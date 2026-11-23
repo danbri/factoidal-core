@@ -1,0 +1,16 @@
+name = "factoidal_ssz_ethlib_bridge"
+version = "0.1.0"
+defaultTargets = ["FactoidalSszBridge"]
+
+[[require]]
+name = "EthLib"
+git = "https://github.com/ethereum/EthLib"
+rev = "6b87b0d4951766864af432455c44344fd12b5cdc"
+
+[leanOptions]
+warningAsError = true
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[lean_lib]]
+name = "FactoidalSszBridge"

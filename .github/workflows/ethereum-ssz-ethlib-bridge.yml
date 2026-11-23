@@ -1,0 +1,32 @@
+name: Isolated Lean 4.35 EthLib SSZ bridge
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/ethereum-ssz-ethlib-bridge/**"
+      - ".github/workflows/ethereum-ssz-ethlib-bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build exact pinned EthLib byte-level adapter and its proof source
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-ssz-ethlib-bridge
+          build: true
+          axiom-audit: true
+          axiom-audit-root: FactoidalSszBridge
+      - name: Re-elaborate theorems and audit actual axiom output
+        shell: bash
+        working-directory: formal/lean4/ethereum-ssz-ethlib-bridge
+        run: |
+          set -euo pipefail
+          lake env lean FactoidalSszBridge.lean | tee "$RUNNER_TEMP/ethlib-axioms.log"
+          python3 scripts/check-axioms.py "$RUNNER_TEMP/ethlib-axioms.log"
