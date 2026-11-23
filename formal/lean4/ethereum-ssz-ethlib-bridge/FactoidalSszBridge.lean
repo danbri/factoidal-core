@@ -97,24 +97,33 @@ private def twoZeroRoot : Bytes :=
     0x43, 0x00, 0x3d, 0x23, 0x20, 0xd9, 0xf0, 0xe8,
     0xea, 0x98, 0x31, 0xa9, 0x27, 0x59, 0xfb, 0x4b]
 
-#guard decide (checkedHelperIndices 4 64 [4] = .ok [5, 3])
-#guard decide (checkedHelperIndices 4 64 [2, 3] = .ok [])
-#guard decide (checkedHelperIndices 1 64 [2, 3] = .error .claimLimit)
-#guard decide (checkedHelperIndices 4 1 [4] = .error .depthLimit)
-#guard decide (checkedHelperIndices 4 64 [] = .error (.upstream .emptyRequest))
-#guard decide (checkedHelperIndices 4 64 [4, 4] = .error (.upstream .repeatedIndex))
-#guard decide (checkedHelperIndices 4 64 [2, 4] = .error (.upstream (.nestedIndex 4)))
+/-- Test-only comparison that keeps .ok/.error variants distinct.
+No proof depends on this helper; the executable production verifier does not call it. -/
+private def resultMatches {α : Type} [BEq α]
+    (actual expected : Except BridgeError α) : Bool :=
+  match actual, expected with
+  | .ok x, .ok y => x == y
+  | .error e, .error f => e == f
+  | _, _ => false
+
+#guard resultMatches (checkedHelperIndices 4 64 [4]) (.ok [5, 3])
+#guard resultMatches (checkedHelperIndices 4 64 [2, 3]) (.ok [])
+#guard resultMatches (checkedHelperIndices 1 64 [2, 3]) (.error .claimLimit)
+#guard resultMatches (checkedHelperIndices 4 1 [4]) (.error .depthLimit)
+#guard resultMatches (checkedHelperIndices 4 64 []) (.error (.upstream .emptyRequest))
+#guard resultMatches (checkedHelperIndices 4 64 [4, 4]) (.error (.upstream .repeatedIndex))
+#guard resultMatches (checkedHelperIndices 4 64 [2, 4]) (.error (.upstream (.nestedIndex 4)))
 #guard combine zeroNode zeroNode == twoZeroRoot
-#guard decide (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] twoZeroRoot = .ok true)
-#guard decide (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] zeroNode = .ok false)
-#guard decide (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] (Array.replicate 31 0) =
-  .error (.upstream (.count 32 31)))
-#guard decide (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode] [] twoZeroRoot =
-  .error (.upstream (.leafCount 2 1)))
-#guard decide (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [zeroNode] twoZeroRoot =
-  .error (.upstream (.proofLength 0 1)))
-#guard decide (checkedMerkleMultiproof 4 64 [4, 4] [zeroNode, zeroNode] [] twoZeroRoot =
-  .error (.upstream .repeatedIndex))
+#guard resultMatches (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] twoZeroRoot) (.ok true)
+#guard resultMatches (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] zeroNode) (.ok false)
+#guard resultMatches (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [] (Array.replicate 31 0))
+  (.error (.upstream (.count 32 31)))
+#guard resultMatches (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode] [] twoZeroRoot)
+  (.error (.upstream (.leafCount 2 1)))
+#guard resultMatches (checkedMerkleMultiproof 4 64 [2, 3] [zeroNode, zeroNode] [zeroNode] twoZeroRoot)
+  (.error (.upstream (.proofLength 0 1)))
+#guard resultMatches (checkedMerkleMultiproof 4 64 [4, 4] [zeroNode, zeroNode] [] twoZeroRoot)
+  (.error (.upstream .repeatedIndex))
 
 #print axioms Factoidal.SSZ.helper_refuses_claim_budget
 #print axioms Factoidal.SSZ.helper_refuses_depth_budget
