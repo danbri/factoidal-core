@@ -61,3 +61,7 @@ root = "BasicMain"
 [[lean_exe]]
 name = "ssz-vector-u64"
 root = "VectorU64Main"
+
+[[lean_exe]]
+name = "ssz-container-roots"
+root = "ContainerRootsMain"
