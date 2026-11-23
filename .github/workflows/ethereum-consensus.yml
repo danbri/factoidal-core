@@ -37,6 +37,7 @@ jobs:
           lake env lean EthereumConsensus/ForkChoice/AttestationScore.lean
           lake env lean EthereumConsensus/ForkChoice/ProposerScore.lean
           lake env lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
+          lake env lean EthereumConsensus/ForkChoice/ChildSelection.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
@@ -79,3 +80,9 @@ jobs:
         run: |
           set -euo pipefail
           lake exe lmd-checked-ancestry | python3 scripts/check-ancestry.py
+      - name: Independent fail-closed weighted child selector (1024 rows)
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe lmd-checked-child | python3 scripts/check-child-selection.py
