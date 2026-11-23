@@ -131,6 +131,38 @@ class PrivateWorkflowTests(unittest.TestCase):
                              "oversized-response", capture=True)
         self.assertLess((self.work / "stages.jsonl").stat().st_size, 1024)
 
+    def test_real_groth16_stage_names_record_success_and_failure(self):
+        marker = "private-child-diagnostic"
+        script = "import sys;print(sys.argv[1]);print(sys.argv[1],file=sys.stderr);sys.exit(int(sys.argv[2]))"
+        console = io.StringIO()
+        expected = []
+        for stage in ("groth16-proving", "groth16-verification"):
+            for code in (0, 7):
+                with self.subTest(stage=stage, code=code), redirect_stdout(console):
+                    command = [sys.executable, "-c", script, marker, str(code)]
+                    if code == 0:
+                        self.assertEqual(common.run_child(command, self.work, stage), b"")
+                    else:
+                        with self.assertRaisesRegex(common.Refusal, "^child-failed$"):
+                            common.run_child(command, self.work, stage)
+                expected.append((stage, "ok" if code == 0 else "failed", code))
+        data = (self.work / "stages.jsonl").read_text()
+        records = [json.loads(line) for line in data.splitlines()]
+        self.assertEqual([(r["stage"], r["status"], r["exitCode"]) for r in records], expected)
+        self.assertNotIn(marker, data)
+        self.assertNotIn(marker, console.getvalue())
+
+    def test_invalid_stage_is_refused_before_starting_a_child(self):
+        for stage in ("", "Groth16", "groth16 proving", "groth16\n", "../groth16", "16-proving", None):
+            with self.subTest(stage=stage), patch("common.subprocess.Popen") as popen:
+                with self.assertRaisesRegex(common.Refusal, "^invalid-stage-record$"):
+                    common.run_child([sys.executable, "-c", "raise SystemExit(0)"], self.work, stage)
+                popen.assert_not_called()
+                with self.assertRaisesRegex(common.Refusal, "^invalid-stage-record$"):
+                    common.stage_record(self.work, stage, "ok", 0, 0.0)
+        self.assertFalse((self.work / "stages.jsonl").exists())
+        self.assertFalse((self.work / "tmp").exists())
+
     def test_exited_wrapper_live_grandchild_is_cleaned_on_timeout(self):
         pidfile = self.work / "grandchild.pid"
         grandchild = "import os,time,pathlib;pathlib.Path('grandchild.pid').write_text(str(os.getpid()));time.sleep(30)"

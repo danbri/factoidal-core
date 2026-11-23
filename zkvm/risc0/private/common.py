@@ -205,9 +205,14 @@ def check_provenance(data: bytes, policy: dict) -> dict:
     return value
 
 
-def stage_record(work: Path, stage: str, status: str, code: int, elapsed: float) -> None:
-    require(re.fullmatch(r"[a-z-]+", stage) is not None and status in ("ok", "failed", "timeout", "output-limit"),
+def validate_stage(stage: str) -> None:
+    require(type(stage) is str and re.fullmatch(r"[a-z][a-z0-9-]*", stage) is not None,
             "invalid-stage-record")
+
+
+def stage_record(work: Path, stage: str, status: str, code: int, elapsed: float) -> None:
+    validate_stage(stage)
+    require(status in ("ok", "failed", "timeout", "output-limit"), "invalid-stage-record")
     path = work / "stages.jsonl"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     with os.fdopen(fd, "ab") as output:
@@ -222,6 +227,9 @@ def stage_record(work: Path, stage: str, status: str, code: int, elapsed: float)
 def run_child(command: list[str], work: Path, stage: str, *, capture: bool = False,
               timeout: int = 120, memory_gib: int = 3, jobs: int = 2) -> bytes:
     """Discard diagnostics, bound the one required JSON response, kill own process group on failure."""
+    # Refuse a bad internal identifier before starting work, not after an
+    # expensive successful child exits and its status must be recorded.
+    validate_stage(stage)
     require("RISC0_DEV_MODE" not in os.environ, "development-mode-refused")
     require(1 <= jobs <= 8 and 1 <= memory_gib <= 8, "invalid-resource-limit")
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "RISC0_HOME")
