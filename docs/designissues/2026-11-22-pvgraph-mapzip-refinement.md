@@ -146,6 +146,28 @@ separately from the complete shipped runtime; the existing full-artifact CI
 remains an independent gate rather than being folded into the 22-minute GPU
 job.
 
+The completed local focused-profile run at clean source
+`b4b6044bcfa58ed5c3c89aa60e5120bec82fc888` compared all 61 native/Wasm API
+cases: 59 exact plan/output matches and two evaluation/planning refusals.
+The complete emitted fixture streams were byte-identical (SHA-256
+`0001fac0d1c3406fac8cd35896e11639e4e02d27f94a7fb319b22e08c2fee15e`). All
+59 fresh Wasm-authored plans then matched on llvmpipe LLVM 19.1.7, with the
+two refusals retained. The 10,227,619-byte `core-plus-registry-test` Wasm
+hash was `12810b88f0be52d385b5ca6728d9adafc0bd85b3f3d89fe9ae96f36c90244b5d`.
+
+That build regenerated 23 changed/dependent C modules and checked the
+recursive source/dependency fingerprints of 533 cached project modules.
+It freshly compiled 888 runtime C and 586 project/HACL/FFI C units,
+rewrote 138 Nat32 literal sites in 46 files, and linked 25 pinned C++
+runtime objects with their checked string-list witness. The source
+comparison and immutable input fingerprints justify those particular
+cache reuses; the Lean compiler, literal conversion, C compiler/linker and
+runtime objects remain part of the implementation boundary. A focused
+profile and a software adapter do not establish complete shipped-runtime
+or physical-hardware correctness. The
+[work note](../20261122-pvgraph-mapzip-refinement.md) records separate
+artifact and evidence hashes.
+
 `Harness.PVGraphPlanTiming` compares the unvalidated candidate producer
 and shipping checked compiler on the same final source, with 31 alternating
 samples for 0, 1, 32 and 120 map nodes. Whole JSON equality is checked outside
