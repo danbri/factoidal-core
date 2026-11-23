@@ -90,9 +90,31 @@ takes part in the Unicode Bidirectional Algorithm (§2.4.2 gives the bidi
 control characters of each value). -/
 inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateOverride | plaintext
   deriving Repr, BEq
-/-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
-inductive BorderStyle where | none | solid | inset | outset
+/-- CSS Backgrounds 3 §4.2 line styles (`hidden` is `none` here: no table conflict
+resolution reads it). -/
+inductive BorderStyle where | none | solid | inset | outset | dotted | dashed | double | groove | ridge
   deriving Repr, BEq
+/-- One value for each side of a box: top, right, bottom, left. -/
+structure Sides (α : Type) where
+  top : α
+  right : α
+  bottom : α
+  left : α
+  deriving Repr
+def Sides.all (a : α) : Sides α := ⟨a,a,a,a⟩
+/-- The sides in the order of CSS's one-to-four-value shorthands (CSS Backgrounds 3 §4). -/
+def Sides.ofList : List α → Option (Sides α)
+  | [a] => some ⟨a,a,a,a⟩
+  | [a,b] => some ⟨a,b,a,b⟩
+  | [a,b,c] => some ⟨a,b,c,b⟩
+  | [a,b,c,d] => some ⟨a,b,c,d⟩
+  | _ => none
+/-- The side named `top`, `right`, `bottom` or `left` set to `a`. -/
+def Sides.set (x : Sides α) (side : String) (a : α) : Sides α :=
+  match side with
+  | "top" => {x with top := a} | "right" => {x with right := a}
+  | "bottom" => {x with bottom := a} | _ => {x with left := a}
+def Sides.toList (x : Sides α) : List α := [x.top, x.right, x.bottom, x.left]
 /-- The border paint is independent of whether its widths take up space. -/
 inductive BorderColor where
   | current
@@ -167,9 +189,10 @@ structure Computed where
   preserveSegmentBreaks : Bool := false
   /-- Border widths as specified; `Computed.borderEdges` is the used width (0 with no style). -/
   borderWidth : Edges := ⟨3,3,3,3⟩
-  borderStyle : BorderStyle := .none
-  /-- None: `currentColor`. -/
-  borderColor : BorderColor := .current
+  /-- `border-*-style`, one for each side. -/
+  borderStyles : Sides BorderStyle := .all .none
+  /-- `border-*-color`, one for each side. -/
+  borderColors : Sides BorderColor := .all .current
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -280,7 +303,19 @@ def htmlProperties : List String :=
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
-  if s.borderStyle == .none then {} else s.borderWidth
+  let w := s.borderWidth
+  let b := s.borderStyles
+  ⟨if b.top == .none then 0 else w.top, if b.right == .none then 0 else w.right,
+   if b.bottom == .none then 0 else w.bottom, if b.left == .none then 0 else w.left⟩
+
+/-- The style of the first side, of top, right, bottom and left, that has one; `none` when
+no side has a border. -/
+def Computed.borderStyle (s : Computed) : BorderStyle :=
+  (s.borderStyles.toList.find? (· != .none)).getD .none
+/-- Whether some side has a border style (it may still be 0 wide). -/
+def Computed.hasBorder (s : Computed) : Bool := s.borderStyle != .none
+/-- All four sides with the one style `st`. -/
+def Computed.withBorderStyle (s : Computed) (st : BorderStyle) : Computed := {s with borderStyles := .all st}
 
 structure Declaration where
   property : String
@@ -365,6 +400,33 @@ def hasAttribute (n : DOM.Node) (key : String) : Bool :=
 
 private def words (s : String) : List String :=
   (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " " |>.filter (· != "")
+/-- Splits `source` at white space outside quotes and parentheses, so that `rgb(0, 0, 255)`
+is one value. One pass, no recursion. -/
+def topWords (source : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut item := ""
+  let mut depth := 0
+  let mut quote : Option Char := none
+  for c in source.toList do
+    if let some q := quote then
+      item := item.push c
+      if c == q then quote := none
+    else if c == '"' || c == '\'' then
+      quote := some c
+      item := item.push c
+    else if c == '(' then
+      depth := depth+1
+      item := item.push c
+    else if c == ')' then
+      depth := depth-1
+      item := item.push c
+    else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') && depth == 0 then
+      if !item.isEmpty then out := out.push item
+      item := ""
+    else item := item.push c
+  if !item.isEmpty then out := out.push item
+  return out.toList
+#guard topWords "1px  solid rgb(0, 0, 255)" == ["1px","solid","rgb(0, 0, 255)"]
 private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.isAlphanum || c == '-' || c == '_')
 /-- Splits `source` at the commas outside quotes and parentheses (CSS Syntax 3 §5.3.11,
 for a comma-separated list of component values). One pass, no recursion. -/
@@ -1187,6 +1249,11 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | "solid" => pure .solid
   | "inset" => pure .inset
   | "outset" => pure .outset
+  | "dotted" => pure .dotted
+  | "dashed" => pure .dashed
+  | "double" => pure .double
+  | "groove" => pure .groove
+  | "ridge" => pure .ridge
   | _ => throw "unsupported CSS border style"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
@@ -1525,42 +1592,32 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "underline" then return {s with underline := true}
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
-  | "border-style" => return {s with borderStyle := ← borderStyle d.value}
-  -- One side's border. This profile has one style and one colour for the four sides: a
-  -- side's style that is the first style an element gets also leaves the sides with no
-  -- style of their own without a border (their width is 0); a side's style of none
-  -- removes that side's border.
+  | "border-style" =>
+    match Sides.ofList (← (topWords d.value).mapM borderStyle) with
+    | some st => return {s with borderStyles := st}
+    | none => throw "border-style requires one to four styles"
   | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← borderWidthPx s.fontSize d.value}}
   | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← borderWidthPx s.fontSize d.value}}
   | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← borderWidthPx s.fontSize d.value}}
   | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← borderWidthPx s.fontSize d.value}}
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
-    let st ← borderStyle d.value
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
-    let only : Edges := match side with
-      | "top" => {top := s.borderWidth.top}
-      | "right" => {right := s.borderWidth.right}
-      | "bottom" => {bottom := s.borderWidth.bottom}
-      | _ => {left := s.borderWidth.left}
-    let without : Edges := match side with
-      | "top" => {s.borderWidth with top := 0}
-      | "right" => {s.borderWidth with right := 0}
-      | "bottom" => {s.borderWidth with bottom := 0}
-      | _ => {s.borderWidth with left := 0}
-    if st == .none then return {s with borderWidth := without}
-    else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
-    else return {s with borderStyle := st}
+    return {s with borderStyles := s.borderStyles.set side (← borderStyle d.value)}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := ← borderPaint d.value}
+    let side := ((d.property.drop 7).takeWhile (· != '-')).toString
+    return {s with borderColors := s.borderColors.set side (← borderPaint d.value)}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
-  | "border-color" => return {s with borderColor := ← borderPaint d.value}
+  | "border-color" =>
+    match Sides.ofList (← (topWords d.value).mapM borderPaint) with
+    | some c => return {s with borderColors := c}
+    | none => throw "border-color requires one to four colours"
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := .current}
-    for part in words d.value do
-      if let .ok style := borderStyle part then out := {out with borderStyle := style}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyles := .all .none, borderColors := .all .current}
+    for part in topWords d.value do
+      if let .ok style := borderStyle part then out := {out with borderStyles := .all style}
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := ← borderPaint part}
+      else out := {out with borderColors := .all (← borderPaint part)}
     return out
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
@@ -1908,9 +1965,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
-  | "border-style" => some {s with borderStyle := source.borderStyle}
-  | "border-color" => some {s with borderColor := source.borderColor}
-  | "border" => some {s with borderWidth := source.borderWidth, borderStyle := source.borderStyle, borderColor := source.borderColor}
+  | "border-style" => some {s with borderStyles := source.borderStyles}
+  | "border-color" => some {s with borderColors := source.borderColors}
+  | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors}
   | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
@@ -2145,7 +2202,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
   if tag == "table" then
     let bc := attrValue n "bordercolor"
-    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColor := .solid c}
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColors := .all (.solid c)}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -2186,7 +2243,7 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
       s := {s with margin := {s.margin with top := v, bottom := v}, pos := (s.pos.withMarginOf 0 vo).withMarginOf 2 vo}
   if imageInput || tag == "img" || tag == "object" then
     if let some b := pixelLengthAttribute (attrValue n "border") then
-      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
+      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyles := .all .solid}
   return s
 
 /-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
@@ -3354,7 +3411,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := .current,
+    borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by

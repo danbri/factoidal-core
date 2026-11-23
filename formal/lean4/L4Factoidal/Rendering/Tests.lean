@@ -355,12 +355,23 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
 #guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
 #guard ((stateAt page "" "k" (hover := some "k")).toOption.map fun s => s.background.map rgb255) == some (some (229,229,229))
-#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,(s.borderColor.resolve s.color).map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,(s.borderColors.left.resolve s.color).map rgb255)) == some (1,some (255,0,0))
 #guard ((stateAt "<p id='x' style='border:8px solid transparent'>A</p>" "" "x").toOption.map fun s =>
-  (s.borderEdges.left,(s.borderColor.resolve s.color).isNone)) == some (8,true)
+  (s.borderEdges.left,(s.borderColors.left.resolve s.color).isNone)) == some (8,true)
 #guard ((stateAt "<p id='x' style='border:8px solid red; border-color:transparent'>A</p>" "" "x").toOption.map fun s =>
-  (s.borderEdges.left,(s.borderColor.resolve s.color).isNone)) == some (8,true)
+  (s.borderEdges.left,(s.borderColors.left.resolve s.color).isNone)) == some (8,true)
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
+-- CSS Backgrounds 3 §4: each side has its own style and colour; a side with style none is
+-- 0 wide; `rgb()` with spaces is one value of a shorthand; the styles dotted ... ridge are read.
+#guard ((stateAt "<p id='x' style='border:2px solid; border-top-color:red; border-left-style:none'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.top,s.borderEdges.left,(s.borderColors.top.resolve s.color).map rgb255,(s.borderColors.right.resolve s.color).map rgb255)) ==
+  some (2,0,some (255,0,0),some (0,0,0))
+#guard ((stateAt "<p id='x' style='border-top-style:solid'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.top,s.borderEdges.right)) == some (3,0)
+#guard ((stateAt "<p id='x' style='border:1px dashed rgb(0, 0, 255)'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderStyles.left == .dashed,(s.borderColors.left.resolve s.color).map rgb255)) == some (true,some (0,0,255))
+#guard ((stateAt "<p id='x' style='border-style:dotted double groove ridge;border-color:red blue'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderStyles.toList == [.dotted,.double,.groove,.ridge],(s.borderColors.bottom.resolve s.color).map rgb255,(s.borderColors.left.resolve s.color).map rgb255)) ==
+  some (true,some (255,0,0),some (0,0,255))
 
 private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html
