@@ -2108,6 +2108,8 @@ structure Laid where
   scene : Rendering.Scene
   boxes : Array Rendering.Layout.Box
   face : Option Rendering.FontProvider.Face
+  /-- The same fonts used for viewport geometry reads in accessible child documents. -/
+  layoutFont : Rendering.Layout.FontProfile := WebRender.asciiFont
   /-- An author rule names `:hover`: a pointer move over the page can change the frame. -/
   hoverRules : Bool := false
   /-- What a pointer state is painted with (`restyle`): the document, its rules, the
@@ -2436,7 +2438,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
           | .error _ => throw e
   let hoverRules := rules.any fun rule => rule.selectors.any fun sel =>
     sel.parts.any (·.pseudo.contains .hover) || sel.slotted.any (·.pseudo.contains .hover)
-  let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules,words := memo}
+  let laid : Laid := {scene := scene,boxes := boxes,face := face,layoutFont := font,
+    hoverRules := hoverRules,words := memo}
   -- A page whose text resolves to `serif` while the engine holds no serif face says so; a
   -- host with a page font then gives the face and draws again. Others pay nothing more.
   let wantsSerif := serifWanted h.serif loaded.isSome fun _ => textWantsSerif heldFamilies dom styles
@@ -2817,7 +2820,7 @@ rules or `style` attribute declare an animation or a transition, as node numbers
 computed text of the property named; 26 the declarations of the node's rules and `style`
 attribute as one text, or with "names" the longhands they declare, with "rules" the
 rules' declarations alone, with "style" the longhands of the `style` attribute. -/
-def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom width height overrides carry =>
+def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts.Page.Measure := fun dom frames width height overrides carry =>
   let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
@@ -2907,16 +2910,16 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- the environment"; Media Queries 4 §4: `width` and `height` are the frame's viewport, the
   -- padding box of its container); a frame document none of whose sheets asks for a media
   -- condition lays nothing out for it.
-  let frameView := fun (r node : Nat) (q : String) => (do
+  let frameView (r node : Nat) (q : String) (size : Option (Float × Float) := none) :
+      Except String Rendering.ComputedGeneric.View := do
     let parts := (q.drop 1).toString.splitOn "\x00"
     let styleIds := (dom.treeOrder r).toList.filter fun id => DOM.Dom.isHtmlElement (dom.get id) "style"
     let asksMedia := styleIds.any fun id =>
       !(Rendering.CSS.attrValue (dom.get id) "media").isEmpty || ((dom.textContent id).getD "").contains '@'
     let env : Rendering.MediaQuery.Env := if !asksMedia then {medium := medium request} else
-      let viewport := match q.startsWith "\x02", (parts[2]?).bind String.toNat? with
-        | true, some f => (match laid.get with
-          | .ok l => paddingBoxOf l f
-          | .error _ => none)
+      let viewport := size.orElse fun _ =>
+        match q.startsWith "\x02", (parts[2]?).bind String.toNat? with
+        | true, some f => laid.get.toOption.bind fun l => paddingBoxOf l f
         | _, _ => none
       { mediaEnv (medium request) width height 100 with
         width := viewport.map (·.1), height := viewport.map (·.2),
@@ -2934,8 +2937,36 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     let styles := match isBody, q.startsWith "\x02", parts with
       | true, true, mw :: mh :: _ => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
       | _, _, _ => styles
-    return ({ dom := dom, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } :
-      Rendering.ComputedGeneric.View) : Except String Rendering.ComputedGeneric.View)
+    return { dom := dom, matchesOf := matchesOf, styles := styles,
+      viewportW := (size.map fun v => v.1.toUInt32.toNat).getD width,
+      viewportH := (size.map fun v => v.2.toUInt32.toNat).getD height }
+  -- A child viewport is the frame owner's content box in its parent layout. The
+  -- top viewport stays in the existing thunk, and nested viewports follow owner links.
+  let rec layoutAt : Nat → Nat → Option Laid
+    | 0, _ => none
+    | _+1, 0 => laid.get.toOption
+    | fuel+1, root => do
+      let (owner,_) ← frames.find? (·.2 == root)
+      if !dom.connected owner then none else
+      let parent ← layoutAt fuel (dom.get owner).doc
+      let (pw,ph) ← paddingBoxOf parent owner
+      let styles ← parent.styles.get.toOption
+      let padding := (styles[owner]?.getD {}).padding
+      let fw := max 0 (pw-padding.left-padding.right)
+      let fh := max 0 (ph-padding.top-padding.bottom)
+      let html ← dom.documentElement root
+      let body := ((dom.get html).kids.find? fun id => DOM.Dom.isHtmlElement (dom.get id) "body").getD html
+      let ownerNode := dom.get owner
+      let margins := "\x02" ++ Rendering.CSS.attrValue ownerNode "marginwidth" ++ "\x00" ++
+        Rendering.CSS.attrValue ownerNode "marginheight"
+      let view ← (frameView root body margins (some (fw,fh))).toOption
+      let flat := Rendering.Generated.flattenContents dom view.styles
+      let (scene, boxes) ← (Rendering.Layout.renderStyled flat view.styles parent.layoutFont
+        (fun _ _ _ _ => .ok []) view.viewportW view.viewportH (document := root)).toOption
+      return {scene, boxes, face := parent.face, layoutFont := parent.layoutFont, dom := flat,
+        styles := Thunk.pure (.ok view.styles)}
+  let frameLayouts := frames.map fun (_,root) => (root, Thunk.mk fun _ => layoutAt 64 root)
+  let layoutForFrame := fun root => (frameLayouts.find? (·.1 == root)).bind fun pair => pair.2.get
   -- what this measure leaves for the next (`Page.Carry`): for a page with no shadow tree, at
   -- text scale 1, whose rules do not read the `style` attribute
   let left : Thunk (Option WasmVM.Hosts.Page.Carry) := Thunk.mk fun _ =>
@@ -3039,6 +3070,16 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
               | .error _ => none)
         else some ""
       | .error _ => none
+    else if op == 35 && !q.isEmpty then do
+      let l ← layoutForFrame node
+      let point ← q.toNat?
+      if point / 65536 ≥ l.scene.width || point % 65536 ≥ l.scene.height then return ""
+      let hits ← readAnswer l point 35
+      if !hits.isEmpty then return hits
+      return ((l.dom.documentElement node).map toString).getD ""
+    else if !frameLayouts.isEmpty && (op == 17 || op == 18 || op == 21 || op == 38)
+        && node < dom.size && (dom.get node).doc != 0 then
+      (layoutForFrame (dom.get node).doc).bind fun l => readAnswer l node op
     else match laid.get with
     | .ok l => readAnswer l node op
     | .error _ => none

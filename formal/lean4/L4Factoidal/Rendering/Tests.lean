@@ -440,4 +440,24 @@ private def shadowPage := "<div id='h'><template shadowrootmode='open'><p id='in
 -- a page with bold and italic text lays out as before (the same boxes), with more paint
 #guard (run "<div><b>ab</b> <i>cd</i></div>" css) matches .ok _
 
+/-- Two documents in one arena keep their node identities and use their own widths. -/
+private def twoDocumentArena : Dom := {nodes := #[
+  {type := .document, kids := #[1]},
+  {type := .element, ns := some htmlNS, lname := "html", parent := some 0},
+  {type := .document, doc := 2, kids := #[3]},
+  {type := .element, ns := some htmlNS, lname := "html", doc := 2, parent := some 2}
+]}
+
+private def documentBoxWidths (d : Nat) (w : Nat) : Except String (Array (Nat × Float × Float)) := do
+  let root : Computed := {display := .block}
+  let html : Computed := {root with pos := {root.pos with marginOf := (0,0,0,0.25)}}
+  let styles := #[root,html,root,html]
+  let (_, boxes) ← renderStyled twoDocumentArena styles font noSVG w 80 (document := d)
+  return (boxes.filter (fun b => (twoDocumentArena.get b.source).type == .element)).map
+    (fun b => (b.source, b.x, b.width))
+
+#guard (documentBoxWidths 0 140).toOption == some #[(1,35,105)]
+#guard (documentBoxWidths 2 90).toOption == some #[(3,22.5,67.5)]
+#guard documentBoxWidths 1 90 matches .error _
+
 end L4Factoidal.Rendering.Tests

@@ -204,7 +204,8 @@ structure Carry where
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
 pixels) with the values of the page's animations, as answers. The engine gives the
-function; it lays out when a read first asks.
+function; it lays out when a read first asks. The second input records the current
+frame owner and document pairs, so several geometry reads can share a child layout.
 
 The last argument is what an earlier measure left with the nodes to style again: the
 caller says by it that the arena, the viewport and the animated values are those of that
@@ -213,7 +214,8 @@ for the `class` of their children when the measure's rules have no `:has()`
 (`Carry.parentOnly`); their subtrees are styled again, the rest is taken as it was. With none the cascade is of the
 whole document. The second answer is what this measure leaves (none when the page is not
 one a `Carry` is for); asking for it makes the cascade. -/
-abbrev Measure := Arena → Nat → Nat → List L4Factoidal.Rendering.Animation.Override → Option (Carry × List Nat) →
+abbrev Measure := Arena → Array (Nat × Nat) → Nat → Nat →
+  List L4Factoidal.Rendering.Animation.Override → Option (Carry × List Nat) →
   Answers × Thunk (Option Carry)
 
 /-- What a page with animations keeps of its last measure: the styles with no animated
@@ -728,7 +730,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
           else none
         else none
       | _, _ => none
-    let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
+    let (base, baseLeft) := m dom h.dom.frames w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
           kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1,
@@ -743,7 +745,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
       let baseCarry := baseLeft.get
       let (final, finalLeft) :=
         if ovs.isEmpty then (base, baseLeft)
-        else m dom w ht ovs (match fromFinal with
+        else m dom h.dom.frames w ht ovs (match fromFinal with
           | some c => some c
           -- from the styles with no animated value: the animated elements again
           | none => baseCarry.map fun c => (c, (ovs.map (·.node)).eraseDups))
@@ -964,7 +966,7 @@ def animOp (h : Host) (node op : Nat) (q : String) : Host × Except Int String :
               let dom := h.dom.dom
               -- the styles with no animated value: those kept by the measure just made, or the cascade
               let carry := (h.reads.styleKept.bind (·.base)).map fun c => (c, ([] : List Nat))
-              let (base, _) := m dom h.reads.width h.reads.height [] carry
+              let (base, _) := m dom h.dom.frames h.reads.width h.reads.height [] carry
               let hidden := !(t < dom.size && dom.connected t) || Id.run do
                 let mut k := t
                 for _ in [0:dom.size + 1] do
@@ -1116,6 +1118,20 @@ theorem Host.noteQuery_same (h : Host) (op : Nat) :
     { (h.noteQuery op) with reads := { (h.noteQuery op).reads with queries := h.reads.queries, queryOps := h.reads.queryOps } } = h := by
   rfl
 
+/-- Only an active, reachable frame document can be the receiver of a point query.
+The compact top-page pointer query has no frame argument. -/
+def framePointAllowed (s : DomHost) (document : Nat) : Bool :=
+  Hosts.Dom.nodeReachable s document &&
+    s.frames.any fun (owner, root) => root == document && s.dom.connected owner
+
+/-- An inaccessible realm can never be queried through the frame point operation. -/
+theorem framePointAllowed_not_reachable (s : DomHost) (document : Nat)
+    (denied : Hosts.Dom.nodeReachable s document = false) :
+    framePointAllowed s document = false := by
+  simp [framePointAllowed, denied]
+
+#print axioms framePointAllowed_not_reachable
+
 /-- `node_query` ops served here: 16 the init of the event being dispatched; 17 a node's
 layout, "x y w h left top width height" (border box in the page, then the client box);
 18 an SVG element's bounding box in its user space, "x y w h"; 19 the viewport, "w h";
@@ -1128,7 +1144,7 @@ def pageQuery (h : Host) (node op : Nat) (q : String := "") : Host × Except Int
   | 16 => (h, if h.event.isEmpty then .error (-1) else .ok h.event)
   | 19 => (h, .ok s!"{h.reads.width} {h.reads.height}")
   | 22 => (h, match h.reads.measure with
-      | some m => match (m h.dom.dom h.reads.width h.reads.height [] none).1 node 22 "" with
+      | some m => match (m h.dom.dom #[] h.reads.width h.reads.height [] none).1 node 22 "" with
         | some r => .ok r
         | none => .error (-1)
       | none => .error (-2))
@@ -1139,12 +1155,14 @@ def pageQuery (h : Host) (node op : Nat) (q : String := "") : Host × Except Int
     let now := d.slotAssignments roots
     ({ h with slots := now }, .ok (" ".intercalate ((L4Factoidal.DOM.Dom.slotChanges h.slots now).toList.map toString)))
   | _ =>
-    let (h, f) := h.measured
-    match f with
-    -- `q` reaches the measure (getComputedStyle in a frame's document brings its container's
-    -- margins in it: `WebDocument.measure`)
-    | some f => (h, match f node op q with | some r => .ok r | none => .error (-1))
-    | none => (h, .error (-2))
+    if op == 35 && !q.isEmpty && !framePointAllowed h.dom node then (h, .error (-2))
+    else
+      let (h, f) := h.measured
+      match f with
+      -- `q` reaches the measure (getComputedStyle in a frame's document brings its container's
+      -- margins in it: `WebDocument.measure`)
+      | some f => (h, match f node op q with | some r => .ok r | none => .error (-1))
+      | none => (h, .error (-2))
 
 /-- The rules of the page's style sheets for an editing command: the text of the sheets
 comes from the layout reads (measure op 40, no layout); the index of the last text is kept. -/
@@ -1178,7 +1196,7 @@ def mediaAnswer (h : Host) (q : String) : Except Int String :=
   match h.reads.measure with
   | none => .error (-2)
   | some m =>
-    match (m h.dom.dom h.reads.width h.reads.height [] none).1 0 41 "" with
+    match (m h.dom.dom #[] h.reads.width h.reads.height [] none).1 0 41 "" with
     | none => .error (-1)
     | some text =>
       match text.splitOn " " with
@@ -2080,7 +2098,8 @@ def Session.attachFrame (s : Session) (el : Nat) (doc : Option Arena) : Session 
   if let some d := doc then
     let (dom, root) := h.dom.graft d
     h := Hosts.Dom.noteFrameDoc { h with dom, frames := (h.frames.filter (·.1 != el)).push (el, root) } el root
-  let s := { s with host := { s.host with dom := h } }
+  let reads := if doc.isSome then s.host.reads.wrote else s.host.reads
+  let s := { s with host := { s.host with dom := h, reads } }
   return s.setLoop (s.loop.queueTask .networking 0 (some { type := "load", target := el }))
 
 /-- A frame's navigation ends with document `source` ("" is `about:blank`;
@@ -2096,7 +2115,8 @@ def Session.loadFrameP (s : Session) (el : Nat) (source : String) (scripts : Arr
   let (dom, root) := Hosts.Dom.attachDocument s.host.dom el source xml responseUrl
   -- asked of the frame as it is after this navigation (`Hosts.Dom.realmScripts`)
   let scripts := Hosts.Dom.realmScripts dom el scripts
-  let mut s := { s with host := { s.host with dom } }
+  let reads := if root.isSome then s.host.reads.wrote else s.host.reads
+  let mut s := { s with host := { s.host with dom, reads } }
   if let some root := root then
     for (node, src) in scripts do
       s ← s.setScriptP (node + root : Nat)
