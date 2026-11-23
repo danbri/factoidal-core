@@ -918,10 +918,38 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
     #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
 
+/-- Used physical displacement between two resolved opposing insets. Flip when
+the far edge is the containing block's start edge. -/
+private def relativeInlineAxis (flip : Bool) (near far : Option Float) : Float :=
+  if flip then (far.map fun v => -v).getD (near.getD 0)
+  else near.getD ((far.map fun v => -v).getD 0)
+
+theorem relativeInlineAxis_start_wins (near far : Float) :
+    relativeInlineAxis false (some near) (some far) = near ∧
+    relativeInlineAxis true (some near) (some far) = -far := ⟨rfl,rfl⟩
+
+#print axioms relativeInlineAxis_start_wins
+
+/-- Accumulate relative offsets through the inline ancestors of the paint source.
+Block and atomic subtree layout already translates its own contents. The containing
+block is excluded so its own geometry can still be translated as a unit. -/
+private def inlineVisualShift (dom : Dom) (styles : Array Computed) (container : Nat)
+    (width : Float) (height : Option Float) (rtl : Bool) : Nat → Nat → Float × Float
+  | 0, _ => (0,0)
+  | fuel+1, id =>
+    if id == container then (0,0) else
+    let n := dom.get id
+    let s := styles[id]!
+    let (dx,dy) := (n.parent.map (inlineVisualShift dom styles container width height rtl fuel)).getD (0,0)
+    if n.type != .element || s.display != .inline || s.pos.position != .relative then (dx,dy) else
+    (dx + relativeInlineAxis rtl (resolveOpt (some width) s.pos.left) (resolveOpt (some width) s.pos.right),
+     dy + relativeInlineAxis false (resolveOpt height s.pos.top) (resolveOpt height s.pos.bottom))
+
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
-    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[])
+    (visualShift : Option (Nat → Float × Float) := none) : Except String Result := do
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
@@ -979,13 +1007,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let b := s.borderEdges
     let scale := s.fontSize/font.unitsPerEm
     let (a,d) := font.metricsOf s
-    let top := y+ascent-a*scale-s.padding.top-b.top
+    let (dx,dy) := (visualShift.map fun shift => shift f.id).getD (0,0)
+    let top := y+ascent-a*scale-s.padding.top-b.top+dy
     let height := (a+d)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
-    let left := f.lo
+    let left := f.lo+dx
     -- never past the box's right edge by a rounding of the subtraction: the width of a
     -- container that shrinks to fit is read from these boxes
     let span := f.hi-f.lo
-    let width := if left+span > f.hi then span-(left+span-f.hi) else span
+    let width := if f.lo+span > f.hi then span-(f.lo+span-f.hi) else span
     -- most inline boxes have nothing to paint
     let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
@@ -996,6 +1025,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   for k in [0:items.size] do
     let (offset,item) := items[k]!
     let rtl := dirs[k]?.getD none
+    let (dx,dy) := match visualShift with
+      | none => (0,0)
+      | some shift => match item with
+        | .word source .. | .space source _ => shift source.paint
+        | .replaced source .. | .atomic source .. | .outOfFlow source => shift source
+        | _ => (0,0)
+    let paintX := x+offset+dx
+    let paintY := y+dy
     -- what the item covers of the line, for the inline boxes it is in
     let mut extent : Option (Float × Float) := none
     match item with
@@ -1003,63 +1040,63 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       -- `top`: where the glyphs' em boxes start in the profile's units (the glyphs are drawn
       -- at the baseline); `areaTop`: the content area of the text's own font, and `boxTop` its
       -- line-height box (CSS 2.1 §10.6.1, §10.8.1).
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
+      let top := paintY+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
-      let areaTop := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm
+      let areaTop := paintY+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm
       let boxTop := areaTop-leading
       if reordered && s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source.paint s (x+offset) areaTop (← itemWidth font rtl item)}
+        out := {out with nodes := out.nodes ++ textBackground font source.paint s paintX areaTop (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
         let advance := font.advance*s.fontSize/font.unitsPerEm
         let glyphs := chars.toArray.mapIdx fun i c =>
-          ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
+          ({index := c.toNat, x := paintX+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,paintX,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
         let width := word.advance*s.fontSize/font.unitsPerEm
         let glyphs := word.glyphs.map fun glyph =>
-          ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
+          ({index := glyph.index,x := paintX+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩}
+        out := {out with nodes := out.nodes ++ shapedNodes word run s paintX (paintY+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,paintX,boxTop,width,s.lineHeight⟩}
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
-      let top := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
-      out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes,
-                       boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩}
+      let top := paintY+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
+      out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s paintX (top+leading) advance else out.nodes,
+                       boxes := out.boxes.push ⟨source.geometry,paintX,top,advance,s.lineHeight⟩}
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+        out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect paintX (paintY+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
       let top := match s.verticalAlign with
-        | .baseline => y+ascent-height
-        | .middle => y+ascent-s.fontSize/4-height/2
-        | .top => y
-        | .bottom => y+ascent+descent-height
+        | .baseline => paintY+ascent-height
+        | .middle => paintY+ascent-s.fontSize/4-height/2
+        | .top => paintY
+        | .bottom => paintY+ascent+descent-height
       -- The box is the border box, inside the margins.
       let m := s.margin
-      out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
-                       boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
+      out := {out with nodes := out.nodes.push (.group none (translate paintX top) nodes),
+                       boxes := out.boxes.push ⟨source,paintX+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
       extent := some (x+offset,x+offset+width)
     | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
-        | .baseline => y+ascent-atomicBaseline s height inner
-        | .middle => y+ascent-s.fontSize/4-height/2
-        | .top => y
-        | .bottom => y+ascent+descent-height
-      let moved := shiftResult (x+offset) top inner
+        | .baseline => paintY+ascent-atomicBaseline s height inner
+        | .middle => paintY+ascent-s.fontSize/4-height/2
+        | .top => paintY
+        | .bottom => paintY+ascent+descent-height
+      let moved := shiftResult paintX top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
                        pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
       extent := some (x+offset,x+offset+width)
-    | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
+    | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := paintX, y := paintY}}
     | .openInline id s continued =>
       let edge := x+offset+(if continued then 0 else s.margin.left)
       frames := (InlineBox.Frame.opened id edge (s.borderEdges.left+s.padding.left) (!continued),s) :: frames
@@ -1227,7 +1264,11 @@ each line is reordered (`bidiLine`). -/
 private def inlineLayoutCore (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
     (band : Float → Float × Float := fun _ => (0,available))
-    (collectLines : Bool := false) : Except String InlineFlow := do
+    (collectLines : Bool := false)
+    (visualShift : Option (Nat → Float × Float) := none) : Except String InlineFlow := do
+  let visualShift := if visualShift.isSome && items0.any (fun
+      | .openInline _ style _ => style.pos.position == .relative
+      | _ => false) then visualShift else none
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -1331,7 +1372,7 @@ private def inlineLayoutCore (font : FontProfile) (items0 : Array Inline) (x y a
         openBoxes := openBoxes ++ waiting
         waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs
+      let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs visualShift
       out := out.add {row with height := if row.height > 0 then row.height else 19.2}
       (line,lineIdx) := continuedStarts openBoxes
       cursorX := 0
@@ -1377,7 +1418,7 @@ private def inlineLayoutCore (font : FontProfile) (items0 : Array Inline) (x y a
           | _ => break
       if cursorX > 0 && cursorX+gap+whole > (band out.flow.height).2 && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
-        out := out.add (← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs)
+        out := out.add (← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs visualShift)
         (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
         fresh := false
@@ -1399,14 +1440,15 @@ private def inlineLayoutCore (font : FontProfile) (items0 : Array Inline) (x y a
       content := true
   if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs
+    let row ← lineLayout font row (x+indent cursorX out.flow.height) (y+out.flow.height) strut dirs visualShift
     out := out.add (if content then row else {row with height := 0})
   return out
 
 def inlineLayout (font : FontProfile) (items : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result :=
-  (inlineLayoutCore font items x y available strut band).map (·.flow)
+    (band : Float → Float × Float := fun _ => (0,available))
+    (visualShift : Option (Nat → Float × Float) := none) : Except String Result :=
+  (inlineLayoutCore font items x y available strut band false visualShift).map (·.flow)
 
 private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
@@ -2207,13 +2249,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- with (`around`) and those of this flow. Lines, and boxes that establish a formatting
       -- context of their own, take the room beside them.
       let mut floats : Array Floats.Box := around
+      let visualShift := if s.pos.writingMode != .horizontalTb then none else
+        some (inlineVisualShift dom styles container width definite (s.direction == .rtl) fuel)
       for seg in Table.segments dom styles kids do
         match seg with
         | .run run =>
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) visualShift
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -2271,7 +2315,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) visualShift
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -2333,7 +2377,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) visualShift
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}
@@ -2781,8 +2825,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
               let mut items := lead
               for child in n.kids do
                 items := items ++ (← inlineItems dom styles embedding pictures cw fuel child)
+              let fragmentHeight := if s.columnFillBalance then none else definite
+              let visualShift := inlineVisualShift dom styles id cw fragmentHeight (s.direction == .rtl) fuel
               let rows ← inlineLayoutCore font (← atomize font items cw) innerX innerY cw (some s)
-                (fun _ => (0,cw)) true
+                (fun _ => (0,cw)) true (some visualShift)
               pure (placeColumnLines (rows.lines.getD #[]) s count width cw gap definite)
             else
               -- a multi-column container is the root of its own block formatting context: its
