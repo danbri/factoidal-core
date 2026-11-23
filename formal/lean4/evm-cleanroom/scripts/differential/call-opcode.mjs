@@ -143,9 +143,11 @@ const nonemptyInputPassed=validReference.status==='stopped' &&
 const identityCall='5f5f5f5f5f6004617530f100'
 const identityReference=await ethereumjs(identityCall,'',50000)
 const identityActual=leanOutcome(identityCall,'',50000)
+const identityMismatchedFields=Object.keys(identityReference).filter(
+  key=>JSON.stringify(identityActual[key])!==JSON.stringify(identityReference[key]))
 const identityPrecompileMatched=identityReference.status==='stopped' &&
   JSON.stringify(identityReference.stack)===JSON.stringify(['1']) &&
-  Object.keys(identityReference).every(key=>JSON.stringify(identityActual[key])===JSON.stringify(identityReference[key]))
+  identityMismatchedFields.length === 0
 // Other reserved precompiles must not be executed as arbitrary empty bytecode.
 const otherPrecompile='5f5f5f5f5f6001617530f100'
 const otherReference=await ethereumjs(otherPrecompile,'',50000)
@@ -160,7 +162,10 @@ const report={
   oracle:'@ethereumjs/evm@10.1.3 Hardfork.Cancun',
   compared:records.length,matched:records.length-failures.length,
   mismatches:failures.length,parentReverts,parentExceptions,
-  childSuccesses,childFailures,gasMutationRejected,nonemptyInputPassed,identityPrecompileMatched,precompileScopeRefused,
+  childSuccesses,childFailures,gasMutationRejected,nonemptyInputPassed,identityPrecompileMatched,
+  identityProbe: {mismatchedFields: identityMismatchedFields,
+    ...(identityPrecompileMatched ? {} : {expected: identityReference, actual: identityActual})},
+  precompileScopeRefused,
   comparedFields:['parent outcome','gas','child storage','actual CALL success bit'],
   scope:'Zero value, empty input/output, one child frame, parent rollback and successive CALLs. Nonempty input, executable identity and unimplemented ECRECOVER precompile are separate controls.',
   firstFailures:failures.slice(0,6),
