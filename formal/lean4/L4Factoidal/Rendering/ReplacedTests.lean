@@ -191,6 +191,13 @@ private def wordsAt (html : String) : Except String (List (String × Float)) :=
 #guard wordsAt "<pre>a  b</pre>" == .ok [("a",0),("b",18)]
 #guard wordsAt "<pre>a\tb</pre>" == .ok [("a",0),("b",48)]
 #guard wordsAt "<p>a  b</p>" == .ok [("a",0),("b",12)]
+-- CSS Text 3 §8.1 to §8.3: letter-spacing after each character (the space too), word-spacing on
+-- each separator, text-indent on the first line only (a percentage of the line's room).
+#guard wordsAt "<p style='letter-spacing:10px'>a b</p>" == .ok [("a",0),("b",32)]
+#guard wordsAt "<p style='word-spacing:5px'>a b</p>" == .ok [("a",0),("b",17)]
+#guard wordsAt "<p style='text-indent:7px'>a b</p>" == .ok [("a",7),("b",19)]
+#guard wordsAt "<div style='text-indent:7px'><p>a b</p></div>" == .ok [("a",7),("b",19)]
+#guard wordsAt "<p style='text-indent:7px'>a<br>b</p>" == .ok [("a",7),("b",0)]
 -- And does not wrap.
 #guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [7,7]
 

@@ -212,6 +212,13 @@ structure Computed where
   objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
+  /-- `letter-spacing` and `word-spacing` in px (inherited, CSS Text 3 §8.1, §8.2): added after
+  each character, and to each word separator. `normal` is 0. -/
+  letterSpacing : Float := 0
+  wordSpacing : Float := 0
+  /-- `text-indent` (inherited, CSS Text 3 §8.3): the indent of the first line of a block
+  container; a percentage is of the container's width. -/
+  textIndent : Length := .px 0
   /-- `direction` (inherited), from CSS or the HTML `dir` attribute. -/
   direction : Direction := .ltr
   /-- `unicode-bidi` (not inherited). -/
@@ -1429,6 +1436,18 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos := s.pos.withMarginOf 3 0}
     let (px,of) ← marginParts d.value
     return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
+  | "letter-spacing" | "word-spacing" =>
+    let v := (trim d.value).toLower
+    let n ← if v == "normal" then pure 0 else match ← length v with
+      | .px n => pure n
+      | _ => throw "letter-spacing and word-spacing require a length"
+    return if d.property == "letter-spacing" then {s with letterSpacing := n} else {s with wordSpacing := n}
+  | "text-indent" =>
+    match ← length d.value with
+    | .px n => return {s with textIndent := .px n}
+    | .percent n => return {s with textIndent := .percent n}
+    | .calc p n => return {s with textIndent := .calc p n}
+    | _ => throw "text-indent requires a length or a percentage"
   | "text-align" => match (trim d.value).toLower with
     | "start" => return {s with textAlign := .start, centerBlocks := false}
     | "left" => return {s with textAlign := .left, centerBlocks := false}
@@ -1779,13 +1798,13 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
       value (" ".intercalate ([width, style] ++ colour.toList))
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
     match (CssValues.specified d.property d.value) with
-    | some w => value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid")
+    | some w => value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid")
     | none => none
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
     (colorHex d.value).bind fun h => if h == "transparent" then none else value h
   | "border-style" =>
     match (words d.value.toLower).head? with
-    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid") else none
+    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid") else none
     | none => none
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
@@ -1815,7 +1834,8 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     else none
   | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
   | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
-  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing" =>
+  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing"
+  | "letter-spacing" | "word-spacing" | "text-indent" =>
     (tableComputed s.fontSize d.property d.value).bind value
   | _ =>
     -- a keyword property: the table's canonical form (lower case)
@@ -1843,7 +1863,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
-   "font-family","background-image","background-size","background-repeat",
+   "font-family","letter-spacing","word-spacing","text-indent","background-image","background-size","background-repeat",
    "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
@@ -1980,6 +2000,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "object-fit" => some {s with objectFit := source.objectFit}
   | "object-position" => some {s with objectPosition := source.objectPosition}
   | "text-align" => some {s with textAlign := source.textAlign}
+  | "letter-spacing" => some {s with letterSpacing := source.letterSpacing}
+  | "word-spacing" => some {s with wordSpacing := source.wordSpacing}
+  | "text-indent" => some {s with textIndent := source.textIndent}
   | "direction" => some {s with direction := source.direction}
   | "unicode-bidi" => some {s with unicodeBidi := source.unicodeBidi}
   | _ => none
@@ -3254,6 +3277,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
     textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars,
+    letterSpacing := parent.letterSpacing, wordSpacing := parent.wordSpacing, textIndent := parent.textIndent,
     -- `writing-mode` and `list-style-type` are inherited (CSS Writing Modes 4 §3.2, CSS
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,

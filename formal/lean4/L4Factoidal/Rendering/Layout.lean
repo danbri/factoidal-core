@@ -71,6 +71,24 @@ def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
    cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
    shapedWord := some face.lookup}
 
+/-- CSS Text 3 §8.2: `extra` font units after each character of `word` (its letter spacing).
+A glyph moves by the extra of the characters of the clusters before it on the line, and the
+word's advance grows by the extra of all its characters. Before 2026-11-23 `letter-spacing`
+was not read. -/
+def letterSpaced (word : FontProvider.Word) (extra : Float) : FontProvider.Word := Id.run do
+  if extra == 0 || !extra.isFinite then return word
+  let mut glyphs : Array FontProvider.Glyph := #[]
+  let mut shift := 0.0
+  let mut cluster : Option Nat := none
+  let mut last := 0
+  for g in word.glyphs do
+    if cluster != some g.clusterStart then
+      if cluster.isSome then shift := shift+extra*Float.ofNat last
+      cluster := some g.clusterStart
+      last := g.clusterEnd-g.clusterStart
+    glyphs := glyphs.push {g with x := g.x+shift}
+  return {word with glyphs, advance := word.advance+extra*Float.ofNat word.text.length}
+
 /-- A word shaped by the font. `rtl`: the direction of its bidi level, when that is
 not the direction of its script (see `shapedWordDir`). -/
 private def FontProfile.word (font : FontProfile) (style : Computed) (text : String)
@@ -95,15 +113,18 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
         word.faceIndex != font.faceIndex || word.family != font.family ||
         word.unitsPerEm != font.unitsPerEm || word.ascent != font.ascent || word.descent != font.descent then
       throw "font profile: shaped word identity, size or metrics mismatch"
-    return some word
+    return some (letterSpaced word (style.letterSpacing*word.unitsPerEm/style.fontSize))
+
 
 private def spaceWidth (font : FontProfile) (style : Computed) : Except String Float := do
+  -- CSS Text 3 §8.1: `word-spacing` is added to each word separator (its letter spacing is
+  -- in the shaped space's advance)
   match ← font.word style " " with
-  | none => return font.advance*style.fontSize/font.unitsPerEm
+  | none => return (font.advance*style.fontSize/font.unitsPerEm+style.letterSpacing+style.wordSpacing)
   | some word =>
     if word.glyphs.any (fun glyph => !glyph.geometry.isEmpty) then
       throw "unsupported painted whitespace glyph in collapsed space profile"
-    return word.advance*style.fontSize/font.unitsPerEm
+    return word.advance*style.fontSize/font.unitsPerEm+style.wordSpacing
 
 /-- The ascent and descent, in the profile's units, of the font of `style`'s text: its family's
 first font (`familyMetrics`), else the profile's. Before 2026-11-22 every line box used the
@@ -976,7 +997,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
 private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
   | .word _ s text _ => do
     match ← font.word s text rtl with
-    | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
+    | none => return (font.advance*s.fontSize/font.unitsPerEm+s.letterSpacing)*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
   | .replaced _ _ w _ _ | .atomic _ _ w _ _ => pure w
   | .openInline _ s continued => pure (if continued then 0 else inlineLead s)
@@ -1142,7 +1163,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | none =>
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
-        let advance := font.advance*s.fontSize/font.unitsPerEm
+        let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacing
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
@@ -1361,8 +1382,15 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let rtlAlign := if plain then (bi.paraLevels[0]?.getD 0) % 2 == 1 else rtlBlock
   -- `band dy` is the room of a line that starts `dy` below `y`: its offset from `x` and its
   -- width, less than `available` beside floats (CSS 2.1 §9.5).
-  let indent := fun (w dy : Float) =>
+  -- CSS Text 3 §8.3: the first line of the block container starts `textIndent` in from its
+  -- start edge (a percentage of `available`), and has that much less room.
+  let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
+  let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
+    if !first || firstIndent == 0 then (offset,room)
+    else if rtlAlign then (offset,room-firstIndent) else (offset+firstIndent,room-firstIndent)
+  let indent := fun (w dy : Float) (first : Bool) =>
+    let (offset,room) := bandAt dy first
     offset+match (strut.map (·.textAlign)).getD .start with
     | .start => if rtlAlign then max 0 (room-w) else 0
     | .end_ => if rtlAlign then 0 else max 0 (room-w)
@@ -1389,6 +1417,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   -- an inline box that starts on it.
   let mut content := false
   let mut fresh := false
+  let mut first := true
   for k in [0:items.size] do
     let item := items[k]!
     match item with
@@ -1450,8 +1479,9 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         openBoxes := openBoxes ++ waiting
         waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
+      let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
+      first := false
       (line,lineIdx) := continuedStarts openBoxes
       cursorX := 0
       pendingSpace := none
@@ -1494,12 +1524,13 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
               else break
             | none => break
           | _ => break
-      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k && !held then
+      if cursorX > 0 && cursorX+gap+whole > (bandAt out.height first).2 && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
-        out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
+        out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
         fresh := false
+        first := false
       else
         if gap > 0 then
           if let some (source,s) := pendingSpace then
@@ -1518,7 +1549,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       content := true
   if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
+    let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
     out := appendResult out (if content then row else {row with height := 0})
   return out
 
