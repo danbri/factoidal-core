@@ -161,21 +161,25 @@ def neutral : Input :=
     childGasLimit := 30000000, childGasUsed := 1,
     childBaseFee := 1000000000 }
 
-#guard expectedBaseFee neutral == .ok 1000000000
-#guard checkHeader neutral == .ok 1000000000
-#guard expectedBaseFee { neutral with parentGasUsed := 30000000 } == .ok 1125000000
-#guard expectedBaseFee { neutral with parentGasUsed := 0 } == .ok 875000000
-#guard expectedBaseFee { neutral with parentGasUsed := 15000001, parentBaseFee := some 1 } == .ok 2
-#guard expectedBaseFee { neutral with parentBaseFee := none } == .error .missingParentFee
-#guard checkHeader { neutral with childBaseFee := 9 } == .error .incorrectBaseFee
-#guard checkHeader { neutral with childGasUsed := 30000001 } == .error .childGasOverLimit
-#guard checkHeader { neutral with parentGasUsed := 30000001 } == .error .parentGasOverLimit
-#guard checkHeader { neutral with childGasLimit := 30029296 } == .error .invalidGasLimit
-#guard checkHeader { neutral with childGasLimit := 29970704 } == .error .invalidGasLimit
-#guard checkHeader { neutral with firstLondon := true, parentGasLimit := 15000000,
-  parentGasUsed := 14000000, parentBaseFee := none } == .ok 1000000000
-#guard checkHeader { neutral with firstLondon := true, parentBaseFee := some 1000000000 } ==
-  .error .unexpectedParentFee
+def activation : Input :=
+  { firstLondon := true, parentGasLimit := 15000000,
+    parentGasUsed := 14000000, parentBaseFee := none,
+    childGasLimit := 30000000, childGasUsed := 0,
+    childBaseFee := initialBaseFee }
+
+#guard decide (expectedBaseFee neutral = .ok 1000000000)
+#guard decide (checkHeader neutral = .ok 1000000000)
+#guard decide (expectedBaseFee { neutral with parentGasUsed := 30000000 } = .ok 1125000000)
+#guard decide (expectedBaseFee { neutral with parentGasUsed := 0 } = .ok 875000000)
+#guard decide (expectedBaseFee { neutral with parentGasUsed := 15000001, parentBaseFee := some 1 } = .ok 2)
+#guard decide (expectedBaseFee { neutral with parentBaseFee := none } = .error .missingParentFee)
+#guard decide (checkHeader { neutral with childBaseFee := 9 } = .error .incorrectBaseFee)
+#guard decide (checkHeader { neutral with childGasUsed := 30000001 } = .error .childGasOverLimit)
+#guard decide (checkHeader { neutral with parentGasUsed := 30000001 } = .error .parentGasOverLimit)
+#guard decide (checkHeader { neutral with childGasLimit := 30029296 } = .error .invalidGasLimit)
+#guard decide (checkHeader { neutral with childGasLimit := 29970704 } = .error .invalidGasLimit)
+#guard decide (checkHeader activation = .ok initialBaseFee)
+#guard decide (checkHeader { activation with parentBaseFee := some initialBaseFee } = .error .unexpectedParentFee)
 
 #print axioms nextBaseFee_at_target
 #print axioms nextBaseFee_above
