@@ -32,6 +32,7 @@ jobs:
         run: |
           lake env lean EthereumConsensus/SSZ/GIndex.lean
           lake env lean EthereumConsensus/ForkChoice/LatestMessage.lean
+          lake env lean EthereumConsensus/ForkChoice/VoteStore.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
@@ -44,3 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           lake exe lmd-latest | python3 scripts/check-lmd-latest.py
+      - name: Independent guarded vote-store sequential trace (1024 rows)
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe lmd-store | python3 scripts/check-lmd-store.py
