@@ -83,8 +83,11 @@ private def size (style : Computed) (available : Float := 200) := replacedSize s
 #guard fitScale .scaleDown 40 20 80 80 == (1,1)
 #guard fitScale .scaleDown 40 20 20 20 == (0.5,0.5)
 /-- The painted rectangle and the pixel map's scale and offset of a picture. -/
-private def painted (fit : ObjectFit) (w h : Float) : List (Float × Float × Float × Float × Float × Float) :=
-  (pictureNodes 1 {objectFit := fit} picture 0 0 w h).filterMap fun
+private def painted (fit : ObjectFit) (w h : Float) (position : String := "") :
+    List (Float × Float × Float × Float × Float × Float) :=
+  let style : Computed := {objectFit := fit}
+  let style := if position.isEmpty then style else (CSS.applyDeclaration style "object-position" position).getD style
+  (pictureNodes 1 style picture 0 0 w h).filterMap fun
     | .paint ⟨_,{geometry := .rect x y pw ph,style := {fill := .image r,..},..}⟩ => some (x,y,pw,ph,r.map.a,r.map.e)
     | _ => none
 #guard painted .fill 80 40 == [(0,0,80,40,0.5,0)]
@@ -93,6 +96,9 @@ private def painted (fit : ObjectFit) (w h : Float) : List (Float × Float × Fl
 -- cover: 160 by 80, cut to the box.
 #guard painted .cover 80 80 == [(0,0,80,80,0.25,10)]
 #guard painted .fill 0 10 == []
+#guard painted .contain 80 80 "50% 75%" == [(0,30,80,40,0.5,0)]
+#guard painted .contain 80 80 "center bottom" == [(0,40,80,40,0.5,0)]
+#guard painted .cover 80 80 "right center" == [(0,0,80,80,0.25,20)]
 
 -- In flow. Inline: the bottom margin edge on the baseline of the line.
 #guard boxes "<div><img id='i' src='a.png'></div>" == .ok [("i",0,0,40,20)]
@@ -186,7 +192,7 @@ private def wordsAt (html : String) : Except String (List (String × Float)) :=
 #guard wordsAt "<pre>a\tb</pre>" == .ok [("a",0),("b",48)]
 #guard wordsAt "<p>a  b</p>" == .ok [("a",0),("b",12)]
 -- And does not wrap.
-#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [3.5,3.5]
+#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [7,7]
 
 -- CSS 2.1 §14.2: the body background fills the canvas, not the body's box.
 private def firstFill (html extra : String) : Except String (Option (Float × Float × Float × Float)) :=
@@ -206,3 +212,6 @@ private def firstFill (html extra : String) : Except String (Option (Float × Fl
 -- A margin on inline SVG moves it; it no longer refuses the page.
 #guard (boxes "<div><svg id='s' width='10' height='10' style='margin:4px'></svg></div>").map (·.head?) == .ok (some ("s",4,4,10,10))
 end L4Factoidal.Rendering.ReplacedTests
+
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_default
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_percent
