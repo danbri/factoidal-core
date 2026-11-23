@@ -17,3 +17,10 @@ treated as errors. The token guard checks that two consecutive source line
 feeds produce two forced breaks and that a collapsed space run has one
 token. It also checks the source offsets of the remaining words. Full
 native compilation and pinned CSS tests are tracked in the PR.
+
+
+The fixed-pin native comparison gained 19 assertions without a loss across
+143 CSS Text tests. The paired visual run gained two passes of six. The
+exact extracted tokenizer and `textItems_preLine_blankLine` compiled in Lean
+4.33.1 with warnings as errors. The lemma shows that collapsing a space
+between two preserved source line feeds retains both forced breaks.

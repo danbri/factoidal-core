@@ -685,6 +685,14 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
     for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
   return result.reverse
 
+/-- Collapsing intervening spaces does not remove a preserved blank line. -/
+theorem textItems_preLine_blankLine (id : TextSource) (style : Computed)
+    (keep : style.preserveSegmentBreaks = true) (collapse : style.preformatted = false) :
+    textItems id style "\n \n" = [.lineBreak style, .lineBreak style] := by
+  simp [textItems, keep, collapse]
+
+#print axioms textItems_preLine_blankLine
+
 -- Compare tokens and source offsets, keeping geometry and the inline breaker out of this check.
 #guard (textItems (.node 1) {preserveSegmentBreaks := true} "a  b\n \n  c").map
     (fun
