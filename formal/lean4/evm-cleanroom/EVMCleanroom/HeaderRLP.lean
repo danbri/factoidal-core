@@ -18,6 +18,9 @@ inductive Error where
   | invalidShape
   | laterFork
   | wrongForkShape
+  | parentBlobGasUsed
+  | childBlobGasUsed
+  | excessBlobGasMismatch
   | chain (e : HeaderChain.Error)
   deriving Repr
 
@@ -112,6 +115,86 @@ def pairResult (p : HeaderChain.Pair) : Except Error Nat :=
   | .error e => .error (.chain e)
   | .ok fee => .ok fee
 
+/-- EIP-4844 and EIP-7691, before Osaka. The child timestamp selects
+the target, including on the first Prague block. -/
+def gasPerBlob : Nat := 131072
+
+def blobTarget (timestamp : Nat) : Nat :=
+  (if timestamp >= pragueTime then 6 else 3) * gasPerBlob
+
+def blobMaximum (timestamp : Nat) : Nat :=
+  (if timestamp >= pragueTime then 9 else 6) * gasPerBlob
+
+def nextExcess (parentExcess parentUsed target : Nat) : Nat :=
+  parentExcess + parentUsed - target
+
+/-- Missing pre-Cancun fields have the protocol-defined zero value.
+Only used by the pair checker after canonical wire admission. -/
+def blobValue (h : Fields) (i : Nat) : Nat :=
+  if readNat h 11 < cancunTime then 0 else readNat h i
+
+def blobUsageValid (h : Fields) : Bool :=
+  let used := blobValue h 17
+  used <= blobMaximum (readNat h 11) && used % gasPerBlob == 0
+
+def expectedExcess (parent child : Fields) : Nat :=
+  nextExcess (blobValue parent 18) (blobValue parent 17)
+    (blobTarget (readNat child 11))
+
+def checkBlobGas (parent child : Fields) : Except Error Unit :=
+  if readNat child 11 < cancunTime then .ok ()
+  else if !blobUsageValid parent then .error .parentBlobGasUsed
+  else if !blobUsageValid child then .error .childBlobGasUsed
+  else if readNat child 18 ≠ expectedExcess parent child then .error .excessBlobGasMismatch
+  else .ok ()
+
+def pairResultWithBlobs (parent child : Fields) (digest : Nat) : Except Error Nat :=
+  match pairResult (pairInput parent child digest) with
+  | .error e => .error e
+  | .ok fee =>
+    match checkBlobGas parent child with
+    | .error e => .error e
+    | .ok () => .ok fee
+
+/-- Kind: arithmetic. Says: excess saturates at zero below target.
+Does not say: parent fields are authentic. -/
+theorem excess_below_target (e u t : Nat) (h : e + u ≤ t) :
+    nextExcess e u t = 0 := by
+  unfold nextExcess
+  omega
+
+/-- Kind: arithmetic. Says: at or above target the subtraction loses no gas.
+Does not say: the target belongs to a supported fork. -/
+theorem excess_above_target (e u t : Nat) (h : t ≤ e + u) :
+    nextExcess e u t + t = e + u := by
+  unfold nextExcess
+  omega
+
+/-- Kind: executable admission. Says: no blob checks before Cancun.
+Does not say: all earlier header rules have been implemented. -/
+theorem blob_before_cancun (p c : Fields) (h : readNat c 11 < cancunTime) :
+    checkBlobGas p c = .ok () := by
+  simp [checkBlobGas, h]
+
+/-- Kind: executable soundness. Says: a successful modern blob check
+requires both declared use constraints and exact child recurrence.
+Does not say: declared use equals the number of blobs in transactions. -/
+theorem blob_check_sound (p c : Fields) (ht : cancunTime ≤ readNat c 11)
+    (h : checkBlobGas p c = .ok ()) :
+    blobUsageValid p = true ∧ blobUsageValid c = true ∧
+      readNat c 18 = expectedExcess p c := by
+  cases hp : blobUsageValid p <;> cases hc : blobUsageValid c <;>
+    simp [checkBlobGas, Nat.not_lt.mpr ht, hp, hc] at h ⊢
+  exact h
+
+/-- Kind: composition. Says: a blob failure propagates after the legacy
+pair checks succeed. Does not say: the legacy checker is complete. -/
+theorem blob_pair_refused (p c : Fields) (d fee : Nat) (e : Error)
+    (h : pairResult (pairInput p c d) = .ok fee)
+    (hb : checkBlobGas p c = .error e) :
+    pairResultWithBlobs p c d = .error e := by
+  simp [pairResultWithBlobs, h, hb]
+
 def checkPair (acceptance : Keccak.Acceptance) (parent child : Fields) :
     Except Error Nat :=
   match wire parent with
@@ -119,7 +202,7 @@ def checkPair (acceptance : Keccak.Acceptance) (parent child : Fields) :
   | .ok bytes =>
     match wire child with
     | .error e => .error e
-    | .ok _ => pairResult (pairInput parent child (hashWire acceptance bytes))
+    | .ok _ => pairResultWithBlobs parent child (hashWire acceptance bytes)
 
 /-- Kind: admission. Says: unsupported field count cannot produce wire bytes.
 Does not say: all later fork headers are invalid. -/
@@ -171,12 +254,12 @@ theorem child_refused (a : Keccak.Acceptance) (parent child : Fields)
   simp [checkPair, hp, hc]
 
 /-- Kind: executable composition. Says: admitted headers use the same
-fields and computed parent digest in the existing chain checker.
+fields and computed parent digest in the existing chain checker and blob checks.
 Does not say: the pair belongs to the canonical chain. -/
 theorem pair_connected (a : Keccak.Acceptance) (parent child : Fields)
     (pb cb : Array UInt8) (hp : wire parent = .ok pb) (hc : wire child = .ok cb) :
     checkPair a parent child =
-      pairResult (pairInput parent child (hashWire a pb)) := by
+      pairResultWithBlobs parent child (hashWire a pb) := by
   simp [checkPair, hp, hc]
 
 /-- Kind: admission. Says: a supported-width pre-Osaka header with
@@ -203,6 +286,18 @@ theorem parent_fee_present (parent child : Fields) (digest : Nat)
 #guard expectedFieldCount 22431083 1746612310 == 20
 #guard expectedFieldCount 22431084 1746612311 == 21
 
+#guard blobTarget (pragueTime - 1) == 393216
+#guard blobTarget pragueTime == 786432
+#guard blobMaximum (pragueTime - 1) == 786432
+#guard blobMaximum pragueTime == 1179648
+#guard nextExcess 0 786432 (blobTarget pragueTime) == 0
+#guard nextExcess 131072 786432 (blobTarget pragueTime) == 131072
+
+#print axioms excess_below_target
+#print axioms excess_above_target
+#print axioms blob_before_cancun
+#print axioms blob_check_sound
+#print axioms blob_pair_refused
 #print axioms fork_shape_refused
 #print axioms parent_fee_present
 #print axioms layout_refused

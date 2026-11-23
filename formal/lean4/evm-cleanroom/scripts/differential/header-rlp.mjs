@@ -59,7 +59,7 @@ H([...sample,bytes(32),bytes(32)],ind('unsupported-layout'))
 H([...sample,bytes(32)],err('wrong-fork-shape'))
 H(sample.slice(0,14),ind('unsupported-layout'))
 // Independent modern field layouts, activation boundaries and actual parent
-// linkage. The pair verdict covers base fee, gas and linkage only.
+// linkage. Pair verdict also checks declared blob use and excess.
 const modern=(num,time,i)=>{
  const f=header(num,time,30000000,15000000,100n,i)
  if(time>=shanghai)f.push(bytes(32))
@@ -67,13 +67,53 @@ const modern=(num,time,i)=>{
  if(time>=prague)f.push(bytes(32))
  return f
 }
+// Test-only independent arithmetic on integer fields, not client logic.
+const number=b=>b.length?BigInt('0x'+hex(b)):0n
+const blobUnit=131072n
+const target=t=>t>=prague?786432n:393216n
+const maxUsed=t=>t>=prague?1179648n:786432n
+const parentBlob=(p,i)=>p.length>=20?number(p[i]):0n
+const excess=(p,t)=>{const total=parentBlob(p,17)+parentBlob(p,18);return total>target(t)?total-target(t):0n}
+const setBlobFields=(p,c,pt,ct,i)=>{
+ if(pt>=cancun){
+   p[17]=nat(BigInt(i%(pt>=prague?10:7))*blobUnit)
+   p[18]=nat([0n,blobUnit,3n*blobUnit,6n*blobUnit,2n**64n-1n][i%5])
+ }
+ if(ct>=cancun){
+   c[17]=nat(BigInt((i+1)%(ct>=prague?10:7))*blobUnit)
+   c[18]=nat(excess(p,ct))
+ }
+}
 for(const activation of [shanghai,cancun,prague]){
  for(let i=0;i<128;i++){
   const time=activation+(i%2===0?-1:i)
   const p=modern(23000000+i,time,i)
   const c=modern(23000001+i,time+1,i+1)
+  // Retain the former width-only hash vectors, then construct valid
+  // blob fields for the pair tests (uint64 overflow is tested separately).
+  c[0]=hash(p);H(p);H(c)
+  setBlobFields(p,c,time,time+1,i)
+  if(c.length>=20&&number(c[18])>=2n**64n){
+   c[18]=nat(0);c[0]=hash(p)
+   P(p,c,err('excess-blob-gas-mismatch'))
+   p[18]=nat(3n*blobUnit);c[18]=nat(excess(p,time+1))
+  }
   c[0]=hash(p)
   H(p);H(c);P(p,c,{status:'ok',fee:'100'})
+  if(c.length>=20){
+   const wrong=c.slice();wrong[18]=nat(number(c[18])+1n)
+   if(number(wrong[18])<2n**64n)P(p,wrong,err('excess-blob-gas-mismatch'))
+   for(const used of [1n,maxUsed(time+1)+blobUnit]){
+    const bad=c.slice();bad[17]=nat(used);P(p,bad,err('child-blob-gas-used'))
+   }
+  }
+  if(p.length>=20){
+   for(const used of [1n,maxUsed(time)+blobUnit]){
+    const bad=p.slice();bad[17]=nat(used)
+    const linked=c.slice();linked[0]=hash(bad)
+    P(bad,linked,err('parent-blob-gas-used'))
+   }
+  }
   const altered=p.map(b=>Buffer.from(b));altered[3][0]^=1
   P(altered,c,err('parent-hash-mismatch'))
   const badFee=c.slice();badFee[15]=nat(101);P(p,badFee,err('fee-check'))
@@ -96,6 +136,16 @@ for(const activation of [shanghai,cancun,prague]){
  const short=f.slice(0,16);H(short,err('wrong-fork-shape'))
  const early=f.slice();early[11]=nat(activation-1);H(early,err('wrong-fork-shape'))
  const lowHeight=f.slice();lowHeight[8]=nat(london-1);H(lowHeight,err('wrong-fork-shape'))
+}
+// Full transition grid: Cancun parent target/max must not be replaced by
+// Prague's target/max, while the child excess uses the new target.
+for(let used=0;used<=6;used++)for(let prior=0;prior<=12;prior++){
+ const p=modern(23000000,prague-1,used), c=modern(23000001,prague,prior)
+ p[17]=nat(BigInt(used)*blobUnit);p[18]=nat(BigInt(prior)*blobUnit)
+ c[17]=nat(9n*blobUnit);c[18]=nat(excess(p,prague));c[0]=hash(p)
+ P(p,c,{status:'ok',fee:'100'})
+ const wrong=c.slice();wrong[18]=nat(number(c[18])+blobUnit)
+ P(p,wrong,err('excess-blob-gas-mismatch'))
 }
 const last=modern(24000000,osaka-1,1);H(last)
 const future=modern(24000001,osaka,1);H(future,ind('later-fork'))
@@ -123,11 +173,12 @@ try{
    a=>a[0].hash='0',
    a=>a[0].wire='00',
    a=>a.pop(),
+   a=>{const i=cases.findIndex(c=>c.expected.reason==='excess-blob-gas-mismatch');assert(i>=0);a[i]={status:'ok',fee:'100'}},
  ]){const a=structuredClone(actual);mutation(a);assert.throws(()=>compare(a))}
  const noOpt=spawnSync(exe,['--batch',file]);assert.equal(noOpt.status,2)
  writeFileSync(file,'H\t0x0g\n')
  const malformed=spawnSync(exe,['--dangerously-enable-unverified-keccak','--batch',file],{encoding:'utf8'})
  assert.equal(malformed.status,2);assert.deepEqual(JSON.parse(malformed.stdout),{status:'inputError'})
  const counts={};for(const c of cases)counts[c.expected.status]=(counts[c.expected.status]??0)+1
- console.log(JSON.stringify({cases:cases.length,matched:actual.length,counts,mutationsRejected:3,missingOptInRejected:true,malformedRejected:true}))
+ console.log(JSON.stringify({cases:cases.length,matched:actual.length,counts,mutationsRejected:4,missingOptInRejected:true,malformedRejected:true}))
 }finally{rmSync(dir,{recursive:true,force:true})}

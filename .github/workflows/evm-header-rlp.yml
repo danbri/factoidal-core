@@ -34,7 +34,7 @@ jobs:
           python3 - <<'PY'
           import json,re,subprocess
           from pathlib import Path
-          expected=set("fork_shape_refused parent_fee_present layout_refused shape_refused wire_exact hash_exact parent_refused child_refused pair_connected".split())
+          expected=set("fork_shape_refused parent_fee_present layout_refused shape_refused wire_exact hash_exact parent_refused child_refused pair_connected excess_below_target excess_above_target blob_before_cancun blob_check_sound blob_pair_refused".split())
           allowed={"propext","Classical.choice","Quot.sound"}
           actual={}
           for line in Path("/tmp/header-rlp-axioms.txt").read_text().splitlines():
