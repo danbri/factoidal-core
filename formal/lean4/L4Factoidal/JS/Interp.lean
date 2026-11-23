@@ -6749,11 +6749,7 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       | .numberToString =>
         let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
         if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        if radix == 10 || !isIntegral x then pure (.str (numToString x))
-        else
-          let i := truncInt x
-          let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-          pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+        pure (.str (toStringRadix x radix.toUInt64.toNat))
       | _ =>
         let d := toIntegerOrInf (← core.toNum a0)
         if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
@@ -6829,8 +6825,7 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         if id_ == .bigintValueOf then pure (.big i) else
         let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
         if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-        pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+        pure (.str ((if i < 0 then "-" else "") ++ natToRadix radix.toUInt64.toNat i.natAbs))
       | _ => throwErr .type "BigInt.prototype method requires that 'this' be a BigInt"
     | _ => throwErr .type "not a function"
 

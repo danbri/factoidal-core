@@ -138,6 +138,10 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
     }
   }
   const {source,options}=page.request(job.width,job.height,{textScalePercent:100,zoomUnit:100});
+  // REFTEST_DUMP_DIR: the document as it is drawn (after the scripts), for debugging a page.
+  const dumpDir=Deno.env.get("REFTEST_DUMP_DIR");
+  if(dumpDir){await Deno.writeTextFile(`${dumpDir}/${job.file}.html`,source);
+    await Deno.writeTextFile(`${dumpDir}/${job.file}.options.json`,JSON.stringify(options));}
   // partialNote:false: no "Partial page" note in the picture (WebDocument.layOutDOMIn); it is the
   // browser's, not the page's. An older engine ignores the field and draws the note.
   const request=JSON.stringify({...options,op:"render",checks:false,cpu:true,partialNote:false});

@@ -66,6 +66,25 @@ def truncInt (x : Float) : Int :=
     let q : Int := (num / den : Nat)
     if neg then -q else q
 
+/-- The digit `d` (below 36) of a radix: `0`-`9`, then `a`-`z` (§6.1.6.1.20). `Nat.toDigits`
+is not used: Lean's `Nat.digitChar` gives `*` for 16 and above, so `(35).toString(36)` was
+`"*"` and the class names that CSS-in-JS libraries make with base 36 (Emotion: BBC News) did
+not match their rules (2026-11-23). -/
+def radixDigit (d : Nat) : Char :=
+  if d < 10 then Char.ofNat (48 + d) else Char.ofNat (87 + d)
+
+/-- `n` in base `b` (2 to 36), with no leading zeros; "0" for 0. At most 1100 digits (a
+double's integer part has at most 1024 binary digits). -/
+def natToRadix (b n : Nat) : String := Id.run do
+  if n == 0 || b < 2 then return "0"
+  let mut k := n
+  let mut out : List Char := []
+  for _ in [0:1100] do
+    if k > 0 then
+      out := radixDigit (k % b) :: out
+      k := k / b
+  return String.ofList out
+
 /-- Number::toString with radix 10 (§6.1.6.1.20). -/
 def numToString (x : Float) : String :=
   if x.isNaN then "NaN"
@@ -297,5 +316,32 @@ def numIndex (x : Float) : Nat :=
 /-- The UTF-16 length of a string (§6.1.4: code units). -/
 def utf16Length (s : String) : Nat :=
   s.foldl (fun a c => a + (if c.toNat ≥ 0x10000 then 2 else 1)) 0
+
+/-- Number::toString(radix) for a radix other than 10 (§21.1.3.6, the digits are
+implementation-approximated): the exact integer part in base `radix`, then the fraction's
+digits, exactly, until it ends or for at most 52 digits. NaN, the infinities and 0 are
+written as with radix 10. -/
+def toStringRadix (x : Float) (radix : Nat) : String :=
+  if radix == 10 || !x.isFinite || x == 0 || radix < 2 || radix > 36 then numToString x else
+  let (neg, num, den) := parts x
+  let whole := natToRadix radix (num / den)
+  let frac := Id.run do
+    let mut r := num % den
+    let mut out : List Char := []
+    for _ in [0:52] do
+      if r > 0 && den > 0 then
+        r := r * radix
+        out := radixDigit (r / den) :: out
+        r := r % den
+    return String.ofList out.reverse
+  (if neg then "-" else "") ++ whole ++ (if frac.isEmpty then "" else "." ++ frac)
+
+#guard toStringRadix 0.5 36 == "0.i"
+#guard toStringRadix (-255) 16 == "-ff"
+#guard toStringRadix 3.5 2 == "11.1"
+#guard natToRadix 36 35 == "z"
+#guard natToRadix 36 1295 == "zz"
+#guard natToRadix 16 255 == "ff"
+#guard natToRadix 2 5 == "101"
 
 end L4Factoidal.JS
