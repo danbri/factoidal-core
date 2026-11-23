@@ -53,6 +53,13 @@ private def refusal (body : String) : String :=
 #guard refusal (image "width='9' height='9'" "x.png") == "image resource not supplied: x.png"
 #guard refusal (image "width='9' height='9'" "file:///etc/passwd") == "image resource not supplied: file:///etc/passwd"
 #guard refusal (image "width='9' height='9'" "data:image/png;base64,aGk=") == "image is not PNG, JPEG or GIF"
+-- The URI's payload is percent-decoded before the image format is detected.
+private def percentPng :=
+  "data:image/png,%89%50%4E%47%0D%0A%1A%0A%00%00%00%0D%49%48%44%52%00%00%00%02%00%00%00%02%08%06%00%00%00%72%B6%0D%24%00%00%00%14%49%44%41%54%78%9C%63%F8%CF%C0%F0%1F%0C%19%18%FE%83%08%06%00%3F%D2%05%FB%DC%02%A3%D4%00%00%00%00%49%45%4E%44%AE%42%60%82"
+#guard (NativeImage.dataBytes percentPng).toOption.map ByteArray.toList ==
+  (NativeImage.dataBytes png).toOption.map ByteArray.toList
+#guard near (rgb (image "width='40' height='40'" percentPng) 10 10) [255,0,0]
+#guard refusal (image "width='9' height='9'" "data:image/png;base64,%%%") == "invalid image data URL"
 -- Expected failure, https://github.com/danbri/factoidal/issues/1258: an `image` of an SVG
 -- document is refused. When it draws, this guard fails.
 #guard refusal (image "width='9' height='9'" "data:image/svg+xml;base64,PHN2Zy8+") == "image is not PNG, JPEG or GIF"

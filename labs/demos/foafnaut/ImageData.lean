@@ -1,6 +1,7 @@
 import ImageJPEG
 import ImageGIF
 import Std.Data.HashMap
+import L4Factoidal.Net.PageFetch
 
 /- Raster image sources of a document.
 
@@ -56,14 +57,15 @@ def base64 (text : ByteArray) (start : Nat) : Except String ByteArray := do
       value := value%(match bits with | 0 => 1 | 1 => 2 | 2 => 4 | 3 => 8 | 4 => 16 | 5 => 32 | 6 => 64 | _ => 128)
   return out
 
-/-- RFC 2397, with the base64 form only. -/
-def dataBytes (href : String) : Except String ByteArray := do
-  let bytes := href.toUTF8
-  let some comma := (List.range bytes.size).find? (fun i => bytes.get! i == 44)
-    | throw "data URI has no comma"
-  let header := (String.fromUTF8? (bytes.extract 0 comma)).getD ""
-  if !(header.toLower.endsWith ";base64") then throw "data URI is not base64"
-  base64 bytes (comma+1)
+/-- Image bytes from the same `data:` URL processor used by page fetch.
+    The image decoder still chooses the format from the bytes. -/
+def dataBytes (href : String) : Except String ByteArray :=
+  let url := if href.startsWith "data:" then href
+    else if (href.take 5).toString.toLower == "data:" then "data:" ++ (href.drop 5).toString
+    else href
+  match L4Factoidal.Net.PageFetch.dataResponse url with
+  | some (_, bytes) => .ok bytes
+  | none => .error "invalid image data URL"
 
 /-! ### Images held at a reduced size (2026-11-14)
 
