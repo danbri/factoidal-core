@@ -136,6 +136,28 @@ machinery; it does not prove PoW chain canonicality or Lean MPT refinement.
 Full fork rules, remaining precompiles and the rest of the independent client
 remain obligations under epic #725.
 
+## Paired runtime observations
+
+The existing timing runner compared native binaries from
+`85579939b390b52bd0fed6e258655288ae00704a` and the published implementation
+checkpoint `53f258e1718fe68f5cfe90066b165e5a77206ca1`. Each path used 12 warm-up
+pairs and 160 measured pairs, alternating which binary ran first. Every run
+checked the pre-existing CLI result fields against the baseline result.
+Measurements include process launch, interpretation, JSON output and exit;
+they do not isolate interpreter throughput.
+
+| Path and revision | p50 ms | p95 ms | p99 ms | Max ms | Min ms | Spread ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Existing frame/ABI path, before | 5.621 | 7.029 | 12.550 | 15.396 | 4.808 | 10.587 |
+| Existing frame/ABI path, after | 5.423 | 6.593 | 10.411 | 29.948 | 4.720 | 25.228 |
+| Existing zero-window CALL/storage path, before | 5.451 | 6.894 | 12.373 | 13.013 | 4.619 | 8.394 |
+| Existing zero-window CALL/storage path, after | 5.414 | 7.200 | 9.765 | 11.295 | 4.603 | 6.692 |
+
+Medians stayed close on these two retained paths. The frame/ABI maximum rose
+to 29.948 ms despite lower p50/p95/p99, so this run does not support a general
+speedup or a latency guarantee. Raw paired samples, machine details, executable
+hashes and the complete distribution summaries are in `timing.json`.
+
 ## Reproduction
 
 Run every command below from `formal/lean4/evm-cleanroom` with the pinned Lean

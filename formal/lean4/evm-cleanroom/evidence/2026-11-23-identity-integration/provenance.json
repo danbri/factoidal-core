@@ -5,7 +5,7 @@
   "trackingIssue": "https://github.com/danbri/factoidal-core/issues/838",
   "pullRequest": "https://github.com/danbri/factoidal-core/pull/839",
   "baseCommit": "85579939b390b52bd0fed6e258655288ae00704a",
-  "sourceIdentification": "Reviewed Git blobs in ../active-claim-manifest-v2.json; published native source commit is recorded in the following evidence checkpoint.",
+  "sourceIdentification": "Published implementation checkpoint has the exact reviewed source blobs and built native binaries. The following evidence-only checkpoint adds this commit attribution and timing results; native and verification sources are unchanged.",
   "sourceManifestSha256": "68831e09183baa20068f55fc368ce6701cfc3f34005ffac90cc9352b07217f7f",
   "toolchain": {
     "version": "Lean 4.33.1",
@@ -74,7 +74,8 @@
   "baseline": {
     "sourceCommit": "85579939b390b52bd0fed6e258655288ae00704a",
     "singleCallGuardsFailed": 9,
-    "directTransactionCasesRefused": 27
+    "directTransactionCasesRefused": 27,
+    "nativeExecutableSha256": "c020270a4f0b79ec267ec867aa20c3ed36cb50a80a2d365c07b55d02473560e3"
   },
   "hostedCI": "Not inferred from local tests. Check the published PR head and hosted run URLs in the PR description.",
   "limits": [
@@ -201,6 +202,19 @@
     "active-axioms.json": {
       "sha256": "8484bac4d5e82ff50729dfaedbadab6903fe2139c818f6303b5e7a7f16d301b7",
       "bytes": 152
+    },
+    "timing.json": {
+      "sha256": "423f64d6cec7804e5f21aabf21a4b35989f3813f9a66227ca4d4f013478e7a87",
+      "bytes": 19056
     }
+  },
+  "testedNativeSourceCommit": "53f258e1718fe68f5cfe90066b165e5a77206ca1",
+  "testedNativeSourceTree": "462ef2a1dafff2fd345928e19d7ec14f5547050e",
+  "performance": {
+    "report": "timing.json",
+    "warmupPairsPerPath": 12,
+    "measuredPairsPerPath": 160,
+    "paths": 2,
+    "scope": "Paired process launch, native interpretation, JSON output and process exit. Shared-host variability; no throughput or latency guarantee."
   }
 }
