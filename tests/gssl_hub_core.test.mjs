@@ -67,6 +67,11 @@ test("public Hub route is explicitly exploratory, linked, and uses same runtime"
   assert.match(eleventy,/web\/hub\/gssl\/\$\{name\}/);
   assert.match(hub,/href="\.\/gssl\//);
   assert.match(spec,/Lean 4 defines the language/);
-  assert.match(spec,/GPU lowering and WGSL/);
+  const assurance=spec.replace(/\s+/g," ");
+  assert.match(assurance,/The five map\/zip operators have the emitted-plan and concrete shader refinement/);
+  assert.match(spec,/\[`compiled_mapzip` theorem\]\([^)]*MapZipCompileRefinement\.lean\)/);
+  assert.match(assurance,/bounded per-step refinement, not a verified general WGSL compiler or whole-graph device executor/);
+  assert.match(assurance,/driver\/hardware execution and readback transport remain external assumptions/);
+  assert.match(assurance,/remaining GPU lowering, whole-graph execution and WGSL\/driver\/hardware execution require further refinement and observational tests/);
   assert.match(spec,/issue #691/);
 });
