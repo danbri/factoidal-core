@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict'
+import {spawnSync} from 'node:child_process'
+import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
+import {keccak_256} from '@noble/hashes/sha3.js'
+
+// Test-only independent generic RLP byte/list encoder.
+const nat=n=>{n=BigInt(n);if(n===0n)return Buffer.alloc(0);let h=n.toString(16);return Buffer.from(h.length%2?'0'+h:h,'hex')}
+const lengthPrefix=(len,short,long)=>len<56?Buffer.of(short+len):Buffer.concat([Buffer.of(long+nat(len).length),nat(len)])
+const rlp=x=>Array.isArray(x)?(()=>{const payload=Buffer.concat(x.map(rlp));return Buffer.concat([lengthPrefix(payload.length,192,247),payload])})():
+  x.length===1&&x[0]<128?x:Buffer.concat([lengthPrefix(x.length,128,183),x])
+const hex=b=>Buffer.from(b).toString('hex')
+const hash=f=>Buffer.from(keccak_256(rlp(f)))
+const digest=f=>BigInt('0x'+hex(hash(f))).toString()
+const london=12965000, shanghai=1681338455
+let seed=0x1559
+const bytes=n=>Buffer.from(Array.from({length:n},()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed>>>24}))
+const header=(num,time,limit,used,fee,i)=>[
+ bytes(32),bytes(32),bytes(20),bytes(32),bytes(32),bytes(32),bytes(256),
+ nat(i%2?0:127),nat(num),nat(limit),nat(used),nat(time),bytes(i%33),bytes(32),bytes(8),
+ ...(fee===null?[]:[nat(fee)])]
+const text=f=>f.map(b=>'0x'+hex(b)).join('\t')
+const cases=[]
+const add=(line,expected)=>cases.push({line,expected})
+const H=(f,e={status:'ok',wire:hex(rlp(f)),hash:digest(f)})=>add('H\t'+text(f),e)
+const P=(p,c,e)=>add('P\t'+text(p)+'|'+text(c),e)
+const err=reason=>({status:'error',reason})
+const ind=reason=>({status:'indeterminate',reason})
+for(let i=0;i<256;i++){
+ const first=i%8===0
+ const n=first?london-1:london+i
+ const time=1628166800+i*2
+ const fee=first?null:[0n,1n,127n,128n,255n,256n,1000000000n,2n**255n][i%8]
+ const p=header(n,time,first?15000000:30000000,first?14000000:15000000,fee,i)
+ const cf=first?1000000000n:fee
+ const c=header(n+1,time+1,30000000,1,cf,i+1)
+ c[0]=hash(p)
+ H(p);H(c)
+ P(p,c,{status:'ok',fee:String(cf)})
+ const changed=p.map(b=>Buffer.from(b));changed[3][0]^=1
+ P(changed,c,err('parent-hash-mismatch'))
+ const bad=c.slice();bad[0]=Buffer.from(c[0]);bad[0][31]^=1
+ P(p,bad,err('parent-hash-mismatch'))
+ const badFee=c.slice();badFee[15]=nat(cf+1n)
+ P(p,badFee,err('fee-check'))
+}
+const sample=header(london,1628166800,30000000,15000000,100n,0)
+for(const i of [0,1,2,3,4,5,6,13,14]){
+ const f=sample.slice();f[i]=f[i].subarray(1);H(f,err('invalid-shape'))
+}
+for(const i of [7,8,9,10,11,15]){
+ const f=sample.slice();f[i]=Buffer.concat([Buffer.of(0),f[i]]);H(f,err('invalid-shape'))
+}
+const extra=sample.slice();extra[12]=bytes(33);H(extra,err('invalid-shape'))
+const later=sample.slice();later[11]=nat(shanghai);H(later,ind('later-fork'))
+H(sample.slice(0,15),err('wrong-fork-shape'))
+H([...sample,bytes(32)],ind('unsupported-layout'))
+H(sample.slice(0,14),ind('unsupported-layout'))
+// Existing independently captured canonical Frontier header: pin its published digest.
+const fixture=JSON.parse(readFileSync(new URL('../../evidence/frontier-mainnet-46147.json',import.meta.url),'utf8'))
+const block=fixture.block
+const raw=k=>Buffer.from(block[k].slice(2),'hex')
+const actualHeader=[raw('parentHash'),raw('sha3Uncles'),raw('miner'),raw('stateRoot'),raw('transactionsRoot'),raw('receiptsRoot'),Buffer.alloc(256),
+ nat(BigInt(block.difficulty)),nat(BigInt(block.number)),nat(BigInt(block.gasLimit)),nat(BigInt(block.gasUsed)),nat(BigInt(block.timestamp)),raw('extraData'),raw('mixHash'),raw('nonce')]
+assert(block.zeroLogsBloom)
+assert.equal('0x'+hex(hash(actualHeader)),block.hash)
+H(actualHeader,{status:'ok',wire:hex(rlp(actualHeader)),hash:BigInt(block.hash).toString()})
+const exe=process.argv[2]
+assert(exe,'provide absolute Lean executable path')
+const dir=mkdtempSync(join(tmpdir(),'header-rlp-'))
+try{
+ const file=join(dir,'cases.tsv');writeFileSync(file,cases.map(c=>c.line).join('\n')+'\n')
+ const out=spawnSync(exe,['--dangerously-enable-unverified-keccak','--batch',file],{encoding:'utf8',maxBuffer:16*1024*1024})
+ assert.equal(out.status,0,out.stderr)
+ const actual=out.stdout.trim().split('\n').map(JSON.parse)
+ const compare=(observed)=>{assert.equal(observed.length,cases.length);for(let i=0;i<cases.length;i++)assert.deepEqual(observed[i],cases[i].expected,'row '+i)}
+ compare(actual)
+ for(const mutation of [
+   a=>a[0].hash='0',
+   a=>a[0].wire='00',
+   a=>a.pop(),
+ ]){const a=structuredClone(actual);mutation(a);assert.throws(()=>compare(a))}
+ const noOpt=spawnSync(exe,['--batch',file]);assert.equal(noOpt.status,2)
+ writeFileSync(file,'H\t0x0g\n')
+ const malformed=spawnSync(exe,['--dangerously-enable-unverified-keccak','--batch',file],{encoding:'utf8'})
+ assert.equal(malformed.status,2);assert.deepEqual(JSON.parse(malformed.stdout),{status:'inputError'})
+ const counts={};for(const c of cases)counts[c.expected.status]=(counts[c.expected.status]??0)+1
+ console.log(JSON.stringify({cases:cases.length,matched:actual.length,counts,mutationsRejected:3,missingOptInRejected:true,malformedRejected:true}))
+}finally{rmSync(dir,{recursive:true,force:true})}
