@@ -82,11 +82,23 @@ def letterSpaced (word : FontProvider.Word) (extra : Float) : FontProvider.Word 
   let mut shift := 0.0
   let mut cluster : Option Nat := none
   let mut clusters := 0
+  -- Zero-width format and bidi controls take no spacing, and neither do the cursive scripts,
+  -- whose letters join (CSS Text 3 §8.1): Arabic, Syriac, NKo, Mandaic, Mongolian, Adlam.
+  let chars := word.text.toList.toArray
+  let within (c lo hi : Nat) : Bool := lo <= c && c <= hi
+  let ignorable (i : Nat) : Bool :=
+    let c := (chars.getD i ' ').toNat
+    c == 0xAD || c == 0xFEFF || within c 0x200B 0x200F || within c 0x202A 0x202E ||
+    within c 0x2060 0x2064 || within c 0x2066 0x206F ||
+    within c 0x0600 0x077F || within c 0x07C0 0x07FF || within c 0x0840 0x08FF || within c 0xFB50 0xFDFF || within c 0xFE70 0xFEFE ||
+    within c 0x1800 0x18AF || within c 0x1E900 0x1E95F
+  let mut spaced := false
   for g in word.glyphs do
     if cluster != some g.clusterStart then
-      if cluster.isSome then shift := shift+extra
+      if spaced then shift := shift+extra
       cluster := some g.clusterStart
-      clusters := clusters+1
+      spaced := !ignorable g.clusterStart
+      if spaced then clusters := clusters+1
     glyphs := glyphs.push {g with x := g.x+shift}
   return {word with glyphs, advance := word.advance+extra*Float.ofNat clusters}
 
