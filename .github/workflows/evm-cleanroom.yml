@@ -224,7 +224,7 @@ jobs:
           set -euo pipefail
           mkdir -p .lake/differential
           node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==124 and x["mismatches"]==0 and x["gasBoundaryTriplets"]==7 and all(x["negativeControls"].values()),x'
-          node scripts/differential/call-data.mjs | tee .lake/differential/call-data.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==122 and x["mismatches"]==0 and len(x["refusalChecks"])==3 and x["globalFuelBoundary"] and all(x["negativeControls"].values()),x'
+          node scripts/differential/call-data.mjs | tee .lake/differential/call-data.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==122 and x["mismatches"]==0 and len(x["refusalChecks"])==1 and len(x["executedPrecompileChecks"])==2 and all(c["matched"] for c in x["executedPrecompileChecks"]) and x["globalFuelBoundary"] and all(x["negativeControls"].values()),x'
       - name: Compare opt-in Keccak and log instruction results with Cancun EthereumJS
         working-directory: formal/lean4/evm-cleanroom
         run: |
