@@ -115,15 +115,15 @@ private def sampleAncestor (supported node : Nat) : Bool :=
 #guard computeProposerScore 3200 == 40
 #guard computeProposerScore 1000000000 == 12500000
 #guard weightWithComputedBoost sampleStore sampleAncestor 5
-  [(1, 8)] none 3200 == some 0
+  [(1, 8)] none 3200 == some 8
 #guard weightWithComputedBoost sampleStore sampleAncestor 5
-  [(1, 8)] (some 12) 3200 == some 40
+  [(1, 8)] (some 12) 3200 == some 48
 #guard weightWithComputedBoost sampleStore sampleAncestor 5
-  [(1, 8)] (some 11) 3200 == some 0
+  [(1, 8)] (some 11) 3200 == some 8
 #guard weightWithComputedBoost sampleStore sampleAncestor 5
   [(1, 8), (1, 9)] (some 12) 3200 == none
 #guard weightWithComputedBoost sampleStore sampleAncestor 5
-  [(1, 8)] (some 12) 80 == some 0
+  [(1, 8)] (some 12) 80 == some 8
 
 #print axioms EthereumConsensus.ForkChoice.computeProposerScore_two_rounds
 #print axioms EthereumConsensus.ForkChoice.computedBoost_without_root
