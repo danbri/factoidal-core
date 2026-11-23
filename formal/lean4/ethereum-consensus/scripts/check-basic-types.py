@@ -91,7 +91,7 @@ def falsification_controls(expected):
     changed["status"] = "error"
     mutations.append(changed)
     changed = dict(expected)
-    changed["root"] = "00" * 32
+    changed["root"] = "ff" * 32
     mutations.append(changed)
     changed = dict(expected)
     changed["bytes"] = "ff"
