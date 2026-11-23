@@ -13,8 +13,9 @@
     "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
     "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
     "EVMCleanroom.lean": "26dfa6044a613c42c3351a9b700b5352de0589a4",
-    "lakefile.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1",
-    "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2"
+    "lakefile.toml": "379997eaeb6e1c9fb147270be0f317f05812683b",
+    "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2",
+    "lakefile-london.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1"
   },
   "axioms": {
     "nextBaseFee_at_target": [
@@ -57,7 +58,8 @@
     "caller-supplied parent fields, child fields and London activation flag",
     "C stdlib/OS handling of CLI byte transport",
     "Python formula is only a differential test oracle, not production code",
-    "Standalone London header CLI is not imported into the legacy EVMCleanroom library or transactional dispatcher; this preserves exact previously reviewed EVM sources"
+    "Standalone London header CLI is not imported into the legacy EVMCleanroom library or transactional dispatcher; this preserves exact previously reviewed EVM sources",
+    "A separate same-directory Lake configuration includes the optional London executable, selected explicitly by -f, leaving default v2 Lake manifest unchanged"
   ],
   "notClaimed": [
     "canonical header authenticity or chain selection",
