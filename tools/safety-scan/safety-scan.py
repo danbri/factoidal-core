@@ -69,9 +69,13 @@ def load_strip():
 
 
 def run_scan(lean_path: str, roots, out_json: pathlib.Path):
-    env = dict(os.environ, LEAN_PATH=lean_path)
+    # Preserve paths relative to the caller while the child selects this
+    # checkout's pinned toolchain from its Lean project directory.
+    dirs = [str(pathlib.Path(d).resolve()) for d in lean_path.split(os.pathsep) if d]
+    env = dict(os.environ, LEAN_PATH=os.pathsep.join(dirs))
+    out_json = out_json.resolve()
     cmd = ["lean", "--run", str(SCANNER), str(out_json), *roots]
-    p = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    p = subprocess.run(cmd, cwd=LEAN_ROOT, env=env, capture_output=True, text=True)
     msg = [l for l in (p.stdout + p.stderr).splitlines() if "warning" not in l.lower()]
     if p.returncode != 0 or not out_json.exists():
         sys.stderr.write("\n".join(msg) + "\n")
@@ -89,7 +93,7 @@ def self_test() -> int:
             (tmp / "SafetyFixture").mkdir(exist_ok=True)
             p = subprocess.run(["lean", "-R", str(src), "-o", str(tmp / f"{mod}.olean"),
                                 str(src / f"{mod}.lean")],
-                               env=dict(os.environ, LEAN_PATH=str(tmp)),
+                               cwd=LEAN_ROOT, env=dict(os.environ, LEAN_PATH=str(tmp)),
                                capture_output=True, text=True)
             if p.returncode != 0:
                 sys.stderr.write(f"fixture {mod} did not compile:\n{p.stdout}{p.stderr}")
