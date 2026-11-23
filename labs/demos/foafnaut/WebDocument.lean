@@ -1993,8 +1993,10 @@ a render names the images in `heldImages`, `[{key,sha256}]`, so the bytes of a r
 request do not grow with the images (`frame_work_test.ts` counts them). `imageInfo`
 says that the engine has these ops: a host calls none of them before it asks. -/
 
-/-- Most images, and most bytes of images, that the engine holds; the oldest go first. -/
-def maxHeldImages : Nat := 64
+/-- Most images, and most bytes of images, that the engine holds; the oldest go first.
+128: the 64 `img` and SVG images that `inspect` lists (`maxDocumentImages`) and as many
+background images. -/
+def maxHeldImages : Nat := 128
 def maxHeldImageBytes : Nat := 33554432
 
 /-- Hold `bytes` as the image `key` with `sha256`, first; drop another image of the same
@@ -2039,11 +2041,14 @@ def decodeBinWith (bytes : ByteArray) (contentType fallback locale : String) : S
 @[export web_document_decode_bin]
 def decodeBin (bytes : ByteArray) (contentType : String) : String := decodeBinWith bytes contentType "" ""
 
-/-- The images a render names (`heldImages`), as key and SHA-256. -/
+/-- The images a render names (`heldImages`), as key and SHA-256: the first
+`maxHeldImages`. A name past them is not held, so its image is drawn as missing (alt
+text, no background), as for any name not held (`heldNamed`); the page is not refused.
+Cost of refusing: from 2026-11-22 the Wikipedia article "United States" (more than 64
+images and backgrounds together) was refused whole (issue 831). -/
 def namedImages (request : JSON.Json) : Except String (List (String × String)) := do
   let .array items := (request.field? "heldImages").getD (.array []) | throw "heldImages must be an array"
-  if items.length > maxHeldImages then throw s!"heldImages exceed {maxHeldImages}"
-  items.mapM fun item => do
+  (items.take maxHeldImages).mapM fun item => do
     let some (.string key) := item.field? "key" | throw "held image key must be a string"
     let some (.string sha) := item.field? "sha256" | throw "held image sha256 must be a string"
     pure (key,sha)

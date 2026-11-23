@@ -864,3 +864,9 @@ private def bigCurves (k : String) : String :=
 #guard cullPixels (bigCurves "40") 160 120 == some 0
 
 
+
+-- A render that names more images than the engine holds is drawn, not refused (issue 831):
+-- the names past `maxHeldImages` are left out.
+private def manyNamed := JSON.Json.object [("heldImages",.array ((List.range 200).map fun i =>
+  .object [("key",.string s!"https://example.test/{i}.png"),("sha256",.string "00")]))]
+#guard (WebDocument.namedImages manyNamed).toOption.map (·.length) == some WebDocument.maxHeldImages
