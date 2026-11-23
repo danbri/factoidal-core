@@ -174,7 +174,7 @@ jobs:
         run: |
           mkdir -p .lake/differential
           node --check scripts/differential/call-opcode.mjs
-          node scripts/differential/call-opcode.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["nonemptyInputPassed"] and x["precompileScopeRefused"],x'
+          node scripts/differential/call-opcode.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["nonemptyInputPassed"] and x["identityPrecompileMatched"] and x["precompileScopeRefused"],x'
       - name: Execute actual nonzero-value CALL under EthereumJS oracle, gas stipend and new-account challenges
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -262,6 +262,9 @@ jobs:
           assert g["compared"] == g["matched"] == g["eligible"] == g["crossOracleMatched"] == 194 and g["mismatches"] == g["errors"] == 0, g
           assert g["excluded"] == {"staticEntry": 3, "osaka": 1, "nonzeroDepth": 9, "coldParent": 3, "zeroGas": 3}, g
           assert len(x["gasBoundaryGroups"]) == 10
+          ident = x["identityExecution"]
+          assert ident["cases"] == ident["ethereumJSMatched"] == ident["gethMatched"] == ident["clientAgreement"] == 27, ident
+          assert ident["gasMutationDetected"] and len(ident["rows"]) == 27, ident
           assert i["categories"]["overhead"]["ethereumJS"]["matched"] == i["categories"]["cap"]["ethereumJS"]["matched"] == 30
           assert i["boundaries"] == len(x["boundaries"]) == 9
           assert sum(b["reason"] == "unsupportedFork" for b in x["boundaries"]) == 6
@@ -273,7 +276,7 @@ jobs:
         working-directory: formal/lean4
         run: |
           mkdir -p evm-cleanroom/.lake/differential
-          node evm-cleanroom/scripts/differential/call-repairs.mjs | tee evm-cleanroom/.lake/differential/call-repairs.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==len(x["comparisons"])==5 and not x["failures"] and len(x["boundaries"])==1,x; b=x["boundaries"][0]; assert b["name"]=="identity-zero-gas" and b["actual"]["status"]=="indeterminate" and b["expected"]["stack"]==["0"],b'
+          node evm-cleanroom/scripts/differential/call-repairs.mjs | tee evm-cleanroom/.lake/differential/call-repairs.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==len(x["comparisons"])==6 and not x["failures"] and len(x["boundaries"])==0,x; assert any(c["name"]=="identity-zero-gas" and c["expected"]==c["actual"] and c["actual"]["stack"]==["0"] for c in x["comparisons"]),x'
       - name: Verify guarded Solidity runtime and signed word operations against EthereumJS
         shell: bash
         working-directory: formal/lean4
