@@ -8,7 +8,7 @@
  * Covers parent STOP/REVERT/INVALID and warm second CALL in one parent frame.
  *
  * The legacy corpus uses zero-value, empty-window, single-depth CALLs.
- * A nonempty input success and an identity precompile refusal are checked separately.
+ * Nonempty input, actual identity precompile and a still-unimplemented precompile are checked separately.
  */
 import { spawnSync } from 'node:child_process'
 import { createEVM } from '@ethereumjs/evm'
@@ -141,10 +141,17 @@ const nonemptyInputPassed=validReference.status==='stopped' &&
   validReference.slot0===(0x2an<<248n).toString() &&
   Object.keys(validReference).every(key=>JSON.stringify(forwarded[key])===JSON.stringify(validReference[key]))
 const identityCall='5f5f5f5f5f6004617530f100'
-const precompileReference=await ethereumjs(identityCall,'',50000)
-const outOfScope=leanOutcome(identityCall,'',50000)
-const precompileScopeRefused=precompileReference.status==='stopped' &&
-  JSON.stringify(precompileReference.stack)===JSON.stringify(['1']) &&
+const identityReference=await ethereumjs(identityCall,'',50000)
+const identityActual=leanOutcome(identityCall,'',50000)
+const identityPrecompileMatched=identityReference.status==='stopped' &&
+  JSON.stringify(identityReference.stack)===JSON.stringify(['1']) &&
+  Object.keys(identityReference).every(key=>JSON.stringify(identityActual[key])===JSON.stringify(identityReference[key]))
+// Other reserved precompiles must not be executed as arbitrary empty bytecode.
+const otherPrecompile='5f5f5f5f5f6001617530f100'
+const otherReference=await ethereumjs(otherPrecompile,'',50000)
+const outOfScope=leanOutcome(otherPrecompile,'',50000)
+const precompileScopeRefused=otherReference.status==='stopped' &&
+  JSON.stringify(otherReference.stack)===JSON.stringify(['1']) &&
   outOfScope.status==='indeterminate' &&
   outOfScope.reason==='unsupportedFork'
 
@@ -153,12 +160,12 @@ const report={
   oracle:'@ethereumjs/evm@10.1.3 Hardfork.Cancun',
   compared:records.length,matched:records.length-failures.length,
   mismatches:failures.length,parentReverts,parentExceptions,
-  childSuccesses,childFailures,gasMutationRejected,nonemptyInputPassed,precompileScopeRefused,
+  childSuccesses,childFailures,gasMutationRejected,nonemptyInputPassed,identityPrecompileMatched,precompileScopeRefused,
   comparedFields:['parent outcome','gas','child storage','actual CALL success bit'],
-  scope:'Zero value, empty input/output, one child frame, parent rollback and successive CALLs. Nonempty input and identity precompile refusal are separate controls.',
+  scope:'Zero value, empty input/output, one child frame, parent rollback and successive CALLs. Nonempty input, executable identity and unimplemented ECRECOVER precompile are separate controls.',
   firstFailures:failures.slice(0,6),
 }
 console.log(JSON.stringify(report))
 if(failures.length || records.length!==330 || !gasMutationRejected ||
-   !nonemptyInputPassed || !precompileScopeRefused || parentReverts===0 || parentExceptions===0 ||
+   !nonemptyInputPassed || !identityPrecompileMatched || !precompileScopeRefused || parentReverts===0 || parentExceptions===0 ||
    childSuccesses===0 || childFailures===0)process.exitCode=1
