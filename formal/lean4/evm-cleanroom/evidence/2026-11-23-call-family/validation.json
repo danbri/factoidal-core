@@ -1,0 +1,62 @@
+{
+  "kind": "call-family-local-validation",
+  "date": "2026-11-23T08:35:01.330020+00:00",
+  "runtimeLocalCommit": "b7e5c44eba09b1df7cfaa3d603c33284039fc764",
+  "harnessLocalCommit": "b63ee290a6b0a6407c402f1b78c4ca1d39a28f83",
+  "basePublicCommit": "d1005fb7a009e9c8942f5f74517e068b66fb5f48",
+  "nativeExecutables": {
+    "evm-subset": {
+      "sha256": "6be0c30fff023aefe31abc6ba0dae860b0763bfb5eedf872cc09f5b9df22e594",
+      "bytes": 6674280
+    },
+    "evm-call-transaction": {
+      "sha256": "7631be2fcd4c73be92a6da674b188e35399cc7f59b214f122e50d49dc9663979",
+      "bytes": 120858224
+    }
+  },
+  "reportSha256": {
+    "axiom-audit.json": "101b946c9b33b9bae3db63fe17bf9ed1600bd51ede14cd67a69093a103adcc25",
+    "axiom-selftest.json": "773346e16785e7b82a91529df8a12a9cbcd22b929b6d3ff744f85c34d76cabcf",
+    "baseline-opcode-controls.json": "0996dd5b30b12638c19b53d2f8384a28334fc56cbc4bf9568e9933ebfc2c7622",
+    "call-family.json": "bb1dff6d007d8152dcd56f101f10e1a995455dffa920a8ca51211e3c7ed94265",
+    "legacy-cli-timing.json": "94264aa4042c23739e06ca40dea308683ada2dc2e7c3e706db6fda37911d8748",
+    "new-public-axioms.log": "c27c1dbd5875a136994f0ce028032792ba04a7ac4a9887fc7737f2c66695d8c3",
+    "raw10000.json": "a4da98d28b1dd45ccff738b3302d6e741e92aa9ea0ecd66be1fb5b2315c294e5",
+    "retained-authenticated-shanghai.json": "f8005df96b79bce2f092931e123ca8243e9f7effcda5a516076fd8c0300b9b0b",
+    "retained-byte-copy.json": "7a935e626559a29c5c5aa5297ae6a31685b2c519703ba480c95860b7cedd031d",
+    "retained-call-context.json": "367cd34bf6fcae088f216b9e2bab5f78594c740daa564f014e660f49d5da3f11",
+    "retained-call-data.json": "8dea7f4aedcb11686a8b3e88c0c9b0df491506512471669020083a00910411a1",
+    "retained-call-opcode.json": "94f855e2f72b0b9c530a548c2127cee12d051422908a4a3fe82b4a3e6f022ca2",
+    "retained-call-transaction.json": "70f0f5952640799cb3e3468808f7bdb3aed0267ab872b0b5909a881768a0d801",
+    "retained-cancun.json": "9d7baf1b22f7dad08a4c9a995fd5f4c6c65019fdaf32cee4f13dacf6e54e4ac9",
+    "retained-hash-log.json": "7088c0becf235bf5a1235a0aa3add386cf442c08afd09bb30418f4fa85c4c504",
+    "retained-prague.json": "cfdc2d0af2f7c010e5aa2ded73babaaff6fb84ae53d73c13830c55f037a9fe2b",
+    "retained-value-call.json": "4ea0a72501d6143b55245ffa0dfdb2f8f5b267eacf878e65034d1ee57a71e6a4",
+    "source-ledger-mutations.log": "1701d160717ddb8294381e9e98a3fcf22769faf7c1c19b6320ff101328d0a6ac",
+    "source-ledger.json": "326dca842ec7564bb83e8e3d035bb486aab0223dad10e8920ac4c38d849f1fb6"
+  },
+  "build": {
+    "toolchain": "Lean4.33.1",
+    "officialArchiveSha256": "890afd185370f85666025b883914ab4f4b339136f8c96167b69cfb62aecaf235",
+    "fullJobs": 64,
+    "cliFollowupJobs": 43,
+    "stackKiB": 65536,
+    "mimallocArenaBytes": 67108864,
+    "addressSpaceBytes": 8589934592,
+    "cpuAndWallTimeLimitSeconds": 600,
+    "sharedLock": "/tmp/foafnaut-lean-build.lock"
+  },
+  "independentSourceReview": {
+    "mode": "read-only review; no test execution",
+    "blockingFindings": 0,
+    "limits": [
+      "local model properties, not independent EELS refinement",
+      "different oracle observation sets and19 Geth context exclusions",
+      "9 explicit indeterminate boundaries separate from implemented matches",
+      "comparator mutations do not mutate Lean",
+      "original/current nonzero storage checked by Lean guards and retained suites"
+    ]
+  },
+  "performanceClaim": "Recorded sample only; CALL p95,p99,maximum and spread worsened; no speedup or tail parity claim. Issue739 remains open.",
+  "hostedCI": "pending"
+}

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "claim_status": "active-code-selected-evidence",
-  "produced_on": "2026-11-22",
+  "produced_on": "2026-11-23",
   "reference_implementation_commit": "03c83338a0b0305a3003c24d14a5b398d795ee0b",
   "reference_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
   "historical_ledger": "https://github.com/danbri/factoidal-core/pull/658",
@@ -19,8 +19,8 @@
     "EVMCleanroom/MemoryGas.lean": "cd52b70946e13e005b1242b8734720eed748f072",
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
-    "EVMCleanroom/CLI.lean": "772c48f3654eea1e10e57e54dfd916bed6992c81",
-    "EVMCleanroom.lean": "d8aad061e2423babef2b104a7a496d70410e815c",
+    "EVMCleanroom/CLI.lean": "a29b476c20a44592ff52ddf7cd4aec3a8e7da481",
+    "EVMCleanroom.lean": "26dfa6044a613c42c3351a9b700b5352de0589a4",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "c77302841e95f37c60d84e98aa839eb7749263ed",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -35,7 +35,7 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "15c847616a86336118e44da15c505af636d6ac8e",
+    "EVMCleanroom/CallOpcode.lean": "591d00a5f08ea1ee7b86dd6e8eb5f39e5148e3e9",
     "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
@@ -47,9 +47,9 @@
     "scripts/eels/frontier-independent-negative.py": "8ad4e8081d1395df8f382e720b92a23a4711f073",
     "evidence/frontier-keccak-vectors.json": "45eb0eeff0a5fe64df74c85e392571d36d10a157",
     "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
-    "scripts/differential/value-call.mjs": "c8f984084b8ed39a81645f142734c167239b2858",
+    "scripts/differential/value-call.mjs": "eb8908e57b1d2ab480493894d994a1a0652a2cce",
     "EVMCleanroom/CallContextTests.lean": "a874f8c7d7af417e38c205461f94c82110be9e84",
-    "scripts/differential/call-context.mjs": "7518029373724316264afd3eb07d28a6c302883e",
+    "scripts/differential/call-context.mjs": "ab585923c102838bba30707e665b3b0c924c995d",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "ba5a9cb7bec40f33f15b144bc84bb5e0cd993970",
     "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
@@ -108,7 +108,9 @@
     "WORLD.md": "6894676748f7cc2c984c0a456c7ee80624214ce4",
     "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
     "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
-    "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463"
+    "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463",
+    "EVMCleanroom/CallFamilyTests.lean": "40c29c1072f871772d1108330d0ef749a1a8d46a",
+    "scripts/differential/call-family.mjs": "2f6fae61a08670a737350b29c69a5f9469c79432"
   },
   "theorem_inventory": [
     {
@@ -1770,6 +1772,130 @@
         "propext"
       ],
       "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.decodeVariant_zero_stackValue",
+      "source_symbol": "decodeVariant_zero_stackValue",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Decoded DELEGATECALL and STATICCALL operands supply zero to the value pricing and funds checks, independently of the parent message value.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_operands",
+      "source_symbol": "beginVariant_entered_operands",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Every successful child entry has operands decoded from the actual caller stack for the selected opcode.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_code",
+      "source_symbol": "beginVariant_entered_code",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Successful variant entry executes the code from the decoded target, while ADDRESS and the execution account follow the opcode.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_context",
+      "source_symbol": "beginVariant_entered_context",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Successful entry sets caller, message value and static mode for the selected variant and preserves transaction origin and opcode profile.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_journal",
+      "source_symbol": "beginVariant_entered_journal",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Successful entry reads the warmed checkpoint and execution-account storage, slot warmth and balance, preserving original transaction slots and projecting world chain ID and block number.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_no_transfer",
+      "source_symbol": "beginVariant_entered_no_transfer",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Variant child entry preserves every account balance. A subsequent descendant CALL may transfer value.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_depth",
+      "source_symbol": "beginVariant_entered_depth",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Successful entry increments call depth within the configured maximum and retains the parent depth in the continuation.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_output_paid",
+      "source_symbol": "beginVariant_entered_output_paid",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The continuation of a successfully entered variant covers the output window in its expanded allocation and records an accepted schedule.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_input_byte",
+      "source_symbol": "beginVariant_entered_input_byte",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Every in-range child calldata byte reads the corresponding byte of the expanded parent memory at successful entry.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_missing_code",
+      "source_symbol": "beginVariant_missing_code",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "With decoded operands on an admitted profile, missing code-account coverage refuses entry at the decoded target address.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_missing_execution_account",
+      "source_symbol": "beginVariant_missing_execution_account",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "On admitted CALLCODE and DELEGATECALL paths, missing execution-account coverage refuses entry even when the code account is covered.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.execute_missing_variant_code",
+      "source_symbol": "execute_missing_variant_code",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The public world-aware dispatcher propagates missing code-account coverage as an indeterminate result at each of the three variant opcode bytes.",
+      "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
     }
   ],
   "external_evidence": {
@@ -2478,7 +2604,7 @@
   ],
   "missing": [
     "Full EELS semantic refinement proofs",
-    "Other call variants, CREATE, precompiles and fork-exact frame and transaction rules beyond the restricted nested CALL dispatcher",
+    "Contract creation (CREATE and CREATE2), precompiles and fork-exact frame and transaction rules beyond the restricted nested call-family dispatcher",
     "Lean MPT/RLP implementation and correspondence, plus independent refinement and security review of the opt-in Keccak implementation",
     "General receipt commitments, log and transaction rules, and complete block validity",
     "General multi-transaction and multi-fork replay, persistent state, Engine API, networking and beacon-chain consensus for a complete execution and consensus client. Current authenticated mainnet evidence covers a restricted Frontier transfer and the witness-limited Shanghai 1CAT call.",
@@ -3003,5 +3129,89 @@
       "byteIdenticalLocalCheckpoint": "23db9cc1c8b3bca8bada8e2e37951acb461b7eb9",
       "equivalence": "The published checkpoint includes final CI, evidence and packaging documentation. All native Lean sources, Lake configuration, replay runners and the historical fixture are byte-identical to the locally built integration source."
     }
+  },
+  "call_family_integration": {
+    "trackingIssue": "https://github.com/danbri/factoidal-core/issues/826",
+    "baseCommit": "d1005fb7a009e9c8942f5f74517e068b66fb5f48",
+    "testedNativeSourceCommit": "b7e5c44eba09b1df7cfaa3d603c33284039fc764",
+    "testedNativeSourceTree": "772b23153227eeeb8d17f63b9382145cd969e16f",
+    "testedHarnessCommit": "b63ee290a6b0a6407c402f1b78c4ca1d39a28f83",
+    "commitProvenance": "Local integration checkpoints; the hosted CI verdict must refer to the published PR head.",
+    "remoteCI": "pending",
+    "leanVersion": "4.33.1",
+    "scope": "World-aware CALLCODE (0xf2), DELEGATECALL (0xf4) and STATICCALL (0xfa) through the shared CALL continuation in the supported opcode profiles.",
+    "semanticReference": {
+      "repository": "ethereum/execution-specs",
+      "commit": "1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653",
+      "path": "src/ethereum/forks/cancun/vm/instructions/system.py"
+    },
+    "sourceBlobCount": 103,
+    "executableGuardExpressions": 33,
+    "selectedTheorems": {
+      "previous": 172,
+      "new": 12,
+      "total": 184,
+      "sourceFiles": 20
+    },
+    "differential": {
+      "runner": "scripts/differential/call-family.mjs",
+      "report": "evidence/2026-11-23-call-family/call-family.json",
+      "reportSha256": "bb1dff6d007d8152dcd56f101f10e1a995455dffa920a8ca51211e3c7ed94265",
+      "leanExecutableSha256": "6be0c30fff023aefe31abc6ba0dae860b0763bfb5eedf872cc09f5b9df22e594",
+      "ethereumJS": {
+        "version": "@ethereumjs/evm@10.1.3",
+        "dependencyLockSha256": "cc95a62e125486d2de9a28cb5fc61c098b955aa22c2dd0b3dc0b19f2df770425",
+        "compared": 213,
+        "matched": 213,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "geth": {
+        "version": "evm version 1.17.10-stable-1df30b18",
+        "sourceCommit": "1df30b18d9ed35ee9d28ffd4648442c2204554ad",
+        "executableSha256": "d8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da",
+        "fork": "Shanghai",
+        "compared": 194,
+        "matched": 194,
+        "mismatches": 0,
+        "errors": 0,
+        "eligible": 194,
+        "crossOracleMatched": 194,
+        "excluded": {
+          "staticEntry": 3,
+          "osaka": 1,
+          "nonzeroDepth": 9,
+          "coldParent": 3,
+          "zeroGas": 3
+        }
+      },
+      "scope": "Synthetic bytecode comparisons over the observations implemented by each harness. Explicit Lean boundary outcomes and parser checks have separate totals.",
+      "gasBoundaryGroups": 10,
+      "boundaryCases": {
+        "total": 9,
+        "unsupportedFork": 6,
+        "stepLimit": 3,
+        "identityPrecompileRefusals": 3,
+        "uncheckedKeccakRefusals": 3
+      },
+      "parserChecks": {
+        "total": 8,
+        "validAccepted": 4,
+        "invalidRefused": 4
+      },
+      "comparatorNegativeControls": [
+        "gas",
+        "storageOwner",
+        "context",
+        "returnBytes"
+      ]
+    },
+    "localAuditReports": {
+      "sourceLedger": "evidence/2026-11-23-call-family/source-ledger.json",
+      "sourceLedgerTests": "evidence/2026-11-23-call-family/source-ledger-mutations.log",
+      "selectedAxioms": "evidence/2026-11-23-call-family/axiom-audit.json",
+      "axiomNegativeControls": "evidence/2026-11-23-call-family/axiom-selftest.json"
+    },
+    "limits": "Theorems cover projections and boundaries of the local interpreter. Full EELS refinement, fork-exact execution, contract creation and precompile execution remain open."
   }
 }

@@ -15,6 +15,8 @@ import { createEVM } from '@ethereumjs/evm'
 import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
 import { Account, createAddressFromString, hexToBytes } from '@ethereumjs/util'
 
+const [executable, ...prefix] = process.argv[2] ? [process.argv[2]] : ['lake', 'exe', 'evm-subset']
+
 const parentAddress=createAddressFromString('0x00000000000000000000000000000000000000c1')
 const childAddress=createAddressFromString('0x00000000000000000000000000000000000000c3')
 const callerAddress=createAddressFromString('0x00000000000000000000000000000000000000c2')
@@ -49,8 +51,8 @@ function parentProgram(request,value,end='00',calls=1) {
   return instruction(request,value).repeat(calls)+end
 }
 function lean(parent,child,gas,parentBalance,childBalance,childNonce) {
-  const p=spawnSync('lake',[
-    'exe','evm-subset','--call-opcode',parent,child,
+  const p=spawnSync(executable,[
+    ...prefix,'--call-opcode',parent,child,
     String(gas),'100',String(parentBalance),String(childBalance),String(childNonce),
   ],{encoding:'utf8',timeout:60000,maxBuffer:1024*1024})
   if(p.error||p.status!==0)

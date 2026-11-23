@@ -14,6 +14,8 @@ import { createEVM } from '@ethereumjs/evm'
 import { Common, Hardfork, Mainnet } from '@ethereumjs/common'
 import { Account, createAddressFromString, hexToBytes } from '@ethereumjs/util'
 
+const [executable, ...prefix] = process.argv[2] ? [process.argv[2]] : ['lake', 'exe', 'evm-subset']
+
 const common = new Common({chain:Mainnet,hardfork:Hardfork.Cancun})
 const P = createAddressFromString('0x00000000000000000000000000000000000000c1')
 const C = createAddressFromString('0x00000000000000000000000000000000000000c3')
@@ -35,8 +37,8 @@ function program(amount,requested,parentSelfBalance) {
   return {code:setup+ending,setupGas}
 }
 function lean(parent,child,gas,parentBalance,childBalance) {
-  const p=spawnSync('lake',[
-    'exe','evm-subset','--call-opcode',parent,child,String(gas),'80',
+  const p=spawnSync(executable,[
+    ...prefix,'--call-opcode',parent,child,String(gas),'80',
     String(parentBalance),String(childBalance),'0',
   ],{encoding:'utf8',timeout:60000,maxBuffer:1024*1024})
   if(p.error||p.status!==0)throw Error('Lean EVM CLI failed '+String(p.error??p.stderr))

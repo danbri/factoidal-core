@@ -20,7 +20,7 @@ function args(argv) {
   const flags = {};
   for (let i = 0; i < argv.length; i += 2) {
     if (!argv[i]?.startsWith('--') || argv[i + 1] === undefined) {
-      throw Error('expected --corpus PATH --out PATH --failures PATH');
+      throw Error('expected --corpus PATH --out PATH --failures PATH [--lean-exe PATH]');
     }
     flags[argv[i].slice(2)] = argv[i + 1];
   }
@@ -58,7 +58,10 @@ const batchPath = options.out + '.lean-input.tsv';
 mkdirSync(dirname(options.out), {recursive:true});
 mkdirSync(dirname(options.failures), {recursive:true});
 writeFileSync(batchPath, batchInput);
-const leanProc = spawnSync('lake', ['exe','evm-subset','--batch',batchPath], {
+const [leanExecutable, ...leanPrefix] = options['lean-exe']
+  ? [options['lean-exe']] : ['lake', 'exe', 'evm-subset'];
+const leanCommand = [...leanPrefix, '--batch'];
+const leanProc = spawnSync(leanExecutable, [...leanCommand, batchPath], {
   encoding:'utf8', maxBuffer:128 * 1024 * 1024, timeout:600000
 });
 if (leanProc.error || leanProc.status !== 0) {
@@ -194,7 +197,7 @@ const report={
     (semanticDisagreements?'mismatch':(unsupported?'incomplete':'pass')),
   scope:'restricted opcode subset; NOT state-test or mainnet replay',
   oracle:{name:'@ethereumjs/evm',version:'10.1.3',hardfork:'Prague'},
-  lean:{command:'lake exe evm-subset --batch'},
+  lean:{command:[leanExecutable, ...leanCommand].join(' ')},
   corpus:{sha256:corpusSha256,count:cases.length,uniqueExecutionInputs:distinctInputs,
     duplicatedExecutionInputs:duplicateInputCount,kind:'synthetic-bytecode'},
   compared:cases.length,

@@ -549,35 +549,38 @@ private def parseProfile : String → Option Profile
   | "osaka" => some .osaka
   | _ => none
 
-/-- Run actual 0xf1 instructions under a scoped EVM frame model. Parent
+/-- Run call-family instructions under a scoped EVM frame model. Parent
     address = 0xc1, child = 0xc3, third account = 0xc4. The prestate has
     zero storage and starts cold by default. The optional context controls
-    the entry frame's read-only flag, opcode profile, call depth and whether
-    its address is initially warm. -/
+    the entry frame's read-only flag, opcode profile, depth, address warmth,
+    caller address and transaction origin. -/
 private def callOpcodeMain (args : List String) (observeLogs : Bool)
     (acceptance : Option Keccak.Acceptance) : IO UInt32 := do
   let basic := match args with
     | [p, c, g, f] => [p, c, g, f, "0", "0", "0"]
     | otherwise => otherwise
   let expanded := match basic.length with
-    | 7 => basic ++ ["0", "shanghaiPlus", "0", "", "0"]
-    | 10 => basic ++ ["", "0"]
-    | 11 => basic ++ ["0"]
+    | 7 => basic ++ ["0", "shanghaiPlus", "0", "", "0", "0", "0"]
+    | 10 => basic ++ ["", "0", "0", "0"]
+    | 11 => basic ++ ["0", "0", "0"]
+    | 12 => basic ++ ["0", "0"]
+    | 13 => basic ++ ["0"]
     | _ => basic
   match expanded with
   | [parentHex, childHex, gasStr, fuelStr, parentBalanceStr, childBalanceStr, childNonceStr,
-     readOnlyStr, profileStr, depthStr, grandchildHex, prewarmParentStr] =>
+     readOnlyStr, profileStr, depthStr, grandchildHex, prewarmParentStr, entryCallerStr, txOriginStr] =>
     match parseBytecode parentHex, parseBytecode childHex, parseBytecode grandchildHex,
       gasStr.toNat?, fuelStr.toNat?, parentBalanceStr.toNat?, childBalanceStr.toNat?,
       childNonceStr.toNat?, readOnlyStr.toNat?, parseProfile profileStr, depthStr.toNat?,
-      prewarmParentStr.toNat? with
+      prewarmParentStr.toNat?, entryCallerStr.toNat?, txOriginStr.toNat? with
     | .ok parentCode, .ok childCode, .ok grandchildCode, some gas, some fuel,
         some parentBalance, some childBalance, some childNonce, some readOnly, some profile,
-        some depth, some prewarmParent =>
+        some depth, some prewarmParent, some entryCaller, some txOrigin =>
       if parentBalance ≥ modulus || childBalance ≥ modulus || childNonce ≥ 2 ^ 64 then
         IO.println "{\"status\":\"inputError\",\"reason\":\"account-values-out-of-range\"}"
         return 2
-      if readOnly > 1 || depth > CallOpcode.maxDepth || prewarmParent > 1 then
+      if readOnly > 1 || depth > CallOpcode.maxDepth || prewarmParent > 1 ||
+          entryCaller ≥ World.addressBound || txOrigin ≥ World.addressBound then
         IO.println "{\"status\":\"inputError\",\"reason\":\"call-context-out-of-range\"}"
         return 2
       let parentAddress : Nat := 0xc1
@@ -612,7 +615,7 @@ private def callOpcodeMain (args : List String) (observeLogs : Bool)
         byteViewFieldsJSON "parentMemory" (ByteView.ofMemory s.memory 0 (32 * s.memory.words)) ++
         byteViewFieldsJSON "returnData" s.returnData ++
         byteViewFieldsJSON "returnBytes" s.outputData ++ "}"
-      let initial := World.frameInput world parentAddress gas (readOnly == 1) profile
+      let initial := World.frameInput world parentAddress gas (readOnly == 1) profile txOrigin entryCaller
       match CallOpcode.settle world initial (CallOpcode.executeAtDepth fuel world parentAddress depth initial) with
       | .stopped final st =>
         IO.println (appendObservations (serialize "stopped" final st) final.logsRev observeLogs acceptance)
@@ -628,11 +631,11 @@ private def callOpcodeMain (args : List String) (observeLogs : Bool)
         let json := "{\"status\":\"indeterminate\",\"reason\":\"" ++ errorCode reason ++ "\"}"
         IO.println (appendObservations json [] observeLogs acceptance)
       return 0
-    | _, _, _, _, _, _, _, _, _, _, _, _ =>
+    | _, _, _, _, _, _, _, _, _, _, _, _, _, _ =>
       IO.println "{\"status\":\"inputError\",\"reason\":\"bad CALL bytecode, gas or account fields\"}"
       return 2
   | _ =>
-    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE [READ_ONLY PROFILE DEPTH [GRANDCHILD_HEX [PREWARM_PARENT]]]]\"}"
+    IO.println "{\"status\":\"inputError\",\"reason\":\"expected PARENT_HEX CHILD_HEX GAS FUEL [PARENT_BALANCE CHILD_BALANCE CHILD_NONCE [READ_ONLY PROFILE DEPTH [GRANDCHILD_HEX [PREWARM_PARENT [ENTRY_CALLER [TX_ORIGIN]]]]]]\"}"
     return 2
 
 /-- Fork-scoped pre-EIP-155 Frontier account transfer. The host supplies

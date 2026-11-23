@@ -35,12 +35,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==172 and x["files"]==101,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==184 and x["files"]==103,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==172 and x["sourceFiles"]==20,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==184 and x["sourceFiles"]==20,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -180,13 +180,13 @@ jobs:
         run: |
           mkdir -p .lake/differential
           node --check scripts/differential/value-call.mjs
-          node scripts/differential/value-call.mjs | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
+          node scripts/differential/value-call.mjs .lake/build/bin/evm-subset | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
       - name: Compare actual CALLVALUE SELFBALANCE ADDRESS CALLER on 160 real child programs
         working-directory: formal/lean4/evm-cleanroom
         run: |
           mkdir -p .lake/differential
           node --check scripts/differential/call-context.mjs
-          node scripts/differential/call-context.mjs | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==160 and x["passed"]==160 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
+          node scripts/differential/call-context.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==160 and x["passed"]==160 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
       - name: Differentially verify GASPRICE and post-Merge PREVRANDAO with EthereumJS Shanghai
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -245,6 +245,29 @@ jobs:
           export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
           node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==124 and g["mismatches"]==0 and g["zeroGasExcluded"]==0,g'
           node scripts/differential/call-data.mjs | tee .lake/differential/call-data-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==112 and g["mismatches"]==0 and g["excluded"]=={"staticEntry":5,"osaka":1,"nonzeroDepth":3,"coldParent":1,"zeroGas":0},g'
+      - name: Compare CALLCODE, DELEGATECALL and STATICCALL against EthereumJS and pinned Geth
+        timeout-minutes: 3
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/call-family.mjs | tee .lake/differential/call-family.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          e, g, i = x["ethereumJS"], x["geth"], x["inventory"]
+          assert e["compared"] == e["matched"] == i["execution"] == 213 and e["mismatches"] == e["errors"] == 0, e
+          assert g["compared"] == g["matched"] == g["eligible"] == g["crossOracleMatched"] == 194 and g["mismatches"] == g["errors"] == 0, g
+          assert g["excluded"] == {"staticEntry": 3, "osaka": 1, "nonzeroDepth": 9, "coldParent": 3, "zeroGas": 3}, g
+          assert len(x["gasBoundaryGroups"]) == 10
+          assert i["categories"]["overhead"]["ethereumJS"]["matched"] == i["categories"]["cap"]["ethereumJS"]["matched"] == 30
+          assert i["boundaries"] == len(x["boundaries"]) == 9
+          assert sum(b["reason"] == "unsupportedFork" for b in x["boundaries"]) == 6
+          assert sum(b["reason"] == "stepLimit" for b in x["boundaries"]) == 3
+          assert len(x["parserChecks"]) == 8 and sum(p["exitCode"] == 2 for p in x["parserChecks"]) == 4
+          assert x["negativeControls"] == dict.fromkeys(["gas", "storageOwner", "context", "returnBytes"], True) and not x["failures"], x["failures"][:3]'
       - name: Compare self-CALL and child context with a separate precompile boundary check
         shell: bash
         working-directory: formal/lean4
@@ -272,7 +295,7 @@ jobs:
           # The fixture corpus itself is versioned evidence. Changes in bytes
           # require an explicit reviewed update to this committed SHA-256.
           printf '610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb  .lake/differential/corpus.jsonl\n' | sha256sum --check
-          node scripts/differential/run.mjs --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
+          node scripts/differential/run.mjs --lean-exe .lake/build/bin/evm-subset --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
       - name: Verify comparator detects deliberately false expectations
         working-directory: formal/lean4/evm-cleanroom
         run: |

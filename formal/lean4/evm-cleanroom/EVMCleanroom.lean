@@ -22,6 +22,7 @@ import EVMCleanroom.CallTransaction
 import EVMCleanroom.CallTransactionProofs
 import EVMCleanroom.CallContextTests
 import EVMCleanroom.CallBoundaryTests
+import EVMCleanroom.CallFamilyTests
 import EVMCleanroom.EELSBridge
 import EVMCleanroom.TxAccounting
 import EVMCleanroom.PragueEnvelope

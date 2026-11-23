@@ -3,7 +3,7 @@ import EVMCleanroom.ValueCall
 import EVMCleanroom.Proofs
 
 /-!
-# World-aware execution of EVM CALL (0xf1)
+# World-aware execution of the EVM call family
 
 CALL prices both memory windows before forwarding gas. A child reads its
 input from the suspended caller's memory and executes through the same
@@ -14,6 +14,8 @@ Each caller journals its account before entering its child. The target
 address is warmed in that caller's scope, before the child checkpoint and
 before value transfer. A child failure restores the checkpoint, including
 successful descendant effects. The top-level checkpoint has the same boundary.
+CALLCODE and DELEGATECALL use the target's code with the caller's account
+journal. STATICCALL uses the target's account journal in a read-only child.
 
 An explicit continuation stack bounds nested execution by Ethereum's depth
 limit. Simulation fuel counts dispatched instructions across all frames.
@@ -226,6 +228,101 @@ def beginCall (active : ActiveFrame) : Except Error CallEntry :=
               .entered ⟨childWorld, target, active.depth + 1, child⟩ continuation
   | _ => .error .stackUnderflow
 
+/-- The call opcodes that enter a child without transferring value. -/
+inductive CallVariant where
+  | callCode
+  | delegateCall
+  | staticCall
+  deriving DecidableEq
+
+def CallVariant.opcode : CallVariant → Nat
+  | .callCode => 0xf2
+  | .delegateCall => 0xf4
+  | .staticCall => 0xfa
+
+structure VariantOperands where
+  requestedGas : Nat
+  codeAddress : Nat
+  stackValue : Nat
+  ranges : Windows
+  rest : List Word
+
+private def decodeVariantWindows (requested target : Word) (value : Nat) :
+    List Word → Option VariantOperands
+  | inputOffset :: inputSize :: outputOffset :: outputSize :: rest =>
+    some ⟨requested.val, target.val % addressBound, value,
+      ⟨inputOffset.val, inputSize.val, outputOffset.val, outputSize.val⟩, rest⟩
+  | _ => none
+
+/-- Only CALLCODE consumes a value operand. DELEGATECALL's inherited
+    value is context for the child, with no gas surcharge or funds check. -/
+def decodeVariant (kind : CallVariant) (stack : List Word) : Option VariantOperands :=
+  match kind with
+  | .callCode =>
+    match stack with
+    | requested :: target :: value :: rest => decodeVariantWindows requested target value.val rest
+    | _ => none
+  | .delegateCall | .staticCall =>
+    match stack with
+    | requested :: target :: rest => decodeVariantWindows requested target 0 rest
+    | _ => none
+
+/-- Report an uncovered code account, or an uncovered execution account
+    for variants that execute in the caller's account. -/
+private def missingVariantAccount (active : ActiveFrame) (kind : CallVariant)
+    (codeAddress : Nat) : Option Nat :=
+  if !active.world.hasAccount codeAddress then some codeAddress
+  else if kind ≠ .staticCall ∧ !active.world.hasAccount active.address then some active.address
+  else none
+
+private def variantFrame (active : ActiveFrame) (kind : CallVariant)
+    (args : VariantOperands) (k : Continuation) : ActiveFrame :=
+  let parent := active.state
+  let address := if kind = .staticCall then args.codeAddress else active.address
+  let readOnly := parent.readOnly || decide (kind = .staticCall)
+  let caller := if kind = .delegateCall then parent.callerAddress else active.address
+  let value := match kind with
+    | .callCode => args.stackValue
+    | .delegateCall => parent.callValue
+    | .staticCall => 0
+  let child := { frameInput k.checkpoint address k.budget.childGas readOnly parent.profile parent.txOrigin caller with
+    code := (k.checkpoint.accounts args.codeAddress).code
+    callData := ByteView.ofMemory k.parent.memory args.ranges.inputOffset args.ranges.inputSize
+    callValue := value }
+  ⟨k.checkpoint, address, active.depth + 1, child⟩
+
+private def prepareVariant (active : ActiveFrame) (kind : CallVariant)
+    (args : VariantOperands) (budget : Budget) : Except Error CallEntry :=
+  let parent := active.state
+  let checkpoint := WorldCall.warmTarget (commitFrame active.world active.address parent) args.codeAddress
+  let memory := parent.memory.expand args.ranges.words
+  let continuation : Continuation :=
+    ⟨active.address, active.depth, { parent with memory, returnData := {} },
+      args.rest, checkpoint, budget, args.ranges⟩
+  if active.depth ≥ maxDepth ∨
+      (args.stackValue ≠ 0 ∧ args.stackValue > (checkpoint.accounts active.address).balance) then
+    .ok (.failed continuation)
+  else if WorldCall.unsupportedPrecompile parent.profile args.codeAddress then .error .unsupportedFork
+  else .ok (.entered (variantFrame active kind args continuation) continuation)
+
+/-- CALLCODE, DELEGATECALL and STATICCALL share the CALL continuation.
+    CALLCODE's explicit value incurs the surcharge and stipend even in a
+    read-only parent. Its balance check uses the executing account and it
+    never incurs the new-account surcharge. -/
+def beginVariant (active : ActiveFrame) (kind : CallVariant) : Except Error CallEntry :=
+  if active.state.profile = .preShanghai then .error .unsupportedFork
+  else
+    match decodeVariant kind active.state.stack.items with
+    | none => .error .stackUnderflow
+    | some args =>
+      match missingVariantAccount active kind args.codeAddress with
+      | some address => .error (.incompleteState address none)
+      | none =>
+        match schedule active.state args.ranges args.requestedGas args.stackValue
+            (active.world.warmAddresses args.codeAddress) true with
+        | .error e => .error e
+        | .ok budget => prepareVariant active kind args budget
+
 /-- The caller owns the entire last-child buffer, and only its fitting
     prefix replaces bytes in the already expanded output window. -/
 def applyOutput (parent : State) (ranges : Windows) (data : ByteView) : State :=
@@ -265,6 +362,11 @@ private def afterCall (k : Continuation) : CallStep → Transition
   | .exceptional e => .terminal (.exceptional e)
   | .indeterminate e => .terminal (.indeterminate e)
 
+private def dispatchCall : Except Error CallEntry → Transition
+  | .error e => .terminal (stepError e)
+  | .ok (.entered child k) => .enter child k
+  | .ok (.failed k) => afterCall k (resumeFailedCall k)
+
 /-- The only storage-reading opcodes admitted by Core use the top word as key. -/
 private def missingStorage (active : ActiveFrame) (opcode : Nat) : Option Nat :=
   match active.world.witnessed with
@@ -285,10 +387,13 @@ private def dispatch (active : ActiveFrame) : Transition :=
   else
     let opcode := byteAt s s.pc
     if opcode == 0xf1 then
-      match beginCall active with
-      | .error e => .terminal (stepError e)
-      | .ok (.entered child k) => .enter child k
-      | .ok (.failed k) => afterCall k (resumeFailedCall k)
+      dispatchCall (beginCall active)
+    else if opcode == 0xf2 then
+      dispatchCall (beginVariant active .callCode)
+    else if opcode == 0xf4 then
+      dispatchCall (beginVariant active .delegateCall)
+    else if opcode == 0xfa then
+      dispatchCall (beginVariant active .staticCall)
     else if opcode == 0xf3 || opcode == 0xfd then
       match Frame.haltWithData s with
       | .error e => .terminal (stepError e)
@@ -321,7 +426,7 @@ private def executeLoop : Nat → ActiveFrame → List Continuation → RawOutco
         match resumeChild k raw with
         | .committed world s => executeLoop fuel ⟨world, k.address, k.depth, s⟩ older
         | .indeterminate e => .indeterminate e
-        -- A valid continuation removed seven operands, and only restores
+        -- A valid continuation removed at least six operands and only restores
         -- gas within its budget. Reject a malformed one without applying it.
         | .exceptional e => .indeterminate e
 
@@ -329,7 +434,7 @@ private def executeLoop : Nat → ActiveFrame → List Continuation → RawOutco
 def executeAtDepth (fuel : Nat) (world : TxWorld) (address depth : Nat) (s : State) : RawOutcome :=
   executeLoop fuel ⟨world, address, depth, s⟩ []
 
-/-- Execute a frame and all reached CALLs using their shared world journal. -/
+/-- Execute a frame and all reached call-family opcodes using their shared world journal. -/
 def execute (fuel : Nat) (world : TxWorld) (address : Nat) (s : State) : RawOutcome :=
   executeAtDepth fuel world address 0 s
 
@@ -539,6 +644,226 @@ theorem beginCall_missing_account (active : ActiveFrame) (request target value i
     beginCall active = .error (.incompleteState (target.val % addressBound) none) := by
   simp [beginCall, hStack, hMissing]
 
+/-- Kind: projection.
+    Says: completing the common window decoder preserves the supplied value.
+    Does not say: the opcode obtains that value from the stack. -/
+private theorem decodeVariantWindows_stackValue (requested target : Word) (value : Nat)
+    (rest : List Word) (args : VariantOperands)
+    (h : decodeVariantWindows requested target value rest = some args) : args.stackValue = value := by
+  unfold decodeVariantWindows at h
+  split at h
+  · cases h
+    rfl
+  · cases h
+
+/-- Kind: correspondence.
+    Says: the decoder supplies zero to the value-pricing and funds checks
+    for DELEGATECALL and STATICCALL, independent of the incoming message value.
+    Does not say: DELEGATECALL executes with a zero CALLVALUE. -/
+theorem decodeVariant_zero_stackValue (kind : CallVariant) (stack : List Word) (args : VariantOperands)
+    (hKind : kind ≠ .callCode) (h : decodeVariant kind stack = some args) : args.stackValue = 0 := by
+  cases kind with
+  | callCode => exact (hKind rfl).elim
+  | delegateCall | staticCall =>
+    simp only [decodeVariant] at h
+    split at h
+    · exact decodeVariantWindows_stackValue _ _ _ _ _ h
+    · cases h
+
+/-- Kind: correspondence.
+    Says: an entered child always has operands decoded from the actual
+    caller stack for its opcode.
+    Does not say: decoded operands alone suffice to enter the child. -/
+theorem beginVariant_entered_operands (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (h : beginVariant active kind = .ok (.entered child k)) :
+    ∃ args, decodeVariant kind active.state.stack.items = some args := by
+  unfold beginVariant at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    next args hDecode => exact ⟨args, hDecode⟩
+
+/-- Kind: correspondence.
+    Says: entry is reached through decoded operands, an affordable budget,
+    a committed and warmed checkpoint, and the permitted depth branch.
+    Does not say: gas or depth suffice for subsequent child instructions. -/
+private theorem beginVariant_entered_setup (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    ∃ budget, schedule active.state args.ranges args.requestedGas args.stackValue
+      (active.world.warmAddresses args.codeAddress) true = .ok budget ∧
+    k = ⟨active.address, active.depth,
+      { active.state with memory := active.state.memory.expand args.ranges.words, returnData := {} },
+      args.rest, WorldCall.warmTarget (commitFrame active.world active.address active.state) args.codeAddress,
+      budget, args.ranges⟩ ∧
+    child = variantFrame active kind args k ∧ active.depth < maxDepth := by
+  simp only [beginVariant, hDecode] at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · split at h
+      · cases h
+      next budget hBudget =>
+        unfold prepareVariant at h
+        dsimp only at h
+        split at h
+        · cases h
+        next hDepth =>
+          split at h
+          · cases h
+          · cases h
+            exact ⟨budget, hBudget, rfl, rfl, Nat.lt_of_not_ge (fun hMax => hDepth (.inl hMax))⟩
+
+/-- Kind: correspondence.
+    Says: each entered child executes the decoded target's code, while
+    its ADDRESS and execution account follow the selected opcode.
+    Does not say: the target's instructions all have semantics in this slice. -/
+theorem beginVariant_entered_code (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    child.state.code = (active.world.accounts args.codeAddress).code ∧
+    child.address = (if kind = .staticCall then args.codeAddress else active.address) ∧
+    child.state.currentAddress = child.address := by
+  obtain ⟨_, _, hK, hChild, _⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  rw [hChild]
+  refine ⟨?_, rfl, rfl⟩
+  rw [hK]
+  change ((WorldCall.warmTarget (commitFrame active.world active.address active.state)
+    args.codeAddress).accounts args.codeAddress).code = _
+  unfold WorldCall.warmTarget
+  split <;> by_cases hAddress : args.codeAddress = active.address <;> simp [commitFrame, hAddress]
+
+/-- Kind: projection.
+    Says: CALLCODE uses the explicit value, DELEGATECALL inherits the caller
+    and value, and STATICCALL forces a read-only child with zero value.
+    The original transaction origin and opcode profile are retained.
+    Does not say: the caller or origin was authenticated. -/
+theorem beginVariant_entered_context (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    child.state.callerAddress = (if kind = .delegateCall then active.state.callerAddress else active.address) ∧
+    child.state.callValue = (match kind with
+      | .callCode => args.stackValue
+      | .delegateCall => active.state.callValue
+      | .staticCall => 0) ∧
+    child.state.readOnly = (active.state.readOnly || decide (kind = .staticCall)) ∧
+    child.state.txOrigin = active.state.txOrigin ∧ child.state.profile = active.state.profile := by
+  obtain ⟨_, _, _, hChild, _⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  subst child
+  cases kind <;> exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Kind: projection.
+    Says: the child uses the exact warmed checkpoint and its own execution
+    account's storage, warmth and balance. Original slots retain the
+    transaction-entry values, and block number and chain ID come from the world.
+    Does not say: the world has authenticated account data or headers. -/
+theorem beginVariant_entered_journal (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    child.world = k.checkpoint ∧
+    k.checkpoint = WorldCall.warmTarget (commitFrame active.world active.address active.state) args.codeAddress ∧
+    child.state.storage.current = (k.checkpoint.accounts child.address).storage ∧
+    child.state.storage.warm = k.checkpoint.warmSlots child.address ∧
+    child.state.storage.original = active.world.original child.address ∧
+    child.state.selfBalance = (k.checkpoint.accounts child.address).balance ∧
+    child.state.blockNumber = active.world.blockNumber ∧ child.state.chainId = active.world.chainId := by
+  obtain ⟨_, _, hK, hChild, _⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  have hCheckpoint := congrArg Continuation.checkpoint hK
+  rw [hChild]
+  refine ⟨rfl, hCheckpoint, rfl, rfl, ?_, rfl, ?_, ?_⟩
+  all_goals
+    rw [hK]
+    simp only [variantFrame, frameInput]
+    unfold WorldCall.warmTarget
+    split <;> rfl
+
+/-- Kind: invariant.
+    Says: entry for every new variant preserves the balance of every
+    account, including CALLCODE's execution and code accounts.
+    Does not say: descendants cannot transfer value through CALL. -/
+theorem beginVariant_entered_no_transfer (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands) (address : Nat)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    (child.world.accounts address).balance = (active.world.accounts address).balance := by
+  obtain ⟨hWorld, hCheckpoint, _⟩ := beginVariant_entered_journal active child kind k args hDecode h
+  rw [hWorld, hCheckpoint]
+  unfold WorldCall.warmTarget
+  split <;> by_cases hAddress : address = active.address <;> simp [commitFrame, hAddress]
+
+/-- Kind: invariant.
+    Says: a child increases its parent's depth by one, within the depth
+    limit, and the continuation retains the parent's depth.
+    Does not say: how many dispatch units remain in the simulation. -/
+theorem beginVariant_entered_depth (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    child.depth = active.depth + 1 ∧ child.depth ≤ maxDepth ∧ k.depth = active.depth := by
+  obtain ⟨_, _, hK, hChild, hDepth⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  rw [hChild, hK]
+  exact ⟨rfl, Nat.succ_le_of_lt hDepth, rfl⟩
+
+/-- Kind: invariant.
+    Says: an entered variant suspends the caller with expanded memory and
+    an output window covered by that allocation, priced through CALL's schedule.
+    Does not say: how much of the window a subsequent child writes. -/
+theorem beginVariant_entered_output_paid (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    k.ranges = args.ranges ∧ k.parent.memory = active.state.memory.expand args.ranges.words ∧
+    MemoryGas.requestedWords k.ranges.outputOffset k.ranges.outputSize ≤ k.parent.memory.words ∧
+    schedule active.state k.ranges args.requestedGas args.stackValue
+      (active.world.warmAddresses args.codeAddress) true = .ok k.budget := by
+  obtain ⟨_, hBudget, hK, _, _⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  rw [hK]
+  exact ⟨rfl, rfl, Nat.le_trans (Nat.le_max_right _ _) (Nat.le_max_right _ _), hBudget⟩
+
+/-- Kind: correspondence.
+    Says: every byte of an entered child's input is read from the matching
+    position in the suspended caller's expanded memory.
+    Does not say: the child reads every byte. -/
+theorem beginVariant_entered_input_byte (active child : ActiveFrame) (kind : CallVariant)
+    (k : Continuation) (args : VariantOperands) (index : Nat) (hIndex : index < args.ranges.inputSize)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (h : beginVariant active kind = .ok (.entered child k)) :
+    child.state.callData.readByte index = (active.state.memory.expand args.ranges.words).readByte
+      (args.ranges.inputOffset + index) := by
+  obtain ⟨_, _, hK, hChild, _⟩ := beginVariant_entered_setup active child kind k args hDecode h
+  rw [hChild, hK]
+  simp [variantFrame, ByteView.ofMemory, ByteView.readByte, hIndex]
+
+/-- Kind: boundary.
+    Says: a missing code-account witness is reported at the decoded
+    address, including for code executed in a different account.
+    Does not say: supplying the witness suffices to enter a child. -/
+theorem beginVariant_missing_code (active : ActiveFrame) (kind : CallVariant) (args : VariantOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (hMissing : active.world.hasAccount args.codeAddress = false) :
+    beginVariant active kind = .error (.incompleteState args.codeAddress none) := by
+  simp [beginVariant, hProfile, hDecode, missingVariantAccount, hMissing]
+
+/-- Kind: boundary.
+    Says: inherited execution context requires coverage of the executing
+    account, even when the code account is covered.
+    Does not say: the witness covers every accessed storage slot. -/
+theorem beginVariant_missing_execution_account (active : ActiveFrame) (kind : CallVariant)
+    (args : VariantOperands) (hKind : kind ≠ .staticCall)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (hCode : active.world.hasAccount args.codeAddress = true)
+    (hMissing : active.world.hasAccount active.address = false) :
+    beginVariant active kind = .error (.incompleteState active.address none) := by
+  simp [beginVariant, hProfile, hDecode, missingVariantAccount, hCode, hKind, hMissing]
+
 /-- Kind: correspondence.
     Says: once 0xf1 enters a child, the next dispatch is the same world-aware
     interpreter using that child and the suspended caller on its stack.
@@ -549,7 +874,37 @@ private theorem executeLoop_enters_child (fuel : Nat) (active child : ActiveFram
     (hEntry : beginCall active = .ok (.entered child k)) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  simp [dispatch, hRunning, hOpcode, hEntry]
+  simp [dispatch, dispatchCall, hRunning, hOpcode, hEntry]
+
+/-- Kind: correspondence.
+    Says: all three new opcode bytes enter the same continuation loop as CALL.
+    Does not say: the supplied child is guaranteed to complete. -/
+private theorem executeLoop_enters_variant (fuel : Nat) (active child : ActiveFrame)
+    (callers : List Continuation) (k : Continuation) (kind : CallVariant)
+    (hRunning : active.state.halted = false)
+    (hOpcode : byteAt active.state active.state.pc = kind.opcode)
+    (hEntry : beginVariant active kind = .ok (.entered child k)) :
+    executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
+  rw [executeLoop]
+  cases kind <;> simp [dispatch, dispatchCall, CallVariant.opcode, hRunning, hOpcode, hEntry]
+
+/-- Kind: boundary.
+    Says: the public dispatcher propagates missing code coverage as an
+    indeterminate result, without executing an empty child or returning success.
+    Does not say: how the account witness was acquired. -/
+theorem execute_missing_variant_code (fuel : Nat) (active : ActiveFrame) (kind : CallVariant)
+    (args : VariantOperands) (hRunning : active.state.halted = false)
+    (hOpcode : byteAt active.state active.state.pc = kind.opcode)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeVariant kind active.state.stack.items = some args)
+    (hMissing : active.world.hasAccount args.codeAddress = false) :
+    executeAtDepth (fuel + 1) active.world active.address active.depth active.state =
+      .indeterminate (.incompleteState args.codeAddress none) := by
+  have hEntry := beginVariant_missing_code active kind args hProfile hDecode hMissing
+  rcases active with ⟨world, address, depth, state⟩
+  change state.halted = false at hRunning
+  rw [executeAtDepth, executeLoop]
+  cases kind <;> simp [dispatch, dispatchCall, stepError, CallVariant.opcode, hRunning, hOpcode, hEntry]
 
 /-- Kind: correspondence.
     Says: the dispatcher continues a caller using the world and state
@@ -577,7 +932,22 @@ theorem executeAtDepth_no_fuel (world : TxWorld) (address depth : Nat) (s : Stat
 #print axioms execute_missing_sload
 #print axioms execute_missing_sstore
 #print axioms beginCall_missing_account
+#print axioms decodeVariantWindows_stackValue
+#print axioms decodeVariant_zero_stackValue
+#print axioms beginVariant_entered_operands
+#print axioms beginVariant_entered_setup
+#print axioms beginVariant_entered_code
+#print axioms beginVariant_entered_context
+#print axioms beginVariant_entered_journal
+#print axioms beginVariant_entered_no_transfer
+#print axioms beginVariant_entered_depth
+#print axioms beginVariant_entered_output_paid
+#print axioms beginVariant_entered_input_byte
+#print axioms beginVariant_missing_code
+#print axioms beginVariant_missing_execution_account
 #print axioms executeLoop_enters_child
+#print axioms executeLoop_enters_variant
+#print axioms execute_missing_variant_code
 #print axioms executeLoop_resumes_caller
 #print axioms executeAtDepth_no_fuel
 
