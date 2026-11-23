@@ -1,0 +1,73 @@
+name: Independent mainnet London header-pair admission
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-london-chain.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  header-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: false
+          axiom-audit: false
+      - name: Build exact native Lean target
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
+        run: |
+          ulimit -v 8388608
+          lake -f lakefile-london-chain.toml build evm-header-chain
+      - name: Audit actual new theorem reports and source pins
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
+        run: |
+          set -o pipefail
+          ulimit -v 8388608
+          lake -f lakefile-london-chain.toml env lean EVMCleanroom/HeaderChain.lean | tee /tmp/chain-axioms.txt
+          python3 - <<'PY'
+          import json, re, subprocess
+          from pathlib import Path
+          expected = {"activation_iff","bounds_refused","earlier_refused","check_sound","above_target_increment"}
+          allowed = {"propext","Classical.choice","Quot.sound"}
+          reports = {}
+          for line in Path("/tmp/chain-axioms.txt").read_text().splitlines():
+              m = re.match(r"'EVMCleanroom\.HeaderChain\.(\w+)' (?:depends on axioms: \[(.*?)\]|does not depend on any axioms)", line)
+              if m:
+                  assert m[1] not in reports, line
+                  reports[m[1]] = set(filter(None, (m[2] or "").split(", ")))
+          assert set(reports) == expected, reports
+          assert all(v <= allowed for v in reports.values()), reports
+          paths = ["EVMCleanroom/HeaderFees.lean","EVMCleanroom/HeaderChain.lean","EVMCleanroom/HeaderChainCLI.lean","lakefile-london-chain.toml","scripts/check-london-chain.py"]
+          pins = {p: subprocess.check_output(["git","hash-object",p],text=True).strip() for p in paths}
+          assert pins["EVMCleanroom/HeaderFees.lean"] == "f905369b16dfc9e457f2a1417ff7225df84430c5"
+          for p in paths:
+              assert pins[p] == subprocess.check_output(["git","rev-parse","HEAD:formal/lean4/evm-cleanroom/"+p],text=True).strip()
+          assert json.loads(Path("lake-manifest.json").read_text())["packages"] == []
+          data = {"tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),"sources":pins,"actualAxioms":{k:sorted(v) for k,v in reports.items()}}
+          Path("/tmp/chain-claims.json").write_text(json.dumps(data,indent=2))
+          print(json.dumps(data))
+          PY
+      - name: Independent native header-pair differential and negative controls
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -o pipefail
+          python3 scripts/check-london-chain.py .lake/build/bin/evm-header-chain | tee /tmp/chain-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: london-chain-evidence
+          path: |
+            /tmp/chain-axioms.txt
+            /tmp/chain-claims.json
+            /tmp/chain-results.json
