@@ -6,9 +6,9 @@ previously removed any way to use the SVG's own absolute dimensions.
 
 Read the SVG's natural lengths through the existing CSS tokenizer and
 absolute unit conversion. Use those dimensions in the same calculation for
-inline and block SVG. When both natural dimensions are positive, they
-supply the intrinsic ratio. Otherwise a positive viewBox can supply it.
-An author-specified pair of CSS dimensions still takes precedence. A zero
+inline and block SVG. A positive viewBox supplies the ratio for an auto
+CSS dimension. Two positive natural dimensions supply it when there is
+no usable viewBox. A pair of definite CSS dimensions supplies the box. A zero
 viewport dimension disables content drawing while keeping the outer layout
 box and its borders.
 

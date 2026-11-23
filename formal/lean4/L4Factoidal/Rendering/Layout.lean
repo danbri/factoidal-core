@@ -164,8 +164,9 @@ private def svgNaturalLength (source : String) : Option Float := do
   if size.isFinite then some size else none
 
 /-- Replaced SVG dimensions share the same calculation in inline and block
-flow. Positive natural dimensions or a viewBox supply the intrinsic ratio when a
-dimension is auto. The ratio-only case uses the available containing width.
+flow. A positive viewBox supplies the ratio for an auto CSS dimension.
+Positive natural dimensions give a ratio when no viewBox supplies one.
+The ratio-only case uses the available containing width.
 Presentation lengths participate in the CSS cascade before this calculation. -/
 def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except String (Float × Float) := do
   let width := CSS.resolve available style.width
@@ -179,16 +180,16 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
   let naturalWidth := svgNaturalLength (CSS.attrValue node "width")
   let naturalHeight := svgNaturalLength (CSS.attrValue node "height")
   let source := CSS.attrValue node "viewBox"
-  let mut ratio := do
-    let w ← naturalWidth
-    let h ← naturalHeight
-    if w > 0 && h > 0 then some (w,h) else none
-  if ratio.isNone && !source.isEmpty then
+  let mut ratio : Option (Float × Float) := none
+  if !source.isEmpty then
     let fields := (source.replace "," " ").splitOn " " |>.flatMap (fun s => (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " ") |>.filter (!·.isEmpty)
     let [_,_,w,h] := fields | throw "unsupported SVG intrinsic viewBox: four numbers required"
     let w ← CSS.number w
     let h ← CSS.number h
     if w > 0 && h > 0 then ratio := some (w,h)
+  if ratio.isNone then
+    if let (some w, some h) := (naturalWidth, naturalHeight) then
+      if w > 0 && h > 0 then ratio := some (w,h)
   let (width,height) := if width.isSome || height.isSome then (width,height)
     else (naturalWidth,naturalHeight)
   match width,height,ratio with
