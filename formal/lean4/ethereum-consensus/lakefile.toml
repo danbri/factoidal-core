@@ -24,3 +24,7 @@ root = "StoreMain"
 [[lean_exe]]
 name = "lmd-score"
 root = "WeightMain"
+
+[[lean_exe]]
+name = "lmd-computed-boost"
+root = "BoostMain"
