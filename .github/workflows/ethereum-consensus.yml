@@ -150,4 +150,6 @@ jobs:
             ${{ runner.temp }}/ethereum-byte-proof-build.log
             ${{ runner.temp }}/ethereum-byte-proof-dependencies.json
             ${{ runner.temp }}/ethereum-byte-proof-report.json
+            ${{ runner.temp }}/ethereum-ssz-basic-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-basic-results.json
           if-no-files-found: warn
