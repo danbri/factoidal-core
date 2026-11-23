@@ -28,3 +28,7 @@ root = "WeightMain"
 [[lean_exe]]
 name = "lmd-computed-boost"
 root = "BoostMain"
+
+[[lean_exe]]
+name = "lmd-checked-ancestry"
+root = "AncestryMain"
