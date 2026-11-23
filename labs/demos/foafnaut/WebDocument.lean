@@ -2228,7 +2228,12 @@ def svgRefusals (embedding : Rendering.Layout.Embedding) (styles : Array Renderi
   let byId := boxes.foldl (fun (a : Array (Option Rendering.Layout.Box)) b => if b.source < a.size then a.set! b.source (some b) else a)
     (Array.replicate size none)
   roots.filterMap fun id => match byId[id]?, styles[id]? with
-    | some (some b), some s => match embedding id s b.width b.height with
+    | some (some b), some s =>
+      let border := s.borderEdges
+      let width := b.width-border.left-border.right-s.padding.left-s.padding.right
+      let height := b.height-border.top-border.bottom-s.padding.top-s.padding.bottom
+      if width <= 0 || height <= 0 then none else
+      match embedding id s width height with
       | .error e => some e
       | .ok _ => none
     | _, _ => none

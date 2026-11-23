@@ -129,9 +129,43 @@ def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : C
 -- formatting contexts (`Constraints`, `Item`, `Children`, `ContentBox`).
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
+/-- SVG's natural dimensions are literal non-negative numbers or absolute lengths.
+The CSS presentation hints are cascaded separately, so an authored `auto` can
+discard a presentation hint without discarding the natural dimension. -/
+def svgNaturalPixels (source : String) : Option Rat :=
+  let pixels := match (CssValues.tokenize source).filter (· != .ws) with
+    | [.num n _] => some n
+    | [.dim n _ unit] => do
+      let (factor, canonical) ← CssValues.absFactor (CssValues.lower unit)
+      if canonical == "px" then some (n*factor) else none
+    | _ => none
+  pixels.filter (fun v => 0 ≤ v)
+
+theorem svgNaturalPixels_nonnegative (source : String) (px : Rat)
+    (h : svgNaturalPixels source = some px) : 0 ≤ px := by
+  unfold svgNaturalPixels at h
+  exact of_decide_eq_true (Option.filter_eq_some_iff.mp h).2
+
+#print axioms svgNaturalPixels_nonnegative
+
+#guard svgNaturalPixels " 1e2pX " == some 100
+#guard svgNaturalPixels "2.54cm" == some 96
+#guard svgNaturalPixels "101.6Q" == some 96
+#guard svgNaturalPixels "-0px" == some 0
+#guard (svgNaturalPixels "-1px").isNone
+#guard (svgNaturalPixels "0em").isNone
+#guard (svgNaturalPixels "100%").isNone
+#guard (svgNaturalPixels "calc(1px)").isNone
+#guard (svgNaturalPixels "1s").isNone
+
+private def svgNaturalLength (source : String) : Option Float := do
+  let px ← svgNaturalPixels source
+  let size := Float.ofNat px.num.toNat / Float.ofNat px.den
+  if size.isFinite then some size else none
+
 /-- Replaced SVG dimensions share the same calculation in inline and block
-flow. A positive viewBox supplies the intrinsic ratio when a dimension is auto.
-The ratio-only case uses the definite available containing width (CSS 2.2 10.3.2).
+flow. Positive natural dimensions or a viewBox supply the intrinsic ratio when a
+dimension is auto. The ratio-only case uses the available containing width.
 Presentation lengths participate in the CSS cascade before this calculation. -/
 def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except String (Float × Float) := do
   let width := CSS.resolve available style.width
@@ -142,19 +176,26 @@ def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except St
     | .percent _ => none
     | other => CSS.resolve 0 other
   if let (some w,some h) := (width,height) then return (max 0 w,max 0 h)
+  let naturalWidth := svgNaturalLength (CSS.attrValue node "width")
+  let naturalHeight := svgNaturalLength (CSS.attrValue node "height")
   let source := CSS.attrValue node "viewBox"
-  let mut ratio : Option (Float × Float) := none
-  if !source.isEmpty then
+  let mut ratio := do
+    let w ← naturalWidth
+    let h ← naturalHeight
+    if w > 0 && h > 0 then some (w,h) else none
+  if ratio.isNone && !source.isEmpty then
     let fields := (source.replace "," " ").splitOn " " |>.flatMap (fun s => (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " ") |>.filter (!·.isEmpty)
     let [_,_,w,h] := fields | throw "unsupported SVG intrinsic viewBox: four numbers required"
     let w ← CSS.number w
     let h ← CSS.number h
     if w > 0 && h > 0 then ratio := some (w,h)
+  let (width,height) := if width.isSome || height.isSome then (width,height)
+    else (naturalWidth,naturalHeight)
   match width,height,ratio with
   | some w,none,some (rw,rh) => return (max 0 w,max 0 (w*rh/rw))
   | none,some h,some (rw,rh) => return (max 0 (h*rw/rh),max 0 h)
   | none,none,some (rw,rh) => return (max 0 available,max 0 (available*rh/rw))
-  | _,_,_ => return (max 0 (width.getD 300),max 0 (height.getD 150))
+  | _,_,_ => return (max 0 (width.getD (naturalWidth.getD 300)),max 0 (height.getD (naturalHeight.getD 150)))
 
 
 /-- The offsets of colour stops on a gradient line `length` px long (CSS Images 3 §3.5.1):
@@ -804,8 +845,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     if n.lname == "br" then return #[.lineBreak s]
     if n.ns == some DOM.svgNS then
       let (width,height) ← svgSize n s available
-      if width <= 0 || height <= 0 then return #[]
-      let inner ← embedding id s width height
+      let inner ← if width <= 0 || height <= 0 then pure [] else embedding id s width height
       -- The SVG producer paints the root's background itself.
       let (ow,oh,nodes) := replacedBox id {s with background := none} width height
         (fun x y => [.group none ⟨1,0,0,1,x,y⟩ inner])
@@ -2637,7 +2677,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
-        let nodes ← embedding id s sw sh
+        let nodes ← if sw <= 0 || sh <= 0 then pure [] else embedding id s sw sh
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
