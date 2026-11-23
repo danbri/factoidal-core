@@ -37,6 +37,9 @@ jobs:
           lake build evm-header-fees
       - name: Audit actually printed theorem axioms and input guards
         working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
         run: |
           ulimit -v 8388608
           lake env lean EVMCleanroom/HeaderFees.lean | tee /tmp/london-header-axioms.txt
