@@ -2356,8 +2356,9 @@ def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat
     let (dw,dh) := (dw.round.toUInt32.toNat,dh.round.toUInt32.toNat)
     if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
     let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
-    found := found.insert id {id := 3*backgroundPictureBase+id, bitmap := bitmap,
-      natural := some (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)}
+    let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
+    let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
+    found := found.insert id made
   if found.isEmpty then return pictures
   return fun id => match found.get? id with
     | some p => some p
