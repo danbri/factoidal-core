@@ -293,21 +293,128 @@ agent): the colour moved 60% of the way to white, and 60% of the colour. -/
 def lighter (c : Color) : Color := ⟨c.r+(1-c.r)*0.6,c.g+(1-c.g)*0.6,c.b+(1-c.b)*0.6⟩
 def darker (c : Color) : Color := ⟨c.r*0.6,c.g*0.6,c.b*0.6⟩
 
-/-- The border of a border box at `(x,y)`, size `w` by `h`: top and bottom across the
-whole width, left and right between them. `outset` is light at the top and left and
-dark at the bottom and right; `inset` is the reverse. -/
+/-- The bands of one side of a border across its width, from the outer edge (0) to the inner
+edge (1), each with its colour (CSS Backgrounds 3 §4.2). `start` is the top or the left side.
+`outset` and `ridge` are light at the top and left, `inset` and `groove` dark; `groove` and
+`ridge` are two halves; `double` is two lines of a third each, solid below 3 px. -/
+def borderBands (st : BorderStyle) (c : Color) (start : Bool) (width : Float) : List (Float × Float × Color) :=
+  let (near,far) := if start then (lighter c,darker c) else (darker c,lighter c)
+  match st with
+  | .none => []
+  | .outset => [(0,1,near)]
+  | .inset => [(0,1,far)]
+  | .ridge => [(0,0.5,near),(0.5,1,far)]
+  | .groove => [(0,0.5,far),(0.5,1,near)]
+  | .double => if width < 3 then [(0,1,c)] else
+      let line := (width/3).round/width
+      [(0,line,c),(1-line,1,c)]
+  | _ => [(0,1,c)]
+
+private def sameBands (a b : List (Float × Float × Color)) : Bool :=
+  a.length == b.length && (a.zip b).all fun ((a0,a1,ca),(b0,b1,cb)) =>
+    a0 == b0 && a1 == b1 && ca.r == cb.r && ca.g == cb.g && ca.b == cb.b
+
+/-- Dashes or dots along one side, `length` long and `thick` wide (CSS Backgrounds 3 §4.2:
+the spacing is the user agent's): dots `thick` long with gaps of `thick`, dashes 3 x `thick`
+with equal gaps, the gaps stretched so that the side starts and ends with a mark. Each is
+`(offset, length)` along the side. -/
+def dashMarks (dotted : Bool) (length thick : Float) : Array (Float × Float) := Id.run do
+  if length <= 0 || thick <= 0 then return #[]
+  let mark := if dotted then thick else 3*thick
+  if length <= mark then return #[(0,length)]
+  let n := (((length+mark)/(2*mark)).round).toUInt64.toNat |> max 2 |> min 4096
+  let gap := (length-n.toFloat*mark)/(n.toFloat-1)
+  let mut out := #[]
+  for i in [0:n] do out := out.push (i.toFloat*(mark+gap), mark)
+  return out
+
+/-- The border of a border box at `(x,y)`, size `w` by `h`. Each side has its own style and
+colour. Where two sides meet with the same bands, the top and bottom sides take the corner,
+as rectangles; where they differ, the corner is split on its diagonal (CSS Backgrounds 3
+§4.5 leaves the join to the user agent; browsers split it), with polygons. Dotted and dashed
+sides are marks along the side, without the diagonal. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
-  if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
-  let some c := s.borderColor.resolve s.color | return #[]
-  let (near,far) := match s.borderStyle with
-    | .outset => (lighter c,darker c)
-    | .inset => (darker c,lighter c)
-    | _ => (c,c)
-  let rect := fun (c : Color) (x y w h : Float) =>
-    if w <= 0 || h <= 0 then #[] else #[Node.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
-    rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+  if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  let st := s.borderStyles
+  let pc := s.borderColors
+  let bands := fun (style : BorderStyle) (paint : BorderColor) (start : Bool) (thick : Float) =>
+    if thick <= 0 then [] else match paint.resolve s.color with
+      | some c => borderBands style c start thick
+      | none => []
+  let top := bands st.top pc.top true b.top
+  let right := bands st.right pc.right false b.right
+  let bottom := bands st.bottom pc.bottom false b.bottom
+  let left := bands st.left pc.left true b.left
+  -- a corner is split when the two sides' bands differ and both are drawn
+  let split := fun (p q : List (Float × Float × Color)) => !p.isEmpty && !q.isEmpty && !sameBands p q
+  let tl := split top left
+  let tr := split top right
+  let bl := split bottom left
+  let br := split bottom right
+  let paint := fun (c : Color) (g : Geometry) => Node.paint ⟨some id,{geometry := g,style := {fill := .solid c}}⟩
+  let quad := fun (c : Color) (p : List Point) =>
+    -- an axis-aligned quadrilateral is drawn as a rectangle (exact edges)
+    match p with
+    | [a,b',c',d] =>
+      if a.y == b'.y && c'.y == d.y && a.x == d.x && b'.x == c'.x then
+        (if b'.x > a.x && d.y > a.y then #[paint c (.rect a.x a.y (b'.x-a.x) (d.y-a.y))] else #[])
+      else #[paint c (.polygon p)]
+    | _ => #[]
+  let mut out : Array Node := #[]
+  let marks := fun (style : BorderStyle) => style == .dotted || style == .dashed
+  -- top: x runs from the left corner to the right corner
+  for (f0,f1,c) in top do
+    if marks st.top then
+      for (o,l) in dashMarks (st.top == .dotted) w b.top do
+        out := out.push (paint c (.rect (x+o) y l b.top))
+    else
+      let ol := if tl then x+f0*b.left else x
+      let il := if tl then x+f1*b.left else x
+      let or' := if tr then x+w-f0*b.right else x+w
+      let ir := if tr then x+w-f1*b.right else x+w
+      out := out ++ quad c [⟨ol,y+f0*b.top⟩,⟨or',y+f0*b.top⟩,⟨ir,y+f1*b.top⟩,⟨il,y+f1*b.top⟩]
+  for (f0,f1,c) in bottom do
+    if marks st.bottom then
+      for (o,l) in dashMarks (st.bottom == .dotted) w b.bottom do
+        out := out.push (paint c (.rect (x+o) (y+h-b.bottom) l b.bottom))
+    else
+      let ol := if bl then x+f0*b.left else x
+      let il := if bl then x+f1*b.left else x
+      let or' := if br then x+w-f0*b.right else x+w
+      let ir := if br then x+w-f1*b.right else x+w
+      out := out ++ quad c [⟨il,y+h-f1*b.bottom⟩,⟨ir,y+h-f1*b.bottom⟩,⟨or',y+h-f0*b.bottom⟩,⟨ol,y+h-f0*b.bottom⟩]
+  -- left and right: between the top and the bottom sides, or to the diagonal of a split corner
+  for (f0,f1,c) in left do
+    if marks st.left then
+      for (o,l) in dashMarks (st.left == .dotted) (h-b.top-b.bottom) b.left do
+        out := out.push (paint c (.rect x (y+b.top+o) b.left l))
+    else
+      let ot := if tl then y+f0*b.top else y+b.top
+      let it := if tl then y+f1*b.top else y+b.top
+      let ob := if bl then y+h-f0*b.bottom else y+h-b.bottom
+      let ib := if bl then y+h-f1*b.bottom else y+h-b.bottom
+      out := out ++ quad c [⟨x+f0*b.left,ot⟩,⟨x+f1*b.left,it⟩,⟨x+f1*b.left,ib⟩,⟨x+f0*b.left,ob⟩]
+  for (f0,f1,c) in right do
+    if marks st.right then
+      for (o,l) in dashMarks (st.right == .dotted) (h-b.top-b.bottom) b.right do
+        out := out.push (paint c (.rect (x+w-b.right) (y+b.top+o) b.right l))
+    else
+      let ot := if tr then y+f0*b.top else y+b.top
+      let it := if tr then y+f1*b.top else y+b.top
+      let ob := if br then y+h-f0*b.bottom else y+h-b.bottom
+      let ib := if br then y+h-f1*b.bottom else y+h-b.bottom
+      out := out ++ quad c [⟨x+w-f1*b.right,it⟩,⟨x+w-f0*b.right,ot⟩,⟨x+w-f0*b.right,ob⟩,⟨x+w-f1*b.right,ib⟩]
+  return out
+
+-- Dots and dashes start and end the side: 100 px of 2 px dots is 26 dots 3.92 px apart.
+#guard (dashMarks true 100 2).size == 26
+#guard (dashMarks true 100 2).back?.map (fun (o,l) => o+l) == some 100
+#guard (dashMarks false 10 5) == #[(0,10)]
+-- double: two lines of a third each; groove: dark outside at the top, light outside at the bottom
+#guard (borderBands .double ⟨1,0,0⟩ true 9).map (fun (a,b,_) => ((a*9).round,(b*9).round)) == [(0,3),(6,9)]
+#guard (borderBands .groove ⟨1,1,1⟩ true 4).map (fun (_,_,c) => c.r) == [0.6,1]
+#guard (borderBands .groove ⟨1,1,1⟩ false 4).map (fun (_,_,c) => c.r) == [1,0.6]
 
 /-- Background, then border, of a border box. None for a box whose mask image is not drawn
 (`Computed.masked`): unmasked, the background of an icon would be a filled box. -/
@@ -1009,7 +1116,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let span := f.hi-f.lo
     let width := if left+span > f.hi then span-(left+span-f.hi) else span
     -- most inline boxes have nothing to paint
-    let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
+    let nodes := if (s.background.isNone || reordered) && !s.hasBorder then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
                                borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
                                                                   right := if ended then s.borderWidth.right else 0}}
@@ -1683,7 +1790,7 @@ private def anonymousBox (base : Computed) : Computed :=
 /-- The style of an anonymous flex or grid item (a run of text): its container's
 inherited values, with no box edges, limits, or flex and alignment values of its own. -/
 private def anonymousItem (base : Computed) : Computed :=
-  {anonymousBox base with display := .block, borderStyle := .none, clipOverflow := false,
+  {anonymousBox base with display := .block, borderStyles := .all .none, clipOverflow := false,
                           minWidth := .auto, maxWidth := .auto, minHeight := .auto, maxHeight := .auto,
                           autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}}
 

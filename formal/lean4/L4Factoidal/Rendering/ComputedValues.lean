@@ -56,6 +56,7 @@ def display : Display → String
 
 def borderStyle : BorderStyle → String
   | .none => "none" | .solid => "solid" | .inset => "inset" | .outset => "outset"
+  | .dotted => "dotted" | .dashed => "dashed" | .double => "double" | .groove => "groove" | .ridge => "ridge"
 
 def textAlign : TextAlign → String
   | .start => "start" | .right => "right" | .center => "center" | .left => "left" | .end_ => "end"
@@ -75,7 +76,9 @@ def values (c : Computed) : List (String × String) :=
   let edges := fun (name : String) (e : Edges) (f : Float → String) =>
     [(s!"{name}-top", f e.top), (s!"{name}-right", f e.right), (s!"{name}-bottom", f e.bottom), (s!"{name}-left", f e.left)]
   let bw := c.borderEdges
-  let bc := ((c.borderColor.resolve c.color).map color).getD "rgba(0, 0, 0, 0)"
+  let bc := fun (p : BorderColor) => ((p.resolve c.color).map color).getD "rgba(0, 0, 0, 0)"
+  let bs := c.borderStyles
+  let bcs := c.borderColors
   [("display", display c.display), ("width", length c.width), ("height", length c.height)] ++
   edges "margin" c.margin px ++ edges "padding" c.padding px ++
   [("color", color c.color),
@@ -87,8 +90,10 @@ def values (c : Computed) : List (String × String) :=
    ("text-decoration-line", if c.underline then "underline" else "none"),
    ("border-top-width", px bw.top), ("border-right-width", px bw.right),
    ("border-bottom-width", px bw.bottom), ("border-left-width", px bw.left)] ++
-  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-style", borderStyle c.borderStyle)) ++
-  ["top", "right", "bottom", "left"].map (fun s => (s!"border-{s}-color", bc)) ++
+  [("border-top-style", borderStyle bs.top), ("border-right-style", borderStyle bs.right),
+   ("border-bottom-style", borderStyle bs.bottom), ("border-left-style", borderStyle bs.left),
+   ("border-top-color", bc bcs.top), ("border-right-color", bc bcs.right),
+   ("border-bottom-color", bc bcs.bottom), ("border-left-color", bc bcs.left)] ++
   [("border-spacing", if c.borderSpacingX == c.borderSpacingY then px c.borderSpacingX
       else px c.borderSpacingX ++ " " ++ px c.borderSpacingY),
    ("border-collapse", if c.borderCollapse then "collapse" else "separate"),
