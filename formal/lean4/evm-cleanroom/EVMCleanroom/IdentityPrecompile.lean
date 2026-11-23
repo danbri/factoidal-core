@@ -158,9 +158,15 @@ private def isResourceLimit (maxBytes gas : Nat) (input : Array UInt8) : Bool :=
 #guard isResourceLimit 0 100 #[0x00]
 #guard isResourceLimit 1 0 #[0x00, 0x01]
 
-#guard (executeView 0 15 (ByteView.ofArray #[])).isOk
-#guard (executeView 1 17 (ByteView.ofArray #[0xff])) == .error .outOfGas
-#guard (executeView 0 100 (ByteView.ofArray #[0xff])) == .error .resourceLimit
+#guard (match executeView 0 15 (ByteView.ofArray #[]) with
+  | .ok (_, 0) => true
+  | _ => false)
+#guard (match executeView 1 17 (ByteView.ofArray #[0xff]) with
+  | .error .outOfGas => true
+  | _ => false)
+#guard (match executeView 0 100 (ByteView.ofArray #[0xff]) with
+  | .error .resourceLimit => true
+  | _ => false)
 
 #print axioms executeView_ofArray
 #print axioms executeView_oversize
