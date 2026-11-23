@@ -1,2 +1,3 @@
 import EthereumConsensus.SSZ.GIndex
 import EthereumConsensus.ForkChoice.LatestMessage
+import EthereumConsensus.ForkChoice.VoteStore
