@@ -1,0 +1,79 @@
+{
+  "schema": "factoidal.ethereum-consensus.ssz-multiproof-claims.v1",
+  "scope": "SSZ multiproof helper index admission/position only; no cryptography or beacon-state verification",
+  "source": {
+    "commit": "5883087d81014ad306fd036f110032d179c23d99",
+    "path": "EthereumConsensus/SSZ/MultiProofHelpers.lean",
+    "git_blob_sha": "3bb33d5661020979c55ca7d188bc8af20054132d"
+  },
+  "toolchain": "leanprover/lean4:v4.33.1",
+  "normative": {
+    "repository": "ethereum/ssz-specs",
+    "commit": "4c2f08805080c6b4b12ede7bf48ad6a80229f4b1",
+    "file": "src/ssz/gindex.py",
+    "functions": [
+      "get_path_indices",
+      "get_branch_indices",
+      "_reject_related",
+      "get_helper_indices"
+    ]
+  },
+  "theorem_axioms": {
+    "EthereumConsensus.SSZ.branchIndices_path": [],
+    "EthereumConsensus.SSZ.branchIndices_length": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.helperIndices_refuses_invalid": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.helperIndices_of_admissible": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.checkedHelpers_refuses_over_claim_cap": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.checkedHelpers_refuses_over_depth_cap": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedHelpers_within_limits": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.helperIndices_empty": [],
+    "EthereumConsensus.SSZ.helperIndices_root": [],
+    "EthereumConsensus.SSZ.helperIndices_duplicate": [],
+    "EthereumConsensus.SSZ.helperIndices_nested": [],
+    "EthereumConsensus.SSZ.helperIndices_one_leaf": [],
+    "EthereumConsensus.SSZ.helperIndices_root_children": []
+  },
+  "evidence": {
+    "ci_run": "https://github.com/danbri/factoidal-core/actions/runs/45141048661",
+    "source_commit": "5883087d81014ad306fd036f110032d179c23d99",
+    "lean_fresh_build": "passed",
+    "reelaborated_theorems": 13,
+    "source_guards": 15,
+    "python_differential": {
+      "total": 2048,
+      "matched": 2048,
+      "admitted": 890,
+      "refused": 1158,
+      "valid_empty_helpers": 157,
+      "comparator_mutations_detected": 3
+    }
+  },
+  "trust_boundary": [
+    "Lean 4 kernel/compiler/runtime",
+    "GitHub Actions hosted environment for builds",
+    "Python differential oracle is a test, not a proof",
+    "Caller-supplied count and depth policy",
+    "No SHA-256 pair or concrete digest bytes in this local module"
+  ],
+  "nonclaims": [
+    "Normative executable refinement to upstream EthLib unproved",
+    "SSZ cryptographic multiproof verification not implemented here",
+    "No BeaconState typing, BLS, fork choice finality or networking claim",
+    "Upstream EthLib uses Lean 4.35.0; Factoidal uses 4.33.1",
+    "Independent human review and broad premerge unverified"
+  ]
+}
