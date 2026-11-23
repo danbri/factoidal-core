@@ -19,6 +19,10 @@ concurrency:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lean:
     runs-on: ubuntu-latest
@@ -35,12 +39,12 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==184 and x["files"]==103,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==216 and x["files"]==112,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==3,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==184 and x["sourceFiles"]==20,x'
+          python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==5,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==216 and x["sourceFiles"]==22,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -267,10 +271,34 @@ jobs:
           assert ident["gasMutationDetected"] and len(ident["rows"]) == 27, ident
           assert i["categories"]["overhead"]["ethereumJS"]["matched"] == i["categories"]["cap"]["ethereumJS"]["matched"] == 30
           assert i["boundaries"] == len(x["boundaries"]) == 9
-          assert sum(b["reason"] == "unsupportedFork" for b in x["boundaries"]) == 6
-          assert sum(b["reason"] == "stepLimit" for b in x["boundaries"]) == 3
+          assert sum(b.get("reason") == "unsupportedFork" for b in x["boundaries"]) == 3
+          assert sum(b.get("reason") == "stepLimit" for b in x["boundaries"]) == 3
+          assert sum(b.get("matched") is True and b["status"] == "stopped" for b in x["boundaries"]) == 3
           assert len(x["parserChecks"]) == 8 and sum(p["exitCode"] == 2 for p in x["parserChecks"]) == 4
           assert x["negativeControls"] == dict.fromkeys(["gas", "storageOwner", "context", "returnBytes"], True) and not x["failures"], x["failures"][:3]'
+      - name: Execute identity through all four CALL opcodes against EthereumJS and pinned Geth
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/identity-call.mjs .lake/build/bin/evm-subset \
+            | tee .lake/differential/identity-call.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          e, g = x["ethereumJS"], x["geth"]
+          assert x["cases"] == len(x["inventory"]) == e["compared"] == e["matched"] == 660, e
+          assert e["mismatches"] == e["errors"] == x["failed"] == 0 and not x["firstFailures"], x["firstFailures"]
+          assert g["compared"] == g["matched"] == g["eligible"] == 648 and g["mismatches"] == g["errors"] == 0, g
+          assert g["excluded"] == {"staticEntry": 4, "nonzeroDepth": 8}, g
+          cross = g["crossOracle"]
+          assert cross["compared"] == cross["matched"] == 648 and cross["mismatches"] == cross["errors"] == 0, cross
+          assert set(x["variants"]) == {"call", "callcode", "delegatecall", "staticcall"}, x["variants"]
+          assert x["warmthControl"]["extraColdGas"] == "2500", x["warmthControl"]
+          assert x["negativeControls"] == dict.fromkeys(["gas", "successBit", "returnData", "copiedMemory"], True), x["negativeControls"]'
       - name: Compare self-CALL and child context with a separate precompile boundary check
         shell: bash
         working-directory: formal/lean4
@@ -385,6 +413,25 @@ jobs:
             evidence/historical-1cat-shanghai-19100013.json "$PWD/.lake/build/bin/evm-call-transaction" \
             | tee .lake/eels/historical-shanghai-contract-replay.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="authenticated-shanghai-contract-replay-match" and x["fixtureSha256"]=="053b2d915c3a03ab529634ec6128df6e1e917418f355b51cb652af4e9162c78c" and x["transactionIndex"]==0 and x["authenticatedAccounts"]==3 and x["authenticatedStorageSlots"]==4 and x["gasUsed"]=="33987" and x["refundGas"]=="4800" and x["receiptStatus"]==1 and x["logCount"]==1 and x["returnBytesHex"]=="0"*63+"1" and x["keccakOptIn"] and x["ethereumJS"]["matched"] and x["geth"]["matched"] and x["roots"]["intermediateStateRoot"]=="0x4ec90276be487d2567d41039696e1bb75b3fa8cb796fc9705f5d83c606a17000" and x["roots"]["targetStorageRoot"]==x["publishedFinalTargetStorageRoot"]=="0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a" and len(x["negativeControls"])==6,x'
+      - name: Compare signed identity transactions and complete state against EthereumJS and pinned Geth
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth-replay.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/identity-transaction.mjs .lake/build/bin/evm-call-transaction \
+            | tee .lake/eels/identity-transaction.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          assert x["compared"] == x["matched"] == len(x["rows"]) == 84, x
+          assert x["nestedCases"] == 57 and x["directCases"] == 27, x
+          assert x["ethereumJS"]["matched"] == x["geth"]["matched"] == 84, x
+          assert x["failed"] == x["unsupported"] == x["localRefusals"] == x["notExecuted"] == 0 and not x["failures"], x["failures"]
+          assert x["missingWitnessRefused"], x
+          assert x["negativeControls"] == dict.fromkeys(["changedGas", "changedReceiptStatus", "changedTargetCredit", "changedOutputBytes"], True), x["negativeControls"]'
       - name: Verify the captured Ethereum mainnet SwapRouter code against its header and EIP-1186 proof
         working-directory: formal/lean4/evm-cleanroom
         run: |

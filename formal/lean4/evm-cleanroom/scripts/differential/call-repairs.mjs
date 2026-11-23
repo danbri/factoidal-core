@@ -64,6 +64,9 @@ function leanObservations() {
 async function reference(fixture) {
   const common = new Common({chain: Mainnet, hardfork: fixture.hardfork ?? Hardfork.Cancun})
   const evm = await createEVM({common})
+  // EIP-2929 requires precompiles to be warm before execution starts.
+  // The low-level message runner does not initialise the transaction access set.
+  for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   await evm.stateManager.putAccount(parent, new Account(0n, fixture.balance ?? 0n))
   await evm.stateManager.putCode(parent, hexToBytes('0x' + fixture.parentCode))
   if (fixture.childCode) {

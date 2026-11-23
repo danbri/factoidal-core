@@ -91,7 +91,8 @@ has 331 independent Shanghai EthereumJS cases.
 opcode against a fixture world. The parent and child addresses are `0xc1` and
 `0xc3`. Optional account and entry-context fields set the balances, child
 nonce, read-only flag, opcode profile and depth. The optional third runtime
-is at `0xc4`. The default fixture starts with cold addresses. The final
+is at `0xc4`. The default fixture starts with cold ordinary addresses and
+warm precompile addresses 1 through 9. The final
 optional field prewarms the parent. Run the command without arguments to
 see the positional fields.
 
@@ -104,13 +105,33 @@ copies only the bytes that fit the paid output window. The journal retains a
 successful child's changes and restores the caller's checkpoint after a child
 failure. The JSON fields `parentMemory*`, `returnData*` and `returnBytes*`
 report bounded snapshots of parent memory, the last-child buffer and the
-parent's terminal output respectively. Precompiles and unsupported
-instructions produce an indeterminate result when reached.
+parent's terminal output respectively. Identity at address `0x04` executes
+through the shared CALL-family precompile handler. Other unimplemented
+precompiles and unsupported instructions produce an indeterminate result.
 [CALL implementation](EVMCleanroom/CallOpcode.lean) ·
 [Byte copy proofs](EVMCleanroom/ByteCopyProofs.lean) ·
 [Byte-opcode differential](scripts/differential/byte-copy.mjs) ·
 [Nested CALL differential](scripts/differential/call-data.mjs) ·
 [Run evidence](../../../docs/20261122-evm-call-data-nesting.md)
+
+### Identity precompile integration
+
+The independent Lean identity executor returns the input bytes unchanged and
+charges `15 + 3 * ceil(inputBytes / 32)` gas. `CALL`, `CALLCODE`,
+`DELEGATECALL`, `STATICCALL` and the public single-CALL adapter use the same
+precompile handler. The decoded-transaction runner also accepts direct
+transactions to address `0x04`. Account code at that address is not executed.
+All paths retain their existing gas, memory, value-transfer and rollback
+rules. A local input cap returns an indeterminate result; it is not an
+Ethereum out-of-gas verdict.
+
+The selected integration tests use the existing EthereumJS and Geth clients
+as development oracles. The Lean package has no external Lake packages.
+Signed synthetic transaction tests still trust the test host for signature
+recovery, receipt encoding and state-trie encoding. They do not establish
+independent Lean signature or trie verification.
+[Integration evidence and remaining work](../../../docs/20261123-evm-identity-integration.md) ·
+[Implementation task](https://github.com/danbri/factoidal-core/issues/838)
 
 `evm-subset --pure-frame-call HEX CALLDATA_HEX GAS FUEL` starts a read-only,
 zero-value frame and checks each fetched opcode before dispatch. This lets

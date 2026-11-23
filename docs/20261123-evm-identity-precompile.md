@@ -1,5 +1,11 @@
 # Independently implemented Lean EVM identity precompile — 23 November 2026
 
+This is the historical standalone-entry evidence at the source revision
+recorded below. Subsequent CALL-family and direct-transaction integration is
+recorded in [the integration worknote](20261123-evm-identity-integration.md).
+The original counts and source pins here remain attributed to that earlier
+revision.
+
 ## Tested implementation and deliberate scope
 
 [Issue #835](https://github.com/danbri/factoidal-core/issues/835) records the model and theorem obligations before coding. [Draft PR #837](https://github.com/danbri/factoidal-core/pull/837) stacks on independent execution [draft PR #827](https://github.com/danbri/factoidal-core/pull/827), head `0b60a50eeb06db84366877cd54c8eab9ad424046`. Work is disjoint from independent consensus SSZ [#834](https://github.com/danbri/factoidal-core/issues/834).

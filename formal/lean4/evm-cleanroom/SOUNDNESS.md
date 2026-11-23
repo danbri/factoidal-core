@@ -205,8 +205,10 @@ within the limits recorded in the evidence.
    transaction context, address prewarming and gas schedules.
 3. **World and chain scope.** The functional world carries accounts, slots,
    warmth and a signed refund counter for the supported frame operations.
-   Other call variants, CREATE, precompiles, complete transaction/block
-   validation, receipts, networking and consensus remain open.
+   The CALL family and identity precompile have bounded executable paths.
+   CREATE, the other precompiles, complete transaction/block validation,
+   receipts, networking and consensus remain open under
+   https://github.com/danbri/factoidal-core/issues/725.
 4. **Compiler and deployment scope.** Guarded execution checks the bytes
    of a Solidity compiler fixture and selected provider captures. Compiler
    correctness and deployed-contract properties need separate proofs.
@@ -220,7 +222,7 @@ within the limits recorded in the evidence.
 
 ## Highest-value next proof obligations
 
-1. Establish a *separate* EELS/EthLib-compatible state-transition
+1. Establish a *separate*, independently authored EELS-compatible state-transition
    denotation, identify matching fork configurations, then prove
    `step_refines_reference` **per covered opcode**, including precise
    success and failure conditions.
@@ -231,8 +233,11 @@ within the limits recorded in the evidence.
 4. Independently check the shared opcode-width semantics and JUMPDEST
    behaviour against EELS. Local soundness and completeness have both
    been proved for all finite bytecode arrays.
-5. Extend the supported account and CALL slice to the other call variants,
-   CREATE, precompiles and fork-exact environment and gas rules.
+5. Extend the supported account and CALL slice to CREATE, the remaining
+   precompiles and fork-exact environment and gas rules. The identity
+   integration record is `docs/20261123-evm-identity-integration.md` at the
+   repository root; its tests and local implementation theorems do not
+   establish general EELS refinement.
 6. If/when optimized implementations are introduced, prove they refine
    the independent simple-step specification rather than proving only
    self-consistency of the optimized code.
@@ -242,8 +247,6 @@ within the limits recorded in the evidence.
 - EELS: https://github.com/ethereum/execution-specs
 - Official fixture source:
   https://github.com/ethereum/execution-spec-tests/blob/main/tests/static/state_tests/VMTests/vmArithmeticTest/addFiller.yml
-- Ethereum Lean library:
-  https://github.com/ethereum/EthLib
 - Yellow Paper: https://ethereum.github.io/yellowpaper/paper.pdf
 - Independent EVM/Yul semantics:
   https://github.com/NethermindEth/EVMYulLean

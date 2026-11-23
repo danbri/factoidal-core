@@ -33,3 +33,5 @@ import EVMCleanroom.MemoryGas
 import EVMCleanroom.Proofs
 import EVMCleanroom.Tests
 import EVMCleanroom.IdentityPrecompile
+import EVMCleanroom.IdentityCallTests
+import EVMCleanroom.IdentityTransactionTests

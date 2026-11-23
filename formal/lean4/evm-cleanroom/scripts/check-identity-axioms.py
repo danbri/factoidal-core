@@ -8,6 +8,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = {
+    "executeView_ofArray", "executeView_oversize", "executeView_exact",
+    "executeView_underfunded", "executeView_preserves_input", "executeView_preserves_byte",
     "execute_oversize", "execute_underfunded", "execute_exact",
     "execute_preserves_input", "execute_gas_accounting",
 }
@@ -44,20 +46,32 @@ def main():
             "does not depend on any axioms"
             for name in sorted(NAMES)
         )
-        assert len(check(good)) == 5
-        bad = (good.replace("does not depend on any axioms",
-                            "depends on axioms: [sorryAx]", 1),
-               good.rsplit("\n", 1)[0],
-               good + "\n" + good.splitlines()[0])
-        denied = 0
-        for example in bad:
+        assert len(check(good)) == len(NAMES)
+        allowed = good.replace("does not depend on any axioms",
+                               "depends on axioms: [Classical.choice, Quot.sound, propext]", 1)
+        assert check(allowed)[sorted(NAMES)[0]] == sorted(ALLOWED)
+        bad = {
+            "proof-placeholder": good.replace("does not depend on any axioms",
+                                               "depends on axioms: [sorryAx]", 1),
+            "missing-theorem": good.rsplit("\n", 1)[0],
+            "duplicate-theorem": good + "\n" + good.splitlines()[0],
+            "extra-theorem": good + "\n'EVMCleanroom.IdentityPrecompile.unselected' "
+                                    "does not depend on any axioms",
+            "duplicate-axiom": good.replace("does not depend on any axioms",
+                                             "depends on axioms: [propext, propext]", 1),
+            "custom-axiom": good.replace("does not depend on any axioms",
+                                          "depends on axioms: [EVMCleanroom.unproved]", 1),
+        }
+        denied = []
+        for label, example in bad.items():
             try:
                 check(example)
             except ValueError:
-                denied += 1
-        if denied != 3:
+                denied.append(label)
+        if len(denied) != len(bad):
             raise ValueError("bad axiom controls survived")
-        print(json.dumps({"status": "negative-controls-pass", "rejected": denied}))
+        print(json.dumps({"status": "negative-controls-pass", "theorems": len(NAMES),
+                          "rejected": len(denied), "controls": denied}))
         return
     result = subprocess.run(
         ["lake", "env", "lean", "EVMCleanroom/IdentityPrecompile.lean"],

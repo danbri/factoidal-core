@@ -63,6 +63,9 @@ function lean(parent, child, totalGas) {
 }
 async function ethereumjs(parent, child, totalGas) {
   const evm=await createEVM({common})
+  // EIP-2929 initialises all active precompiles as warm. Low-level runCall
+  // leaves transaction initialisation to the caller; keep the parent setup unchanged.
+  for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   await evm.stateManager.putAccount(parentAddress,new Account())
   await evm.stateManager.putAccount(childAddress,new Account())
   await evm.stateManager.putCode(parentAddress,hexToBytes('0x'+parent))

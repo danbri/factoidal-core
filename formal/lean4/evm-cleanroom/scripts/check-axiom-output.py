@@ -35,10 +35,9 @@ def require(condition, explanation):
 def extract_printed(text):
     """Return all actual theorem/axiom messages in an elaborator transcript."""
     found = defaultdict(list)
-    for line in text.splitlines():
-        match = PRINTED.search(line)
-        if not match:
-            continue
+    # Lean wraps long axiom lists across lines when invoked directly. Match
+    # complete reports, retaining every axiom and duplicate theorem report.
+    for match in PRINTED.finditer(text):
         raw = match.group('axioms')
         axioms = tuple(sorted(a.strip() for a in raw.split(',') if a.strip())) if raw else ()
         require(len(set(axioms)) == len(axioms), 'duplicate printed axiom')
@@ -71,6 +70,9 @@ def selftest():
         {'name': 'EVMCleanroom.Demo.trivial', 'axioms_printed': []},
     ]
     require(verify_printed(good, emitted) == 2, 'valid test rejected')
+    wrapped = sample.replace('[propext, Quot.sound]', '[propext,\n Quot.sound]')
+    require(verify_printed(good, extract_printed(wrapped + '\n' + no_axioms)) == 2,
+            'valid wrapped theorem output rejected')
     corrupt = [
         [dict(good[0], axioms_printed=['propext']), good[1]],
         [dict(good[0], axioms_printed=['propext', 'sorryAx']), good[1]],
@@ -82,7 +84,17 @@ def selftest():
             verify_printed(forged, emitted)
         except ValueError:
             rejected += 1
-    require(rejected == len(corrupt), 'adversarial control not rejected')
+    corrupt_transcripts = [
+        wrapped.replace('Quot.sound]', 'sorryAx,\n Quot.sound]') + '\n' + no_axioms,
+        wrapped + '\n' + wrapped + '\n' + no_axioms,
+    ]
+    for forged in corrupt_transcripts:
+        try:
+            verify_printed(good, extract_printed(forged))
+        except ValueError:
+            rejected += 1
+    require(rejected == len(corrupt) + len(corrupt_transcripts),
+            'adversarial control not rejected')
     return rejected
 
 

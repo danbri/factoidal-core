@@ -8,8 +8,8 @@ and earlier EVM pricing is 15 base gas plus 3 per 32-byte input word.
 The caller supplies the precompile's forwarded gas, not the parent gas.
 An explicit implementation byte cap is checked before returning data.
 
-This is an executable precompile *entry point*, not yet integrated with
-CALL, CALLCODE, DELEGATECALL or STATICCALL. The identity operation is
+The world-aware CALL, CALLCODE, DELEGATECALL and STATICCALL dispatcher
+uses the view entry point below. The identity operation is
 available across the Ethereum forks this seed models. A resource refusal
 is an indeterminate implementation limit, not an EVM out-of-gas result.
 
@@ -66,6 +66,42 @@ theorem executeView_exact (maxBytes gas : Nat) (view : ByteView)
   have hNotUnder : ¬ gas < gasCost view.size := by omega
   simp [executeView, hNotOver, hNotUnder]
 
+/-- Kind: gas admission.
+    Says: an admitted byte view with too little forwarded gas fails with
+    out-of-gas before any output is returned.
+    Does not say: a CALL has allocated that gas correctly. -/
+theorem executeView_underfunded (maxBytes gas : Nat) (view : ByteView)
+    (hSize : view.size ≤ maxBytes) (hGas : gas < gasCost view.size) :
+    executeView maxBytes gas view = .error .outOfGas := by
+  have hNotOver : ¬ view.size > maxBytes := by omega
+  simp [executeView, hNotOver, hGas]
+
+/-- Kind: executed result invariant.
+    Says: the actual view executor returns exactly the supplied immutable
+    view on every successful execution, including its backing byte function.
+    Does not say: an external source of the view is authenticated. -/
+theorem executeView_preserves_input (maxBytes gas : Nat) (input output : ByteView)
+    (remaining : Nat)
+    (h : executeView maxBytes gas input = .ok (output, remaining)) :
+    output = input := by
+  unfold executeView at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · cases h
+      rfl
+
+/-- Kind: byte correspondence.
+    Says: each byte read from a successful identity result equals the byte
+    read at the same index of the input, including bounded zero reads.
+    Does not say: a caller copies the entire result into its output range. -/
+theorem executeView_preserves_byte (maxBytes gas : Nat) (input output : ByteView)
+    (remaining index : Nat)
+    (h : executeView maxBytes gas input = .ok (output, remaining)) :
+    output.readByte index = input.readByte index := by
+  rw [executeView_preserves_input maxBytes gas input output remaining h]
+
 /-- Kind: admission boundary.
     Says: oversize input is refused before gas charging or output construction.
     Does not say: Ethereum itself has this input-size limit. -/
@@ -85,7 +121,7 @@ theorem execute_underfunded (maxBytes gas : Nat) (input : Array UInt8)
 
 /-- Kind: implementation correspondence.
     Says: admitted input and gas return identical bytes and exact unused gas.
-    Does not say: this entry is yet wired into CALL-family dispatch. -/
+    Does not say: a parent CALL's account, memory or value charges are included. -/
 theorem execute_exact (maxBytes gas : Nat) (input : Array UInt8)
     (hSize : input.size ≤ maxBytes) (hGas : gasCost input.size ≤ gas) :
     execute maxBytes gas input = .ok (input, gas - gasCost input.size) := by
@@ -171,6 +207,9 @@ private def isResourceLimit (maxBytes gas : Nat) (input : Array UInt8) : Bool :=
 #print axioms executeView_ofArray
 #print axioms executeView_oversize
 #print axioms executeView_exact
+#print axioms executeView_underfunded
+#print axioms executeView_preserves_input
+#print axioms executeView_preserves_byte
 #print axioms execute_oversize
 #print axioms execute_underfunded
 #print axioms execute_exact

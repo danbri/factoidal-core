@@ -103,7 +103,7 @@ theorem run_executed_admitted (p : Request) (result : Result) (h : run p = .exec
   | some address => simp only [hMissing] at h; cases h
   | none =>
     simp only [hMissing] at h
-    by_cases hPrecompile : WorldCall.unsupportedPrecompile p.fork.profile p.tx.to = true
+    by_cases hPrecompile : CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to = true
     · rw [if_pos hPrecompile] at h
       cases h
     simp only [hPrecompile] at h

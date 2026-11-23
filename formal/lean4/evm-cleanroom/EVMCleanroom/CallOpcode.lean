@@ -378,20 +378,27 @@ def Continuation.codeTarget (k : Continuation) : Nat :=
   | _ :: target :: _ => target.val % addressBound
   | _ => addressBound
 
-/-- Enter an already budgeted identity precompile without running account code.
-    The success world includes any CALL value transfer; the checkpoint is
-    used on child out-of-gas. Missing witnesses and local resource limits
-    are never turned into EVM failure. -/
+/-- Resolve an already budgeted precompile entry without running account code.
+    Both the opcode dispatcher and the public single-CALL adapter use this
+    resolver. Success keeps any value transfer, while out-of-gas restores the
+    checkpoint. A local resource refusal remains indeterminate. -/
+private def precompileStep (child : ActiveFrame) (k : Continuation) : Option CallStep :=
+  if k.codeTarget == 4 then
+    some (match IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
+        child.state.callData with
+      | .ok (data, remaining) => resumeCall k child.world remaining data true
+      | .error .outOfGas => resumeCall k k.checkpoint 0 {} false
+      | .error reason => .indeterminate reason)
+  else none
+
+/-- Ordinary children enter the continuation stack; precompiles resolve
+    through the shared native precompile handler. -/
 private def dispatchCall : Except Error CallEntry → Transition
   | .error e => .terminal (stepError e)
   | .ok (.entered child k) =>
-      if k.codeTarget == 4 then
-        match IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
-            child.state.callData with
-        | .ok (data, remaining) => afterCall k (resumeCall k child.world remaining data true)
-        | .error .outOfGas => afterCall k (resumeCall k k.checkpoint 0 {} false)
-        | .error reason => .terminal (.indeterminate reason)
-      else .enter child k
+      match precompileStep child k with
+      | some result => afterCall k result
+      | none => .enter child k
   | .ok (.failed k) => afterCall k (resumeFailedCall k)
 
 /-- Actual dispatch delegates the complete identity byte window and child gas
@@ -403,7 +410,7 @@ theorem dispatchCall_identity_exact (child : ActiveFrame) (k : Continuation)
       child.state.callData = .ok (bytes, remaining)) :
     dispatchCall (.ok (.entered child k)) =
       afterCall k (resumeCall k child.world remaining bytes true) := by
-  simp [dispatchCall, hTarget, hResult]
+  simp [dispatchCall, precompileStep, hTarget, hResult]
 
 /-- An admitted but underfunded identity child loses its forwarded gas and
     its value transfer, while the parent continuation retains the checkpoint. -/
@@ -413,7 +420,7 @@ theorem dispatchCall_identity_outOfGas (child : ActiveFrame) (k : Continuation)
       child.state.callData = .error .outOfGas) :
     dispatchCall (.ok (.entered child k)) =
       afterCall k (resumeCall k k.checkpoint 0 {} false) := by
-  simp [dispatchCall, hTarget, hResult]
+  simp [dispatchCall, precompileStep, hTarget, hResult]
 
 /-- Resource refusal is not an EVM failure bit or a completed receipt. -/
 theorem dispatchCall_identity_resourceLimit (child : ActiveFrame) (k : Continuation)
@@ -421,7 +428,7 @@ theorem dispatchCall_identity_resourceLimit (child : ActiveFrame) (k : Continuat
     (hResult : IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
       child.state.callData = .error .resourceLimit) :
     dispatchCall (.ok (.entered child k)) = .terminal (.indeterminate .resourceLimit) := by
-  simp [dispatchCall, hTarget, hResult]
+  simp [dispatchCall, precompileStep, afterCall, hTarget, hResult]
 
 /-- The only storage-reading opcodes admitted by Core use the top word as key. -/
 private def missingStorage (active : ActiveFrame) (opcode : Nat) : Option Nat :=
@@ -498,7 +505,10 @@ def execute (fuel : Nat) (world : TxWorld) (address : Nat) (s : State) : RawOutc
     The child runs in the same dispatcher as `execute`. -/
 def callStep (fuel : Nat) (world : TxWorld) (parentAddress : Nat) (parent : State) : CallStep :=
   match beginCall ⟨world, parentAddress, 0, parent⟩ with
-  | .ok (.entered child k) => resumeChild k (executeLoop fuel child [])
+  | .ok (.entered child k) =>
+      match precompileStep child k with
+      | some result => result
+      | none => resumeChild k (executeLoop fuel child [])
   | .ok (.failed k) => resumeFailedCall k
   | .error e =>
     match stepError e with
@@ -931,7 +941,7 @@ private theorem executeLoop_enters_child (fuel : Nat) (active child : ActiveFram
     (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  simp [dispatch, dispatchCall, hRunning, hOpcode, hEntry, hOrdinary]
+  simp [dispatch, dispatchCall, precompileStep, hRunning, hOpcode, hEntry, hOrdinary]
 
 /-- Kind: correspondence.
     Says: all three new opcode bytes enter the same continuation loop as CALL.
@@ -944,7 +954,7 @@ private theorem executeLoop_enters_variant (fuel : Nat) (active child : ActiveFr
     (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  cases kind <;> simp [dispatch, dispatchCall, CallVariant.opcode, hRunning, hOpcode, hEntry,
+  cases kind <;> simp [dispatch, dispatchCall, precompileStep, CallVariant.opcode, hRunning, hOpcode, hEntry,
     hOrdinary]
 
 /-- Kind: boundary.
@@ -1205,5 +1215,179 @@ theorem run_parent_exception_atomic (fuel : Nat) (entry result : TxWorld)
 #print axioms finishCall_state_projection
 #print axioms finishCall_logs_projection
 #print axioms finishCall_commit_preserves_world
+
+/-- Kind: executable correspondence.
+    Says: the actual identity dispatcher derives unchanged bytes and exact
+    remaining child gas from the input-size and gas inequalities.
+    Does not say: an arbitrary continuation came from a valid parent CALL. -/
+theorem dispatchCall_identity_admitted (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : IdentityPrecompile.gasCost child.state.callData.size ≤ k.budget.childGas) :
+    dispatchCall (.ok (.entered child k)) = afterCall k
+      (resumeCall k child.world
+        (k.budget.childGas - IdentityPrecompile.gasCost child.state.callData.size)
+        child.state.callData true) := by
+  exact dispatchCall_identity_exact child k _ _ hTarget
+    (IdentityPrecompile.executeView_exact _ _ _ hSize hGas)
+
+/-- Kind: executable gas boundary.
+    Says: an admitted identity input with insufficient child gas restores
+    the checkpoint, returns no bytes or child gas, and resumes with failure.
+    Does not say: a resource-limit refusal is an EVM failure. -/
+theorem dispatchCall_identity_underfunded (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : k.budget.childGas < IdentityPrecompile.gasCost child.state.callData.size) :
+    dispatchCall (.ok (.entered child k)) =
+      afterCall k (resumeCall k k.checkpoint 0 {} false) := by
+  exact dispatchCall_identity_outOfGas child k hTarget
+    (IdentityPrecompile.executeView_underfunded _ _ _ hSize hGas)
+
+/-- Kind: executable resource boundary.
+    Says: exceeding the local identity input limit makes the actual
+    dispatcher indeterminate before producing an EVM success or failure bit.
+    Does not say: Ethereum has this local implementation limit. -/
+theorem dispatchCall_identity_oversize (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget = 4)
+    (hSize : maxIdentityCallBytes < child.state.callData.size) :
+    dispatchCall (.ok (.entered child k)) = .terminal (.indeterminate .resourceLimit) := by
+  exact dispatchCall_identity_resourceLimit child k hTarget
+    (IdentityPrecompile.executeView_oversize _ _ _ hSize)
+
+/-- Kind: public adapter correspondence.
+    Says: a successfully entered, funded identity CALL in the public
+    single-CALL API executes the same byte-preserving precompile and gas charge.
+    Does not say: the input world or transaction signature is authenticated. -/
+theorem callStep_identity_admitted (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : IdentityPrecompile.gasCost child.state.callData.size ≤ k.budget.childGas) :
+    callStep fuel world address parent =
+      resumeCall k child.world
+        (k.budget.childGas - IdentityPrecompile.gasCost child.state.callData.size)
+        child.state.callData true := by
+  have hResult := IdentityPrecompile.executeView_exact _ _ _ hSize hGas
+  simp [callStep, hEntry, precompileStep, hTarget, hResult]
+
+/-- Kind: public adapter gas boundary.
+    Says: insufficient identity gas in the public single-CALL API restores
+    the caller checkpoint and returns the failure bit with zero child gas.
+    Does not say: the entire parent transaction has failed. -/
+theorem callStep_identity_underfunded (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : k.budget.childGas < IdentityPrecompile.gasCost child.state.callData.size) :
+    callStep fuel world address parent = resumeCall k k.checkpoint 0 {} false := by
+  have hResult := IdentityPrecompile.executeView_underfunded _ _ _ hSize hGas
+  simp [callStep, hEntry, precompileStep, hTarget, hResult]
+
+/-- Kind: public adapter resource boundary.
+    Says: the public single-CALL API preserves identity's local input-limit
+    refusal as an indeterminate result, regardless of simulation fuel.
+    Does not say: the input-size limit is an Ethereum validity rule. -/
+theorem callStep_identity_oversize (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : maxIdentityCallBytes < child.state.callData.size) :
+    callStep fuel world address parent = .indeterminate .resourceLimit := by
+  have hResult := IdentityPrecompile.executeView_oversize maxIdentityCallBytes k.budget.childGas
+    child.state.callData hSize
+  simp [callStep, hEntry, precompileStep, hTarget, hResult]
+
+/-- Kind: observable public result.
+    Says: a committed identity result exposes the complete input view,
+    exact remaining gas, success bit and the child's resulting world.
+    Does not say: a parent which later reverts retains that world. -/
+theorem callStep_identity_observations (fuel : Nat) (world result : TxWorld)
+    (address : Nat) (parent resumed : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : IdentityPrecompile.gasCost child.state.callData.size ≤ k.budget.childGas)
+    (hResult : callStep fuel world address parent = .committed result resumed) :
+    result = child.world ∧ resumed.returnData = child.state.callData ∧
+    resumed.gas = k.budget.reserve +
+      (k.budget.childGas - IdentityPrecompile.gasCost child.state.callData.size) ∧
+    resumed.stack.items = word 1 :: k.rest := by
+  rw [callStep_identity_admitted fuel world address parent child k hEntry hTarget hSize hGas] at hResult
+  obtain ⟨hWorld, hBytes, _, hRemaining, hStack⟩ := resumeCall_observations _ _ _ _ _ _ _ hResult
+  exact ⟨hWorld, hBytes, hRemaining, hStack⟩
+
+/-- Kind: end-to-end byte correspondence.
+    Says: every byte copied by a successful public identity CALL equals the
+    corresponding byte in the actual parent's expanded input-memory window.
+    Does not say: bytes beyond the caller's output range are copied. -/
+theorem callStep_identity_input_to_output (fuel : Nat) (world result : TxWorld)
+    (address : Nat) (parent resumed : State) (child : ActiveFrame) (k : Continuation)
+    (index : Nat)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : child.state.callData.size ≤ maxIdentityCallBytes)
+    (hGas : IdentityPrecompile.gasCost child.state.callData.size ≤ k.budget.childGas)
+    (hResult : callStep fuel world address parent = .committed result resumed)
+    (hIndex : index < min k.ranges.outputSize k.ranges.inputSize) :
+    resumed.memory.readByte (k.ranges.outputOffset + index) =
+      (parent.memory.expand k.ranges.words).readByte (k.ranges.inputOffset + index) := by
+  have hView := (beginCall_entered_context _ _ _ hEntry).1
+  have hViewSize : child.state.callData.size = k.ranges.inputSize := by
+    rw [hView]
+    rfl
+  rw [callStep_identity_admitted fuel world address parent child k hEntry hTarget hSize hGas] at hResult
+  have hCopied := resumeCall_copies_prefix k child.world result _ child.state.callData true
+    resumed index hResult (beginCall_entered_output_paid _ _ _ hEntry) (by simpa [hViewSize] using hIndex)
+  rw [hCopied]
+  exact beginCall_entered_input_byte _ _ _ hEntry index (Nat.lt_of_lt_of_le hIndex (Nat.min_le_right _ _))
+
+/-- Kind: public opcode boundary.
+    Says: after the real CALL opcode has entered an oversized identity
+    input, one dispatcher step returns the local resource refusal.
+    Does not say: other opcode paths have the same input limit. -/
+theorem executeAtDepth_identity_oversize (fuel : Nat) (active child : ActiveFrame)
+    (k : Continuation) (hRunning : active.state.halted = false)
+    (hOpcode : byteAt active.state active.state.pc = 0xf1)
+    (hEntry : beginCall active = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : maxIdentityCallBytes < child.state.callData.size) :
+    executeAtDepth (fuel + 1) active.world active.address active.depth active.state =
+      .indeterminate .resourceLimit := by
+  have hResult := IdentityPrecompile.executeView_oversize maxIdentityCallBytes k.budget.childGas
+    child.state.callData hSize
+  rw [executeAtDepth, executeLoop]
+  simp [dispatch, dispatchCall, precompileStep, afterCall, hRunning, hOpcode, hEntry, hTarget, hResult]
+
+/-- Kind: public opcode boundary.
+    Says: CALLCODE, DELEGATECALL and STATICCALL each propagate identity's
+    local input-limit refusal through the actual public dispatcher.
+    Does not say: all their possible target precompiles are implemented. -/
+theorem executeAtDepth_identity_variant_oversize (fuel : Nat) (active child : ActiveFrame)
+    (k : Continuation) (kind : CallVariant) (hRunning : active.state.halted = false)
+    (hOpcode : byteAt active.state active.state.pc = kind.opcode)
+    (hEntry : beginVariant active kind = .ok (.entered child k))
+    (hTarget : k.codeTarget = 4)
+    (hSize : maxIdentityCallBytes < child.state.callData.size) :
+    executeAtDepth (fuel + 1) active.world active.address active.depth active.state =
+      .indeterminate .resourceLimit := by
+  have hResult := IdentityPrecompile.executeView_oversize maxIdentityCallBytes k.budget.childGas
+    child.state.callData hSize
+  rw [executeAtDepth, executeLoop]
+  cases kind <;> simp [dispatch, dispatchCall, precompileStep, afterCall, CallVariant.opcode,
+    hRunning, hOpcode, hEntry, hTarget, hResult]
+
+#print axioms dispatchCall_identity_admitted
+#print axioms dispatchCall_identity_underfunded
+#print axioms dispatchCall_identity_oversize
+#print axioms callStep_identity_admitted
+#print axioms callStep_identity_underfunded
+#print axioms callStep_identity_oversize
+#print axioms callStep_identity_observations
+#print axioms callStep_identity_input_to_output
+#print axioms executeAtDepth_identity_oversize
+#print axioms executeAtDepth_identity_variant_oversize
 
 end EVMCleanroom.CallOpcode

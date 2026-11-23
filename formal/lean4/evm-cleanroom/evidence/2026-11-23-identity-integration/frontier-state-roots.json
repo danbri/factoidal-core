@@ -1,0 +1,20 @@
+{
+  "status": "full-historical-three-account-root-replay-pass",
+  "block": "46147",
+  "from": "0xa1e4380a3b1f749673e270229993ee55f35663b4",
+  "to": "0x5df9b87991262f6ba471f09758cde1c0fc1de734",
+  "miner": "0xe6a7a1d47ff21b6321162aea7c6cb457d5476bca",
+  "validatedPrestateRoot": "0x691fc4f4d21d10787902e8f3266711f1d640e75fedbeb406dc0b8d3096128436",
+  "derivedIntermediateStateRoot": "0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957",
+  "derivedFinalBlockStateRoot": "0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",
+  "publishedIntermediateStateRoot": "0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957",
+  "publishedFinalBlockStateRoot": "0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",
+  "transactionGasUsed": "21000",
+  "transactionFeeWei": "1050000000000000000",
+  "genesisFrontierBlockSubsidyWei": "5000000000000000000",
+  "witnessedAccounts": 3,
+  "codeHashesValidated": true,
+  "signatureAndTxHeaderValidation": "requires-separate-commitment-gate",
+  "requiredCommitmentGate": "scripts/eels/replay-first-mainnet.mjs",
+  "trust": "EthereumJS RLP/MPT/Keccak and published block header, Lean arithmetic; PoW chain canonicality not independently proved"
+}

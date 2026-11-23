@@ -272,6 +272,9 @@ function snapshot(out, field, data) {
 async function ethereumJS(c) {
   const common = new Common({chain: Mainnet, hardfork: c.profile === 'osaka' ? Hardfork.Osaka : Hardfork.Shanghai})
   const evm = await createEVM({common})
+  // EIP-2929: active precompiles start warm even in a raw message fixture.
+  // runCall does not perform this transaction-level initialisation.
+  for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   const [parent, child, third, caller] = [A, B, C, sender].map(address)
   if (c.prewarmParent) evm.journal.addAlwaysWarmAddress(parent.toString())
   for (const [who, code, balance, nonce] of [

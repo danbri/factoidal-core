@@ -1,0 +1,106 @@
+{
+  "status": "all-retained-regressions-pass",
+  "nativeSha256": {
+    "evm-subset": "64c49e1396913d332fa4f28ecd3015172a77aa6d19dbb773da396d6c532b46e8",
+    "evm-call-transaction": "13c60d9cba38fd6eb4d5ef77963a35f9731844420d11d61f22a18d0bbaa0d50d"
+  },
+  "fixtureSourceCommit": "3c4287ae3aea1f45af9288629834f0584fcde69a",
+  "fixtureSha256": {
+    "fixtures/eip7623.json": "9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4",
+    "fixtures/push0-contracts.json": "1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba",
+    "fixtures/frontier-46146-archive-witness.json": "9c9286d7c9500aca5426b7bf44bc74b19f84d2b16761dfb10ea7948bbef17924",
+    "factoidal-core/formal/lean4/evm-cleanroom/evidence/historical-1cat-shanghai-19100013.json": "053b2d915c3a03ab529634ec6128df6e1e917418f355b51cb652af4e9162c78c"
+  },
+  "prague": {
+    "passed": 6,
+    "failed": 0,
+    "unsupported": 0,
+    "actualLeanStateTestsExecuted": 6,
+    "cases": [
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_protected]",
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_0_unprotected]",
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_1]",
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_2]",
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_3]",
+      "tests/prague/eip7623_increase_calldata_cost/test_eip_mainnet.py::test_eip_7623[fork_Prague-state_test----type_4]"
+    ],
+    "ledgerMutationsRejected": 6,
+    "negativeControlsRejected": 9
+  },
+  "cancun": {
+    "totals": {
+      "fixtureCases": 24,
+      "forkCases": 6,
+      "passed": 6,
+      "failed": 0,
+      "unsupported": 0,
+      "otherForkCases": 18
+    },
+    "cases": [
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-before_jumpdest]",
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-fill_stack]",
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-gas_cost]",
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-key_sstore]",
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-stack_overflow]",
+      "tests/shanghai/eip3855_push0/test_push0.py::test_push0_contracts[fork_Cancun-state_test-storage_overwrite]"
+    ],
+    "negativeControlsRejected": 4
+  },
+  "shanghai19100013": {
+    "status": "authenticated-shanghai-contract-replay-match",
+    "authenticatedAccounts": 3,
+    "authenticatedStorageSlots": 4,
+    "gasUsed": "33987",
+    "refundGas": "4800",
+    "roots": {
+      "intermediateStateRoot": "0x4ec90276be487d2567d41039696e1bb75b3fa8cb796fc9705f5d83c606a17000",
+      "targetStorageRoot": "0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a"
+    },
+    "ethereumJSMatched": true,
+    "gethMatched": true,
+    "negativeControlsRejected": 6
+  },
+  "frontier46147": {
+    "status": "full-historical-three-account-root-replay-pass",
+    "witnessedAccounts": 3,
+    "derivedIntermediateStateRoot": "0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957",
+    "derivedFinalBlockStateRoot": "0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",
+    "transactionGasUsed": "21000",
+    "signedCommitmentNegativeControlsRejected": 6,
+    "independentPythonMatchesBothRoots": true,
+    "independentPythonKeccakVectors": 24,
+    "independentPythonNegativeControlsRejected": 6
+  },
+  "limits": [
+    "Official published EELS fixtures use trusted host signed-envelope recovery and MPT construction; these exact cases are not general fork conformance.",
+    "Prague gate admits six signed envelope cases over types 0-4, with restricted empty destination, zero excess blob gas and constrained authorization handling; no KZG sidecars.",
+    "Cancun gate executes six selected cases from an inventory of 24 with 18 other-fork cases explicit; no denominator broadening.",
+    "Shanghai replay authenticates index-zero account/storage state and published receipt; intermediate world root is not a full replay of all block transactions.",
+    "Frontier companion gates authenticate the historical witnesses and replay the three affected accounts; host MPT/RLP/Keccak and known historical headers remain trusted, and PoW chain canonicality and Lean MPT refinement are not proved."
+  ],
+  "outputs": [
+    "final-active-axiom-controls.json",
+    "final-call-data.json",
+    "final-call-family.json",
+    "final-call-opcode.json",
+    "final-call-repairs.json",
+    "final-cancun-negative.json",
+    "final-cancun-six-summary.json",
+    "final-cancun-six.json",
+    "final-frontier-commitments-summary.json",
+    "final-frontier-commitments.json",
+    "final-frontier-independent-python.json",
+    "final-frontier-python-negative.json",
+    "final-frontier-state-roots-summary.json",
+    "final-frontier-state-roots.json",
+    "final-identity-axiom-controls.json",
+    "final-identity-axioms.json",
+    "final-identity-call.json",
+    "final-identity-standalone.json",
+    "final-mainnet-19100013.json",
+    "final-prague-negative.json",
+    "final-prague-six-ledger.json",
+    "final-prague-six-summary.json",
+    "final-prague-six.json"
+  ]
+}

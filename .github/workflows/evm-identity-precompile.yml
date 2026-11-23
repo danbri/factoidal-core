@@ -18,6 +18,9 @@ jobs:
   identity:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Compile actual Lean library and its added theorem/guard module
@@ -29,6 +32,7 @@ jobs:
       - name: Check independent Lean dependency graph and source pins
         working-directory: formal/lean4/evm-cleanroom
         run: |
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           config = Path("lakefile.toml").read_text()
@@ -44,22 +48,25 @@ jobs:
               assert [line for line in source.splitlines() if line.startswith("import ")] == imports, name
           assert Path("lean-toolchain").read_text().strip() == "leanprover/lean4:v4.33.1"
           PY
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"]=="active-sources-consistent" and r["selectedTheorems"]==184 and r["files"]==103,r'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"]=="active-sources-consistent" and r["selectedTheorems"]==216 and r["files"]==112,r'
       - name: Build the identity precompile native executable
         working-directory: formal/lean4/evm-cleanroom
         run: lake build evm-identity-precompile
       - name: Audit actual kernel theorem dependencies and refusal controls
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-identity-axioms.py --selftest
-          python3 scripts/check-identity-axioms.py | tee .lake/identity-axioms.json
+          set -euo pipefail
+          python3 scripts/check-identity-axioms.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["theorems"]==11 and x["rejected"]==len(x["controls"])==6,x'
+          python3 scripts/check-identity-axioms.py | tee .lake/identity-axioms.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["theorems"]==len(x["axioms"])==11,x'
       - name: Execute 1056 independent full-input comparisons and mutation controls
         working-directory: formal/lean4/evm-cleanroom
         run: |
+          set -euo pipefail
           python3 scripts/differential/identity-precompile.py .lake/build/bin/evm-identity-precompile | tee .lake/identity-oracle.json
       - name: Check a directly invoked exact-gas identity call
         working-directory: formal/lean4/evm-cleanroom
         run: |
+          set -euo pipefail
           .lake/build/bin/evm-identity-precompile 0x0001 18 2 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"ok","dataHex":"0001","gasRemaining":"0","gasUsed":"18"}, x'
           .lake/build/bin/evm-identity-precompile 0x0001 17 2 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"exceptional","reason":"outOfGas"},x'
           .lake/build/bin/evm-identity-precompile 0x0001 99 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"indeterminate","reason":"resourceLimit"},x'
