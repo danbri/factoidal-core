@@ -12,7 +12,3 @@ root = "EVMCleanroom.CLI"
 [[lean_exe]]
 name = "evm-call-transaction"
 root = "EVMCleanroom.CLITransaction"
-
-[[lean_exe]]
-name = "evm-header-fees"
-root = "EVMCleanroom.HeaderFeeCLI"
