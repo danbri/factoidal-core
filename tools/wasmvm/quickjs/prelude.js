@@ -7421,8 +7421,12 @@
     if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
     const answer = n.query(id, 195, 'request\u0000' + globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
     if (typeof answer !== 'string' || answer === '') return null;
-    const url = frame >= 0 ? resolveURL(answer.slice(1), docURL(d)) : resolveURL(answer.slice(1));
-    return url === null ? null : {url, unitDensity: answer[0] === '1'};
+    // Startup reaches parsed images before the realm's location is populated.
+    // The node's document already has its URL and any parsed <base> element.
+    const documentBase = n.query(id, 164, '');
+    const base = typeof documentBase === 'string' && documentBase !== '' ? documentBase : undefined;
+    const url = resolveURL(answer.slice(1), base);
+    return url === null ? null : {url, base, unitDensity: answer[0] === '1'};
   };
   const imgWriteSize = (id, st, size) => {
     const r = n.query(id, 163, size);
@@ -7472,7 +7476,7 @@
     const rawSrc = n0.attr(id, 'src');
     const parent = info(id, 1);
     const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
-    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && url !== '' && url === resolveURL(rawSrc, info(id, 7) > 0 ? docURL(info(id, 7)) : undefined);
+    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && url !== '' && url === resolveURL(rawSrc, selection.base);
     const available = (plainSrc || inPicture) ? imgAvailable.get(availableKey) : null;
     // Absent sources and completed cache entries resolve before viewport deferral.
     if (!force && url !== '' && !available && String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy') {
@@ -18785,7 +18789,7 @@
   // ==== imagesource: the image an img element asks for (HTML §4.8.4.3) =====================
   // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
   // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
-  // the viewport of the element's document, resolved against that document's URL.
+  // the viewport of the element's document, resolved against that document's base URL.
   Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
     return imgSelection(nodeId(this))?.url ?? '';
   }, configurable: true, enumerable: true });

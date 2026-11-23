@@ -62,6 +62,23 @@ test('Image constructor preserves its shared prototype with an immutable descrip
   assert.deepEqual(attributes,[['width','17'],['height','23']]);
 });
 
+test('parsed image selection uses the owning base before realm location is set',()=>{
+  const start=prelude.indexOf('  const imgSelection = id => {');
+  const end=prelude.indexOf('  const imgWriteSize = ',start);
+  assert.ok(start>=0&&end>start);
+  const context=vm.createContext({
+    devicePixelRatio:1,
+    info:()=>0,
+    viewport:()=>[800,600],
+    resolveURL(input,base='about:blank'){try {return new URL(input,base).href;} catch {return null;}},
+    n:{query(_id,op){if(op===164)return 'https://example.test/assets/';assert.equal(op,195);return '1icon.png';}},
+  });
+  vm.runInContext(prelude.slice(start,end)+'\n globalThis.selectImage=imgSelection;',context);
+  const selected=context.selectImage(4);
+  assert.equal(selected.url,'https://example.test/assets/icon.png');
+  assert.equal(selected.unitDensity,true);
+});
+
 test('one URL changing from 1x to 2x to 1x clears and restores its layout dimensions',async()=>{
   const start=prelude.indexOf('  const imgSelection = id => {');
   const end=prelude.indexOf('  const imgWatch = () => {',start);
@@ -73,7 +90,7 @@ test('one URL changing from 1x to 2x to 1x clears and restores its layout dimens
     imgGen:0,imgStates:new Map(),imgAvailable:new Map(),imgFire:(_el,event)=>events.push(event),imgUndelay:()=>{},
     chk(){},register:f=>f,
     n:{query(_id,op,payload){
-      if(op===195){assert.equal(payload,'request\x001\x00800\x00600');return selected;}
+      if(op===164)return '';if(op===195){assert.equal(payload,'request\x001\x00800\x00600');return selected;}
       assert.equal(op,163);commands.push(payload);return '';
     },timer(f){timers.push(f);return ''; }},
     cspBlocksRequest:()=>false,flushViolations(){},corsSettings:()=>({mode:'no-cors',credentials:'include'}),elementFetch(url){
@@ -98,7 +115,7 @@ test('a completed plain-src image is available to another detached image in the 
   const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
-    n:{query(_id,op,payload){if(op===195)return '0/cached.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    n:{query(_id,op,payload){if(op===164)return '';if(op===195)return '0/cached.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
     chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
     corsSettings:()=>({mode,credentials:mode==='no-cors'?'include':'same-origin'}),
@@ -128,7 +145,7 @@ test('a completed selected image is reused inside an empty picture',async()=>{
   const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(id,k)=>k===7?9:k===1?(id===2?10:-1):k===12?-1:k===0?1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/cached-picture.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:(id)=>id===10?'picture':'img',
-    n:{query(_id,op,payload){if(op===195)return '0/cached-picture.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    n:{query(_id,op,payload){if(op===164)return '';if(op===195)return '0/cached-picture.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
     chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
     corsSettings:()=>({mode:'no-cors',credentials:'include'}),elementFetch(){assert.fail('completed picture image should be reused');}});
@@ -148,7 +165,7 @@ test('a valid image response is accepted when its HTTP status is an error',async
   const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(_id,name)=>name==='src'?'/error-status.png':null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'div',
-    n:{query(_id,op){if(op===195)return '0/error-status.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    n:{query(_id,op){if(op===164)return '';if(op===195)return '0/error-status.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
     chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
     corsSettings:()=>({mode:'no-cors',credentials:'include'}),
@@ -171,7 +188,7 @@ test('a completed superseded fetch seeds availability without settling its stale
   const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,n0:{attr:(id,name)=>name==='src'?src.get(id)??null:null},
     wrap:()=>({getAttribute:()=>null}),htmlEl:()=>true,str:()=>'',
-    n:{query(id,op){if(op===195)return '0'+src.get(id);assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    n:{query(id,op){if(op===164)return '';if(op===195)return '0'+src.get(id);assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay:()=>{},
     chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
     corsSettings:()=>({mode:'no-cors',credentials:'include'}),
@@ -197,7 +214,7 @@ test('decode waiters observe a replaced request on the DOM task source',()=>{
   const states=new Map([[4,{gen:0,url:'/old.png',waiters:[[()=>{},()=>rejected++]],layoutSized:false}]]);
   const context=vm.createContext({imgLazy:new Set(),layoutObserverInterfaces:()=>undefined,DOMException,devicePixelRatio:1,info:(_id,k)=>k===7?9:k===1||k===12?-1:0,
     viewport:()=>[800,600],resolveURL:s=>s,n0:{attr:()=>null},wrap:()=>({getAttribute:()=>null}),
-    n:{query(_id,op){if(op===195)return '0/new.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
+    n:{query(_id,op){if(op===164)return '';if(op===195)return '0/new.png';assert.equal(op,163);return '';},timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:states,imgAvailable:new Map(),imgFire(){},imgUndelay(){},chk(){},register:f=>f,
     cspBlocksRequest:()=>false,flushViolations(){},corsSettings:()=>({mode:'no-cors',credentials:'include'}),
     elementFetch:()=>new Promise(()=>{})});
@@ -317,7 +334,7 @@ function lazyImageHarness() {
     info:(_id,k)=>k===7?9:k===1||k===12?-1:0,viewport:()=>[800,600],docURL:()=>'',resolveURL:s=>s,
     n0:{attr:(_id,name)=>name==='src'?source:null},
     wrap:()=>({getAttribute:name=>name==='loading'?'lazy':null}),htmlEl:()=>true,str:()=>'',
-    n:{query(_id,op){if(op===195)return source?'1'+source:'';assert.equal(op,163);return '';},
+    n:{query(_id,op){if(op===164)return '';if(op===195)return source?'1'+source:'';assert.equal(op,163);return '';},
       timer(f){timers.push(f);return ''; }},
     imgGen:0,imgStates:new Map(),imgAvailable:available,imgFire:(_el,type)=>events.push(type),imgUndelay(){},
     chk(){},register:f=>f,cspBlocksRequest:()=>false,flushViolations(){},
