@@ -89,19 +89,20 @@ theorem check_sound {p : Pair} {fee : Nat} (h : check p = .ok fee) :
   by_cases hb : bounded p = true
   · by_cases hp : p.childNumber < londonHeight
     · simp [check, hb, hp] at h
-    · by_cases hn : p.childNumber = p.parentNumber + 1
+    · simp [check, hb, hp] at h
+      by_cases hn : p.childNumber = p.parentNumber + 1
       · by_cases ht : p.parentTimestamp < p.childTimestamp
         · by_cases hh : p.childParentHash = p.parentHash
           · have hfee : feeCheck p = .ok fee := by
-              simpa [check, hb, hp, hn, Nat.not_le.mpr ht, hh] using h
+              simpa [hn, Nat.not_le.mpr ht, hh] using h
             refine ⟨hb, Nat.le_of_not_gt hp, hn, ht, hh, ?_⟩
             unfold feeCheck at hfee
             cases he : HeaderFees.checkHeader (feeInput p) with
             | error e => simp [he] at hfee
             | ok v => simp [he] at hfee; simp [hfee]
-          · simp [check, hb, hp, hn, Nat.not_le.mpr ht, hh] at h
-        · simp [check, hb, hp, hn, Nat.le_of_not_gt ht] at h
-      · simp [check, hb, hp, hn] at h
+          · simp [hn, Nat.not_le.mpr ht, hh] at h
+        · simp [hn, Nat.le_of_not_gt ht] at h
+      · simp [hn] at h
   · have hf : bounded p = false := by cases e : bounded p <;> simp_all
     simp [check, hf] at h
 
