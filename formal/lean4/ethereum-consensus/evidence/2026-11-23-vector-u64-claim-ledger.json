@@ -51,5 +51,43 @@
     "existing pure SHA-256, without independent FIPS refinement",
     "JSONL is line capped only after host input allocation",
     "no BLS, beacon state, vector length provenance or general consensus"
-  ]
+  ],
+  "theorem_axioms": {
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_cap": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_count": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_exact": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_cap": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64HashLevel_two": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_single": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_two": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_zero_empty": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_count": [
+      "propext",
+      "Quot.sound"
+    ]
+  },
+  "verified_source_head": "67948c3c24197f2ed29a909f1c91539f417815dd",
+  "verified_workflow": "https://github.com/danbri/factoidal-core/actions/runs/45235021923",
+  "source_head_new_test_cases": 1406
 }
