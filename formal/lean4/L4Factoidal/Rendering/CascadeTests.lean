@@ -200,6 +200,11 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 4em }").map (·.fontSize) == some 64
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 150% }").map (·.fontSize) == some 24
+#guard (styleAt "<div><small id=t>x</small></div>" "small { font-size: 1em }").map (·.fontSize) == some 16
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 20px }").map (·.fontSize) == some 20
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: bogus }").map (·.fontSize) == some 32
 -- white-space keeps or collapses white space
 #guard (styleAt pageT "#t { white-space: pre-wrap }").map (·.preformatted) == some true
 #guard (styleAt "<pre><span id=t>x</span></pre>" "span { white-space: normal }").map (·.preformatted) == some false

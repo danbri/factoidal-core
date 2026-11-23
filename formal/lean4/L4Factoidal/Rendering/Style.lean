@@ -3455,7 +3455,16 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     chosen := physicalWinners {rtl} chosen
   -- Font size precedes line-height and inheritance-sensitive dependent values.
   if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then
-    result := applyWinner parent initial result d
+    -- `em`, `%`, `larger` and `smaller` in `font-size` are of the parent's font size (CSS
+    -- Fonts 4 §2.5), not of the size the user agent gives the element: `h1 {font-size: 4em}`
+    -- in a 16 px body is 64 px, not 4 × 32 px. A value that does not read keeps the user
+    -- agent's size. (Until 2026-11-23 the base was the element's start, so every heading
+    -- with an `em` or `%` size was twice as large, or as the user agent scales it.)
+    let base := match wideSource parent initial d with
+      | some _ => result
+      | none => if (CssValues.specified "font-size" d.value).isSome || (apply result d).toOption.isSome
+          then {result with fontSize := parent.fontSize} else result
+    result := applyWinner parent initial base d
     -- the user agent's margins are in em of the element's own font size (`startMargin`); an
     -- author `margin` below still wins
     -- (only when the margins are still the user agent's: no presentational hint set them)
