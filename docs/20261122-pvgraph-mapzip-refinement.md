@@ -33,9 +33,10 @@ it. Physical source buffers may alias each other; output must be fresh.
 
 ## Local observations
 
-The final source composition, parsed lane/grid and compiler-certificate
-theorems compiled under pinned Lean 4.33.1. Individual actual axiom reports
-use only `propext`, `Classical.choice` and `Quot.sound`. The source hygiene
+At the recorded source checkpoint below, the composition, parsed lane/grid
+and compiler-certificate theorems compiled under pinned Lean 4.33.1.
+Individual actual axiom reports use only `propext`, `Classical.choice` and
+`Quot.sound`. The source hygiene
 audit found no new escape hatch; the existing partial-definition count
 remained 163. A default Lake proof target and a fresh-source CI job make
 these modules part of the checked build.
@@ -102,6 +103,32 @@ operations. It is not the complete shipped Wasm artifact, a release
 publication or evidence of physical-GPU performance. The independent
 full-artifact CI and remaining compiler/host/device assumptions still
 apply.
+
+## Executable bound correction on 2026-11-23
+
+Final runtime review found that the executable `StepMatches` decision used
+`step.constant < UInt32.size`. Its unrewritten generated `MapZipPlan.c`
+allocated `lean_cstr_to_nat("4294967296")` at the comparison and passed it
+to `lean_nat_dec_lt`, whose two arguments are borrowed, without releasing
+that temporary. On wasm32 this literal needs an allocated natural number.
+The focused artifact recorded above was protected by its 32-bit literal
+rewrite; the shipping `formal/lean4/Wasm/build-wasm.sh` does not apply that
+rewrite. Its successful execution checks therefore did not establish that
+the shipping build avoided this allocation leak.
+
+The source now explicitly imports `L4Factoidal.NatBounds` and uses its
+existing `@[reducible, noinline] L4Factoidal.two32` in that executable
+proposition. This is the repository's shared persistent-bound convention;
+`NatBounds` already proves `two32 = UInt32.size` by `rfl`, so the logical
+bound is definitionally unchanged. No custom runtime or unsafe code is
+added.
+
+This amendment was checked by source and existing generated-C inspection
+only while the private proof held the build resources. The proof, native,
+Wasm, device and timing results in this note describe the earlier recorded
+checkpoint. Lean CI and a fresh unrewritten C/Wasm inspection, execution
+checks and timing refresh for the amended source are pending; they are
+not claimed by the earlier artifact's results.
 
 ## Measured validation cost
 

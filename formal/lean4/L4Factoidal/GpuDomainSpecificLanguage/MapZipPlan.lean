@@ -1,6 +1,7 @@
 import L4Factoidal.GpuDomainSpecificLanguage.GraphJson
 import L4Factoidal.GpuDomainSpecificLanguage.MapZipKind
 import L4Factoidal.GpuDomainSpecificLanguage.MapZipShader
+import L4Factoidal.NatBounds
 
 /-!
 # Translation validation of actual PVGraph GPU plans
@@ -103,7 +104,7 @@ def StepMatches (doc : Document) (node : Node) (raw : Json) (kind : Kind)
   node.outputs = [⟨"out",bufferType⟩] ∧
   sourcePort? doc node.id (if kind.isZip then "a" else "x") = some ⟨step.a,"out"⟩ ∧
   (if kind.isZip then sourcePort? doc node.id "b" = some ⟨step.b,"out"⟩ else step.b = step.a) ∧
-  coefficient? kind raw = .ok step.constant ∧ step.constant < UInt32.size ∧
+  coefficient? kind raw = .ok step.constant ∧ step.constant < L4Factoidal.two32 ∧
   step.words ≤ 4194240 ∧
   precedingWords? preceding step.a = some step.words ∧
   precedingWords? preceding step.b = some step.words ∧
