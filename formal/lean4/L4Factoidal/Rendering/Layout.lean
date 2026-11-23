@@ -674,17 +674,16 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
       if !word.isEmpty then
         for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
         word := ""
-      if style.preformatted then
-        -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
-        if c == '\n' then
-          result := .lineBreak style :: result
-          column := 0
-        else if c != '\r' then
+      if c == '\n' && (style.preformatted || style.preserveSegmentBreaks) then
+        result := .lineBreak style :: result
+        column := 0
+      else if style.preformatted then
+        if c != '\r' then
           let count := if c == '\t' then 8-column%8 else 1
           for _ in [0:count] do result := .space id style :: result
           column := column+count
-      else
-        if !spaced then result := .space id style :: result
+      else if !spaced then
+        result := .space id style :: result
       spaced := true
     else
       if word.isEmpty then start := index
@@ -701,6 +700,22 @@ private def textItems (id : TextSource) (style : Computed) (text : String) : Lis
   if !word.isEmpty then
     for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
   return result.reverse
+
+/-- Collapsing intervening spaces does not remove a preserved blank line. -/
+theorem textItems_preLine_blankLine (id : TextSource) (style : Computed)
+    (keep : style.preserveSegmentBreaks = true) (collapse : style.preformatted = false) :
+    textItems id style "\n \n" = [.lineBreak style, .lineBreak style] := by
+  simp [textItems, keep, collapse]
+
+#print axioms textItems_preLine_blankLine
+
+-- Compare tokens and source offsets, keeping geometry and the inline breaker out of this check.
+#guard (textItems (.node 1) {preserveSegmentBreaks := true} "a  b\n \n  c").map
+    (fun
+      | .word _ _ word start => (word, start)
+      | .lineBreak _ => ("\n", 0)
+      | .space .. => (" ", 0)
+      | _ => ("?", 0)) == [("a", 0), (" ", 0), ("b", 3), ("\n", 0), ("\n", 0), ("c", 9)]
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
 `alt=""` (an image that adds nothing), and `[image]` with no `alt`. -/
@@ -719,7 +734,14 @@ private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
   | some (text, placeholder) =>
     let grey : Color := ⟨0.459,0.459,0.459⟩
     let pos := {s.pos with nowrap := true}
-    let t : Computed := {s with background := none, underline := false, preformatted := false, color := (if placeholder then grey else s.color), pos := pos}
+    let t : Computed := { s with
+      background := none
+      underline := false
+      preformatted := false
+      preserveSegmentBreaks := false
+      color := if placeholder then grey else s.color
+      pos
+    }
     (textItems (.control dom id) t text).toArray
 
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
