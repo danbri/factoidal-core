@@ -3212,6 +3212,12 @@
       "selectedAxioms": "evidence/2026-11-23-call-family/axiom-audit.json",
       "axiomNegativeControls": "evidence/2026-11-23-call-family/axiom-selftest.json"
     },
-    "limits": "Theorems cover projections and boundaries of the local interpreter. Full EELS refinement, fork-exact execution, contract creation and precompile execution remain open."
+    "limits": "Theorems cover projections and boundaries of the local interpreter. Full EELS refinement, fork-exact execution, contract creation and precompile execution remain open.",
+    "publishedSourceCheckpoint": {
+      "commit": "3b04b0f88dbe53fee84fcb67c8f6f26d31e851f7",
+      "tree": "00f7b6e09f2e5204bb92e645b9571230162495f9",
+      "byteIdenticalLocalEvidenceCommit": "38c5299be79122accfc16fd5b64d61740a9a3acc",
+      "equivalence": "Published tree equals the local evidence tree. Native Lean source, Lake configuration and toolchain pin are byte-identical to local native source b7e5c44eba09b1df7cfaa3d603c33284039fc764; harness equals local b63ee290a6b0a6407c402f1b78c4ca1d39a28f83."
+    }
   }
 }

@@ -9,6 +9,14 @@ child result handling and ancestor rollback. The work advances
 [full Ethereum #725](https://github.com/danbri/factoidal-core/issues/725).
 It is stacked on [draft PR #798](https://github.com/danbri/factoidal-core/pull/798).
 
+[Published source checkpoint `3b04b0f`](https://github.com/danbri/factoidal-core/commit/3b04b0f88dbe53fee84fcb67c8f6f26d31e851f7)
+has exactly the checked local evidence tree
+`00f7b6e09f2e5204bb92e645b9571230162495f9`. Its native sources are byte-identical
+to local runtime commit `b7e5c44e`; its harness matches local `b63ee290`.
+Hosted CI is a separate gate, pending at publication. The branch remains
+unmerged; the exact-head builds-repository Linux gate and full premerge
+verification have not been claimed.
+
 The semantic reference is
 [EELS Cancun `system.py` at `1da5a11`](https://github.com/ethereum/execution-specs/blob/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/cancun/vm/instructions/system.py).
 The implementations and tests do not establish complete fork-indexed
