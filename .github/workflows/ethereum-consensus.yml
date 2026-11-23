@@ -38,6 +38,7 @@ jobs:
           lake env lean EthereumConsensus/ForkChoice/ProposerScore.lean
           lake env lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
           lake env lean EthereumConsensus/ForkChoice/ChildSelection.lean
+          lake env lean EthereumConsensus/ForkChoice/StoredHead.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
@@ -86,3 +87,9 @@ jobs:
         run: |
           set -euo pipefail
           lake exe lmd-checked-child | python3 scripts/check-child-selection.py
+      - name: Independent finite-inventory bounded get_head (1024 rows)
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe lmd-stored-head | python3 scripts/check-stored-head.py
