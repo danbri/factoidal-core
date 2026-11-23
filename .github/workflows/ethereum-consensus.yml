@@ -100,6 +100,16 @@ jobs:
           python3 ethereum-consensus/scripts/check-basic-types.py \
             ethereum-consensus/.lake/build/bin/ssz-basic-types \
             --report "$RUNNER_TEMP/ethereum-ssz-basic-results.json"
+      - name: Check fixed-length uint64 SSZ vector Merkle roots in pure Lean
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus build ssz-vector-u64
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/VectorU64.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-vector-axioms.log"
+          python3 ethereum-consensus/scripts/check-vector-u64.py \
+            ethereum-consensus/.lake/build/bin/ssz-vector-u64 \
+            --report "$RUNNER_TEMP/ethereum-ssz-vector-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
@@ -152,4 +162,6 @@ jobs:
             ${{ runner.temp }}/ethereum-byte-proof-report.json
             ${{ runner.temp }}/ethereum-ssz-basic-axioms.log
             ${{ runner.temp }}/ethereum-ssz-basic-results.json
+            ${{ runner.temp }}/ethereum-ssz-vector-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-vector-results.json
           if-no-files-found: warn
