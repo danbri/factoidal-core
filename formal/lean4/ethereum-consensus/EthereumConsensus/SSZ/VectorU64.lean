@@ -122,7 +122,7 @@ theorem checkedVectorU64Wire_exact (declared : Nat) (values : List UInt64)
 theorem checkedVectorU64_refuses_cap (declared : Nat) (values : List UInt64)
     (h : declared = 0 ∨ 64 < declared) :
     checkedVectorU64 declared values = .error .resourceLimit := by
-  simp [checkedVectorU64, checkedVectorU64Wire, h]
+  simp [checkedVectorU64, checkedVectorU64Wire, h, bind, Except.bind]
 
 /-- Kind: structural implementation. Says: the concrete level operation
     hashes one pair in order with our existing pure Lean SHA-256-backed hashPair.
@@ -159,7 +159,7 @@ theorem checkedVectorU64_refuses_count (declared : Nat) (values : List UInt64)
     (cap : ¬ (declared = 0 ∨ 64 < declared))
     (wrong : values.length ≠ declared) :
     checkedVectorU64 declared values = .error .wrongLength := by
-  simp [checkedVectorU64, checkedVectorU64Wire, cap, wrong]
+  simp [checkedVectorU64, checkedVectorU64Wire, cap, wrong, bind, Except.bind]
 
 private def resultError (result : Except VectorU64Error α) (error : VectorU64Error) : Bool :=
   match result with
