@@ -34,6 +34,38 @@ def execute (maxBytes gas : Nat) (input : Array UInt8) :
   else if gas < gasCost input.size then .error .outOfGas
   else .ok (input, gas - gasCost input.size)
 
+/-- Execute identity on an immutable, bounded view without materialising
+    its bytes. This is the adapter used by the real CALL-family dispatcher.
+    Its two refusals and gas charge deliberately match `execute`. -/
+def executeView (maxBytes gas : Nat) (input : ByteView) :
+    Except Error (ByteView × Nat) :=
+  if input.size > maxBytes then .error .resourceLimit
+  else if gas < gasCost input.size then .error .outOfGas
+  else .ok (input, gas - gasCost input.size)
+
+/-- Correspondence with the already tested byte-array entry point.
+    No cryptographic assumption or externally computed result is involved. -/
+theorem executeView_ofArray (maxBytes gas : Nat) (bytes : Array UInt8) :
+    (executeView maxBytes gas (ByteView.ofArray bytes)).map
+      (fun result => (bytes, result.2)) = execute maxBytes gas bytes := by
+  by_cases hSize : bytes.size > maxBytes
+  · simp [executeView, execute, ByteView.ofArray, hSize]
+  · by_cases hGas : gas < gasCost bytes.size
+    · simp [executeView, execute, ByteView.ofArray, hSize, hGas]
+    · simp [executeView, execute, ByteView.ofArray, hSize, hGas]
+
+theorem executeView_oversize (maxBytes gas : Nat) (view : ByteView)
+    (h : maxBytes < view.size) :
+    executeView maxBytes gas view = .error .resourceLimit := by
+  simp [executeView, h]
+
+theorem executeView_exact (maxBytes gas : Nat) (view : ByteView)
+    (hSize : view.size ≤ maxBytes) (hGas : gasCost view.size ≤ gas) :
+    executeView maxBytes gas view = .ok (view, gas - gasCost view.size) := by
+  have hNotOver : ¬ view.size > maxBytes := by omega
+  have hNotUnder : ¬ gas < gasCost view.size := by omega
+  simp [executeView, hNotOver, hNotUnder]
+
 /-- Kind: admission boundary.
     Says: oversize input is refused before gas charging or output construction.
     Does not say: Ethereum itself has this input-size limit. -/
@@ -126,6 +158,13 @@ private def isResourceLimit (maxBytes gas : Nat) (input : Array UInt8) : Bool :=
 #guard isResourceLimit 0 100 #[0x00]
 #guard isResourceLimit 1 0 #[0x00, 0x01]
 
+#guard (executeView 0 15 (ByteView.ofArray #[])).isOk
+#guard (executeView 1 17 (ByteView.ofArray #[0xff])) == .error .outOfGas
+#guard (executeView 0 100 (ByteView.ofArray #[0xff])) == .error .resourceLimit
+
+#print axioms executeView_ofArray
+#print axioms executeView_oversize
+#print axioms executeView_exact
 #print axioms execute_oversize
 #print axioms execute_underfunded
 #print axioms execute_exact
