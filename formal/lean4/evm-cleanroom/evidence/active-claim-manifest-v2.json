@@ -78,7 +78,7 @@
     "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
     "scripts/differential/byte-call-timing.mjs": "458b3f4d963665bec9656c3363bb2c7413a299b8",
     "scripts/differential/byte-copy.mjs": "fbe8c59b8dca01da00d4c05d1bc9ea2a98f52532",
-    "scripts/differential/call-data.mjs": "28a85f5f7e572cedbc9f903b6ce030e2a7edc606",
+    "scripts/differential/call-data.mjs": "152845b872705c2d4f63714df31687398c5f7f2c",
     "scripts/differential/geth-byte-oracle.mjs": "d1be6712584c3fcc69ee64d71f19100183170160",
     "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
