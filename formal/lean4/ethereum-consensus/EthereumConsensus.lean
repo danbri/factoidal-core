@@ -11,3 +11,5 @@ import EthereumConsensus.ForkChoice.StoredHead
 import EthereumConsensus.SSZ.MultiProofHelpers
 import EthereumConsensus.SSZ.ByteProofTheorems
 import EthereumConsensus.SSZ.BasicTypes
+
+import EthereumConsensus.SSZ.ContainerRoots
