@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "scope": "London EIP-1559 checked base-fee/header arithmetic, not full block or authenticated parent",
+  "sourceCheckpoint": "0e9cb799e091acccc8bc1ecb80718c6cd8a3d531",
+  "leanToolchain": "leanprover/lean4:v4.33.1",
+  "normative": {
+    "eip": "https://eips.ethereum.org/EIPS/eip-1559",
+    "executionSpecsCommit": "391d8a05d5cb182542ac7e7330c858b6ee03f990",
+    "executionSpecsPath": "src/ethereum/forks/london/fork.py",
+    "executionSpecsBlob": "1444d5c0e452cffb0665b091b60c4c6f0a027439"
+  },
+  "sourceBlobs": {
+    "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
+    "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
+    "EVMCleanroom.lean": "c58493e9c87adeaefdaf47f292530c6e653b1e3e",
+    "lakefile.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1",
+    "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2"
+  },
+  "axioms": {
+    "nextBaseFee_at_target": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "nextBaseFee_above": [
+      "propext",
+      "Quot.sound"
+    ],
+    "nextBaseFee_below": [
+      "propext",
+      "Quot.sound"
+    ],
+    "expected_firstLondon": [
+      "propext"
+    ],
+    "checkHeader_sound": [
+      "propext",
+      "Quot.sound"
+    ],
+    "missing_parent_refused": [
+      "propext"
+    ]
+  },
+  "selectedFixtureCorpus": {
+    "cases": 1555,
+    "seed": 1559,
+    "expectedOutcomes": {
+      "ok": 1389,
+      "invalid": 162,
+      "indeterminate": 4
+    },
+    "comparatorMutations": 3,
+    "notRun": 0
+  },
+  "trustedBoundaries": [
+    "Lean 4.33.1 compiler/runtime",
+    "caller-supplied parent fields, child fields and London activation flag",
+    "C stdlib/OS handling of CLI byte transport",
+    "Python formula is only a differential test oracle, not production code"
+  ],
+  "notClaimed": [
+    "canonical header authenticity or chain selection",
+    "full EELS block validation",
+    "complete fork indexing",
+    "full protocol conformance"
+  ]
+}
