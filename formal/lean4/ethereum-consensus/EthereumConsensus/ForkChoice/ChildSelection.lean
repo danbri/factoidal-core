@@ -85,6 +85,31 @@ theorem bestScored_unknown_refused (score : Nat → Option Nat)
     selectBestScored score (root :: rest) = none := by
   simp [selectBestScored, h]
 
+/-- Says: a missing score for ANY member of the candidate inventory,
+    not only the head, makes the complete selection indeterminate.
+    Does not establish the completeness of the supplied candidate list. -/
+theorem bestScored_any_unknown_refused (score : Nat → Option Nat) :
+    ∀ (roots : List Nat) (target : Nat),
+      target ∈ roots → score target = none →
+      selectBestScored score roots = none := by
+  intro roots
+  induction roots with
+  | nil =>
+      intro target hMember _
+      cases hMember
+  | cons head tail ih =>
+      intro target hMember hMissing
+      simp only [List.mem_cons] at hMember
+      cases hMember with
+      | inl hEqual =>
+          subst target
+          exact bestScored_unknown_refused score head tail hMissing
+      | inr hTail =>
+          have hRest := ih target hTail hMissing
+          cases hHead : score head with
+          | none => simp [selectBestScored, hHead]
+          | some amount => simp [selectBestScored, hHead, hRest]
+
 /-- Says: equal weights favour the larger abstract root, irrespective of
     list order for this two-child case. Does not prove the Nat/Root codec. -/
 theorem bestScored_tie_break (score : Nat → Option Nat)
@@ -211,6 +236,7 @@ private def sampleRoster : List EligibleWeight := [(0, 10), (1, 10)]
 #print axioms EthereumConsensus.ForkChoice.bestScored_empty
 #print axioms EthereumConsensus.ForkChoice.bestScored_single
 #print axioms EthereumConsensus.ForkChoice.bestScored_unknown_refused
+#print axioms EthereumConsensus.ForkChoice.bestScored_any_unknown_refused
 #print axioms EthereumConsensus.ForkChoice.bestScored_tie_break
 #print axioms EthereumConsensus.ForkChoice.checkedChild_unknown_parent_refused
 #print axioms EthereumConsensus.ForkChoice.checkedChild_duplicate_refused
