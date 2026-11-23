@@ -129,18 +129,17 @@ theorem checkedBasicRoot_rejects_long (bytes : ByteArray)
 #guard (encodeUInt64 256)[0]! == 0
 #guard (encodeUInt64 256)[1]! == 1
 #guard (encodeUInt64 65536)[2]! == 1
-#guard decodeUInt64 (encodeUInt64 0) == .ok 0
-#guard decodeUInt64 (encodeUInt64 1) == .ok 1
-#guard decodeUInt64 (encodeUInt64 255) == .ok 255
-#guard decodeUInt64 (encodeUInt64 256) == .ok 256
-#guard decodeUInt64 (encodeUInt64 18446744073709551615) ==
-  .ok 18446744073709551615
-#guard decodeUInt64 ByteArray.empty == .error .invalidLength
-#guard decodeBool (encodeBool false) == .ok false
-#guard decodeBool (encodeBool true) == .ok true
-#guard decodeBool (ByteArray.empty.push 2) == .error .noncanonicalBoolean
-#guard decodeBool (ByteArray.empty.push 255) == .error .noncanonicalBoolean
-#guard decodeBool ByteArray.empty == .error .invalidLength
+#guard decide (decodeUInt64 (encodeUInt64 0) = .ok 0)
+#guard decide (decodeUInt64 (encodeUInt64 1) = .ok 1)
+#guard decide (decodeUInt64 (encodeUInt64 255) = .ok 255)
+#guard decide (decodeUInt64 (encodeUInt64 256) = .ok 256)
+#guard decide (decodeUInt64 (encodeUInt64 18446744073709551615) =\n  .ok 18446744073709551615)
+#guard decide (decodeUInt64 ByteArray.empty = .error .invalidLength)
+#guard decide (decodeBool (encodeBool false) = .ok false)
+#guard decide (decodeBool (encodeBool true) = .ok true)
+#guard decide (decodeBool (ByteArray.empty.push 2) = .error .noncanonicalBoolean)
+#guard decide (decodeBool (ByteArray.empty.push 255) = .error .noncanonicalBoolean)
+#guard decide (decodeBool ByteArray.empty = .error .invalidLength)
 #guard (uint64Root 256).toOption.map (fun chunk => chunk.bytes.size) == some 32
 #guard (boolRoot true).toOption.map (fun chunk => chunk.bytes.size) == some 32
 
