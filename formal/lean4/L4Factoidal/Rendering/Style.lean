@@ -409,6 +409,9 @@ structure Rule where
   before : List Selector := []
   /-- The same for `::after`. -/
   after : List Selector := []
+  /-- The same for `::first-letter` (CSS Pseudo-Elements 4 §2.3); `Generated.firstLetters`
+  wraps the first letter of the originating element in an element that has these rules. -/
+  firstLetter : List Selector := []
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -644,6 +647,26 @@ def generatedSelector (s : String) : Option (String × Bool) :=
   else if low.endsWith ":after" then split 6 false
   else none
 
+/-- A selector that ends in `::first-letter` (or CSS 2's `:first-letter`): the selector of
+its originating element. -/
+def firstLetterSelector (s : String) : Option String :=
+  let t := trim s
+  let low := t.toLower
+  let split := fun (n : Nat) =>
+    let base := (t.dropEnd n).toString
+    let bare := match base.toList.getLast? with
+      | none => true
+      | some c => c == ' ' || c == '>' || c == '+' || c == '~' || c == '\t' || c == '\n'
+    some (if bare then base ++ "*" else base)
+  if low.endsWith "::first-letter" then split 14
+  else if low.endsWith ":first-letter" then split 13
+  else none
+
+#guard firstLetterSelector "p::first-letter" == some "p"
+#guard firstLetterSelector "div:first-letter" == some "div"
+#guard firstLetterSelector "::first-letter" == some "*"
+#guard firstLetterSelector "p::before" == none
+
 /-- The longhands that a side shorthand read by this profile sets, in the order of its
 values: the four sides of `margin`, `padding` and `inset`, the two sides of a
 flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
@@ -846,16 +869,18 @@ def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
   else
     -- each selector with the pseudo-element it ends in: `none`, `::before`, `::after`
     let texts := (splitTopCommas leaf.prelude).map fun s => match generatedSelector s with
-      | some (base,before) => (base,some before)
-      | none => (s,none)
+      | some (base,before) => (base,some (if before then 0 else 1))
+      | none => match firstLetterSelector s with
+        | some base => (base,some 2)
+        | none => (s,none)
     match texts.mapM (fun t => selector t.1) with
     | .ok all =>
       let tagged := all.zip (texts.map (·.2))
-      let pick := fun (which : Option Bool) => tagged.filterMap fun (sel,w) => if w == which then some sel else none
+      let pick := fun (which : Option Nat) => tagged.filterMap fun (sel,w) => if w == which then some sel else none
       let declarations := declarationsOf leaf.decls
       let usesVars := declarations.any (·.usesVars)
       let usesLogical := declarations.any fun d => CssValues.Logical.mentions d.property
-      some {selectors := pick none, before := pick (some true), after := pick (some false),
+      some {selectors := pick none, before := pick (some 0), after := pick (some 1), firstLetter := pick (some 2),
             declarations, layer := leaf.rank, usesVars, usesLogical}
     | .error _ => none
 

@@ -1,4 +1,5 @@
 import L4Factoidal.Rendering.Style
+import L4Factoidal.Unicode.RegexPropData
 
 /-! Generated content: the boxes of `::before` and `::after` (CSS 2.1 §12.1; CSS
 Pseudo-Elements 4 §4.1).
@@ -128,9 +129,10 @@ def rulesOf (before : Bool) (rules : List Rule) : List Rule :=
 /-- A rule that can make a pseudo-element: it has a `content` declaration. -/
 def makesContent (r : Rule) : Bool := r.declarations.any (·.property == "content")
 
-/-- Whether a sheet can make a pseudo-element at all. -/
+/-- Whether a sheet can make a pseudo-element at all: a `::before` or `::after` with
+`content`, or a `::first-letter`. -/
 def used (rules : List Rule) : Bool :=
-  rules.any fun r => (!r.before.isEmpty || !r.after.isEmpty) && makesContent r
+  rules.any fun r => ((!r.before.isEmpty || !r.after.isEmpty) && makesContent r) || !r.firstLetter.isEmpty
 
 /-- Elements that have no pseudo-elements here: replaced elements and controls, whose
 content is not their children. -/
@@ -207,9 +209,8 @@ Cost: a sheet with no pseudo-element rule that has `content` pays one pass over 
 Else each element looks once in the buckets of the rules that have `content` (not of the
 rules that only style a pseudo-element, such as `*::before{box-sizing:border-box}`), and
 the rest is paid for each pseudo-element made. -/
-def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+def styledParts (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
     (state : ElementState := {}) : Except String (Dom × Array Computed) := do
-  if !used rules then return (dom, ← computeFor treeScope dom rules textScale state)
   -- as `computeFor` does (`CSS.forDocument`): `:has()` and the structural pseudo-classes
   -- worked out once for the document
   let rules := forTree treeScope dom rules
@@ -247,6 +248,157 @@ def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textS
       | none => []
   let styles ← computeAllWith (withAnimated state matchesOf) derived textScale
   return fill dom.size owners derived styles
+
+/-! ### `::first-letter` (CSS Pseudo-Elements 4 §2.3; CSS 2.1 §5.12.2)
+
+After the cascade, the first letter of each element that a `::first-letter` rule matches
+is put in an element of its own, named `::first-letter`, with the rules of the
+pseudo-element; it inherits from the parent of the text it is cut from.
+
+- **The first letter**: the first letter or digit (General_Category L or N) of the first
+  text of the element's first line, with the marks that follow it (M), and the
+  punctuation (Ps, Pe, Pi, Pf, Po) before and after it. White space before it is dropped.
+- **Where it is looked for**: the element's children in tree order, into inline elements
+  and block children (and its `::before` text); not into floats, absolutely positioned
+  boxes, `display: none`, or atomic boxes (an inline block, a table, a replaced element,
+  `br`), where the first line has no first letter here.
+- **Only block containers** have one: `block`, `inline-block`, `table-cell`,
+  `table-caption`.
+- **Nodes**: the page's nodes keep their numbers. The text node the letter is cut from
+  loses the letter from its data; the element and its text node are added at the end.
+- **Not done**: a first letter in `::marker`, the text scale applied to a size the rule
+  sets (a size the letter inherits is scaled), a letter run of a digraph, `initial-letter`. -/
+
+private def hexValue (s : String) : Nat :=
+  s.foldl (fun n c => n * 16 + (if c.isDigit then c.toNat - 48
+    else if 'A' ≤ c && c ≤ 'F' then c.toNat - 55 else if 'a' ≤ c && c ≤ 'f' then c.toNat - 87 else 0)) 0
+
+/-- The code points of General_Category values, as sorted ranges. -/
+def categoryRanges (names : List String) : Array (Nat × Nat) :=
+  let rs := names.flatMap fun k => match L4Factoidal.Unicode.RegexPropData.gc.find? (·.1 == k) with
+    | some (_, t) => if t.isEmpty then [] else (t.splitOn ",").map fun e => match e.splitOn "-" with
+        | [a, b] => (hexValue a, hexValue b)
+        | _ => (hexValue e, hexValue e)
+    | none => []
+  rs.toArray.qsort (fun a b => a.1 < b.1)
+
+/-- Whether `c` is in the sorted ranges `rs`: a binary search, at most 64 steps. -/
+def inRanges (rs : Array (Nat × Nat)) (c : Nat) : Bool := Id.run do
+  let mut lo := 0
+  let mut hi := rs.size
+  for _ in [0:64] do
+    if lo < hi then
+      let mid := (lo + hi) / 2
+      let (a, b) := rs[mid]!
+      if c < a then hi := mid
+      else if c > b then lo := mid + 1
+      else return true
+  return false
+
+def punctuationRanges : Array (Nat × Nat) := categoryRanges ["Ps", "Pe", "Pi", "Pf", "Po"]
+def letterRanges : Array (Nat × Nat) := categoryRanges ["Lu", "Ll", "Lt", "Lm", "Lo", "Nd", "Nl", "No"]
+def markRanges : Array (Nat × Nat) := categoryRanges ["Mn", "Mc", "Me"]
+
+/-- The first letter of a text, as the character offsets of its start and end; the
+white space before it is not in it. `none`: the text is white space only (look further);
+`some none`: the text starts with something that is not a first letter (look no further). -/
+def firstLetterRange (text : String) : Option (Option (Nat × Nat)) := Id.run do
+  let cs := text.toList.toArray
+  let space := fun (c : Char) => c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0C'
+  let mut i := 0
+  for _ in [0:cs.size] do
+    if i < cs.size && space cs[i]! then i := i + 1
+  if i ≥ cs.size then return none
+  let start := i
+  let punct := fun (k : Nat) => k < cs.size && inRanges punctuationRanges cs[k]!.toNat
+  for _ in [0:cs.size] do
+    if punct i then i := i + 1
+  if !(i < cs.size && inRanges letterRanges cs[i]!.toNat) then return some none
+  i := i + 1
+  for _ in [0:cs.size] do
+    if i < cs.size && inRanges markRanges cs[i]!.toNat then i := i + 1
+  for _ in [0:cs.size] do
+    if punct i then i := i + 1
+  return some (some (start, i))
+
+#guard firstLetterRange "  Test" == some (some (2, 3))
+#guard firstLetterRange ")T)est" == some (some (0, 3))
+#guard firstLetterRange "“A” b" == some (some (0, 3))
+#guard firstLetterRange "éx" == some (some (0, 2))
+#guard firstLetterRange "   " == none
+#guard firstLetterRange "-x" == some none
+#guard firstLetterRange "42" == some (some (0, 1))
+
+/-- The text node of an element's first letter, and the letter's character offsets in it,
+by the styles of the laid out tree. Children in tree order, depth first, as the first
+line would hold them; at most `d.size` steps. -/
+def firstLetterText (d : Dom) (styles : Array Computed) (owner : Nat) : Option (Nat × Nat × Nat) := Id.run do
+  let mut pending := (d.get owner).kids.toList
+  for _ in [0:d.size + 1] do
+    match pending with
+    | [] => return none
+    | k :: rest =>
+      pending := rest
+      let n := d.get k
+      if n.type == .text then
+        match firstLetterRange n.data with
+        | none => pure ()
+        | some none => return none
+        | some (some (a, b)) => return some (k, a, b)
+      else if n.type == .element then
+        let s := (styles[k]?).getD {}
+        if s.display == .none || s.pos.float != .none || s.pos.position == .absolute || s.pos.position == .fixed then pure ()
+        else if bare.contains n.lname || n.ns == some svgNS then return none
+        else if s.display == .inline || s.display == .block then pending := n.kids.toList ++ pending
+        else return none
+  return none
+
+/-- The elements that have a first letter, then their letters made elements: `matchesOf id`
+are the `::first-letter` rules that match page element `id` (`base` elements). -/
+def addFirstLetters (base : Nat) (matchesOf : Nat → List Match) (d : Dom) (styles : Array Computed) :
+    Except String (Dom × Array Computed) := do
+  let mut d := d
+  let mut styles := styles
+  for id in [0:base] do
+    let ms := matchesOf id
+    if ms.isEmpty then continue
+    let display := ((styles[id]?).map (·.display)).getD .none
+    if !(display == .block || display == .inlineBlock || display == .tableCell || display == .tableCaption) then continue
+    match firstLetterText d styles id with
+    | none => pure ()
+    | some (t, a, b) =>
+      let text := d.get t
+      let some p := text.parent | continue
+      let cs := text.data.toList
+      let letter := String.ofList ((cs.drop a).take (b - a))
+      let rest := String.ofList (cs.drop b)
+      let pe := d.size
+      let element : DOM.Node :=
+        {type := .element, ns := some htmlNS, lname := "::first-letter", parent := some p, kids := #[pe+1], doc := text.doc}
+      let letterNode : DOM.Node := {type := .text, parent := some pe, data := letter, doc := text.doc}
+      let nodes := ((d.nodes.push element).push letterNode).modify t fun n => {n with data := rest}
+      d := {nodes := nodes.modify p fun n => {n with kids := n.kids.flatMap fun k => if k == t then #[pe, t] else #[k]}}
+      let parentStyle := (styles[p]?).getD {}
+      let own ← styleOfNode (fun x => if x == pe then ms else []) d pe parentStyle
+      let inner ← styleOfNode (fun _ => []) d (pe+1) own
+      styles := (styles.push own).push inner
+  return (d, styles)
+
+/-- The tree to lay out and the styles of its nodes: `styledParts`, then the first letters
+(`addFirstLetters`) when a rule has `::first-letter`. -/
+def styled (treeScope : Option TreeScope) (dom : Dom) (rules : List Rule) (textScale : Float := 1)
+    (state : ElementState := {}) : Except String (Dom × Array Computed) := do
+  if !used rules then return (dom, ← computeFor treeScope dom rules textScale state)
+  let (d, styles) ← styledParts treeScope dom rules textScale state
+  if !(rules.any (!·.firstLetter.isEmpty)) then return (d, styles)
+  let rules := forTree treeScope dom rules
+  let tree := match treeScope with
+    | some ts => ts.tree
+    | none => dom
+  let keys := (ElemKeys.of tree).get tree
+  let letters := Index.author treeScope (rules.filterMap fun r =>
+    if r.firstLetter.isEmpty then none else some {r with selectors := r.firstLetter, before := [], after := [], firstLetter := []})
+  addFirstLetters dom.size (fun id => letters.matched keys dom state id) d styles
 
 /-- **A sheet with no pseudo-element rule that has `content` changes nothing**: the tree
 is the page's and the styles are those of `CSS.computeFor`. -/

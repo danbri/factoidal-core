@@ -424,6 +424,22 @@ private def clearfix := "<div id=a><div id=f style='float:left;height:30px;width
   let (tree,_) ← (Generated.styled none dom (← (CSS.parse "*::before{box-sizing:border-box} #a{color:red}").toOption)).toOption
   pure (tree.size == dom.size)) == some true
 
+-- `::first-letter` (CSS Pseudo-Elements 4 §2.3): the letter and its punctuation in an element
+-- of their own, with the rule's style; the rest stays in the page's text node.
+private def letterOf (page sheet : String) : Option (String × String × Float) := do
+  let dom := DOM.parseHtmlDocument page
+  let (tree,styles) ← (Generated.styled none dom (← (CSS.parse sheet).toOption)).toOption
+  let fl ← (List.range tree.size).find? fun i => (tree.get i).lname == "::first-letter"
+  let t ← (tree.get fl).kids[0]?
+  let rest ← (List.range tree.size).find? fun i => (tree.get i).type == .text && (tree.get i).parent == (tree.get fl).parent &&
+    (tree.get (tree.get fl).parent.get!).kids.toList.idxOf i == (tree.get (tree.get fl).parent.get!).kids.toList.idxOf fl + 1
+  pure ((tree.get t).data, (tree.get rest).data, (styles[fl]?).map (·.fontSize) |>.getD 0)
+#guard letterOf "<div>)T)est</div>" "div::first-letter{font-size:36px}" == some (")T)", "est", 36)
+#guard letterOf "<p>  <b>Hello</b></p>" "p:first-letter{font-size:20px}" == some ("H", "ello", 20)
+#guard letterOf "<p id=a>x</p>" "#a::before{content:'Q'} p::first-letter{font-size:20px}" == some ("Q", "", 20)
+-- none in an inline block, nor for an inline originating element
+#guard letterOf "<p><span style='display:inline-block'>A</span>b</p>" "p::first-letter{font-size:20px}" == none
+#guard letterOf "<span>Ab</span>" "span::first-letter{font-size:20px}" == none
 
 -- Intrinsic contributions are within `min-width` and `max-width` (CSS Sizing 3 §5.1):
 -- four empty items of min-width 20 and margins 10 make a 160 px inline-flex container
