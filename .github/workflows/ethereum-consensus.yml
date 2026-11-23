@@ -36,6 +36,7 @@ jobs:
           lake env lean EthereumConsensus/ForkChoice/VoteStore.lean
           lake env lean EthereumConsensus/ForkChoice/AttestationScore.lean
           lake env lean EthereumConsensus/ForkChoice/ProposerScore.lean
+          lake env lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
@@ -66,10 +67,15 @@ jobs:
         run: |
           set -euo pipefail
           lake exe lmd-score | python3 scripts/check-attestation-score.py
-
       - name: Independent two-stage proposer score and LMD bridge (1024 rows)
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
         run: |
           set -euo pipefail
           lake exe lmd-computed-boost | python3 scripts/check-proposer-score.py
+      - name: Independent bounded ancestry and LMD checked score (1024 rows)
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe lmd-checked-ancestry | python3 scripts/check-ancestry.py
