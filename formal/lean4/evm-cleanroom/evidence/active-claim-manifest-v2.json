@@ -12,7 +12,7 @@
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85e56acddd9396be6ff1418400b717150521f9f5",
     "EVMCleanroom/Frame.lean": "790e09753018170c633e3b3ad604b2b6b3c98244",
-    "EVMCleanroom/World.lean": "0f852ccd77d75a3b3ae03fb4b4b0ee1da6743b45",
+    "EVMCleanroom/World.lean": "8424289cfe1a9e6d0c453ba28c60c907c32750b0",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "c7f2f3f581d76d3ca74ea018791ec5b7e61f224d",
@@ -35,7 +35,7 @@
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "591d00a5f08ea1ee7b86dd6e8eb5f39e5148e3e9",
+    "EVMCleanroom/CallOpcode.lean": "a039eeee3a7827bcd1299feaa82d67d3a6c3a86e",
     "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
@@ -52,7 +52,7 @@
     "scripts/differential/call-context.mjs": "ab585923c102838bba30707e665b3b0c924c995d",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "ba5a9cb7bec40f33f15b144bc84bb5e0cd993970",
-    "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
+    "EVMCleanroom/CallBoundaryTests.lean": "c59833048341a09d20c10698e6de90cb256d7b98",
     "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
     "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
     "scripts/differential/call-repairs.mjs": "7da80e271dfe8253ebd75a6312f39dbf6a28eeca",
@@ -109,7 +109,7 @@
     "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
     "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
     "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463",
-    "EVMCleanroom/CallFamilyTests.lean": "40c29c1072f871772d1108330d0ef749a1a8d46a",
+    "EVMCleanroom/CallFamilyTests.lean": "7d0f0cf068e7adbcf20be41e77000ef32519c9be",
     "scripts/differential/call-family.mjs": "2f6fae61a08670a737350b29c69a5f9469c79432"
   },
   "theorem_inventory": [
@@ -1442,7 +1442,7 @@
         "Quot.sound",
         "propext"
       ],
-      "scope": "The actual LOG0\u2013LOG4 dispatcher prices and commits the active address, stack topics in pop order and the expanded data window.",
+      "scope": "The actual LOG0–LOG4 dispatcher prices and commits the active address, stack topics in pop order and the expanded data window.",
       "provenance": "Actual Lean 4.33.1 #print axioms on the source tree of fb5812620c0feb2334fa016861baeab6f7f89879 (witness-limited call transaction integration)."
     },
     {
