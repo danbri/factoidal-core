@@ -11,8 +11,9 @@ namespace NativeImage
 
 open L4Factoidal.Rendering (Bitmap)
 
-/-- Limit on the decoded pixels of one document: the paint table has one word for
-    each pixel, and `NativeSVG.maxPaintTableWords` is the same number. -/
+/-- Limit on the decoded pixels of one image store: the paint table has one word for
+    each pixel. `NativeSVG.maxPaintTableWords` is four times this number, for a page's two
+    stores (images and backgrounds) and the SVG pictures drawn again. -/
 def maxDocumentPixels : Nat := 1048576
 
 /-- A decoded image, or the refusal that names why it is not one. -/

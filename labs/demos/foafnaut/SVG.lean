@@ -1756,8 +1756,22 @@ private def BackendPrimitive.storageRowsFast (p : BackendPrimitive) : Nat :=
   simp only [BackendPrimitive.storageRows, BackendPrimitive.storageRowsFast]
   cases p.geometry <;> simp [edges_length]
 
-/-- Largest paint table of a scene, in 32-bit words. -/
-def maxPaintTableWords : Nat := 1048576
+/-- Largest paint table of a scene, in 32-bit words (16 MiB). An HTML page has two image
+stores, each held within `NativeImage.maxDocumentPixels` (one word a pixel): the `img`
+pictures and the background images. SVG images drawn again at their size add at most 16
+pictures of at most 65536 pixels (`WebDocument.maxVectorRedraws`,
+`NativeSVGForgiving.maxImagePixels`). The paint table holds them all, with room for the
+other paints. Until 2026-11-23 the limit was one store's budget, and a page with large photos
+in both stores (live BBC News) was refused whole (issue 833). WebGPU guarantees storage
+bindings of 128 MiB (`maxStorageBufferBindingSize`). -/
+def maxPaintTableWords : Nat := 4*NativeImage.maxDocumentPixels
+
+/-- Kind: bound. Says: two stores of images and 16 redrawn pictures of 65536 pixels fit the
+paint table with a quarter of `maxDocumentPixels` left for other paints. Does not say: the
+other paints of a page fit in what is left. -/
+theorem imageStores_fit_paintTable :
+    2*NativeImage.maxDocumentPixels + 16*65536 + NativeImage.maxDocumentPixels/4 ≤ maxPaintTableWords := by
+  decide
 
 private def pointBox (points : List Point) : Float × Float × Float × Float :=
   match points with
