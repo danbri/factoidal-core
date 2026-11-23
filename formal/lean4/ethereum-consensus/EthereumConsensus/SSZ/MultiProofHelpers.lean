@@ -44,6 +44,19 @@ def admissibleClaims (xs : List Nat) : Bool :=
     xs.all (fun index => decide (1 < index)) &&
     uniqueClaims xs && unrelatedClaims xs
 
+/-- A transparent, structurally recursive descending sorter. The bounded
+    public entry caps the number of candidates before this quadratic step.
+    Keep this definition kernel-reducible for concrete equality theorems. -/
+def insertDescending (index : Nat) : List Nat → List Nat
+  | [] => [index]
+  | x :: xs =>
+      if index > x then index :: x :: xs
+      else x :: insertDescending index xs
+
+def descending : List Nat → List Nat
+  | [] => []
+  | x :: xs => insertDescending x (descending xs)
+
 /-- Actual helper-index dispatcher. Indices name the *positions* of the
     external proof nodes; no supplied hash or root is trusted or checked. -/
 def helperIndices (xs : List Nat) : Option (List Nat) :=
@@ -51,7 +64,7 @@ def helperIndices (xs : List Nat) : Option (List Nat) :=
     let paths := (xs.map pathIndices).flatten
     let branches := (xs.map branchIndices).flatten
     let helpers := (branches.filter (fun index => !(paths.contains index))).eraseDups
-    some (helpers.mergeSort (fun a b => decide (a > b)))
+    some (descending helpers)
   else none
 
 /-- Runtime work-budget wrapper. Caps are caller-supplied policy values,
@@ -93,7 +106,7 @@ theorem helperIndices_of_admissible (xs : List Nat)
   let paths := (xs.map pathIndices).flatten
   let branches := (xs.map branchIndices).flatten
   let helpers := (branches.filter (fun index => !(paths.contains index))).eraseDups
-  refine ⟨helpers.mergeSort (fun a b => decide (a > b)), ?_⟩
+  refine ⟨descending helpers, ?_⟩
   simp [helperIndices, h, paths, branches, helpers]
 
 /-- Says: a request beyond the explicit claim limit is refused before
@@ -142,11 +155,11 @@ theorem helperIndices_nested : helperIndices [2, 4] = none := by rfl
 
 /-- Says: an isolated leaf needs its right sibling and its uncle.
     Does not say: these hashes are present, correct or SHA-256 digests. -/
-theorem helperIndices_one_leaf : helperIndices [4] = some [5, 3] := by decide
+theorem helperIndices_one_leaf : helperIndices [4] = some [5, 3] := by rfl
 
 /-- Says: the two direct children of the root need no helper witness.
     Does not say: their claimed leaf hashes match a consensus root. -/
-theorem helperIndices_root_children : helperIndices [2, 3] = some [] := by decide
+theorem helperIndices_root_children : helperIndices [2, 3] = some [] := by rfl
 
 #guard helperIndices [] == none
 #guard helperIndices [0] == none
