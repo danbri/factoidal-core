@@ -40,3 +40,7 @@ root = "ChildMain"
 [[lean_exe]]
 name = "lmd-stored-head"
 root = "StoredHeadMain"
+
+[[lean_exe]]
+name = "ssz-multiproof-helpers"
+root = "MultiProofMain"
