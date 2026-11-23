@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * Compare caller resumption and static/profile propagation with EthereumJS.
- * The identity precompile has its own boundary check because Lean does not
- * execute it. Build EVMCleanroom.CallBoundaryTests before running this probe.
+ * The identity zero-forwarded-gas case is now executed in the same Lean
+ * CALL dispatcher and independently compared, including exact parent gas.
+ * Build EVMCleanroom.CallBoundaryTests before running this probe.
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -41,7 +42,7 @@ const fixtures = [
   },
   {
     name: 'identity-zero-gas', parentCode: '5f5f5f5f5f60045ff100', observed: identity,
-    bit: '0', slot0: '0', boundary: true,
+    bit: '0', slot0: '0',
   },
 ]
 
@@ -97,15 +98,8 @@ for (const fixture of fixtures) {
     const expected = await reference(fixture)
     assert.deepEqual(expected.stack, [fixture.bit])
     assert.equal(expected.slot0, fixture.slot0)
-    if (fixture.boundary) {
-      boundaries.push({name, expected, actual: measured})
-      assert.deepEqual(measured, {
-        status: 'indeterminate', reason: 'EVMCleanroom.Error.unsupportedFork',
-      })
-    } else {
-      comparisons.push({name, expected, actual: measured})
-      assert.deepEqual(measured, expected)
-    }
+    comparisons.push({name, expected, actual: measured})
+    assert.deepEqual(measured, expected)
   } catch (error) {
     failures.push({name, error: String(error)})
   }
