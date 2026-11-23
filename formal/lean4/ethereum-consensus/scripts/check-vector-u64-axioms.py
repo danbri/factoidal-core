@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Fail-closed source/inventory/allowed-axiom audit for fixed uint64 SSZ vectors.
 
-This first-stage ledger pins the exact implementation/CLI source blobs and
-theorem names. It audits ACTUAL Lean #print axioms, but it deliberately does
-not claim the exact per-theorem axiom sets until verified source output is
-captured and added to a versioned ledger.
+The versioned ledger pins implementation/CLI source blobs, names and exact
+per-theorem axiom sets obtained from source-built Lean 4.33.1 output.
+Any change to a code blob or axiom result fails closed.
 """
 import argparse
 import hashlib
@@ -67,6 +66,8 @@ def main():
         actual[name] = axioms
     demand(set(actual) == expected,
            f"missing/extra actual theorem outputs: {sorted(set(actual) ^ expected)}")
+    demand(actual == ledger["theorem_axioms"],
+           "actual Lean axiom sets differ from the exact source-pinned evidence")
     print(json.dumps({"source_pins_checked": len(seen), "theorems_checked": len(actual),
           "axioms": dict(sorted(actual.items()))}, sort_keys=True))
 
