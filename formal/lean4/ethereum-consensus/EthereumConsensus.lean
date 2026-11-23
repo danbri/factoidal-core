@@ -7,3 +7,4 @@ import EthereumConsensus.ForkChoice.AttestationScore
 import EthereumConsensus.ForkChoice.ProposerScore
 import EthereumConsensus.ForkChoice.CheckedAncestry
 import EthereumConsensus.ForkChoice.ChildSelection
+import EthereumConsensus.ForkChoice.StoredHead
