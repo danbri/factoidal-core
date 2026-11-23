@@ -2383,7 +2383,8 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
     let attach := fun (i : Nat) (st : Rendering.CSS.Computed) => match pics i with
       | some pic =>
-        let natural := match st.backgroundImage.bind (fun k => images.lookup k) |>.bind WebRender.vectorNatural with
+        -- an image URL with a fragment shows a view: its size is the picture's
+        let natural := match st.backgroundImage.bind (fun k => if k.contains '#' then none else images.lookup k) |>.bind WebRender.vectorNatural with
           | some n => some n
           | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
         {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
