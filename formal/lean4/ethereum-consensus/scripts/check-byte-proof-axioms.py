@@ -9,7 +9,8 @@ import re
 
 
 REPOSITORY = Path(__file__).resolve().parents[4]
-SCHEMA = "factoidal.ethereum-consensus.byte-proof-claims.v1"
+SCHEMAS = {"factoidal.ethereum-consensus.byte-proof-claims.v1",
+           "factoidal.ethereum-consensus.basic-type-claims.v1"}
 FOUNDATIONS = {"propext", "Quot.sound", "Classical.choice"}
 THEOREM_NAME = r"[A-Za-z_][\w']*(?:\.[A-Za-z_][\w']*)*"
 DECLARATION = re.compile(rf"^[ \t]*#print[ \t]+axioms[ \t]+({THEOREM_NAME})[ \t]*(?:--.*)?$", re.M)
@@ -85,7 +86,7 @@ def observed_axioms(text: str) -> dict[str, list[str]]:
 
 def check(ledger_path: Path, log_path: Path) -> None:
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"), object_pairs_hook=json_object)
-    require(ledger.get("schema") == SCHEMA, "unknown byte-proof claim ledger schema")
+    require(ledger.get("schema") in SCHEMAS, "unknown claim ledger schema")
     expected = ledger["theorem_axioms"]
     require(isinstance(expected, dict) and bool(expected), "claim ledger has no theorem axioms")
     for name, axioms in expected.items():
