@@ -357,7 +357,7 @@ def firstLetterText (d : Dom) (styles : Array Computed) (owner : Nat) : Option (
           let ps := n.parent.bind (styles[·]?) |>.getD {}
           -- A preserved line feed before the letter puts it on a later line.
           if (ps.preformatted || ps.preserveSegmentBreaks) && (cs.extract 0 a).any (· == '\n') then return none
-          if (cs.extract a b).any (fun c => cursive c.toNat) then return none
+          if (cs.extract a b).any (fun c => cursive c.toNat && inRanges letterRanges c.toNat) then return none
           return some (k, a, b)
       else if n.type == .element then
         let s := (styles[k]?).getD {}

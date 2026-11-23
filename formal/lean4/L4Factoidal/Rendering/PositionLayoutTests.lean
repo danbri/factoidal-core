@@ -443,6 +443,7 @@ private def letterOf (page sheet : String) : Option (String × String × Float) 
 #guard letterOf "<div><div></div>X</div>" "div::first-letter{font-size:20px}" == none
 #guard letterOf "<div style='white-space:pre'>\n  The</div>" "div::first-letter{font-size:20px}" == none
 #guard letterOf "<div>عا</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div>،T،est</div>" "div::first-letter{font-size:20px}" == some ("،T،", "est", 20)
 #guard letterOf "<div><div>Ab</div></div>" "div div::first-letter{font-size:20px}" == some ("A", "b", 20)
 
 -- Intrinsic contributions are within `min-width` and `max-width` (CSS Sizing 3 §5.1):
