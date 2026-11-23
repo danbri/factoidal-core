@@ -9,11 +9,11 @@ Pinned reference: `ethereum/consensus-specs@d2021d2719235f0df4726a1d330502cb15aa
 
 `EthereumConsensus.ForkChoice.CheckedAncestry` adds a finite-fuel traversal from a supplied `Nat → Option BlockPosition`. It refuses an unknown supported/candidate root, a required missing parent, insufficient fuel and a non-decreasing slot edge. `checkedDescends` has three observable outcomes: `some true` (confirmed by supplied lookup), `some false` (resolved but different branch), `none` (inconclusive). The lookup is **not** authenticated: `confirmed` here only means consistent with the supplied synthetic block map.
 
-`weightWithCheckedAncestry` first checks uniqueness of the caller-supplied active/unslashed validator roster. It then requires all ancestry queries that can affect vote credit and the optional proposer boost to resolve. If not, it refuses the full score. When known, it calls the **existing executable Lean** `weightWithComputedBoost` with the now-resolved predicate. No host language substitutes for that computation. The `totalActiveBalance` still comes from the caller and must represent all active validators of the justified checkpoint state, not the unslashed vote roster.
+`weightWithCheckedAncestry` first checks uniqueness of the caller-supplied active/unslashed validator roster. It first requires that the candidate node itself exists in the supplied block map (including the empty-roster/no-boost case), then requires all ancestry queries that can affect vote credit and the optional proposer boost to resolve. If not, it refuses the full score. When known, it calls the **existing executable Lean** `weightWithComputedBoost` with the now-resolved predicate. No host language substitutes for that computation. The `totalActiveBalance` still comes from the caller and must represent all active validators of the justified checkpoint state, not the unslashed vote roster.
 
 ## Intended theorems and source evidence
 
-Ten attached `#print axioms` declarations:
+Eleven attached `#print axioms` declarations:
 1. `checkedDescends_zero_fuel`
 2. `checkedDescends_unknown_candidate`
 3. `ancestorAtSlot_at_or_below`
@@ -21,11 +21,12 @@ Ten attached `#print axioms` declarations:
 5. `ancestorAtSlot_missing_parent`
 6. `ancestorAtSlot_non_decreasing_parent`
 7. `checkedWeight_duplicate_refused`
-8. `checkedWeight_unknown_boost_refused`
-9. `checkedWeight_agrees_when_known` — direct call bridge to the existing executable weight computation
-10. `checkedWeight_rejected_update`
+8. `checkedWeight_unknown_node_refused`
+9. `checkedWeight_unknown_boost_refused`
+10. `checkedWeight_agrees_when_known` — direct call bridge to the existing executable weight computation
+11. `checkedWeight_rejected_update`
 
-There are 16 source `#guard` cases. They cover branch distinctions, insufficient fuel, absent block roots, malformed parent edges, positive boost, absent boost, malformed eligible-validator roster and unknown score refusals. All theorem/proof claims remain **unverified until the exact-head Lean 4.33.1 CI runs**. Source text is not compiler evidence. The independent Python oracle cannot validate Lean theorems.
+There are 17 source `#guard` cases. They cover branch distinctions, insufficient fuel, absent block roots, malformed parent edges, positive boost, absent boost, malformed eligible-validator roster and unknown score refusals. All theorem/proof claims remain **unverified until the exact-head Lean 4.33.1 CI runs**. Source text is not compiler evidence. The independent Python oracle cannot validate Lean theorems.
 
 ## Synthetic differential gate
 
