@@ -500,8 +500,16 @@ for (const op of variants) {
     try {
       const expected = await ethereumJS(c)
       const actual = runLean(c)
-      assert.deepEqual(actual, {status: 'indeterminate', reason}, c.id)
-      boundaries.push({id: c.id, oracleStatus: expected.status, ...actual})
+      if (name === 'identity-precompile') {
+        assert.equal(expected.status, 'stopped', c.id + ': oracle success')
+        checkSnapshots(actual)
+        const fields = diff(expected, actual)
+        assert.deepEqual(fields, [], c.id + ': actual identity CALL-family execution')
+        boundaries.push({id: c.id, oracleStatus: expected.status, ...actual, matched: true})
+      } else {
+        assert.deepEqual(actual, {status: 'indeterminate', reason}, c.id)
+        boundaries.push({id: c.id, oracleStatus: expected.status, ...actual})
+      }
     } catch (error) {
       failures.push({id: c.id, error: String(error)})
     }
