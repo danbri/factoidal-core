@@ -1089,6 +1089,23 @@ they obsolete? Widely used? Both?" and "1227 - off by default and make user pass
 - Coordinator's reading, not the owner's words: track B item 4 is no longer blocked by 1223 and
   1224, so item 5 (XML Encryption 1.1) can start.
 
+### XML Encryption 1.1: deferrals; AES on emulators (owner, 2026-11-23)
+
+Owner, verbatim: "I am concerned re cryptography. Wary of rolling our own. Unhappy about partial
+implementation of standards. Recall some issue with aes being vulnerable when no hardware support
+for some op (eg outside of x86); but this sounds risky given existence of emulators, wasm etc. We
+can defer for now and add more if concrete usecases arise."
+
+- Deferred, with expected failures: AES-192 in XML Encryption
+  (https://github.com/danbri/factoidal/issues/1304, W3C WRAP.2 and AGRMNT.2) and ECDH-ES on P-384
+  and P-521 (https://github.com/danbri/factoidal/issues/1223, W3C AGRMNT.3). Add an algorithm only
+  for a concrete use case and only from a verified source.
+- AES on an emulated CPU (CPUID reports AES-NI, the emulator runs it in software):
+  https://github.com/danbri/factoidal/issues/1305, for expert review. No code change yet.
+- Coordinator's reading, not the owner's words: this answer does not decide
+  https://github.com/danbri/factoidal-core/pull/766 (finite-field Diffie-Hellman, dh-es, with
+  1024-bit primes behind an opt-in). It stays unmerged until the owner answers on it.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and

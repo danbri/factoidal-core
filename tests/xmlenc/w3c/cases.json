@@ -23,7 +23,8 @@
    "file": "cipherText__RSA-3072__aes192-gcm__rsa-oaep-mgf1p__Sha256.xml",
    "outcome": "refused",
    "reason": "AES-192",
-   "key": "oracle-RSA-3072"
+   "key": "oracle-RSA-3072",
+   "issue": "https://github.com/danbri/factoidal/issues/1304"
   },
   {
    "id": "WRAP.3",
@@ -45,13 +46,15 @@
    "id": "AGRMNT.2",
    "file": "cipherText__EC-P384__aes192-gcm__kw-aes192__ECDH-ES__ConcatKDF.xml",
    "outcome": "refused",
-   "reason": "AES-192"
+   "reason": "AES-192",
+   "issue": "https://github.com/danbri/factoidal/issues/1304"
   },
   {
    "id": "AGRMNT.3",
    "file": "cipherText__EC-P521__aes256-gcm__kw-aes256__ECDH-ES__ConcatKDF.xml",
    "outcome": "refused",
-   "reason": "not on P-256"
+   "reason": "not on P-256",
+   "issue": "https://github.com/danbri/factoidal/issues/1223"
   },
   {
    "id": "AGRMNT.7",
