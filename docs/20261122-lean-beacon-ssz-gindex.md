@@ -7,9 +7,13 @@ Execution subgoal is separate: https://github.com/danbri/factoidal-core/issues/6
 ## Normative slice and provenance
 
 The upstream Ethereum consensus specification is
-https://github.com/ethereum/consensus-specs/blob/498449f83228304263b05cce1b052f44b7531d8c/ssz/merkle-proofs.md
-(SSZ generalized-index helpers and single Merkle proof; latest path-change
-commit returned by GitHub on 22 November 2026). This is an upstream source
+https://github.com/ethereum/consensus-specs/blob/802485ec74a6986542bd53bf153189623aab440c/ssz/merkle-proofs.md
+(historical generalized-index helpers and single Merkle proof). The previous
+pin 498449f83228304263b05cce1b052f44b7531d8c had already removed that
+file; the current standalone SSZ pin is ethereum/ssz-specs at
+4c2f08805080c6b4b12ede7bf48ad6a80229f4b1, src/ssz/gindex.py.
+The checked-branch distinction from issue #813 is implemented separately in
+EthereumConsensus.SSZ.CheckedBranch (see docs/20261123-lean-beacon-ssz-branch-admission.md). This is an upstream source
 pin; independent normative refinement is not yet proved. Its code states: child = 2*i+right,
 parent = i//2, sibling = i xor 1, proof length = floor(log2(i));
 odd-index siblings are hashed to the left. These operations are implemented
