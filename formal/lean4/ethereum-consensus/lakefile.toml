@@ -20,3 +20,7 @@ root = "LatestMain"
 [[lean_exe]]
 name = "lmd-store"
 root = "StoreMain"
+
+[[lean_exe]]
+name = "lmd-score"
+root = "WeightMain"
