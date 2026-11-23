@@ -2316,7 +2316,9 @@ def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Arra
     let st := styles[i]!
     let some (_,b) := st.backgroundBitmap | continue
     let some (nw,nh,ratio) := st.backgroundNatural | continue
-    let some bytes := st.backgroundImage.bind (images.lookup ·) | continue
+    let some key := st.backgroundImage | continue
+    if key.contains '#' then continue
+    let some bytes := images.lookup key | continue
     if st.pos.borderBox then continue
     let .px w := st.width | continue
     let .px h := st.height | continue
@@ -2342,6 +2344,8 @@ def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat
   for (id,key) in keys do
     if found.size ≥ maxVectorRedraws then break
     let some picture := pictures id | continue
+    -- a fragment (`#view`, `#svgView(...)`) picks a view, which the store's picture has
+    if key.contains '#' then continue
     let some bytes := images.lookup key | continue
     if (WebRender.vectorNatural bytes).isNone then continue
     let some st := styles[id]? | continue
