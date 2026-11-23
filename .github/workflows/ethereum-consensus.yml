@@ -31,6 +31,7 @@ jobs:
         working-directory: formal/lean4/ethereum-consensus
         run: |
           lake env lean EthereumConsensus/SSZ/GIndex.lean
+          lake env lean EthereumConsensus/SSZ/CheckedBranch.lean
           lake env lean EthereumConsensus/ForkChoice/LatestMessage.lean
           lake env lean EthereumConsensus/ForkChoice/VoteStore.lean
       - name: Independent SSZ generalized-index reference over 1025 inputs
@@ -39,6 +40,12 @@ jobs:
         run: |
           set -euo pipefail
           lake exe ssz-gindex | python3 scripts/check-gindex.py
+      - name: Independent checked SSZ branch policy and fold (1025 inputs)
+        shell: bash
+        working-directory: formal/lean4/ethereum-consensus
+        run: |
+          set -euo pipefail
+          lake exe ssz-checked-branch | python3 scripts/check-checked-branch.py
       - name: Independent LMD latest-message reference over 2048 inputs
         shell: bash
         working-directory: formal/lean4/ethereum-consensus
