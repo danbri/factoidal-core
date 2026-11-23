@@ -100,3 +100,34 @@ container layout, no beacon state transition, BLS or finality.
 The caller-supplied resource caps are not SSZ consensus parameters.
 The Python reference is a *test*, not a normative refinement proof.
 The full acceptance epic remains open. No main merge is intended.
+
+## Upstream Lean SSZ evaluation and integration decision
+
+Before promoting this standalone 4.33.1 position helper to any production
+consensus code, bridge to the substantially more complete upstream model.
+The pinned official `ethereum/ssz-specs@4c2f08805080c6b4b12ede7bf48ad6a80229f4b1/lean/lakefile.toml`
+uses `ethereum/EthLib@6b87b0d4951766864af432455c44344fd12b5cdc`.
+Its package has `EthLib.Consensus.Ssz.Merkle.Gindex.getHelperIndices`,
+`rejectRelated`, concrete 32-byte-checked
+`Merkle.Verify.calculateMultiMerkleRoot` and
+`verifyMerkleMultiproof`, a Lean SHA-256 implementation,
+and mature `Proofs.Ssz.Merkle.Multiproof` and
+`MultiproofBinding` results. See
+https://github.com/ethereum/EthLib/blob/6b87b0d4951766864af432455c44344fd12b5cdc/EthLib/Consensus/Ssz/README.md .
+The upstream `ssz-specs/lean` harness already checks released vectors
+for encoding/roots, invalid declarations, generalized indices, JSON,
+single branches and multiproofs, plus generated Python differential
+and hash tests. This is a **better assurance base** for full SSZ than
+continuing to copy its semantics.
+
+Both pinned upstream SSZ and EthLib toolchain files specify
+`leanprover/lean4:v4.35.0`, while the Factoidal isolated package
+currently pins `v4.33.1`. The existing positional module is therefore
+an independently checked, deliberately small compatibility prototype,
+**not a substitute for EthLib's codec, multiproof verification or
+proofs**. Upstream integration and an executable-path equality/refinement
+bridge are tracked in
+https://github.com/danbri/factoidal-core/issues/830 .
+That work must resolve the compiler pin in an isolated lane, preserve
+resource and error semantics, and run upstream's declared *complete*
+fixture manifest before using an end-to-end SSZ conformance claim.
