@@ -18,7 +18,7 @@ There are 22 source `#guard` cases covering direct inventory lookup, viable chil
 
 ## Verification and reproduction
 
-CI is configured in `.github/workflows/ethereum-consensus.yml` to build Lean 4.33.1, rerun `StoredHead.lean` with all 15 `#print axioms` statements, and pipe `lake exe lmd-stored-head` through the independent Python checker. At preparation time, **the new source has not yet passed hosted Lean CI or local compilation**. Do not promote earlier PR #823's passes to this new source.
+CI is configured in `.github/workflows/ethereum-consensus.yml` to build Lean 4.33.1, rerun `StoredHead.lean` with all 15 `#print axioms` statements, and pipe `lake exe lmd-stored-head` through the independent Python checker. **Hosted source-head validation passed:** [specialised Linux consensus CI run 45128969487](https://github.com/danbri/factoidal-core/actions/runs/45128969487) on source+documentation head `201f7cc9721cf52dd3713acc635b10f85f2dcee1`, 23 November 2026. Lean 4.33.1 built the library and executable (12 library jobs, 18 executable jobs) and rechecked all 15 actual theorem declarations with printed axiom sets: 1 empty set (`scanStored_empty`), 14 sets containing only `propext`. All 22 source guards passed. The independent Python checker matched **1,024/1,024 Lean rows**, 0 mismatches: 369 refused one-step selections, 499 selected root 2, 156 selected root 1; 760 traversal refusals and 264 completed heads (250 root 4, 14 root 3). All inherited specialised SSZ, LMD, VoteStore, proposer score, ancestry and child-selection comparisons passed. **No local Lean build, benchmark or broad premerge/full corpus claim** is made.
 
 Reproduce from `formal/lean4/ethereum-consensus` after taking the repository build lock with bounded memory:
 
@@ -28,7 +28,7 @@ lake env lean EthereumConsensus/ForkChoice/StoredHead.lean
 lake exe lmd-stored-head | python3 scripts/check-stored-head.py
 ```
 
-Runtime/toolchain, exact source SHA and actual axiom results must be appended after CI. There is no local compiler in the current runtime, so no local Lean success, paired performance results or independent external expert review is claimed.
+These results cover finite synthetic cases, not authenticated beacon attestations, live head choice, BLS or FFG. No local compiler was available in this runtime; no paired performance result or independent external expert review is claimed. Subsequent source edits require a new exact-source proof and oracle run.
 
 ## Outstanding work
 
