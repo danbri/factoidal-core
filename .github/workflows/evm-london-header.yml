@@ -1,0 +1,76 @@
+name: Independent London header-fee Lean conformance slice
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-london-header.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: london-headers-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  london-header:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile real Lean model and its selected proof obligations
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Build standalone London-header executable
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
+        run: |
+          ulimit -v 8388608
+          lake build evm-header-fees
+      - name: Audit actually printed theorem axioms and input guards
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          ulimit -v 8388608
+          lake env lean EVMCleanroom/HeaderFees.lean | tee /tmp/london-header-axioms.txt
+          for theorem in nextBaseFee_at_target nextBaseFee_above nextBaseFee_below expected_firstLondon checkHeader_sound missing_parent_refused; do
+            grep -q "EVMCleanroom.HeaderFees.$theorem" /tmp/london-header-axioms.txt
+          done
+          if grep -E '(sorryAx|native_decide|unsafe)' /tmp/london-header-axioms.txt; then
+            exit 1
+          fi
+      - name: Execute independent EIP-1559 header reference comparison
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-london-header-fees.py --generate /tmp/london-input.tsv /tmp/london-expected.jsonl
+          lake exe evm-header-fees --batch /tmp/london-input.tsv > /tmp/london-observed.jsonl
+          python3 scripts/check-london-header-fees.py --check /tmp/london-expected.jsonl /tmp/london-observed.jsonl
+      - name: Invalid-transport guard
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          printf 'invalid\t30000000\t15000000\t1000000000\t30000000\t0\t1000000000\n' >/tmp/london-malformed.tsv
+          if lake exe evm-header-fees --batch /tmp/london-malformed.tsv >/tmp/london-malformed-out.jsonl; then
+            echo "Malformed input incorrectly accepted"
+            exit 1
+          fi
+          python3 -c 'import json; r=json.load(open("/tmp/london-malformed-out.jsonl")); assert r["status"]=="inputError",r'
+      - name: No new implementation package
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("lake-manifest.json").read_text())
+          assert manifest.get("packages", []) == [], manifest
+          for p in ("EVMCleanroom/HeaderFees.lean", "EVMCleanroom/HeaderFeeCLI.lean"):
+              text = Path(p).read_text()
+              assert "EthLib" not in text and "extern" not in text
+          print("No added Lake packages, FFI or external implementation imports")
+          PY
