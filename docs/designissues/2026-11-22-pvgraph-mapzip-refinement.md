@@ -136,17 +136,17 @@ It implements no graph evaluator in JavaScript. With a freshly built loader
 whose profile contains those operations:
 
 ```sh
-node tools/pvgraph-wasm-fixtures.mjs path/to/l4factoidal.js native-fixtures.jsonl wasm-fixtures.jsonl "$(git rev-parse HEAD)"
+deno run -A --no-config --no-npm tools/pvgraph-wasm-fixtures.mjs path/to/l4factoidal.js native-fixtures.jsonl wasm-fixtures.jsonl "$(git rev-parse HEAD)"
 deno run -A --no-config --no-npm --unstable-webgpu tools/pvgraph-gpu-device-smoke.mjs wasm-fixtures.jsonl "$(git rev-parse HEAD)"
 ```
 
-The output fixture path must be new. The helper records loader/Wasm identity,
+The output fixture path must be new. The helper records Wasm identity,
 source provenance and both fixture hashes. A focused Wasm profile is labelled
 separately from the complete shipped runtime; the existing full-artifact CI
 remains an independent gate rather than being folded into the 22-minute GPU
 job.
 
-The completed local focused-profile run at clean source
+The historical initial focused-profile run at clean source
 `b4b6044bcfa58ed5c3c89aa60e5120bec82fc888` compared all 61 native/Wasm API
 cases: 59 exact plan/output matches and two evaluation/planning refusals.
 The complete emitted fixture streams were byte-identical (SHA-256
@@ -168,9 +168,42 @@ or physical-hardware correctness. The
 [work note](../20261122-pvgraph-mapzip-refinement.md) records separate
 artifact and evidence hashes.
 
+The corrected-source replay on clean local `63791fda` (published commit
+`40ec158c`, same tree) passed the same 61 API cases and both 59-case WebGPU executions,
+retaining both refusals. Its 10,227,649-byte focused Wasm has SHA-256
+`5c24a5c52d681f4a3245466a0774b7b1138e5942bf956a5a05c1a2ea7e49001b`.
+The fixture bytes stayed identical. This replay regenerated 15 source/dependency
+closure modules and matched 541 cached modules; only `MapZipPlan` changed
+C bytes. The unchanged helper freshly compiled 888 runtime C units and
+checked 586 project/HACL/FFI inputs with its existing object cache. The
+standard conversion affected 137 sites in 45 files. The pinned C++ runtime
+and software-adapter qualifications remain the same.
+
+The executable coefficient bound now uses `L4Factoidal.two32` from the
+`NatBounds` module, definitionally equal to `UInt32.size`, with the
+repository's reducible/noinline persistent constant convention. Both unrewritten standard Lake C and focused C show
+the global read and initialization, with no inline bound allocation in
+`MapZipPlan`. This inspection is separate from passing a focused artifact
+that applies a literal rewrite. The source controls now compile an
+18-module baseline closure, and all 215 runtime controls still pass.
+
+The complete shipping artifact was independently tested on public
+`40ec158c` by ordinary full-Wasm CI. That success, the separate full-corpus
+recursion-audit failure and its scoped repair, and the outstanding
+exact-final-head `factoidal-builds/build.yml` gate are recorded separately
+in the [work note](../20261122-pvgraph-mapzip-refinement.md).
+Neither this focused replay nor a successful core job substitutes for the
+repository's broader landing gate.
+
 `Harness.PVGraphPlanTiming` compares the unvalidated candidate producer
 and shipping checked compiler on the same final source, with 31 alternating
 samples for 0, 1, 32 and 120 map nodes. Whole JSON equality is checked outside
 the timed interval. It measures added validation cost in that command-line
 runtime; it excludes serialisation, GPU work and end-to-end application time.
 No old cached executable is used as an alleged equivalent baseline.
+
+The refreshed record retains all four sets of 31 samples in
+[dated raw timing JSONL](../evidence/20261123-pvgraph-mapzip-two32-timing.jsonl)
+and reports candidate and checked p50, p95, p99, maximum and min–max spread.
+Nearest-rank p99 equals the observed maximum at this sample count; it is a
+coarse tail observation, not a precision estimate of application latency.

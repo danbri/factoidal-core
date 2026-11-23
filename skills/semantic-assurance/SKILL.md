@@ -232,6 +232,18 @@ connects the actual successful RDFS producer on certified inputs passing
 roundTripSafe. Accepted fallbacks outside that check remain an open agreement
 obligation. Do not infer failure from a false profile check.
 
+## PVGraph GPU lowering
+
+Before extending map/zip lowering, read the
+[emitted-plan refinement design](../../docs/designissues/2026-11-22-pvgraph-mapzip-refinement.md).
+Bind the decoded graph to the actual emitted JSON fields and exact selected
+WGSL source. Keep per-step refinement separate from whole-graph execution,
+host bindings/readback and the shader compiler/device. Consult the
+[dated execution record](../../docs/20261122-pvgraph-mapzip-refinement.md)
+for each source/artifact identity and pending checks. Inspect unrewritten
+generated C when checking allocation behaviour; a focused artifact's
+literal conversion does not establish the behaviour of another build path.
+
 ## Rendering transformations
 
 See [SVG scene/compositor proof boundaries](../../docs/designissues/2026-11-01-svg-scene-compositor.md)
