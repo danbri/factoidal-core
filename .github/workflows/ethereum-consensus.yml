@@ -87,6 +87,16 @@ jobs:
           python3 ethereum-consensus/scripts/check-byte-proofs.py \
             ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
             --report "$RUNNER_TEMP/ethereum-byte-proof-report.json"
+      - name: Compile and audit the pure Lean SSZ basic scalar codecs
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus build ssz-basic-types
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
+          python3 ethereum-consensus/scripts/check-basic-types.py \
+            ethereum-consensus/.lake/build/bin/ssz-basic-types \
+            --report "$RUNNER_TEMP/ethereum-ssz-basic-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
