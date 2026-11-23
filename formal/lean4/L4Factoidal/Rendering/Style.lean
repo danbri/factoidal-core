@@ -291,6 +291,9 @@ structure Computed where
   backgroundRepeat : Bool × Bool := (true, true)
   backgroundPositionX : BackgroundOffset := .length (.percent 0)
   backgroundPositionY : BackgroundOffset := .length (.percent 0)
+  /-- `background-clip` (CSS Backgrounds 3 §3.7): the box the background is painted in, as
+  0 border box, 1 padding box, 2 content box. -/
+  backgroundClip : Nat := 0
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -726,7 +729,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     if key == "background" then
       let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
       let expanded := CssValues.expand key d.value
-      let rasterPlacement : List Declaration := ["background-size", "background-repeat",
+      let rasterPlacement : List Declaration := ["background-size", "background-repeat", "background-clip",
         "background-position-x", "background-position-y"].filterMap fun name =>
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
@@ -1535,6 +1538,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     match size with
     | some v => return {s with backgroundSize := v}
     | none => throw "unsupported background size"
+  | "background-clip" =>
+    match (trim d.value).toLower with
+    | "border-box" => return {s with backgroundClip := 0}
+    | "padding-box" => return {s with backgroundClip := 1}
+    | "content-box" => return {s with backgroundClip := 2}
+    | _ => throw "unsupported background clip"
   | "background-repeat" =>
     let parts := (CssValues.commaItems d.value).headD []
     let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
@@ -1863,7 +1872,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
-   "font-family","letter-spacing","word-spacing","text-indent","background-image","background-size","background-repeat",
+   "font-family","letter-spacing","word-spacing","text-indent","background-image","background-clip","background-size","background-repeat",
    "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
@@ -1961,6 +1970,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
   | "background-size" => some {s with backgroundSize := source.backgroundSize}
   | "background-repeat" => some {s with backgroundRepeat := source.backgroundRepeat}
+  | "background-clip" => some {s with backgroundClip := source.backgroundClip}
   | "background-position-x" => some {s with backgroundPositionX := source.backgroundPositionX}
   | "background-position-y" => some {s with backgroundPositionY := source.backgroundPositionY}
   | "column-count" => some {s with columnCount := source.columnCount}

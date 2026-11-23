@@ -298,16 +298,32 @@ private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array
   | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
 
 
+/-- The box `background-clip` paints in (CSS Backgrounds 3 §3.7), for a border box at
+`(x,y)`, `w` by `h`: the border box, or that less the border (padding box), or less the
+border and the padding (content box). -/
+def backgroundArea (s : Computed) (x y w h : Float) : Float × Float × Float × Float :=
+  if s.backgroundClip == 0 then (x,y,w,h) else
+  let b := s.borderEdges
+  let p := if s.backgroundClip == 2 then s.padding else {}
+  let l := b.left+p.left
+  let t := b.top+p.top
+  (x+l,y+t,w-l-b.right-p.right,h-t-b.bottom-p.bottom)
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
-  let colour := backgroundColour id s x y w h
-  -- CSS Backgrounds 3 §3.2: the image over the colour
+  let (cx,cy,cw,ch) := backgroundArea s x y w h
+  if cw <= 0 || ch <= 0 then #[] else
+  let colour := backgroundColour id s cx cy cw ch
+  -- CSS Backgrounds 3 §3.2: the image over the colour (a gradient fills the clip box)
   let withGradient := match s.backgroundGradient with
     | none => colour
-    | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+    | some g => colour.push (.paint ⟨some id,{geometry := .rect cx cy cw ch,style := {fill := gradientPaint g cx cy cw ch}}⟩)
   match s.backgroundBitmap with
   | none => withGradient
-  | some (pic,b) => withGradient ++ backgroundTiles id pic b s x y w h
+  | some (pic,b) =>
+    let tiles := backgroundTiles id pic b s x y w h
+    if s.backgroundClip == 0 then withGradient ++ tiles
+    else withGradient.push (.clipped none identity ⟨cx,cy,cw,ch,identity⟩ tiles.toList)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/

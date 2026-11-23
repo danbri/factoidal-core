@@ -367,6 +367,9 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
   (s.borderEdges.top,s.borderEdges.left,(s.borderColors.top.resolve s.color).map rgb255,(s.borderColors.right.resolve s.color).map rgb255)) ==
   some (2,0,some (255,0,0),some (0,0,0))
 #guard ((stateAt "<p id='x' style='border-top-style:solid'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.top,s.borderEdges.right)) == some (3,0)
+-- CSS Backgrounds 3 §3.7: background-clip, alone and in the background shorthand
+#guard ((stateAt "<p id='x' style='background-clip:content-box'>A</p>" "" "x").toOption.map (·.backgroundClip)) == some 2
+#guard ((stateAt "<p id='x' style='background:red padding-box'>A</p>" "" "x").toOption.map (·.backgroundClip)) == some 1
 #guard ((stateAt "<p id='x' style='border:1px dashed rgb(0, 0, 255)'>A</p>" "" "x").toOption.map fun s =>
   (s.borderStyles.left == .dashed,(s.borderColors.left.resolve s.color).map rgb255)) == some (true,some (0,0,255))
 #guard ((stateAt "<p id='x' style='border-style:dotted double groove ridge;border-color:red blue'>A</p>" "" "x").toOption.map fun s =>
