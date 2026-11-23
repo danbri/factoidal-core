@@ -3137,7 +3137,23 @@
     "testedNativeSourceTree": "772b23153227eeeb8d17f63b9382145cd969e16f",
     "testedHarnessCommit": "b63ee290a6b0a6407c402f1b78c4ca1d39a28f83",
     "commitProvenance": "Local integration checkpoints; the hosted CI verdict must refer to the published PR head.",
-    "remoteCI": "pending",
+    "remoteCI": {
+      "status": "passed",
+      "testedHead": "1405b06361ece1021f66be6330b0fedc7d2a989c",
+      "tree": "ca9c0be67b0cb860b08639e30397e22ee0ffc857",
+      "mergeCommit": "ab1a5a368833e181abbcc8d6a6062828ca189441",
+      "evmRun": "https://github.com/danbri/factoidal-core/actions/runs/45140294956",
+      "evmJobs": {
+        "lean": 137576320115,
+        "differential": 137576320000,
+        "eels-real-state": 137576319607
+      },
+      "frontierRun": "https://github.com/danbri/factoidal-core/actions/runs/45140294917",
+      "treeEqualityVerified": true,
+      "scope": "All three EVM jobs and separate authenticated Frontier job passed on the specified exact source. Later metadata changes require their own hosted check status.",
+      "npmBlocker": "No factoidal-builds web release matches the tested head ancestry; package tests did not run.",
+      "separateBuildsAndPremerge": "Not claimed"
+    },
     "leanVersion": "4.33.1",
     "scope": "World-aware CALLCODE (0xf2), DELEGATECALL (0xf4) and STATICCALL (0xfa) through the shared CALL continuation in the supported opcode profiles.",
     "semanticReference": {

@@ -58,7 +58,23 @@
     ]
   },
   "performanceClaim": "Recorded sample only; CALL p95,p99,maximum and spread worsened; no speedup or tail parity claim. Issue739 remains open.",
-  "hostedCI": "pending",
+  "hostedCI": {
+    "status": "passed",
+    "testedHead": "1405b06361ece1021f66be6330b0fedc7d2a989c",
+    "tree": "ca9c0be67b0cb860b08639e30397e22ee0ffc857",
+    "mergeCommit": "ab1a5a368833e181abbcc8d6a6062828ca189441",
+    "evmRun": "https://github.com/danbri/factoidal-core/actions/runs/45140294956",
+    "evmJobs": {
+      "lean": 137576320115,
+      "differential": 137576320000,
+      "eels-real-state": 137576319607
+    },
+    "frontierRun": "https://github.com/danbri/factoidal-core/actions/runs/45140294917",
+    "treeEqualityVerified": true,
+    "scope": "All three EVM jobs and separate authenticated Frontier job passed on the specified exact source. Later metadata changes require their own hosted check status.",
+    "npmBlocker": "No factoidal-builds web release matches the tested head ancestry; package tests did not run.",
+    "separateBuildsAndPremerge": "Not claimed"
+  },
   "publishedSourceCheckpoint": {
     "commit": "3b04b0f88dbe53fee84fcb67c8f6f26d31e851f7",
     "tree": "00f7b6e09f2e5204bb92e645b9571230162495f9",

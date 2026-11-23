@@ -13,9 +13,17 @@ It is stacked on [draft PR #798](https://github.com/danbri/factoidal-core/pull/7
 has exactly the checked local evidence tree
 `00f7b6e09f2e5204bb92e645b9571230162495f9`. Its native sources are byte-identical
 to local runtime commit `b7e5c44e`; its harness matches local `b63ee290`.
-Hosted CI is a separate gate, pending at publication. The branch remains
-unmerged; the exact-head builds-repository Linux gate and full premerge
-verification have not been claimed.
+The branch remains unmerged; the exact-head builds-repository Linux gate
+and full premerge verification have not been claimed.
+
+All three [EVM CI jobs](https://github.com/danbri/factoidal-core/actions/runs/45140294956)
+and the separate [authenticated Frontier job](https://github.com/danbri/factoidal-core/actions/runs/45140294917)
+passed on head `1405b06361ece1021f66be6330b0fedc7d2a989c`. Its CI merge
+`ab1a5a368833e181abbcc8d6a6062828ca189441` has exactly the same tree,
+`ca9c0be67b0cb860b08639e30397e22ee0ffc857`. This later evidence update
+changes documentation and metadata only. The npm package job failed its
+existing ancestor-web-release prerequisite before package tests ran;
+that prerequisite has not been bypassed.
 
 The semantic reference is
 [EELS Cancun `system.py` at `1da5a11`](https://github.com/ethereum/execution-specs/blob/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/cancun/vm/instructions/system.py).
@@ -119,8 +127,8 @@ run against EthereumJS. Nested STATICCALL is included in the Geth lane.
 Geth compares status, gas, returned bytes, available stack/memory/return-data,
 account balances/storage and available refunds. It does **not** independently
 compare log records, access warmth or exact exception categories. EthereumJS
-adds those observations where the harness exposes them. Every compared field
-and per-case result is present in the raw report.
+adds those observations where the harness exposes them. The raw report lists observation categories
+and each case's match or exclusion outcome.
 
 Nine separate boundary controls require indeterminate results: identity
 precompile and unchecked Keccak for each variant, plus simulation-fuel
