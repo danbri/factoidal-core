@@ -102,3 +102,31 @@ has existing concrete SSZ SHA-256 support, but its pinned toolchain is Lean
 4.35.0, whereas this package is required to use 4.33.1. That is a
 compatibility decision to test, not a reason to silently downgrade or vendor
 unreviewed cryptographic sources.
+
+## Observed hosted source-head evidence (03:09 UTC)
+
+Source-and-test head `63d5332c49ca561526c8a992270b52456d42ffea`,
+[dedicated CI run 45104174736](https://github.com/danbri/factoidal-core/actions/runs/45104174736):
+the one Ubuntu `ssz` job **passed**. Lean 4.33.1 compiled the module
+and its 15 source guards, explicitly reran the theorem file and printed
+the actual nine axiom sets:
+
+- No axioms: `attestationScore_empty`, `attestationScore_rejected_update`.
+- `[propext, Quot.sound]`: `attestationScore_duplicate_refused`.
+- `[propext]`: `credit_equivocating_zero`, `credit_absent_zero`,
+  `attestationScore_single_vote`, `weight_without_boost`,
+  `weight_with_matching_boost`, `weight_with_nonmatching_boost`.
+
+All are within the repository's allowed axioms; no `sorryAx` or new
+trust primitives appeared in this selected module. The **actual Lean
+executable output** matched the independently implemented Python
+reference on all **1,024/1,024** finite-roster cases, with **79** duplicate
+refusals, **95** positive proposer boosts, **156** changes after attempted
+store updates, and **0** mismatches. Existing gates also passed: **1,025**
+SSZ positions, **1,025** checked-branch rows, **2,048** latest-message rows
+and **1,024** sequential VoteStore rows. This job covers its own
+consensus-package sources only; it does **not** establish a broader repo
+Linux/premerge/npm pass or a cryptographic Ethereum consensus verdict.
+
+This appended evidence note is documentation-only; any CI run against
+the resulting documentation commit is separately identified in the PR.
