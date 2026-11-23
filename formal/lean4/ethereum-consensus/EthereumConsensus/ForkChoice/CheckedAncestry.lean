@@ -86,13 +86,15 @@ def weightWithCheckedAncestry (store : VoteStore)
     (blocks : Nat → Option BlockPosition) (node fuel : Nat)
     (roster : List EligibleWeight) (boostRoot : Option Nat)
     (totalActiveBalance : Nat) : Option Nat :=
-  if uniqueRoster roster then
-    if rosterQueriesKnown store blocks node fuel roster &&
-        boostQueryKnown blocks node fuel boostRoot then
-      weightWithComputedBoost store
-        (fun supported candidate =>
-          checkedDescends blocks supported candidate fuel == some true)
-        node roster boostRoot totalActiveBalance
+  if (blocks node).isSome then
+    if uniqueRoster roster then
+      if rosterQueriesKnown store blocks node fuel roster &&
+          boostQueryKnown blocks node fuel boostRoot then
+        weightWithComputedBoost store
+          (fun supported candidate =>
+            checkedDescends blocks supported candidate fuel == some true)
+          node roster boostRoot totalActiveBalance
+      else none
     else none
   else none
 
@@ -161,6 +163,17 @@ theorem checkedWeight_duplicate_refused
       boostRoot totalActiveBalance = none := by
   simp [weightWithCheckedAncestry, h]
 
+/-- Even an empty roster with no boost cannot validate a missing candidate
+    node as having a known score of zero. -/
+theorem checkedWeight_unknown_node_refused
+    (store : VoteStore) (blocks : Nat → Option BlockPosition)
+    (node fuel : Nat) (roster : List EligibleWeight)
+    (boostRoot : Option Nat) (totalActiveBalance : Nat)
+    (h : blocks node = none) :
+    weightWithCheckedAncestry store blocks node fuel roster
+      boostRoot totalActiveBalance = none := by
+  simp [weightWithCheckedAncestry, h]
+
 /-- Missing proposer ancestry never silently drops a potentially positive
     boost and reports a completed score instead. -/
 theorem checkedWeight_unknown_boost_refused
@@ -179,6 +192,7 @@ theorem checkedWeight_agrees_when_known
     (store : VoteStore) (blocks : Nat → Option BlockPosition)
     (node fuel : Nat) (roster : List EligibleWeight)
     (boostRoot : Option Nat) (totalActiveBalance : Nat)
+    (hNode : (blocks node).isSome = true)
     (hRoster : uniqueRoster roster = true)
     (hVotes : rosterQueriesKnown store blocks node fuel roster = true)
     (hBoost : boostQueryKnown blocks node fuel boostRoot = true) :
@@ -188,7 +202,7 @@ theorem checkedWeight_agrees_when_known
       (fun supported candidate =>
         checkedDescends blocks supported candidate fuel == some true)
       node roster boostRoot totalActiveBalance := by
-  simp [weightWithCheckedAncestry, hRoster, hVotes, hBoost]
+  simp [weightWithCheckedAncestry, hNode, hRoster, hVotes, hBoost]
 
 /-- A rejected message update cannot modify the guarded score. -/
 theorem checkedWeight_rejected_update
@@ -242,6 +256,8 @@ private def sampleStore : VoteStore := {
   [(0, 10), (0, 30)] none 3200 == none
 #guard weightWithCheckedAncestry sampleStore chain 7 4
   [(0, 10)] none 3200 == none
+#guard weightWithCheckedAncestry sampleStore chain 7 4
+  [] none 3200 == none
 
 #print axioms EthereumConsensus.ForkChoice.checkedDescends_zero_fuel
 #print axioms EthereumConsensus.ForkChoice.checkedDescends_unknown_candidate
@@ -250,6 +266,7 @@ private def sampleStore : VoteStore := {
 #print axioms EthereumConsensus.ForkChoice.ancestorAtSlot_missing_parent
 #print axioms EthereumConsensus.ForkChoice.ancestorAtSlot_non_decreasing_parent
 #print axioms EthereumConsensus.ForkChoice.checkedWeight_duplicate_refused
+#print axioms EthereumConsensus.ForkChoice.checkedWeight_unknown_node_refused
 #print axioms EthereumConsensus.ForkChoice.checkedWeight_unknown_boost_refused
 #print axioms EthereumConsensus.ForkChoice.checkedWeight_agrees_when_known
 #print axioms EthereumConsensus.ForkChoice.checkedWeight_rejected_update
