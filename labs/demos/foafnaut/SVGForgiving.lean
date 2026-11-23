@@ -1244,6 +1244,18 @@ def imageSize (attrs : List NamespaceAttribute) : Nat × Nat :=
   let side := fun (v : Float) => max 1 (min 4096 v.round.toUInt32.toNat)
   (side fw,side fh)
 
+/-- The natural width, height and ratio (width over height) of an SVG image (CSS Images 3
+§5.1, SVG 2 §8.2): `width` and `height` when they are lengths (a percentage is none); the
+ratio of the `viewBox`, else of `width` and `height` when both are lengths. -/
+def naturalSize (attrs : List NamespaceAttribute) : Option Float × Option Float × Option Float :=
+  let w := rootPixels (plainAttr attrs "width")
+  let h := rootPixels (plainAttr attrs "height")
+  let ratio := match rootViewBox (plainAttr attrs "viewBox"), w, h with
+    | some (bw,bh), _, _ => some (bw/bh)
+    | none, some w, some h => some (w/h)
+    | _, _, _ => none
+  (w,h,ratio)
+
 /-- Most pixels of the picture drawn for one SVG image. The picture is drawn on the CPU,
 twice (on white and on black, for its alpha), at about 20 µs a pixel for a drawing of 80
 paths (2026-11-14, M1): at 262144 pixels an illustration of 500 by 285 took 5.7 s of a

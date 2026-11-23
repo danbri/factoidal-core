@@ -288,6 +288,10 @@ structure Computed where
   bytes and they decoded (`WebDocument` sets it after the cascade); `Layout.background` tiles
   it. None: only the colour (and a gradient) is painted, as before. -/
   backgroundBitmap : Option (Nat × Bitmap) := none
+  /-- The natural width, height and ratio (width over height) of the background image, any of
+  them missing (CSS Images 3 §5.1): an SVG image may have none. None: those of
+  `backgroundBitmap`. -/
+  backgroundNatural : Option (Option Float × Option Float × Option Float) := none
   backgroundSize : BackgroundSize := .dimensions .auto .auto
   backgroundRepeat : Bool × Bool := (true, true)
   backgroundPositionX : BackgroundOffset := .length (.percent 0)

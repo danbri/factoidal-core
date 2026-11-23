@@ -2314,7 +2314,11 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     let (store,entry) := WebRender.storeIn stores keys images
     let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
     (.ok (d,styles.mapIdx fun i st => match pics i with
-      | some pic => {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap)}
+      | some pic =>
+        let natural := match st.backgroundImage.bind (fun k => images.lookup k) |>.bind WebRender.vectorNatural with
+          | some n => some n
+          | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
+        {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
       | none => st),entry)
 
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"

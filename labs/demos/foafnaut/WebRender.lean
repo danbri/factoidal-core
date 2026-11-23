@@ -369,6 +369,15 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
     return ({width := rw, height := rh, rgba},w,h)
 
+/-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
+none for a file that is not SVG or does not read. -/
+def vectorNatural (bytes : ByteArray) : Option (Option Float × Option Float × Option Float) :=
+  if !looksLikeSVG bytes then none else do
+    let xml ← String.fromUTF8? bytes
+    if xml.length > NativeSVG.maxInputChars then none
+    let .element _ attrs _ ← (XML.parseNamespaceView xml).toOption | none
+    some (NativeSVGForgiving.naturalSize attrs)
+
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
 `vectorPicture`. -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=

@@ -254,16 +254,39 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
 would need more paints its colour only. -/
 def maxBackgroundTiles : Nat := 4096
 
-private def backgroundTileSize (size : BackgroundSize) (iw ih w h : Float) : Float × Float :=
+/-- The size of a background tile (CSS Backgrounds 3 §3.9, by the default sizing algorithm of
+CSS Images 3 §5.3) from `background-size`, the image's natural width, height and ratio
+(`nw`, `nh`, `ratio`: width over height; any may be missing) and the positioning area `w`
+by `h`. A missing size with no ratio takes the area's. -/
+def backgroundTileSize (size : BackgroundSize) (nw nh ratio : Option Float) (w h : Float) : Float × Float :=
+  let r := ratio.bind fun r => if r > 0 && r.isFinite then some r else none
+  let fit := fun (cover : Bool) => match r with
+    | some r => if (w/r <= h) != cover then (w,w/r) else (h*r,h)
+    | none => (w,h)
   match size with
-  | .cover => let scale := max (w/iw) (h/ih); (iw*scale, ih*scale)
-  | .contain => let scale := min (w/iw) (h/ih); (iw*scale, ih*scale)
+  | .cover => fit true
+  | .contain => fit false
   | .dimensions width height =>
     match CSS.resolve w width, CSS.resolve h height with
     | some tw, some th => (tw,th)
-    | some tw, none => (tw,ih*tw/iw)
-    | none, some th => (iw*th/ih,th)
-    | none, none => (iw,ih)
+    | some tw, none => (tw, match r with | some r => tw/r | none => nh.getD h)
+    | none, some th => ((match r with | some r => th*r | none => nw.getD w), th)
+    | none, none => match nw, nh, r with
+      | some a, some b, _ => (a,b)
+      | some a, none, some r => (a,a/r)
+      | none, some b, some r => (b*r,b)
+      | some a, none, none => (a,h)
+      | none, some b, none => (w,b)
+      | none, none, some _ => fit false
+      | none, none, none => (w,h)
+
+#guard backgroundTileSize (.dimensions .auto .auto) (some 10) (some 20) (some 0.5) 100 100 == (10,20)
+#guard backgroundTileSize (.dimensions .auto .auto) none none none 256 768 == (256,768)
+#guard backgroundTileSize (.dimensions .auto .auto) none none (some 2) 256 768 == (256,128)
+#guard backgroundTileSize (.dimensions .auto (.px 32)) none none none 256 768 == (256,32)
+#guard backgroundTileSize (.dimensions .auto (.px 32)) (some 8) none (some 0.125) 256 768 == (4,32)
+#guard backgroundTileSize .cover none none (some 2) 100 100 == (200,100)
+#guard backgroundTileSize .contain none none (some 2) 100 100 == (100,50)
 
 /-- The first background layer is sized against the padding box and clipped to the
 border box. Repeated axes may need a tile before the origin to cover the border. -/
@@ -274,7 +297,8 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let e := s.borderEdges
   let areaW := max 0 (w-e.left-e.right)
   let areaH := max 0 (h-e.top-e.bottom)
-  let (tw,th) := backgroundTileSize s.backgroundSize iw ih areaW areaH
+  let (nw,nh,ratio) := s.backgroundNatural.getD (some iw,some ih,some (iw/ih))
+  let (tw,th) := backgroundTileSize s.backgroundSize nw nh ratio areaW areaH
   if tw <= 0 || th <= 0 then return #[]
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then

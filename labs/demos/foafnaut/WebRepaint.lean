@@ -60,7 +60,7 @@ def sameShape (a b : Computed) : Bool :=
     borderColors,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
-    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat,
+    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
      _backgroundPositionX,_backgroundPositionY,backgroundClip,backgroundLayers⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
