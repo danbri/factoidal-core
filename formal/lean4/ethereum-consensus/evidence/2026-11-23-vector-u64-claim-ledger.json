@@ -6,7 +6,7 @@
   "sources": [
     {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/VectorU64.lean",
-      "git_blob_sha": "82a7ca328d31ff7130f92550df08d0478cdc60be"
+      "git_blob_sha": "d84159c860a5e2b41debe3e1d994a315259bb844"
     },
     {
       "path": "formal/lean4/ethereum-consensus/VectorU64Main.lean",
