@@ -309,7 +309,7 @@ def htmlProperties : List String :=
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
    "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
    "direction","unicode-bidi","background-size","background-repeat",
-   "background-position","background-position-x","background-position-y"]
+   "background-position","background-position-x","background-position-y","background-clip"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
