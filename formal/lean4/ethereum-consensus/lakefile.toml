@@ -36,3 +36,7 @@ root = "AncestryMain"
 [[lean_exe]]
 name = "lmd-checked-child"
 root = "ChildMain"
+
+[[lean_exe]]
+name = "lmd-stored-head"
+root = "StoredHeadMain"
