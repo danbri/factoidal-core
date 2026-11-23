@@ -142,11 +142,11 @@ theorem helperIndices_nested : helperIndices [2, 4] = none := by rfl
 
 /-- Says: an isolated leaf needs its right sibling and its uncle.
     Does not say: these hashes are present, correct or SHA-256 digests. -/
-theorem helperIndices_one_leaf : helperIndices [4] = some [5, 3] := by rfl
+theorem helperIndices_one_leaf : helperIndices [4] = some [5, 3] := by decide
 
 /-- Says: the two direct children of the root need no helper witness.
     Does not say: their claimed leaf hashes match a consensus root. -/
-theorem helperIndices_root_children : helperIndices [2, 3] = some [] := by rfl
+theorem helperIndices_root_children : helperIndices [2, 3] = some [] := by decide
 
 #guard helperIndices [] == none
 #guard helperIndices [0] == none
