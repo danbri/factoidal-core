@@ -124,23 +124,36 @@ theorem checkedBasicRoot_rejects_long (bytes : ByteArray)
     checkedBasicRoot bytes = .error .resourceLimit := by
   simp [checkedBasicRoot, h]
 
+/- Executable verdict inspection without assuming that Except has a BEq or
+   DecidableEq instance in the pinned Lean toolchain. -/
+private def expectedOk {α : Type} [BEq α]
+    (result : Except BasicCodecError α) (expected : α) : Bool :=
+  match result with
+  | .ok value => value == expected
+  | .error _ => false
+
+private def expectedError {α : Type}
+    (result : Except BasicCodecError α) (expected : BasicCodecError) : Bool :=
+  match result with
+  | .ok _ => false
+  | .error err => err == expected
+
 #guard (encodeUInt64 0).size == 8
 #guard (encodeUInt64 255)[0]! == 255
 #guard (encodeUInt64 256)[0]! == 0
 #guard (encodeUInt64 256)[1]! == 1
 #guard (encodeUInt64 65536)[2]! == 1
-#guard decide (decodeUInt64 (encodeUInt64 0) = .ok 0)
-#guard decide (decodeUInt64 (encodeUInt64 1) = .ok 1)
-#guard decide (decodeUInt64 (encodeUInt64 255) = .ok 255)
-#guard decide (decodeUInt64 (encodeUInt64 256) = .ok 256)
-#guard decide (decodeUInt64 (encodeUInt64 18446744073709551615) =
-  .ok 18446744073709551615)
-#guard decide (decodeUInt64 ByteArray.empty = .error .invalidLength)
-#guard decide (decodeBool (encodeBool false) = .ok false)
-#guard decide (decodeBool (encodeBool true) = .ok true)
-#guard decide (decodeBool (ByteArray.empty.push 2) = .error .noncanonicalBoolean)
-#guard decide (decodeBool (ByteArray.empty.push 255) = .error .noncanonicalBoolean)
-#guard decide (decodeBool ByteArray.empty = .error .invalidLength)
+#guard expectedOk decodeUInt64 (encodeUInt64 0) 0
+#guard expectedOk decodeUInt64 (encodeUInt64 1) 1
+#guard expectedOk decodeUInt64 (encodeUInt64 255) 255
+#guard expectedOk decodeUInt64 (encodeUInt64 256) 256
+#guard expectedOk (decodeUInt64 (encodeUInt64 18446744073709551615)) 18446744073709551615
+#guard expectedError decodeUInt64 ByteArray.empty .invalidLength
+#guard expectedOk decodeBool (encodeBool false) false
+#guard expectedOk decodeBool (encodeBool true) true
+#guard expectedError decodeBool (ByteArray.empty.push 2) .noncanonicalBoolean
+#guard expectedError decodeBool (ByteArray.empty.push 255) .noncanonicalBoolean
+#guard expectedError decodeBool ByteArray.empty .invalidLength
 #guard (uint64Root 256).toOption.map (fun chunk => chunk.bytes.size) == some 32
 #guard (boolRoot true).toOption.map (fun chunk => chunk.bytes.size) == some 32
 
