@@ -2300,6 +2300,37 @@ theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option Str
 images (`WebRender.picturesOf`): the paint table keeps one bitmap for each id. -/
 def backgroundPictureBase : Nat := 1099511627776
 
+/-- Most SVG background images drawn again at their tile size on one page. -/
+def maxVectorRedraws : Nat := 16
+
+/-- An SVG background image shown larger than its picture is drawn again at its tile size
+(`WebRender.vectorPictureAt`), for a box whose width and height are lengths in px (content
+box sizing): a stretched picture blurs its edges. Tile size by `Layout.backgroundTileSize`
+against the padding box; at most `maxVectorRedraws`, each with its own paint-table id. -/
+def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Array Rendering.CSS.Computed) :
+    Array Rendering.CSS.Computed := Id.run do
+  let mut out := styles
+  let mut count := 0
+  for i in [0:styles.size] do
+    if count ≥ maxVectorRedraws then break
+    let st := styles[i]!
+    let some (_,b) := st.backgroundBitmap | continue
+    let some (nw,nh,ratio) := st.backgroundNatural | continue
+    let some bytes := st.backgroundImage.bind (images.lookup ·) | continue
+    if st.pos.borderBox then continue
+    let .px w := st.width | continue
+    let .px h := st.height | continue
+    let aw := w+st.padding.left+st.padding.right
+    let ah := h+st.padding.top+st.padding.bottom
+    let (tw,th) := Rendering.Layout.backgroundTileSize st.backgroundSize nw nh ratio aw ah
+    if !(tw.isFinite && th.isFinite) || tw < 1 || th < 1 || tw > 4096 || th > 4096 then continue
+    let (tw,th) := (tw.round.toUInt32.toNat, th.round.toUInt32.toNat)
+    if tw ≤ b.width && th ≤ b.height then continue
+    let some bitmap := WebRender.vectorPictureAt bytes tw th | continue
+    count := count+1
+    out := out.set! i {st with backgroundBitmap := some (2*backgroundPictureBase+i,bitmap)}
+  return out
+
 /-- The cascade with each element's background image decoded from the supplied images (a
 `data:` URL from itself), and the store made for them, for the engine to keep. A page with no
 background image gives its cascade back as it is. -/
@@ -2313,13 +2344,15 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     if keys.isEmpty then (.ok (d,styles),none) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
-    (.ok (d,styles.mapIdx fun i st => match pics i with
+    let attach := fun (i : Nat) (st : Rendering.CSS.Computed) => match pics i with
       | some pic =>
         let natural := match st.backgroundImage.bind (fun k => images.lookup k) |>.bind WebRender.vectorNatural with
           | some n => some n
           | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
         {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
-      | none => st),entry)
+      | none => st
+    let styles := styles.mapIdx attach
+    (.ok (d,redrawVectorBackgrounds images styles),entry)
 
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict

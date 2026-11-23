@@ -1250,10 +1250,10 @@ ratio of the `viewBox`, else of `width` and `height` when both are lengths. -/
 def naturalSize (attrs : List NamespaceAttribute) : Option Float × Option Float × Option Float :=
   let w := rootPixels (plainAttr attrs "width")
   let h := rootPixels (plainAttr attrs "height")
-  let ratio := match rootViewBox (plainAttr attrs "viewBox"), w, h with
-    | some (bw,bh), _, _ => some (bw/bh)
-    | none, some w, some h => some (w/h)
-    | _, _, _ => none
+  let ratio := match w, h, rootViewBox (plainAttr attrs "viewBox") with
+    | some w, some h, _ => some (w/h)
+    | _, _, some (bw,bh) => some (bw/bh)
+    | _, _, none => none
   (w,h,ratio)
 
 /-- Most pixels of the picture drawn for one SVG image. The picture is drawn on the CPU,

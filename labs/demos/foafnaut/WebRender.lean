@@ -378,6 +378,35 @@ def vectorNatural (bytes : ByteArray) : Option (Option Float × Option Float × 
     let .element _ attrs _ ← (XML.parseNamespaceView xml).toOption | none
     some (NativeSVGForgiving.naturalSize attrs)
 
+/-- An SVG image file drawn for a tile of `tw` by `th` CSS pixels, its concrete object size
+(CSS Images 3 §5.3): a `viewBox` of its own is kept, with its `preserveAspectRatio`; with
+none, an image of a natural width and height is scaled to the tile as a whole, and an image
+without them takes the tile as its viewport. The picture has `imageRaster tw th` pixels. -/
+def vectorPictureAt (bytes : ByteArray) (tw th : Nat) : Option Rendering.Bitmap :=
+  if !looksLikeSVG bytes || tw == 0 || th == 0 || tw > 4096 || th > 4096 then none else
+    match (do
+      let some xml := String.fromUTF8? bytes | throw "SVG image is not UTF-8 text"
+      if xml.length > NativeSVG.maxInputChars then throw "SVG image exceeds 1048576 characters"
+      let root ← XML.parseNamespaceView xml
+      let .element name attrs children := root | throw "SVG image has no root element"
+      let attrs := match NativeSVGForgiving.naturalSize attrs, (NativeSVGText.plainAttr attrs "viewBox").isSome with
+        | (some w, some h, _), false =>
+          (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == "preserveAspectRatio")) ++
+            [NativeSVGText.mkAttr "viewBox" s!"0 0 {w} {h}", NativeSVGText.mkAttr "preserveAspectRatio" "none"]
+        | _, _ => attrs
+      let root := XML.NamespaceNode.element name attrs children
+      let (rw,rh) := NativeSVGForgiving.imageRaster tw th
+      let draw : Option String → Except String ByteArray := fun ground => do
+        let (scene,_) ← NativeSVGForgiving.parseNode (NativeSVGForgiving.imageRoot root tw th ground) rw rh none [] none #[] 64
+        pure scene.rgba
+      let white ← draw none
+      let rgba ← if (NativeSVGText.plainAttr attrs "viewport-fill").isSome then pure white
+        else do pure (alphaFrom white (← draw (some "#000000")))
+      if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
+      pure ({width := rw, height := rh, rgba} : Rendering.Bitmap) : Except String Rendering.Bitmap) with
+    | .ok b => some b
+    | .error _ => none
+
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
 `vectorPicture`. -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
