@@ -33,14 +33,14 @@ def check(ledger_path: Path, output_path: Path) -> None:
         raise AssertionError("incomplete theorem ledger")
     if len(set(expected)) != len(expected):
         raise AssertionError("repeated theorem names")
-    declared = re.findall(r"^#print axioms\s+([A-Za-z0-9_.]+)\\s*$", blob.decode("utf-8"), re.M)
+    declared = re.findall(r"^#print axioms\s+([A-Za-z0-9_.]+)\s*$", blob.decode("utf-8"), re.M)
     if len(declared) != len(set(declared)) or set(declared) != set(expected):
         raise AssertionError(f"source #print axiom declarations drifted: {declared}")
 
     output = output_path.read_text(encoding="utf-8")
     pattern = re.compile(
-        r"'(EthereumConsensus\.SSZ\\.[A-Za-z0-9_]+)' "
-        r"(?:depends on axioms: \[([^\]]*)\\]|(does not depend on any axioms))"
+        r"'(EthereumConsensus\.SSZ\.[A-Za-z0-9_]+)' "
+        r"(?:depends on axioms: \[([^\]]*)\]|(does not depend on any axioms))"
     )
     observed = {}
     for name, axiom_list, empty_marker in pattern.findall(output):
