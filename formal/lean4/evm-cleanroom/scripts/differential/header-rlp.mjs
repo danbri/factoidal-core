@@ -13,7 +13,7 @@ const rlp=x=>Array.isArray(x)?(()=>{const payload=Buffer.concat(x.map(rlp));retu
 const hex=b=>Buffer.from(b).toString('hex')
 const hash=f=>Buffer.from(keccak_256(rlp(f)))
 const digest=f=>BigInt('0x'+hex(hash(f))).toString()
-const london=12965000, shanghai=1681338455
+const london=12965000, shanghai=1681338455, cancun=1710338135, prague=1746612311, osaka=1764798551
 let seed=0x1559
 const bytes=n=>Buffer.from(Array.from({length:n},()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed>>>24}))
 const header=(num,time,limit,used,fee,i)=>[
@@ -53,10 +53,53 @@ for(const i of [7,8,9,10,11,15]){
  const f=sample.slice();f[i]=Buffer.concat([Buffer.of(0),f[i]]);H(f,err('invalid-shape'))
 }
 const extra=sample.slice();extra[12]=bytes(33);H(extra,err('invalid-shape'))
-const later=sample.slice();later[11]=nat(shanghai);H(later,ind('later-fork'))
+const later=sample.slice();later[11]=nat(osaka);H(later,ind('later-fork'))
 H(sample.slice(0,15),err('wrong-fork-shape'))
-H([...sample,bytes(32)],ind('unsupported-layout'))
+H([...sample,bytes(32),bytes(32)],ind('unsupported-layout'))
+H([...sample,bytes(32)],err('wrong-fork-shape'))
 H(sample.slice(0,14),ind('unsupported-layout'))
+// Independent modern field layouts, activation boundaries and actual parent
+// linkage. The pair verdict covers base fee, gas and linkage only.
+const modern=(num,time,i)=>{
+ const f=header(num,time,30000000,15000000,100n,i)
+ if(time>=shanghai)f.push(bytes(32))
+ if(time>=cancun)f.push(nat([0n,1n,127n,128n,131072n,2n**64n-1n][i%6]),nat([0n,255n,256n,2n**64n-1n][i%4]),bytes(32))
+ if(time>=prague)f.push(bytes(32))
+ return f
+}
+for(const activation of [shanghai,cancun,prague]){
+ for(let i=0;i<128;i++){
+  const time=activation+(i%2===0?-1:i)
+  const p=modern(23000000+i,time,i)
+  const c=modern(23000001+i,time+1,i+1)
+  c[0]=hash(p)
+  H(p);H(c);P(p,c,{status:'ok',fee:'100'})
+  const altered=p.map(b=>Buffer.from(b));altered[3][0]^=1
+  P(altered,c,err('parent-hash-mismatch'))
+  const badFee=c.slice();badFee[15]=nat(101);P(p,badFee,err('fee-check'))
+  const badLink=c.map(b=>Buffer.from(b));badLink[0][0]^=1
+  P(p,badLink,err('parent-hash-mismatch'))
+ }
+ const f=modern(23000000,activation,0)
+ for(const idx of [16,19,20].filter(j=>j<f.length)){
+  for(const size of [0,31,33]){
+   const bad=f.slice();bad[idx]=bytes(size);H(bad,err('invalid-shape'))
+  }
+ }
+ if(activation>=cancun){
+  for(const idx of [17,18]){
+   for(const val of [Buffer.of(0),Buffer.of(0,1),Buffer.alloc(9,1)]){
+    const bad=f.slice();bad[idx]=val;H(bad,err('invalid-shape'))
+   }
+  }
+ }
+ const short=f.slice(0,16);H(short,err('wrong-fork-shape'))
+ const early=f.slice();early[11]=nat(activation-1);H(early,err('wrong-fork-shape'))
+ const lowHeight=f.slice();lowHeight[8]=nat(london-1);H(lowHeight,err('wrong-fork-shape'))
+}
+const last=modern(24000000,osaka-1,1);H(last)
+const future=modern(24000001,osaka,1);H(future,ind('later-fork'))
+future[0]=hash(last);P(last,future,ind('later-fork'))
 // Existing independently captured canonical Frontier header: pin its published digest.
 const fixture=JSON.parse(readFileSync(new URL('../../evidence/frontier-mainnet-46147.json',import.meta.url),'utf8'))
 const block=fixture.block
