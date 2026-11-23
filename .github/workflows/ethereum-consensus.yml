@@ -113,6 +113,16 @@ jobs:
           python3 ethereum-consensus/scripts/check-vector-u64.py \
             ethereum-consensus/.lake/build/bin/ssz-vector-u64 \
             --report "$RUNNER_TEMP/ethereum-ssz-vector-results.json"
+      - name: Check four fixed-shape SSZ beacon container roots in independent Lean
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus build ssz-container-roots
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log"
+          python3 ethereum-consensus/scripts/check-container-roots.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots \
+            --report "$RUNNER_TEMP/ethereum-ssz-containers-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
@@ -167,4 +177,6 @@ jobs:
             ${{ runner.temp }}/ethereum-ssz-basic-results.json
             ${{ runner.temp }}/ethereum-ssz-vector-axioms.log
             ${{ runner.temp }}/ethereum-ssz-vector-results.json
+            ${{ runner.temp }}/ethereum-ssz-containers-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-containers-results.json
           if-no-files-found: warn
