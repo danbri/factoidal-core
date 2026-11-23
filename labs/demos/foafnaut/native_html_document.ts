@@ -428,9 +428,12 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const fonts=fontHost?.(document.source).catch(error=>console.error("Native HTML: fallback fonts:",String(error)));
   const inspection=await engine.inspect(document.source,{url:document.url,...mode});
   noteDiagnostics(page,inspection,false);
-  const scripted=inspection.scripts.some(script=>script.kind!=="data");
-  if(scripted&&!scriptHost)
+  const scriptElements=inspection.scripts.some(script=>script.kind!=="data");
+  if(scriptElements&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
+  // A page whose only script is an event handler content attribute (`<body onload>`, Lean's
+  // `handlers`) runs it when this host has a script engine; without one it is drawn as is.
+  const scripted=scriptElements||((inspection as {handlers?:boolean}).handlers===true&&!!scriptHost);
   if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
   // The bytes of the page's scripts and of its tab icon are read while its sheets and images
   // are: they wait for nothing of those, and they stood one after the other before the

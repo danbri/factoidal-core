@@ -751,6 +751,14 @@ private def classicScriptsIn (m : WebAccept.Mode) (scripting : Bool) (scripts : 
 private def classicScripts (request : JSON.Json) (scripts : List JSON.Json) : Except String (List JSON.Json) :=
   (WebAccept.accept (WebAccept.mode request) fun m => classicScriptsIn m (scripting request) scripts).map (·.1)
 
+/-- Whether an element of the page has an attribute with no namespace whose name is `on` and
+one or more letters: the names of the event handler content attributes (HTML §8.1.8.1). -/
+def hasHandlerAttributes (dom : DOM.Dom) : Bool :=
+  (dom.treeOrder 0).any fun id =>
+    let n := dom.get id
+    n.type == .element && n.attrs.any fun a =>
+      a.ns.isNone && a.lname.length > 2 && a.lname.startsWith "on" && (a.lname.drop 2).all Char.isAlpha
+
 def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : Bool) :
     Except String (JSON.Json × List WebAccept.Diagnostic) := do
   let base := baseURL dom url
@@ -772,7 +780,11 @@ def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : B
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
   return (.object [("nodes",(snapshot.field? "nodes").getD (.array [])),
-    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
+    ("scripts",.array scripts),
+    -- An event handler content attribute (HTML §8.1.8.1) is page script too: `<body onload>`
+    -- runs with no script element, so the host starts a script session for it.
+    ("handlers",.bool (scripting && hasHandlerAttributes dom)),
+    ("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
     ("baseURL",.string base),("title",.string (documentTitle dom)),
     ("icon",match iconURL dom base with | some url => .string url | none => .null)],ds ++ d)
 

@@ -79,6 +79,13 @@ private def inspected := (WebDocument.inspect urlDOM "https://example.test/a/pag
   | some (.array [script]) => script.field? "url" == some (.string "https://example.test/a/assets/scripts/app.js")
   | _ => false
 
+-- A page whose only script is an event handler content attribute says so (`handlers`).
+#guard WebDocument.hasHandlerAttributes (DOM.parseHtmlDocument "<body onload='f()'><p>A</p>")
+#guard !WebDocument.hasHandlerAttributes (DOM.parseHtmlDocument "<body one-x=1 on=1><p>A</p>")
+#guard inspected.field? "handlers" == some (.bool false)
+#guard ((WebDocument.inspect (DOM.parseHtmlDocument "<body onload='f()'>") "https://example.test/").toOption.bind
+  (·.field? "handlers")) == some (.bool true)
+
 -- The scripting snapshot is the authoritative MIME classifier. Legacy classic
 -- types survive inspection; data blocks remain inert; padded modules refuse.
 private def ecmaInspection := WebDocument.inspect
