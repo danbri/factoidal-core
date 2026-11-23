@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {spawnSync} from 'node:child_process'
-import {mkdtempSync,writeFileSync,rmSync} from 'node:fs'
+import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {keccak_256} from '@noble/hashes/sha3.js'
@@ -57,6 +57,15 @@ const later=sample.slice();later[11]=nat(shanghai);H(later,ind('later-fork'))
 H(sample.slice(0,15),err('wrong-fork-shape'))
 H([...sample,bytes(32)],ind('unsupported-layout'))
 H(sample.slice(0,14),ind('unsupported-layout'))
+// Existing independently captured canonical Frontier header: pin its published digest.
+const fixture=JSON.parse(readFileSync(new URL('../../evidence/frontier-mainnet-46147.json',import.meta.url),'utf8'))
+const block=fixture.block
+const raw=k=>Buffer.from(block[k].slice(2),'hex')
+const actualHeader=[raw('parentHash'),raw('sha3Uncles'),raw('miner'),raw('stateRoot'),raw('transactionsRoot'),raw('receiptsRoot'),Buffer.alloc(256),
+ nat(BigInt(block.difficulty)),nat(BigInt(block.number)),nat(BigInt(block.gasLimit)),nat(BigInt(block.gasUsed)),nat(BigInt(block.timestamp)),raw('extraData'),raw('mixHash'),raw('nonce')]
+assert(block.zeroLogsBloom)
+assert.equal('0x'+hex(hash(actualHeader)),block.hash)
+H(actualHeader,{status:'ok',wire:hex(rlp(actualHeader)),hash:BigInt(block.hash).toString()})
 const exe=process.argv[2]
 assert(exe,'provide absolute Lean executable path')
 const dir=mkdtempSync(join(tmpdir(),'header-rlp-'))

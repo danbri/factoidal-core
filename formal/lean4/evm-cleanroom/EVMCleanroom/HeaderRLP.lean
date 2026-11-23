@@ -41,18 +41,18 @@ def validShape (h : Fields) : Bool :=
 
 /-- Only used after the fixed header layout and widths are checked:
 every string and the complete payload fit in two length bytes. -/
-private def prefix (shortBase longBase n : Nat) : Array UInt8 :=
+private def lengthPrefix (shortBase longBase n : Nat) : Array UInt8 :=
   if n <= 55 then #[UInt8.ofNat (shortBase + n)]
   else if n < 256 then #[UInt8.ofNat (longBase + 1), UInt8.ofNat n]
   else #[UInt8.ofNat (longBase + 2), UInt8.ofNat (n / 256), UInt8.ofNat (n % 256)]
 
 private def encodeString (b : Array UInt8) : Array UInt8 :=
   if b.size == 1 && (b[0]?).getD 0 < 128 then b
-  else prefix 128 183 b.size ++ b
+  else lengthPrefix 128 183 b.size ++ b
 
 private def encodeFlat (h : Fields) : Array UInt8 :=
   let payload := h.foldl (fun acc b => acc ++ encodeString b) #[]
-  prefix 192 247 payload.size ++ payload
+  lengthPrefix 192 247 payload.size ++ payload
 
 def wire (h : Fields) : Except Error (Array UInt8) :=
   if !layout h then .error .unsupportedLayout
@@ -62,7 +62,7 @@ def wire (h : Fields) : Except Error (Array UInt8) :=
     .error .wrongForkShape
   else .ok (encodeFlat h)
 
-def hashWire (acceptance : Keccak.Acceptance) (bytes : Array UInt8) : Nat :=
+private def hashWire (acceptance : Keccak.Acceptance) (bytes : Array UInt8) : Nat :=
   Keccak.experimentalDigestWord acceptance (ByteView.ofArray bytes)
 
 def hash (acceptance : Keccak.Acceptance) (h : Fields) :

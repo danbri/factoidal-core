@@ -4,7 +4,7 @@ import EVMCleanroom.CLIEncoding
 namespace EVMCleanroom.HeaderRLPCLI
 open EVMCleanroom.HeaderRLP
 
-private def reason : Error → String
+private def reason : HeaderRLP.Error → String
   | .unsupportedLayout => "unsupported-layout"
   | .invalidShape => "invalid-shape"
   | .laterFork => "later-fork"
@@ -16,12 +16,12 @@ private def reason : Error → String
   | .chain .parentHashMismatch => "parent-hash-mismatch"
   | .chain (.fee _) => "fee-check"
 
-private def indeterminate : Error → Bool
+private def indeterminate : HeaderRLP.Error → Bool
   | .unsupportedLayout | .laterFork | .chain .earlierFork | .chain .resourceLimit
   | .chain (.fee .resourceLimit) | .chain (.fee .missingParentFee) => true
   | _ => false
 
-private def errorJson (e : Error) : String :=
+private def errorJson (e : HeaderRLP.Error) : String :=
   "{\"status\":\"" ++ (if indeterminate e then "indeterminate" else "error") ++
     "\",\"reason\":\"" ++ reason e ++ "\"}"
 
@@ -39,7 +39,7 @@ private def emit (a : EVMCleanroom.Keccak.Acceptance) (line : String) :
     match one.splitOn "\t" with
     | "H" :: fields =>
       let h ← parseFields fields
-      match hash a h with
+      match HeaderRLP.hash a h with
       | .error e => return errorJson e
       | .ok (bytes, digest) =>
         return "{\"status\":\"ok\",\"wire\":\"" ++ EVMCleanroom.CLI.hexBytes bytes ++
