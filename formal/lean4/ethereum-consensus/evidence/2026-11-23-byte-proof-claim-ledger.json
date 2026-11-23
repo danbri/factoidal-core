@@ -1,6 +1,6 @@
 {
   "schema": "factoidal.ethereum-consensus.byte-proof-claims.v1",
-  "scope": "29 new SSZ byte-proof statements plus six reused SHA2 width/padding statements; conditional finite-tree correctness and actual verification verdicts; no full FIPS or authenticated beacon-state claim",
+  "scope": "29 new SSZ byte-proof statements plus six reused SHA2 width/padding statements; conditional finite-tree correctness and actual verification verdicts; no full FIPS or authenticated beacon-state claim; retained axiom audit on the independently extended basic-codec stack",
   "base_commit": "7c50781db078f03c573ee32c38551c4fba2ac015",
   "toolchain": "leanprover/lean4:v4.33.1",
   "compiler_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
@@ -8,6 +8,10 @@
     {
       "path": "formal/lean4/ethereum-consensus/AncestryMain.lean",
       "git_blob_sha": "f8ed01bc64de9a80a3f72fe972f00d70c15ebc3f"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/BasicMain.lean",
+      "git_blob_sha": "e72494bc9de26db7a467309eb005458228fa163e"
     },
     {
       "path": "formal/lean4/ethereum-consensus/BoostMain.lean",
@@ -27,7 +31,7 @@
     },
     {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus.lean",
-      "git_blob_sha": "7aea51531e08d8bb6b5fcd0b2f3d8f324bf5219c"
+      "git_blob_sha": "75b39f86e9a2101d37276f108332b311032d6b89"
     },
     {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/AttestationScore.lean",
@@ -58,6 +62,10 @@
       "git_blob_sha": "20b5e7d0b37a08d09402b9f3af9af66db62b9f29"
     },
     {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean",
+      "git_blob_sha": "e2d3b3e2b4eb29c0ed2cea820a36713ae93ebb6d"
+    },
+    {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProof.lean",
       "git_blob_sha": "ff547b1c8547769ec36673c0f6dde3fb29bf40a1"
     },
@@ -78,18 +86,6 @@
       "git_blob_sha": "3bb33d5661020979c55ca7d188bc8af20054132d"
     },
     {
-      "path": "formal/lean4/L4Factoidal/Crypto/SHA2.lean",
-      "git_blob_sha": "92737f4d83035745dba29ef2c3867b01b8dfa50f"
-    },
-    {
-      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Tests.lean",
-      "git_blob_sha": "7ac4c2235566cd636d85848241fbbd1f3a1b246b"
-    },
-    {
-      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean",
-      "git_blob_sha": "b878ce9d43eeeb77f06598fd55d9c01d9c62597c"
-    },
-    {
       "path": "formal/lean4/ethereum-consensus/LatestMain.lean",
       "git_blob_sha": "48e6ab53c9cd7ba7be303c66101c3969723004cb"
     },
@@ -102,16 +98,28 @@
       "git_blob_sha": "01e43bd4ecc2fc03de068459304383c5c8b69de1"
     },
     {
-      "path": "formal/lean4/ethereum-consensus/StoreMain.lean",
-      "git_blob_sha": "405522d5f2f0c9923e46581beff341cda9699bf3"
-    },
-    {
       "path": "formal/lean4/ethereum-consensus/StoredHeadMain.lean",
       "git_blob_sha": "3911bc1836ac3efa0edfa33678d80e3a4e93d31a"
     },
     {
+      "path": "formal/lean4/ethereum-consensus/StoreMain.lean",
+      "git_blob_sha": "405522d5f2f0c9923e46581beff341cda9699bf3"
+    },
+    {
       "path": "formal/lean4/ethereum-consensus/WeightMain.lean",
       "git_blob_sha": "43a1c0995096c74cc27697a8bb5a29b1f4dfe86f"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2.lean",
+      "git_blob_sha": "92737f4d83035745dba29ef2c3867b01b8dfa50f"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Tests.lean",
+      "git_blob_sha": "7ac4c2235566cd636d85848241fbbd1f3a1b246b"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean",
+      "git_blob_sha": "b878ce9d43eeeb77f06598fd55d9c01d9c62597c"
     }
   ],
   "theorem_sources": [
