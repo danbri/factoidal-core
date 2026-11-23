@@ -12,3 +12,7 @@ root = "Main"
 [[lean_exe]]
 name = "lmd-latest"
 root = "LatestMain"
+
+[[lean_exe]]
+name = "lmd-store"
+root = "StoreMain"
