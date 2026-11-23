@@ -32,3 +32,7 @@ root = "BoostMain"
 [[lean_exe]]
 name = "lmd-checked-ancestry"
 root = "AncestryMain"
+
+[[lean_exe]]
+name = "lmd-checked-child"
+root = "ChildMain"
