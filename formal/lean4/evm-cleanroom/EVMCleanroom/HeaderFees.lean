@@ -167,19 +167,26 @@ def activation : Input :=
     childGasLimit := 30000000, childGasUsed := 0,
     childBaseFee := initialBaseFee }
 
-#guard decide (expectedBaseFee neutral = .ok 1000000000)
-#guard decide (checkHeader neutral = .ok 1000000000)
-#guard decide (expectedBaseFee { neutral with parentGasUsed := 30000000 } = .ok 1125000000)
-#guard decide (expectedBaseFee { neutral with parentGasUsed := 0 } = .ok 875000000)
-#guard decide (expectedBaseFee { neutral with parentGasUsed := 15000001, parentBaseFee := some 1 } = .ok 2)
-#guard decide (expectedBaseFee { neutral with parentBaseFee := none } = .error .missingParentFee)
-#guard decide (checkHeader { neutral with childBaseFee := 9 } = .error .incorrectBaseFee)
-#guard decide (checkHeader { neutral with childGasUsed := 30000001 } = .error .childGasOverLimit)
-#guard decide (checkHeader { neutral with parentGasUsed := 30000001 } = .error .parentGasOverLimit)
-#guard decide (checkHeader { neutral with childGasLimit := 30029296 } = .error .invalidGasLimit)
-#guard decide (checkHeader { neutral with childGasLimit := 29970704 } = .error .invalidGasLimit)
-#guard decide (checkHeader activation = .ok initialBaseFee)
-#guard decide (checkHeader { activation with parentBaseFee := some initialBaseFee } = .error .unexpectedParentFee)
+/-- Only a test comparator; the public result does not use it. -/
+private def outcomesMatch (actual expected : Except Error Nat) : Bool :=
+  match actual, expected with
+  | .ok a, .ok b => a == b
+  | .error a, .error b => a == b
+  | _, _ => false
+
+#guard outcomesMatch (expectedBaseFee neutral) (.ok 1000000000)
+#guard outcomesMatch (checkHeader neutral) (.ok 1000000000)
+#guard outcomesMatch (expectedBaseFee { neutral with parentGasUsed := 30000000 }) (.ok 1125000000)
+#guard outcomesMatch (expectedBaseFee { neutral with parentGasUsed := 0 }) (.ok 875000000)
+#guard outcomesMatch (expectedBaseFee { neutral with parentGasUsed := 15000001, parentBaseFee := some 1 }) (.ok 2)
+#guard outcomesMatch (expectedBaseFee { neutral with parentBaseFee := none }) (.error .missingParentFee)
+#guard outcomesMatch (checkHeader { neutral with childBaseFee := 9 }) (.error .incorrectBaseFee)
+#guard outcomesMatch (checkHeader { neutral with childGasUsed := 30000001 }) (.error .childGasOverLimit)
+#guard outcomesMatch (checkHeader { neutral with parentGasUsed := 30000001 }) (.error .parentGasOverLimit)
+#guard outcomesMatch (checkHeader { neutral with childGasLimit := 30029296 }) (.error .invalidGasLimit)
+#guard outcomesMatch (checkHeader { neutral with childGasLimit := 29970704 }) (.error .invalidGasLimit)
+#guard outcomesMatch (checkHeader activation) (.ok initialBaseFee)
+#guard outcomesMatch (checkHeader { activation with parentBaseFee := some initialBaseFee }) (.error .unexpectedParentFee)
 
 #print axioms nextBaseFee_at_target
 #print axioms nextBaseFee_above
