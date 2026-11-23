@@ -41,12 +41,58 @@ controls. The fixture is synthetic, with no trusted root or SHA-256
 digest. Existing checked-branch and LMD gates are also rerun by
 `.github/workflows/ethereum-consensus.yml`.
 
-## Exact-source evidence and limits
-At authorship time, there is no local Lean 4.33.1 environment in the
-connector-only runtime. CI compilation, exact-head proof axioms,
-input totals and latency MUST be recorded after a hosted run. Source
-publication alone is not a passing test. There is no before/after
-performance result yet; this is a new module, not an existing hot path.
+## Exact-source evidence: 23 November 2026
+Implementation and proof head:
+`5883087d81014ad306fd036f110032d179c23d99`.
+GitHub Actions specialised Linux CI:
+https://github.com/danbri/factoidal-core/actions/runs/45141048661
+(job 137578847347): **passed** on that exact source head. Fresh
+Lean 4.33.1 library compilation, `#guard` elaboration and the
+separate complete theorem-file rerun passed. The actual printed sets
+for **all 13 new theorem declarations** were independently read from
+the CI log: **7 empty**, **4 [propext] only**, and **2
+[propext, Quot.sound]**; no `sorryAx`, user axiom or other axiom.
+(The four propext-only are `branchIndices_length`,
+`helperIndices_refuses_invalid`,
+`checkedHelpers_refuses_over_depth_cap` and
+`checkedHelpers_within_limits`.) All **15 new `#guard` controls**
+elaborated. The other two nonempty declarations are
+`helperIndices_of_admissible` and
+`checkedHelpers_refuses_over_claim_cap`.
+
+The independent multiproof positional oracle matched **2,048/2,048**
+actual Lean input/result rows, comprising **890 admitted, 1,158
+refused and 157 valid empty-helper** requests; all three comparator
+mutations were detected. The previously published SSZ generalized
+index (1,025), checked branch (1,025), latest-message (2,048),
+vote-store, attestation, proposer boost, ancestry, child selection
+and bounded stored-head (each 1,024) independent gate steps were
+rerun and **passed** in the same Linux job. This is synthetic
+positional evidence, not SHA-256 or beacon-proof correctness.
+
+The two earlier source heads `31c8f6a81ae80b181905bd3827878cc2ab93f35c`
+(CI 45140747273) and `2f3e67721ba0020d8eaaa20162348b2094ae007a`
+(CI 45140908823) **failed** to elaborate two example theorems
+because `List.mergeSort` was not kernel-reducible in the required
+proofs. Commit `5883087` replaces that sort with a transparent
+structural insertion sort, so the executable and the example
+proofs use the same implementation. The accepted range is limited
+by caller-supplied caps (4 claims and depth 64 in the CLI) and not
+a complete SSZ parameter policy.
+
+A native local Lean 4.33.1 build, source-tree benchmarking,
+memory-profile measurement, full repository premerge, an
+independent human review, and broad repository gates are **not**
+claimed. On the preceding parent stack, the broad Lean corpus
+check https://github.com/danbri/factoidal-core/actions/runs/45129163023
+failed at the unrelated existing CSS recursive
+`L4Factoidal_Rendering_CssValues_Calc_simpWith` allow-list gate.
+Our exact-head broad corpus and npm workflows are separate from the
+specialised consensus success and must be inspected independently.
+No before/after runtime latency distribution is available for this
+new opt-in module. The sorter has quadratic worst-case work over
+the returned candidate indices; the caller-supplied caps only
+bound it for callers that enforce finite caps.
 
 Crucial nonclaims: no concrete 32-byte SSZ Root, no SHA-256 pair
 hash, no multiproof **verification** or authenticated beacon
