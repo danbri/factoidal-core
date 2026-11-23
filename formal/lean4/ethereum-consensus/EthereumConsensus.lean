@@ -3,3 +3,5 @@ import EthereumConsensus.SSZ.CheckedBranch
 import EthereumConsensus.ForkChoice.LatestMessage
 import EthereumConsensus.ForkChoice.VoteStore
 import EthereumConsensus.ForkChoice.AttestationScore
+
+import EthereumConsensus.ForkChoice.ProposerScore
