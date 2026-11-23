@@ -49,10 +49,10 @@ theorem executeView_ofArray (maxBytes gas : Nat) (bytes : Array UInt8) :
     (executeView maxBytes gas (ByteView.ofArray bytes)).map
       (fun result => (bytes, result.2)) = execute maxBytes gas bytes := by
   by_cases hSize : bytes.size > maxBytes
-  · simp [executeView, execute, ByteView.ofArray, hSize]
+  · simp [executeView, execute, ByteView.ofArray, hSize, Except.map]
   · by_cases hGas : gas < gasCost bytes.size
-    · simp [executeView, execute, ByteView.ofArray, hSize, hGas]
-    · simp [executeView, execute, ByteView.ofArray, hSize, hGas]
+    · simp [executeView, execute, ByteView.ofArray, hSize, hGas, Except.map]
+    · simp [executeView, execute, ByteView.ofArray, hSize, hGas, Except.map]
 
 theorem executeView_oversize (maxBytes gas : Nat) (view : ByteView)
     (h : maxBytes < view.size) :
