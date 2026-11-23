@@ -80,6 +80,8 @@ def boost_root(case):
 
 
 def score(case, node, fuel, boost, updated):
+    if block(case, node) is None:
+        return None
     entries = roster(case)
     if len({i for i, _ in entries}) != len(entries):
         return None
