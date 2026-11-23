@@ -20,9 +20,10 @@ The implemented Lean files and oracle were unchanged from corrected source head 
 
 ```sh
 # Working directory: formal/lean4/evm-cleanroom
-lake build EVMCleanroom evm-header-fees
+lake build EVMCleanroom
+lake -f lakefile-london.toml build evm-header-fees
 python3 scripts/check-london-header-fees.py --generate /tmp/london-input.tsv /tmp/london-expected.jsonl
-lake exe evm-header-fees --batch /tmp/london-input.tsv > /tmp/london-observed.jsonl
+lake -f lakefile-london.toml exe evm-header-fees --batch /tmp/london-input.tsv > /tmp/london-observed.jsonl
 python3 scripts/check-london-header-fees.py --check /tmp/london-expected.jsonl /tmp/london-observed.jsonl
 LEAN_STACK_SIZE_KB=65536 MIMALLOC_ARENA_RESERVE=67108864 lake env lean EVMCleanroom/HeaderFees.lean > /tmp/london-header-axioms.txt
 python3 scripts/check-london-claims.py --selftest
@@ -39,7 +40,9 @@ The initial `#guard` attempt failed because Lean 4.33.1 has no implicit `BEq (Ex
 
 **Regression discovered during complete EVM CI:** The first integrated root import changed the blob of `EVMCleanroom.lean`. The existing v2 proof/assurance ledger correctly rejected that source drift in both the Lean job and the authenticated real-state job (run [45252161604](https://github.com/danbri/factoidal-core/actions/runs/45252161604)), even though the standalone London slice passed. The root import was therefore reverted in `47b5575ce4bd65e373af5a5c86f0f2bb7e9986ea`, restoring **exact** previously reviewed root blob `26dfa6044a613c42c3351a9b700b5352de0589a4`. London header logic remains compiled, run and audited through the standalone `evm-header-fees` target and fresh source-axiom check. It is **not** imported into the old EVM model or integrated header/block validation yet. The new ledger now pins the original root blob and all independent London source files. This avoids altering the old v2 manifest or accepting stale evidence.
 
-The corrected post-regression head requires a fresh complete CI run. Neither the earlier passing specialised run nor the earlier failing EVM jobs establishes that final verdict. Do not inherit this passing verdict if source, audit or workflow changes fail on that head. The broad repository/premerge and factoidal-builds exact-head Linux gate are separate and not claimed.
+A second source-pin gate detected that the original `lakefile.toml` was also part of the v2 assurance manifest. Its extra native target was moved to a separate, committed, same-directory `lakefile-london.toml` selected explicitly with `lake -f lakefile-london.toml`. The default Lake configuration is now **byte-identical** to its predecessor blob `379997eaeb6e1c9fb147270be0f317f05812683b`; the alternate file has its own source pin and adds no dependency. Thus EVM's original source and build definition remain unchanged while a native Lean London entry point can be compiled separately. The new evidence inventory now has six pinned source blobs.
+
+The corrected post-regression head needs a fresh complete CI run, and no previous passing result substitutes for it. Neither the earlier passing specialised run nor the earlier failing EVM jobs establishes that final verdict. Do not inherit this passing verdict if source, audit or workflow changes fail on that head. The broad repository/premerge and factoidal-builds exact-head Linux gate are separate and not claimed.
 
 ## Theorem scope and remaining blockers
 
