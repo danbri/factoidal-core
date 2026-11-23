@@ -56,8 +56,8 @@ its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
-    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyle,
-    borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
+    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
+    borderColors,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundSize,_backgroundRepeat,
@@ -74,8 +74,10 @@ def sameShape (a b : Computed) : Bool :=
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
   preserveSegmentBreaks == b.preserveSegmentBreaks &&
-  edgesEq borderWidth b.borderWidth && (borderStyle == .none) == (b.borderStyle == .none) &&
-  (borderColor.resolve a.color).isSome == (b.borderColor.resolve b.color).isSome &&
+  edgesEq borderWidth b.borderWidth &&
+  -- each side's style, and whether its colour is drawn
+  (borderStyles.toList.zip b.borderStyles.toList).all (fun (x,y) => x == y) &&
+  (borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => (x.resolve a.color).isSome == (y.resolve b.color).isSome) &&
   borderSpacingX == b.borderSpacingX && borderSpacingY == b.borderSpacingY &&
   borderCollapse == b.borderCollapse && captionBottom == b.captionBottom &&
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
@@ -95,17 +97,18 @@ def sameShape (a b : Computed) : Bool :=
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=
   sameShape a b && colorEq a.color b.color && optEq colorEq a.background b.background &&
-  optEq colorEq (a.borderColor.resolve a.color) (b.borderColor.resolve b.color) &&
-  optEq colorEq a.decorationColor b.decorationColor &&
-  a.borderStyle == b.borderStyle
+  (a.borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => optEq colorEq (x.resolve a.color) (y.resolve b.color)) &&
+  optEq colorEq a.decorationColor b.decorationColor
 
-/-- The two colours of a border, as `Layout.borderNodes` makes them. -/
-private def borderColors (s : Computed) : Option (Color × Color) :=
-  (s.borderColor.resolve s.color).map fun c =>
-    match s.borderStyle with
-    | .outset => (Layout.lighter c,Layout.darker c)
-    | .inset => (Layout.darker c,Layout.lighter c)
-    | _ => (c,c)
+/-- The colours of the bands of each side of a border, as `Layout.borderNodes` makes them
+(`Layout.borderBands`; the width does not change the colours). -/
+private def borderColors (s : Computed) : List Color :=
+  let st := s.borderStyles
+  let pc := s.borderColors
+  [(st.top,pc.top,true),(st.right,pc.right,false),(st.bottom,pc.bottom,false),(st.left,pc.left,true)].flatMap
+    fun (style,paint,start) => match paint.resolve s.color with
+      | some c => (Layout.borderBands style c start 3).map (·.2.2)
+      | none => []
 
 /-- The colour pairs (before, after) of the paints that a node's own style makes. -/
 def ownPairs (a b : Computed) : List (Color × Color) :=
@@ -113,9 +116,9 @@ def ownPairs (a b : Computed) : List (Color × Color) :=
   (match a.background,b.background with | some x,some y => [(x,y)] | _,_ => []) ++
   (if a.underline then [(a.decorationColor.getD a.color,b.decorationColor.getD b.color)] else []) ++
   (if a.borderStyle == .none then [] else
-    match borderColors a, borderColors b with
-    | some (an,af), some (bn,bf) => [(an,bn),(af,bf)]
-    | _, _ => [])
+    let x := borderColors a
+    let y := borderColors b
+    if x.length == y.length then x.zip y else [])
 
 /-- The background pair of a node, for the text of its inline descendants. -/
 private def backgroundPairs (a b : Computed) : List (Color × Color) :=
