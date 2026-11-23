@@ -107,6 +107,9 @@ jobs:
           lake -d ethereum-consensus build ssz-vector-u64
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/VectorU64.lean" |
             tee "$RUNNER_TEMP/ethereum-ssz-vector-axioms.log"
+          python3 ethereum-consensus/scripts/check-vector-u64-axioms.py \
+            ethereum-consensus/evidence/2026-11-23-vector-u64-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-ssz-vector-axioms.log"
           python3 ethereum-consensus/scripts/check-vector-u64.py \
             ethereum-consensus/.lake/build/bin/ssz-vector-u64 \
             --report "$RUNNER_TEMP/ethereum-ssz-vector-results.json"
