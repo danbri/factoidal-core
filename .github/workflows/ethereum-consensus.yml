@@ -132,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -v 8388608
-          lake -d ethereum-consensus build ssz-container-roots
+          lake -d ethereum-consensus -v build ssz-container-roots 2>&1 | tee "$RUNNER_TEMP/ethereum-container-build.log"
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean" |
             tee "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log"
           python3 ethereum-consensus/scripts/check-container-root-axioms.py \
@@ -160,6 +160,22 @@ jobs:
             "$RUNNER_TEMP/ethereum-attestation-axioms.log" | tee "$RUNNER_TEMP/ethereum-attestation-ledger.json"
           python3 ethereum-consensus/scripts/check-attestation-data.py \
             ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-attestation-results.json"
+      - name: Check indexed attester-slashing preparation and actual signing roots
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/AttesterSlashing.lean" |
+            tee "$RUNNER_TEMP/ethereum-slashing-axioms.log"
+          python3 ethereum-consensus/scripts/check-attester-slashing-axioms.py \
+            "$RUNNER_TEMP/ethereum-slashing-axioms.log" | tee "$RUNNER_TEMP/ethereum-slashing-ledger.json"
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-container-roots \
+            --link-log "$RUNNER_TEMP/ethereum-container-build.log" \
+            --report "$RUNNER_TEMP/ethereum-slashing-dependencies.json"
+          python3 ethereum-consensus/scripts/check-attester-slashing.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-slashing-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
@@ -224,4 +240,9 @@ jobs:
             ${{ runner.temp }}/ethereum-attestation-axioms.log
             ${{ runner.temp }}/ethereum-attestation-ledger.json
             ${{ runner.temp }}/ethereum-attestation-results.json
+            ${{ runner.temp }}/ethereum-container-build.log
+            ${{ runner.temp }}/ethereum-slashing-axioms.log
+            ${{ runner.temp }}/ethereum-slashing-ledger.json
+            ${{ runner.temp }}/ethereum-slashing-dependencies.json
+            ${{ runner.temp }}/ethereum-slashing-results.json
           if-no-files-found: warn
