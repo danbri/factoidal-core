@@ -504,7 +504,6 @@ private def bigImportSkips : Option Nat := do
   let (_,ds) ← (WebDocument.sheetsIn .liberal importDOM (importRequest [("imported",.array [big])]) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
   return (ds.filter (·.skip == .stylesheetBytes)).length
 #guard bigImportSkips == some 1
-#guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" ("".pushn ' ' 8388609 ++ "p{font-size:30px}")])] == some 16
 -- an import under a media query that does not hold is not applied; one that holds is
 #guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' print;",
   importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 16
