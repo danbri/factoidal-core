@@ -170,7 +170,8 @@ private def parseBlobCall (v : Json) (a : Keccak.Acceptance) : Except String Blo
     let h ← x.getStr?
     if h.length > 514 then throw "hash-width-limit"
     parseBytecode h
-  return { request := req
+  return {
+    request := req
     parent := ← parseHeader (← v.getObjVal? "parentHeader")
     child := ← parseHeader (← v.getObjVal? "childHeader")
     hashes := hashes
