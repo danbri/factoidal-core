@@ -250,8 +250,9 @@ environment, so that the list a host fetches (`inspect`) and every layout name t
 image whatever the window's size. Candidates in a format the engine does not decode are
 passed over, and the `src` stands when nothing else is left. -/
 
-/-- A URL whose path names an image format the engine has no decoder for: WebP, AVIF, JPEG
-XL, HEIF. -/
+/-- Formats excluded as alternate source-set candidates. A WebP URL alone cannot
+distinguish lossless from lossy, so source-set selection still preserves other
+candidates. An explicit image source can use the lossless decoder. -/
 def undecodablePath (url : String) : Bool :=
   let path := ((((url.splitOn "#").headD "").splitOn "?").headD "").toLower
   [".webp", ".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending

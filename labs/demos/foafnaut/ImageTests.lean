@@ -39,6 +39,11 @@ private def refused (r : Except String Rendering.Bitmap) (text : String) : Bool 
   match r with | .ok _ => false | .error m => (m.splitOn text).length > 1
 
 #guard pixels (decodePNG rgbPng) == [255,0,0,255,0,255,0,255]
+
+-- Four translucent pixels, with the last three represented by an overlapping copy.
+private def webpLossless := hex "524946461c000000574542505650384c100000002f03000010000832e23f5b419ad0be14"
+#guard naturalSize webpLossless == some (4,1)
+#guard pixels (decode webpLossless) == (List.replicate 4 [32,0,9,125]).flatten
 -- Each colour type. Palette with tRNS, grey with alpha, RGBA, 1-bit grey, 16-bit grey.
 #guard pixels (decodePNG (png (ihdr 2 1 8 3) (ByteArray.mk #[0,1,0])
   (chunk "PLTE" (ByteArray.mk #[1,2,3,4,5,6]) ++ chunk "tRNS" (ByteArray.mk #[9])))) == [4,5,6,255,1,2,3,9]
