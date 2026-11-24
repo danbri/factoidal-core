@@ -6796,8 +6796,8 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
         | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
         | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
-        | 11 => if x == posZero then x else Float.exp x - 1
-        | 12 => if x == posZero then x else Float.log (1 + x)
+        | 11 => mathExpMinusOne x
+        | 12 => mathLogOnePlus x
         | 14 => L4Factoidal.Prim.Float16.round x
         | _ => x.toFloat32.toFloat))
     | .mathHypot =>
