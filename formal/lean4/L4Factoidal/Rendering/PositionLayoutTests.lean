@@ -24,6 +24,24 @@ private def at? (html extra text : String) (width : Nat := 200) : Option (Float 
   let g ← run.glyphs[0]?
   return (g.x,g.y)
 
+-- A heading with four words on its first ordinary line keeps two lines with balance.
+private def sixWords := "<div id=parent><div id=heading>AAAA <span>BBBB</span> CCCC DDDD EEEE FFFF</div></div>"
+private def breaksSix (extra : String) : Option (Bool × Bool) := do
+  let style := "#heading{width:120px} " ++ extra
+  let (_, a) ← at? sixWords style "AAAA"
+  let (_, d) ← at? sixWords style "DDDD"
+  let (_, f) ← at? sixWords style "FFFF"
+  return (a == d, d == f)
+
+#guard breaksSix "" == some (true,false)
+#guard breaksSix "#heading{text-wrap:balance}" == some (false,true)
+#guard breaksSix "#parent{text-wrap-style:balance}" == some (false,true)
+#guard breaksSix "#heading{--wr:balance;text-wrap:var(--wr)}" == some (false,true)
+#guard breaksSix "#heading{text-wrap:balance;text-wrap-style:auto}" == some (true,false)
+#guard breaksSix "#parent{text-wrap:balance} #heading{text-wrap-style:initial}" == some (true,false)
+#guard box sixWords "#heading{width:120px;text-wrap:balance}" "heading" ==
+  box sixWords "#heading{width:120px}" "heading"
+
 private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</div></div><div id=z>ZZ</div>"
 
 -- A sized or painted block inside an inline keeps its box (CSS 2.1 §9.2.1.1).
