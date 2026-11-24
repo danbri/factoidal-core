@@ -3,12 +3,24 @@ templateEngineOverride: md
 ---
 # Wikidata result views in Factoidal Hub
 
-The Hub starts with the result visualisation. An optional colourised query
-editor below it can submit a query to either Wikidata endpoint. Its **Show
-parsed structure** action loads the same-origin Factoidal Wasm engine and
-uses `parseSparqlStructure`. The returned S-expression comes from Lean's
-parsed query AST and preserves property paths. The bundled graph example
-appears before the browser makes any SPARQL requests.
+The Hub opens as a gallery. Each visualisation has its own rendered card,
+and cards that share a query live in the same group. London landmarks use
+one result set for the map, Commons images and table. A second query supplies
+the graph, graph builder and tree. Two small NASA datasets supply the charts
+and timeline. There are also examples of an ASK answer and CONSTRUCT triples.
+
+Saved previews appear immediately. **Load 5 live examples** sends at most
+five different queries to the [Wikidata QLever endpoint][qlever], sequentially
+with a 450 ms pause after each response. Each response updates all the cards
+in its group. The button loads the remaining examples on the next press.
+An individual group's **Run on QLever** action uses the same request path.
+A rate limit, service-unavailable response or timeout pauses the queue and
+leaves the shown previews in place. Each group has one raw results disclosure.
+
+The optional colourised query editor also uses QLever. **Edit query** opens
+it with the group's SPARQL. **Show parsed structure** loads the same-origin
+Factoidal Wasm engine and uses `parseSparqlStructure`. The returned
+S-expression comes from Lean's parsed query AST and preserves property paths.
 
 The [WDQS presentation comments][views] work in an edited query.
 `#defaultView` picks the first result tab. `#view` configures a view
@@ -80,4 +92,5 @@ outside the system include paths. From `docs/`, run `npm ci` and
 
 [audit]: ./20261124-mlp-wikidata-catalogue.md#exact-output-and-jsonl-compatibility
 [views]: https://www.wikidata.org/wiki/Wikidata:SPARQL_query_service/Wikidata_Query_Help/Result_Views
+[qlever]: https://query-next.wikidata.org/sparql
 [workbench]: https://mlp-wikidata-workbench.danbri.chatgpt.site/

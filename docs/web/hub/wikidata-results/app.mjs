@@ -1,5 +1,7 @@
 import '../assets/sparql-result-elements.mjs';
-import { exampleQuery, exampleResults } from './example.mjs';
+import { groups } from './example.mjs';
+import { drawRaw, element, mountGallery } from './gallery.mjs';
+import { queryQlever } from './qlever.mjs';
 import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs';
 import { createResultViews } from './views.mjs';
 
@@ -7,7 +9,6 @@ const $ = id => document.getElementById(id);
 const editor = $('query');
 const highlight = $('highlight');
 const language = $('language');
-const endpoint = $('endpoint');
 const runButton = $('run');
 const inspectButton = $('inspect');
 const visualTab = $('visual-tab');
@@ -16,10 +17,6 @@ const visualPanel = $('visual-panel');
 const rawPanel = $('raw-panel');
 const view = $('view');
 const views = createResultViews();
-const endpoints = {
-  classic: ['Blazegraph', 'https://query.wikidata.org/sparql'],
-  qlever: ['QLever', 'https://query-next.wikidata.org/sparql'],
-};
 
 let runtime;
 let parseJob = 0;
@@ -29,12 +26,7 @@ let directives;
 let viewCleanup;
 let drawId = 0;
 let visualSelected = true;
-
-function element(name, content) {
-  const node = document.createElement(name);
-  if (content !== undefined) node.textContent = content;
-  return node;
-}
+let gallery;
 
 function fetchRuntime() {
   if (!runtime) {
@@ -58,7 +50,8 @@ function chosenLanguage() {
 function controls() {
   const empty = !editor.value.trim();
   inspectButton.disabled = empty;
-  runButton.disabled = Boolean(controller) || empty;
+  runButton.disabled = Boolean(controller || gallery?.busy) || empty;
+  gallery?.controls();
 }
 
 function paintEditor() {
@@ -148,38 +141,6 @@ function selectTab(showVisual, focus = false) {
   draw();
 }
 
-function downloadResult() {
-  const rdf = result.kind === 'rdf';
-  const blob = new Blob([rdf ? result.data : JSON.stringify(result.data, null, 2)],
-    { type: rdf ? result.contentType : 'application/sparql-results+json' });
-  const url = URL.createObjectURL(blob);
-  const link = element('a');
-  link.download = rdf ? 'wikidata-results.rdf.txt' : 'wikidata-results.srj';
-  link.href = url;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function renderRaw() {
-  rawPanel.replaceChildren();
-  const actions = element('p');
-  const download = element('button', 'Download complete results');
-  download.type = 'button';
-  download.onclick = downloadResult;
-  actions.append(download);
-  rawPanel.append(actions);
-  if (result.kind === 'rdf') {
-    const text = element('pre', result.data);
-    text.className = 'rdf';
-    rawPanel.append(element('p', result.contentType), text);
-  } else {
-    const component = element(result.kind === 'ask' ? 'factoidal-sparql-boolean' : 'factoidal-sparql-results');
-    component.setAttribute('max-rows', '200');
-    component.results = result.data;
-    rawPanel.append(component);
-  }
-}
-
 function showResult(value, query, source) {
   result = value;
   directives = viewDirectives(query);
@@ -187,13 +148,13 @@ function showResult(value, query, source) {
   view.value = directives.defaultView;
   const rows = value.kind === 'select' ? ` · ${value.data.results.bindings.length.toLocaleString()} rows` : '';
   $('result-state').textContent = source + rows;
-  renderRaw();
+  $('result-panels').hidden = false;
+  drawRaw(rawPanel, result);
   selectTab(value.kind === 'select');
 }
 
 async function run() {
-  const which = endpoint.value;
-  const [name, url] = endpoints[which];
+  if (controller || gallery?.busy) return;
   const body = editor.value;
   let query;
   try {
@@ -206,35 +167,14 @@ async function run() {
   controller = active;
   const timeout = setTimeout(() => active.abort(), 45000);
   controls();
-  $('result-state').textContent = 'Waiting for ' + name + '…';
+  $('result-state').textContent = 'Waiting for QLever…';
   try {
-    const encoded = new URLSearchParams({ query });
-    const get = encoded.toString().length < 7000;
-    const response = await fetch(get ? url + '?' + encoded : url, {
-      method: get ? 'GET' : 'POST', body: get ? undefined : encoded,
-      headers: { Accept: 'application/sparql-results+json, application/n-triples;q=0.9, text/turtle;q=0.8, application/rdf+xml;q=0.5' },
-      signal: active.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}. ${(await response.text()).trim().slice(0, 320)}`);
-    }
-    const contentType = response.headers.get('content-type')?.split(';')[0] ?? 'Unknown media type';
-    let value;
-    if (contentType.endsWith('json')) {
-      const data = await response.json();
-      if (typeof data.boolean === 'boolean') value = { kind: 'ask', data };
-      else if (Array.isArray(data.head?.vars) && Array.isArray(data.results?.bindings)) value = { kind: 'select', data };
-      else throw new Error('The response is missing SPARQL result bindings.');
-    } else {
-      if (!['application/n-triples', 'text/turtle', 'application/rdf+xml', 'application/n-quads',
-        'application/trig', 'text/plain'].includes(contentType)) throw new Error('Unexpected media type ' + contentType + '.');
-      value = { kind: 'rdf', data: await response.text(), contentType };
-    }
+    const value = await queryQlever(query, { signal: active.signal });
     if (controller !== active) return;
-    showResult(value, body, name);
+    showResult(value, body, 'QLever');
   } catch (error) {
     if (controller === active) {
-      $('result-state').textContent = name + (error.name === 'AbortError' ? ' timed out.' : '. ' + error.message);
+      $('result-state').textContent = 'QLever' + (error.name === 'AbortError' ? ' timed out.' : '. ' + error.message);
     }
   } finally {
     clearTimeout(timeout);
@@ -253,14 +193,23 @@ function stopRunning() {
   }
 }
 
-function loadExample() {
+function loadQuery(query) {
   stopRunning();
-  editor.value = exampleQuery;
+  editor.value = query;
   paintEditor();
   clearStructure();
-  endpoint.value = 'classic';
-  showResult({ kind: 'select', data: exampleResults }, exampleQuery, 'Graph example · saved results');
+  result = undefined;
+  resetDraw();
+  $('result-panels').hidden = true;
+  $('result-state').textContent = '';
   controls();
+}
+
+function openEditor(query) {
+  if (query !== undefined) loadQuery(query);
+  $('query-editor').open = true;
+  $('query-editor').scrollIntoView();
+  editor.focus({ preventScroll: true });
 }
 
 for (const [id, label] of Object.entries(viewNames)) {
@@ -269,7 +218,7 @@ for (const [id, label] of Object.entries(viewNames)) {
   option.value = id;
   view.add(option);
 }
-$('example').onclick = loadExample;
+$('editor-link').onclick = event => { event.preventDefault(); openEditor(); };
 inspectButton.onclick = inspectQuery;
 runButton.onclick = run;
 editor.oninput = () => { stopRunning(); clearStructure(); paintEditor(); controls(); };
@@ -292,4 +241,5 @@ visualTab.parentElement.onkeydown = event => {
   selectTab(event.key === 'Home' || (event.key !== 'End' && !visualSelected), true);
 };
 view.onchange = draw;
-loadExample();
+gallery = mountGallery({ views, onEdit: openEditor, canRun: () => !controller, onChange: controls });
+loadQuery(groups[0].query);
