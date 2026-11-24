@@ -451,7 +451,7 @@ where
 
 private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
   a.name.namespace_.isNone &&
-    ((tag == "svg" && a.name.localPart == "category") || inertAttribute a.name.localPart)
+    ((tag == "svg" && ["category", "icon"].contains a.name.localPart) || inertAttribute a.name.localPart)
 
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
@@ -462,17 +462,17 @@ private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extr
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
-/-- A plain category label on an svg leaves validation of all other attributes unchanged,
-    including an error from a later attribute. -/
-private theorem validateAttrs_svg_category (value : String) (attrs : List NamespaceAttribute)
-    (extra : List String) :
-    validateAttrs "svg" ({ name := { namespace_ := none, localPart := "category" }, value } :: attrs)
+/-- An unqualified application metadata attribute on an SVG viewport leaves the
+validation of every other attribute unchanged, including any rejection. -/
+private theorem validateAttrs_svg_metadata (key value : String) (attrs : List NamespaceAttribute)
+    (extra : List String) (metadata : key = "category" ∨ key = "icon") :
+    validateAttrs "svg" ({ name := { namespace_ := none, localPart := key }, value } :: attrs)
       extra = validateAttrs "svg" attrs extra := by
-  have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := "category" }, value } = true := by
-    simp [skipAttribute]
+  have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := key }, value } = true := by
+    rcases metadata with rfl | rfl <;> simp [skipAttribute]
   simp [validateAttrs, List.forIn_cons, skip]
 
-#print axioms validateAttrs_svg_category
+#print axioms validateAttrs_svg_metadata
 
 private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
 /-- SVG 2 §9.2 geometry properties of this reader's shapes: presentation attributes that a
