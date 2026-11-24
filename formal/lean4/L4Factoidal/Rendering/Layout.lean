@@ -565,6 +565,27 @@ def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
   else if h < minH then (min (minH*w/h) maxW,minH)
   else (w,h)
 
+/-- Resolve a replaced element's horizontal length. A calculation can come from
+`contentBoxed`, where a percentage size of a border box loses its horizontal edges.
+The intrinsic width pass supplies zero as its indefinite containing width. -/
+private def replacedHorizontal (s : Computed) (available : Float) : CSS.Length → Option Float
+  | .px n => some n
+  | .percent p => if available <= 0 then none else some (available*p)
+  | .calc p offset => if available <= 0 then none else some (max 0 (available*p+offset))
+  | .stretch => if available <= 0 then none else
+    some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
+  | _ => none
+
+/-- A calculated replaced width uses its containing width and the content-box adjustment. -/
+theorem replacedHorizontal_calc (s : Computed) (available p offset : Float) (h : ¬ available ≤ 0) :
+    replacedHorizontal s available (.calc p offset) = some (max 0 (available*p+offset)) := by
+  simp [replacedHorizontal, h]
+
+#print axioms replacedHorizontal_calc
+
+#guard replacedHorizontal {} 120 (.calc 1 (-8)) == some 112
+#guard (replacedHorizontal {} 0 (.calc 1 (-8))).isNone
+
 /-- CSS 2.1 §10.3.2 and §10.6.2, with the limits of §10.4 and §10.7: the used content
 width and height of a replaced element. `intrinsic` is the size of its content when it
 has one, which gives the ratio too; with none, 300 by 150. `available` is the width of
@@ -572,13 +593,7 @@ the containing block. It is 0 while widths are measured, and then a percentage c
 as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
 no definite containing block height. -/
 def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
-  let horizontal := fun (l : CSS.Length) => match l with
-    | .px n => some n
-    | .percent p => if available <= 0 then none else some (available*p)
-    -- `stretch` (CSS Sizing 4 §6.1): the margin box fills the containing block
-    | .stretch => if available <= 0 then none else
-      some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-    | _ => none
+  let horizontal := replacedHorizontal s available
   let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
   let minW := (horizontal s.minWidth).getD 0
   let maxW := (horizontal s.maxWidth).getD unbounded
@@ -611,12 +626,7 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
   | some (rn,rd) =>
     let natural := intrinsic.any fun (w,h) => w > 0 && h > 0
     if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
-    let horizontal := fun (l : CSS.Length) => match l with
-      | .px n => some n
-      | .percent p => if available <= 0 then none else some (available*p)
-      | .stretch => if available <= 0 then none else
-        some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-      | _ => none
+    let horizontal := replacedHorizontal s available
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
     let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
     let maxW := (horizontal s.maxWidth).map fun m => LU.ofPx (max 0 m)
@@ -658,7 +668,7 @@ limits is 300 by 150, the default object size (CSS Images 3 §4.1). -/
 theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto) (hh : s.height = .auto)
     (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
     replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
-  simp [replacedNatural, hw, hh, hmw, hxw, hmh, hxh]
+  simp [replacedNatural, replacedHorizontal, hw, hh, hmw, hxw, hmh, hxh]
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/
@@ -1158,10 +1168,23 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
     #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
 
+/-- A line carrying only static-position placeholders has no in-flow content. -/
+private def isStaticPlaceholder : Inline → Bool
+  | .outOfFlow _ => true
+  | _ => false
+
+private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) : Array Pending :=
+  items.filterMap fun (offset, item) => match item with
+    | .outOfFlow id => some {id, x := x+offset, y}
+    | _ => none
+
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
+  -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
+  if items.all (fun item => isStaticPlaceholder item.2) then
+    return {pending := staticLinePositions items x y}
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
@@ -1324,6 +1347,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
   return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
+
+/-- An entirely out-of-flow row retains its static positions and contributes no
+    height, baseline or paint, even when the enclosing block supplies a strut. -/
+private theorem lineLayout_static_only (font : FontProfile) (items : Array (Float × Inline))
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool))
+    (h : items.all (fun item => isStaticPlaceholder item.2) = true) :
+    lineLayout font items x y strut dirs = .ok {pending := staticLinePositions items x y} := by
+  simp [lineLayout, h] <;> rfl
+
+#print axioms lineLayout_static_only
 
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
@@ -3205,6 +3238,32 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
   return ((styles[body]?).bind (·.background)).map (body,·)
 
+/-- CSS Display 3 §2.4: a replaced element with internal table display participates
+as an atomic inline box. Table construction reads this used display, while the
+computed style retains the authored value. -/
+def replacedDisplay (display : Display) (replaced : Bool) : Display :=
+  if display.isTableInternal && replaced then .inlineBlock else display
+
+/-- An ordinary box keeps its display, including actual non-replaced table cells. -/
+theorem replacedDisplay_ordinary (display : Display) :
+    replacedDisplay display false = display := by
+  simp [replacedDisplay]
+
+#print axioms replacedDisplay_ordinary
+
+private def usedReplacedDisplay (dom : Dom) (pictures : Pictures) (id : Nat) (display : Display) :
+    Display :=
+  if display.isTableInternal then
+    let node := dom.get id
+    let replaced := DOM.Dom.isHtmlElement node "input" || DOM.Dom.isHtmlElement node "img" ||
+      (blankReplaced node).isSome || node.ns == some DOM.svgNS || (pictures id).isSome
+    replacedDisplay display replaced
+  else display
+
+#guard replacedDisplay .tableCell true == .inlineBlock
+#guard replacedDisplay .tableCell false == .tableCell
+#guard replacedDisplay .none true == .none
+
 /-- The scene of a tree whose styles are computed: existing DOM input, explicit viewport
 and font data, immutable scene output. `pictures` holds the decoded content of replaced
 elements. -/
@@ -3213,8 +3272,10 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
-  let styles := computed.map fun s =>
-    {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
+  let styles := computed.mapIdx fun id s =>
+    let s := withViewportEdges s vw vh
+    {s with display := usedReplacedDisplay dom pictures id s.display,
+            width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,

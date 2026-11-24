@@ -1142,7 +1142,7 @@ def length (s : String) : Except String Length := do
     if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
-  | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .auto | .vw _ | .vh _ | .viewportMath _ _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
 /-- The used `letter-spacing` and `word-spacing` in px: a percentage is of this element's font
@@ -1153,6 +1153,9 @@ def Computed.wordSpacingPx (s : Computed) : Float := (resolve s.fontSize s.wordS
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
+  | .viewportMath expr fontSize =>
+    ((viewportSizePixels expr fontSize (tableRat width) (tableRat height)).map
+      fun n => .px (ratToFloat n)).getD .auto
   | other => other
 
 def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
@@ -1281,17 +1284,25 @@ private def borderEdges (fontSize : Float) (s : String) : Except String Edges :=
   | _ => throw "CSS edge shorthand requires one to four values"
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
-private def marginParts (source : String) : Except String (Float × Float) := do
-  match ← length source with
-  | .px n => return (n,0)
-  | .percent p => return (0,p)
-  | .calc p v => return (v,p)
+private def marginParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let value ← match length source with
+    | .ok value => pure value
+    | .error _ => length source.toLower
+  match value with
+  | .px n => return (n, 0, none)
+  | .percent p => return (0, p, none)
+  | .calc p v => return (v, p, none)
+  | .vw n => return (0, 0, some (.width n))
+  | .vh n => return (0, 0, some (.height n))
   | _ => throw "box edges require a length or a percentage"
 /-- One padding, as `marginParts`; never negative. -/
-private def paddingParts (source : String) : Except String (Float × Float) := do
-  let (px,of) ← marginParts source
-  if px < 0 || of < 0 then throw "negative edges outside first CSS profile"
-  return (px,of)
+private def paddingParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let (px, of, viewport) ← marginParts source
+  let fraction : Float := match viewport with
+    | some (.width n) | some (.height n) => n
+    | none => 0
+  if px < 0 || of < 0 || fraction < 0 then throw "negative edges outside first CSS profile"
+  return (px, of, viewport)
 /-- The four margins of a `margin` shorthand: a margin may be negative (CSS 2.1 §8.3). -/
 private def marginValues (s : String) : Except String Edges := do
   match ← (words s).mapM pixels with
@@ -1314,10 +1325,18 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | _ => throw "unsupported CSS border style"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
-private def limit (source : String) : Except String Length := do
+private def sizeLength (fontSize : Float) (source : String) : Except String Length :=
+  match length source with
+  | .ok value => .ok value
+  | .error error =>
+    match if source.contains '(' then viewportSizeMath fontSize source else none with
+    | some value => .ok value
+    | none => .error error
+
+private def limit (fontSize : Float) (source : String) : Except String Length := do
   let v := (trim source).toLower
   if v == "none" || v == "auto" then return .auto
-  match ← length v with
+  match ← sizeLength fontSize v with
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
@@ -1462,30 +1481,38 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "grid" => return {s with display := .grid}
     | "inline-grid" => return {s with display := .inlineGrid}
     | _ => throw "unsupported CSS display"
-  | "width" => return {s with width := ← length d.value}
-  | "height" => return {s with height := ← length d.value}
+  | "width" => return {s with width := ← sizeLength s.fontSize d.value}
+  | "height" => return {s with height := ← sizeLength s.fontSize d.value}
   | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos := s.pos.withMarginOf 0 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos := s.pos.withMarginOf 0 of}
+      let pos := (s.pos.withMarginOf 0 0).withViewportMargin 0 none
+      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 0 of).withViewportMargin 0 viewport
+    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos}
   | "margin-right" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos := s.pos.withMarginOf 1 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos := s.pos.withMarginOf 1 of}
+      let pos := (s.pos.withMarginOf 1 0).withViewportMargin 1 none
+      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 1 of).withViewportMargin 1 viewport
+    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos}
   | "margin-bottom" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos := s.pos.withMarginOf 2 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos := s.pos.withMarginOf 2 of}
+      let pos := (s.pos.withMarginOf 2 0).withViewportMargin 2 none
+      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 2 of).withViewportMargin 2 viewport
+    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos}
   | "margin-left" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos := s.pos.withMarginOf 3 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
+      let pos := (s.pos.withMarginOf 3 0).withViewportMargin 3 none
+      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 3 of).withViewportMargin 3 viewport
+    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos}
   | "letter-spacing" | "word-spacing" =>
     let v := (trim d.value).toLower
     -- a percentage is of the font size (CSS Text 4 §8.1, §8.2)
@@ -1536,17 +1563,21 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "plaintext" => return {s with unicodeBidi := .plaintext}
     | _ => throw "unsupported CSS unicode-bidi"
   | "padding-top" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with top := px}, pos := s.pos.withPaddingOf 0 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 0 of).withViewportPadding 0 viewport
+    return {s with padding := {s.padding with top := px}, pos}
   | "padding-right" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with right := px}, pos := s.pos.withPaddingOf 1 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 1 of).withViewportPadding 1 viewport
+    return {s with padding := {s.padding with right := px}, pos}
   | "padding-bottom" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with bottom := px}, pos := s.pos.withPaddingOf 2 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 2 of).withViewportPadding 2 viewport
+    return {s with padding := {s.padding with bottom := px}, pos}
   | "padding-left" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with left := px}, pos := s.pos.withPaddingOf 3 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 3 of).withViewportPadding 3 viewport
+    return {s with padding := {s.padding with left := px}, pos}
   | "color" => return {s with color := ← color d.value}
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
@@ -1729,10 +1760,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "super" => return {s with verticalAlign := .baseline, shift := 1}
     | "sub" => return {s with verticalAlign := .baseline, shift := -1}
     | _ => throw "unsupported CSS vertical-align"
-  | "min-width" => return {s with minWidth := ← limit d.value}
-  | "max-width" => return {s with maxWidth := ← limit d.value}
-  | "min-height" => return {s with minHeight := ← limit d.value}
-  | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "min-width" => return {s with minWidth := ← limit s.fontSize d.value}
+  | "max-width" => return {s with maxWidth := ← limit s.fontSize d.value}
+  | "min-height" => return {s with minHeight := ← limit s.fontSize d.value}
+  | "max-height" => return {s with maxHeight := ← limit s.fontSize d.value}
   | "object-position" =>
     let some value := tableComputed s.fontSize d.property d.value | throw "invalid CSS object-position"
     let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
@@ -2015,14 +2046,30 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "display" => some {s with display := source.display}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
-  | "margin-top" => some {s with margin := {s.margin with top := source.margin.top}}
-  | "margin-right" => some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight}
-  | "margin-bottom" => some {s with margin := {s.margin with bottom := source.margin.bottom}}
-  | "margin-left" => some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft}
-  | "padding-top" => some {s with padding := {s.padding with top := source.padding.top}}
-  | "padding-right" => some {s with padding := {s.padding with right := source.padding.right}}
-  | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom}}
-  | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
+  | "margin-top" =>
+    let pos := s.pos.withViewportMargin 0 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 0)).map Prod.snd)
+    some {s with margin := {s.margin with top := source.margin.top}, pos}
+  | "margin-right" =>
+    let pos := s.pos.withViewportMargin 1 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 1)).map Prod.snd)
+    some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight, pos}
+  | "margin-bottom" =>
+    let pos := s.pos.withViewportMargin 2 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 2)).map Prod.snd)
+    some {s with margin := {s.margin with bottom := source.margin.bottom}, pos}
+  | "margin-left" =>
+    let pos := s.pos.withViewportMargin 3 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 3)).map Prod.snd)
+    some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft, pos}
+  | "padding-top" =>
+    let pos := s.pos.withViewportPadding 0 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 0)).map Prod.snd)
+    some {s with padding := {s.padding with top := source.padding.top}, pos}
+  | "padding-right" =>
+    let pos := s.pos.withViewportPadding 1 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 1)).map Prod.snd)
+    some {s with padding := {s.padding with right := source.padding.right}, pos}
+  | "padding-bottom" =>
+    let pos := s.pos.withViewportPadding 2 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 2)).map Prod.snd)
+    some {s with padding := {s.padding with bottom := source.padding.bottom}, pos}
+  | "padding-left" =>
+    let pos := s.pos.withViewportPadding 3 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 3)).map Prod.snd)
+    some {s with padding := {s.padding with left := source.padding.left}, pos}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
@@ -2303,7 +2350,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
-/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
+/-- A margin hint as its pixels and its percentage part. -/
 def hintEdge : Option Length → Option (Float × Float)
   | some (.px v) => some (v, 0)
   | some (.percent p) => some (0, p)
@@ -3376,10 +3423,22 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       if !value.isEmpty then initial := applyOrKeep initial ⟨property, value, false⟩
   if n.ns == some DOM.htmlNS || n.ns.isNone then
     initial := alignHints n (bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))) parent
+  let legacyFontHint := if html && n.lname == "font" then
+      (HTML.Dimension.legacyFontSize (attrValue n "size")).bind fontSizeKeyword
+    else none
+  if let some size := legacyFontHint then
+    initial := {initial with fontSize := size, lineHeight := initial.lineHeightFactor.map (size*·) |>.getD initial.lineHeight}
+  let legacyColorHint := if html && n.lname == "font" then
+      CssValues.Color.legacyHTMLColor (attrValue n "color")
+    else none
+  if let some (r,g,b) := legacyColorHint then
+    let channel := fun n => Float.ofNat n / 255
+    initial := {initial with color := ⟨channel r, channel g, channel b⟩}
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
   -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
   -- `width: 147px` there; `<input type=image width=40>` is 40px wide)
-  let hinted := hintedProperties preHint initial
+  let hinted := (if legacyFontHint.isSome then ["font-size"] else []) ++
+    (if legacyColorHint.isSome then ["color"] else []) ++ hintedProperties preHint initial
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then
@@ -3664,6 +3723,92 @@ def attributesReachParentOnly (rules : List Rule) : Bool :=
     | some c => selectorsUseHas [c]
     | none => false
 
+/-- What the arguments of the rules' `:has()`s read of an element: its class names
+(lower case), its attribute names (lower case; `id`, `lang`, `dir` for those selectors),
+and whether a pseudo-class there reads more (`:checked`, `:disabled`, ... : `anyAttr`). -/
+structure HasReads where
+  classes : List String := []
+  attrs : List String := []
+  anyAttr : Bool := false
+  deriving Inhabited, BEq
+
+/-- The pseudo-classes that read the place of an element among its siblings or its
+children only: an attribute write changes none of them. -/
+def structuralPseudo (n : String) : Bool :=
+  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
+   "only-of-type", "scope"].contains n || n.startsWith "heading("
+
+/-- `HasReads` of the rules: the simple selectors inside each `:has()`, also inside
+`:not()`, `:is()` and `:nth-child(… of …)` there, and `:has()`s found inside those lists
+outside a `:has()`. A work list, bounded: past the bound, or with a `:has()` already worked
+out against a document (`Simple.anchors`, whose arguments are gone), none. -/
+def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
+  let mut pending : List (Bool × DOM.Selectors.Complex) :=
+    rules.flatMap fun r => r.selectors.filterMap fun s => s.complex.map ((false, ·))
+  let mut out : HasReads := {}
+  for _ in [:1048576] do
+    match pending with
+    | [] => return some { out with classes := out.classes.eraseDups, attrs := out.attrs.eraseDups }
+    | (inHas, .mk parts) :: rest =>
+      let mut more := rest
+      for (_, simples) in parts do
+        for s in simples do
+          match s with
+          | .has l => more := l.map ((true, ·)) ++ more
+          | .anchors _ => return none
+          | .nth _ _ _ (some l) => more := l.map ((inHas, ·)) ++ more
+          | .not l => more := l.map ((inHas, ·)) ++ more
+          | .is l => more := l.map ((inHas, ·)) ++ more
+          | .cls v => if inHas then out := { out with classes := v.toLower :: out.classes }
+          | .id _ => if inHas then out := { out with attrs := "id" :: out.attrs }
+          | .attr _ name _ _ _ _ => if inHas then out := { out with attrs := name.toLower :: out.attrs }
+          | .lang _ => if inHas then out := { out with attrs := "lang" :: out.attrs }
+          | .pseudo n =>
+            if inHas && !structuralPseudo n then
+              if n.startsWith "dir(" then out := { out with attrs := "dir" :: out.attrs }
+              else out := { out with anyAttr := true }
+          | _ => pure ()
+      pending := more
+  return none
+
+/-- The class names of a `class` attribute value (split at ASCII whitespace), lower case. -/
+def classTokens (s : String) : List String :=
+  ((s.map fun c => if c == '\t' || c == '\n' || c == '\r' || c == '\x0c' then ' ' else c).splitOn " ").filterMap
+    fun t => if t.isEmpty then none else some t.toLower
+
+/-- A write of attribute `name` of an element from `old` to `new` changes no class name and
+no attribute that the `:has()` arguments read (`hasArgumentReads`): every `:has()` of the
+document then holds where it held before the write, and the matching of the other
+selectors reads the written element only in its parent's subtree, as with no `:has()`
+(`attributesReachParentOnly`). Class names compare in lower case, so a quirks-mode page
+is covered too. -/
+def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
+  let name := name.toLower
+  if name == "class" then
+    let o := classTokens old
+    let n := classTokens new
+    !r.attrs.contains "class" &&
+      !((o.filter (!n.contains ·)) ++ (n.filter (!o.contains ·))).any r.classes.contains
+  else !r.anyAttr && !r.attrs.contains name
+
+#guard (match parse ".a:has(.b, [data-x]) .c { color: red } .d:has(> p:dir(rtl)) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.classes == ["b"] && r.attrs.length == 2 && r.attrs.contains "data-x" &&
+        r.attrs.contains "dir" && !r.anyAttr
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(.b) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.unaffected "class" "x y" "x y z" && !r.unaffected "class" "x" "x B" &&
+        !r.unaffected "class" "b x" "x" && r.unaffected "aria-expanded" "false" "true"
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(:checked) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => !r.unaffected "aria-expanded" "false" "true" && r.unaffected "class" "" "q"
+    | none => false
+  | .error _ => false)
+
 /-! ### Animated values in the cascade
 
 CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
@@ -3751,14 +3896,35 @@ def hasNoMatch (dom : Dom) (l : List DOM.Selectors.Complex) : Bool :=
 /-- The rules without the selectors that a `:has()` false everywhere keeps from matching
 (one pass over the document for each `:has()`), so that matching does not search a
 large subtree once for each element (selectors/invalidation/has-complexity.html). Rules
-with no `:has()` are as they were, and a page with none pays one test per selector. -/
+with no `:has()` are as they were. Pseudo-element selector lists survive the ordinary
+selector pruning, and a page with no ordinary `:has()` pays one test per ordinary selector. -/
 def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
   if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
   else rules.filterMap fun r =>
     let sels := r.selectors.filter fun sel => match sel.complex with
       | some c => !((hasLists c).any (hasNoMatch dom))
       | none => true
-    if sels.isEmpty then none else some { r with selectors := sels }
+    if sels.isEmpty && (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) then none
+    else some { r with selectors := sels }
+
+/-- Pruning ordinary selectors preserves a rule that contains only generated pseudo-element
+selectors. This holds even when another rule activates the pruning pass. -/
+theorem pruneHas_keeps_pseudo (dom : Dom) (rules : List Rule) (r : Rule)
+    (hr : r ∈ rules) (hs : r.selectors = [])
+    (hp : (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) = false) :
+    r ∈ pruneHas dom rules := by
+  unfold pruneHas
+  split
+  · exact hr
+  · apply List.mem_filterMap.mpr
+    refine ⟨r, hr, ?_⟩
+    simp [hs, hp] <;> cases r <;> simp_all
+
+#guard match parse ".row::after{content:'';display:block;clear:both}.unrelated:has(.missing){color:red}" with
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument "<div class=row></div>"
+    (pruneHas dom rules).map (·.after.length) == [1]
+  | .error _ => false
 
 /-- A complex selector with each compound that has a `:has()` matched once against every
 element of the document: the compound becomes its other simple selectors and the elements

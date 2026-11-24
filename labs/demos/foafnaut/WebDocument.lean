@@ -2405,6 +2405,32 @@ def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : 
     | some p => some p
     | none => pictures id
 
+private def attachBackgroundPicture (picture : Rendering.Layout.Pictures)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (id : Nat) (style : Rendering.CSS.Computed) : Rendering.CSS.Computed :=
+  match picture id with
+  | some pic =>
+    let natural := match style.backgroundImage.bind (naturals.lookup ·) with
+      | some n => some n
+      | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
+    {style with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap), backgroundNatural := natural}
+  | none => style
+
+/-- Take the already constructed picture map as data. A function of an element id can
+be eta-expanded inside the style loop, rebuilding the map for every element. -/
+@[noinline] def attachBackgroundPictures (pictures : Std.TreeMap Nat Rendering.Layout.Picture)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
+  styles.mapIdx (attachBackgroundPicture (fun id => pictures.get? id) naturals)
+
+theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Nat × String))
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) :
+    attachBackgroundPictures (WebRender.picturesMap store keys) naturals styles =
+      styles.mapIdx (attachBackgroundPicture (WebRender.picturesOf store keys) naturals) := rfl
+
+#print axioms attachBackgroundPictures_eq
+
 /-- The cascade with each element's background image decoded from the supplied images (a
 `data:` URL from itself), and the store made for them, for the engine to keep. A page with no
 background image gives its cascade back as it is. -/
@@ -2419,19 +2445,12 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
     if keys.isEmpty then (.ok (d,styles),none,[]) else
     let (store,entry) := WebRender.storeIn stores keys images
-    let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
+    let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
     -- the natural size of each SVG background, read once for each URL (a page can name one
     -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
     let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
       if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
-    let attach := fun (i : Nat) (st : Rendering.CSS.Computed) => match pics i with
-      | some pic =>
-        let natural := match st.backgroundImage.bind (naturals.lookup ·) with
-          | some n => some n
-          | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
-        {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
-      | none => st
-    let styles := styles.mapIdx attach
+    let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
     let (styles,wanted) := redrawVectorBackgrounds images styles
     (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures")
 
@@ -2817,7 +2836,10 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- of `width` and `height`), "" when the node has no box
   | 21 => match box, l.styles.get with
     | some (x0,y0,x1,y1), .ok styles =>
-      let s := styles[node]?.getD {}
+      -- The stored cascade is before viewport edge resolution. The script layout has
+      -- a CSS-pixel scene, so use the same viewport that renderStyled used.
+      let s := Rendering.Layout.withViewportEdges (styles[node]?.getD {})
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height)
       let b := s.borderEdges
       some (line [max 0 (x1-x0-b.left-b.right-s.padding.left-s.padding.right),
                   max 0 (y1-y0-b.top-b.bottom-s.padding.top-s.padding.bottom)])
@@ -3095,7 +3117,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
                  | none => Rendering.CSS.attributesReachParentOnly rules,
                readsStyle := match carry with
                  | some (c,_) => c.readsStyle
-                 | none => Rendering.CSS.readsStyleAttribute rules }
+                 | none => Rendering.CSS.readsStyleAttribute rules,
+               hasReads := match carry with
+                 | some (c,_) => c.hasReads
+                 | none => if Rendering.CSS.attributesReachParentOnly rules then none
+                   else Rendering.CSS.hasArgumentReads rules }
       else none
     | _, _ => none
   -- the position of each computed style name, for the reads by name of the animation engine

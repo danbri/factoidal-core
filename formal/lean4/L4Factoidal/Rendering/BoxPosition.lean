@@ -150,6 +150,16 @@ iteration mark (`Unicode.LineBreak.Mode`). `anywhere` is read as `loose` here. -
 inductive LineBreakStyle where | auto | strict | normal | loose
   deriving Repr, BEq, DecidableEq
 
+inductive ViewportEdge where
+  | width (fraction : Float)
+  | height (fraction : Float)
+  deriving Repr, BEq
+
+/-- CSS viewport fractions resolved to unrounded CSS pixels. -/
+def ViewportEdge.pixels (width height : Float) : ViewportEdge → Float
+  | .width fraction => fraction * width
+  | .height fraction => fraction * height
+
 /-- `list-style-type` (CSS Lists 3 §3.1; inherited), as this profile draws markers:
 `auto` is by the kind of list (a number in `ol`, else the bullet of the list's nesting
 depth), `none` no marker, a bullet, or a number (every numbering style is decimal here). -/
@@ -237,6 +247,10 @@ structure PositionStyle where
   marginOf : Float × Float × Float × Float := (0,0,0,0)
   /-- The same for the padding (§8.4). -/
   paddingOf : Float × Float × Float × Float := (0,0,0,0)
+  /-- Viewport-relative sides, using the same numbering as `setSide`. Only sides with
+  viewport units are stored; the common case has two empty lists. -/
+  viewportMargins : List (Nat × ViewportEdge) := []
+  viewportPadding : List (Nat × ViewportEdge) := []
   deriving Repr
 
 /-- Every field equal: the two lay out the same. -/
@@ -249,6 +263,7 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.lineBreak == b.lineBreak &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
   a.marginOf == b.marginOf && a.paddingOf == b.paddingOf && a.scrolls == b.scrolls &&
+  a.viewportMargins == b.viewportMargins && a.viewportPadding == b.viewportPadding &&
   a.contents == b.contents && a.positionArea == b.positionArea && a.anchorNames == b.anchorNames && a.positionAnchor == b.positionAnchor &&
   AnchorRef.sameOpt a.anchorTop b.anchorTop && AnchorRef.sameOpt a.anchorRight b.anchorRight &&
   AnchorRef.sameOpt a.anchorBottom b.anchorBottom && AnchorRef.sameOpt a.anchorLeft b.anchorLeft
@@ -278,6 +293,22 @@ def PositionStyle.withMarginOf (p : PositionStyle) (side : Nat) (v : Float) : Po
 /-- The percentage part of the padding of one side. -/
 def PositionStyle.withPaddingOf (p : PositionStyle) (side : Nat) (v : Float) : PositionStyle :=
   if v == 0 && p.paddingOf == (0,0,0,0) then p else {p with paddingOf := setSide p.paddingOf side v}
+
+private def setViewportSide (edges : List (Nat × ViewportEdge)) (side : Nat)
+    (edge : Option ViewportEdge) : List (Nat × ViewportEdge) :=
+  match edge with
+  | some value => (side, value) :: edges.filter (fun (i, _) => i != side)
+  | none => edges.filter (fun (i, _) => i != side)
+
+def PositionStyle.withViewportMargin (p : PositionStyle) (side : Nat)
+    (edge : Option ViewportEdge) : PositionStyle :=
+  if edge.isNone && p.viewportMargins.isEmpty then p
+  else {p with viewportMargins := setViewportSide p.viewportMargins side edge}
+
+def PositionStyle.withViewportPadding (p : PositionStyle) (side : Nat)
+    (edge : Option ViewportEdge) : PositionStyle :=
+  if edge.isNone && p.viewportPadding.isEmpty then p
+  else {p with viewportPadding := setViewportSide p.viewportPadding side edge}
 
 /-- A margin or padding of the box is a percentage (or has a percentage part). -/
 def PositionStyle.percentEdges (p : PositionStyle) : Bool := p.marginOf != (0,0,0,0) || p.paddingOf != (0,0,0,0)

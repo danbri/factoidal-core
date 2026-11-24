@@ -1802,3 +1802,27 @@ note = "Restarts the selected plan from the captured query, dataset, environment
 [[nonstage]]
 id = "wasm:datasetQueryGpuClose"
 reason = "Releases the retained GPU query continuation and dataset snapshot; no query evaluation."
+
+[[nonstage]]
+id = "wasm:parseSparqlStructure"
+reason = "Parses query text and returns its syntax representation without a dataset or evaluation."
+
+[[nonstage]]
+id = "npm:.#parseSparqlStructure"
+reason = "Delegates query inspection to wasm:parseSparqlStructure."
+
+[[nonstage]]
+id = "npm:./browser#parseSparqlStructure"
+reason = "Delegates query inspection to wasm:parseSparqlStructure."
+
+[[nonstage]]
+id = "wasm:wikidataRewrite"
+reason = "Rewrites WDQS query text and returns diagnostics without loading or evaluating RDF data."
+
+[[nonstage]]
+id = "npm:.#wikidataRewrite"
+reason = "Delegates WDQS query rewriting to wasm:wikidataRewrite."
+
+[[nonstage]]
+id = "npm:./browser#wikidataRewrite"
+reason = "Delegates WDQS query rewriting to wasm:wikidataRewrite."

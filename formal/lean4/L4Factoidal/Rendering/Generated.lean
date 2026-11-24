@@ -145,6 +145,32 @@ def bumpFirst (name : String) (f : Int → Int) : List (String × Int × Nat) �
   | [] => []
   | (n, v, o) :: rest => if n == name then (n, f v, o) :: rest else (n, v, o) :: bumpFirst name f rest
 
+private def bumpFirstGo (name : String) (f : Int → Int) :
+    List (String × Int × Nat) → List (String × Int × Nat) → List (String × Int × Nat)
+  | [], acc => acc.reverse
+  | (n, v, o) :: rest, acc =>
+    if n == name then acc.reverseAux ((n, f v, o) :: rest)
+    else bumpFirstGo name f rest ((n, v, o) :: acc)
+
+private theorem bumpFirstGo_eq (name : String) (f : Int → Int)
+    (xs acc : List (String × Int × Nat)) :
+    bumpFirstGo name f xs acc = acc.reverse ++ bumpFirst name f xs := by
+  induction xs generalizing acc with
+  | nil => simp [bumpFirstGo, bumpFirst]
+  | cons x rest ih =>
+    obtain ⟨n, v, o⟩ := x
+    by_cases h : (n == name) = true <;>
+      simp [bumpFirstGo, bumpFirst, h, ih, List.append_assoc]
+
+def bumpFirstLoop (name : String) (f : Int → Int) (xs : List (String × Int × Nat)) :=
+  bumpFirstGo name f xs []
+
+@[csimp] theorem bumpFirst_eq_loop : @bumpFirst = @bumpFirstLoop := by
+  funext name f xs
+  simp [bumpFirstLoop, bumpFirstGo_eq]
+
+#print axioms bumpFirst_eq_loop
+
 /-- The `list-item` counter of HTML lists (HTML §15.3.8, CSS Lists 3 §4.5): whether `k` is an
 `ol` with the `reversed` attribute. -/
 def reversedList (d : Dom) (k : Nat) : Bool :=

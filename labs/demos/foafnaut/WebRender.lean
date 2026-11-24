@@ -67,8 +67,24 @@ private def bitmapOutlineExact (index : Nat) : Bool :=
 
 #guard (List.range 95).all fun n => bitmapOutlineExact (n+32)
 
+/-- The ASCII geometries are fixed and shared by all layouts. Build the table lazily
+so a font-backed session that never uses the bitmap font pays no outline work. -/
+private def bitmapOutlines : Thunk (Array (List Rendering.Geometry)) :=
+  Thunk.mk fun _ => Array.ofFn fun i : Fin 128 => bitmapOutline i.val
+
+def bitmapOutlineCached (index : Nat) : List Rendering.Geometry :=
+  if h : index < 128 then bitmapOutlines.get[index]'(by simpa [bitmapOutlines, Thunk.get] using h)
+  else bitmapOutline index
+
+/-- The cached bitmap profile returns the same geometry in the same order. -/
+theorem bitmapOutlineCached_eq (index : Nat) :
+    bitmapOutlineCached index = bitmapOutline index := by
+  by_cases h : index < 128 <;> simp [bitmapOutlineCached, h, bitmapOutlines, Thunk.get]
+
+#print axioms bitmapOutlineCached_eq
+
 def asciiFont : Rendering.Layout.FontProfile :=
-  {family := "factoidal-ascii-bitmap-v1",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := bitmapOutline, admits := fun n => 32 <= n && n <= 126}
+  {family := "factoidal-ascii-bitmap-v1",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := bitmapOutlineCached, admits := fun n => 32 <= n && n <= 126}
 
 /-- The HTML parser already adjusted element and foreign-attribute names.
 This conversion transfers the semantic DOM values directly, without XML text. -/
