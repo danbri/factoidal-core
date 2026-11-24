@@ -824,6 +824,41 @@ private def tilesPage : String := "<!doctype html><title>T</title><div style='wi
   "background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGP4z8DAwMDwHwAIAAH/B2G9UwAAAABJRU5ErkJggg==);background-size:1px 2px'></div>"
 #guard renderText tilesPage [asks] != ""
 #guard mentions (renderText tilesPage [asks]) "\"diagnostics\"" == 0
+
+-- `content` with 65 parts, past `Content.maxPieces` (64): one hit with the count; 64 report nothing (issue 865)
+private def piecesPage (n : Nat) : String := "<!doctype html><title>C</title><style>p::before{content:" ++
+  String.join (List.replicate n "'a' ") ++ "}</style><p>A</p>"
+#guard mentions (renderText (piecesPage 65) [asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 65) [asks]) "\"wanted\":65" == 1
+#guard mentions (renderText (piecesPage 65) [liberal,asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 64) [asks]) "\"limit\":\"maxPieces\"" == 0
+-- custom properties that double at each reference, so one passes `CssVars.maxValueBytes` (1 MiB):
+-- 1000 bytes, doubled 11 times, is 2,048,000. 10 doublings stay under it.
+private def doublingPage (n : Nat) : String := "<!doctype html><title>V</title><style>:root{--b0:" ++ "".pushn 'x' 1000 ++ ";" ++
+  String.join ((List.range n).map fun i => s!"--b{i+1}:var(--b{i}) var(--b{i});") ++ "}p{margin:0}</style><p>A</p>"
+#guard mentions (renderText (doublingPage 11) [asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 11) [liberal,asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 8) [asks]) "\"limit\":\"maxValueBytes\"" == 0
+-- one custom property longer than the limit, declared as it is
+#guard mentions (renderText ("<!doctype html><title>V</title><style>:root{--big:" ++ "".pushn 'x' 1048577 ++ "}</style><p>A</p>") [asks]) "\"limit\":\"maxValueBytes\"" == 1
+-- `var()` fallbacks nested 32 deep end the fuel (`CssVars.maxFallbacks`); 31 deep do not
+private def nestedPage (n : Nat) : String := "<!doctype html><title>N</title><style>p{width:" ++
+  String.join (List.replicate n "var(--a, ") ++ "1px" ++ "".pushn ')' n ++ "}</style><p>A</p>"
+#guard mentions (renderText (nestedPage 32) [asks]) "\"limit\":\"maxFallbacks\"" == 1
+#guard mentions (renderText (nestedPage 31) [asks]) "\"limit\":\"maxFallbacks\"" == 0
+-- a document sheet past `Style.maxSheetBytes` (8 MiB) is left out whole and reported as `stylesheetBytes` (issue 865)
+private def bigSheetSkips (n : Nat) : Option Nat := do
+  let dom := DOM.parseHtmlDocument ("<style>" ++ "".pushn ' ' n ++ "p{margin:0}</style><p>A</p>")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal dom (importRequest []) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+  return (ds.filter (·.skip == .stylesheetBytes)).length
+#guard bigSheetSkips 8388700 == some 1
+#guard bigSheetSkips 1000 == some 0
+-- grid axes with more fixed tracks than `Grid.maxTracks` (100000): one hit with the most asked
+private def gridStyleOf (cols : String) : Array Rendering.CSS.Computed :=
+  #[{grid := (Rendering.CSS.GridStyle.set 16 {} "grid-template-columns" cols).getD {}}]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(200000, 10px)")).map (fun h => (h.name,h.limit,h.wanted)) == [("maxTracks",100000,200000)]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(100000, 10px)")).isEmpty
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(auto-fill, 10px)")).isEmpty
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.
