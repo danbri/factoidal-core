@@ -199,6 +199,82 @@ def fullstate_cases():
         emit("error not_common",l=str((index+1)%count),r=str((index+1)%count))
     return rows
 
+
+def allsigner_cases():
+    rng = random.Random(923)
+    rows = []
+    def wire(values):
+        return [x.hex() if isinstance(x, bytes) else str(x) for x in values]
+    for i in range(64):
+        slot = [31, 32, 364032*32-1, 364032*32][i % 4]
+        epoch = slot // 32
+        count = 4
+        vs = [(rng.randbytes(48),rng.randbytes(32),32_000_000_000,
+               int((i+j)%3==0),0,0,MAX64,MAX64) for j in range(count)]
+        # Materialise four distinct actual leaves, extend to depth 40
+        # using the independently computed empty subtree roots.
+        leaves = [leaf(v) for v in vs]
+        layers = [leaves, [pair(leaves[0],leaves[1]),pair(leaves[2],leaves[3])]]
+        top = pair(*layers[1])
+        empty = ZERO
+        zeros = []
+        for depth in range(40):
+            zeros.append(empty)
+            empty = pair(empty,empty)
+        for depth in range(2,40):
+            top = pair(top,zeros[depth])
+        rr = pair(top,basic(count))
+        proofs = [[leaves[j^1], layers[1][(j//2)^1], *zeros[2:]] for j in range(count)]
+        assert all(reconstruct(leaves[j],j,count,proofs[j])==rr for j in range(count))
+        c = (rng.randbytes(4),rng.randbytes(4),max(3,epoch),rng.randbytes(32))
+        root, branches = context_fixture(rr,slot,c,rng)
+        a = (64,0,rng.randbytes(32),0,ZERO,c[2],ZERO)
+        b = (64,0,rng.randbytes(32),0,ZERO,c[2],ZERO)
+        left, right = [0,1,2], [1,2,3]
+        lw = [[j,*vs[j],*proofs[j]] for j in left]
+        rw = [[j,*vs[j],*proofs[j]] for j in right]
+        def indices(xs):
+            return ",".join(map(str,xs)) or "-"
+        def emit(expected, l=left, r=right, wl=lw, wr=rw,
+                 registry=rr, sr=root, br=branches, n=count):
+            tokens = ["allsigners",str(slot),str(n),registry.hex(),sr.hex(),
+                      *wire([x for branch in br for x in branch]),*wire(c),
+                      *wire(a),*wire(b),indices(l),indices(r),str(len(wl)),str(len(wr)),
+                      *wire([x for w in wl+wr for x in w])]
+            row = " ".join(tokens)
+            assert len(row.encode())+1 <= 262144
+            rows.append((row,expected))
+        def keys(xs):
+            return ",".join(vs[j][0].hex() for j in xs)
+        eligible = [j for j in left if j in right and not vs[j][3] and vs[j][5]<=epoch<vs[j][7]]
+        good = " ".join(["prepared_not_authenticated",vote_root(c,a),vote_root(c,b),
+                         keys(left),keys(right),indices(eligible)])
+        emit(good)
+        # The two noncommon signer witnesses must be verified too.
+        for side, wlist in [(0,lw),(1,rw)]:
+            for j in range(len(wlist)):
+                for field in [1, 3, 9+(i%40)]:
+                    edited = [w.copy() for w in wlist]
+                    value = edited[j][field]
+                    edited[j][field] = changed(value) if isinstance(value,bytes) else value^1
+                    emit("error signer_root_mismatch", **({"wl":edited} if side==0 else {"wr":edited}))
+        emit("error index_mismatch",wl=lw[:-1])
+        emit("error index_mismatch",wr=rw+[rw[-1]])
+        emit("error index_mismatch",wl=[lw[1],lw[0],lw[2]])
+        emit("error index_mismatch",wr=[rw[0],rw[0],rw[2]])
+        emit("error bad_indices",l=[0,0,2])
+        emit("error resource_limit",r=list(range(33)))
+        emit("error resource_limit",wr=[rw[0]]*33)
+        emit("error index_outside",r=[1,2,4],wr=[rw[0],rw[1],[4,*rw[2][1:]]])
+        emit("error signer_root_mismatch",n=count+1)
+        emit("error state_root_mismatch",registry=changed(rr))
+        for j,label in enumerate(["state_root_mismatch","slot_root_mismatch","fork_mismatch","genesis_mismatch"]):
+            edited=[p.copy() for p in branches]
+            edited[j][0]=changed(edited[j][0])
+            emit("error "+label,br=edited)
+    assert len(rows)==64*33, len(rows)
+    return rows
+
 def cases():
     rng = random.Random(881)
     state_rng = random.Random(896)
@@ -369,6 +445,7 @@ def cases():
         (" ".join(valid_full + ["0"]), "error branch_length"),
         ("fullstate " + "x" * 8192, "error resource_limit"),
     ])
+    rows.extend(allsigner_cases())
     return rows
 
 def compare(rows, actual):
@@ -419,8 +496,19 @@ def main():
         pass
     else:
         raise ValueError("signing root comparator corruption not detected")
-    assert len(rows) == 7181
-    print(f"Prepared {len(rows)} rows; seven comparator controls detected", flush=True)
+    allrow = next(i for i,(row,_) in enumerate(rows) if row.startswith("allsigners "))
+    forged = expected.copy()
+    fields = forged[allrow].split(" ")
+    fields[3] = ",".join(reversed(fields[3].split(",")))
+    forged[allrow] = " ".join(fields)
+    try:
+        compare(rows,forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("signer key order comparator corruption not detected")
+    assert len(rows) == 9293
+    print(f"Prepared {len(rows)} rows; eight comparator controls detected", flush=True)
     if sys.argv[1:] == ["--self-test"]:
         return
     if len(sys.argv) < 2:

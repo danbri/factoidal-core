@@ -176,6 +176,11 @@ jobs:
             --report "$RUNNER_TEMP/ethereum-slashing-dependencies.json"
           python3 ethereum-consensus/scripts/check-attester-slashing.py \
             ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-slashing-results.json"
+      - name: Falsify retained exact-source attestation and slashing ledgers
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-retained-ledger-controls.py \
+            "$RUNNER_TEMP/ethereum-attestation-axioms.log" "$RUNNER_TEMP/ethereum-slashing-axioms.log"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail

@@ -551,4 +551,209 @@ theorem checkStateVotes_delegates (slot : UInt64) (c : ForkContext)
 #print axioms EthereumConsensus.SSZ.checkStateVotes_bad_preparation
 #print axioms EthereumConsensus.SSZ.checkStateVotes_delegates
 
+
+/-! All-signer selection for the actual raw votes, conditional on one
+    supplied BeaconState commitment. No BLS authentication or mutation. -/
+structure SignerWitness where
+  index : UInt64
+  validator : RegistryValidator
+  siblings : List ByteArray
+
+inductive SignerError where
+  | resourceLimit
+  | indexMismatch
+  | rootMismatch
+  | registry (error : RegistryError)
+  | context (error : StateSigningError)
+  | preparation (error : SlashingPreparationError)
+  | slotMismatch
+  | stateMismatch
+
+def verifySignerRow (length : Nat) (root : ByteArray) (w : SignerWitness) :
+    Except SignerError Unit :=
+  match verifyValidatorAt length w.index.toNat w.validator w.siblings root with
+  | .error e => .error (.registry e)
+  | .ok result => if result.matchesRoot then .ok () else .error .rootMismatch
+
+def verifySignerRows (length : Nat) (root : ByteArray) :
+    List SignerWitness → Except SignerError Unit
+  | [] => .ok ()
+  | w :: ws =>
+    match verifySignerRow length root w with
+    | .error e => .error e
+    | .ok _ => verifySignerRows length root ws
+
+def signerIndices (ws : List SignerWitness) : List UInt64 :=
+  ws.map (fun w => w.index)
+
+def signerKeys (ws : List SignerWitness) : List ByteArray :=
+  ws.map (fun w => w.validator.publicKey)
+
+/-- No key is returned until every witness matches the same registry root.
+    The order is the original indexed-attestation order. -/
+def verifySignerList (length : Nat) (root : ByteArray) (indices : List UInt64)
+    (ws : List SignerWitness) : Except SignerError (List ByteArray) :=
+  if indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit then
+    .error .resourceLimit
+  else if signerIndices ws ≠ indices then .error .indexMismatch
+  else
+    match verifySignerRows length root ws with
+    | .error e => .error e
+    | .ok _ => .ok (signerKeys ws)
+
+structure AllSignerSelection where
+  firstKeys : List ByteArray
+  secondKeys : List ByteArray
+  eligibleCommon : List UInt64
+
+def selectSignerLists (length : Nat) (root : ByteArray) (epoch : UInt64)
+    (left right : List UInt64) (lw rw : List SignerWitness) :
+    Except SignerError AllSignerSelection :=
+  match verifySignerList length root left lw with
+  | .error e => .error e
+  | .ok lk =>
+    match verifySignerList length root right rw with
+    | .error e => .error e
+    | .ok rk =>
+      .ok ⟨lk, rk, (lw.filter (fun w =>
+        decide (w.index ∈ right) && isSlashableValidator w.validator epoch)).map (fun w => w.index)⟩
+
+/-- Check the actual raw votes and all four state fields, then the complete
+    ordered signer sets. The empty eligible list is not a successful slash. -/
+def checkAllStateSigners (slot : UInt64) (context : ForkContext) (a b : AttestationData)
+    (left right : List UInt64) (lw rw : List SignerWitness) (length : Nat)
+    (registryRoot : ByteArray) (stateSiblings slotSiblings forkSiblings genesisSiblings : List ByteArray)
+    (stateRoot : ByteArray) :
+    Except SignerError (PreparedAttesterSlashing × AllSignerSelection) :=
+  match verifyStateSigningContext slot context forkSiblings genesisSiblings stateRoot with
+  | .error e => .error (.context e)
+  | .ok _ =>
+    match prepareAttesterSlashing context a b left right with
+    | .error e => .error (.preparation e)
+    | .ok prepared =>
+      match verifyMainnetStateSlot slot slotSiblings stateRoot with
+      | .error e => .error (.registry e)
+      | .ok sr =>
+        if !sr.matchesRoot then .error .slotMismatch
+        else
+          match verifyRegistryInState (mainnetRegistryLayout slot) registryRoot stateSiblings stateRoot with
+          | .error e => .error (.registry e)
+          | .ok rr =>
+            if !rr.matchesRoot then .error .stateMismatch
+            else
+              match selectSignerLists length registryRoot (mainnetRegistryEpoch slot) left right lw rw with
+              | .error e => .error e
+              | .ok selection => .ok (prepared, selection)
+
+/-- Kind: admission. Says: either oversized list refuses before hashing.
+    Does not say: the local limit is an Ethereum protocol limit. -/
+theorem verifySignerList_over_limit (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (h : indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit) :
+    verifySignerList length root indices ws = .error .resourceLimit := by
+  simp only [verifySignerList, if_pos h]
+
+/-- Kind: admission. Says: missing, extra or reordered indices refuse.
+    Does not say: indices alone establish valid public keys. -/
+theorem verifySignerList_wrong_order (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (hl : ¬ (indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit))
+    (hi : signerIndices ws ≠ indices) :
+    verifySignerList length root indices ws = .error .indexMismatch := by
+  simp only [verifySignerList, if_neg hl, if_pos hi]
+
+/-- Kind: linkage. Says: a failed membership verdict refuses that signer.
+    Does not say: the supplied registry is canonical. -/
+theorem verifySignerRow_mismatch (length : Nat) (root : ByteArray)
+    (w : SignerWitness) (r : ByteProofResult)
+    (h : verifyValidatorAt length w.index.toNat w.validator w.siblings root = .ok r)
+    (hm : r.matchesRoot = false) :
+    verifySignerRow length root w = .error .rootMismatch := by
+  simp [verifySignerRow, h, hm]
+
+/-- Kind: linkage. Says: list checking propagates the first failed row.
+    Does not say: subsequent rows have been checked. -/
+theorem verifySignerRows_bad_head (length : Nat) (root : ByteArray)
+    (w : SignerWitness) (ws : List SignerWitness) (e : SignerError)
+    (h : verifySignerRow length root w = .error e) :
+    verifySignerRows length root (w :: ws) = .error e := by
+  simp only [verifySignerRows, h]
+
+/-- Kind: refinement. Says: successful row traversal requires every actual
+    row verifier to succeed. Does not say: SHA-256 collision resistance. -/
+theorem verifySignerRows_all (length : Nat) (root : ByteArray)
+    (ws : List SignerWitness)
+    (h : verifySignerRows length root ws = .ok ()) :
+    ∀ w ∈ ws, verifySignerRow length root w = .ok () := by
+  induction ws with
+  | nil => simp
+  | cons x xs ih =>
+    cases hx : verifySignerRow length root x with
+    | error e => simp [verifySignerRows, hx] at h
+    | ok u =>
+      cases u
+      have ht : verifySignerRows length root xs = .ok () := by
+        simpa only [verifySignerRows, hx] using h
+      intro w hw
+      rcases List.mem_cons.mp hw with he | he
+      · subst w
+        exact hx
+      · exact ih ht w he
+
+/-- Kind: linkage. Says: admitted verified rows produce exactly ordered keys.
+    Does not say: the keys are valid BLS points. -/
+theorem verifySignerList_of_verified (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (hl : ¬ (indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit))
+    (hi : signerIndices ws = indices)
+    (hv : verifySignerRows length root ws = .ok ()) :
+    verifySignerList length root indices ws = .ok (signerKeys ws) := by
+  simp [verifySignerList, hl, hi, hv]
+
+/-- Kind: linkage. Says: verified first list cannot hide a failed second.
+    Does not say: either aggregate signature has been verified. -/
+theorem selectSignerLists_bad_right (length : Nat) (root : ByteArray) (epoch : UInt64)
+    (left right : List UInt64) (lw rw : List SignerWitness) (keys : List ByteArray)
+    (e : SignerError) (hl : verifySignerList length root left lw = .ok keys)
+    (hr : verifySignerList length root right rw = .error e) :
+    selectSignerLists length root epoch left right lw rw = .error e := by
+  simp only [selectSignerLists, hl, hr]
+
+/-- Kind: linkage. Says: raw state context failure prevents key selection.
+    Does not say: the root is canonical. -/
+theorem checkAllStateSigners_bad_context (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (lw rw : List SignerWitness)
+    (length : Nat) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : StateSigningError) (h : verifyStateSigningContext slot c fs gs root = .error e) :
+    checkAllStateSigners slot c a b left right lw rw length rr rs sl fs gs root =
+      .error (.context e) := by
+  simp only [checkAllStateSigners, h]
+
+/-- Kind: linkage. Says: a mismatching registry state branch prevents key
+    selection, even if every individual validator witness is correct.
+    Does not say: the supplied commitment is authenticated. -/
+theorem checkAllStateSigners_bad_registry (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (lw rw : List SignerWitness)
+    (length : Nat) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (p : PreparedAttesterSlashing) (sr r : ByteProofResult)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .ok p)
+    (hs : verifyMainnetStateSlot slot sl root = .ok sr)
+    (hm : sr.matchesRoot = true)
+    (hr : verifyRegistryInState (mainnetRegistryLayout slot) rr rs root = .ok r)
+    (hn : r.matchesRoot = false) :
+    checkAllStateSigners slot c a b left right lw rw length rr rs sl fs gs root =
+      .error .stateMismatch := by
+  simp [checkAllStateSigners, hc, hp, hs, hm, hr, hn]
+
+#print axioms EthereumConsensus.SSZ.verifySignerList_over_limit
+#print axioms EthereumConsensus.SSZ.verifySignerList_wrong_order
+#print axioms EthereumConsensus.SSZ.verifySignerRow_mismatch
+#print axioms EthereumConsensus.SSZ.verifySignerRows_bad_head
+#print axioms EthereumConsensus.SSZ.verifySignerRows_all
+#print axioms EthereumConsensus.SSZ.verifySignerList_of_verified
+#print axioms EthereumConsensus.SSZ.selectSignerLists_bad_right
+#print axioms EthereumConsensus.SSZ.checkAllStateSigners_bad_context
+#print axioms EthereumConsensus.SSZ.checkAllStateSigners_bad_registry
+
 end EthereumConsensus.SSZ
