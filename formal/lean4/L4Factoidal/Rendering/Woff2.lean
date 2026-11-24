@@ -500,7 +500,17 @@ def toSfnt (b : ByteArray) : Except String ByteArray := do
     if g.transformed != l.transformed then throw "WOFF2 transforms only one of glyf and loca"
   | none, none => pure ()
   | _, _ => throw "WOFF2 font has only one of glyf and loca"
-  let sorted := entries.qsort (fun a b => a.tag < b.tag)
+  -- sorted by tag: an insertion sort in loops (at most `maxTables` entries; `Array.qsort`
+  -- recurses)
+  let mut sorted : Array Entry := Array.emptyWithCapacity entries.size
+  for e in entries do
+    let mut k := sorted.size
+    sorted := sorted.push e
+    for _ in [0:sorted.size] do
+      if k == 0 || sorted[k-1]!.tag < e.tag then break
+      sorted := sorted.set! k sorted[k-1]!
+      k := k - 1
+    sorted := sorted.set! k e
   -- the tables in output order, with their bytes
   let mut tables : Array (Nat × ByteArray) := #[]
   let mut xMins : Array Int := #[]
