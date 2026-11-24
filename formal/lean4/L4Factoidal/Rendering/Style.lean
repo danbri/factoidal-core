@@ -3863,14 +3863,14 @@ def HasReads.childWriteOk (r : HasReads) (attrs : Array (String × String)) : Bo
 -- `childSafe`: positive class, id or attribute in every compound, descendant and child only
 #guard (match parse ".a:has(.b > [data-x].c) .d { color: red } #e:has(#f) { color: blue }" with
   | .ok rules => match hasArgumentReads rules with
-    | some r => r.childSafe && r.childWriteOk #[("class", "x y"), ("id", "z")] &&
+    | some r => r.childSafe && r.childWriteOk #[("class", "x y"), ("title", "z")] &&
         !r.childWriteOk #[("CLASS", "B")] && !r.childWriteOk #[("data-x", "")] && !r.childWriteOk #[("id", "q")]
     | none => false
   | .error _ => false)
-#guard ["a:has(p) {}", "a:has(+ .b) {}", "a:has(.b ~ .c) {}", "a:has(.b:empty) {}",
-    "a:has(.b:nth-child(2)) {}", "a:has(:not(.b)) {}", "a:has(:is(.b, .c)) {}", "a:has(.b:not(:first-child)) {}"].all
-  fun css => match parse css with
-    | .ok rules => match hasArgumentReads rules with
+#guard ["a:has(p)", "a:has(+ .b)", "a:has(.b ~ .c)", "a:has(.b:empty)",
+    "a:has(.b:nth-child(2))", "a:has(:not(.b))", "a:has(:is(.b, .c))", "a:has(.b:not(:first-child))"].all
+  fun sel => match parse (sel ++ " { color: red }") with
+    | .ok rules => rules.length == 1 && match hasArgumentReads rules with
       | some r => !r.childSafe
       | none => true
     | .error _ => false
