@@ -1354,7 +1354,7 @@ private theorem lineLayout_static_only (font : FontProfile) (items : Array (Floa
     (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool))
     (h : items.all (fun item => isStaticPlaceholder item.2) = true) :
     lineLayout font items x y strut dirs = .ok {pending := staticLinePositions items x y} := by
-  simp [lineLayout, h]
+  simp [lineLayout, h] <;> rfl
 
 #print axioms lineLayout_static_only
 
