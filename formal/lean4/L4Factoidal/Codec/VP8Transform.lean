@@ -145,27 +145,41 @@ theorem inverseWHT_zero :
 
 abbrev SpatialResidual := Vector CoefficientBlock 24
 
-/-- Apply the second-order luma transform, then the 16 Y, 4 U and 4 V DCTs. -/
-def spatialResidual (factors : QuantFactors) (residual : Residual) : SpatialResidual :=
+structure PreparedResidual where
+  samples : SpatialResidual
+  hasCoefficients : Bool
+
+/-- Apply the second-order luma transform, then the 16 Y, 4 U and 4 V DCTs.
+Keep the decoder's nonzero flag for deciding whether to filter inner edges. -/
+def prepareResidual (factors : QuantFactors) (residual : Residual) : PreparedResidual :=
   let dc := residual.y2.map (fun block => inverseWHT (dequantise factors.y2DC factors.y2AC block))
-  Vector.ofFn fun i =>
+  let blocks : Vector (CoefficientBlock × Bool) 24 := Vector.ofFn fun i =>
     let raw := residual.yuv[i.val]'(by simpa only [residual.blockCount] using i.isLt)
-    if isLuma : i.val < 16 then
-      let block := dequantise factors.yDC factors.yAC raw
-      let block := match dc with
+    let input :=
+      if isLuma : i.val < 16 then
+        let block := dequantise factors.yDC factors.yAC raw
+        match dc with
         | none => block
         | some values => block.set 0 (values.get ⟨i.val, isLuma⟩)
-      inverseDCT block
-    else inverseDCT (dequantise factors.uvDC factors.uvAC raw)
+      else dequantise factors.uvDC factors.uvAC raw
+    let nonzeroAC := raw.toArray.any (· != 0) (start := 1)
+    (inverseDCT input, nonzeroAC || input.get 0 != 0)
+  ⟨blocks.map Prod.fst, blocks.toArray.any Prod.snd⟩
 
 /-- Feed one macroblock of spatial residuals at a time into reconstruction.
 A skipped macroblock needs only its predicted samples. -/
+def foldPreparedResiduals (src : ByteArray) (image : WebP.Image src.size) (initial : α)
+    (visit : α → Control → Nat → Nat → Macroblock → Option PreparedResidual → Except String α) :
+    Except String α :=
+  foldResiduals src image initial fun state control row col macroblock residual =>
+    let spatial := residual.map (prepareResidual (quantFactors control macroblock.segment))
+    visit state control row col macroblock spatial
+
 def foldSpatialResiduals (src : ByteArray) (image : WebP.Image src.size) (initial : α)
     (visit : α → Control → Nat → Nat → Macroblock → Option SpatialResidual → Except String α) :
     Except String α :=
-  foldResiduals src image initial fun state control row col macroblock residual =>
-    let spatial := residual.map (spatialResidual (quantFactors control macroblock.segment))
-    visit state control row col macroblock spatial
+  foldPreparedResiduals src image initial fun state control row col macroblock prepared =>
+    visit state control row col macroblock (prepared.map PreparedResidual.samples)
 
 #print axioms signedCoefficient16_bounds
 #print axioms signedCoefficient16_exact
