@@ -250,10 +250,6 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
-/-- Most tiles of one background image that a box paints (`backgroundTiles`); a box that
-would need more paints its colour only. -/
-def maxBackgroundTiles : Nat := 4096
-
 /-- The size of a background tile (CSS Backgrounds 3 §3.9, by the default sizing algorithm of
 CSS Images 3 §5.3) from `background-size`, the image's natural width, height and ratio
 (`nw`, `nh`, `ratio`: width over height; any may be missing) and the positioning area `w`
@@ -288,15 +284,14 @@ def backgroundTileSize (size : BackgroundSize) (nw nh ratio : Option Float) (w h
 #guard backgroundTileSize .cover none none (some 2) 100 100 == (200,100)
 #guard backgroundTileSize .contain none none (some 2) 100 100 == (100,50)
 
-/-- The tiles of a background image (`backgroundTiles`): none when nothing is drawn; `.solid`
-for a repeated opaque 1×1 image, which is a colour; else the first tile's corner, the tile
-size and the columns and rows. -/
-inductive TileGrid where
+/-- Placement of the first tile of a background image, or its solid colour
+when an opaque single pixel repeats in both directions. -/
+inductive BackgroundTile where
   | none
   | solid (c : Color)
-  | grid (startX startY tw th : Float) (cols rows : Nat)
+  | placed (originX originY width height : Float)
 
-def tileGrid (b : Bitmap) (s : Computed) (x y w h : Float) : TileGrid := Id.run do
+def backgroundTile (b : Bitmap) (s : Computed) (x y w h : Float) : BackgroundTile := Id.run do
   if b.width == 0 || b.height == 0 then return .none
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
@@ -312,42 +307,27 @@ def tileGrid (b : Bitmap) (s : Computed) (x y w h : Float) : TileGrid := Id.run 
   -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
   let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
   let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
-  let startX := if repeatX then ox-((ox-x)/tw).ceil*tw else ox
-  let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
-  let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
-  let rows := if repeatY then ((y+h-startY)/th).ceil.toUInt64.toNat else 1
-  return .grid startX startY tw th cols rows
+  return .placed ox oy tw th
 
-/-- The number of tiles a box's background image needs (0 for none or a colour): what
-`maxBackgroundTiles` bounds, for the report of a box past it (issue 865). -/
-def backgroundTileCount (b : Bitmap) (s : Computed) (x y w h : Float) : Nat :=
-  match tileGrid b s x y w h with
-  | .grid _ _ _ _ cols rows => cols*rows
-  | _ => 0
-
-/-- The first background layer is sized against the padding box and clipped to the
-border box. Repeated axes may need a tile before the origin to cover the border. -/
+/-- A background has one paint rectangle. The paint sampler repeats the bitmap
+on the requested axes, and this rectangle clips each non-repeating axis to one tile. -/
 def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
-  let (startX,startY,tw,th,cols,rows) ← match tileGrid b s x y w h with
+  let (ox,oy,tw,th) ← match backgroundTile b s x y w h with
     | .none => return #[]
     | .solid c => return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-    | .grid sx sy tw th cols rows => pure (sx,sy,tw,th,cols,rows)
-  if cols*rows > maxBackgroundTiles then return #[]
+    | .placed ox oy tw th => pure (ox,oy,tw,th)
+  let (repeatX,repeatY) := s.backgroundRepeat
+  let l := if repeatX then x else max x ox
+  let t := if repeatY then y else max y oy
+  let r := if repeatX then x+w else min (x+w) (ox+tw)
+  let bottom := if repeatY then y+h else min (y+h) (oy+th)
+  if r <= l || bottom <= t then return #[]
   let sx := Float.ofNat b.width/tw
   let sy := Float.ofNat b.height/th
-  let mut out := #[]
-  for j in [0:rows] do
-    for i in [0:cols] do
-      let tx := startX+Float.ofNat i*tw
-      let ty := startY+Float.ofNat j*th
-      let l := max x tx
-      let t := max y ty
-      let r := min (x+w) (tx+tw)
-      let bo := min (y+h) (ty+th)
-      if r > l && bo > t then
-        let image : ImageRecord := ⟨⟨sx,0,0,sy,-tx*sx,-ty*sy⟩,pic,b⟩
-        out := out.push (.paint ⟨some id,{geometry := .rect l t (r-l) (bo-t),style := {fill := .image image}}⟩)
-  return out
+  let image : ImageRecord := {map := ⟨sx,0,0,sy,-ox*sx,-oy*sy⟩, id := pic, bitmap := b, repeatX, repeatY}
+  return #[.paint ⟨some id,{geometry := .rect l t (r-l) (bottom-t),style := {fill := .image image}}⟩]
+
+#guard (backgroundTiles 1 1 ⟨69,69,ByteArray.empty⟩ {} 0 0 1280 19182).size == 1
 
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
@@ -724,7 +704,7 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
     | some _ => (Float.ofNat picture.bitmap.width/iw,Float.ofNat picture.bitmap.height/ih)
     | none => (1,1)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
-  let paint : Paint := .image ⟨map,picture.id,picture.bitmap⟩
+  let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
   [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
 
 /-- A replaced element's margin box at the origin, for content `w` by `h`: its outer
@@ -1120,7 +1100,7 @@ def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (
   let w := f*Float.ofNat image.bitmap.width
   let h := f*Float.ofNat image.bitmap.height
   let map : Transform := ⟨1/f,0,0,1/f,-left/f,-top/f⟩
-  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image ⟨map,image.id,image.bitmap⟩}}⟩
+  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image {map, id := image.id, bitmap := image.bitmap}}}⟩
 
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do

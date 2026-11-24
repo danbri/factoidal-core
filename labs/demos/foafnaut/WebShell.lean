@@ -524,7 +524,7 @@ def iconNodes (icon : TabIcon) (index x y side : Nat) : List Rendering.Node :=
       let map : Rendering.Transform := ⟨Float.ofNat icon.width/w,0,0,Float.ofNat icon.height/h,0,0⟩
       let bitmap : Rendering.Bitmap := {width := icon.width,height := icon.height,rgba}
       [.group none ⟨1,0,0,1,Float.ofNat x+left,Float.ofNat y+top⟩
-        [.paint ⟨none,{geometry := .rect 0 0 w h,style := {fill := .image ⟨map,iconPaintId index,bitmap⟩}}⟩]]
+        [.paint ⟨none,{geometry := .rect 0 0 w h,style := {fill := .image {map,id := iconPaintId index,bitmap}}}⟩]]
     | .error _ => []
 
 private def tabNodes (s : Shell) (t : Theme) (width : Nat) (box : Box) (index : Nat) : List Rendering.Node :=
