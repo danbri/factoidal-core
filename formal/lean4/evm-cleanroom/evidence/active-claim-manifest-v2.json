@@ -1,18 +1,18 @@
 {
   "schema_version": 2,
   "claim_status": "active-code-selected-evidence",
-  "produced_on": "2026-11-23",
+  "produced_on": "2026-11-24",
   "reference_implementation_commit": "03c83338a0b0305a3003c24d14a5b398d795ee0b",
   "reference_ci_run": "https://github.com/danbri/factoidal-core/actions/runs/44741089115",
   "historical_ledger": "https://github.com/danbri/factoidal-core/pull/658",
   "historical_ledger_status": "separate, immutable original PR #642 snapshot; do not rewrite original evidence SHA",
   "source_hash_algorithm": "Git blob SHA-1, computed over 'blob <length>\\0<bytes>'; sufficient for drift detection but not a collision-resistant cryptographic guarantee",
   "source_blobs": {
-    "EVMCleanroom/Core.lean": "e5363002d45ce987ac613e3bd3446026037f50e4",
+    "EVMCleanroom/Core.lean": "e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b",
     "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
     "EVMCleanroom/Proofs.lean": "85e56acddd9396be6ff1418400b717150521f9f5",
     "EVMCleanroom/Frame.lean": "790e09753018170c633e3b3ad604b2b6b3c98244",
-    "EVMCleanroom/World.lean": "0f852ccd77d75a3b3ae03fb4b4b0ee1da6743b45",
+    "EVMCleanroom/World.lean": "5f8e55b691c81669abc40875c04a5fb337259dcc",
     "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
     "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
     "EVMCleanroom/Call.lean": "c7f2f3f581d76d3ca74ea018791ec5b7e61f224d",
@@ -20,7 +20,7 @@
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
     "EVMCleanroom/CLI.lean": "a29b476c20a44592ff52ddf7cd4aec3a8e7da481",
-    "EVMCleanroom.lean": "26dfa6044a613c42c3351a9b700b5352de0589a4",
+    "EVMCleanroom.lean": "b828e1d8c6b747bc23d3df8c5327f57bf9295f35",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "c77302841e95f37c60d84e98aa839eb7749263ed",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -29,14 +29,14 @@
     "scripts/differential/frame.mjs": "422b052c206d21766a459b15acf6fc255187fcd8",
     "scripts/check-active-ledger.py": "ea8de18227f20a2f8013ec42945eaf36fc8fca77",
     "scripts/test-active-ledger.py": "c0223c61e6a8ab0528d2340d574a211dc41723f3",
-    "scripts/check-axiom-output.py": "d7e0b50664c0af0288e76343f4528a519583ed2a",
+    "scripts/check-axiom-output.py": "0b34ae2605412df8cf7271b9d7c24311cfeded8a",
     "scripts/differential/osaka-clz.mjs": "75c466fdfef537ee1ab79874263ee8bba59ef251",
     "EVMCleanroom/PragueEnvelope.lean": "1dbd4c5ccca0ab3d74e84d848be3cf6f5c6f9bce",
     "scripts/eels/run-lean-prague-all-types.mjs": "6ce55f663e30feac6c2cf69c1cc8c569a8a0e783",
     "scripts/eels/prague-all-selftest.mjs": "adc1aac3e3432c08aeb7ee91f0543221619d5f3f",
     "scripts/check-prague-six-ledger.py": "172c20294186c72e9430bc060e7ea239060f3265",
-    "EVMCleanroom/CallOpcode.lean": "591d00a5f08ea1ee7b86dd6e8eb5f39e5148e3e9",
-    "scripts/differential/call-opcode.mjs": "c303ca5c17c0f485b01d300c79e2f3f2b30546d1",
+    "EVMCleanroom/CallOpcode.lean": "80429a86a5aa0f548d8a565a0e742277b43f447a",
+    "scripts/differential/call-opcode.mjs": "6aaccd5b55f2199df0be769ba8c9ac78c7ee45fa",
     "EVMCleanroom/FrontierTransfer.lean": "a85feceae4af9c1370d661f43ec8f7fcd4837531",
     "scripts/eels/replay-first-mainnet.mjs": "27bb7f161b209c644875aec883f86170f9b17161",
     "evidence/frontier-mainnet-46147.json": "3cea095d8700ffb3ea34f21c9a7741b881eabdc6",
@@ -52,10 +52,10 @@
     "scripts/differential/call-context.mjs": "ab585923c102838bba30707e665b3b0c924c995d",
     "EVMCleanroom/CallTests.lean": "2d6596346a7092cab12955e4b936303ab4d21473",
     "EVMCleanroom/CalldataProofs.lean": "ba5a9cb7bec40f33f15b144bc84bb5e0cd993970",
-    "EVMCleanroom/CallBoundaryTests.lean": "1071872262f7c8b1774ae9b4fd61ce1b1dd60a96",
+    "EVMCleanroom/CallBoundaryTests.lean": "c59833048341a09d20c10698e6de90cb256d7b98",
     "scripts/differential/CallRepairsProbe.lean": "53ff7f43feb1da53bc86e9b644dd482da1fe78fa",
     "scripts/differential/calldata.mjs": "63ad41b263dda18e324077201deb6bfcb43cc1c6",
-    "scripts/differential/call-repairs.mjs": "7da80e271dfe8253ebd75a6312f39dbf6a28eeca",
+    "scripts/differential/call-repairs.mjs": "be659104e7489410bf8b72fa0ff21a76081341f5",
     "scripts/rpc/README.md": "d6b01f4ab2abb68b79788d9011ecded643b14d3d",
     "scripts/rpc/capture.mjs": "427d0f65b83fc195f17bc0a1cb1f021f89a2ee14",
     "scripts/rpc/capture.test.mjs": "0371b1f998835f9ef9ce72840629bcd97e0bbcec",
@@ -78,11 +78,11 @@
     "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
     "scripts/differential/byte-call-timing.mjs": "458b3f4d963665bec9656c3363bb2c7413a299b8",
     "scripts/differential/byte-copy.mjs": "fbe8c59b8dca01da00d4c05d1bc9ea2a98f52532",
-    "scripts/differential/call-data.mjs": "28a85f5f7e572cedbc9f903b6ce030e2a7edc606",
+    "scripts/differential/call-data.mjs": "8466093307ae499fdf5b719a70cf0e3e6a56fdaf",
     "scripts/differential/geth-byte-oracle.mjs": "d1be6712584c3fcc69ee64d71f19100183170160",
     "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
     "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
-    "lakefile.toml": "379997eaeb6e1c9fb147270be0f317f05812683b",
+    "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
     "scripts/differential/raw10000-timing.py": "6506eeb4e7ac4085b3b5f2639e48c60572be2efc",
     "EVMCleanroom/Tests.lean": "fa8df939bb72f1b735b5f256fdc9a67fce679ec6",
     "scripts/differential/chain-id.mjs": "9639c8e6a837a4004e034e4253cee7b56c2788d8",
@@ -93,24 +93,47 @@
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json": "f65142e9ea2680bcae1f37a08474b0220b8e671f",
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json": "63e3d0056f977342910b11b5977b0ba8081a6825",
     "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "a3ea5a1a4a2c118a32e92c9aeee7c05c4f2a9de2",
-    "EVMCleanroom/CallTransaction.lean": "ad40361b4d703f07fa8bafdb1256261362208e7f",
-    "EVMCleanroom/CallTransactionProofs.lean": "56863f4db199d218c63135cda5290de745714ebd",
+    "EVMCleanroom/CallTransaction.lean": "c64625a6d8bc8acda7879fca7fd6da98cb57a384",
+    "EVMCleanroom/CallTransactionProofs.lean": "3c8dbf6a1e9f494e75db35e56fa915d1d2b079ca",
     "EVMCleanroom/HashLogProofs.lean": "71107d9dcdae0cd7fa5246607dee95ddff1ff37c",
     "EVMCleanroom/HashLogTests.lean": "bb5929112dfebaa2e70ca2c29fbd47eea360d97e",
     "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
-    "README.md": "e974d865da78338a787196233471b43e24ae253b",
+    "README.md": "bb264957cc9eaff64c520e4f35ccac74e818a507",
     "evidence/historical-1cat-shanghai-19100013.json": "2aea250f921b10e9ad22abd8fc68314d1ac610f0",
     "scripts/differential/hash-log.mjs": "91703959a8c3c60b9f61d1bda54d69eeb59e87a8",
-    "scripts/eels/call-transaction-differential.mjs": "83ee19a7f6e78984708b674a274e1933579c9615",
+    "scripts/eels/call-transaction-differential.mjs": "e32c075294cee7f891033ffafbcd51f803722cac",
     "scripts/eels/replay-authenticated-contract.mjs": "4b0f7257abbb96a2fbee8003c42aa1f9ba9d33f3",
-    "SOUNDNESS.md": "cc5db3065f7a94afc3b038dab800018fb15860d5",
+    "SOUNDNESS.md": "b028992ee4d0a66113dae546d8236932fa60d38c",
     "ROADMAP.md": "bcf5b808df8f645cdb7deefb13459ca9d078001f",
     "WORLD.md": "6894676748f7cc2c984c0a456c7ee80624214ce4",
     "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
     "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
     "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463",
-    "EVMCleanroom/CallFamilyTests.lean": "40c29c1072f871772d1108330d0ef749a1a8d46a",
-    "scripts/differential/call-family.mjs": "2f6fae61a08670a737350b29c69a5f9469c79432"
+    "EVMCleanroom/CallFamilyTests.lean": "7d0f0cf068e7adbcf20be41e77000ef32519c9be",
+    "scripts/differential/call-family.mjs": "c7a8d2851c484c6d6820a54e3c6cfee9bc2dc920",
+    "EVMCleanroom/IdentityPrecompile.lean": "f424ce29bfbe9e4fca248a16aa3225a3a978c3fb",
+    "EVMCleanroom/IdentityCLI.lean": "f88a68dc41a60dcddc19b21541eb1fae24c4f4bb",
+    "EVMCleanroom/IdentityCallTests.lean": "e2a2a5ef411f634ecd4e6d197db6403b11dcec81",
+    "EVMCleanroom/IdentityTransactionTests.lean": "906a7dfcb026db811c75d714fd0182e0087df48f",
+    "scripts/check-identity-axioms.py": "037538b4c449b8911c0a90009d355e7bd8715138",
+    "scripts/differential/identity-precompile.py": "d8daa1aa4024a4cae5f6716f0a7f72421d5fc1d6",
+    "scripts/differential/identity-call.mjs": "0df2b9bc69c87a1e8feff922199b95dc99f2f53d",
+    "scripts/differential/identity-transaction.mjs": "8fd93342b5431e5e24c54e2fc5442bdf00fd1788",
+    "lake-manifest.json": "9c79a0f8a1a5e644a3ecd9acda133dade7416a71",
+    "EVMCleanroom/BlobCall.lean": "97f192d8d0465409ec91fda5fdaa8296578b73f5",
+    "EVMCleanroom/BlobCallCLI.lean": "46d9f046773bbb37760a78ff2ca17b4d4980ccb5",
+    "EVMCleanroom/BlobCallProofs.lean": "7083701bb6e737721f1d9c4d7141186f22b59c3e",
+    "EVMCleanroom/BlobHashProofs.lean": "b7890b0496daec19a067e173034b4a530a72b8de",
+    "EVMCleanroom/BlobHashTests.lean": "b2ac2162373af3ec1fdeb4ad537685eca5f41a86",
+    "EVMCleanroom/HeaderChain.lean": "9f3ce9a1b73a14b409a9858492d58fa79ea51e66",
+    "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
+    "EVMCleanroom/HeaderRLP.lean": "3144954f2fcff97da1ac1e54f7be6b63d6ccb667",
+    "lakefile-blob-call.toml": "5ba03901414d2da9fa02c84224a1c562c5d62cb5",
+    "scripts/check-blobhash-axioms.py": "cb7e41c48765c315de31af812e471c62e6bffd91",
+    "scripts/differential/blob-call.mjs": "c327d2c0e9604600cdd963eebdcc48fd706f1f3d",
+    "scripts/differential/package.json": "2b16a6de6cb14101f65e2f379a7ede78399d6000",
+    "scripts/eels/package.json": "77eb29940be5001f459b9a54aee329b60213cf17",
+    "scripts/differential/blobhash-transactions.mjs": "db671648c3f4de03358d476095d15bafd5d297cb"
   },
   "theorem_inventory": [
     {
@@ -1896,6 +1919,660 @@
       ],
       "scope": "The public world-aware dispatcher propagates missing code-account coverage as an indeterminate result at each of the three variant opcode bytes.",
       "provenance": "Actual Lean 4.33.1 #print axioms output from local CALL-family source d1b975eab963c119e53ef3275a4d1a30d8148da6. The native fixture context update b7e5c44eba09b1df7cfaa3d603c33284039fc764 retains this proof source."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_ofArray",
+      "source_symbol": "executeView_ofArray",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Helper projection: executeView on ByteView.ofArray has the same refusals and remaining gas as the direct-array execute function after mapping successful output back to the original array. The projection itself does not establish the returned view bytes; executeView_preserves_input and executeView_preserves_byte establish that separately.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_oversize",
+      "source_symbol": "executeView_oversize",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Helper resource boundary: if the immutable input view exceeds maxBytes, the executable view helper returns resourceLimit regardless of available gas. maxBytes is a local implementation limit, not an Ethereum validity rule.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_exact",
+      "source_symbol": "executeView_exact",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Helper exact result: an input view within maxBytes and gas at least gasCost(size) returns exactly that view and gas minus gasCost(size). This does not include caller access, memory, value-transfer or transaction charges.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_underfunded",
+      "source_symbol": "executeView_underfunded",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Helper gas boundary: an admitted-size view with gas below gasCost(size) returns outOfGas. Oversized input has a separate, earlier resourceLimit result; no CALL budget correctness is assumed proved by this helper.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_preserves_input",
+      "source_symbol": "executeView_preserves_input",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [],
+      "scope": "Helper success invariant: any successful executeView result contains the exact supplied ByteView, including its backing byte function. The successful-result premise selects executions; it does not prove that arbitrary input and gas succeed or that the input source is authenticated.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.executeView_preserves_byte",
+      "source_symbol": "executeView_preserves_byte",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [],
+      "scope": "Helper byte invariant: every readByte(index) of a successful executeView output equals the same input read, including zero reads beyond the view bound. This does not establish the caller output-copy window.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.execute_oversize",
+      "source_symbol": "execute_oversize",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Direct-array helper resource boundary: input arrays larger than maxBytes return resourceLimit before gas classification. The bound is local admission policy and does not limit protocol-valid Ethereum inputs.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.execute_underfunded",
+      "source_symbol": "execute_underfunded",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Direct-array helper gas boundary: admitted-size input with insufficient forwarded gas returns outOfGas. This does not validate gas allocation by a parent CALL or transaction.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.execute_exact",
+      "source_symbol": "execute_exact",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Direct-array helper exact result: admitted size and sufficient gas return the unchanged input array and exactly gas minus gasCost(size). Parent CALL overhead, intrinsic transaction gas and fee settlement are separate.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.execute_preserves_input",
+      "source_symbol": "execute_preserves_input",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Direct-array helper success invariant: any successful execute result returns precisely the supplied array. It does not prove success for every input or that another entry point invokes execute.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.IdentityPrecompile.execute_gas_accounting",
+      "source_symbol": "execute_gas_accounting",
+      "source": "EVMCleanroom/IdentityPrecompile.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Direct-array helper accounting: for a successful execute result, remaining gas plus gasCost(input.size) equals the supplied gas. It accounts only for the precompile child allowance, not parent overhead or transaction fees.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob f424ce29bfbe9e4fca248a16aa3225a3a978c3fb. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.World.beginTransaction_identity_warm",
+      "source_symbol": "beginTransaction_identity_warm",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Initial fixture-world property: World.beginTransaction marks address 0x04 warm before any call. This is a property of the generic fixed 1..9 initial set, not proof of complete fork-aware access-set initialisation or transaction authentication.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8424289cfe1a9e6d0c453ba28c60c907c32750b0. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.World.beginTransaction_ordinary_cold",
+      "source_symbol": "beginTransaction_ordinary_cold",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Concrete initial fixture-world property: World.beginTransaction leaves address 0xc3 cold. This is the stated address-specific regression property, not a theorem about every ordinary address or every fork.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8424289cfe1a9e6d0c453ba28c60c907c32750b0. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_exact",
+      "source_symbol": "dispatchCall_identity_exact",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Conditional dispatcher composition: when an entered continuation targets 0x04 and the view executor returns the supplied bytes and remaining gas, the actual dispatcher invokes caller resumption with those bytes, that gas and the child world. The precompile result is a premise here; the admitted arithmetic theorem derives it separately.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_outOfGas",
+      "source_symbol": "dispatchCall_identity_outOfGas",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Conditional dispatcher composition: when an entered continuation targets 0x04 and the view executor returns outOfGas, actual dispatch resumes with the saved checkpoint, zero child gas, empty output and failure. This lemma assumes the helper result; the underfunded theorem derives it from inequalities.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_resourceLimit",
+      "source_symbol": "dispatchCall_identity_resourceLimit",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Conditional dispatcher composition: when an identity helper result is resourceLimit, actual dispatch yields terminal indeterminate resourceLimit rather than a completed failure bit. The oversize theorem derives that helper result from the local size bound.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_admitted",
+      "source_symbol": "dispatchCall_identity_admitted",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual dispatcher arithmetic connection: target 0x04 plus admitted input size and sufficient child gas cause dispatch to resume with the exact input view and childGas minus gasCost(size), preserving the entered child world. No precompile-result premise is used. A valid parent continuation is a separate obligation.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_underfunded",
+      "source_symbol": "dispatchCall_identity_underfunded",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual dispatcher gas connection: target 0x04 plus admitted size and insufficient child gas cause dispatch to select checkpoint rollback, zero child gas, empty output and failure resumption. No helper-result premise is used; this is a resumption-path equation rather than proof every arbitrary continuation can commit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.dispatchCall_identity_oversize",
+      "source_symbol": "dispatchCall_identity_oversize",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual dispatcher resource connection: target 0x04 and size above maxIdentityCallBytes yield terminal indeterminate resourceLimit. The local resource refusal is not converted to an Ethereum failed receipt or consensus-invalid result.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.callStep_identity_admitted",
+      "source_symbol": "callStep_identity_admitted",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public single-CALL adapter connection: for a child actually produced by beginCall, target 0x04, admitted size and sufficient child gas, callStep invokes resumption with exact identity bytes and gas. It does not execute target account code or assume a precompile result. It does not authenticate the world or alone establish that resumption commits.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.callStep_identity_underfunded",
+      "source_symbol": "callStep_identity_underfunded",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public single-CALL adapter gas connection: an actually entered identity child with admitted size and insufficient child gas selects the caller checkpoint, zero child gas, empty output and failure resumption. This is child failure, not a claim that the entire parent transaction fails.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.callStep_identity_oversize",
+      "source_symbol": "callStep_identity_oversize",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public single-CALL adapter resource boundary: an actually entered identity child exceeding the local byte cap yields indeterminate resourceLimit for every supplied simulation fuel. The cap is an implementation bound, not an Ethereum validity rule.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.callStep_identity_observations",
+      "source_symbol": "callStep_identity_observations",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public result observations: under actual beginCall entry, identity target, admitted size and sufficient child gas, any committed callStep result exposes the child world, complete input view, reserve plus exact remaining child gas, and success word 1. Commit is an observed-result premise; this does not prove arbitrary continuations commit or that later parent rollback retains the child world.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.callStep_identity_input_to_output",
+      "source_symbol": "callStep_identity_input_to_output",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public input-to-output byte correspondence: for an actually entered, admitted and funded identity CALL whose public callStep commits, every byte within the minimum of the decoded input and output lengths equals the corresponding byte of the original parent memory after paid expansion. The proof connects beginCall memory slicing, native identity and actual output copying; it makes no claim that the remainder of the full return buffer is copied.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.executeAtDepth_identity_oversize",
+      "source_symbol": "executeAtDepth_identity_oversize",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public bytecode-dispatch boundary: given a running CALL opcode, its actual beginCall result targeting identity, an oversized view and at least one dispatcher step, executeAtDepth returns indeterminate resourceLimit. This is connected to the real opcode dispatcher, not a detached helper result.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.executeAtDepth_identity_variant_oversize",
+      "source_symbol": "executeAtDepth_identity_variant_oversize",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Public bytecode-dispatch boundary for CALLCODE, DELEGATECALL and STATICCALL: given a running opcode and its actual beginVariant result targeting identity, an oversized view and one available dispatcher step yield indeterminate resourceLimit. This does not establish support for other precompiles or full fork semantics.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 90f1da831eb2c832045a5333c58940c47fd28176. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.runFrame_identity_exact",
+      "source_symbol": "runFrame_identity_exact",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual transaction-frame helper connection: for a direct address-0x04 frame with admitted input and sufficient gas, runFrame returns the entered world, exact calldata view and gas minus gasCost(size), ignoring account code. runAdmitted invokes this helper for accepted envelopes; signature and state authentication remain host assumptions.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.runFrame_identity_outOfGas",
+      "source_symbol": "runFrame_identity_outOfGas",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual transaction-frame gas boundary: a direct identity frame within the local byte cap but below gasCost(size) produces exceptional outOfGas. Oversized input is refused earlier as indeterminate; this theorem does not itself settle fees or balances.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.runFrame_identity_resourceLimit",
+      "source_symbol": "runFrame_identity_resourceLimit",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual transaction-frame resource boundary: direct identity input above maxIdentityCallBytes yields indeterminate resourceLimit before gas classification. It does not produce a completed failed receipt and does not assert an Ethereum protocol input cap.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.settleFrame_identity_outOfGas",
+      "source_symbol": "settleFrame_identity_outOfGas",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Transaction effect-boundary composition: admitted-size direct identity out-of-gas selects the fee-paid escrow world and zero remaining frame gas, then invokes the existing failure fee settlement. This connects actual precompile failure to rollback before fee credits; per-account fee and balance equations are separate existing finish/settlement proofs.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.runFrame_identity_fuel",
+      "source_symbol": "runFrame_identity_fuel",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual transaction-frame fuel property: direct native identity execution has the same result for any two instruction-fuel values, including zero. The executable still enforces its byte cap and gas requirement; this says nothing about bytecode frames or resource-free execution.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.runFrame_ordinary",
+      "source_symbol": "runFrame_ordinary",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual transaction-frame preservation: for any address other than 0x04, runFrame is exactly the existing CallOpcode.execute with the same fuel, world, address and frame. This introduces no second bytecode implementation and does not prove whole-EVM or all-fork completeness.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed in final-build.log (71-job successful build, 23 November 2026); defining source Git blob 8dc721eb65d183f6b2973362e10237ba0c913192. Publication source pins and final axiom audit must refer to these reviewed bytes."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash",
+      "source_symbol": "step_blobHash",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual Core.step for Cancun/Osaka BLOBHASH uses the complete unsigned index to select the ordered transaction hash or zero, through the normal three-gas commit; no envelope authentication or full EELS refinement.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_underflow",
+      "source_symbol": "step_blobHash_underflow",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual admitted BLOBHASH with an empty operand stack returns stack underflow; no theorem about complete transaction settlement.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_unknown_fork",
+      "source_symbol": "step_blobHash_unknown_fork",
+      "source": "EVMCleanroom/Core.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The coarse pre-Cancun profiles refuse BLOBHASH as unsupportedFork; this is a local support boundary, not fork-exact INVALID equivalence.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.World.frameInput_txBlobHashes",
+      "source_symbol": "frameInput_txBlobHashes",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "The shared real frame constructor copies exactly the world transaction hash list, regardless of address, gas, static mode or call participants.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob 5f8e55b691c81669abc40875c04a5fb337259dcc. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.World.commitFrame_txBlobHashes",
+      "source_symbol": "commitFrame_txBlobHashes",
+      "source": "EVMCleanroom/World.lean",
+      "axioms_printed": [],
+      "scope": "Committing a bytecode frame preserves the world transaction hash list; arbitrary frame/world consistency is not assumed or established.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob 5f8e55b691c81669abc40875c04a5fb337259dcc. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginCall_entered_txBlobHashes",
+      "source_symbol": "beginCall_entered_txBlobHashes",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Every actual successful CALL entry carries the original world transaction hash list into both child world and child state, including the checked value-transfer branch; no assertion that a newly entered stack already contains a BLOBHASH index.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob 80429a86a5aa0f548d8a565a0e742277b43f447a. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.CallOpcode.beginVariant_entered_txBlobHashes",
+      "source_symbol": "beginVariant_entered_txBlobHashes",
+      "source": "EVMCleanroom/CallOpcode.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Every actual successful CALLCODE, DELEGATECALL or STATICCALL entry carries the original world transaction hash list into both child world and child state, independently of execution and code addresses.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob 80429a86a5aa0f548d8a565a0e742277b43f447a. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.run_empty_blobHashes",
+      "source_symbol": "run_empty_blobHashes",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "The ordinary type-0/1/2 public transaction entry passes an empty hash list to the shared runner; external signature and witness authentication remain trusted.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob c64625a6d8bc8acda7879fca7fd6da98cb57a384. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.debitSender_blobHashes",
+      "source_symbol": "debitSender_blobHashes",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [],
+      "scope": "Actual execution-fee escrow and nonce advancement preserve transaction blob context.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob c64625a6d8bc8acda7879fca7fd6da98cb57a384. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.CallTransaction.entryFrame_blobHashes",
+      "source_symbol": "entryFrame_blobHashes",
+      "source": "EVMCleanroom/CallTransaction.lean",
+      "axioms_printed": [],
+      "scope": "The actual top-level bytecode frame receives the entered world hash list unchanged by transaction calldata, destination or value.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob c64625a6d8bc8acda7879fca7fd6da98cb57a384. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.World.pay_txBlobHashes",
+      "source_symbol": "World.pay_txBlobHashes",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [],
+      "scope": "Every successful World.pay result preserves its input transaction hash list, including self-transfer; no authentication of that list.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_success",
+      "source_symbol": "step_blobHash_success",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "From actual opcode, admitted profile, operand stack and at least three gas, derives a successful Core.step with exact lookup, stack tail, three-gas charge, pc advance, unchanged memory/storage and context; includes static and full-stack states.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_in_range",
+      "source_symbol": "step_blobHash_in_range",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual funded BLOBHASH with a full-width in-range index returns the exact indexed word and consumes three gas; no versioned-hash validity premise is inferred.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_out_of_range",
+      "source_symbol": "step_blobHash_out_of_range",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual funded BLOBHASH with any full-width index at least the list length returns zero, without machine-width truncation, and consumes three gas.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_blobHash_outOfGas",
+      "source_symbol": "step_blobHash_outOfGas",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Actual admitted BLOBHASH with a stack index and fewer than three gas returns outOfGas, independently of hash contents and index range.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.commit_txBlobHashes",
+      "source_symbol": "commit_txBlobHashes",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [],
+      "scope": "Every successful Core.commit preserves transaction hash context through arbitrary planned memory, storage and log effects.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.step_txBlobHashes",
+      "source_symbol": "step_txBlobHashes",
+      "source": "EVMCleanroom/BlobHashProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Every successful actual Core.step preserves the transaction hash list, including intervening bytecode instructions before BLOBHASH; CALL-family dispatch is covered separately.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-proof-build-3.log; defining source Git blob b7890b0496daec19a067e173034b4a530a72b8de. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.burn_sender",
+      "source_symbol": "burn_sender",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual blob preburn subtracts the supplied amount from the sender witness and preserves its remaining fields; no witness authentication or affordability claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.burn_other",
+      "source_symbol": "burn_other",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Blob preburn leaves witnesses at addresses other than the sender unchanged; no completeness or membership claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.burn_exact",
+      "source_symbol": "burn_exact",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Given sufficient sender balance, the actual post-preburn balance plus the burn equals the original balance; no fee-price correctness claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.funds_refused",
+      "source_symbol": "funds_refused",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The actual blob funds gate refuses balances below maximum execution-fee cap plus value and maximum blob-fee cap; no account authentication claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.prepared_exact",
+      "source_symbol": "prepared_exact",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The actual prepared request uses the supplied derived fee pair, header-derived coinbase, internal accounting type and exact preburn witness inventory; no canonical-chain claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.header_refused",
+      "source_symbol": "header_refused",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "An actual checked-fee-pair error propagates to blob preparation refusal; no complete header or block validity claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.execute_exact",
+      "source_symbol": "execute_exact",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "An actual executed result from the shared explicit-context transaction runner is exposed unchanged when cumulative gas fits the declared block total; no complete block inventory or receipt-root authentication claim.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.prepared_blobHashes",
+      "source_symbol": "prepared_blobHashes",
+      "source": "EVMCleanroom/BlobCall.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Actual preparation preserves every full hash word in input order across the internal type-2 accounting conversion; prepareRequest alone is not admission.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 97f192d8d0465409ec91fda5fdaa8296578b73f5. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.prepareWithFees_checked",
+      "source_symbol": "prepareWithFees_checked",
+      "source": "EVMCleanroom/BlobCallProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Successful actual Cancun preparation establishes exact preparation, nonempty input, at most six hashes and all version/width checks; no signature or KZG authentication.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.prepare_blobHashes_checked",
+      "source_symbol": "prepare_blobHashes_checked",
+      "source": "EVMCleanroom/BlobCallProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Successful header/blob preparation carries exactly the normalised ordered input hashes and their six-word bound, with nonempty valid-hash inputs; no chain membership or KZG proof.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.prepared_entry_blobHashes",
+      "source_symbol": "prepared_entry_blobHashes",
+      "source": "EVMCleanroom/BlobCallProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "The actual prepared hash list reaches the real frame constructor after execution-fee escrow and nonce advancement; no assertion that value transfer succeeded.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.admitted_entry_blobHashes",
+      "source_symbol": "admitted_entry_blobHashes",
+      "source": "EVMCleanroom/BlobCallProofs.lean",
+      "axioms_printed": [],
+      "scope": "An actual successful World.pay result yields the exact prepared hash list in real frame entry; the premise is the transfer result, not an assumed context equality.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.BlobCall.validated_entry_blobHashes",
+      "source_symbol": "validated_entry_blobHashes",
+      "source": "EVMCleanroom/BlobCallProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Successful actual header/blob admission plus actual successful value transfer yield exactly the original ordered hash words in the executing frame and establish its six-word bound; external signatures, witnesses and KZG remain unverified.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
     }
   ],
   "external_evidence": {
@@ -2604,7 +3281,7 @@
   ],
   "missing": [
     "Full EELS semantic refinement proofs",
-    "Contract creation (CREATE and CREATE2), precompiles and fork-exact frame and transaction rules beyond the restricted nested call-family dispatcher",
+    "Contract creation (CREATE and CREATE2), precompiles other than identity and fork-exact frame and transaction rules beyond the restricted nested call-family dispatcher",
     "Lean MPT/RLP implementation and correspondence, plus independent refinement and security review of the opt-in Keccak implementation",
     "General receipt commitments, log and transaction rules, and complete block validity",
     "General multi-transaction and multi-fork replay, persistent state, Engine API, networking and beacon-chain consensus for a complete execution and consensus client. Current authenticated mainnet evidence covers a restricted Frontier transfer and the witness-limited Shanghai 1CAT call.",
@@ -3235,5 +3912,119 @@
       "byteIdenticalLocalEvidenceCommit": "38c5299be79122accfc16fd5b64d61740a9a3acc",
       "equivalence": "Published tree equals the local evidence tree. Native Lean source, Lake configuration and toolchain pin are byte-identical to local native source b7e5c44eba09b1df7cfaa3d603c33284039fc764; harness equals local b63ee290a6b0a6407c402f1b78c4ca1d39a28f83."
     }
+  },
+  "identity_precompile_integration": {
+    "trackingIssue": "https://github.com/danbri/factoidal-core/issues/838",
+    "pullRequest": "https://github.com/danbri/factoidal-core/pull/839",
+    "baseCommit": "85579939b390b52bd0fed6e258655288ae00704a",
+    "provenance": "evidence/2026-11-23-identity-integration/provenance.json",
+    "localBuild": {
+      "status": "passed",
+      "leanVersion": "4.33.1",
+      "jobs": 71,
+      "newGuardExpressions": 26,
+      "previouslyFailingSingleCallGuards": 9,
+      "externalLakePackages": 0
+    },
+    "scope": "Identity at address 0x04 in the actual nested CALL-family dispatcher, public single-CALL adapter and accepted decoded-transaction entry. Generic root bytecode interpretation is not itself native message dispatch.",
+    "sourceBlobCount": 112,
+    "selectedTheorems": {
+      "previous": 184,
+      "addedToAudit": 32,
+      "newStatementsThisWork": 19,
+      "total": 216,
+      "sourceFiles": 22
+    },
+    "rawCallMatrix": {
+      "report": "evidence/2026-11-23-identity-integration/identity-call.json",
+      "ethereumJS": {
+        "compared": 660,
+        "matched": 660,
+        "failed": 0
+      },
+      "geth": {
+        "compared": 648,
+        "matched": 648,
+        "failed": 0,
+        "crossOracleMatched": 648,
+        "excluded": {
+          "staticEntry": 4,
+          "nonzeroDepth": 8
+        }
+      },
+      "comparatorMutationsRejected": 4,
+      "precompileWarmthGasDifference": 2500
+    },
+    "signedTransactions": {
+      "report": "evidence/2026-11-23-identity-integration/identity-transactions.json",
+      "fork": "Shanghai",
+      "transactionTypes": [
+        0,
+        1,
+        2
+      ],
+      "compared": 84,
+      "matchedBothClients": 84,
+      "nested": 57,
+      "direct": 27,
+      "failed": 0,
+      "unsupported": 0,
+      "localRefusals": 0,
+      "notExecuted": 0,
+      "comparatorMutationsRejected": 4,
+      "missingWitnessRefused": true,
+      "commitments": "Host encodes Lean receipts and post-state. EthereumJS runTx and Geth t8n execute the signed bytes independently; Geth supplies stateRoot and receiptsRoot commitments."
+    },
+    "retainedStandalone": {
+      "report": "evidence/2026-11-23-identity-integration/identity-standalone.json",
+      "compared": 1056,
+      "matched": 1056,
+      "mismatches": 0
+    },
+    "retainedRegressions": "evidence/2026-11-23-identity-integration/retained-regressions.json",
+    "hostedCI": "Current PR checks must refer to the published head. Older hosted results elsewhere in this manifest validate only their recorded revisions.",
+    "trustAndLimits": [
+      "No normative EELS refinement or full fork-conformance theorem. Selected axioms are checked by actual Lean elaboration.",
+      "1 MiB input cap and simulation fuel are local resource refusal policies, not Ethereum validity rules.",
+      "A supplied account witness remains required, including for identity. Host signature recovery and receipt/trie encoding remain trusted test infrastructure.",
+      "Other precompiles, CREATE/CREATE2, full fork and block replay, persistent state, networking and independent EL/CL consensus remain unfinished under #725."
+    ]
+  },
+  "blobhash_integration": {
+    "scope": "Independent pure Lean Cancun BLOBHASH through checked decoded blob transaction preparation, the shared ordinary transaction runner and all four CALL-family variants. Ordinary transactions explicitly start with empty context. No runtime import of EthereumJS, Geth or another Ethereum implementation.",
+    "integration_base": "The complete identity integration from PR #839 is merged with the Cancun blob-call stack from PR #863; neither parent alone establishes the combined result.",
+    "selected_additions": 30,
+    "newly_authored_theorems": 23,
+    "previous_standalone_blob_call_theorems": 7,
+    "total_selected_theorems": 246,
+    "actual_axioms": "All 30 additions were observed uniquely in successful Lean 4.33.1 compiler reports. The complete actual compiler-output audit then passed all 246 selected claims across 25 sources on 24 November 2026; exact additions use only propext and Quot.sound or no axioms. This is local compiler evidence, not a hosted-CI result.",
+    "guards": 38,
+    "dedicated_auditor": "scripts/check-blobhash-axioms.py: exact named inventory, whole-transcript wrapped axiom parsing, eight rejected corrupt transcript controls, reviewed source closure and hosted exact-HEAD matching.",
+    "execution_evidence": {
+      "local_signed_comparisons": 179,
+      "standalone": 173,
+      "same_block_prefix": 6,
+      "types": {
+        "0": 6,
+        "1": 6,
+        "2": 6,
+        "3": 161
+      },
+      "ethereumjs_matches": 179,
+      "geth_matches": 179,
+      "reference_client_agreement": 179,
+      "failures": 0,
+      "local_refusals": 0,
+      "not_executed": 0,
+      "negative_mutations_detected": 13,
+      "missing_child_witness_refused": true,
+      "kzg_operations": 0,
+      "blob_native_sha256": "fc33d369b084791173ec178c100fce347acf24af52efb7f0b1d64c554587f510",
+      "ordinary_native_sha256": "7a7c99e7e9957596f1cb8298cf2eaa0425aa1cb896eab3c0ebc5b4f46f98f9cd",
+      "signed_report_sha256": "88d43f6e2174fe2264f53196c53f27f480d6885ca49e13cf1d277cbc78122c63",
+      "trust_boundary": "Exact signed bytes execute in both clients; Lean receives decoded envelopes and complete synthetic witnesses. Host receipt/trie encodings are checked against independently computed Geth receipt, transaction and state roots. This is local evidence; consult current PR checks for hosted status."
+    },
+    "limits": "Local-model proofs, not normative EELS refinement. Lean receives decoded externally authenticated envelopes and state witnesses; signature recovery and trie/receipt codecs remain host trust boundaries. No KZG proof or sidecar verification, complete block validation, Prague transaction execution or live transaction submission.",
+    "source_pins": 126
   }
 }

@@ -387,7 +387,7 @@ const boundaryCases = [
   [fixture('simulation fuel cap'), r => { r.fuel = '1000001' }, { reason: 'resourceLimit' }],
   [fixture('Keccak without explicit permission', { code: '5f5f205000' }), () => {}, { reason: 'unsupportedFork' }],
   [fixture('scope refuses valid CREATE', { code: '5f5f5ff05000' }), () => {}, { reason: 'invalidOpcode' }],
-  [fixture('scope refuses identity precompile', { to: address(4), absent: true }), () => {}, { reason: 'unsupportedFork' }],
+  [fixture('scope refuses unimplemented ECRECOVER precompile', { to: address(1), absent: true }), () => {}, { reason: 'unsupportedFork' }],
   [fixture('scope refuses present-empty witness', { absent: true, data: '', value: 0n }),
     r => { r.accounts.find(a => a.address === decimal(to)).exists = true }, { reason: 'invalidWitness' }],
 ]

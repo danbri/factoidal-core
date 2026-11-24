@@ -280,6 +280,10 @@ structure State where
   blockBaseFee : Nat := 0
   /-- Selected EIP-7516 blob gas price; not yet authenticated from header state. -/
   blockBlobBaseFee : Nat := 0
+  /-- Ordered versioned hashes supplied by transaction admission. The empty
+      context belongs to ordinary transactions; this frame does not authenticate
+      the signed envelope or any blob sidecar. -/
+  txBlobHashes : Array Word := #[]
   /-- Immediate caller, set at each CALL entry. -/
   callerAddress : Nat := 0
   callValue : Nat := 0
@@ -630,6 +634,10 @@ def planStep (s : State) : Except Error Plan :=
       -- preShanghai spans pre-/post-London: refuse the ambiguous old profile.
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.blockBaseFee :: s.stack.items) 2
+    | 0x49 => -- BLOBHASH (EIP-4844; Cancun onwards)
+      if s.profile = .cancunPlus ∨ s.profile = .osaka then
+        unary s (fun index => s.txBlobHashes.getD index.val (word 0)) 3
+      else .error .unsupportedFork
     | 0x4a => -- BLOBBASEFEE (EIP-7516; Cancun onwards)
       -- shanghaiPlus spans the fork boundary, so it cannot decide activation.
       if s.profile = .cancunPlus ∨ s.profile = .osaka then
@@ -988,6 +996,44 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
       simp only [hs, List.length_cons] at hStack
       have hMin : 2 ≤ rest.length + 1 + 1 := Nat.succ_le_succ (Nat.succ_le_succ (Nat.zero_le _))
       exact (Nat.not_lt_of_ge hMin hStack).elim
+
+/-- Kind: dispatcher correspondence.
+    Says: actual Cancun/Osaka BLOBHASH consumes the full 256-bit index and
+    requests a three-gas replacement with the transaction hash or zero.
+    Does not say: the transaction hashes or blob sidecars are authenticated. -/
+theorem step_blobHash (s : State) (index : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hStack : s.stack.items = index :: rest) :
+    step s = commit s (s.pc + 1)
+      (s.txBlobHashes.getD index.val (word 0) :: rest) 3 := by
+  simp [step, planStep, hRun, hOp, hProfile, unary, hStack, prepared]
+
+/-- Kind: executable failure boundary.
+    Says: an admitted BLOBHASH with no index reports stack underflow.
+    Does not say: an earlier fork activates the instruction. -/
+theorem step_blobHash_underflow (s : State)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hStack : s.stack.items = []) :
+    step s = .error .stackUnderflow := by
+  simp [step, planStep, hRun, hOp, hProfile, unary, hStack]
+
+/-- Kind: fork boundary.
+    Says: the coarse older profiles refuse BLOBHASH without executing it.
+    Does not say: every real fork represented by those profiles has the same
+    consensus-invalid-opcode rule. -/
+theorem step_blobHash_unknown_fork (s : State)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
+    (hProfile : s.profile = .preShanghai ∨ s.profile = .shanghaiPlus) :
+    step s = .error .unsupportedFork := by
+  cases hProfile with
+  | inl h => simp [step, planStep, hRun, hOp, h]
+  | inr h => simp [step, planStep, hRun, hOp, h]
+
+#print axioms step_blobHash
+#print axioms step_blobHash_underflow
+#print axioms step_blobHash_unknown_fork
 
 /-- Actual Cancun EIP-7516 opcode requests a two-gas commit of the supplied
     blob base fee. No theorem here derives the fee from excess blob gas. -/

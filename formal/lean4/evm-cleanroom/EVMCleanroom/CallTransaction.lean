@@ -278,18 +278,103 @@ def settleFrame (tx : Envelope) (block : BlockContext) (budget : Budget)
   | .exceptional w s e => finish tx block budget w (.exceptional e) s false
   | .indeterminate e => .indeterminate (.frame e)
 
+/-- The actual transaction-frame dispatcher. Identity uses the same bounded
+    native Lean byte-view executor as nested CALLs and ignores account code.
+    A precompile executes no EVM instruction and therefore needs no instruction
+    fuel; all ordinary bytecode frames retain `CallOpcode.execute`'s fuel bound.
+    Both paths return through `settleFrame`, preserving the fee escrow and the
+    transaction value-transfer checkpoint on exceptional failure. -/
+def runFrame (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State) :
+    CallOpcode.RawOutcome :=
+  if address == 4 then
+    match IdentityPrecompile.executeView CallOpcode.maxIdentityCallBytes frame.gas frame.callData with
+    | .ok (bytes, remaining) =>
+      .returned entered { frame with gas := remaining, outputData := bytes, halted := true }
+    | .error .outOfGas => .exceptional .outOfGas
+    | .error reason => .indeterminate reason
+  else CallOpcode.execute fuel entered address frame
+
+/-- Kind: executable correspondence.
+    Says: an admitted, sufficiently funded direct identity frame returns exactly
+    its calldata view and the exact unspent gas through the transaction path.
+    Does not say: that the supplied envelope or state witness is authenticated. -/
+theorem runFrame_identity_exact (fuel : Nat) (entered : TxWorld) (frame : State)
+    (hSize : frame.callData.size ≤ CallOpcode.maxIdentityCallBytes)
+    (hGas : IdentityPrecompile.gasCost frame.callData.size ≤ frame.gas) :
+    runFrame fuel entered 4 frame = .returned entered
+      { frame with
+        gas := frame.gas - IdentityPrecompile.gasCost frame.callData.size
+        outputData := frame.callData
+        halted := true } := by
+  simp [runFrame, IdentityPrecompile.executeView_exact _ _ _ hSize hGas]
+
+/-- Kind: exceptional boundary.
+    Says: underfunded direct identity execution is an EVM out-of-gas result.
+    Does not say: that oversized inputs are consensus-invalid; they refuse first. -/
+theorem runFrame_identity_outOfGas (fuel : Nat) (entered : TxWorld) (frame : State)
+    (hSize : frame.callData.size ≤ CallOpcode.maxIdentityCallBytes)
+    (hGas : frame.gas < IdentityPrecompile.gasCost frame.callData.size) :
+    runFrame fuel entered 4 frame = .exceptional .outOfGas := by
+  simp [runFrame, IdentityPrecompile.executeView, Nat.not_lt_of_ge hSize, hGas]
+
+/-- Kind: resource boundary.
+    Says: over-limit direct identity input propagates indeterminate resource
+    refusal before gas classification, never a completed failed receipt.
+    Does not say: that the local input cap is an Ethereum protocol rule. -/
+theorem runFrame_identity_resourceLimit (fuel : Nat) (entered : TxWorld) (frame : State)
+    (hSize : CallOpcode.maxIdentityCallBytes < frame.callData.size) :
+    runFrame fuel entered 4 frame = .indeterminate .resourceLimit := by
+  simp [runFrame, IdentityPrecompile.executeView, hSize]
+
+/-- Kind: effect boundary.
+    Says: the real settlement path restores the fee-paid escrow world on
+    identity out-of-gas, then applies the existing failure fee accounting.
+    Does not say: that signatures, trie witnesses or fee inputs are authentic. -/
+theorem settleFrame_identity_outOfGas (tx : Envelope) (block : BlockContext) (budget : Budget)
+    (fuel : Nat) (escrow entered : TxWorld) (frame : State)
+    (hSize : frame.callData.size ≤ CallOpcode.maxIdentityCallBytes)
+    (hGas : frame.gas < IdentityPrecompile.gasCost frame.callData.size) :
+    settleFrame tx block budget escrow frame (runFrame fuel entered 4 frame) =
+      finish tx block budget escrow (.exceptional .outOfGas)
+        { frame with gas := 0, halted := true } false := by
+  rw [runFrame_identity_outOfGas fuel entered frame hSize hGas]
+  rfl
+
+/-- Kind: executable correspondence.
+    Says: direct identity frames are independent of the bytecode step budget.
+    Does not say: that native precompile resource bounds are unnecessary. -/
+theorem runFrame_identity_fuel (fuel otherFuel : Nat) (entered : TxWorld) (frame : State) :
+    runFrame fuel entered 4 frame = runFrame otherFuel entered 4 frame := rfl
+
+/-- Kind: executable correspondence.
+    Says: an ordinary transaction still uses the existing bytecode dispatcher
+    and its complete fuel and journal semantics without a second implementation.
+    Does not say: that all Ethereum instructions or forks are implemented. -/
+theorem runFrame_ordinary (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State)
+    (hAddress : address ≠ 4) :
+    runFrame fuel entered address frame = CallOpcode.execute fuel entered address frame := by
+  simp [runFrame, hAddress]
+
+/-- The real top-level frame projection, shared by ordinary and admitted blob
+    transactions. Transaction context is already installed in `entered`; local
+    calldata and CALL value do not replace it. -/
+def entryFrame (p : Request) (entered : TxWorld) (budget : Budget) : State :=
+  { frameInput entered p.tx.to budget.frameGas false p.fork.profile p.tx.sender p.tx.sender with
+    callData := ByteView.ofArray p.tx.data, callValue := p.tx.value }
+
 private def runAdmitted (p : Request) (w : TxWorld) (budget : Budget) : Outcome :=
   let escrow := debitSender w p.tx.sender budget
   match pay escrow p.tx.sender p.tx.to p.tx.value with
   | .error _ => .indeterminate (.unsupported "value-transfer-unavailable")
   | .ok entered =>
-    let frame := { frameInput entered p.tx.to budget.frameGas false p.fork.profile p.tx.sender p.tx.sender with
-      callData := ByteView.ofArray p.tx.data, callValue := p.tx.value }
-    settleFrame p.tx p.block budget escrow frame (CallOpcode.execute p.fuel entered p.tx.to frame)
+    let frame := entryFrame p entered budget
+    settleFrame p.tx p.block budget escrow frame (runFrame p.fuel entered p.tx.to frame)
 
-/-- Execute a decoded, externally authenticated contract transaction in the
-    admitted Shanghai or Cancun slice, or return an explicit refusal. -/
-def run (p : Request) : Outcome :=
+/-- Shared execution entry for an explicit transaction context. `BlobCall.run`
+    supplies only its admitted Cancun hash list, while the ordinary public
+    `run` always supplies an empty list. This lower-level function does not
+    authenticate a signed blob envelope or validate its blob-specific fees. -/
+def runWithBlobHashes (p : Request) (hashes : Array Word) : Outcome :=
   if p.tx.kind > 2 then .indeterminate (.unsupported "unsupported-transaction-type")
   else if !p.block.bounded p.fork then .indeterminate (.unsupported "unusable-block-context")
   else if p.exceedsResources then
@@ -297,14 +382,48 @@ def run (p : Request) : Outcome :=
   else if !(decide ((p.witnesses.map (·.address)).Nodup) && p.witnesses.all WitnessAccount.valid) then
     .indeterminate .invalidWitness
   else
-    let w := witnessWorld p
+    let w := { witnessWorld p with txBlobHashes := hashes }
     match [p.tx.sender, p.tx.to, p.block.coinbase].find? (fun address => !w.hasAccount address) with
     | some address => .indeterminate (.frame (.incompleteState address none))
     | none =>
-      if WorldCall.unsupportedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
+      if CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
       else
         match admit p.tx p.block (w.accounts p.tx.sender) with
         | .error reason => .rejected reason
         | .ok budget => runAdmitted p w budget
+
+/-- Execute a decoded, externally authenticated ordinary contract transaction
+    in the admitted Shanghai or Cancun slice. Every call starts with an empty
+    BLOBHASH context, including after a previous blob transaction. -/
+def run (p : Request) : Outcome := runWithBlobHashes p #[]
+
+/-- Kind: executable correspondence.
+    Says: the ordinary entry always passes an empty ordered transaction hash
+    list to the same admission, execution and settlement path as blob calls.
+    Does not say: that signed bytes or state witnesses were authenticated. -/
+theorem run_empty_blobHashes (p : Request) : run p = runWithBlobHashes p #[] := rfl
+
+/-- Kind: executable projection.
+    Says: fee escrow and nonce advancement preserve transaction hash context.
+    Does not say: that the context was validated against a signed envelope. -/
+theorem debitSender_blobHashes (w : TxWorld) (sender : Nat) (budget : Budget) :
+    (debitSender w sender budget).txBlobHashes = w.txBlobHashes := rfl
+
+/-- Kind: executable projection.
+    Says: the actual top-level bytecode frame receives the entered world's
+    ordered hash list independently of calldata, destination and transaction value.
+    Does not say: that an arbitrary supplied world is a valid blob transaction. -/
+theorem entryFrame_blobHashes (p : Request) (entered : TxWorld) (budget : Budget) :
+    (entryFrame p entered budget).txBlobHashes = entered.txBlobHashes := rfl
+
+#print axioms runFrame_identity_exact
+#print axioms runFrame_identity_outOfGas
+#print axioms runFrame_identity_resourceLimit
+#print axioms settleFrame_identity_outOfGas
+#print axioms runFrame_identity_fuel
+#print axioms runFrame_ordinary
+#print axioms run_empty_blobHashes
+#print axioms debitSender_blobHashes
+#print axioms entryFrame_blobHashes
 
 end EVMCleanroom.CallTransaction

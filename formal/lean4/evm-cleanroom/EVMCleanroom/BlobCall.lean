@@ -27,12 +27,18 @@ structure Prepared where
   request : Request
   blobGas : Nat
   burn : Nat
+  txBlobHashes : Array Word
 
 def gas (hashes : Array (Array UInt8)) : Nat :=
   HeaderRLP.gasPerBlob * hashes.size
 
 def validHash (h : Array UInt8) : Bool :=
   h.size == 32 && (h[0]?).getD 0 == 1
+
+/-- Big-endian hash bytes become one full EVM word. The admitted path invokes
+    this only after the one-to-six count and exact 32-byte version checks. -/
+def hashWord (h : Array UInt8) : Word :=
+  word (h.foldl (fun acc byte => acc * 256 + byte.toNat) 0)
 
 def maximumUpfront (tx : Envelope) (blobGas blobCap : Nat) : Nat :=
   tx.gasLimit * tx.gasPriceCap + tx.value + blobGas * blobCap
@@ -67,7 +73,8 @@ def prepareRequest (p : Input) (fees : Nat × Nat) : Prepared :=
     tx := { p.request.tx with kind := 2 }
     block := blockContext p.child p.request.block.gasUsedBefore fees
     witnesses := p.request.witnesses.map (burnWitness p.request.tx.sender burn) }
-  { request := request, blobGas := b, burn := burn }
+  { request := request, blobGas := b, burn := burn
+    txBlobHashes := p.hashes.map hashWord }
 
 def checkFunds (p : Input) (fees : Nat × Nat) (sender : WitnessAccount) :
     Except Refusal Prepared :=
@@ -108,7 +115,7 @@ inductive Outcome where
 /-- Only the original transaction runner may produce a receipt. The
 caller-supplied partial block position cannot exceed the declared total. -/
 def execute (p : Prepared) (declaredGas : Nat) : Outcome :=
-  match CallTransaction.run p.request with
+  match CallTransaction.runWithBlobHashes p.request p.txBlobHashes with
   | .executed result =>
     if result.cumulativeGasUsed > declaredGas then
       .refused (.indeterminate "inconsistent-block-position")
@@ -169,10 +176,18 @@ theorem header_refused (a : Keccak.Acceptance) (p : Input) (e : HeaderRLP.Error)
 within the declared gas total exposes exactly the existing runner result.
 Does not say: full transaction inventory or receipts-root authentication. -/
 theorem execute_exact (p : Prepared) (declaredGas : Nat) (r : CallTransaction.Result)
-    (h : CallTransaction.run p.request = .executed r)
+    (h : CallTransaction.runWithBlobHashes p.request p.txBlobHashes = .executed r)
     (hg : r.cumulativeGasUsed ≤ declaredGas) :
     execute p declaredGas = .transaction p (.executed r) := by
   simp [execute, h, Nat.not_lt.mpr hg]
+
+/-- Kind: executable projection.
+    Says: preparation preserves hash order and every complete word through
+    the internal accounting-type conversion; it cannot infer an empty context
+    from the internal type-2 shape.
+    Does not say: that `prepareRequest` alone performs admission checks. -/
+theorem prepared_blobHashes (p : Input) (fees : Nat × Nat) :
+    (prepareRequest p fees).txBlobHashes = p.hashes.map hashWord := rfl
 
 #print axioms burn_sender
 #print axioms burn_other
@@ -181,5 +196,6 @@ theorem execute_exact (p : Prepared) (declaredGas : Nat) (r : CallTransaction.Re
 #print axioms prepared_exact
 #print axioms header_refused
 #print axioms execute_exact
+#print axioms prepared_blobHashes
 
 end EVMCleanroom.BlobCall

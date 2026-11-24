@@ -222,8 +222,16 @@ private def profileBoundary (kind : CallVariant) : Bool :=
   outcomeError (executeParent w s) false .unsupportedFork
 
 #guard profileBoundary .callCode && profileBoundary .delegateCall && profileBoundary .staticCall
+-- Identity executes successfully through CALLCODE with the requested child
+-- budget. Its input and output are empty and it cannot modify world storage.
 #guard let w := fixtureWorld #[]
-  outcomeError (executeParent w (parentFrame w .callCode (target := 4))) false .unsupportedFork
+  match executeParent w (parentFrame w .callCode (target := 4)) with
+  | .stopped out s =>
+    s.stack.items.map (·.val) == [1, 0xdd] && s.returnData.size == 0 &&
+    out.warmAddresses 4 &&
+    (out.accounts 0xc1).balance == 11 && (out.accounts 0xc3).balance == 23 &&
+    (out.accounts 0xc1).storage 0 == 7
+  | _ => false
 #guard let w := fixtureWorld #[]
   outcomeError (executeParent w (parentFrame w .staticCall) (fuel := 0)) false .stepLimit
 

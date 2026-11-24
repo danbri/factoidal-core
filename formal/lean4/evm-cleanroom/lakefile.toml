@@ -12,3 +12,7 @@ root = "EVMCleanroom.CLI"
 [[lean_exe]]
 name = "evm-call-transaction"
 root = "EVMCleanroom.CLITransaction"
+
+[[lean_exe]]
+name = "evm-identity-precompile"
+root = "EVMCleanroom.IdentityCLI"

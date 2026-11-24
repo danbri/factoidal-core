@@ -54,10 +54,28 @@ structure TxWorld where
   blockBaseFee : Nat := 0
   /-- Unauthenticated externally selected blob base fee for a selected Cancun+ fork. -/
   blockBlobBaseFee : Nat := 0
+  /-- Immutable, ordered transaction context installed by the transaction
+      adapter. Neither the signed envelope nor sidecars are authenticated here. -/
+  txBlobHashes : Array Word := #[]
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
-    original := fun address slot => (accounts address).storage slot }
+    original := fun address slot => (accounts address).storage slot
+    -- EIP-2929's fixed precompile list belongs to the initial access set.
+    -- This execution subset still models historical forks incompletely.
+    warmAddresses := fun address => decide (1 ≤ address ∧ address ≤ 9) }
+
+/-- The identity precompile is initially warm on EIP-2929-era transactions,
+    independent of whether any CALL has yet executed. -/
+theorem beginTransaction_identity_warm (accounts : Nat → Account) :
+    (beginTransaction accounts).warmAddresses 4 = true := rfl
+
+/-- Ordinary fixture contract addresses are not implicitly warmed. -/
+theorem beginTransaction_ordinary_cold (accounts : Nat → Account) :
+    (beginTransaction accounts).warmAddresses 0xc3 = false := rfl
+
+#print axioms beginTransaction_identity_warm
+#print axioms beginTransaction_ordinary_cold
 
 def TxWorld.hasAccount (w : TxWorld) (address : Nat) : Bool :=
   match w.witnessed with
@@ -85,6 +103,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
     blockGasLimit := w.blockGasLimit
     blockBaseFee := w.blockBaseFee
     blockBlobBaseFee := w.blockBlobBaseFee
+    txBlobHashes := w.txBlobHashes
     logsRev := w.logsRev
     keccakAcceptance := w.keccakAcceptance
     callerAddress := callerAddress
@@ -131,6 +150,15 @@ theorem frameInput_blobBaseFee (w : TxWorld) (address gas : Nat)
     (frameInput w address gas readOnly profile originAddress callerAddress).blockBlobBaseFee =
       w.blockBlobBaseFee := rfl
 
+/-- Kind: executable projection.
+    Says: real account frame entry receives the world's ordered transaction
+    hash list for every caller, address, static flag and opcode profile.
+    Does not say: the list was authenticated or admitted by a transaction. -/
+theorem frameInput_txBlobHashes (w : TxWorld) (address gas : Nat)
+    (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
+    (frameInput w address gas readOnly profile originAddress callerAddress).txBlobHashes =
+      w.txBlobHashes := rfl
+
 /-- Each world-to-frame projection supplies the same block fields, including for nested CALL. -/
 theorem frameInput_blockEnvironment (w : TxWorld) (address gas : Nat)
     (readOnly : Bool) (profile : Profile) (originAddress callerAddress : Nat) :
@@ -163,6 +191,7 @@ theorem frameInput_participants (w : TxWorld) (address gas : Nat)
 #print axioms frameInput_address
 #print axioms frameInput_chainId
 #print axioms frameInput_blobBaseFee
+#print axioms frameInput_txBlobHashes
 #print axioms frameInput_blockEnvironment
 #print axioms frameInput_feeAndRandao
 #print axioms frameInput_participants
@@ -180,6 +209,15 @@ def commitFrame (w : TxWorld) (address : Nat) (out : State) : TxWorld :=
       if other = address then out.storage.warm key else w.warmSlots other key
     refund := out.storage.refund
     logsRev := out.logsRev }
+
+/-- Kind: transaction-context preservation.
+    Says: committing any frame journal retains the world's hash context,
+    even if the supplied frame itself contains a different list.
+    Does not say: arbitrary caller-created frames have consistent context. -/
+theorem commitFrame_txBlobHashes (w : TxWorld) (address : Nat) (out : State) :
+    (commitFrame w address out).txBlobHashes = w.txBlobHashes := rfl
+
+#print axioms commitFrame_txBlobHashes
 
 /-- A result is not a transaction receipt or a block-state root. REVERT
     and exceptional halts deliberately return the unmodified pre-frame

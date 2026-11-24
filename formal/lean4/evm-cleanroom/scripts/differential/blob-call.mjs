@@ -67,7 +67,8 @@ bad(q=>q.childHeader[0]='ff'.repeat(32),'indeterminate','header-pair-refused')
 bad(q=>q.childHeader[15]='65','indeterminate','header-pair-refused')
 bad(q=>q.transaction.type=2,'indeterminate','not-type-3')
 bad(q=>q.transaction.gasLimit='21019','rejected','below-intrinsic-gas')
-bad(q=>q.accounts[1].codeHex='49','indeterminate','invalidOpcode')
+// BLOBHASH is now executable; retain a separate unsupported BLOCKHASH control.
+bad(q=>q.accounts[1].codeHex='5f40','indeterminate','invalidOpcode')
 bad(q=>q.childHeader[10]=hex(nat(21000)),'indeterminate','inconsistent-block-position')
 const resource=request({excess:64n*D+1n});cases.push({q:resource,expected:{status:'indeterminate',reason:'header-pair-refused'}})
 function compare(actual){

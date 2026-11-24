@@ -32,3 +32,9 @@ import EVMCleanroom.JumpCompleteness
 import EVMCleanroom.MemoryGas
 import EVMCleanroom.Proofs
 import EVMCleanroom.Tests
+import EVMCleanroom.IdentityPrecompile
+import EVMCleanroom.IdentityCallTests
+import EVMCleanroom.IdentityTransactionTests
+import EVMCleanroom.BlobHashProofs
+import EVMCleanroom.BlobHashTests
+import EVMCleanroom.BlobCallProofs

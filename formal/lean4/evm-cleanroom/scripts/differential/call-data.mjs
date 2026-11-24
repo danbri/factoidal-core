@@ -277,6 +277,9 @@ function snapshot(out, field, data, id) {
 async function reference(c) {
   const common = new Common({chain: Mainnet, hardfork: c.profile === 'osaka' ? Hardfork.Osaka : Hardfork.Shanghai})
   const evm = await createEVM({common})
+  // EIP-2929: active precompiles start warm even in a raw message fixture.
+  // runCall does not perform this transaction-level initialisation.
+  for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   const [parent, child, third, caller] = [A, B, C, sender].map(address)
   if (c.prewarmParent) evm.journal.addAlwaysWarmAddress(parent.toString())
   const key = new Uint8Array(32)
@@ -450,6 +453,7 @@ for (const c of cases) {
 }
 
 const refusalChecks = []
+const executedPrecompileChecks = []
 for (const c of [
   {id: 'identity-precompile', parent: prefill + call({target: 4, inputSize: 5, outputSize: 5}) + '3d00',
     child: '', expect: {status: 'stopped', stack: ['5', '1'], returnDataHex: sequence.slice(0, 10)}},
@@ -463,8 +467,16 @@ for (const c of [
   try {
     const expected = await reference(input)
     const actual = lean(input)
-    assert.deepEqual(actual, {status: 'indeterminate', reason: 'unsupportedFork'}, id)
-    refusalChecks.push({id, expectedStatus: expected.status, ...actual})
+    if (id === 'osaka-opcode-under-shanghai') {
+      assert.deepEqual(actual, {status: 'indeterminate', reason: 'unsupportedFork'}, id)
+      refusalChecks.push({id, expectedStatus: expected.status, ...actual})
+    } else {
+      requireFullSnapshots(actual, id)
+      const fields = diff(expected, actual)
+      if (fields.length) failures.push({id, fields, expected, actual})
+      executedPrecompileChecks.push({id, expectedStatus: expected.status,
+        status: actual.status, matched: fields.length === 0})
+    }
   } catch (error) {
     failures.push({id, error: String(error)})
   }
@@ -493,7 +505,7 @@ console.log(JSON.stringify({
   kind: 'independent-call-bytes-and-nested-journal-differential',
   oracle: '@ethereumjs/evm@10.1.3 Shanghai runCall and one Osaka CLZ fixture',
   seed, compared: cases.length, matched, mismatches: cases.length - matched,
-  categories, refusalChecks, globalFuelBoundary, negativeControls, oracleExceptions,
+  categories, refusalChecks, executedPrecompileChecks, globalFuelBoundary, negativeControls, oracleExceptions,
   initialState: 'Fixtures seed the executing parent address except the named raw-cold self-call control.',
   observedFields: ['status', 'gasRemaining', 'frame output and size', 'account balances/nonce/storage',
     'journal warmth and refund', 'stack, memory and child returndata on STOP/RETURN/REVERT'],
@@ -505,4 +517,7 @@ console.log(JSON.stringify({
     firstFailures: gethFailures.slice(0, 8)},
   firstFailures: failures.slice(0, 10)
 }))
-if (failures.length || gethFailures.length || !Object.values(negativeControls).every(Boolean)) process.exitCode = 1
+if (failures.length || gethFailures.length || refusalChecks.length !== 1 ||
+    executedPrecompileChecks.length !== 2 ||
+    !executedPrecompileChecks.every(c => c.matched) ||
+    !Object.values(negativeControls).every(Boolean)) process.exitCode = 1

@@ -200,13 +200,15 @@ within the limits recorded in the evidence.
 
 1. **EELS refinement.** Opcode, gas, exception and journal theorems
    concern the local model. Reference refinement remains open.
-2. **Fork selection.** `preShanghai`, `shanghaiPlus` and `osaka` select
+2. **Fork selection.** `preShanghai`, `shanghaiPlus`, `cancunPlus` and `osaka` select
    subsets of opcode behaviour. Chain replay requires fork-exact
    transaction context, address prewarming and gas schedules.
 3. **World and chain scope.** The functional world carries accounts, slots,
    warmth and a signed refund counter for the supported frame operations.
-   Other call variants, CREATE, precompiles, complete transaction/block
-   validation, receipts, networking and consensus remain open.
+   The CALL family and identity precompile have bounded executable paths.
+   CREATE, the other precompiles, complete transaction/block validation,
+   receipts, networking and consensus remain open under
+   https://github.com/danbri/factoidal-core/issues/725.
 4. **Compiler and deployment scope.** Guarded execution checks the bytes
    of a Solidity compiler fixture and selected provider captures. Compiler
    correctness and deployed-contract properties need separate proofs.
@@ -218,9 +220,36 @@ within the limits recorded in the evidence.
 7. **Provenance.** The project independently implements public specification
    descriptions. A formal clean-room provenance audit remains open.
 
+## Cancun BLOBHASH integration boundary
+
+`BlobCall.prepare` now preserves its validated, ordered versioned-hash list
+through the internal fee-accounting request and into actual frame entry.
+`validated_entry_blobHashes` relates successful header/blob preparation and
+the actual value-transfer result to the executing frame's exact list and its
+six-word bound. Core step theorems cover lookup, zero outside the full-width
+index range, three-gas charging, underflow, out-of-gas and context preservation.
+The actual CALL-family entry theorems carry the world's list into child frames.
+They do not assume that an arbitrary externally constructed parent frame is
+consistent with its world, or that a newly entered empty stack already holds
+an index. The ordinary transaction entry always supplies an empty list.
+
+The 38 guards and signed synthetic two-client matrix are tests. The matrix
+binds both reference executions to identical signed bytes; Lean still receives
+decoded inputs and synthetic witnesses. Signature recovery, receipt and trie
+encoding, compiler/runtime, and the experimental Keccak implementation remain
+trust boundaries. Hash access neither verifies a KZG proof nor makes blob
+bodies available. Coarse older opcode profiles return a local fork refusal;
+that is not a proof of fork-exact invalid-opcode behaviour. Prague transaction
+execution and full block-inventory validation remain unfinished.
+
+The selected theorem ledger and dedicated audit record actual compiler output,
+source pins and falsification controls. Neither establishes a full Ethereum
+refinement proof. Reproduction, exact counts and remaining work are recorded in
+`docs/20261124-evm-blobhash-integration.md` at the repository root.
+
 ## Highest-value next proof obligations
 
-1. Establish a *separate* EELS/EthLib-compatible state-transition
+1. Establish a *separate*, independently authored EELS-compatible state-transition
    denotation, identify matching fork configurations, then prove
    `step_refines_reference` **per covered opcode**, including precise
    success and failure conditions.
@@ -231,8 +260,11 @@ within the limits recorded in the evidence.
 4. Independently check the shared opcode-width semantics and JUMPDEST
    behaviour against EELS. Local soundness and completeness have both
    been proved for all finite bytecode arrays.
-5. Extend the supported account and CALL slice to the other call variants,
-   CREATE, precompiles and fork-exact environment and gas rules.
+5. Extend the supported account and CALL slice to CREATE, the remaining
+   precompiles and fork-exact environment and gas rules. The identity
+   integration record is `docs/20261123-evm-identity-integration.md` at the
+   repository root; its tests and local implementation theorems do not
+   establish general EELS refinement.
 6. If/when optimized implementations are introduced, prove they refine
    the independent simple-step specification rather than proving only
    self-consistency of the optimized code.
@@ -242,8 +274,6 @@ within the limits recorded in the evidence.
 - EELS: https://github.com/ethereum/execution-specs
 - Official fixture source:
   https://github.com/ethereum/execution-spec-tests/blob/main/tests/static/state_tests/VMTests/vmArithmeticTest/addFiller.yml
-- Ethereum Lean library:
-  https://github.com/ethereum/EthLib
 - Yellow Paper: https://ethereum.github.io/yellowpaper/paper.pdf
 - Independent EVM/Yul semantics:
   https://github.com/NethermindEth/EVMYulLean

@@ -272,6 +272,9 @@ function snapshot(out, field, data) {
 async function ethereumJS(c) {
   const common = new Common({chain: Mainnet, hardfork: c.profile === 'osaka' ? Hardfork.Osaka : Hardfork.Shanghai})
   const evm = await createEVM({common})
+  // EIP-2929: active precompiles start warm even in a raw message fixture.
+  // runCall does not perform this transaction-level initialisation.
+  for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   const [parent, child, third, caller] = [A, B, C, sender].map(address)
   if (c.prewarmParent) evm.journal.addAlwaysWarmAddress(parent.toString())
   for (const [who, code, balance, nonce] of [
@@ -500,13 +503,72 @@ for (const op of variants) {
     try {
       const expected = await ethereumJS(c)
       const actual = runLean(c)
-      assert.deepEqual(actual, {status: 'indeterminate', reason}, c.id)
-      boundaries.push({id: c.id, oracleStatus: expected.status, ...actual})
+      if (name === 'identity-precompile') {
+        assert.equal(expected.status, 'stopped', c.id + ': oracle success')
+        checkSnapshots(actual)
+        const fields = diff(expected, actual)
+        assert.deepEqual(fields, [], c.id + ': actual identity CALL-family execution')
+        boundaries.push({id: c.id, oracleStatus: expected.status, ...actual, matched: true})
+      } else {
+        assert.deepEqual(actual, {status: 'indeterminate', reason}, c.id)
+        boundaries.push({id: c.id, oracleStatus: expected.status, ...actual})
+      }
     } catch (error) {
       failures.push({id: c.id, error: String(error)})
     }
   }
 }
+// Separately counted, actually executed 0x04 precompile calls through each
+// continuation variant. The full execution inventory above retains its
+// historical 213-case denominator; these additional cases are not included
+// in that number or mistaken for official EELS conformance.
+const identityCases = []
+const identityRows = []
+for (const op of variants) {
+  for (const inputSize of [0, 5, 33]) {
+    for (const requested of [0, 18, 20000]) {
+      const c = {...defaults, id: op + ':identity-' + inputSize + '-' + requested,
+        category: 'identity', variant: op,
+        parent: prefill + invoke(op, {target: 4, requested, inputSize, output: 64, outputSize: 5}) + '3d00',
+        child: ''}
+      identityCases.push(c)
+      const expected = await observe(c, 'ethereumJS identity', () => ethereumJS(c))
+      const actual = await observe(c, 'Lean identity', () => runLean(c))
+      if (actual?.status !== 'indeterminate' && actual) {
+        try { checkSnapshots(actual) } catch (error) {
+          failures.push({id: c.id, source: 'Lean identity snapshot', error: String(error)})
+        }
+      }
+      const jsDifferences = expected && actual ? diff(expected, actual) : ['missing-observation']
+      if (jsDifferences.length) failures.push({id: c.id, oracle: 'ethereumJS identity', jsDifferences,
+        expected, actual})
+      let gethDifferences = []
+      let crossDifferences = []
+      if (geth) {
+        const observed = await observe(c, 'Geth identity', () => gethReference(c))
+        gethDifferences = observed && actual ? diff(observed, actual) : ['missing-observation']
+        crossDifferences = observed && expected ? diff(observed, expected) : ['missing-observation']
+        if (gethDifferences.length || crossDifferences.length)
+          failures.push({id: c.id, oracle: 'Geth identity', gethDifferences, crossDifferences,
+            geth: observed, ethereumJS: expected, actual})
+      }
+      identityRows.push({id: c.id, inputSize, requested,
+        ethereumJSMatched: jsDifferences.length === 0,
+        gethMatched: geth ? gethDifferences.length === 0 : null,
+        clientAgreement: geth ? crossDifferences.length === 0 : null})
+    }
+  }
+}
+// Deliberately tamper with an independently observed gas result; the same
+// exact-field comparator must reject it, not merely compare status bits.
+const identityFirst = identityRows[0]
+const identityFirstCase = identityCases[0]
+const identityFirstActual = identityFirstCase ? runLean(identityFirstCase) : undefined
+const identityGasMutationDetected = !!identityFirst && !!identityFirstActual &&
+  diff(identityFirstActual, {...identityFirstActual,
+    gasRemaining: (BigInt(identityFirstActual.gasRemaining) + 1n).toString()})
+    .includes('gasRemaining')
+
 const parserChecks = []
 const rootProbe = {...defaults, parent: '333200', child: ''} // CALLER; ORIGIN; STOP
 const maximumAddress = String(addressLimit - 1n)
@@ -566,8 +628,18 @@ console.log(JSON.stringify({
       'A/B balances and A/B/C storage', 'refund on STOP/RETURN']},
   inventory: {execution: cases.length, boundaries: 9, categories, variants: variantsCompared, cases: casesCompared},
   probes: {executionSlotWarmth: 'measured by GAS around SLOAD', grandchildBalance: 'SELFBALANCE in a read-only call'},
-  gasBoundaryGroups, boundaries, parserChecks, negativeControls, failures,
+  gasBoundaryGroups, boundaries,
+  identityExecution: {cases: identityRows.length,
+    ethereumJSMatched: identityRows.filter(c => c.ethereumJSMatched).length,
+    gethMatched: geth ? identityRows.filter(c => c.gethMatched).length : null,
+    clientAgreement: geth ? identityRows.filter(c => c.clientAgreement).length : null,
+    gasMutationDetected: identityGasMutationDetected, rows: identityRows},
+  parserChecks, negativeControls, failures,
 }))
 if (failures.length || counts.ethereumJS.matched !== cases.length ||
-    (geth && counts.geth.matched !== gethEligible) || boundaries.length !== 9 || parserChecks.length !== 8 ||
+    (geth && counts.geth.matched !== gethEligible) ||
+    identityRows.length !== 27 || identityRows.some(c => !c.ethereumJSMatched ||
+      (geth && (!c.gethMatched || !c.clientAgreement))) ||
+    !identityGasMutationDetected ||
+    boundaries.length !== 9 || parserChecks.length !== 8 ||
     !Object.values(negativeControls).every(Boolean)) process.exitCode = 1

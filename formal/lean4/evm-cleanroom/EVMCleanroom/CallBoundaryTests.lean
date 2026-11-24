@@ -103,8 +103,12 @@ private def stoppedWith (result : CallOpcode.Outcome) (address bit value : Nat)
   | .exceptional w s .writeProtection =>
     s.gas == 0 && (w.accounts 0xc1).balance == 1 && (w.accounts 0xc3).balance == 0
   | _ => false
+-- Zero forwarded gas reaches the precompile, whose 15-gas base cost
+-- produces a soft CALL failure, not an unsupported-operation refusal.
 #guard match identityCall with
-  | .indeterminate .unsupportedFork => true
+  | .stopped w s =>
+    s.stack.items.map (·.val) == [0] && s.returnData.size == 0 &&
+    w.warmAddresses 4 && (w.accounts 0xc1).balance == 0
   | _ => false
 
 private def fundedWorld := testWorld #[] 1

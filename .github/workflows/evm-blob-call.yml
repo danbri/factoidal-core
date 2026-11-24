@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   blob-call:
     runs-on: ubuntu-latest
@@ -21,64 +24,90 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Build native executable and audit actual axioms and imports
-        working-directory: formal/lean4/evm-cleanroom
+      - name: Build the root proofs, guards and both native transaction entries
+        working-directory: formal/lean4
         env:
+          LEAN_NUM_THREADS: "1"
           LEAN_STACK_SIZE_KB: "65536"
           MIMALLOC_ARENA_RESERVE: "67108864"
         run: |
-          set -o pipefail
+          set -euo pipefail
           ulimit -v 8388608
-          lake -f lakefile-blob-call.toml clean
-          lake -f lakefile-blob-call.toml build evm-blob-call 2>&1 | tee /tmp/blob-call-build.txt
-          lake -f lakefile-blob-call.toml env lean EVMCleanroom/BlobCall.lean | tee /tmp/blob-call-axioms.txt
-          python3 - <<'PY'
-          import json,re,subprocess
-          from pathlib import Path
-          expected=set("burn_sender burn_other burn_exact funds_refused prepared_exact header_refused execute_exact".split())
-          allowed={"propext","Classical.choice","Quot.sound"}
-          actual={}
-          for line in Path("/tmp/blob-call-axioms.txt").read_text().splitlines():
-              m=re.fullmatch(r"'EVMCleanroom\.BlobCall\.(\w+)' (?:depends on axioms: \[(.*?)\]|does not depend on any axioms)",line)
-              if m:
-                  assert m[1] not in actual
-                  actual[m[1]]=set(filter(None,(m[2] or "").split(", ")))
-          assert set(actual)==expected,actual
-          assert all(a<=allowed for a in actual.values()),actual
-          assert json.loads(Path("lake-manifest.json").read_text())["packages"]==[]
-          paths={"lakefile-blob-call.toml","lean-toolchain","lake-manifest.json","scripts/differential/blob-call.mjs","scripts/differential/package-lock.json"}
-          pending=["EVMCleanroom/BlobCall.lean","EVMCleanroom/BlobCallCLI.lean"]
-          while pending:
-              p=pending.pop()
-              if p in paths: continue
-              paths.add(p)
-              for line in Path(p).read_text().splitlines():
-                  if line.startswith("import "):
-                      for mod in line.split()[1:]:
-                          if mod=="Std" or mod.startswith("Std.") or mod=="Lean.Data.Json": continue
-                          assert mod.startswith("EVMCleanroom."),(p,mod)
-                          pending.append(mod.replace(".","/")+".lean")
-          for p in ("EVMCleanroom/BlobCall.lean","EVMCleanroom/BlobCallCLI.lean"):
-              assert not re.search(r"\b(sorry|native_decide|unsafe|implemented_by|axiom)\b|partial\s+def",Path(p).read_text()),p
-          pins={p:subprocess.check_output(["git","hash-object",p],text=True).strip() for p in sorted(paths)}
-          for p in paths:
-              assert pins[p]==subprocess.check_output(["git","rev-parse","HEAD:formal/lean4/evm-cleanroom/"+p],text=True).strip()
-          evidence={"head":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),"sources":pins,"actualAxioms":{k:sorted(v) for k,v in actual.items()}}
-          Path("/tmp/blob-call-claims.json").write_text(json.dumps(evidence,indent=2))
-          print(json.dumps(evidence))
-          PY
-      - name: Independent fee and balance oracle plus EthereumJS frame comparison
-        working-directory: formal/lean4/evm-cleanroom/scripts/differential
+          lake -d evm-cleanroom clean
+          lake -d evm-cleanroom build EVMCleanroom evm-call-transaction 2>&1 | tee /tmp/blob-call-root-build.txt
+          lake -d evm-cleanroom -f lakefile-blob-call.toml build evm-blob-call 2>&1 | tee /tmp/blob-call-build.txt
+          sha256sum evm-cleanroom/.lake/build/bin/evm-blob-call evm-cleanroom/.lake/build/bin/evm-call-transaction | tee /tmp/blob-call-binaries.txt
+      - name: Audit actual theorem axioms, negative controls and exact source imports
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_NUM_THREADS: "1"
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
         run: |
-          set -o pipefail
-          npm ci
-          node blob-call.mjs "$PWD/../../.lake/build/bin/evm-blob-call" | tee /tmp/blob-call-results.json
+          set -euo pipefail
+          ulimit -v 8388608
+          python3 scripts/check-blobhash-axioms.py --selftest \
+            | tee /tmp/blob-call-axiom-controls.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==8 and x["wrappedPositiveAccepted"],x'
+          python3 scripts/check-blobhash-axioms.py --require-head --out /tmp/blob-call-claims.json --transcripts-dir /tmp/blob-call-axioms \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["theorems"]==30 and x["sourceFiles"]==7 and x["requireHead"],x'
+      - name: Install the existing pinned reference clients
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          printf 'cc95a62e125486d2de9a28cb5fc61c098b955aa22c2dd0b3dc0b19f2df770425  scripts/differential/package-lock.json\n' | sha256sum --check
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+          printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Retain the independent fee and balance oracle and EthereumJS frame comparisons
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          node scripts/differential/blob-call.mjs .lake/build/bin/evm-blob-call | tee /tmp/blob-call-results.json
+      - name: Compare signed BLOBHASH transactions against EthereumJS and pinned Geth
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          geth_dir=$(mktemp -d "$RUNNER_TEMP/evm-geth-blobhash.XXXXXX")
+          geth_release=geth-alltools-linux-amd64-1.17.10-1df30b18
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://gethstore.blob.core.windows.net/builds/$geth_release.tar.gz" \
+            --output "$geth_dir/geth.tar.gz"
+          printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
+          tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
+          export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          printf 'd8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da  %s\n' "$EVM_GETH_EXE" | sha256sum --check
+          node scripts/differential/blobhash-transactions.mjs .lake/build/bin/evm-blob-call .lake/build/bin/evm-call-transaction \
+            | tee /tmp/blobhash-transactions.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          assert x["mode"] == "full" and x["fork"] == "Cancun", x
+          assert x["cases"] == x["matched"] == len(x["rows"]) == 179, x
+          assert x["standaloneCases"] == 173 and x["sequenceCases"] == 6, x
+          assert x["types"] == {"0": 6, "1": 6, "2": 6, "3": 161}, x["types"]
+          for client in ("ethereumJS", "geth"):
+              assert x[client]["executed"] == x[client]["compared"] == x[client]["matched"] == 179, x[client]
+          assert x["clientAgreement"] == {"compared": 179, "matched": 179}, x
+          assert x["failed"] == x["localRefusals"] == x["notExecuted"] == x["kzgOperations"] == 0 and not x["failures"], x["failures"]
+          assert all(row["ethereumJSMatched"] and row["gethMatched"] for row in x["rows"]), x
+          assert x["missingWitnessRefused"], x
+          assert x["negativeControls"] == dict.fromkeys([
+              "changedGas", "changedOutputByte", "changedBlobBurn", "changedBlobGas",
+              "changedSignedHashByte", "changedSignedHashOrder", "changedSignedChainId",
+              "changedSignedAccessList", "changedReceiptStatus",
+              "changedStateBalance", "changedLogData", "changedStorageWord", "omittedRow"], True), x["negativeControls"]
+          assert len(x["nativeSha256"]) == len(x["ordinaryNativeSha256"]) == 64, x'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: blob-call-evidence
           path: |
+            /tmp/blob-call-root-build.txt
             /tmp/blob-call-build.txt
-            /tmp/blob-call-axioms.txt
+            /tmp/blob-call-binaries.txt
+            /tmp/blob-call-axioms/
+            /tmp/blob-call-axiom-controls.json
             /tmp/blob-call-claims.json
             /tmp/blob-call-results.json
+            /tmp/blobhash-transactions.json
