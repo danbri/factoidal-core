@@ -982,18 +982,16 @@ async function main() {
   // link regions of the frame on screen. One small main-thread call for each coalesced move; the
   // window library is told only when the answer changes (issue 1268).
   let pointerShown="arrow",lastPointer:number[]|undefined;
-  const linkText=new WeakMap<object,string>();
   const pointAt=(x:number,y:number)=>{
     lastPointer=[x,y];
     if(!session?.frames||!native)return;
     const page=document as Page,request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number}={shell:shell(),x,y,width};
     if(page.graph)request.model=page.graph.model;
-    else if(!candidate&&frame?.webRender.links.length){
-      let links=linkText.get(frame);
-      if(links===undefined){links=JSON.stringify(frame.webRender.links);linkText.set(frame,links);}
-      request.links=links;request.pageY=Math.round(pageRow(y));
+    let links:unknown[]|undefined;
+    if(!page.graph&&!candidate&&frame?.webRender.links.length){
+      links=frame.webRender.links;request.pageY=Math.round(pageRow(y));
     }
-    const kind=engine.pointerCursor(request);
+    const kind=engine.pointerCursor(request,links);
     if(kind!==pointerShown){pointerShown=kind;native.setCursor(kind);}
   };
   // Lean selects the whole address when the bar takes the focus; typing then replaces it.

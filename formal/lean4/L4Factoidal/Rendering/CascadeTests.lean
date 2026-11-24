@@ -385,6 +385,11 @@ private def isPx (v : Float) : CSS.Length → Bool
   | .px x => x == v
   | _ => false
 
+-- HTML §15.3.10 gives buttons a border-box default that author rules can override.
+#guard hinted "<button type=button>Search</button>" "" "button" fun s => s.pos.borderBox
+#guard hinted "<button>Search</button>" "button{box-sizing:content-box}" "button" fun s => !s.pos.borderBox
+#guard hinted "<div>Search</div>" "" "div" fun s => !s.pos.borderBox
+
 #guard hinted "<img width='200.25' height='20.25e2'>" "" "img" fun s => isPx 200.25 s.width && isPx 20.25 s.height
 #guard hinted "<hr width='50%'>" "" "hr" fun s => match s.width with | .percent p => p == 0.5 | _ => false
 #guard hinted "<iframe width=300 height=100></iframe>" "" "iframe" fun s => isPx 300 s.width && isPx 100 s.height

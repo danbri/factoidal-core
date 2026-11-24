@@ -1703,7 +1703,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           | none => .error s!"image resource not supplied: {key}"
         let ((ax,ay,aw,ah),map) ← imagePlacement x y w h bitmap (attr attrs "preserveAspectRatio")
         -- fill-opacity is not a property of an image; `opacity` is.
-        let painted := {inherited with fill:=.image ⟨map,id,bitmap⟩,stroke:=.none,fillOpacity:=1}
+        let painted := {inherited with fill:=.image {map,id,bitmap},stroke:=.none,fillOpacity:=1}
         return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform,element:=path}]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
@@ -3795,8 +3795,10 @@ private def sceneShader : String :=
   "fn texel(base:u32,w:u32,h:u32,x:f32,y:f32)->vec4f{let i=u32(clamp(x,0.0,f32(w-1u)));let j=u32(clamp(y,0.0,f32(h-1u)));" ++
   "let c=unpack4x8unorm(tiles[base+j*w+i]);return vec4f(c.rgb*c.a,c.a);}" ++
   "fn imageSample(r:u32,start:u32,p:vec2f,alpha:f32)->vec4f{" ++
-  "let fx=word(r)*p.x+word(r+1u)*p.y+word(r+2u)-0.5;let fy=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u)-0.5;" ++
-  "let w=u32(word(r+3u));let h=u32(word(r+7u));let base=start+u32(word(r+8u));" ++
+  "let dw=word(r+3u);let dh=word(r+7u);let width=abs(dw);let height=abs(dh);" ++
+  "var u=word(r)*p.x+word(r+1u)*p.y+word(r+2u);var v=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u);" ++
+  "if(dw<0.0){u=u-floor(u/width)*width;}if(dh<0.0){v=v-floor(v/height)*height;}" ++
+  "let fx=u-0.5;let fy=v-0.5;let w=u32(width);let h=u32(height);let base=start+u32(word(r+8u));" ++
   -- unit scale on whole pixels: the pixel each sample falls in (`ImageRecord.colorAt`)
   "if(word(r)==1.0&&word(r+1u)==0.0&&word(r+4u)==0.0&&word(r+5u)==1.0&&fract(word(r+2u))==0.0&&fract(word(r+6u))==0.0){" ++
   "let n=texel(base,w,h,floor(fx+0.5),floor(fy+0.5));if(n.a<=0.0){return vec4f(0.0);}return vec4f(n.rgb/n.a,n.a*alpha);}" ++

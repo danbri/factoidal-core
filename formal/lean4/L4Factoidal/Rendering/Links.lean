@@ -29,6 +29,14 @@ def decode (source : String) : Except String (List LinkRegion) := do
   if regions.length > 49152 then throw "link regions: too many regions"
   regions.mapM decodeRegion
 
+/-- Contiguous link chunks can be picked from the end toward the beginning.
+The first successful pick is the same link as a pick over the whole list. -/
+theorem hitLink_append (before after : List LinkRegion) (x y : Float) :
+    hitLink (before ++ after) x y = (hitLink after x y).or (hitLink before x y) := by
+  simp [hitLink, List.reverse_append, List.find?_append]
+
+#print axioms hitLink_append
+
 def targetJSON : Option LinkRegion → String
   | none => "null"
   | some r => "{\"sourceNode\":" ++ toString r.sourceNode ++ ",\"href\":" ++ quote r.href ++ "}"
