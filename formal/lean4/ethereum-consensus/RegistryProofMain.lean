@@ -134,7 +134,93 @@ private def dispatchStateVotes (slot index : UInt64) (length : Nat)
     | _ => throw "parse_error"
   | _ => throw "parse_error"
 
+
+private def allSignerErrorName : SignerError → String
+  | .resourceLimit => "resource_limit"
+  | .indexMismatch => "index_mismatch"
+  | .rootMismatch => "signer_root_mismatch"
+  | .registry e => errorName e
+  | .context e => signingErrorName e
+  | .preparation e => signingErrorName (.preparation e)
+  | .slotMismatch => "slot_root_mismatch"
+  | .stateMismatch => "state_root_mismatch"
+
+private def readSignerRow : List String → Except String SignerWitness
+  | idx :: key :: cred :: balance :: slashed :: eligible :: activation :: exit ::
+      withdrawable :: tail => do
+    if tail.length ≠ 40 then throw "branch_length"
+    let i ← readU64 idx
+    let k ← readHex key
+    let c ← readHex cred
+    let b ← readU64 balance
+    let s ← readFlag slashed
+    let e ← readU64 eligible
+    let a ← readU64 activation
+    let x ← readU64 exit
+    let w ← readU64 withdrawable
+    let ss ← tail.mapM readHex
+    let v : RegistryValidator := {
+      publicKey := k, withdrawalCredentials := c, effectiveBalance := b, slashed := s,
+      activationEligibilityEpoch := e, activationEpoch := a, exitEpoch := x,
+      withdrawableEpoch := w }
+    return ⟨i, v, ss⟩
+  | _ => .error "parse_error"
+
+private def readSignerRows (n : Nat) (tokens : List String) : Except String (List SignerWitness) :=
+  if n > slashingIndexLimit then .error "resource_limit"
+  else if tokens.length ≠ n * 49 then .error "branch_length"
+  else (List.range n).mapM (fun i => readSignerRow ((tokens.drop (i*49)).take 49))
+
+private def keyListText (keys : List ByteArray) : String :=
+  if keys.isEmpty then "-" else String.intercalate "," (keys.map L4Factoidal.Crypto.bytesToHex)
+
+private def indexListText (indices : List UInt64) : String :=
+  if indices.isEmpty then "-" else String.intercalate "," (indices.map (fun i => toString i.toNat))
+
+private def dispatchAllSigners : List String → Except String String
+  | slotText :: countText :: rrText :: rootText :: rest => do
+    let slot ← readU64 slotText
+    let length ← readNat countText
+    let rr ← readHex rrText
+    let root ← readHex rootText
+    let depth := registryStateDepth (mainnetRegistryLayout slot)
+    let proofCount := 4 * depth
+    if rest.length < proofCount + 22 then throw "branch_length"
+    let ss ← (rest.take proofCount).mapM readHex
+    match rest.drop proofCount with
+    | prev :: curr :: activation :: genesis :: tail => do
+      let pv ← readHex prev
+      let cv ← readHex curr
+      let ae ← readU64 activation
+      let gr ← readHex genesis
+      let c : ForkContext := {
+        previousVersion := pv, currentVersion := cv, activationEpoch := ae,
+        genesisValidatorsRoot := gr }
+      let a ← readVote (tail.take 7)
+      let b ← readVote ((tail.drop 7).take 7)
+      match tail.drop 14 with
+      | lt :: rt :: lc :: rc :: rows => do
+        let left ← readIndices lt
+        let right ← readIndices rt
+        let ln ← readNat lc
+        let rn ← readNat rc
+        if ln > slashingIndexLimit ∨ rn > slashingIndexLimit then throw "resource_limit"
+        let lw ← readSignerRows ln (rows.take (ln*49))
+        let rw ← readSignerRows rn (rows.drop (ln*49))
+        let result ← (checkAllStateSigners slot c a b left right lw rw length rr
+          (ss.take depth) ((ss.drop depth).take depth)
+          ((ss.drop (2*depth)).take depth) (ss.drop (3*depth)) root).mapError allSignerErrorName
+        return "prepared_not_authenticated " ++
+          L4Factoidal.Crypto.bytesToHex result.1.firstSigningRoot.bytes ++ " " ++
+          L4Factoidal.Crypto.bytesToHex result.1.secondSigningRoot.bytes ++ " " ++
+          keyListText result.2.firstKeys ++ " " ++ keyListText result.2.secondKeys ++ " " ++
+          indexListText result.2.eligibleCommon
+      | _ => throw "parse_error"
+    | _ => throw "parse_error"
+  | _ => .error "parse_error"
+
 private def dispatch : List String → Except String String
+  | "allsigners" :: rest => dispatchAllSigners rest
   | op :: count :: idx :: ep :: common :: key :: cred :: balance :: slashed ::
       eligible :: activation :: exit :: withdrawable :: root :: rest => do
     let length ← readNat count
@@ -230,7 +316,8 @@ def main : IO Unit := do
   repeat
     let line ← input.getLine
     if line.isEmpty then break
-    let limit := if line.startsWith "fullstate " then 8192 else 4096
+    let limit := if line.startsWith "allsigners " then 262144
+      else if line.startsWith "fullstate " then 8192 else 4096
     let result := if line.utf8ByteSize > limit then .error "resource_limit"
       else dispatch (line.trimAscii.toString.splitOn " ")
     output.putStrLn (match result with
