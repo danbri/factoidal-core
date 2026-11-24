@@ -3192,11 +3192,39 @@ def RuleIndex.candidates (ix : RuleIndex) (k : ElemKey) (lname : String) : Array
     if let some a := ix.byClass[cl]? then runs := runs.push a
   return RuleIndex.mergeRuns runs
 
+/-- Within a rule selected by the index, cheaply reject its other selectors whose
+rightmost compound cannot match this element. Rules with a single selector use
+the direct matcher. -/
+private def matchGroupedEntry (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule) : Option Match :=
+  match e.2.selectors with
+  | _ :: _ :: _ =>
+    let k := keys id
+    let tag := (dom.get id).lname
+    let m := e.2.selectors.filter fun sel => sel.bucket.admits k tag && selectorMatchesK keys dom id sel state
+    if m.isEmpty then none else some (e.1,e.2,m)
+  | _ => matchEntry keys dom id state e
+
+private theorem matchGroupedEntry_eq (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule) :
+    matchGroupedEntry keys dom id state e = matchEntry keys dom id state e := by
+  have same : (e.2.selectors.filter fun sel => sel.bucket.admits (keys id) (dom.get id).lname && selectorMatchesK keys dom id sel state) =
+      e.2.selectors.filter (selectorMatchesK keys dom id · state) := by
+    apply List.filter_congr
+    intro sel _
+    cases h : selectorMatchesK keys dom id sel state with
+    | false => simp only [Bool.and_false]
+    | true => simp [selectorMatchesK_admits keys dom id sel state h]
+  unfold matchGroupedEntry
+  split
+  · simp only [same, matchEntry]
+  · rfl
+
+#print axioms matchGroupedEntry_eq
+
 /-- The rules that match element `id`, from its buckets. -/
 def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
   (ix.candidates (keys id) (dom.get id).lname).toList.filterMap fun i =>
     match ix.entries[i]? with
-    | some e => matchEntry keys dom id state e
+    | some e => matchGroupedEntry keys dom id state e
     | none => none
 
 /-! ### Rule buckets on a page with shadow trees
