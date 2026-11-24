@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { exampleQuery, exampleResults } from '../../docs/web/hub/wikidata-rewriter/example.mjs';
+import { exampleQuery, exampleResults } from '../../docs/web/hub/wikidata-results/example.mjs';
 import {
-  axisColumn, commonsImage, displayedVars, graphData, mapGeometry, numberValue, viewDirectives, viewNames,
-} from '../../docs/web/hub/wikidata-rewriter/view-data.mjs';
-import { createResultViews } from '../../docs/web/hub/wikidata-rewriter/views.mjs';
+  axisColumn, commonsImage, displayedVars, graphData, highlightTokens, mapGeometry, numberValue, viewDirectives, viewNames,
+} from '../../docs/web/hub/wikidata-results/view-data.mjs';
+import { createResultViews } from '../../docs/web/hub/wikidata-results/views.mjs';
 
 const { head: { vars }, results: { bindings } } = exampleResults;
 const wkt = value => ({ datatype: 'http://www.opengis.net/ont/geosparql#wktLiteral', value });
@@ -67,4 +67,15 @@ test('image grid recognises Commons file URLs', () => {
   assert.equal(commonsImage(media), 'https://commons.wikimedia.org/wiki/Special:FilePath/Example.jpg?width=480');
   assert.equal(commonsImage({ ...media, value: 'https://commons.wikimedia.org.example.org/wiki/Special:FilePath/Example.jpg' }), null);
   assert.equal(commonsImage({ ...media, value: 'https://commons.wikimedia.org:8080/wiki/Special:FilePath/Example.jpg' }), null);
+});
+
+test('query editor colours comments, keywords, literals, IRIs and variables', () => {
+  const source = '# note\nSELECT ?x WHERE { BIND("SELECT" AS ?x) wd:Q42 ?p <urn:example> }';
+  const tokens = highlightTokens(source);
+  assert.deepEqual(tokens.map(({ text, kind }) => [text, kind]), [
+    ['# note', 'comment'], ['SELECT', 'keyword'], ['?x', 'variable'], ['WHERE', 'keyword'],
+    ['BIND', 'keyword'], ['"SELECT"', 'string'], ['AS', 'keyword'], ['?x', 'variable'],
+    ['wd:Q42', 'iri'], ['?p', 'variable'], ['<urn:example>', 'iri'],
+  ]);
+  assert.ok(tokens.every(({ at, text }) => source.slice(at, at + text.length) === text));
 });

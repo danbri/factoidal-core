@@ -1,15 +1,15 @@
 import '../assets/sparql-result-elements.mjs';
 import { exampleQuery, exampleResults } from './example.mjs';
-import { viewDirectives, viewNames } from './view-data.mjs';
+import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs';
 import { createResultViews } from './views.mjs';
 
 const $ = id => document.getElementById(id);
-const original = $('original');
-const rewritten = $('rewritten');
+const editor = $('query');
+const highlight = $('highlight');
 const language = $('language');
 const endpoint = $('endpoint');
-const rewriteButton = $('rewrite');
 const runButton = $('run');
+const inspectButton = $('inspect');
 const visualTab = $('visual-tab');
 const rawTab = $('raw-tab');
 const visualPanel = $('visual-panel');
@@ -22,7 +22,7 @@ const endpoints = {
 };
 
 let runtime;
-let rewriteInProgress = false;
+let parseJob = 0;
 let controller;
 let result;
 let directives;
@@ -55,58 +55,48 @@ function chosenLanguage() {
   return tag;
 }
 
-function queryFor(which) {
-  return which === 'classic' ? original.value : rewritten.value;
-}
-
 function controls() {
-  rewriteButton.disabled = rewriteInProgress || !original.value.trim();
-  runButton.disabled = Boolean(controller) || !queryFor(endpoint.value).trim();
+  const empty = !editor.value.trim();
+  inspectButton.disabled = empty;
+  runButton.disabled = Boolean(controller) || empty;
 }
 
-function diagnose(reports) {
-  const list = $('diagnostics');
-  list.hidden = reports.length === 0;
-  list.replaceChildren(...reports.map(report => element('li', report)));
-}
-
-function resetRewrite() {
-  rewritten.value = '';
-  $('rewrite-state').textContent = '';
-  diagnose([]);
-}
-
-async function rewrite() {
-  const input = original.value;
-  const outputAtStart = rewritten.value;
-  let tag;
-  try {
-    tag = chosenLanguage();
-  } catch (error) {
-    $('rewrite-state').textContent = error.message;
-    return;
+function paintEditor() {
+  const fragments = [];
+  let previous = 0;
+  for (const { at, text, kind } of highlightTokens(editor.value)) {
+    fragments.push(document.createTextNode(editor.value.slice(previous, at)));
+    const span = element('span', text);
+    span.className = 'syntax-' + kind;
+    fragments.push(span);
+    previous = at + text.length;
   }
-  rewriteInProgress = true;
-  controls();
-  $('rewrite-state').textContent = 'Loading the browser rewriter…';
-  diagnose([]);
+  fragments.push(document.createTextNode(editor.value.slice(previous) + '\n'));
+  highlight.replaceChildren(...fragments);
+  highlight.scrollLeft = editor.scrollLeft;
+  highlight.scrollTop = editor.scrollTop;
+}
+
+function clearStructure() {
+  parseJob += 1;
+  $('parse-state').textContent = '';
+  $('parsed').hidden = true;
+}
+
+async function inspectQuery() {
+  const id = ++parseJob;
+  $('parsed').hidden = true;
+  $('parse-state').textContent = 'Parsing with Factoidal Wasm…';
   try {
     const api = await fetchRuntime();
-    const answer = await api.wikidataRewrite(input, { language: tag });
-    if (input !== original.value || outputAtStart !== rewritten.value || tag !== chosenLanguage()) return;
-    rewritten.value = answer.rewritten_query ?? '';
-    $('rewrite-state').textContent = {
-      rewritten: 'Rewritten in browser Wasm.',
-      unchanged: 'The browser rewriter left this query unchanged.',
-    }[answer.rewrite_status] ?? 'Rewrite status ' + answer.rewrite_status.replaceAll('_', ' ') + '.';
-    diagnose([...answer.rewrites.map(rule => rule.rule_id + ' · ' + rule.variant_id),
-      ...answer.warnings.map(item => item.message), ...answer.errors.map(item => item.message)]);
-    if (answer.rewritten_query !== null) endpoint.value = 'qlever';
+    const structure = await api.parseSparqlStructure(editor.value, { wdqs: true });
+    if (id !== parseJob) return;
+    $('parsed').textContent = structure.sse;
+    $('parsed').hidden = false;
+    $('parse-state').textContent = structure.form.toUpperCase() + ' query' +
+      (structure.variables.length ? ' · ' + structure.variables.map(variable => '?' + variable).join(', ') : '');
   } catch (error) {
-    if (input === original.value) $('rewrite-state').textContent = 'Browser rewrite unavailable. ' + error.message;
-  } finally {
-    rewriteInProgress = false;
-    controls();
+    if (id === parseJob) $('parse-state').textContent = error.message;
   }
 }
 
@@ -190,26 +180,11 @@ function renderRaw() {
   }
 }
 
-function showResult(value, originalQuery, runningQuery, source) {
+function showResult(value, query, source) {
   result = value;
-  directives = viewDirectives(originalQuery);
-  // A rewritten draft can explicitly change the presentation. View directives
-  // in the original remain available when the generated output omits them.
-  if (runningQuery) {
-    const edited = viewDirectives(runningQuery);
-    directives = {
-      title: edited.title || directives.title,
-      defaultView: edited.hasDefaultView ? edited.defaultView : directives.defaultView,
-      unknownView: edited.hasDefaultView ? edited.unknownView : directives.unknownView,
-      options: new Map(Object.keys(viewNames).map(id => [id, {
-        ...directives.options.get(id), ...edited.options.get(id),
-      }])),
-      invalidOptions: directives.invalidOptions || edited.invalidOptions,
-    };
-  }
+  directives = viewDirectives(query);
   visualTab.hidden = value.kind !== 'select';
   view.value = directives.defaultView;
-  $('result-controls').hidden = false;
   const rows = value.kind === 'select' ? ` · ${value.data.results.bindings.length.toLocaleString()} rows` : '';
   $('result-state').textContent = source + rows;
   renderRaw();
@@ -219,8 +194,7 @@ function showResult(value, originalQuery, runningQuery, source) {
 async function run() {
   const which = endpoint.value;
   const [name, url] = endpoints[which];
-  const source = original.value;
-  const body = queryFor(which);
+  const body = editor.value;
   let query;
   try {
     query = body.replaceAll('[AUTO_LANGUAGE]', chosenLanguage());
@@ -257,7 +231,7 @@ async function run() {
       value = { kind: 'rdf', data: await response.text(), contentType };
     }
     if (controller !== active) return;
-    showResult(value, source, which === 'qlever' ? body : null, name);
+    showResult(value, body, name);
   } catch (error) {
     if (controller === active) {
       $('result-state').textContent = name + (error.name === 'AbortError' ? ' timed out.' : '. ' + error.message);
@@ -281,10 +255,11 @@ function stopRunning() {
 
 function loadExample() {
   stopRunning();
-  original.value = exampleQuery;
-  resetRewrite();
+  editor.value = exampleQuery;
+  paintEditor();
+  clearStructure();
   endpoint.value = 'classic';
-  showResult({ kind: 'select', data: exampleResults }, exampleQuery, null, 'Graph example · saved results');
+  showResult({ kind: 'select', data: exampleResults }, exampleQuery, 'Graph example · saved results');
   controls();
 }
 
@@ -295,12 +270,20 @@ for (const [id, label] of Object.entries(viewNames)) {
   view.add(option);
 }
 $('example').onclick = loadExample;
-rewriteButton.onclick = rewrite;
+inspectButton.onclick = inspectQuery;
 runButton.onclick = run;
-endpoint.onchange = controls;
-original.oninput = () => { stopRunning(); resetRewrite(); controls(); };
-rewritten.oninput = () => { stopRunning(); controls(); };
-language.oninput = () => { stopRunning(); resetRewrite(); controls(); };
+editor.oninput = () => { stopRunning(); clearStructure(); paintEditor(); controls(); };
+editor.onscroll = () => {
+  highlight.scrollTop = editor.scrollTop;
+  highlight.scrollLeft = editor.scrollLeft;
+};
+editor.onkeydown = event => {
+  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && !runButton.disabled) {
+    event.preventDefault();
+    run();
+  }
+};
+language.oninput = () => { stopRunning(); controls(); };
 visualTab.onclick = () => selectTab(true);
 rawTab.onclick = () => selectTab(false);
 visualTab.parentElement.onkeydown = event => {

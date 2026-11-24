@@ -664,6 +664,20 @@ export interface WikidataRewriteResult {
   errors: WikidataRewriteDiagnostic[];
 }
 
+export interface SparqlQueryStructure {
+  form: 'select' | 'ask' | 'construct' | 'describe';
+  variables: string[];
+  sse: string;
+}
+
+/** Parse a query without evaluating it. The S-expression preserves property paths.
+ * Set wdqs to use Wikidata's implicit prefixes.
+ */
+export function parseSparqlStructure(
+  query: string,
+  options?: { wdqs?: boolean; version?: '1.1' | '1.2' }
+): Promise<SparqlQueryStructure>;
+
 /** Rewrite legacy WDQS syntax in a Lean engine with the wikidataRewrite op.
  * AUTO_LANGUAGE defaults to en; the caller may supply an explicit language.
  */
@@ -2389,6 +2403,7 @@ declare const _default: {
   fromQuads: typeof fromQuads;
   ready: typeof ready;
   wikidataRewrite: typeof wikidataRewrite;
+  parseSparqlStructure: typeof parseSparqlStructure;
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
   syntaxFor: typeof syntaxFor;

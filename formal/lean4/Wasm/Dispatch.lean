@@ -294,6 +294,7 @@ def handleOpNames : List String :=
   , "resolveIri"
   , "queryForm"
   , "wikidataRewrite"
+  , "parseSparqlStructure"
   , "engineTables"
   , "apiCheck"
   , "parseQuadsJson"

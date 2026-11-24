@@ -35,7 +35,7 @@ export {
   isValidLiteral,
   canonicalLiteral,
   literalFromValue,
-  ready, wikidataRewrite,
+  ready, wikidataRewrite, parseSparqlStructure,
   engineTables,
   sameValue,
   syntaxFor,

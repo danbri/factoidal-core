@@ -20,6 +20,21 @@ export const viewNames = Object.freeze({
 const viewIds = new Map(Object.keys(viewNames).map(id => [id.toLowerCase(), id]));
 const queryTokens = /"""(?:\\[\s\S]|(?!""")[\s\S])*"""|'''(?:\\[\s\S]|(?!''')[\s\S])*'''|"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'|<[^<>"{}|^\x60\\\s]*>|#[^\r\n]*/g;
 
+const editorTokens = new RegExp(queryTokens.source +
+  String.raw`|[?$][\p{L}\p{N}_][\p{L}\p{N}\p{M}_]*|\b(?:SELECT|ASK|CONSTRUCT|DESCRIBE|PREFIX|BASE|WHERE|FROM|NAMED|OPTIONAL|FILTER|UNION|MINUS|SERVICE|SILENT|BIND|VALUES|UNDEF|GROUP|HAVING|ORDER|LIMIT|OFFSET|BY|ASC|DESC|AS|DISTINCT|REDUCED|GRAPH|EXISTS|NOT|WITH|INCLUDE)\b|\b[A-Za-z_][\w-]*:[\w-]+`, 'giu');
+
+export function highlightTokens(query) {
+  return Array.from(query.matchAll(editorTokens), match => {
+    const [text] = match;
+    let kind = 'keyword';
+    if (text.startsWith('#')) kind = 'comment';
+    else if (/^["']/.test(text)) kind = 'string';
+    else if (/^[?$]/.test(text)) kind = 'variable';
+    else if (text.startsWith('<') || text.includes(':')) kind = 'iri';
+    return { at: match.index, text, kind };
+  });
+}
+
 export function viewDirectives(query) {
   const options = new Map();
   let defaultView = 'Table';

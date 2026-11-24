@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--jar", type=Path, required=True, help="Oracle JAR built from that checkout")
     parser.add_argument("--lean-bin", type=Path, help="Compare the compiled Lean JSONL command")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--require-parity", action="store_true",
+                        help="Fail unless all statuses and all successful Java rewrite texts match")
     args = parser.parse_args()
     fixtures = args.upstream / "fixtures"
     inputs = {
@@ -56,6 +58,10 @@ def main():
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{counts['status_match']}/{len(rows)} statuses match; "
           f"{counts['byte_match_rewritten']}/{counts['java_rewritten']} Java rewrites match byte for byte.")
+    if args.require_parity and (
+        counts["status_match"] != len(rows) or counts["byte_match_rewritten"] != counts["java_rewritten"]
+    ):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
