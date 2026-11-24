@@ -3757,6 +3757,11 @@ structure HasReads where
   classes : List String := []
   attrs : List String := []
   anyAttr : Bool := false
+  /-- Every compound of every `:has()` argument has a class, an id or an attribute selector
+  that is not under `:not()`, its combinators are descendant or child only, and no
+  `:nth-*()` or structural pseudo-class is in an argument: an element that has none of
+  `classes` and `attrs` then matches no compound of an argument (`HasReads.childWriteOk`). -/
+  childSafe : Bool := true
   deriving Inhabited, BEq
 
 /-- The pseudo-classes that read the place of an element among its siblings or its
@@ -3778,12 +3783,19 @@ def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
     | [] => return some { out with classes := out.classes.eraseDups, attrs := out.attrs.eraseDups }
     | (inHas, .mk parts) :: rest =>
       let mut more := rest
-      for (_, simples) in parts do
+      for (comb, simples) in parts do
+        if inHas then
+          let positive := simples.any fun s => match s with
+            | .cls _ | .id _ | .attr .. => true
+            | _ => false
+          if !positive || !(comb == ' ' || comb == '>') then out := { out with childSafe := false }
         for s in simples do
           match s with
           | .has l => more := l.map ((true, ·)) ++ more
           | .anchors _ => return none
-          | .nth _ _ _ (some l) => more := l.map ((inHas, ·)) ++ more
+          | .nth _ _ _ l =>
+            if inHas then out := { out with childSafe := false }
+            if let some l := l then more := l.map ((inHas, ·)) ++ more
           | .not l => more := l.map ((inHas, ·)) ++ more
           | .is l => more := l.map ((inHas, ·)) ++ more
           | .cls v => if inHas then out := { out with classes := v.toLower :: out.classes }
@@ -3791,6 +3803,7 @@ def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
           | .attr _ name _ _ _ _ => if inHas then out := { out with attrs := name.toLower :: out.attrs }
           | .lang _ => if inHas then out := { out with attrs := "lang" :: out.attrs }
           | .pseudo n =>
+            if inHas && structuralPseudo n then out := { out with childSafe := false }
             if inHas && !structuralPseudo n then
               if n.startsWith "dir(" then out := { out with attrs := "dir" :: out.attrs }
               else out := { out with anyAttr := true }
@@ -3818,6 +3831,17 @@ def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
       !((o.filter (!n.contains ·)) ++ (n.filter (!o.contains ·))).any r.classes.contains
   else !r.anyAttr && !r.attrs.contains name
 
+/-- A child write: elements are added or removed, and `x` is one of them or of their
+descendants. With `childSafe`, when no such `x` has a class in `classes` or an attribute in
+`attrs`, no added or removed element matches a compound of a `:has()` argument, and the
+descendant and child relations between the other elements do not change: every `:has()`
+of the document holds where it held before the write. Attribute names compare in lower
+case, whatever their namespace. -/
+def HasReads.childWriteOk (r : HasReads) (attrs : Array (String × String)) : Bool :=
+  r.childSafe && attrs.all fun (name, value) =>
+    let name := name.toLower
+    !r.attrs.contains name && !(name == "class" && (classTokens value).any r.classes.contains)
+
 #guard (match parse ".a:has(.b, [data-x]) .c { color: red } .d:has(> p:dir(rtl)) { color: blue }" with
   | .ok rules => match hasArgumentReads rules with
     | some r => r.classes == ["b"] && r.attrs.length == 2 && r.attrs.contains "data-x" &&
@@ -3834,6 +3858,24 @@ def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
   | .ok rules => match hasArgumentReads rules with
     | some r => !r.unaffected "aria-expanded" "false" "true" && r.unaffected "class" "" "q"
     | none => false
+  | .error _ => false)
+
+-- `childSafe`: positive class, id or attribute in every compound, descendant and child only
+#guard (match parse ".a:has(.b > [data-x].c) .d { color: red } #e:has(#f) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.childSafe && r.childWriteOk #[("class", "x y"), ("id", "z")] &&
+        !r.childWriteOk #[("CLASS", "B")] && !r.childWriteOk #[("data-x", "")] && !r.childWriteOk #[("id", "q")]
+    | none => false
+  | .error _ => false)
+#guard ["a:has(p) {}", "a:has(+ .b) {}", "a:has(.b ~ .c) {}", "a:has(.b:empty) {}",
+    "a:has(.b:nth-child(2)) {}", "a:has(:not(.b)) {}", "a:has(:is(.b, .c)) {}", "a:has(.b:not(:first-child)) {}"].all
+  fun css => match parse css with
+    | .ok rules => match hasArgumentReads rules with
+      | some r => !r.childSafe
+      | none => true
+    | .error _ => false
+#guard (match parse ".a:not(:nth-child(2)) .b { color: red } .c:has(.d:hover) { color: blue }" with
+  | .ok rules => (hasArgumentReads rules).map (·.childSafe) == some true
   | .error _ => false)
 
 /-! ### Animated values in the cascade
