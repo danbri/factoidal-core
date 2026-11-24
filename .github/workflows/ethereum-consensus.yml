@@ -133,6 +133,16 @@ jobs:
             "$RUNNER_TEMP/ethereum-signing-axioms.log" | tee "$RUNNER_TEMP/ethereum-signing-ledger.json"
           python3 ethereum-consensus/scripts/check-signing-domains.py \
             ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-signing-results.json"
+      - name: Audit actual attestation SSZ and target-epoch signing results
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/AttestationData.lean" |
+            tee "$RUNNER_TEMP/ethereum-attestation-axioms.log"
+          python3 ethereum-consensus/scripts/check-attestation-data-axioms.py \
+            "$RUNNER_TEMP/ethereum-attestation-axioms.log" | tee "$RUNNER_TEMP/ethereum-attestation-ledger.json"
+          python3 ethereum-consensus/scripts/check-attestation-data.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-attestation-results.json"
       - name: Independent SSZ generalized-index reference over 1025 inputs
         run: |
           set -euo pipefail
@@ -192,4 +202,7 @@ jobs:
             ${{ runner.temp }}/ethereum-signing-axioms.log
             ${{ runner.temp }}/ethereum-signing-ledger.json
             ${{ runner.temp }}/ethereum-signing-results.json
+            ${{ runner.temp }}/ethereum-attestation-axioms.log
+            ${{ runner.temp }}/ethereum-attestation-ledger.json
+            ${{ runner.temp }}/ethereum-attestation-results.json
           if-no-files-found: warn
