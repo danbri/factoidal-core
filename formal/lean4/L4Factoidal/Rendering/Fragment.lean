@@ -78,6 +78,9 @@ nearest positioned ancestor (or the root) still has to lay out. -/
 structure Result where
   nodes : Array Node := #[]
   boxes : Array Box := #[]
+  /-- Right edge of an inline layout before its inline-block transforms, when
+  it differs from the edge reported by the painted boxes. -/
+  inlineFlowRight : Option Float := none
   runs : Array GlyphRun := #[]
   height : Float := 0
   pending : Array Pending := #[]
