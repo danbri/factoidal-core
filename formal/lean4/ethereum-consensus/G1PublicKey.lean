@@ -139,8 +139,17 @@ theorem admitPoint_ok (q result : AffinePoint) (sign : Bool)
     · simp only [admitPoint, if_pos hc, if_pos hs, Except.ok.injEq] at h
       subst result
       exact ⟨rfl, hc, hs⟩
-    · simp only [admitPoint, if_pos hc, if_neg hs] at h
-  · simp only [admitPoint, if_neg hc] at h
+    · simp [admitPoint, hc, hs] at h
+  · simp [admitPoint, hc] at h
+
+/-- Kind: refinement. Says: the checked coordinate predicate entails the
+canonical field bounds, curve equation and requested sign.
+Does not say: the recovered square root always exists. -/
+theorem coordinateChecks_sound (q : AffinePoint) (sign : Bool)
+    (h : coordinateChecks q sign = true) :
+    ((q.x < modulus ∧ q.y < modulus) ∧
+      sq q.y = addF (mulF (sq q.x) q.x) 4) ∧ largeY q.y = sign := by
+  simpa [coordinateChecks, Bool.and_eq_true] using h
 
 /-- Kind: linkage. Says: successful byte decoding went through candidate
 recovery and the concrete coordinate and subgroup checks.
@@ -150,7 +159,7 @@ theorem decodePublicKey_ok (bytes : ByteArray) (result : AffinePoint)
     ∃ sign : Bool, candidate bytes = .ok (result, sign) ∧
       coordinateChecks result sign = true ∧ subgroupCheck result = true := by
   cases hc : candidate bytes with
-  | error e => simp only [decodePublicKey, hc] at h
+  | error e => simp [decodePublicKey, hc] at h
   | ok pair =>
     obtain ⟨q, sign⟩ := pair
     simp only [decodePublicKey, hc] at h
@@ -160,6 +169,7 @@ theorem decodePublicKey_ok (bytes : ByteArray) (result : AffinePoint)
 
 #print axioms EthereumConsensus.BLS.decodePublicKey_wrong_width
 #print axioms EthereumConsensus.BLS.admitPoint_ok
+#print axioms EthereumConsensus.BLS.coordinateChecks_sound
 #print axioms EthereumConsensus.BLS.decodePublicKey_ok
 
 end EthereumConsensus.BLS
