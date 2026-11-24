@@ -162,10 +162,10 @@ assert.equal(blobPrice(10015432n,5007716n),7n)
 assert.equal(blobPrice(213662528n,3338477n),6235149080797199216264525102n)
 assert.equal(blobPrice(320493824n,5007716n),6235149080802028382733105041n)
 const B=(p,c,e)=>add('B\t'+text(p)+'|'+text(c),e)
-const bExpected=(n,d)=>{
+const bExpected=(n,d,fee=100n)=>{
  if(n>64n*d)return ind('blob-fee-resource-limit')
  const price=String(blobPrice(n,d))
- return {status:'ok',fee:'100',blobFee:price,stack:price,gas:'0'}
+ return {status:'ok',fee:String(fee),blobFee:price,stack:price,gas:'0'}
 }
 for(const time of [cancun+1,prague,prague+1]){
  const d=den(time)
@@ -190,6 +190,21 @@ for(const time of [cancun+1,prague,prague+1]){
  const badShape=c.slice();badShape[19]=Buffer.alloc(31);B(p,badShape,err('invalid-shape'))
  const old=modern(23000001,cancun-1,1),older=modern(23000000,cancun-2,0)
  old[0]=hash(older);B(older,old,ind('blob-fee-unavailable'))
+}
+// Sample 512 distinct whole-blob excesses across each complete admitted
+// range, including its endpoints. Unlike the arithmetic stress values
+// above, these excesses respect the from-zero whole-blob invariant.
+for(const time of [cancun+1,prague+1]){
+ const d=den(time),maxBlobs=64n*d/blobUnit
+ for(let i=0;i<512;i++){
+  const n=(BigInt(i)*maxBlobs/511n)*blobUnit
+  const p=modern(23000000,time-1,i),c=modern(23000001,time,i+1)
+  const normalFee=[0n,1n,100n,1000000000n,2n**128n,2n**255n][i%6]
+  p[15]=nat(normalFee);c[15]=nat(normalFee)
+  p[17]=nat(target(time));p[18]=nat(n)
+  c[17]=nat(0);c[18]=nat(n);c[0]=hash(p)
+  B(p,c,bExpected(n,d,normalFee))
+ }
 }
 const last=modern(24000000,osaka-1,1);H(last)
 const future=modern(24000001,osaka,1);H(future,ind('later-fork'))

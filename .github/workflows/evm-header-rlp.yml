@@ -29,7 +29,8 @@ jobs:
         run: |
           set -o pipefail
           ulimit -v 8388608
-          lake -f lakefile-header-rlp.toml build evm-header-rlp
+          lake -f lakefile-header-rlp.toml clean
+          lake -f lakefile-header-rlp.toml build evm-header-rlp 2>&1 | tee /tmp/header-rlp-build.txt
           lake -f lakefile-header-rlp.toml env lean EVMCleanroom/HeaderRLP.lean | tee /tmp/header-rlp-axioms.txt
           python3 - <<'PY'
           import json,re,subprocess
@@ -45,10 +46,16 @@ jobs:
           assert set(actual)==expected,actual
           assert all(a<=allowed for a in actual.values()),actual
           assert json.loads(Path("lake-manifest.json").read_text())["packages"]==[]
-          paths=["EVMCleanroom/HeaderRLP.lean","EVMCleanroom/HeaderRLPCLI.lean","EVMCleanroom/Core.lean","EVMCleanroom/Storage.lean","EVMCleanroom/HeaderChain.lean","EVMCleanroom/HeaderFees.lean","EVMCleanroom/Keccak.lean","EVMCleanroom/Memory.lean","EVMCleanroom/CLIEncoding.lean","lakefile-header-rlp.toml","scripts/differential/header-rlp.mjs","scripts/differential/package-lock.json","evidence/frontier-mainnet-46147.json"]
+          paths=["EVMCleanroom/HeaderRLP.lean","EVMCleanroom/HeaderRLPCLI.lean","EVMCleanroom/Core.lean","EVMCleanroom/Storage.lean","EVMCleanroom/HeaderChain.lean","EVMCleanroom/HeaderFees.lean","EVMCleanroom/Keccak.lean","EVMCleanroom/Memory.lean","EVMCleanroom/MemoryGas.lean","EVMCleanroom/CLIEncoding.lean","lakefile-header-rlp.toml","lean-toolchain","lake-manifest.json","scripts/differential/header-rlp.mjs","scripts/differential/package-lock.json","evidence/frontier-mainnet-46147.json"]
           pins={p:subprocess.check_output(["git","hash-object",p],text=True).strip() for p in paths}
           for p in paths:
               assert pins[p]==subprocess.check_output(["git","rev-parse","HEAD:formal/lean4/evm-cleanroom/"+p],text=True).strip()
+          modules={p for p in paths if p.endswith(".lean")}
+          for p in modules:
+              for line in Path(p).read_text().splitlines():
+                  if line.startswith("import "):
+                      for mod in line.split()[1:]:
+                          assert mod=="Std" or mod.replace(".","/")+".lean" in modules, (p,mod)
           evidence={"tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),"sources":pins,"actualAxioms":{k:sorted(v) for k,v in actual.items()}}
           Path("/tmp/header-rlp-claims.json").write_text(json.dumps(evidence,indent=2))
           print(json.dumps(evidence))
@@ -64,6 +71,7 @@ jobs:
         with:
           name: header-rlp-evidence
           path: |
+            /tmp/header-rlp-build.txt
             /tmp/header-rlp-axioms.txt
             /tmp/header-rlp-claims.json
             /tmp/header-rlp-results.json
