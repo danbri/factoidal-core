@@ -156,13 +156,14 @@ private def pendingToken (state : PState) (tokens : List LocatedToken) : Option 
   | [] => none
 
 private def finish (original current : String) (steps : List RewriteStep) (parsedRule : Bool)
-    (syntheticCountOrdinals : List Nat := []) : RewriteResult :=
+    (syntheticCountOrdinals : List Nat) (preserveComments : Bool) : RewriteResult :=
   if steps.isEmpty then { rewrite_status := "unchanged", rewritten_query := some original }
   else
     let output := formatTextRewrite current
     match parseSparql output with
     | .ok _ =>
-      let formatted := if parsedRule then formatParsedRewrite output syntheticCountOrdinals else none
+      let formatted := if parsedRule && !preserveComments then
+          formatParsedRewrite output syntheticCountOrdinals else none
       let output := (formatted.filter fun text => (parseSparql text).isOk).getD output
       { rewrite_status := "rewritten", rewritten_query := some output
         rewrites := steps }
@@ -195,7 +196,7 @@ private def syntheticCountOrdinals (tokens : List LocatedToken) (edits : List Ed
     ordinals
 
 private def afterParse (original current language : String) (steps : List RewriteStep)
-    (inputNames : List (String × String)) (query : Query) (namedBlock : Bool) :
+    (inputNames : List (String × String)) (query : Query) (namedBlock preserveComments : Bool) :
     RewriteResult := Id.run do
   if let some name := projectionAliasConflict query then
     return failure "parse_error" "select_alias_already_in_scope" "parse"
@@ -291,20 +292,20 @@ private def afterParse (original current language : String) (steps : List Rewrit
     if step.variant_id == "range-count" then some edit.start else none
   let result := finish original (applyEdits current edits)
     (steps ++ slices.map Prod.snd ++ List.replicate geoCount geoRule ++ postSteps) (!edits.isEmpty)
-    (syntheticCountOrdinals bodyTokens edits rangeStarts)
+    (syntheticCountOrdinals bodyTokens edits rangeStarts) preserveComments
   let warnings := if !namedBlock then [] else labelSites.map fun _ =>
     (⟨"named_subquery_label_service_removed", "post-ARQ",
       "SERVICE wikibase:label is not supported inside a named subquery and was removed; any *Label variable it would have bound is now permanently unbound in this block.", none⟩ : Diagnostic)
   return { result with warnings := result.warnings ++ warnings }
 
 private def parseAndRewrite (original current language : String) (steps : List RewriteStep)
-    (namedBlock : Bool) :
+    (namedBlock preserveComments : Bool) :
     RewriteResult := Id.run do
   let parsed := parseQuerySyntax current
   match parsed with
   | .ok query =>
     if (projectionAliasConflict query).isNone then
-      return afterParse original current language steps [] query namedBlock
+      return afterParse original current language steps [] query namedBlock preserveComments
   | .error error =>
     if error.msg != "SELECT expression aliases variable already in scope" then
       return failure "parse_error" "original_query_parse_error" "parse" error.msg (some error.pos) steps
@@ -319,7 +320,7 @@ private def parseAndRewrite (original current language : String) (steps : List R
   let repaired := applyEdits current edits
   let steps := steps ++ [⟨"rewrite-legacy-select-alias", "rename-input"⟩]
   return match parseQuerySyntax repaired with
-  | .ok query => afterParse original repaired language steps names query namedBlock
+  | .ok query => afterParse original repaired language steps names query namedBlock preserveComments
   | .error error => failure "parse_error" "legacy_alias_repair_parse_error" "legacy-input"
       error.msg (some error.pos) steps
 
@@ -331,12 +332,14 @@ private def unextractedDefinition : List LocatedToken → Bool
       unextractedDefinition (second :: rest)
   | _ => false
 
-private def rewriteBody (text language : String) (namedBlock : Bool) : RewriteResult := Id.run do
+private def rewriteBody (text language : String) (namedBlock : Bool)
+    (preserveComments : Bool := false) : RewriteResult := Id.run do
   let tokens := sourceTokens text
   if unextractedDefinition tokens then
     return failure "skipped_unsupported" "unsupported_proprietary_feature" "pre-ARQ"
       "The query uses an unimplemented named subquery."
-  let .ok (state, _) := sourceState tokens | return parseAndRewrite text text language [] namedBlock
+  let .ok (state, _) := sourceState tokens |
+    return parseAndRewrite text text language [] namedBlock preserveComments
   let hints := rewriteHints text state tokens
   let current := applyEdits text hints
   let steps := if hints.isEmpty then [] else [⟨"rewrite-query-hint", "default"⟩]
@@ -347,7 +350,7 @@ private def rewriteBody (text language : String) (namedBlock : Bool) : RewriteRe
         "pre-parse" "wikibase:isSomeValue needs an argument" (some pos)
         (steps ++ [⟨"rewrite-wikibase-isSomeValue", "default"⟩]))
   let steps := if edits.isEmpty then steps else steps ++ [⟨"rewrite-wikibase-isSomeValue", "default"⟩]
-  return parseAndRewrite text (applyEdits current edits) language steps namedBlock
+  return parseAndRewrite text (applyEdits current edits) language steps namedBlock preserveComments
 
 private def namedStep : RewriteStep := ⟨"rewrite-named-subquery", "default"⟩
 
@@ -382,22 +385,28 @@ private def rewriteNamed (body language : String) (plan : NamedSubquery.Plan) : 
     return { rewrite_status := "rewritten", rewritten_query := some text, rewrites := steps, warnings := warnings }
 
 /-- Run the rewrite pipeline without executing the query. SPARQL fragments
-are validated before assembling QLever's WITH and INCLUDE clauses. -/
-def rewriteQuery (text : String) (language : String := "") : RewriteResult := Id.run do
+are validated before assembling QLever's WITH and INCLUDE clauses. By
+default the output follows the pinned Wikimedia serializer. Set
+`preserveComments` to keep source comments in place where the edits and
+QLever assembly permit, and retain the remaining comments after the query. -/
+def rewriteQuery (text : String) (language : String := "") (preserveComments : Bool := false) :
+    RewriteResult := Id.run do
   if text.utf8ByteSize > 1000000 then
     return failure "skipped_unsupported" "query_exceeds_length_limit" "input" "Query exceeds 1 MB"
   let (leading, body) := splitLeadingComments text
   let plan := if body.contains '%' then NamedSubquery.plan body (sourceTokens body true) else .ok none
+  let withOriginal := fun output =>
+    appendOriginalQuery (if preserveComments then restoreSourceComments output text else output) text
   match plan with
   | .error problem => return namedFailure problem "pre-ARQ" [namedStep]
   | .ok none =>
-    let result := rewriteBody text language false
+    let result := rewriteBody text language false preserveComments
     return if result.rewrite_status == "rewritten" then
-      { result with rewritten_query := result.rewritten_query.map (appendOriginalQuery · text) }
+      { result with rewritten_query := result.rewritten_query.map withOriginal }
       else result
   | .ok (some plan) =>
     let result := rewriteNamed body language plan
     return { result with rewritten_query :=
-      result.rewritten_query.map (fun output => appendOriginalQuery (leading ++ output) text) }
+      result.rewritten_query.map (fun output => withOriginal (leading ++ output)) }
 
 end L4Factoidal.Wikidata

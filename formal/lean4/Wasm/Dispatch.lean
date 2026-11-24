@@ -295,6 +295,7 @@ def handleOpNames : List String :=
   , "queryForm"
   , "wikidataRewrite"
   , "parseSparqlStructure"
+  , "parseSparqlAst"
   , "engineTables"
   , "apiCheck"
   , "parseQuadsJson"

@@ -14,18 +14,18 @@ structure LocatedToken where
   start : Nat
   stop : Nat
 
-private def scan (allowPercent : Bool) : Nat → Nat → List Char → List LocatedToken → List LocatedToken
+private def scan (allowPercent v12 : Bool) : Nat → Nat → List Char → List LocatedToken → List LocatedToken
   | 0, _, _, acc => acc.reverse
   | fuel + 1, offset, chars, acc =>
-    let (token, start, stop, rest) := nextToken false offset chars
-    if token != .eof then scan allowPercent fuel stop rest (⟨token, start, stop⟩ :: acc)
+    let (token, start, stop, rest) := nextToken v12 offset chars
+    if token != .eof then scan allowPercent v12 fuel stop rest (⟨token, start, stop⟩ :: acc)
     else if allowPercent && start < stop && chars[start - offset]? == some '%' then
       let (name, stop, tail) := scanWhile (fun c => c.isAlphanum || c == '_') stop rest []
-      scan allowPercent fuel stop tail (⟨.invalid ("%" ++ String.ofList name), start, stop⟩ :: acc)
+      scan allowPercent v12 fuel stop tail (⟨.invalid ("%" ++ String.ofList name), start, stop⟩ :: acc)
     else acc.reverse
 
-def sourceTokens (text : String) (allowPercent := false) : List LocatedToken :=
-  scan allowPercent (text.length + 1) 0 text.toList []
+def sourceTokens (text : String) (allowPercent := false) (v12 := false) : List LocatedToken :=
+  scan allowPercent v12 (text.length + 1) 0 text.toList []
 
 def sourceState (tokens : List LocatedToken) (defaults := defaultPrefixes) :
     Except L4Factoidal.Syntax.ParseError (PState × TStream) :=

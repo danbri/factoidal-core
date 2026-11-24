@@ -1816,6 +1816,18 @@ id = "npm:./browser#parseSparqlStructure"
 reason = "Delegates query inspection to wasm:parseSparqlStructure."
 
 [[nonstage]]
+id = "wasm:parseSparqlAst"
+reason = "Returns the parsed SPARQL AST and original source metadata without evaluating a query."
+
+[[nonstage]]
+id = "npm:.#parseSparqlAst"
+reason = "Delegates query parsing to wasm:parseSparqlAst."
+
+[[nonstage]]
+id = "npm:./browser#parseSparqlAst"
+reason = "Delegates query parsing to wasm:parseSparqlAst."
+
+[[nonstage]]
 id = "wasm:wikidataRewrite"
 reason = "Rewrites WDQS query text and returns diagnostics without loading or evaluating RDF data."
 

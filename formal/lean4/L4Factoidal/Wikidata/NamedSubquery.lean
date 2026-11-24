@@ -66,24 +66,30 @@ private def closeGroup (depth : Nat) : List LocatedToken → Option (LocatedToke
     | .rbrace => if depth == 0 then some (token, rest) else closeGroup (depth - 1) rest
     | _ => closeGroup depth rest
 
-private def findBlocks (chars : Array Char) : Nat → List LocatedToken → List Block
+private def findBlocks (chars : Array Char) (qlever : Bool) : Nat → List LocatedToken → List Block
   | 0, _ | _, [] => []
   | fuel + 1, word :: rest =>
     let found : Option (Block × List LocatedToken) := do
       if word.token != .withKw then none else
-        let openBrace :: body := rest | none
-        if openBrace.token != .lbrace then none else
+        let (name, body, stop, tail) ← if qlever then do
+          let nameToken :: asWord :: openBrace :: body := rest | none
+          guard (asWord.token == .asKw && openBrace.token == .lbrace)
+          let (name, _) ← readName nameToken
+          let (closeBrace, tail) ← closeGroup 0 body
+          let body := slice chars openBrace.start closeBrace.stop
+          some (name, "SELECT * WHERE " ++ body, closeBrace.stop, tail)
+        else do
+          let openBrace :: body := rest | none
+          guard (openBrace.token == .lbrace)
           let (closeBrace, after) ← closeGroup 0 body
-          let asWord :: nameTokens := after | none
-          let nameToken :: tail := nameTokens | none
-          if asWord.token != .asKw then none else
-            let (name, stop) ← readName nameToken
-            let body := (slice chars openBrace.stop closeBrace.start).trimAscii.toString
-            some (⟨name, body, word.start, stop, references body.toList.toArray (sourceTokens body true)⟩,
-              tail)
+          let asWord :: nameToken :: tail := after | none
+          guard (asWord.token == .asKw)
+          let (name, stop) ← readName nameToken
+          some (name, (slice chars openBrace.stop closeBrace.start).trimAscii.toString, stop, tail)
+        some (⟨name, body, word.start, stop, references body.toList.toArray (sourceTokens body true)⟩, tail)
     match found with
-    | some (block, tail) => block :: findBlocks chars fuel tail
-    | none => findBlocks chars fuel rest
+    | some (block, tail) => block :: findBlocks chars qlever fuel tail
+    | none => findBlocks chars qlever fuel rest
 
 private def wildcard (text : String) : Bool :=
   match (sourceTokens text).map LocatedToken.token with
@@ -103,9 +109,10 @@ private def orderBlocks (done : List Block) : Nat → List Block → Except Prob
     | none => orderBlocks done 0 remaining
     | some next => orderBlocks (next :: done) fuel (remaining.filter (·.name != next.name))
 
-def plan (text : String) (tokens : List LocatedToken) : Except Problem (Option Plan) := do
+def plan (text : String) (tokens : List LocatedToken) (qlever := false) (inspect := false) :
+    Except Problem (Option Plan) := do
   let chars := text.toList.toArray
-  let blocks := findBlocks chars tokens.length tokens
+  let blocks := findBlocks chars qlever tokens.length tokens
   let outer := (references chars tokens).filter fun ref =>
     !blocks.any (fun block => block.start ≤ ref.start && ref.start < block.stop)
   if blocks.isEmpty && outer.isEmpty then return none
@@ -120,10 +127,11 @@ def plan (text : String) (tokens : List LocatedToken) : Except Problem (Option P
     if !seen.contains ref.name then
       throw ⟨"blazegraph_error", "named_subquery_undefined_reference",
         s!"INCLUDE %{ref.name} refers to a named subquery this query never defines."⟩
-  for ref in all do
-    if blocks.any (fun block => block.name == ref.name && wildcard block.body) then
-      throw ⟨"skipped_unsupported", "named_subquery_select_star_included",
-        s!"The named subquery %{ref.name} uses SELECT * and cannot be safely referenced by INCLUDE; declare its projected variables explicitly."⟩
+  unless inspect do
+    for ref in all do
+      if blocks.any (fun block => block.name == ref.name && wildcard block.body) then
+        throw ⟨"skipped_unsupported", "named_subquery_select_star_included",
+          s!"The named subquery %{ref.name} uses SELECT * and cannot be safely referenced by INCLUDE; declare its projected variables explicitly."⟩
   let blocks ← orderBlocks [] blocks.length (blocks.mergeSort (fun a b => a.name ≤ b.name))
   return some ⟨blocks, outer⟩
 
@@ -133,12 +141,12 @@ private def variables (names : List String) : String :=
   String.join (names.map fun name => " ?" ++ name)
 
 def substitute (text : String) (refs : List Reference) (blocks : List PreparedBlock)
-    (extra : List Edit := []) : String :=
+    (extra : List Edit := []) (markerPrefix : String := placeholderPrefix) : String :=
   let edits := refs.map fun ref =>
     let vars := ((blocks.find? (·.name == ref.name)).map (·.vars)).getD []
     let columns := variables vars
     let undefs := String.join (vars.map fun _ => " UNDEF")
-    (⟨ref.start, ref.stop, s!"VALUES (?{placeholderPrefix}{ref.name}{columns}) \{ (UNDEF{undefs}) }"⟩ : Edit)
+    (⟨ref.start, ref.stop, s!"VALUES (?{markerPrefix}{ref.name}{columns}) \{ (UNDEF{undefs}) }"⟩ : Edit)
   applyEdits text ((edits ++ extra).mergeSort (fun a b => a.start ≤ b.start))
 
 private def prefixLine (line : String) : Bool :=

@@ -6,6 +6,8 @@
 
 export type {
   WikidataRewriteDiagnostic, WikidataRewriteResult,
+  SparqlQueryStructure, SparqlSourceComment,
+  SparqlQueryDocument, SparqlQueryAst, SparqlQueryPattern, SparqlExpression, SparqlPropertyPath,
   FactoidalErrorCode,
   FactoidalErrorPosition,
   NamedNode, BlankNode, Literal, Variable, DefaultGraph, Quad, Term, DataFactory,
@@ -35,7 +37,7 @@ export {
   isValidLiteral,
   canonicalLiteral,
   literalFromValue,
-  ready, wikidataRewrite, parseSparqlStructure,
+  ready, wikidataRewrite, parseSparqlStructure, parseSparqlAst,
   engineTables,
   sameValue,
   syntaxFor,

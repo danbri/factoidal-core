@@ -1,25 +1,20 @@
 import Wasm.Ops.Support
-import L4Factoidal.Wikidata.Parser
+import L4Factoidal.SPARQL.QueryDocument
 
 namespace L4Wasm.Ops
 open L4Factoidal.SPARQL
+open L4Factoidal.JSON
+
+private def sparqlVersion? : String → Option SparqlVersion
+  | "1.1" => some .v11
+  | "1.2" => some .v12
+  | _ => none
 
 /-- Inspect the same unlowered query AST used by the parser. This operation
 does not evaluate the query or require a dataset. -/
-def parseSparqlStructure (text wdqs version : String) : String := Id.run do
-  let version ← match version with
-    | "1.1" => pure SparqlVersion.v11
-    | "1.2" => pure SparqlVersion.v12
-    | _ => return errJson "SPARQL version must be 1.1 or 1.2"
-  let result := if wdqs == "true" then L4Factoidal.Wikidata.parseQuerySyntax text none version
-    else
-      match parseSparqlWith topFuel text none version with
-      | .ok query => .ok query
-      | .error error =>
-        match parseSparqlWith (scaledFuel text) text none version with
-        | .ok query => .ok query
-        | .error _ => .error error
-  match result with
+def parseSparqlStructure (text wdqs version : String) (includeComments : Bool := false) : String := Id.run do
+  let some version := sparqlVersion? version | return errJson "SPARQL version must be 1.1 or 1.2"
+  match parseUnloweredQuery text (wdqs == "true") version with
   | .error error => return errJson s!"SPARQL parse error: {error.msg} (offset {error.pos})"
   | .ok query =>
     let form := match query.form with
@@ -27,7 +22,22 @@ def parseSparqlStructure (text wdqs version : String) : String := Id.run do
       | .ask => "ask"
       | .construct _ => "construct"
       | .describe _ => "describe"
-    return okWith [("result", .object [("form", .string form),
-      ("variables", .array (query.projectedVars.map .string)), ("sse", .string query.toSse)])]
+    let fields := [("form", .string form),
+      ("variables", .array (query.projectedVars.map .string)), ("sse", .string query.toSse)]
+    let comments := if includeComments then
+      [("comments", .array ((sourceComments text version.is12).map sourceCommentJson))]
+      else []
+    return okWith [("result", .object (fields ++ comments))]
+
+/-- Full query and source inspection. Query parse failures are in the result;
+the transport error channel is reserved for malformed requests. -/
+def parseSparqlAst (text options : String) : String := Id.run do
+  let .ok (.object fields) := parseJson options | return errJson "SPARQL parse options must be an object"
+  let options := Json.object fields
+  let some version := sparqlVersion? ((options.getString? "version").getD "1.1") |
+    return errJson "SPARQL version must be 1.1 or 1.2"
+  let wdqs := (options.getBool? "wdqs").getD false
+  let base := options.getString? "base"
+  return okWith [("result", parseQueryDocument text wdqs version base)]
 
 end L4Wasm.Ops

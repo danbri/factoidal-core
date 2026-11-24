@@ -1161,17 +1161,25 @@ function buildApi(driver) {
   }
 
   /** Inspect the parsed query without evaluating it. */
-  async function parseSparqlStructure(query, { wdqs = false, version = '1.1' } = {}) {
+  async function parseSparqlStructure(query, { wdqs = false, version = '1.1', includeComments = false } = {}) {
     const c = await ctx();
     requireEntryFn(c.e, 'parseSparqlStructure', 'parseSparqlStructure');
-    return entryResult(c.e.parseSparqlStructure(String(query), String(wdqs), version), 'parseSparqlStructure').result;
+    return entryResult(c.e.parseSparqlStructure(String(query), String(wdqs), version,
+      ...(includeComments ? ['true'] : [])), 'parseSparqlStructure').result;
+  }
+
+  async function parseSparqlAst(query, options = {}) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'parseSparqlAst', 'parseSparqlAst');
+    return entryResult(c.e.parseSparqlAst(String(query), JSON.stringify(options)), 'parseSparqlAst').result;
   }
 
   /** Rewrite a legacy WDQS query using the Lean Wikidata rules. */
-  async function wikidataRewrite(query, { language = '' } = {}) {
+  async function wikidataRewrite(query, { language = '', preserveComments = false } = {}) {
     const c = await ctx();
     requireEntryFn(c.e, 'wikidataRewrite', 'wikidataRewrite');
-    return entryResult(c.e.wikidataRewrite(String(query), String(language)), 'wikidataRewrite').result;
+    return entryResult(c.e.wikidataRewrite(String(query), String(language),
+      ...(preserveComments ? ['true'] : [])), 'wikidataRewrite').result;
   }
 
   /** Load the engine; afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
@@ -3106,6 +3114,7 @@ function buildApi(driver) {
     ready,
     wikidataRewrite,
     parseSparqlStructure,
+    parseSparqlAst,
     engineTables,
     sameValue,
     syntaxFor,
