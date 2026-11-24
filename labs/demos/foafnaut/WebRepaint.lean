@@ -58,7 +58,7 @@ def sameShape (a b : Computed) : Bool :=
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
     borderColors,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
-    minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
+    minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
      _backgroundPositionX,_backgroundPositionY,backgroundClip,backgroundLayers,svgAuthor⟩ =>
@@ -85,6 +85,7 @@ def sameShape (a b : Computed) : Bool :=
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
   optEq (fun left right => lengthEq left.1 right.1 && lengthEq left.2 right.2) objectPosition b.objectPosition &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
+  balanceText == b.balanceText && balanceWrap == b.balanceWrap &&
   lengthEq letterSpacing b.letterSpacing && lengthEq wordSpacing b.wordSpacing && lengthEq textIndent b.textIndent &&
   backgroundClip == b.backgroundClip && backgroundLayers == b.backgroundLayers &&
   -- These declarations can change the SVG scene rather than a box paint.
@@ -97,6 +98,9 @@ def sameShape (a b : Computed) : Bool :=
   -- a masked box, a raised or shifted line and a clipped-away box lay out or paint differently
   masked == b.masked && shift == b.shift && rise == b.rise && centerBlocks == b.centerBlocks &&
   clipRectEmpty == b.clipRectEmpty && clipPathEmpty == b.clipPathEmpty && clipHidden == b.clipHidden
+
+#guard !sameShape {} {balanceText := true}
+#guard !sameShape {} {balanceWrap := false}
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

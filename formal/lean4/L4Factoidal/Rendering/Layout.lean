@@ -1505,13 +1505,112 @@ private def placeStarts (starts : Array (Nat × Nat × Computed)) (line : Array 
 private def continuedStarts (open_ : Array (Nat × Nat × Computed)) : Array (Float × Inline) × Array Nat :=
   if open_.isEmpty then (#[],#[]) else (open_.map fun st => (0,.openInline st.2.1 st.2.2 true),open_.map (·.1))
 
+/-- The widths of one inline participant and its preceding collapsed separator. -/
+private structure WrapMeasure where
+  width : Float
+  gap : Float
+
+/-- Greedy packing at a possibly reduced breaking width. The recorded widths
+exclude trailing collapsible white space. -/
+private def wrappedWidths (words : Array WrapMeasure) (limit : Float) : Array Float := Id.run do
+  let mut widths := #[]
+  let mut line := 0
+  for word in words do
+    if line <= 0 then
+      line := word.width
+    else
+      let next := line + word.gap + word.width
+      if next > limit then
+        widths := widths.push line
+        line := word.width
+      else
+        line := next
+  return if line > 0 then widths.push line else widths
+
+/-- Use the variance of occupied widths to compare layouts with the same line
+count and available width. This is also the variance of their remaining space. -/
+private def widthVariance (widths : Array Float) : Float :=
+  let mean := widths.foldl (· + ·) 0 / Float.ofNat widths.size
+  widths.foldl (fun sum width => sum + (width - mean) * (width - mean)) 0
+
+/-- A breaking width with the same number of lines as the ordinary layout. -/
+private abbrev CountPreservingWidth (words : Array WrapMeasure) (available : Float) :=
+  { w : Float // (wrappedWidths words w).size = (wrappedWidths words available).size }
+
+/-- Search for a more even wrap with the normal line count. Limit the search to
+ten lines and twelve probes. A reduced breaking width never changes the box width. -/
+private def chooseBalancedWidth (words : Array WrapMeasure) (available : Float) :
+    Option (CountPreservingWidth words available) := Id.run do
+  let normal := wrappedWidths words available
+  if normal.size <= 1 || normal.size > 10 then return none
+  let mut lo := words.foldl (fun w item => max w item.width) 0
+  if lo > available then return none
+  let mut hi := available
+  let mut choice := none
+  let mut score := widthVariance normal
+  for _ in [0:12] do
+    let width := (lo + hi) / 2
+    let proposed := wrappedWidths words width
+    if proposed.size > normal.size then lo := width
+    else
+      hi := width
+      if h : proposed.size = normal.size then
+        let candidate := widthVariance proposed
+        if candidate < score then
+          score := candidate
+          choice := some ⟨width, h⟩
+  return choice
+
+private def balancedWidth (words : Array WrapMeasure) (available : Float) : Option Float :=
+  (chooseBalancedWidth words available).map (·.val)
+
+private theorem balancedWidth_preservesCount (words : Array WrapMeasure) (available width : Float)
+    (selected : balancedWidth words available = some width) :
+    (wrappedWidths words width).size = (wrappedWidths words available).size := by
+  unfold balancedWidth at selected
+  cases h : chooseBalancedWidth words available with
+  | none => simp [h] at selected
+  | some good =>
+    simp only [h, Option.map_some, Option.some.injEq] at selected
+    exact selected ▸ good.property
+
+#print axioms balancedWidth_preservesCount
+
+/-- Measure text in a constant-width horizontal line box. Inline boxes with no
+horizontal edges fit the same model. For other participants, let the ordinary
+layout handle the whole run. -/
+private def inlineBalanceWidth (font : FontProfile) (items : Array Inline)
+    (available : Float) : Except String (Option Float) := do
+  if items.size > 384 || available <= 0 || !available.isFinite then return none
+  let mut words := #[]
+  let mut separator := none
+  for item in items do
+    match item with
+    | .word _ s _ _ =>
+      if s.preformatted || s.pos.nowrap then return none
+      let width ← itemWidth font none item
+      let gap ← match separator with
+        | some space => spaceWidth font space
+        | none => pure 0
+      if width <= 0 || !width.isFinite || gap < 0 || !gap.isFinite then return none
+      words := words.push ⟨width,gap⟩
+      separator := none
+    | .space _ s =>
+      if s.preformatted || s.pos.nowrap then return none
+      separator := some s
+    | .openInline _ s _ => if inlineLead s != 0 then return none
+    | .closeInline _ s => if inlineTrail s != 0 then return none
+    | _ => return none
+  return balancedWidth words available
+
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
 each line is reordered (`bidiLine`). -/
 def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
+    (band : Float → Float × Float := fun _ => (0,available))
+    (uniformBand : Bool := true) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -1529,6 +1628,10 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   -- CSS Text 3 §8.3: the first line of the block container starts `textIndent` in from its
   -- start edge (a percentage of `available`), and has that much less room.
   let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
+  let balanced ← if uniformBand && !bidi && firstIndent == 0 &&
+      strut.any (fun s => s.balanceText && s.balanceWrap && !s.pos.nowrap && s.pos.writingMode == .horizontalTb) then
+    inlineBalanceWidth font items available
+    else pure none
   let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
     if !first || firstIndent == 0 then (offset,room)
@@ -1687,7 +1790,9 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
               else break
             | none => break
           | _ => break
-      if cursorX > 0 && cursorX+gap+whole > (bandAt out.height first).2 && !preformatted item && !glued k && !held then
+      let room := (bandAt out.height first).2
+      let wrapRoom := balanced.getD room
+      if cursorX > 0 && cursorX+gap+whole > wrapRoom && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
         out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
@@ -1880,8 +1985,22 @@ def liftBlocks (dom : Dom) (styles : Array Computed) (kids : Array Nat) : Array 
 bullet: the one that `list-style-type` names, or by default the disc, circle or square of
 a list nested one, two or more deep (HTML §15.3.7). A font with no glyph for the bullet
 (`FontProfile.admits`) gets a star. -/
-def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat)
+    (direction : Direction := .ltr) (mode : WritingMode := .horizontalTb) : String := Id.run do
   if style == .none then return ""
+  let draw := fun (glyph fallback : Char) =>
+    s!"{if font.admits glyph.toNat || font.shapedWord.isSome then glyph else fallback} "
+  if style == .disclosureOpen then
+    return match mode with
+    | .horizontalTb => draw '▾' 'v'
+    | .verticalRl => draw '◂' '<'
+    | .verticalLr => draw '▸' '>'
+  if style == .disclosureClosed then
+    return match mode, direction with
+    | .horizontalTb, .ltr => draw '▸' '>'
+    | .horizontalTb, .rtl => draw '◂' '<'
+    | _, .ltr => draw '▾' 'v'
+    | _, .rtl => draw '▴' '^'
   let some parent := (dom.get id).parent | return "* "
   if style != .number && !(style == .auto && (dom.get parent).lname == "ol") then
     let mut depth := 0
@@ -1898,12 +2017,23 @@ def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Na
       | _ => if depth >= 3 then '▪' else if depth == 2 then '◦' else '•'
     -- A shaped font draws the bullet, or a fallback face does (`SfntProfile`); only a
     -- fixed font without it shows `*`.
-    return if font.admits bullet.toNat || font.shapedWord.isSome then s!"{bullet} " else "* "
+    return draw bullet '*'
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
     if (dom.get kid).lname == "li" then number := number+1
   return s!"{number}. "
+
+/-- `list-style-type:none` suppresses the marker in every writing mode. -/
+theorem listMarker_none (dom : Dom) (font : FontProfile) (id : Nat)
+    (direction : Direction) (mode : WritingMode) :
+    listMarker dom font .none id direction mode = "" := rfl
+
+#print axioms listMarker_none
+
+private def listMarkerItems (dom : Dom) (font : FontProfile) (id : Nat) (s : Computed) : Array Inline :=
+  if !s.pos.listItem then #[]
+  else (textItems (.node id) s (listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode)).toArray
 
 /-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
 block container (a cell's contents, or an anonymous cell's), or a table (an element,
@@ -2379,7 +2509,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (a,b) ← gridIntrinsic children s (collectItems dom styles id)
           return (within a+add,within b+add)
         -- an outside marker (the default) takes no room in the item's lines
-        let lead := if n.lname == "li" && s.pos.listInside then (textItems (.node id) s (listMarker dom font s.pos.listStyle id)).toArray
+        let lead := if s.pos.listItem && s.pos.listInside then listMarkerItems dom font id s
           else if n.lname == "img" then altItems id s n else controlItems dom id s
         let (a,b) ← flowWidths id n.kids lead
         return (within a+add,within b+add)
@@ -2510,7 +2640,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -2568,7 +2698,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -2632,7 +2762,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}
@@ -3029,8 +3159,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
-      let markerItems := if n.lname == "li" then (textItems (.node id) s (listMarker dom font s.pos.listStyle id)).toArray else #[]
-      let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else controlItems dom id s
+      let markerItems := listMarkerItems dom font id s
+      let lead := if n.lname == "img" then altItems id s n else if s.pos.listItem && s.pos.listInside then markerItems else controlItems dom id s
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
       let minHeight := match s.minHeight with | .px h => h | _ => 0

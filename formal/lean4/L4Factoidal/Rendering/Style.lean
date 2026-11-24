@@ -212,6 +212,10 @@ structure Computed where
   objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
+  /-- Choose more even soft breaks for a block's inline formatting context. -/
+  balanceText : Bool := false
+  /-- Whether `text-wrap-mode` permits selecting balanced soft breaks. -/
+  balanceWrap : Bool := true
   /-- `letter-spacing` and `word-spacing` (inherited, CSS Text 3 §8.1, §8.2): added after each
   character, and to each word separator. `normal` is 0. A percentage is of the font size of the
   element that uses it, so it inherits as a percentage (`letterSpacingPx`). -/
@@ -721,6 +725,7 @@ def sidesOf (property : String) : List String :=
   if property == "margin" || property == "padding" then ["top","right","bottom","left"].map (property ++ "-" ++ ·)
   else if property == "inset" then ["top","right","bottom","left"]
   else if property == "background-position" then ["background-position-x","background-position-y"]
+  else if property == "text-wrap" then ["text-wrap-mode","text-wrap-style"]
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
     | none => []
@@ -730,7 +735,7 @@ Box 4 §3.2), one or two for the two sides of an axis (CSS Logical 1 §4.2). The
 the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each.
 `background-position` uses the shared property grammar. -/
 def expandSides (property value : String) (important : Bool) : List Declaration :=
-  if property == "background-position" then
+  if property == "background-position" || property == "text-wrap" then
     ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
       if name == property then none else some ⟨name,v,important⟩
   else
@@ -811,7 +816,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
         rasterPlacement ++ (whole :: acc) else
-    if key == "background-position" && !CssVars.mentions d.value then
+    if (key == "background-position" || key == "text-wrap") && !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
@@ -1504,10 +1509,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     -- `flow-root` is a block that is the root of a block formatting context (`pos.flowRoot`)
     -- `contents`: no box of its own (`pos.contents`; `Generated.flattenContents`); what is
     -- left of it is an inline box that is never laid out
-    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root", contents := d.value == "contents"}}
+    let pos := { s.pos with
+      flowRoot := d.value == "flow-root"
+      contents := d.value == "contents"
+      listItem := d.value == "list-item" }
+    let s := {s with pos := pos}
     match (if d.value == "flow-root" then "block" else if d.value == "contents" then "inline" else d.value) with
     | "none" => return {s with display := .none}
-    | "block" => return {s with display := .block}
+    | "block" | "list-item" => return {s with display := .block}
     | "inline" => return {s with display := .inline}
     | "inline-block" => return {s with display := .inlineBlock}
     | "table" => return {s with display := .table}
@@ -1724,6 +1733,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
     if v < 0 then throw "line-height must be non-negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
+  | "text-wrap-style" =>
+    match CssValues.specified d.property d.value with
+    | some value => return {s with balanceText := value == "balance"}
+    | none => throw "invalid text-wrap-style"
+  | "text-wrap-mode" =>
+    match CssValues.specified d.property d.value with
+    | some value => return {s with balanceWrap := value != "nowrap"}
+    | none => throw "invalid text-wrap-mode"
   | "white-space" | "white-space-collapse" =>
     let nowrap := d.property != "white-space" && s.pos.nowrap
     match (trim d.value).toLower with
@@ -1954,7 +1971,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     match (CssValues.specified "display" d.value) with
     | none => none
     | some t =>
-      if ["flex", "grid", "flow-root", "list-item", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
+      if ["flex", "grid", "flow-root", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
       else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
       else if t == "run-in" then value "inline"
       -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
@@ -1998,6 +2015,7 @@ def ownProperties : List String :=
   ["display","width","height","margin","padding","margin-top","margin-right","margin-bottom","margin-left",
    "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
+   "text-wrap-style","text-wrap-mode",
    "visibility","overflow","text-decoration","text-decoration-line","border-style",
    "border-top-width","border-right-width","border-bottom-width","border-left-width",
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
@@ -2088,7 +2106,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
   match property with
   | "display" =>
-    let pos := {s.pos with contents := source.pos.contents}
+    let pos := {s.pos with contents := source.pos.contents, listItem := source.pos.listItem}
     some {s with display := source.display, pos := pos}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
@@ -2139,6 +2157,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
+  | "text-wrap-style" => some {s with balanceText := source.balanceText}
+  | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
   | "white-space" | "white-space-collapse" =>
     let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
     some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
@@ -2172,7 +2192,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
 them). -/
 def inheritedProperties : List String :=
   ["color","font","font-size","font-family","font-weight","font-style","line-height","visibility","border-spacing","border-collapse",
-   "caption-side","text-align","direction","white-space","white-space-collapse"]
+   "caption-side","text-align","direction","white-space","white-space-collapse","text-wrap-style","text-wrap-mode"]
 
 /-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
 the parent's; `initial` the initial values (the fields of an empty `Computed`); `unset`
@@ -2814,6 +2834,10 @@ def userAgentSheet : String :=
   -- a drop-down list shows its selected option (`Layout.controlItems`), with room for its arrow
   "select{display:inline-block;padding:1px 4px;border:1px solid #767676;background-color:#ffffff;white-space:nowrap}" ++
   "select>*{display:none}" ++
+  -- HTML §15.3.7 and §15.5.5: a summary marker belongs to the first summary of details.
+  "li{display:list-item}" ++
+  "details>summary:first-of-type{display:list-item;list-style-type:disclosure-closed;list-style-position:inside}" ++
+  "details[open]>summary:first-of-type{list-style-type:disclosure-open}" ++
   -- HTML §15.3.6
   "sub,sup{font-size:smaller}" ++
   -- HTML §15.4.1: `iframe { border: 2px inset; }`
@@ -3440,6 +3464,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
     textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars,
+    balanceText := parent.balanceText, balanceWrap := parent.balanceWrap,
     letterSpacing := parent.letterSpacing, wordSpacing := parent.wordSpacing, textIndent := parent.textIndent,
     -- `writing-mode` and `list-style-type` are inherited (CSS Writing Modes 4 §3.2, CSS
     -- Lists 3 §3.1); the rest of `pos` is not
