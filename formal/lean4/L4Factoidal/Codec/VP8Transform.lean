@@ -138,7 +138,10 @@ theorem inverseDCT_zero :
     inverseDCT (Vector.replicate 16 0) = Vector.replicate 16 0 := by decide
 
 theorem inverseWHT_zero :
-    inverseWHT (Vector.replicate 16 0) = Vector.replicate 16 0 := by decide
+    inverseWHT (Vector.replicate 16 0) = Vector.replicate 16 0 := by
+  have zero : inverseTransform whtButterfly 3 (Vector.replicate 16 0) =
+      Vector.replicate 16 0 := by decide
+  rw [inverseWHT, zero, Vector.map_replicate] <;> rfl
 
 abbrev SpatialResidual := Vector CoefficientBlock 24
 
