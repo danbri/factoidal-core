@@ -2332,9 +2332,9 @@ L4Factoidal_DOM_Editing_fixDisallowedAncestors  # (c) one more call after the no
 L4Factoidal_Rendering_CssValues_parseCVs  # (c) one call per level of nested functions and blocks; at most maxNesting = 64 levels (a deeper opener is read as a bad token); the tokens of a level are a tail call
 L4Factoidal_Rendering_CssValues_calcOperand  # (c) the nesting of one calc() value, at most maxNesting = 64 (parseCVs)
 L4Factoidal_Rendering_CssValues_calcExpr  # (c) mutual with calcOperand: the nesting of one calc() value, at most 64
-L4Factoidal_Rendering_CssValues_Calc_type  # (c) the nesting of a calculation tree made by calcOperand, at most 64
-L4Factoidal_Rendering_CssValues_Calc_simp  # (c) the nesting of a calculation tree, at most 64
-L4Factoidal_Rendering_CssValues_Calc_css  # (c) the nesting of a calculation tree, at most 64; terms, factors and arguments are folds
+L4Factoidal_Rendering_CssValues_Calc_type  # (b) calculation-tree nesting; mapM visits siblings with an accumulator loop
+L4Factoidal_Rendering_CssValues_Calc_simpWith  # (b) calculation-tree nesting; mapTR visits siblings, clamp rewrites consume fuel before child descent
+L4Factoidal_Rendering_CssValues_Calc_css  # (b) calculation-tree nesting; terms, factors and arguments use folds/mapTR
 L4Factoidal_Rendering_CssValues_Calc_depth  # (c) the nesting of a calculation tree, at most 64
 L4Factoidal_Rendering_CssValues_vdsLevel  # (c) the nesting of a grammar text of the property table (Data.lean, generated; no page input)
 L4Factoidal_Rendering_CssValues_vdsSepLoop  # (c) mutual with vdsLevel: a grammar text of the property table

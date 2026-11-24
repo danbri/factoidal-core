@@ -9,7 +9,7 @@ use risc0_groth16::{ProofJson, Seal};
 use risc0_zkp::core::hash::poseidon_254::Poseidon254HashSuite;
 use risc0_zkvm::{
     sha::{Digest, Digestible}, ApiClient, AssetRequest, ExternalProver, Groth16Receipt,
-    Groth16ReceiptVerifierParameters, InnerReceipt, Prover, ProverOpts, Receipt,
+    Groth16ReceiptVerifierParameters, InnerReceipt, Prover, ProverOpts, Receipt, ReceiptClaim,
     SuccinctReceiptVerifierParameters, VerifierContext,
 };
 use serde_json::json;
@@ -17,6 +17,54 @@ use std::{env, fs, io::{Read, Write}, path::Path, process::Command};
 
 use receipt_format::MAX_RECEIPT;
 const PARAMS_HEX: &str = "e71e6620a834f4d8dc1998476b865a9a6437a14474f9442cf8664f9ec22a5eee";
+
+// Public byte transport only. The expected image, policy and context come from
+// independent caller arguments, never this document or its provenance neighbour.
+// A fixed struct refuses unknown and duplicate fields before proof decoding.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct PublicAskProof {
+    schema: String,
+    sdk: String,
+    receipt_kind: String,
+    image_id: String,
+    journal: String,
+    seal: String,
+    verifier_parameters: String,
+}
+
+fn exact_hex(value: &str, size: usize) -> Result<Vec<u8>> {
+    ensure!(value.len() == 2 + 2 * size && value.starts_with("0x"), "wrong hexadecimal field length");
+    let value = &value[2..];
+    ensure!(value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "expected canonical lower-case hexadecimal");
+    Ok(hex::decode(value)?)
+}
+
+fn verify_public(bytes: &[u8], image: Digest, policy: &[u8], context: &[u8]) -> Result<()> {
+    ensure!(bytes.len() <= 4096, "public proof exceeds byte limit");
+    ensure!(policy.len() == 32 && context.len() == 32, "expected 32-byte policy and context hashes");
+    let public: PublicAskProof = serde_json::from_slice(bytes)?;
+    ensure!(public.schema == "factoidal.ask.evm.v1" && public.sdk == "3.1.0"
+        && public.receipt_kind == "groth16", "unsupported public proof schema");
+    ensure!(exact_hex(&public.image_id, 32)? == image.as_bytes(), "unexpected image ID");
+    ensure!(exact_hex(&public.verifier_parameters, 32)?
+        == Groth16ReceiptVerifierParameters::default().digest().as_bytes(), "unexpected verifier parameters");
+    let journal = exact_hex(&public.journal, 128)?;
+    require_ask_true(&journal)?;
+    ensure!(&journal[32..64] == policy, "unexpected policy hash");
+    ensure!(&journal[64..96] == context, "unexpected context hash");
+    let seal = exact_hex(&public.seal, 260)?;
+    ensure!(seal[..4] == [0xe7, 0x1e, 0x66, 0x20], "unexpected verifier selector");
+    // ReceiptClaim::ok fixes Halted(0), an empty input digest and no assumptions.
+    // The claim is reconstructed for the independently authorised image. The
+    // SDK verifies the whole claim using its pinned default Groth16 parameters.
+    let claim = ReceiptClaim::ok(image, journal.clone());
+    let inner = Groth16Receipt::new(seal[4..].to_vec(), claim.into(),
+        Groth16ReceiptVerifierParameters::default().digest());
+    let receipt = Receipt::new(InnerReceipt::Groth16(inner), journal.clone());
+    verify_binding(&receipt, image, &journal)
+}
 
 fn bounded_read(path: &Path, max: u64) -> Result<Vec<u8>> {
     let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
@@ -162,7 +210,15 @@ fn main() -> Result<()> {
         write_new(Path::new(&args[4]), serde_json::to_string_pretty(&statement)?.as_bytes())?;
         return Ok(());
     }
-    ensure!(args.len() >= 5, "usage: parameters | statement IMAGE EXPECTED_JOURNAL OUT.json | prepare IMAGE RECEIPT EXPECTED_JOURNAL R0VM NEW_DIRECTORY | finish IMAGE RECEIPT EXPECTED_JOURNAL PROOF.json OUT.receipt | export IMAGE RECEIPT EXPECTED_JOURNAL OUT.json");
+    if action == "verify-public" && args.len() == 6 {
+        let image = Digest::from_hex(args[2].trim_start_matches("0x"))?;
+        let policy = exact_hex(&args[3], 32)?;
+        let context = exact_hex(&args[4], 32)?;
+        verify_public(&bounded_read(Path::new(&args[5]), 4096)?, image, &policy, &context)?;
+        println!("Verified public ASK v1 Groth16 proof against independent image, policy and context");
+        return Ok(());
+    }
+    ensure!(args.len() >= 5, "usage: parameters | verify-public IMAGE POLICY_HASH CONTEXT_HASH PUBLIC.json | statement IMAGE EXPECTED_JOURNAL OUT.json | prepare IMAGE RECEIPT EXPECTED_JOURNAL R0VM NEW_DIRECTORY | finish IMAGE RECEIPT EXPECTED_JOURNAL PROOF.json OUT.receipt | export IMAGE RECEIPT EXPECTED_JOURNAL OUT.json");
     let image = Digest::from_hex(args[2].trim_start_matches("0x"))?;
     let receipt = read_receipt(Path::new(&args[3]))?;
     let expected = bounded_read(Path::new(&args[4]), 65536)?;
@@ -199,7 +255,58 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use risc0_zkvm::{FakeReceipt, ReceiptClaim};
+    use risc0_zkvm::FakeReceipt;
+
+    const PUBLIC_ASK: &[u8] = include_bytes!("../../fixtures/ask-proof.json");
+    // Independent verifier configuration for the retained public synthetic proof.
+    fn public_expectations() -> (Digest, Vec<u8>, Vec<u8>) {
+        (Digest::from_hex("c6d11ad4ba2b40d049bd3c117779816c73b3247d7bc50bb00e1c5c898618239b").unwrap(),
+         hex::decode("ffc402d884d6af71d2e2189e6db4f6eb1e40f164cbce76e20109f2fb28728e0b").unwrap(),
+         hex::decode("7fbf63bf0092351a1381c010568ebbaf94b7ccb71f7a33b33584e194ac7e4bb2").unwrap())
+    }
+
+    #[test]
+    fn public_only_verification_accepts_the_retained_real_ask_proof() {
+        let (image, policy, context) = public_expectations();
+        verify_public(PUBLIC_ASK, image, &policy, &context).unwrap();
+        assert!(verify_public(PUBLIC_ASK, Digest::ZERO, &policy, &context).is_err());
+        assert!(verify_public(PUBLIC_ASK, image, &[0; 32], &context).is_err());
+        assert!(verify_public(PUBLIC_ASK, image, &policy, &[0; 32]).is_err());
+    }
+
+    #[test]
+    fn public_only_verification_rejects_each_mutated_claim_and_seal() {
+        let (image, policy, context) = public_expectations();
+        let original: serde_json::Value = serde_json::from_slice(PUBLIC_ASK).unwrap();
+        for (field, byte) in [("journal", 0), ("journal", 32), ("journal", 64),
+                              ("journal", 96), ("journal", 127), ("seal", 0), ("seal", 4)] {
+            let mut changed = original.clone();
+            let mut bytes = hex::decode(changed[field].as_str().unwrap().trim_start_matches("0x")).unwrap();
+            bytes[byte] ^= 1;
+            changed[field] = json!(format!("0x{}", hex::encode(bytes)));
+            assert!(verify_public(&serde_json::to_vec(&changed).unwrap(), image, &policy, &context).is_err(),
+                "accepted mutation of {field} byte {byte}");
+        }
+    }
+
+    #[test]
+    fn public_only_schema_is_bounded_and_strict() {
+        let (image, policy, context) = public_expectations();
+        let original: serde_json::Value = serde_json::from_slice(PUBLIC_ASK).unwrap();
+        let duplicate = String::from_utf8(PUBLIC_ASK.to_vec()).unwrap()
+            .replacen('{', "{\"sdk\":\"3.1.0\",", 1);
+        assert!(verify_public(duplicate.as_bytes(), image, &policy, &context).is_err());
+        for (field, value) in [("extra", json!(0)), ("sdk", json!("3.0.0")),
+            ("receiptKind", json!("fake")), ("journal", json!("0x00")),
+            ("seal", json!(format!("0x{}", "00".repeat(261)))),
+            ("verifierParameters", json!(format!("0x{}", "00".repeat(32)))),
+            ("imageId", json!(format!("0x{}", image.to_string().to_uppercase())))] {
+            let mut changed = original.clone();
+            changed[field] = value;
+            assert!(verify_public(&serde_json::to_vec(&changed).unwrap(), image, &policy, &context).is_err());
+        }
+        assert!(verify_public(&vec![b' '; 4097], image, &policy, &context).is_err());
+    }
 
     #[test]
     fn identity_context_uses_the_pinned_merkle_root_not_its_leaf() {

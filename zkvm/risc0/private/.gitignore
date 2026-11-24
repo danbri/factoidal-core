@@ -1,0 +1,6 @@
+# Only explicitly reviewed public packages may be retained here.
+fixtures/*
+!fixtures/20261123/
+fixtures/20261123/*
+!fixtures/20261123/ask-proof.json
+!fixtures/20261123/public-provenance.json

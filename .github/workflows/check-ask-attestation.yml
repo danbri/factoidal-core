@@ -90,6 +90,24 @@ jobs:
         run: python3 zkvm/risc0/evm/bootstrap.py
       - name: Verify the real official Groth16 fixture with the pinned SDK
         run: cargo +1.97.1 test --release --locked --manifest-path zkvm/risc0/evm/receipt-tool/Cargo.toml -j2
+      - name: Check private ASK lifecycle and publication refusals
+        run: python3 zkvm/risc0/private/test_workflow.py
+      - name: Build the pinned public-only receipt verifier
+        run: cargo +1.97.1 build --release --locked --manifest-path zkvm/risc0/evm/receipt-tool/Cargo.toml -j2
+      - name: Reverify the recorded private-witness public package
+        # Historical reviewed image/statement replay, with no private input,
+        # native/guest rebuild or new proof generation in this step.
+        run: |
+          python3 - <<'PY'
+          import hashlib, pathlib, subprocess, sys
+          verifier = pathlib.Path('zkvm/risc0/evm/receipt-tool/target/release/factoidal-evm-receipt').resolve(strict=True)
+          with verifier.open('rb') as source:
+              digest = hashlib.file_digest(source, 'sha256').hexdigest()
+          subprocess.run([sys.executable, 'zkvm/risc0/private/verify.py',
+              '--policy', 'zkvm/risc0/private/authorisation.example.json',
+              '--verifier-tool', str(verifier), '--verifier-sha256', digest,
+              '--package', 'zkvm/risc0/private/fixtures/20261123'], check=True)
+          PY
       - name: Install the pinned RV32 compiler for real assembly controls
         shell: bash
         run: |

@@ -41,6 +41,8 @@ def main() -> None:
     parser.add_argument("--max-memory-gib", type=int, default=8)
     parser.add_argument("--timeout-seconds", type=int, default=1800)
     parser.add_argument("--lock", type=Path, default=Path("/tmp/factoidal-zk-prove.lock"))
+    parser.add_argument("--redact-diagnostics", action="store_true",
+                        help="discard raw child diagnostics and omit commands/paths from stage records")
     args = parser.parse_args()
     install = args.install_dir.resolve()
     pins = checked_install(install)
@@ -93,17 +95,24 @@ def main() -> None:
                 raise SystemExit("Insufficient disk reserve for local proving")
             print(f"Running official {name} process locally", flush=True)
             start = time.monotonic()
-            with (work / f"{name}.log").open("w") as log:
+            # Private workflows must not retain child diagnostics that can quote
+            # witness material. Existing public-fixture diagnostics remain
+            # available when this additive flag is unset.
+            with (Path(os.devnull) if args.redact_diagnostics else work / f"{name}.log").open("w") as log:
                 completed = subprocess.run(command, executable=executable, cwd=install / "app", env=environment,
                     stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout_seconds, preexec_fn=limits)
-            runs.append({"stage": name, "command": command, "executable": executable,
-                         "exit_code": completed.returncode,
-                         "elapsed_seconds": time.monotonic() - start})
+            record = {"stage": name, "exit_code": completed.returncode,
+                      "elapsed_seconds": time.monotonic() - start}
+            if not args.redact_diagnostics:
+                record.update(command=command, executable=executable)
+            runs.append(record)
             (work / "cpu-prover-run.json").write_text(json.dumps({
                 "manifest": pins["manifest"], "setup": pins["setup"], "runs": runs,
                 "verified_receipt": False, "jobs": args.jobs, "max_memory_gib": args.max_memory_gib,
             }, indent=2) + "\n")
             if completed.returncode != 0:
+                if args.redact_diagnostics:
+                    raise SystemExit(f"Official {name} failed; no accepted receipt")
                 raise SystemExit(f"Official {name} failed; no accepted receipt (see {work / (name + '.log')})")
     if not proof.is_file() or proof.stat().st_size > 1024 * 1024:
         raise SystemExit("Official prover did not produce bounded proof JSON")

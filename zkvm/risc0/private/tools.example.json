@@ -1,0 +1,36 @@
+{
+  "schema": "factoidal.ask.private-tools.v1",
+  "cpuInstall": "/verified/official-cpu-prover",
+  "native": {
+    "path": "/verified/l4-ask-attest",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "host": {
+    "path": "/verified/factoidal-ask-receipt",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "receiptTool": {
+    "path": "/verified/factoidal-evm-receipt",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "r0vm": {
+    "path": "/verified/r0vm",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "program": {
+    "path": "/verified/ask-final.bin",
+    "sha256": "b62a0fbaf80f1660e75a9df2143c2ca540d7755db6481daf49e3d7eeb21cf56b"
+  },
+  "cpuRunner": {
+    "path": "/verified/run_cpu_prover.py",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "cpuFetcher": {
+    "path": "/verified/fetch_cpu_prover.py",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  },
+  "cpuPins": {
+    "path": "/verified/cpu-prover-pins.json",
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_VERIFIED_SOFTWARE_SHA256"
+  }
+}

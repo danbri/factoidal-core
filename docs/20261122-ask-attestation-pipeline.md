@@ -149,6 +149,12 @@ not establish eligibility for a different policy.
 
 ## Reproduction and test evidence
 
+The subsequent [private witness workflow](20261122-private-ask-workflow.md)
+uses this unchanged admitted computation with fresh host OS salts, native/HACL
+snapshot checks, independently authorised image/policy/context and a strict
+public-only Groth16 package. Its worknote separates host lifecycle checks from
+new proof evidence and records the local SDK transport trust boundary.
+
 The source was checked with Lean 4.33.1, one build at a time, explicit
 `formal/lean4` working directories and a 4 GB Lean memory cap. Small
 module checks used `LEAN_NUM_THREADS=1`, `LEAN_STACK_SIZE_KB=16384`,

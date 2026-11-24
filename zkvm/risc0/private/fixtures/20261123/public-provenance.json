@@ -1,0 +1,29 @@
+{
+  "contextHash": "0x7fbf63bf0092351a1381c010568ebbaf94b7ccb71f7a33b33584e194ac7e4bb2",
+  "guestSource": {
+    "buildManifestSha256": "6c943875c91d6bed1c5133849ceb4b408e95ccc85da2dc5fcd0bfc00f5eb0880",
+    "commit": "1bf9c1b430f7ddc3489d72991c82b01bd625600c",
+    "programSha256": "b62a0fbaf80f1660e75a9df2143c2ca540d7755db6481daf49e3d7eeb21cf56b",
+    "tree": "985a6bd54f57da71530fc24f84b54bcd3e9f2192"
+  },
+  "imageId": "0xc6d11ad4ba2b40d049bd3c117779816c73b3247d7bc50bb00e1c5c898618239b",
+  "policyHash": "0xffc402d884d6af71d2e2189e6db4f6eb1e40f164cbce76e20109f2fb28728e0b",
+  "requireTrue": true,
+  "schema": "factoidal.ask.public-provenance.v1",
+  "sdk": "3.1.0",
+  "softwareSha256": {
+    "commonSource": "68b07330633e4716aa6706eb137f40b2fa4a6930b32215865fec153804e07df6",
+    "cpuFetcher": "29b5bd37c89c4531e996b7b43f63fbc6de409df8a77b5b406dffcdda3c00e45a",
+    "cpuPins": "d2d981eea53da4bb8503a8d44874e52db9f8664d3ba433223132890d3dd7fa94",
+    "cpuRunner": "fd6230800175c58f9994783f3d0dc2a717a466fa5678e15e3074b2af42dcf04e",
+    "host": "27a0ee3b206dba9798fb3999277259a2a061b22daec6c76846fbf498ad395e7d",
+    "native": "c064f7fb4e4e6af80b5a5bda06a1df6b351ad5ade895f96ec6f88a7bf01c174b",
+    "program": "b62a0fbaf80f1660e75a9df2143c2ca540d7755db6481daf49e3d7eeb21cf56b",
+    "python": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7",
+    "r0vm": "990c7e55c5627c6d78968c5fa6c6c98119a6282b5298831ccb52178f0dff9310",
+    "receiptTool": "394a7cd9213108bc2e76a435d198e9e708341946529e463148482883b2034a5d",
+    "verifierSource": "7df62687464804b5a9f2f24384d4d7289419755ba0060ab9e1419af221c34816",
+    "workflowSource": "3d3db93483a18e0576a18f00b27a533dd345a40b5bf02b564fa8c0ebbcfa3a02"
+  },
+  "verifierParameters": "0xe71e6620a834f4d8dc1998476b865a9a6437a14474f9442cf8664f9ec22a5eee"
+}
