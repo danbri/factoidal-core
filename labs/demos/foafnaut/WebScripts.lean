@@ -491,6 +491,7 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
     ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),
     ("wholeStyles",num (s.host.reads.wholeStyles - before.wholeStyles)),("partStyles",num (s.host.reads.partStyles - before.partStyles)),
+    ("wholeWhy",.string (" ".intercalate (s.host.reads.wholeWhy.toList.map fun (k, n) => k ++ ":" ++ toString n))),
     ("reads",num (s.host.reads.queries - before.queries)),("readOps",.string (readOpsSince before.queryOps s.host.reads.queryOps)),
     ("ns",num ns)] ++
     (match animatedOf s.host.reads s.host.anim.now with

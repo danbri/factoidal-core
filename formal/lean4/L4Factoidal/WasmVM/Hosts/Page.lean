@@ -248,6 +248,13 @@ the subtrees written since the last (`Host.measureNow`): the cost of script read
 writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
   wholeStyles : Nat := 0
   partStyles : Nat := 0
+  /-- Why each of `wholeStyles` styled the whole document, counted by reason (`Host.measureNow`):
+  `first`, `viewport`, `version`, `has`, `big`, or `write:<import>` with the last write that
+  forgot the noted elements (`forgetBy`). A diagnostic of issue 871; at most 64 reasons. -/
+  wholeWhy : Array (String × Nat) := #[]
+  /-- The import of the last write that was neither of a `style` or `class` attribute nor
+  neutral (with `set_attribute`: the attribute's name). -/
+  forgetBy : String := ""
   /-- Layout and style reads served (`pageQuery`), and how many of each op (op, count): the
   profile of a script turn at the boundary of scripts and the document (`WebScripts` reports
   each turn's part). A list: a page asks a few kinds of read. -/
@@ -697,6 +704,12 @@ def underAny (dom : Arena) (roots : List Nat) (n : Nat) : Bool := Id.run do
     | some c => if roots.contains c then return true else cur := (dom.get c).parent
   return false
 
+/-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
+def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
+  match ws.findIdx? (·.1 == why) with
+  | some i => ws.modify i fun (k, n) => (k, n + 1)
+  | none => if ws.size < 64 then ws.push (why, 1) else ws
+
 /-- A layout of the current arena and viewport for reads, counted. A page with an
 animation, or with an animation or transition declaration (measure op 28), has a style
 change first (`Animation.styleChange`), and its layout takes the animated values
@@ -733,8 +746,20 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
           else none
         else none
       | _, _ => none
-    let h := { h with reads := if last.isNone then { h.reads with wholeStyles := h.reads.wholeStyles + 1 }
-      else { h.reads with partStyles := h.reads.partStyles + 1 } }
+    let why : String :=
+      match h.reads.styleKept, h.reads.styleWrites with
+      | none, _ => "first"
+      | some _, none => "write:" ++ h.reads.forgetBy
+      | some k, some nodes =>
+        if !(k.width == w && k.height == ht) then "viewport"
+        else if k.base.isNone then "nobase"
+        else if h.reads.styleVersion != h.reads.version then "version"
+        else if (k.base.map (·.parentOnly)) != some true then "has"
+        else if (subtreesWithin dom nodes).isNone then "big" else "other"
+    let reads := h.reads
+    let reads := if last.isNone then { reads with wholeStyles := reads.wholeStyles + 1, wholeWhy := countWhy reads.wholeWhy why }
+      else { reads with partStyles := reads.partStyles + 1 }
+    let h := { h with reads := reads }
     let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
@@ -1410,6 +1435,14 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
     let reads := if readOnlyImports.contains nm then h.reads
       else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
+    -- the write that forgot the noted elements, for `Reads.wholeWhy`
+    let reads := if readOnlyImports.contains nm || neutral || styleOf.isSome then reads
+      else { reads with forgetBy :=
+        if nm == "set_attribute" || nm == "remove_attribute" then
+          match Hosts.Dom.readStr mem st (a 1) (a 2) 32 with
+          | .ok name => nm ++ "=" ++ name
+          | .error _ => nm
+        else nm }
     -- a listener through the first build's import (page scripts use `listen`, above)
     let listens := nm == "add_event_listener" &&
       (match Hosts.Dom.readStr mem st (a 1) (a 2) 24 with
