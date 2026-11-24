@@ -449,14 +449,31 @@ where
   eventHandler (name : String) : Bool :=
     name.length > 2 && name.startsWith "on" && name.toList.all fun c => c.isLower
 
+private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone &&
+    ((tag == "svg" && ["category", "icon"].contains a.name.localPart) || inertAttribute a.name.localPart)
+
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
-    if a.name.namespace_.isNone && inertAttribute a.name.localPart then continue
+    -- Inline icons may carry application metadata on the svg element (BBC News).
+    if skipAttribute tag a then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+/-- An unqualified application metadata attribute on an SVG viewport leaves the
+validation of every other attribute unchanged, including any rejection. -/
+private theorem validateAttrs_svg_metadata (key value : String) (attrs : List NamespaceAttribute)
+    (extra : List String) (metadata : key = "category" ∨ key = "icon") :
+    validateAttrs "svg" ({ name := { namespace_ := none, localPart := key }, value } :: attrs)
+      extra = validateAttrs "svg" attrs extra := by
+  have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := key }, value } = true := by
+    rcases metadata with rfl | rfl <;> simp [skipAttribute]
+  simp [validateAttrs, List.forIn_cons, skip]
+
+#print axioms validateAttrs_svg_metadata
+
 private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
 /-- SVG 2 §9.2 geometry properties of this reader's shapes: presentation attributes that a
     style sheet or `style` may set. Each is checked where it applies (the element's own
