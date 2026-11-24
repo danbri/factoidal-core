@@ -1151,7 +1151,8 @@ private def mergeInlineRight (a b : Result) : Option Float :=
   else some (max (inlineRight a) (inlineRight b))
 
 @[inline] private def pushInlineBox (r : Result) (box : Box) : Result :=
-  {r with boxes := r.boxes.push box,
+  {r with
+    boxes := r.boxes.push box
     inlineFlowRight := r.inlineFlowRight.map (fun x => max x (box.x+box.width))}
 
 /-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
@@ -1738,7 +1739,9 @@ def framedAtomic (id : Nat) (s : Computed) (w h : Float) (inner : Result) : Inli
   let m := s.margin
   let box : Box := ⟨id,m.left,m.top,w,h⟩
   let framed :=
-    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes,
+    {inner with
+      nodes := decorations id s m.left m.top w h ++ inner.nodes
+      boxes := #[box] ++ inner.boxes
       inlineFlowRight := inner.inlineFlowRight.map (fun x => max x (box.x+box.width))}
   .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
     (transformInlineBorderBox s m.left m.top w h framed)
