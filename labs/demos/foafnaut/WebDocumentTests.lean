@@ -445,6 +445,20 @@ private def imgDrawn := WebDocument.compileText imgPage ("{\"op\":\"render\",\"u
 #guard contains (WebDocument.compileText imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
 #guard contains (WebDocument.compileText imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
 
+-- `content: url(...)` on `::before` (issue 874): the sheet's URL is made absolute against the
+-- document, `inspect` lists the image to fetch (with the background images), and with its bytes
+-- the page is drawn with the image in the paragraph; with none, or with bytes that are not an
+-- image, the page is drawn as with no image (CSS 2.1 §12.2) and is not refused.
+private def contentPage := "<style>p::before{content:url(a.png)}</style><body style='margin:0'><p id=t style='margin:0'>A</p></body>"
+#guard contains (WebDocument.compileText contentPage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+  "\"backgroundImages\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
+private def contentWith (bytes : String) := WebDocument.compileText contentPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ bytes ++ "\"}]}") 40 40
+private def contentNone := WebDocument.compileText contentPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40
+#guard !contains (contentWith imageBytes) "\"error\"" && !contains contentNone "\"error\""
+#guard contentWith imageBytes != contentNone
+-- bytes that do not decode: as no image
+#guard contentWith "aGk=" == contentNone
+
 -- An SVG file as the image of an `img` (2026-11-14; before, its alt text): the document is drawn
 -- on the CPU into a bitmap of twice its size, with alpha, and laid out by the size of its root.
 private def svgFile := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10' viewBox='0 0 20 10'><rect width='10' height='10' fill='#ff0000'/></svg>"
