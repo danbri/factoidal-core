@@ -151,7 +151,8 @@ private def dispatch : List String → Except String String
     let expected ← readHex root
     if op == "fullstate" then
       if included then throw "parse_error"
-      return ← dispatchStateVotes epoch index length v expected rest
+      let value ← dispatchStateVotes epoch index length v expected rest
+      return value
     let siblings ← rest.mapM readHex
     if op == "root" then
       let leaf ← (validatorRoot v).mapError errorName
