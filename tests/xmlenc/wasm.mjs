@@ -122,10 +122,18 @@ for (const c of w3c.cases) {
       assert.notEqual(got, c.expectedHex, `STALE defective-data exclusion, now decrypts: ${c.issue}`);
       return;
     }
-    const res = await decrypt({ document, keys: caseKeys });
+    // dh1024: a 1024-bit Diffie-Hellman prime, refused without the opt-in.
+    const optIn = c.dh1024 ? { dangerouslyAndRegrettablyAcceptDh1024: true } : {};
+    if (c.dh1024) {
+      const plain = await decrypt({ document, keys: caseKeys });
+      assert.equal(plain.ok, false);
+      assert.ok(plain.error.includes('dangerouslyAndRegrettablyAcceptDh1024'), plain.error);
+    }
+    const res = await decrypt({ document, keys: caseKeys, ...optIn });
     if (c.outcome === 'ok') {
       assert.equal(res.ok, true, res.error);
       assert.equal(res.canonical, canonical(readFileSync(join(w3cDir, c.expected), 'utf8')));
+      if (c.dh1024) assert.ok((res.warnings || []).some((w) => w.includes('Dh1024')), JSON.stringify(res.warnings));
     } else if (c.outcome === 'xfail') {
       // An expected failure: red when it starts to decrypt (close c.issue then).
       assert.notEqual(res.ok, true, `STALE expected failure, now decrypts: ${c.issue}`);

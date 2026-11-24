@@ -58,6 +58,14 @@ refused, with a message that names it. Nothing is skipped.
     HACL* HMAC); no `KA-Nonce`. The recipient key is named by
     `ds:KeyName` in `xenc:RecipientKeyInfo`, or is the caller's only key on
     that curve.
+  * Finite-field Diffie-Hellman key agreement `xmlenc11#dh-es` (§5.6.3):
+    originator key `xenc:DHKeyValue` (§5.6.1); the recipient key is a
+    `DhKey` (`p`, `g`, `q`, `x`); the originator's domain parameters, when
+    given, must be the key's; the public value is checked (`[2, p - 2]`,
+    `y^q mod p = 1`) before the private value is used; `Z = y^x mod p` by
+    HACL* (`Dh.modExp`); then Concat KDF or PBKDF2 as above. Primes of 2048
+    to 4096 bits; 1024 bits only with `Opts.dh1024`. The legacy
+    `xmlenc#dh` (§5.6.2, its own key derivation) is refused.
   * Derived keys (§5.4.3): `xenc11:DerivedKey` in `ds:KeyInfo` of
     `EncryptedData` (the content key) or of `EncryptedKey` (the key
     encryption key of AES Key Wrap), with one `xenc11:KeyDerivationMethod`
@@ -128,6 +136,8 @@ import L4Factoidal.Crypto.RsaOaepChecked
 import L4Factoidal.Crypto.WebHacl
 import L4Factoidal.Crypto.P256Native
 import L4Factoidal.Crypto.X25519
+import L4Factoidal.Crypto.DhNative
+import L4Factoidal.Risk
 import L4Factoidal.Crypto.ConcatKdf
 
 namespace L4Factoidal.XML.Enc
@@ -161,6 +171,7 @@ def kwAes128 : String := xencNs ++ "kw-aes128"
 def kwAes192 : String := xencNs ++ "kw-aes192"
 def kwAes256 : String := xencNs ++ "kw-aes256"
 def ecdhEs : String := xenc11Ns ++ "ECDH-ES"
+def dhEs : String := xenc11Ns ++ "dh-es"
 def x25519Agreement : String := "http://www.w3.org/2021/04/xmldsig-more#x25519"
 def concatKdfAlg : String := xenc11Ns ++ "ConcatKDF"
 def pbkdf2Alg : String := xenc11Ns ++ "pbkdf2"
@@ -219,6 +230,9 @@ structure Prims where
   (`WebHacl.haclHash`); `pbkdf2_native_eq_spec` relates it to the pure function. -/
   pbkdf2 : WebHacl.HashAlg → ByteArray → ByteArray → Nat → Nat → ByteArray :=
     fun a => WebCrypto.pbkdf2 (WebHacl.haclHash a)
+  /-- Finite-field Diffie-Hellman: `p x y` to `y^x mod p` as `|p|` octets
+  (HACL* `Hacl_Bignum64_mod_exp_consttime`, `Dh.modExp`). -/
+  dhModExp : ByteArray → ByteArray → ByteArray → Option ByteArray := Dh.modExp
 
 /-- HACL* (`RsaOaep.rsaPrivateOp`, `Rsa.rsaPublicOp`, `P256`, `X25519`). -/
 def nativePrims : Prims where
@@ -253,13 +267,24 @@ structure SymKey where
   kid : Option String := none
   k : ByteArray
 
+/-- A finite-field Diffie-Hellman private key (§5.6.1): the prime `p`, the
+generator `g`, the order `q` of the subgroup `g` generates, and the private
+value `x`, each a big-endian number. -/
+structure DhKey where
+  kid : Option String := none
+  p : ByteArray
+  g : ByteArray
+  q : ByteArray
+  x : ByteArray
+
 /-- The caller's keys. -/
 structure Keys where
   rsa : List RsaKey := []
   ec : List EcKey := []
   sym : List SymKey := []
+  dh : List DhKey := []
 
-def Keys.isEmpty (k : Keys) : Bool := k.rsa.isEmpty && k.ec.isEmpty && k.sym.isEmpty
+def Keys.isEmpty (k : Keys) : Bool := k.rsa.isEmpty && k.ec.isEmpty && k.sym.isEmpty && k.dh.isEmpty
 
 structure Opts where
   /-- Accept `aes128-cbc` and `aes256-cbc` data encryption. -/
@@ -272,6 +297,9 @@ structure Opts where
   one HMAC; a larger count is refused before any key is used, so a document
   cannot make the reader do unbounded work. -/
   maxPbkdf2Iterations : Nat := 1000000
+  /-- Accept a Diffie-Hellman prime of 1024 to 2047 bits (`xmlenc11#dh-es`).
+  Only `Risk.dangerouslyAccept .dh1024Agreement` makes the token. -/
+  dh1024 : Option (Risk.Accepted .dh1024Agreement) := none
 
 /-- Why a decryption or encryption gives no document. -/
 inductive Failure where
@@ -930,10 +958,198 @@ theorem xmlenc11_derivedKey_pbkdf2_eq_rfc8018 (hh : WebHacl.HashAgrees) (hm : We
   simp only [deriveFromMaster, Kdf.derive?, xmlenc11_pbkdf2_native_eq_rfc8018 hh hm]
   split <;> simp_all
 
+/-! ## Finite-field Diffie-Hellman (§5.6.1, §5.6.3) -/
+
+/-- The 1024-bit Diffie-Hellman refusal. It names the opt-in of each
+surface. -/
+def dh1024Refusal : String :=
+  "a Diffie-Hellman prime of fewer than 2048 bits is refused by default (NIST SP 800-131A Rev. 2 disallows it for key agreement). To accept it: the member dangerouslyAndRegrettablyAcceptDh1024: true of the xmlDecrypt options, or Opts.dh1024 := some (Risk.dangerouslyAccept .dh1024Agreement) in Lean. https://github.com/danbri/factoidal/issues/1227"
+
+/-- The index of the first non-zero octet at or after `i`; a tail call per
+octet. -/
+def firstNonZero (b : ByteArray) : (fuel i : Nat) → Nat
+  | 0, i => i
+  | f + 1, i => if h : i < b.size then (if b[i] == 0 then firstNonZero b f (i + 1) else i) else i
+
+/-- The octets of a number without leading zero octets (the `ds:CryptoBinary`
+form, XML Signature 1.1 §4.0.1). -/
+def stripZeros (b : ByteArray) : ByteArray := b.extract (firstNonZero b b.size 0) b.size
+
+/-- `b`, as a number, right-aligned in `k` octets; `none` when it does not
+fit. -/
+def rightAlign (b : ByteArray) (k : Nat) : Option ByteArray :=
+  let s := stripZeros b
+  if s.size > k then none else some (⟨Array.replicate (k - s.size) 0⟩ ++ s)
+
+/-- An originator's `xenc:DHKeyValue` (§5.6.1): the optional domain
+parameters `(P, Q, Generator)` and the public value `Public`, each without
+leading zero octets. `seed` and `pgenCounter` are accepted and not read. -/
+structure DhPublic where
+  domain : Option (ByteArray × ByteArray × ByteArray)
+  y : ByteArray
+
+/-- The originator key of `xmlenc11#dh-es`: one `xenc:DHKeyValue`, directly
+or in `ds:KeyValue`. The children are the schema's sequence
+`(P, Q, Generator)?, Public, (seed, pgenCounter)?`. -/
+def dhOriginatorKey (o : El) : M DhPublic := do
+  if !o.elementOnly then refuse "xenc:OriginatorKeyInfo has unexpected content"
+  let cands := o.children.foldl (fun acc c =>
+    if c.is dsNs "KeyValue" then acc ++ c.children else acc ++ [c]) []
+  let k ← match cands with
+    | [k] => pure k
+    | _ => refuse "xenc:OriginatorKeyInfo must hold one public key"
+  if !k.is xencNs "DHKeyValue" then
+    refuse s!"dh-es needs an xenc:DHKeyValue originator key, not {k.lname}"
+  if !k.elementOnly then refuse "xenc:DHKeyValue has unexpected content"
+  let bin (e : El) : M ByteArray :=
+    match e.text? >>= base64Decode? with
+    | some b => pure (stripZeros b)
+    | none => refuse s!"xenc:{e.lname} is not base64"
+  let (domain, rest) ← match k.children with
+    | p :: q :: g :: rest =>
+        if p.is xencNs "P" then
+          if !(q.is xencNs "Q" && g.is xencNs "Generator") then
+            refuse "xenc:DHKeyValue: xenc:P must be followed by xenc:Q and xenc:Generator"
+          pure (some (← bin p, ← bin q, ← bin g), rest)
+        else pure (none, k.children)
+    | cs => pure (none, cs)
+  match rest with
+  | [y] =>
+      if !y.is xencNs "Public" then refuse "xenc:DHKeyValue has no xenc:Public"
+      pure { domain, y := ← bin y }
+  | [y, sd, pc] =>
+      if !y.is xencNs "Public" then refuse "xenc:DHKeyValue has no xenc:Public"
+      if !(sd.is xencNs "seed" && pc.is xencNs "pgenCounter") then
+        refuse "xenc:DHKeyValue: xenc:Public may be followed only by xenc:seed and xenc:pgenCounter"
+      pure { domain, y := ← bin y }
+  | _ => refuse "xenc:DHKeyValue must be (P, Q, Generator)?, Public, (seed, pgenCounter)?"
+
+/-- The prime size check: 128 to 512 octets (1024 to 4096 bits) in steps of
+8 octets (the limb of `Dh.modExp`); fewer than 256 octets only with the
+`dh1024` token. -/
+def dhPrimeCheck (opts : Opts) (k : Nat) : M Unit :=
+  if k % 8 != 0 || k < 128 || k > 512 then
+    refuse s!"a Diffie-Hellman prime of {k * 8} bits is not supported (1024 to 4096 bits, a multiple of 64)"
+  else if k < 256 && opts.dh1024.isNone then refuse dh1024Refusal
+  else pure ()
+
+/-- `y^x mod p` as `|p|` octets, kept only when it has that size and is not
+0 or 1 (NIST SP 800-56A Rev. 3 §5.7.1.1: an output of 1 is an error). -/
+def dhZ? (prims : Prims) (p x y : ByteArray) : Option ByteArray :=
+  match prims.dhModExp p x y with
+  | some z => if z.size == p.size && 1 < Dh.natOfBytes z then some z else none
+  | none => none
+
+/-- The shared secret `Z` of `xmlenc11#dh-es` (§5.6.3; RFC 2631 §2.1.1) for
+the recipient key `key` and the originator's public value. Before the
+private value is used: the prime size (`dhPrimeCheck`); the originator's
+domain parameters, when given, must be the key's; the public value must be
+in `[2, p - 2]` and in the subgroup of order `q` (`y^q mod p = 1`; RFC 2631
+§2.1.5, NIST SP 800-56A Rev. 3 §5.6.2.3.1). Each of these is a refusal with
+a message: none depends on the private value. -/
+def dhSharedSecret (prims : Prims) (opts : Opts) (key : DhKey) (pub : DhPublic) : M ByteArray := do
+  let p := stripZeros key.p
+  let q := stripZeros key.q
+  let k := p.size
+  dhPrimeCheck opts k
+  if q.size == 0 then refuse "the Diffie-Hellman key has no subgroup order q"
+  match pub.domain with
+  | some (pp, qq, gg) =>
+      if pp != p || qq != q || gg != stripZeros key.g then
+        refuse "the originator's Diffie-Hellman domain parameters are not the recipient key's"
+  | none => pure ()
+  let yN := Dh.natOfBytes pub.y
+  if yN < 2 || yN + 2 > Dh.natOfBytes p then
+    refuse "the originator's Diffie-Hellman public value is not in [2, p - 2]"
+  let y ← match rightAlign pub.y k with
+    | some y => pure y
+    | none => refuse "the originator's Diffie-Hellman public value is longer than p"
+  match prims.dhModExp p q y with
+  | some r =>
+      if Dh.natOfBytes r != 1 then
+        refuse "the originator's Diffie-Hellman public value is not in the subgroup of order q"
+  | none => refuse "the Diffie-Hellman subgroup check was refused"
+  match dhZ? prims p key.x y with
+  | some z => pure z
+  | none => .error .decryptFailed
+
+/-! ### Theorems relating §5.6.3 to RFC 2631 and §5.4
+
+Says: on the native primitives, the shared secret of `dh-es` is `y^x mod p`
+as `|p|` octets, given HACL*'s functional correctness (`ModExpAgrees`); it
+has the size of `p`; a prime of fewer than 2048 bits is refused unless the
+caller holds the `dh1024Agreement` token; the key derivation after it is
+the same `Kdf.derive?` as for ECDH-ES (Concat KDF of §5.4.1 or PBKDF2 of
+§5.4.2).
+Does not say: that a group is strong; anything about constant-time
+behaviour of the Lean code around HACL*. -/
+
+/-- The `dh-es` shared secret has the size of `p` (RFC 2631 §2.1.2: "the
+same length as p"). -/
+theorem xmlenc11_dhZ_size (prims : Prims) (p x y z : ByteArray) (h : dhZ? prims p x y = some z) :
+    z.size = p.size := by
+  unfold dhZ? at h
+  split at h
+  · split at h
+    · rename_i e
+      cases h
+      simp only [Bool.and_eq_true, beq_iff_eq] at e
+      exact e.1
+    · cases h
+  · cases h
+
+/-- On the native primitives, the `dh-es` shared secret is RFC 2631 `ZZ =
+y^x mod p` as `|p|` octets, given HACL*'s functional correctness. -/
+theorem xmlenc11_dhZ_eq_rfc2631 (hm : Dh.ModExpAgrees) (p x y z : ByteArray)
+    (h : dhZ? nativePrims p x y = some z) : z = Dh.modExpSpec p x y := by
+  unfold dhZ? at h
+  cases e : nativePrims.dhModExp p x y with
+  | none => rw [e] at h; cases h
+  | some r =>
+    rw [e] at h
+    simp only at h
+    split at h
+    · cases h
+      exact hm p x y _ e
+    · cases h
+
+/-- A prime of 1024 bits is refused without the `dh1024Agreement` token. -/
+theorem xmlenc11_dh1024_needs_token (opts : Opts) (h : opts.dh1024 = none) :
+    dhPrimeCheck opts 128 = refuse dh1024Refusal := by
+  simp [dhPrimeCheck, h]
+
+/-- With the token, a 1024-bit prime passes the size check. -/
+theorem xmlenc11_dh1024_with_token (opts : Opts) (t : Risk.Accepted .dh1024Agreement)
+    (h : opts.dh1024 = some t) : dhPrimeCheck opts 128 = pure () := by
+  simp [dhPrimeCheck, h]
+
+/-- Primes of 2048 to 4096 bits pass the size check with no token. -/
+theorem xmlenc11_dh_2048_no_token (opts : Opts) (k : Nat) (h1 : 256 ≤ k) (h2 : k ≤ 512) (h3 : k % 8 = 0) :
+    dhPrimeCheck opts k = pure () := by
+  have a : ¬ k < 128 := by omega
+  have b : ¬ k > 512 := by omega
+  have c : ¬ k < 256 := by omega
+  simp [dhPrimeCheck, h3, a, b, c]
+
+/-- The key from a key agreement's shared secret (§5.4): the same function
+for ECDH-ES, X25519 and `dh-es`. -/
+def agreeDerive (prims : Prims) (kdf : Kdf) (z? : Option ByteArray) (keyLen : Nat) : M ByteArray :=
+  match z? >>= fun z => kdf.derive? prims z keyLen with
+  | some k => pure k
+  | none => .error .decryptFailed
+
+/-- `dh-es` with Concat KDF is §5.4.1 Concat KDF over SHA-256 with the DH
+shared secret as `Z`, as for ECDH-ES. -/
+theorem xmlenc11_dhes_concat (prims : Prims) (p : ConcatKdf.XmlEncParams) (z : ByteArray) (n : Nat) :
+    agreeDerive prims (.concat p) (some z) n =
+      (match ConcatKdf.xmlEncDerive? ConcatKdf.sha256Hash z n p with
+       | some k => pure k
+       | none => .error .decryptFailed) := rfl
+
 /-- A key of `keyLen` octets from an `xenc:AgreementMethod`. -/
 def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts := {}) : M ByteArray := do
   let alg := (a.attr? "Algorithm").getD ""
-  if alg != ecdhEs && alg != x25519Agreement then
+  if alg != ecdhEs && alg != x25519Agreement && alg != dhEs then
     refuse s!"the key agreement algorithm {alg} is not supported"
   if !a.elementOnly then refuse "xenc:AgreementMethod has unexpected content"
   let mut kdm : Option El := none
@@ -948,11 +1164,9 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts 
   let kdf ← match kdm with
     | some k => kdfSized opts k keyLen
     | none => refuse "xenc:AgreementMethod has no key derivation method"
-  let (curve, pub) ← match orig with
-    | some o => originatorKey o
+  let o ← match orig with
+    | some o => pure o
     | none => refuse "xenc:AgreementMethod has no originator key"
-  if alg == x25519Agreement && curve != .x25519 then
-    refuse "xmldsig-more#x25519 needs an X25519 originator key"
   let name? ← match recip with
     | none => pure none
     | some r => do
@@ -961,14 +1175,21 @@ def agreeKey (prims : Prims) (keys : Keys) (a : El) (keyLen : Nat) (opts : Opts 
         | [] => pure none
         | [k] => pure (some (← keyNameOf k))
         | _ => refuse "xenc:RecipientKeyInfo has more than one ds:KeyName"
-  let key ← pick (if curve == .p256 then "P-256" else "X25519") name?
-    (keys.ec.filter (·.curve == curve)) (·.kid)
-  let z? := match curve with
-    | .p256 => prims.p256Ecdh pub key.d
-    | .x25519 => prims.x25519 key.d pub
-  match z? >>= fun z => kdf.derive? prims z keyLen with
-  | some k => pure k
-  | none => .error .decryptFailed
+  if alg == dhEs then
+    let pub ← dhOriginatorKey o
+    let key ← pick "Diffie-Hellman" name? keys.dh (·.kid)
+    let z ← dhSharedSecret prims opts key pub
+    agreeDerive prims kdf (some z) keyLen
+  else
+    let (curve, pub) ← originatorKey o
+    if alg == x25519Agreement && curve != .x25519 then
+      refuse "xmldsig-more#x25519 needs an X25519 originator key"
+    let key ← pick (if curve == .p256 then "P-256" else "X25519") name?
+      (keys.ec.filter (·.curve == curve)) (·.kid)
+    let z? := match curve with
+      | .p256 => prims.p256Ecdh pub key.d
+      | .x25519 => prims.x25519 key.d pub
+    agreeDerive prims kdf z? keyLen
 
 /-! ## Content keys -/
 

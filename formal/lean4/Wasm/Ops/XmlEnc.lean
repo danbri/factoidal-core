@@ -6,6 +6,7 @@ AES requests (`Crypto/CipherCall.lean`, design record
 `docs/designissues/2026-10-27-xml-encryption-and-jwe.md`).
 
   xmlDecrypt({"document": xml, "keys": [jwk…], "allowCbc": bool, "octets": bool,
+              "dangerouslyAndRegrettablyAcceptDh1024": bool,
               "answers": [{"request": need, "answer": {"ok": b64} | {"refused": true}}…]})
   xmlEncrypt({"document": xml, "recipient": jwk, "algorithm": "aes128-gcm" | "aes256-gcm",
               "keyTransport": "rsa-oaep-mgf1p" | "rsa-oaep-sha256", "keyWrap": "kw-aes128" | "kw-aes256",
@@ -36,7 +37,12 @@ Keys (`keys`, and `recipient` of `xmlEncrypt`) are JWKs (RFC 7517, RFC 7518
 key or content key must still have the size of its algorithm; a master key
 of an `xenc11:DerivedKey` may have any of these sizes). An `oct` recipient
 of `xmlEncrypt` has 16 or 32 octets. `kid` is the
-`ds:KeyName` the document uses for the key. For `xmlEncrypt`, `random` is
+`ds:KeyName` the document uses for the key. A finite-field Diffie-Hellman
+key (XML Encryption 1.1 `xmlenc11#dh-es`, §5.6.3) has no JWK type; here it
+is `{"kty": "DH", "p", "g", "q", "x"}` (base64 of big-endian numbers). A
+prime of fewer than 2048 bits is refused unless
+`dangerouslyAndRegrettablyAcceptDh1024` is true; then the result has a
+`warnings` member. For `xmlEncrypt`, `random` is
 octets from the host's random source: the content key, the 12-octet IV,
 then 20 (RSA-OAEP SHA-1), 32 (RSA-OAEP SHA-256, or the ephemeral key of a
 key agreement) or 0 (a named key encryption key or a derived key) octets,
@@ -156,7 +162,14 @@ def addKey (ks : Keys) (j : Json) : Except String Keys := do
       let k ← b64Field? j "k"
       if k.size == 0 || k.size > 1024 then throw "an oct key must be 1 to 1024 octets"
       pure { ks with sym := ks.sym ++ [{ kid, k }] }
-  | _ => throw "a key must be a JWK with kty RSA, EC, OKP or oct"
+  | some "DH" =>
+      -- Not a registered JWK type (RFC 7518 has none for finite-field
+      -- Diffie-Hellman): this op's own form, the members of `DhKey`.
+      let p ← b64Field? j "p"
+      let x ← b64Field? j "x"
+      if p.size > 513 || x.size == 0 || x.size > 513 then throw "a DH key must have p and x of at most 4096 bits"
+      pure { ks with dh := ks.dh ++ [{ kid, p, g := ← b64Field? j "g", q := ← b64Field? j "q", x }] }
+  | _ => throw "a key must be a JWK with kty RSA, EC, OKP or oct, or a DH key"
 
 def keysOf (j : Json) : Except String Keys :=
   match j.field? "keys" with
@@ -175,18 +188,26 @@ def documentOf (j : Json) : Except String Document :=
         | .ok d => .ok d
         | .error _ => .error "the document is not well-formed XML"
 
-def octetsEnvelope (r : M ByteArray) : String :=
+/-- The `warnings` member, when there are warnings. -/
+def warningsField (ws : List String) : List (String × Json) :=
+  if ws.isEmpty then [] else [("warnings", .array (ws.map Json.string))]
+
+def octetsEnvelope (r : M ByteArray) (ws : List String := []) : String :=
   match r with
-  | .ok b => okWith [("octets", .string (base64 b))]
+  | .ok b => okWith ([("octets", .string (base64 b))] ++ warningsField ws)
   | .error (.need q) => okWith [("need", reqJson q)]
   | .error f => errJson f.message
 
-def envelope (r : M Document) : String :=
+def envelope (r : M Document) (ws : List String := []) : String :=
   match r with
-  | .ok d => okWith [("document", .string (serializeDocument d)),
-                     ("canonical", .string (L4Factoidal.XML.Canonical.canonDocument d))]
+  | .ok d => okWith ([("document", .string (serializeDocument d)),
+                     ("canonical", .string (L4Factoidal.XML.Canonical.canonDocument d))] ++ warningsField ws)
   | .error (.need q) => okWith [("need", reqJson q)]
   | .error f => errJson f.message
+
+/-- The warning of the `dangerouslyAndRegrettablyAcceptDh1024` opt-in. -/
+def dh1024Warning : String :=
+  "dangerouslyAndRegrettablyAcceptDh1024: Diffie-Hellman primes of fewer than 2048 bits were accepted for this decryption (https://github.com/danbri/factoidal/issues/1227)"
 
 /-- `xmlDecrypt` with a given cipher and primitives (the wasm op passes the
 replay cipher of `answers`; the native probe passes `nativeCipher`). -/
@@ -200,12 +221,17 @@ def decryptWith (mkCipher : List (Req × Ans) → Cipher) (prims : Prims) (argJs
         let answers ← answersOf j
         let allowCbc := (j.field? "allowCbc").bind Json.asBool? |>.getD false
         let octets := (j.field? "octets").bind Json.asBool? |>.getD false
-        pure (d, ks, answers, allowCbc, octets) : Except String _) with
+        let dh1024 := (j.field? "dangerouslyAndRegrettablyAcceptDh1024").bind Json.asBool? |>.getD false
+        pure (d, ks, answers, allowCbc, octets, dh1024) : Except String _) with
       | .error e => errJson e
-      | .ok (d, ks, answers, allowCbc, octets) =>
-          let opts : Opts := { allowCbc, maxDepth := maxDocDepth }
-          if octets then octetsEnvelope (decryptOctets (mkCipher answers) prims ks opts d)
-          else envelope (decrypt (mkCipher answers) prims ks opts d)
+      | .ok (d, ks, answers, allowCbc, octets, dh1024) =>
+          -- The token is made here only, from the caller's explicit member
+          -- (skills/lean-risk-flags §5).
+          let tok := if dh1024 then some (L4Factoidal.Risk.dangerouslyAccept .dh1024Agreement) else none
+          let ws := if dh1024 then [dh1024Warning] else []
+          let opts : Opts := { allowCbc, maxDepth := maxDocDepth, dh1024 := tok }
+          if octets then octetsEnvelope (decryptOctets (mkCipher answers) prims ks opts d) ws
+          else envelope (decrypt (mkCipher answers) prims ks opts d) ws
 
 /-- The recipient of `xmlEncrypt`, from a public JWK. -/
 def recipientOf (j : Json) (keyLen : Nat) : Except String Recipient := do

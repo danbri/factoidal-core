@@ -59,8 +59,12 @@
   {
    "id": "AGRMNT.7",
    "file": "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml",
-   "outcome": "refused",
-   "reason": "key agreement algorithm"
+   "outcome": "ok",
+   "native": false,
+   "expected": "plaintext.xml",
+   "key": "oracle-DH-1024",
+   "dh1024": true,
+   "kek": "cd71afb5b99a88dfaf1738655eea6920"
   },
   {
    "id": "AGRMNT.9",
@@ -68,6 +72,14 @@
    "outcome": "xfail",
    "issue": "https://github.com/danbri/factoidal/issues/1303",
    "key": "oracle-EC-P256"
+  },
+  {
+   "id": "AGRMNT.10",
+   "file": "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__pbkdf2.xml",
+   "outcome": "xfail",
+   "issue": "https://github.com/danbri/factoidal/issues/1303",
+   "key": "oracle-DH-1024",
+   "dh1024": true
   },
   {
    "id": "SYM.1",

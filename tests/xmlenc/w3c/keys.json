@@ -42,5 +42,13 @@
   "kty": "oct",
   "kid": "Our shared secret",
   "k": "UEFTU1dPUkQ"
+ },
+ {
+  "kty": "DH",
+  "kid": "oracle-DH-1024",
+  "p": "-KqKpjushvO-rNEy7v2UYdFAQERMyxxnSAF6dgO_mZTDveFnrW1qxI4D-zkr_A1THgGOv70tvRf6bEM-dg0790SZofd92mXbSgWKxaZejLE55Czm0zdsSsNtzS9pex9aFT_HBsDuS35cA8J40F30vNcKVI5x1wtsyAY9kYhfJuU",
+  "g": "3xW-G05hF5w70NRVDbCiziQHFpOEWFhKtgmexo60v04rFBARVRjU-7V94StOX7nlbHuIeaCKvBPVYBWHwOZNcQezhwmnZHemV5YpB3tFleNO495UZmfaBFWG6OWNujgq7a1PtfVhKZfcDr3ARJCd3AqwC7hHa6p40PatlK5HU6Q",
+  "q": "fFVFUx3WQ3nfVmiZd37KMOigICImZY4zpAC9OwHfzMph3vCz1ra1YkcB_ZyV_gapjwDHX96W3ov9NiGfOwad-6JM0Pu-7TLtpQLFYtMvRlic8hZzaZu2JWG25pe0vY-tCp_jg2B3Jb8uAeE8aC76XmuFKkc464W2ZAMeyMQvk3I",
+  "x": "XTSH2IeLKwnsJ11f1tKR3ie_aLI"
  }
 ]

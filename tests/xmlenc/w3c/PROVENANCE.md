@@ -20,6 +20,7 @@ document states for the Working Group's material.
 | `cipherText__EC-P521__aes256-gcm__kw-aes256__ECDH-ES__ConcatKDF.xml` | `oracle/` | AGRMNT.3 |
 | `cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml` | `oracle/` | AGRMNT.7 |
 | `cipherText__EC-P256__aes128-gcm__kw-aes256__ECDH-ES__pbkdf2.xml` | `oracle/` | AGRMNT.9 (key agreement with PBKDF2) |
+| `cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__pbkdf2.xml` | `oracle/` | AGRMNT.10 (added 2026-11-22) |
 | `plaintext.xml` | `oracle/` | the plaintext of the Oracle cases |
 | `microsoft-xenc11-example-AES128-GCM.xml` | `microsoft/xenc11-example-AES128-GCM.xml` | SYM.1 |
 | `microsoft-dkey-example-ConcatKDF-crypto.xml` | `microsoft/dkey-example-ConcatKDF-crypto.xml` | DRV.1 |
@@ -68,3 +69,22 @@ and `node --test tests/xmlenc/wasm.mjs` using a Wasm build of the same source.
 Not used: the key derivation cases DRV.3 and DRV.4 (binary files), the Microsoft
 key agreement cases (binary plaintext under `Type` Element, and P-384,
 P-521 and DH), AGRMNT.4 to AGRMNT.8 and AGRMNT.10 (binary plaintext, P-384, P-521, DH).
+
+Added 2026-11-22 (finite-field Diffie-Hellman, `xmlenc11#dh-es`, §5.6.3).
+The key of `oracle/DH-1024_SHA256WithDSA.p12` (password `passwd`) is in
+`keys.json` as kid `oracle-DH-1024`, in the op's own form
+`{"kty": "DH", "p", "g", "q", "x"}` (no JWK type exists for it): `p`, `g`, `q`
+are the X9.42 `DomainParameters` and `x` the private value of the PKCS #8
+key, read with `openssl pkcs12 -legacy -nocerts -nodes | openssl pkey
+-outform DER | openssl asn1parse`. They equal the `P`, `Generator` and `Q`
+of the documents. The prime has 1024 bits, so both cases are run with the
+opt-in `dangerouslyAndRegrettablyAcceptDh1024` (and refused without it).
+AGRMNT.7 (Concat KDF) decrypts with Node's crypto (`y^x mod p`, Concat KDF
+over SHA-256, AES Key Wrap, AES-GCM); `kek` in `cases.json` is the key
+encryption key that Node derives, and the native probe checks that Lean
+derives the same (AES Key Wrap is host-only natively). AGRMNT.10 (PBKDF2,
+HMAC-SHA-256, 2000 iterations) is an expected failure for the same reason
+as AGRMNT.9: no PBKDF2 input that was tried (the shared secret padded to
+the length of `p`, without leading zeros, as hex or base64 text; SHA-1,
+SHA-256, SHA-384, SHA-512; 1000, 2000 or 16000 iterations) gives a key
+encryption key that unwraps its key (https://github.com/danbri/factoidal/issues/1303).

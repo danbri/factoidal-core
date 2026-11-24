@@ -47,6 +47,13 @@ jobs:
         L4Factoidal.XML.Enc.xmlenc11_write_concat
         L4Factoidal.XML.Enc.xmlenc11_write_pbkdf2_eq_rfc8018
         L4Factoidal.XML.Enc.xmlenc11_write_derived_size
+        L4Factoidal.Crypto.Dh.bytesOfNat_size
+        L4Factoidal.XML.Enc.xmlenc11_dhZ_size
+        L4Factoidal.XML.Enc.xmlenc11_dhZ_eq_rfc2631
+        L4Factoidal.XML.Enc.xmlenc11_dh1024_needs_token
+        L4Factoidal.XML.Enc.xmlenc11_dh1024_with_token
+        L4Factoidal.XML.Enc.xmlenc11_dh_2048_no_token
+        L4Factoidal.XML.Enc.xmlenc11_dhes_concat
     steps:
       - uses: actions/checkout@v4
         with:

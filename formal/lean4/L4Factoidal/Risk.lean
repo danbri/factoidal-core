@@ -31,6 +31,14 @@ inductive Risk where
   https://github.com/danbri/factoidal/issues/1227: "off by default and make user pass in a
   \"dangerously_and_regrettsbly_.... \" symbol". -/
   | rsa1024Verify
+  /-- Finite-field Diffie-Hellman key agreement over a prime of fewer than 2048 bits
+  (XML Encryption 1.1 `xmlenc11#dh-es` through `XML.Enc.Opts.dh1024`). The arithmetic is
+  HACL*'s, as for 2048 bits and more. Not shown: that the group resists the discrete
+  logarithm. NIST SP 800-131A Rev. 2 (2019) disallows key agreement with a modulus of fewer
+  than 2048 bits; the W3C interop case AGRMNT.7 uses 1024 bits. The coordinator applied the
+  owner's 1024-bit RSA decision (https://github.com/danbri/factoidal/issues/1227) to this
+  case; it is not an owner decision of its own. -/
+  | dh1024Agreement
   deriving DecidableEq, Repr
 
 /-- Evidence that a caller accepted risk `r`. The constructor is private: the only way to
