@@ -1,4 +1,4 @@
-import EthereumConsensus.SSZ.AttestationData
+import EthereumConsensus.SSZ.AttesterSlashing
 import Lean
 
 /-! JSONL transport for four concrete fixed-shape SSZ beacon containers.
@@ -69,6 +69,29 @@ private def fromDomain {α : Type} (result : Except DomainError α) :
     | .domainTypeWidth => "domain_type_width"
     | .versionWidth => "version_width"
     | .container _ => "container_error")
+
+private def getSlashingData (request : Json) (prefix : String) : Except String AttestationData := do
+  let slot ← getUInt64 request (prefix ++ "slot")
+  let index ← getUInt64 request (prefix ++ "committee_index")
+  let beacon ← getHex request (prefix ++ "beacon_block_root") 32
+  let se ← getUInt64 request (prefix ++ "source_epoch")
+  let sr ← getHex request (prefix ++ "source_root") 32
+  let te ← getUInt64 request (prefix ++ "target_epoch")
+  let tr ← getHex request (prefix ++ "target_root") 32
+  fromContainer (checkedAttestationData slot index beacon se sr te tr)
+
+private def getSlashingIndices (request : Json) (key : String) : Except String (List UInt64) := do
+  let values ← request.getObjValAs? (Array Nat) key
+  if values.size > slashingIndexLimit then throw "resource_limit"
+  let mut indices : Array UInt64 := #[]
+  for value in values do
+    if value ≥ 18446744073709551616 then throw "out_of_range"
+    indices := indices.push (UInt64.ofNat value)
+  return indices.toList
+
+private def slashingKeys (prefix : String) : List String :=
+  ["slot", "committee_index", "beacon_block_root", "source_epoch",
+    "source_root", "target_epoch", "target_root"].map (prefix ++ ·)
 
 private def dispatch (request : Json) : Except String Json := do
   let op ← request.getObjValAs? String "op"
@@ -147,6 +170,26 @@ private def dispatch (request : Json) : Except String Json := do
       ("object_root", .str (L4Factoidal.Crypto.bytesToHex result.objectRoot.bytes)),
       ("domain", .str (L4Factoidal.Crypto.bytesToHex result.domain.bytes)),
       ("signing_root", .str (L4Factoidal.Crypto.bytesToHex result.signingRoot.bytes))]
+  | "attester_slashing_preflight" =>
+    checkKeys request (["op", "previous_version", "current_version", "activation_epoch",
+      "genesis_validators_root", "a_indices", "b_indices"] ++
+      slashingKeys "a_" ++ slashingKeys "b_")
+    let context ← getForkContext request
+    let a ← getSlashingData request "a_"
+    let b ← getSlashingData request "b_"
+    let left ← getSlashingIndices request "a_indices"
+    let right ← getSlashingIndices request "b_indices"
+    match prepareAttesterSlashing context a b left right with
+    | .error .resourceLimit => throw "resource_limit"
+    | .error .badIndices => throw "bad_indices"
+    | .error .notConflicting => throw "not_conflicting"
+    | .error .noCommonIndices => throw "no_common_indices"
+    | .error (.signing _) => throw "signing_error"
+    | .ok evidence =>
+      return Json.mkObj [("status", .str "prepared_not_authenticated"),
+        ("common_indices", toJson (evidence.commonIndices.map UInt64.toNat)),
+        ("first_signing_root", .str (L4Factoidal.Crypto.bytesToHex evidence.firstSigningRoot.bytes)),
+        ("second_signing_root", .str (L4Factoidal.Crypto.bytesToHex evidence.secondSigningRoot.bytes))]
   | _ => throw "unknown_operation"
 
 /-- Compare raw, unquoted field separators with the parser's final key
