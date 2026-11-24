@@ -468,11 +468,9 @@ def pageStore (keys : List String) (images : List (String × ByteArray)) : Nativ
     | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap,store.natural key⟩
     | _ => out) {}
 
-/-- The pictures of `keys` in `store`. The map is made once, by `picturesMap`, which is not
-inlined: when the compiler inlined a definition like this one into its caller and
-eta-expanded the result, each call of the function made the map again (2026-11-24: the
-image keys of BBC News were worked out again for each picture the layout asked for, about
-40% of its layout time). -/
+/-- Reference lookup for the pictures of `keys` in `store`. The layout paths bind
+`picturesMap` outside their lookup closures so the native compiler does not rebuild
+the map on every call to the closure. -/
 def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
   let found := picturesMap store keys
   fun id => found.get? id
@@ -658,7 +656,8 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     let (store,made) := storeIn kept (imgs.map (·.2)) images
-    return (embedding dom,picturesOf store imgs,made,{})
+    let found := picturesMap store imgs
+    return (embedding dom,(fun id => found.get? id),made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
   let (root,source) ← documentNamespaceTree dom cascade
@@ -673,11 +672,12 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
+  let found := picturesMap store imgs
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
-    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
+    return placeSVG scene id style width height,(fun id => found.get? id),made,madeWords)
 
 /-- The pictures of a page drawn with no SVG: the `img` pictures, made as on a page with no
 `svg` element, and an embedding that refuses every `svg` root with `refusal` (liberal mode
@@ -689,7 +689,16 @@ def makeReplacedNoSvg (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option 
       Option StoreEntry × NativeSVGText.Words :=
   let imgs := htmlImageKeys dom documentURL
   let (store,made) := storeIn kept (imgs.map (·.2)) images
-  (fun _ _ _ _ => .error refusal,picturesOf store imgs,made,{})
+  let found := picturesMap store imgs
+  (fun _ _ _ _ => .error refusal,(fun id => found.get? id),made,{})
+
+/-- Precomputing the lookup table in the SVG fallback preserves the picture
+lookup for every ID, including missing or refused images. -/
+theorem makeReplacedNoSvg_pictures (kept : StoresKept) (dom : DOM.Dom)
+    (documentURL : Option String) (images : List (String × ByteArray)) (refusal : String) :
+    (makeReplacedNoSvg kept dom documentURL images refusal).2.1 =
+      let imgs := htmlImageKeys dom documentURL
+      picturesOf (storeIn kept (imgs.map (·.2)) images).1 imgs := rfl
 
 /-- Kind: safety. Says: the embedding of `makeReplacedNoSvg` answers every `svg` root with its
 refusal and nothing else, so the layout that takes it (liberal mode, `quiet`) draws no SVG and
