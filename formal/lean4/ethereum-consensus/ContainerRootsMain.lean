@@ -1,4 +1,4 @@
-import EthereumConsensus.SSZ.SigningDomains
+import EthereumConsensus.SSZ.AttestationData
 import Lean
 
 /-! JSONL transport for four concrete fixed-shape SSZ beacon containers.
@@ -125,6 +125,25 @@ private def dispatch (request : Json) : Except String Json := do
     let header ← fromContainer (checkedBeaconBlockHeader slot proposer parent state body)
     let result ← fromDomain (headerProposerSigningRoot context header)
     return Json.mkObj [("status", .str "ok"),
+      ("object_root", .str (L4Factoidal.Crypto.bytesToHex result.objectRoot.bytes)),
+      ("domain", .str (L4Factoidal.Crypto.bytesToHex result.domain.bytes)),
+      ("signing_root", .str (L4Factoidal.Crypto.bytesToHex result.signingRoot.bytes))]
+  | "attester_signing" =>
+    checkKeys request ["op", "slot", "committee_index", "beacon_block_root",
+      "source_epoch", "source_root", "target_epoch", "target_root",
+      "previous_version", "current_version", "activation_epoch", "genesis_validators_root"]
+    let context ← getForkContext request
+    let slot ← getUInt64 request "slot"
+    let index ← getUInt64 request "committee_index"
+    let beacon ← getHex request "beacon_block_root" 32
+    let se ← getUInt64 request "source_epoch"
+    let sr ← getHex request "source_root" 32
+    let te ← getUInt64 request "target_epoch"
+    let tr ← getHex request "target_root" 32
+    let data ← fromContainer (checkedAttestationData slot index beacon se sr te tr)
+    let result ← fromDomain (attesterSigningRoot context data)
+    return Json.mkObj [("status", .str "ok"),
+      ("bytes", .str (L4Factoidal.Crypto.bytesToHex (attestationDataWire data))),
       ("object_root", .str (L4Factoidal.Crypto.bytesToHex result.objectRoot.bytes)),
       ("domain", .str (L4Factoidal.Crypto.bytesToHex result.domain.bytes)),
       ("signing_root", .str (L4Factoidal.Crypto.bytesToHex result.signingRoot.bytes))]
