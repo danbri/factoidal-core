@@ -3392,10 +3392,17 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     else none
   if let some size := legacyFontHint then
     initial := {initial with fontSize := size, lineHeight := initial.lineHeightFactor.map (size*·) |>.getD initial.lineHeight}
+  let legacyColorHint := if html && n.lname == "font" then
+      CssValues.Color.legacyHTMLColor (attrValue n "color")
+    else none
+  if let some (r,g,b) := legacyColorHint then
+    let channel := fun n => Float.ofNat n / 255
+    initial := {initial with color := ⟨channel r, channel g, channel b⟩}
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
   -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
   -- `width: 147px` there; `<input type=image width=40>` is 40px wide)
-  let hinted := (if legacyFontHint.isSome then ["font-size"] else []) ++ hintedProperties preHint initial
+  let hinted := (if legacyFontHint.isSome then ["font-size"] else []) ++
+    (if legacyColorHint.isSome then ["color"] else []) ++ hintedProperties preHint initial
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then

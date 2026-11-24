@@ -499,6 +499,61 @@ def parseHex (s : String) : Option Color :=
     some (ofBytes (16 * r1 + r2) (16 * g1 + g2) (16 * b1 + b2) (16 * a1 + a2))
   | _ => none
 
+private def legacyComponentLength (digits : Nat) : Nat :=
+  max 1 ((digits + 2) / 3)
+
+private def legacyPad (digits : List Nat) : List Nat :=
+  digits ++ List.replicate (3 * legacyComponentLength digits.length - digits.length) 0
+
+/-- The padded stream always splits into three equal, nonempty components. -/
+theorem legacyPad_length (digits : List Nat) :
+    (legacyPad digits).length = 3 * legacyComponentLength digits.length ∧
+      0 < legacyComponentLength digits.length := by
+  have rounded : (digits.length + 2) / 3 ≤ legacyComponentLength digits.length :=
+    Nat.le_max_right _ _
+  have nonempty : 1 ≤ legacyComponentLength digits.length := Nat.le_max_left _ _
+  have covered : digits.length ≤ 3 * legacyComponentLength digits.length := by omega
+  simp only [legacyPad, List.length_append, List.length_replicate]
+  omega
+
+#print axioms legacyPad_length
+
+/-- HTML §2.3.6. Named colours and three-digit hash colours are the two conventional
+    forms. The compatibility form splits a bounded stream of hexadecimal digits. -/
+def legacyHTMLColor (input : String) : Option (Nat × Nat × Nat) := do
+  if input.isEmpty then none else
+  let space := fun c : Char => c.isWhitespace || c == '\x0C'
+  let chars := ((input.toList.dropWhile space).reverse.dropWhile space).reverse
+  let name := String.ofList (chars.map Char.toLower)
+  if name == "transparent" then none else
+  if let some rgb := lookup namedColors name then return rgb
+  if let ['#', r, g, b] := chars then
+    if let (some r, some g, some b) := (hexVal r, hexVal g, hexVal b) then
+      return (17*r, 17*g, 17*b)
+  -- Each code point expands to at least one digit, so nothing after the first
+  -- 128 input code points can affect the 128-character compatibility stream.
+  let expanded := ((chars.take 128).flatMap fun c => if c.toNat > 0xFFFF then ['0','0'] else [c]).take 128
+  let digits := (if expanded.head? == some '#' then expanded.drop 1 else expanded).map fun c =>
+    (hexVal c).getD 0
+  let width := legacyComponentLength digits.length
+  let padded := legacyPad digits
+  let trim := fun xs : List Nat => (xs.take width).drop (width - 8)
+  let r := trim padded
+  let g := trim (padded.drop width)
+  let b := trim (padded.drop (2*width))
+  let zeros := fun xs : List Nat => (xs.takeWhile (· == 0)).length
+  let drop := min (min 8 width - 2) (min (zeros r) (min (zeros g) (zeros b)))
+  let channel := fun xs : List Nat => ((xs.drop drop).take 2).foldl (fun acc n => 16*acc+n) 0
+  return (channel r, channel g, channel b)
+
+#guard legacyHTMLColor "" == none && legacyHTMLColor " TranSparent\x0C" == none
+#guard legacyHTMLColor " Rebeccapurple " == some (102,51,153)
+#guard legacyHTMLColor "#aBC" == some (170,187,204) && legacyHTMLColor "#008000" == some (0,128,0)
+#guard legacyHTMLColor "chucknorris" == some (192,0,0)
+#guard legacyHTMLColor "#abcd" == some (171,205,0)
+#guard legacyHTMLColor "😀4a" == some (0,74,0)
+#guard legacyHTMLColor " \t" == some (0,0,0)
+
 /-- Whether a lower-case identifier is a colour keyword. -/
 def isKeyword (k : String) : Bool :=
   k == "transparent" || k == "currentcolor" || (lookup namedColors k).isSome
