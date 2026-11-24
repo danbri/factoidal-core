@@ -11,6 +11,8 @@ def git(*args):
     return subprocess.check_output(["git","-C",str(repo),*args],text=True).strip()
 
 pins={
+    "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean": "b878ce9d43eeeb77f06598fd55d9c01d9c62597c",
+    "formal/lean4/ethereum-consensus/scripts/check-pure-lean-dependencies.py": "746a8fd4f8f16c4d474655e0f3ac3747d9723e64",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/AttesterSlashing.lean": "33a09146651425b78a5f9d860d58704fe0520d8b",
     "formal/lean4/ethereum-consensus/scripts/check-attester-slashing.py": "fde24107d399fe4a0e3efdc84ce7090624e49c17",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProofTheorems.lean": "2fd9c36db65c98f6e7895696762cab3856bc7d53",
