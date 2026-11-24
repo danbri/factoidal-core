@@ -109,35 +109,56 @@ theorem unitChar_toNat (c : Char) (h : c.toNat < 0x10000) : unitChar c.toNat = c
   have : isSurrogate c.toNat = false := by unfold isSurrogate; simp; omega
   simp [unitChar, this]
 
+/-- Invariant. Says: a unit that is not a high surrogate decodes on its own,
+followed by the decoded tail. Does not say: arbitrary input units fit in 16 bits. -/
+private theorem decodeUnits_notHigh (u : Nat) (rest : List Nat) (hh : isHigh u = false) :
+    decodeUnits (u :: rest) = unitChar u :: decodeUnits rest := by
+  cases rest <;> simp [decodeUnits, hh]
+
+/-- Correspondence. Says: a high/low pair outside the reserved representation
+range decodes to its reconstructed character, followed by the decoded tail.
+Does not say: reserved pairs use this branch or that the entire codec round-trips. -/
+private theorem decodeUnits_pair (u l : Nat) (rest : List Nat)
+    (hh : isHigh u = true) (hl : isLow l = true)
+    (hn : ¬ ((decide (0x10F000 ≤ 0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00)) &&
+      decide (0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00) < 0x10F800)) = true)) :
+    decodeUnits (u :: l :: rest) =
+      Char.ofNat (0x10000 + (u - 0xD800) * 0x400 + (l - 0xDC00)) :: decodeUnits rest := by
+  simp only [decodeUnits, hh, hl, Bool.and_self, ite_true, if_neg hn]
+
+-- Check the decoder steps symbolically before substituting UTF-16 arithmetic.
 set_option maxRecDepth 20000 in
-/-- A character of a Unicode text that is not one of the kept characters is its UTF-16
-encoding, and that encoding decodes to it. -/
+/-- Correspondence. Says: encoding and decoding a character outside the reserved
+representation range returns that character before the decoded tail.
+Does not say: the equation holds for reserved representation characters. -/
 theorem decodeUnits_charUnits (c : Char) (rest : List Nat) (hc : isLoneChar c = false) :
     decodeUnits (charUnits c ++ rest) = c :: decodeUnits rest := by
   have hr := charRange c
-  unfold isLoneChar at hc
-  simp at hc
   by_cases hb : c.toNat < 0x10000
   · have h1 : charUnits c = [c.toNat] := by
-      simp [charUnits, isLoneChar, hb]; omega
+      simp [charUnits, hc, hb]
     rw [h1]
     have hu := unitChar_toNat c hb
-    cases rest with
-    | nil => simp [decodeUnits, hu]
-    | cons l rest' =>
-      have : isHigh c.toNat = false := by unfold isHigh; simp; omega
-      simp [decodeUnits, this, hu]
+    have hh : isHigh c.toNat = false := by unfold isHigh; simp; omega
+    simp only [List.cons_append, List.nil_append, decodeUnits_notHigh _ rest hh, hu]
   · have h1 : charUnits c = [0xD800 + (c.toNat - 0x10000) / 0x400, 0xDC00 + (c.toNat - 0x10000) % 0x400] := by
-      simp [charUnits, isLoneChar, hb]; omega
+      simp [charUnits, hc, hb]
     rw [h1]
     have hh : isHigh (0xD800 + (c.toNat - 0x10000) / 0x400) = true := by unfold isHigh; simp; omega
     have hl : isLow (0xDC00 + (c.toNat - 0x10000) % 0x400) = true := by unfold isLow; simp; omega
     have hcp : 0x10000 + (0xD800 + (c.toNat - 0x10000) / 0x400 - 0xD800) * 0x400 +
-        (0xDC00 + (c.toNat - 0x10000) % 0x400 - 0xDC00) = c.toNat := by omega
-    simp only [List.cons_append, List.nil_append, decodeUnits, hh, hl, Bool.and_self, ite_true, hcp]
+        (0xDC00 + (c.toNat - 0x10000) % 0x400 - 0xDC00) = c.toNat := by
+      simp only [Nat.add_sub_cancel_left, Nat.add_assoc, Nat.div_add_mod']
+      exact Nat.add_sub_of_le (Nat.le_of_not_gt hb)
     have hn : ¬ ((decide (0x10F000 ≤ c.toNat) && decide (c.toNat < 0x10F800)) = true) := by
-      simp; omega
-    rw [if_neg hn, Char.ofNat_toNat]
+      change ¬ (isLoneChar c = true)
+      simp [hc]
+    have hd := decodeUnits_pair _ _ rest hh hl (by simpa only [hcp] using hn)
+    simpa only [List.cons_append, List.nil_append, hcp, Char.ofNat_toNat] using hd
+
+#print axioms decodeUnits_notHigh
+#print axioms decodeUnits_pair
+#print axioms decodeUnits_charUnits
 
 /-- Round trip of well-formed text: a Lean string with none of the kept characters, written
 as UTF-16 code units and read back, is the same string. -/

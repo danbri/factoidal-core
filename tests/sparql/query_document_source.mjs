@@ -75,7 +75,8 @@ function verifyNode(node, length, counts) {
 }
 
 function verifyDocument(document, query, counts) {
-  const length = Array.from(query).length;
+  const codePoints = Array.from(query);
+  const length = codePoints.length;
   assert.equal(document.schema_version, 1);
   assert.equal(typeof document.parser_version, 'string');
   assert.equal(document.source.text, query);
@@ -83,7 +84,7 @@ function verifyDocument(document, query, counts) {
   assert.deepEqual(document.source.span, { start: 0, end: length });
   for (const token of document.source.tokens) {
     assertSpan(token.span, length, 'token');
-    assert.equal(slice(query, token.span), token.text);
+    assert.equal(codePoints.slice(token.span.start, token.span.end).join(''), token.text);
   }
   for (const node of astNodes(document.ast)) verifyNode(node, length, counts);
   for (const { span, ast } of document.namedSubqueries) {
@@ -120,6 +121,8 @@ function optionalCase(name, body, check) {
 
 const triple = '?x <urn:p> ?o';
 const nestedSelect = `SELECT ?x (<urn:fn>(?x) AS ?alias) WHERE { ${triple} }`;
+const largeValuesRowCount = 10_001;
+const largeValues = `VALUES ?v { ${Array(largeValuesRowCount).fill('<urn:i>').join(' ')} }`;
 const cases = [
   {
     name: 'repeated triples, projection, and Unicode code-point offsets',
@@ -316,6 +319,20 @@ const cases = [
       assert.equal(groupBy[0].kind, 'var');
       assert.equal(having[0].kind, 'compare');
       assert.equal(modifier.orderBy[0].kind, 'desc');
+    },
+  },
+  {
+    name: 'large VALUES rows do not become triple anchors',
+    query: `SELECT * WHERE { ${largeValues} ${triple} }`,
+    check(document, query) {
+      assert.equal(one(document.ast, 'values').rows.length, largeValuesRowCount);
+      const anchors = document.source.anchors;
+      assert.deepEqual(anchors.map(({ kind, origin, span }) => ({ kind, origin, span })), [
+        { kind: 'values', origin: 'exact', span: occurrence(query, largeValues) },
+        { kind: 'triple', origin: 'exact', span: occurrence(query, triple) },
+      ]);
+      assert.ok(slice(query, anchors[0].span) === largeValues, 'VALUES anchor text');
+      assert.equal(slice(query, anchors[1].span), triple);
     },
   },
   {

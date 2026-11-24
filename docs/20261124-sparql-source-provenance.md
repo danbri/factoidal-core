@@ -74,11 +74,11 @@ document parser. Its canonical mode separately calls `parseUnloweredQuery`
 and `queryAstJson`. The full Lean workflow builds the runner and runs the
 source regression suite.
 
-- 16 source-contract cases pass; all 15 applicable canonical comparisons
+- 17 source-contract cases pass; all 16 applicable canonical comparisons
   pass. Cases cover repeated occurrences, comma and semicolon expansion,
   moved filters, OPTIONAL, scopes, paths, blank nodes, collections,
   `CONSTRUCT WHERE`, Unicode, named queries, aggregates, parse diagnostics
-  and the replay limit.
+  the replay limit and long VALUES anchoring.
 - An independent review tested 14 further valid queries against canonical
   ASTs and checked 28 repeated occurrences in seven cases.
 - A fixed corpus of 580 classic queries and 528 supplied replacement texts
@@ -126,6 +126,31 @@ every namespace. Previously, building `Wikidata/RewriteServer` left a
 native entry point eligible for the Wasm link. The new filter retains the
 parser and rewrite library units and uses the existing stale-object purge
 for excluded native runners.
+
+### Integration corrections
+
+The authored-anchor integration exposed a separate long-VALUES defect.
+With 10,001 IRI rows, its fixed 10,000-unit parser budget ran out before
+the closing brace. The scanner then reported the first three data IRIs as
+an exact triple. A fresh native run reproduced that result without a
+syntax diagnostic. The regression failed against that binary, then passed
+after the fix: one exact VALUES anchor and one exact anchor for the real
+triple following the clause.
+
+The VALUES parser now uses the scanner's remaining token budget in addition
+to `topFuel`. The scanner consumes at least one token per step, so its
+budget bounds the remaining token count. Reusing it avoids repeatedly
+walking token tails to compute their lengths.
+
+The full library build also found a kernel-checking failure in the existing
+`JS.Str.decodeUnits_charUnits` proof. Two private symbolic decoder lemmas
+now separate decoding from the arithmetic for surrogate recombination.
+The proof reuses its existing guard hypothesis and the quotient/remainder
+identity. The theorem statement, executable definitions and scoped
+`maxRecDepth 20000` are retained. A focused build passed under the original
+resource caps. The helper lemmas report only `propext`; the main theorem
+reports `propext` and `Quot.sound`. This is a proof-checking repair, not a
+new string-operation implementation or runtime stack claim.
 
 Reproduce the focused suite from `formal/lean4/` and the repository root,
 respectively:

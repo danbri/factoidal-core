@@ -59,7 +59,7 @@ private def tripleProperties (state : PState) (stops : Std.HashMap Nat Nat)
         tripleProperties state stops subject fuel false (advTok after) found
       else found
 
-private def clauseTail (state : PState) (site : PosToken) (tail : TStream) :
+private def clauseTail (state : PState) (tokenBudget : Nat) (site : PosToken) (tail : TStream) :
     Option (String × TStream) := do
   match site.tok with
   | .optional | .minusKw | .union | .lateral =>
@@ -77,7 +77,7 @@ private def clauseTail (state : PState) (site : PosToken) (tail : TStream) :
     let (_, rest) ← (expectTok .rparen (advTok rest)).toOption
     some ("bind", rest)
   | .values =>
-    let (_, rest) ← (pValuesClause topFuel state tail).toOption
+    let (_, rest) ← (pValuesClause (topFuel + tokenBudget) state tail).toOption
     some ("values", rest)
   | _ => none
 
@@ -85,7 +85,8 @@ private def scanAnchors (state : PState) (stops : Std.HashMap Nat Nat) :
     Nat → Token → TStream → List QuerySourceAnchor → List QuerySourceAnchor
   | 0, _, _, found | _, _, [], found => found.reverse
   | fuel + 1, previous, stream@(site :: tail), found =>
-    if let some (kind, after) := clauseTail state site tail then
+    -- The scan consumes at least one token per step, so fuel bounds the tail length.
+    if let some (kind, after) := clauseTail state fuel site tail then
       let anchor := spanSince stops kind stream after
       -- Inline data has braces too, but its rows are not graph patterns.
       if site.tok == .values then scanAnchors state stops fuel .rbrace after (anchor :: found)
