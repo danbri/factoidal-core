@@ -498,12 +498,16 @@ private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css
 #guard importSize [("imported",.array [sheetA])] == some 30
 -- the nested sheet comes before the sheet that imports it: a.css's 30px is the later rule
 #guard importSize [("imported",.array [sheetA,importedSheet "https://e.test/p/sub/b.css" "p{font-size:40px}"])] == some 30
--- an imported sheet past the 8 MiB of a document's sheets is left out and reported (issue 865)
-private def bigImportSkips : Option Nat := do
-  let big := importedSheet "https://e.test/p/a.css" ("".pushn ' ' 8388609 ++ "p{font-size:30px}")
-  let (_,ds) ← (WebDocument.sheetsIn .liberal importDOM (importRequest [("imported",.array [big])]) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+-- an imported sheet that takes the document's sheets past 8 MiB (here 5 MiB of the page's own
+-- sheet and an import of 3.5 MiB; imports alone stop at 4 MiB, `importedSheets`) is left out
+-- and reported (issue 865)
+private def bigImportSkips (importBytes : Nat) : Option Nat := do
+  let dom := DOM.parseHtmlDocument ("<style>@import url(a.css);" ++ "".pushn ' ' 5242880 ++ "</style><p>A</p>")
+  let sheet := importedSheet "https://e.test/p/a.css" ("".pushn ' ' importBytes ++ "p{font-size:30px}")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal dom (importRequest [("imported",.array [sheet])]) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
   return (ds.filter (·.skip == .stylesheetBytes)).length
-#guard bigImportSkips == some 1
+#guard bigImportSkips 3670016 == some 1
+#guard bigImportSkips 1024 == some 0
 -- an import under a media query that does not hold is not applied; one that holds is
 #guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' print;",
   importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 16
