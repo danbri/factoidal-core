@@ -2333,7 +2333,7 @@ L4Factoidal_Rendering_CssValues_parseCVs  # (c) one call per level of nested fun
 L4Factoidal_Rendering_CssValues_calcOperand  # (c) the nesting of one calc() value, at most maxNesting = 64 (parseCVs)
 L4Factoidal_Rendering_CssValues_calcExpr  # (c) mutual with calcOperand: the nesting of one calc() value, at most 64
 L4Factoidal_Rendering_CssValues_Calc_type  # (c) the nesting of a calculation tree made by calcOperand, at most 64
-L4Factoidal_Rendering_CssValues_Calc_simp  # (c) the nesting of a calculation tree, at most 64
+L4Factoidal_Rendering_CssValues_Calc_simpWith  # (b) nested calculation syntax; the worker split out of Calc.simp; siblings use list maps
 L4Factoidal_Rendering_CssValues_Calc_css  # (c) the nesting of a calculation tree, at most 64; terms, factors and arguments are folds
 L4Factoidal_Rendering_CssValues_Calc_depth  # (c) the nesting of a calculation tree, at most 64
 L4Factoidal_Rendering_CssValues_vdsLevel  # (c) the nesting of a grammar text of the property table (Data.lean, generated; no page input)
@@ -2475,3 +2475,6 @@ L4Factoidal_SPARQL_GpuQuery_Plan_collect  # (c) only production caller is patter
 L4Factoidal_SPARQL_GpuQuery_bgpRows  # (b) one continuation per triple pattern in a query BGP; recursion follows query syntax, never the number of matching rows or triples in the dataset
 L4Factoidal_SPARQL_GpuQuery_estimatePattern  # (b) query AST nesting; the variable GRAPH branch walks named graphs with emitted List.mapTR and foldl loops, not a dataset-length recursive stack
 L4Factoidal_SPARQL_GpuQuery_pattern  # (b) lowered query-algebra nesting; the only dataset-length continuation collection is variable GRAPH and is guarded at 256 named graphs before Plan.collect
+# --- 2026-11-24, viewport calculation syntax and fixed first-letter tables ---
+L4Factoidal_Rendering_CSS_usesViewport  # (b) nested calculation syntax; List.any walks siblings without adding one recursive call per sibling
+L4Factoidal_Rendering_Generated_categoryRanges  # (c) first-letter categories are three fixed lists over the checked-in Unicode general category data; no document strings reach the sort
