@@ -77,6 +77,7 @@ jobs:
           log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"proposer-axioms.log").read_text()
           reports = re.findall(r"'(EthereumConsensus\.SSZ\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)", log)
           expected = {"EthereumConsensus.SSZ."+n for n in (
+              "sameProposerRootFields_iff",
               "checkProposerState_different_slot",
               "checkProposerState_different_proposer",
               "checkProposerState_identical",
@@ -88,7 +89,7 @@ jobs:
               "checkProposerRegistry_not_slashable",
               "checkProposerRegistry_delegates",
               "prepareProposerRoots_delegates",)}
-          assert names == expected and len(reports) == 11 and {n for n,_ in reports} == expected
+          assert names == expected and len(reports) == 12 and {n for n,_ in reports} == expected
           for name, axioms in reports:
               assert set(filter(None, (a.strip() for a in axioms.split(",")))) <= {"propext","Classical.choice","Quot.sound"}, name
           a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
