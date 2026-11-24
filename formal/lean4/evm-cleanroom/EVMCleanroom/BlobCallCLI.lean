@@ -184,11 +184,12 @@ private def report (out : BlobCall.Outcome) : Json :=
   | .refused (.indeterminate reason) =>
     Json.mkObj [("status", .str "indeterminate"), ("reason", .str reason)]
   | .transaction p result =>
-    match result with
-    | .executed _ =>
+    let inner := transactionResponse p.request result
+    match inner.getObjVal? "status" with
+    | .ok (.str "executed") =>
       Json.mkObj [("status", .str "executed"), ("blobGasUsed", decimal p.blobGas),
-        ("blobFeeBurn", decimal p.burn), ("result", transactionResponse p.request result)]
-    | _ => transactionResponse p.request result
+        ("blobFeeBurn", decimal p.burn), ("result", inner)]
+    | _ => inner
 
 def cliMain (args : List String) : IO UInt32 := do
   match args with

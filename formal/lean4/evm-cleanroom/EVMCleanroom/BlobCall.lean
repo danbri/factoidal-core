@@ -62,13 +62,12 @@ was checked as 3 and its blob constraints separately checked. -/
 def prepareRequest (p : Input) (fees : Nat × Nat) : Prepared :=
   let b := gas p.hashes
   let burn := b * fees.2
-  { request := { p.request with
-      fork := .cancun
-      tx := { p.request.tx with kind := 2 }
-      block := blockContext p.child p.request.block.gasUsedBefore fees
-      witnesses := p.request.witnesses.map (burnWitness p.request.tx.sender burn) }
-    blobGas := b
-    burn := burn }
+  let request := { p.request with
+    fork := .cancun
+    tx := { p.request.tx with kind := 2 }
+    block := blockContext p.child p.request.block.gasUsedBefore fees
+    witnesses := p.request.witnesses.map (burnWitness p.request.tx.sender burn) }
+  { request := request, blobGas := b, burn := burn }
 
 def checkFunds (p : Input) (fees : Nat × Nat) (sender : WitnessAccount) :
     Except Refusal Prepared :=

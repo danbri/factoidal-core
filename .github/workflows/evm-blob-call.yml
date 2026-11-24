@@ -1,0 +1,84 @@
+name: Independent Lean Cancun blob call
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-blob-call.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  blob-call:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: false
+          axiom-audit: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build native executable and audit actual axioms and imports
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
+        run: |
+          set -o pipefail
+          ulimit -v 8388608
+          lake -f lakefile-blob-call.toml clean
+          lake -f lakefile-blob-call.toml build evm-blob-call 2>&1 | tee /tmp/blob-call-build.txt
+          lake -f lakefile-blob-call.toml env lean EVMCleanroom/BlobCall.lean | tee /tmp/blob-call-axioms.txt
+          python3 - <<'PY'
+          import json,re,subprocess
+          from pathlib import Path
+          expected=set("burn_sender burn_other burn_exact funds_refused prepared_exact header_refused execute_exact".split())
+          allowed={"propext","Classical.choice","Quot.sound"}
+          actual={}
+          for line in Path("/tmp/blob-call-axioms.txt").read_text().splitlines():
+              m=re.fullmatch(r"'EVMCleanroom\.BlobCall\.(\w+)' (?:depends on axioms: \[(.*?)\]|does not depend on any axioms)",line)
+              if m:
+                  assert m[1] not in actual
+                  actual[m[1]]=set(filter(None,(m[2] or "").split(", ")))
+          assert set(actual)==expected,actual
+          assert all(a<=allowed for a in actual.values()),actual
+          assert json.loads(Path("lake-manifest.json").read_text())["packages"]==[]
+          paths={"lakefile-blob-call.toml","lean-toolchain","lake-manifest.json","scripts/differential/blob-call.mjs","scripts/differential/package-lock.json"}
+          pending=["EVMCleanroom/BlobCall.lean","EVMCleanroom/BlobCallCLI.lean"]
+          while pending:
+              p=pending.pop()
+              if p in paths: continue
+              paths.add(p)
+              for line in Path(p).read_text().splitlines():
+                  if line.startswith("import "):
+                      for mod in line.split()[1:]:
+                          if mod=="Std" or mod.startswith("Std.") or mod=="Lean.Data.Json": continue
+                          assert mod.startswith("EVMCleanroom."),(p,mod)
+                          pending.append(mod.replace(".","/")+".lean")
+          for p in ("EVMCleanroom/BlobCall.lean","EVMCleanroom/BlobCallCLI.lean"):
+              assert not re.search(r"\b(sorry|native_decide|unsafe|implemented_by|axiom)\b|partial\s+def",Path(p).read_text()),p
+          pins={p:subprocess.check_output(["git","hash-object",p],text=True).strip() for p in sorted(paths)}
+          for p in paths:
+              assert pins[p]==subprocess.check_output(["git","rev-parse","HEAD:formal/lean4/evm-cleanroom/"+p],text=True).strip()
+          evidence={"head":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),"sources":pins,"actualAxioms":{k:sorted(v) for k,v in actual.items()}}
+          Path("/tmp/blob-call-claims.json").write_text(json.dumps(evidence,indent=2))
+          print(json.dumps(evidence))
+          PY
+      - name: Independent fee and balance oracle plus EthereumJS frame comparison
+        working-directory: formal/lean4/evm-cleanroom/scripts/differential
+        run: |
+          set -o pipefail
+          npm ci
+          node blob-call.mjs "$PWD/../../.lake/build/bin/evm-blob-call" | tee /tmp/blob-call-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: blob-call-evidence
+          path: |
+            /tmp/blob-call-build.txt
+            /tmp/blob-call-axioms.txt
+            /tmp/blob-call-claims.json
+            /tmp/blob-call-results.json
