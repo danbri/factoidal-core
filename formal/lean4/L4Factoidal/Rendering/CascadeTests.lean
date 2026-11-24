@@ -295,6 +295,29 @@ private def shadowInnerCss :=
 #guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss
 #guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss {hover := some 8}
 
+-- A shadow stylesheet can hide a named slot until its host has loaded or has focus.
+private def dropdownRule := ":host(:not([loaded], :focus-within)) slot[name=dropdown]{display:none}"
+
+private def dropdownPage (loaded : Bool) :=
+  "<div id='h'" ++ (if loaded then " loaded" else "") ++
+  "><template shadowrootmode='open'><button>Toggle</button><slot id='inside' name='dropdown'></slot>" ++
+  "</template><p slot='dropdown'>Menu</p></div><slot id='outside' name='dropdown'></slot>"
+
+private def dropdownHidden (loaded focused : Bool) : Option (Bool × Bool) := do
+  let original := DOM.parseHtmlDocument (dropdownPage loaded)
+  let button ← (List.range original.size).find? (fun i => (original.get i).lname == "button")
+  let dom := if focused then original.setNode button (fun n => {n with states := 8}) else original
+  let rules ← (scopedRules dom "" dropdownRule).toOption
+  let styles ← (computeAllIn (TreeScope.of dom) dom.flat rules 1 {}).toOption
+  let inside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "inside")
+  let outside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "outside")
+  return ((← styles[inside]?).display == .none, (← styles[outside]?).display == .none)
+
+#guard dropdownHidden false false == some (true, false)
+#guard dropdownHidden true false == some (false, false)
+#guard dropdownHidden false true == some (false, false)
+#guard agreesIn (dropdownPage false) "" dropdownRule
+
 -- A page with no shadow tree never takes the scoped path: `:host` and `::slotted()` rules
 -- go in no bucket, and match nothing.
 #guard ((CSS.parse ":host{color:red}::slotted(b){color:red}").toOption.map fun rs =>
