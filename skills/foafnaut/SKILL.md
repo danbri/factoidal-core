@@ -564,6 +564,9 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
   environment. Run `python3 tools/safety-scan/safety-scan.py --self-test`, then the scan,
   before and after a change that adds an `@[extern]`, `unsafe`, `@[implemented_by]`,
   `initialize` or `dbgTrace`. Tracking: https://github.com/danbri/factoidal-core/issues/427.
+- [Threads, tabs, processes, DNS and HTTP connections, 2026-11-24](../../docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md):
+  what runs on which thread today, one engine worker per tab, processes per site, the connection
+  pool and HTTP/2, the DNS cache and speculative resolution, the Veil models to add first.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).
