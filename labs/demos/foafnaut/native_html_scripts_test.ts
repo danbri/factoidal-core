@@ -38,6 +38,41 @@ console.log('loaded at ' + Date.now());
 /** The page text as the engine lays it out with the session's commands. */
 const text=(engine:HTMLEngine,commands:unknown[])=>engine.selectedText(page,800,600,{url:"file:///scripted.html",selection:"all",commands});
 
+/** Trusted Space activates the first summary on release, through the cancelable click. */
+function disclosureKeys(engine:HTMLEngine){
+  const cases=[
+    {name:"plain", focus:"#summary", cancel:"", opened:true, clicks:1, scroll:false},
+    {name:"canceled keydown", focus:"#summary", cancel:"keydown", opened:false, clicks:0, scroll:false},
+    {name:"canceled keyup", focus:"#summary", cancel:"keyup", opened:false, clicks:0, scroll:false},
+    {name:"canceled click", focus:"#summary", cancel:"click", opened:false, clicks:1, scroll:false},
+    {name:"non-summary focus", focus:"#other", cancel:"", opened:false, clicks:0, scroll:true},
+  ];
+  for(const {name,focus,cancel,opened,clicks,scroll} of cases){
+    const html=`<!doctype html><details><summary id=summary>More</summary><p>Body</p></details><button id=other>Other</button>
+<script>
+const details=document.querySelector("details"), target=document.querySelector(${JSON.stringify(focus)});
+for(const type of ["keydown","keyup","click"])target.addEventListener(type,e=>{
+  if(type===${JSON.stringify(cancel)})e.preventDefault();
+  console.log(type+" "+details.open+" "+e.isTrusted);
+});
+target.focus();
+console.log("focused "+(document.activeElement===target));
+</script>`;
+    const start=engine.scriptSession(html,withEngine({action:"start",url:"file:///disclosure.html",resources:[]}));
+    try{
+      assert.deepEqual(start.logs,["focused true"],name);
+      const key=engine.scriptSession("",{action:"key",session:start.session,key:" "});
+      const events=["keydown false true","keyup false true"];
+      if(clicks)events.push("click false true");
+      assert.deepEqual(key.logs,events,name);
+      assert.equal(key.keyDefault,scroll,name);
+      assert.equal(key.changed,opened,name);
+    }finally{
+      engine.scriptSession("",{action:"close",session:start.session});
+    }
+  }
+}
+
 async function runs(engine:HTMLEngine){
   const info=engine.scriptInfo();
   assert(info.ops.includes("start")&&info.ops.includes("click"));
@@ -96,6 +131,7 @@ setTimeout(() => console.log('timer after ' + (performance.now() - t1 >= 10)), 1
   clock=engine.scriptSession("",{action:"settle",session:clock.session,budgetMs:1000});turns.push(clock);
   assert.deepEqual(clock.logs,["timer after true"]);
   engine.scriptSession("",{action:"close"});
+  if(lean)disclosureKeys(engine);
   return turns.map(({ns:_,instructions:__,...t})=>t);
 }
 
