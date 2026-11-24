@@ -8,7 +8,7 @@ open Lean L4Factoidal.SPARQL L4Factoidal.Wikidata
 
 private def normalTokens (original : List String) (text : String) :
     List Token × List Token := Id.run do
-  let tokens := (tokenizeAt .v11 text).map (·.tok)
+  let tokens := (sourceTokens text true).map LocatedToken.token
   let mut names : Std.HashMap String String := {}
   let mut alpha := #[]
   for token in tokens do
@@ -26,8 +26,8 @@ private def inspect (j : Json) : Except String Json := do
   let source ← (← j.getObjVal? "source").getStr?
   let left ← (← j.getObjVal? "left").getStr?
   let right ← (← j.getObjVal? "right").getStr?
-  let names := (tokenizeAt .v11 source).filterMap fun t =>
-    match t.tok with | .var v => some v | _ => none
+  let names := (sourceTokens source true).filterMap fun t =>
+    match t.token with | .var v => some v | _ => none
   let (leftTokens, leftAlpha) := normalTokens names left
   let (rightTokens, rightAlpha) := normalTokens names right
   return Json.mkObj [("id", toJson id), ("tokens_equal", toJson (leftTokens == rightTokens)),

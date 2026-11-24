@@ -105,4 +105,25 @@ private def labelAfterBinding : Bool :=
   | none => false
 #guard labelAfterBinding
 
+-- Compare the complete source-preserving output with the pinned Java oracle.
+private def namedInput :=
+  "SELECT ?s WITH { SELECT ?s WHERE { ?s wdt:P31 wd:Q5 } LIMIT 1 } AS %rows WHERE { INCLUDE %rows . }"
+
+private def namedOutput :=
+  "PREFIX wd: <http://www.wikidata.org/entity/>\nPREFIX wdt: <http://www.wikidata.org/prop/direct/>\n" ++
+  "WITH %rows AS {\n?s wdt:P31 wd:Q5\n}\nSELECT ?s  WHERE { { SELECT ?s WHERE { INCLUDE %rows } LIMIT 1 }\n }"
+
+#guard (rewriteQuery namedInput).rewritten_query == some (appendOriginalQuery namedOutput namedInput)
+#guard (rewriteQuery "ASK { BIND(\"INCLUDE %fake\" AS ?text) }").rewrite_status == "unchanged"
+#guard ((rewriteQuery "SELECT ?s WHERE { INCLUDE %missing }").errors.map (·.code)) ==
+  ["named_subquery_undefined_reference"]
+
+private def nestedLabelInput :=
+  "SELECT ?sLabel WHERE { { SELECT ?sLabel WHERE { ?s wdt:P31 wd:Q5 . " ++
+  "SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". } } } }"
+
+#guard (rewriteQuery nestedLabelInput).rewrites.map (·.variant_id) == ["automatic"]
+#guard (rewriteQuery nestedLabelInput).rewritten_query.any fun text =>
+  (text.splitOn "?s  rdfs:label  ?s__label_value").length == 3
+
 end L4Factoidal.Wikidata

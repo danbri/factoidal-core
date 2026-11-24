@@ -134,11 +134,11 @@ measured separately.
 | Query hints and `wikibase:isSomeValue` | Source edits before ARQ | Implemented. The checked-in fixtures for these groups match byte for byte. |
 | Variable reuse | Rejects a reused alias at ARQ parsing unless an earlier rule has already removed it | Recovers outer SELECT aliases using the lexer and existing projection, graph-pattern and modifier parsers. Preserves public result names. Ambiguous nested references and BIND target reuse require further scope analysis. |
 | Date and duration typing | Rewrites supported expression literals and date-derived comparisons. Some ambiguous or mixed cases are refused or left alone. | Rule remains to be ported. |
-| Geospatial | Rules for around, box, distance, globe, latitude and longitude apply under documented constraints | Rules remain to be ported. |
+| Geospatial | Rules for around, box, distance, globe, latitude and longitude apply under documented constraints | `geof:distance` is implemented. Around, box and other GeoSPARQL rewrites remain. |
 | `bd:slice` and `bd:sample` | Portability rules for supported forms. Sampling can legitimately change the returned rows. | Rules remain to be ported. |
 | GAS | Converts supported traversal to QLever Path Search. Blazegraph traversal includes tree/visited-set semantics with no general SPARQL 1.1 equivalent. | Rule remains to be ported. |
-| Label service | Broad post-parse conversion. WDQS v2 also offers the service via its proxy. | Scalar, single outer service subset. Nested/multiple services, aggregation and prebound outputs remain gaps. |
-| Named subqueries | Hoists supported legacy definitions to QLever's `WITH %name AS { … }` and `INCLUDE` dialect. The migration guide separately documents v2 proxy support. | No named-subquery conversion yet. |
+| Label service | Broad post-parse conversion. WDQS v2 also offers the service via its proxy. | Scalar service in the direct WHERE group of a query or subselect. Multiple services, other nested graph scopes, aggregation and prebound outputs remain gaps. |
+| Named subqueries | Hoists supported legacy definitions to QLever's `WITH %name AS { … }` and `INCLUDE` dialect. The migration guide separately documents v2 proxy support. | Matches the dedicated upstream fixtures, including dependencies, modifiers, projected variables and error cases. The shared alias-loss limitation is described below. |
 | `wikibase:mwapi` and `wikibase:decodeURI` | Explicitly diagnosed. The migration guide describes an external Action API request or client-side decoding, respectively. | Diagnosed as unsupported proprietary constructs. |
 | Prefixes and graph routing | Implicit WDQS namespaces with explicit overrides, and scholarly service endpoint conversion | Implemented for known scholarly service IRIs. The workbench serves main-graph endpoints by default. |
 | Evaluation order and performance | Removal of hints and several documented rewrites. No general guarantee of equivalent planning or improved latency. | The timing harness compares the original on Blazegraph with either saved rewrite on QLever. It reports comparable ratios only when the result bags match in all trials. |
@@ -218,41 +218,110 @@ a workbench build from the same tested corpus and oracle.
 
 ## Exact output and JSONL compatibility
 
-The second audit compares the same prepared English input with the pinned,
-source-built Java oracle. Lean's formatter reads the validated token stream
-with Factoidal's clause parsers. This keeps source-order FILTERs, nested
-groups, and property paths before evaluation lowering. It emits ARQ's
-prefix, triple and expression layout, and validation reparses the output.
-Label rewrites use the upstream's ordering of automatic outputs and anchor
-after the last subsequent outer-group binder of a label entity. The port
-also rewrites the supported Blazegraph `geof:distance` call shapes.
+The formatter reads the validated token stream with Factoidal's clause
+parsers and emits ARQ's prefix, triple and expression layout. It preserves
+source-order FILTERs, nested groups, and property paths before evaluation
+lowering. Label rewrites handle a scalar service in either a top-level
+WHERE or a subselect's direct WHERE. Named subqueries use the same Lean
+rewrite pipeline on each dependency and the outer body. The pipeline
+validates the SPARQL fragments before assembling the QLever dialect.
+Extraction, dependency ordering, visible projections, modifier placement
+and layout follow the [pinned Java named-subquery rules][orchestrator].
 
 | Corpus | Byte-identical rewrites | Byte-identical unchanged queries | Java-only rewrite | Lean-only rewrite |
 | --- | ---: | ---: | ---: | ---: |
-| First 100 | 81 / 81 paired | 16 | 0 | 3 |
-| All 580 | 410 / 410 paired | 106 | 24 | 19 |
+| First 100 | 81 / 81 | 16 | 0 | 3 |
+| All 580 | 434 / 434 | 106 | 0 | 19 |
 
-There are 21 corpus queries with no result text on either side. Of the 24
-Java-only rewrites, 23 use named subqueries and one uses a nested label
-service. The 19 Lean-only cases include 18 legacy alias repairs and the
-`$date` prefix-scanner case. The 213 upstream fixtures remain a wider test
-of the migration tool. 73 statuses and 33 of 134 Java rewrites match
-byte for byte in that set. Named subqueries, expanded label scopes, date
-and duration, remaining geospatial functions and services, and the
-utility and GAS services remain release gates.
+There are 21 corpus queries with no result text from either tool and
+matching statuses. The 19 Lean-only cases include 18 legacy alias repairs
+and the `$date` prefix-scanner case. All 411 plain SPARQL rewrites also
+match after independent Jena reparse and normalisation. The 23 remaining
+exact matches use QLever's named-subquery syntax, which Jena does not parse.
 
-Build the native transport with `lake build l4wikidata-rewriter` in
-`formal/lean4`. The command accepts Wikimedia JSONL v1 requests on stdin
-and returns their request IDs, query IDs, SHA-256, and versioned result
-envelopes. It needs no JVM. For the HTTP adapter, set `REWRITER_BIN` to
-the absolute binary path. Native responses for all 580 records matched
-the Lean batch path with protocol version and query identity checked.
-To run the fixture audit through the same binary, add
-`--lean-bin formal/lean4/.lake/build/bin/l4wikidata-rewriter` to
-`compare_rewriter_fixtures.py`. The wider fixture audit is the
-behavioural replacement gate. This revision builds the Lean Wasm
-dispatch module. Browser-Wasm execution remains a separate release check.
+The independent Wikimedia fixture audit supplies the broader check. The
+18 dedicated named-subquery fixtures match status and rewrite trace.
+All 13 successful named-subquery outputs match byte for byte. Across all
+213 fixtures, 91 statuses and 80 rule traces match. Lean matches 46 of the
+134 successful Java outputs byte for byte. Remaining fixture gaps include
+more label-service scopes and modes, date and duration, geospatial
+services and functions, utility services and GAS. For bare
+`[AUTO_LANGUAGE]` input the Lean port resolves the specified language
+or defaults to English. Direct Java invocation preserves that placeholder.
+That accounts for the text difference in the compound anomaly fixture.
+The corpus comparison uses the same prepared English input on both sides.
 
-The updated workbench serves the audited snapshot and includes a
-byte-identical filter. Generate the same comparison metadata by adding
-`--annotate-catalogue` to `compare_rewrite_text.py`.
+Build the native transport and Lean WASM dispatch from `formal/lean4`:
+
+```bash
+lake build L4Factoidal.Wikidata.RewriteTests l4wikidata-rewriter Wasm.CoreDispatch
+```
+
+The native command accepts Wikimedia JSONL v1 requests on stdin and returns
+their request IDs, query IDs, SHA-256 and versioned result envelopes. For
+the Python HTTP adapter, set `REWRITER_BIN` to the absolute binary path.
+Use the pinned Wikimedia checkout at
+`e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74`. Build
+`java-rewriter/target/sparql-rewriter.jar` using the upstream Maven recipe.
+The oracle used here was compiled from the same source using Eclipse's
+Java compiler and the dependency classes from the pinned archive. Its
+SHA-256 was `3c205767df0796e40735e9ed1e3a1ed819e5f3f6c33be0a5c572261a3d92c45f`.
+Pass the actual source-built JAR into the audits:
+
+```bash
+python tools/wikidata/compare_rewriter_fixtures.py /path/to/upstream \
+  --jar /path/to/source-built.jar \
+  --lean-bin formal/lean4/.lake/build/bin/l4wikidata-rewriter \
+  --out /tmp/wdqs-fixtures.json
+python tools/wikidata/build_mlp_catalogue.py --with-lean \
+  --jar /path/to/source-built.jar --out /tmp/mlp-catalogue.json \
+  --first-100-out /tmp/mlp-first-100.json
+python tools/wikidata/compare_rewrite_text.py /tmp/mlp-catalogue.json \
+  --jar /path/to/source-built.jar --annotate-catalogue --out /tmp/mlp-text-comparison.json
+```
+
+Browser-WASM execution and the remaining fixture gaps are release gates.
+The [workbench][workbench] serves the precomputed corpus for trying the
+rewrites and comparing real endpoint results.
+
+## Five paired live endpoint checks
+
+Each pair sent one original to Blazegraph and the byte-identical saved
+rewrite to QLever. Both requests started within 0.5 ms of each other.
+There was one pair per query and a three-second pause after each pair.
+Times include network, endpoint cache and response parsing. Columns and
+duplicate row occurrences are compared as a multiset. An integer
+datatype-only difference is recorded separately from other row changes.
+The [recorded observations][timings] include the submitted query hashes.
+
+| Query | Blazegraph | QLever | Result comparison |
+| --- | ---: | ---: | --- |
+| MLP 007 | 7.79 s | 7.22 s | 83 rows on each side. `xsd:integer` versus `xsd:int` only. |
+| MLP 011 | 4.43 s | 5.90 s | 134 rows on each side. Integer datatype difference only. |
+| MLP 027 | 4.51 s | 3.99 s | 41 rows on each side. Other bindings differ. |
+| MLP 192 | 5.06 s | 5.00 s | 20 rows versus 20,456. QLever returned all 20 original rows plus 20,436 more. |
+| MLP 203 | 4.13 s | 4.41 s | Four rows on each side. Other bindings differ. |
+
+The shared MLP 192 rewrite exposes `?item2` from a named subquery whose
+body binds only `?item1`. Wikimedia's rule keeps aggregate SELECTs in
+hoisted definitions and removes other projections. This drops
+`SELECT (?item1 AS ?item2)`, so the rewritten join sees `?item2` unbound
+from that branch. The same rule can affect any non-aggregate projection
+that creates a binding. A related edge case arises when the visible
+projection is empty. A parsed rewrite can render the synthetic single
+column as shorthand `VALUES`, which the Java placeholder restorer does
+not match. The Lean port reproduces the upstream output in both cases.
+
+The causes of the MLP 027 and 203 value differences were not established.
+Live dataset changes, label handling and aggregate ordering can affect
+the returned bindings. A single pair records response times under shared
+conditions and does not establish a sustained speed difference.
+
+```bash
+python tools/wikidata/compare_endpoint_timings.py /tmp/mlp-catalogue.json \
+  mlp-007 mlp-011 mlp-027 mlp-192 mlp-203 --pair-delay 3 --timeout 20
+```
+
+[orchestrator]: https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/NamedSubqueryOrchestrator.java
+[workbench]: https://mlp-wikidata-workbench.danbri.chatgpt.site/
+[timings]: ../tools/wikidata/evidence/20261124-mlp-five-endpoints.jsonl

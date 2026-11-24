@@ -3,6 +3,7 @@ import L4Factoidal.Wikidata.LabelService
 import L4Factoidal.Wikidata.Legacy
 import L4Factoidal.Wikidata.ArqFormat
 import L4Factoidal.Wikidata.GeoDistance
+import L4Factoidal.Wikidata.NamedSubquery
 
 namespace L4Factoidal.Wikidata
 open Lean L4Factoidal.SPARQL
@@ -60,6 +61,20 @@ private def bodyEnd : Nat → List LocatedToken → Option (Nat × List LocatedT
     | .rbrace => if depth == 1 then some (token.stop, rest) else bodyEnd (depth - 1) rest
     | _ => bodyEnd depth rest
   | _, [] => none
+
+/-- Find the innermost subselect enclosing this service. Each stack entry
+tracks a graph group, with tokens only for groups that start a subselect. -/
+private def enclosingSelect (position : Nat) (stack : List (Option (List LocatedToken))) :
+    List LocatedToken → Option (List LocatedToken)
+  | [] => stack.findSome? id
+  | token :: rest =>
+    if token.start ≥ position then stack.findSome? id
+    else match token.token with
+    | .lbrace =>
+      let select := if rest.head?.any (fun next => next.token == .select) then some rest else none
+      enclosingSelect position (select :: stack) rest
+    | .rbrace => enclosingSelect position (stack.drop 1) rest
+    | _ => enclosingSelect position stack rest
 
 private def outerRange (tokens : List LocatedToken) (site : ServiceSite) :
     Option (Nat × Nat × List LocatedToken) := do
@@ -147,7 +162,7 @@ private def finish (original current : String) (steps : List RewriteStep) (parse
     | .ok _ =>
       let formatted := if parsedRule then formatParsedRewrite output else none
       let output := (formatted.filter fun text => (parseSparql text).isOk).getD output
-      { rewrite_status := "rewritten", rewritten_query := some (appendOriginalQuery output original)
+      { rewrite_status := "rewritten", rewritten_query := some output
         rewrites := steps }
     | .error error =>
       failure "validation_failed" "rewritten_query_parse_error" "validate" error.msg (some error.pos) steps
@@ -163,7 +178,7 @@ private def projectionAliasConflict (query : Query) : Option String :=
   | _ => none
 
 private def afterParse (original current language : String) (steps : List RewriteStep)
-    (inputNames : List (String × String)) (query : Query) :
+    (inputNames : List (String × String)) (query : Query) (namedBlock : Bool) :
     RewriteResult := Id.run do
   if let some name := projectionAliasConflict query then
     return failure "parse_error" "select_alias_already_in_scope" "parse"
@@ -191,24 +206,45 @@ private def afterParse (original current language : String) (steps : List Rewrit
     | .error pos => return (failure "blazegraph_error" "geof_distance_invalid_arity" "post-parse"
         "geof:distance() must be called with exactly 2 or 3 arguments." (some pos) (steps ++ [geoRule]))
   let labelSites := sites.filter (fun site => site.iri == labelEndpoint)
-  let (edits, postSteps) ← match labelSites with
+  -- https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/rules/NamedSubqueryLabelServiceRemover.java
+  let (edits, postSteps) ← if namedBlock then do
+    let removals ← labelSites.mapM fun site => do
+      let some (stop, _) := bodyEnd 0 site.body |
+        return (⟨site.start, site.start, ""⟩ : Edit)
+      let before := (bodyTokens.takeWhile (fun token => token.start < site.start)).getLast?
+      let after := (bodyTokens.dropWhile (fun token => token.start < stop)).head?
+      let dot := (after.any fun token => startsTriples token.token) &&
+        before.any (fun token => ![.lbrace, .rbrace, .rparen, .dot].contains token.token)
+      return ⟨site.start, stop, if dot then "." else ""⟩
+    pure (subgraphs ++ removals,
+      List.replicate removals.length ⟨"rewrite-wikibase-label-service", "removed-in-subquery"⟩)
+  else match labelSites with
     | [] => pure (subgraphs, [])
     | [site] =>
-      let some (start, stop, rest) := outerRange bodyTokens site |
-        return failure "skipped_unsupported" "label_scope_not_supported" "post-parse" "Label service must be in the outer WHERE group" (some site.start) steps
+      let (scope, scopedTokens, names) ← match enclosingSelect site.start [] bodyTokens with
+        | none => pure (query, bodyTokens, inputNames)
+        | some subqueryTokens =>
+          let stream := subqueryTokens.map fun token => (⟨token.token, token.start⟩ : PosToken)
+          match pSelectQuery topFuel state state.base stream with
+          | .ok (subquery, _) => pure (subquery, subqueryTokens, [])
+          | .error error =>
+            return (failure "parse_error" "original_query_parse_error" "parse"
+              error.msg (some error.pos) steps)
+      let some (start, stop, rest) := outerRange scopedTokens site |
+        return failure "skipped_unsupported" "label_scope_not_supported" "post-parse" "Label service must be directly in a query WHERE group" (some site.start) steps
       let used := tokens.filterMap fun token => match token.token with
         | .var name => some name
         | _ => none
       let binders := (laterBinders state (rest.length + 1)
         (rest.map fun token => ⟨token.token, token.start⟩) []).getD []
-      match rewriteOuterLabel query language used (binders.flatMap Prod.snd) inputNames with
+      match rewriteOuterLabel scope language used (binders.flatMap Prod.snd) names with
       | .ok (text, variant, entities) =>
         let target := binders.foldl (fun position (next, bound) =>
           if bound.any entities.contains then next else position) stop
         let labelEdits := if target == stop then [⟨start, stop, text⟩] else
           -- A triples block directly followed by SERVICE needs a dot if the
           -- next element after removing SERVICE is also a triples block.
-          let before := (bodyTokens.takeWhile (fun token => token.start < start)).getLast?.map (·.token)
+          let before := (scopedTokens.takeWhile (fun token => token.start < start)).getLast?.map (·.token)
           let needsDot := (rest.head?.map (·.token)).any startsTriples &&
             (before.any fun token => ![.lbrace, .rbrace, .rparen, .dot].contains token)
           [⟨start, stop, if needsDot then ".\n" else ""⟩, ⟨target, target, "\n" ++ text⟩]
@@ -218,16 +254,21 @@ private def afterParse (original current language : String) (steps : List Rewrit
         "Multiple label services require scope analysis" none steps)
   let steps := if subgraphs.isEmpty then steps else steps ++ [⟨"rewrite-wdsubgraph-service", "default"⟩]
   let edits := edits ++ geoEdits
-  return finish original (applyEdits current (edits.mergeSort (fun a b => a.start ≤ b.start)))
+  let result := finish original (applyEdits current (edits.mergeSort (fun a b => a.start ≤ b.start)))
     (steps ++ List.replicate geoCount geoRule ++ postSteps) (!edits.isEmpty)
+  let warnings := if !namedBlock then [] else labelSites.map fun _ =>
+    (⟨"named_subquery_label_service_removed", "post-ARQ",
+      "SERVICE wikibase:label is not supported inside a named subquery and was removed; any *Label variable it would have bound is now permanently unbound in this block.", none⟩ : Diagnostic)
+  return { result with warnings := result.warnings ++ warnings }
 
-private def parseAndRewrite (original current language : String) (steps : List RewriteStep) :
+private def parseAndRewrite (original current language : String) (steps : List RewriteStep)
+    (namedBlock : Bool) :
     RewriteResult := Id.run do
   let parsed := parseQuerySyntax current
   match parsed with
   | .ok query =>
     if (projectionAliasConflict query).isNone then
-      return afterParse original current language steps [] query
+      return afterParse original current language steps [] query namedBlock
   | .error error =>
     if error.msg != "SELECT expression aliases variable already in scope" then
       return failure "parse_error" "original_query_parse_error" "parse" error.msg (some error.pos) steps
@@ -242,19 +283,24 @@ private def parseAndRewrite (original current language : String) (steps : List R
   let repaired := applyEdits current edits
   let steps := steps ++ [⟨"rewrite-legacy-select-alias", "rename-input"⟩]
   return match parseQuerySyntax repaired with
-  | .ok query => afterParse original repaired language steps names query
+  | .ok query => afterParse original repaired language steps names query namedBlock
   | .error error => failure "parse_error" "legacy_alias_repair_parse_error" "legacy-input"
       error.msg (some error.pos) steps
 
 -- Wikimedia's SparqlRewriteEngine, pinned source:
 -- https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/SparqlRewriteEngine.java
-/-- Run pre-parse rules, parse with WDQS defaults, apply post-parse rules, and
-validate rewritten SPARQL with the standard parser. No query is executed. -/
-def rewriteQuery (text : String) (language : String := "") : RewriteResult := Id.run do
-  if text.utf8ByteSize > 1000000 then
-    return failure "skipped_unsupported" "query_exceeds_length_limit" "input" "Query exceeds 1 MB"
+private def unextractedDefinition : List LocatedToken → Bool
+  | first :: second :: rest =>
+    (first.token == .withKw && second.token == .lbrace) ||
+      unextractedDefinition (second :: rest)
+  | _ => false
+
+private def rewriteBody (text language : String) (namedBlock : Bool) : RewriteResult := Id.run do
   let tokens := sourceTokens text
-  let .ok (state, _) := sourceState tokens | return parseAndRewrite text text language []
+  if unextractedDefinition tokens then
+    return failure "skipped_unsupported" "unsupported_proprietary_feature" "pre-ARQ"
+      "The query uses an unimplemented named subquery."
+  let .ok (state, _) := sourceState tokens | return parseAndRewrite text text language [] namedBlock
   let hints := rewriteHints text state tokens
   let current := applyEdits text hints
   let steps := if hints.isEmpty then [] else [⟨"rewrite-query-hint", "default"⟩]
@@ -265,6 +311,57 @@ def rewriteQuery (text : String) (language : String := "") : RewriteResult := Id
         "pre-parse" "wikibase:isSomeValue needs an argument" (some pos)
         (steps ++ [⟨"rewrite-wikibase-isSomeValue", "default"⟩]))
   let steps := if edits.isEmpty then steps else steps ++ [⟨"rewrite-wikibase-isSomeValue", "default"⟩]
-  return parseAndRewrite text (applyEdits current edits) language steps
+  return parseAndRewrite text (applyEdits current edits) language steps namedBlock
+
+private def namedStep : RewriteStep := ⟨"rewrite-named-subquery", "default"⟩
+
+private def namedFailure (problem : NamedSubquery.Problem) (phase : String)
+    (steps : List RewriteStep := []) : RewriteResult :=
+  failure problem.status problem.code phase problem.message none steps
+
+private def rewriteNamed (body language : String) (plan : NamedSubquery.Plan) : RewriteResult := Id.run do
+  let prologue := String.join ((NamedSubquery.prefixes body).eraseDups.map (· ++ "\n"))
+  let mut blocks : List NamedSubquery.PreparedBlock := []
+  let mut steps : List RewriteStep := [namedStep]
+  let mut warnings : List Diagnostic := []
+  for block in plan.blocks do
+    let substituted := prologue ++ NamedSubquery.substitute block.body block.references blocks
+    let result := rewriteBody substituted language true
+    let some output := result.rewritten_query | return result
+    let .ok query := parseQuerySyntax substituted |
+      return failure "parse_error" "original_query_parse_error" "parse" "Invalid named subquery"
+    match NamedSubquery.prepareBlock block.name query output blocks with
+    | .error problem => return namedFailure problem "post-ARQ" (steps ++ result.rewrites)
+    | .ok prepared => blocks := blocks ++ [prepared]
+    steps := steps ++ result.rewrites
+    warnings := warnings ++ result.warnings
+  let removals := plan.blocks.map fun block => (⟨block.start, block.stop, ""⟩ : Edit)
+  let result := rewriteBody (NamedSubquery.substitute body plan.references blocks removals) language false
+  steps := steps ++ result.rewrites
+  warnings := warnings ++ result.warnings
+  let some rewritten := result.rewritten_query | return { result with rewrites := steps, warnings := warnings }
+  match NamedSubquery.assemble rewritten blocks with
+  | .error problem => return { namedFailure problem "post-ARQ" steps with warnings := warnings }
+  | .ok text =>
+    return { rewrite_status := "rewritten", rewritten_query := some text, rewrites := steps, warnings := warnings }
+
+/-- Run the rewrite pipeline without executing the query. SPARQL fragments
+are validated before assembling QLever's WITH and INCLUDE clauses. -/
+def rewriteQuery (text : String) (language : String := "") : RewriteResult := Id.run do
+  if text.utf8ByteSize > 1000000 then
+    return failure "skipped_unsupported" "query_exceeds_length_limit" "input" "Query exceeds 1 MB"
+  let (leading, body) := splitLeadingComments text
+  let plan := if body.contains '%' then NamedSubquery.plan body (sourceTokens body true) else .ok none
+  match plan with
+  | .error problem => return namedFailure problem "pre-ARQ" [namedStep]
+  | .ok none =>
+    let result := rewriteBody text language false
+    return if result.rewrite_status == "rewritten" then
+      { result with rewritten_query := result.rewritten_query.map (appendOriginalQuery · text) }
+      else result
+  | .ok (some plan) =>
+    let result := rewriteNamed body language plan
+    return { result with rewritten_query :=
+      result.rewritten_query.map (fun output => appendOriginalQuery (leading ++ output) text) }
 
 end L4Factoidal.Wikidata
