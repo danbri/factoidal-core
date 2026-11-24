@@ -594,6 +594,7 @@ async function main() {
   // the page as it is on screen (its kept layout), as a browser's compositor scrolls what it has;
   // the change is drawn when the scroll pauses, or after SCROLL_HOLD_MAX_MS.
   let scrollAt=-Infinity,pageChanged:number|undefined;
+  let awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[];
   // When each page was first shown: a reader often scrolls at once, and the changes that its
   // scripts and late resources make then wait for the first scroll to pause too.
   const firstShown=new WeakMap<object,number>();
@@ -602,7 +603,11 @@ async function main() {
   const scrollHolds=(now:number)=>{
     if(!scrollFirstOn)return false;
     const shownAt=firstShown.get(document);
-    return scrollFirst({now,scrollAt,changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
+    const waitingForBand=(awaitingShift.length>0||awaitingBand.length>0)&&canShift();
+    // A queued scroll has not gone quiet until it reaches the screen. The existing
+    // changedAt deadline still bounds the wait for script updates.
+    return scrollFirst({now,scrollAt:waitingForBand?now:scrollAt,
+      changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
   };
   // Scripts first (page-load.mjs scriptsFirst): while the page's start has not finished (the
   // last turn said startMore), a change by its scripts waits for the start to end, or for a few
@@ -1473,7 +1478,7 @@ async function main() {
   };
   let lastStep=0,stepAt=0,pressAt=[0,0];
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
-  let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
+  let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
   // The idle loop (issue 450): pumps, waits in the window library and turns with nothing to do.
   const idleStats={pumps:0,waits:0,waitedMs:0,quietPumps:0,eventsAfterWait:0,idleTurns:0,idleMs:0};
