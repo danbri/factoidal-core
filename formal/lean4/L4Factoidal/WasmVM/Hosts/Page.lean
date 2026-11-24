@@ -2293,8 +2293,10 @@ private def sheetsArena : Arena :=
 #guard sheetSignature ((sheetsArena.linkChild 3 6 none)) == sheetSignature sheetsArena
 #guard (sheetSignature ((sheetsArena.linkChild 3 7 none))).size == 2
 -- `childWrite`: the parent and the nodes added; a node outside the arena gives none
-#guard childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!) == some (3, [5, 6])
-#guard childWrite sheetsArena "text_content_set" (fun i => [5][i]!) == some (5, [5, 6])
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).all fun (p, ns) => p == 3 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).isSome
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).all fun (p, ns) => p == 5 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).isSome
 #guard childWrite sheetsArena "append_child" (fun i => [3, 99][i]!) == none
 #guard childWrite sheetsArena "set_attribute" (fun i => [3, 5][i]!) == none
 
