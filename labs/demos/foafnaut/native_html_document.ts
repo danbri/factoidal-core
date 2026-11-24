@@ -235,14 +235,18 @@ each face that it can, from the page's own origin and within the size caps, and 
 to Lean (webFontLoad), which checks the font with the font policy and holds it. A face that
 fails or is refused is left out: its text falls back to the next family, as CSS says. A page
 whose sheets have no @font-face makes no call. The answer is the request field `webFonts`. */
-export async function loadWebFonts(engine:WebFontEngine,url:string,source:string,resources:HTMLResource[],signal?:AbortSignal) {
+export async function loadWebFonts(engine:WebFontEngine,url:string,source:string,resources:HTMLResource[],signal?:AbortSignal,
+    imported:{url:string;source:string}[]=[]) {
   const webFonts:{url:string;sha256:string}[]=[];
   if(typeof engine.fontFaces!=="function"||typeof engine.webFontLoad!=="function")return webFonts;
   const hasRule=(text:string)=>/@font-face/i.test(text);
-  if(!hasRule(source)&&!resources.some(r=>hasRule(r.source)))return webFonts;
+  // The sheets that @import brought count as the page's: their @font-face rules name faces too
+  // (WPT css/WOFF2 declares its reference fonts in an imported sheet; until 2026-11-24 such a
+  // face was never loaded, and its text fell back).
+  if(!hasRule(source)&&!resources.some(r=>hasRule(r.source))&&!imported.some(r=>hasRule(r.source)))return webFonts;
   // An engine from before @font-face answers "unknown document operation": no web fonts.
   let answer;
-  try{answer=await engine.fontFaces(source,{url,resources});}catch{return webFonts;}
+  try{answer=await engine.fontFaces(source,{url,resources,...(imported.length?{imported}:{})});}catch{return webFonts;}
   const loaded=new Map<string,string>();let total=0;
   for(const face of answer?.faces??[]) {
     for(const src of face.sources) {
@@ -547,7 +551,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
-  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);
+  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
   options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};
