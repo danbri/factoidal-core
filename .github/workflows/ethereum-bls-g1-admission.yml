@@ -75,7 +75,9 @@ jobs:
           expected = {"EthereumConsensus.BLS."+n for n in
             ("decodePublicKey_wrong_width","admitPoint_ok","coordinateChecks_sound","decodePublicKey_ok",
              "decodePublicKey_candidate_error","decodePublicKey_candidate_ok",
-             "decodePublicKey_candidate_bad_coordinates","decodePublicKey_candidate_bad_subgroup")}
+             "decodePublicKey_candidate_bad_coordinates","decodePublicKey_candidate_bad_subgroup",
+             "aggregatePublicKeys_over_limit","aggregatePublicKeys_empty","aggregateLoop_singleton",
+             "aggregateLoop_bad_first","finishAggregate_infinity","finishAggregate_ok","aggregatePublicKeys_ok")}
           def audit(t):
               reports = re.findall(r"'(EthereumConsensus\.BLS\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
               if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
@@ -90,9 +92,9 @@ jobs:
               except ValueError:
                   continue
               raise ValueError("audit mutation escaped")
-          print("Actual eight theorem reports and four falsification controls passed")
+          print("Actual fifteen theorem reports and four falsification controls passed")
           PY
-      - name: Compare native key admission against independent affine oracle
+      - name: Compare native key admission and aggregation against independent affine oracle
         run: |
           set -euo pipefail
           ulimit -v 8388608
