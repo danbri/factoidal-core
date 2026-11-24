@@ -5,7 +5,8 @@ import L4Factoidal.Codec.VP8Tables
 The lossy WebP key-frame control partition (RFC 6386 §§7, 9, 11, 13, 19).
 The arithmetic decoder reads only its indexed partition. The prefix indexes the
 separate coefficient partitions, and the prediction reader decodes macroblock
-modes and coefficient probabilities.
+modes and coefficient probabilities. The residual reader streams the decoded
+coefficient blocks to a caller in raster order.
 -/
 namespace L4Factoidal.Codec.VP8
 
@@ -396,6 +397,174 @@ def inspectPrediction (src : ByteArray) (image : WebP.Image src.size) :
   if count : macroblocks.size = rows * columns then
     return ⟨frame, entropy, columns, rows, macroblocks, count⟩
   throw "invalid VP8 macroblock count"
+
+/-- The coefficient order appearing in the stream is different from the
+row-major order consumed by the inverse transforms. -/
+def zigzag : Vector (Fin 16) 16 :=
+  #v[0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 11, 14, 15]
+
+private def unzigzag : Vector (Fin 16) 16 :=
+  #v[0, 1, 5, 6, 2, 4, 7, 12, 3, 8, 11, 13, 9, 10, 14, 15]
+
+private theorem unzigzag_zigzag :
+    ∀ i : Fin 16, unzigzag.get (zigzag.get i) = i := by
+  simp only [Fin.forall_fin_succ, Fin.forall_fin_zero]
+  decide
+
+/-- Decoding a later scan position cannot overwrite another coefficient. -/
+theorem zigzag_injective {a b : Fin 16} (equal : zigzag.get a = zigzag.get b) : a = b := by
+  have restored := congrArg unzigzag.get equal
+  simpa only [unzigzag_zigzag] using restored
+
+private def coefficientBand : Vector (Fin 8) 16 :=
+  #v[0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7]
+
+private def categoryPayload (probabilities : Array Nat) : Read Nat := do
+  let mut payload := 0
+  for probability in probabilities do
+    payload := 2*payload + if (← readProb probability) then 1 else 0
+  return payload
+
+private def largeCoefficient (branch : Fin 11 → Read Bool) : Read Nat := do
+  if !(← branch 3) then
+    if !(← branch 4) then return 2
+    return 3 + if (← branch 5) then 1 else 0
+  if !(← branch 6) then
+    if !(← branch 7) then return 5 + (← categoryPayload #[159])
+    return 7 + (← categoryPayload #[165,145])
+  let upper ← branch 8
+  let lower ← branch (if upper then 10 else 9)
+  if !upper then
+    if !lower then return 11 + (← categoryPayload #[173,148,140])
+    return 19 + (← categoryPayload #[176,155,140,135])
+  if !lower then return 35 + (← categoryPayload #[180,157,141,134,130])
+  return 67 + (← categoryPayload #[254,254,243,230,196,177,153,140,133,130,129])
+
+abbrev CoefficientBlock := Vector Int 16
+
+private def readCoefficientBlock (entropy : Entropy) (kind : Fin 4) (first : Nat)
+    (initialContext : Fin 3) : Read (CoefficientBlock × Bool) := do
+  let mut values := Vector.replicate 16 (0 : Int)
+  let mut context := initialContext
+  let mut previousZero := false
+  let mut occupied := false
+  for position in List.finRange 16 do
+    if position.val < first then continue
+    let branch := fun node => readProb
+      (entropy.probability kind (coefficientBand.get position) context node).toNat
+    if !previousZero then
+      if !(← branch 0) then break
+    if !(← branch 1) then
+      context := 0
+      previousZero := true
+    else
+      let magnitude ← if (← branch 2) then largeCoefficient branch else pure 1
+      let value := Int.ofNat magnitude
+      let value := if (← readProb 128) then -value else value
+      let index := zigzag.get position
+      values := values.set index.val value index.isLt
+      context := if magnitude == 1 then 1 else 2
+      previousZero := false
+      occupied := true
+  return (values, occupied)
+
+private structure Occupancy where
+  y2 : Bool := false
+  planes : Vector Bool 8 := Vector.replicate 8 false
+  deriving Inhabited
+
+private def occupiedContext (above left : Bool) : Fin 3 :=
+  ⟨(if above then 1 else 0) + (if left then 1 else 0), by
+    cases above <;> cases left <;> decide⟩
+
+private def readPlane (entropy : Entropy) (kind : Fin 4) (first side offset : Nat)
+    (above left : Vector Bool 8) :
+    Read (Array CoefficientBlock × Vector Bool 8 × Vector Bool 8) := do
+  let mut above := above
+  let mut left := left
+  let mut result := Array.emptyWithCapacity (side * side)
+  for y in [:side] do
+    for x in [:side] do
+      let topIndex := offset+x
+      let leftIndex := offset+y
+      let context := occupiedContext (above.getD topIndex false) (left.getD leftIndex false)
+      let (coefficients, occupied) ← readCoefficientBlock entropy kind first context
+      above := above.setIfInBounds topIndex occupied
+      left := left.setIfInBounds leftIndex occupied
+      result := result.push coefficients
+  return (result, above, left)
+
+structure Residual where
+  y2 : Option CoefficientBlock
+  yuv : Array CoefficientBlock
+  blockCount : yuv.size = 24
+
+private def hasLumaDC : LumaPrediction → Bool
+  | .whole _ => true
+  | .subblocks _ => false
+
+private def skipOccupancy (hasDC : Bool) (above : Occupancy) : Occupancy :=
+  {y2 := !hasDC && above.y2}
+
+private def readResidual (entropy : Entropy) (hasDC : Bool) (above left : Occupancy) :
+    Read (Residual × Occupancy × Occupancy) := do
+  let (y2, aboveDC, leftDC) ← if hasDC then do
+    let (coefficients, occupied) ←
+      readCoefficientBlock entropy 1 0 (occupiedContext above.y2 left.y2)
+    pure (some coefficients, occupied, occupied)
+  else pure (none, above.y2, left.y2)
+  let (y, above, left) ← readPlane entropy (if hasDC then 0 else 3)
+    (if hasDC then 1 else 0) 4 0 above.planes left.planes
+  let (u, above, left) ← readPlane entropy 2 0 2 4 above left
+  let (v, above, left) ← readPlane entropy 2 0 2 6 above left
+  let yuv := y ++ u ++ v
+  if count : yuv.size = 24 then
+    return (⟨y2,yuv,count⟩, ⟨aboveDC,above⟩, ⟨leftDC,left⟩)
+  throw "invalid VP8 residual block count"
+
+private def beginResidual (src : ByteArray) (span : Span src.size) : Except String Cursor := do
+  if span.size < 2 then throw "truncated VP8 coefficient partition"
+  return ⟨16,255,256 * byte src span.offset + byte src (span.offset+1)⟩
+
+/-- Decode keyframe residuals in raster order. The consumer sees one macroblock
+at a time. Each coefficient partition has an independent cursor and the above
+and left occupancy contexts follow the raster across partition boundaries. -/
+def foldResiduals (src : ByteArray) (image : WebP.Image src.size) (initial : α)
+    (visit : α → Control → Nat → Nat → Macroblock → Option Residual → Except String α) :
+    Except String α := do
+  let prediction ← inspectPrediction src image
+  let partitions := prediction.frame.coefficients
+  let mut cursors : Array (Option Cursor) := Array.replicate partitions.size none
+  let mut above : Array Occupancy := Array.replicate prediction.columns {}
+  let mut state := initial
+  for row in [:prediction.rows] do
+    let partIndex := row % partitions.size
+    let some partition := partitions[partIndex]? | throw "missing VP8 coefficient partition"
+    let mut cursor := cursors[partIndex]?.join
+    let mut left : Occupancy := {}
+    for column in [:prediction.columns] do
+      let some block := prediction.macroblocks[row * prediction.columns + column]? |
+        throw "missing VP8 prediction record"
+      let top := above[column]?.getD {}
+      let hasDC := hasLumaDC block.luma
+      if block.skipCoefficients then
+        above := above.set! column (skipOccupancy hasDC top)
+        left := skipOccupancy hasDC left
+        state ← visit state prediction.frame.control row column block none
+      else
+        let started ← match cursor with
+          | some active => pure active
+          | none => beginResidual src partition
+        let ((residual, nextTop, nextLeft), nextCursor) ←
+          ((readResidual prediction.entropy hasDC top left).run ⟨src,partition⟩).run started
+        cursor := some nextCursor
+        above := above.set! column nextTop
+        left := nextLeft
+        state ← visit state prediction.frame.control row column block (some residual)
+    cursors := cursors.set! partIndex cursor
+  return state
+
+#print axioms zigzag_injective
 
 #print axioms arithmeticSplit_between
 #print axioms coefficientIndex_injective
