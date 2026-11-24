@@ -47,22 +47,29 @@ private def bitAt (input : Input) (bit : Nat) : Except String Nat :=
     .ok (octet.toNat / 2 ^ (7 - bit % 8) % 2)
   else .error "truncated VP8 arithmetic partition"
 
+/-- Decisions in the 16-bit reference formulation depend only on the high
+byte. The low byte can remain unread until shifting needs its first bit. -/
+theorem decision_uses_high_byte (boundary buffered : Nat) :
+    boundary * 256 ≤ buffered ↔ boundary ≤ buffered / 256 :=
+  (Nat.le_div_iff_mul_le (by decide : 0 < 256)).symm
+
 private def readProb (probability : Nat) : Read Bool := do
   let input ← read
   let mut cursor ← get
-  if cursor.range < 128 || cursor.range > 255 || probability > 255 ||
-      cursor.value ≥ cursor.range * 256 then
+  if cursor.range == 0 || cursor.range > 255 || probability > 255 ||
+      cursor.value ≥ cursor.range then
     throw "invalid VP8 arithmetic cursor"
-  let boundary := arithmeticSplit cursor.range probability
-  let one := cursor.value ≥ boundary * 256
-  cursor := if one then {cursor with
-    range := cursor.range-boundary, value := cursor.value-boundary*256}
-    else {cursor with range := boundary}
+  -- Read only what this decision needs. The final symbol of a partition
+  -- does not require normalization for a following symbol.
   for _ in [:7] do
     if cursor.range ≥ 128 then break
     let next ← ofExcept (bitAt input cursor.nextBit)
     cursor := {nextBit := cursor.nextBit+1, range := cursor.range*2, value := cursor.value*2+next}
-  set cursor
+  let boundary := arithmeticSplit cursor.range probability
+  let one := cursor.value ≥ boundary
+  set (if one then {cursor with
+    range := cursor.range-boundary, value := cursor.value-boundary}
+    else {cursor with range := boundary})
   return one
 
 private def readLiteral (width : Nat) : Read Nat := do
@@ -153,6 +160,10 @@ private def readControl : Read Control := do
 private def byte (src : ByteArray) (index : Nat) : Nat :=
   (src[index]?.getD 0).toNat
 
+private def beginPartition (src : ByteArray) (span : Span src.size) : Except String Cursor :=
+  if span.size == 0 then .error "truncated VP8 arithmetic partition"
+  else .ok ⟨8,255,byte src span.offset⟩
+
 private def le24 (src : ByteArray) (index : Nat) : Nat :=
   byte src index + 256 * byte src (index+1) + 65536 * byte src (index+2)
 
@@ -183,9 +194,8 @@ def inspect (src : ByteArray) (image : WebP.Image src.size) : Except String (Fra
   if profile > 3 then throw "reserved VP8 profile"
   let shown := tag / 16 % 2 == 1
   let controlSpan ← subspan source 10 (tag / 32)
-  if controlSpan.size < 2 then throw "truncated VP8 control partition"
-  let initial := 256 * byte src controlSpan.offset + byte src (controlSpan.offset+1)
-  let (control, continuation) ← ((readControl.run ⟨src,controlSpan⟩).run ⟨16,255,initial⟩)
+  let initial ← beginPartition src controlSpan
+  let (control, continuation) ← ((readControl.run ⟨src,controlSpan⟩).run initial)
   let sizeTable := 10 + controlSpan.size
   let mut offset := sizeTable + 3 * (control.coefficientCount-1)
   if offset > source.size then throw "truncated VP8 partition sizes"
@@ -522,10 +532,6 @@ private def readResidual (entropy : Entropy) (hasDC : Bool) (above left : Occupa
     return (⟨y2,yuv,count⟩, ⟨aboveDC,above⟩, ⟨leftDC,left⟩)
   throw "invalid VP8 residual block count"
 
-private def beginResidual (src : ByteArray) (span : Span src.size) : Except String Cursor := do
-  if span.size < 2 then throw "truncated VP8 coefficient partition"
-  return ⟨16,255,256 * byte src span.offset + byte src (span.offset+1)⟩
-
 /-- Decode keyframe residuals in raster order. The consumer sees one macroblock
 at a time. Each coefficient partition has an independent cursor and the above
 and left occupancy contexts follow the raster across partition boundaries. -/
@@ -554,7 +560,7 @@ def foldResiduals (src : ByteArray) (image : WebP.Image src.size) (initial : α)
       else
         let started ← match cursor with
           | some active => pure active
-          | none => beginResidual src partition
+          | none => beginPartition src partition
         let ((residual, nextTop, nextLeft), nextCursor) ←
           ((readResidual prediction.entropy hasDC top left).run ⟨src,partition⟩).run started
         cursor := some nextCursor
@@ -565,6 +571,7 @@ def foldResiduals (src : ByteArray) (image : WebP.Image src.size) (initial : α)
   return state
 
 #print axioms zigzag_injective
+#print axioms decision_uses_high_byte
 
 #print axioms arithmeticSplit_between
 #print axioms coefficientIndex_injective
