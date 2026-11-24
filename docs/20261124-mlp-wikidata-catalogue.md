@@ -33,8 +33,8 @@ CC BY-SA 4.0 attribution to Martin Poulter and the Wikidata contributors.
 
 A lexical scan found no other query-shaped lines outside these templates.
 The extraction covers the captured revision set and does not chase links or
-render arbitrary MediaWiki templates. The workbench uses the first 100
-historical records, which are an exact slice of the full catalogue.
+render arbitrary MediaWiki templates. The first 100 historical records are available as an exact slice
+of the full catalogue. The workbench browses all 580 records.
 
 Run from the repository root after compiling the Lean rewriter in
 `formal/lean4` with `lake build L4Factoidal.Wikidata.Rewrite`.
@@ -204,8 +204,8 @@ cache and service conditions. It records strict RDF-term equality separately
 from datatype-only equivalence and leaves comparisons with remaining result
 differences without a speed ratio.
 
-The workbench still contains the earlier precomputed 580-query snapshot. Release requires supported fixture parity, documented
-intentional differences and unavailable rewrites, native/Wasm agreement, and
+At the first audit, the workbench served the earlier precomputed snapshot.
+Release requires supported fixture parity, documented intentional differences and unavailable rewrites, native/Wasm agreement, and
 a workbench build from the same tested corpus and oracle.
 
 [compare]: https://www.wikidata.org/w/index.php?title=Wikidata:SPARQL_query_service/WDQS_backend_update/Compare&oldid=2574073050
@@ -215,3 +215,44 @@ a workbench build from the same tested corpus and oracle.
 [optimisation]: https://www.wikidata.org/wiki/Wikidata:SPARQL_query_service/query_optimization_v2
 [named]: https://wikitech.wikimedia.org/wiki/Wikidata_Query_Service/Migration/Rewrite_of_Utility_Services_and_Functions#Named_subqueries
 [engine]: https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/SparqlRewriteEngine.java
+
+## Exact output and JSONL compatibility
+
+The second audit compares the same prepared English input with the pinned,
+source-built Java oracle. Lean's formatter reads the validated token stream
+with Factoidal's clause parsers. This keeps source-order FILTERs, nested
+groups, and property paths before evaluation lowering. It emits ARQ's
+prefix, triple and expression layout, and validation reparses the output.
+Label rewrites use the upstream's ordering of automatic outputs and anchor
+after the last subsequent outer-group binder of a label entity. The port
+also rewrites the supported Blazegraph `geof:distance` call shapes.
+
+| Corpus | Byte-identical rewrites | Byte-identical unchanged queries | Java-only rewrite | Lean-only rewrite |
+| --- | ---: | ---: | ---: | ---: |
+| First 100 | 81 / 81 paired | 16 | 0 | 3 |
+| All 580 | 410 / 410 paired | 106 | 24 | 19 |
+
+There are 21 corpus queries with no result text on either side. Of the 24
+Java-only rewrites, 23 use named subqueries and one uses a nested label
+service. The 19 Lean-only cases include 18 legacy alias repairs and the
+`$date` prefix-scanner case. The 213 upstream fixtures remain a wider test
+of the migration tool. 73 statuses and 33 of 134 Java rewrites match
+byte for byte in that set. Named subqueries, expanded label scopes, date
+and duration, remaining geospatial functions and services, and the
+utility and GAS services remain release gates.
+
+Build the native transport with `lake build l4wikidata-rewriter` in
+`formal/lean4`. The command accepts Wikimedia JSONL v1 requests on stdin
+and returns their request IDs, query IDs, SHA-256, and versioned result
+envelopes. It needs no JVM. For the HTTP adapter, set `REWRITER_BIN` to
+the absolute binary path. Native responses for all 580 records matched
+the Lean batch path with protocol version and query identity checked.
+To run the fixture audit through the same binary, add
+`--lean-bin formal/lean4/.lake/build/bin/l4wikidata-rewriter` to
+`compare_rewriter_fixtures.py`. The wider fixture audit is the
+behavioural replacement gate. This revision builds the Lean Wasm
+dispatch module. Browser-Wasm execution remains a separate release check.
+
+The updated workbench serves the audited snapshot and includes a
+byte-identical filter. Generate the same comparison metadata by adding
+`--annotate-catalogue` to `compare_rewrite_text.py`.

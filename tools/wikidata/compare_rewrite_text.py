@@ -24,9 +24,12 @@ def main():
     parser.add_argument("--jar", type=Path, required=True)
     parser.add_argument("--ecj", type=Path, help="Use this Eclipse compiler JAR if javac is absent")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--annotate-catalogue", action="store_true",
+                        help="Record this audit's structural comparison in the input catalogue")
     args = parser.parse_args()
     archive = args.jar.resolve()
-    rows = json.loads(args.catalogue.read_text(encoding="utf-8"))["queries"]
+    catalogue = json.loads(args.catalogue.read_text(encoding="utf-8"))
+    rows = catalogue["queries"]
     pairs = [row for row in rows
              if row["rewrite_status"] == row["lean_rewrite_status"] == "rewritten"]
     sides = ("replacement_query", "lean_replacement_query")
@@ -78,6 +81,13 @@ def main():
         "jena_original_rejections": {key: result.get("error") for key, result in jena.items()
                                      if key.endswith(":original")},
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if args.annotate_catalogue:
+        by_id = {row["id"]: row for row in rows}
+        for row in report:
+            verdict = (row["jena_tokens"] or {}).get("alpha_equal")
+            if isinstance(verdict, bool):
+                by_id[row["id"]].setdefault("review", {})["normalized_rewrite_match"] = verdict
+        args.catalogue.write_text(json.dumps(catalogue, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{len(report)} paired rewrites. "
           f"{sum(row['byte_identical'] for row in report)} match byte for byte. "
           f"{sum((row['jena_tokens'] or {}).get('alpha_equal', False) for row in report)} "

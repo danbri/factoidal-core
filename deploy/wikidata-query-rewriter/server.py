@@ -1,4 +1,4 @@
-"""Bounded HTTP adapter to Wikimedia's Java JSONL engine."""
+"""Bounded HTTP adapter to a Wikimedia-compatible JSONL command."""
 import json
 import os
 import subprocess
@@ -7,6 +7,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 JAR = os.environ.get('REWRITER_JAR', '/app/sparql-rewriter.jar')
+REWRITER_BIN = os.environ.get('REWRITER_BIN')
+COMMAND = [REWRITER_BIN] if REWRITER_BIN else ['java', '-Xmx256m', '-Xss16m', '-jar', JAR]
 MAX_BODY = 1_000_000
 slots = threading.BoundedSemaphore(2)
 
@@ -38,7 +40,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             ident = str(uuid.uuid4())
             request = {'protocol_version': 1, 'request_id': ident, 'query_id': ident, 'query': payload['query']}
-            p = subprocess.run(['java', '-Xmx256m', '-Xss16m', '-jar', JAR], input=json.dumps(request)+'\n', text=True, capture_output=True, timeout=75)
+            p = subprocess.run(COMMAND, input=json.dumps(request)+'\n', text=True, capture_output=True, timeout=75)
             result = json.loads(p.stdout)
             if p.returncode or not isinstance(result, dict) or result.get('request_id') != ident: raise ValueError()
             self.reply(200, result)

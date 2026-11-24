@@ -63,15 +63,20 @@ def parseWithFuel (fuel : Nat) (text : String) (base : Option String)
         .error ⟨"blank node label reused across graph-pattern scope", 0⟩
       else .ok q
 
+/-- Parse WDQS syntax while retaining property paths for rewrite analysis. -/
+def parseQuerySyntax (text : String) (base : Option String := none)
+    (version : SparqlVersion := .v11) : Except ParseError Query :=
+  match parseWithFuel topFuel text base version with
+  | .ok q => .ok q
+  | .error e =>
+    match parseWithFuel (scaledFuel text) text base version with
+    | .ok q => .ok q
+    | .error _ => .error e
+
 /-- Same retry and path-alternative lowering as `parseSparql`. -/
 def parseQuery (text : String) (base : Option String := none)
     (version : SparqlVersion := .v11) : Except ParseError Query :=
-  match parseWithFuel topFuel text base version with
-  | .ok q => .ok q.expandIriAlternatives
-  | .error e =>
-    match parseWithFuel (scaledFuel text) text base version with
-    | .ok q => .ok q.expandIriAlternatives
-    | .error _ => .error e
+  (parseQuerySyntax text base version).map (·.expandIriAlternatives)
 
 #guard (parseQuery "SELECT * WHERE { wd:Q42 wdt:P31 ?o }").isOk
 #guard (match parseQuery "SELECT * WHERE { noSuchPrefix:foo ?p ?o }" with | .error _ => true | .ok _ => false)

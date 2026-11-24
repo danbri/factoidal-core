@@ -896,6 +896,9 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- See L4Factoidal/SPARQL/Parser.lean and Harness/SparqlSyntaxProbe.lean.
 @[default_target] lean_exe «l4sparql-probe» where root := `Harness.SparqlSyntaxProbe
 
+-- Wikimedia rewriter JSONL v1 transport backed by the Factoidal Lean rules.
+lean_exe «l4wikidata-rewriter» where root := `Wikidata.RewriteServer
+
 -- Verifiable Credentials Data Integrity (eddsa-rdfc-2022) + did:key
 -- probe (Harness/VcProbe.lean): the RFC 8032 Ed25519 vectors through
 -- the HACL* extern (which `#guard` cannot evaluate), the did:key

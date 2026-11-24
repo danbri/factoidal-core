@@ -75,4 +75,34 @@ private def exactHintOutput :=
 
 #guard (rewriteQuery exactHintInput).rewritten_query == some exactHintOutput
 
+-- ARQ retains FILTER placement and prints a path alternative as a path.
+-- This also exercises blank node labels, the shorthand VALUES form and ASC.
+private def layoutInput :=
+  "PREFIX ex: <urn:ex:>\nSELECT ?s WHERE { VALUES ?s { ex:s }\n" ++
+  "?s (ex:a|ex:b) ?o . FILTER(BOUND(?o)) OPTIONAL { ?s ex:c [] } } ORDER BY ASC(?s)"
+
+private def layoutExpected :=
+  "PREFIX  ex:   <urn:ex:>\n\nSELECT  ?s\nWHERE\n  { VALUES ?s { ex:s }\n" ++
+  "    ?s ex:a|ex:b ?o\n    FILTER bound(?o)\n    OPTIONAL\n      { ?s  ex:c  _:b0 }\n  }\nORDER BY ASC(?s)\n"
+
+#guard formatParsedRewrite layoutInput == some layoutExpected
+#guard (rewriteQuery "ASK { ?item wdt:P31 wd:Q5 . SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" } }").rewrite_status == "rewritten"
+
+private def distanceExample :=
+  "SELECT ?d WHERE { BIND(geof:distance(?a, CONCAT(\"x\", \"y\"), \"meter\") AS ?d) }"
+private def distanceOutput :=
+  "PREFIX  geof: <http://www.opengis.net/def/function/geosparql/>\n\nSELECT  ?d\nWHERE\n" ++
+  "  { BIND(geof:distance(?a, concat(\"x\", \"y\")) AS ?d) }\n"
+#guard (rewriteQuery distanceExample).rewritten_query == some (appendOriginalQuery distanceOutput distanceExample)
+#guard (rewriteQuery "ASK { FILTER(geof:distance(?point)) }").rewrite_status == "blazegraph_error"
+
+private def laterBinder :=
+  "SELECT ?item ?itemLabel WHERE { SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" } " ++
+  "?item wdt:P31 wd:Q5 }"
+private def labelAfterBinding : Bool :=
+  match (rewriteQuery laterBinder).rewritten_query with
+  | some output => (output.splitOn "?item  wdt:P31  wd:Q5\n    BIND(if(bound(?item)").length == 2
+  | none => false
+#guard labelAfterBinding
+
 end L4Factoidal.Wikidata

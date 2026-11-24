@@ -222,25 +222,32 @@ def query_title(source):
 
 
 def run_java(jar, inputs):
+    return run_rewriter(["java", "-Xmx512m", "-Xss16m", "-jar", str(jar)], inputs)
+
+
+def run_rewriter(command, inputs):
     records = [
         {"protocol_version": 1, "request_id": key, "query_id": key, "query": query}
         for key, query in inputs.items()
     ]
     wire = "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records)
     result = subprocess.run(
-        ["java", "-Xmx512m", "-Xss16m", "-jar", str(jar)],
+        command,
         input=wire, cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
         check=True, timeout=300,
     )
     replies = [json.loads(line) for line in result.stdout.splitlines()]
     if len(replies) != len(records):
-        raise ValueError(f"Expected {len(records)} Java responses, got {len(replies)}")
+        raise ValueError(f"Expected {len(records)} rewriter responses, got {len(replies)}")
     outputs = {}
     for key, reply in zip(inputs, replies, strict=True):
         if reply.get("status") != "ok" or reply.get("request_id") != key or reply.get("query_id") != key:
             raise ValueError(f"Invalid oracle response to {key}: {reply}")
         if reply.get("query_sha256") != digest(inputs[key].encode()):
-            raise ValueError(f"Oracle query hash mismatch for {key}")
+            raise ValueError(f"Rewriter query hash mismatch for {key}")
+        if reply.get("protocol_version") != 1 or reply["result"].get("query_id") != key or (
+                reply["result"].get("contract_version") != 1 or reply["result"].get("schema_version") != 1):
+            raise ValueError(f"Rewriter envelope version or query identity mismatch for {key}")
         outputs[key] = reply["result"]
     return outputs
 

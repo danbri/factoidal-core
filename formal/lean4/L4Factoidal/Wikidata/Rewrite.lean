@@ -2,6 +2,7 @@ import Lean.Data.Json
 import L4Factoidal.Wikidata.LabelService
 import L4Factoidal.Wikidata.Legacy
 import L4Factoidal.Wikidata.ArqFormat
+import L4Factoidal.Wikidata.GeoDistance
 
 namespace L4Factoidal.Wikidata
 open Lean L4Factoidal.SPARQL
@@ -60,17 +61,8 @@ private def bodyEnd : Nat → List LocatedToken → Option (Nat × List LocatedT
     | _ => bodyEnd depth rest
   | _, [] => none
 
-private def afterLabelVars : Nat → List LocatedToken → List String
-  | depth, token :: rest =>
-    match token.token with
-    | .rbrace => if depth == 0 then [] else afterLabelVars (depth - 1) rest
-    | .lbrace => afterLabelVars (depth + 1) rest
-    | .var name => name :: afterLabelVars depth rest
-    | _ => afterLabelVars depth rest
-  | _, [] => []
-
 private def outerRange (tokens : List LocatedToken) (site : ServiceSite) :
-    Option (Nat × Nat × List String) := do
+    Option (Nat × Nat × List LocatedToken) := do
   let before := tokens.takeWhile (fun token => token.start < site.start)
   let depth := before.foldl (fun n token =>
     if token.token == .lbrace then n + 1 else if token.token == .rbrace then n - 1 else n) 0
@@ -78,9 +70,45 @@ private def outerRange (tokens : List LocatedToken) (site : ServiceSite) :
     let (stop, rest) ← bodyEnd 0 site.body
     match rest with
     | first :: tail =>
-      if first.token == .dot then some (site.start, first.stop, afterLabelVars 0 tail)
-      else some (site.start, stop, afterLabelVars 0 rest)
+      if first.token == .dot then some (site.start, first.stop, tail)
+      else some (site.start, stop, rest)
     | [] => none
+
+private def laterBinders (state : PState) : Nat → TStream → List (Nat × List String) →
+    Option (List (Nat × List String))
+  | 0, _, _ => none
+  | fuel + 1, tokens, acc => do
+    let token := peekTok tokens
+    if token == .rbrace then return acc.reverse
+    let rest := advTok tokens
+    let (bound, rest) ← if startsTriples token then do
+      let (pattern, tail) ← (pTriplesBlock topFuel state (.empty, []) tokens).toOption
+      pure (pattern.inScopeVars, tail)
+    else match token with
+      | .optional | .minusKw => do
+        let (pattern, tail) ← (pGroupGraphPattern topFuel state rest).toOption
+        pure (if token == .optional then pattern.inScopeVars else [], tail)
+      | .lbrace => do
+        let (pattern, tail) ← (pGroupOrUnion topFuel state tokens).toOption
+        pure (pattern.inScopeVars, tail)
+      | .filterKw => (pFilterExpr topFuel state rest).toOption.map (fun (_, tail) => ([], tail))
+      | .values => (pValuesClause topFuel state rest).toOption.map (fun (p, tail) => (p.inScopeVars, tail))
+      | .service | .graph => do
+        let rest := if token == .service && peekTok rest == .silent then advTok rest else rest
+        let (name, rest) ← (pGraphName topFuel state rest).toOption
+        let (pattern, tail) ← (pGroupGraphPattern topFuel state rest).toOption
+        let vars := match name with | .var name => name :: pattern.inScopeVars | _ => pattern.inScopeVars
+        pure (if token == .graph then vars else [], tail)
+      | .bind => do
+        let (_, rest) ← (expectTok .lparen rest).toOption
+        let (_, rest) ← (pExpr topFuel state rest).toOption
+        let (_, rest) ← (expectTok .asKw rest).toOption
+        let .var name := peekTok rest | none
+        let (_, tail) ← (expectTok .rparen (advTok rest)).toOption
+        pure ([name], tail)
+      | _ => none
+    let rest := if peekTok rest == .dot then advTok rest else rest
+    laterBinders state fuel rest ((peekPos rest, bound) :: acc)
 
 private def subgraphNamespace := "https://query.wikidata.org/subgraph/"
 
@@ -104,9 +132,10 @@ private def pendingToken (state : PState) (tokens : List LocatedToken) : Option 
   match tokens with
   | token :: rest =>
     let iri := (tokenIri state token.token).getD ""
+    let isCall := (rest.head?.map (·.token)) == some .lparen
     if hintNamespace.isPrefixOf iri ||
-        "http://www.opengis.net/def/geosparql/function/".isPrefixOf iri ||
-        ((rest.head?.map (·.token)) == some .lparen && pendingFeature iri) then some token
+        ("http://www.opengis.net/def/geosparql/function/".isPrefixOf iri &&
+          !(iri == legacyGeofDistance && isCall)) || (isCall && pendingFeature iri) then some token
     else pendingToken state rest
   | [] => none
 
@@ -115,8 +144,8 @@ private def finish (original current : String) (steps : List RewriteStep) (parse
   else
     let output := formatTextRewrite current
     match parseSparql output with
-    | .ok query =>
-      let formatted := if parsedRule then formatParsedRewrite output query else none
+    | .ok _ =>
+      let formatted := if parsedRule then formatParsedRewrite output else none
       let output := (formatted.filter fun text => (parseSparql text).isOk).getD output
       { rewrite_status := "rewritten", rewritten_query := some (appendOriginalQuery output original)
         rewrites := steps }
@@ -156,28 +185,45 @@ private def afterParse (original current language : String) (steps : List Rewrit
   let subgraphs ← match sites.mapM subgraphEdit with
     | .ok edits => pure (edits.filterMap id)
     | .error error => return { rewrite_status := "skipped_unsupported", rewrites := steps, errors := [error] }
+  let geoRule : RewriteStep := ⟨"rewrite-geof-distance", "default"⟩
+  let (geoEdits, geoCount) ← match rewriteGeoDistance state body bodyTokens with
+    | .ok plan => pure plan
+    | .error pos => return (failure "blazegraph_error" "geof_distance_invalid_arity" "post-parse"
+        "geof:distance() must be called with exactly 2 or 3 arguments." (some pos) (steps ++ [geoRule]))
   let labelSites := sites.filter (fun site => site.iri == labelEndpoint)
   let (edits, postSteps) ← match labelSites with
     | [] => pure (subgraphs, [])
     | [site] =>
-      let some (start, stop, later) := outerRange bodyTokens site |
+      let some (start, stop, rest) := outerRange bodyTokens site |
         return failure "skipped_unsupported" "label_scope_not_supported" "post-parse" "Label service must be in the outer WHERE group" (some site.start) steps
       let used := tokens.filterMap fun token => match token.token with
         | .var name => some name
         | _ => none
-      match rewriteOuterLabel query language used later inputNames with
-      | .ok (text, variant) => pure (subgraphs ++ [⟨start, stop, text⟩],
-          [⟨"rewrite-wikibase-label-service", variant⟩])
+      let binders := (laterBinders state (rest.length + 1)
+        (rest.map fun token => ⟨token.token, token.start⟩) []).getD []
+      match rewriteOuterLabel query language used (binders.flatMap Prod.snd) inputNames with
+      | .ok (text, variant, entities) =>
+        let target := binders.foldl (fun position (next, bound) =>
+          if bound.any entities.contains then next else position) stop
+        let labelEdits := if target == stop then [⟨start, stop, text⟩] else
+          -- A triples block directly followed by SERVICE needs a dot if the
+          -- next element after removing SERVICE is also a triples block.
+          let before := (bodyTokens.takeWhile (fun token => token.start < start)).getLast?.map (·.token)
+          let needsDot := (rest.head?.map (·.token)).any startsTriples &&
+            (before.any fun token => ![.lbrace, .rbrace, .rparen, .dot].contains token)
+          [⟨start, stop, if needsDot then ".\n" else ""⟩, ⟨target, target, "\n" ++ text⟩]
+        pure (subgraphs ++ labelEdits, [⟨"rewrite-wikibase-label-service", variant⟩])
       | .error message => return failure "skipped_unsupported" "label_scope_not_supported" "post-parse" message (some site.start) steps
     | _ => return (failure "skipped_unsupported" "label_scope_not_supported" "post-parse"
         "Multiple label services require scope analysis" none steps)
   let steps := if subgraphs.isEmpty then steps else steps ++ [⟨"rewrite-wdsubgraph-service", "default"⟩]
+  let edits := edits ++ geoEdits
   return finish original (applyEdits current (edits.mergeSort (fun a b => a.start ≤ b.start)))
-    (steps ++ postSteps) (!edits.isEmpty)
+    (steps ++ List.replicate geoCount geoRule ++ postSteps) (!edits.isEmpty)
 
 private def parseAndRewrite (original current language : String) (steps : List RewriteStep) :
     RewriteResult := Id.run do
-  let parsed := parseQuery current
+  let parsed := parseQuerySyntax current
   match parsed with
   | .ok query =>
     if (projectionAliasConflict query).isNone then
@@ -195,7 +241,7 @@ private def parseAndRewrite (original current language : String) (steps : List R
     | .error message => return failure "parse_error" "select_alias_already_in_scope" "legacy-input" message none steps
   let repaired := applyEdits current edits
   let steps := steps ++ [⟨"rewrite-legacy-select-alias", "rename-input"⟩]
-  return match parseQuery repaired with
+  return match parseQuerySyntax repaired with
   | .ok query => afterParse original repaired language steps names query
   | .error error => failure "parse_error" "legacy_alias_repair_parse_error" "legacy-input"
       error.msg (some error.pos) steps

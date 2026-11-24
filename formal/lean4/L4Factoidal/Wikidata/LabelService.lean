@@ -23,7 +23,27 @@ private def definitelyBound : QueryPattern → List String
   | .union left right => (definitelyBound left).filter (definitelyBound right).contains
   | .minus left _ | .leftJoin left _ _ | .filter _ left | .bind _ _ left =>
     definitelyBound left
+  | .values names rows =>
+    if rows.isEmpty then [] else
+      names.zipIdx.filterMap fun (name, index) =>
+        if rows.all (fun row => row[index]?.any Option.isSome) then some name else none
+  | .subSelect (query@(.mk _ _ pattern _ _ _ _ _)) =>
+    (definitelyBound pattern).filter query.projectedVars.contains
+  | .service _ false body => definitelyBound body
+  | .graph name body => match name with
+    | .var v => v :: definitelyBound body
+    | _ => definitelyBound body
   | _ => []
+
+-- `collectVisibleVariables` in the pinned label rule excludes sibling
+-- OPTIONAL/UNION branches in the first pass of automatic output assignment.
+private def strictlyVisible : QueryPattern → List String
+  | .join left right => strictlyVisible left ++ strictlyVisible right
+  | .leftJoin left _ _ | .minus left _ | .filter _ left => strictlyVisible left
+  | .bind _ name left => name :: strictlyVisible left
+  | .union _ _ => []
+  | .service endpoint _ body => if endpoint.val == labelEndpoint then [] else body.inScopeVars
+  | pattern => pattern.inScopeVars
 
 private def outerLabel : QueryPattern → Option (QueryPattern × QueryPattern)
   | .filter _ pattern | .bind _ _ pattern => outerLabel pattern
@@ -47,6 +67,12 @@ private def outputFor (name : String) : Option Output :=
       some ⟨.var (String.ofList (name.toList.take (name.length - suffix.length))), name, predicate⟩
     else none
 
+private def automaticProjection (query : Query) : List String :=
+  match query.form with
+  | .select (.vars _) => query.projectedVars
+  | .construct triples => ((QueryPattern.bgp triples).inScopeVars).eraseDups
+  | _ => []
+
 private def readBody : List TriplePattern → List String → List Output →
     Except String (List String × List Output)
   | [], languages, outputs => .ok (languages.reverse, outputs.reverse)
@@ -68,7 +94,7 @@ private def allocate (used : List String) (stem : String) : String :=
     let name := if n == 0 then stem else s!"{stem}__{n}"
     if used.contains name then none else some name).getD stem
 
-private def emit (incoming : QueryPattern) (languages : List String) (output : Output)
+private def emit (incoming : QueryPattern) (available : List String) (languages : List String) (output : Output)
     (used : List String) : Except String (String × List String) := do
   if output.predicate == aliasIri then
     throw "Alias aggregation requires candidate-subquery analysis"
@@ -84,7 +110,7 @@ private def emit (incoming : QueryPattern) (languages : List String) (output : O
   let value := allocate used (base ++ "__" ++ kind ++ "_value")
   let (entity, subject, guard, names) ← match output.entity with
     | .var name =>
-      if !(incoming.inScopeVars.contains name) then
+      if !available.contains name then
         .error s!"Label entity ?{name} has no incoming binding"
       else
         let entityVar := "?" ++ name
@@ -110,39 +136,45 @@ private def emit (incoming : QueryPattern) (languages : List String) (output : O
 /-- Plan a single outer, non-SILENT label service with scalar outputs.
 The source range is selected by the lexer, and the service body and incoming
 scope are checked against the real parser's AST. -/
-def rewriteOuterLabel (query : Query) (language : String) (used later : List String)
+def rewriteOuterLabel (query : Query) (language : String) (used laterBound : List String)
     (inputNames : List (String × String) := []) :
-    Except String (String × String) := do
+    Except String (String × String × List String) := do
   let some (incoming, body) := outerLabel query.pattern |
     throw "Label service placement requires nested or order-independent scope analysis"
   let .bgp triples := body | throw "Expected label-service triples"
   let (values, manual) ← readBody triples [] []
   let languages := languagePriority language values
+  let available := incoming.inScopeVars ++ laterBound
   if languages.isEmpty then throw "Missing wikibase:language"
-  let outputs ← if manual.isEmpty then
-    match query.form with
-    | .select (.vars _) =>
-      let candidates := (query.projectedVars.filterMap outputFor).map fun output =>
-        match output.entity with
-        | .var name => { output with entity := .var ((inputNames.lookup name).getD name) }
-        | _ => output
-      for output in candidates do
-        if let .var name := output.entity then
-          if query.pattern.inScopeVars.contains name && !(incoming.inScopeVars.contains name) then
-            throw s!"Label entity ?{name} is introduced after the service"
-      pure (candidates.filter fun output =>
-        match output.entity with
-        | .var name => incoming.inScopeVars.contains name
-        | _ => false)
-    | _ => throw "Automatic label lookup requires an explicit SELECT projection"
-    else pure manual
+  if manual.isEmpty then
+    if let .describe _ := query.form then
+      throw "Automatic DESCRIBE needs projection rewriting"
+  let outputs ← if manual.isEmpty then do
+    let candidates := ((automaticProjection query).filterMap outputFor).map fun output =>
+      match output.entity with
+      | .var name => { output with entity := .var ((inputNames.lookup name).getD name) }
+      | _ => output
+    for output in candidates do
+      if let .var name := output.entity then
+        if query.pattern.inScopeVars.contains name && !available.contains name then
+          throw s!"Label entity ?{name} is introduced after the service"
+    let supported := candidates.filter fun output =>
+      match output.entity with
+      | .var name => available.contains name
+      | _ => false
+    let strict := strictlyVisible query.pattern
+    let (first, second) := supported.partition fun output =>
+      match output.entity with | .var name => strict.contains name | _ => true
+    pure (first ++ second)
+  else pure manual
   let names := outputs.map (·.name)
-  if names.any later.contains then
-    throw "An output variable also occurs later in the outer group"
   if names.eraseDups.length != names.length then throw "Multiple mappings for a label output"
   let (pieces, _) ← outputs.foldlM (fun (pieces, names) output => do
-    let (piece, names) ← emit incoming languages output names
+    let (piece, names) ← emit incoming available languages output names
     return (piece :: pieces, names)) ([], used)
-  return (String.join pieces.reverse, if manual.isEmpty then "automatic" else "manual")
+  let entities := outputs.filterMap fun output => match output.entity with
+    | .var name => some name
+    | _ => none
+  return (String.join pieces.reverse, if manual.isEmpty then "automatic" else "manual", entities)
 
 end L4Factoidal.Wikidata

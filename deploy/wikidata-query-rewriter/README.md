@@ -18,6 +18,13 @@ rules deliberately change results. `/healthz` checks only the HTTP process.
 The adapter does not execute queries or fetch IRIs. It bounds body size to 1 MB,
 JVM concurrency to two and each process to 75 seconds. It does not log requests.
 
+For a local comparison with the Lean implementation, build the JSONL command
+from `formal/lean4` with `lake build l4wikidata-rewriter`. Then run the same
+HTTP adapter with `REWRITER_BIN` set to the absolute path to
+`.lake/build/bin/l4wikidata-rewriter`. The adapter then launches the native
+command for each request. The Docker image above continues to provide the
+source-built Wikimedia oracle. See the catalogue audit for rule parity.
+
 To deploy, copy `fly.toml.example` to `fly.toml`, select an app name and run
 `fly launch --no-deploy` then `fly deploy --remote-only` in this directory.
 This makes a separate app; do not overwrite another Fly workload. Provisioning
