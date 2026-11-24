@@ -466,12 +466,12 @@ private def keysOf (html : String) : List String :=
 #guard keysOf "<img src='a.png'>" == ["https://e.test/p/a.png"]
 #guard keysOf "<img srcset='b.png'>" == ["https://e.test/p/b.png"]
 #guard keysOf "<img src='a.png' srcset='b.png 2x'>" == ["https://e.test/p/a.png"]
-#guard keysOf "<img src='a.jpg' srcset='b.webp 1x, c.webp 2x'>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<img src='a.jpg' srcset='b.webp 1x, c.webp 2x'>" == ["https://e.test/p/b.webp"]
 #guard keysOf "<img src='a.jpg' srcset='small.jpg 100w, big.jpg 2000w' sizes='50px'>" == ["https://e.test/p/small.jpg"]
-#guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/w.webp"]
 #guard keysOf "<picture><source srcset='p.png'><img src='a.jpg'></picture>" == ["https://e.test/p/p.png"]
 #guard keysOf "<img alt='none'>" == []
-#guard WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
+#guard !WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
 #guard WebRender.plainImage (DOM.parseHtmlDocument "<img id=i src='a.png'>") ((DOM.parseHtmlDocument "<img id=i src='a.png'>").getElementById 0 "i" |>.getD 0)
 
 -- `@import` (2026-11-14; before, no import was followed): `inspect` names the sheets to fetch,

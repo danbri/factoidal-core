@@ -283,11 +283,10 @@ environment, so that the list a host fetches (`inspect`) and every layout name t
 image whatever the window's size. Candidates in a format the engine does not decode are
 passed over, and the `src` stands when nothing else is left. -/
 
-/-- A URL whose path names an image format the engine has no decoder for: WebP, AVIF, JPEG
-XL, HEIF. -/
+/-- Formats excluded as alternate source-set candidates. -/
 def undecodablePath (url : String) : Bool :=
   let path := ((((url.splitOn "#").headD "").splitOn "?").headD "").toLower
-  [".webp", ".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending
+  [".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending
 
 /-- The environment an image source is chosen in: one device pixel to the CSS pixel, a
 viewport of 1280 by 800. -/
@@ -337,7 +336,7 @@ private def embeddedImageSource (n : DOM.Node) : Option String := do
   if url.isEmpty then none else do
     let mimeType := fun s : String => ((s.splitOn ";").headD "").trimAscii.toString.toLower
     let declared := mimeType (Rendering.CSS.attrValue n "type")
-    let types := ["image/png", "image/jpeg", "image/gif", "image/svg+xml"]
+    let types := ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
     let supported :=
       if !declared.isEmpty then types.contains declared
       else if url.toLower.startsWith "data:" then
@@ -345,7 +344,7 @@ private def embeddedImageSource (n : DOM.Node) : Option String := do
         types.contains (mimeType header)
       else
         let path := (((url.splitOn "#").headD "").splitOn "?").headD ""
-        [".png", ".jpg", ".jpeg", ".gif", ".svg"].any fun e => path.toLower.endsWith e
+        [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].any fun e => path.toLower.endsWith e
     if supported then some url else none
 
 /-- HTML images, image embeds and video posters, keyed by the node that displays them.
