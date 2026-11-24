@@ -51,6 +51,8 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
   | .setValue n v => .object [("op",.string "setValue"),("nodeId",num n),("value",match v with | some s => .string s | none => .null)]
   | .setStates n v => .object [("op",.string "setStates"),("nodeId",num n),("states",num v)]
+  | .setNatural n z => .object [("op",.string "setNatural"),("nodeId",num n),
+      ("size",match z with | some (w,h) => .array [num w,num h] | none => .null)]
   | .registerProperty n e => .object [("op",.string "registerProperty"),("name",.string n),("entry",.string e)]
   | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
   | .splitText n o r => .object [("op",.string "splitText"),("source",num n),("offset",num o),("nodeId",num r)]
@@ -95,6 +97,13 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: value must be a string or null"
     return .setValue (← node "nodeId") v
   | "registerProperty" => exactly ["name","entry"]; return .registerProperty (← str "name") (← str "entry")
+  | "setNatural" =>
+    exactly ["nodeId","size"]
+    let z ← match ← field command "size" with
+      | .null => pure none
+      | .array [w, h] => pure (some (← nodeId w, ← nodeId h))
+      | _ => throw "script command: size must be two numbers or null"
+    return .setNatural (← node "nodeId") z
   | "setStates" =>
     exactly ["nodeId","states"]
     let states ← node "states"

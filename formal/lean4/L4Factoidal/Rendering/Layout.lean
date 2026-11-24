@@ -644,7 +644,34 @@ def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
       if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
     some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
   else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
+  -- an `img` whose image loaded for a script, whose picture the engine does not hold (an img
+  -- a script made, or one the host did not fetch): a box of the image's natural size, empty
+  -- (HTML §4.8.4.3; before, it stood as its alt text, "[image]" or nothing)
+  else if DOM.Dom.isHtmlElement n "img" then n.natural.map fun (w, h) => some (Float.ofNat w, Float.ofNat h)
   else none
+
+/-- Kind: layout branch preservation.
+Says: an `img` with no request dimensions keeps the existing alt-text path.
+Does not say: the alt text or decoded image pixels are painted correctly. -/
+theorem blankReplaced_img_none (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "img" = true) (hn : n.natural = none) :
+    blankReplaced n = none := by
+  have hl : n.lname = "img" := by simp [DOM.Dom.isHtmlElement] at h; exact h.2
+  simp [blankReplaced, DOM.Dom.isHtmlElement, hl, hn]
+
+/-- Kind: intrinsic-dimension correspondence.
+Says: an image with request dimensions selects those dimensions for replaced layout.
+Does not say: CSS sizing is exact real arithmetic or any decoded pixels are present. -/
+theorem blankReplaced_img_some (n : DOM.Node) (w h : Nat)
+    (hi : DOM.Dom.isHtmlElement n "img" = true) (hn : n.natural = some (w, h)) :
+    blankReplaced n = some (some (Float.ofNat w, Float.ofNat h)) := by
+  have hl : n.lname = "img" := by simp [DOM.Dom.isHtmlElement] at hi; exact hi.2
+  have hc : DOM.Dom.isHtmlElement n "canvas" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  have hf : DOM.Dom.isHtmlElement n "iframe" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  have hv : DOM.Dom.isHtmlElement n "video" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  simp [blankReplaced, hc, hf, hv, hi, hn]
+
+#print axioms blankReplaced_img_none
+#print axioms blankReplaced_img_some
 
 /-- Kind: property. Says: an `iframe` is a replaced box with no natural size. -/
 theorem blankReplaced_iframe (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "iframe" = true) :

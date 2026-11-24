@@ -48,6 +48,30 @@ private def boxes (html : String) (extra : String := "") (width : Nat := 200) :
     let id := CSS.attrValue (dom.get b.source) "id"
     if id.isEmpty || (dom.get b.source).type != .element then none else some (id,b.x,b.y,b.width,b.height)
 
+-- An img with no picture held but a natural size from its request (`Node.natural`):
+-- a box of that size, as a script's img that loaded (before: its alt text, here nothing)
+private def naturalBoxes (html : String) (dimensions : Nat × Nat := (40, 20)) :
+    Except String (List (String × Float × Float × Float × Float)) := do
+  let dom := DOM.parseHtmlDocument html
+  let dom := match dom.getElementById 0 "i" with
+    | some k => dom.setNode k fun x => { x with natural := some dimensions }
+    | none => dom
+  let (_,found) ← Layout.render dom (← CSS.parse css) font noSVG 200 100 1 {} (picturesOf dom)
+  return found.toList.filterMap fun b =>
+    let id := CSS.attrValue (dom.get b.source) "id"
+    if id.isEmpty || (dom.get b.source).type != .element then none else some (id,b.x,b.y,b.width,b.height)
+-- (a ratio of 2: `replacedNatural` divides by the ratio, and 27/13 would not give 26 exactly)
+#guard (naturalBoxes "<img id=i alt='' src='b.png'>").map (·.lookup "i") == .ok (some (0,0,40,20))
+#guard (naturalBoxes "<img id=i alt='' src='b.png' width=60>").map (·.lookup "i") == .ok (some (0,0,60,30))
+#guard (naturalBoxes "<img id=i alt='' src='b.png' height=30>").map (·.lookup "i") == .ok (some (0,0,60,30))
+#guard (naturalBoxes "<img id=i alt='' src='b.png' width=60 height=10>").map (·.lookup "i") == .ok (some (0,0,60,10))
+-- An ordinary non-binary ratio must not be excluded just to use exact Float equality.
+#guard match naturalBoxes "<img id=i alt='' src='b.png' width=54>" (27, 13) with
+  | .ok found => match found.lookup "i" with
+    | some (_, _, w, h) => (w - 54).abs < 0.001 && (h - 26).abs < 0.001
+    | none => false
+  | .error _ => false
+
 -- Sizing, CSS 2.1 §10.3.2 and §10.6.2: intrinsic size, one dimension with the ratio, both.
 private def size (style : Computed) (available : Float := 200) := replacedSize style (some (40,20)) available
 #guard size {} == (40,20)

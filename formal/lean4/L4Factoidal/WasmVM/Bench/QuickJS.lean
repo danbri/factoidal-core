@@ -156,6 +156,8 @@ def commandJson : Hosts.Dom.Command → Json
   | .resetForm n => Json.mkObj [("op", Json.str "resetForm"), ("nodeId", jn n)]
   | .setValue n v => Json.mkObj [("op", Json.str "setValue"), ("nodeId", jn n), ("value", match v with | some s => Json.str s | none => Json.null)]
   | .setStates n v => Json.mkObj [("op", Json.str "setStates"), ("nodeId", jn n), ("states", jn v)]
+  | .setNatural n z => Json.mkObj [("op", Json.str "setNatural"), ("nodeId", jn n),
+      ("size", match z with | some (w, h) => Json.arr #[jn w, jn h] | none => Json.null)]
   | .registerProperty n e => Json.mkObj [("op", Json.str "registerProperty"), ("name", Json.str n), ("entry", Json.str e)]
   | .replaceData n o k v => Json.mkObj [("op", Json.str "replaceData"), ("nodeId", jn n), ("offset", jn o), ("count", jn k), ("value", Json.str v)]
   | .splitText n o r => Json.mkObj [("op", Json.str "splitText"), ("source", jn n), ("offset", jn o), ("nodeId", jn r)]

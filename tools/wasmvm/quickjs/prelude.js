@@ -901,7 +901,7 @@
   let htmlConstructing = false, ceActive = false;
   // A script element that a script made (section dynscripts): told when it is created.
   let noteFreshScript = () => {}, noteFrameMade = () => {};
-  let noteImg = () => {};   // section images: an img element made by script
+  let noteImg = () => {}, noteImageSubtree = () => {}; // section images
   // A parser-inserted script element with no src and no child text bailed out of "prepare
   // the script element" before it was started (HTML §4.12.1.1 step 7): text added later runs it.
   const noteEmptyScripts = () => {
@@ -5542,7 +5542,9 @@
   // rendering"). A page with no observer pays nothing: the first observe() wraps the natives
   // that change the tree, so that a change asks for one check in the next frame.
   // An engine without the operations leaves the interfaces undefined.
-  lazyGroup(['IntersectionObserver', 'IntersectionObserverEntry', 'ResizeObserver', 'ResizeObserverEntry', 'ResizeObserverSize'], () => {
+  let layoutObservers;
+  const layoutObserverInterfaces = () => layoutObservers ??= makeLayoutObservers();
+  function makeLayoutObservers() {
     if (typeof apiCall(171, ['0px']) !== 'string') return undefined;
     const layoutWatch = { intersection: new Set(), resize: new Set(), wrapped: false, pending: false };
     const layoutUnits = v => Math.round(v * 64);
@@ -5726,16 +5728,11 @@
       get trackVisibility() { return intersectionState.get(this).trackVisibility; }
       observe(target) {
         if (!(target instanceof Element)) throw new TypeError("Failed to execute 'observe' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
-        const st = intersectionState.get(this);
-        if (st.targets.has(target)) return;
-        st.targets.set(target, { index: -1, intersecting: false });
-        layoutWatch.intersection.add(this); watchTreeForObservers(); askObserverCheck();
+        addIntersectionTarget(this, target);
       }
       unobserve(target) {
         if (!(target instanceof Element)) throw new TypeError("Failed to execute 'unobserve' on 'IntersectionObserver': parameter 1 is not of type 'Element'.");
-        const st = intersectionState.get(this);
-        st.targets.delete(target);
-        if (!st.targets.size) layoutWatch.intersection.delete(this);
+        removeIntersectionTarget(this, target);
       }
       disconnect() { const st = intersectionState.get(this); st.targets.clear(); layoutWatch.intersection.delete(this); }
       takeRecords() { const st = intersectionState.get(this), q = st.queue; st.queue = []; return q; }
@@ -5792,8 +5789,35 @@
       for (const k of Object.getOwnPropertyNames(C.prototype)) if (k !== 'constructor') Object.defineProperty(C.prototype, k, { enumerable: true });
       Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
     }
-    return { IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize };
-  });
+    function addIntersectionTarget(observer, target) {
+      const st = intersectionState.get(observer);
+      if (st.targets.has(target)) return;
+      st.targets.set(target, { index: -1, intersecting: false });
+      layoutWatch.intersection.add(observer); watchTreeForObservers(); askObserverCheck();
+    }
+    function removeIntersectionTarget(observer, target) {
+      const st = intersectionState.get(observer);
+      st.targets.delete(target);
+      if (!st.targets.size) layoutWatch.intersection.delete(observer);
+    }
+    let lazyImages;
+    function watchLazyImage(target) {
+      lazyImages ??= new IntersectionObserver(entries => {
+        for (const entry of entries) {
+          const id = nodeId(entry.target);
+          if (entry.isIntersecting && imgLazy.has(id)) updateImage(id, true);
+        }
+      });
+      addIntersectionTarget(lazyImages, target);
+    }
+    function forgetLazyImage(target) {
+      if (lazyImages) removeIntersectionTarget(lazyImages, target);
+    }
+    return { IntersectionObserver, IntersectionObserverEntry, ResizeObserver, ResizeObserverEntry, ResizeObserverSize,
+      watchLazyImage, forgetLazyImage };
+  }
+  lazyGroup(['IntersectionObserver', 'IntersectionObserverEntry', 'ResizeObserver', 'ResizeObserverEntry', 'ResizeObserverSize'],
+    layoutObserverInterfaces);
   // ==== end of observers of layout ========================================================
   lazy('TextDecoder', () => {
     const decoders = new WeakMap();
@@ -7375,7 +7399,10 @@
   // error events, its natural size (Lean's HTML.ImageSize from the file's first bytes, web_api
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
-  const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
+  const imgStates = new Map();   // node -> { gen, url, complete, w, h, waiters }
+  const preparedImages = new Set(); // cloned or parsed images waiting for insertion
+  const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
+  const imgAvailable = new Map(); // document + URL + request mode -> decoded intrinsic size
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
   // waits until each has its load or error event)
@@ -7386,43 +7413,127 @@
     const f = deferredLoad; deferredLoad = null;
     chk(n.timer(register(f), 0, 0));
   };
-  const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy']);
+  const imgAttrs = new Set(['src', 'srcset', 'sizes', 'crossorigin', 'referrerpolicy', 'loading']);
   const imgFire = (el, type) => { const e = new Event(type); state(e).trusted = true; dispatch(el, e); };
-  const updateImage = id => {
+  const imgSelection = id => {
+    const d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+    let size;
+    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
+    const answer = n.query(id, 195, 'request\u0000' + globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
+    if (typeof answer !== 'string' || answer === '') return null;
+    // Startup reaches parsed images before the realm's location is populated.
+    // The node's document already has its URL and any parsed <base> element.
+    const documentBase = n.query(id, 164, '');
+    const base = typeof documentBase === 'string' && documentBase !== '' ? documentBase : undefined;
+    const url = resolveURL(answer.slice(1), base);
+    return url === null ? null : {url, base, unitDensity: answer[0] === '1'};
+  };
+  const imgWriteSize = (id, st, size) => {
+    const r = n.query(id, 163, size);
+    if (r !== '') {
+      if (typeof r === 'number') failD(r);
+      throw new DOMException('The image dimensions were refused.', 'QuotaExceededError');
+    }
+    // A refused host command changes neither the arena nor our tracking of it.
+    st.layoutSized = size !== '';
+  };
+  const imgClearSize = (id, st) => { if (st.layoutSized) imgWriteSize(id, st, ''); };
+  const updateImage = (id, force = false) => {
     const el = wrap(id);
     const gen = ++imgGen;
-    const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
-    const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
-    // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
-    // step 2.2: the current request changed)
+    const hasSrc = n0.attr(id, 'src');
+    const selection = imgSelection(id);
+    const url = selection?.url ?? '';
+    // A new request changes the current request. decode() observes that change
+    // on the DOM-manipulation task source, after this mutation turn can finish.
     const before = imgStates.get(id);
-    if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-    const st = { gen, complete: false, w: 0, h: 0, waiters: [] };
+    if (before?.waiters.length) {
+      const staleWaiters = before.waiters.splice(0);
+      chk(n.timer(register(() => {
+        for (const [, rej] of staleWaiters) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      }), 0, 0));
+    }
+    const st = { gen, url, unitDensity: selection?.unitDensity ?? false, complete: false, w: 0, h: 0, waiters: [], layoutSized: before?.layoutSized ?? false };
     imgStates.set(id, st);
+    const cors = corsSettings(el);
+    const availableKey = JSON.stringify([info(id, 7), url, cors.mode, cors.credentials]);
+    const refused = error => {
+      // No automatic retry after a resource refusal: retain tracking, reject this
+      // generation's decode waiters and report the refusal instead of a load event.
+      st.complete = true; st.w = 0; st.h = 0;
+      for (const [, rej] of st.waiters.splice(0)) rej(error);
+      imgUndelay(id); report(error);
+    };
     const settle = ok => {
       st.complete = true;
+      // the layout's size of the img (Lean's Node.natural, op 163): the image's natural size
+      // once it loaded, cleared when its request failed
+      if (!ok) { try { imgClearSize(id, st); } catch (error) { refused(error); return; } }
       for (const [res, rej] of st.waiters.splice(0)) ok ? res() : rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       imgFire(el, ok ? 'load' : 'error');
       imgUndelay(id);
     };
+    const rawSrc = n0.attr(id, 'src');
+    const parent = info(id, 1);
+    const inPicture = parent >= 0 && info(parent, 0) === 1 && htmlEl(parent) && str(parent, 0) === 'picture';
+    const plainSrc = !inPicture && typeof rawSrc === 'string' && n0.attr(id, 'srcset') === null && url !== '' && url === resolveURL(rawSrc, selection.base);
+    const available = (plainSrc || inPicture) ? imgAvailable.get(availableKey) : null;
+    // Absent sources and completed cache entries resolve before viewport deferral.
+    if (!force && url !== '' && !available && String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy') {
+      imgLazy.add(id);
+      layoutObserverInterfaces()?.watchLazyImage(el);
+      imgUndelay(id);
+      return;
+    }
+    if (imgLazy.delete(id)) layoutObserverInterfaces()?.forgetLazyImage(el);
     if (url === '') {
       // no source: broken; an empty src attribute fires error (step 13)
       st.complete = true;
+      try { imgClearSize(id, st); } catch (error) { imgUndelay(id); throw error; }
       if (typeof hasSrc === 'string') Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); });
       else imgUndelay(id);
       return;
     }
     if (cspBlocksRequest('img-src', url, '', false, id)) { flushViolations(); Promise.resolve().then(() => { if (imgStates.get(id)?.gen === gen) settle(false); }); return; }
-    const cors = corsSettings(el);
+    if (available) {
+      st.w = available.w; st.h = available.h;
+      st.available = true;
+      try { if (st.unitDensity) imgWriteSize(id, st, `${st.w} ${st.h}`); else imgClearSize(id, st); }
+      catch (error) { refused(error); return; }
+      // Reuse the already-decoded resource, but settle on a task. A relevant
+      // mutation in this turn must still be able to replace this request first.
+      chk(n.timer(register(() => { if (imgStates.get(id)?.gen === gen) settle(true); }), 0, 0));
+      return;
+    }
     elementFetch(url, { destination: 'image', ...cors, referrerPolicy: (el.getAttribute('referrerpolicy') ?? '').toLowerCase() }).then(r => {
-      if (imgStates.get(id)?.gen !== gen) return;
-      if (r === undefined) { st.complete = true; imgUndelay(id); return; }
+      if (r === undefined) {
+        if (imgStates.get(id)?.gen !== gen) return;
+        st.complete = true;
+        try { imgClearSize(id, st); } catch (error) { refused(error); return; }
+        imgUndelay(id); return;
+      }
       let size = '';
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
-      if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
-      if (size === '') { settle(false); return; }
+      // HTML's image algorithm ignores the HTTP status when deciding whether the
+      // response body is a valid image. Net.Xhr.imageRaw has already reduced a
+      // decodable response to its natural dimensions, including error responses.
+      if (r !== null) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
+      if (size === '') { if (imgStates.get(id)?.gen === gen) settle(false); return; }
       const [w, h] = size.split(' ').map(Number);
+      // A completed image can enter the document's available-image list even
+      // if this element's request was superseded while the fetch was in flight.
+      // Do not publish partial/in-flight responses or settle the stale request.
+      if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+        imgAvailable.delete(availableKey);
+        imgAvailable.set(availableKey, {w, h});
+        if (imgAvailable.size > 512) imgAvailable.delete(imgAvailable.keys().next().value);
+      }
+      if (imgStates.get(id)?.gen !== gen) return;
       st.w = w; st.h = h;
+      // The decoder returns physical pixels. They are CSS pixels only for a 1x
+      // request. Clear the preceding request's size when this one needs correction.
+      try { if (selection.unitDensity) imgWriteSize(id, st, size); else imgClearSize(id, st); }
+      catch (error) { refused(error); return; }
       settle(true);
     });
   };
@@ -7430,16 +7541,142 @@
     if (imgWatching) return;
     imgWatching = true;
     const setAttr0 = n.setAttr, removeAttr0 = n.removeAttr;
-    const isImg = id => info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'img';
-    n.setAttr = (id, name, value) => { const r = setAttr0(id, name, value); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
-    n.removeAttr = (id, name) => { const r = removeAttr0(id, name); if (r === 0 && imgAttrs.has(String(name).toLowerCase()) && isImg(id)) updateImage(id); return r; };
+    const insert0 = n.insert, remove0 = n.remove, replace0 = n.replace;
+    const isSource = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'source';
+    const isPicture = id => id >= 0 && info(id, 0) === 1 && htmlEl(id) && str(id, 0) === 'picture';
+    const refreshPictureImage = id => {
+      const before = imgStates.get(id);
+      if (!before) return;
+      const selected = imgSelection(id);
+      const url = selected?.url ?? '';
+      const unitDensity = selected?.unitDensity ?? false;
+      // An already available image is reused when a picture mutation leaves its selected
+      // URL unchanged. An in-flight request, however, is replaced by the relevant mutation
+      // even when its URL is the same; decode() must reject that earlier request.
+      if ((before.complete || before.available) && url === before.url && unitDensity === before.unitDensity) return;
+      if (url !== before.url || unitDensity !== before.unitDensity) {
+        imgPendingUpdates.delete(id);
+        updateImage(id, true);
+        return;
+      }
+      Promise.resolve().then(() => {
+        if (imgStates.get(id) !== before) return;
+        const now = imgSelection(id);
+        if ((before.complete || before.available) && (now?.url ?? '') === before.url && (now?.unitDensity ?? false) === before.unitDensity) return;
+        imgPendingUpdates.delete(id);
+        updateImage(id, true);
+      });
+    };
+    const pictureImages = picture => {
+      if (!isPicture(picture)) return [];
+      return kids(picture).filter(isImg);
+    };
+    const pictureTreeChanged = (parent, added, oldParent = -1, removed = []) => {
+      const touched = new Set();
+      const refresh = id => {
+        if (isImg(id) && !touched.has(id)) { touched.add(id); refreshPictureImage(id); }
+      };
+      if (isPicture(oldParent)) {
+        if ([...added, ...removed].some(isSource)) for (const id of pictureImages(oldParent)) refresh(id);
+        for (const id of [...added, ...removed]) refresh(id);
+      }
+      if (isPicture(parent)) {
+        if ([...added, ...removed].some(isSource)) for (const id of pictureImages(parent)) refresh(id);
+        for (const id of [...added, ...removed]) refresh(id);
+      }
+    };
+    const watched = (id, name) => {
+      name = String(name);
+      const separator = name.indexOf('\u0000');
+      // Namespace operations preserve local-name case, including in HTML documents.
+      if (separator >= 0) return separator === 0 && imgAttrs.has(name.slice(1));
+      if (imgAttrs.has(name)) return true;
+      // Unrelated attributes need no extra host calls. Only a folded candidate
+      // needs the document-mode check for ordinary setAttribute/removeAttribute.
+      return imgAttrs.has(name.toLowerCase()) && info(id, 8) === 1;
+    };
+    const schedule = id => {
+      if (imgPendingUpdates.has(id)) return;
+      imgPendingUpdates.add(id);
+      chk(n.timer(register(() => {
+        if (imgPendingUpdates.delete(id)) updateImage(id);
+      }), 0, 0));
+    };
+    const startPreparedImages = moved => {
+      if (preparedImages.size === 0) return;
+      for (const root of moved) {
+        if (!connectedId(root)) continue;
+        for (const id of [root, ...descendants(root)]) {
+          if (!preparedImages.delete(id) || imgStates.has(id)) continue;
+          const el = wrap(id);
+          // Insertion of an eager request before the main document load delays that load.
+          if (readyState !== 'complete' && info(id, 7) === 0 &&
+              String(el.getAttribute('loading') ?? '').toLowerCase() !== 'lazy') imgDelay.add(id);
+          schedule(id);
+        }
+      }
+    };
+    const sourceAttrChanged = (id, name) => {
+      name = String(name);
+      const separator = name.indexOf('\u0000');
+      const local = separator >= 0 ? name.slice(separator + 1) : name;
+      const isHtmlAttr = separator >= 0 ? separator === 0 : info(id, 8) === 1;
+      const attr = separator < 0 && isHtmlAttr ? local.toLowerCase() : local;
+      if (!isHtmlAttr || !['srcset', 'sizes', 'media', 'type', 'width', 'height'].includes(attr)) return;
+      const parent = info(id, 1);
+      if (isPicture(parent)) {
+        const siblings = kids(parent), index = siblings.indexOf(id);
+        if (index >= 0) for (const image of siblings.slice(index + 1).filter(isImg)) refreshPictureImage(image);
+      }
+    };
+    n.setAttr = (id, name, value) => {
+      const r = setAttr0(id, name, value);
+      if (r === 0) { if (watched(id, name) && isImg(id)) schedule(id); if (isSource(id)) sourceAttrChanged(id, name); }
+      return r;
+    };
+    n.removeAttr = (id, name) => {
+      const r = removeAttr0(id, name);
+      if (r === 0) { if (watched(id, name) && isImg(id)) schedule(id); if (isSource(id)) sourceAttrChanged(id, name); }
+      return r;
+    };
+    n.insert = (parent, node, child) => {
+      const oldParent = info(node, 1);
+      const moved = info(node, 0) === 11 ? kids(node) : [node];
+      const r = insert0(parent, node, child);
+      if (r === 0) {
+        startPreparedImages(moved);
+        pictureTreeChanged(parent, moved, oldParent);
+      }
+      return r;
+    };
+    n.remove = (parent, child) => {
+      const r = remove0(parent, child);
+      if (r === 0) pictureTreeChanged(parent, [], parent, [child]);
+      return r;
+    };
+    n.replace = (parent, node, child) => {
+      const oldParent = info(node, 1);
+      const moved = info(node, 0) === 11 ? kids(node) : [node];
+      const r = replace0(parent, node, child);
+      if (r === 0) {
+        startPreparedImages(moved);
+        pictureTreeChanged(parent, moved, oldParent, [child]);
+      }
+      return r;
+    };
   };
   noteImg = id => imgWatch();
+  noteImageSubtree = (root, inclusive) => {
+    if (inclusive && isImg(root)) preparedImages.add(root);
+    for (const id of elementsOf(root)) if (isImg(id)) preparedImages.add(id);
+    if (preparedImages.size > 0) imgWatch();
+  };
   // The page's own images: the first `imgStartMax` request at once (a host that draws the page
   // fetches them too, so a page with many does not fetch each twice up front); the rest when
   // a script reads their state (complete, naturalWidth, naturalHeight, decode()).
   const imgStartMax = 16;
   const imgLazy = new Set();
+  const imgPendingUpdates = new Set();
   const imgStart = () => {
     const imgs = document.getElementsByTagName('img');
     if (imgs.length === 0) return;
@@ -7447,10 +7684,16 @@
     let k = 0;
     for (const el of imgs) {
       const id = nodeId(el);
-      if (k++ < imgStartMax) { imgDelay.add(id); updateImage(id); } else imgLazy.add(id);
+      const lazy = String(el.getAttribute('loading') ?? '').toLowerCase() === 'lazy';
+      if (lazy) updateImage(id);
+      else if (k++ < imgStartMax) { imgDelay.add(id); updateImage(id); }
+      else imgLazy.add(id);
     }
   };
-  const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
+  const imgTouch = id => {
+    if (imgPendingUpdates.delete(id)) updateImage(id, true);
+    else if (imgLazy.has(id)) updateImage(id, true);
+  };
   {
     const P = named.HTMLImageElement.prototype;
     const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
@@ -14821,6 +15064,7 @@
       for (const line of (rows ?? '').split('\u0000')) {
         if (line === '') continue;
         const [row, idl, k, content] = line.split(' ');
+        const imageSource = P === named.HTMLImageElement && imgAttrs.has(content);
         if (k === 'N') {
           // nonce hiding (HTML §2.6.5): the IDL attribute is the element's internal slot, which a
           // change of the content attribute sets
@@ -14857,7 +15101,7 @@
             // one host call: Lean decides and sets the content attribute (with no observer or
             // custom element to tell, and no URL, whose iframe src navigates); else the decision,
             // then setAttribute
-            if (!observed.size && !ceActive && k !== 'u') {
+            if (!observed.size && !ceActive && k !== 'u' && !imageSource) {
               const id = ids.get(this);
               if (id === undefined || id >= WINDOW) throw new TypeError("parameter is not of type 'Node'");
               const r = n.query(id, 167, row + '\u0000' + reflectConv[k](v));
@@ -17542,6 +17786,7 @@
   // The event handler content attributes of the elements of a subtree (a page's, or a clone's:
   // a clone's attributes are set by Lean, not through setAttribute).
   const scanHandlers = (root, inclusive) => {
+    if (root !== 0) noteImageSubtree(root, inclusive);
     // only the elements with an attribute named `on…` (node_query 168, in tree order), not every element
     const found = n.query(root, 168, inclusive ? '1' : '');
     if (typeof found !== 'string' || found === '') return;
@@ -17814,7 +18059,7 @@
       if (height !== undefined) img.setAttribute('height', String(height >>> 0));
       return img;
     };
-    ImageFactory.prototype = named.HTMLImageElement.prototype; def('Image', ImageFactory);
+    Object.defineProperty(ImageFactory, 'prototype', { value: named.HTMLImageElement.prototype, writable: false, enumerable: false, configurable: false }); def('Image', ImageFactory);
 
     // ---- textarea, output, fieldset ----
     prop(T, 'value', function () { return this.textContent.replace(/\r\n?/g, '\n'); }, function (v) {
@@ -18544,14 +18789,9 @@
   // ==== imagesource: the image an img element asks for (HTML §4.8.4.3) =====================
   // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
   // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
-  // the viewport of the element's document, resolved against that document's URL.
+  // the viewport of the element's document, resolved against that document's base URL.
   Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
-    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
-    let size;
-    if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
-    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
-    if (typeof r !== 'string' || r === '') return '';
-    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
+    return imgSelection(nodeId(this))?.url ?? '';
   }, configurable: true, enumerable: true });
   // `width` and `height` of an img (HTML §4.8.4.4): the rendered size of the image in CSS
   // pixels (the content box of Lean's layout, measure op 21), else its natural size, which
@@ -18963,6 +19203,7 @@
       const f = chk(n.create(14 + 16 * info(ctx, 7), (ns ?? '') + '\u0000' + name + '\u0000' + markup));
       if (o.config !== null) op(f, 193, (safe ? '1' : '0') + '\u0000' + o.config);
       if (!safe) scanHandlers(f, false);
+      else noteImageSubtree(f, false);
       // with runScripts the fragment's script elements are not "already started": they run
       // when the fragment is inserted into a document with a browsing context
       if (o.runScripts) for (const k of elementsOf(f)) if (str(k, 0) === 'script') noteFreshScript(k);

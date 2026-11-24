@@ -101,6 +101,8 @@ inductive Command where
   /-- The element states of `node` (`Node.states`: a showing popover, a modal dialog, a
   defined custom element) set to `states`. -/
   | setStates (node : Nat) (states : Nat)
+  /-- The natural size of `img` `node` (`Node.natural`); `none` clears it. -/
+  | setNatural (node : Nat) (size : Option (Nat × Nat))
   /-- `attachShadow` of `host` (`DOM.Dom.attachShadow`, the state as `shadowFlags`) made or
   reused shadow root `result`. -/
   | attachShadow (host flags result : Nat)
@@ -414,6 +416,10 @@ def Command.sameWrite : Command → Command → Bool
   | .removeAttribute n k, .removeAttribute m j => n == m && k == j
   | .setTextContent n _, .setTextContent m _ => n == m
   | _, _ => false
+
+/-- The largest natural width or height `setNatural` takes (`HTML.ImageSize` reads 16-bit
+and 32-bit sizes; a layout box past this is refused, not drawn). -/
+def maxNatural : Nat := 65535
 
 /-- The commands that read attributes or character data (`cloneNode`, `importNode`,
 `normalize`), the namespaced attribute writes (whose attribute may be one that
@@ -1969,6 +1975,11 @@ def Command.apply (d : Dom) : Command → Except String Dom
     checkNode d n
     if v ≥ 16 then throw "script command: states exceed bound"
     return d.setNode n fun x => { x with states := v }
+  | .setNatural n z => do
+    checkNode d n
+    if !Forms.isHtml d n ["img"] then throw "script command: target must be an img"
+    if z.any (fun (w, h) => w > maxNatural || h > maxNatural) then throw "script command: natural size exceeds bound"
+    return d.setNode n fun x => { x with natural := z }
   | .registerProperty name entry => do
     if d.nodes.isEmpty || (d.get 0).type != .document then throw "script command: no document"
     if entry.utf8ByteSize > 65536 then throw "script command: registration exceeds bound"
@@ -2008,6 +2019,29 @@ def Command.apply (d : Dom) : Command → Except String Dom
     if o > L4Factoidal.DOM.Range.nodeLength d n then throw "script command: IndexSizeError"
     let (d, _, k) := L4Factoidal.DOM.Live.splitText d {} n o
     made r (d, k)
+
+/-- Kind: bounded command replay.
+Says: an existing image with admitted dimensions gets the exact requested node update.
+Does not say: the dimensions came from a successful network or image decoder call. -/
+theorem Command.apply_setNatural (d : Dom) (n : Nat) (z : Option (Nat × Nat))
+    (hn : n < d.size) (hi : Forms.isHtml d n ["img"] = true)
+    (hz : z.any (fun (w, h) => w > maxNatural || h > maxNatural) = false) :
+    Command.apply d (.setNatural n z) = .ok (d.setNode n fun x => { x with natural := z }) := by
+  simp [Command.apply, checkNode, hn, hi, hz]
+  rfl
+
+/-- Kind: resource-bound refusal.
+Says: oversized request dimensions are refused before any DOM update.
+Does not say: all image formats or decoded pixel allocations meet this bound. -/
+theorem Command.apply_setNatural_refused (d : Dom) (n : Nat) (z : Option (Nat × Nat))
+    (hn : n < d.size) (hi : Forms.isHtml d n ["img"] = true)
+    (hz : z.any (fun (w, h) => w > maxNatural || h > maxNatural) = true) :
+    Command.apply d (.setNatural n z) = .error "script command: natural size exceeds bound" := by
+  simp [Command.apply, checkNode, hn, hi, hz]
+  rfl
+
+#print axioms Command.apply_setNatural
+#print axioms Command.apply_setNatural_refused
 
 -- DOMParser: an XML document, a parse error, and an HTML document joined to an arena
 #guard (match createKind { nodes := #[{ type := .document }] } 12 "application/xml\x00<a xmlns='u'/>" with
