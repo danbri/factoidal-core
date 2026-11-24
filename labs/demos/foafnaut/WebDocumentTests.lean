@@ -498,6 +498,13 @@ private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css
 #guard importSize [("imported",.array [sheetA])] == some 30
 -- the nested sheet comes before the sheet that imports it: a.css's 30px is the later rule
 #guard importSize [("imported",.array [sheetA,importedSheet "https://e.test/p/sub/b.css" "p{font-size:40px}"])] == some 30
+-- an imported sheet past the 8 MiB of a document's sheets is left out and reported (issue 865)
+private def bigImportSkips : Option Nat := do
+  let big := importedSheet "https://e.test/p/a.css" ("".pushn ' ' 8388609 ++ "p{font-size:30px}")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal importDOM (importRequest [("imported",.array [big])]) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+  return (ds.filter (·.skip == .stylesheetBytes)).length
+#guard bigImportSkips == some 1
+#guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" ("".pushn ' ' 8388609 ++ "p{font-size:30px}")])] == some 16
 -- an import under a media query that does not hold is not applied; one that holds is
 #guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' print;",
   importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 16
@@ -789,6 +796,12 @@ private def backgroundsPage (n : Nat) : String := "<!doctype html><title>B</titl
 private def facesPage : String := "<!doctype html><title>F</title><style>" ++
   String.join ((List.range 70).map fun i => "@font-face{font-family:f" ++ toString i ++ ";src:url(f" ++ toString i ++ ".woff2)}") ++ "</style><p>A</p>"
 #guard mentions (renderText facesPage [asks]) "\"limit\":\"maxFaces\"" == 1
+-- a render that names 20 different web fonts, past `maxWebFonts` (16); 3 report nothing
+private def namedFonts (n : Nat) : String × JSON.Json := ("webFonts",.array ((List.range n).map fun i =>
+  .object [("url",.string s!"https://e.test/f{i}.woff2"),("sha256",.string s!"{i}")]))
+#guard mentions (renderText facesPage [asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
+#guard mentions (renderText facesPage [liberal,asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
+#guard mentions (renderText facesPage [asks,namedFonts 3]) "\"limit\":\"maxWebFonts\"" == 0
 -- a 1×2 image repeated over a box of 400×300: 60000 tiles, past `maxBackgroundTiles` (4096)
 private def tilesPage : String := "<!doctype html><title>T</title><div style='width:400px;height:300px;" ++
   "background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGP4z8DAwMDwHwAIAAH/B2G9UwAAAABJRU5ErkJggg==);background-size:1px 2px'></div>"

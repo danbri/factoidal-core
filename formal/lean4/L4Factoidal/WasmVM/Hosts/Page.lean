@@ -730,6 +730,18 @@ def touchesSheets (dom : Arena) (roots : List Nat) : Bool :=
 def sheetParent (dom : Arena) (n : Nat) : Bool :=
   n >= dom.size || (let x := dom.get n; x.lname == "style" || x.lname == "link")
 
+/-- Why a child write (parent `parent`, nodes added or removed `nodes`) is not one that a
+partial restyle can take, for `Reads.wholeWhy` (issue 871): `sheet-parent` (the parent is a
+`style` or `link` element), `large` (a subtree past `subtreeLimit`), `sheet` (a `style` or
+`link` element is added or removed), `root` (the parent has no parent), else `other`. -/
+def childWriteWhy (dom : Arena) (parent : Nat) (nodes : List Nat) : String :=
+  if sheetParent dom parent then "sheet-parent" else
+  match subtreesWithin dom (nodes.filter (· < dom.size)) with
+  | none => "large"
+  | some ns =>
+    if ns.any (fun n => let x := dom.get n; x.lname == "style" || x.lname == "link") then "sheet"
+    else if (dom.get parent).parent.isNone then "root" else "other"
+
 /-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
 def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
   match ws.findIdx? (·.1 == why) with
@@ -1519,6 +1531,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           match Hosts.Dom.readStr mem st (a 1) (a 2) 32 with
           | .ok name => nm ++ "=" ++ name
           | .error _ => nm
+        else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then
+          nm ++ ":" ++ childWriteWhy d (a 0) [a 1]
+        else if nm == "replace_child" then nm ++ ":" ++ childWriteWhy d (a 0) [a 1, a 2]
         else nm }
     -- a listener through the first build's import (page scripts use `listen`, above)
     let listens := nm == "add_event_listener" &&
