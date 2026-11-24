@@ -14,6 +14,9 @@ jobs:
     defaults:
       run:
         working-directory: formal/lean4
+    env:
+      LEAN_NUM_THREADS: '2'
+      LAKE_ARTIFACT_CACHE: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
@@ -21,6 +24,8 @@ jobs:
           lake-package-directory: formal/lean4/ethereum-consensus
           build: false
           test: false
+          use-github-cache: false
+          use-mathlib-cache: false
       - name: Check reference vectors and actual source graph
         run: |
           set -euo pipefail
@@ -52,10 +57,12 @@ jobs:
       - name: Compile pinned Lean libraries and registry module
         run: |
           set -euo pipefail
-          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry
+          ulimit -v 8388608
+          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry +RegistryProofMain
       - name: Capture actual theorem axioms and audit compiled imports
         run: |
           set -euo pipefail
+          ulimit -v 8388608
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ValidatorRegistry.lean" | tee "$RUNNER_TEMP/registry-axioms.log"
           python3 - <<'PY'
           import os, pathlib, re, runpy, subprocess
@@ -64,7 +71,7 @@ jobs:
           names = set(re.findall(r"^#print axioms (\S+)", source, re.M))
           log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"registry-axioms.log").read_text()
           reports = re.findall(r"'(EthereumConsensus\.SSZ\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)", log)
-          assert len(names) == 6 and len(reports) == 6 and {n for n,_ in reports} == names
+          assert len(names) == 8 and len(reports) == 8 and {n for n,_ in reports} == names
           for name, axioms in reports:
               assert set(filter(None, (a.strip() for a in axioms.split(",")))) <= {"propext","Classical.choice","Quot.sound"}, name
           a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
@@ -75,6 +82,7 @@ jobs:
       - name: Execute actual registry proof functions against independent oracle
         run: |
           set -euo pipefail
+          ulimit -v 8388608
           python3 ethereum-consensus/scripts/check-validator-registry.py lake -d ethereum-consensus env lean --run "$PWD/ethereum-consensus/RegistryProofMain.lean" | tee "$RUNNER_TEMP/registry-results.log"
       - uses: actions/upload-artifact@v4
         if: always()
