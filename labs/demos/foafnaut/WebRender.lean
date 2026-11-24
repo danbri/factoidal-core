@@ -110,11 +110,38 @@ def documentElement (dom : DOM.Dom) : Option Nat :=
     (document.kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")).orElse fun _ =>
       document.kids.find? (fun id => (dom.get id).type == .element)
 
+private def svgStyleAttribute (a : XML.NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone && a.name.localPart == "style"
+
+/-- Hand the SVG reader the browser's already-selected author values. The SVG
+reader consumes a restricted declaration list; a value containing a delimiter
+cannot be embedded in it. The original DOM and the presentation attributes keep
+their identity. The SVG reader will still check each resulting paint value. -/
+private def svgAuthorAttributes (attrs : List XML.NamespaceAttribute)
+    (values : List (String × String)) : List XML.NamespaceAttribute :=
+  let retained := attrs.filter (fun a => !svgStyleAttribute a)
+  let value := String.intercalate ";" (values.filterMap fun (key,text) =>
+    if text.contains ';' then none else some (key ++ ":" ++ text))
+  if value.isEmpty then retained
+  else retained ++ [{name := ⟨none,"style"⟩,value}]
+
+private theorem svgAuthorAttributes_preservePresentation (attrs : List XML.NamespaceAttribute)
+    (values : List (String × String)) :
+    (svgAuthorAttributes attrs values).filter (fun a => !svgStyleAttribute a) =
+      attrs.filter (fun a => !svgStyleAttribute a) := by
+  simp only [svgAuthorAttributes]
+  split <;> simp [List.filter_filter, svgStyleAttribute]
+
+#print axioms svgAuthorAttributes_preservePresentation
+
 /-- Convert the original HTML element subtree bottom-up. Every original child
 index survives, including text/comments; no host extraction or XML reparse. A `script`
 element (HTML's or SVG's) draws nothing: it stays in its place as an empty comment, so the
-SVG reader does not meet it and the indices after it are unchanged. -/
-def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceNode) := do
+SVG reader does not meet it and the indices after it are unchanged. When the HTML
+cascade is supplied, SVG style elements likewise keep their child position; their rules
+have already been consumed with the rest of the document's author styles. -/
+def documentNamespaceTree (dom : DOM.Dom) (cascade : Option (Array Rendering.CSS.Computed) := none) :
+    Except String (Nat × XML.NamespaceNode) := do
   if dom.nodes.size == 0 then throw "HTML document root missing"
   let some root := documentElement dom
     | throw "HTML element root missing"
@@ -128,8 +155,9 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
     | (finished,id)::rest =>
       let some node := dom.nodes[id]? | throw "invalid node in HTML namespace tree"
       pending := rest
-      if node.type == .element && node.lname == "script" && id != root &&
-          (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS) then
+      if node.type == .element && id != root &&
+          ((node.lname == "script" && (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS)) ||
+           (cascade.isSome && node.lname == "style" && node.ns == some DOM.svgNS)) then
         values := values.insert id (.other (.comment ""))
       else if node.type == .element then
         if !finished then pending := node.kids.toList.map (fun child => (false,child)) ++ ((true,id)::rest)
@@ -140,6 +168,11 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
           -- lowered SVG text; page content (markup or script) cannot give one.
           let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS && a.ns != some NativeSVG.glyphNS)).map fun a =>
             ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
+          let attrs := if node.ns == some DOM.svgNS then
+            match cascade.bind (fun styles => styles[id]?) with
+            | some style => svgAuthorAttributes attrs style.svgAuthor
+            | none => attrs
+          else attrs
           values := values.insert id (.element ⟨node.ns,node.lname⟩ attrs children)
       else if node.type == .text || node.type == .cdata then
         values := values.insert id (.other (.text node.data))
@@ -619,7 +652,8 @@ to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
 glyph outlines go to the reader as numbers in a table. -/
 def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[])
+    (cascade : Option (Array Rendering.CSS.Computed) := none) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
       Option StoreEntry × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
@@ -628,7 +662,7 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
     return (embedding dom,picturesOf store imgs,made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
-  let (root,source) ← documentNamespaceTree dom
+  let (root,source) ← documentNamespaceTree dom cascade
   -- CSS Color 4 colours the reader does not read, as `#rrggbb` (`SVGCssColour`); the tree's
   -- shape is unchanged, so source paths still point at the same elements
   let source := NativeSVGCssColour.tree 256 source
