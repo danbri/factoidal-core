@@ -726,6 +726,10 @@ def touchesSheets (dom : Arena) (roots : List Nat) : Bool :=
   | none => true
   | some ns => ns.any fun n => let x := dom.get n; x.lname == "style" || x.lname == "link"
 
+/-- Whether `n` is a `style` or `link` element (or not a node): a child written under it may change the rules. -/
+def sheetParent (dom : Arena) (n : Nat) : Bool :=
+  n >= dom.size || (let x := dom.get n; x.lname == "style" || x.lname == "link")
+
 /-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
 def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
   match ws.findIdx? (·.1 == why) with
@@ -1471,10 +1475,14 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       -- 2026-11-24 such a write made the next read style the whole document (issue 871).
       -- A `style` or `link` element added, removed or replaced, or the text of a `style`
       -- element set, changes the rules: the whole document (`touchesSheets`).
-      else if nm == "append_child" || nm == "remove_child" then
-        if touchesSheets d [a 0, a 1] then none else (d.get (a 0)).parent.map fun p => (p, true)
-      else if nm == "insert_before" || nm == "replace_child" then
-        if touchesSheets d [a 0, a 1, a 2] then none else (d.get (a 0)).parent.map fun p => (p, true)
+      -- Only the nodes added or removed (`a 1`; for a replace also `a 2`) and the parent itself
+      -- can carry rules; the parent's other descendants and an insert's reference child cannot.
+      -- Until 2026-11-24 the parent's whole subtree was checked, and an insert into a large
+      -- container styled the whole document (zh.wikipedia: 66 times; issue 871).
+      else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then
+        if sheetParent d (a 0) || touchesSheets d [a 1] then none else (d.get (a 0)).parent.map fun p => (p, true)
+      else if nm == "replace_child" then
+        if sheetParent d (a 0) || touchesSheets d [a 1, a 2] then none else (d.get (a 0)).parent.map fun p => (p, true)
       else if nm == "text_content_set" then
         if touchesSheets d [a 0] then none else (d.get (a 0)).parent.map fun p => (p, true)
       else none
