@@ -2025,8 +2025,9 @@ async function main() {
       }
       // Scroll prefetch: when the scroll nears the edge of the keep range, or its speed says it
       // will pass the edge within two frames and the time of a band, the worker makes the next
-      // band at low priority. Only when the worker has nothing else to do and no frame is due.
-      if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()&&worker.pending===0){
+      // band at low priority when no frame is due. It can be queued behind script work:
+      // the worker serves input and ordinary requests first, and stale bands are discarded.
+      if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()){
         const band=current.layers.layers;
         const target=prefetchTarget(band,scroll,motion,{marginRows:PREFETCH_MARGIN_ROWS,horizonMs:2*FRAME_MS+bandMs,limit:scrollLimit()});
         const request=target===undefined?undefined:requestFor(target);
