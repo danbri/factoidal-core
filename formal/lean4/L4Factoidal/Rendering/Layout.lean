@@ -2247,15 +2247,21 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
   | fuel+1, task => do
     -- CSS Text 3 §8.3: the first line's `text-indent` counts in both widths (a percentage
     -- counts as 0 here, CSS Sizing 3 §5.2.1, cyclic percentages)
-    let inlineWidths (items : Array Inline) (indent : Float := 0) : Except String (Float × Float) := do
+    let inlineWidths (items : Array Inline) (minContent : Array (Nat × Inline)) (indent : Float) :
+        Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
       let strut : Option Computed := if indent == 0 then none else some {textIndent := .px indent, textAlign := .left}
-      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0 strut
+      let narrowItems := minContent.foldl (fun items (i, item) => items.setIfInBounds i item) (items.map compressInline)
+      let narrow ← inlineLayout font (← atomize font narrowItems 0) 0 0 0 strut
       let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 strut
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
       let mut inline := lead
+      let mut minContent : Array (Nat × Inline) := #[]
+      let indent := match (styles[container]?.map (·.textIndent)) with
+        | some (CSS.Length.px n) => n
+        | _ => 0
       -- The max-content widths of the floats so far that nothing has cleared (CSS 2.1
       -- §9.5): with all the room they sit side by side, and the lines and boxes after them
       -- are beside them. With no float in the flow this stays 0.
@@ -2263,8 +2269,9 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       for seg in Table.segments dom styles (liftBlocks dom styles kids) do
         match seg with
         | .run run =>
-          let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
+          let (a,b) ← inlineWidths inline minContent indent
           inline := #[]
+          minContent := #[]
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max (b+beside) (d+beside)))
         | .node k =>
@@ -2277,15 +2284,23 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
             widths := (max widths.1 c,widths.2)
             beside := beside+d
           else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
-            let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
+            let (a,b) ← inlineWidths inline minContent indent
             inline := #[]
+            minContent := #[]
             widths := (max widths.1 a,max widths.2 (b+beside))
             if (styles[k]!).pos.clear != .none then beside := 0
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
             widths := (max widths.1 c,max widths.2 (d+beside))
+          else if (styles[k]!).display == .inlineBlock && blockInside dom styles k then
+            let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box k)
+            -- These items only measure the line. Their widths already include
+            -- margins, so the synthetic boxes cover that full extent.
+            let style := {styles[k]! with margin := {}}
+            minContent := minContent.push (inline.size, .replaced k style lo 0 [])
+            inline := inline.push (.replaced k style hi 0 [])
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
-      let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
+      let (a,b) ← inlineWidths inline minContent indent
       return (max widths.1 a,max widths.2 (b+beside))
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
       let frame := tableFrame styles element container
