@@ -73,7 +73,9 @@ jobs:
           import os, pathlib, re
           text = (pathlib.Path(os.environ["RUNNER_TEMP"])/"g1-axioms.log").read_text()
           expected = {"EthereumConsensus.BLS."+n for n in
-            ("decodePublicKey_wrong_width","admitPoint_ok","coordinateChecks_sound","decodePublicKey_ok")}
+            ("decodePublicKey_wrong_width","admitPoint_ok","coordinateChecks_sound","decodePublicKey_ok",
+             "decodePublicKey_candidate_error","decodePublicKey_candidate_ok",
+             "decodePublicKey_candidate_bad_coordinates","decodePublicKey_candidate_bad_subgroup")}
           def audit(t):
               reports = re.findall(r"'(EthereumConsensus\.BLS\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
               if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
@@ -88,7 +90,7 @@ jobs:
               except ValueError:
                   continue
               raise ValueError("audit mutation escaped")
-          print("Actual four theorem reports and four falsification controls passed")
+          print("Actual eight theorem reports and four falsification controls passed")
           PY
       - name: Compare native key admission against independent affine oracle
         run: |
