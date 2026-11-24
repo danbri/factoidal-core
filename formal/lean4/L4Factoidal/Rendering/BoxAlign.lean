@@ -6,6 +6,9 @@ the property table (`CssValues`): the table decides what is a value of a propert
 gives its canonical text; this module only names the keywords the layout acts on. -/
 namespace L4Factoidal.Rendering.CSS
 
+private instance : Repr CssValues.Calc where
+  reprPrec expr prec := reprPrec (CssValues.Calc.text expr) prec
+
 /-- A length of the layout profile: px, a percentage (as a fraction), or viewport units
 (fractions of the viewport, resolved when it is known: `Length.atViewport`). -/
 inductive Length where
@@ -14,6 +17,9 @@ inductive Length where
   /-- A percentage (as a fraction) plus px: `calc(50% - 8px)`, and what a `border-box`
   percentage is as a content-box size. -/
   | calc (percent : Float) (px : Float)
+  /-- A size calculation whose length can be determined without a containing-block percentage.
+  Its element font size is known during the cascade and its viewport when layout starts. -/
+  | viewportMath (expression : CssValues.Calc) (fontSize : Rat)
   /-- The sizing keywords (CSS Sizing 3 §3.2, 4 §6.1): a size taken from the contents, or
   `stretch`, the size that fills the containing block. They are not numbers: `resolve`
   answers `none` for them, and the layout gives them their sizes (`Layout.sizeKeyword`). -/
@@ -54,6 +60,51 @@ def ratToFloat (r : Rat) : Float := Float.ofInt r.num / Float.ofNat r.den
 /-- A font size or other positive px value for the property table, to a thousandth. -/
 def tableRat (x : Float) : Rat :=
   if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- Read a length-valued sizing function without substituting a default viewport.
+Percentages which require a layout basis are handled by the existing length paths. -/
+def viewportSizeMath (fontSize : Float) (source : String) : Option Length := do
+  let [part] := CssValues.stripWs (CssValues.CV.parse source) | none
+  let expr ← CssValues.Calc.parse part
+  let fuel := CssValues.Calc.depth 64 expr + 4
+  if expr.type .percent fuel == some (CssValues.Ty.ofKind .length) then
+    some (.viewportMath expr (tableRat fontSize))
+  else none
+
+/-- Used size in CSS pixels, with the nonnegative range of width and height. -/
+def viewportSizePixels (expression : CssValues.Calc) (fontSize viewportW viewportH : Rat) :
+    Option Rat :=
+  let context : CssValues.Ctx := {fontSize, viewportW, viewportH}
+  match expression.simp (some context) (expression.depth 64 + 4) with
+  | .val px "px" => some (if 0 ≤ px then px else 0)
+  | _ => none
+
+/-- Every pixel size supplied by a viewport calculation is nonnegative. -/
+theorem viewportSizePixels_nonnegative (expression : CssValues.Calc)
+    (fontSize viewportW viewportH px : Rat)
+    (h : viewportSizePixels expression fontSize viewportW viewportH = some px) : 0 ≤ px := by
+  unfold viewportSizePixels at h
+  split at h
+  · split at h
+    · rename_i nonnegative
+      cases h
+      exact nonnegative
+    · cases h
+      simp
+  · contradiction
+
+#print axioms viewportSizePixels_nonnegative
+
+private def sizeAt (source : String) (viewport : Rat) : Option Rat := do
+  match ← viewportSizeMath 16 source with
+  | .viewportMath expr font => viewportSizePixels expr font viewport 736
+  | _ => none
+
+#guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 1280 == some 120
+#guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 480 == some (699104 / 10000)
+#guard sizeAt "max(-10px, -2vw)" 1280 == some 0
+#guard sizeAt "min(100px, 40vw)" 200 == some 80
+#guard (sizeAt "clamp(20px, 50%, 120px)" 1280).isNone
 
 /-- The components of the computed value of `value` for `property` by the property table,
 with font-relative lengths in px against `fontSize`; `none` when it is not a value of the
