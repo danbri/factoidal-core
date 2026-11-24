@@ -16,11 +16,16 @@ structure AttestationData where
 def checkedAttestationData (slot index : UInt64) (beacon : ByteArray)
     (sourceEpoch : UInt64) (sourceRoot : ByteArray)
     (targetEpoch : UInt64) (targetRoot : ByteArray) :
-    Except ContainerError AttestationData := do
-  let beaconRoot ← checkedContainerRoot beacon
-  let source ← checkedCheckpoint sourceEpoch sourceRoot
-  let target ← checkedCheckpoint targetEpoch targetRoot
-  return ⟨slot, index, beaconRoot, source, target⟩
+    Except ContainerError AttestationData :=
+  match checkedContainerRoot beacon with
+  | .error e => .error e
+  | .ok beaconRoot =>
+    match checkedCheckpoint sourceEpoch sourceRoot with
+    | .error e => .error e
+    | .ok source =>
+      match checkedCheckpoint targetEpoch targetRoot with
+      | .error e => .error e
+      | .ok target => .ok ⟨slot, index, beaconRoot, source, target⟩
 
 def attestationDataWire (data : AttestationData) : ByteArray :=
   encodeUInt64 data.slot ++ encodeUInt64 data.committeeIndex ++
@@ -28,13 +33,22 @@ def attestationDataWire (data : AttestationData) : ByteArray :=
 
 /-- Five field roots, in order, with the source and target represented by
     their own container roots; the remaining three leaves are zeros. -/
-def attestationDataRoot (data : AttestationData) : Except ContainerError Chunk := do
-  let slot ← containerUInt64Root data.slot
-  let index ← containerUInt64Root data.committeeIndex
-  let source ← checkpointRoot data.source
-  let target ← checkpointRoot data.target
-  let zero ← containerZeroRoot
-  return beaconHeaderTree slot index data.beaconBlockRoot source target zero
+def attestationDataRoot (data : AttestationData) : Except ContainerError Chunk :=
+  match containerUInt64Root data.slot with
+  | .error e => .error e
+  | .ok slot =>
+    match containerUInt64Root data.committeeIndex with
+    | .error e => .error e
+    | .ok index =>
+      match checkpointRoot data.source with
+      | .error e => .error e
+      | .ok source =>
+        match checkpointRoot data.target with
+        | .error e => .error e
+        | .ok target =>
+          match containerZeroRoot with
+          | .error e => .error e
+          | .ok zero => .ok (beaconHeaderTree slot index data.beaconBlockRoot source target zero)
 
 def attesterDomainType : ByteArray := ByteArray.mk #[1, 0, 0, 0]
 
@@ -55,14 +69,14 @@ theorem checkedAttestationData_bad_beacon (slot index sourceEpoch targetEpoch : 
     (beacon sourceRoot targetRoot : ByteArray) (h : beacon.size ≠ 32) :
     checkedAttestationData slot index beacon sourceEpoch sourceRoot targetEpoch targetRoot =
       .error .rootWidth := by
-  simp [checkedAttestationData, checkedContainerRoot_wrong_width beacon h, bind, Except.bind]
+  simp only [checkedAttestationData, checkedContainerRoot_wrong_width beacon h]
 
 /-- Kind: structure. Says: wire has the five fixed fields, totalling
     128 bytes. Does not say: the data is a valid vote. -/
 theorem attestationDataWire_size (data : AttestationData) :
     (attestationDataWire data).size = 128 := by
-  simp [attestationDataWire, ByteArray.size_append, encodeUInt64_size,
-    data.beaconBlockRoot.width, checkpointWire_size]
+  simp only [attestationDataWire, ByteArray.size_append, encodeUInt64_size,
+    data.beaconBlockRoot.width, checkpointWire_size] <;> decide
 
 /-- Kind: linkage. Says: the actual root uses these five ordered field roots.
     Does not say: the underlying SHA-256 satisfies full FIPS refinement. -/
@@ -75,7 +89,7 @@ theorem attestationDataRoot_delegates (data : AttestationData)
     (hz : containerZeroRoot = .ok zero) :
     attestationDataRoot data =
       .ok (beaconHeaderTree slot index data.beaconBlockRoot source target zero) := by
-  simp [attestationDataRoot, hs, hi, hc, ht, hz, bind, Except.bind]
+  simp only [attestationDataRoot, hs, hi, hc, ht, hz]
 
 /-- Kind: linkage. Says: target epoch is the domain input of the actual
     signing entry. Does not say: signature verification took place. -/
