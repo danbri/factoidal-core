@@ -239,16 +239,16 @@ private def renderTriplesBlock (context : FormatContext) (fuel : Nat)
     | .path s p o => do
       return [(← renderSubject context s) ++ " " ++ (← renderPath context fuel false p) ++
         " " ++ (← renderTerm context o)]
-  return addDots groups
+  return addDots groups []
 where
-  addDots : List (List String) → List String
-    | [] => []
-    | [last] => last
-    | block :: tail =>
+  addDots : List (List String) → List String → List String
+    | [], acc => acc.reverse
+    | [last], acc => acc.reverse ++ last
+    | block :: tail, acc =>
       let dotted := match block.reverse with
         | [] => []
-        | last :: rest => ((last ++ " .") :: rest).reverse
-      dotted ++ addDots tail
+        | last :: rest => (last ++ " .") :: rest
+      addDots tail (dotted ++ acc)
 
 private def renderData (prefixes : FormatContext) (indent : Nat) (pattern : QueryPattern) : Option String := do
   let .values names values := pattern | none
@@ -290,12 +290,14 @@ private def selectText (prefixes : FormatContext) (fuel : Nat) (qualification : 
   return "SELECT" ++ qualification ++ "  " ++ items
 
 private def orderDirections (state : PState) (fuel : Nat) (tokens : TStream) : List Bool :=
-  match fuel with
-  | 0 => []
-  | f + 1 =>
-    match pOrderCondition f state tokens with
-    | .error _ => []
-    | .ok (_, rest) => (peekTok tokens == .asc) :: orderDirections state f rest
+  go fuel tokens []
+where
+  go : Nat → TStream → List Bool → List Bool
+    | 0, _, acc => acc.reverse
+    | fuel + 1, tokens, acc =>
+      match pOrderCondition fuel state tokens with
+      | .error _ => acc.reverse
+      | .ok (_, rest) => go fuel rest ((peekTok tokens == .asc) :: acc)
 
 private def renderModifiers (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
     (ts : TStream) : Option (List String × TStream) := do

@@ -66,9 +66,13 @@ private def closeGroup (depth : Nat) : List LocatedToken → Option (LocatedToke
     | .rbrace => if depth == 0 then some (token, rest) else closeGroup (depth - 1) rest
     | _ => closeGroup depth rest
 
-private def findBlocks (chars : Array Char) : Nat → List LocatedToken → List Block
-  | 0, _ | _, [] => []
-  | fuel + 1, word :: rest =>
+private def findBlocks (chars : Array Char) (fuel : Nat) (tokens : List LocatedToken) :
+    List Block :=
+  go fuel tokens []
+where
+  go : Nat → List LocatedToken → List Block → List Block
+  | 0, _, acc | _, [], acc => acc.reverse
+  | fuel + 1, word :: rest, acc =>
     let found : Option (Block × List LocatedToken) := do
       if word.token != .withKw then none else
         let openBrace :: body := rest | none
@@ -82,8 +86,8 @@ private def findBlocks (chars : Array Char) : Nat → List LocatedToken → List
             some (⟨name, body, word.start, stop, references body.toList.toArray (sourceTokens body true)⟩,
               tail)
     match found with
-    | some (block, tail) => block :: findBlocks chars fuel tail
-    | none => findBlocks chars fuel rest
+    | some (block, tail) => go fuel tail (block :: acc)
+    | none => go fuel rest acc
 
 private def wildcard (text : String) : Bool :=
   match (sourceTokens text).map LocatedToken.token with
@@ -156,15 +160,17 @@ private def possiblePlaceholder : List LocatedToken → Option String
   | ⟨.lparen, _, _⟩ :: ⟨.var name, _, _⟩ :: _ =>
     if placeholderPrefix.isPrefixOf name then some name else none
   | _ => none
-private def restoreEdits (chars : Array Char) (blocks : List PreparedBlock) :
-    List LocatedToken → Except Problem (List Edit)
-  | [] => .ok []
-  | keyword :: tail => do
-    let next := fun (_ : Unit) => restoreEdits chars blocks tail
-    if keyword.token != .values then return ← next ()
-    let some varName := possiblePlaceholder tail | return ← next ()
-    let _ :: body := tail.dropWhile (·.token != .lbrace) | return ← next ()
-    let some (closeBrace, rest) := closeGroup 0 body | return ← next ()
+private def restoreEdits (chars : Array Char) (blocks : List PreparedBlock)
+    (tokens : List LocatedToken) : Except Problem (List Edit) :=
+  go tokens []
+where
+  go : List LocatedToken → List Edit → Except Problem (List Edit)
+  | [], acc => .ok acc.reverse
+  | keyword :: tail, acc => do
+    if keyword.token != .values then go tail acc else
+    let some varName := possiblePlaceholder tail | go tail acc
+    let _ :: body := tail.dropWhile (·.token != .lbrace) | go tail acc
+    let some (closeBrace, rest) := closeGroup 0 body | go tail acc
     let name := (varName.drop placeholderPrefix.length).toString
     let some block := blocks.find? (·.name == name) |
       throw ⟨"validation_failed", "named_subquery_unresolved_include_placeholder",
@@ -179,8 +185,7 @@ private def restoreEdits (chars : Array Char) (blocks : List PreparedBlock) :
     let ending := if chars[stop]? == some '\n' then "" else "\n"
     let edit : Edit := ⟨keyword.start, stop,
       s!"\{ SELECT{variables block.vars} WHERE \{ INCLUDE %{name} }{modifiers} }{ending}"⟩
-    let edits ← next ()
-    return edit :: edits
+    go tail (edit :: acc)
 
 private def restore (text : String) (blocks : List PreparedBlock) : Except Problem String :=
   (restoreEdits text.toList.toArray blocks (sourceTokens text)).map (applyEdits text)

@@ -328,6 +328,19 @@ private def slotStyles : Option (Bool × Float) := do
 
 #guard slotStyles == some (true, 1)
 
+private def namespaceSlotContents (css : String) : Option (Bool × Bool) := do
+  let dom := DOM.parseHtmlDocument "<slot id='html-slot'></slot><svg><slot id='svg-slot'></slot></svg>"
+  let html ← dom.getElementById 0 "html-slot"
+  let svg ← dom.getElementById 0 "svg-slot"
+  let rules ← (CSS.parse css).toOption
+  let styles ← (computeAll dom rules 1).toOption
+  return ((← styles[html]?).pos.contents, (← styles[svg]?).pos.contents)
+
+#guard namespaceSlotContents "" == some (true, false)
+#guard namespaceSlotContents "#html-slot{display:initial}" == some (false, false)
+#guard namespaceSlotContents "#html-slot{display:revert}" == some (true, false)
+
+
 -- A page with no shadow tree never takes the scoped path: `:host` and `::slotted()` rules
 -- go in no bucket, and match nothing.
 #guard ((CSS.parse ":host{color:red}::slotted(b){color:red}").toOption.map fun rs =>
@@ -451,4 +464,3 @@ private def gradientAt (html css : String) : Option Bool := do
 #guard hinted "<h1>x</h1>" "" "h1" fun s => (s.margin.top - 0.67*32).abs < 0.001
 
 end L4Factoidal.Rendering.CascadeTests
-

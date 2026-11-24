@@ -302,6 +302,8 @@ structure Computed where
   /-- The number of background layers: the comma-separated items of `background-image`
   (CSS Backgrounds 3 §3.1). -/
   backgroundLayers : Nat := 1
+  /-- The element's own SVG author winners. The SVG renderer handles paint inheritance. -/
+  svgAuthor : List (String × String) := []
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 /-- The clip of the final layer, which the background colour uses (CSS Backgrounds 3 §3.7):
@@ -322,6 +324,18 @@ def htmlProperties : List String :=
    "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
    "direction","unicode-bidi","background-size","background-repeat",
    "background-position","background-position-x","background-position-y","background-clip"]
+
+/-- Longhands the embedded SVG adapter can pass to the SVG style reader. -/
+def svgAuthorProperties : List String :=
+  ["fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
+   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
+   "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule",
+   "opacity","overflow","width","height","cx","cy","r","rx","ry","x","y",
+   "font","font-family","font-size","font-style","font-weight","font-variant","font-stretch","font-size-adjust",
+   "font-kerning","font-feature-settings","text-anchor","letter-spacing","word-spacing","writing-mode","direction",
+   "unicode-bidi","dominant-baseline","alignment-baseline","baseline-shift","text-decoration","text-rendering",
+   "glyph-orientation-vertical","glyph-orientation-horizontal","kerning","line-increment","text-align",
+   "display-align","text-transform","white-space"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
@@ -2073,7 +2087,9 @@ widths, the style and the colour. -/
 def copyProperty (property : String) (source s : Computed) : Option Computed :=
   let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
   match property with
-  | "display" => some {s with display := source.display}
+  | "display" =>
+    let pos := {s.pos with contents := source.pos.contents}
+    some {s with display := source.display, pos := pos}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
   | "margin-top" =>
@@ -2772,8 +2788,6 @@ inline-block with a raised border, sunken while it is `:active`), and the form c
 the ones that HTML gives (`#0000EE`, `#551A8B`, `#FF0000`); the button colours are
 this profile's choice, since HTML leaves a button's look to the platform. -/
 def userAgentSheet : String :=
-  -- CSS Shadow 1 §4.1.1, overridable in author sheets.
-  "slot{display:contents}" ++
   ":link{color:#0000ee}" ++
   ":visited{color:#551a8b}" ++
   -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.
@@ -3396,7 +3410,9 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       hasAttr "hidden")) ||
     -- the content of a `details` that is not open (it was drawn open)
     closedDetailsContent dom id
-  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
+  let svgDescendant := n.ns == some DOM.svgNS &&
+    (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
+  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg" && !svgDescendant
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
   let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
@@ -3429,6 +3445,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,
             listInside := parent.pos.listInside, nowrap := parent.pos.nowrap,
+            -- CSS Shadow 1 §4.1.1: the HTML slot has no box by default.
+            contents := DOM.Dom.isHtmlElement n "slot" && !hidden,
             textTransform := parent.pos.textTransform, lineBreak := parent.pos.lineBreak}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
@@ -3564,10 +3582,15 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         a.top == ua.top && a.right == ua.right && a.bottom == ua.bottom && a.left == ua.left) &&
         ua.top + ua.bottom > 0 then
       result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
+  if n.ns == some DOM.svgNS then
+    result := {result with svgAuthor := chosen.filterMap fun (key,(priority,d)) =>
+      let author := (priority[1]?.getD 0) ≥ 2
+      let outerDimension := svgViewport && (key == "width" || key == "height")
+      if author && svgAuthorProperties.contains key && !outerDimension then some (key,d.value)
+      else none}
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
-      -- Inline SVG paint declarations stay with the existing SVG producer.
-      -- External HTML paint rules are refused until that cascade is unified.
+      -- SVG paint goes to the SVG renderer; the root's layout-related properties stay here.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
       else result := applyWinner parent initial result d
   -- A root or body never clips here: the window scrolls instead.
@@ -3594,13 +3617,15 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   {s with fontSize := size, lineHeight := height}
 
 /-- The style of node `id` under the style `parent` of its parent: an element's cascade
-(`computedFrom`); any other node, and an SVG element inside SVG, takes what is inherited.
+(`computedFrom`). SVG descendants keep the HTML inherited box style but also
+resolve their own author winners and variables for SVG rendering.
 The step of `computeAllWith` and of `restyleWith`. -/
-def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed :=
+def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-  if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
-    display := .inline, width := .auto, height := .auto,
+  if n.type == .element && !svgDescendant then return ← computedFrom dom id (matchesOf id) parent
+  let inherited : Computed := {parent with
+    svgAuthor := [], display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current,
@@ -3609,6 +3634,10 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
         -- a text node keeps what its text is set by
         pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform,
                 lineBreak := parent.pos.lineBreak}}
+  if n.type == .element && svgDescendant then
+    let cascade ← computedFrom dom id (matchesOf id) parent
+    return {inherited with svgAuthor := cascade.svgAuthor, vars := cascade.vars}
+  return inherited
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. `root` is the
