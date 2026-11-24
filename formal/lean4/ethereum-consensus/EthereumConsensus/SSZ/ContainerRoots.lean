@@ -161,7 +161,7 @@ theorem checkedContainerRoot_wrong_width (bytes : ByteArray)
 theorem checkedVersionRoot_wrong_width (bytes : ByteArray)
     (h : bytes.size ≠ 4) :
     checkedVersionRoot bytes = .error .versionWidth := by
-  simp only [checkedVersionRoot, if_neg h]
+  simp only [checkedVersionRoot, if_pos h]
 
 /-- Kind: admission. Says: malformed parent bytes never construct a
     header with a substituted parent. Does not say: a 32-byte parent exists. -/
