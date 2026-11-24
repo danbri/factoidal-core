@@ -14,6 +14,7 @@ recursion and no backward scan. `breaks cs` lists the positions, as numbers
 of code points before the break, where a break is allowed or mandatory;
 the end of the text (LB3) is always listed and position 0 (LB2) never.
 -/
+import Init.Data.Vector.OfFn
 import L4Factoidal.Unicode.LineBreakData
 
 namespace L4Factoidal.Unicode.LineBreak
@@ -66,12 +67,12 @@ private def characterProperties (c : UInt32) : UInt8 × UInt8 :=
 
 /-- The two Unicode table results for each Latin-1 code point. Constructed on the
 first layout that needs them, using the same generated tables as the reference. -/
-private def latin1Properties : Thunk (Array (UInt8 × UInt8)) :=
-  Thunk.mk fun _ => Array.ofFn (fun i : Fin 256 => characterProperties (UInt32.ofNat i.val))
+private def latin1Properties : Thunk (Vector (UInt8 × UInt8) 256) :=
+  Thunk.mk fun _ => Vector.ofFn (fun i : Fin 256 => characterProperties (UInt32.ofNat i.val))
 
 @[inline] private def cachedCharacterProperties (c : UInt32) : UInt8 × UInt8 :=
   if h : c.toNat < 256 then
-    latin1Properties.get[c.toNat]'(by simpa [latin1Properties] using h)
+    latin1Properties.get[c.toNat]'h
   else characterProperties c
 
 /-- Every cached entry, including controls, and every fallback returns the original
@@ -80,12 +81,14 @@ theorem cachedCharacterProperties_eq (c : UInt32) :
     cachedCharacterProperties c = characterProperties c := by
   unfold cachedCharacterProperties
   split
-  · simp [latin1Properties]
+  · change (Vector.ofFn (fun i : Fin 256 => characterProperties (UInt32.ofNat i.val)))[c.toNat] =
+        characterProperties c
+    rw [Vector.getElem_ofFn, UInt32.ofNat_toNat]
   · rfl
 
 /-- Cut the text into units (LB1, LB9, LB10). A character that attaches to the
 previous unit gets no break before it. -/
-private def unitsWith (properties : UInt32 → UInt8 × UInt8) (cs : Array Char)
+@[specialize] private def unitsWith (properties : UInt32 → UInt8 × UInt8) (cs : Array Char)
     (mode : Mode) : Array LBUnit := Id.run do
   let mut us : Array LBUnit := Array.mkEmpty cs.size
   for i in [0:cs.size] do
