@@ -353,8 +353,7 @@ def checkedFeePair (a : Keccak.Acceptance) (p c : Fields) :
 transaction environment. The input frame's other fields are unchanged. -/
 def projectBlobFees (s : EVMCleanroom.State) (fees : Nat × Nat) :
     EVMCleanroom.State :=
-  { s with profile := .cancunPlus, blockBaseFee := fees.1,
-    blockBlobBaseFee := fees.2 }
+  { s with profile := .cancunPlus, blockBaseFee := fees.1, blockBlobBaseFee := fees.2 }
 
 def withCheckedBlobFees (a : Keccak.Acceptance) (p c : Fields)
     (s : EVMCleanroom.State) : Except Error EVMCleanroom.State :=
@@ -403,8 +402,7 @@ theorem fee_frame_exact (a : Keccak.Acceptance) (p c : Fields)
     (s : EVMCleanroom.State) (f b : Nat)
     (h : checkedFeePair a p c = .ok (f, b)) :
     withCheckedBlobFees a p c s =
-      .ok { s with profile := .cancunPlus, blockBaseFee := f,
-        blockBlobBaseFee := b } := by
+      .ok { s with profile := .cancunPlus, blockBaseFee := f, blockBlobBaseFee := b } := by
   simp [withCheckedBlobFees, h, projectBlobFees]
 
 /-- Kind: executable dispatcher connection. Says: the projected frame
