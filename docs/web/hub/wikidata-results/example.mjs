@@ -20,6 +20,17 @@ const landmarks = [
   ["Q83125","Tower Bridge","POINT(-0.075278 51.505556)","London%20-%20London%20Tower%20Bridge%20-%20140806%20171049.jpg"],
   ["Q62378","Tower of London","POINT(-0.076198 51.508200)","Tower%20of%20London%20viewed%20from%20the%20River%20Thames.jpg"],
 ];
+const photoCredits = {
+  Q41225: ['Christian David', '4.0'],
+  Q42182: ['Diliff', '3.0'],
+  Q83125: ['Barcex', '3.0'],
+  Q62378: ['Bob Collowan', '3.0'],
+};
+const commonsFile = 'http://commons.wikimedia.org/wiki/Special:FilePath/';
+const landmarkThumbnails = new Map(landmarks.map(([id, , , file]) => {
+  const [author, license] = photoCredits[id];
+  return [commonsFile + file, { src: new URL(`./photos/${id}.jpg`, import.meta.url).href, author, license }];
+}));
 const londonQuery = `#title:London landmarks
 #defaultView:Map{"hide":["?coord","?image"]}
 #view:ImageGrid{"hide":["?coord","?image"]}
@@ -115,9 +126,10 @@ export const groups = [
     id: 'london', title: 'London landmarks',
     description: 'Find four landmarks on the map, see their Commons photos, or look up the Wikidata items.',
     query: londonQuery,
+    thumbnails: landmarkThumbnails,
     preview: result(['placeLabel', 'place', 'coord', 'image'], landmarks.map(([id, name, point, file]) =>
       [english(name), entity(id), literal(point, 'http://www.opengis.net/ont/geosparql#wktLiteral'),
-        iri('http://commons.wikimedia.org/wiki/Special:FilePath/' + file)])),
+        iri(commonsFile + file)])),
     views: [view('Map', 'Select a marker to see the landmark.'), view('ImageGrid', 'Open a photo on Wikimedia Commons.'),
       view('Table', 'Each row links to a Wikidata item.')],
   },

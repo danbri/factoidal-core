@@ -109,6 +109,7 @@ textarea { display: block; width: 100%; margin-top: .4rem; resize: vertical; bac
 .view-card .gallery figure { padding: 0; overflow: hidden; }
 .view-card .gallery img { object-fit: cover; }
 .view-card .gallery figcaption { margin: 0; padding: .45rem .55rem; font-weight: 650; font-size: .88rem; }
+.photo-credit { margin: 0; padding: 0 .55rem .45rem; font-size: .74rem; color: var(--muted); }
 .view-card .gallery details { padding: 0 .55rem .45rem; font-size: .85rem; }
 .view-card .graph-stage { height: clamp(17rem, 29vw, 24rem); }
 .view-card .result-map { height: clamp(21rem, 46vw, 29rem); }

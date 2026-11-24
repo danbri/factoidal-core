@@ -60,7 +60,7 @@ function renderTable(root, { vars, rows, options }) {
   root.append(table);
 }
 
-function renderImages(root, { vars, rows, options }) {
+function renderImages(root, { vars, rows, options, thumbnails }) {
   const gallery = element('div', undefined, 'gallery');
   const visible = displayedVars(vars, options);
   for (const row of rows) {
@@ -71,8 +71,16 @@ function renderImages(root, { vars, rows, options }) {
       if (!url) continue;
       const figure = element('figure');
       const file = linkOrText('', url.replace(/\/wiki\/Special:FilePath\/(.+?)(?:\?.*)?$/i, '/wiki/File:$1'));
-      file.append(image(url, caption || 'Commons image'));
+      const thumbnail = thumbnails?.get(row[key].value);
+      file.append(image(thumbnail?.src ?? url, caption || 'Commons image'));
       figure.append(file, element('figcaption', caption || '?' + key));
+      if (thumbnail) {
+        const credit = element('p', undefined, 'photo-credit');
+        credit.append(linkOrText(thumbnail.author + ' / Commons', file.href), ' · ',
+          linkOrText('CC BY-SA ' + thumbnail.license, 'https://creativecommons.org/licenses/by-sa/' + thumbnail.license + '/'),
+          ' · thumbnail');
+        figure.append(credit);
+      }
       const details = element('details');
       details.append(element('summary', 'Row details'), rowDetails(visible, row));
       figure.append(details);

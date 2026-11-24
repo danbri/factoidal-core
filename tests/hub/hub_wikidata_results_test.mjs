@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { groups } from '../../docs/web/hub/wikidata-results/example.mjs';
 import { batchSize, qleverUrl, queryQlever, runBatch } from '../../docs/web/hub/wikidata-results/qlever.mjs';
 import {
@@ -115,9 +116,19 @@ test('SELECT, ASK and CONSTRUCT share the QLever transport', async () => {
 
 test('image grid recognises Commons file URLs', () => {
   const media = { type: 'uri', value: 'http://commons.wikimedia.org/wiki/Special:FilePath/Example.jpg' };
-  assert.equal(commonsImage(media), 'https://commons.wikimedia.org/wiki/Special:FilePath/Example.jpg?width=480');
+  assert.equal(commonsImage(media), 'https://commons.wikimedia.org/wiki/Special:FilePath/Example.jpg?width=500');
   assert.equal(commonsImage({ ...media, value: 'https://commons.wikimedia.org.example.org/wiki/Special:FilePath/Example.jpg' }), null);
   assert.equal(commonsImage({ ...media, value: 'https://commons.wikimedia.org:8080/wiki/Special:FilePath/Example.jpg' }), null);
+});
+
+test('every saved London photo has a local JPEG and Commons attribution', async () => {
+  for (const row of london.preview.data.results.bindings) {
+    const photo = london.thumbnails.get(row.image.value);
+    assert.ok(photo.author);
+    assert.match(photo.license, /^(3|4)\.0$/);
+    const bytes = await readFile(new URL(photo.src));
+    assert.deepEqual([...bytes.subarray(0, 2)], [255, 216]);
+  }
 });
 
 test('query editor colours comments, keywords, literals, IRIs and variables', () => {

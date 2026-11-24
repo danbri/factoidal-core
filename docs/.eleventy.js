@@ -72,6 +72,7 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "example.mjs", "gallery.mjs", "qlever.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/wikidata-results/${name}`);
   }
+  eleventyConfig.addPassthroughCopy('web/hub/wikidata-results/photos');
   // Static page: the explanations are rendered at build time from the directory data file,
   // which is also published as explanations.json for reuse.
   eleventyConfig.addPassthroughCopy("web/hub/wikidata-explanations/style.css");

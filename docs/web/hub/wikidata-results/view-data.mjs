@@ -115,7 +115,7 @@ export function commonsImage(term) {
     if (!['http:', 'https:'].includes(url.protocol) || url.port || url.username || url.password) return null;
     if (url.hostname === 'commons.wikimedia.org' && /^\/wiki\/Special:FilePath\//i.test(url.pathname)) {
       // The thumbnail parameter limits transfer for galleries and node thumbnails.
-      url.searchParams.set('width', '480');
+      url.searchParams.set('width', '500');
     } else if (url.hostname !== 'upload.wikimedia.org' || !url.pathname.startsWith('/wikipedia/commons/')) {
       return null;
     }
