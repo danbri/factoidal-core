@@ -7,7 +7,7 @@ the loop filter operates on those planes in a later stage.
 -/
 namespace L4Factoidal.Codec.VP8
 
-private def clipSample (value : Int) : UInt8 :=
+def clipSample (value : Int) : UInt8 :=
   UInt8.ofNat (min 255 value.toNat)
 
 theorem clipSample_toNat (value : Int) :
@@ -151,12 +151,19 @@ private def subblocks (plane : ByteArray) (stride x y : Nat) (modes : Array Intr
         (fun j i => predict4 mode edges (Fin.ofNat 4 j) (Fin.ofNat 4 i)) delta
   return plane
 
+structure FilterBlock where
+  segment : Nat
+  intra4 : Bool
+  inner : Bool
+
 structure Reconstructed where
   columns : Nat
   rows : Nat
   y : ByteArray
   u : ByteArray
   v : ByteArray
+  control : Option Control := none
+  filterBlocks : Array FilterBlock := #[]
 
 private def zeroPlane (size : Nat) : ByteArray := Id.run do
   let mut bytes := ByteArray.emptyWithCapacity size
@@ -164,15 +171,22 @@ private def zeroPlane (size : Nat) : ByteArray := Id.run do
     bytes := bytes.push 0
   return bytes
 
-private def reconstructMacroblock (frame : Reconstructed) (_ : Control) (row col : Nat)
-    (macroblock : Macroblock) (residual : Option SpatialResidual) : Except String Reconstructed := do
-  let ⟨columns, rows, y, u, v⟩ := frame
+private def reconstructMacroblock (frame : Reconstructed) (control : Control) (row col : Nat)
+    (macroblock : Macroblock) (prepared : Option PreparedResidual) : Except String Reconstructed := do
+  let ⟨columns, rows, y, u, v, _, filterBlocks⟩ := frame
+  let residual := prepared.map PreparedResidual.samples
   let y ← match macroblock.luma with
     | .whole mode => wholeBlock y (columns*16) (col*16) (row*16) 4 0 mode residual
     | .subblocks modes => subblocks y (columns*16) (col*16) (row*16) modes residual
   let u ← wholeBlock u (columns*8) (col*8) (row*8) 2 16 macroblock.chroma residual
   let v ← wholeBlock v (columns*8) (col*8) (row*8) 2 20 macroblock.chroma residual
-  return ⟨columns,rows,y,u,v⟩
+  let intra4 := match macroblock.luma with
+    | .whole _ => false
+    | .subblocks _ => true
+  let inner := intra4 || prepared.any PreparedResidual.hasCoefficients
+  let filterBlocks := if control.filterLevel == 0 then filterBlocks
+    else filterBlocks.push ⟨macroblock.segment,intra4,inner⟩
+  return ⟨columns,rows,y,u,v,some control,filterBlocks⟩
 
 /-- Reconstruct the padded YUV420 planes before filtering. -/
 def reconstruct (src : ByteArray) (image : WebP.Image src.size) : Except String Reconstructed := do
@@ -182,7 +196,7 @@ def reconstruct (src : ByteArray) (image : WebP.Image src.size) : Except String 
   let y := zeroPlane (blocks*256)
   let u := zeroPlane (blocks*64)
   let v := zeroPlane (blocks*64)
-  foldSpatialResiduals src image ⟨columns,rows,y,u,v⟩ reconstructMacroblock
+  foldPreparedResiduals src image ⟨columns,rows,y,u,v,none,#[]⟩ reconstructMacroblock
 
 #print axioms clipSample_toNat
 
