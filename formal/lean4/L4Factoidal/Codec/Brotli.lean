@@ -269,11 +269,12 @@ def readPrefixCode (d : ByteArray) (alphabet : Nat) : M Huff := do
       if syms.contains v then throw "Brotli simple prefix code names a symbol twice"
       syms := syms.push v
     if nsym == 1 then return Huff.one syms[0]!
-    let lensOf : List Nat ←
-      if nsym == 2 then pure [1,1]
-      else if nsym == 3 then pure [1,2,2]
-      else if (← readBits d 1) == 0 then pure [2,2,2,2]
-      else pure [1,2,3,3]
+    -- the tree-select bit is read only when NSYM is 4 (an action nested in an `if` term
+    -- would run before the test)
+    let mut lensOf : List Nat := if nsym == 2 then [1,1] else [1,2,2]
+    if nsym == 4 then
+      let treeSelect ← readBits d 1
+      lensOf := if treeSelect == 0 then [2,2,2,2] else [1,2,3,3]
     let mut lens := Array.replicate alphabet 0
     for (s, l) in syms.toList.zip lensOf do
       lens := lens.set! s l
@@ -400,8 +401,8 @@ def stepCat (d : ByteArray) (c : Cat) : M Cat := do
 /-- A context map of `size` entries over `ntrees` prefix codes (section 7.3). -/
 def readContextMap (d : ByteArray) (size ntrees : Nat) : M (Array Nat) := do
   if ntrees < 2 then return Array.replicate size 0
-  let rleMax ← do
-    if (← readBits d 1) == 1 then pure ((← readBits d 4) + 1) else pure 0
+  let useRle ← readBits d 1
+  let rleMax ← if useRle == 1 then (· + 1) <$> readBits d 4 else pure 0
   let h ← readPrefixCode d (ntrees + rleMax)
   let mut map : Array Nat := Array.emptyWithCapacity size
   for _ in [0:size] do
