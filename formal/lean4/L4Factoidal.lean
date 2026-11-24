@@ -473,6 +473,8 @@ import L4Factoidal.Codec.XzTests
 import L4Factoidal.Prim.Bytes
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Codec.ZstdTests
+import L4Factoidal.Codec.Brotli
+import L4Factoidal.Codec.BrotliTests
 import L4Factoidal.Qlvr.Id
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Tdb2.Read
