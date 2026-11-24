@@ -90,6 +90,24 @@ try{
  writeFileSync(file,'{\n')
  const malformed=run(['--dangerously-enable-unverified-keccak','--batch',file])
  assert.equal(malformed.status,2);assert.equal(JSON.parse(malformed.stdout).status,'inputError')
+ const malformedRequests=[
+  q=>delete q.parentHeader,
+  q=>delete q.childHeader,
+  q=>delete q.blobVersionedHashes,
+  q=>delete q.maxFeePerBlobGas,
+  q=>delete q.priorBlobGas,
+  q=>q.parentHeader='not-an-array',
+  q=>q.childHeader[0]='zz',
+  q=>q.blobVersionedHashes=[42],
+  q=>q.maxFeePerBlobGas=3
+ ]
+ for(const mutate of malformedRequests){
+  const q=request();mutate(q)
+  writeFileSync(file,JSON.stringify(q)+'\n')
+  const invalid=run(['--dangerously-enable-unverified-keccak','--batch',file])
+  assert.equal(invalid.status,2,invalid.stderr)
+  assert.equal(JSON.parse(invalid.stdout).status,'inputError')
+ }
  const counts={};for(const x of actual)counts[x.status]=(counts[x.status]??0)+1
- console.log(JSON.stringify({cases:actual.length,matched:actual.length,counts,mutationsRejected:mutations.length,frameOracle:'EthereumJS 10.1.3 Cancun',signedTransactionOracle:false,missingOptInRejected:true,malformedRejected:true}))
+ console.log(JSON.stringify({cases:actual.length,matched:actual.length,counts,mutationsRejected:mutations.length,frameOracle:'EthereumJS 10.1.3 Cancun',signedTransactionOracle:false,missingOptInRejected:true,malformedRejected:true,malformedRequestsRejected:malformedRequests.length}))
 }finally{rmSync(dir,{recursive:true,force:true})}
