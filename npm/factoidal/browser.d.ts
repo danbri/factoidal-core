@@ -5,6 +5,7 @@
 // system, so a path string rejects.
 
 export type {
+  WikidataRewriteDiagnostic, WikidataRewriteResult,
   FactoidalErrorCode,
   FactoidalErrorPosition,
   NamedNode, BlankNode, Literal, Variable, DefaultGraph, Quad, Term, DataFactory,
@@ -34,7 +35,7 @@ export {
   isValidLiteral,
   canonicalLiteral,
   literalFromValue,
-  ready,
+  ready, wikidataRewrite,
   engineTables,
   sameValue,
   syntaxFor,
