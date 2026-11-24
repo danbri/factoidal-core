@@ -1,9 +1,9 @@
 import '../assets/sparql-result-elements.mjs';
-import { groups } from './example.mjs';
-import { drawRaw, element, mountGallery } from './gallery.mjs';
+import { groups } from './example.mjs?v=gallery-photos';
+import { drawRaw, element, mountGallery } from './gallery.mjs?v=gallery-photos';
 import { queryQlever } from './qlever.mjs';
-import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs';
-import { createResultViews } from './views.mjs';
+import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs?v=gallery-photos';
+import { createResultViews } from './views.mjs?v=gallery-photos';
 
 const $ = id => document.getElementById(id);
 const editor = $('query');
@@ -241,5 +241,5 @@ visualTab.parentElement.onkeydown = event => {
   selectTab(event.key === 'Home' || (event.key !== 'End' && !visualSelected), true);
 };
 view.onchange = draw;
-gallery = mountGallery({ views, onEdit: openEditor, canRun: () => !controller, onChange: controls });
+gallery = mountGallery({ groups, views, onEdit: openEditor, canRun: () => !controller, onChange: controls });
 loadQuery(groups[0].query);

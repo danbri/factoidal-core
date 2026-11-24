@@ -1,7 +1,7 @@
 import {
   axisColumn, commonsImage, dateValue, displayedVars, displayNodes, graphData, hexColour,
   isEntity, isLabel, mapGeometry, numberValue, optionVars, termLabel, viewNames,
-} from './view-data.mjs';
+} from './view-data.mjs?v=gallery-photos';
 
 const colours = ['#12614f', '#1f73a5', '#a74625', '#7e448f', '#695900', '#007989'];
 const defaultColour = colours[0];
