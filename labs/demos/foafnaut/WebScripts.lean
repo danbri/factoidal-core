@@ -174,16 +174,22 @@ structure Before where
   jobs : Nat := 0
   tasks : Nat := 0
   layouts : Nat := 0
+  /-- The measures that styled the whole document, and those that styled part of it
+  (`Page.Reads.wholeStyles`, `partStyles`). -/
+  wholeStyles : Nat := 0
+  partStyles : Nat := 0
   /-- The layout and style reads (`Page.Reads.queries`, `queryOps`): at most 201 rows. -/
   queries : Nat := 0
   queryOps : Array (Nat × Nat) := #[]
 
 def Before.of (s : Page.Session) : Before :=
   { changes := s.changes, steps := s.steps, jobs := s.jobs, tasks := s.tasks, layouts := s.layouts,
+    wholeStyles := s.host.reads.wholeStyles, partStyles := s.host.reads.partStyles,
     queries := s.host.reads.queries, queryOps := s.host.reads.queryOps }
 
 def Before.ofLean (s : LeanJS.Session) : Before :=
   { changes := s.changes, steps := s.steps, jobs := s.jobs, tasks := s.tasks, layouts := s.layouts,
+    wholeStyles := s.host.reads.wholeStyles, partStyles := s.host.reads.partStyles,
     queries := s.host.reads.queries, queryOps := s.host.reads.queryOps }
 
 /-- The reads of each op made since `before`, as "op:count" words: the ops a turn asked for. -/
@@ -484,6 +490,7 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("quiet",.bool s.quiet),
     ("instructions",num (s.steps - before.steps)),("jobs",num (s.jobs - before.jobs)),
     ("tasks",num (s.tasks - before.tasks)),("layouts",num (s.host.reads.layouts - before.layouts)),
+    ("wholeStyles",num (s.host.reads.wholeStyles - before.wholeStyles)),("partStyles",num (s.host.reads.partStyles - before.partStyles)),
     ("reads",num (s.host.reads.queries - before.queries)),("readOps",.string (readOpsSince before.queryOps s.host.reads.queryOps)),
     ("ns",num ns)] ++
     (match animatedOf s.host.reads s.host.anim.now with

@@ -108,8 +108,13 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   let waited=0,timedOut=false;
   const script=page.script;
   const scriptErrors:string[]=[];
+  // What the page's script reads cost the engine (issue 871): measures made, and of them the
+  // ones that styled the whole document and the ones that styled only what was written.
+  const reads={layouts:0,wholeStyles:0,partStyles:0,reads:0,instructions:0};
   if(script){
     const take=async(next:Turn)=>{
+      const t=next as unknown as Record<string,unknown>;
+      for(const k of Object.keys(reads) as (keyof typeof reads)[])if(typeof t[k]==="number")reads[k]+=t[k] as number;
       // the turn's errors, and the console lines of uncaught exceptions
       for(const e of [...(next.errors??[]),...(next.logs??[]).filter(l=>/^Uncaught /.test(String(l)))])if(scriptErrors.length<4)scriptErrors.push(String(e).slice(0,200));
       if(Deno.env.get("REFTEST_DEBUG"))console.error(JSON.stringify({logs:next.logs,errors:next.errors,changed:(next as {changed?:boolean}).changed,clock:(next as {clock?:number}).clock}).slice(0,600));
@@ -197,7 +202,7 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   // What the engine skipped on the page (liberal mode: WebAccept diagnostics), for finding causes.
   const diags=((scene.diagnostics??head.diagnostics) as {feature?:string;message?:string}[]|undefined)??[];
   const skipped=[...new Set(diags.map(d=>`${d.feature??""}: ${d.message??""}`.slice(0,160)))].slice(0,12);
-  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script,...(skipped.length?{skipped}:{}),...(scriptErrors.length?{scriptErrors}:{})};
+  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script,...(script?{scriptCost:reads}:{}),...(skipped.length?{skipped}:{}),...(scriptErrors.length?{scriptErrors}:{})};
 }
 
 const jobs=(await Deno.readTextFile(opt("--list"))).split("\n").filter(Boolean).map(l=>JSON.parse(l));

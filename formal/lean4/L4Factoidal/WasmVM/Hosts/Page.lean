@@ -243,6 +243,11 @@ structure Reads where
   keptNow : Int := 0
   /-- Layouts made for reads. -/
   layouts : Nat := 0
+  /-- Of those, the measures that styled the whole document, and those that styled again only
+the subtrees written since the last (`Host.measureNow`): the cost of script reads after
+writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
+  wholeStyles : Nat := 0
+  partStyles : Nat := 0
   /-- Layout and style reads served (`pageQuery`), and how many of each op (op, count): the
   profile of a script turn at the boundary of scripts and the document (`WebScripts` reports
   each turn's part). A list: a page asks a few kinds of read. -/
@@ -728,6 +733,8 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
           else none
         else none
       | _, _ => none
+    let h := { h with reads := if last.isNone then { h.reads with wholeStyles := h.reads.wholeStyles + 1 }
+      else { h.reads with partStyles := h.reads.partStyles + 1 } }
     let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
