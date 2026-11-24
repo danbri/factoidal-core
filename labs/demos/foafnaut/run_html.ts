@@ -535,20 +535,18 @@ async function main() {
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
   }),width=1280,height=800;
-  // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
-  // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
-  // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
-  // to the first frame of a page with a dozen inline icons. Runs that check every frame keep it.
-  const firstView:PageView&{checks?:boolean}=check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false};
-  const firstFrame=Promise.resolve(document.compile(width,height,firstView));
-  // The first call of the main-thread engine costs 0.4 to 0.6 s (the engine's own start on this
-  // thread). It was the history entry made after this compile, between the page and its first
-  // frame; it is made here, while the worker compiles, when this thread only waits. (While
-  // the page is fetched it would hold up the loader, which works through this thread.)
-  if(worker)try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
-  let frame:HTMLArtifact=await firstFrame;
-  console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
+  // Geometry is taken from the last presented frame. In a window, the first compile
+  // belongs to renderFrame, when the real backing size and chrome are known.
+  let frame:HTMLArtifact|undefined;
+  const noteLoaded=(page:typeof document,artifact:HTMLArtifact,width:number,height:number)=>
+    console.log(JSON.stringify({type:"native-html-loaded",t:Math.round(performance.now()),url:page.url,
+      primitives:artifact.primitiveCount,links:artifact.webRender.links.length,width,height}));
   if(check){
+    const firstFrame=Promise.resolve(document.compile(width,height));
+    // Warm the main-thread engine while the worker runs the CPU check.
+    if(worker)try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
+    const frame=await firstFrame;
+    noteLoaded(document,frame,width,height);
     // Synthetic limits exercise only the published planner ABI. Window rendering
     // always passes the real device limits in createHTMLWindowSession.
     const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",frame as unknown as {width:number;height:number;data:number[]},{
@@ -990,7 +988,7 @@ async function main() {
     if(!session?.frames||!native)return;
     const page=document as Page,request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number}={shell:shell(),x,y,width};
     if(page.graph)request.model=page.graph.model;
-    else if(!candidate&&frame.webRender.links.length){
+    else if(!candidate&&frame?.webRender.links.length){
       let links=linkText.get(frame);
       if(links===undefined){links=JSON.stringify(frame.webRender.links);linkText.set(frame,links);}
       request.links=links;request.pageY=Math.round(pageRow(y));
@@ -1039,7 +1037,7 @@ async function main() {
   };
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
   // The engine's limit for the layers on screen (page-load.mjs scrollLimitOf, shared with the Hub).
-  const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame.webRender.boxes as number[][]|undefined,height,scale);
+  const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame?.webRender.boxes as number[][]|undefined,height,scale);
   const scrollBy=(amount:number)=>{
     const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
@@ -1681,6 +1679,7 @@ async function main() {
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
+      if(result.presented&&!frame)noteLoaded(nextDocument,next,sentWidth,sentHeight);
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
@@ -1855,7 +1854,7 @@ async function main() {
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
           // One small Lean call: the control or the link pressed, and what the composite darkens.
-          const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
+          const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current&&frame?frame.webRender.links as unknown[]:[]);
           const control=answer.control;
           if(control){
             if(answer.rects.length)startPress({control,rects:answer.rects});
@@ -1874,7 +1873,7 @@ async function main() {
         }
         // `:hover` (links only): a new frame when the link under the pointer changes, and only
         // when an author rule names `:hover`.
-        if(event.kind===3&&!press&&layered&&current?.layers.layers.hoverRules){
+        if(event.kind===3&&!press&&layered&&current?.layers.layers.hoverRules&&frame){
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
@@ -1896,7 +1895,7 @@ async function main() {
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
               .catch(error=>scriptFailed(page,error,"click"));
           }
-          const target=engine.hit(frame,released[0],pageRow(released[1]));
+          const target=frame&&engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
             followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute);}
         }
@@ -2086,7 +2085,7 @@ async function main() {
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
       const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
-      if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
+      if(commands&&frame&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
         if(step==="graph")shellCommand("graph","");
