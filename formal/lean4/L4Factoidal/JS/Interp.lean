@@ -6796,7 +6796,8 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
         | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
         | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
-        | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | 11 => if x == posZero then x else Float.exp x - 1
+        | 12 => if x == posZero then x else Float.log (1 + x)
         | 14 => L4Factoidal.Prim.Float16.round x
         | _ => x.toFloat32.toFloat))
     | .mathHypot =>
@@ -12463,10 +12464,7 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
     | .mathExp => num1 Float.exp
     | .mathTrunc => num1 fun x => if x.isFinite then (if x < 0 then -((-x).floor) else x.floor) else x
     | .mathSign => num1 fun x => if x.isNaN then x else if x > 0 then 1 else if x < 0 then -1 else x
-    | .mathRound => num1 fun x =>
-        if !x.isFinite || x == 0 then x
-        else if x < 0 && x ≥ -0.5 then -0.0
-        else (x + 0.5).floor
+    | .mathRound => num1 mathRoundNumber
     | .mathAtan2 => pure (.num (Float.atan2 (← toNum n a0) (← toNum n a1)))
     | .mathPow => pure (.num (jsPow (← toNum n a0) (← toNum n a1)))
     | .mathMax | .mathMin =>
@@ -12905,6 +12903,9 @@ def initRealm : M Unit := do
   defineOwn math "E" (.data (.num 2.718281828459045) false false false)
   defineOwn math "LN2" (.data (.num 0.6931471805599453) false false false)
   defineOwn math "LN10" (.data (.num 2.302585092994046) false false false)
+  defineOwn math "LOG2E" (.data (.num 1.4426950408889634) false false false)
+  defineOwn math "LOG10E" (.data (.num 0.4342944819032518) false false false)
+  defineOwn math "SQRT1_2" (.data (.num 0.7071067811865476) false false false)
   defineOwn math "SQRT2" (.data (.num 1.4142135623730951) false false false)
   -- Map, Set, WeakMap, WeakSet
   for (k, nm) in [(0, "Map"), (1, "Set"), (2, "WeakMap"), (3, "WeakSet")] do

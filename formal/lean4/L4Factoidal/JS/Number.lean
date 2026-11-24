@@ -52,6 +52,30 @@ a `Float` literal in a function body is converted from its decimal digits at eac
 /-- `x` is `-0`. -/
 def isNegZero (x : Float) : Bool := x == 0 && (x.toBits >>> 63) == 1
 
+@[noinline] private def mathHalf : Float := 0.5
+
+/-- ECMA-262 §21.3.2.29. Round to the nearest integer, with ties toward
+positive infinity. Compare the fractional part to one half: adding one
+half to the original value can round across the boundary first. -/
+def mathRoundNumber (x : Float) : Float :=
+  if !x.isFinite || x == posZero then x
+  else if x < posZero && x ≥ -mathHalf then negZero
+  else
+    let lower := x.floor
+    if x - lower < mathHalf then lower else lower + 1
+
+theorem mathRoundNumber_zero (x : Float) (h : (x == posZero) = true) :
+    mathRoundNumber x = x := by
+  simp [mathRoundNumber, h]
+
+theorem mathRoundNumber_nonfinite (x : Float) (h : x.isFinite = false) :
+    mathRoundNumber x = x := by
+  simp [mathRoundNumber, h]
+
+#guard mathRoundNumber (Float.ofBits 0x3fdfffffffffffff) == posZero
+#guard isNegZero (mathRoundNumber (-0.5))
+#guard mathRoundNumber 4503599627370497.0 == 4503599627370497.0
+
 /-- The exact value of a finite double as `sign, num / den` (`XPath4.floatParts`). -/
 def parts (x : Float) : Bool × Nat × Nat := XPath4.floatParts x
 
