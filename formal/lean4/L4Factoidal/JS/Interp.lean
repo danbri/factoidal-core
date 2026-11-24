@@ -920,6 +920,26 @@ def splitOn (s sep : String) : Array String :=
         | none => acc.push (substr s last (Str.jsLength s))
     go (Str.jsLength s + 1) 0 #[]
 
+/-- The substrings of the ordinary string split, after both arguments are converted.
+A zero limit needs no separator search, including when the separator is undefined. -/
+def splitPlain (s : String) (separator : Option String) (limit : Nat) : Array String :=
+  if limit = 0 then #[] else
+  match separator with
+  | none => #[s]
+  | some sep => (splitOn s sep).extract 0 limit
+
+/-- Every ordinary split result contains at most the requested number of substrings. -/
+theorem splitPlain_size_le (s : String) (separator : Option String) (limit : Nat) :
+    (splitPlain s separator limit).size ≤ limit := by
+  cases limit with
+  | zero => simp [splitPlain]
+  | succ n =>
+    cases separator with
+    | none => simp [splitPlain]
+    | some sep => simpa [splitPlain] using Nat.min_le_left (n + 1) (splitOn s sep).size
+
+#print axioms splitPlain_size_le
+
 /-- `parseInt` (§19.2.5). -/
 def parseIntStr (s : String) (radix : Int) : Float :=
   let cs := (trimJs s).toList
@@ -12565,15 +12585,14 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize) s.utf8ByteSize)
           pure (.str (Str.canonical (s ++ String.join parts)))
         | .stringSplit =>
-          match a0 with
-          | .undef => newArray #[.str s]
-          | v =>
-            let sep ← toStr n v
-            let parts := splitOn s sep
-            let lim ← match a1 with
-              | .undef => pure parts.size
-              | l => do pure (toUint32 (← toNum n l))
-            newArray ((parts.extract 0 lim).map .str)
+          -- The limit conversion precedes separator conversion, which can throw even
+          -- for a zero limit. The @@split dispatch has already run for objects.
+          let limit ← match a1 with
+            | .undef => pure 4294967295
+            | l => do pure (toUint32 (← toNum n l))
+          let sep ← toStr n a0
+          let separator := match a0 with | .undef => none | _ => some sep
+          newArray ((splitPlain s separator limit).map .str)
         | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ => n
 

@@ -565,6 +565,27 @@ def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
   else if h < minH then (min (minH*w/h) maxW,minH)
   else (w,h)
 
+/-- Resolve a replaced element's horizontal length. A calculation can come from
+`contentBoxed`, where a percentage size of a border box loses its horizontal edges.
+The intrinsic width pass supplies zero as its indefinite containing width. -/
+private def replacedHorizontal (s : Computed) (available : Float) : CSS.Length → Option Float
+  | .px n => some n
+  | .percent p => if available <= 0 then none else some (available*p)
+  | .calc p offset => if available <= 0 then none else some (max 0 (available*p+offset))
+  | .stretch => if available <= 0 then none else
+    some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
+  | _ => none
+
+/-- A calculated replaced width uses its containing width and the content-box adjustment. -/
+theorem replacedHorizontal_calc (s : Computed) (available p offset : Float) (h : ¬ available ≤ 0) :
+    replacedHorizontal s available (.calc p offset) = some (max 0 (available*p+offset)) := by
+  simp [replacedHorizontal, h]
+
+#print axioms replacedHorizontal_calc
+
+#guard replacedHorizontal {} 120 (.calc 1 (-8)) == some 112
+#guard (replacedHorizontal {} 0 (.calc 1 (-8))).isNone
+
 /-- CSS 2.1 §10.3.2 and §10.6.2, with the limits of §10.4 and §10.7: the used content
 width and height of a replaced element. `intrinsic` is the size of its content when it
 has one, which gives the ratio too; with none, 300 by 150. `available` is the width of
@@ -572,13 +593,7 @@ the containing block. It is 0 while widths are measured, and then a percentage c
 as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
 no definite containing block height. -/
 def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
-  let horizontal := fun (l : CSS.Length) => match l with
-    | .px n => some n
-    | .percent p => if available <= 0 then none else some (available*p)
-    -- `stretch` (CSS Sizing 4 §6.1): the margin box fills the containing block
-    | .stretch => if available <= 0 then none else
-      some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-    | _ => none
+  let horizontal := replacedHorizontal s available
   let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
   let minW := (horizontal s.minWidth).getD 0
   let maxW := (horizontal s.maxWidth).getD unbounded
@@ -611,12 +626,7 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
   | some (rn,rd) =>
     let natural := intrinsic.any fun (w,h) => w > 0 && h > 0
     if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
-    let horizontal := fun (l : CSS.Length) => match l with
-      | .px n => some n
-      | .percent p => if available <= 0 then none else some (available*p)
-      | .stretch => if available <= 0 then none else
-        some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-      | _ => none
+    let horizontal := replacedHorizontal s available
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
     let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
     let maxW := (horizontal s.maxWidth).map fun m => LU.ofPx (max 0 m)
@@ -658,7 +668,7 @@ limits is 300 by 150, the default object size (CSS Images 3 §4.1). -/
 theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto) (hh : s.height = .auto)
     (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
     replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
-  simp [replacedNatural, hw, hh, hmw, hxw, hmh, hxh]
+  simp [replacedNatural, replacedHorizontal, hw, hh, hmw, hxw, hmh, hxh]
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/

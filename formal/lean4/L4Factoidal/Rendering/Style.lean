@@ -1142,7 +1142,7 @@ def length (s : String) : Except String Length := do
     if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
-  | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .auto | .vw _ | .vh _ | .viewportMath _ _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
 /-- The used `letter-spacing` and `word-spacing` in px: a percentage is of this element's font
@@ -1153,6 +1153,9 @@ def Computed.wordSpacingPx (s : Computed) : Float := (resolve s.fontSize s.wordS
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
+  | .viewportMath expr fontSize =>
+    ((viewportSizePixels expr fontSize (tableRat width) (tableRat height)).map
+      fun n => .px (ratToFloat n)).getD .auto
   | other => other
 
 def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
@@ -1322,10 +1325,18 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | _ => throw "unsupported CSS border style"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
-private def limit (source : String) : Except String Length := do
+private def sizeLength (fontSize : Float) (source : String) : Except String Length :=
+  match length source with
+  | .ok value => .ok value
+  | .error error =>
+    match if source.contains '(' then viewportSizeMath fontSize source else none with
+    | some value => .ok value
+    | none => .error error
+
+private def limit (fontSize : Float) (source : String) : Except String Length := do
   let v := (trim source).toLower
   if v == "none" || v == "auto" then return .auto
-  match ← length v with
+  match ← sizeLength fontSize v with
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
@@ -1470,8 +1481,8 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "grid" => return {s with display := .grid}
     | "inline-grid" => return {s with display := .inlineGrid}
     | _ => throw "unsupported CSS display"
-  | "width" => return {s with width := ← length d.value}
-  | "height" => return {s with height := ← length d.value}
+  | "width" => return {s with width := ← sizeLength s.fontSize d.value}
+  | "height" => return {s with height := ← sizeLength s.fontSize d.value}
   | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
@@ -1749,10 +1760,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "super" => return {s with verticalAlign := .baseline, shift := 1}
     | "sub" => return {s with verticalAlign := .baseline, shift := -1}
     | _ => throw "unsupported CSS vertical-align"
-  | "min-width" => return {s with minWidth := ← limit d.value}
-  | "max-width" => return {s with maxWidth := ← limit d.value}
-  | "min-height" => return {s with minHeight := ← limit d.value}
-  | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "min-width" => return {s with minWidth := ← limit s.fontSize d.value}
+  | "max-width" => return {s with maxWidth := ← limit s.fontSize d.value}
+  | "min-height" => return {s with minHeight := ← limit s.fontSize d.value}
+  | "max-height" => return {s with maxHeight := ← limit s.fontSize d.value}
   | "object-position" =>
     let some value := tableComputed s.fontSize d.property d.value | throw "invalid CSS object-position"
     let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
