@@ -226,6 +226,46 @@ private def firstFill (html extra : String) : Except String (Option (Float × Fl
 
 -- A margin on inline SVG moves it; it no longer refuses the page.
 #guard (boxes "<div><svg id='s' width='10' height='10' style='margin:4px'></svg></div>").map (·.head?) == .ok (some ("s",4,4,10,10))
+
+-- `content: url(...)` (CSS Content 3 §2.1, CSS 2.1 §12.2, issue 874): the image is a replaced
+-- box of its natural size (40 by 20 here) in the pseudo-element, between the texts beside it.
+-- `Generated.fill` adds the image as a node `Generated.imageName` after the pseudo-element's
+-- own two nodes; the picture is given for it by node number, as the engine does after the
+-- cascade (`WebDocument.generatedImages`).
+private def generated (html extra : String) (imageNode : Nat) : Except String (Scene × Array Box) := do
+  let dom := DOM.parseHtmlDocument html
+  Layout.render dom (← CSS.parse (css ++ extra)) font noSVG 200 100 1 {} fun id =>
+    if id == dom.size + imageNode then some picture else none
+private def generatedWords (html extra : String) (imageNode : Nat := 2) : Except String (List (String × Float)) :=
+  (generated html extra imageNode).map fun r => r.1.glyphRuns.toList.map fun run => (run.text,(run.glyphs[0]?.map (·.x)).getD 0)
+private def generatedBox (html extra : String) (imageNode : Nat := 2) :
+    Except String (Option (Float × Float × Float × Float)) := do
+  let dom := DOM.parseHtmlDocument html
+  let (_,found) ← Layout.render dom (← CSS.parse (css ++ extra)) font noSVG 200 100 1 {} fun id =>
+    if id == dom.size + imageNode then some picture else none
+  return found.toList.findSome? fun b =>
+    if CSS.attrValue (dom.get b.source) "id" == "a" then some (b.x,b.y,b.width,b.height) else none
+private def beside := "<p id=a>AA</p>"
+-- the image takes its 40 px, and the text starts after it
+#guard generatedWords beside "#a::before{content:url(a.png)}" == .ok [("AA",40)]
+-- after: the text first
+#guard generatedWords beside "#a::after{content:url(a.png)}" == .ok [("AA",0)]
+-- the line is as high as the image (it stands on the baseline); the 7 px is the paragraph's margin
+#guard generatedBox beside "#a::before{content:url(a.png)}" == .ok (some (0,7,200,20))
+-- no picture (the host did not give the image, or it did not decode): nothing is drawn, and the
+-- text is where it is with no pseudo-element (CSS 2.1 §12.2)
+#guard generatedWords beside "#a::before{content:url(a.png)}" (imageNode := 9) == .ok [("AA",0)]
+#guard generatedBox beside "#a::before{content:url(a.png)}" (imageNode := 9) == .ok (some (0,7,200,7))
+-- a string, the image, a string: "x" first, the image next, "y" last (the image is the third
+-- node added; the second text is the fourth)
+#guard generatedWords beside "#a::before{content:'x' url(a.png) 'y'}" == .ok [("x",0),("y",46),("AA",52)]
+-- the image is as large as its natural size, and `width` and `height` of the pseudo-element
+-- do not resize an inline box (CSS 2.1 §10.3.1): the same
+#guard generatedWords beside "#a::before{content:url(a.png);width:100px}" == .ok [("AA",40)]
+-- two images
+#guard generatedWords beside "#a::before{content:url(a.png) url(a.png)}" == .ok [("AA",40)]
+-- a counter beside an image
+#guard generatedWords beside "#a::before{content:'1' url(a.png)}" == .ok [("1",0),("AA",46)]
 end L4Factoidal.Rendering.ReplacedTests
 
 #print axioms L4Factoidal.Rendering.Layout.pictureOffset_default

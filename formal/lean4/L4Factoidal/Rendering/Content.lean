@@ -19,8 +19,13 @@ inductive Piece where
   | text (s : String)
   /-- `attr(name)`: the value of that attribute of the originating element. -/
   | attr (name : String)
-  /-- An image, `no-open-quote`: nothing in this profile. -/
+  /-- An image that is not a `url()`, `no-open-quote`: nothing in this profile. -/
   | blank
+  /-- `url(...)` (CSS Content 3 §2.1, CSS 2.1 §12.2): an image, drawn as an inline replaced
+  box of its natural size. The URL is as the sheet gave it (the engine makes it absolute
+  against the sheet's URL when it reads the sheet, CSS Values 4 §4.5). An image that cannot be
+  displayed draws nothing. -/
+  | image (url : String)
   /-- `counter(name, style)` (CSS 2.1 §12.4; CSS Lists 3 §4.3): the innermost counter of
   that name, in that style (`decimal` when none is given). -/
   | counter (name style : String)
@@ -58,10 +63,13 @@ def commaParts (args : List CssValues.CV) : List (List CssValues.CV) :=
       | [] => [[a]]
       | c :: rest => (a :: c) :: rest) [[]]).map CssValues.stripWs
 
+/-- The part for `url(u)`: an empty URL names no image (CSS Images 3 §4.1). -/
+def imageOf (u : String) : Piece := if (u.trimAscii.toString).isEmpty then .blank else .image u.trimAscii.toString
+
 /-- One component of the value as a part; `none` when it is not one. -/
 def piece : CssValues.CV → Option Piece
   | .tok (.str s) => some (.text s)
-  | .tok (.url _) => some .blank
+  | .tok (.url u) => some (imageOf u)
   | .tok (.ident k) =>
     match CssValues.lower k with
     | "open-quote" => some (.text "\u201C")
@@ -70,7 +78,11 @@ def piece : CssValues.CV → Option Piece
     | _ => none
   | .fn name args =>
     let name := CssValues.lower name
-    if name == "attr" then
+    if name == "url" then
+      match CssValues.stripWs args with
+      | [.tok (.str u)] => some (imageOf u)
+      | _ => none
+    else if name == "attr" then
       match CssValues.stripWs args with
       | .tok (.ident a) :: _ => some (.attr a)
       | _ => none
@@ -116,7 +128,7 @@ def chars (attr : String → String) : List Piece → List Char → List Char
     let more := match p with
       | .text s => s.toList
       | .attr name => (attr name).toList
-      | .blank | .counter .. | .counters .. => []
+      | .blank | .image _ | .counter .. | .counters .. => []
     chars attr rest ((acc ++ more).take maxChars)
 
 /-- The text of a box with these parts. -/
@@ -146,7 +158,7 @@ theorem chars_prefix (attr : String → String) (ps : List Piece) (acc : List Ch
       have keep : acc <+: (acc ++ (match p with
           | .text s => s.toList
           | .attr name => (attr name).toList
-          | .blank | .counter .. | .counters .. => [])).take maxChars := by
+          | .blank | .image _ | .counter .. | .counters .. => [])).take maxChars := by
         rw [List.prefix_take_iff]
         exact ⟨List.prefix_append _ _, h⟩
       exact List.IsPrefix.trans keep (ih _ (by simp [List.length_take]; omega))
@@ -213,14 +225,22 @@ theorem read_parts_le (value : String) (ps : List Piece) (h : read value = some 
 #guard read "counters(item, \".\")" == some (.parts [.counters "item" "." "decimal"])
 #guard read "counters(item, \".\", lower-alpha)" == some (.parts [.counters "item" "." "lower-alpha"])
 #guard read "counter(1)" == none
-#guard read "url(a.png)" == some (.parts [.blank])
-#guard read "url(a.png) / \"alt\"" == some (.parts [.blank])
+#guard read "url(a.png)" == some (.parts [.image "a.png"])
+#guard read "url(a.png) / \"alt\"" == some (.parts [.image "a.png"])
+#guard read "url(\"a b.png\")" == some (.parts [.image "a b.png"])
+#guard read "url('s.svg')" == some (.parts [.image "s.svg"])
+#guard read "URL( \"s.svg\" )" == some (.parts [.image "s.svg"])
+#guard read "\"a\" url(i.png) \"b\"" == some (.parts [.text "a", .image "i.png", .text "b"])
+#guard read "url(\"\")" == some (.parts [.blank])
+#guard read "url(a.png b.png)" == none
+#guard read "linear-gradient(red, blue)" == some (.parts [.blank])
 #guard read "\"x\" / \"alt\"" == some (.parts [.text "x"])
 #guard read "" == none
 #guard read "12px" == none
 #guard read "\"a\" bogus" == none
 #guard read "inherit" == none
 #guard text (fun _ => "v") [.text "a", .attr "x", .blank, .text "b"] == "avb"
+#guard text (fun _ => "v") [.text "a", .image "i.png", .text "b"] == "ab"
 #guard text (fun _ => "") [] == ""
 #guard (text (fun _ => String.ofList (List.replicate 70000 'x')) [.attr "a", .attr "a"]).length == maxChars
 
@@ -390,5 +410,34 @@ def withCounters (values : String → List Int) (ps : List Piece) : List Piece :
 
 #guard withCounters (fun _ => [1, 2]) [.counter "a" "decimal", .counters "a" "." "decimal"] ==
   [.text "2", .text "1.2"]
+
+/-! ### Images among the parts
+
+`content: "a" url(i.png) "b"` is a text, an image and a text, in order (CSS 2.1 §12.2). -/
+
+/-- A run of text, or an image, of a pseudo-element's content. -/
+inductive Seg where
+  | text (s : String)
+  | image (url : String)
+  deriving Repr, BEq, DecidableEq
+
+/-- Whether a value has an image to draw. -/
+def hasImage (ps : List Piece) : Bool := ps.any fun p => match p with | .image _ => true | _ => false
+
+/-- The parts as runs of text and images in order: the text of each run of non-image parts
+(`text`, so each at most `maxChars` characters), then the image. At most `ps.length + 1`
+segments. -/
+def segments (attr : String → String) (ps : List Piece) : List Seg :=
+  let (segs, run) := ps.foldl (fun (acc : List Seg × List Piece) p => match p with
+    | .image u => ((if acc.2.isEmpty then acc.1 else .text (text attr acc.2.reverse) :: acc.1) |> (Seg.image u :: ·), [])
+    | other => (acc.1, other :: acc.2)) ([], [])
+  (if run.isEmpty then segs else .text (text attr run.reverse) :: segs).reverse
+
+#guard segments (fun _ => "v") [.text "a", .attr "x", .image "i.png", .text "b"] == [.text "av", .image "i.png", .text "b"]
+#guard segments (fun _ => "") [.image "i.png"] == [.image "i.png"]
+#guard segments (fun _ => "") [.image "a", .image "b"] == [.image "a", .image "b"]
+#guard segments (fun _ => "") [.text "x"] == [.text "x"]
+#guard hasImage [.text "x", .image "u"]
+#guard !hasImage [.text "x", .blank]
 
 end L4Factoidal.Rendering.CSS.Content

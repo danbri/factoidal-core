@@ -281,6 +281,13 @@ def counterScopes (d : Dom) (styles : Array Computed) (makesBox record : Nat →
           stack := n.kids.toList.map ((true, ·)) ++ [(false, k)] ++ stack
   return out
 
+/-- The local name of the node that stands for an image of a `content` value (CSS 2.1 §12.2),
+a child of its pseudo-element; its `src` attribute is the image's URL. It is `inline` like the
+text beside it and is laid out as a replaced box when the host gave the image
+(`inlineItems`: `pictures id`); with no picture it draws nothing. No parser makes an element of
+this name. -/
+def imageName : String := "::content-image"
+
 /-- After the cascade: each pseudo-element whose `content` makes a box gets its text; the
 others are `display: none`. `base` is the size of the page's tree; `owners` the spots in
 the order `derive` added them. -/
@@ -306,8 +313,31 @@ def fill (base : Nat) (owners : Array Spot) (dom : Dom) (styles : Array Computed
     | some ps =>
       let values := fun (name : String) =>
         (((scopes[pe]?).getD []).filter (·.1 == name)).reverse.map (·.2.1)
-      let text := Content.text (attrValue (dom.get owners[i].owner)) (Content.withCounters values ps)
-      dom := {nodes := dom.nodes.modify (pe+1) fun n => {n with data := text}}
+      let ps := Content.withCounters values ps
+      let attr := attrValue (dom.get owners[i].owner)
+      if !Content.hasImage ps then
+        dom := {nodes := dom.nodes.modify (pe+1) fun n => {n with data := Content.text attr ps}}
+      else
+        -- images among the parts: the first text stays in the text node `pe+1`; the other
+        -- texts and the images are nodes added at the end, children of `pe` in order
+        let (first,more) := match Content.segments attr ps with
+          | .text t :: rest => (t,rest)
+          | segs => ("",segs)
+        dom := {nodes := dom.nodes.modify (pe+1) fun n => {n with data := first}}
+        let inner := (styles[pe+1]?).getD {}
+        let doc := (dom.get pe).doc
+        let mut kids := #[pe+1]
+        for seg in more do
+          let id := dom.size
+          let node : DOM.Node := match seg with
+            | .text t => {type := .text, parent := some pe, data := t, doc := doc}
+            | .image u =>
+              let src : DOM.Attr := {lname := "src", value := u}
+              {type := .element, ns := some htmlNS, lname := imageName, parent := some pe, attrs := #[src], doc := doc}
+          dom := {nodes := dom.nodes.push node}
+          styles := styles.push inner
+          kids := kids.push id
+        dom := {nodes := dom.nodes.modify pe fun n => {n with kids := kids}}
     | none => styles := styles.modify pe fun s => {s with display := .none}
   return (dom,styles)
 
