@@ -61,8 +61,18 @@ private def signingErrorName : StateSigningError → String
   | .preparation .badIndices => "bad_indices"
   | .preparation .notConflicting => "not_conflicting"
   | .preparation .noCommonIndices => "no_common_indices"
-  | .preparation .signing _ => "signing_error"
+  | .preparation (.signing _) => "signing_error"
   | .registry e => errorName e
+
+-- Check the nested error transport directly, including the defensive
+-- signing-error arm that valid context admission normally prevents.
+#guard signingErrorName (.preparation .resourceLimit) == "resource_limit"
+#guard signingErrorName (.preparation .badIndices) == "bad_indices"
+#guard signingErrorName (.preparation .notConflicting) == "not_conflicting"
+#guard signingErrorName (.preparation .noCommonIndices) == "no_common_indices"
+#guard signingErrorName (.preparation (.signing .domainTypeWidth)) == "signing_error"
+#guard signingErrorName (.preparation (.signing .versionWidth)) == "signing_error"
+#guard signingErrorName (.preparation (.signing (.container .rootWidth))) == "signing_error"
 
 private def slotVerdictName : MainnetSlotCandidateVerdict → String
   | .slotRootMismatch => "slot_root_mismatch"
