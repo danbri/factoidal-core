@@ -3544,9 +3544,10 @@ changes the declarations of that element alone: the styles that can differ are i
 and those of its descendants (by inheritance). `restyleWith` gives the styles of the
 whole tree from the styles before the change by styling those subtrees again, so a
 script that writes one element's style and reads a computed value pays for one subtree,
-not for the document. This holds only when no rule reads the `style` attribute
-(`readsStyleAttribute`) and the text scale is 1 (`computeAllWith` scales at its end);
-the caller (`WebDocument.measure`) checks both. -/
+not for the document. This holds only when the text scale is 1 (`computeAllWith` scales
+at its end; `WebDocument.measure` checks it), and, when a rule reads the `style` attribute
+(`readsStyleAttribute`), only with the subtree of the element's parent as the root, since
+its later siblings may then match other rules (`Page.Host.measureNow` does this). -/
 
 /-- The styles `base` with the subtrees of `roots` styled again, parents before children
 (the step of `computeAllWith`). `base` must be the styles of the same tree with text

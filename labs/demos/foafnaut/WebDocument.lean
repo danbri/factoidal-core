@@ -3083,16 +3083,19 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     return ({ dom := dom, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } :
       Rendering.ComputedGeneric.View) : Except String Rendering.ComputedGeneric.View)
   -- what this measure leaves for the next (`Page.Carry`): for a page with no shadow tree, at
-  -- text scale 1, whose rules do not read the `style` attribute
+  -- text scale 1 (with rules that read the `style` attribute too: `Carry.readsStyle`)
   let left : Thunk (Option WasmVM.Hosts.Page.Carry) := Thunk.mk fun _ =>
     match styled.get, inputs.get with
     | .ok view, .ok (_,rules,none,state,textScale) =>
-      if textScale == 1 && (carry.isSome || !Rendering.CSS.readsStyleAttribute rules) then
+      if textScale == 1 then
         some { index := index.get, rules := rules, state := {state with animated := []}, styles := view.styles,
                -- (the rules are those of the measure before when it left them)
                parentOnly := match carry with
                  | some (c,_) => c.parentOnly
-                 | none => Rendering.CSS.attributesReachParentOnly rules }
+                 | none => Rendering.CSS.attributesReachParentOnly rules,
+               readsStyle := match carry with
+                 | some (c,_) => c.readsStyle
+                 | none => Rendering.CSS.readsStyleAttribute rules }
       else none
     | _, _ => none
   -- the position of each computed style name, for the reads by name of the animation engine
