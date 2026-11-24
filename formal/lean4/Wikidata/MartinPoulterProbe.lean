@@ -1,7 +1,7 @@
-/- Probe original WDQS corpus text without modifying prefixes. A rejection is
+/- Probe original WDQS corpus text with WDQS default prefixes. A rejection is
 an observation, not evidence that a query is invalid on WDQS. -/
 import Lean
-import L4Factoidal.SPARQL.Parser
+import L4Factoidal.Wikidata.Parser
 open Lean L4Factoidal.SPARQL
 private def records (text : String) : Except String (Array Json) := do
   let doc ← Json.parse text
@@ -12,7 +12,7 @@ private def inspect (j : Json) : Except String Json := do
   let query ← requiredString j "query"
   let page ← requiredString j "page"
   let ordinal ← j.getObjVal? "ordinal"
-  let (accepted, message) := match parseSparql query none .v11 with
+  let (accepted, message) := match L4Factoidal.Wikidata.parseQuery query none .v11 with
     | .ok _ => (true, "")
     | .error e => (false, e.msg)
   pure <| Json.mkObj [("page", toJson page), ("ordinal", ordinal),

@@ -18,6 +18,6 @@ captures current revisions and requires internet. It extracts SPARQL/SPARQL2
 `query=` templates whose whitespace-delimited closing braces end a line; it
 does not expand templates or harvest URL-encoded links. Matching template starts
 and extracted counts agree (579), but this does not establish wider completeness.
-The Lean probe does not modify prefixes or execute queries. WDQS implicit
-prefixes and extensions can cause a rejection without making a query invalid in
-WDQS. From formal/lean4 run `lake env lean --run Wikidata/MartinPoulterProbe.lean`.
+The Lean probe supplies WDQS default prefixes without modifying the source; it
+does not execute queries. WDQS extensions can cause a rejection without making
+a query invalid in WDQS. From formal/lean4 run `lake env lean --run Wikidata/MartinPoulterProbe.lean`.
