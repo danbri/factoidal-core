@@ -1031,13 +1031,41 @@ theorem insetPx_noBase (v : View) (id : Nat) (name value : String) (h : insetBas
   unfold insetPx
   split <;> simp [h]
 
+/-- The styled viewport edge, in CSS pixels of the same viewport that layout uses. A
+deferred edge is the cascade's winner even when it came from a logical shorthand or
+a custom property. -/
+def viewportEdgeValue (c : CSS.Computed) (width height : Float) (name : String) : Option String :=
+  if c.pos.viewportMargins.isEmpty && c.pos.viewportPadding.isEmpty then none
+  else do
+    let (edges, side) ← match name with
+      | "margin-top" => some (c.pos.viewportMargins, 0)
+      | "margin-right" => some (c.pos.viewportMargins, 1)
+      | "margin-bottom" => some (c.pos.viewportMargins, 2)
+      | "margin-left" => some (c.pos.viewportMargins, 3)
+      | "padding-top" => some (c.pos.viewportPadding, 0)
+      | "padding-right" => some (c.pos.viewportPadding, 1)
+      | "padding-bottom" => some (c.pos.viewportPadding, 2)
+      | "padding-left" => some (c.pos.viewportPadding, 3)
+      | _ => none
+    let (_, edge) ← edges.find? (fun (i, _) => i == side)
+    return ComputedValues.px (edge.pixels width height)
+
+theorem viewportEdgeValue_paddingTop (c : CSS.Computed) (w h fraction : Float) :
+    viewportEdgeValue {c with pos := {c.pos with viewportPadding := [(0, .height fraction)]}}
+      w h "padding-top" = some (ComputedValues.px (fraction * h)) := by
+  simp [viewportEdgeValue, CSS.ViewportEdge.pixels]
+
+#print axioms viewportEdgeValue_paddingTop
+
 /-- The resolved value of a longhand (CSSOM §9.1): for a property of the layout profile, the
 profile's answer, or the declaration's computed value where that is the answer
 (`declaredWins`, `absoluteWins`); for any other, the computed value by the property table. -/
 def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
   let name := physicalNameOf v id name
+  let c := v.styles[id]?.getD {}
   let also := alsoOf v id name
-  if name == "line-height" then
+  if let some edge := viewportEdgeValue c (Float.ofNat v.viewportW) (Float.ofNat v.viewportH) name then edge
+  else if name == "line-height" then
     -- CSSOM §9: the resolved line height is the used one, `normal` or a length; the
     -- profile keeps a number as a factor it shows as `normal`, so the table answers
     let c := computedOf v id name
@@ -1045,7 +1073,7 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
     | [.tok (.num x _)] => CssValues.fmtRat (x * (numCtx v id).fontSize) ++ "px"
     | _ => c
   else
-  match (ComputedValues.values (v.styles[id]?.getD {})).lookup name with
+  match (ComputedValues.values c).lookup name with
   | some value =>
     -- with flow-relative declarations in play, a border side (the profile has one border
     -- for all sides) and any side or size in a vertical writing mode (the profile lays out
