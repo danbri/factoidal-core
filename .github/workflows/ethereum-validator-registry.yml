@@ -16,6 +16,7 @@ jobs:
         working-directory: formal/lean4
     env:
       LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
       LAKE_ARTIFACT_CACHE: 'false'
     steps:
       - uses: actions/checkout@v4
@@ -23,6 +24,7 @@ jobs:
         with:
           lake-package-directory: formal/lean4/ethereum-consensus
           build: false
+          axiom-audit: false
           test: false
           use-github-cache: false
           use-mathlib-cache: false
@@ -30,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 ethereum-consensus/scripts/check-validator-registry.py --self-test
-          python3 - <<'PY'
+          python3 - <<'PY' | tee "$RUNNER_TEMP/registry-source-pins.json"
           import json, pathlib, runpy, subprocess
           p = pathlib.Path("ethereum-consensus").resolve()
           a = runpy.run_path(str(p / "scripts/check-pure-lean-dependencies.py"))
@@ -58,12 +60,14 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -v 8388608
-          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry
-          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/RegistryProofMain.lean"
+          ulimit -c 0
+          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 2>&1 | tee "$RUNNER_TEMP/registry-libraries.log"
+          lake -d ethereum-consensus -v build ssz-validator-registry 2>&1 | tee "$RUNNER_TEMP/registry-native-build.log"
       - name: Capture actual theorem axioms and audit compiled imports
         run: |
           set -euo pipefail
           ulimit -v 8388608
+          ulimit -c 0
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ValidatorRegistry.lean" | tee "$RUNNER_TEMP/registry-axioms.log"
           python3 - <<'PY'
           import os, pathlib, re, runpy, subprocess
@@ -78,17 +82,29 @@ jobs:
           a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
           graph = a["source_graph"](p, a["config_roots"](p) | {"RegistryProofMain"})
           prefix = pathlib.Path(subprocess.check_output(["lake","-d","ethereum-consensus","env","lean","--print-prefix"],text=True).strip())
-          a["audit_build"](p/".lake/build",prefix,graph)
+          compiled = a["audit_build"](p/".lake/build",prefix,graph)
+          assert {"RegistryProofMain", "EthereumConsensus.SSZ.ValidatorRegistry"} <= set(compiled)
           PY
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-validator-registry \
+            --link-log "$RUNNER_TEMP/registry-native-build.log" \
+            --report "$RUNNER_TEMP/registry-dependencies.json"
       - name: Execute actual registry proof functions against independent oracle
         run: |
           set -euo pipefail
           ulimit -v 8388608
-          python3 ethereum-consensus/scripts/check-validator-registry.py lake -d ethereum-consensus env lean --run "$PWD/ethereum-consensus/RegistryProofMain.lean" | tee "$RUNNER_TEMP/registry-results.log"
+          ulimit -c 0
+          python3 ethereum-consensus/scripts/check-validator-registry.py ethereum-consensus/.lake/build/bin/ssz-validator-registry | tee "$RUNNER_TEMP/registry-results.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validator-registry-evidence
           path: |
+            ${{ runner.temp }}/registry-source-pins.json
+            ${{ runner.temp }}/registry-libraries.log
+            ${{ runner.temp }}/registry-native-build.log
+            ${{ runner.temp }}/registry-dependencies.json
             ${{ runner.temp }}/registry-axioms.log
             ${{ runner.temp }}/registry-results.log
