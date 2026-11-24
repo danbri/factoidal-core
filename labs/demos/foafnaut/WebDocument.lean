@@ -2338,8 +2338,9 @@ again at the size they are shown (`Layout.fitScale` of the box and `object-fit`)
 backgrounds are (`redrawVectorBackgrounds`): for a box whose width and height are lengths
 in px (content box sizing), at most `maxVectorRedraws`, each with its own paint-table id.
 The picture keeps the image's natural size, so it is placed as before. -/
-def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat × String))
-    (styles : Array Rendering.CSS.Computed) (pictures : Rendering.Layout.Pictures) : Rendering.Layout.Pictures := Id.run do
+@[noinline] def redrawnPictures (images : List (String × ByteArray)) (keys : List (Nat × String))
+    (styles : Array Rendering.CSS.Computed) (pictures : Rendering.Layout.Pictures) :
+    Std.TreeMap Nat Rendering.Layout.Picture := Id.run do
   let mut found : Std.TreeMap Nat Rendering.Layout.Picture := {}
   for (id,key) in keys do
     if found.size ≥ maxVectorRedraws then break
@@ -2364,8 +2365,13 @@ def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat
     let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
     let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
     found := found.insert id made
-  if found.isEmpty then return pictures
-  return fun id => match found.get? id with
+  return found
+
+/-- `pictures` with the pictures of `found` in place of theirs. -/
+def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : Rendering.Layout.Pictures) :
+    Rendering.Layout.Pictures :=
+  if found.isEmpty then pictures
+  else fun id => match found.get? id with
     | some p => some p
     | none => pictures id
 
@@ -2487,9 +2493,12 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- of a layout also answers the SVG refusals below and `Laid.styles` (each cascaded the
   -- document again before). The page's own tree takes the cascade made above.
   -- SVG images of `img` shown larger than their pictures, drawn again at their size
-  let pictures := match made with
-    | .ok (_,styles) => redrawVectorPictures images (WebRender.htmlImageKeys dom documentURL) styles pictures
-    | .error _ => pictures
+  -- (a map, made once here: as a function-valued `match`, it was made again for each
+  -- picture the layout asked for; see `WebRender.picturesOf`)
+  let redrawn : Std.TreeMap Nat Rendering.Layout.Picture := match made with
+    | .ok (_,styles) => redrawnPictures images (WebRender.htmlImageKeys dom documentURL) styles pictures
+    | .error _ => {}
+  let pictures := withPictures redrawn pictures
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once

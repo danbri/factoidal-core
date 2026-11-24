@@ -413,11 +413,20 @@ def pageStore (keys : List String) (images : List (String × ByteArray)) : Nativ
   NativeSVG.imageStoreOf keys images vectorPicture
 
 /-- The picture of each `img` whose image decoded within the limits of the store. -/
-def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
-  let found := keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
+@[noinline] def picturesMap (store : NativeImage.Store) (keys : List (Nat × String)) :
+    Std.TreeMap Nat Rendering.Layout.Picture :=
+  keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
     match store.get? key with
     | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap,store.natural key⟩
     | _ => out) {}
+
+/-- The pictures of `keys` in `store`. The map is made once, by `picturesMap`, which is not
+inlined: when the compiler inlined a definition like this one into its caller and
+eta-expanded the result, each call of the function made the map again (2026-11-24: the
+image keys of BBC News were worked out again for each picture the layout asked for, about
+40% of its layout time). -/
+def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
+  let found := picturesMap store keys
   fun id => found.get? id
 
 /-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
