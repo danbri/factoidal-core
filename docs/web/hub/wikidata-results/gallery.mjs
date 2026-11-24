@@ -1,6 +1,5 @@
-import { groups } from './example.mjs';
 import { batchSize, queryQlever, runBatch } from './qlever.mjs';
-import { viewDirectives, viewNames } from './view-data.mjs';
+import { viewDirectives, viewNames } from './view-data.mjs?v=gallery-photos';
 
 const labels = { ...viewNames, Ask: 'Boolean result', Rdf: 'RDF triples' };
 
@@ -67,7 +66,7 @@ function countText(result) {
   return ' · ' + n.toLocaleString() + (n === 1 ? ' row' : ' rows');
 }
 
-export function mountGallery({ views, onEdit, canRun, onChange }) {
+export function mountGallery({ groups, views, onEdit, canRun, onChange }) {
   const root = document.getElementById('gallery');
   const nav = document.getElementById('gallery-nav');
   const batchButton = document.getElementById('batch-run');
