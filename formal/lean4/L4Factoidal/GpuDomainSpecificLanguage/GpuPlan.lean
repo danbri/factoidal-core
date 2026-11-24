@@ -1,6 +1,7 @@
 import Lean.Data.Json
 import L4Factoidal.GpuDomainSpecificLanguage.GpuFastPath
 import L4Factoidal.GpuDomainSpecificLanguage.GraphJson
+import L4Factoidal.GpuDomainSpecificLanguage.MapZipPlan
 
 /-!
 # PVGraph GPU plan: Lean owns lowering, the host only allocates and dispatches
@@ -153,10 +154,12 @@ private def record (st : State) (node : String) (shape : Shape)
   { st with shapes := (node,shape) :: st.shapes, steps := step :: st.steps }
 
 private def kernelStep (node a b : String) (code words constant aw bw : Nat)
-    (shaderName : String := "word") : Json :=
+    (shaderName : String := "") : Json :=
   let lanes := if code == 15 then constant else words
+  let selectedShader := if shaderName != "" then shaderName
+    else if 1 ≤ code && code ≤ 5 then "mapZip" else "word"
   obj [("kind",txt "kernel"),("node",txt node),
-    ("shader",txt shaderName),("code",num code),("a",txt a),("b",txt b),
+    ("shader",txt selectedShader),("code",num code),("a",txt a),("b",txt b),
     ("constant",num constant),("words",num words),
     ("config",toJson [code,words,constant,aw,bw]),
     ("workgroups",num (max 1 ((lanes + 63) / 64)))]
@@ -187,7 +190,7 @@ private def emitScan : Nat → State → String → Nat → String → Except St
 
 /-- Generate an all-or-nothing GPU plan from the canonical admitted PVGraph
     and *only input sizes*. The actual values remain in typed host buffers. -/
-def compile? (rawGraph inputSizes : Json) : Except String Json := do
+def compileCandidate? (rawGraph inputSizes : Json) : Except String Json := do
   let certified ← GraphJson.decodeCertified? rawGraph
   let doc := certified.graph
   let rawNodes ← (← rawGraph.getObjVal? "nodes").getArr?
@@ -297,11 +300,40 @@ def compile? (rawGraph inputSizes : Json) : Except String Json := do
   pure (obj [
     ("version",txt "pvgraph-gpu/0.2"),
     ("shader",txt shader),
-    ("shaders",obj [("word",txt shader),("scan",txt scanShader)]),
+    ("shaders",obj [("word",txt shader),("scan",txt scanShader),
+      ("mapZip",txt MapZipShader.source)]),
     ("requiresInputValidation",toJson (doc.nodes.any
       (fun n => n.op == "u32.segment.expand"))),
     ("steps",toJson st.steps.reverse),
     ("outputs",toJson st.outputs.reverse)])
+
+/-- The shipping compiler validates the candidate's actual JSON against the
+    admitted source graph before exposing it to the host. The map/zip certificate
+    is structural; source semantics are proved separately in MapZipRefinement. -/
+def compile? (rawGraph inputSizes : Json) : Except String Json := do
+  let candidate ← compileCandidate? rawGraph inputSizes
+  let _ ← MapZipPlan.validate? rawGraph inputSizes candidate
+  return candidate
+
+/-- Kind: shipping producer boundary.
+Says: every successful public GPU plan has structural evidence tied to its
+actual decoded graph, original JSON fields and selected map/zip shader bytes.
+Does not say: a host, GPU compiler or device respected that plan. -/
+theorem compile_checked {rawGraph inputSizes plan : Json}
+    (compiled : compile? rawGraph inputSizes = .ok plan) :
+    Nonempty (MapZipPlan.Checked rawGraph inputSizes plan) := by
+  unfold compile? at compiled
+  cases hc : compileCandidate? rawGraph inputSizes with
+  | error e => simp [hc,Bind.bind,Except.bind] at compiled
+  | ok candidate =>
+    cases hv : MapZipPlan.validate? rawGraph inputSizes candidate with
+    | error e => simp [hc,hv,Bind.bind,Except.bind] at compiled
+    | ok checked =>
+      simp [hc,hv,Bind.bind,Except.bind,Pure.pure,Except.pure] at compiled
+      subst plan
+      exact ⟨checked⟩
+
+#print axioms compile_checked
 
 #guard (shader.splitOn "@compute").length == 2
 

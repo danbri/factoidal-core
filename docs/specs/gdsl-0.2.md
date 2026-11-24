@@ -205,10 +205,26 @@ No JavaScript operator registry or reference evaluator exists.
 Lean `GraphWords.execute` semantics and that the whole admitted
 PVGraph interpreter has the same result under that model. The per-lane
 dispatch also has disjoint writes and schedule-independent results.
-The `GpuPlan` and fixed shader are **not yet a verified WGSL compiler**;
-a correct GPU driver is an explicit implementation assumption. Device
-testing compares complete WebGPU outputs with native Lean outputs,
-including high-bit arithmetic, zero-length buffers, fanout and broadcast.
+For `u32.map.add`, `u32.map.mul`, `u32.map.xor`, `u32.zip.add` and
+`u32.zip.xor`, the shipping `GpuPlan.compile?` additionally validates the
+actual emitted JSON against the certified graph. The
+[`compiled_mapzip` theorem](../../formal/lean4/L4Factoidal/GpuDomainSpecificLanguage/MapZipCompileRefinement.lean)
+connects each such source node, its raw parameter and ports, actual buffer
+IDs, config, selected shader bytes and rounded dispatch to the existing
+`GraphWords.execute` result. A concrete parser and finite-array interpreter
+consume the emitted WGSL; every permutation of the 64-lane dispatch has
+the same complete logical output, with no padded-lane writes. Empty buffers
+retain the host's spare physical allocation word.
+
+This is a bounded per-step refinement, not a verified general WGSL compiler
+or whole-graph device executor. Other kernels retain their existing model
+and tests. Input snapshot/buffer correspondence, fresh output allocation,
+driver/hardware execution and readback transport remain external assumptions.
+Device testing compares complete WebGPU outputs with native Lean outputs,
+including all five covered operators, high-bit arithmetic, zero-length
+buffers, 63/64/65-word boundaries, fanout and broadcast. The
+[refinement record](../designissues/2026-11-22-pvgraph-mapzip-refinement.md)
+states the exact proof and execution boundaries.
 
 The GPU branch refuses operations outside its fragment, including
 `u32.reduce.sum`; `u32.scan.sum` uses a hierarchical parallel GPU plan.
@@ -265,8 +281,10 @@ modules and checks actual exported Lean builder behaviour.
 
 Lean's proofs are about Lean definitions. They do **not** prove
 correctness of the Lean-to-Wasm compiler, Wasm host runtime or
-JavaScript ABI. GPU lowering and WGSL/driver/hardware execution require
-further refinement and observational tests. The low-level
+JavaScript ABI. The five map/zip operators have the emitted-plan and concrete
+shader refinement described above; remaining GPU lowering, whole-graph
+execution and WGSL/driver/hardware execution require further refinement and
+observational tests. The low-level
 `@factoidal/core/gpu-resident` session is a separate resource API,
 not a certified PVGraph GPU executor.
 

@@ -13,8 +13,12 @@ if(!inputPath||!/^[a-f0-9]{40}$/.test(sha??""))
   throw Error("Usage: pvgraph-gpu-device-smoke.mjs LEAN_FIXTURES HEAD_SHA");
 const fixtures=readFileSync(inputPath,"utf8").trim().split(/\r?\n/)
   .filter(Boolean).map(JSON.parse);
+const mapZipOps=["map-add","map-mul","map-xor","zip-add","zip-xor"];
+const mapZipLengths=[0,1,63,64,65];
 const required=["map-highbits","fanout-zip","broadcast","scalar","empty",
   "large-8192","u64-two-lane-equality","u64-two-column-bounds","scan-parallel",
+  ...mapZipOps.flatMap(op=>mapZipLengths.map(n=>"mapzip-"+op+"-"+n)),
+  ...["zip-add","zip-xor"].map(op=>"mapzip-"+op+"-unequal"),
   ...[0,63,64,65,4095,4096,4097,16385,262145].map(n=>"scan-boundary-"+n),
   ...["duplicates","high-half","empty-left","empty-right","empty-both",
     "no-match","skew","large-16385"].flatMap(name=>
@@ -22,6 +26,23 @@ const required=["map-highbits","fanout-zip","broadcast","scalar","empty",
 if(new Set(fixtures.map(r=>r.case)).size!==fixtures.length||
    required.some(name=>!fixtures.some(r=>r.case===name)))
   throw Error("missing or duplicate Lean-authored device case");
+// These fixtures must reach the changed production shader. A successful test
+// against a legacy shader would not cover the new lowering boundary.
+for(const op of mapZipOps){
+  for(const n of mapZipLengths){
+    const record=fixtures.find(r=>r.case==="mapzip-"+op+"-"+n);
+    const kernels=record.plan?.steps?.filter(s=>s.kind==="kernel");
+    if(!record.eligible||kernels?.length!==1||kernels[0].shader!=="mapZip"||
+       kernels[0].words!==n||kernels[0].workgroups!==Math.max(1,Math.ceil(n/64))||
+       typeof record.plan.shaders?.mapZip!=="string")
+      throw Error("map/zip fixture did not select its production shader: "+record.case);
+  }
+}
+for(const op of ["zip-add","zip-xor"]){
+  const record=fixtures.find(r=>r.case==="mapzip-"+op+"-unequal");
+  if(record.eligible!==false||record.plan!==null||record.expected!==null)
+    throw Error("unequal zip fixture must be refused before device execution");
+}
 const u64=fixtures.find(r=>r.case==="u64-two-lane-equality");
 if(!u64||u64.expected.differenceLow[0]!==0||
    u64.expected.differenceHigh[0]===0||
@@ -52,7 +73,8 @@ try{
   for(const record of fixtures){
     if(!record.eligible){
       if(record.plan!==null)throw Error("unsupported case returned a plan");
-      data.cases.push({name:record.case,correctlyRefused:true});
+      data.cases.push({name:record.case,correctlyRefused:true,
+        refusedBy:"Lean reference and GPU planner before device execution"});
       continue;
     }
     const plan=record.plan;

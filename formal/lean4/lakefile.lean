@@ -396,6 +396,16 @@ lean_lib ParalliverseStudioProofs where
     `Wasm.ParalliverseHub, `Harness.ParalliverseWordMapGPUModel,
     `Harness.ParalliverseStudioFixtures]
 
+-- Actual serialised PVGraph map/zip plans, selected WGSL and padded dispatch
+-- refine GraphWords (issue #802). Proof/parser modules stay outside the Wasm
+-- runtime closure; the runtime imports only the structural translation validator.
+@[default_target] lean_lib PVGraphMapZipProofs where
+  roots := #[`L4Factoidal.GpuDomainSpecificLanguage.MapZipCompileRefinement,
+    `Harness.MapZipPlanTests]
+lean_exe «pvgraph-mapzip-check» where root := `Harness.MapZipPlanTests
+lean_exe «pvgraph-gpu-device-fixtures» where root := `Harness.PVGraphGpuDevice
+lean_exe «pvgraph-plan-timing» where root := `Harness.PVGraphPlanTiming
+
 -- The opt-in CPU fixture runner emits JSON Lines.
 lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
 
