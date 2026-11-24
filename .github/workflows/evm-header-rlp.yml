@@ -34,7 +34,7 @@ jobs:
           python3 - <<'PY'
           import json,re,subprocess
           from pathlib import Path
-          expected=set("fork_shape_refused parent_fee_present layout_refused shape_refused wire_exact hash_exact parent_refused child_refused pair_connected excess_below_target excess_above_target blob_before_cancun blob_check_sound blob_pair_refused".split())
+          expected=set("fork_shape_refused parent_fee_present layout_refused shape_refused wire_exact hash_exact parent_refused child_refused pair_connected excess_below_target excess_above_target blob_before_cancun blob_check_sound blob_pair_refused blob_series_exhausted blob_series_zero blob_fee_cap fee_pair_refused fee_pair_exact fee_frame_exact fee_frame_step".split())
           allowed={"propext","Classical.choice","Quot.sound"}
           actual={}
           for line in Path("/tmp/header-rlp-axioms.txt").read_text().splitlines():
@@ -45,7 +45,7 @@ jobs:
           assert set(actual)==expected,actual
           assert all(a<=allowed for a in actual.values()),actual
           assert json.loads(Path("lake-manifest.json").read_text())["packages"]==[]
-          paths=["EVMCleanroom/HeaderRLP.lean","EVMCleanroom/HeaderRLPCLI.lean","EVMCleanroom/HeaderChain.lean","EVMCleanroom/HeaderFees.lean","EVMCleanroom/Keccak.lean","EVMCleanroom/Memory.lean","EVMCleanroom/CLIEncoding.lean","lakefile-header-rlp.toml","scripts/differential/header-rlp.mjs","scripts/differential/package-lock.json","evidence/frontier-mainnet-46147.json"]
+          paths=["EVMCleanroom/HeaderRLP.lean","EVMCleanroom/HeaderRLPCLI.lean","EVMCleanroom/Core.lean","EVMCleanroom/Storage.lean","EVMCleanroom/HeaderChain.lean","EVMCleanroom/HeaderFees.lean","EVMCleanroom/Keccak.lean","EVMCleanroom/Memory.lean","EVMCleanroom/CLIEncoding.lean","lakefile-header-rlp.toml","scripts/differential/header-rlp.mjs","scripts/differential/package-lock.json","evidence/frontier-mainnet-46147.json"]
           pins={p:subprocess.check_output(["git","hash-object",p],text=True).strip() for p in paths}
           for p in paths:
               assert pins[p]==subprocess.check_output(["git","rev-parse","HEAD:formal/lean4/evm-cleanroom/"+p],text=True).strip()

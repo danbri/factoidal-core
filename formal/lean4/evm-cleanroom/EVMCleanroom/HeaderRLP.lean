@@ -1,5 +1,6 @@
 import EVMCleanroom.HeaderChain
 import EVMCleanroom.Keccak
+import EVMCleanroom.Core
 
 /-! Bounded canonical RLP encoding of mainnet legacy and London-family
 headers through Prague (before Osaka). The header fields are untrusted byte strings,
@@ -21,6 +22,8 @@ inductive Error where
   | parentBlobGasUsed
   | childBlobGasUsed
   | excessBlobGasMismatch
+  | blobFeeUnavailable
+  | blobFeeResourceLimit
   | chain (e : HeaderChain.Error)
   deriving Repr
 
@@ -307,5 +310,128 @@ theorem parent_fee_present (parent child : Fields) (digest : Nat)
 #print axioms parent_refused
 #print axioms child_refused
 #print axioms pair_connected
+
+/-- EIP-4844 integer series. Each recursive step consumes one unit of
+fuel and includes exactly one nonzero term. No approximate result is returned
+when the fuel runs out. The caller supplies a positive denominator and index. -/
+def blobSeries (excess denominator : Nat) : Nat → Nat → Nat → Nat → Option Nat
+  | 0, _, term, total =>
+    if term = 0 then some (total / denominator) else none
+  | fuel + 1, index, term, total =>
+    if term = 0 then some (total / denominator)
+    else blobSeries excess denominator fuel (index + 1)
+      (term * excess / (denominator * index)) (total + term)
+
+/-- Cancun and Prague update fractions (EIP-4844, EIP-7691). Only used
+for admitted pre-Osaka blob headers. -/
+def blobDenominator (timestamp : Nat) : Nat :=
+  if timestamp >= pragueTime then 5007716 else 3338477
+
+/-- The excess cap and iteration cap are implementation resource limits,
+not consensus rules. The cap bounds intermediate integer sizes as well as
+the iteration count. -/
+def boundedBlobFee (excess denominator : Nat) : Option Nat :=
+  if denominator = 0 ∨ excess > 64 * denominator then none
+  else blobSeries excess denominator 512 1 denominator 0
+
+def blobFeeAt (timestamp excess : Nat) : Option Nat :=
+  boundedBlobFee excess (blobDenominator timestamp)
+
+/-- Uses the SAME child fields admitted by the canonical header pair path.
+Neither a supplied fee nor a guessed fork may override this calculation. -/
+def checkedFeePair (a : Keccak.Acceptance) (p c : Fields) :
+    Except Error (Nat × Nat) :=
+  match checkPair a p c with
+  | .error e => .error e
+  | .ok fee =>
+    if readNat c 11 < cancunTime then .error .blobFeeUnavailable
+    else match blobFeeAt (readNat c 11) (readNat c 18) with
+    | none => .error .blobFeeResourceLimit
+    | some blobFee => .ok (fee, blobFee)
+
+/-- Only projects the two fee fields and opcode profile, not a complete
+transaction environment. The input frame's other fields are unchanged. -/
+def projectBlobFees (s : EVMCleanroom.State) (fees : Nat × Nat) :
+    EVMCleanroom.State :=
+  { s with profile := .cancunPlus, blockBaseFee := fees.1,
+    blockBlobBaseFee := fees.2 }
+
+def withCheckedBlobFees (a : Keccak.Acceptance) (p c : Fields)
+    (s : EVMCleanroom.State) : Except Error EVMCleanroom.State :=
+  match checkedFeePair a p c with
+  | .error e => .error e
+  | .ok fees => .ok (projectBlobFees s fees)
+
+/-- Kind: executable resource contract. Says: exhausted fuel with a
+nonzero term returns no result. Does not say: all valid excess values fit. -/
+theorem blob_series_exhausted (e d i t total : Nat) (ht : t ≠ 0) :
+    blobSeries e d 0 i t total = none := by
+  simp [blobSeries, ht]
+
+/-- Kind: executable arithmetic. Says: a zero term finishes with the
+integer quotient. Does not say: the entire series refines EIP-4844. -/
+theorem blob_series_zero (e d fuel i total : Nat) :
+    blobSeries e d fuel i 0 total = some (total / d) := by
+  cases fuel <;> simp [blobSeries]
+
+/-- Kind: resource contract. Says: excess above the cap is refused before
+the recurrence. Does not say: the header violates consensus. -/
+theorem blob_fee_cap (e d : Nat) (h : e > 64 * d) :
+    boundedBlobFee e d = none := by
+  simp [boundedBlobFee, h]
+
+/-- Kind: composition. Says: existing header rejection propagates.
+Does not say: all required header validations are implemented. -/
+theorem fee_pair_refused (a : Keccak.Acceptance) (p c : Fields) (e : Error)
+    (h : checkPair a p c = .error e) :
+    checkedFeePair a p c = .error e := by
+  simp [checkedFeePair, h]
+
+/-- Kind: composition. Says: a successful checked pair and admitted series
+return the exact two prices derived by the Lean paths.
+Does not say: the parent is authenticated. -/
+theorem fee_pair_exact (a : Keccak.Acceptance) (p c : Fields) (f b : Nat)
+    (hp : checkPair a p c = .ok f) (ht : cancunTime ≤ readNat c 11)
+    (hb : blobFeeAt (readNat c 11) (readNat c 18) = some b) :
+    checkedFeePair a p c = .ok (f, b) := by
+  simp [checkedFeePair, hp, Nat.not_lt.mpr ht, hb]
+
+/-- Kind: composition. Says: the actual frame adapter installs the
+checked pair's prices and Cancun opcode profile. Does not say: the rest
+of the frame or chain is authenticated. -/
+theorem fee_frame_exact (a : Keccak.Acceptance) (p c : Fields)
+    (s : EVMCleanroom.State) (f b : Nat)
+    (h : checkedFeePair a p c = .ok (f, b)) :
+    withCheckedBlobFees a p c s =
+      .ok { s with profile := .cancunPlus, blockBaseFee := f,
+        blockBlobBaseFee := b } := by
+  simp [withCheckedBlobFees, h, projectBlobFees]
+
+/-- Kind: executable dispatcher connection. Says: the projected frame
+uses the derived blob fee in the real BLOBBASEFEE two-gas commit.
+Does not say: the supplied frame was a valid transaction. -/
+theorem fee_frame_step (s : EVMCleanroom.State) (f b : Nat)
+    (hRun : s.halted = false) (hOp : EVMCleanroom.byteAt s s.pc = 0x4a) :
+    EVMCleanroom.step (projectBlobFees s (f,b)) =
+      EVMCleanroom.commit (projectBlobFees s (f,b)) (s.pc + 1)
+        (EVMCleanroom.word b :: s.stack.items) 2 := by
+  exact EVMCleanroom.step_blobBaseFee_cancun
+    (projectBlobFees s (f,b)) hRun hOp rfl
+
+#guard blobFeeAt cancunTime 0 == some 1
+#guard blobFeeAt pragueTime 0 == some 1
+#guard blobFeeAt cancunTime 6676954 == some 7
+#guard blobFeeAt pragueTime 10015432 == some 7
+#guard blobFeeAt cancunTime 213662529 == none
+#guard blobFeeAt pragueTime 320493825 == none
+#guard blobSeries 1 1 0 1 1 0 == none
+
+#print axioms blob_series_exhausted
+#print axioms blob_series_zero
+#print axioms blob_fee_cap
+#print axioms fee_pair_refused
+#print axioms fee_pair_exact
+#print axioms fee_frame_exact
+#print axioms fee_frame_step
 
 end EVMCleanroom.HeaderRLP

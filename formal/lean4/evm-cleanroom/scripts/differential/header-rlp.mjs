@@ -147,9 +147,53 @@ for(let used=0;used<=6;used++)for(let prior=0;prior<=12;prior++){
  const wrong=c.slice();wrong[18]=nat(number(c[18])+blobUnit)
  P(p,wrong,err('excess-blob-gas-mismatch'))
 }
+// Independent integer series: retain all terms and sum only at the end.
+// Test oracle, never a runtime provider. The denominator is selected by the
+// child fork, not the parent. Fixed anchor vectors are checked separately.
+const den=t=>t>=prague?5007716n:3338477n
+const blobPrice=(n,d)=>{
+ const terms=[d]
+ while(terms.at(-1)!==0n)terms.push(terms.at(-1)*n/(d*BigInt(terms.length)))
+ return terms.reduce((s,t)=>s+t,0n)/d
+}
+assert.equal(blobPrice(0n,3338477n),1n)
+assert.equal(blobPrice(6676954n,3338477n),7n)
+assert.equal(blobPrice(10015432n,5007716n),7n)
+assert.equal(blobPrice(213662528n,3338477n),6235149080797199216264525102n)
+assert.equal(blobPrice(320493824n,5007716n),6235149080802028382733105041n)
+const B=(p,c,e)=>add('B\t'+text(p)+'|'+text(c),e)
+const bExpected=(n,d)=>{
+ if(n>64n*d)return ind('blob-fee-resource-limit')
+ const price=String(blobPrice(n,d))
+ return {status:'ok',fee:'100',blobFee:price,stack:price,gas:'0'}
+}
+for(const time of [cancun+1,prague,prague+1]){
+ const d=den(time)
+ const ns=[0n,1n,d-1n,d,d+1n,2n*d,64n*d-1n,64n*d,64n*d+1n,2n**64n-1n]
+ for(let i=0;i<256;i++)ns.push(BigInt(i)*d/4n)
+ for(const n of ns){
+  const p=modern(23000000,time-1,0),c=modern(23000001,time,1)
+  // Parent used exactly the child target (also permitted for the last
+  // Cancun block before Prague), so child excess equals parent excess.
+  p[17]=nat(target(time));p[18]=nat(n)
+  c[17]=nat(0);c[18]=nat(n);c[0]=hash(p)
+  B(p,c,bExpected(n,d))
+ }
+}
+{
+ const p=modern(23000000,cancun-1,0),c=modern(23000001,cancun,1)
+ c[17]=nat(0);c[18]=nat(0);c[0]=hash(p)
+ B(p,c,bExpected(0n,den(cancun)))
+ const wrong=c.slice();wrong[18]=nat(1);B(p,wrong,err('excess-blob-gas-mismatch'))
+ const badLink=c.map(b=>Buffer.from(b));badLink[0][0]^=1;B(p,badLink,err('parent-hash-mismatch'))
+ const badFee=c.slice();badFee[15]=nat(101);B(p,badFee,err('fee-check'))
+ const badShape=c.slice();badShape[19]=Buffer.alloc(31);B(p,badShape,err('invalid-shape'))
+ const old=modern(23000001,cancun-1,1),older=modern(23000000,cancun-2,0)
+ old[0]=hash(older);B(older,old,ind('blob-fee-unavailable'))
+}
 const last=modern(24000000,osaka-1,1);H(last)
 const future=modern(24000001,osaka,1);H(future,ind('later-fork'))
-future[0]=hash(last);P(last,future,ind('later-fork'))
+future[0]=hash(last);P(last,future,ind('later-fork'));B(last,future,ind('later-fork'))
 // Existing independently captured canonical Frontier header: pin its published digest.
 const fixture=JSON.parse(readFileSync(new URL('../../evidence/frontier-mainnet-46147.json',import.meta.url),'utf8'))
 const block=fixture.block
@@ -174,11 +218,15 @@ try{
    a=>a[0].wire='00',
    a=>a.pop(),
    a=>{const i=cases.findIndex(c=>c.expected.reason==='excess-blob-gas-mismatch');assert(i>=0);a[i]={status:'ok',fee:'100'}},
+   a=>{const i=cases.findIndex(c=>c.expected.blobFee!==undefined);assert(i>=0);a[i].blobFee='0'},
+   a=>{const i=cases.findIndex(c=>c.expected.stack!==undefined);assert(i>=0);a[i].stack='0'},
+   a=>{const i=cases.findIndex(c=>c.expected.gas!==undefined);assert(i>=0);a[i].gas='2'},
+   a=>{const i=cases.findIndex(c=>c.expected.reason==='blob-fee-resource-limit');assert(i>=0);a[i]={status:'error',reason:'blob-fee-resource-limit'}},
  ]){const a=structuredClone(actual);mutation(a);assert.throws(()=>compare(a))}
  const noOpt=spawnSync(exe,['--batch',file]);assert.equal(noOpt.status,2)
  writeFileSync(file,'H\t0x0g\n')
  const malformed=spawnSync(exe,['--dangerously-enable-unverified-keccak','--batch',file],{encoding:'utf8'})
  assert.equal(malformed.status,2);assert.deepEqual(JSON.parse(malformed.stdout),{status:'inputError'})
  const counts={};for(const c of cases)counts[c.expected.status]=(counts[c.expected.status]??0)+1
- console.log(JSON.stringify({cases:cases.length,matched:actual.length,counts,mutationsRejected:4,missingOptInRejected:true,malformedRejected:true}))
+ console.log(JSON.stringify({cases:cases.length,matched:actual.length,counts,mutationsRejected:8,blobFeeCases:cases.filter(c=>c.line.startsWith('B\t')).length,missingOptInRejected:true,malformedRejected:true}))
 }finally{rmSync(dir,{recursive:true,force:true})}

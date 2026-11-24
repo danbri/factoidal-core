@@ -12,6 +12,8 @@ private def reason : HeaderRLP.Error → String
   | .parentBlobGasUsed => "parent-blob-gas-used"
   | .childBlobGasUsed => "child-blob-gas-used"
   | .excessBlobGasMismatch => "excess-blob-gas-mismatch"
+  | .blobFeeUnavailable => "blob-fee-unavailable"
+  | .blobFeeResourceLimit => "blob-fee-resource-limit"
   | .chain .earlierFork => "earlier-fork"
   | .chain .resourceLimit => "resource-limit"
   | .chain .numberMismatch => "number-mismatch"
@@ -21,7 +23,8 @@ private def reason : HeaderRLP.Error → String
 
 private def indeterminate : HeaderRLP.Error → Bool
   | .unsupportedLayout | .laterFork | .chain .earlierFork | .chain .resourceLimit
-  | .chain (.fee .resourceLimit) | .chain (.fee .missingParentFee) => true
+  | .chain (.fee .resourceLimit) | .chain (.fee .missingParentFee)
+  | .blobFeeUnavailable | .blobFeeResourceLimit => true
   | _ => false
 
 private def errorJson (e : HeaderRLP.Error) : String :=
@@ -56,6 +59,23 @@ private def emit (a : EVMCleanroom.Keccak.Acceptance) (line : String) :
       match checkPair a p c with
       | .error e => return errorJson e
       | .ok fee => return "{\"status\":\"ok\",\"fee\":\"" ++ toString fee ++ "\"}"
+    | "B" :: fields =>
+      let p ← parseFields fields
+      let c ← parseFields (second.splitOn "\t")
+      let input : EVMCleanroom.State := { code := #[0x4a], gas := 2 }
+      match withCheckedBlobFees a p c input with
+      | .error e => return errorJson e
+      | .ok frame =>
+        match EVMCleanroom.step frame with
+        | .error _ => throw "unexpected-blob-fee-step"
+        | .ok result =>
+          match result.stack.items with
+          | [w] =>
+            return "{\"status\":\"ok\",\"fee\":\"" ++ toString frame.blockBaseFee ++
+              "\",\"blobFee\":\"" ++ toString frame.blockBlobBaseFee ++
+              "\",\"stack\":\"" ++ toString w.val ++
+              "\",\"gas\":\"" ++ toString result.gas ++ "\"}"
+          | _ => throw "unexpected-blob-fee-stack"
     | _ => throw "expected-pair-request"
   | _ => throw "expected-one-or-two-headers"
 
