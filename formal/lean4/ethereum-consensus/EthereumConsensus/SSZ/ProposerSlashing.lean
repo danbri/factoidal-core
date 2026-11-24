@@ -23,7 +23,23 @@ structure ProposerEvidence where
   firstSigningRoot : Chunk
   secondSigningRoot : Chunk
 
-def prepareProposerRoots (c : ForkContext) (a b : BeaconBlockHeader)
+/-- Root fields are compared as bytes, never by comparing their digests. -/
+def sameProposerRootFields (a b : BeaconBlockHeader) : Bool :=
+  (a.parentRoot.bytes == b.parentRoot.bytes) &&
+  (a.stateRoot.bytes == b.stateRoot.bytes) &&
+  (a.bodyRoot.bytes == b.bodyRoot.bytes)
+
+def sameProposerRootModel (a b : BeaconBlockHeader) : Prop :=
+  a.parentRoot.bytes = b.parentRoot.bytes ∧
+  a.stateRoot.bytes = b.stateRoot.bytes ∧ a.bodyRoot.bytes = b.bodyRoot.bytes
+
+/-- Kind: refinement. Says: the actual root-field comparison covers all three
+    root fields exactly. Does not say: the roots are authenticated. -/
+theorem sameProposerRootFields_iff (a b : BeaconBlockHeader) :
+    sameProposerRootFields a b = true ↔ sameProposerRootModel a b := by
+  simp [sameProposerRootFields, sameProposerRootModel, byteArray_beq_iff_eq, and_assoc]
+
+private def prepareProposerRoots (c : ForkContext) (a b : BeaconBlockHeader)
     (key : ByteArray) : Except ProposerEvidenceError ProposerEvidence :=
   match headerProposerSigningRoot c a with
   | .error e => .error (.signing e)
@@ -34,7 +50,7 @@ def prepareProposerRoots (c : ForkContext) (a b : BeaconBlockHeader)
 
 /-- The current epoch is derived from the proved state slot. The signing
     epoch is derived separately by headerProposerSigningRoot. -/
-def checkProposerRegistry (slot : UInt64) (a b : BeaconBlockHeader)
+private def checkProposerRegistry (slot : UInt64) (a b : BeaconBlockHeader)
     (c : ForkContext) (length : Nat) (v : RegistryValidator)
     (siblings : List ByteArray) (registryRoot : ByteArray)
     (registrySiblings : List ByteArray) (stateRoot : ByteArray) :
@@ -61,8 +77,7 @@ def checkProposerState (slot : UInt64) (a b : BeaconBlockHeader)
     (stateRoot : ByteArray) : Except ProposerEvidenceError ProposerEvidence :=
   if a.slot ≠ b.slot then .error .differentSlot
   else if a.proposerIndex ≠ b.proposerIndex then .error .differentProposer
-  else if a.parentRoot.bytes == b.parentRoot.bytes &&
-    a.stateRoot.bytes == b.stateRoot.bytes && a.bodyRoot.bytes == b.bodyRoot.bytes then
+  else if sameProposerRootFields a b then
     .error .identicalHeaders
   else
     match verifyStateSigningContext slot c forkSiblings genesisSiblings stateRoot with
@@ -98,8 +113,7 @@ theorem checkProposerState_identical (slot : UInt64) (a b : BeaconBlockHeader)
     (c : ForkContext) (len : Nat) (v : RegistryValidator)
     (ss : List ByteArray) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
     (hs : a.slot = b.slot) (hi : a.proposerIndex = b.proposerIndex)
-    (he : (a.parentRoot.bytes == b.parentRoot.bytes &&
-      a.stateRoot.bytes == b.stateRoot.bytes && a.bodyRoot.bytes == b.bodyRoot.bytes) = true) :
+    (he : sameProposerRootFields a b = true) :
     checkProposerState slot a b c len v ss rr rs sl fs gs root = .error .identicalHeaders := by
   simp [checkProposerState, hs, hi, he]
 
@@ -108,8 +122,7 @@ theorem checkProposerState_bad_context (slot : UInt64) (a b : BeaconBlockHeader)
     (c : ForkContext) (len : Nat) (v : RegistryValidator)
     (ss : List ByteArray) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
     (hs : a.slot = b.slot) (hi : a.proposerIndex = b.proposerIndex)
-    (he : (a.parentRoot.bytes == b.parentRoot.bytes &&
-      a.stateRoot.bytes == b.stateRoot.bytes && a.bodyRoot.bytes == b.bodyRoot.bytes) = false)
+    (he : sameProposerRootFields a b = false)
     (e : StateSigningError) (hc : verifyStateSigningContext slot c fs gs root = .error e) :
     checkProposerState slot a b c len v ss rr rs sl fs gs root = .error (.context e) := by
   simp [checkProposerState, hs, hi, he, hc]
@@ -120,8 +133,7 @@ theorem checkProposerState_slot_mismatch (slot : UInt64) (a b : BeaconBlockHeade
     (c : ForkContext) (len : Nat) (v : RegistryValidator)
     (ss : List ByteArray) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
     (hs : a.slot = b.slot) (hi : a.proposerIndex = b.proposerIndex)
-    (he : (a.parentRoot.bytes == b.parentRoot.bytes &&
-      a.stateRoot.bytes == b.stateRoot.bytes && a.bodyRoot.bytes == b.bodyRoot.bytes) = false)
+    (he : sameProposerRootFields a b = false)
     (hc : verifyStateSigningContext slot c fs gs root = .ok ())
     (proof : ByteProofResult) (hp : verifyMainnetStateSlot slot sl root = .ok proof)
     (hm : proof.matchesRoot = false) :
@@ -134,8 +146,7 @@ theorem checkProposerState_delegates (slot : UInt64) (a b : BeaconBlockHeader)
     (c : ForkContext) (len : Nat) (v : RegistryValidator)
     (ss : List ByteArray) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
     (hs : a.slot = b.slot) (hi : a.proposerIndex = b.proposerIndex)
-    (he : (a.parentRoot.bytes == b.parentRoot.bytes &&
-      a.stateRoot.bytes == b.stateRoot.bytes && a.bodyRoot.bytes == b.bodyRoot.bytes) = false)
+    (he : sameProposerRootFields a b = false)
     (hc : verifyStateSigningContext slot c fs gs root = .ok ())
     (proof : ByteProofResult) (hp : verifyMainnetStateSlot slot sl root = .ok proof)
     (hm : proof.matchesRoot = true) :
@@ -205,6 +216,7 @@ theorem prepareProposerRoots_delegates (c : ForkContext) (a b : BeaconBlockHeade
     prepareProposerRoots c a b key = .ok ⟨key, first.signingRoot, second.signingRoot⟩ := by
   simp only [prepareProposerRoots, ha, hb]
 
+#print axioms EthereumConsensus.SSZ.sameProposerRootFields_iff
 #print axioms EthereumConsensus.SSZ.checkProposerState_different_slot
 #print axioms EthereumConsensus.SSZ.checkProposerState_different_proposer
 #print axioms EthereumConsensus.SSZ.checkProposerState_identical
