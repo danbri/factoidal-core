@@ -5,3 +5,5 @@ Native samples of the frozen mobile US Wikipedia document showed the picture-map
 Build the map at the call boundary and pass it as data to a non-inlined style pass. The equivalence theorem states equality of the resulting style array to using the original per-ID function. It covers the chosen bitmap, intrinsic size and unchanged styles for missing pictures. Native profiling and a paired frozen replay are separate checks for the runtime effect.
 
 Related to [desktop acceptance](https://github.com/danbri/factoidal-core/issues/712).
+
+The exact native build reports that `attachBackgroundPictures_eq` compiled, with Lean's standard propositional, quotient and choice axioms. In [the alternating Linux Textnaut replay](https://github.com/danbri/factoidal-builds/actions/runs/45415574336), the mobile US Wikipedia article's first frame went from 74.6 and 77.9 s to 31.9 and 31.7 s. First layout went from 72.7 and 76.0 s to 30.0 and 29.9 s. Each arm used the same two archived inputs, and the article retained 23,931 rows and 4,894 links. The smaller BBC UK replay stayed around 3.1–3.2 s. The test ran with scripts disabled and does not measure desktop scroll responsiveness.

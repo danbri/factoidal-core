@@ -1142,7 +1142,7 @@ def length (s : String) : Except String Length := do
     if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
-  | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .auto | .vw _ | .vh _ | .viewportMath _ _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
 /-- The used `letter-spacing` and `word-spacing` in px: a percentage is of this element's font
@@ -1153,6 +1153,9 @@ def Computed.wordSpacingPx (s : Computed) : Float := (resolve s.fontSize s.wordS
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
+  | .viewportMath expr fontSize =>
+    ((viewportSizePixels expr fontSize (tableRat width) (tableRat height)).map
+      fun n => .px (ratToFloat n)).getD .auto
   | other => other
 
 def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
@@ -1314,10 +1317,18 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | _ => throw "unsupported CSS border style"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
-private def limit (source : String) : Except String Length := do
+private def sizeLength (fontSize : Float) (source : String) : Except String Length :=
+  match length source with
+  | .ok value => .ok value
+  | .error error =>
+    match if source.contains '(' then viewportSizeMath fontSize source else none with
+    | some value => .ok value
+    | none => .error error
+
+private def limit (fontSize : Float) (source : String) : Except String Length := do
   let v := (trim source).toLower
   if v == "none" || v == "auto" then return .auto
-  match ← length v with
+  match ← sizeLength fontSize v with
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
@@ -1462,8 +1473,8 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "grid" => return {s with display := .grid}
     | "inline-grid" => return {s with display := .inlineGrid}
     | _ => throw "unsupported CSS display"
-  | "width" => return {s with width := ← length d.value}
-  | "height" => return {s with height := ← length d.value}
+  | "width" => return {s with width := ← sizeLength s.fontSize d.value}
+  | "height" => return {s with height := ← sizeLength s.fontSize d.value}
   | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
@@ -1729,10 +1740,10 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "super" => return {s with verticalAlign := .baseline, shift := 1}
     | "sub" => return {s with verticalAlign := .baseline, shift := -1}
     | _ => throw "unsupported CSS vertical-align"
-  | "min-width" => return {s with minWidth := ← limit d.value}
-  | "max-width" => return {s with maxWidth := ← limit d.value}
-  | "min-height" => return {s with minHeight := ← limit d.value}
-  | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "min-width" => return {s with minWidth := ← limit s.fontSize d.value}
+  | "max-width" => return {s with maxWidth := ← limit s.fontSize d.value}
+  | "min-height" => return {s with minHeight := ← limit s.fontSize d.value}
+  | "max-height" => return {s with maxHeight := ← limit s.fontSize d.value}
   | "object-position" =>
     let some value := tableComputed s.fontSize d.property d.value | throw "invalid CSS object-position"
     let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
@@ -3664,6 +3675,92 @@ def attributesReachParentOnly (rules : List Rule) : Bool :=
     | some c => selectorsUseHas [c]
     | none => false
 
+/-- What the arguments of the rules' `:has()`s read of an element: its class names
+(lower case), its attribute names (lower case; `id`, `lang`, `dir` for those selectors),
+and whether a pseudo-class there reads more (`:checked`, `:disabled`, ... : `anyAttr`). -/
+structure HasReads where
+  classes : List String := []
+  attrs : List String := []
+  anyAttr : Bool := false
+  deriving Inhabited, BEq
+
+/-- The pseudo-classes that read the place of an element among its siblings or its
+children only: an attribute write changes none of them. -/
+def structuralPseudo (n : String) : Bool :=
+  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
+   "only-of-type", "scope"].contains n || n.startsWith "heading("
+
+/-- `HasReads` of the rules: the simple selectors inside each `:has()`, also inside
+`:not()`, `:is()` and `:nth-child(… of …)` there, and `:has()`s found inside those lists
+outside a `:has()`. A work list, bounded: past the bound, or with a `:has()` already worked
+out against a document (`Simple.anchors`, whose arguments are gone), none. -/
+def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
+  let mut pending : List (Bool × DOM.Selectors.Complex) :=
+    rules.flatMap fun r => r.selectors.filterMap fun s => s.complex.map ((false, ·))
+  let mut out : HasReads := {}
+  for _ in [:1048576] do
+    match pending with
+    | [] => return some { out with classes := out.classes.eraseDups, attrs := out.attrs.eraseDups }
+    | (inHas, .mk parts) :: rest =>
+      let mut more := rest
+      for (_, simples) in parts do
+        for s in simples do
+          match s with
+          | .has l => more := l.map ((true, ·)) ++ more
+          | .anchors _ => return none
+          | .nth _ _ _ (some l) => more := l.map ((inHas, ·)) ++ more
+          | .not l => more := l.map ((inHas, ·)) ++ more
+          | .is l => more := l.map ((inHas, ·)) ++ more
+          | .cls v => if inHas then out := { out with classes := v.toLower :: out.classes }
+          | .id _ => if inHas then out := { out with attrs := "id" :: out.attrs }
+          | .attr _ name _ _ _ _ => if inHas then out := { out with attrs := name.toLower :: out.attrs }
+          | .lang _ => if inHas then out := { out with attrs := "lang" :: out.attrs }
+          | .pseudo n =>
+            if inHas && !structuralPseudo n then
+              if n.startsWith "dir(" then out := { out with attrs := "dir" :: out.attrs }
+              else out := { out with anyAttr := true }
+          | _ => pure ()
+      pending := more
+  return none
+
+/-- The class names of a `class` attribute value (split at ASCII whitespace), lower case. -/
+def classTokens (s : String) : List String :=
+  ((s.map fun c => if c == '\t' || c == '\n' || c == '\r' || c == '\x0c' then ' ' else c).splitOn " ").filterMap
+    fun t => if t.isEmpty then none else some t.toLower
+
+/-- A write of attribute `name` of an element from `old` to `new` changes no class name and
+no attribute that the `:has()` arguments read (`hasArgumentReads`): every `:has()` of the
+document then holds where it held before the write, and the matching of the other
+selectors reads the written element only in its parent's subtree, as with no `:has()`
+(`attributesReachParentOnly`). Class names compare in lower case, so a quirks-mode page
+is covered too. -/
+def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
+  let name := name.toLower
+  if name == "class" then
+    let o := classTokens old
+    let n := classTokens new
+    !r.attrs.contains "class" &&
+      !((o.filter (!n.contains ·)) ++ (n.filter (!o.contains ·))).any r.classes.contains
+  else !r.anyAttr && !r.attrs.contains name
+
+#guard (match parse ".a:has(.b, [data-x]) .c { color: red } .d:has(> p:dir(rtl)) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.classes == ["b"] && r.attrs.length == 2 && r.attrs.contains "data-x" &&
+        r.attrs.contains "dir" && !r.anyAttr
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(.b) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.unaffected "class" "x y" "x y z" && !r.unaffected "class" "x" "x B" &&
+        !r.unaffected "class" "b x" "x" && r.unaffected "aria-expanded" "false" "true"
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(:checked) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => !r.unaffected "aria-expanded" "false" "true" && r.unaffected "class" "" "q"
+    | none => false
+  | .error _ => false)
+
 /-! ### Animated values in the cascade
 
 CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
@@ -3751,14 +3848,35 @@ def hasNoMatch (dom : Dom) (l : List DOM.Selectors.Complex) : Bool :=
 /-- The rules without the selectors that a `:has()` false everywhere keeps from matching
 (one pass over the document for each `:has()`), so that matching does not search a
 large subtree once for each element (selectors/invalidation/has-complexity.html). Rules
-with no `:has()` are as they were, and a page with none pays one test per selector. -/
+with no `:has()` are as they were. Pseudo-element selector lists survive the ordinary
+selector pruning, and a page with no ordinary `:has()` pays one test per ordinary selector. -/
 def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
   if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
   else rules.filterMap fun r =>
     let sels := r.selectors.filter fun sel => match sel.complex with
       | some c => !((hasLists c).any (hasNoMatch dom))
       | none => true
-    if sels.isEmpty then none else some { r with selectors := sels }
+    if sels.isEmpty && (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) then none
+    else some { r with selectors := sels }
+
+/-- Pruning ordinary selectors preserves a rule that contains only generated pseudo-element
+selectors. This holds even when another rule activates the pruning pass. -/
+theorem pruneHas_keeps_pseudo (dom : Dom) (rules : List Rule) (r : Rule)
+    (hr : r ∈ rules) (hs : r.selectors = [])
+    (hp : (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) = false) :
+    r ∈ pruneHas dom rules := by
+  unfold pruneHas
+  split
+  · exact hr
+  · apply List.mem_filterMap.mpr
+    refine ⟨r, hr, ?_⟩
+    simp [hs, hp] <;> cases r <;> simp_all
+
+#guard match parse ".row::after{content:'';display:block;clear:both}.unrelated:has(.missing){color:red}" with
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument "<div class=row></div>"
+    (pruneHas dom rules).map (·.after.length) == [1]
+  | .error _ => false
 
 /-- A complex selector with each compound that has a `:has()` matched once against every
 element of the document: the compound becomes its other simple selectors and the elements

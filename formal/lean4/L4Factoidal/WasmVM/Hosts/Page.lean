@@ -206,6 +206,10 @@ structure Carry where
   rules have `[style]`): a write of an element's `style` then changes which rules match in
   the subtree of its parent, as a write of its `class` does (`Host.measureNow`). -/
   readsStyle : Bool := false
+  /-- With `:has()` in the rules: what their arguments read (`CSS.hasArgumentReads`). An
+  attribute write that changes none of it (`CSS.HasReads.unaffected`) changes styles in the
+  subtree of the element's parent alone, as with `parentOnly` (`Reads.hasSafe`). -/
+  hasReads : Option L4Factoidal.Rendering.CSS.HasReads := none
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
 pixels) with the values of the page's animations, as answers. The engine gives the
@@ -274,6 +278,10 @@ writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
   /-- One of `styleWrites` is there for a `class` written under it: the rules that match
   in its subtree may differ, not only the declarations of the element itself. -/
   styleSubtrees : Bool := false
+  /-- Every write noted since the last measure was of an attribute that the `:has()`
+  arguments of the kept rules do not read (`Carry.hasReads`, `CSS.HasReads.unaffected`):
+  with `:has()` in the rules, the subtrees of the noted elements may then be styled alone. -/
+  hasSafe : Bool := true
   /-- The version that the last write which may change a style made (`Reads.wrote`, not
   neutral): a layout of that version or a later one has the styles of the document as it
   is (`Host.frameStyles`). -/
@@ -760,7 +768,8 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
           -- than it needs)
           let readsStyle := (k.base.map (·.readsStyle)) == some true
           if !h.reads.styleSubtrees && !readsStyle then some (k, nodes, nodes)
-          else if (k.base.map (·.parentOnly)) == some true then
+          else if (k.base.map (·.parentOnly)) == some true ||
+              (h.reads.hasSafe && ((k.base.bind (·.hasReads)).isSome)) then
             let roots := if readsStyle then (nodes.map fun n => (dom.get n).parent.getD n).eraseDups else nodes
             (subtreesWithin dom roots).map fun under => (k, roots, under)
           else none
@@ -774,7 +783,8 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
         if !(k.width == w && k.height == ht) then "viewport"
         else if k.base.isNone then "nobase"
         else if h.reads.styleVersion != h.reads.version then "version"
-        else if (k.base.map (·.parentOnly)) != some true then "has"
+        else if (k.base.map (·.parentOnly)) != some true &&
+            !(h.reads.hasSafe && ((k.base.bind (·.hasReads)).isSome)) then "has"
         else if (subtreesWithin dom (if (k.base.map (·.readsStyle)) == some true
             then (nodes.map fun n => (dom.get n).parent.getD n).eraseDups else nodes)).isNone then "big" else "other"
     let reads := h.reads
@@ -785,7 +795,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
           kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1,
-          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false,
+          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false, hasSafe := true,
           styleVersion := h.reads.version } }, some f)
     -- with the style change made and the animated values known: the layout with them
     let finish := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State)
@@ -1466,8 +1476,31 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         if touchesSheets d [a 0] then none else (d.get (a 0)).parent.map fun p => (p, true)
       else none
     let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
+    -- with `:has()` in the kept rules: whether this write changes nothing their arguments
+    -- read (`Carry.hasReads`); a child or text write always may
+    let hasOk : Bool :=
+      match (h.reads.styleKept.bind (·.base)).bind (·.hasReads) with
+      | none => false
+      | some hr =>
+        if nm == "set_attribute" || nm == "remove_attribute" then
+          match Hosts.Dom.readStr mem st (a 1) (a 2) 64 with
+          | .ok name =>
+            if name.toLower == "class" then
+              let old := (((d.get (a 0)).attrs.find? fun x => x.ns.isNone && x.lname == "class").map (·.value)).getD ""
+              let new? : Option String := if nm == "remove_attribute" then some ""
+                else match Hosts.Dom.readStr mem st (a 3) (a 4) 4096 with
+                  | .ok v => some v
+                  | .error _ => none
+              match new? with
+              | some new => hr.unaffected name old new
+              | none => false
+            else hr.unaffected name "" ""
+          | .error _ => false
+        else false
     let reads := if readOnlyImports.contains nm then h.reads
       else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
+    let reads := if readOnlyImports.contains nm || neutral then reads
+      else { reads with hasSafe := reads.hasSafe && hasOk }
     -- the write that forgot the noted elements, for `Reads.wholeWhy`
     let reads := if readOnlyImports.contains nm || neutral || styleOf.isSome then reads
       else { reads with forgetBy :=
