@@ -1,0 +1,85 @@
+name: Independent Lean validator registry proof
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - '.github/workflows/ethereum-validator-registry.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: formal/lean4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          test: false
+      - name: Check reference vectors and actual source graph
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-validator-registry.py --self-test
+          python3 - <<'PY'
+          import json, pathlib, runpy, subprocess
+          p = pathlib.Path("ethereum-consensus").resolve()
+          a = runpy.run_path(str(p / "scripts/check-pure-lean-dependencies.py"))
+          graph = a["source_graph"](p, a["config_roots"](p) | {"RegistryProofMain"})
+          a["check_negative_controls"](p, graph)
+          repo = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"], text=True).strip())
+          pins = {}
+          for mod in graph:
+              src = a["module_path"](p.parent if mod in a["SHA2_MODULES"] else p, mod, ".lean")
+              rel = str(src.relative_to(repo))
+              blob = subprocess.check_output(["git","hash-object",str(src)],text=True).strip()
+              assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
+              pins[rel] = blob
+          for src in [p/"lean-toolchain",p/"lakefile.toml",p/"lake-manifest.json",
+                      p/"scripts/check-validator-registry.py",p/"scripts/check-pure-lean-dependencies.py"]:
+              rel = str(src.relative_to(repo))
+              blob = subprocess.check_output(["git","hash-object",str(src)],text=True).strip()
+              assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
+              pins[rel] = blob
+          print(json.dumps({"head":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
+                            "tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),
+                            "source_pins":pins},sort_keys=True))
+          PY
+      - name: Compile pinned Lean libraries and registry module
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry
+      - name: Capture actual theorem axioms and audit compiled imports
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus env lean ethereum-consensus/EthereumConsensus/SSZ/ValidatorRegistry.lean | tee "$RUNNER_TEMP/registry-axioms.log"
+          python3 - <<'PY'
+          import os, pathlib, re, runpy, subprocess
+          p = pathlib.Path("ethereum-consensus").resolve()
+          source = (p/"EthereumConsensus/SSZ/ValidatorRegistry.lean").read_text()
+          names = set(re.findall(r"^#print axioms (\S+)", source, re.M))
+          log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"registry-axioms.log").read_text()
+          reports = re.findall(r"'(EthereumConsensus\.SSZ\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)", log)
+          assert len(names) == 6 and len(reports) == 6 and {n for n,_ in reports} == names
+          for name, axioms in reports:
+              assert set(filter(None, (a.strip() for a in axioms.split(",")))) <= {"propext","Classical.choice","Quot.sound"}, name
+          a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
+          graph = a["source_graph"](p, a["config_roots"](p) | {"RegistryProofMain"})
+          prefix = pathlib.Path(subprocess.check_output(["lake","-d","ethereum-consensus","env","lean","--print-prefix"],text=True).strip())
+          a["audit_build"](p/".lake/build",prefix,graph)
+          PY
+      - name: Execute actual registry proof functions against independent oracle
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-validator-registry.py lake -d ethereum-consensus env lean --run ethereum-consensus/RegistryProofMain.lean | tee "$RUNNER_TEMP/registry-results.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validator-registry-evidence
+          path: |
+            ${{ runner.temp }}/registry-axioms.log
+            ${{ runner.temp }}/registry-results.log
