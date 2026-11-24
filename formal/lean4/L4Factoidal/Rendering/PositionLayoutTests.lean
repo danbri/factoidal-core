@@ -658,6 +658,27 @@ private def moved := "<div id=a>AA</div><div id=b>BB</div>"
 -- `none` and an unknown function: no transform
 #guard box moved "#a{transform:translate(10px,3px)} #a{transform:none}" "a" == some (0,0,200,7)
 #guard box moved "#a{transform:bogus(10px)}" "a" == some (0,0,200,7)
+-- Inline-blocks transform their border box without moving the following inline item.
+private def atomicTransformFixture := "<div><span id=a>AB</span><span id=b>CD</span></div>"
+private def atomicPlain := "#a{display:inline-block;width:20px;height:10px}"
+private def atomicShifted := atomicPlain ++ "#a{transform:translate(50%,3px)}"
+#guard (box atomicTransformFixture atomicPlain "a").isSome &&
+  box atomicTransformFixture atomicShifted "a" ==
+    (box atomicTransformFixture atomicPlain "a").map (fun (x,y,w,h) => (x+10,y+3,w,h))
+#guard (at? atomicTransformFixture atomicPlain "CD").isSome &&
+  at? atomicTransformFixture atomicShifted "CD" == at? atomicTransformFixture atomicPlain "CD"
+private def atomicScaled := atomicPlain ++ "#a{transform:scale(2);transform-origin:0 0}"
+#guard box atomicTransformFixture atomicScaled "a" ==
+  (box atomicTransformFixture atomicPlain "a").map (fun (x,y,w,h) => (x,y,2*w,2*h))
+-- A nested transform can overflow its auto-sized parent's painted edge without
+-- changing the parent's width or the position of the following text.
+private def nestedAtomicFixture := "<div><span id=p><span id=a>AB</span>EF</span><span id=b>CD</span></div>"
+private def nestedAtomicPlain := "#p{display:inline-block}" ++ atomicPlain
+private def nestedAtomicShifted := nestedAtomicPlain ++ "#a{transform:translateX(80px)}"
+#guard (box nestedAtomicFixture nestedAtomicPlain "p").isSome &&
+  box nestedAtomicFixture nestedAtomicShifted "p" == box nestedAtomicFixture nestedAtomicPlain "p"
+#guard (at? nestedAtomicFixture nestedAtomicPlain "CD").isSome &&
+  at? nestedAtomicFixture nestedAtomicShifted "CD" == at? nestedAtomicFixture nestedAtomicPlain "CD"
 -- an inline box is not transformed
 #guard at? "<div>ab <span id=s>cd</span></div>" "#s{transform:translate(10px,3px)}" "cd" == some (18,0)
 
