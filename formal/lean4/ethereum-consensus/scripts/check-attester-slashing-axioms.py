@@ -17,7 +17,7 @@ pins={
     "formal/lean4/ethereum-consensus/scripts/check-attester-slashing.py": "fde24107d399fe4a0e3efdc84ce7090624e49c17",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProofTheorems.lean": "2fd9c36db65c98f6e7895696762cab3856bc7d53",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/AttestationData.lean": "066e9adcb47a0beed6ce9258722b9beb2ef8fd7f",
-    "formal/lean4/ethereum-consensus/ContainerRootsMain.lean": "fbe57e5f33933314564ca0d9d456825b3f29fdc0",
+    "formal/lean4/ethereum-consensus/ContainerRootsMain.lean": "cc3635b29abf0905fa1e4eab318602ac18c196e9",
     "formal/lean4/ethereum-consensus/EthereumConsensus.lean": "e697564e6eae6ccf7c5942ace1a3feaa470935ec",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/SigningDomains.lean": "f3195b4b96a80ea2b5ba86317b1d89052594a1c0",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean": "c26954c1514b0d216f4aa4a3918a1bc4291af93c",
