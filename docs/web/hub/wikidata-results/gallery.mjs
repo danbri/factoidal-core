@@ -97,7 +97,7 @@ export function mountGallery({ views, onEdit, canRun, onChange }) {
       else {
         const { head: { vars }, results: { bindings: rows } } = result.data;
         const cleanup = await views.get(card.id)(target,
-          { vars, rows, options: entry.directives.options.get(card.id) ?? {} }, card.id);
+          { vars, rows, options: entry.directives.options.get(card.id) ?? {}, thumbnails: entry.group.thumbnails }, card.id);
         if (revision === card.revision) card.cleanup = cleanup;
         else cleanup?.();
       }
