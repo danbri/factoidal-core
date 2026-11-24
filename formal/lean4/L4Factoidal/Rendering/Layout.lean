@@ -1734,6 +1734,41 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
   return frames.foldl (fun rest frame => frame.before ++ rest) out
 
+/-- A wrapper to see through: an inline element (not a link, not replaced, not SVG) with no
+margin, border, padding or background of its own, that has a block-level child in flow.
+`liftBlocks` gives its children to the block flow of its parent. -/
+def seeThrough (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  let s := styles[id]!
+  n.type == .element && s.display == .inline && !s.pos.isAbsolute && s.pos.float == .none &&
+  n.lname != "a" && n.ns != some DOM.svgNS && (blankReplaced n).isNone && n.lname != "img" &&
+  s.background.isNone && s.backgroundImage.isNone && s.backgroundGradient.isNone &&
+  s.borderEdges.top == 0 && s.borderEdges.right == 0 && s.borderEdges.bottom == 0 && s.borderEdges.left == 0 &&
+  s.padding.left == 0 && s.padding.right == 0 && s.margin.left == 0 && s.margin.right == 0 &&
+  n.kids.any fun k =>
+    let ks := styles[k]!
+    (dom.get k).type == .element && ks.display.isBlockLevel && !ks.pos.isAbsolute && ks.pos.float == .none
+
+/-- The children of a block flow with each `seeThrough` wrapper replaced by its children, in
+order, to any depth (CSS 2.1 §9.2.1.1: a block box inside an inline box breaks the inline
+box around it; the block keeps its own layout). Before 2026-11-24 the wrapper's contents
+were laid out as inline content: GitHub's header, a flex column inside the inline custom
+element `react-partial`, drew each of its items on a line of its own. At most `dom.size`
+steps. -/
+def liftBlocks (dom : Dom) (styles : Array Computed) (kids : Array Nat) : Array Nat := Id.run do
+  if !kids.any (seeThrough dom styles) then return kids
+  let mut out : Array Nat := #[]
+  let mut pending : List Nat := kids.toList
+  for _ in [0:dom.size + kids.size + 1] do
+    match pending with
+    | [] => break
+    | k :: rest =>
+      if seeThrough dom styles k then pending := (dom.get k).kids.toList ++ rest
+      else
+        out := out.push k
+        pending := rest
+  return out ++ pending.toArray
+
 /-- What goes before a list item (CSS Lists 3 §3.1 `list-style-type`): nothing with
 `none`; its number with a numbering style, or by default in an ordered list; else a
 bullet: the one that `list-style-type` names, or by default the disc, circle or square of
@@ -2119,7 +2154,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       -- §9.5): with all the room they sit side by side, and the lines and boxes after them
       -- are beside them. With no float in the flow this stays 0.
       let mut beside : Float := 0
-      for seg in Table.segments dom styles kids do
+      for seg in Table.segments dom styles (liftBlocks dom styles kids) do
         match seg with
         | .run run =>
           let (a,b) ← inlineWidths inline (match (styles[container]?.map (·.textIndent)) with | some (CSS.Length.px n) => n | _ => 0)
@@ -2348,7 +2383,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- with (`around`) and those of this flow. Lines, and boxes that establish a formatting
       -- context of their own, take the room beside them.
       let mut floats : Array Floats.Box := around
-      for seg in Table.segments dom styles kids do
+      for seg in Table.segments dom styles (liftBlocks dom styles kids) do
         match seg with
         | .run run =>
           if !inline.isEmpty then

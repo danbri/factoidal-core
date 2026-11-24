@@ -35,6 +35,9 @@ private def reds (html : String) : Nat :=
 #guard reds "<p>A<a href=x><div style='width:10px;height:10px;background:red'></div></a>B</p>" == 1
 #guard reds "<a href=x><div style='width:10px;height:10px;background:red'></div></a>" == 1
 #guard reds "<div style='width:10px;height:10px;background:red'></div>" == 1
+-- A flex container inside an inline element keeps its flex layout: its items side by side.
+private def flexInSpan := "<span><div style='display:flex'><div id=a>AA</div><div id=b>BB</div></div></span>"
+#guard (do let (_,ya) ← at? flexInSpan "" "AA"; let (xb,yb) ← at? flexInSpan "" "BB"; pure (xb > 0 && ya == yb)) == some true
 
 -- Relative: the box moves, the flow after it does not.
 #guard box page "#a{position:relative;left:10px;top:3px}" "a" == some (10,3,200,7)
