@@ -69,6 +69,9 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "example.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/gdsl-app/${name}`);
   }
+  for (const name of ["app.mjs", "example.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
+    eleventyConfig.addPassthroughCopy(`web/hub/wikidata-rewriter/${name}`);
+  }
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {

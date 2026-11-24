@@ -1,3 +1,6 @@
+---
+templateEngineOverride: md
+---
 # MLP first 100 queries: parser and original rewriter
 
 Run on 24 November 2026 using the first 100 template records in the checked-in

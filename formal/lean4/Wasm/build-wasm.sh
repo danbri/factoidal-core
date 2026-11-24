@@ -307,8 +307,8 @@ RT_SRCS="debug thread mpz utf8 object apply exception interrupt memory stackinfo
 # line makes glibc headers shadow the wasm sysroot's
 # (bits/wordsize.h fatal error in step 5).
 UVINC=""
-for d in /opt/homebrew/include /usr/local/include /usr/include; do
-  if [ -f "$d/uv.h" ]; then
+for d in "${L4_WASM_UV_INCLUDE:-}" /opt/homebrew/include /usr/local/include /usr/include; do
+  if [ -n "$d" ] && [ -f "$d/uv.h" ]; then
     mkdir -p "$WORK/uv-include"
     cp "$d/uv.h" "$WORK/uv-include/"
     [ -d "$d/uv" ] && cp -r "$d/uv" "$WORK/uv-include/"
@@ -316,7 +316,7 @@ for d in /opt/homebrew/include /usr/local/include /usr/include; do
     break
   fi
 done
-[ -n "$UVINC" ] || { echo "uv.h not found (apt-get install libuv1-dev / brew install libuv) — needed for declarations only"; exit 1; }
+[ -n "$UVINC" ] || { echo "uv.h not found (set L4_WASM_UV_INCLUDE or install libuv headers) — needed for declarations only"; exit 1; }
 # A restored cache can contain the old unpatched object despite matching Lean
 # headers. Require a witness written only after this script compiled the patched
 # source; a missing/mismatched witness invalidates object.o only, not Init/Std.

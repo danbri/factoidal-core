@@ -1,3 +1,6 @@
+---
+templateEngineOverride: md
+---
 # Martin Poulter’s Wikidata query catalogue
 
 The catalogue covers 580 SPARQL queries from the pinned main user page and its
@@ -234,7 +237,8 @@ and layout follow the [pinned Java named-subquery rules][orchestrator].
 | All 580 | 434 / 434 | 106 | 0 | 19 |
 
 There are 21 corpus queries with no result text from either tool and
-matching statuses. The 19 Lean-only cases include 18 legacy alias repairs
+matching statuses. The engine outcomes and query text match on 561 of the
+580 inputs. Of those, 540 contain matching query text and 21 have no text. The 19 Lean-only cases include 18 legacy alias repairs
 and the `$date` prefix-scanner case. All 411 plain SPARQL rewrites also
 match after independent Jena reparse and normalisation. The 23 remaining
 exact matches use QLever's named-subquery syntax, which Jena does not parse.
@@ -242,8 +246,10 @@ exact matches use QLever's named-subquery syntax, which Jena does not parse.
 The independent Wikimedia fixture audit supplies the broader check. The
 18 dedicated named-subquery fixtures match status and rewrite trace.
 All 13 successful named-subquery outputs match byte for byte. Across all
-213 fixtures, 91 statuses and 80 rule traces match. Lean matches 46 of the
-134 successful Java outputs byte for byte. Remaining fixture gaps include
+213 fixtures, 91 statuses and 80 rule traces match. Status counts all input
+cases, including errors, skips and unchanged queries. Wikimedia rewrites
+134 of the 213 inputs, and Lean matches the exact output text for 46 of
+those 134. The two counts use different denominators. Remaining fixture gaps include
 more label-service scopes and modes, date and duration, geospatial
 services and functions, utility services and GAS. For bare
 `[AUTO_LANGUAGE]` input the Lean port resolves the specified language
