@@ -1,0 +1,2586 @@
+{
+  "mlp-001": {
+    "source_sha256": "774671b921d67aa041bee3bbc8564936ff49266384f0a59fed24d1b220d81fb3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a9a205e0e3af42b9853723985f8ddd3cc390ec916a341c180cfdc511ca4a69be",
+    "lean_replacement_query_sha256": "d6f6d4d32a01b2e308e643fb9797cb98b33aace217529a60328570e30c510616"
+  },
+  "mlp-002": {
+    "source_sha256": "98b525188e6cf14235f1b6705bb617906ad89718f620fb8e11a909c78f618cc1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d525bcaa04c74adbb52fdf352b88c56a92aa3228092f1f737f75a3087f1f2b8f",
+    "lean_replacement_query_sha256": "bb451a767dfda1d3aa9581b3157704b207708a22e7ca735c71953e60c139403b"
+  },
+  "mlp-007": {
+    "source_sha256": "e4b282eb7d1b4bb804a6c1a9b9ddb0ae18c71e4666ae1b5a5c4445d4cb5f3e73",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1ccbce3b30d9138447ede2a2d5c3522749ce6279f3b98462feec57893294f5f6",
+    "lean_replacement_query_sha256": "e2598c5f4db910e361633a0358bf89d922ad54414c190260dc5f8baa28f717c2"
+  },
+  "mlp-008": {
+    "source_sha256": "b6b5202360e130831212bc1ba56d824512b4dff6e82fc98215e55fd97517fa3f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e508c33b0b84ba50e00f41d675ab8b538bfbf479ac4ceca951d9d8b51d1cfa9d",
+    "lean_replacement_query_sha256": "5b5b8530f5ed624226109550ec7afcd243c20beeefe835a37a5cbb67c6a9b0d4"
+  },
+  "mlp-009": {
+    "source_sha256": "5856fb1db1583ee63bf5dccbc0c3171a4b24b880475819d1a85a50839c7f3ce8",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "964c8a354986805abb11ce0c675bbfdaa9d9c9590c45a28205783dd6f9557855",
+    "lean_replacement_query_sha256": "2f7cadedae6a573258b2eaf77f7ac4f2ead509d2a89b45f7d05191436ffb4a2e"
+  },
+  "mlp-011": {
+    "source_sha256": "cc41d106830ec1a3fd1927837a6e987e5025c34aca9538e323617232185b4f8f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ae6ac6c414580dee84941207a4ff3a6a41520118c4251cb5d2e247c807b785c7",
+    "lean_replacement_query_sha256": "a59bbb713a9b0b5d40d861568ae3bf7f0e93abde913ad3c1d4008faec1f4cac3"
+  },
+  "mlp-012": {
+    "source_sha256": "f5d57c45993fadfc8b6972037d3a2958ab8c8cc538e7b0c9efd7dee121f10ac7",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "acb89c8392793cd9f90f827213f5f714878fdc5a5637cad59eeb0aa7b040a16d",
+    "lean_replacement_query_sha256": "0830be20b49e2c80bb6388e146bd6cc15f452b7ac9e5e7544e99f86b1f3a8ff5"
+  },
+  "mlp-013": {
+    "source_sha256": "c079f9b76a55fe998a151a5731601f72180832e360d63012e08d279726c8f676",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9ff44f1512099235edd8390bd81c68ee241178b3208350de10bc14971671f81d",
+    "lean_replacement_query_sha256": "a928e33bce7512b245908d9ec574e3857fdb384be11217a6d6bdaad42061e653"
+  },
+  "mlp-014": {
+    "source_sha256": "0ab5ecb687d4f532b8f70b37df8f97f068c016dbd06cc4de13ecfc120810b6ce",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ee5b74e66e52c9bf2815eba71aae3bee53d7bc8e9094319bf0e40b197aa72f44",
+    "lean_replacement_query_sha256": "5cf0498a42b3f8357706ee74e264c2c044bc1b349ebc6db385415f1328774015"
+  },
+  "mlp-015": {
+    "source_sha256": "4b654c4d049f3b7e1e3b7a2a897c70b56c0713d463ba9e4a97d0b0691f5a5d4f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cecac3ac4ff5d4f05b7f29e6b56709e84d96e9fd577395b0bf029ae8a2c89714",
+    "lean_replacement_query_sha256": "3e9ba5c28f1fff0197c0e3535b4e24a2611366016826f3e0e3ab39f688fae6a0"
+  },
+  "mlp-016": {
+    "source_sha256": "b74ab65f8c8287aff4a0a314aaeca8383ec8ef23f7aaed8a4aefeb988cb69f9f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "28e028709a98e82b52770bf1836090feb090786167d76ff44c1eefe164f04b4a",
+    "lean_replacement_query_sha256": "e955aa17eeff395ecdc0db7695dd33a1bb0b81b318fc3855be687c67984a868e"
+  },
+  "mlp-018": {
+    "source_sha256": "aa100cf13b31ee918e7f4e10b35179536d086b537a41be6cfdb8d978a7c41351",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "35f4b4c68a738813c5aa2751d760184c073b443a9da6a37dbe3ed7c59804ca44",
+    "lean_replacement_query_sha256": "1a7fa9905078851469c716971efa516e6a940eafe1c6defdc0c27f3f3d6169df"
+  },
+  "mlp-019": {
+    "source_sha256": "f2596d2ca8e7e990abf1b62e49184d8fbcbc69d38dd055477acfaecd96b11f03",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9929e7abe8c7f713cb9b56fd315e13478cb29688e33d42457ecfe78c1660a280",
+    "lean_replacement_query_sha256": "92d3478a6ea01fbc5657a5bcb9631793f19f7921be3b203986f3a3d7f2d72d30"
+  },
+  "mlp-020": {
+    "source_sha256": "b1c3577a0da8597394ef85995dfc7241198e7bad71ac302e5f987c8156ec74dd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "58a8715d009d3afd16c39316023b3e1919c41a8d2fab04231efc31eda68325fd",
+    "lean_replacement_query_sha256": "f99f41505008c56807f0d46662e9666d1a55c4109e9067b96c5f8a87e64d24b3"
+  },
+  "mlp-021": {
+    "source_sha256": "42ba973b47d850ea00724aca6bb0d7198c0a88e2eb4636934d89d2d24bab06c8",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7219188252f2f57c7dbc3f276d281f8f0454b5ae6f95967bffca1c7a3d06c4cc",
+    "lean_replacement_query_sha256": "9851ebafbc992be8b8e7eb5f2811e80733c4500219a7b8913b4c02a2658c529d"
+  },
+  "mlp-022": {
+    "source_sha256": "2165497687e30f3b89eed5f97a09485ed16efd1397fb78d6839e8383a0f992dc",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "62c7df557d8e8efa66bea1c6cdb555d636ed1b35b1267b364085f98c868eb0fc",
+    "lean_replacement_query_sha256": "381c839d493ed9fb8891574253e5a6d35696152f5cf47cf560e210b2b5d6e9e8"
+  },
+  "mlp-023": {
+    "source_sha256": "a5e575a594469687fd5fbfe59bb1ce5e40f40e93db5823b4c306db89a1eeb5c1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8e0f08b45ffe72efe1cd0a4a36fa8f4a88a58cd63cfc45f73ef472eb566bf834",
+    "lean_replacement_query_sha256": "2bdf1a6ee52e49e92448eb68d2358c177bbfc322cb39a25b9bd6c15b87a38352"
+  },
+  "mlp-024": {
+    "source_sha256": "502f69b4c8c57f7ba09a31e1082e6083f83a6326bbb54b6f65ed147cf487ffd1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4da1a6961c6539564d6700eb126c00e3bbd9518a832d98c54d197fc9dc096857",
+    "lean_replacement_query_sha256": "b32acd4431cc6fa68f40c4e98a16ebfc8545e8d27057aa8aa1fb9c14b967ed36"
+  },
+  "mlp-025": {
+    "source_sha256": "8dc623197ba84805ebe246b7016a945ffd908036872ae0daa6e6e95a7a99684e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "357bf8676472b4e77e1c9592602ecb9871507da9929ef17002bf147065a7cb40",
+    "lean_replacement_query_sha256": "0237a3886e3839a114d90a6dbda60ca1d52a218bdada2bb52d5cb51dbc89b82e"
+  },
+  "mlp-026": {
+    "source_sha256": "84004bfac15131b44bfafa4d67db1d3a4661782110cc0fd4bce32fa8a55a791f",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?stars, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2020-12-07",
+      "url": "https://www.wikidata.org/w/index.php?oldid=1319372974"
+    }
+  },
+  "mlp-027": {
+    "source_sha256": "2fa60b8c187db68f453a211e0bd9e08fd553202e686f02f427c782edbcafbaea",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "fe4c745b3eaf330eb8043bf7a44b883cc04501f241b13edf47f835908869ad5b",
+    "lean_replacement_query_sha256": "bee85f17ad65eef7d2533b888fca6f5fc88a1252f74a5bc01aed04db9816142b"
+  },
+  "mlp-028": {
+    "source_sha256": "dccc24c22adca863f5afcb0da1c83c308f450c7693a690ce73e5ac3fda2ee84b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4721c6795ada3b0302ba7bbee819c4b89c34ba5a79cefe8272823acd4a6c3ea0",
+    "lean_replacement_query_sha256": "1232bfb852d506d705e5ad2cd94e9a68662978d6f6f1026937c5780c256c827d"
+  },
+  "mlp-029": {
+    "source_sha256": "e1f12a03dd339b11caa59cf2d50378ecdd0cb4a75fab97f1c1ec8a1866311916",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "42a46d1f5131c8641b7aec2cc64547c71fe716b31fdf1f9fefb4b1fd02651dfd",
+    "lean_replacement_query_sha256": "cf14335d5328aec5a4a1e569dc621557355867206901db6bff15499720af42e9"
+  },
+  "mlp-031": {
+    "source_sha256": "b0588adab0a3e05e3572791b018cf919de9212e7fd3a63ad1bcb82a5e1896c81",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5a874f58b0aa11cf4052549937934451da72e97515d3230bceba74e9048c04f7",
+    "lean_replacement_query_sha256": "766b945bee10e14244c7fd0b36f8abe14bd0951b74a907bb6d3f81d610cfdc3a"
+  },
+  "mlp-032": {
+    "source_sha256": "50fa4e9c14d6da0bf2ea6da91a3e65ea45289eff96effad6b599ce2ae3d50ad3",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "9cf23ca1163cd507ddefdc2d37fa7ae6da020f1905d61246da652704f68b97cb",
+    "lean_replacement_query_sha256": "75afa2e0dd2ff995d8044d214831b4dd200d97b2043abfbdff9a2b910390457d"
+  },
+  "mlp-033": {
+    "source_sha256": "5ef4141579dfe138ec0abf621816d86f6582e7577c72933a6506ff5a3743d222",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a665d55bc661c4fbe9fbcbec4296084333b6a728350f88cf8d39ced9c98be772",
+    "lean_replacement_query_sha256": "492509933073352328ad0e67bfdd179202cc0328f8fb79e1d0ac63912676f0bf"
+  },
+  "mlp-034": {
+    "source_sha256": "62164abcfbf516b5ca4170c2b9cef5f6b0afc279e5318cf363474fe74de47c47",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4e15b207a587bf840d89245431d64e3140309b3271a530dab4561cdb162780a6",
+    "lean_replacement_query_sha256": "cd09d4bb790857a12273249135dc58e9bc934b65ff33c104d734efc20f5f40b7"
+  },
+  "mlp-035": {
+    "source_sha256": "19575350bea0c2ea1a2fdd03035ddeb7f389423b19a04aef3dae2322c7c498cb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a475120892beddd82162bc00ad21f0a933615a2f971f257461f1516660df0dfe",
+    "lean_replacement_query_sha256": "47e419fb284a110c8eb8a247bf5095bcb531ea8b1056f68c3ccd5e78c010a7d9"
+  },
+  "mlp-036": {
+    "source_sha256": "ba8e256f055c9d2368c4fb32fb72da715b76d6135ea61142d8daf5077dcf1db5",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "429119d2b3d5cf66572e8e776f6fc470db27a12829e6f9a2e1b4905c5c2f7b4d",
+    "lean_replacement_query_sha256": "0ed7bf79fed893971f1fcb7add7accb127d48d49d58be7dd2ad6bafc9243e111"
+  },
+  "mlp-037": {
+    "source_sha256": "489914cf518efb97077e69bb2c9a95d7f5b144d23998c6d83d8249453bab9b5a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f1352e04409c1864980f8bcf7e95e85291c3fe751c63f008cba00e9ffb540fd3",
+    "lean_replacement_query_sha256": "f8a950be9644bef2985ae40b31b06d5680d598a0957533f63b94d0549a4d7d3f"
+  },
+  "mlp-038": {
+    "source_sha256": "f0c4e45ca307e7566ffa2d1a564f372e1f571d70c35f65a7ba156695a9920714",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cadb72d7268f3f7a7062bde266f9f128d789be14bb7f12fa7b184777a5d31a86",
+    "lean_replacement_query_sha256": "eac8315573ffd007742ad922a4225abcd3d9ab90b1750804fd2c283dee7cc945"
+  },
+  "mlp-039": {
+    "source_sha256": "d062ce29ed963b2df0c4bd160a82c32279f6d05f381498e00532d5250b92c002",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6474424e68f3384a87078bbdc62834b174338df1243db03e79d9f2559c4aa9da",
+    "lean_replacement_query_sha256": "7719cc942ef9a5692a31217b7f01d54792d6e5d9f9226a91b76d268a66ada2e4"
+  },
+  "mlp-040": {
+    "source_sha256": "44b9f87d41b1db70ae9b986b40c4e86e768b67849cd886fac1bd56a7fe279ac8",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4357930218169e9b12f168e03d7411652fb6df864694bad6c6b456dd0dfd3922",
+    "lean_replacement_query_sha256": "a31a04335bda2828fa798204a9921166f2fcae498eaddf4060764f1f7f4a08b4"
+  },
+  "mlp-042": {
+    "source_sha256": "ce5f27de914d73de83ed4d3a069b260aa2cc1c6bfb21b1ab6160ba1eb78c7b8c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0e9c71911d8f6963f02472ab5246b170519851d1fe760796b996747e33011995",
+    "lean_replacement_query_sha256": "f0a97528d38e1a8d07f3d794f6f2e8e69e8071f2a97f18dec07162443130f797"
+  },
+  "mlp-043": {
+    "source_sha256": "19941c017b20f1ccd7dcd92bb934211a8d5b120efa84149dba6706ec55bbf96b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "391d8f785b83fdceb0808d743f7b8d7b30b7107c626e4475a5c0395a22259797",
+    "lean_replacement_query_sha256": "080fc87ab7afb4bfb730d5737b7662cf82cda31a51c24e1fea356affecbcd789"
+  },
+  "mlp-044": {
+    "source_sha256": "edf05bb25ceae852e51bbdef0718bde6c76ad1a42eb760d84e7c00015f288b32",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "792169b6baa743719d2758461223bcdbc674a870970e3486322a3c6c116044a0",
+    "lean_replacement_query_sha256": "e493ea0c0c348db07ccf20cd7165703d6b27a65d1b68291247a174a6a4667853"
+  },
+  "mlp-045": {
+    "source_sha256": "6a9e0c5c355ddcddd647478c036679905c11966bb141067c76984be487f4be53",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "fe5623104f59da50bff9691b5c6b8c6fda51f8d15c3aa73d34392dcd27f8a62d",
+    "lean_replacement_query_sha256": "eb8f1fcef54128ef53288cfb89a3ea90c0484d168f5cd634d175c4d105d390d4"
+  },
+  "mlp-046": {
+    "source_sha256": "c739233f2d376b3d08a5b896adb6365163eec9cae2ca4e2a4f0d6801cb823510",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6cbd3097429be5dff631431858245cf540e0ac23d939df36dfb802dab42d8a1f",
+    "lean_replacement_query_sha256": "1fb1546c394a5372038b150f985b203b669afec6bf6ba96e8799dd32c212c8bd"
+  },
+  "mlp-047": {
+    "source_sha256": "76e9207a869ae7faff2bba85044fdd9fb29edd392c83db7e1cecd7a7f6478ce5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "65cda84c961563f5edeb15feff594ff34bb5c9458417d07f1057f249a80e0ce3",
+    "lean_replacement_query_sha256": "ab462b5fb3522b32529690eb14cf1fd896d9d12cec28af0f84b2988b0c218462"
+  },
+  "mlp-049": {
+    "source_sha256": "6a13fee14d879f4dddf8eacbdf6fd603019a503372a811e11fe66a0a894db17b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "621b2e446d7cc77a0d81e5a51263c677faf10750e1d4e33e8015c9f3e1749466",
+    "lean_replacement_query_sha256": "2b6e9a0cceb9e3c3115592014570b0da80f7e419269ef7bfcc85786f4dc9a542"
+  },
+  "mlp-050": {
+    "source_sha256": "954525834b37dfc0f6e6d7150ac05c5528fa898911de707ce92a3410a0ff0f79",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5380ec3cd797d102e39f5800a36965fc035e26b650177f9c067e46fde7204570",
+    "lean_replacement_query_sha256": "b8d18fc9b0e03097acb66c659cc12cc6e05b28e8ba8eefb0beec767fff9e85de"
+  },
+  "mlp-051": {
+    "source_sha256": "733dd33884968c41c7dfc2e8408ffbc7e4244d64e2e1a0b2a08396331c7f42e6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "671bdf7f1ea0c5a5ac4ad024f829db61ccbe868a6c28586ca2b98aa320b4ab7e",
+    "lean_replacement_query_sha256": "d587155590f22ec9680b8b19b8536917d3006d6e0c9cbea695ff6c5179ee4be3"
+  },
+  "mlp-052": {
+    "source_sha256": "d21bf8d10d46f22d9c779f377407d7d55f0e6133ab3bc077cca402ac1b74179c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "82d109cce0d39791608a0449e247e179016f193c305e1d2438af5bfceef00f2c",
+    "lean_replacement_query_sha256": "30b255e1da87e105be178f7f8d815aa04318f731ffcb0d2692fbbf9a1889be79"
+  },
+  "mlp-053": {
+    "source_sha256": "46dc66295d4b2d8eb46f3486ace003a1463a2800439a02033d610a176f160b11",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2a47a40471f702bad3be2312846febdea572b636e2921906075d9fc859efb70d",
+    "lean_replacement_query_sha256": "eced2e2679bc7515c4cad59142adf208da37356d1848eb77ef2e664e1d0430e4"
+  },
+  "mlp-054": {
+    "source_sha256": "345104981ec3281d8cc304128651245e4bc4c00335d00fce21dbcffd1fc64050",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0a49712c53e0f7e833e90415c9c5d860d24b011bf338bcec3599f8dea7865e9a",
+    "lean_replacement_query_sha256": "5aae61c7eddeae47ee6f4929aa2ae8a0b6cac31bd248a352907d0d20ce26129b"
+  },
+  "mlp-055": {
+    "source_sha256": "d84602d997865bb5161b696351706ddb8a6351e520d4b79c05b1b1e7cba2d817",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2556fa0020ca205ce36be2fd24659c5e6ad4539fce7ff548e6cfea298e036b97",
+    "lean_replacement_query_sha256": "ada9fec6787b2853f1e17bc230ef6c61796f1fa446be95e91bafe1ae684498f7"
+  },
+  "mlp-056": {
+    "source_sha256": "7f21a77eede8762c1cde28423acfa44037dd8e33ce5f296168b2eebe90108f9b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6b5b17ea14d9482730b97fc51551d4a5588497d5fd2323614f3ad4ab4ebf905f",
+    "lean_replacement_query_sha256": "df9da316a18dc5456caa27e49224204452f6221df7e774989d23cfe5c0e51053"
+  },
+  "mlp-057": {
+    "source_sha256": "ad83069a317bcd363ad794db66c6dd6b5d32b62b4ec69f2c52cd8f1a4601006a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "25c9ce14fa3ecadbdcf9464658af1cc0d4fc649ff0ab682f8f29cbe93c08a143",
+    "lean_replacement_query_sha256": "deef08c87d37a5aa540e98c444416a8a36af9f316764f375c4656ff3cf57ddd4"
+  },
+  "mlp-058": {
+    "source_sha256": "86a94ca8e99fa269dc7a6384a026c5f69d446a8a9f5a61f2a86e151889b1590c",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "a7f7881a79eebf6e400d3a89d24d1d1c9e8a8e485aec04cf4e4d8a3ea064a7dd",
+    "lean_replacement_query_sha256": "7c36f4b7a447022a4287b99cc4c655897beff86c24b98f906f02c32df6f21df2"
+  },
+  "mlp-059": {
+    "source_sha256": "297ef03f01540dfe1c821f5fd036a294badd0c84c4036e5cffa430c4169dcbb3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d73512b8a1a6f5a41232135aaf204ae08a2d1d4b6fc10dafe06a1b6a18c6f9ca",
+    "lean_replacement_query_sha256": "e230c6fcc87c749b4abf9077ad9b1b76060069b53223c9a23023ac76286921fc"
+  },
+  "mlp-060": {
+    "source_sha256": "8cacc59d955e4e9c1941a494605a68989145521e63e872375e60145cbdc359e7",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?coord, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2017-12-18",
+      "url": "https://www.wikidata.org/w/index.php?oldid=610448730"
+    }
+  },
+  "mlp-061": {
+    "source_sha256": "f77d92585addbfb4e35a0c84dabb2b9688a4b1859dffc41ccc1c0c1573799627",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "fadec892d824569f6f9e37a392b44f3a233d845b2c7bd3ba3387bd44da5acc01",
+    "lean_replacement_query_sha256": "3bd695c6db1a828c256d327fb0f778635fbe2b63f891dda5322fafc833fbb007"
+  },
+  "mlp-062": {
+    "source_sha256": "5459aee6f5188e0387e129ce01a393538d3493a59f6c7019d116b38d2b1b38ac",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "86da898aadc221fc91d0be05c66b90a2d968a3d77fcfd3129e937855a8e0ee29",
+    "lean_replacement_query_sha256": "29f02291e3ea070a6eacf28212bc13d1fff9148120a727137a22d2f059faf59e"
+  },
+  "mlp-063": {
+    "source_sha256": "77c10b27b697f0fb482a93f236545a582f5bfe605c8f70f511ec10644e27f60a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2a1db608b2a0cda196e055234f86bf0adba6622eeba6f6871e094bc45f136e88",
+    "lean_replacement_query_sha256": "3fd47cf915dfb20e7f1fc338020148d767e399e5fb93d4ca638e1365921678b9"
+  },
+  "mlp-064": {
+    "source_sha256": "7e069a421c82dcb2e9e1866ec0646f3e0c8b9433e382dec8dae48f24c0cb7798",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "aa3cb0f184cf5514b4f023b4ff5f61049fba8a548d49171ff968d0311425efe3",
+    "lean_replacement_query_sha256": "636c6e92ebdc60710c471544586bf0c0b444f372456db9cc4a14ee1bda7f17fc"
+  },
+  "mlp-065": {
+    "source_sha256": "ab2393baf353988cc4257c9ed9c9a06daf236e663a05bdc6e926126ea1e6324d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "731144b26fb2fd8a0256c290e63cc7ddfeee3cf56e9362606e83ce77355c205b",
+    "lean_replacement_query_sha256": "e38e9533bc49b7f499006c3abb19289f5ab2830af88d89f93556ff904ee83336"
+  },
+  "mlp-069": {
+    "source_sha256": "b441c42229207f365fe1bf6ee7f16688ab4fbdb58ee2ea6dbd3070a39820aeb2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6fb74468b1fc093a5b395ffbe4075ca314a48bd9bc83ed57e53449e7d96d952a",
+    "lean_replacement_query_sha256": "b5f7919bb2148fe78441b6aaea855ffdf416291b80f47b262f38937a042bcff1"
+  },
+  "mlp-070": {
+    "source_sha256": "e2caf1d67a1403f0e51ae9a094e11604e100baa8a08fbb1c4ec0f32443ffb0fa",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a303d415e1ec359173ef94e38dccb2f4f9f8bc819a282d8cee56c42288cd20d0",
+    "lean_replacement_query_sha256": "42b58c5a2d6770d4107d3247a06ebeb965e96d1fac29bf4229cc8df8859a24fd"
+  },
+  "mlp-071": {
+    "source_sha256": "092c892115e2bf38ae554df99f329a91a12813d72319276247534820a2a5935f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b0c1d91156d7df4c9a9e3442bd0a78b46f1e5b0db219edc7191891e5df4747ea",
+    "lean_replacement_query_sha256": "fcf12d1ee588e64734696b57c94e9ba8daf447575daab6a7d8e0531626cba51f"
+  },
+  "mlp-072": {
+    "source_sha256": "24d14ca6dfd45811b11b938fe9c7a9375b3afafc1bc47085209dfeba333e9e38",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c8893f6eb69edfac7f41fc3d16626ff97524478eb1a0e1bfcc7246c739bcf66d",
+    "lean_replacement_query_sha256": "87a47fa6bfc2c89f2249511ebac17e0b032887993cea66cc4415f7e8ea64db32"
+  },
+  "mlp-073": {
+    "source_sha256": "1daa602e02271c53d1e29ce90ef8a7205adbc763d094ca0776b5c54cf801cab7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "301b4d05ea2871723b6a7227500eaa38eae03ca3f407e911ead99de9e4236ab9",
+    "lean_replacement_query_sha256": "fe6ff9381841a3e1d92d9db251a291f971e9cac3a362ad27a295dd0f6f977521"
+  },
+  "mlp-074": {
+    "source_sha256": "df0923f627603d520ee11908057dedc39e8aabf8fe851073376a1d3639d7d7f7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b38531ffe9da23762f96e38369902442ae8ae059b39b42947d5d32e024937b7c",
+    "lean_replacement_query_sha256": "dea0fc7957bcf219b56b44efd8a80df5a72d2047ef3cd0c74d395fd52132deed"
+  },
+  "mlp-075": {
+    "source_sha256": "132183a554b4649edb1853b702d75100fcc74b94211ca9df0bbcb81f3c91025f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d353d95167d761f76fc62f3f941a50bc730a59eefb4504a4feeaebf51ad70f97",
+    "lean_replacement_query_sha256": "f01227f891ad434f8114c02744fe75ce0b3a09874c8d3a38de96666ea6f8bb7b"
+  },
+  "mlp-076": {
+    "source_sha256": "67fa2e1043f5a6b3e7a7187ba20ab3765e3a2636a0b5aca3b8bdb7fbfb468193",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ac2d0600d64ecc91fb2a53df6eb02e25e0c52636277d5326cc407ff97e9b6819",
+    "lean_replacement_query_sha256": "320e46d7df143813d53149a1a1adba334d7f5191c28a2a8002268284160a7a96"
+  },
+  "mlp-077": {
+    "source_sha256": "9d00f85bf18207b259520a37063659f62c378ede87161806a2ac935338094494",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "15305b93308487bac68f3817fd8e28705edb3a821ea0006823cb12646b70734e",
+    "lean_replacement_query_sha256": "ed1ffa49e2b003f07923a87de02081d4845748d10f0f5bd1f6e4d4bd41a04833"
+  },
+  "mlp-078": {
+    "source_sha256": "e1495306adc3b27f523fdb03e799c5e856798d1035a42f5409ece82e9be94744",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f0e8a4ec7630e4040cbe172373dadaaebbf6f3aa0c0fb85c070e4fda03cb68fd",
+    "lean_replacement_query_sha256": "a925cf25c6b8898755224243d92726ec1963e468ab2da8f765d764801309b5a1"
+  },
+  "mlp-079": {
+    "source_sha256": "bef395509908eac147d0697fd89b3fe312b7e2ba63df180cef72ca2db87cf898",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a73b940697513fedda900918001242c4d141a8d45483ba540cb2b095e0141322",
+    "lean_replacement_query_sha256": "cad72cc11553b17a67e63ea41fe9cd443088f4c870a6a5682bfade10690e89b8"
+  },
+  "mlp-080": {
+    "source_sha256": "a108e4b800e23325bfb49b69e9616162b5fe0b5bf7e368ef96f56e4e4a5c3053",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cbf288ed7a49cfe095349e1f71ccd9c2d347f2739b74f1bbcf6642eeaaa7fffc",
+    "lean_replacement_query_sha256": "d4e1f3db4e89cf353d6aad6286808077e93e4ca585ede945646b51f3f6bc7b5b"
+  },
+  "mlp-082": {
+    "source_sha256": "524552947bd72fff6cd62ced9a5e274dab6d206e61d980ecffb97e9e6f12bffb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "92b1da7fbc06623a172e8216a71368e67bf07cec85b3dd4c9b0c1d8b9b25e373",
+    "lean_replacement_query_sha256": "d3fb77bf1ce4b8be783cd16d33214577125c7fd58b9889bf528f50a93c675fc4"
+  },
+  "mlp-083": {
+    "source_sha256": "7ee1c0fdcc4ef5c731b3b5ad9ac4ec44ff972c847dec5491f654a59e6d9a916a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5258cdf894241cf5c01a6ed6590fa5c3dcba560829ed4f03316118f09bebcb47",
+    "lean_replacement_query_sha256": "f56c2c90451d8e827d041e2823c3e05ec24410fbd662420789ea5d4de643700b"
+  },
+  "mlp-084": {
+    "source_sha256": "4eccd5a917a32d76f412ac8f1f9f74faf14cff7c9d427d3500928d841c2f7e61",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "75e96244730240e108a312cfc4824b6cdce3323f473f8be691da0fdcd09afc70",
+    "lean_replacement_query_sha256": "20624cb4d58d658222e79628cf96cdefe8f771edb5f9610628344b15acca08c5"
+  },
+  "mlp-085": {
+    "source_sha256": "ab074fefd9842fdf1ae207b04ff97568e40d07f7398d997b9003b5740e7f3c1f",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "b59d33755b305fe894335e00dd042007de3a31d301591ad2f8dc4b47d26a0297",
+    "lean_replacement_query_sha256": "293c062186b6cdc803ce65f79afcfd787ef4f761e189c2cdb3b16f8061c478ce"
+  },
+  "mlp-086": {
+    "source_sha256": "bbe25308a15115ef51c1d28c3c4f58571b06e16537756612a516bada1171671a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d141ac3c183e0f14eeccd229143e2c3aef0b05efc81ebcbda5a7d575574d2b63",
+    "lean_replacement_query_sha256": "93e91f45a937dd75932b8f31c4208fe0839d034708f7b6190f0fa4ca2c6353ad"
+  },
+  "mlp-088": {
+    "source_sha256": "6040baebac65d2e2ada3362adfb4cb187c4cfbb0dd7e4cf99337af0322705429",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5efc77e40ab9fed0bb935b3cbf5d5ef157c1b4dcd7dd463223484d755b294138",
+    "lean_replacement_query_sha256": "dd6d6d1578152db93ff62a10a7d4848bc9fc8a3abbcfcfc4505beb123d453dfc"
+  },
+  "mlp-089": {
+    "source_sha256": "8f7452ce6b3d9617dad8c6ec8b849008810190cb366daec06c2c945507ec29fd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "56f19635cbf5378597038d86fb9a65da2463037afb218edaed8a2c4e7055b5ad",
+    "lean_replacement_query_sha256": "d7422f6a2e84b8e0ed35be6bceb71a39b44d6472c84a0aa3c1ffadec3ed6d974"
+  },
+  "mlp-090": {
+    "source_sha256": "223733f81ee685064e535d2044aebd481e5025dd664cd0d0bbce5cee88fa98c0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "92b64844055477639b4494ac0079f09d89706c244756e23323075aea5202d36b",
+    "lean_replacement_query_sha256": "9121261fcdfd10f75f9373f06572041f435302f25cf7cbfdb7a798d8a15da6e2"
+  },
+  "mlp-091": {
+    "source_sha256": "0eed4f0e0cb4ca81c2cd6b6278ebb33b363be3e8dfbd36038b6406125ca14205",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2ec85bfa0aaa91868655e5e3987db60e66da1ffd49cd4b2bf5b35842d6420486",
+    "lean_replacement_query_sha256": "eeb459071bd6fe26a4748269e67ef13cce49493ac93178c54e5706a248046a81"
+  },
+  "mlp-092": {
+    "source_sha256": "fdcec30906fa434a284eb9905216687eaf3d9531672f6ff6951b52dd11b5637a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "440e641e85a6d71bd99cceb3f80f5a2a6c8b2005f9174bccafa329487d57a621",
+    "lean_replacement_query_sha256": "7da799149cbb5a0dd8c65589d919199c9d19137da3f9c4e94152a63ae17e3154"
+  },
+  "mlp-093": {
+    "source_sha256": "5adea25554261f94c2d08dbba729057697d582957ea02542a2c60126dbb32ef8",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?image, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2017-12-18",
+      "url": "https://www.wikidata.org/w/index.php?oldid=610448730"
+    }
+  },
+  "mlp-094": {
+    "source_sha256": "2af8515343d7892902b76e55c838f3b6668101cdbcbe3e95a5ed8e8d2c585bf1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "81330b9d65c0cc41b9c7df577677a0b2bb0766b0841c36b6162673f75254d3e9",
+    "lean_replacement_query_sha256": "60f1654f415cd823bc4f36a012f116198296c2a1ea1e43147ef0c01c8affc050"
+  },
+  "mlp-097": {
+    "source_sha256": "39b11dea16d886054802f3e60a29cea997c24f2bc65ede7c2c9c9cb51e00ba4d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "47a38ab1215af91526112ffede540df65c46edf05d4fa9a9b53cd3cd6222a9e8",
+    "lean_replacement_query_sha256": "d8e495befd58d1315238e63716ae3e15af63ee862a7e95a57edd7593f87e2c95"
+  },
+  "mlp-098": {
+    "source_sha256": "44dff72a62480f12265b6fb1c99d5f24f525bb75cdefe48b509a0e2f911faa8e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3075b61750314be8d06b7ef180991d4ebd2ab3e17080d983aa16c9f8ae5f9561",
+    "lean_replacement_query_sha256": "818ff899395f03911bcc272b3cc577c60cc82071ff56b9681be5c236e67161bf"
+  },
+  "mlp-099": {
+    "source_sha256": "33679e2b0cb4f4fabccaa6a511015b6fb7aed5e7f5be1518970785811c02c1e3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c727aa6709e5a4853ab3401e7bf4fc75a58095aba34fe7fc77a8592cd87461de",
+    "lean_replacement_query_sha256": "2f00160ab5b168e55b0d0e8e8b070fee00c4670285089c710289a8fa9289cf18"
+  },
+  "mlp-100": {
+    "source_sha256": "eea7d3890e3ad5a62a56c59c83689b499d8155bbe6203c9b06ed1b4d5ad283ab",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2b1724a15bd2dcff11c6fff6e0ba704624632d75460f4db53c15e2f6a8de6fef",
+    "lean_replacement_query_sha256": "f57df31a3e74d0d14a6902ff2238dc7803b8291b6fd7c48b60b1098262da1d0e"
+  },
+  "mlp-101": {
+    "source_sha256": "6dae48d1a0c702b36e93e6ee1310a679ed70742872da78672e147f8c0832960a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ca2326ceb3cea1f036e6ff6c8aa93b182fe6e2846f5ffcd5acac26744719b0fe",
+    "lean_replacement_query_sha256": "47ec4349d593a60147c9cc21f38d20e50303cbd2d2b6b2078a4e842e49fa4311"
+  },
+  "mlp-102": {
+    "source_sha256": "830ed29960286caef4d1288ef49cce089eae3f0c540d31ccccc146ef8484826b",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "91cb320146b1259c70eec7725d0a82515c11b200ce7e875916fe1d767c55e738",
+    "lean_replacement_query_sha256": "e798c2f760e4e9bbeaa095088207cfb9e7835439d0a58b075b7231e38032f974"
+  },
+  "mlp-103": {
+    "source_sha256": "31ef1166e2a77b9322a34f44f818bd7bbddf474707657d48f623b840019f771e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b97b930dd1ac2dba05046226a8e776489abc475e8cf94d787feb0ca9a76c2e33",
+    "lean_replacement_query_sha256": "b192cb94153a2952b27db17d0dbaea07a0a0d7f1ce1b38b7fcdc32ec9d9d0ef6"
+  },
+  "mlp-104": {
+    "source_sha256": "2294c652a352a4d8d7a79e39e9775ed6b207acdc81d4929eb18d4d35b7f9f06f",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?image, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-108": {
+    "source_sha256": "1486de273c400614f101664ff2a0c17b0a8335bafe8051303e959d15c6af2e54",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e4653b1b25f5ff4d510b17262ac096463a8e228855ec57051f8d880ec231b8cf",
+    "lean_replacement_query_sha256": "9c9f3e0730e7d6a498b9acadc33750938968390251eb54181cea2123a926aa93"
+  },
+  "mlp-109": {
+    "source_sha256": "28b8ede639ae6b2daaa6a207f4da9dd54136235ca25f5ec465383ec24fa3a954",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f37152585963a0ce346507f4f67e5e8f6a16cf5da62ca60f34609a5f8ce65494",
+    "lean_replacement_query_sha256": "a608276081e1d82bfa1df94c786add3d66dae7051b53930faab1451d05163d9f"
+  },
+  "mlp-111": {
+    "source_sha256": "06728ae91c3f0a803bac80bcd73599178f0d175ec5066257e1088fb9d1866109",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9c2c7a5cbade49f2730373d16aa300d832d690b7b9a0a5e4f3cee35b868755aa",
+    "lean_replacement_query_sha256": "0d29a4094b241e7d9db13430d973c2f0faa39c206bb87223e6b462b37f457a5e"
+  },
+  "mlp-112": {
+    "source_sha256": "f83c2d2b925225b5350293d5a1d8024f335600222142a212174a7438cddd9b04",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8addb9f3e09442e713a065855bb080e24a7b7f3755784c5e8665596a2234135a",
+    "lean_replacement_query_sha256": "38c64c3379c8dc0fe0d2b86c649556216b098168d4e90c483d5d0f97b396a87a"
+  },
+  "mlp-113": {
+    "source_sha256": "a21445e8fb186081f979f73289cb98fcea2b079551c0db70d90dfc2efcb7b663",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "5a4f1a076c065f026dfc55c660deb0ee758bd82a8e45386d2c82273f4896d144",
+    "lean_replacement_query_sha256": "2c52978074a3674eaf50a48914293d3044dcbf31948277ff4d26e05dbe331118"
+  },
+  "mlp-114": {
+    "source_sha256": "c62c95e6b0cbbb32ce78baf512b336f312bb55cba0dd8dae68b94b07ea36a959",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "07cc4feab352bd70c12e3a8da64fe072c5bffb209315d0bdd9d3dfaf062be61c",
+    "lean_replacement_query_sha256": "60aac5db7fbb9682193fc3cf12f9836d8a6e3e372fb2bd5b8d0dc3dfef6e5144"
+  },
+  "mlp-115": {
+    "source_sha256": "0704e4bee069db7182889bfb05b49a649800b506b4e2fab487879f80ab23190f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "71f173f50ede288a869da1b73cdcab4193b822ad1ef0f9217d8a1004ab36f850",
+    "lean_replacement_query_sha256": "48786d0158446d5d93906b344af6ecfe0a9e09fdbf6afe82f86e5b1c22297b2f"
+  },
+  "mlp-116": {
+    "source_sha256": "2d3aed2075d5fbe28252ca04a116efd0cde2a2c6624ea639331fed3e491679c1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "be0e69494deef594c0c1feeddf0c0b6e27b2de2d22b61f1a263587fca25a509d",
+    "lean_replacement_query_sha256": "9ac81b502b8de3a4185f0cfaefe965024b39ba4ad7e87c59480003207654351a"
+  },
+  "mlp-117": {
+    "source_sha256": "a5d2485daff4a552073d23068bca2225df8038b099d1083c5253ca303d01abe0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "36956fcf3ad74e79ade5083a66f9aaea2f19ee9830d2e3d1d81ab77d00f1c9d4",
+    "lean_replacement_query_sha256": "b9b8fe7037e8824b85652e925ff40c332f5c106ca2b8c8566087e7ae0d756841"
+  },
+  "mlp-118": {
+    "source_sha256": "8af98ea8cc6a877fcfcd473113dbe69b4f77263198ab48cd271b74422a01e263",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4726ad6c53724e0e259f27e8a078e094417d47434cff10477e5d49ba683d4ab2",
+    "lean_replacement_query_sha256": "f4a50f6d92f6e3abd8dd1fe2bbd49dab026ac27904f862ede4c9fb514896dbba"
+  },
+  "mlp-119": {
+    "source_sha256": "ccb85734668daf893bb768fc5302a04964425a14d3d4b06f576fbb6268aa8c78",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3e6943132b817c81391d21ed1f63479846b720292f0da5dcc30fceb220572aec",
+    "lean_replacement_query_sha256": "79f8c469e1de950e923f64baa253cbd13bc6b9c528f8e3c7dfb8a76e05298b07"
+  },
+  "mlp-120": {
+    "source_sha256": "e225d4c996271abb0da9cd169d0bc0d6c09aae98ed6498a7a764cdffe47c57d9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0ffadea2539aeff774bb4988a5b525871236a49495364a853bc7903d7eee6e4c",
+    "lean_replacement_query_sha256": "aa67ec9508325042f780df27df4e57172f709b66766e225fa83ae6d7480467fc"
+  },
+  "mlp-121": {
+    "source_sha256": "e8f55d7d6ff4048aacda4704c8535a663c40d626af3ee6402d676ecc2605d405",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "eea85d4c853561cfb6b313461b48ad04ee3f6637e128199e7827324500a3cdfb",
+    "lean_replacement_query_sha256": "0884ba67734cfc2a85bd611b1494e3949a30abcf4bef34f21db55f825a7b82d7"
+  },
+  "mlp-122": {
+    "source_sha256": "4c06cc7f14de2ea5cc7514c455bbe9a13a75a9cc5d32c2fcb167ca3982a6bb5d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1dd817a6e989caf688e5f695051bf0cabfd4fcff2c1763fca7ad7ef8e62cb8dd",
+    "lean_replacement_query_sha256": "e712560f89df848888a02abd7c6136c7b1097c9cf156aa579599394b044f44e7"
+  },
+  "mlp-123": {
+    "source_sha256": "ecde30c834671fbb749bea1ab36030c658c18e5740c7c8c022304fb73a9f4bf4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ef3bc15e5202d2723050add392bb20d34e6bbe268623733b3736735550bc9f05",
+    "lean_replacement_query_sha256": "3a5219c270e2937d93dcba2b2dc92ddf4ca829d825f94d716100c3066214f839"
+  },
+  "mlp-124": {
+    "source_sha256": "6f94ca4595c8ed1fa0363a520c72ee02433075eb4c6a52839c143ccb691a90fb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9ec66535239a21eeacc00bc59cf9a1cda0b19319a442dea5872240f9f27ea730",
+    "lean_replacement_query_sha256": "f0e943e80edcc248520630cea04c0501b3860364272ffe72cb5090629dd8cb81"
+  },
+  "mlp-125": {
+    "source_sha256": "f6f51cd331a3f5aaa5f6ba027ecff76aa963917f8a89239457f3ee6feab19d8b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0b0cdb9a1c67cbade9c87b4de4abd602b2117a70287772ee5ef1145d1d611c7a",
+    "lean_replacement_query_sha256": "18febd6518df4ffea69e6104434479d39fe9ddfe09c911ac6e7b2f93079d0376"
+  },
+  "mlp-126": {
+    "source_sha256": "90f4068d264949513c60d762aa6fef5017da4615cd7afc79269e6b2c82d45cb7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5365fc615270dcdbbe67d24ebba33abd1066959980cecc53d6222f81287d2db6",
+    "lean_replacement_query_sha256": "2b061f120263759d85cdb872052c0f9f5cea6f8307402e95648df4c47dfb7554"
+  },
+  "mlp-127": {
+    "source_sha256": "297b04d58a4247ab7dbac3dbf5db72d0c338b34c5680c02efe6c508a5d0c0e85",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bd84bdf9195219e7a1406992961f21b8a6a74151c2ca0b4e4398fc924425cbbe",
+    "lean_replacement_query_sha256": "47fd71714bd435106f372baaa984c62b601cec426545ef6e238910f35dd4f14d"
+  },
+  "mlp-128": {
+    "source_sha256": "2d319aad4915649290b1aa43a8ea5e46ac52b120a0600d35b629ebc18dbb0e9a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cee22ffe62f37f26c436ee84c6a9b554283d410f35055630ce777d5fa15095c6",
+    "lean_replacement_query_sha256": "5c5a75d42c8d9c1f326bbdd3780e36286104604b8b3f7f0880100bef1ba3412f"
+  },
+  "mlp-130": {
+    "source_sha256": "44969a4d3f9a889572ac1879a5ffac06b9b29786c113b5a65ddf1f74f9861157",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "643a1e220e19eb11acf0ac1d94b0ce0f6a6ea68a2ae949ac5ebe3e6fe9a78ada",
+    "lean_replacement_query_sha256": "11171d76d568f1ad12bdae17a9bcdfeae35259d132533853afa844f2d27d7332"
+  },
+  "mlp-131": {
+    "source_sha256": "f9e5da447755d837dea8b2921739cb77985def493621ba1c0bdb93a183da2487",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bc054493d1a64ddf3aaf533cb7c9b6ee10eec79c8388cae0f2f7d25f30e81a35",
+    "lean_replacement_query_sha256": "6bd01033c7a189fc090f2dc5c78fadb57aebf770331b13c277897f439377fcf1"
+  },
+  "mlp-132": {
+    "source_sha256": "66e3b42164caa963e74a3a57b1dc1b8c1f7cf77be9782a8a4e4330567836148b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "597c199b42a25dd6d311736c01ab23ed8874ab655b47876fd7a5769c7a4618e9",
+    "lean_replacement_query_sha256": "9e71cb7b12d4ed33485965b81e9656fbf879c3a65cb80f06de2ce44b6d21b35a"
+  },
+  "mlp-133": {
+    "source_sha256": "995e29abef786763e78673b1efd65452f568ab3db81f13ba76155ed0d49ae1d2",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?image, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-134": {
+    "source_sha256": "c5beb8a329779aec2e4610a2c8c7c4ceffc406b1a3c711024cf7af29c69baacf",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?coord, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-135": {
+    "source_sha256": "eb98ee5b5b737eb27dbc55ccf5ede98feecceebc5aa04844b13b5249cfc25751",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bfc2e686727e511f53fd96daaefcd89b1ad9e3f6fd10a9edbeafde093655c1fd",
+    "lean_replacement_query_sha256": "84fae0e43a551eb84c60be21e9f4d2bfd142e6ec9a9c295929065a4e9abfa132"
+  },
+  "mlp-136": {
+    "source_sha256": "1ac8ef9d01b89a131a428229d7bf2522ca90590c62a2f2a592826b1efe1e4da3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "00f0ff7b793371df787193b910a6fef8b74a0e8124b72f33e14f92c9b4eddad0",
+    "lean_replacement_query_sha256": "77f7c09f8cd1bc6000d7276b291dd3e80b4448cd865b927e78182e7ce2b4276f"
+  },
+  "mlp-137": {
+    "source_sha256": "2562a8aff7fdd0827630b28d4be01e5e61c087de0084cfe7a824734b51033866",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d4fdba6e3b5f0939c2de671855593a43ff82bbebd9c67ce93a42e2d4c8f7ce1c",
+    "lean_replacement_query_sha256": "8fa3b2e639a59619761118083ae294ff92bb756cb2aa37e34e5cd309434e01dd"
+  },
+  "mlp-138": {
+    "source_sha256": "36a8e31d5448da68d62414291838ba798f9f42bf34b49fb1bfd12f938f0c73e8",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d02b183562d2ce43c20392d062550172815371e833e34986b0ff4db55bc02087",
+    "lean_replacement_query_sha256": "d74a5c3a00465085343572b32329bb81bfebfff8f6c755e0f2f0ec3afcdf3c24"
+  },
+  "mlp-139": {
+    "source_sha256": "732463e24e34d6381024d71cd1cb1fea88a0488b0b87fdb4b97664631ffb17d4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "52eec0c837f69c5c7a254a571a4942b27c6f450a3d4c58bf2478306a78e00cd3",
+    "lean_replacement_query_sha256": "92646cc4422dcfab1ae0262c8864f8de2c0f54062761911001ca3bf01e72fa92"
+  },
+  "mlp-140": {
+    "source_sha256": "e295a1b337a2ae05d0a59e901c29dae2b1f5d734e10fe8166627172bd57c76e1",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?image, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-141": {
+    "source_sha256": "0eea9ce72a9c80a88d78d8a5f09ac0e0dfd93725fdea47485e41c790162b4a8f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0ae2423aaed9ae2ab4929df2359bcd47a0aa0ba16cdb3f6e26e9969075651b92",
+    "lean_replacement_query_sha256": "2989bcc33cc240783427370385570631cc61bc96c0cb29e3905fa7e8e0ee34a1"
+  },
+  "mlp-142": {
+    "source_sha256": "7454b1c90dd3b1ff886d24af92e3949fdbbc306827fa12358aacddd1d023c51c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "49eb32578633fb14957b82ed1b5853d349a7489ccd9386e1aa2b71fd01db093d",
+    "lean_replacement_query_sha256": "6553e3192a9ebd3a86481b1ad770221977fd1f88486ac4c232547a4768cddd35"
+  },
+  "mlp-143": {
+    "source_sha256": "2883d13415947b74668f6e2edf9ef28156dcdcefc115178771fa3bbb604d6ce4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3f2fc3e846e62e5ba22c9d18f573d25f39ca26265a1fe84da7df932b36bbda21",
+    "lean_replacement_query_sha256": "2ad78214e1d5d5f5ddbf655e30f3c982735771e9f75b5ff630e38ccbea20dad1"
+  },
+  "mlp-145": {
+    "source_sha256": "1796b2216b799d30e4f65451fab3387ff9e15d6db8b74a82dfa6a8a4fe730dfa",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8265e853e2ccc1966051b05299542944dc94afb1a5a5f0e4343cfe6fed788019",
+    "lean_replacement_query_sha256": "74c37e530a3449bde8ed6e1c3e06526269867a3c0e6df391d47bbf76beb80a8c"
+  },
+  "mlp-146": {
+    "source_sha256": "51d5db3f540165fa12fb85ad661d9ce0fd96a585af25257108209f83bc38f927",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d23660ddbe0eb12015237831d24f28a47cb54714854114bfb99ca5ce88e23b56",
+    "lean_replacement_query_sha256": "827d27142fd22fffcc52bfb690feb90b111249fa51355f3bdd458a645114c600"
+  },
+  "mlp-147": {
+    "source_sha256": "a9b281d33f680d24516ed48935ccfaef0dd0897024d7a99760e04f86ed186a1e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e7ddbc9a130c1e44430c028b8b73cde76ab7130ad1f85fd25bc4543bc8ada036",
+    "lean_replacement_query_sha256": "dae9b82fa9486912e4b7ef5a9b8f83db8d230cb361e1ef42efa8dedbae4d78c0"
+  },
+  "mlp-148": {
+    "source_sha256": "ac50baadb476533570cc938867490915b2f617e34b8f619dc932e5c3b101860d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "86a29632dfb315b57cec3ee03253da477b23e37077a621efac9d628df564a60e",
+    "lean_replacement_query_sha256": "a5b21edf5df078518348d58d2eaf48dbc81ba71d8470a94d572ec182cd95728e"
+  },
+  "mlp-149": {
+    "source_sha256": "614101b20ca57ac2f94a6f5163b95cab624e39837215c9621e7eecd2200aa267",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c505d2f4881598266db7134cf2c035aae7fcc9796b96fcb4703045e2fde7e62d",
+    "lean_replacement_query_sha256": "aadc8c130b13bb8e702a30f140cbc24b4da5e2aa5ad6526c3c5418eee72d69ba"
+  },
+  "mlp-150": {
+    "source_sha256": "be14d5cfd9c3f2690e384e0cff3ce648ee9f92fcf24b833db05875bad1bed388",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ecac6e7840af1309ea32f4a2cc02dc48da980302a2e4049293f9ec2138b7c544",
+    "lean_replacement_query_sha256": "84139d62253ff264c6dc8772ef67b0e9c54120467ba84913a306ad4e83cdd232"
+  },
+  "mlp-151": {
+    "source_sha256": "c00befb7896ce2f63e826e48e54c2d4b43346dd2875a1d93bb1164718275c110",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "89aea52135bc7bff1fb1acaa4aebb839c6245bba885bb83f0372449a8c462e94",
+    "lean_replacement_query_sha256": "214e834f5d0c02ff64982179fe52ae4964353b9cf11134f031d5fc0e5cd9f78b"
+  },
+  "mlp-152": {
+    "source_sha256": "a79cc1a20c5dfde4860238f6b24fac55c8a7924e51b4e66200725f373e9e3aa4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b2b53a73474c1efd6fbdb953ad37d4b543a8e524b053df7531fe6b86e5faffe4",
+    "lean_replacement_query_sha256": "7c5603169475e4a82fac916cc9678eac46beced0bfc2fbca5628a20a1869be0f"
+  },
+  "mlp-153": {
+    "source_sha256": "10865d5356215aa9ba94b31396ee86cf6945a5a811e7db4ea4b6f0c0f26e5a1c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0ea47cddb4fcf77e0cceee08e403a5dd8145657984142216e5f597bdee86b2d2",
+    "lean_replacement_query_sha256": "3864d8e46ab428d420aabe6616be8614cf322ee0409a5f2ae18dc8c2b4a9f6df"
+  },
+  "mlp-154": {
+    "source_sha256": "67cc128a710d60f125d34a641d1014a0bbe4b9ee670cd4b72a496a64e3afd06a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "62c989d47b79fc63e2753fc44acbc19ca8efd6779844b846ce3f69ad3544ca83",
+    "lean_replacement_query_sha256": "e6525798e024a5a963097b5905942300a7122620f4984ba749f115ff7229e193"
+  },
+  "mlp-155": {
+    "source_sha256": "be486a2d494435202f149d93bef20e9f1f07fc7baabaadac5a8daeaeb85c1168",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b526ec96468487ea35ea8168ec05eef72d29d807a65e4735c015dffc2d91e67d",
+    "lean_replacement_query_sha256": "6e36da9d4edb5419aafee9950b1cbc22187042593629bb076c4066719114a3f3"
+  },
+  "mlp-156": {
+    "source_sha256": "4593f9889656440c0777dfe8aec3b7761efbc15b4ac77d25e9dd3292b84749ef",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bc82dfc0dad5cd66f1c96ea80d2bfa9d63936b67c1aa717aadc895d856817d5d",
+    "lean_replacement_query_sha256": "2701434e82f0ee6662c085f03167d232b90ec83212af4f9194a99245a294aced"
+  },
+  "mlp-157": {
+    "source_sha256": "cca5e7199d27485ac3565549d0e068633f66cfc250edb611a156ee46d7bf7b3e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "826a81bbe4f08a0d09ead11d75e87f3eb0db2b27b533c0f26b59797dabd4b9e8",
+    "lean_replacement_query_sha256": "b7b610c9353fbd9c6b4dc6e26f050502d973606d8cdb180b84b28e9c4c97fea7"
+  },
+  "mlp-158": {
+    "source_sha256": "e3ce864518b390b7753cec23f88d394a5dc20e93ca1adc991f1f5dc8d0b32764",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f31af24ea45ebdcb20864c1628877dd3846f4773f0a62fd9d1fce065c84463d4",
+    "lean_replacement_query_sha256": "be23b77264f69b8013f6325ab710d9cd02fa97c3e69b3cd288332ae0059ca197"
+  },
+  "mlp-159": {
+    "source_sha256": "112676d4a301ab54937c0c2cacf90e66f8b2289bbc8ecdb2056dbab37e954a08",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a5b600df32beccba439556b703722a28c9ab36e275a524cde965bb2dc6991da2",
+    "lean_replacement_query_sha256": "9cd625ec27a9e0cae2399e2272d00eaaff6965323e970778805875965f798439"
+  },
+  "mlp-160": {
+    "source_sha256": "a2cfbe5727c17a03ec4f13b76f466112486ee7495fbfac3c5a95f31cbe482b34",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "276d0802bb2761fdb2a782a26a492a0c2c796e2cbc6370e00ea55c8dbc8add79",
+    "lean_replacement_query_sha256": "e2a535d5a4ebf071061bdf7d17aa8290342db8c5be344224584956b73f79bc01"
+  },
+  "mlp-161": {
+    "source_sha256": "e53fe205c7593af012360d7fea3acb7cfead5b449705803731432899e783751e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0eb5a2f24f7f44ba6ec4bd4e4e02d6460a18223a7c6604070aa2bf14913a9f92",
+    "lean_replacement_query_sha256": "1cbf0b99e760bda3378369c844d4efd84ee158117c59373da6cd1819d5799337"
+  },
+  "mlp-162": {
+    "source_sha256": "24a8c8d13e57368f29b4150f3248a5dec14e975ad3b944cc882bd47fa79161f1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "db8c8941c9aaaddb7b353841c9d4639bca70bf727a663a86bc28fd4f2b76e0ce",
+    "lean_replacement_query_sha256": "4d14f686bb2f48e5552819e652cbd09520efeb029b4033bf9a619ffbc834f91b"
+  },
+  "mlp-165": {
+    "source_sha256": "bc0663e44f50e20daade2b590d7db2d467d6f30761da5081451a300c72082cf6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "540ec969f25a74d43d093975f7b9a762d45e703747c328f92dbcd1898bdc3ac9",
+    "lean_replacement_query_sha256": "3e05d6c1d7c3d47dc191957eeac9ea5f7d27f42408c9fd052bb9c4e46747e9d0"
+  },
+  "mlp-166": {
+    "source_sha256": "e04806984d1277bee5a5b586451dc5de98fabca8d09be90d62b151d65358f154",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0517b2fa189e246593aa61018b136a27c20a43bd2d4ab7748cf8d2dbe090c60f",
+    "lean_replacement_query_sha256": "606f5d7c3a23e3a80f5505a9d09d8520ff41f060470aa0029cb909c8222c1e36"
+  },
+  "mlp-167": {
+    "source_sha256": "141c048e27dcc32f0a6fbe23aedf0a949df902b16d87472823372e4a0e790f74",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9f11a2441eb80f47a9f2f9fdf307985d8f47e95bd7dcd4d2cd9c6a7b79482517",
+    "lean_replacement_query_sha256": "c2957bdd9f6274f0ef430c965b82e7829d4a3d830263afb6f95a4fab5cd4fffd"
+  },
+  "mlp-168": {
+    "source_sha256": "565b25100c21e214156a8aab12796bed1ebaa0027387d6890e4c6483b2b7e7fa",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "51e5f8c1affd4a3c4f1f35681e93e26ca1fa3a1963c10cea4f50bbd7bebd698d",
+    "lean_replacement_query_sha256": "22b0c7ab625e51ea9c6f03126ff85da0771403a8ad320b2d44b7c064fb24aeeb"
+  },
+  "mlp-169": {
+    "source_sha256": "b7d5b85ceaae0a7d0cbfb30852db4cd358ec983949cc7073c9c05832741b008a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "166be1db35782774dc5ab0026438565286dd9dcd1e346fb9146f56f0a30e0074",
+    "lean_replacement_query_sha256": "4222ffbcbaf07e08f1a05193000e01b781dfdaafef3d722f640bc26317b1daf7"
+  },
+  "mlp-175": {
+    "source_sha256": "2da4698975ed95dc000d0ee6dc0d8ad9d3848f36fe3abefc3413d9b8c1de9ebe",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d6a538295d432be0fb9106538a3fe6bd66f76bf7e8b6fe7563fce82b1b28690e",
+    "lean_replacement_query_sha256": "d43d4e9f1fb0d7faa37366c7f381cc4ad9da7f0b1f3da1b42cae75e28de29fe1"
+  },
+  "mlp-179": {
+    "source_sha256": "55f184527d33e053fbf88322bded5a16b84f98145bda1363359fd850ee40a537",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e1e1a2b15763b68629915f638fb7513743f57ae3f53bbe89d401b3152009c5c0",
+    "lean_replacement_query_sha256": "eb61b6612ff42f1b68990b21521ac74de7204fe94104aced7bab1df3db99b283"
+  },
+  "mlp-180": {
+    "source_sha256": "35a9532e45fad35d10a04e81a919d61ef37c5290faf2b6c1b9fe90992b04b7c4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3b86f825a62e58d7942d4c8557929ebe23238a97e81ba5cd0e14617dc92f6632",
+    "lean_replacement_query_sha256": "b9c6d4f0c044c205f14c855ccc4f77ed5419af942d0b3c145cedca684e66f962"
+  },
+  "mlp-181": {
+    "source_sha256": "89e33c04ec9fd04beadbfaac0f42ecf1ae5b8a3f8e7dd00365a40a700027731f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "70b321dd57a6d69156757a9cf70ecc11eee152abf8f6561b7f6e6975c0de8a40",
+    "lean_replacement_query_sha256": "3752ef5c2dddae8b41d6177a7b2a3b557554ace98921b61a335d13d77de9ed5f"
+  },
+  "mlp-182": {
+    "source_sha256": "81d934ba7aec85307e4697b62c2108355275d40c9d5f28c59e7621a3c86e3192",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "beed0baaaffe86da54446c29d196eecae68dcff2ff5e7b8c1a85f2237ba6edb5",
+    "lean_replacement_query_sha256": "7fb97bc3e757bbe32f9bdba24e4ae9ec16229546bc0632a8a80db2cfb3e04555"
+  },
+  "mlp-183": {
+    "source_sha256": "4234d2ff1864689739f2b782367ef87ea232670a040485a35e65ce2c2346638c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7a8747a83c22362f17b3df97a0b07cf06598236148d7105201d5f32f7991ff38",
+    "lean_replacement_query_sha256": "aa881ad12f733845aff6bf58fad226022fe2206813fce6fecabc642d37f7bfcd"
+  },
+  "mlp-184": {
+    "source_sha256": "5eb7ee76c32014741c95c34b2bf695f885bf99dfce8561ae60eccb02ee941fe9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9a3f9edc778d4f894d61acf5b86b9dd0d8b9533667c6b56cd2a9c8ea43f70ef2",
+    "lean_replacement_query_sha256": "e0dbe6ff3cb879b40c1334415121981613ba19e2b17ad1d8ce8005072916f42e"
+  },
+  "mlp-185": {
+    "source_sha256": "f4dd5f621f355d0cb08905105325009c05a0a55cad374cac664f28cc04ac9367",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6149f2574c1043c2bcd3217de311c5fc26f3f0e27faeabc11f850808281fc99e",
+    "lean_replacement_query_sha256": "943895f3c6ab6db0e9c4153e26e270edea0f8d32d898e94c7f53f69632f815f9"
+  },
+  "mlp-195": {
+    "source_sha256": "882b4d8b041d1124464565788bfd9982b3de34eebf72dc29d0e872c606f78ea5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e0c0ed2881b8a26f1ea9df543e7d7abd0ad9c253762fd54a150ef36593762ac2",
+    "lean_replacement_query_sha256": "9611cad8bf228c740186b8f7df52f1883889433ffb1682b6cce2c29a2fae1359"
+  },
+  "mlp-196": {
+    "source_sha256": "95ac58156d377385aa1e88467d53501dc51807dac9a9e1bc75321b2d9d762cd1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b8c292c1eddbcc592b8d67cda60e93236a19ccf6c3a8c4d591599d5792c3272a",
+    "lean_replacement_query_sha256": "1cfa74a29e7d43547c994a80655b06ed6224d2378bdb69e92a0237a362e51909"
+  },
+  "mlp-197": {
+    "source_sha256": "2fa99e76e1d64febc3c0896b6e366048dd1d2b73b92e163d1ec658b2086ae51a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d9673b92857fc4d9bb74e4c8caf772e5a2507b9b8825f6f16719cfb194514e3b",
+    "lean_replacement_query_sha256": "73aaddc7c24291978bc54822f37d54e95e4108bf9a006950eacd3b5bcca6f5c8"
+  },
+  "mlp-198": {
+    "source_sha256": "53078e5b2345584f82e8de598fe9cbe538d4eedfd8b814088680925524ad8d77",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6065591b04e865d8f37e6f1c2fd14cde7746d568c73ec71c553a47df870dec7a",
+    "lean_replacement_query_sha256": "51fc2b4dff5b6a2c5e66d3d117e42cdb45b7af668d9cc7c52bd7c53c36d3d1ca"
+  },
+  "mlp-199": {
+    "source_sha256": "bc1d20c6ac3157e41a650fe9e7b671c736edca9c88fe7a9df9af5c9730fb2e0c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a40af102a9801949bf90b8d4e8604d50ac993f0b7b706c678060f4689fec8cab",
+    "lean_replacement_query_sha256": "3347bfa7b478eac2c8a840369e25c618a21707f5c345b5b59121d3815ef24119"
+  },
+  "mlp-200": {
+    "source_sha256": "574ca025c3580ec461a16deb47ddf1fdc1016a1294dcd9dbd7db268d6966aece",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bec58d6a5aac5676d1c194540d113cd60e6857529e578c2d633567b52ac9b07e",
+    "lean_replacement_query_sha256": "17b7cc534b8cf6ba9fcab77c927e0e40a0846bef2177b934c3147b95f36069da"
+  },
+  "mlp-201": {
+    "source_sha256": "a6981ccb59be5510239f264a74c7b288dfdb15b650b70a5505987db903087bc6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f9d2c3db1ff2765adc62dae39d06004eeda5a15a3798fb773002646fd8413f80",
+    "lean_replacement_query_sha256": "da6eee9071de33fdcbd6601607a80456c8b00287709fa35be8049583ab394e56"
+  },
+  "mlp-202": {
+    "source_sha256": "5ff39178e169b4e10e9a93d9839d967008675c7c78ec0803303ca74c02df2765",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "d541bcc53c0e77306d1c26e0975c937eb11e1bcb800ed38b6e6d236224ba0360",
+    "lean_replacement_query_sha256": "089c65213fef30afca4d79d23e2f0953beb95a9d3c2524f262939ddabd79759e"
+  },
+  "mlp-203": {
+    "source_sha256": "0dd7ff5c3e5b45c7eee4dc592f5e803114c0230a639e4005e19a46fa41cbc8e2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ccd68a1055f4a29510765aecd9ba0bc29eb2ceb9be53b8f579b0cd2bda1202f3",
+    "lean_replacement_query_sha256": "5554086e3b208aaee7a0f9a1bbf8d46b9ddd886b3f17874aea6d03c6e5fa4ead"
+  },
+  "mlp-204": {
+    "source_sha256": "96494a6477330011f819ff0c90a02923c678cd4df8924175bb607896f7151569",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6449bb9139916de56307bd0e937f9246e0fc6c70b8bb7ba0f236d504a84bce8d",
+    "lean_replacement_query_sha256": "da4e18037aa5746198e9968a4e598e019f285bf29e9813173c37250c8d760751"
+  },
+  "mlp-205": {
+    "source_sha256": "fbc552f898f24238dbdf15cf7512488bfcf6ef91f23e231fafbab023e29d26cd",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "35100822f34212b3ffa935f0a82f6950f228378621a086559f064ffaa3f946d7",
+    "lean_replacement_query_sha256": "20a513b0b9d90b43dc0d074d7bf2c5fb190b0698366f04966810a2e1bd1f6a7c"
+  },
+  "mlp-206": {
+    "source_sha256": "18095ad8bf1e5c34cccbab3d7589e00956ea6aadce4e2fcf0aaa8252dcc6881f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9b8148a8d61eab0fc6838211d01ad805e844e77462579d63e92d6ef806a6ee99",
+    "lean_replacement_query_sha256": "01cb0622267c922bc29601745e0875c3918614f1b6b8d651ee2b17a7bb1f2b57"
+  },
+  "mlp-207": {
+    "source_sha256": "54b0eb34377516c27cde0c3fa4b1a68db04b5d149ee1ddec0b683126d1b17c0e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "436bdfa069dcf64391bd43faf087f7087d842d098b5f7398176f44924a05a11a",
+    "lean_replacement_query_sha256": "32a7d3e15c4c8cc7d827ba8847a170999392fbc2530df6b2f57d73e26daddf99"
+  },
+  "mlp-208": {
+    "source_sha256": "397ea54c95825eb747973d523547b3cbfbf8384e715096781001fe2178049e47",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "29bbcd88f3a3f5a79596499ec8b88d7178e5f3056fae929300a4395f7e741b81",
+    "lean_replacement_query_sha256": "b255c847155db1f37504b7a318cd9436923d5d117a55a9b40f329c83e12f18db"
+  },
+  "mlp-209": {
+    "source_sha256": "74667c22c3955cd99bb04b34a9da67995dca2ca98722eb0ff38284e1850795c0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a90d29705619fe1152a5c96e12d61e23051fc43fcfd95e9d8431240a568a88f5",
+    "lean_replacement_query_sha256": "f11cb2a5318be3d9491c759277a85d4e1df3dbbb8ee533413fef6f6b05f34d3c"
+  },
+  "mlp-210": {
+    "source_sha256": "a5d4f5841381a26d110a8c0012b7753840f346785f9728b305fddbd576284ece",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "fc8470ed067ef3d5e2a3247d28a8bac0c13b248f21a96dd2868b9bdd7f6c121f",
+    "lean_replacement_query_sha256": "5a45a050278b28adf1a8cd4bbcb0815ab26000b8f6417cf97e8398d9f03fb758"
+  },
+  "mlp-211": {
+    "source_sha256": "0d07c2b4b7b1f84c7a685f8d0131cf14dcbfb9da45406a9d138d75bf5dd70f0e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b6a3bf8fdb2f73b0cd3ec79d2dd598b7ae852afbdda0dc7aa6c4a9fed2d1a0ae",
+    "lean_replacement_query_sha256": "a3ee72cd409aad0dae3f9c3c055b817d3554bd7f4ae2bb1939eebd1684f328d4"
+  },
+  "mlp-212": {
+    "source_sha256": "de2349c1a0a8a3b68c6e9507229e1e44f5ccdc58a9f47cb77742a654da4941d4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2ce6799d04930ee71b97ecc1c942d2f09c1fa692fd9858db618de11b10fa93c6",
+    "lean_replacement_query_sha256": "08c03415bfdfa83f98474a8442d1baf4b5ddb0f82488a74e774a57b826ae69f5"
+  },
+  "mlp-213": {
+    "source_sha256": "32376f4a7da6d7fcf5d10a434f614313fea11dd643dc2fa26b8d7c2ee344d2f5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "46c8f510bb061cfb1b2dab600f4e9200c996dc4519970316698665dd53ff5d6b",
+    "lean_replacement_query_sha256": "bc30e1ab915d7c739fb6d0ba5a4de04148f96df7b7287e9091ce91a652d27290"
+  },
+  "mlp-214": {
+    "source_sha256": "a9fb77463115c05f4df7dffffd70941a8504df0ed97bfaf481029e970d7e5df1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d01e651003d6bf0cbfac61cd42062c72fe1885e0381373018034676d29ee5837",
+    "lean_replacement_query_sha256": "a69d595b9dfbafe20762710dfe290051563feab2d42aa52f8ed155d9edebba10"
+  },
+  "mlp-215": {
+    "source_sha256": "0a0c0c3f2625f89bcdab713efac92cd3f88d9ea062ffcc17ff474b25b60ea014",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8a89882856d4620b15d4b41772b252522daecf82ce2b76568e100cfb813940cd",
+    "lean_replacement_query_sha256": "e82ddcd97591e621f7843a56d5dd02b41297c93d3c9cc0e9304d81925a7ed958"
+  },
+  "mlp-216": {
+    "source_sha256": "99e6484e05d2f8a51f6b031d534ed96a1b5520c5d5392ad0c460b622d6865801",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5b29db1d3c12e6c8f88e588a549fc093bac2525a36af1ef593df3a033f90c899",
+    "lean_replacement_query_sha256": "54b18fa4970dfaa90202934da15d5ccd76b4538ca29e1c39999523501417d672"
+  },
+  "mlp-217": {
+    "source_sha256": "81d7a875582c2e1989fe53cc91fef39829f008e9da5b07b8651ce9dc5b4d8fbe",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "187b724db4d3653e6eae0f1e0684216acad841f5fb3c9d2418a8db1abe298f59",
+    "lean_replacement_query_sha256": "01d9d8b2fc99265b19537dee3bc4c4304d15e5cfc71e5f8dcb2f9ba5d23ccf09"
+  },
+  "mlp-218": {
+    "source_sha256": "cc4b6d807a1aa0767b137a063cffc602453fd2e90964e9114eda3d0be2b01827",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "39e5c9f67b82ce718ab0330090d415e68763d02e951554d7f4c4c1b7f5ec3211",
+    "lean_replacement_query_sha256": "a3284aaae8a142c8bd198d57911934fd027382e441e7d3cb751b54da54231f4b"
+  },
+  "mlp-219": {
+    "source_sha256": "bb55220353485908b050c247e66d4ed5fcf37d44659acbdcd6f1808462479750",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "65cac94f90dac1ea9b3b7b3a3c6a096e4a36d815764669724ee1a77936fc0229",
+    "lean_replacement_query_sha256": "2f89d098fecd83bb423ce288e3dd967a7ae1fdccef3aad0c72d97743c59dd487"
+  },
+  "mlp-220": {
+    "source_sha256": "e9d2825e3bb20d78f0597b2208cfa3fcf8a4463290c0f23653250092716042a1",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "d57b4a6b3ca47020c6cda99e464c6c9819e20de5006277a071f98d3712d235f9",
+    "lean_replacement_query_sha256": "f499fbc724ebd285ac0fe7b7fdcb97378813eb9820f49976ed5a4c22650b7dc5"
+  },
+  "mlp-221": {
+    "source_sha256": "0f11c56e1ac403285b0063c50eda2c24853cedc3f4f6f8e19ea929898f5e5662",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e2d3354c7a912d79e7ecf17120a0f34c3fd7718c2cd87be4bc9f00ea25cae763",
+    "lean_replacement_query_sha256": "480c0ca057de3c0432760282645dc3ef01b0054640471fb4598c3e09b06eeede"
+  },
+  "mlp-222": {
+    "source_sha256": "b49f3dc0f2da0417c1be5958a63b7d75f9e5725d1acf0c7ae9435581c52f6a1c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "82b52623d777ff1ca2a0647cb220746c9038294757e1ed35d7be460b8ffde8d1",
+    "lean_replacement_query_sha256": "14d13a8a15aef173dddf8325dfa43afd9b7ebaa4d410a54ae5f06fdb58ad9f4f"
+  },
+  "mlp-223": {
+    "source_sha256": "3a349ab7626320d0bdd2daa720e00407e1bdc399ebfdca63b12c4bfeab4b92c2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a23da319b2d78f275a6cba2896fe165ef28d1ac62b73b0bb1269bdf252a76290",
+    "lean_replacement_query_sha256": "3f4a832955ef03cc526e9c2bfd0a0eefe054c84e73983652e76c4cdfee0a3d30"
+  },
+  "mlp-224": {
+    "source_sha256": "cb53ede40724082029650d1bca8ca9b1aefd408bf75b01444f0b8d8365c1c895",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a73d8467b98c274ff101502f07a3fe71f5ac7d94f3262dfa255cc3869e44eca6",
+    "lean_replacement_query_sha256": "da4d7b0379f432bb274fa4e0437f3bd28561c2ce56037083586592887607c4a5"
+  },
+  "mlp-225": {
+    "source_sha256": "620d0d338916fad64785ced86e989ef54ae83504f7719c8dc4f33b67dba5ecea",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b09865ed7d6b1ff2ae034b2350539ed7c1a9333a8a99319af86d507bd08f4b19",
+    "lean_replacement_query_sha256": "a86f6981a53fca7353d3c4d1fff06dc1a64506e60366795b4f850b902cb05334"
+  },
+  "mlp-226": {
+    "source_sha256": "5e3b6c5b42635cef94438362d564a83f06cfbdc27070499b2efd07b4b5f2cf6c",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "53828ae137d0baba48eb063e8c69bd55e87898f579f6f90df8140bb6e511102e",
+    "lean_replacement_query_sha256": "1d92cd2481bc95e61b8d61ca85fc614a3f24776ad9ca4770dc61f6337894ce86"
+  },
+  "mlp-229": {
+    "source_sha256": "cbdc16f10127f961d2d410b497e93ccabdb8bb812eb55aaaeebf924be44141dd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "00231baaed7bcfd106bb182d9fa6cd39b608bfd1791c8cfe6a576f4cda52d309",
+    "lean_replacement_query_sha256": "3781d93e747ddbf27277d6ed2098db67045e12d3a8aded44490d2fd295da01b3"
+  },
+  "mlp-230": {
+    "source_sha256": "d52bb9bfebc4dd546f6b7847ae6f7da454f2b01aae56a07ec2411df34c5904fd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "df93fbc47e35b26c6538832efa48ce104a3ba2369e952004661e33bda4abaf9d",
+    "lean_replacement_query_sha256": "3d6e1b35c4e25d8cbbed91338cf5e859e97192907f0a580b8520a5bea1654a15"
+  },
+  "mlp-231": {
+    "source_sha256": "0a3677fae3fbe3352185c1037df7c120659f5981b9bea737bb0b77eeebe9c387",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2272404e87cdaff97036274216215f36935a6fccb1e87a5f1b0fc05741e85f24",
+    "lean_replacement_query_sha256": "1ed66449ac62a44f4376721826e375e0135eb941b96904abe7673899b0caff46"
+  },
+  "mlp-232": {
+    "source_sha256": "c5398bc49773e4c9b76703291a218a26e280c04352f611f28135432037d95807",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "884dc23bbe27d6b968633141cf89f7f1aa8d2b27835c034242fd45ad64e5fda8",
+    "lean_replacement_query_sha256": "9e81ed5059404731db5b41411df36be5ee72b46b08633436835d375105ba028e"
+  },
+  "mlp-233": {
+    "source_sha256": "474d58609508bd1804e2f2d95aef8da83b13df395e55499622ef0c9c2d1c3f2f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a8dea514393d9219195749f1b46677a9754a5857f136e90e3f364b775cc8f8ca",
+    "lean_replacement_query_sha256": "892a0aaa409526e7d0446b8600cc8952c6a2b813b317379afc42dd4df3f476fe"
+  },
+  "mlp-234": {
+    "source_sha256": "a613e2f3ef26d2937aaf3caceb62aae9b1a5a7eddc4eb1fc238b31a9ba35b2b1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "afd93ba44757be4ba41825616731a6266eb446541af4ae87a244843fb42f1a3f",
+    "lean_replacement_query_sha256": "d40d4f7d50295a53b89dc3dc0a378fb843ee4c6240b0813cea663e9451a43284"
+  },
+  "mlp-235": {
+    "source_sha256": "c2d969eb7f26831124eaae519767a50e493b7d7686d5727515cebb2726ad3255",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "dcfc2a5c0bb53189d6d05e1dd58269955f219f4d65c635aca3b9f1d8d4373b07",
+    "lean_replacement_query_sha256": "58ee843e34cd4d8bebc188ce29aa0d7bd0e04cdec519be3cfd977d23f21c0452"
+  },
+  "mlp-236": {
+    "source_sha256": "c0ce6691b046f8715912ac4b54bca4264c1a7476ccaace13d37b68e6de22a405",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "62272d38c00c021b45835df6071b53fd66376d63208c0dfe902ae61aacc56104",
+    "lean_replacement_query_sha256": "72ab3deaad025277fcd1776a7c3da1c5ac2684f0a52029ee4e7e8ce6662142b8"
+  },
+  "mlp-237": {
+    "source_sha256": "0ee9c6132edce93717b46450b0cf6d01dbdee7b9f03a3e7356ce44e00625958b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1fe418a0877ea3abddfff273f0651382da95179cae07d95a16f81847e25249ca",
+    "lean_replacement_query_sha256": "abc01bc6b7d41f185a577db8586caf2a8ce0a27bfd84f479ab1b1b12437892ec"
+  },
+  "mlp-238": {
+    "source_sha256": "189dffb6b1f0b558ac2ecbbc59b667ec576fe7630e2a7930dc03f8194c9c3891",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e6ca85b6cc01c3f475506e727adece966d3e6e745cba3bc87ba753b35d896fee",
+    "lean_replacement_query_sha256": "17d54bb8640e94633ca5af799b7c2fd8a1d6699f1cbd80c6c9666cb36f80f469"
+  },
+  "mlp-240": {
+    "source_sha256": "72dd412b757efb7b40530ded7e8f931304f4fae1fd4e3d0d191f8e4da44afe3e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f167630dc9eed0b732ecb1accc5b2923feb0157a824651f2029ffa2240a655ce",
+    "lean_replacement_query_sha256": "1c491cd2dc465ba985c4fb6a1a608f1f5243a596417c88c8606858f5ef2ba53e"
+  },
+  "mlp-241": {
+    "source_sha256": "4725b7a1dcc18796452593bf86d5cf51688330c480fc0a15533ea08bad5bef63",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3f1863b0cad7071533fa199dbbac36d94053c394db2f260de543fc9e7aff2101",
+    "lean_replacement_query_sha256": "55cfd38a5dad65b13ecd76ef35bafffe4d80cb6ba71fd5086f314abcd961bca9"
+  },
+  "mlp-242": {
+    "source_sha256": "ec5770c880a5d1a273a4906f61975c3b5ec121577a86753cccdbdac362cc5f63",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bb4928ece1abf82a5b7d77e05920e50a32be6d3fc7649ec39a0994dab4821e00",
+    "lean_replacement_query_sha256": "172d28fb6e8224dc46603544abe2e049694b321573c8657297c9c0bbe7d959af"
+  },
+  "mlp-243": {
+    "source_sha256": "02987aef1601b64e3dae62d5c2ba90fae8f41f7594c3ca9927d835f965060b9c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "72d361decbb9d3b11697bb0a871867e73eacbea287b652ac7d5c7a70fb0c9a78",
+    "lean_replacement_query_sha256": "a76583a1ad9f19650421b17adc45d011253fadbf3fd4e73d113bec113059e788"
+  },
+  "mlp-247": {
+    "source_sha256": "155bd6be1cc6ff68111884d9439cde5289e97e885918d1921a4ef183f7e77c32",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bce187354ba80f12cba68800deb7ed3683d90d7f44f10259819962e250540d13",
+    "lean_replacement_query_sha256": "9b856b382cf3f4193acdf0d794e911db6d33f089d7eb0a52acd1a980adaf157a"
+  },
+  "mlp-248": {
+    "source_sha256": "bfc462735cac88cbb5894c26257dbbf95642a65fc3149c2292a82e7825ea3710",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d66c9bbfc554535faf04c3ba7a38d779f91fc589356f30a4f9fbd129e0486c41",
+    "lean_replacement_query_sha256": "e2e4bb95a6c6d87be5c497b02ec67c47d18c5ea555d73ab6030886b895a300c0"
+  },
+  "mlp-249": {
+    "source_sha256": "4bf8583cb027b1e131d3a7c3baf7202783bcfff84f6d08f5499a2c4b5293d486",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "fa221d514c56e0f8237f7ed3a91b79cd1b1d9e5c6d3675a82fccae82461b2198",
+    "lean_replacement_query_sha256": "58bb7fb3e3fc416ef140433825d0af2f79d07d166494699f5d9e61227dd35a67"
+  },
+  "mlp-254": {
+    "source_sha256": "5df29c3bed5b2305876fc64126307e960790db7562fc43c1c0e1df0cf54cd370",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f6df186cde403e2c7aaa0dee8058f0cc18ee4af33cfd70a9548e8ea7dec0bcc8",
+    "lean_replacement_query_sha256": "931b9ad28d98e1eaf9fa7e89b2119783eda42e0ecc18e6039c613a9c95e023a4"
+  },
+  "mlp-255": {
+    "source_sha256": "2cadb3e7e4f4c6f81e33bcba432a6edab01c9f13846b373c1fa5f639d40fd149",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "857b4ef40058be0c04dde770601b978e77ee4f0e7e8795b8862799ed7b820cf0",
+    "lean_replacement_query_sha256": "21df5d4d461e5c87e6deb407b2767e7c7c9baf7894db83aadbc648483435a76a"
+  },
+  "mlp-256": {
+    "source_sha256": "e764cd7353de5ac6e941eb755ac1a1ed3c45ede843de3a9491c63e59ec165d28",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "00b8dd4a70feb510bc81c84dcb2c7f950bb50b8f0eaac3c59d738dc4d7238fcd",
+    "lean_replacement_query_sha256": "6d13544b39f2078eafff231fa142335b3de693be224b4bf4af1e249c33f4594f"
+  },
+  "mlp-257": {
+    "source_sha256": "83664ad8406f379265a9236381897fa150117517e7ff9d0d91051a3c86f68bfd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d015f79b2341c94febd9804751b073ec4eaa4a0adc49cf516ff6015b5b5f913a",
+    "lean_replacement_query_sha256": "fe2b3723fc979884438f27c8fb1c5cb9588ac48371c616e25d904e2480644ef6"
+  },
+  "mlp-258": {
+    "source_sha256": "15d3c381a5aaa56e5be4a9796396d44652f2c5c2a7136fccce9cdbe4b3d5b968",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ea6098bfb87945549757b4599742a671815eaf1632652276e0fea11623fd9523",
+    "lean_replacement_query_sha256": "39752607f618155072df1afbea7b138be02f0abb8f5afa81f18a528a35d178d4"
+  },
+  "mlp-259": {
+    "source_sha256": "2f7fa2ac9c903f3193c073678a78cdda835dfeaf09f0dc970313b2676e99fe1b",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "dc47fec321b70a7b3f4024ab658d2a3e181ec74a397f6d1b760c20e1701e0285",
+    "lean_replacement_query_sha256": "ebd6e33a8b5136b0453787392f0b9e16c3c4253af550528b5b6a106c22b77e45"
+  },
+  "mlp-260": {
+    "source_sha256": "f7e386dac021c41ecc5ed491b2beb9c6f16eb4526c7c7bbf4934a603870ab023",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "8e76f0af9f2e68f6756686cb9a1f48c232ac5efca6f9b1f65f922a59afef593f",
+    "lean_replacement_query_sha256": "6e79481d9e627487b1d2fe4f2b7a8a4ef0d376696ba8091d12275587e7181226"
+  },
+  "mlp-261": {
+    "source_sha256": "c988146d5f2c11a2d7dc382518dd99580adf540747c58ad6887307b1a5e6b41b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "06f6c56679d47f71e3efe2303f0751f5e6b654ffc54082804e292fa69d6a9505",
+    "lean_replacement_query_sha256": "42e347ef68d76e33542fcb0a6ef2a1f446dd5588aa1cd691d9538d5a608fa55d"
+  },
+  "mlp-262": {
+    "source_sha256": "048b1171b0cd34ec0fe1fb60cd512caabd16ee53a2563a7c64fc98980e4bf6de",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "90d879f975cbe8f02b7b4a98fbf31e694a04a9b0895b3cad42601026822868b0",
+    "lean_replacement_query_sha256": "fe1f7f552201d95b0b64d04b39d9fd7a4f6f5c8be63809cf617b9eee2a49b7c0"
+  },
+  "mlp-263": {
+    "source_sha256": "6da4340aaebd25a8f4e71e7a09fc706f10d2a871cf74f426aff9766209982780",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "ce19de4356ad3efc9e1874952c60310b2636eaf279c5d13bc7174b8aec5c9d00",
+    "lean_replacement_query_sha256": "cd5f071b9beb60da493979ebc23c702175ca78e3d6754678642a2bc60acc6ad4"
+  },
+  "mlp-264": {
+    "source_sha256": "84049330ebfb03438c73493fa97df1bb3da41759caab3ed1151d2146f06c0745",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?cLabel, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-266": {
+    "source_sha256": "3aaca7ec3b790d9882cfd9257e4d25661607d69f6d9d48a8b54b76e8726f9f65",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "57cf322824f1c5b27b9960ca1466a1fd5776c5d9204131dba67e7ed0a947f670",
+    "lean_replacement_query_sha256": "dc60f9def8cd13064e9c758ff710fe0cd4c507401e2bf47d831188a297e574e1"
+  },
+  "mlp-267": {
+    "source_sha256": "3df57ffaefd6054a403d6e42e989b9b2e45e46509eda2a0769a7112d56e0ada1",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?coords, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-269": {
+    "source_sha256": "6450ba064708b6e13ca6239cf2294f8994f9b8b249ce4e805a3eaecb8437a95f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b19bbb28220354de54b89c4830a80519c07fcfb118805587048983dd9a2b6637",
+    "lean_replacement_query_sha256": "21c41c9f301aaf2ef972d15f79486d3740ce8aeebcddd7c8642f25c9120c46d4"
+  },
+  "mlp-270": {
+    "source_sha256": "c67eab232ebe6c5f7d81c496d439d23d718cd44d5ec5f1f2028e5c65722d6b7a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d9f469772c14477a1134cdd7c9c22d0dc7e439180880e88e6d782c8a56819dc7",
+    "lean_replacement_query_sha256": "a85997cbca41565ce7a87ee8682f0a0b50cd01a1b424abcfedc6ddb3809c076b"
+  },
+  "mlp-271": {
+    "source_sha256": "60a7cccc75daffb255ce6351b16dc17154b063853311f8fb3707eb22d91e78b7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "26f1db7143a1b856fe9519f7b0af35804207a9d7a1a0aa54369cc6ac5dd8a7ce",
+    "lean_replacement_query_sha256": "ddbf980b3f16ddf52d9bb4d3d61643b9fb4c49e30310ff35dcf361b4ee31dc41"
+  },
+  "mlp-272": {
+    "source_sha256": "568094ab64abc874fbe6295305f1f0544946e9abf3add0aebdaadc86fea8a8e5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6b7465399c46420946628565304511554db0a99cad731fe9569cd5c8b54c56f0",
+    "lean_replacement_query_sha256": "66b5c6e4852ece408a84b28e0f64d589e31b7d0d4644bff353dfb4c63ac8cd8a"
+  },
+  "mlp-273": {
+    "source_sha256": "74d4ce0e1b4f6864f29e2336fc3c651ca7c0b1ed1d92d5e8cffab199b887db69",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "6b3e437877fef60943c6ecc7d55bcecb1781164d29bb18d6698a892e648387da",
+    "lean_replacement_query_sha256": "652e2a8a7cbb8a687a7cd2f85cdc574b6e0add9286a2c7df8f533c8de3969c43"
+  },
+  "mlp-274": {
+    "source_sha256": "513e9f765a0ef47388837160c707ac8ff7075c86efa09ddaf9e5d084b97ad325",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "f5e81fb4daa76555712aa25deac7265c65cb6af31dfe57fb64f776230a91fbc4",
+    "lean_replacement_query_sha256": "a1a07b8ddaa02fcdc401d9db9fd672a4b691fc4c2c2877c106846cfb477e2e94"
+  },
+  "mlp-275": {
+    "source_sha256": "44c3d4ae3d27414f67b95d9711b70a5fdd410c5b740f6293d784e2f6fb8abd29",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "99481764453d9423a7a7cb7ab6c5e0d83986bcccf69aeb30a71eb37206698f45",
+    "lean_replacement_query_sha256": "b4b9a2cc132938dd2e7a6e0b03ac24ed327569406911e1b991fdc47381ba3a4c"
+  },
+  "mlp-276": {
+    "source_sha256": "0fc9e345136d728012f309ae6bb37e594fc84f7f652d03a896aa87b2f98ccf24",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "50960a5925e671b4f85af9b90714cd713503a46dde0c6f63a3bf0752cb49b025",
+    "lean_replacement_query_sha256": "d6cbfaca1815a54a33ca7f3400d32709726a0fb9da9f9d1d296f25d378400d18"
+  },
+  "mlp-277": {
+    "source_sha256": "e6c43495e205c4d4595e6fd2e462fb23d26c9c9a9807754a748e7dfedc93bda2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "949a112f21a8e12f1ce15e94a403204f8ec62c2b0e456c9f023b9203c3d3bfe1",
+    "lean_replacement_query_sha256": "36104dd42b5895724a9a4a9b25c2a56ca176afeb216c72a03eabbad7ad833796"
+  },
+  "mlp-278": {
+    "source_sha256": "698e9ce84c65f902f572cb16309b0ba9d4130fd7071d508c864a843bb6a43d2f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8fadfdcb891bbd3a91fb89a90e4ea659d878230bce2db55b5d343c9e17a5a2fa",
+    "lean_replacement_query_sha256": "08e0451144a6f24464bd0b50064178231239b9a795b4e0b749047becca321a04"
+  },
+  "mlp-279": {
+    "source_sha256": "3371acc28e3d8bc66ba823ba4601e2cc24b8f8b2f97eb0ee9e1da88f5f6d864f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "110016d71e63dc45f1dcf2e02383c802d5aa0bdd734fc1aa060e369ebabf168b",
+    "lean_replacement_query_sha256": "ecbe7b5b8751b0cd073b3f60e7786090257c6f1fa09fe29ce42cbe3adeabb810"
+  },
+  "mlp-280": {
+    "source_sha256": "cae3f4b3d2cea3eb2c118dd5d44edd4127b40e84ab65cacb3f71cf29095fe53f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b482baa4dba9cf7253e2fb1987bddb7490a3a7b309a49c8205a84de7f517fa84",
+    "lean_replacement_query_sha256": "8cb70a6acd974026cd3d4b903ad42b89389ac20596a067f0bfb8e5fcec7c340d"
+  },
+  "mlp-281": {
+    "source_sha256": "a6d4dd24082d3382ed47084dae7da3d82ffb9321445038f266a1bf4f2b4ac4ec",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "14ef8bb9d3838702a6f55abb23a873045f314d3ce413f44a9e5850ff436b38e4",
+    "lean_replacement_query_sha256": "cb6e3ec52c6ef8d64b1bd9d46a59a45454c1fdefa54240c0b7da7b7e53067dcc"
+  },
+  "mlp-282": {
+    "source_sha256": "5ff09d37f0ca7c63d1791a225b9d29394c2af1124615790311e177c07cd8e3f3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f3e1c7209e9c0140b218d8212b27ff0bbc1b83c3fb51e96ba77dee0f14173d72",
+    "lean_replacement_query_sha256": "f50808333b7edd3b51ce1b8de968836371bd761732831d55665ca1d4a7c59f2d"
+  },
+  "mlp-283": {
+    "source_sha256": "1fd23d355724466ad14f3b68cf4694173a74d1067fde30a50b32e40fb1dda2b8",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "77f04b8587d6071f548be06d80795955e48177bbc76484fffe2852ff781ab214",
+    "lean_replacement_query_sha256": "496d9307ed55df568f39bfaad1c81faa63b16702af8aa0d62c4b5645f6a9c1da"
+  },
+  "mlp-284": {
+    "source_sha256": "d2dfe11e242a4f5c0291306071c649cb06dd5fcaa9d531a194c279cfe8469ba7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "dd89f8413ef75119357707de1f621666ef919f853d3bfe3697e1364aec63a259",
+    "lean_replacement_query_sha256": "221b619e4ca0a17bdf2a624b462ccdea415242594d7611d0ca9dd62233192d6b"
+  },
+  "mlp-285": {
+    "source_sha256": "4a05222acc840c115f66f4e2db7b949f0808ca6e9abecdca6934c687e827ac51",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4f7dd6696baade6ff3ce8ddbfc62a9afb3fed04527106fe7e10e78f764f4e807",
+    "lean_replacement_query_sha256": "6c6e67b99f5723cca7462e59b03b7b5864850a409b40f1ced8bd7eab5841b7ad"
+  },
+  "mlp-286": {
+    "source_sha256": "399a45788c0a64eee452e5b3cd42c19b4d2dae8a62b1fcc7373fa170cf43ccd8",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "26b9ee9b637241287fd426721e3fb91ef1f9b6e6f1e4e5bbecabbddf5231f18a",
+    "lean_replacement_query_sha256": "e2740f0020d4ccf1b598f68c32a518eab60b5ed9c172963f6e5e2e1f98bae64e"
+  },
+  "mlp-287": {
+    "source_sha256": "210ba23ac2953fb0ca6417abb3a6a54b4a7518cefbb36f45389b996c127321e9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d799524dce496363adcc3ef29577fb64dee302dc91d4e8922fde58bedacefda6",
+    "lean_replacement_query_sha256": "189d191b67a4810054e10a082501d0c7c43141d7abe2fbfee05df46757bd53fa"
+  },
+  "mlp-288": {
+    "source_sha256": "4d7f53c96f236fc2d7b9072529352a05dad9ac68fe4f1330c960667b44a651a9",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "862fd13badc2ad9dd94b9a923a637c567e565f25ea118a855ea3c008fd06ecb6",
+    "lean_replacement_query_sha256": "d877a1f570cb931ba39733dc39790abfc59acfc3d78bc33134c53e25631200bd"
+  },
+  "mlp-289": {
+    "source_sha256": "1fd6f05d8a79a98877e922f5da236e8d639cf74ca82cae0a4430e4d6e8097c4a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "26f9e25ccd9852d91dd69ff8aaf18deb40e4ab39ada79e319fa5d35897fadaec",
+    "lean_replacement_query_sha256": "042b787ce3b99c746043f536bf7a8c85b97b87adde7d3e0b26d142e6ca206c12"
+  },
+  "mlp-290": {
+    "source_sha256": "0caf379d81d5330176afb76e0cb6ff56b9ace072c3b10806bf0a0492032db245",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?image, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-291": {
+    "source_sha256": "769afac148a3fe30677dda420c2abd904bad4b7cbcf1f4b58d7a48d8e204cdc9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "df42a4ad03bd0088d823eec4ce4c9ceee602f9f87ad29e9cf651330807776f68",
+    "lean_replacement_query_sha256": "5ea38a00867df9fedccabd085ac131a10a34d4ff9bf7b2bdaddb5ab22e622c6f"
+  },
+  "mlp-292": {
+    "source_sha256": "054df268bb86b647d7de2dd04741524384827dbc164284c8f1b3a87a544ab0d5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "32c92cc22813c700b27dbc2dd2c410893b72bc485a3756edcb37c0339af112ce",
+    "lean_replacement_query_sha256": "a2f8c3d7411a887212f764ae8cf6807542552d07afe93909b9268ef201e1b5d5"
+  },
+  "mlp-293": {
+    "source_sha256": "2da9fb1ddf46ef406a8abe0637bbb9491ba9a1f980b537afa0512b8d4024aabf",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e30549a2204222272ebf7775bfd0be7ce5b2c5b7ea9b1ccdcc573151e67f909c",
+    "lean_replacement_query_sha256": "8f7e40dc1e25f7fa41dd5c02dec36b062e939abcd253c309496f7db1f8e47236"
+  },
+  "mlp-295": {
+    "source_sha256": "25ada53aa88077ea4303c5a708f52b0b0c487c03cf0bbd7bfd25e0efbddec23b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ccf10ee39ce5f635aee3d2d2c9f4903418ba3b216049450913ab6a0bca6b3604",
+    "lean_replacement_query_sha256": "9b0c26b7c3096ec5fb671902271bdcff511697198f57699e622a4cf67d3c2e2d"
+  },
+  "mlp-296": {
+    "source_sha256": "047980e1f4b455931a387dfeb0a137b538ecaefb25ed5a976c0798673ed98ea8",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "aa9dd6311f3a63f06c5988dcd5853520cc377b9ccf0eb3197f20c93de7da713c",
+    "lean_replacement_query_sha256": "a109c1056f4d756f63e079317e3705689f5eb470902133712b293da841120d81"
+  },
+  "mlp-297": {
+    "source_sha256": "3b232ea4dcd84a659cc29d851eaa31b15c8c444450e125552c317eb0f22f918a",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "2d3cbcb4e33061a291b4c42414a34e44867a86809da71857867a1db00fd4a157",
+    "lean_replacement_query_sha256": "40ec1e1c6b46713298aaf77703a2546aee6294ecf6287e350e4581edce8eae2f"
+  },
+  "mlp-299": {
+    "source_sha256": "cd5d1e3998ce60047630a3f83fdb9b6a990416df51a096f7d365c39536fb8cdc",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "18ea0ee16af9b0e90150758cada4ee8e93d4a751cb74ada7a9c9c59a7bcda139",
+    "lean_replacement_query_sha256": "b9acf92302f90827e0b9db2a42b574e59bc3438e6ceab7f1e7d5da55e1249c99"
+  },
+  "mlp-300": {
+    "source_sha256": "469c49ba72b062e5d0b7a530cc0e7262252047517a3088646415fdf381963224",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "10da3c5f158964ad303e4793f5eda8506d6d7cac72fb62d7bfeace08a26f645d",
+    "lean_replacement_query_sha256": "8337b9b30f522365ee5e2dfaf3c15b6baf6b15059558c2bc13317f68ae7ef1cd"
+  },
+  "mlp-301": {
+    "source_sha256": "04876c5d228b5ebb120307664cc70cbeb7bcbcd220df7b2dfdff9a42ee3ffe91",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b9be2a2e3bea2cab2bdc2decf4a69533728148a3335bb1c6c9acfbf36afb569f",
+    "lean_replacement_query_sha256": "c35e7f403eb99dd35552929d0d88a4bb362d93e2a5295efc2bfd233b39d0cdbf"
+  },
+  "mlp-302": {
+    "source_sha256": "eb1d311ac2f6d5cbd5f3442b5264325d36eda14b3e68266cecd1fa051e306bd4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6c2b4f987c0e0a920c7f199cc5e28fa5ea7408a9e375ae082e9b7ef200e290a9",
+    "lean_replacement_query_sha256": "4d00901952f753095357c8ced87b61d41b34ca8a9f79cf718001a680b0130ac8"
+  },
+  "mlp-303": {
+    "source_sha256": "dba93b8690218122d2809f688777a39f711f12371cc353d99e299c1780f98acb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a1faa610f89eafcf801a7d8c1f079c809e6bf2b8fd5ebbc85afd071a2d556f9a",
+    "lean_replacement_query_sha256": "48d167304add50b2adeaa29c039066868fbf552311999db852fac09d235ce4f6"
+  },
+  "mlp-304": {
+    "source_sha256": "ca13dc13d157271430da1b2dab281a63d1f673ecf3a55b4752d303c517df7937",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3645184f06fb97889b41b631717e0bd031c32b683f9c98c1ef71b39250a5919b",
+    "lean_replacement_query_sha256": "13788cac09c34e7efff0fe484d315be1f7cab77034e095307e31638c09c09773"
+  },
+  "mlp-305": {
+    "source_sha256": "8ad11def6c4aa7867d63e33794149d919731c6ba6612990292e65ed7b9164d30",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?other, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-306": {
+    "source_sha256": "49c3b645f481ed26d26beb6f9783242dc79b82fff47e91ed41dfc10cb4139d5f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "40df8bb8d0535d3929047ea0765ce7564ffabf25e20f5a47eb65eb78dad49ba7",
+    "lean_replacement_query_sha256": "2389a6551aa2c49f26bf175e53c820a357f345b96f2ec12036d790ffa70a0a2c"
+  },
+  "mlp-307": {
+    "source_sha256": "eda0aca53d0760d020cbd6509e7bbcdb9b4955795aa6df9c656dbc741eefacc7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b43e650161105ca43526f1557694c939874b6efab3a4fe5af0b1856bb899bf75",
+    "lean_replacement_query_sha256": "60b38611759cbccd10309076da02c1ad7205d60eaca720683add1d46ead81088"
+  },
+  "mlp-308": {
+    "source_sha256": "5751dcc0d754d89dbf04f32055cd9b28552d7fcdcb8eb54570cf4d0a406ac502",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e1760b543800d30567ff4d20bd5514f90cf230ed345a058d612ce8e29a09adff",
+    "lean_replacement_query_sha256": "9f460427965a034169c24da6c6b805e112aa978d34c6a4121b9c60aac61ab69d"
+  },
+  "mlp-310": {
+    "source_sha256": "67810c66e41fea033d16cd0759ae69e1e9a675ae1991cc9c7f495f4f1d9bb393",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "20f4374fac4c59b2c45613e2f27cac0854502b57e82938be431f6223ac7fc025",
+    "lean_replacement_query_sha256": "d7e4f1612be82958366bc688d39f9dc1fc55c091916d94799680cfd027770739"
+  },
+  "mlp-311": {
+    "source_sha256": "15abbdb1f031ca5ce00ebcd31132a04eb48a08bc8524f27469c4755f7ddc070f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ea7621f0e75fba2ed3f1923438e023c569b4a961b62948d97897ddee62363a7f",
+    "lean_replacement_query_sha256": "66bd24dd1adbe7722bcfff148115311a6b2b789ac1209050f25388cfdf243b4e"
+  },
+  "mlp-312": {
+    "source_sha256": "f8ada6e1d52d8836c29422ae50c16d9f0557f9fb7c6557591ced8802bee30b3b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "99dc3ea4f1a01ec4210485d6ae1c3e452f3acac6839d2f215e2cde8d5e2e1d8a",
+    "lean_replacement_query_sha256": "ab1630eddd6edc10ae9c7a35f67619f571f4bc4809f0935cc97179a222ca232d"
+  },
+  "mlp-313": {
+    "source_sha256": "15fb8d3f81413b0eefc9ecf8ea35d978fb18e17352d1c364aad686ab7f7a74c3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f41eca4ad7ad1759f9a26ab292d8949a6b61a980558e1a12fd3fd27be8a5af65",
+    "lean_replacement_query_sha256": "fc1205f388ccf80ff5dcee8ca06b94773c2baf2e1fecbc80f8cb6e79e30ee4a8"
+  },
+  "mlp-314": {
+    "source_sha256": "6ac99fa7d8f2c19d1864e42f2ad3cbce02485979b0cc9fd9dd28765aeb48ddae",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cdbf2e17ace266e241f0dedb65acd79eb1738a84f0cff9a9f907c62d925d22c5",
+    "lean_replacement_query_sha256": "7f728767079ceebee599e0be491bf920f7ad4a30f3eb19c15bac70d21580b9e5"
+  },
+  "mlp-316": {
+    "source_sha256": "3ab435f12d2f677e42d4f7f1155cee32eba2ee69acbde855b635d9b61585b284",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?material, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2020-12-07",
+      "url": "https://www.wikidata.org/w/index.php?oldid=1319373775"
+    }
+  },
+  "mlp-317": {
+    "source_sha256": "3a1810a97e292eec6b516b9acea295f58f1537455c478e356b8ad0278be68af0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1d566560ccc0629d0a987841844f75c1a367dc24cc2e162a76f1f3057f9eb455",
+    "lean_replacement_query_sha256": "8c733b5b175dca185bcd155dbc404fe79f3d9d3806f77019df7a59a3a8313221"
+  },
+  "mlp-318": {
+    "source_sha256": "b2a98113fedadb87eca73ea10393d84d9c8e4bdfb6c89ad2e38d8b9b7e2a3c68",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?type, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2020-12-07",
+      "url": "https://www.wikidata.org/w/index.php?oldid=1319373775"
+    }
+  },
+  "mlp-319": {
+    "source_sha256": "684216866cb064a9330fcf5958b694730443e2d446bc228d0b98647ceafc9669",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "23c7710c1cabc43b50a9b0fd7026310736834bf82a7d07c4d379f3e1d8e2f4ca",
+    "lean_replacement_query_sha256": "9c2fe1e632954a27fbc49ddc5f5eefed5945aa87d4caa6d27c4f597de98cb7c5"
+  },
+  "mlp-323": {
+    "source_sha256": "798bd0162ab0be94e71f2b1a47f57d1767cd4f0e9ea99c5cfe018d15d3d3f561",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7e22646018036c9ed60104c7304763b1c854069e7e7475d47e03c10f927b49d8",
+    "lean_replacement_query_sha256": "83508dfc972361c3550af1d5f73b1dbd3d1367d6afa60aa9ec3efd4130ad1247"
+  },
+  "mlp-325": {
+    "source_sha256": "c4b73ffa8326f009aac89385700ab110f6cfb46de4e97243fe184a246c9592ad",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "554761bb6058d0d1131046b77523638303cebac48cbfc7be563d60c0ed9f68b4",
+    "lean_replacement_query_sha256": "74725a045c562aa15d42a2d9cbbde88b85a3ef38a9f8d9750472215cd9f418cb"
+  },
+  "mlp-326": {
+    "source_sha256": "acb7a40ea215a974aeabd56a313acf0007662dd7aa93d647ecca977fc051724e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "11164c7c0feefb2a47807bdc8f5d496a60b7a218b413f0d3901e5123e891f3a4",
+    "lean_replacement_query_sha256": "e765bf582efc0f2fe736ea26a256dfb5a5ff20585a0ab818167936ba68caf511"
+  },
+  "mlp-333": {
+    "source_sha256": "04ae0dad46a1e4fc2ec1fd722fd069f15ea6fb308f1cc31413e852f298802d00",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "83671c20a1e5381a822fd38c295da05c502ec9fe269bdfca2ec7628364365d39",
+    "lean_replacement_query_sha256": "774f80e779afc2fb3017a5243b1527383a738f82c49fb9777fe00a774c2edf5b"
+  },
+  "mlp-334": {
+    "source_sha256": "6c68655664e97606fcb1b072ae62325fe0bf6b59dcb5536f06d981860038a6df",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cd3eda8e73cd5f214a8aa17a36592e33351549910cf0aa5bc1a3b5aaedf9733f",
+    "lean_replacement_query_sha256": "311f71149d3656f7737b3ff680c117948c3506cf646295e2d6b5520583308152"
+  },
+  "mlp-335": {
+    "source_sha256": "c5d25af3911e08f535b1be75a563263c2458db78b1af3fea56419a6263a96033",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e0eb8c79ad698e6c4390a1ab4a007f451afdb907eb19aae89f0e305243a8eb1c",
+    "lean_replacement_query_sha256": "8d36b1a608fe80fae3438eac65637368df95bbf5e34f119d045a05e159fe9d2b"
+  },
+  "mlp-337": {
+    "source_sha256": "36b5f151dab38d95fc6eb6a1c5ed36ed091f3b52d52d817421eb1d08d5090ce4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c1b25b1e6e3f16752f1dbbc92740ef2c65c79f7daa2d1630d375bac1004ec31e",
+    "lean_replacement_query_sha256": "cebee7c6b299dd526eebf3a4b0f33b90782d137e66e3aa8afd344307071abc1b"
+  },
+  "mlp-338": {
+    "source_sha256": "f960667855a75a2cd1a3099907fc83587d95a7c4ddc4ff6a9177c74e89cb99e6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "07e6ff7d91c7ffcd33bb0b238bdc2ec3c115afb646ff909dc000fd9e8f59cdc8",
+    "lean_replacement_query_sha256": "94ba9ab9549ac9d9aa6769dd0fc001863a6cf0768d31e4e6d20092e19ce5070e"
+  },
+  "mlp-339": {
+    "source_sha256": "3ad5eda075ac0c6dbc5d97e03f2b14f22c359f27918d9beeab2a654218f7d844",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "43f0ecd6f067a95544525abe92f83bf631db39cda76c8c85d919651490b1a202",
+    "lean_replacement_query_sha256": "64374c4882cbc0cb9737b141b7ce34a67d6b581136f2765aafcb0841aa4e05e3"
+  },
+  "mlp-340": {
+    "source_sha256": "33a524602215c84f9197b98a149639f3cc0ddeaebc534b6bde47ba9c47f68d4c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7e5c4bdc354c67f6f1aaf5903b73a6c21158e43ed71132bbbbb0dcbd57d19dfc",
+    "lean_replacement_query_sha256": "70bc4afb6f243532c2528c907fd5f3ead16e1e74bdb5f71831a1b06a575501aa"
+  },
+  "mlp-341": {
+    "source_sha256": "6aa92bffed34f02c3811170dea84902d56f331c39e1a46d33a6a4be0b2f9322c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "360decb2d46bf32f90a06945e5848d7cea48f4db00fb320a64b790ca2f355d12",
+    "lean_replacement_query_sha256": "881f97335c0110fa8e262593dab5d3614c0143d29637a80a09773c2e05ebb6c2"
+  },
+  "mlp-342": {
+    "source_sha256": "daa68f04d025f20e64e84750818e8197e2a0f6978e7883a9dad89b650fc2e38e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "81bb6f275c81ef131511da3de68ee271edb4fafc8f12948217af1114ffe49836",
+    "lean_replacement_query_sha256": "f05b46a350a550d0cc5d0789e6c1fb626b5aa635ac59496cfde762bb393cabe1"
+  },
+  "mlp-343": {
+    "source_sha256": "4f1556c658e4a5738810ab1e5de08303d182a5c6c7b21bc56e96ba33ac6f690e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b9c30a551155485543749d9376fe250555591f649c065d3d3e69f987183cd1a9",
+    "lean_replacement_query_sha256": "9973dc4e179ddcaec31a296997d4c66408325bda99701c15f233668f4cb39fc1"
+  },
+  "mlp-344": {
+    "source_sha256": "e7e7b4c697e3008f19cae49d942bdf1d701fcea769b7c900b3d394ff7e2f1067",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4f35e5a42fedf6319d7c75499606f9a2b0a7c144785aabfa28608968db1b5181",
+    "lean_replacement_query_sha256": "0b6cecb7d3fc937838a26205a909d1fb117bbf922d0d0abc7c318b0a8f863f73"
+  },
+  "mlp-345": {
+    "source_sha256": "b40b0c5cd514e907d1a1ff86927c563f2892edf10fa2b8c5a6432626cb38c52a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2ffc336558c26a574fe09d60b226526a8931ef0b10c6b824f1a8afc71a63ca9e",
+    "lean_replacement_query_sha256": "d853c96fb4de7cde414ed22956e8e24d16a38053c9d76edb688fde47849a0be2"
+  },
+  "mlp-354": {
+    "source_sha256": "fe29d04c9924e092c0399abce6fb1d308eb2d021042184865cec6fde22258ee3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2f13b6f8883bfc4dbb7c3897c00c76de8624123d5586809401b3fcb2a18ab6aa",
+    "lean_replacement_query_sha256": "11c58f1a2c718d9f3a1ba015c05b71eca5f05e813d8f078a976cf2bdec3daec3"
+  },
+  "mlp-356": {
+    "source_sha256": "59d256cfd23b65252cfeabec1ed6ff07d9cc41e7d054453a2a7a9916b5121fda",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4a0742c67bcab28530a678b587c5ff9e7959e0e060c11ad38dcef0f10fce6d51",
+    "lean_replacement_query_sha256": "1f37357c766d72994d4ab742f57b7df5846981f76466603a904d57ed3f9fbe1c"
+  },
+  "mlp-357": {
+    "source_sha256": "be183f10158de0904df74f74abb943aa4f73c8c01fe192ee9b8a327d8614875f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "07a78422ed09decb0deeb16c8422a7fb65344ec9d7a83e7e6a1898705290be75",
+    "lean_replacement_query_sha256": "bf6ec77efc46974a5d97de78a6485160dc1bbfc80703da1369769b68528d17da"
+  },
+  "mlp-358": {
+    "source_sha256": "8684f6e2be8442eaf596df75c5f462f56a78eaaaf6751f3900822d385f3b4875",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "20a07a7ebb324456eba49d17e382ec7faeaf851fffce487dd583f5a45556ba1f",
+    "lean_replacement_query_sha256": "81ede0107917d7ad5c7359fee2cc831277a6c56187c4b80fadb2962299c0b88a"
+  },
+  "mlp-359": {
+    "source_sha256": "ad0de16fe1eace1839f87eae151703109e1756ca38a07fc5e4bb17ad4b9ea0f1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "775d3f0876f70d4cd2847ac66f04a89d59ef89e8fcde25447453b6f040b4e86a",
+    "lean_replacement_query_sha256": "8068081175e12315950f61233246871b1e0b5144955338eaa636e158d9b8af74"
+  },
+  "mlp-360": {
+    "source_sha256": "c3f708a622d31c1e1ac96b3d908fb4210584acd40eb9410aa19e4a3b6388ded1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c3a2942d2d1969d36e3b3ffd5940fd8fe9eec6ca555e0e5cf976825654c013f6",
+    "lean_replacement_query_sha256": "8a69853f7db3170ad6e342a12156c6d819a9daddfd9a1272ec8d6a3479aa11ee"
+  },
+  "mlp-361": {
+    "source_sha256": "b1a18e1988c0e4122221749d04aa076bfc4a272350d4ce8351a76be432bf2d64",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4372bcf6049b1857be25064c9380be9c8d9110e451e72aedecd152de8783a3ca",
+    "lean_replacement_query_sha256": "63595bec08165db767cddca89ac521d5c6e67362acce78be0e5335e7060f67b8"
+  },
+  "mlp-362": {
+    "source_sha256": "feb2c5c6e7458c1f1869845571cff1f8d593d62582ce128ec73c4359425a21de",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8709c1b5db12b610e51f77cd6acbf0e5d0cbd59339f271fc9d01847a182dde41",
+    "lean_replacement_query_sha256": "de186444ee021b0ad7e6f8d03f14561d9388c863f12f69dec3b136394b70493d"
+  },
+  "mlp-367": {
+    "source_sha256": "bc47e02d5b13755633b95784fb221a3152e9022b029e9a6726cefdaf45ce3a89",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6810e1954cccb3ec59232e503259fed59718ac36c7a21b9b82c109a90f2f0c65",
+    "lean_replacement_query_sha256": "863eb65087649f57c4b38cda2de7c54297060d6b481bbfb25862d42b10efbc72"
+  },
+  "mlp-368": {
+    "source_sha256": "c80631db725bf5823a012c08b099ea7b39ddbb5da34d42f2b436e43bc410dc2a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b5986140cc44fe5361455917636bc637764b527ae515c3374a566a273ca58ba5",
+    "lean_replacement_query_sha256": "b57769ffa7cb29667bc4376690ad12b107698f0f9fce14375a60fdb8ccdec95d"
+  },
+  "mlp-370": {
+    "source_sha256": "29844b778338fee589d08fb1641018d89c8a6c0aea2a8f44d8de605e5a8bbf80",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b9de19cb2b629d4e609f5be4e5fe3027d1e707e5ed2a398e28816899c3b076f8",
+    "lean_replacement_query_sha256": "054de9cbaa6002875816c594eec26bac733274fd92ebd3cfa7b5031ddf14c01d"
+  },
+  "mlp-371": {
+    "source_sha256": "d48ba78ad0dca620ad2cf56e1e35b44d8ffcb2d735f56da31cbfbd8b2ce50880",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "524d99308fc7729be3f022975b8ccb9e67d75d9525938696c58ab96bc78d9e9f",
+    "lean_replacement_query_sha256": "fa68728115a986134405df5987e43d066f067ba95bebfcd079ee5926f8e815dc"
+  },
+  "mlp-372": {
+    "source_sha256": "028c03e07ce9d02f5b35ebec9f40e33d579f4237ff9d14d54903cd7b66efb693",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ac02581539c934c8361a5147fe195b863bb4b63b5eb95804ecb468b30ea7dde8",
+    "lean_replacement_query_sha256": "7026a4f3b5c9e98db4b967ccf34a094735507c95fd70315defbbc78a4cee55d7"
+  },
+  "mlp-373": {
+    "source_sha256": "b828168f9946f0939cec99a01b8932b394c4353700968852d41676844488ca75",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d888aa7e5dd449268c3964ffbd4474c9bb4dfc734e52eeb41444c6e933780e93",
+    "lean_replacement_query_sha256": "c2d41a4ce403eb8074287d945e2e1a7ae507b60c063449273fa131594ba41f18"
+  },
+  "mlp-374": {
+    "source_sha256": "26a5c1a8a463eed3daed559b22a3a4e95d291dda63167748bcaf2df4e0b8e57d",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?q, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope",
+    "observed_by": {
+      "date": "2023-10-26",
+      "url": "https://www.wikidata.org/w/index.php?oldid=1997626148"
+    }
+  },
+  "mlp-375": {
+    "source_sha256": "d7cd1fc3b640b7179da3400bb3e7004314f745ed69038540c1013117b6bbee29",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "26ea7628a2b10642ced23acc4e2444d28bd3e7d5389036858a344d9aee9c37b2",
+    "lean_replacement_query_sha256": "bf6befe7c01057caa52f1ec8b45f19eb02b90779ef65b4cff687c6a849b5193e"
+  },
+  "mlp-376": {
+    "source_sha256": "fd0065607a5897c5206f87798ca44afeeadc5bcaf7404685126947d078ae7fb6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7e334f1909eeae8b8cdb2fb3fba6b363d33cc1c1e6db1ebc25c9734eebde31e6",
+    "lean_replacement_query_sha256": "de7a4727ab3b7833a2769484fa7a0bb6af40a24c212c2184bb241e07a14b170e"
+  },
+  "mlp-377": {
+    "source_sha256": "158c8b03b6e68fd1f8173aa1591d67b176f28ddae78219a17d9356d20681de68",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "51839125a13dc81ba96ac54dab6eaa07b6dd1944f67802e6980983ad49d977a6",
+    "lean_replacement_query_sha256": "daa3eba33f1bab14c320bc6c47b5152fca389cc6bd749866c8bc19d51028447e"
+  },
+  "mlp-378": {
+    "source_sha256": "c66915626152dd79201dd9309fe709f82c47afa234d112fbe0e36cf2f08efa77",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "142c0f7ccd315baa48889a9c3e4484ad1f171b119713ac17d5c0dffce5ba6f21",
+    "lean_replacement_query_sha256": "20a4b87e1e211d1b69db96a3b900efacfc4e95ccd9fb035fbbe2f90dbe3d6567"
+  },
+  "mlp-379": {
+    "source_sha256": "9cdfd21dd56c498519ae63026a698d4904208ce42475eec29f563bcc6a323f0c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2cfdb53efd16e022ad622a58143fac0fe2c240fe12559395b00e627ed5f07fc8",
+    "lean_replacement_query_sha256": "3a165c7179c98c870f2965ccb932a6ef3ffb6a694b604a6ff383aa19997d4647"
+  },
+  "mlp-383": {
+    "source_sha256": "3c740dada93fdd7144db17c320d3d023b877bd402da2a7233fa72b66ff0d47b2",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?coord, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-385": {
+    "source_sha256": "14d6ecceb15acede1e061a90a4fecadd32b05b820a44114271895b7d2c637450",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "c818a52a1abb6ac5436627af078d318df3d68e6d94ce28603bfe72dfc04a7d74",
+    "lean_replacement_query_sha256": "3efe1a8c4ab430226325685dddca0675a5ac272016a8b9799790f76e9b8403f9"
+  },
+  "mlp-386": {
+    "source_sha256": "6f8fc8629a237f67a8123c85f6d699a35ab35409303de7b9c6c379220c70d289",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "c7a11375181c4742814d105d0d50c2cb0d86a598eefe973c8ad34e4c9c668640",
+    "lean_replacement_query_sha256": "ccbfcc38792df9b15dae4aa39ebb98a50436beeff31e06f493e13de3f6cca3e4"
+  },
+  "mlp-387": {
+    "source_sha256": "075fc470ee7cf2e5c3f47a4b1a862fec790e6a8925ef10e6a778bb9b71b58df6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4686f126a9141eed288d5f5c862dc419f6ce7a857b83352b16816ea58f432773",
+    "lean_replacement_query_sha256": "044f9f998808a170abfa40d103ce51478a39166e830d9b22755bcb1dac5f3b2e"
+  },
+  "mlp-391": {
+    "source_sha256": "33587181736c5293eea6d8460c4297d3d586b39223668ca7583134527596913e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3b8b2739a3c7d8f55b615a085e1041210d3037da03f13efc65eecc5746306d98",
+    "lean_replacement_query_sha256": "b3246f27bb990422b9452a0f4bfe9858fc1e1690fbadd63124acfc6b9b522721"
+  },
+  "mlp-393": {
+    "source_sha256": "9a747b4d52772a2cb6e816f2847766fd8c00366b214bea3e9700f9ff5f8a14d2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5d995d572824b3923bdc60efd668ae9318c00cf06b36694bb201bd7b6979ed68",
+    "lean_replacement_query_sha256": "85ac3509783a9bebf8d5094af15137f874b1cc895ef075eb4739719997c93095"
+  },
+  "mlp-394": {
+    "source_sha256": "30c3cdc0290409960ff30daa73943c621702560332117236af597418af4052f4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "05c51cbff6bef46f27be804427b2dcbdcb1731c226df397399250debdbba4e39",
+    "lean_replacement_query_sha256": "71de78f44e63195a2925242b0f0f43ab7444359ea9ea3a62358bcdcd97fe8a27"
+  },
+  "mlp-395": {
+    "source_sha256": "d483f2a2653956671b8dc0d2ca90a2cd99eaf39a75a8ca31f8720d1e2d8408e6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "956a2632042eebf263e9e945f0f29a1a7c4686196cb10e9b9fa732002c954b24",
+    "lean_replacement_query_sha256": "be0560c150b0b9be53368183a5534bf50b1dc610aa3c8308d6b6ce83c636a878"
+  },
+  "mlp-396": {
+    "source_sha256": "2808952e212481e49f8d053009b422e47bed9cef7d740e51003c019009963909",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "eca06dc1015b7bcf7fb06246b36c68a1398da427961a86eca65f7cf2d2132768",
+    "lean_replacement_query_sha256": "42fa55e910af96226528bb47e9b05e68bd84bf13e3e41d079c0bfff530367ffe"
+  },
+  "mlp-397": {
+    "source_sha256": "63bf1ba7a05d40863aef38ed2b57dd55b13b18174c550fc310a3397b4bc61dda",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "09255327be0fda4dbaf2c542ed1c0fb6dc274032d08a6dcb964fcdf5abee8662",
+    "lean_replacement_query_sha256": "cbed3b1d47cb8209337a5172f1f7ec9bb0f049850dcedd49b62ed73364399fc0"
+  },
+  "mlp-398": {
+    "source_sha256": "12c90affec79cd538beea1c9ee4d59195eb3c06a8a81dab3c64684bb8054aebb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "899d2852cad925a895d8c4dd9e345c1ddccf7468d62e147dad926145770826dc",
+    "lean_replacement_query_sha256": "7a285486feff8ce7ea0b46618ca80db43a9b46473b44f2723c3d2f94b371e9b5"
+  },
+  "mlp-399": {
+    "source_sha256": "fa4375066f0df171c1768f0581f56468eb0e65c0f7a3e95239d4b0c1d2ed5241",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d00076c6e77e826f86b9baddd915bca1693aa9307c0075970c99bd789c05cd59",
+    "lean_replacement_query_sha256": "c6fe700cc7ae0b695eec41e07a9e64f87608d9f923c4debeb6aade369484a372"
+  },
+  "mlp-400": {
+    "source_sha256": "af0921ad0293fd249bbedc07ac49817ac0d8904ae83845b2a66eb577fa10cc98",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "35bd32db8962c3e29eee9c6d5458553bb9c10eaaa6daf56261582ae956226d9e",
+    "lean_replacement_query_sha256": "38ba45ddb9763a16f73b0dbfbc8f11afa44ed4f455f6d68dbaa769d8a740c0bc"
+  },
+  "mlp-401": {
+    "source_sha256": "6ac468c5d5306eb9d572cd9dd9303f3bcab5cf2288418cf5117b544bf9b29561",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d0595e1a95ac53da9e523b91f66846439a77ec3c4d489e36840572073bac07cc",
+    "lean_replacement_query_sha256": "88358ec09e0cfd10c11fd74a516ba22529ac9f87ad99df1ab2b9f0ca2c6533e2"
+  },
+  "mlp-402": {
+    "source_sha256": "3a31404f5a50d3af1e06827515d1554b5d64ed4fed86008780308af41d903df1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e1ee8ecf9af9586d6528ec47a830c868f96bd68d3974656af1d48ce9d8dbe19e",
+    "lean_replacement_query_sha256": "683467a97f9f7855c008633f005109bac524eaca3cf1c848c419aa9173683a0d"
+  },
+  "mlp-403": {
+    "source_sha256": "1b59e39dbb4bbb056aa353fe329ce27c3ef24391588ec03affd31c9a84caf4ad",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?coord, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-406": {
+    "source_sha256": "e0e1cd4089be464f012c3ad589156c82faf83c30f5192ea7a268b4485979f7d4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a57ba3fa565f39d43a11ececa9bd2e4c9c3d4f9bf0d04248fa56bea52f87de2b",
+    "lean_replacement_query_sha256": "a2040d23ee7aedb0fbf331b8b7102867cbc7ff171c57f9cfce0fbdf2a847a9d1"
+  },
+  "mlp-407": {
+    "source_sha256": "cb02483a5644a9feec352048d98c3c286aca77798c9b4545f6302e8a74b52027",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?fulltext, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-408": {
+    "source_sha256": "49ecd63bc817e40dde3f04c87a2be4f74286f1874003379ee69b9ab153a439fb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "07d4fe2b87753d016e40810c9ffaa6c47d2fc5514ee977e205b87518dd95108a",
+    "lean_replacement_query_sha256": "2886a8b7de0845f7d09a6ae000b281c2a606da622db0040131523718f2433c0d"
+  },
+  "mlp-409": {
+    "source_sha256": "43bf6e3da9a99c8c871a246f5bbbde22a9c2e32cc49abea5da0a3646211c8041",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ed43fda133b8c40055eddf4678491bffee88d97cf09d0fdde2f3decc3638298b",
+    "lean_replacement_query_sha256": "5365e76ffcc808f6df40d54b0e196d11ad8bb6d635cce271f6baac5a86cc2c47"
+  },
+  "mlp-410": {
+    "source_sha256": "0f0cd41cd0329c31acab9fd2f34b192bddcba6d5be48eaa5f2f49086d027453e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9a78f73acf5bc38b7182f11f62fb4154c731fb88edd0f64a84e5a4a5c32b2d11",
+    "lean_replacement_query_sha256": "e6df4815d44ab4444d84f7d2eceef4618117e8985957e92155c975c4a1a99e51"
+  },
+  "mlp-413": {
+    "source_sha256": "5975861e8f54e1575587762fe227300841b5becd6586fe1b07e0e321fd433b1c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f53c4f4d829715c9392c085f834c165d5d8af0df9d8eaeeecda19954fd5aaace",
+    "lean_replacement_query_sha256": "5db7c5202aa062b6e6bd5caaf5e508937c7c3ec703e5e436031682a521b6ba33"
+  },
+  "mlp-415": {
+    "source_sha256": "92961949b77756408404a0d0c39a634f372db7dd6bc76518308991fbc587efda",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "72b3dc8b94315ee8f76d25d2291a5b26a24f8b28a0361bf706c296122062b0b6",
+    "lean_replacement_query_sha256": "b1b2773e99eff0ae8ddd3cb7666f731ebccecd5f709d9b7f7716762819a45be4"
+  },
+  "mlp-417": {
+    "source_sha256": "4d9ed35bbf2b926727bad2271391c300f8277f313339dd04441f2df74d8b9710",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "1667340193cd4be1adc9a7c3d382b324a25e0c453d858cd8cc649bc4f8c8fb16",
+    "lean_replacement_query_sha256": "8d49ecce783cf0e76af21ebf09a8ddf1dcdf5cde491b59b6fe970df5630de722"
+  },
+  "mlp-422": {
+    "source_sha256": "af4366656854a34ceec4e106d79858ddf874b8c2de40b38e276109f78180210b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e5479c72ef6f47dafeac3a69074fc11c6f067d5118590f41ffeaf6b9d4eed5f5",
+    "lean_replacement_query_sha256": "3038a3205ea6ef8b5d56ca3870e60bb08a4ff1679a4cd0b133dabe759be7374d"
+  },
+  "mlp-425": {
+    "source_sha256": "e4d31a30cf17642fe7daad2222d1be434ccea753438de71a87cf91e32772c245",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1c9ef749f3a184fef6d59bb849c6aaf34521c0cd130e367f396fb371dace905c",
+    "lean_replacement_query_sha256": "bd007dc88f5e1d781b3d32af5846d7f1228b4a704730b0df5d2d76a83d60b55b"
+  },
+  "mlp-428": {
+    "source_sha256": "cb5ce32e9b94d2c9821fb25426bc412a803c4a48b630b6ed6ad62cc9e60a4818",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a2a1b1b36b7f176f86f14bc6250d61ca8b44324db6145fd204bffcc3adfc3b12",
+    "lean_replacement_query_sha256": "278ed10cebc9167587dd4bb33051ef9a6d290f9e756c4428b77d5772f081f732"
+  },
+  "mlp-429": {
+    "source_sha256": "78d1ef045aa13c5758f7581ba58f81addec538e6cc2bcce4bc8798e85a64351f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9d159f71f666e9751a07da6a9eb056da5cea4a6327e9be531260c5935684fe61",
+    "lean_replacement_query_sha256": "3df5ac9c79154b09abbb012893979efcb7c9c812406760d7d0d6df80aa7e5732"
+  },
+  "mlp-430": {
+    "source_sha256": "279f804290ac7bf6daa0efa1f51d4cd37fd3ecb8d58a3754906fcc992c1fc2b0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5064db252f10ab92621ba838c7ad0b7447beae1f28d09c136fecdf9ee1a602a0",
+    "lean_replacement_query_sha256": "0b10bd90bc6dbe1bebfc4839e40f3db9581878a0368faf75c8bb93f490167809"
+  },
+  "mlp-431": {
+    "source_sha256": "2efcf63a8c2c9162bcc47f933ce89de78143af9a857a361318debb2a1b7db085",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "cfbb0d1bf8e6797fd641ea29f40d96ea38c59a758e8476190d66876d1869d72a",
+    "lean_replacement_query_sha256": "19e19286e6550d9e7a4ee60902cf05cf14b4aad86d2af05def5c616155c21f3b"
+  },
+  "mlp-432": {
+    "source_sha256": "9fbfe05597f23dcb1c8afc42a8e86bfc41761a859ba44553eaed41e02468fc08",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f2bcc97888fc8b7e3538048299c9b0ea9ea26319c0725630bca5ae3da6a1846d",
+    "lean_replacement_query_sha256": "6eadca72628d1ae4321ad034ba3a558455e0aed1787d68a2e3f12ffd27ea2e35"
+  },
+  "mlp-444": {
+    "source_sha256": "403dd2564582e736a66bcb86fae0182980e00cd278e3281b14e604aadf59602e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3038ac9ba24a1740eccfbdd135b2f91efb2752948674fcc881ff5848cb8ce6b5",
+    "lean_replacement_query_sha256": "b662855d6538d62b0efa8d7c237202af156f92813eee6afa254412306ca63db3"
+  },
+  "mlp-445": {
+    "source_sha256": "fc7d5df3a6586cfdb280041cda0b36bc1818cfe8b12a8f051b82b93d840cf4bf",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "10483e25eeb2935f9e654223de1b32ebb4652c271c87a1f6450d79cf98cc3577",
+    "lean_replacement_query_sha256": "98ba0ffb6ca6d88dac51fc434f69a6443403f448d07bd545cc7d097bb8465152"
+  },
+  "mlp-457": {
+    "source_sha256": "adcc99a1679c3ed844d7c219d2e59bbe67d34715e26045f2a54be455522236c9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f00bd447448693e2cd6329ff969c29727fb2186d9a3a6f58f6557b056451de57",
+    "lean_replacement_query_sha256": "d845ef3c68f2d86b832510a51cab6bf46fb39ebdcb46bea3fe0ff747ef05d4a0"
+  },
+  "mlp-458": {
+    "source_sha256": "b64d3e1c7c9f2dc9bcf9fbd44c0a6109b21a11d868f103e70f3101b0d2978e20",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d0dd10b14d3723a75338b9e52f2cc2e35d70c639fe729cd8e986b852d93ce413",
+    "lean_replacement_query_sha256": "8df7423e80274af11d0917d62413a5574cc7e2858b61cb9ccef3d36398b27efa"
+  },
+  "mlp-459": {
+    "source_sha256": "195b64043c7d077c2098e31d88fb3e9bc8310c72cbd6b555744632df4a5d9585",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6b756d59d71212d2e9430374d9386f2f4207d0fc472a7e935eabfd485292da32",
+    "lean_replacement_query_sha256": "4b10613069422c4725fec06c3221235e02637bddc8028185daf5328471486933"
+  },
+  "mlp-460": {
+    "source_sha256": "d8dec3fa4e7be35ebab2a9d436dcf748b4178e4b8f9ec3dcc62dfa98753cc04c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "776e29809c0ab22edc8f8d962a0a01ebbc003b9e55f197848e20bb4739af26d4",
+    "lean_replacement_query_sha256": "f2542ab49946364fc5eb066d1a008713f8e342937e2cd5e09d135f075219c67e"
+  },
+  "mlp-461": {
+    "source_sha256": "6564d3e83441d82461c96add50a61b3bd15164e21ecabcda999c40eabde1ec32",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5f743ed0f917760252e259fa62ab1cf29ef57d7689916122d894eae2c8e53cd3",
+    "lean_replacement_query_sha256": "fec44ede0803200cf1cccf62118ac09058101cd5bf26229455eb9a21fee8e9f5"
+  },
+  "mlp-462": {
+    "source_sha256": "8af5d13598b57965af1dee0a8510375a5a8adf930af5e96c87fb675d22034efc",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c96e07ee64449d831c4ae336845e66b763bbb8ba31427ccf6e3cb73f6a75e2cc",
+    "lean_replacement_query_sha256": "3e29851655154e9564ff295c1ff69f2f4ed0cb4489a9d4017bde035260e37550"
+  },
+  "mlp-463": {
+    "source_sha256": "1e68f68068958c341167d98c6c86680a67126fc730645674f49e625e8a0a6e1a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8ab096d0dbcd751fc18fd3630be89b268edd53c55b97da64103448d9ea54a1af",
+    "lean_replacement_query_sha256": "a7e85881796a4d7c1e32d452b9a613c887a1b6f9320d0c9870b6c575aa172423"
+  },
+  "mlp-464": {
+    "source_sha256": "ca96996fddac82b68e218d07be85f404be4f75d08958ca4612615a51e6208b8c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "48f1976726335ae23b888f7bc815a253cbf5996bb47bc1654ba93add3809a322",
+    "lean_replacement_query_sha256": "3c37222276668c40268a6a048847b74cb3276c14594d34d34e86b73c48e8a5e4"
+  },
+  "mlp-465": {
+    "source_sha256": "6d239853f141242e07e437057f2b3072af018b07b1bbe4703cb78177212efcbc",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2dc01f6c5ccbee71631c93256e14c79b8886a8c2cb9fd4342525da122ded9fe0",
+    "lean_replacement_query_sha256": "89911ab9680d641dba89c9f4883c2f58f08e36e9e0834ee9ab04b2a3f8841fda"
+  },
+  "mlp-466": {
+    "source_sha256": "39d4527a88ea158a869e579b766170d381491dc4637b01264692c517c25ab4cd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "7decb1bc44e58d7fc23e8e17e035c469933278a76bd8ec83b461c374a257753d",
+    "lean_replacement_query_sha256": "21e58d1449965d8555f7167608cd653d60d0f2a14d818cabf5e3e39cafb58196"
+  },
+  "mlp-467": {
+    "source_sha256": "3401cee86b966176eee8473e924a1970a0a1fd2a47726f100a965d9c69cddbfb",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "349761adddbfad44ce4bc7dc43c1412cf3f4f0e41e5c5a564ebb30660d4768bb",
+    "lean_replacement_query_sha256": "711409381b9117e75a25de0b4c95be52997ed27aab13f4f1741217321fd5f360"
+  },
+  "mlp-468": {
+    "source_sha256": "c7e4e143aa43c4c19fc5b1461442292b21ba761da9d5599aa8026b36b244c3f8",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "82f1dadd5ea8715926dbe19faa037f4a28a931eb5b571332721cf864de174e76",
+    "lean_replacement_query_sha256": "2209c34fc4e97655518684de29cc0567a3c48f00982d4a52844c6cda21ef97e4"
+  },
+  "mlp-469": {
+    "source_sha256": "a77fa8920444cb7a458ab400671f18dfcb73490289b2291434f5834db3a038e0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d499f0d8934faefbe7329ad8a5b59e1ad2044f2d40e4b1060f53c53c8111380a",
+    "lean_replacement_query_sha256": "845f2d4409a8c7cf9cb21929d34b54cf13e65ce1880f4d4be5ae94c1040b13b6"
+  },
+  "mlp-470": {
+    "source_sha256": "69911e7156768b070fcffc184d2224d561b87c3d47d2ad99fce0be5b5319946a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a7ab642c2398b637d772317582c557ebaf47d07438600a5c1be869fbbdc9336b",
+    "lean_replacement_query_sha256": "0a9d70a55b650ac68df6a7b434aeb1d13a71923463873e218ac7b2f8bf375204"
+  },
+  "mlp-471": {
+    "source_sha256": "c7ff0cb3f8864e0076ddafd326c8af7aaa98e56a4ad6d99229f28f5a2c614902",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "bd51f55ebe18d7ba3bd0d22034c41edc69ed6f1bd314f5f9d34e20c6b2b43430",
+    "lean_replacement_query_sha256": "0d7c679037da7ae053ffc4c81001c540b840ba6b1ce914b86b689c723f4298c8"
+  },
+  "mlp-472": {
+    "source_sha256": "0185b18ea2ae065c9b3bb1978819d4bfd5ebe5821aea0ecfa7738af9d3a500ca",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "172a868c0e292158b00276150f1eeb460424e648bbd7237165b1cf7bdc0deaf6",
+    "lean_replacement_query_sha256": "deecff1570b224c2412ec7fb27f20d0260d227947bcf18c27a81c99929b99f5b"
+  },
+  "mlp-473": {
+    "source_sha256": "ee4d4dee694ed649b001885612ecb7c8ba3f5bba2fdc7727a467bcc7a42f3184",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1afd733e4dd96de1cb5f0a4aa28d6d402cb5f74b9a80a75c844844f7cdb4cc9f",
+    "lean_replacement_query_sha256": "8e70227cce35f89b383d0069789c36b993bf62346f0483c896043b415b23eb96"
+  },
+  "mlp-477": {
+    "source_sha256": "61e07e4078e0310a8498eac2f2091ea20cc068ad279794b0d8952bff87e7d152",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ed5b65ca45d58d253fafe10820fc00a71bfe12f1815eb29ddf4d97c274a9980d",
+    "lean_replacement_query_sha256": "9321724b911c8ba5262a3604b19ac720082d77edbd24b99fc5399055978d3bda"
+  },
+  "mlp-478": {
+    "source_sha256": "0266650c195d881a3daadb950cd8f3920d92e1a20512c4d4fe59734279c04f72",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4eb4099f13f96a1a40d39152903864a746bc2a011495ca24c29dbd1cb8c4a6e0",
+    "lean_replacement_query_sha256": "f37e91867683f813c83f2e4ad50ee5937b7fe01f07d0781edbf89b609dfb1665"
+  },
+  "mlp-479": {
+    "source_sha256": "6b1d4d11025d6bd94165d1560ee301e16b5631bfb9b41d28a06141ef37283d28",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "28c452489be1e101d682e76d5a5b14d9352e5288e9920c77b9c88ac4a82a8c8f",
+    "lean_replacement_query_sha256": "28f02dc36c6cd48a0e241c1f0d8607faa1c119bff97353439e4edd456271c4e3"
+  },
+  "mlp-481": {
+    "source_sha256": "86cc6c989f45aece27b0ede360f60b41e13b2608acb9cf7dfba0595cf35f2d41",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b24230510078ed6e419b7ff97d1b49ce3020c01a824ab2e43c19b1a90e55f455",
+    "lean_replacement_query_sha256": "9684fee8eaf10859e9cae5ff2ca2f5e2e2c8c6be1831ada00508ee15f5c88c7c"
+  },
+  "mlp-482": {
+    "source_sha256": "d41084358a8952926a10b25b9df5c1601002f6c6a514abdd1a2c502341364478",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "54d20dbe72161c6dac1efcdf815fa40ecd995e845d014f49fd8ad463517ae1f6",
+    "lean_replacement_query_sha256": "9520380701614a59a63778f55a34866dc5274e62d66ba012b17bf66b68f74876"
+  },
+  "mlp-485": {
+    "source_sha256": "40959df100f8146534b00a6954ad2bf3dc590e1ee7626abd8597071b6e19680b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ffd2a1d2c893afa5e75f8b25d3ca233745987dbebe55ab1930d870917c833306",
+    "lean_replacement_query_sha256": "43ae096b2f6e1f6bf44aabd1fb3848b721cc101871453d87d6ff568a0aac9ea4"
+  },
+  "mlp-487": {
+    "source_sha256": "4e5bb2734b944b6d49342ba71ed1af94d996d86278e43773c7a4ce97bf728fb4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0a9256189607567cdb80ef9af09dc4ded9c5156865de4b06906d391e798607a4",
+    "lean_replacement_query_sha256": "5dc403ac849c4416595b50333eb989b16ad2a5492d69dcc6a00bd607b18073a0"
+  },
+  "mlp-489": {
+    "source_sha256": "8faeea9963bc131c73be345a156e2cc223f34d1f7890061fb5fbf9327de17ca5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c4c19ec1b350ef2361b981722b5c1943572bbca6f80769c8063c08f487f7aca5",
+    "lean_replacement_query_sha256": "c90c13de70485bce7247630ca98e2819a89b640755eab137437729e1d9d1e327"
+  },
+  "mlp-490": {
+    "source_sha256": "9f616b1dc6e97d7ca3813b7ff0020c439cf48753a88f2d558654e7746a54b3dc",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5aaedb03e4e1456fbb9986286d2361b1de29019e912a5e0ed2be303bc8133b55",
+    "lean_replacement_query_sha256": "62f93c07e5840c8c1cfd23851297f0b2c103df98f86d55a29b1124c769d99814"
+  },
+  "mlp-491": {
+    "source_sha256": "306ade7d04296dba5f796889815268c0d25bf0f0d330e5116510e2e692d85384",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a69dea63be44f1f7eb7663a6c3ffd126d9aa5e545e93294e96435bedcfcc0928",
+    "lean_replacement_query_sha256": "a49e6ae44f7cefbf54fd01cad3c1f44fb54a19d0d84bad8828188b501968af17"
+  },
+  "mlp-492": {
+    "source_sha256": "e6e98b3457fb45dd9d18f217a0bec4d730db5e94290e70d151dac6427e535618",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "06ec50a17fc0fd0ea8bede13474806129d2c447b6ea19c42be5269f096f44e5e",
+    "lean_replacement_query_sha256": "3b639065a350814a368fb229492aa7b66bc5d726461214a556cde94ac40b5928"
+  },
+  "mlp-493": {
+    "source_sha256": "69775ebb1f9049bce8386faa030d841598b4688e846a3c5b0b7eda4d2d8bb571",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4d778dd97fae4792685ba9016e73175819ae26bc75aba66009ca670ffabe85fd",
+    "lean_replacement_query_sha256": "91baf087e39e8ab952d50503ccf3bd6077c476e7e04e22df78fae77b02672f78"
+  },
+  "mlp-494": {
+    "source_sha256": "d46b87e071697a69fdb3aaedd4ba65486c9514a8b61d246dba67b1d883dbf548",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c0f227185521f7e4d302dc0cdb80b79734b22c3e9e6a059ae85740a71ff9320e",
+    "lean_replacement_query_sha256": "37803fd61e7402d8c3ced442f82284476c95b75b404b0692a0ae97b49d4dcb82"
+  },
+  "mlp-495": {
+    "source_sha256": "15ca29f0dc8d2511df16e0df6840e324608cfc41869caa88449ea6a342dea585",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c50cb148b04bf04fbb9d91e98f5526cae5b7af3422c735b645e508cad00f064c",
+    "lean_replacement_query_sha256": "71a57a6fef4bb431987830a6ba76b56cd017e309838e49ace25974c24a7adeec"
+  },
+  "mlp-496": {
+    "source_sha256": "dca9ff6ac55878c1eda66463a833608933dc1be06e896f1409067a22098dd417",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8e14c784f1dc78ef77e50cd4e8dee89fa2233ca085854a617f27cb0fb4f26946",
+    "lean_replacement_query_sha256": "09eecc1a54787f2bd868db25055afd43a88e4c00e61984038ce31489d6508e4f"
+  },
+  "mlp-497": {
+    "source_sha256": "c1f3ad7cf805fa83dc3ce42fb590dcd2c3f8365c22a250db4eb5a808ad125110",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "670dc2c02c59aed43c32b8e79e0239bdaaf53e01f8b8a04f779b4f259381f2af",
+    "lean_replacement_query_sha256": "fc64083329313fb9e57eb673a6096ebb661f368501a0705ddb899e2948f49b7e"
+  },
+  "mlp-498": {
+    "source_sha256": "50ca391d610f02977541f49e639bc2a818d35c8e5bd85cd8305dd86575914cb5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "321fb30053bbd8a6e6b4e5656f4c506a05eb8a58f52b0312f3beb83694cebeb1",
+    "lean_replacement_query_sha256": "43f206e1b9a67be14972dfc8a0b98b2fdb903c6acd4c16e0fb41204523f3cbc6"
+  },
+  "mlp-499": {
+    "source_sha256": "3d7dabb89f06d1ee8e448ddb73fb3235c9f9f4f915f624b9da430d57c73de3de",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "187852de94b4a6904932c27249afce3853553682156fafece729032635cf3a4b",
+    "lean_replacement_query_sha256": "cb1405169a25d259b0dd2e8645664c9d6c950db298102a68a56966187bd55070"
+  },
+  "mlp-503": {
+    "source_sha256": "8d6ac0b45e7dd5ca006357dbd1a0f51eb406f83cdd9bb4c10331cac22b129033",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "af42217a36ddda4a0659dbd550dcaa0b6cbfe81ded01e2374cc95c517c006adf",
+    "lean_replacement_query_sha256": "a929e160e63f7ce5635e2f0c248e8dba24279addec82a56cd70e7176f2f7bacd"
+  },
+  "mlp-507": {
+    "source_sha256": "e6b2abfa01bf726dd25eed53fb1f9854499b431f9f554d1c703e003599c4f04a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f7a59aa623fbf9214b11d0c32d7371908cf6a9f21e8ef87bbbc7a32ab3854046",
+    "lean_replacement_query_sha256": "acda7c566dd889a0eab2674d0a0e972970beff0ef7cb1f96a8d1f5b9c41775f4"
+  },
+  "mlp-508": {
+    "source_sha256": "6d97610f8c32a64bc73548d342d11fa3d9ffdaec4a929c8f8c6c1e19998403f8",
+    "status": "tool_disagreement",
+    "code": "jena_prefix_scan_dollar_variable",
+    "note": "The original rewrite utility rejects $date while scanning for implicit prefixes. Jena itself accepts the same query once the WDQS prefixes are supplied explicitly."
+  },
+  "mlp-509": {
+    "source_sha256": "463ad6740b8c08e64ec71538031403fac28c3867fa1ac4565b5169de2e6c63dd",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "1dd30ab605d8f6bad1d35d7de38311b75c0c9340743566b4f798020d8151b66c",
+    "lean_replacement_query_sha256": "3791a85e5f82b5fbd1104df98545d8727ccde14a4291841ee4729ab7b8dd48e2"
+  },
+  "mlp-510": {
+    "source_sha256": "b963811a1a17223bdefc767fd854bde1b7c193af031beced53862bd2e96d0ab6",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "65f1b307c9f54f3446ad22c80b5742ae389ec22176d278b1b3dd89e8d0b4ad3e",
+    "lean_replacement_query_sha256": "64715e0059136c1a266890bba42967c890124dafaf17fa6981d276b1ed8d2f0a"
+  },
+  "mlp-511": {
+    "source_sha256": "096101a058c95bdeec373cc28689fa6436e363e4d5944119d688d49dd5ab75d2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ad65fc6d37686e20289d9c6494fb51a9c723d02eb3ed1bf8ad994795d63f1419",
+    "lean_replacement_query_sha256": "6044ec238aa1632d85342898199d95f653f18f607d6a3f44b34ed0cfff25fd26"
+  },
+  "mlp-512": {
+    "source_sha256": "21f1dc4d068cd55dc087c629d0926a6bfaacf8aa610278b8d2993aaa991b5427",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "14e02ead4092e9009650a11e9c200b060eb9049e4340cb8fabdb5427e6e470a0",
+    "lean_replacement_query_sha256": "d73cbcc0f07b2faf6d59bdf3f6e320cea55d3bf9ad4961a7752bcc129922bdcd"
+  },
+  "mlp-513": {
+    "source_sha256": "a8f3d85e6502662cd720168155ce954f7f371872695b7957601c3e9000011138",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c4e33a4de228bf041294c5422d753f9eb9e18edbdebe7141356893a09af2b279",
+    "lean_replacement_query_sha256": "acb95c0003d521ae8370ed8b189269313971c0bbe3bf55c6e15ed12da5f4a9e6"
+  },
+  "mlp-514": {
+    "source_sha256": "8844b92f3deede4ace0f6111e5bec89f8add333df2ee04adb5cc4fae21ef1b92",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6ce9fd7d176a2a9683cb5cb748850c3a96ec752c588da20c1022360db1e2c585",
+    "lean_replacement_query_sha256": "9201b4ab2e9932e0d0d92e77f5035972bf5b7d018f9ac29599465dcdd4d4cb4e"
+  },
+  "mlp-515": {
+    "source_sha256": "6a7e7b1f2cca3392522e51c9a5c41b2f79f2b82e87bae08eec38c4be1c25b7c5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "e04357826b7143fd80d1da19cb5d8f64274f0a1d80aa91b124c74603737a3356",
+    "lean_replacement_query_sha256": "a5234ffe334c2d07da6fe1f8fd0b2c8c8574467bbf6281e3999a3d7c17d49b77"
+  },
+  "mlp-516": {
+    "source_sha256": "fb1ef9961f58c1cd9a8ed9165253bb981633a1a45d6e68454a9f3171df3e6a38",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "95c491c2a820f02eabffdac40583f63fdcb78020afa56902c02e9d6dfd05c1fe",
+    "lean_replacement_query_sha256": "f82d003a90d7a0cd70a44662ec0cb374417d1bdf80576ceea5bed512946a789b"
+  },
+  "mlp-517": {
+    "source_sha256": "4f41988299f223f7646c907328c2d2de4d95b93573340d623d251dea57a791b7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "96b5a31de4ffdc155e449be71e3d2fcd6e311ad857062ba61718c0360b91ae5c",
+    "lean_replacement_query_sha256": "e461bcd7dcc0ae9684007dbe52609d884b2503d97b922a6b108a4c12928ab45f"
+  },
+  "mlp-518": {
+    "source_sha256": "0acca652c60e14c831c661f85262c54068c429b009ee7e60c78d89d29b611561",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "15f150cbe96f990f5fd0786d34f8744ded60eb9874e2269769280ddb68b10073",
+    "lean_replacement_query_sha256": "170f2f479985c08eb654756bd649b3d7306222ff60d2f5a232e185211e28443b"
+  },
+  "mlp-519": {
+    "source_sha256": "5f4fc7264ad1194d495463c44f4a3a6463f3e2aa5b2dd0fe569f16fad8f2b2e4",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0de403fbd5fe57bba95d0375cd8ed8d9fa4d18595db6c36a52dab522a3f4e80d",
+    "lean_replacement_query_sha256": "22c9ee19bdb95e6da6a6eea12d3de59b6d7902d69ad85766c3747eb408c02dd4"
+  },
+  "mlp-520": {
+    "source_sha256": "f7195dd251a3046175eed7eb9bcfa015132d37b5d875972d62b4fb7ff6749a1a",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0695b4f0882a2c5e76667ea09ce1c97c8252c21cb540da66767a2f2257042719",
+    "lean_replacement_query_sha256": "643f1a89ee82914b67358f3ff80e8c6e8f556b245d21f416b7f772e2e47c959c"
+  },
+  "mlp-521": {
+    "source_sha256": "f76a6e1199b07a2989bb6d8a37f6732576a828c65d2df4761b52567283c77cb3",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3f0acf90f24d2bfa5d6a11f0d8ad5e17cbba6c6a3c948a222800c2619f68d95a",
+    "lean_replacement_query_sha256": "048b0e0a97af7d48a95610515a797ed7dbd3b738e70bf24a1a9922f6de54b6be"
+  },
+  "mlp-522": {
+    "source_sha256": "2bca9635075a095b68a5d4bc041a3cebd7bdcb135a255ff45807a021f43c962e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "586f48e30344544348662b1a67c46f51e828e3a48af45555068541806816975e",
+    "lean_replacement_query_sha256": "f98b15461348bc20f70130e6f462f4ec18750a324bfd9573d4c6ab6ab9a6c5a8"
+  },
+  "mlp-523": {
+    "source_sha256": "1e6d2f0e8f5547e42b1d60cf61e818630c50c6fa20cb848863c546d7d19a9ab2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "d84267cb8fd08e16a76f4a5285c25407cd8191ec6f259017260ffbfaa03a693c",
+    "lean_replacement_query_sha256": "1ed3b11eea7c57677d061f15cfa581a4e3096fb18263cac11931d8dd5df3311b"
+  },
+  "mlp-524": {
+    "source_sha256": "274f8a323e25103f27b58d77e395b5fff17e855edb356c9fbebdf1efe98fa213",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "2676fbf6d3f0aa1515929e7a874f92f8b40b30681e005717a64e76aaf9700d2d",
+    "lean_replacement_query_sha256": "a20b4a6889aa637ecf1bbff936e6745d50c83224d48e153a062c779c98ef8124"
+  },
+  "mlp-525": {
+    "source_sha256": "facf22f81f69aca16db209037eb9dd19b9ab6f1d3e94768d3e11948f26924d2f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6dc6ac599e08ef010793a2ac0adeac9f83b8c49eb52ca993e434284b972a4196",
+    "lean_replacement_query_sha256": "07787642032f2b80c94e00f77dabe91d97066f2952d98f5d1a1a9dcd842fa34c"
+  },
+  "mlp-526": {
+    "source_sha256": "b2b7da16bd137e337579c279e320b65d05e5063d21fac6d04f35ecb32dced854",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a5848f7df1ee4ef87b354ac1e3c8c6a8d6b4917208067cb5ec5adfb57aeb85ac",
+    "lean_replacement_query_sha256": "403c16e793d9dbed96126d656b61cae2973f8a9b9088eeecd33cf218995d80a6"
+  },
+  "mlp-528": {
+    "source_sha256": "69137a627ee1deeaf2412c8d2a5d768a7dd73ba67c12985879ebf20d6073ccb1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5d56a8dd0aa35004c17d9a467aa252a93a651b8a9e81cb5715296742ed06c0df",
+    "lean_replacement_query_sha256": "dcb8cd8181f71187fb560a0c8e3f29d5e1da06e8786fe29277473e4cf2c228b2"
+  },
+  "mlp-529": {
+    "source_sha256": "f2a24caa2d9a5bab3138571b28d2f5ed807772038d8feb116f3d30a73521ad0f",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "eb7340a88ba84426b0278698c46fe8544518c27387d856d423ec3b9666b18895",
+    "lean_replacement_query_sha256": "714b45743c648a761a3864c8f9ddebca7b0f0ba7e9b5ddfc3809d6da13cb0d96"
+  },
+  "mlp-530": {
+    "source_sha256": "1840bf70f80ce120627caaf8057721b047c2a78bb5493b2f315be0a91d16c638",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "868bd3927903b7a673d9383f7c0440349c08cace7437b12075125592184222d0",
+    "lean_replacement_query_sha256": "93e0a87312e252d0cbf6a776d3cac79cad3fed144110f994daea4417f116d1d8"
+  },
+  "mlp-531": {
+    "source_sha256": "5cc90509d964feb3e50711278a3f8e6565a3f165effd1ae8012fc3414165c73c",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9f7a5a87bf22292490ca3fd8e1d7a10466b8979f74dc98e240b269eb47389c47",
+    "lean_replacement_query_sha256": "30c7d0c099c09bf1de6e59f277fac2d7caa132c23a785392248d15bf507636a4"
+  },
+  "mlp-532": {
+    "source_sha256": "111e335a59dfc91a8dafad579827b0cbac5258094d7974cac5097d56029fdd2b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f222ed408f5ccb85f499b90a5e1e1d56b37912e7c63265efc431b661041e76fa",
+    "lean_replacement_query_sha256": "1d23b853b251943efa67911d568b0e90a15e77b54929ada119ccee12d3e56b79"
+  },
+  "mlp-533": {
+    "source_sha256": "0d957997ce70e6f39e2efa1f6f86128b341f438a89782b19bb6cb7e109a06abf",
+    "status": "source_issue",
+    "code": "trailing_brace",
+    "note": "The published snippet has an extra closing brace after GROUP BY. Remove that brace.",
+    "observed_by": {
+      "date": "2025-12-22",
+      "url": "https://www.wikidata.org/w/index.php?oldid=2445585540"
+    }
+  },
+  "mlp-534": {
+    "source_sha256": "7f1eac57d3d431a951169b4bae796be8daa4aa2bd2a595b87b46dbb00734b76b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a5ab779a28785ef13ef15a849ba7b1cd5d428bb556930621d58745113060e3c0",
+    "lean_replacement_query_sha256": "5cbf2d75d70eccd553429431fd765623fec7712113a628b06c959caa46a62354"
+  },
+  "mlp-535": {
+    "source_sha256": "8d009907bd2422c02fd1c4336b18b6de416bbdfb108c850f1982af5b778b975b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "0f77fcf2b5b9bf17bb73851a178ecc8f46916bb756acc94a2aa42d3f408b9ed6",
+    "lean_replacement_query_sha256": "58b9679997127be5cb047f70c98216bea7e13fb6b458cb3a8b174d5b34ad8417"
+  },
+  "mlp-537": {
+    "source_sha256": "6e0456d9929d9792d2bf07a48064e0dd929244c52c44369f21d81216b7535107",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "ce2f862f0393f33a0998d5fbb39c3addae5d2e6cc455872e589390e287fc26fd",
+    "lean_replacement_query_sha256": "186bfc695fea63e1500e473a864754f363848fb91d4f9cd4e9473d8a75037ef9"
+  },
+  "mlp-538": {
+    "source_sha256": "60c934694811d217685734aaecbb3cdccef782bfe54c48d24424b26604ab21b0",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8c2ba820e839c43c1b549249e1fa487fa4a09d8e4dff739e97ce2f976b6d9270",
+    "lean_replacement_query_sha256": "7f94ee8f564a51140aa166ace7afd1fbc572cc0fb1a57db657b7aa5e8e4d7e96"
+  },
+  "mlp-539": {
+    "source_sha256": "3c62f846a8b40133cbff9bec394c0fb71235edf794e923504ea23b57ccb7b912",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "b1fe420eb62b14ad1b9ef5e99f783b0e3111609d78af55370c00810e39dd7a27",
+    "lean_replacement_query_sha256": "9fde2eea75aceae5879f51d784e67a85bf649196d590322c2498c5fce7c42b4e"
+  },
+  "mlp-541": {
+    "source_sha256": "031dce4b69f69c5c821741df5be8a400a7f44e8ba557b663ed34f48af8b4eef5",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9dedbf8631fdbd00b9914def923a6a3276babee19e87c878bccecee8b1f6c131",
+    "lean_replacement_query_sha256": "f3491fa1d67f5a15790453e2bb6fc01d307cf58228ec0a78fe205c053427ac7b"
+  },
+  "mlp-542": {
+    "source_sha256": "aded1f0c64c42ce829c56ab9cef4a33f21e80ee881c5557a2c03efe7aaff53d8",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "b8095d3c325affff92dc5c5c9b43b4dcc8f55813d0cdd52d8cc0a3285136bf95",
+    "lean_replacement_query_sha256": "3d40f52a525eda14297cdb28f4076d54691caa474b4b883085ffb1fddd29a845"
+  },
+  "mlp-543": {
+    "source_sha256": "246ad33b4511ba0d3f2c1f83e44bf480ef979b99aac556b285389a60ce68ac62",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "9fb88a8b41b4d90562135b841b17eb79c70acdd236f70db700d71eda95d6620c",
+    "lean_replacement_query_sha256": "e5cc5a271cb3ffbbccdf7bc8ed552e84d7d1f6ef0076362a959dbef78da889cf"
+  },
+  "mlp-544": {
+    "source_sha256": "a54c2c42b07c681e1cd849305a4fad7df539aac7d202370a5f59bcb01d8fcc9e",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "3fe3bd6d2e74f8b4541b769e54b693dffb2ceb48c8489febaa4cdad1d1f38ead",
+    "lean_replacement_query_sha256": "1ef8d0dbb49c5c2867262d769dee4b17aa2f5fd6523273e980fba9ce723b8ac5"
+  },
+  "mlp-545": {
+    "source_sha256": "46eff60595b88f97ab22a1a696c3fb7dfe7371eb45af961afee09e90e022fd9d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "07d2ce1cc242fa0304604446a74c6ae8e39b60c1dd519456d7716b3b56aaddd6",
+    "lean_replacement_query_sha256": "22c6f82b3b8ba565a0bdd62033dbfc452f1eb76806655f57551994bba5b57333"
+  },
+  "mlp-548": {
+    "source_sha256": "98e11f7163319072b5d907db635599d184bb6a9d68b0f2de5f2ecf1aa1b7c15d",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "893e52a7f6b20a3db0c24ed1b62601e58663ebee9cf353b7677f0566ee0f94b6",
+    "lean_replacement_query_sha256": "203f2ee327a1548fbb71e62dac5aab3415b3054309e67045c886409d9c1f81f1"
+  },
+  "mlp-549": {
+    "source_sha256": "717e7803fb9f86c9f94202edb9461d628dd268d272ee7f1c9d4a6752c13dc1d2",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "23b6a9a2000eee91c97126578843f382a1a52a475becf6caaf877f373aea8b20",
+    "lean_replacement_query_sha256": "4c688cbfa321e79b62dd1bc745f8514d6248ba9dc030c9d200bbfd0e255574f7"
+  },
+  "mlp-550": {
+    "source_sha256": "50c371756b1152e9220ed45e389bf9aefdfb3b6591262cbb8b8062f3d8305b99",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "dc843c6f0eb8e4e4e444e9df71fc4f7af72becb5ecc368c04082d760413f4110",
+    "lean_replacement_query_sha256": "18d35f22d63d9c16b62b2843e3c0bed3727cd2f3d16ba68cb20b433adf3ef7ac"
+  },
+  "mlp-551": {
+    "source_sha256": "c8a18445452d3348625f533dec24d9d093f4e49dca4980506d9bdbb003782442",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "49bc8ae41d9d710e5f7a82a19cfb8d556a6087801e4ca23224ec2ece714b99c1",
+    "lean_replacement_query_sha256": "be16252f6a7646674f11bf140f896c9a961734c6536f65fab735ed7b4f6e6223"
+  },
+  "mlp-554": {
+    "source_sha256": "6702aa5ca5473e499c88b8473dc606948e715b312b052a79c4fdfc8205d90ba1",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "deb92016c3ef10203ec1ace24d93d8aae0352037c746323768609641d4a31a33",
+    "lean_replacement_query_sha256": "4cbc3e502eb1d9efccacc1725b76e18ab2260908577bbefba35359bc2a66676a"
+  },
+  "mlp-555": {
+    "source_sha256": "4697200c17bc96b156f4ffb19deba822cdd437bfbf421ea4e91ab7a169145283",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "becb89e31d9f08514594b3fce6bac91b205e13abcf40f1c23238ebf14fb9c9f5",
+    "lean_replacement_query_sha256": "ba8823f70664b8117dad19b3b3d31d44896b94cbf767ce9969b62ecd1754ceb1"
+  },
+  "mlp-556": {
+    "source_sha256": "86d6ccd4d3cccdd8648e9e90bf1765d348a9fd4f098e253a718ff96270af74c9",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "a477e158c379ed769ad4fe19ba679477675d549d3a975da9894304f008605b0c",
+    "lean_replacement_query_sha256": "860db2eee428ae4e992666c56ec934b7215b60c011ab71e29d95b98ccd83848d"
+  },
+  "mlp-557": {
+    "source_sha256": "6a9ae3c35f341cbc090d89e49e9574216903310035139a87f7408419e826e992",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "4ab056ba0ea4d6ea9d73dd018dca44ace27687e5db7722a202a6bd4ce846ba8b",
+    "lean_replacement_query_sha256": "6635f2f440fd43c7b04468ac4f9ea0e005c8d3deeee41dc42155df5da0515402"
+  },
+  "mlp-558": {
+    "source_sha256": "7777826f5ae9abf236db7a4d2537dc017ceb1de2472097c99f5305368119a01b",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6aefa85c3f0a96d7e4358052501d20dbd76611015c52f1d583d7b7d3bf51ee8f",
+    "lean_replacement_query_sha256": "19d4174a26b4924d3d95cb810c05de1f60048106c3f8f5d013237fcbc82c3d38"
+  },
+  "mlp-559": {
+    "source_sha256": "3cab50365a4476f506c80c3b6b36acd380253c6be9ab92bdeec9a3fc8a05a626",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "5ff6cd620b5d03b472a7eb62d27dd7df64120f0c7f64b2f7a211ce9904c76a23",
+    "lean_replacement_query_sha256": "6b955ff2b7ec6086e4f1af504e9398416c8e7eb7fede0e880d5ea6b924313521"
+  },
+  "mlp-570": {
+    "source_sha256": "37f6b37980b3c761b4ffc4481ac094de499baec046b43baf12d578f460daa34f",
+    "status": "source_issue",
+    "code": "select_alias_already_in_scope",
+    "note": "SELECT assigns to ?person, which is already in scope in WHERE. Give the expression a fresh output name, or rename the input variable while keeping the output name.",
+    "reference": "https://www.w3.org/TR/sparql11-query/#variableScope"
+  },
+  "mlp-571": {
+    "source_sha256": "3112177d2051e0eae839f9735807581972098260a5de13c9e36a9de2100bb0ec",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c3425bd6c6307828fcbad41945f34cf5994c8fb60747fa82701208777b96f0f9",
+    "lean_replacement_query_sha256": "454879f714476e3082290f3f137c45c0b92698416af469a83cb46497660b32c3"
+  },
+  "mlp-572": {
+    "source_sha256": "5fc7eb3633c1b6d6904a7f908eda7b6fd3bf8b48872ddca72c50281a1d27dea9",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "3e881663fe9a382c76b2dadbf68837bd9cca8a8ed72c2a43f955d088be027d3e",
+    "lean_replacement_query_sha256": "c7c71cccc86b3d13b22fbc8e206c1c14af6a4fb0d1ac34a3388297fb7b4658a3"
+  },
+  "mlp-573": {
+    "source_sha256": "7cf8c3c1da9fed24e0a16ca5950bc2b671b26c64d695bf15678a22d029f95529",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "9a33e8780b92aa68d150106468dceabf72916b379fb4d8a0efb3b23ece9fddd7",
+    "lean_replacement_query_sha256": "9581f320375686c9fc70456704ce2b8397557a004ccbfe39f63c5b2549424f81"
+  },
+  "mlp-574": {
+    "source_sha256": "0d42df84fbeb9bba39bf25fca57df1ee13d496db31c007a2729338841364218d",
+    "normalized_rewrite_match": false,
+    "replacement_query_sha256": "43f1b6674d3cc6ae4b5460ae60168a0bd66cb6f393ffef177a984bbc5e2d3fa8",
+    "lean_replacement_query_sha256": "91ee12a38c10ff867921b61f76efa3a57ac9f335b756159ab91c6cfb3db592b6"
+  },
+  "mlp-575": {
+    "source_sha256": "af54bfe3ef2d0b5e1df95a981e95b5a610b0be51133f552231364c5ab25df7f7",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "c3d6293b29f9644dfd81075b7267c5c174284d885209f1dd938339f44d73295f",
+    "lean_replacement_query_sha256": "278d48dfce465c833d6d92ada7239b209b1c185e4950ecad2a49d71415d64cc0"
+  },
+  "mlp-576": {
+    "source_sha256": "13c74f751c780c57e01c78f9e746558a57c09c8d211ddcdd8bc56ca09c7c6dae",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "f2ac5a481b4fab8212a18abe37ee2a802c45fbafad9e52bab39f3f55c9c5deca",
+    "lean_replacement_query_sha256": "75193ca9f263562c322a1fa0a788128c40ea7d110104cb740586bc516462f5e4"
+  },
+  "mlp-577": {
+    "source_sha256": "0827355efc79cef79c3ed389ea4946ea999784ac12ea307c496910768debf814",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "95b6fa4beb6dcac832ad0f752e28d923279f2c5683f3f7bf6150e1b5eca3fede",
+    "lean_replacement_query_sha256": "0a123a71bf37c7c138536d7985702764df32ce02db02e773b719dc4f7781dde3"
+  },
+  "mlp-578": {
+    "source_sha256": "13aaa233138402cb3687c1a178669293d98a4bb6ba9105dca2a38db912c1fb43",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "6ad8b35a11d6af1c07bb1460c0b19bcb8c3135e91e576a8bc2ab81fbfc106b56",
+    "lean_replacement_query_sha256": "ff15aba5bc9daa39a04132aae9f2ef1387d80bbf6f9f4571e92e8c554a2910e3"
+  },
+  "mlp-579": {
+    "source_sha256": "8c9ff472be644675ef5246e243596a4dcf2b31f905b1391f298bf1132b3ca295",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "8498f6946d1da1babcb3fc61b5fb4e400cbf59d4ea34ce05d6d4a29ea44a5f51",
+    "lean_replacement_query_sha256": "c6661f02ecb0d50256637eaec8295729727c454e570b9cc5b719807f15ce461d"
+  },
+  "mlp-580": {
+    "source_sha256": "c8d80947a5bbe9e68bb771cf3f259c259e5dc40734a7085780e8de7e4bcacebe",
+    "normalized_rewrite_match": true,
+    "replacement_query_sha256": "eadd0581d833d23c87b91aa849e446a94c892b4c2a9da7164481cea461367678",
+    "lean_replacement_query_sha256": "0dc534fb302fd98810861972644ebbe27219136299543634ea9de839c15c227c"
+  }
+}

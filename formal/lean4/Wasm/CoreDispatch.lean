@@ -55,6 +55,8 @@ import Wasm.Ops.Terms
 import Wasm.Ops.ContainerPath
 import Wasm.Ops.Collections
 import Wasm.Ops.LiteralValue
+import Wasm.Ops.Wikidata
+import Wasm.Ops.QuerySyntax
 
 namespace L4Wasm.Core
 
@@ -85,6 +87,8 @@ def coreOpNames : List String :=
   , "rhoDfFragmentCheck"
   , "rdfsPlusClosure"
   , "queryRaw"
+  , "wikidataRewrite"
+  , "parseSparqlStructure"
   , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames ++ containerPathOpNames
     ++ literalOpNames
 
@@ -305,6 +309,8 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "rhoDfFragmentCheck"   => some (arity1 op rhoDfFragmentCheck args)
   | "rdfsPlusClosure"      => some (arity1 op rdfsPlusClosure args)
   | "queryRaw"             => some (arity3Now op (fun a b c n => queryRawBy extra a b c n) args)
+  | "wikidataRewrite"      => some (arity2 op Ops.wikidataRewrite args)
+  | "parseSparqlStructure" => some (arity3 op Ops.parseSparqlStructure args)
   | "shaclValidate"        => some (arity2 op shaclValidate args)
   -- The durable update log of a browser host (`Wasm/Ops/DeltaLog.lean`,
   -- https://github.com/danbri/factoidal/issues/728).

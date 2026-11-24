@@ -1,0 +1,3165 @@
+{
+  "sample": "first records in harvested order; not random",
+  "count": 100,
+  "jar_sha256": "cc152896c4a5ae0111cae415136aa4ef4bab322ac591571b1e5def6cdbeb9e48",
+  "corpus_sha256": "3257919042acc8e87681c943ad0ade721b3e9117882d40bea8ca9a55628ae6ea",
+  "lean_mode": "WDQS defaults, SPARQL 1.1",
+  "results": [
+    {
+      "index": 1,
+      "page": "User:MartinPoulter/queries",
+      "section": "All Wikidata properties with label and description, ordered numerically",
+      "ordinal": 1,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "0",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "0",
+        "message": ""
+      }
+    },
+    {
+      "index": 2,
+      "page": "User:MartinPoulter/queries",
+      "section": "Variation of the above excluding external IDs (thanks Magnus Sälgö)",
+      "ordinal": 2,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "1",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "1",
+        "message": ""
+      }
+    },
+    {
+      "index": 3,
+      "page": "User:MartinPoulter/queries",
+      "section": "Count of scientific articles",
+      "ordinal": 3,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "2",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "2",
+        "message": ""
+      }
+    },
+    {
+      "index": 4,
+      "page": "User:MartinPoulter/queries",
+      "section": "Count of fictional characters",
+      "ordinal": 4,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "3",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "3",
+        "message": ""
+      }
+    },
+    {
+      "index": 5,
+      "page": "User:MartinPoulter/queries",
+      "section": "Count of items with coordinate locations",
+      "ordinal": 5,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "4",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "4",
+        "message": ""
+      }
+    },
+    {
+      "index": 6,
+      "page": "User:MartinPoulter/queries",
+      "section": "Count of organisations",
+      "ordinal": 6,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "5",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "5",
+        "message": ""
+      }
+    },
+    {
+      "index": 7,
+      "page": "User:MartinPoulter/queries",
+      "section": "Count of labels for a given item, broken down by language",
+      "ordinal": 7,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "6",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "6",
+        "message": ""
+      }
+    },
+    {
+      "index": 8,
+      "page": "User:MartinPoulter/queries",
+      "section": "Women born in the UK",
+      "ordinal": 8,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "7",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "7",
+        "message": ""
+      }
+    },
+    {
+      "index": 9,
+      "page": "User:MartinPoulter/queries",
+      "section": "Women with place of birth: UK",
+      "ordinal": 9,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "8",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "8",
+        "message": ""
+      }
+    },
+    {
+      "index": 10,
+      "page": "User:MartinPoulter/queries",
+      "section": "Wikipedia articles about works",
+      "ordinal": 10,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "9",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "9",
+        "message": ""
+      }
+    },
+    {
+      "index": 11,
+      "page": "User:MartinPoulter/queries",
+      "section": "Categorised timeline of works",
+      "ordinal": 11,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "10",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "10",
+        "message": ""
+      }
+    },
+    {
+      "index": 12,
+      "page": "User:MartinPoulter/queries",
+      "section": "Works ordered by how many language versions of Wikipedia have an article about them",
+      "ordinal": 12,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "11",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "11",
+        "message": ""
+      }
+    },
+    {
+      "index": 13,
+      "page": "User:MartinPoulter/queries",
+      "section": "Dead",
+      "ordinal": 13,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "12",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "12",
+        "message": ""
+      }
+    },
+    {
+      "index": 14,
+      "page": "User:MartinPoulter/queries",
+      "section": "Living",
+      "ordinal": 14,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "13",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "13",
+        "message": ""
+      }
+    },
+    {
+      "index": 15,
+      "page": "User:MartinPoulter/queries",
+      "section": "Economics Nobel Laureates' workplace location, with Wikipedia links",
+      "ordinal": 15,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "14",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "14",
+        "message": ""
+      }
+    },
+    {
+      "index": 16,
+      "page": "User:MartinPoulter/queries",
+      "section": "Economics Nobel Laureates' alma mater location",
+      "ordinal": 16,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "15",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "15",
+        "message": ""
+      }
+    },
+    {
+      "index": 17,
+      "page": "User:MartinPoulter/queries",
+      "section": "Specialisms within economics and related nationalities",
+      "ordinal": 17,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "16",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "16",
+        "message": ""
+      }
+    },
+    {
+      "index": 18,
+      "page": "User:MartinPoulter/queries",
+      "section": "Economists with a Project Gutenberg ID and optionally an English Wikisource profile",
+      "ordinal": 18,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "17",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "17",
+        "message": ""
+      }
+    },
+    {
+      "index": 19,
+      "page": "User:MartinPoulter/queries",
+      "section": "Economics awards and their recipients, by year",
+      "ordinal": 19,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "18",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "18",
+        "message": ""
+      }
+    },
+    {
+      "index": 20,
+      "page": "User:MartinPoulter/queries",
+      "section": "Winners of multiple economics awards",
+      "ordinal": 20,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "19",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "19",
+        "message": ""
+      }
+    },
+    {
+      "index": 21,
+      "page": "User:MartinPoulter/queries",
+      "section": "People who won economics awards but are not listed as economists",
+      "ordinal": 21,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "20",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "20",
+        "message": ""
+      }
+    },
+    {
+      "index": 22,
+      "page": "User:MartinPoulter/queries",
+      "section": "Titles of (current) national finance ministers",
+      "ordinal": 22,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "21",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "21",
+        "message": ""
+      }
+    },
+    {
+      "index": 23,
+      "page": "User:MartinPoulter/queries",
+      "section": "Timeline of Chancellors of the Exchequer",
+      "ordinal": 23,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "22",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "22",
+        "message": ""
+      }
+    },
+    {
+      "index": 24,
+      "page": "User:MartinPoulter/queries",
+      "section": "Timeline of Chairs of the US Federal Reserve",
+      "ordinal": 24,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "23",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "23",
+        "message": ""
+      }
+    },
+    {
+      "index": 25,
+      "page": "User:MartinPoulter/queries",
+      "section": "Free trade areas",
+      "ordinal": 25,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "24",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "24",
+        "message": ""
+      }
+    },
+    {
+      "index": 26,
+      "page": "User:MartinPoulter/queries",
+      "section": "Stars in flag versus fertility",
+      "ordinal": 26,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "25",
+        "message": ""
+      },
+      "original_status": "parse_error",
+      "original_errors": [
+        {
+          "code": "original_query_parse_error",
+          "phase": "parse",
+          "message": "The original query could not be parsed as SPARQL 1.1.",
+          "retry_classification": "after_input_or_parser_change",
+          "diagnostic_reference": "docs/README_java_rewriter.md#rewrite-status-outputs"
+        }
+      ],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": null
+    },
+    {
+      "index": 27,
+      "page": "User:MartinPoulter/queries",
+      "section": "Colleges and Permanent Private Halls with coats of arms and official web sites",
+      "ordinal": 27,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "26",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "26",
+        "message": ""
+      }
+    },
+    {
+      "index": 28,
+      "page": "User:MartinPoulter/queries",
+      "section": "How many Wikidata entities were educated at the University of Oxford?",
+      "ordinal": 28,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "27",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "27",
+        "message": ""
+      }
+    },
+    {
+      "index": 29,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable people educated at colleges of the University of Oxford",
+      "ordinal": 29,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "28",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "28",
+        "message": ""
+      }
+    },
+    {
+      "index": 30,
+      "page": "User:MartinPoulter/queries",
+      "section": "How many Wikidata entities were educated at the University of Oxford ''or'' at individual colleges?",
+      "ordinal": 30,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "29",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "29",
+        "message": ""
+      }
+    },
+    {
+      "index": 31,
+      "page": "User:MartinPoulter/queries",
+      "section": "Which of the above are fictional humans?",
+      "ordinal": 31,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "30",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "30",
+        "message": ""
+      }
+    },
+    {
+      "index": 32,
+      "page": "User:MartinPoulter/queries",
+      "section": "Organisations founded by Oxford alumni (including colleges)",
+      "ordinal": 32,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "31",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "31",
+        "message": ""
+      }
+    },
+    {
+      "index": 33,
+      "page": "User:MartinPoulter/queries",
+      "section": "Female graduates of Pembroke College",
+      "ordinal": 33,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "32",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "32",
+        "message": ""
+      }
+    },
+    {
+      "index": 34,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by international female Oxford alumni (including colleges)",
+      "ordinal": 34,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "33",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "33",
+        "message": ""
+      }
+    },
+    {
+      "index": 35,
+      "page": "User:MartinPoulter/queries",
+      "section": "Image grid of international female Oxford alumnae",
+      "ordinal": 35,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "34",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "34",
+        "message": ""
+      }
+    },
+    {
+      "index": 36,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things discovered by Oxford alumni (including colleges & PP halls)",
+      "ordinal": 36,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "35",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "35",
+        "message": ""
+      }
+    },
+    {
+      "index": 37,
+      "page": "User:MartinPoulter/queries",
+      "section": "Recipients of the Bodley Medal",
+      "ordinal": 37,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "36",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "36",
+        "message": ""
+      }
+    },
+    {
+      "index": 38,
+      "page": "User:MartinPoulter/queries",
+      "section": "Recent publications by living staff (or former staff) of the University of Oxford",
+      "ordinal": 38,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "37",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "37",
+        "message": ""
+      }
+    },
+    {
+      "index": 39,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of things in Oxford colour-coded by type",
+      "ordinal": 39,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "38",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "38",
+        "message": ""
+      }
+    },
+    {
+      "index": 40,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of things in Oxford and what they are named after",
+      "ordinal": 40,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "39",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "39",
+        "message": ""
+      }
+    },
+    {
+      "index": 41,
+      "page": "User:MartinPoulter/queries",
+      "section": "People with ENWS author profiles",
+      "ordinal": 41,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "40",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "40",
+        "message": ""
+      }
+    },
+    {
+      "index": 42,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things in collections of the Bodleian",
+      "ordinal": 42,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "41",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "41",
+        "message": ""
+      }
+    },
+    {
+      "index": 43,
+      "page": "User:MartinPoulter/queries",
+      "section": "Bodleian manuscripts, with images and Commons categories",
+      "ordinal": 43,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "42",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "42",
+        "message": ""
+      }
+    },
+    {
+      "index": 44,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable people whose doctoral advisor was a University of Edinburgh alum (+ academic field)",
+      "ordinal": 44,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "43",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "43",
+        "message": ""
+      }
+    },
+    {
+      "index": 45,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by women who attended the University of Edinburgh",
+      "ordinal": 45,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "44",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "44",
+        "message": ""
+      }
+    },
+    {
+      "index": 46,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by people employed by the University of Edinburgh",
+      "ordinal": 46,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "45",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "45",
+        "message": ""
+      }
+    },
+    {
+      "index": 47,
+      "page": "User:MartinPoulter/queries",
+      "section": "Organisations founded by people born in Edinburgh",
+      "ordinal": 47,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "46",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "46",
+        "message": ""
+      }
+    },
+    {
+      "index": 48,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable alumni of the University of Bristol whose citizenship is not UK",
+      "ordinal": 48,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "47",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "47",
+        "message": ""
+      }
+    },
+    {
+      "index": 49,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable people whose doctoral advisor was a University of Bristol alum (+ academic field)",
+      "ordinal": 49,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "48",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "48",
+        "message": ""
+      }
+    },
+    {
+      "index": 50,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable people whose doctoral advisor was a University of Bristol employee (+ academic field)",
+      "ordinal": 50,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "49",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "49",
+        "message": ""
+      }
+    },
+    {
+      "index": 51,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by alumni of the University of Bristol",
+      "ordinal": 51,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "50",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "50",
+        "message": ""
+      }
+    },
+    {
+      "index": 52,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by people employed by the University of Bristol (at some point in their career)",
+      "ordinal": 52,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "51",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "51",
+        "message": ""
+      }
+    },
+    {
+      "index": 53,
+      "page": "User:MartinPoulter/queries",
+      "section": "Awards won by alumni of the University of Reading",
+      "ordinal": 53,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "52",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "52",
+        "message": ""
+      }
+    },
+    {
+      "index": 54,
+      "page": "User:MartinPoulter/queries",
+      "section": "Papers online at a White Rose URL but without \"content deliverer: White Rose Research Online\" qualifier",
+      "ordinal": 54,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "53",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "53",
+        "message": ""
+      }
+    },
+    {
+      "index": 55,
+      "page": "User:MartinPoulter/queries",
+      "section": "Papers by University of Leeds researchers with a Wikimedia-compatible licence",
+      "ordinal": 55,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "54",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "54",
+        "message": ""
+      }
+    },
+    {
+      "index": 56,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of universities",
+      "ordinal": 56,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "55",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "55",
+        "message": ""
+      }
+    },
+    {
+      "index": 57,
+      "page": "User:MartinPoulter/queries",
+      "section": "Museums with Twitter accounts",
+      "ordinal": 57,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "56",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "56",
+        "message": ""
+      }
+    },
+    {
+      "index": 58,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things that museums are named after",
+      "ordinal": 58,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "57",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "57",
+        "message": ""
+      }
+    },
+    {
+      "index": 59,
+      "page": "User:MartinPoulter/queries",
+      "section": "Global map of art museums, with their web sites",
+      "ordinal": 59,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "58",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "58",
+        "message": ""
+      }
+    },
+    {
+      "index": 60,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of museums in the UK, with images and web sites",
+      "ordinal": 60,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "59",
+        "message": ""
+      },
+      "original_status": "parse_error",
+      "original_errors": [
+        {
+          "code": "original_query_parse_error",
+          "phase": "parse",
+          "message": "The original query could not be parsed as SPARQL 1.1.",
+          "retry_classification": "after_input_or_parser_change",
+          "diagnostic_reference": "docs/README_java_rewriter.md#rewrite-status-outputs"
+        }
+      ],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": null
+    },
+    {
+      "index": 61,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things that stars, galaxies, star clusters and nebulae are named after",
+      "ordinal": 61,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "60",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "60",
+        "message": ""
+      }
+    },
+    {
+      "index": 62,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things that planets and their moons are named after",
+      "ordinal": 62,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "61",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "61",
+        "message": ""
+      }
+    },
+    {
+      "index": 63,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things that spacecraft are named after",
+      "ordinal": 63,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "62",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "62",
+        "message": ""
+      }
+    },
+    {
+      "index": 64,
+      "page": "User:MartinPoulter/queries",
+      "section": "Things that discovered stars",
+      "ordinal": 64,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "63",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "63",
+        "message": ""
+      }
+    },
+    {
+      "index": 65,
+      "page": "User:MartinPoulter/queries",
+      "section": "People who invented scientific instruments",
+      "ordinal": 65,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "64",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "64",
+        "message": ""
+      }
+    },
+    {
+      "index": 66,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of Biosphere reserves with an entry and location in Wikidata but ''not'' in English Wikipedia",
+      "ordinal": 66,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "65",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "65",
+        "message": ""
+      }
+    },
+    {
+      "index": 67,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of Biosphere reserves with an entry and location in Wikidata ''and'' an English Wikipedia article",
+      "ordinal": 67,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "66",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "66",
+        "message": ""
+      }
+    },
+    {
+      "index": 68,
+      "page": "User:MartinPoulter/queries",
+      "section": "Biosphere reserves with an entry but no location",
+      "ordinal": 68,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "67",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "67",
+        "message": ""
+      }
+    },
+    {
+      "index": 69,
+      "page": "User:MartinPoulter/queries",
+      "section": "Lutenists ordered by year of birth",
+      "ordinal": 69,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "68",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "68",
+        "message": ""
+      }
+    },
+    {
+      "index": 70,
+      "page": "User:MartinPoulter/queries",
+      "section": "Birthplaces of painters in the Rijksmuseum collection (based on query by Jane Darnell)",
+      "ordinal": 70,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "69",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "69",
+        "message": ""
+      }
+    },
+    {
+      "index": 71,
+      "page": "User:MartinPoulter/queries",
+      "section": "Image gallery of oil paintings from Rijksmuseum",
+      "ordinal": 71,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "70",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "70",
+        "message": ""
+      }
+    },
+    {
+      "index": 72,
+      "page": "User:MartinPoulter/queries",
+      "section": "Visual art works by African-American women",
+      "ordinal": 72,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "71",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "71",
+        "message": ""
+      }
+    },
+    {
+      "index": 73,
+      "page": "User:MartinPoulter/queries",
+      "section": "Trans people in the arts",
+      "ordinal": 73,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "72",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "72",
+        "message": ""
+      }
+    },
+    {
+      "index": 74,
+      "page": "User:MartinPoulter/queries",
+      "section": "Art venues in the UK, but not pubs",
+      "ordinal": 74,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "73",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "73",
+        "message": ""
+      }
+    },
+    {
+      "index": 75,
+      "page": "User:MartinPoulter/queries",
+      "section": "All art exhibitions known to Wikidata",
+      "ordinal": 75,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "74",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "manual"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "74",
+        "message": ""
+      }
+    },
+    {
+      "index": 76,
+      "page": "User:MartinPoulter/queries",
+      "section": "Poems from the 18th century, with their authors and languages",
+      "ordinal": 76,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "75",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "75",
+        "message": ""
+      }
+    },
+    {
+      "index": 77,
+      "page": "User:MartinPoulter/queries",
+      "section": "Poems whose text is available online through Wikisource, or elsewhere",
+      "ordinal": 77,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "76",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "76",
+        "message": ""
+      }
+    },
+    {
+      "index": 78,
+      "page": "User:MartinPoulter/queries",
+      "section": "Poets of the Kingdom of Great Britain whose birth and death years are known",
+      "ordinal": 78,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "77",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "77",
+        "message": ""
+      }
+    },
+    {
+      "index": 79,
+      "page": "User:MartinPoulter/queries",
+      "section": "People who wrote a notable poem but do not have \"poet\" included in their occupations",
+      "ordinal": 79,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "78",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "78",
+        "message": ""
+      }
+    },
+    {
+      "index": 80,
+      "page": "User:MartinPoulter/queries",
+      "section": "Notable works (with an English Wikipedia article) by authors who have no notable works",
+      "ordinal": 80,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "79",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "79",
+        "message": ""
+      }
+    },
+    {
+      "index": 81,
+      "page": "User:MartinPoulter/queries",
+      "section": "Works of Florence Earle Coates",
+      "ordinal": 81,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "80",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "80",
+        "message": ""
+      }
+    },
+    {
+      "index": 82,
+      "page": "User:MartinPoulter/queries",
+      "section": "Films with \"it\" in the title",
+      "ordinal": 82,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "81",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "81",
+        "message": ""
+      }
+    },
+    {
+      "index": 83,
+      "page": "User:MartinPoulter/queries",
+      "section": "What kinds of things have first lines?",
+      "ordinal": 83,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "82",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "82",
+        "message": ""
+      }
+    },
+    {
+      "index": 84,
+      "page": "User:MartinPoulter/queries",
+      "section": "Poems, their languages, and the languages of their first lines",
+      "ordinal": 84,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "83",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "83",
+        "message": ""
+      }
+    },
+    {
+      "index": 85,
+      "page": "User:MartinPoulter/queries",
+      "section": "Works where the language of the first line differs from the original language of the work",
+      "ordinal": 85,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "84",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "84",
+        "message": ""
+      }
+    },
+    {
+      "index": 86,
+      "page": "User:MartinPoulter/queries",
+      "section": "English Wikisource texts with a Wikidata entry but no indication of what they are",
+      "ordinal": 86,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "85",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "85",
+        "message": ""
+      }
+    },
+    {
+      "index": 87,
+      "page": "User:MartinPoulter/queries",
+      "section": "English Wikisource texts with an \"instance of\": count by type",
+      "ordinal": 87,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "86",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "86",
+        "message": ""
+      }
+    },
+    {
+      "index": 88,
+      "page": "User:MartinPoulter/queries",
+      "section": "Dead people with a Project Gutenberg ID but no English Wikisource profile, whose main language is English",
+      "ordinal": 88,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": false,
+        "id": "87",
+        "message": "expected L4Factoidal.SPARQL.Token.rparen"
+      },
+      "original_status": "parse_error",
+      "original_errors": [
+        {
+          "code": "original_query_parse_error",
+          "phase": "parse",
+          "message": "The original query could not be parsed as SPARQL 1.1.",
+          "retry_classification": "after_input_or_parser_change",
+          "diagnostic_reference": "docs/README_java_rewriter.md#rewrite-status-outputs"
+        }
+      ],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": null
+    },
+    {
+      "index": 89,
+      "page": "User:MartinPoulter/queries",
+      "section": "Authors by gender",
+      "ordinal": 89,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "88",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-isSomeValue",
+          "variant_id": "default"
+        },
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "88",
+        "message": ""
+      }
+    },
+    {
+      "index": 90,
+      "page": "User:MartinPoulter/queries",
+      "section": "Authors by nationality",
+      "ordinal": 90,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "89",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-isSomeValue",
+          "variant_id": "default"
+        },
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "89",
+        "message": ""
+      }
+    },
+    {
+      "index": 91,
+      "page": "User:MartinPoulter/queries",
+      "section": "Authors of notable letters, by number of letters",
+      "ordinal": 91,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "90",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "90",
+        "message": ""
+      }
+    },
+    {
+      "index": 92,
+      "page": "User:MartinPoulter/queries",
+      "section": "Recipients of notable letters, by number of letters",
+      "ordinal": 92,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "91",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "91",
+        "message": ""
+      }
+    },
+    {
+      "index": 93,
+      "page": "User:MartinPoulter/queries",
+      "section": "Map of lifeboat stations, with ownership",
+      "ordinal": 93,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "92",
+        "message": ""
+      },
+      "original_status": "parse_error",
+      "original_errors": [
+        {
+          "code": "original_query_parse_error",
+          "phase": "parse",
+          "message": "The original query could not be parsed as SPARQL 1.1.",
+          "retry_classification": "after_input_or_parser_change",
+          "diagnostic_reference": "docs/README_java_rewriter.md#rewrite-status-outputs"
+        }
+      ],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": null
+    },
+    {
+      "index": 94,
+      "page": "User:MartinPoulter/queries",
+      "section": "Lifeboat stations lacking a location",
+      "ordinal": 94,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "93",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "93",
+        "message": ""
+      }
+    },
+    {
+      "index": 95,
+      "page": "User:MartinPoulter/queries",
+      "section": "Without images",
+      "ordinal": 95,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "94",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "94",
+        "message": ""
+      }
+    },
+    {
+      "index": 96,
+      "page": "User:MartinPoulter/queries",
+      "section": "With images",
+      "ordinal": 96,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "95",
+        "message": ""
+      },
+      "original_status": "unchanged",
+      "original_errors": [],
+      "original_warnings": [],
+      "original_rewrites": [],
+      "lean_output": {
+        "accepted": true,
+        "id": "95",
+        "message": ""
+      }
+    },
+    {
+      "index": 97,
+      "page": "User:MartinPoulter/queries",
+      "section": "All doctoral theses",
+      "ordinal": 97,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "96",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "96",
+        "message": ""
+      }
+    },
+    {
+      "index": 98,
+      "page": "User:MartinPoulter/queries",
+      "section": "Authors and their theses",
+      "ordinal": 98,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "97",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "97",
+        "message": ""
+      }
+    },
+    {
+      "index": 99,
+      "page": "User:MartinPoulter/queries",
+      "section": "Doctoral theses without an author",
+      "ordinal": 99,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "98",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "98",
+        "message": ""
+      }
+    },
+    {
+      "index": 100,
+      "page": "User:MartinPoulter/queries",
+      "section": "Doctoral thesis with an author, but the author has no thesis",
+      "ordinal": 100,
+      "revision_url": "https://www.wikidata.org/w/index.php?title=User%3AMartinPoulter%2Fqueries&oldid=2545563417",
+      "lean_input": {
+        "accepted": true,
+        "id": "99",
+        "message": ""
+      },
+      "original_status": "rewritten",
+      "original_errors": [],
+      "original_warnings": [
+        {
+          "code": "wikibase_label_auto_language_passed_through",
+          "phase": "post-ARQ",
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic",
+          "message": "wikibase:language includes [AUTO_LANGUAGE], which only has meaning in the WDQS web GUI (substituted with the browser's language before the query reaches Blazegraph); this rewrite passes it through literally, so it will never match a real label/description language and always falls back to the entity ID or IRI."
+        }
+      ],
+      "original_rewrites": [
+        {
+          "rule_id": "rewrite-wikibase-label-service",
+          "variant_id": "automatic"
+        }
+      ],
+      "lean_output": {
+        "accepted": true,
+        "id": "99",
+        "message": ""
+      }
+    }
+  ]
+}

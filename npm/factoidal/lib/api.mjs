@@ -1160,6 +1160,20 @@ function buildApi(driver) {
     return c.wrap(entryResult(c.e.datasetFromQuadsJson(JSON.stringify(arr)), 'fromQuads'), {});
   }
 
+  /** Inspect the parsed query without evaluating it. */
+  async function parseSparqlStructure(query, { wdqs = false, version = '1.1' } = {}) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'parseSparqlStructure', 'parseSparqlStructure');
+    return entryResult(c.e.parseSparqlStructure(String(query), String(wdqs), version), 'parseSparqlStructure').result;
+  }
+
+  /** Rewrite a legacy WDQS query using the Lean Wikidata rules. */
+  async function wikidataRewrite(query, { language = '' } = {}) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'wikidataRewrite', 'wikidataRewrite');
+    return entryResult(c.e.wikidataRewrite(String(query), String(language)), 'wikidataRewrite').result;
+  }
+
   /** Load the engine; afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
   async function ready() {
     await ctx();
@@ -3090,6 +3104,8 @@ function buildApi(driver) {
     canonicalLiteral,
     literalFromValue,
     ready,
+    wikidataRewrite,
+    parseSparqlStructure,
     engineTables,
     sameValue,
     syntaxFor,

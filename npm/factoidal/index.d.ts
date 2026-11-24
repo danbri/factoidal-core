@@ -647,6 +647,45 @@ export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
 /** Load the engine. Afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
 export function ready(): Promise<void>;
 
+export interface WikidataRewriteDiagnostic {
+  code: string;
+  phase: string;
+  message: string;
+  offset: number | null;
+}
+
+export interface WikidataRewriteResult {
+  schema_version: 1;
+  rewrite_status: 'rewritten' | 'unchanged' | 'parse_error' | 'blazegraph_error' |
+    'skipped_unsupported' | 'validation_failed';
+  rewritten_query: string | null;
+  rewrites: { rule_id: string; variant_id: string }[];
+  warnings: WikidataRewriteDiagnostic[];
+  errors: WikidataRewriteDiagnostic[];
+}
+
+export interface SparqlQueryStructure {
+  form: 'select' | 'ask' | 'construct' | 'describe';
+  variables: string[];
+  sse: string;
+}
+
+/** Parse a query without evaluating it. The S-expression preserves property paths.
+ * Set wdqs to use Wikidata's implicit prefixes.
+ */
+export function parseSparqlStructure(
+  query: string,
+  options?: { wdqs?: boolean; version?: '1.1' | '1.2' }
+): Promise<SparqlQueryStructure>;
+
+/** Rewrite legacy WDQS syntax in a Lean engine with the wikidataRewrite op.
+ * AUTO_LANGUAGE defaults to en; the caller may supply an explicit language.
+ */
+export function wikidataRewrite(
+  query: string,
+  options?: { language?: string }
+): Promise<WikidataRewriteResult>;
+
 // ---------------------------------------------------------------------
 // Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
 // Synchronous after the engine is loaded (`await ready()` or any other call);
@@ -2363,6 +2402,8 @@ declare const _default: {
   isomorphic: typeof isomorphic;
   fromQuads: typeof fromQuads;
   ready: typeof ready;
+  wikidataRewrite: typeof wikidataRewrite;
+  parseSparqlStructure: typeof parseSparqlStructure;
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
   syntaxFor: typeof syntaxFor;

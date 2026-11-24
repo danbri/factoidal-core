@@ -293,6 +293,8 @@ def handleOpNames : List String :=
   , "termsToNTriples"
   , "resolveIri"
   , "queryForm"
+  , "wikidataRewrite"
+  , "parseSparqlStructure"
   , "engineTables"
   , "apiCheck"
   , "parseQuadsJson"

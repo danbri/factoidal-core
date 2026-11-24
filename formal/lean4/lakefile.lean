@@ -507,7 +507,7 @@ lean_lib ClosureChecks where
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
-             `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
+             `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue, `Wasm.Ops.Wikidata, `Wasm.Ops.QuerySyntax,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections, `Wasm.Ops.ContainerPath,
              -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
              -- the op modules the split moved out of the core closure, and the
@@ -895,6 +895,9 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- .rq files without a manifest, using the suites' naming convention.
 -- See L4Factoidal/SPARQL/Parser.lean and Harness/SparqlSyntaxProbe.lean.
 @[default_target] lean_exe «l4sparql-probe» where root := `Harness.SparqlSyntaxProbe
+
+-- Wikimedia rewriter JSONL v1 transport backed by the Factoidal Lean rules.
+lean_exe «l4wikidata-rewriter» where root := `Wikidata.RewriteServer
 
 -- Verifiable Credentials Data Integrity (eddsa-rdfc-2022) + did:key
 -- probe (Harness/VcProbe.lean): the RFC 8032 Ed25519 vectors through
