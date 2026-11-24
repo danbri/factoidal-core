@@ -361,6 +361,12 @@ structure Declaration where
 /-- Selectors Level 4 location (§8) and user action (§9) pseudo-classes. -/
 inductive PseudoClass where | link | visited | anyLink | hover | active
   deriving Repr, BEq
+/-- A compound parsed by the full selector grammar inside a host-scoped selector. -/
+structure ScopedCompound where
+  selector : DOM.Selectors.Complex
+  specificity : Nat × Nat × Nat
+instance : Repr ScopedCompound := ⟨fun f _ => "scoped compound " ++ repr f.specificity⟩
+
 structure Compound where
   tag : Option String := none
   id : Option String := none
@@ -369,6 +375,8 @@ structure Compound where
   /-- `:host` or `:host(compound)` (CSS Scoping 1 §3.2.1): it matches only the shadow host
   of the rule's shadow tree, and the other fields test that host. -/
   host : Bool := false
+  /-- The complete predicate when these fields are only a bucket prefilter. -/
+  scopeFilter : Option ScopedCompound := none
   deriving Repr
 structure Selector where
   /-- Rightmost compound first; ancestors follow. -/
@@ -555,16 +563,6 @@ private def compoundBody (s : String) : Except String Compound := do
     else if ident chunk then out := {out with tag := some chunk.toLower}
     else throw s!"unsupported CSS selector: {s}"
   return out
-/-- A compound, or `:host` and `:host(compound)` (CSS Scoping 1 §3.2.1). -/
-private def compound (s : String) : Except String Compound := do
-  if s == ":host" then return {host := true}
-  if s.startsWith ":host(" && s.endsWith ")" then
-    let inner ← compoundBody ((s.drop 6).dropEnd 1).toString
-    return {inner with host := true}
-  compoundBody s
-private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
-  (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
-    n.2.2 + (if p.tag.isSome then 1 else 0))
 /-- The specificity of a selector of `DOM.Selectors` (Selectors 4 §17): ids; classes,
 attributes and pseudo-classes; types and pseudo-elements. `:is()`, `:not()`, `:has()` and the `of`
 list of `:nth-child()` count as their most specific argument. The recursion is on the
@@ -613,6 +611,30 @@ def complexPrefilter : DOM.Selectors.Complex → Compound
           | .type .default (some n) => if n == n.toLower then some n else none
           | _ => none }
 
+private def scopedCompound (s : String) : Except String Compound :=
+  match DOM.Selectors.parse s with
+  | some [c@(.mk [(' ', _)])] =>
+    .ok { complexPrefilter c with
+      scopeFilter := some ⟨c, complexSpecificity DOM.Selectors.maxNesting c⟩ }
+  | _ => .error s!"unsupported CSS compound: {s}"
+
+private def compound (s : String) (contextual : Bool) : Except String Compound := do
+  if s == ":host" then return {host := true}
+  let parseBody := fun body => match compoundBody body with
+    | .error message => if contextual then scopedCompound body else .error message
+    | .ok fields => .ok fields
+  if s.startsWith ":host(" && s.endsWith ")" then
+    let inner ← parseBody ((s.drop 6).dropEnd 1).toString
+    return {inner with host := true}
+  parseBody s
+
+private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
+  let (ids, classes, tags) := match p.scopeFilter with
+    | some f => f.specificity
+    | none => (if p.id.isSome then 1 else 0, p.classes.length + p.pseudo.length,
+        if p.tag.isSome then 1 else 0)
+  (n.1 + ids, n.2.1 + classes + (if p.host then 1 else 0), n.2.2 + tags)
+
 /-- A selector that the compound grammar below does not read, through `DOM.Selectors`. -/
 private def complexSelector (s : String) : Except String Selector :=
   match DOM.Selectors.parse s with
@@ -620,8 +642,8 @@ private def complexSelector (s : String) : Except String Selector :=
     .ok { parts := [complexPrefilter c], specificity := complexSpecificity DOM.Selectors.maxNesting c, complex := some c }
   | _ => .error s!"unsupported CSS selector: {s}"
 
-private def compoundSelector (s : String) : Except String Selector := do
-  let ws := words (trim s)
+private def compoundSelector (s : String) (contextual : Bool := false) : Except String Selector := do
+  let ws := if contextual then topWords (trim s) else words (trim s)
   -- `::slotted(compound)` ends the last compound (CSS Scoping 1 §3.2.2).
   let (ws, slotted) ← match ws.getLast? with
     | some w =>
@@ -632,7 +654,8 @@ private def compoundSelector (s : String) : Except String Selector := do
         pure (ws.dropLast ++ [if before.isEmpty then "*" else before], some c)
       | _ => pure (ws, none)
     | none => pure (ws, none)
-  let parts ← ws.mapM compound
+  let parts ← ws.mapM (compound · contextual)
+  if contextual && !(parts.any (·.host)) then throw "expected a shadow host selector"
   if parts.isEmpty || parts.length > 16 then throw "CSS selector exceeds supported depth"
   let specificity := (parts ++ slotted.toList).foldl compoundSpecificity (0,0,0)
   -- `::slotted` is a pseudo-element: one more in the last count.
@@ -644,7 +667,12 @@ pseudo-classes and the shadow tree selectors), else all of what `DOM.Selectors` 
 private def selector (s : String) : Except String Selector :=
   match compoundSelector s with
   | .ok sel => .ok sel
-  | .error _ => complexSelector s
+  | .error _ =>
+    if s.contains ":host" then
+      match compoundSelector s true with
+      | .ok sel => .ok sel
+      | .error _ => complexSelector s
+    else complexSelector s
 
 /-- A selector that ends in the pseudo-element `::before` or `::after` (`:before` and
 `:after` too: CSS 2.1 §5.12.3), split: the selector of the originating element, and
@@ -1081,7 +1109,9 @@ def hostOfScope (ts : TreeScope) (scope : Option Nat) : Option Nat :=
 /-- A compound of a rule of tree `scope`: a `:host` compound matches only the host of that
 tree, and no other compound matches it (the host is featureless there). -/
 private def compoundInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (s : Compound) : Bool :=
-  s.host == (hostOfScope ts scope == some id) && compoundFieldsK keys ts.tree state id s
+  s.host == (hostOfScope ts scope == some id) && compoundFieldsK keys ts.tree state id s &&
+    (s.scopeFilter.map fun f =>
+      DOM.Selectors.matchComplex ts.tree none DOM.Selectors.matchFuel id f.selector).getD true
 
 /-- The next node up for a selector of tree `scope`: the parent, and from that tree's
 shadow root its host. -/
@@ -2057,7 +2087,9 @@ widths, the style and the colour. -/
 def copyProperty (property : String) (source s : Computed) : Option Computed :=
   let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
   match property with
-  | "display" => some {s with display := source.display}
+  | "display" =>
+    let pos := {s.pos with contents := source.pos.contents}
+    some {s with display := source.display, pos := pos}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
   | "margin-top" =>
@@ -3010,7 +3042,7 @@ theorem selectorPartsMatchInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (
       obtain ⟨⟨hscope, hc⟩, _⟩ := h
       unfold compoundInK at hc
       simp only [Bool.and_eq_true] at hc
-      obtain ⟨hhost, hfields⟩ := hc
+      obtain ⟨⟨hhost, hfields⟩, _⟩ := hc
       cases hh : c.host with
       | true =>
         simp only [hh, if_true]
@@ -3413,6 +3445,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,
             listInside := parent.pos.listInside, nowrap := parent.pos.nowrap,
+            -- CSS Shadow 1 §4.1.1: the HTML slot has no box by default.
+            contents := DOM.Dom.isHtmlElement n "slot" && !hidden,
             textTransform := parent.pos.textTransform, lineBreak := parent.pos.lineBreak}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.

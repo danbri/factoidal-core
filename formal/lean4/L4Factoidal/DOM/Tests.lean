@@ -247,7 +247,11 @@ def dsd : Dom := parseHtmlDocument "<div id='h'><template shadowrootmode='open'>
 #guard (match (dsd.get (byId dsd "h")).shadow with
   | some sr => (dsd.get sr).kids.size == 2 && dsd.isShadowRoot sr && (dsd.get (byId dsd "h")).kids.size == 1
   | none => false)
-#guard (dsd.flatChildren (byId dsd "h")).map (fun k => (dsd.get k).lname) == #["p", "b"]
+#guard (dsd.flatChildren (byId dsd "h")).map (fun k => (dsd.get k).lname) == #["p", "slot"]
+#guard (let flat := dsd.flat
+  let slot := ((flat.get (byId dsd "h")).kids)[1]!
+  (flat.get slot).kids.map (fun k => (flat.get k).lname) == #["b"] &&
+    ((flat.get ((flat.get slot).kids[0]!)).parent == some slot))
 #guard ((dsd.get (byId dsd "h")).shadow.bind fun sr => (dsd.get sr).shadowInit.map (·.declarative)) == some true
 #guard ((parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)).get
   (byId (parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)) "h")).shadow.isNone
