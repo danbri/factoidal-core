@@ -165,12 +165,47 @@ theorem decodePublicKey_ok (bytes : ByteArray) (result : AffinePoint)
     simp only [decodePublicKey, hc] at h
     obtain ⟨he, hv, hs⟩ := admitPoint_ok q result sign h
     subst result
-    exact ⟨sign, hc, hv, hs⟩
+    exact ⟨sign, rfl, hv, hs⟩
+
+/-- Kind: refinement. Says: candidate decoding errors propagate unchanged.
+Does not say: candidate recovery is mathematically complete. -/
+theorem decodePublicKey_candidate_error (bytes : ByteArray) (e : KeyError)
+    (h : candidate bytes = .error e) :
+    decodePublicKey bytes = .error e := by
+  simp only [decodePublicKey, h]
+
+/-- Kind: refinement. Says: the recovered point is returned when both checks pass.
+Does not say: the checks establish the mathematical group law. -/
+theorem decodePublicKey_candidate_ok (bytes : ByteArray) (q : AffinePoint) (sign : Bool)
+    (h : candidate bytes = .ok (q, sign))
+    (hc : coordinateChecks q sign = true) (hs : subgroupCheck q = true) :
+    decodePublicKey bytes = .ok q := by
+  simp only [decodePublicKey, h, admitPoint, if_pos hc, if_pos hs]
+
+/-- Kind: rejection. Says: a recovered point failing coordinate checks is refused.
+Does not say: the candidate recovery algorithm finds every valid point. -/
+theorem decodePublicKey_candidate_bad_coordinates (bytes : ByteArray) (q : AffinePoint)
+    (sign : Bool) (h : candidate bytes = .ok (q, sign))
+    (hc : coordinateChecks q sign ≠ true) :
+    decodePublicKey bytes = .error .notOnCurve := by
+  simp only [decodePublicKey, h, admitPoint, if_neg hc]
+
+/-- Kind: rejection. Says: a coordinate-checked candidate failing subgroup check
+is refused. Does not say: the subgroup algorithm refines scalar multiplication. -/
+theorem decodePublicKey_candidate_bad_subgroup (bytes : ByteArray) (q : AffinePoint)
+    (sign : Bool) (h : candidate bytes = .ok (q, sign))
+    (hc : coordinateChecks q sign = true) (hs : subgroupCheck q ≠ true) :
+    decodePublicKey bytes = .error .notSubgroup := by
+  simp only [decodePublicKey, h, admitPoint, if_pos hc, if_neg hs]
 
 #print axioms EthereumConsensus.BLS.decodePublicKey_wrong_width
 #print axioms EthereumConsensus.BLS.admitPoint_ok
 #print axioms EthereumConsensus.BLS.coordinateChecks_sound
 #print axioms EthereumConsensus.BLS.decodePublicKey_ok
+#print axioms EthereumConsensus.BLS.decodePublicKey_candidate_error
+#print axioms EthereumConsensus.BLS.decodePublicKey_candidate_ok
+#print axioms EthereumConsensus.BLS.decodePublicKey_candidate_bad_coordinates
+#print axioms EthereumConsensus.BLS.decodePublicKey_candidate_bad_subgroup
 
 end EthereumConsensus.BLS
 
