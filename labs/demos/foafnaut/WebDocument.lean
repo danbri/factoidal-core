@@ -2405,6 +2405,32 @@ def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : 
     | some p => some p
     | none => pictures id
 
+private def attachBackgroundPicture (picture : Rendering.Layout.Pictures)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (id : Nat) (style : Rendering.CSS.Computed) : Rendering.CSS.Computed :=
+  match picture id with
+  | some pic =>
+    let natural := match style.backgroundImage.bind (naturals.lookup ·) with
+      | some n => some n
+      | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
+    {style with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap), backgroundNatural := natural}
+  | none => style
+
+/-- Take the already constructed picture map as data. A function of an element id can
+be eta-expanded inside the style loop, rebuilding the map for every element. -/
+@[noinline] def attachBackgroundPictures (pictures : Std.TreeMap Nat Rendering.Layout.Picture)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
+  styles.mapIdx (attachBackgroundPicture (fun id => pictures.get? id) naturals)
+
+theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Nat × String))
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) :
+    attachBackgroundPictures (WebRender.picturesMap store keys) naturals styles =
+      styles.mapIdx (attachBackgroundPicture (WebRender.picturesOf store keys) naturals) := rfl
+
+#print axioms attachBackgroundPictures_eq
+
 /-- The cascade with each element's background image decoded from the supplied images (a
 `data:` URL from itself), and the store made for them, for the engine to keep. A page with no
 background image gives its cascade back as it is. -/
@@ -2419,19 +2445,12 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
     if keys.isEmpty then (.ok (d,styles),none,[]) else
     let (store,entry) := WebRender.storeIn stores keys images
-    let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
+    let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
     -- the natural size of each SVG background, read once for each URL (a page can name one
     -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
     let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
       if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
-    let attach := fun (i : Nat) (st : Rendering.CSS.Computed) => match pics i with
-      | some pic =>
-        let natural := match st.backgroundImage.bind (naturals.lookup ·) with
-          | some n => some n
-          | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
-        {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
-      | none => st
-    let styles := styles.mapIdx attach
+    let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
     let (styles,wanted) := redrawVectorBackgrounds images styles
     (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures")
 
