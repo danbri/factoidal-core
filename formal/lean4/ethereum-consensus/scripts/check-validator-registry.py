@@ -61,8 +61,28 @@ def reconstruct(value, index, count, siblings):
 def changed(b):
     return bytes([b[0] ^ 1]) + b[1:]
 
+def state_fixture(registry_root, fields_count, rng):
+    # Build the complete padded container in a heap. Only the validators
+    # field is a real registry root; other fields are synthetic roots.
+    width = 1 << (fields_count - 1).bit_length()
+    heap = [ZERO] * (2 * width)
+    for i in range(fields_count):
+        heap[width + i] = rng.randbytes(32)
+    heap[width + 11] = registry_root
+    for i in range(width - 1, 0, -1):
+        heap[i] = pair(heap[2*i], heap[2*i+1])
+    index = width + 11
+    siblings = []
+    while index > 1:
+        siblings.append(heap[index ^ 1])
+        index //= 2
+    # Independent layer-based Merkle calculation must match the heap.
+    assert merkle(heap[width:]) == heap[1]
+    return width, heap[1], siblings
+
 def cases():
     rng = random.Random(881)
+    state_rng = random.Random(896)
     rows = []
     def add(op, count, index, epoch, common, v, root, siblings, expected):
         key, cred, *numbers = v
@@ -128,6 +148,30 @@ def cases():
                 add("root", count, index, epoch, 1, edited, root, [], edited_root.hex())
                 add("proof", count, index, epoch, 1, edited, root, siblings,
                     "mismatch " + reconstruct(edited_root, index, count, siblings).hex())
+        # State layouts are derived from the pinned BeaconState field counts
+        # (Phase0, Altair, Bellatrix, Capella, Deneb, Electra, Fulu).
+        width, state_root, state_sibs = state_fixture(
+            root, [21, 24, 25, 28, 28, 37, 38][i % 7], state_rng)
+        op = "state" + str(width)
+        other_op = "state64" if width == 32 else "state32"
+        combined = siblings + [state_root] + state_sibs
+        add(op, count, index, epoch, 1, v, root, combined, good)
+        add(op, count, index, epoch, 0, v, root, combined, "error not_common")
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [changed(state_root)] + state_sibs, "state_root_mismatch")
+        add(op, count, index, epoch, 1, v, changed(root), combined, "state_root_mismatch")
+        changed_state = list(state_sibs)
+        changed_state[i % len(state_sibs)] = changed(changed_state[i % len(state_sibs)])
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [state_root] + changed_state, "state_root_mismatch")
+        add(op, count, index, epoch, 1, v, root,
+            wrong + [state_root] + state_sibs, "root_mismatch")
+        add(op, count, index, epoch, 1, bad_v, root, combined, "root_mismatch")
+        add(other_op, count, index, epoch, 1, v, root, combined, "error branch_length")
+        add(op, count, index, epoch, 1, v, root, combined[:-1], "error branch_length")
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [b"x"] + state_sibs, "error chunk_width")
+        add(op, count, index, epoch, 1, v, b"x", combined, "error chunk_width")
     # Transport errors must not turn into proof or candidate verdicts.
     valid = rows[0][0].split(" ")
     for field, value, error in [
@@ -166,7 +210,16 @@ def main():
             pass
         else:
             raise ValueError("comparator corruption not detected")
-    print(f"Prepared {len(rows)} rows; four comparator controls detected", flush=True)
+    state_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("state32 "))
+    forged = expected.copy()
+    forged[state_row] = "state_root_mismatch" if expected[state_row] != "state_root_mismatch" else "candidate_not_authenticated"
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("state comparator corruption not detected")
+    print(f"Prepared {len(rows)} rows; five comparator controls detected", flush=True)
     if sys.argv[1:] == ["--self-test"]:
         return
     if len(sys.argv) < 2:
