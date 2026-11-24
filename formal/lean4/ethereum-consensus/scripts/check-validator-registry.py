@@ -348,7 +348,27 @@ def cases():
         rows.append((" ".join(edited), "error " + error))
     rows.extend([("bad", "error parse_error"), ("x" * 4097, "error resource_limit")])
     assert len(rows) == 4613
-    rows.extend(fullstate_cases())
+    full = fullstate_cases()
+    rows.extend(full)
+    # Retain the real fullstate request shape; mutate transport fields without
+    # rebuilding its commitment, so the error must precede protocol dispatch.
+    valid_full = full[0][0].split(" ")
+    assert valid_full[0] == "fullstate" and valid_full[4] == "0"
+    for field, value, error in [
+        (4, "1", "parse_error"),
+        (-14, "78", "vote_width"),
+        (-16, str(MAX64 + 1), "out_of_range"),
+        (-14, "gg", "invalid_hex"),
+        (-1, ",".join(map(str, range(33))), "resource_limit"),
+    ]:
+        edited = valid_full.copy()
+        edited[field] = value
+        rows.append((" ".join(edited), "error " + error))
+    rows.extend([
+        (" ".join(valid_full[:-1]), "error branch_length"),
+        (" ".join(valid_full + ["0"]), "error branch_length"),
+        ("fullstate " + "x" * 8192, "error resource_limit"),
+    ])
     return rows
 
 def compare(rows, actual):
@@ -399,7 +419,7 @@ def main():
         pass
     else:
         raise ValueError("signing root comparator corruption not detected")
-    assert len(rows) == 7173
+    assert len(rows) == 7181
     print(f"Prepared {len(rows)} rows; seven comparator controls detected", flush=True)
     if sys.argv[1:] == ["--self-test"]:
         return
