@@ -312,6 +312,7 @@ def main():
         lean_rewrites = {}
         lean_templates = {}
 
+    audit = json.loads(Path(__file__).with_name("mlp_audit.json").read_text(encoding="utf-8"))
     rows = []
     for key, source in sources.items():
         text = source["query"]
@@ -352,6 +353,16 @@ def main():
             "lean_classic_parse": lean.get(("classic-" if key in classic_ids else "source-") + key),
             "lean_replacement_parse": lean.get("replacement-" + key),
         }
+        observation = audit.get(key)
+        if observation and observation["source_sha256"] == digest(text.encode()):
+            review = observation.copy()
+            for key in ("replacement_query", "lean_replacement_query"):
+                expected = review.pop(key + "_sha256", None)
+                actual = row[key]
+                if expected and (actual is None or digest(actual.encode()) != expected):
+                    review.pop("normalized_rewrite_match", None)
+            if len(review) > 1:
+                row["review"] = review
         rows.append(row)
     metadata = {
         "schema_version": 1,

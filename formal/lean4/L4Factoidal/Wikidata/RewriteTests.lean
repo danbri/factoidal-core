@@ -38,4 +38,7 @@ private def hintExample : String :=
 #guard (rewriteQuery "ASK { FILTER(wikibase:isSomeValue(?v, wd:Q42)) }").rewrite_status == "rewritten"
 #guard (rewriteQuery "ASK { SERVICE wikibase:mwapi { ?s ?p ?o } }").rewrite_status == "skipped_unsupported"
 
+#guard (rewriteQuery "SELECT (SUM(?n) AS ?n) WHERE { ?s ?p ?n }").rewrite_status == "parse_error"
+#guard (rewriteQuery "SELECT (SUM(?n) AS ?total) WHERE { ?s ?p ?n }").rewrite_status == "unchanged"
+
 end L4Factoidal.Wikidata

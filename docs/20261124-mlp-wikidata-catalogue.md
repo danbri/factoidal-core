@@ -75,7 +75,7 @@ RDF graph to check language priority and entity-ID fallback.
 | Local rewrite run | First 100 | Full 580 |
 | --- | ---: | ---: |
 | Wikimedia rewrote / unchanged | 81 / 16 | 434 / 106 |
-| Factoidal rewrote / unchanged | 84 / 16 | 417 / 108 |
+| Factoidal rewrote / unchanged | 81 / 16 | 404 / 106 |
 | Both tools supplied query text | 97 | 509 |
 
 The Wikimedia run used the checked-in executable JAR through Java JSONL.
@@ -83,3 +83,39 @@ These counts track statuses and text availability. The workbench runs one
 query or one pair on demand, with the original for Blazegraph and the selected
 replacement for QLever. Future parity claims need result comparisons and the
 upstream golden fixtures for each rule.
+
+
+## Normalisation and source review
+
+The generated queries differ as text. No pair of actual rewrites matched with
+only comments and whitespace removed by the Lean lexer. Parsing both sides
+with Jena 4.10, clearing the prefix map, serialising, and comparing tokens
+gave 1/81 exact matches in the first 100 and 2/403 across the complete
+catalogue. Consistently renaming only variables absent from the original query
+raised these counts to 75/81 and 370/403. All 403 pairs parsed in Jena. The
+unmatched pairs can differ in OPTIONAL or BIND order, guard placement, or
+lookups generated. That diagnostic neither proves nor refutes equal results.
+
+Four ordered corpus examples (MLP 007, 011, 019 and 027) were run as pairs
+on QLever. They returned the same column sets and bags of bindings with
+83, 134, 1,081 and 41 rows respectively. The requests excluded the appended
+original-query comment and compared complete results without imposing row order.
+
+The three first-100 original-source issues reuse SELECT aliases that are
+already in scope. This includes SUM and SAMPLE self-aliases. The SPARQL 1.1
+scope rule is at https://www.w3.org/TR/sparql11-query/#variableScope .
+These are now rejected by the Lean rewriter's outer projection check. The
+general Factoidal parser still accepts certain grouped aliases. The review
+flags 18 original aliases and one unmatched closing brace across the full
+catalogue. The other original Java parse failure is MLP 508. Jena accepts
+that source with explicit prefixes, so it is a rewrite-tool scanner issue.
+
+The offending patterns for MLP 060 and 093 appear in the 18 December 2017
+revision (610448730), and MLP 026 in the 7 December 2020 revision
+(1319372974). Twelve of the 16 unchanged first-100 queries are present
+verbatim in the 2017 revision. They already used standard query constructs
+there, subject to WDQS's convenience prefix environment. That observation
+does not reconstruct the edits that first made them portable.
+
+Reproduce normalisation with `tools/wikidata/compare_rewrite_text.py`. It uses
+the same local Jena JAR, a Java compiler, and the Lean tokeniser.

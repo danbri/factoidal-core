@@ -120,11 +120,24 @@ private def finish (original current : String) (steps : List RewriteStep) : Rewr
     | .error error =>
       failure "validation_failed" "rewritten_query_parse_error" "validate" error.msg (some error.pos) steps
 
+/-- SPARQL 1.1 §18.2.1 forbids projecting into a name already in the
+WHERE scope. The general Factoidal parser permits some grouped aliases;
+the migration tool diagnoses them before emitting a replacement. -/
+private def projectionAliasConflict (query : Query) : Option String :=
+  match query.form with
+  | .select (.vars items) => items.findSome? fun item => match item with
+    | .expr _ name => if query.pattern.inScopeVars.contains name then some name else none
+    | .var _ => none
+  | _ => none
+
 private def afterParse (original current language : String) (steps : List RewriteStep) :
     RewriteResult := Id.run do
   let query ← match parseQuery current with
     | .ok query => pure query
     | .error error => return failure "parse_error" "original_query_parse_error" "parse" error.msg (some error.pos) steps
+  if let some name := projectionAliasConflict query then
+    return failure "parse_error" "select_alias_already_in_scope" "parse"
+      s!"SELECT expression reuses ?{name}, already in scope in WHERE" none steps
   if !query.dataset.isEmpty then
     return failure "skipped_unsupported" "unsupported_dataset_clause" "post-parse" "Top-level FROM or FROM NAMED" none steps
   let tokens := sourceTokens current
