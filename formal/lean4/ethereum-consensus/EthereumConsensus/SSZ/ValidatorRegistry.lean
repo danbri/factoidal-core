@@ -419,4 +419,136 @@ theorem checkMainnetSlotCommonValidator_delegates (slot : UInt64)
 #print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_mismatch
 #print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_delegates
 
+
+/-! The Fork and genesis_validators_root are state fields 3 and 1.
+    The context is commitment-bound, not canonical-chain authenticated. -/
+inductive StateSigningError where
+  | forkWidth
+  | basicRoot
+  | branchLength
+  | proof (error : ByteProofError)
+  | forkMismatch
+  | genesisMismatch
+  | preparation (error : SlashingPreparationError)
+  | registry (error : RegistryError)
+
+def stateForkRoot (context : ForkContext) : Except StateSigningError Chunk := do
+  if context.previousVersion.size ≠ 4 ∨ context.currentVersion.size ≠ 4 then
+    throw .forkWidth
+  let prev ← (checkedBasicRoot context.previousVersion).mapError (fun _ => StateSigningError.basicRoot)
+  let curr ← (checkedBasicRoot context.currentVersion).mapError (fun _ => StateSigningError.basicRoot)
+  let ep ← (uint64Root context.activationEpoch).mapError (fun _ => StateSigningError.basicRoot)
+  let zero ← containerZeroRoot.mapError (fun _ => StateSigningError.basicRoot)
+  return hashPair (hashPair prev curr) (hashPair ep zero)
+
+def stateForkGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 35
+  | .electraFulu => 67
+
+def stateGenesisGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 33
+  | .electraFulu => 65
+
+def verifyStateSigningContext (slot : UInt64) (context : ForkContext)
+    (forkSiblings genesisSiblings : List ByteArray) (stateRoot : ByteArray) :
+    Except StateSigningError Unit :=
+  let layout := mainnetRegistryLayout slot
+  let depth := registryStateDepth layout
+  if forkSiblings.length ≠ depth ∨ genesisSiblings.length ≠ depth then .error .branchLength
+  else
+    match stateForkRoot context with
+    | .error e => .error e
+    | .ok leaf =>
+      match verifyByteBranch depth (stateForkGindex layout) leaf.bytes forkSiblings stateRoot with
+      | .error e => .error (.proof e)
+      | .ok forkResult =>
+        if forkResult.matchesRoot then
+          match verifyByteBranch depth (stateGenesisGindex layout)
+              context.genesisValidatorsRoot genesisSiblings stateRoot with
+          | .error e => .error (.proof e)
+          | .ok genesisResult =>
+            if genesisResult.matchesRoot then .ok () else .error .genesisMismatch
+        else .error .forkMismatch
+
+/-- Actual raw-vote preparation followed by slot/registry verification.
+    The result deliberately contains only unauthenticated candidate evidence. -/
+def checkStateVotes (slot : UInt64) (context : ForkContext) (a b : AttestationData)
+    (left right : List UInt64) (index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings forkSiblings genesisSiblings : List ByteArray)
+    (stateRoot : ByteArray) :
+    Except StateSigningError (PreparedAttesterSlashing × MainnetSlotCandidateVerdict) :=
+  match verifyStateSigningContext slot context forkSiblings genesisSiblings stateRoot with
+  | .error e => .error e
+  | .ok _ =>
+    match prepareAttesterSlashing context a b left right with
+    | .error e => .error (.preparation e)
+    | .ok prepared =>
+      match checkMainnetSlotCommonValidator slot prepared index length v siblings
+          registryRoot stateSiblings slotSiblings stateRoot with
+      | .error e => .error (.registry e)
+      | .ok verdict => .ok (prepared, verdict)
+
+/-- Kind: layout. Says: both context fields occupy their fixed positions.
+    Does not say: the supplied state is canonical. -/
+theorem stateSigning_gindices :
+    stateForkGindex .phase0Deneb = 35 ∧ stateForkGindex .electraFulu = 67 ∧
+    stateGenesisGindex .phase0Deneb = 33 ∧ stateGenesisGindex .electraFulu = 65 :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Kind: admission. Says: a wrong context branch count refuses before hashing.
+    Does not say: well-sized branches are authentic. -/
+theorem verifyStateSigningContext_bad_branch (slot : UInt64) (c : ForkContext)
+    (fs gs : List ByteArray) (root : ByteArray)
+    (h : fs.length ≠ registryStateDepth (mainnetRegistryLayout slot) ∨
+      gs.length ≠ registryStateDepth (mainnetRegistryLayout slot)) :
+    verifyStateSigningContext slot c fs gs root = .error .branchLength := by
+  simp only [verifyStateSigningContext, if_pos h]
+
+/-- Kind: linkage. Says: context failure propagates before vote preparation.
+    Does not say: context success establishes signature validity. -/
+theorem checkStateVotes_bad_context (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : StateSigningError)
+    (h : verifyStateSigningContext slot c fs gs root = .error e) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .error e := by
+  simp only [checkStateVotes, h]
+
+/-- Kind: linkage. Says: actual vote preparation failure prevents candidate checking.
+    Does not say: admitted votes carry valid signatures. -/
+theorem checkStateVotes_bad_preparation (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : SlashingPreparationError)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .error e) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .error (.preparation e) := by
+  simp only [checkStateVotes, hc, hp]
+
+/-- Kind: linkage. Says: success returns the actual prepared signing roots
+    and actual slot/registry verdict under the identical state commitment.
+    Does not say: canonical root, BLS or a state mutation is established. -/
+theorem checkStateVotes_delegates (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (p : PreparedAttesterSlashing) (verdict : MainnetSlotCandidateVerdict)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .ok p)
+    (hv : checkMainnetSlotCommonValidator slot p index length v ss rr rs sl root = .ok verdict) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .ok (p, verdict) := by
+  simp only [checkStateVotes, hc, hp, hv]
+
+#print axioms EthereumConsensus.SSZ.stateSigning_gindices
+#print axioms EthereumConsensus.SSZ.verifyStateSigningContext_bad_branch
+#print axioms EthereumConsensus.SSZ.checkStateVotes_bad_context
+#print axioms EthereumConsensus.SSZ.checkStateVotes_bad_preparation
+#print axioms EthereumConsensus.SSZ.checkStateVotes_delegates
+
 end EthereumConsensus.SSZ
