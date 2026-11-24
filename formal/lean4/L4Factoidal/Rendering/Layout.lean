@@ -1485,13 +1485,112 @@ private def placeStarts (starts : Array (Nat × Nat × Computed)) (line : Array 
 private def continuedStarts (open_ : Array (Nat × Nat × Computed)) : Array (Float × Inline) × Array Nat :=
   if open_.isEmpty then (#[],#[]) else (open_.map fun st => (0,.openInline st.2.1 st.2.2 true),open_.map (·.1))
 
+/-- The widths of one inline participant and its preceding collapsed separator. -/
+private structure WrapMeasure where
+  width : Float
+  gap : Float
+
+/-- Greedy packing at a possibly reduced breaking width. The recorded widths
+exclude trailing collapsible white space. -/
+private def wrappedWidths (words : Array WrapMeasure) (limit : Float) : Array Float := Id.run do
+  let mut widths := #[]
+  let mut line := 0
+  for word in words do
+    if line <= 0 then
+      line := word.width
+    else
+      let next := line + word.gap + word.width
+      if next > limit then
+        widths := widths.push line
+        line := word.width
+      else
+        line := next
+  return if line > 0 then widths.push line else widths
+
+/-- Use the variance of occupied widths to compare layouts with the same line
+count and available width. This is also the variance of their remaining space. -/
+private def widthVariance (widths : Array Float) : Float :=
+  let mean := widths.foldl (· + ·) 0 / Float.ofNat widths.size
+  widths.foldl (fun sum width => sum + (width - mean) * (width - mean)) 0
+
+/-- A breaking width with the same number of lines as the ordinary layout. -/
+private abbrev CountPreservingWidth (words : Array WrapMeasure) (available : Float) :=
+  { w : Float // (wrappedWidths words w).size = (wrappedWidths words available).size }
+
+/-- Search for a more even wrap with the normal line count. Limit the search to
+ten lines and twelve probes. A reduced breaking width never changes the box width. -/
+private def chooseBalancedWidth (words : Array WrapMeasure) (available : Float) :
+    Option (CountPreservingWidth words available) := Id.run do
+  let normal := wrappedWidths words available
+  if normal.size <= 1 || normal.size > 10 then return none
+  let mut lo := words.foldl (fun w item => max w item.width) 0
+  if lo > available then return none
+  let mut hi := available
+  let mut choice := none
+  let mut score := widthVariance normal
+  for _ in [0:12] do
+    let width := (lo + hi) / 2
+    let proposed := wrappedWidths words width
+    if proposed.size > normal.size then lo := width
+    else
+      hi := width
+      if h : proposed.size = normal.size then
+        let candidate := widthVariance proposed
+        if candidate < score then
+          score := candidate
+          choice := some ⟨width, h⟩
+  return choice
+
+private def balancedWidth (words : Array WrapMeasure) (available : Float) : Option Float :=
+  (chooseBalancedWidth words available).map (·.val)
+
+private theorem balancedWidth_preservesCount (words : Array WrapMeasure) (available width : Float)
+    (selected : balancedWidth words available = some width) :
+    (wrappedWidths words width).size = (wrappedWidths words available).size := by
+  unfold balancedWidth at selected
+  cases h : chooseBalancedWidth words available with
+  | none => simp [h] at selected
+  | some good =>
+    simp only [h, Option.map_some, Option.some.injEq] at selected
+    exact selected ▸ good.property
+
+#print axioms balancedWidth_preservesCount
+
+/-- Measure text in a constant-width horizontal line box. Inline boxes with no
+horizontal edges fit the same model. For other participants, let the ordinary
+layout handle the whole run. -/
+private def inlineBalanceWidth (font : FontProfile) (items : Array Inline)
+    (available : Float) : Except String (Option Float) := do
+  if items.size > 384 || available <= 0 || !available.isFinite then return none
+  let mut words := #[]
+  let mut separator := none
+  for item in items do
+    match item with
+    | .word _ s _ _ =>
+      if s.preformatted || s.pos.nowrap then return none
+      let width ← itemWidth font none item
+      let gap ← match separator with
+        | some space => spaceWidth font space
+        | none => pure 0
+      if width <= 0 || !width.isFinite || gap < 0 || !gap.isFinite then return none
+      words := words.push ⟨width,gap⟩
+      separator := none
+    | .space _ s =>
+      if s.preformatted || s.pos.nowrap then return none
+      separator := some s
+    | .openInline _ s _ => if inlineLead s != 0 then return none
+    | .closeInline _ s => if inlineTrail s != 0 then return none
+    | _ => return none
+  return balancedWidth words available
+
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
 each line is reordered (`bidiLine`). -/
 def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
+    (band : Float → Float × Float := fun _ => (0,available))
+    (uniformBand : Bool := true) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -1509,6 +1608,10 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   -- CSS Text 3 §8.3: the first line of the block container starts `textIndent` in from its
   -- start edge (a percentage of `available`), and has that much less room.
   let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
+  let balanced ← if uniformBand && !bidi && firstIndent == 0 &&
+      strut.any (fun s => s.balanceText && s.balanceWrap && !s.pos.nowrap && s.pos.writingMode == .horizontalTb) then
+    inlineBalanceWidth font items available
+    else pure none
   let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
     if !first || firstIndent == 0 then (offset,room)
@@ -1667,7 +1770,9 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
               else break
             | none => break
           | _ => break
-      if cursorX > 0 && cursorX+gap+whole > (bandAt out.height first).2 && !preformatted item && !glued k && !held then
+      let room := (bandAt out.height first).2
+      let wrapRoom := balanced.getD room
+      if cursorX > 0 && cursorX+gap+whole > wrapRoom && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
         out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
@@ -2515,7 +2620,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -2573,7 +2678,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -2637,7 +2742,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}
