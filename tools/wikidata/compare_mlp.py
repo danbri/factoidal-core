@@ -17,11 +17,14 @@ ROOT = Path(__file__).resolve().parents[2]
 LEAN = ROOT / 'formal/lean4'
 CORPUS = LEAN / 'Wikidata/corpus/martin-poulter/queries.json'
 
-def run_lean(records):
+def run_lean(records, language=None):
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / 'queries.json'
         path.write_text(json.dumps(records), encoding='utf-8')
-        p = subprocess.run(['lake', 'env', 'lean', '--run', 'Wikidata/ParseBatch.lean', str(path)], cwd=LEAN, capture_output=True, text=True, check=True, timeout=300)
+        command = ['lake', 'env', 'lean', '--run', 'Wikidata/ParseBatch.lean', str(path)]
+        if language is not None:
+            command.extend(['--rewrite', language])
+        p = subprocess.run(command, cwd=LEAN, capture_output=True, text=True, check=True, timeout=300)
     out = [json.loads(line) for line in p.stdout.splitlines()]
     if len(out) != len(records) or [x['id'] for x in out] != [x['id'] for x in records]:
         raise RuntimeError('Lean responses missing, duplicated, or out of order')

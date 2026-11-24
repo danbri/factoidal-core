@@ -69,6 +69,7 @@ export const isValidLiteral = api.isValidLiteral;
 export const canonicalLiteral = api.canonicalLiteral;
 export const literalFromValue = api.literalFromValue;
 export const ready = api.ready;
+export const wikidataRewrite = api.wikidataRewrite;
 export const engineTables = api.engineTables;
 export const sameValue = api.sameValue;
 export const syntaxFor = api.syntaxFor;
