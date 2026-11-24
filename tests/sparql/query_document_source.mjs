@@ -291,6 +291,32 @@ const cases = [
     },
   },
   {
+    name: 'named projection alias is visible but an unused projected variable remains free for BIND',
+    query: 'SELECT ?x ?label ?alias WITH { SELECT ?x ?label (STR(?x) AS ?alias) ' +
+      'WHERE { ?x wdt:P31 wd:Q5 } } AS %rows WHERE { INCLUDE %rows . BIND("unknown" AS ?label) }',
+    options: { wdqs: true },
+    canonical: false,
+    check(document) {
+      assert.deepEqual(document.diagnostics, []);
+      const include = one(document.ast, 'include');
+      assert.deepEqual(eraseSource(include), { kind: 'include', name: 'rows', variables: ['x', 'alias'] });
+      assert.equal(one(document.ast, 'bind').variable, 'label');
+      assert.ok(ofKind(document.namedSubqueries[0].ast.form, 'var').some(node => node.name === 'label'));
+    },
+  },
+  {
+    name: 'a variable mentioned inside OPTIONAL is still in scope after INCLUDE',
+    query: 'SELECT ?x ?label WITH { SELECT ?x ?label WHERE { ?x wdt:P31 wd:Q5 . ' +
+      'OPTIONAL { ?x rdfs:label ?label } } } AS %rows WHERE { INCLUDE %rows . BIND("unknown" AS ?label) }',
+    options: { wdqs: true },
+    canonical: false,
+    check(document) {
+      assert.equal(document.ast, null);
+      assert.equal(document.diagnostics[0].code, 'named_subquery_outer_parse_error');
+      assert.match(document.diagnostics[0].message, /BIND variable already in scope/);
+    },
+  },
+  {
     name: 'COUNT(*) and COUNT(true) keep distinct arguments',
     query: 'SELECT (COUNT(*) AS ?a) (COUNT(true) AS ?b) WHERE { ?x <urn:p> ?o }',
     check(document, query) {
