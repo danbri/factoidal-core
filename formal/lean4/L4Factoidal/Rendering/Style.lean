@@ -807,9 +807,10 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     let whole : Declaration := ⟨key,d.value,d.important⟩
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
-    -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
+    -- and its image. A CSS-wide keyword applies to the image longhand too.
     if key == "background" then
-      let image := if (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
+      let wide := CssValues.cssWide.contains (trim d.value).toLower
+      let image := if wide || (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
       let expanded := CssValues.expand key d.value
       let rasterPlacement : List Declaration := ["background-size", "background-repeat", "background-clip",
         "background-position-x", "background-position-y"].filterMap fun name =>
