@@ -542,6 +542,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     (imageURL,reason)=>fetchFailed("background image",imageURL,`image not read: ${reason}`,"background colour shown"),engine as SubresourceEngine)])
     .then(([a,b])=>[...a,...b]):imageBytes;
   pageImageBytes.catch(()=>{});
+  // The complete stylesheet set is known. Web fonts depend on those sheets, so
+  // their requests can run while the image bytes and tab icon are still arriving.
+  const webFontsReading=loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
+  webFontsReading.catch(()=>{});
   const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
@@ -551,7 +555,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
-  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
+  const webFonts=await webFontsReading;
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
   options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};
