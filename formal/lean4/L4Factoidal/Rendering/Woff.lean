@@ -9,7 +9,7 @@ directory of 20 bytes for each table. `toSfnt` gives back the sfnt that the font
 (`SfntProfile.Font.read`, with the font safety policy) reads: its offset table, its table
 records sorted by tag as the WOFF directory has them, and each table at a four-byte
 boundary. WOFF 1.0 is still a common web font format; a face offered only as WOFF 1.0 was
-not read before. WOFF2 (Brotli and transformed tables) is not read here.
+not read before. WOFF2 (Brotli and transformed tables) is read by `Woff2.toSfnt`.
 
 Font bytes are hostile input. Every size is checked against the input and against
 `maxSfntBytes` before anything is made; each table is inflated to exactly the length the
