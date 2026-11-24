@@ -34,6 +34,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Audit standalone source dependencies
         run: python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py --self-test
+      - name: Install pinned Lean before focused build localisation
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Localise SSZ module build failure before full regression gate
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          python3 ethereum-consensus/scripts/check-container-build.py --self-test
+          python3 ethereum-consensus/scripts/check-container-root-axioms.py --self-test
+          python3 ethereum-consensus/scripts/check-container-build.py --output "$RUNNER_TEMP/ethereum-consensus-build-diagnostics"
       - name: Compile Lean 4.33.1 definitions, guards and axiom audit
         uses: leanprover/lean-action@v1
         with:
@@ -120,6 +135,8 @@ jobs:
           lake -d ethereum-consensus build ssz-container-roots
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean" |
             tee "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log"
+          python3 ethereum-consensus/scripts/check-container-root-axioms.py \
+            "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log" | tee "$RUNNER_TEMP/ethereum-ssz-containers-ledger.json"
           python3 ethereum-consensus/scripts/check-container-roots.py \
             ethereum-consensus/.lake/build/bin/ssz-container-roots \
             --report "$RUNNER_TEMP/ethereum-ssz-containers-results.json"
@@ -198,6 +215,8 @@ jobs:
             ${{ runner.temp }}/ethereum-ssz-vector-axioms.log
             ${{ runner.temp }}/ethereum-ssz-vector-results.json
             ${{ runner.temp }}/ethereum-ssz-containers-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-containers-ledger.json
+            ${{ runner.temp }}/ethereum-consensus-build-diagnostics/
             ${{ runner.temp }}/ethereum-ssz-containers-results.json
             ${{ runner.temp }}/ethereum-signing-axioms.log
             ${{ runner.temp }}/ethereum-signing-ledger.json
