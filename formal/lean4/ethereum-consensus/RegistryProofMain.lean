@@ -56,9 +56,23 @@ private def dispatch : List String → Except String String
     let index ← readU64 idx
     let epoch ← readU64 ep
     let included ← readFlag common
-    let v : RegistryValidator ← do
-      return ⟨← readHex key, ← readHex cred, ← readU64 balance, ← readFlag slashed,
-        ← readU64 eligible, ← readU64 activation, ← readU64 exit, ← readU64 withdrawable⟩
+    let publicKey ← readHex key
+    let credentials ← readHex cred
+    let effectiveBalance ← readU64 balance
+    let isSlashed ← readFlag slashed
+    let eligibilityEpoch ← readU64 eligible
+    let activationEpoch ← readU64 activation
+    let exitEpoch ← readU64 exit
+    let withdrawableEpoch ← readU64 withdrawable
+    let v : RegistryValidator := {
+      publicKey := publicKey
+      withdrawalCredentials := credentials
+      effectiveBalance := effectiveBalance
+      slashed := isSlashed
+      activationEligibilityEpoch := eligibilityEpoch
+      activationEpoch := activationEpoch
+      exitEpoch := exitEpoch
+      withdrawableEpoch := withdrawableEpoch }
     let expected ← readHex root
     let siblings ← rest.mapM readHex
     if op == "root" then
@@ -70,7 +84,10 @@ private def dispatch : List String → Except String String
         L4Factoidal.Crypto.bytesToHex proof.root.bytes
     else if op == "candidate" then
       let zero ← (containerZeroRoot).mapError (fun _ => "basic_root")
-      let prepared : PreparedAttesterSlashing := ⟨if included then [index] else [], zero, zero⟩
+      let prepared : PreparedAttesterSlashing := {
+        commonIndices := if included then [index] else []
+        firstSigningRoot := zero
+        secondSigningRoot := zero }
       let verdict ← (checkCommonValidator prepared epoch index length v siblings expected).mapError errorName
       return match verdict with
         | .rootMismatch => "root_mismatch"
