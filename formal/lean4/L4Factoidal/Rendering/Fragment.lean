@@ -516,9 +516,10 @@ def withViewportEdges (s : Computed) (width height : Float) : Computed :=
   match s.pos.viewportMargins, s.pos.viewportPadding with
   | [], [] => s
   | margins, padding =>
-    {s with margin := viewportEdgePixels s.margin width height margins,
-            padding := viewportEdgePixels s.padding width height padding,
-            pos := {s.pos with viewportMargins := [], viewportPadding := []}}
+    let margin := viewportEdgePixels s.margin width height margins
+    let padding := viewportEdgePixels s.padding width height padding
+    let pos := {s.pos with viewportMargins := [], viewportPadding := []}
+    {s with margin, padding, pos}
 
 theorem withViewportEdges_unused (s : Computed) (width height : Float)
     (hm : s.pos.viewportMargins = []) (hp : s.pos.viewportPadding = []) :
