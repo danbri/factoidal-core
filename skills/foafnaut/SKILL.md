@@ -434,6 +434,14 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- While `build-web-render.sh --native` runs, do not run `lake build` and do not edit a Lean file
+  that the build has not compiled yet, in `formal/lean4` or in `labs/demos/foafnaut`. The build
+  reads `.lake` oleans and the lab sources as it goes, so the library it makes can mix old and
+  new code. A Lean file is safe to edit only after `WEB_RENDER_BUILD_RC=` is in its log. Check
+  the log before you edit. 2026-11-24, in one session: an edit of `Layout.lean` and then a
+  `lake build` of `WasmVM.Hosts` were each made during the Lean stage. Each time, the session
+  stopped the build and started it again: about 25 minutes lost each time. No mixed library
+  was used for a measurement.
 - A proof module that imports `Lean.Elab.*` or `Lean.Meta.*` (tactics, `elab`, `MetaM`) must not be in the
   import closure of an executable or engine. 2026-11-16: `L4Factoidal.JS` imported `JS/FuelMono` (tactics),
   so `leanjs` linked Lean's elaborator and grew from 11 MB to 111 MB unnoticed (issue 551). Make such a
