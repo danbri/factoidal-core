@@ -40,3 +40,13 @@ details > summary { cursor: pointer; font-weight: 620; }
 .links { margin: .5rem 0 0; font-size: .92rem; }
 .about { margin-top: 2rem; color: var(--muted); font-size: .92rem; }
 .about h2 { font-size: 1.1rem; color: var(--ink); }
+.parallax-summary { margin: 0 0 1rem; padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: .9rem; background: var(--paper); }
+.parallax-summary h2 { margin: 0 0 .6rem; font-size: 1.2rem; }
+.parallax-summary p { margin: .5rem 0 0; color: var(--muted); max-width: 52rem; }
+.parallax-summary dt { font-weight: 620; margin-top: .55rem; }
+.parallax-summary dd { margin: .15rem 0 0; font: .85rem/1.7 ui-monospace, monospace; overflow-wrap: anywhere; }
+.parallax { margin-top: .7rem; font-size: .92rem; }
+.parallax p { margin: 0; }
+.chips, .blockers { display: flex; flex-wrap: wrap; gap: .35rem; list-style: none; margin: .4rem 0 0; padding: 0; }
+.chips li { padding: .1rem .55rem; border: 1px solid var(--accent); border-radius: 999px; color: var(--accent); }
+.blockers li { padding: .1rem .55rem; border: 1px dashed var(--muted); border-radius: .4rem; color: var(--muted); }
