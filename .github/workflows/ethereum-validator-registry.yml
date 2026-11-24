@@ -58,7 +58,8 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -v 8388608
-          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry +RegistryProofMain
+          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 +EthereumConsensus.SSZ.ValidatorRegistry
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/RegistryProofMain.lean"
       - name: Capture actual theorem axioms and audit compiled imports
         run: |
           set -euo pipefail
