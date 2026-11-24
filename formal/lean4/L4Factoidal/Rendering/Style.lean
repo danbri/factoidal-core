@@ -2793,7 +2793,7 @@ def userAgentSheet : String :=
   -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.
   ":any-link{text-decoration:underline}" ++
   ":link:active,:visited:active{color:#ff0000}" ++
-  "button{display:inline-block;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
+  "button{display:inline-block;box-sizing:border-box;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
   "button:hover{background-color:#e5e5e5}" ++
   "button:active{border-style:inset;background-color:#c8c8c8}" ++
   -- form controls (HTML §15.5.x): inline-block widgets of a fixed size, as a text field of
