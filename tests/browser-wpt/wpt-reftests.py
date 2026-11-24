@@ -28,7 +28,8 @@ allowed difference range starts at 0) or both numbers are inside their ranges. T
 annotation is looked up as wptrunner does: (node, reference, relation), then the reference
 alone, then the node's default, on the node being compared (the test, or a reference in a chain).
 
-Statuses: PASS, FAIL (a picture that does not hold, or the engine refusing a page: its message
+Statuses: EXCLUDED (a test of DEFECTIVE, defective upstream data with an open issue: reported apart,
+not in the passed count or the total; the run exits 1 if one passes), PASS, FAIL (a picture that does not hold, or the engine refusing a page: its message
 is kept); TIMEOUT when a page on the path kept `reftest-wait` for the page-time budget; ERROR
 when the harness failed (a fetch, the runner, a picture missing); CRASH when the drawing
 process died on a page; STALL when a page took longer than --stall seconds of wall time (the
@@ -55,6 +56,41 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 # ---- the manifest ------------------------------------------------------------------------
+
+# Tests with defective upstream data (owner rule, 2026-10-21: "Dont list bad tests as our failing";
+# skills/test-suites/SKILL.md, "Defective test data"). Each is reported apart: status EXCLUDED, not
+# in the passed count or the total. If one PASSES, the run exits 1 (stale exclusion). Use this
+# table only with evidence in the open issue.
+_I883 = "https://github.com/danbri/factoidal-core/issues/883"
+_REASON_CFF_REF = ("the WOFF2 font is TrueType (upm 2048, hhea 1454/-20) but the reference uses the CFF font "
+                   "SFNT-CFF-Reference.otf (upm 1000, typo 750/-250): the line boxes differ")
+DEFECTIVE = {
+    "/css/WOFF2/directory-knowntags-001.xht": (_REASON_CFF_REF, _I883),
+    "/css/WOFF2/tabledata-glyf-origlength-001.xht": (_REASON_CFF_REF, _I883),
+    "/css/WOFF2/tabledata-glyf-origlength-002.xht": (_REASON_CFF_REF, _I883),
+    "/css/WOFF2/tabledata-glyf-origlength-003.xht": (_REASON_CFF_REF, _I883),
+    "/css/WOFF2/tabledata-glyf-bbox-001.xht": (
+        "the WOFF2 font is CFF (upm 1000, typo 750/-250) but the reference uses the TrueType font "
+        "SFNT-TTF-Reference.ttf (upm 2048, hhea 1454/-20): the line boxes differ", _I883),
+}
+
+
+def apply_exclusions(rows, defective=None):
+    """Mark the rows of DEFECTIVE tests EXCLUDED (the measured status goes to `measured`).
+    Returns the tests that passed: stale exclusions, which fail the run."""
+    defective = DEFECTIVE if defective is None else defective
+    stale = []
+    for r in rows:
+        d = defective.get(r["test"])
+        if not d:
+            continue
+        r["measured"] = r["status"]
+        r["status"] = "EXCLUDED"
+        r["exclusion"] = {"reason": d[0], "issue": d[1]}
+        if r["measured"] == "PASS":
+            stale.append(r["test"])
+    return stale
+
 
 def manifest_items(path, kind="reftest"):
     """{url: (references, extras)} of the manifest's items of `kind` (manifest version 8 or 9)."""
@@ -443,6 +479,14 @@ def run(a):
             png_write_rgb(os.path.join(failures, stem + ".test.png"), w, h, pn)
             png_write_rgb(os.path.join(failures, stem + ".ref.png"), w, h, pr)
             diff_picture(os.path.join(failures, stem + ".diff.png"), w, h, pn, pr)
+    stale = apply_exclusions(rows)
+    excluded = [r for r in rows if r["status"] == "EXCLUDED"]
+    for r in excluded:
+        log(f"EXCLUDED {r['test']}: defective test data, {r['exclusion']['issue']}")
+    for t in stale:
+        log(f"STALE EXCLUSION {t}: the test now passes; remove it from DEFECTIVE")
+    all_rows = rows
+    rows = [r for r in rows if r["status"] != "EXCLUDED"]
     counts = collections.Counter(r["status"] for r in rows)
     passed = counts.get("PASS", 0)
     chrome_rows = [r for r in rows if "chrome" in r]
@@ -460,7 +504,7 @@ def run(a):
         "manifestSha256": hashlib.sha256(open(a.manifest, "rb").read()).hexdigest(),
         "shard": [a.shard, a.shards],
         "totals": {"tests": len(rows), "passed": passed, "share": round(100 * passed / len(rows), 4) if rows else 0,
-                   "statuses": dict(counts), "harnessErrors": harness,
+                   "statuses": dict(counts), "excluded": len(excluded), "harnessErrors": harness,
                    "harnessErrorShare": round(100 * harness / len(rows), 4) if rows else 0,
                    "chromeTests": len(chrome_rows), "chromePassed": chrome_pass,
                    "chromeShare": round(100 * chrome_pass / len(rows), 4) if rows and chrome_rows else None,
@@ -471,13 +515,13 @@ def run(a):
     }
     meta["valid"] = bool(rows) and harness < 0.005 * len(rows) and all(r["status"] for r in rows)
     meta["invalidReason"] = None if meta["valid"] else f"harness errors {harness} of {len(rows)} (limit 0.5%)"
-    json.dump({**meta, "tests": rows}, open(os.path.join(a.out, "results.json"), "w"), indent=1)
-    write_summary(a.out, meta, rows)
+    json.dump({**meta, "tests": all_rows}, open(os.path.join(a.out, "results.json"), "w"), indent=1)
+    write_summary(a.out, meta, rows, all_rows)
     if a.no_pictures:
         shutil.rmtree(pictures, ignore_errors=True)
     t = meta["totals"]
-    log(f"{prefix}: {passed}/{len(rows)} PASS ({t['share']}%), Chrome {chrome_pass}/{len(rows)}; {dict(counts)}; {meta['wallSeconds']} s")
-    return 0
+    log(f"{prefix}: {passed}/{len(rows)} PASS ({t['share']}%), Chrome {chrome_pass}/{len(rows)}; {dict(counts)}; {len(excluded)} excluded (defective test data); {meta['wallSeconds']} s")
+    return 1 if stale else 0
 
 
 def directory_table(rows, depth=2):
@@ -490,7 +534,7 @@ def directory_table(rows, depth=2):
     return sorted(by.items())
 
 
-def write_summary(out, meta, rows):
+def write_summary(out, meta, rows, all_rows=None):
     t = meta["totals"]
     lines = [f"# WPT reftests {meta['prefix']}", "",
              f"**{t['passed']} of {t['tests']} pass ({t['share']:.2f}%)**" + (f"; Chrome {t['chromePassed']} ({t['chromeShare']:.2f}%) at the same WPT commit" if t.get("chromeShare") is not None else ""),
@@ -504,13 +548,19 @@ def write_summary(out, meta, rows):
     for r in rows:
         if r["status"] != "PASS" and r.get("chrome") == "PASS":
             lines.append(f"- {r['status']} `{r['test']}`" + (f": {r['message']}" if r.get("message") else ""))
+    excl = [r for r in (all_rows or rows) if r["status"] == "EXCLUDED"]
+    if excl:
+        lines += ["", f"## {len(excl)} excluded (defective test data)", "", "Not in the passed count or the total.", ""]
+        for r in excl:
+            lines.append(f"- `{r['test']}`: {r['exclusion']['reason']}; {r['exclusion']['issue']}")
     open(os.path.join(out, "summary.md"), "w").write("\n".join(lines) + "\n")
 
 
 def compare(a):
-    prev = {r["test"]: r["status"] for r in json.load(open(a.prev))["tests"]}
+    # EXCLUDED tests (defective test data) are in neither run's counts
+    prev = {r["test"]: r["status"] for r in json.load(open(a.prev))["tests"] if r["status"] != "EXCLUDED"}
     cur_doc = json.load(open(a.cur))
-    cur = {r["test"]: r["status"] for r in cur_doc["tests"]}
+    cur = {r["test"]: r["status"] for r in cur_doc["tests"] if r["status"] != "EXCLUDED"}
     up = sorted(t for t in cur if cur[t] == "PASS" and prev.get(t) not in (None, "PASS"))
     down = sorted(t for t in cur if cur[t] != "PASS" and prev.get(t) == "PASS")
     new = sorted(t for t in cur if t not in prev)
@@ -529,7 +579,7 @@ def compare(a):
     cause = {}
     prev_doc = json.load(open(a.prev))
     for r in prev_doc["tests"]:
-        if r["status"] == "PASS":
+        if r["status"] in ("PASS", "EXCLUDED"):
             continue
         skips = [m for v in (r.get("skipped") or {}).values() for m in v]
         for name, kind, pat in CLUSTERS:
@@ -587,7 +637,7 @@ def clusters(a):
                 r["chrome"] = {"P": "PASS", "F": "FAIL"}.get(ch[r["test"]].get("s"), ch[r["test"]].get("s"))
     out = collections.OrderedDict((name, []) for name, _, _ in CLUSTERS)
     for r in doc["tests"]:
-        if r["status"] == "PASS":
+        if r["status"] in ("PASS", "EXCLUDED"):
             continue
         skips = [m for v in (r.get("skipped") or {}).values() for m in v]
         for name, kind, pat in CLUSTERS:
