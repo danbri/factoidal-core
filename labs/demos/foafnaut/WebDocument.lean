@@ -3095,7 +3095,11 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
                  | none => Rendering.CSS.attributesReachParentOnly rules,
                readsStyle := match carry with
                  | some (c,_) => c.readsStyle
-                 | none => Rendering.CSS.readsStyleAttribute rules }
+                 | none => Rendering.CSS.readsStyleAttribute rules,
+               hasReads := match carry with
+                 | some (c,_) => c.hasReads
+                 | none => if Rendering.CSS.attributesReachParentOnly rules then none
+                   else Rendering.CSS.hasArgumentReads rules }
       else none
     | _, _ => none
   -- the position of each computed style name, for the reads by name of the animation engine
