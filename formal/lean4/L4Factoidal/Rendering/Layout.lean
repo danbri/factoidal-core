@@ -288,10 +288,16 @@ def backgroundTileSize (size : BackgroundSize) (nw nh ratio : Option Float) (w h
 #guard backgroundTileSize .cover none none (some 2) 100 100 == (200,100)
 #guard backgroundTileSize .contain none none (some 2) 100 100 == (100,50)
 
-/-- The first background layer is sized against the padding box and clipped to the
-border box. Repeated axes may need a tile before the origin to cover the border. -/
-def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
-  if b.width == 0 || b.height == 0 then return #[]
+/-- The tiles of a background image (`backgroundTiles`): none when nothing is drawn; `.solid`
+for a repeated opaque 1×1 image, which is a colour; else the first tile's corner, the tile
+size and the columns and rows. -/
+inductive TileGrid where
+  | none
+  | solid (c : Color)
+  | grid (startX startY tw th : Float) (cols rows : Nat)
+
+def tileGrid (b : Bitmap) (s : Computed) (x y w h : Float) : TileGrid := Id.run do
+  if b.width == 0 || b.height == 0 then return .none
   let iw := Float.ofNat b.width
   let ih := Float.ofNat b.height
   let e := s.borderEdges
@@ -299,11 +305,10 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let areaH := max 0 (h-e.top-e.bottom)
   let (nw,nh,ratio) := s.backgroundNatural.getD (some iw,some ih,some (iw/ih))
   let (tw,th) := backgroundTileSize s.backgroundSize nw nh ratio areaW areaH
-  if tw <= 0 || th <= 0 then return #[]
+  if tw <= 0 || th <= 0 then return .none
   let (repeatX,repeatY) := s.backgroundRepeat
   if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
-    let c : Color := ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
-    return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+    return .solid ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
   -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
   let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
   let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
@@ -311,9 +316,25 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
   let startY := if repeatY then oy-((oy-y)/th).ceil*th else oy
   let cols := if repeatX then ((x+w-startX)/tw).ceil.toUInt64.toNat else 1
   let rows := if repeatY then ((y+h-startY)/th).ceil.toUInt64.toNat else 1
+  return .grid startX startY tw th cols rows
+
+/-- The number of tiles a box's background image needs (0 for none or a colour): what
+`maxBackgroundTiles` bounds, for the report of a box past it (issue 865). -/
+def backgroundTileCount (b : Bitmap) (s : Computed) (x y w h : Float) : Nat :=
+  match tileGrid b s x y w h with
+  | .grid _ _ _ _ cols rows => cols*rows
+  | _ => 0
+
+/-- The first background layer is sized against the padding box and clipped to the
+border box. Repeated axes may need a tile before the origin to cover the border. -/
+def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  let (startX,startY,tw,th,cols,rows) ← match tileGrid b s x y w h with
+    | .none => return #[]
+    | .solid c => return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+    | .grid sx sy tw th cols rows => pure (sx,sy,tw,th,cols,rows)
   if cols*rows > maxBackgroundTiles then return #[]
-  let sx := iw/tw
-  let sy := ih/th
+  let sx := Float.ofNat b.width/tw
+  let sy := Float.ofNat b.height/th
   let mut out := #[]
   for j in [0:rows] do
     for i in [0:cols] do

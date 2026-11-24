@@ -27,7 +27,7 @@ REPORTERS = re.compile(r"WebAccept\.skip|LimitHit|limitHit|Limit\.hit")
 # a limit that refuses the work with a message is not silent
 REFUSERS = re.compile(r"\bthrow\b|\.error\b|new Error\(")
 # Silent limits (neither report nor refuse), measured 2026-11-24. Lower it as reports land; never raise it.
-BASELINE_UNREPORTED = 48
+BASELINE_UNREPORTED = 47
 
 LEAN_DEF = re.compile(r"^\s*(?:private\s+)?def\s+(max[A-Z]\w*)\s*:\s*(Nat|Float|UInt\d+)\s*:=\s*(.*)$")
 TS_DEF = re.compile(r"\b(MAX_[A-Z_]+)\s*=\s*([^,;]+)")
