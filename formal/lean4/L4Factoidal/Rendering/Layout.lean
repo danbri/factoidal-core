@@ -1168,10 +1168,23 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
     #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
 
+/-- A line carrying only static-position placeholders has no in-flow content. -/
+private def isStaticPlaceholder : Inline → Bool
+  | .outOfFlow _ => true
+  | _ => false
+
+private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) : Array Pending :=
+  items.filterMap fun (offset, item) => match item with
+    | .outOfFlow id => some {id, x := x+offset, y}
+    | _ => none
+
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
+  -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
+  if items.all (fun item => isStaticPlaceholder item.2) then
+    return {pending := staticLinePositions items x y}
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
@@ -1334,6 +1347,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
   return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
+
+/-- An entirely out-of-flow row retains its static positions and contributes no
+    height, baseline or paint, even when the enclosing block supplies a strut. -/
+private theorem lineLayout_static_only (font : FontProfile) (items : Array (Float × Inline))
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool))
+    (h : items.all (fun item => isStaticPlaceholder item.2) = true) :
+    lineLayout font items x y strut dirs = .ok {pending := staticLinePositions items x y} := by
+  simp [lineLayout, h]
+
+#print axioms lineLayout_static_only
 
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
