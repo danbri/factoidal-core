@@ -65,3 +65,7 @@ root = "VectorU64Main"
 [[lean_exe]]
 name = "ssz-container-roots"
 root = "ContainerRootsMain"
+
+[[lean_exe]]
+name = "ssz-validator-registry"
+root = "RegistryProofMain"
