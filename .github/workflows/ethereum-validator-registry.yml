@@ -56,7 +56,7 @@ jobs:
       - name: Capture actual theorem axioms and audit compiled imports
         run: |
           set -euo pipefail
-          lake -d ethereum-consensus env lean ethereum-consensus/EthereumConsensus/SSZ/ValidatorRegistry.lean | tee "$RUNNER_TEMP/registry-axioms.log"
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ValidatorRegistry.lean" | tee "$RUNNER_TEMP/registry-axioms.log"
           python3 - <<'PY'
           import os, pathlib, re, runpy, subprocess
           p = pathlib.Path("ethereum-consensus").resolve()
@@ -75,7 +75,7 @@ jobs:
       - name: Execute actual registry proof functions against independent oracle
         run: |
           set -euo pipefail
-          python3 ethereum-consensus/scripts/check-validator-registry.py lake -d ethereum-consensus env lean --run ethereum-consensus/RegistryProofMain.lean | tee "$RUNNER_TEMP/registry-results.log"
+          python3 ethereum-consensus/scripts/check-validator-registry.py lake -d ethereum-consensus env lean --run "$PWD/ethereum-consensus/RegistryProofMain.lean" | tee "$RUNNER_TEMP/registry-results.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
