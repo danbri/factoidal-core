@@ -82,7 +82,7 @@ jobs:
                   if not set(filter(None,(v.strip() for v in a.split(",")))) <= {"propext","Classical.choice","Quot.sound"}:
                       raise ValueError("unpermitted axiom: "+n)
           audit(text)
-          for bad in ["",text+"\n"+text,text.replace("EthereumConsensus.BLS.decodePublicKey_ok","EthereumConsensus.BLS.other"),text+"\n'EthereumConsensus.BLS.other' depends on axioms: [sorryAx]"]:
+          for bad in ["",text+"\n"+text,text.replace("EthereumConsensus.BLS.decodePublicKey_ok","EthereumConsensus.BLS.other"),re.sub(r"('EthereumConsensus\.BLS\.\w+') (?:depends on axioms:\s*\[[^]]*\]|does not depend on any axioms)", r"\1 depends on axioms: [sorryAx]",text,count=1)]:
               try:
                   audit(bad)
               except ValueError:
