@@ -199,6 +199,14 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard marginOf pageT ".a { margin: 3px } p { margin: inherit }" == some [3, 3, 3, 3]
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
+-- HTML's legacy size is a presentational hint, including for a nested font element.
+#guard (styleAt "<font color='#008000'><span id=t>x</span></font>" "").map (·.color.g) == some (128/255)
+#guard redOf "<font color=blue id=t>x</font>" "#t{color:red}" == some 1
+#guard redOf "<div style='color:red'><font color=transparent id=t>x</font></div>" "" == some 1
+#guard (styleAt "<h1><font size=7><font id=t>x</font></font></h1>" "").map (·.fontSize) == some 48
+#guard (styleAt "<h1><font size='+0' id=t>x</font></h1>" "").map (·.fontSize) == some 16
+#guard (styleAt "<h1><font size='- 1' id=t>x</font></h1>" "").map (·.fontSize) == some 32
+#guard (styleAt "<h1><font size=7 id=t>x</font></h1>" "#t { font-size: 50% }").map (·.fontSize) == some 16
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 4em }").map (·.fontSize) == some 64
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 150% }").map (·.fontSize) == some 24
