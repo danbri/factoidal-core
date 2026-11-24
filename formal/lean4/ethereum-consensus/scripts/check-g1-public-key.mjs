@@ -59,7 +59,35 @@ function makeCases(){
   for(const n of [0,1,2,31,32,47,49,63,64])put("00".repeat(n),"error width");
   for(const s of ["0","gg","Z0","00".repeat(65)])put(s,"error invalid_hex");
   put(encode(0n,4),"error not_subgroup");put(encode(0n,5),"error not_subgroup");
-  return cases;
+  const aggregateCases=[];
+  const key=q=>encode(q[0],sign(q[1])?5:4);
+  const neg=q=>[q[0],mod(-q[1])];
+  const multiples=Array.from({length:64},(_,i)=>mul(BigInt(i+1),g));
+  function aggregate(points){
+    let sum=null;
+    for(const q of points)sum=add(sum,q);
+    return sum===null?"error infinity_sum":`ok ${sum[0]} ${sum[1]}`;
+  }
+  function putAgg(points){
+    aggregateCases.push(["agg "+points.map(key).join(" "),aggregate(points)]);
+  }
+  aggregateCases.push(["agg","error empty_keys"]);
+  for(const q of multiples){putAgg([q]);putAgg([q,q]);putAgg([q,neg(q)]);}
+  for(let i=0;i<64;i++){
+    const a=multiples[i],b=multiples[(i*7+5)%64],c=multiples[(i*11+3)%64];
+    putAgg([a,b,c]);putAgg([c,a,b]);putAgg([a,neg(a),b,c]);putAgg([a,b,neg(a),neg(b)]);
+  }
+  for(const [bad,error] of [[encode(0n,4),"error not_subgroup"],[encode(p,4),"error non_canonical_x"],[encode(0n,6),"error infinity_key"],["00","error width"]]){
+    aggregateCases.push(["agg "+bad+" "+key(g),error]);
+    aggregateCases.push(["agg "+key(g)+" "+bad,error]);
+    aggregateCases.push(["agg "+key(g)+" "+key(neg(g))+" "+bad,error]);
+  }
+  const cap=2048;
+  const capSum=mul(BigInt(cap),g);
+  aggregateCases.push(["agg "+Array(cap).fill(key(g)).join(" "),`ok ${capSum[0]} ${capSum[1]}`]);
+  aggregateCases.push(["agg "+Array(cap+1).fill(key(g)).join(" "),"error resource_limit"]);
+  aggregateCases.push(["agg "+Array(cap+1).fill("00").join(" "),"error resource_limit"]);
+  return {cases,aggregateCases};
 }
 function compare(cases,output){
   if(output.length!==cases.length)throw Error("row count mismatch");
@@ -72,15 +100,21 @@ function controls(cases){
   for(const b of bad){let refused=false;try{compare(cases,b)}catch{refused=true}if(!refused)throw Error("mutation not detected")}
   return bad.length;
 }
-const cases=makeCases();
+const {cases,aggregateCases}=makeCases();
+const allCases=[...cases,...aggregateCases];
 console.log("Generated",cases.length,"rows;",controls(cases),"comparator controls detected");
+console.log("Generated",aggregateCases.length,"aggregate rows;",controls(aggregateCases),"aggregate comparator controls detected");
 const counts={};for(const [,out] of cases){const k=out.startsWith("ok ")?"ok":out;counts[k]=(counts[k]||0)+1}
 console.log(JSON.stringify(counts));
 if(process.argv[2]==="--self-test")process.exit(0);
 if(process.argv.length!==3)throw Error("usage: node check-g1-public-key.mjs <native binary>");
 const start=process.hrtime.bigint();
-const run=spawnSync(process.argv[2],[],{input:cases.map(r=>r[0]).join("\n")+"\n",encoding:"utf8",timeout:120000,maxBuffer:4*1024*1024});
+const run=spawnSync(process.argv[2],[],{input:allCases.map(r=>r[0]).join("\n")+"\n",encoding:"utf8",timeout:120000,maxBuffer:4*1024*1024});
 if(run.error||run.status!==0||run.stderr)throw Error(JSON.stringify({status:run.status,error:String(run.error),stderr:run.stderr}));
 if(!run.stdout.endsWith("\n"))throw Error("missing final newline");
-compare(cases,run.stdout.slice(0,-1).split("\n"));
-console.log("PASS "+cases.length+"/"+cases.length+" actual Lean G1 admission rows; "+Number(process.hrtime.bigint()-start)/1e6+" ms");
+const actual=run.stdout.slice(0,-1).split("\n");
+compare(allCases,actual);
+compare(cases,actual.slice(0,cases.length));
+compare(aggregateCases,actual.slice(cases.length));
+console.log("PASS "+aggregateCases.length+"/"+aggregateCases.length+" actual Lean G1 aggregate rows");
+console.log("PASS "+cases.length+"/"+cases.length+" actual Lean G1 admission rows; combined batch "+Number(process.hrtime.bigint()-start)/1e6+" ms");
