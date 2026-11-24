@@ -3751,14 +3751,35 @@ def hasNoMatch (dom : Dom) (l : List DOM.Selectors.Complex) : Bool :=
 /-- The rules without the selectors that a `:has()` false everywhere keeps from matching
 (one pass over the document for each `:has()`), so that matching does not search a
 large subtree once for each element (selectors/invalidation/has-complexity.html). Rules
-with no `:has()` are as they were, and a page with none pays one test per selector. -/
+with no `:has()` are as they were. Pseudo-element selector lists survive the ordinary
+selector pruning, and a page with no ordinary `:has()` pays one test per ordinary selector. -/
 def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
   if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
   else rules.filterMap fun r =>
     let sels := r.selectors.filter fun sel => match sel.complex with
       | some c => !((hasLists c).any (hasNoMatch dom))
       | none => true
-    if sels.isEmpty then none else some { r with selectors := sels }
+    if sels.isEmpty && (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) then none
+    else some { r with selectors := sels }
+
+/-- Pruning ordinary selectors preserves a rule that contains only generated pseudo-element
+selectors. This holds even when another rule activates the pruning pass. -/
+theorem pruneHas_keeps_pseudo (dom : Dom) (rules : List Rule) (r : Rule)
+    (hr : r ∈ rules) (hs : r.selectors = [])
+    (hp : (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) = false) :
+    r ∈ pruneHas dom rules := by
+  unfold pruneHas
+  split
+  · exact hr
+  · apply List.mem_filterMap.mpr
+    refine ⟨r, hr, ?_⟩
+    simp [hs, hp] <;> cases r <;> simp_all
+
+#guard match parse ".row::after{content:'';display:block;clear:both}.unrelated:has(.missing){color:red}" with
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument "<div class=row></div>"
+    (pruneHas dom rules).map (·.after.length) == [1]
+  | .error _ => false
 
 /-- A complex selector with each compound that has a `:has()` matched once against every
 element of the document: the compound becomes its other simple selectors and the elements
