@@ -449,11 +449,14 @@ where
   eventHandler (name : String) : Bool :=
     name.length > 2 && name.startsWith "on" && name.toList.all fun c => c.isLower
 
+private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone &&
+    ((tag == "svg" && a.name.localPart == "category") || inertAttribute a.name.localPart)
+
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
     -- Inline icons may carry application metadata on the svg element (BBC News).
-    if a.name.namespace_.isNone &&
-        (inertAttribute a.name.localPart || (tag == "svg" && a.name.localPart == "category")) then continue
+    if skipAttribute tag a then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
@@ -465,7 +468,9 @@ private theorem validateAttrs_svg_category (value : String) (attrs : List Namesp
     (extra : List String) :
     validateAttrs "svg" ({ name := { namespace_ := none, localPart := "category" }, value } :: attrs)
       extra = validateAttrs "svg" attrs extra := by
-  rfl
+  have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := "category" }, value } = true := by
+    simp [skipAttribute]
+  simp [validateAttrs, List.forIn_cons, skip]
 
 #print axioms validateAttrs_svg_category
 
