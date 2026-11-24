@@ -995,14 +995,24 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
     -- An inline box with `unicode-bidi` is wrapped in its bidi control characters.
     -- An inline box is between its bounds, which give it its boxes and its edges on the lines.
-    let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
+    -- A block box inside an inline box (CSS 2.1 §9.2.1.1) keeps its own box: it is laid out
+    -- as an atomic box on a line of its own, as wide as the line (`AtomicFrame.opened`),
+    -- with its background, borders, padding and size. Until 2026-11-23 only its contents
+    -- were kept: `<a><div class=votearrow></div></a>` drew nothing (Hacker News).
+    let sized := fun (l : CSS.Length) => match l with | .auto => false | _ => true
+    let boxed := s.display.isBlockLevel && (sized s.width || sized s.height || s.background.isSome ||
+      s.backgroundImage.isSome || s.backgroundGradient.isSome || s.borderEdges.top > 0 || s.borderEdges.bottom > 0 ||
+      s.borderEdges.left > 0 || s.borderEdges.right > 0)
+    let mut out : Array Inline := if boxed then #[.lineBreak s, .openAtomic id s]
+      else if s.display.isBlockLevel then #[.lineBreak s]
       else if s.display == .inlineBlock then #[.openAtomic id s]
       else (if s.display == .inline then #[.openInline id s false] else #[]) ++ (bidiOpen s).map .bidiMark
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
     -- a form control's own text (its value, label or placeholder)
     out := out ++ controlItems dom id s
     if s.display == .inline && s.background.isSome && !s.masked then out := out.map (withBackground s)
-    return if s.display.isBlockLevel then out.push (.lineBreak s)
+    return if boxed then (out.push .closeAtomic).push (.lineBreak s)
+      else if s.display.isBlockLevel then out.push (.lineBreak s)
       else if s.display == .inlineBlock then out.push .closeAtomic
       else out ++ (bidiClose s).map .bidiMark ++ (if s.display == .inline then #[.closeInline id s] else #[])
 
@@ -1652,7 +1662,8 @@ private def AtomicFrame.opened (id : Nat) (s : Computed) (before : Array Inline)
   let p := s.padding
   let m := s.margin
   let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
-  let fixed := CSS.resolve available s.width
+  -- a block box (a block inside an inline, `inlineItems`) is as wide as the line
+  let fixed := (CSS.resolve available s.width).orElse fun _ => if s.display.isBlockLevel then some room else none
   ⟨id,s,before,fixed,fixed.getD room⟩
 
 /-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
