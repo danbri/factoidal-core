@@ -323,13 +323,71 @@ function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:numbe
 }
 /** `answers:"bytes"` (the default) takes render answers as bytes with raw sections;
 `"text"` takes the JSON text with Base64, the reference that tests compare with. */
-/** The link regions of a frame as text, made once per array: `hit` and `press` on the same
- * frame send the same string, and Lean decodes it once (WebDocument.decodeLinks). */
-const linkTexts=new WeakMap<object,string>();
-function linksText(links:unknown[]):string {
-  let text=linkTexts.get(links);
-  if(text===undefined){text=JSON.stringify(links);linkTexts.set(links,text);}
-  return text;
+type LinkTarget = {href:string;sourceNode:number};
+type LinkChunk = {text:string;start:number;end:number;top:number;bottom:number};
+const linkChunkLimit=512*1024;
+const pressFragmentCount=8; // WebDocument.maxPressRects
+const linkWire=new WeakMap<unknown[],LinkChunk[]>();
+
+/** Keep the common single-payload path. Larger pages use contiguous, bounded
+ * chunks so Lean can pick in reverse paint order without increasing its input limit. */
+export function linkChunks(links:unknown[]):LinkChunk[] {
+  const kept=linkWire.get(links);
+  if(kept)return kept;
+  const full=JSON.stringify(links);
+  if(encoder.encode(full).length<=linkChunkLimit) {
+    const one=[{text:full,start:0,end:links.length,top:-Infinity,bottom:Infinity}];
+    linkWire.set(links,one);
+    return one;
+  }
+  const chunks:LinkChunk[]=[];
+  let start=0,bytes=2,top=Infinity,bottom=-Infinity;
+  let rows:string[]=[];
+  const flush=(end:number)=>{
+    if(!rows.length)return;
+    chunks.push({text:"["+rows.join(",")+"]",start,end,top,bottom});
+    rows=[];start=end;bytes=2;top=Infinity;bottom=-Infinity;
+  };
+  for(const [index,row] of links.entries()){
+    const encoded=JSON.stringify(row);
+    const size=encoder.encode(encoded).length;
+    if(bytes+size+(rows.length?1:0)>linkChunkLimit)flush(index);
+    rows.push(encoded);
+    bytes+=size+(rows.length>1?1:0);
+    const y=Array.isArray(row)?row[3]:undefined,h=Array.isArray(row)?row[5]:undefined;
+    // Do not exclude a malformed row here. The Lean decoder remains authoritative.
+    if(typeof y==="number"&&typeof h==="number"&&Math.abs(y)<2**31&&h>=0&&h<2**31){
+      top=Math.min(top,Math.floor(y)-1);bottom=Math.max(bottom,Math.ceil(y+h)+1);
+    }else {top=-Infinity;bottom=Infinity;}
+  }
+  flush(links.length);
+  linkWire.set(links,chunks);
+  return chunks;
+}
+
+export function pickLinkChunk(chunks:LinkChunk[],row:number,pick:(text:string)=>LinkTarget|null) {
+  for(let i=chunks.length-1;i>=0;i--){
+    const chunk=chunks[i];
+    if(row<chunk.top||row>=chunk.bottom)continue;
+    const target=pick(chunk.text);
+    if(target)return {target,chunk};
+  }
+  return null;
+}
+
+/** The winning chunk supplies the target. Earlier or later fragments of that
+ * source supply the same press highlight rectangles as the full link list. */
+export function pressLinksText(links:unknown[],chunk:LinkChunk,sourceNode:number):string {
+  const before:string[]=[],after:string[]=[];
+  let fragments=0;
+  for(const [index,row] of links.entries()){
+    if(!Array.isArray(row)||row[0]!==sourceNode)continue;
+    if(index<chunk.start)before.push(JSON.stringify(row));
+    else if(index>=chunk.end)after.push(JSON.stringify(row));
+    if(++fragments===pressFragmentCount)break;
+  }
+  const chunks=[...before,chunk.text.slice(1,-1),...after].filter(Boolean);
+  return "["+chunks.join(",")+"]";
 }
 /** Test mode: with FOAFNAUT_HOST_TRACE set to a file, every engine call adds one JSON line to it
 (docs/web/hub/foafnaut/host-trace.mjs; checked by host_contract_check.ts against the host contract).
@@ -359,6 +417,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       return result;
     } finally {module.ccall("web_render_free",null,["number"],[pointer]);}
   }
+  const pickLinks=(text:string,width:number,height:number,x:number,y:number):LinkTarget|null=>
+    call("web_render_hit",["string","number","number","number","number"],[text,width,height,x,y]);
   // Bytes of JSON request sent to Lean for renders: the last one and the most (frame_work_test.ts).
   const sent={renders:0,lastRenderBytes:0,maxRenderBytes:0};
   const countRender=(request:string)=>{
@@ -509,10 +569,31 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // The address menu's buttons and the text Copy writes; empty with the menu closed.
     shellActions:(shell:unknown,width:number)=>(documentCall("",{op:"shellActions",shell,width}) as {actions:MenuAction[]}).actions,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
-    press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),linksText:linksText(links)}) as PressAnswer,
+    press(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[]):PressAnswer {
+      const pageRow=Math.max(0,Math.floor(row));
+      const press=(linksText:string)=>documentCall("",{op:"press",shell,x,y,width,row:pageRow,linksText}) as PressAnswer;
+      const chunks=linkChunks(links);
+      if(chunks.length===1)return press(chunks[0].text);
+      const chrome=press("[]");
+      if(chrome.control||!Number.isFinite(pageRow))return chrome;
+      const pressX=Number.isInteger(x)&&x>=0?x:0;
+      // Press coordinates are natural page rows. The window hit operation checks
+      // a viewport, while press may use any row of the retained page.
+      const hit=pickLinkChunk(chunks,pageRow,text=>pickLinks(text,0xffffffff,0xffffffff,pressX,pageRow));
+      return hit?press(pressLinksText(links,hit.chunk,hit.target.sourceNode)):chrome;
+    },
     // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
-    pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
-      (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
+    pointerCursor(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number},
+        regions?:unknown[]):string {
+      let links=request.links;
+      const row=request.pageY;
+      if(regions&&row!==undefined){
+        const chunks=linkChunks(regions);
+        links=chunks.length===1?chunks[0].text:
+          pickLinkChunk(chunks,row,text=>pickLinks(text,0xffffffff,0xffffffff,request.x,row))?.chunk.text;
+      }
+      return (documentCall("",{...request,op:"pointerCursor",links}) as {cursor:string}).cursor;
+    },
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number,modifiers=0)=>documentCall("",{op:"shellKey",shell,key,modifiers}) as ShellEdit,
     // Select all, copy, cut, paste, undo, redo and focus in the address bar; `clipboard` is the text to copy.
@@ -613,8 +694,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
-      return call("web_render_hit",["string","number","number","number","number"],
-        [linksText(artifact.webRender.links),artifact.width,artifact.height,x,y]);
+      const chunks=linkChunks(artifact.webRender.links);
+      return pickLinkChunk(chunks,y,text=>pickLinks(text,artifact.width,artifact.height,x,y))?.target??null;
     },
   };
 }
