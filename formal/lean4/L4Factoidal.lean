@@ -473,6 +473,8 @@ import L4Factoidal.Codec.XzTests
 import L4Factoidal.Prim.Bytes
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Codec.ZstdTests
+import L4Factoidal.Codec.Brotli
+import L4Factoidal.Codec.BrotliTests
 import L4Factoidal.Qlvr.Id
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Tdb2.Read
@@ -1342,6 +1344,8 @@ import L4Factoidal.Rendering.SfntColrTests
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.Woff
+import L4Factoidal.Rendering.Woff2
+import L4Factoidal.Rendering.Woff2Tests
 import L4Factoidal.Rendering.SfntMarkTheorems
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.FontFaceRuleTests

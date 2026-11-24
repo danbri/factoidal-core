@@ -12,9 +12,10 @@ Profile:
 * descriptors `font-family`, `src` (`url()` with an optional `format()`; `local()`
   is never matched: there are no system fonts), `font-weight` (one value or a range),
   `font-style` and `unicode-range`; others are read and ignored;
-* formats: `truetype`, `opentype`, `collection` and a source with no format; WOFF,
-  WOFF 2, SVG fonts and EOT need a decoder that the engine does not have, so such a
-  source is passed over (§4.3: an unsupported format is skipped);
+* formats: `truetype`, `opentype`, `collection`, `woff` (WOFF 1.0, `Woff.toSfnt`),
+  `woff2` (WOFF2, `Woff2.toSfnt`) and a source with no format; SVG fonts and EOT need a
+  decoder that the engine does not have, so such a source is passed over (§4.3: an
+  unsupported format is skipped);
 * matching (§5.2): the faces of a family are narrowed by style, then by weight, then
   each character takes the last defined face whose `unicode-range` holds it.
   The element style of this profile has no `font-weight` or `font-style`, so the
@@ -42,7 +43,7 @@ structure Face where
 
 /-- Formats with an sfnt in them (§4.3.1, `<font-format>`). -/
 def readableFormat (format : String) : Bool :=
-  ["truetype","opentype","collection","woff"].contains format.toLower
+  ["truetype","opentype","collection","woff","woff2"].contains format.toLower
 
 private def unquote (s : String) : String :=
   let s := trim s
