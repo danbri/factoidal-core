@@ -75,23 +75,20 @@ def viewportSizeMath (fontSize : Float) (source : String) : Option Length := do
 def viewportSizePixels (expression : CssValues.Calc) (fontSize viewportW viewportH : Rat) :
     Option Rat :=
   let context : CssValues.Ctx := {fontSize, viewportW, viewportH}
-  match expression.simp (some context) (expression.depth 64 + 4) with
-  | .val px "px" => some (if 0 ≤ px then px else 0)
-  | _ => none
+  let pixels := match expression.simp (some context) (expression.depth 64 + 4) with
+    | .val px "px" => some px
+    | _ => none
+  pixels.map fun px => if 0 ≤ px then px else 0
 
 /-- Every pixel size supplied by a viewport calculation is nonnegative. -/
 theorem viewportSizePixels_nonnegative (expression : CssValues.Calc)
     (fontSize viewportW viewportH px : Rat)
     (h : viewportSizePixels expression fontSize viewportW viewportH = some px) : 0 ≤ px := by
-  unfold viewportSizePixels at h
-  split at h
-  · split at h
-    · rename_i nonnegative
-      cases h
-      exact nonnegative
-    · cases h
-      simp
-  · contradiction
+  dsimp only [viewportSizePixels] at h
+  obtain ⟨value, _, rfl⟩ := Option.map_eq_some_iff.mp h
+  split
+  · assumption
+  · exact Rat.le_refl
 
 #print axioms viewportSizePixels_nonnegative
 
@@ -100,7 +97,8 @@ private def sizeAt (source : String) (viewport : Rat) : Option Rat := do
   | .viewportMath expr font => viewportSizePixels expr font viewport 736
   | _ => none
 
-#guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 1280 == some 120
+#guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 1440 == some 120
+#guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 1280 == some (1194944 / 10000)
 #guard sizeAt "clamp(3.75rem, 2.51rem + 6.198vw, 7.5rem)" 480 == some (699104 / 10000)
 #guard sizeAt "max(-10px, -2vw)" 1280 == some 0
 #guard sizeAt "min(100px, 40vw)" 200 == some 80

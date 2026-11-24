@@ -6,6 +6,6 @@ Keep the parsed calculation and the element's font size through the cascade. Whe
 
 The stored value uses the CSS Values evaluator's existing font-unit model. Expressions with a containing-block percentage basis continue through the existing size paths. Repaint shape comparison conservatively rejects reuse when a compared size includes the new value. The existing representation and path for simple pixels, percentages, and affine percentage calculations are retained.
 
-The included Lean theorem states that every pixel size returned by the evaluator is nonnegative. Five guards cover both viewport widths, min, the nonnegative range, and exclusion of a function needing a containing-block percentage. The native build checks which declarations and guards compile. Browser geometry and visual acceptance need separate measurements.
+The included Lean theorem states that every pixel size returned by the evaluator is nonnegative. Six guards cover three viewport widths, min, the nonnegative range, and exclusion of a function needing a containing-block percentage. At a 16px root font, the result at 1280px is 119.4944px and reaches the 120px cap at 1440px. The native build checks which declarations and guards compile. Browser geometry and visual acceptance need separate measurements.
 
 Related to [desktop acceptance](https://github.com/danbri/factoidal-core/issues/712).
