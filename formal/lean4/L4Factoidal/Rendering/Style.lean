@@ -3378,7 +3378,9 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       hasAttr "hidden")) ||
     -- the content of a `details` that is not open (it was drawn open)
     closedDetailsContent dom id
-  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
+  let svgDescendant := n.ns == some DOM.svgNS &&
+    (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
+  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg" && !svgDescendant
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
   let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
@@ -3547,8 +3549,11 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         ua.top + ua.bottom > 0 then
       result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
   if n.ns == some DOM.svgNS then
-    result := {result with svgAuthor := chosen.filterMap fun (key,(_,d)) =>
-      if svgAuthorProperties.contains key then some (key,d.value) else none}
+    result := {result with svgAuthor := chosen.filterMap fun (key,(priority,d)) =>
+      let author := (priority[1]?.getD 0) ≥ 2
+      let outerDimension := svgViewport && (key == "width" || key == "height")
+      if author && svgAuthorProperties.contains key && !outerDimension then some (key,d.value)
+      else none}
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
       -- SVG paint goes to the SVG renderer; the root's layout-related properties stay here.
@@ -3578,13 +3583,15 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   {s with fontSize := size, lineHeight := height}
 
 /-- The style of node `id` under the style `parent` of its parent: an element's cascade
-(`computedFrom`); any other node, and an SVG element inside SVG, takes what is inherited.
+(`computedFrom`). SVG descendants keep the HTML inherited box style but also
+resolve their own author winners and variables for SVG rendering.
 The step of `computeAllWith` and of `restyleWith`. -/
-def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed :=
+def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-  if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
-    display := .inline, width := .auto, height := .auto,
+  if n.type == .element && !svgDescendant then return ← computedFrom dom id (matchesOf id) parent
+  let inherited : Computed := {parent with
+    svgAuthor := [], display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current,
@@ -3593,6 +3600,10 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
         -- a text node keeps what its text is set by
         pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform,
                 lineBreak := parent.pos.lineBreak}}
+  if n.type == .element && svgDescendant then
+    let cascade ← computedFrom dom id (matchesOf id) parent
+    return {inherited with svgAuthor := cascade.svgAuthor, vars := cascade.vars}
+  return inherited
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. `root` is the
