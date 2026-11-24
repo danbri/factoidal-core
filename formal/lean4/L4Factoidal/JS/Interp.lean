@@ -2774,6 +2774,15 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       pure (.str (Str.canonical out))
     | _ => throwErr .type "not a function"
 
+/-- The shared index and get steps of Array and TypedArray `at`. The caller reads
+the length before coercing the index. The one indexed read observes any update
+made during coercion, including a typed buffer resize or detachment. -/
+private def arrayAtWithLength (core : CoreFn H) (receiver : Value) (len : Nat) (index : Value) : M Value := do
+  let k := toIntegerOrInf (← core.toNum index)
+  let i := if k < 0 then Float.ofNat len + k else k
+  if i < 0 || i ≥ Float.ofNat len then pure .undef
+  else core.getV receiver (toString i.toUInt64.toNat)
+
 /-- Built-ins of `moreNative`: the %TypedArray%.prototype methods that answer a typed array or work on its bytes. `r` is the realm `moreNative` read. -/
 def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
@@ -2804,6 +2813,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
     match id with
     | (.x (.typedMethod which)) =>
       let (ty, b, off, len) ← validTyped "TypedArray method"
+      if which == 4 then return ← arrayAtWithLength core thisV len a0
       let xs ← valuesOf ty b off len
       let size := xs.size
       let writeAll (vs : Array Value) : M Unit := do
@@ -2875,10 +2885,6 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
         | none => fresh ty part
         | some a => fill a part
       | 3 => writeAll (← sorted a0); pure thisV
-      | 4 =>
-        let k := toIntegerOrInf (← core.toNum a0)
-        let i := if k < 0 then Float.ofNat size + k else k
-        if i < 0 || i ≥ Float.ofNat size then pure .undef else pure xs[i.toUInt64.toNat]!
       | 5 =>
         -- lastIndexOf (§23.2.3.20): strict equality, from the end
         let start ← if args.size > 1 then do
@@ -4598,6 +4604,9 @@ def moreNativeArray (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
     let a1 := argD args 1
     match id with
     | (.x (.arrayMethod k)) =>
+      -- toSorted checks the comparator before ToObject and LengthOfArrayLike.
+      if k == 3 && !(a0 matches .undef) && !(← isCallable a0) then
+        throwErr .type "The comparison function must be either a function or undefined"
       -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
       let oid ← core.toObj thisV
       let o := Value.obj oid
@@ -4646,9 +4655,6 @@ def moreNativeArray (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
         if len > 4294967295 then throwErr .range "Invalid array length"
         newArray (← valuesUpTo len).reverse
       | 3 =>
-        match a0 with
-        | .undef => pure ()
-        | f => if !(← isCallable f) then throwErr .type "The comparison function must be either a function or undefined"
         if len > 4294967295 then throwErr .range "Invalid array length"
         newArray (← core.mergeSort a0 (← valuesUpTo len).toList).toArray
       | 4 =>
@@ -6538,10 +6544,9 @@ def callNativeArrayRead (core : CoreFn H) (r : Realm) (id : Native) (thisV : Val
       | none => newArray flat
       | some a => core.speciesFill a flat none
     | .arrayAt =>
-      let es ← core.elemsOf thisV
-      let k := toIntegerOrInf (← core.toNum a0)
-      let i := if k < 0 then Float.ofNat es.size + k else k
-      if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
+      let receiver := Value.obj (← core.toObj thisV)
+      let len ← core.arrayLikeLength receiver
+      arrayAtWithLength core receiver len a0
     | .arrayFindLast | .arrayFindLastIndex =>
       if !(← isCallable a0) then throwErr .type "callback is not a function"
       let es ← core.elemsOf thisV
