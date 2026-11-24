@@ -69,3 +69,7 @@ root = "ContainerRootsMain"
 [[lean_exe]]
 name = "ssz-validator-registry"
 root = "RegistryProofMain"
+
+[[lean_exe]]
+name = "ssz-proposer-slashing"
+root = "ProposerSlashingMain"
