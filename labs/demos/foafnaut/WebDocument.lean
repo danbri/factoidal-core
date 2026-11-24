@@ -2346,8 +2346,7 @@ def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat
     let some picture := pictures id | continue
     -- a fragment (`#view`, `#svgView(...)`) picks a view, which the store's picture has
     if key.contains '#' then continue
-    let some bytes := images.lookup key | continue
-    if (WebRender.vectorNatural bytes).isNone then continue
+    -- the cheap tests first: most pictures are not shown larger than they are held
     let some st := styles[id]? | continue
     if st.pos.borderBox then continue
     let .px w := st.width | continue
@@ -2359,6 +2358,8 @@ def redrawVectorPictures (images : List (String × ByteArray)) (keys : List (Nat
     if !(dw.isFinite && dh.isFinite) || dw < 1 || dh < 1 || dw > 4096 || dh > 4096 then continue
     let (dw,dh) := (dw.round.toUInt32.toNat,dh.round.toUInt32.toNat)
     if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
+    let some bytes := images.lookup key | continue
+    if !WebRender.looksLikeSVG bytes then continue
     let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
     let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
     let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
@@ -2381,10 +2382,13 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
     if keys.isEmpty then (.ok (d,styles),none) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
+    -- the natural size of each SVG background, read once for each URL (a page can name one
+    -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
+    let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
+      if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
     let attach := fun (i : Nat) (st : Rendering.CSS.Computed) => match pics i with
       | some pic =>
-        -- an image URL with a fragment shows a view: its size is the picture's
-        let natural := match st.backgroundImage.bind (fun k => if k.contains '#' then none else images.lookup k) |>.bind WebRender.vectorNatural with
+        let natural := match st.backgroundImage.bind (naturals.lookup ·) with
           | some n => some n
           | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
         {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}

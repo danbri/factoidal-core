@@ -144,6 +144,16 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
     await Deno.writeTextFile(`${dumpDir}/${job.file}.options.json`,JSON.stringify(options));}
   // partialNote:false: no "Partial page" note in the picture (WebDocument.layOutDOMIn); it is the
   // browser's, not the page's. An older engine ignores the field and draws the note.
+  // REFTEST_TIME: one render as the window asks for it (no CPU pixels), timed, with the phase
+  // timings the engine gives, on standard error (a measurement, not part of the score).
+  if(Deno.env.get("REFTEST_TIME")){
+    const t0=performance.now();
+    const gpu=bytesBackend(source,JSON.stringify({...options,op:"render",checks:false,partialNote:false}),job.width,job.height);
+    const ms=performance.now()-t0;
+    const head=unpackAnswer(gpu).head as Record<string,unknown>;
+    const timing=Object.fromEntries(Object.entries((head.page??head) as Record<string,unknown>).filter(([k,v])=>/ms|Ms|time|Time|cost/.test(k)&&typeof v!=="object"));
+    console.error(JSON.stringify({type:"reftest-time",file:job.file,ms:Math.round(ms),sourceChars:source.length,timing}));
+  }
   const request=JSON.stringify({...options,op:"render",checks:false,cpu:true,partialNote:false});
   let buffer=bytesBackend(source,request,job.width,job.height);
   // The serif and monospace faces, as the window holds them (serif_font.ts): given the first time
