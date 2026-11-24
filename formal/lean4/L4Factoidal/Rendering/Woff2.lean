@@ -16,12 +16,13 @@ The sfnt is laid out as the reference decoder (google/woff2, `woff2_dec.cc`) lay
 table records sorted by tag; the tables in tag order, each at a four-byte boundary, except
 that a reconstructed `loca` follows its `glyf` at once; every glyph padded to four bytes; the
 simple glyphs written with the reference decoder's flag and coordinate encoding; the table
-checksums and the `head` checkSumAdjustment computed. For a font with no composite glyph
-whose `hmtx` is transformed, the bytes are the reference decoder's bytes.
+checksums and the `head` checkSumAdjustment computed. The bytes are the reference decoder's
+bytes (checked on 34 WOFF2 files made from twelve fonts, `tools/fonts/woff2_vectors.py`).
 
-One difference from the reference decoder, after the specification: a left side bearing left
-out of a transformed `hmtx` is the xMin of the glyph's bounding box for a composite glyph too
-(§5.4; fontTools does the same); `woff2_dec.cc` uses 0 for a composite glyph.
+Differences from the reference decoder: a glyph whose contour count is negative and not -1,
+and a simple glyph whose first contour has no point, are refused (the reference decoder writes
+them as they come); a transformation version of `glyf` or `loca` other than 0 and 3, and of
+`hmtx` other than 0 and 1, is refused.
 
 Font collections (flavor `ttcf`, §4.2) are refused with a message: the font reader takes one
 face.

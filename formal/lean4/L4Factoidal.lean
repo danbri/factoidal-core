@@ -1344,6 +1344,8 @@ import L4Factoidal.Rendering.SfntColrTests
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.Woff
+import L4Factoidal.Rendering.Woff2
+import L4Factoidal.Rendering.Woff2Tests
 import L4Factoidal.Rendering.SfntMarkTheorems
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.FontFaceRuleTests

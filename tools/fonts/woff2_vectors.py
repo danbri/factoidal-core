@@ -136,8 +136,36 @@ def compare(out):
     return 1 if bad else 0
 
 
+def lean(out):
+    """The small vectors of Rendering/Woff2Tests.lean: Noto Sans (OFL 1.1, no Reserved Font
+    Name; third_party/fonts/noto-sans/OFL.txt) cut to the glyphs of "Aé1" (é is a composite
+    glyph), as WOFF2 with no transform, with glyf and loca transformed, and with hmtx too."""
+    from fontTools import subset
+    os.makedirs(out, exist_ok=True)
+    src = os.path.join(FONTS, "noto-sans", "NotoSans-Regular.ttf")
+    ttf = os.path.join(out, "noto-sans-subset.ttf")
+    opts = subset.Options()
+    opts.layout_features = []
+    opts.name_IDs = [0, 1, 2]
+    font = subset.load_font(src, opts)
+    sub = subset.Subsetter(opts)
+    sub.populate(text="Aé1")
+    sub.subset(font)
+    font.save(ttf)
+    for tname, tset in TRANSFORMS.items():
+        dst = os.path.join(out, "noto-sans-subset-%s.woff2" % tname)
+        woff2.compress(ttf, dst, transform_tables=tset)
+        b = open(dst, "rb").read()
+        print("-- %s: %d bytes" % (os.path.basename(dst), len(b)))
+        print("private def w_%s : ByteArray := bytes [" % tname)
+        rows = [", ".join("0x%02x" % x for x in b[i:i + 16]) for i in range(0, len(b), 16)]
+        print("  " + ",\n  ".join(rows) + " ]")
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "make":
         make(sys.argv[2])
+    elif sys.argv[1] == "lean":
+        lean(sys.argv[2])
     else:
         sys.exit(compare(sys.argv[2]))
