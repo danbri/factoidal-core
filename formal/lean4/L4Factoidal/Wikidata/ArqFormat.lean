@@ -12,6 +12,7 @@ open L4Factoidal.SPARQL L4Factoidal.RDF
 private structure FormatContext where
   prefixes : List (String × String)
   blanks : Std.HashMap String String
+  syntheticCountSelects : List Nat
 
 private def renderIri (prefixes : FormatContext) (iri : WfIri) : String :=
   (prefixes.prefixes.findSome? fun (name, namespaceIri) =>
@@ -279,12 +280,14 @@ private def withoutIndent (indent : Nat) (text : String) : String :=
   String.ofList (text.toList.drop indent)
 
 private def selectText (prefixes : FormatContext) (fuel : Nat) (qualification : String)
-    (selection : SelectClause) : Option String := do
+    (selection : SelectClause) (syntheticCount : Bool) : Option String := do
   let items ← match selection with
     | .all => some "*"
     | .vars items => do
       let names ← items.mapM fun item => match item with
         | .var name => some ("?" ++ name)
+        | .expr (.aggregate .count false (.boolLit true)) name =>
+          some ((if syntheticCount then "(count(*)" else "(COUNT(*)") ++ " AS ?" ++ name ++ ")")
         | .expr expr name => do return "(" ++ (← renderExpr prefixes fuel expr) ++ " AS ?" ++ name ++ ")"
       pure (String.intercalate " " names)
   return "SELECT" ++ qualification ++ "  " ++ items
@@ -345,7 +348,8 @@ private def renderQuerySyntax (prefixes : FormatContext) (state : PState) (fuel 
         | .reduced => (" REDUCED", advTok rest)
         | _ => ("", rest)
       let (selection, rest) ← (pSelectVars fuel state rest).toOption
-      pure (← selectText prefixes fuel qualification selection, rest)
+      pure (← selectText prefixes fuel qualification selection
+        (prefixes.syntheticCountSelects.contains (peekPos ts)), rest)
     | _ => none
   let rest := if peekTok rest == .whereKw then advTok rest else rest
   let (body, rest) ← renderGroupSyntax prefixes state fuel (indent + 2) rest
@@ -444,7 +448,7 @@ private def formatPrefix (name iri : String) : String :=
 
 /-- Reproduce the pinned ARQ layout for supported syntax. The caller validates
 both the input and the result. An unported case retains the source layout. -/
-def formatParsedRewrite (text : String) : Option String := do
+def formatParsedRewrite (text : String) (syntheticCountOrdinals : List Nat := []) : Option String := do
   guard (text.utf8ByteSize <= 8192)
   let tokens := sourceTokens text
   let (state, ts) ← (sourceState tokens []).toOption
@@ -452,7 +456,12 @@ def formatParsedRewrite (text : String) : Option String := do
   let defaults := defaultPrefixes.filter fun (name, _) =>
     ["rdfs", "schema", "skos"].contains name && (lookupPrefix name state.prefixes).isNone
   let prefixes := state.prefixes ++ defaults
-  let (body, rest) ← renderQuerySyntax ⟨prefixes, collectBlankNames ts {}⟩ state 128 0 ts
+  -- ARQ's generated AggCount renders as lowercase count(*). Authored
+  -- projections retain the normal uppercase aggregate formatting.
+  let syntheticCounts := if syntheticCountOrdinals.isEmpty then [] else
+    ((ts.filter (·.tok == .select)).zipIdx).filterMap fun (token, index) =>
+      if syntheticCountOrdinals.contains index then some token.pos else none
+  let (body, rest) ← renderQuerySyntax ⟨prefixes, collectBlankNames ts {}, syntheticCounts⟩ state 128 0 ts
   guard (tokensOnlyEof rest)
   let used := (sourceTokens body).filterMap fun token => match token.token with
     | .pname name => some (splitPname name).1

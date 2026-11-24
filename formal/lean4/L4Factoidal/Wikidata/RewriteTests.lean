@@ -88,6 +88,18 @@ private def layoutExpected :=
 #guard formatParsedRewrite layoutInput == some layoutExpected
 #guard (rewriteQuery "ASK { ?item wdt:P31 wd:Q5 . SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" } }").rewrite_status == "rewritten"
 
+private def sliceRangeInput :=
+  "SELECT (COUNT(*) AS ?total) WHERE { SERVICE bd:slice { " ++
+  "?item wdt:P31 wd:Q5 . bd:serviceParam bd:slice.range ?count . } }"
+
+#guard (rewriteQuery sliceRangeInput).rewrites.map (·.variant_id) == ["range-count"]
+#guard (rewriteQuery sliceRangeInput).rewritten_query.any fun text =>
+  let rewritten := ((text.splitOn "\n# Original query:").headD "")
+  (rewritten.splitOn "(COUNT(*) AS ?total)").length == 2 &&
+  (rewritten.splitOn "(count(*) AS ?count)").length == 2
+#guard (rewriteQuery "ASK { SERVICE bd:slice { { ?item wdt:P31 wd:Q5 } } }").rewrite_status ==
+  "skipped_unsupported"
+
 private def distanceExample :=
   "SELECT ?d WHERE { BIND(geof:distance(?a, CONCAT(\"x\", \"y\"), \"meter\") AS ?d) }"
 private def distanceOutput :=

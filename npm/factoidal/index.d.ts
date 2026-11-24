@@ -657,7 +657,7 @@ export interface WikidataRewriteDiagnostic {
 export interface WikidataRewriteResult {
   schema_version: 1;
   rewrite_status: 'rewritten' | 'unchanged' | 'parse_error' | 'blazegraph_error' |
-    'skipped_unsupported' | 'validation_failed';
+    'ambiguous_conflicting' | 'skipped_unsupported' | 'validation_failed';
   rewritten_query: string | null;
   rewrites: { rule_id: string; variant_id: string }[];
   warnings: WikidataRewriteDiagnostic[];
@@ -670,7 +670,8 @@ export interface SparqlQueryStructure {
   sse: string;
 }
 
-/** Parse a query without evaluating it. The S-expression preserves property paths.
+/** Inspect a query without evaluating it. The display S-expression preserves
+ * property paths and abbreviates details such as VALUES rows and ORDER BY keys.
  * Set wdqs to use Wikidata's implicit prefixes.
  */
 export function parseSparqlStructure(

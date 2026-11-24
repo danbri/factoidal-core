@@ -4,6 +4,7 @@ import L4Factoidal.Wikidata.Legacy
 import L4Factoidal.Wikidata.ArqFormat
 import L4Factoidal.Wikidata.GeoDistance
 import L4Factoidal.Wikidata.NamedSubquery
+import L4Factoidal.Wikidata.BdSlice
 
 namespace L4Factoidal.Wikidata
 open Lean L4Factoidal.SPARQL
@@ -154,13 +155,14 @@ private def pendingToken (state : PState) (tokens : List LocatedToken) : Option 
     else pendingToken state rest
   | [] => none
 
-private def finish (original current : String) (steps : List RewriteStep) (parsedRule : Bool) : RewriteResult :=
+private def finish (original current : String) (steps : List RewriteStep) (parsedRule : Bool)
+    (syntheticCountOrdinals : List Nat := []) : RewriteResult :=
   if steps.isEmpty then { rewrite_status := "unchanged", rewritten_query := some original }
   else
     let output := formatTextRewrite current
     match parseSparql output with
     | .ok _ =>
-      let formatted := if parsedRule then formatParsedRewrite output else none
+      let formatted := if parsedRule then formatParsedRewrite output syntheticCountOrdinals else none
       let output := (formatted.filter fun text => (parseSparql text).isOk).getD output
       { rewrite_status := "rewritten", rewritten_query := some output
         rewrites := steps }
@@ -176,6 +178,21 @@ private def projectionAliasConflict (query : Query) : Option String :=
     | .expr _ name => if query.pattern.inScopeVars.contains name then some name else none
     | .var _ => none
   | _ => none
+
+/-- Track generated SELECTs through source edits and prologue formatting.
+The ordinal stays valid if prefixes or blank lines are inserted or removed. -/
+private def syntheticCountOrdinals (tokens : List LocatedToken) (edits : List Edit)
+    (sites : List Nat) : List Nat :=
+  if sites.isEmpty then [] else
+    let selects := tokens.filter (·.token == .select)
+    let (_, _, ordinals) := edits.foldl (fun (remaining, ordinal, ordinals) edit =>
+      let preceding := remaining.takeWhile (fun t => t.start < edit.start)
+      let ordinal := ordinal + preceding.length
+      let ordinals := if sites.contains edit.start then ordinal :: ordinals else ordinals
+      let inserted := (sourceTokens edit.replacement).countP (·.token == .select)
+      (remaining.dropWhile (fun t => t.start < edit.stop), ordinal + inserted, ordinals))
+      (selects, 0, [])
+    ordinals
 
 private def afterParse (original current language : String) (steps : List RewriteStep)
     (inputNames : List (String × String)) (query : Query) (namedBlock : Bool) :
@@ -195,11 +212,27 @@ private def afterParse (original current language : String) (steps : List Rewrit
     return failure "skipped_unsupported" "unsupported_proprietary_feature" "post-parse"
       "This proprietary term or function needs another rewrite rule" (some token.start) steps
   let sites := services state bodyTokens
-  if let some site := sites.find? (fun site => pendingFeature site.iri) then
+  if let some site := sites.find? (fun site => site.iri != BdSlice.endpoint && pendingFeature site.iri) then
     return failure "skipped_unsupported" "unsupported_proprietary_service" "post-parse" site.iri (some site.start) steps
   let subgraphs ← match sites.mapM subgraphEdit with
     | .ok edits => pure (edits.filterMap id)
     | .error error => return { rewrite_status := "skipped_unsupported", rewrites := steps, errors := [error] }
+  let sliceRule : RewriteStep := ⟨"rewrite-bd-slice-service", "default"⟩
+  let mut slices : List (Edit × RewriteStep) := []
+  for site in sites.filter (·.iri == BdSlice.endpoint) do
+    let some (stop, rest) := bodyEnd 0 site.body |
+      return failure "skipped_unsupported" "bd_slice_unsupported_service_content" "post-ARQ"
+        "The bd:slice service body is not a supported triple block." none (steps ++ [sliceRule])
+    let (replacement, variant) ← match BdSlice.plan current state site.body stop with
+      | .ok plan => pure plan
+      | .error error => return failure error.status error.code "post-ARQ" error.message none (steps ++ [sliceRule])
+    let stop := (rest.head?.filter (·.token == .dot)).map (·.stop) |>.getD stop
+    let before := (bodyTokens.takeWhile (·.start < site.start)).getLast?.map (·.token)
+    let needsDot := variant == "hint-removed" &&
+      before.any (fun token => ![.lbrace, .rbrace, .rparen, .dot].contains token)
+    let text := if needsDot then ".\n" ++ replacement else replacement
+    slices := (⟨site.start, stop, text⟩, { sliceRule with variant_id := variant }) :: slices
+  slices := slices.reverse
   let geoRule : RewriteStep := ⟨"rewrite-geof-distance", "default"⟩
   let (geoEdits, geoCount) ← match rewriteGeoDistance state body bodyTokens with
     | .ok plan => pure plan
@@ -253,9 +286,12 @@ private def afterParse (original current language : String) (steps : List Rewrit
     | _ => return (failure "skipped_unsupported" "label_scope_not_supported" "post-parse"
         "Multiple label services require scope analysis" none steps)
   let steps := if subgraphs.isEmpty then steps else steps ++ [⟨"rewrite-wdsubgraph-service", "default"⟩]
-  let edits := edits ++ geoEdits
-  let result := finish original (applyEdits current (edits.mergeSort (fun a b => a.start ≤ b.start)))
-    (steps ++ List.replicate geoCount geoRule ++ postSteps) (!edits.isEmpty)
+  let edits := (edits ++ slices.map Prod.fst ++ geoEdits).mergeSort (fun a b => a.start ≤ b.start)
+  let rangeStarts := slices.filterMap fun (edit, step) =>
+    if step.variant_id == "range-count" then some edit.start else none
+  let result := finish original (applyEdits current edits)
+    (steps ++ slices.map Prod.snd ++ List.replicate geoCount geoRule ++ postSteps) (!edits.isEmpty)
+    (syntheticCountOrdinals bodyTokens edits rangeStarts)
   let warnings := if !namedBlock then [] else labelSites.map fun _ =>
     (⟨"named_subquery_label_service_removed", "post-ARQ",
       "SERVICE wikibase:label is not supported inside a named subquery and was removed; any *Label variable it would have bound is now permanently unbound in this block.", none⟩ : Diagnostic)

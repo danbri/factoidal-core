@@ -138,7 +138,8 @@ measured separately.
 | Variable reuse | Rejects a reused alias at ARQ parsing unless an earlier rule has already removed it | Recovers outer SELECT aliases using the lexer and existing projection, graph-pattern and modifier parsers. Preserves public result names. Ambiguous nested references and BIND target reuse require further scope analysis. |
 | Date and duration typing | Rewrites supported expression literals and date-derived comparisons. Some ambiguous or mixed cases are refused or left alone. | Rule remains to be ported. |
 | Geospatial | Rules for around, box, distance, globe, latitude and longitude apply under documented constraints | `geof:distance` is implemented. Around, box and other GeoSPARQL rewrites remain. |
-| `bd:slice` and `bd:sample` | Portability rules for supported forms. Sampling can legitimately change the returned rows. | Rules remain to be ported. |
+| `bd:slice` | Removes offset and limit hints or converts a range request to a `count(*)` subquery. | Matches the pinned Java oracle on all 14 dedicated fixtures, including all six successful outputs byte for byte. |
+| `bd:sample` | Portability rules for supported forms. Sampling can legitimately change the returned rows. | Rule remains to be ported. |
 | GAS | Converts supported traversal to QLever Path Search. Blazegraph traversal includes tree/visited-set semantics with no general SPARQL 1.1 equivalent. | Rule remains to be ported. |
 | Label service | Broad post-parse conversion. WDQS v2 also offers the service via its proxy. | Scalar service in the direct WHERE group of a query or subselect. Multiple services, other nested graph scopes, aggregation and prebound outputs remain gaps. |
 | Named subqueries | Hoists supported legacy definitions to QLever's `WITH %name AS { … }` and `INCLUDE` dialect. The migration guide separately documents v2 proxy support. | Matches the dedicated upstream fixtures, including dependencies, modifiers, projected variables and error cases. The shared alias-loss limitation is described below. |
@@ -245,10 +246,12 @@ exact matches use QLever's named-subquery syntax, which Jena does not parse.
 
 The independent Wikimedia fixture audit supplies the broader check. The
 18 dedicated named-subquery fixtures match status and rewrite trace.
-All 13 successful named-subquery outputs match byte for byte. Across all
-213 fixtures, 91 statuses and 80 rule traces match. Status counts all input
+All 13 successful named-subquery outputs match byte for byte. The general
+`bd:slice` port matches all 14 dedicated statuses and rewrite traces and
+all six successful output texts. The Poulter harvest contains no `bd:slice`
+queries. Across all 213 fixtures, 104 statuses and 94 rule traces match. Status counts all input
 cases, including errors, skips and unchanged queries. Wikimedia rewrites
-134 of the 213 inputs, and Lean matches the exact output text for 46 of
+134 of the 213 inputs, and Lean matches the exact output text for 52 of
 those 134. The two counts use different denominators. Remaining fixture gaps include
 more label-service scopes and modes, date and duration, geospatial
 services and functions, utility services and GAS. For bare
