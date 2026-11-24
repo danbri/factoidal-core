@@ -183,4 +183,113 @@ theorem checkCommonValidator_candidate (p : PreparedAttesterSlashing)
 #print axioms EthereumConsensus.SSZ.checkCommonValidator_mismatch
 #print axioms EthereumConsensus.SSZ.checkCommonValidator_candidate
 
+
+/-- Explicit BeaconState container layouts, not a fork-choice verdict.
+    Phase0 through Deneb have 32 field positions; Electra and Fulu have 64.
+    The validators field is at zero-based position 11 in both layouts.
+    Spec pin: ethereum/consensus-specs@d2021d2719235f0df4726a1d330502cb15aa8ea3. -/
+inductive RegistryStateLayout where
+  | phase0Deneb
+  | electraFulu
+  deriving BEq, DecidableEq, Repr
+
+def registryStateDepth : RegistryStateLayout → Nat
+  | .phase0Deneb => 5
+  | .electraFulu => 6
+
+def registryStateGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 43
+  | .electraFulu => 75
+
+def verifyRegistryInState (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (stateSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError ByteProofResult :=
+  if stateSiblings.length ≠ registryStateDepth layout then .error .branchLength
+  else (verifyByteBranch (registryStateDepth layout) (registryStateGindex layout)
+    registryRoot stateSiblings stateRoot).mapError RegistryError.proof
+
+inductive StateCandidateVerdict where
+  | stateRootMismatch
+  | registryVerdict (verdict : RegistryCandidateVerdict)
+  deriving BEq, DecidableEq, Repr
+
+/-- Both branches must match before a candidate can be returned. The state
+    root, layout, epoch and prepared signatures are not authenticated here. -/
+def checkStateCommonValidator (layout : RegistryStateLayout)
+    (prepared : PreparedAttesterSlashing) (epoch index : UInt64)
+    (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
+    (registryRoot : ByteArray) (stateSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError StateCandidateVerdict :=
+  match verifyRegistryInState layout registryRoot stateSiblings stateRoot with
+  | .error e => .error e
+  | .ok result =>
+    if result.matchesRoot then
+      match checkCommonValidator prepared epoch index length v siblings registryRoot with
+      | .error e => .error e
+      | .ok verdict => .ok (.registryVerdict verdict)
+    else .ok .stateRootMismatch
+
+/-- Kind: layout. Says: the earlier layout uses position 11 at depth 5.
+    Does not say: the supplied state uses that fork. -/
+theorem registryState_phase0Deneb :
+    registryStateDepth .phase0Deneb = 5 ∧ registryStateGindex .phase0Deneb = 43 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: layout. Says: the later layout uses position 11 at depth 6.
+    Does not say: the supplied state uses that fork. -/
+theorem registryState_electraFulu :
+    registryStateDepth .electraFulu = 6 ∧ registryStateGindex .electraFulu = 75 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: admission. Says: a wrong state-branch count is refused.
+    Does not say: admitted witnesses have correct byte widths. -/
+theorem verifyRegistryInState_bad_branch (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length ≠ registryStateDepth layout) :
+    verifyRegistryInState layout registryRoot siblings stateRoot = .error .branchLength := by
+  simp only [verifyRegistryInState, if_pos h]
+
+/-- Kind: linkage. Says: the actual verifier uses the layout's fixed depth
+    and index with concrete byte proofs. Does not say: the root is authentic. -/
+theorem verifyRegistryInState_delegates (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length = registryStateDepth layout) :
+    verifyRegistryInState layout registryRoot siblings stateRoot =
+      (verifyByteBranch (registryStateDepth layout) (registryStateGindex layout)
+        registryRoot siblings stateRoot).mapError RegistryError.proof := by
+  simp [verifyRegistryInState, h]
+
+/-- Kind: linkage. Says: a mismatching state branch cannot reach a candidate.
+    Does not say: the root itself is authentic. -/
+theorem checkStateCommonValidator_mismatch (layout : RegistryStateLayout)
+    (p : PreparedAttesterSlashing) (epoch index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings : List ByteArray) (stateRoot : ByteArray) (result : ByteProofResult)
+    (hp : verifyRegistryInState layout registryRoot stateSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = false) :
+    checkStateCommonValidator layout p epoch index length v siblings registryRoot stateSiblings stateRoot =
+      .ok .stateRootMismatch := by
+  simp [checkStateCommonValidator, hp, hm]
+
+/-- Kind: linkage. Says: after a matching state proof the existing common
+    validator path decides the outcome. Does not say: signatures are valid. -/
+theorem checkStateCommonValidator_delegates (layout : RegistryStateLayout)
+    (p : PreparedAttesterSlashing) (epoch index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings : List ByteArray) (stateRoot : ByteArray) (result : ByteProofResult)
+    (verdict : RegistryCandidateVerdict)
+    (hp : verifyRegistryInState layout registryRoot stateSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = true)
+    (hc : checkCommonValidator p epoch index length v siblings registryRoot = .ok verdict) :
+    checkStateCommonValidator layout p epoch index length v siblings registryRoot stateSiblings stateRoot =
+      .ok (.registryVerdict verdict) := by
+  simp [checkStateCommonValidator, hp, hm, hc]
+
+#print axioms EthereumConsensus.SSZ.registryState_phase0Deneb
+#print axioms EthereumConsensus.SSZ.registryState_electraFulu
+#print axioms EthereumConsensus.SSZ.verifyRegistryInState_bad_branch
+#print axioms EthereumConsensus.SSZ.verifyRegistryInState_delegates
+#print axioms EthereumConsensus.SSZ.checkStateCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkStateCommonValidator_delegates
+
 end EthereumConsensus.SSZ
