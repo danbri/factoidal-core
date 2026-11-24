@@ -290,73 +290,94 @@ def rendered (s : σ) (n : Nat) : σ × Bool :=
         | none => break
     return (s, true)
 
-/-- A key of the user (`up`: its release). `keydown` is fired at the editing host of the
-selection (else the `body`). When no listener canceled it, `keypress` is fired for a key
-with a character (`press`: its init; a host that gives none gets no `keypress`); when
+/-- A key of the user (`up`: its release). `keydown` is fired at the focused element,
+then falls back to the editing host or body when there is no focus. A focused disclosure
+summary handles Space by activating on release. When no listener canceled `keydown`,
+`keypress` is fired for a key with a character (`press`: its init). When
 that is not canceled and the key edits (`DOM.Editing.keyCommandIn`), `beforeinput` is
 fired at the editing host; when that is not canceled the editing command runs and
 `input` is fired. In a focused text control (`Dom.textKeyOf`) `beforeinput` is fired at
 the control and then `@edit`, where the page's glue runs the command (op 179). ArrowLeft
 and ArrowRight move the caret. `keyDefault` of the pointer state records whether the host
-may scroll for the key (not canceled, not edited). `init` is the JSON init of the
+may scroll for the key. `init` is the JSON init of the
 keyboard events. Everything after `keydown` is a default action of the key: it runs
 through `Input.afterCancelable`, so a canceled `keydown` has none of it. -/
-def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInput) (press : Option String := none) : σ :=
+def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInput)
+    (press : Option String := none) (again : Bool := false) : σ :=
   let s := (e.advance s (e.loop s).clock).1
   let target := Hosts.Dom.keyTarget (e.host s).dom
+  let space := k.key == " "
+  let focusedSummary := fun (s : σ) =>
+    let d := (e.host s).dom.dom
+    L4Factoidal.DOM.Forms.isDetailsSummary d target && Hosts.Dom.focusedElement d == some target
   if up then
-    let s := (e.dispatchWith s target "keyup" init).1
+    let (s, prevented) := e.dispatchWith s target "keyup" init
+    let s := if !space then s else
+      let p := (e.host s).pointer
+      let s := e.setPointer s { p with spaceSummary := none }
+      if !prevented && p.spaceSummary == some target && focusedSummary s then
+        let (s, shown) := e.rendered s target
+        if shown then e.click s target else s
+      else s
     (e.advance s (e.loop s).clock).1
   else
     let (s, prevented) := e.dispatchWith s target "keydown" init
-    let s := e.setPointer s { (e.host s).pointer with keyDefault := some (!prevented && !Hosts.Dom.keyEdits (e.host s).dom) }
+    let summarySpace := space && !k.shift && !k.ctrl && !k.alt && !k.cmd && focusedSummary s
+    let p := (e.host s).pointer
+    let s := e.setPointer s { p with
+      spaceSummary := if space && !again then none else p.spaceSummary
+      keyDefault := some (!prevented && !summarySpace && !Hosts.Dom.keyEdits (e.host s).dom) }
     let s := Input.afterCancelable prevented (fun s =>
       let (s, pressPrevented) := match press with
         | some pressInit => e.dispatchWith s target "keypress" pressInit
         | none => (s, false)
       Input.afterCancelable pressPrevented (fun s =>
-        match Hosts.Dom.keyCommandOf (e.host s).dom k, Hosts.Dom.keyHost (e.host s).dom with
-        | some (command, value), some host =>
-          let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
-          let data := L4Factoidal.DOM.Editing.inputDataOf command value
-          let (h, ix) := (e.host s).editRules
-          let s := e.setHost s h
-          let ranges := (Hosts.Dom.editTarget h.dom ix command value).toList
-          let (s, prevented) := e.dispatchWith s host "beforeinput" (inputInit inputType data ranges)
-          Input.afterCancelable prevented (fun s =>
-            let h := e.host s
-            let ds := h.dom
-            let h := { h with dom := emptyDomHost }
-            let (dom, ok, ev) := Hosts.Dom.editKey ds ix command value
-            let s := e.setHost s { h with dom, reads := h.reads.wrote }
-            match ok, ev with
-            | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
-            | _, _ => s) s
-        | _, _ =>
-          match Hosts.Dom.textKeyOf (e.host s).dom k with
-          | some (control, command, value) =>
-            -- a text control: `beforeinput` at it, then the page's glue runs the command on
-            -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`;
-            -- a control that a listener hid (display: none on it or an ancestor) is not edited
+        if summarySpace then
+          if again || !focusedSummary s then s else
+            e.setPointer s { (e.host s).pointer with spaceSummary := some target }
+        else
+          match Hosts.Dom.keyCommandOf (e.host s).dom k, Hosts.Dom.keyHost (e.host s).dom with
+          | some (command, value), some host =>
             let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
             let data := L4Factoidal.DOM.Editing.inputDataOf command value
-            let (s, shown) := e.rendered s control
-            if !shown then s else
-            let (s, prevented) := e.dispatchWith s control "beforeinput" (inputInit inputType data [])
+            let (h, ix) := (e.host s).editRules
+            let s := e.setHost s h
+            let ranges := (Hosts.Dom.editTarget h.dom ix command value).toList
+            let (s, prevented) := e.dispatchWith s host "beforeinput" (inputInit inputType data ranges)
             Input.afterCancelable prevented (fun s =>
+              let h := e.host s
+              let ds := h.dom
+              let h := { h with dom := emptyDomHost }
+              let (dom, ok, ev) := Hosts.Dom.editKey ds ix command value
+              let s := e.setHost s { h with dom, reads := h.reads.wrote }
+              match ok, ev with
+              | true, some (at_, it, d) => (e.dispatchWith s at_ "input" (inputInit it d)).1
+              | _, _ => s) s
+          | _, _ =>
+            match Hosts.Dom.textKeyOf (e.host s).dom k with
+            | some (control, command, value) =>
+              -- a text control: `beforeinput` at it, then the page's glue runs the command on
+              -- its value and selection (`@edit`: `Editing.textEdit`, op 179) and fires `input`;
+              -- a control that a listener hid (display: none on it or an ancestor) is not edited
+              let inputType := L4Factoidal.DOM.Editing.inputTypeOf command
+              let data := L4Factoidal.DOM.Editing.inputDataOf command value
               let (s, shown) := e.rendered s control
-              if !shown then s else (e.dispatchWith s control "@edit" (editInit command value)).1) s
-          | none =>
-            -- Enter (no modifier) in a field that has implicit submission (HTML §4.10.21.2,
-            -- `DOM.FormControls.implicitSubmission`): a click at the form's default button, or
-            -- the form submitted from itself (`@submit`, the prelude's submit steps)
-            let plain := k.key == "Enter" && !k.shift && !k.ctrl && !k.alt && !k.cmd
-            match (if plain then Hosts.Dom.implicitOf (e.host s).dom else none) with
-            | some (.click b) => e.click s b
-            | some (.submit f) => (e.dispatch s f "@submit").1
+              if !shown then s else
+              let (s, prevented) := e.dispatchWith s control "beforeinput" (inputInit inputType data [])
+              Input.afterCancelable prevented (fun s =>
+                let (s, shown) := e.rendered s control
+                if !shown then s else (e.dispatchWith s control "@edit" (editInit command value)).1) s
             | none =>
-            let h := e.host s
-            e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
+              -- Enter (no modifier) in a field that has implicit submission (HTML §4.10.21.2,
+              -- `DOM.FormControls.implicitSubmission`): a click at the form's default button, or
+              -- the form submitted from itself (`@submit`, the prelude's submit steps)
+              let plain := k.key == "Enter" && !k.shift && !k.ctrl && !k.alt && !k.cmd
+              match (if plain then Hosts.Dom.implicitOf (e.host s).dom else none) with
+              | some (.click b) => e.click s b
+              | some (.submit f) => (e.dispatch s f "@submit").1
+              | none =>
+              let h := e.host s
+              e.setHost s { h with dom := Hosts.Dom.caretMove h.dom k }) s) s
     (e.advance s (e.loop s).clock).1
 
 /-! ### Low-level input events (`WebDriver.Actions.Low`) -/
@@ -548,7 +569,7 @@ def lowWheel (s : σ) (x y dx dy : Int) (mods : Actions.Mods) : σ :=
 def lowKey (s : σ) (down : Bool) (data : Keys.KeyData) (mods : Actions.Mods) (again : Bool) : σ :=
   e.key s (!down) (Input.keyInit data mods again)
     { key := data.key, shift := mods.shift, ctrl := mods.ctrl, alt := mods.alt, cmd := mods.cmd }
-    ((Input.keypressChar data.key mods).map fun c => Input.keyInit data mods again (some c))
+    ((Input.keypressChar data.key mods).map fun c => Input.keyInit data mods again (some c)) again
 
 /-- One low-level input event as the DOM events of the user. -/
 def dispatchLow (s : σ) (low : Actions.Low) : σ :=

@@ -76,6 +76,48 @@ theorem mathRoundNumber_nonfinite (x : Float) (h : x.isFinite = false) :
 #guard isNegZero (mathRoundNumber (-0.5))
 #guard mathRoundNumber 4503599627370497.0 == 4503599627370497.0
 
+/-- Coefficients of the Taylor correction to expm1, highest degree first.
+Each factorial in this range is exactly representable in binary64. -/
+@[noinline] private def expMinusOneCoefficients : Array Float :=
+  #[1.0 / 1307674368000.0, 1.0 / 87178291200.0, 1.0 / 6227020800.0,
+    1.0 / 479001600.0, 1.0 / 39916800.0, 1.0 / 3628800.0,
+    1.0 / 362880.0, 1.0 / 40320.0, 1.0 / 5040.0, 1.0 / 720.0,
+    1.0 / 120.0, 1.0 / 24.0, 1.0 / 6.0, 0.5]
+
+/-- ECMA-262 §21.3.2.15. Around zero, evaluate the degree-15 series without
+subtracting two nearly equal numbers. Outside that interval use the exponential. -/
+def mathExpMinusOne (x : Float) : Float :=
+  if x == posZero then x
+  else if x.abs ≤ mathHalf then
+    let correction := expMinusOneCoefficients.foldl (fun acc c => c + x * acc) posZero
+    x + x * x * correction
+  else Float.exp x - 1
+
+/-- ECMA-262 §21.3.2.22. Correct for the rounding of `1+x` in the interval
+where cancellation in the uncorrected logarithm matters most. -/
+def mathLogOnePlus (x : Float) : Float :=
+  if x == posZero then x
+  else
+    let y := 1 + x
+    if y == 1 then x
+    else if x.abs < mathHalf then Float.log y + (x - (y - 1)) / y
+    else Float.log y
+
+/-- The zero path returns the input, preserving its sign. -/
+theorem mathExpMinusOne_zero (x : Float) (h : (x == posZero) = true) :
+    mathExpMinusOne x = x := by
+  simp [mathExpMinusOne, h]
+
+/-- The zero path returns the input, preserving its sign. -/
+theorem mathLogOnePlus_zero (x : Float) (h : (x == posZero) = true) :
+    mathLogOnePlus x = x := by
+  simp [mathLogOnePlus, h]
+
+#guard isNegZero (mathExpMinusOne negZero)
+#guard isNegZero (mathLogOnePlus negZero)
+#guard (mathExpMinusOne (Float.ofBits 1)).toBits == 1
+#guard (mathLogOnePlus (Float.ofBits 1)).toBits == 1
+
 /-- The exact value of a finite double as `sign, num / den` (`XPath4.floatParts`). -/
 def parts (x : Float) : Bool × Nat × Nat := XPath4.floatParts x
 

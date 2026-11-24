@@ -175,9 +175,10 @@ structure PointerState where
   /-- The last press, for the click count (`WebDriver.Input.clickCount`). -/
   last : Option L4Factoidal.WebDriver.Input.LastPress := none
   /-- The default action of the last `keydown` for the host, until the host reads it:
-  `true` when no listener canceled it and the key did not go to a text control or an
-  editing host (`Dom.keyEdits`), so the host may scroll the page for it. -/
+  `true` when the page leaves the key available for host scrolling. -/
   keyDefault : Option Bool := none
+  /-- A focused disclosure summary that will activate when its Space press is released. -/
+  spaceSummary : Option Nat := none
   /-- The touch points on the surface (`WebDriver.Touch`), from the touch pointers. -/
   touches : L4Factoidal.WebDriver.Touch.Surface := {}
   /-- Pointer capture (`WebDriver.Capture`), and the pointers other than the mouse that are

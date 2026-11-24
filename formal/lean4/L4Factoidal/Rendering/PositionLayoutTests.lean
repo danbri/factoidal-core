@@ -279,6 +279,14 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+-- The first summary gets the disclosure marker. Authors can remove it through
+-- its display or list style, and an ordinary element can opt in to a list item.
+#guard markers "<details><summary>A</summary><summary>A</summary></details>" "" == some [">"]
+#guard markers "<details open><summary>A</summary><summary>A</summary></details>" "" == some ["v"]
+#guard markers "<details><summary>A</summary></details>" "summary{list-style-type:none}" == some []
+#guard markers "<details><summary>A</summary></details>" "summary{display:block}" == some []
+#guard markers "<div>A</div>" "div{display:list-item;list-style:disc inside}" == some ["•"]
+
 -- A shaped font (a real face, `shapedWord`) draws the bullet itself, or a fallback face does:
 -- no star, though the profile's own `admits` is for fixed fonts only and says no.
 private def shapedTest (t : String) (size : Nat) : Except String FontProvider.Word :=

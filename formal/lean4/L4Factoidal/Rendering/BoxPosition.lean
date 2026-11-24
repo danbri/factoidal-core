@@ -164,7 +164,7 @@ def ViewportEdge.pixels (width height : Float) : ViewportEdge → Float
 `auto` is by the kind of list (a number in `ol`, else the bullet of the list's nesting
 depth), `none` no marker, a bullet, or a number (every numbering style is decimal here). -/
 inductive ListStyle where
-  | auto | none | disc | circle | square | number
+  | auto | none | disc | circle | square | number | disclosureOpen | disclosureClosed
   deriving Repr, BEq
 
 structure PositionStyle where
@@ -189,6 +189,8 @@ structure PositionStyle where
   writingMode : WritingMode := .horizontalTb
   /-- `list-style-type`; inherited, as `writingMode` is. -/
   listStyle : ListStyle := .auto
+  /-- `display: list-item` makes a marker as well as a block (CSS Display 3 §2.3). -/
+  listItem : Bool := false
   /-- `display: flow-root` (CSS Display 3 §2.1): a block that is the root of a block
   formatting context: it holds its floats and its children's margins. Set by the cascade
   with `display`. -/
@@ -258,7 +260,8 @@ def PositionStyle.same (a b : PositionStyle) : Bool :=
   a.position == b.position && a.top.same b.top && a.right.same b.right && a.bottom.same b.bottom &&
   a.left.same b.left && a.zIndex == b.zIndex && a.float == b.float && a.clear == b.clear &&
   a.borderBox == b.borderBox && a.ratio == b.ratio && a.ratioAuto == b.ratioAuto &&
-  a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listInside == b.listInside &&
+  a.writingMode == b.writingMode && a.listStyle == b.listStyle && a.listItem == b.listItem &&
+  a.listInside == b.listInside &&
   a.flowRoot == b.flowRoot && a.content == b.content && a.nowrap == b.nowrap && a.textTransform == b.textTransform &&
   a.lineBreak == b.lineBreak &&
   sameSteps a.transform b.transform && a.transformOrigin == b.transformOrigin &&
@@ -423,7 +426,9 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
       else if reset then some {p with listStyle := .auto} else
       match v with
       | "none" => some {p with listStyle := .none}
-      | "disc" | "disclosure-open" | "disclosure-closed" => some {p with listStyle := .disc}
+      | "disc" => some {p with listStyle := .disc}
+      | "disclosure-open" => some {p with listStyle := .disclosureOpen}
+      | "disclosure-closed" => some {p with listStyle := .disclosureClosed}
       | "circle" => some {p with listStyle := .circle}
       | "square" => some {p with listStyle := .square}
       | "decimal" | "decimal-leading-zero" | "lower-alpha" | "upper-alpha" | "lower-latin" | "upper-latin"
