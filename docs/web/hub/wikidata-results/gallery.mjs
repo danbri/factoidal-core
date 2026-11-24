@@ -1,5 +1,5 @@
 import { batchSize, queryQlever, runBatch } from './qlever.mjs';
-import { viewDirectives, viewNames } from './view-data.mjs?v=gallery-photos';
+import { viewDirectives, viewNames } from './view-data.mjs?v=gallery-preview';
 
 const labels = { ...viewNames, Ask: 'Boolean result', Rdf: 'RDF triples' };
 
@@ -72,6 +72,16 @@ export function mountGallery({ groups, views, onEdit, canRun, onChange }) {
   const batchButton = document.getElementById('batch-run');
   const batchStatus = document.getElementById('batch-state');
   const entries = [];
+  const pendingCards = new Map();
+  const observer = typeof IntersectionObserver === 'function' ? new IntersectionObserver(changes => {
+    for (const { isIntersecting, target } of changes) {
+      if (!isIntersecting || !pendingCards.has(target)) continue;
+      const { entry, card } = pendingCards.get(target);
+      pendingCards.delete(target);
+      observer.unobserve(target);
+      void renderCard(entry, card, entry.result);
+    }
+  }, { rootMargin: '140px 0px' }) : undefined;
   let busy = false;
 
   function controls() {
@@ -109,7 +119,9 @@ export function mountGallery({ groups, views, onEdit, canRun, onChange }) {
     entry.result = result;
     entry.status.textContent = caption + countText(result);
     entry.status.dataset.live = String(entry.loaded);
-    for (const card of entry.cards) void renderCard(entry, card, result);
+    for (const card of entry.cards) {
+      if (!pendingCards.has(card.panel)) void renderCard(entry, card, result);
+    }
     if (entry.raw.open) drawRaw(entry.rawOutput, result);
   }
 
@@ -203,6 +215,12 @@ export function mountGallery({ groups, views, onEdit, canRun, onChange }) {
       if (raw.open && entry.result) drawRaw(rawOutput, entry.result);
     });
     entries.push(entry);
+    if (observer) {
+      for (const card of cards) {
+        pendingCards.set(card.panel, { entry, card });
+        observer.observe(card.panel);
+      }
+    }
     render(entry, group.preview, 'Saved preview');
   }
 

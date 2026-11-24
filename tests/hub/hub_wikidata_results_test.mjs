@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { groups } from '../../docs/web/hub/wikidata-results/example.mjs';
+import { inspectSparql } from '../../docs/web/hub/wikidata-results/inspect.mjs';
 import { batchSize, qleverUrl, queryQlever, runBatch } from '../../docs/web/hub/wikidata-results/qlever.mjs';
 import {
   axisColumn, commonsImage, displayedVars, graphData, highlightTokens, mapGeometry, numberValue, viewDirectives, viewNames,
@@ -27,6 +28,30 @@ test('the gallery has a separate card for each view and shares six distinct quer
   assert.deepEqual(cards.sort(), [...Object.keys(viewNames), 'Ask', 'Rdf'].sort());
   assert.equal(new Set(groups.map(group => group.query)).size, 6);
   assert.ok(groups.every(group => !/\b(?:hint:|SERVICE)\b/.test(group.query)));
+});
+
+test('the editor uses the syntax checker on a deployed engine without structure support', () => {
+  const syntaxError = new Error('SPARQL parse error at offset 7');
+  const engine = { call(op, args) {
+    if (op === 'ops') return { ops: ['queryForm'] };
+    assert.equal(op, 'queryForm');
+    if (args[0] === 'SELECT missing') throw syntaxError;
+    assert.deepEqual(args, ['ASK {}']);
+    return { kind: 'ask' };
+  } };
+  assert.deepEqual(inspectSparql(engine, 'ASK {}'), { form: 'ask' });
+  assert.throws(() => inspectSparql(engine, 'SELECT missing'), error => error === syntaxError);
+});
+
+test('the editor shows parsed structure when the engine advertises it', () => {
+  const result = { form: 'ask', variables: [], sse: '(ask (bgp))' };
+  const engine = { call(op, args) {
+    if (op === 'ops') return { ops: ['queryForm', 'parseSparqlStructure'] };
+    assert.equal(op, 'parseSparqlStructure');
+    assert.deepEqual(args, ['ASK {}', 'true', '1.1']);
+    return { result };
+  } };
+  assert.deepEqual(inspectSparql(engine, 'ASK {}'), result);
 });
 
 test('view tags read options from comments and ignore literal strings and IRIs', () => {
