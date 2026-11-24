@@ -31,7 +31,7 @@
     },
     {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus.lean",
-      "git_blob_sha": "51c3a28da1fc51a94eb09f259f281fd4ae7a785c"
+      "git_blob_sha": "e697564e6eae6ccf7c5942ace1a3feaa470935ec"
     },
     {
       "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/AttestationScore.lean",
