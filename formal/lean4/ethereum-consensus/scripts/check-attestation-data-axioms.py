@@ -11,11 +11,11 @@ def git(*args):
     return subprocess.check_output(["git","-C",str(repo),*args],text=True).strip()
 
 pins={
-    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/AttestationData.lean": "c3149043f6cfa0327fe8662f7720a2aa8c2199b6",
+    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/AttestationData.lean": "066e9adcb47a0beed6ce9258722b9beb2ef8fd7f",
     "formal/lean4/ethereum-consensus/ContainerRootsMain.lean": "9d44cd5b9162856ee5bfc1806027bdb0b242805a",
     "formal/lean4/ethereum-consensus/EthereumConsensus.lean": "e697564e6eae6ccf7c5942ace1a3feaa470935ec",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/SigningDomains.lean": "f3195b4b96a80ea2b5ba86317b1d89052594a1c0",
-    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean": "0530e3dda8a8086fe9d3de4c06db2dbc45bac5c7",
+    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean": "18bb1122878ee1ffac940e331eedf2d494d64328",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean": "e2d3b3e2b4eb29c0ed2cea820a36713ae93ebb6d",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProof.lean": "ff547b1c8547769ec36673c0f6dde3fb29bf40a1",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/MultiProofHelpers.lean": "3bb33d5661020979c55ca7d188bc8af20054132d",
