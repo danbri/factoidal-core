@@ -464,15 +464,25 @@ theorem shrinkWidth_minContent (lo hi room : Float) : shrinkWidth .minContent lo
 theorem shrinkWidth_maxContent (lo hi room : Float) : shrinkWidth .maxContent lo hi room = hi := rfl
 theorem shrinkWidth_auto (lo hi room : Float) : shrinkWidth .auto lo hi room = min hi (max lo room) := rfl
 
-/-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
-child that is a block-level box or a float, or it is positioned and has element children
-(it is then the containing block of its absolutely positioned descendants). Such a box is
-laid out as a block container; one with inline content only stays a line of its own. -/
-def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
-  (dom.get id).kids.any fun k =>
-    (dom.get k).type == .element &&
-      ((styles[id]!).pos.containsAbsolutes ||
-        ((styles[k]!).display != .none && ((styles[k]!).display.isBlockLevel || (styles[k]!).pos.float != .none)))
+/-- An inline-block needs the block layout path if it has a block-level or
+floated child, establishes an absolute containing block with element children,
+or contains another inline-block that needs the block layout path. The last
+case keeps those nested block formatting contexts from being flattened by the
+line-only path. The traversal walks only through inline-block children. -/
+def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool := Id.run do
+  let mut pending := [id]
+  for _ in [:dom.size] do
+    let current :: rest := pending | return false
+    pending := rest
+    let absolute := (styles[current]!).pos.containsAbsolutes
+    for child in (dom.get current).kids do
+      if (dom.get child).type != .element then continue
+      if absolute then return true
+      let style := styles[child]!
+      if style.display == .none then continue
+      if style.display.isBlockLevel || style.pos.float != .none then return true
+      if style.display == .inlineBlock then pending := child :: pending
+  return false
 
 /-- The room beside `floats` for a line or box `h` high at `y`, in a content box from `x`,
 `width` wide: how far its left edge is from `x`, and its width. With no floats: all of it. -/
