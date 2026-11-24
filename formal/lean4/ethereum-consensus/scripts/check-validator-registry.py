@@ -116,6 +116,32 @@ def cases():
             other = (index + 1) % count
             add("proof", count, other, epoch, 1, v, root, siblings,
                 "mismatch " + reconstruct(leaf(v), other, count, siblings).hex())
+        # Exercise the exact transport mapping for every Validator field,
+        # including equal-width fields that a swapped assignment could conceal.
+        if i < 8:
+            for field in range(8):
+                edited = list(v)
+                edited[field] = changed(v[field]) if field < 2 else v[field] ^ 1
+                edited = tuple(edited)
+                edited_root = leaf(edited)
+                assert edited_root != leaf(v)
+                add("root", count, index, epoch, 1, edited, root, [], edited_root.hex())
+                add("proof", count, index, epoch, 1, edited, root, siblings,
+                    "mismatch " + reconstruct(edited_root, index, count, siblings).hex())
+    # Transport errors must not turn into proof or candidate verdicts.
+    valid = rows[0][0].split(" ")
+    for field, value, error in [
+        (1, "-1", "parse_error"), (2, str(MAX64 + 1), "out_of_range"),
+        (3, str(MAX64 + 1), "out_of_range"), (4, "2", "parse_error"),
+        (5, "gg", "invalid_hex"), (6, "a", "invalid_hex"),
+        (7, str(MAX64 + 1), "out_of_range"), (8, "2", "parse_error"),
+        (9, str(MAX64 + 1), "out_of_range"), (10, str(MAX64 + 1), "out_of_range"),
+        (11, str(MAX64 + 1), "out_of_range"), (12, str(MAX64 + 1), "out_of_range"),
+        (0, "unknown", "unknown_operation"),
+    ]:
+        edited = valid.copy()
+        edited[field] = value
+        rows.append((" ".join(edited), "error " + error))
     rows.extend([("bad", "error parse_error"), ("x" * 4097, "error resource_limit")])
     return rows
 
