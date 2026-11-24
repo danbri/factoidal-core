@@ -2817,7 +2817,10 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- of `width` and `height`), "" when the node has no box
   | 21 => match box, l.styles.get with
     | some (x0,y0,x1,y1), .ok styles =>
-      let s := styles[node]?.getD {}
+      -- The stored cascade is before viewport edge resolution. The script layout has
+      -- a CSS-pixel scene, so use the same viewport that renderStyled used.
+      let s := Rendering.Layout.withViewportEdges (styles[node]?.getD {})
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height)
       let b := s.borderEdges
       some (line [max 0 (x1-x0-b.left-b.right-s.padding.left-s.padding.right),
                   max 0 (y1-y0-b.top-b.bottom-s.padding.top-s.padding.bottom)])

@@ -7,3 +7,5 @@ Preserve simple `vw` and `vh` edge declarations through the cascade and resolve 
 The Lean equivalence for a breakout with two viewport-width margins and one viewport-height padding edge states that resolving that style gives the explicit pixel style, including all untouched fields. A separate theorem covers the layout fast path for empty deferred edges. Native geometry checks and WPT results are separate evidence. Viewport calculations such as `calc(1vw + 2px)` still need general edge calculation support.
 
 Related to [desktop acceptance](https://github.com/danbri/factoidal-core/issues/712).
+
+The shared-snapshot W3C replay showed the restored hero and logo at 480 and 1440 px. Its stricter CSSOM assertion found that the script width and height request subtracted padding from the unresolved cascade. Apply the same viewport edge conversion as the layout before subtracting padding in that request. The explicit pixel comparison uses physical sides, so it also serves as an independent reference for the viewport shorthand declarations.
