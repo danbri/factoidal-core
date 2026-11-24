@@ -500,6 +500,45 @@ def contentBoxed (s : Computed) : Computed :=
   {s with width := less h s.width, minWidth := less h s.minWidth, maxWidth := less h s.maxWidth,
           height := less v s.height, minHeight := less v s.minHeight, maxHeight := less v s.maxHeight}
 
+private def viewportEdgePixels (edges : Edges) (width height : Float)
+    (values : List (Nat × ViewportEdge)) : Edges :=
+  values.foldl (fun out (side, value) =>
+    let pixels := value.pixels width height
+    match side with
+    | 0 => {out with top := pixels}
+    | 1 => {out with right := pixels}
+    | 2 => {out with bottom := pixels}
+    | _ => {out with left := pixels}) edges
+
+/-- Resolve viewport-relative margins and padding before percentage edges, intrinsic
+sizing and box-sizing conversion. -/
+def withViewportEdges (s : Computed) (width height : Float) : Computed :=
+  match s.pos.viewportMargins, s.pos.viewportPadding with
+  | [], [] => s
+  | margins, padding =>
+    {s with margin := viewportEdgePixels s.margin width height margins,
+            padding := viewportEdgePixels s.padding width height padding,
+            pos := {s.pos with viewportMargins := [], viewportPadding := []}}
+
+theorem withViewportEdges_unused (s : Computed) (width height : Float)
+    (hm : s.pos.viewportMargins = []) (hp : s.pos.viewportPadding = []) :
+    withViewportEdges s width height = s := by
+  simp [withViewportEdges, hm, hp]
+
+/-- A full-width breakout's two viewport margins and a vertical inset are equivalent
+to setting the corresponding pixel edges. Other style fields are preserved. -/
+theorem withViewportEdges_breakout (s : Computed) (width height margin padding : Float) :
+    withViewportEdges
+      {s with pos := {s.pos with viewportMargins := [(1, .width margin), (3, .width margin)],
+                                 viewportPadding := [(0, .height padding)]}}
+      width height =
+    {s with margin := {s.margin with right := margin * width, left := margin * width},
+            padding := {s.padding with top := padding * height},
+            pos := {s.pos with viewportMargins := [], viewportPadding := []}} := rfl
+
+#print axioms withViewportEdges_unused
+#print axioms withViewportEdges_breakout
+
 /-- The style with the percentage parts of its margins and padding resolved against a
 containing block `width` wide (CSS 2.1 §8.3, §8.4: all four sides are of the width). -/
 def withEdges (s : Computed) (width : Float) : Computed :=

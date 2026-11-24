@@ -3240,6 +3240,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
   let vw := Float.ofNat width
   let vh := Float.ofNat height
   let styles := computed.mapIdx fun id s =>
+    let s := withViewportEdges s vw vh
     {s with display := usedReplacedDisplay dom pictures id s.display,
             width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,

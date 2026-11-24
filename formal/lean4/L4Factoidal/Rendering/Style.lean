@@ -1281,17 +1281,25 @@ private def borderEdges (fontSize : Float) (s : String) : Except String Edges :=
   | _ => throw "CSS edge shorthand requires one to four values"
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
-private def marginParts (source : String) : Except String (Float × Float) := do
-  match ← length source with
-  | .px n => return (n,0)
-  | .percent p => return (0,p)
-  | .calc p v => return (v,p)
+private def marginParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let value ← match length source with
+    | .ok value => pure value
+    | .error _ => length source.toLower
+  match value with
+  | .px n => return (n, 0, none)
+  | .percent p => return (0, p, none)
+  | .calc p v => return (v, p, none)
+  | .vw n => return (0, 0, some (.width n))
+  | .vh n => return (0, 0, some (.height n))
   | _ => throw "box edges require a length or a percentage"
 /-- One padding, as `marginParts`; never negative. -/
-private def paddingParts (source : String) : Except String (Float × Float) := do
-  let (px,of) ← marginParts source
-  if px < 0 || of < 0 then throw "negative edges outside first CSS profile"
-  return (px,of)
+private def paddingParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let (px, of, viewport) ← marginParts source
+  let fraction := match viewport with
+    | some (.width n) | some (.height n) => n
+    | none => 0
+  if px < 0 || of < 0 || fraction < 0 then throw "negative edges outside first CSS profile"
+  return (px, of, viewport)
 /-- The four margins of a `margin` shorthand: a margin may be negative (CSS 2.1 §8.3). -/
 private def marginValues (s : String) : Except String Edges := do
   match ← (words s).mapM pixels with
@@ -1468,24 +1476,32 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos := s.pos.withMarginOf 0 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos := s.pos.withMarginOf 0 of}
+      return {s with margin := {s.margin with top := 0}, autoMarginTop := true,
+              pos := (s.pos.withMarginOf 0 0).withViewportMargin 0 none}
+    let (px, of, viewport) ← marginParts d.value
+    return {s with margin := {s.margin with top := px}, autoMarginTop := false,
+            pos := (s.pos.withMarginOf 0 of).withViewportMargin 0 viewport}
   | "margin-right" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos := s.pos.withMarginOf 1 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos := s.pos.withMarginOf 1 of}
+      return {s with margin := {s.margin with right := 0}, autoMarginRight := true,
+              pos := (s.pos.withMarginOf 1 0).withViewportMargin 1 none}
+    let (px, of, viewport) ← marginParts d.value
+    return {s with margin := {s.margin with right := px}, autoMarginRight := false,
+            pos := (s.pos.withMarginOf 1 of).withViewportMargin 1 viewport}
   | "margin-bottom" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos := s.pos.withMarginOf 2 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos := s.pos.withMarginOf 2 of}
+      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true,
+              pos := (s.pos.withMarginOf 2 0).withViewportMargin 2 none}
+    let (px, of, viewport) ← marginParts d.value
+    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false,
+            pos := (s.pos.withMarginOf 2 of).withViewportMargin 2 viewport}
   | "margin-left" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos := s.pos.withMarginOf 3 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
+      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true,
+              pos := (s.pos.withMarginOf 3 0).withViewportMargin 3 none}
+    let (px, of, viewport) ← marginParts d.value
+    return {s with margin := {s.margin with left := px}, autoMarginLeft := false,
+            pos := (s.pos.withMarginOf 3 of).withViewportMargin 3 viewport}
   | "letter-spacing" | "word-spacing" =>
     let v := (trim d.value).toLower
     -- a percentage is of the font size (CSS Text 4 §8.1, §8.2)
@@ -1536,17 +1552,21 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "plaintext" => return {s with unicodeBidi := .plaintext}
     | _ => throw "unsupported CSS unicode-bidi"
   | "padding-top" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with top := px}, pos := s.pos.withPaddingOf 0 of}
+    let (px, of, viewport) ← paddingParts d.value
+    return {s with padding := {s.padding with top := px},
+            pos := (s.pos.withPaddingOf 0 of).withViewportPadding 0 viewport}
   | "padding-right" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with right := px}, pos := s.pos.withPaddingOf 1 of}
+    let (px, of, viewport) ← paddingParts d.value
+    return {s with padding := {s.padding with right := px},
+            pos := (s.pos.withPaddingOf 1 of).withViewportPadding 1 viewport}
   | "padding-bottom" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with bottom := px}, pos := s.pos.withPaddingOf 2 of}
+    let (px, of, viewport) ← paddingParts d.value
+    return {s with padding := {s.padding with bottom := px},
+            pos := (s.pos.withPaddingOf 2 of).withViewportPadding 2 viewport}
   | "padding-left" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with left := px}, pos := s.pos.withPaddingOf 3 of}
+    let (px, of, viewport) ← paddingParts d.value
+    return {s with padding := {s.padding with left := px},
+            pos := (s.pos.withPaddingOf 3 of).withViewportPadding 3 viewport}
   | "color" => return {s with color := ← color d.value}
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
@@ -2015,14 +2035,22 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "display" => some {s with display := source.display}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
-  | "margin-top" => some {s with margin := {s.margin with top := source.margin.top}}
-  | "margin-right" => some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight}
-  | "margin-bottom" => some {s with margin := {s.margin with bottom := source.margin.bottom}}
-  | "margin-left" => some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft}
-  | "padding-top" => some {s with padding := {s.padding with top := source.padding.top}}
-  | "padding-right" => some {s with padding := {s.padding with right := source.padding.right}}
-  | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom}}
-  | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
+  | "margin-top" => some {s with margin := {s.margin with top := source.margin.top},
+      pos := s.pos.withViewportMargin 0 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 0)).map Prod.snd)}
+  | "margin-right" => some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight,
+      pos := s.pos.withViewportMargin 1 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 1)).map Prod.snd)}
+  | "margin-bottom" => some {s with margin := {s.margin with bottom := source.margin.bottom},
+      pos := s.pos.withViewportMargin 2 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 2)).map Prod.snd)}
+  | "margin-left" => some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft,
+      pos := s.pos.withViewportMargin 3 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 3)).map Prod.snd)}
+  | "padding-top" => some {s with padding := {s.padding with top := source.padding.top},
+      pos := s.pos.withViewportPadding 0 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 0)).map Prod.snd)}
+  | "padding-right" => some {s with padding := {s.padding with right := source.padding.right},
+      pos := s.pos.withViewportPadding 1 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 1)).map Prod.snd)}
+  | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom},
+      pos := s.pos.withViewportPadding 2 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 2)).map Prod.snd)}
+  | "padding-left" => some {s with padding := {s.padding with left := source.padding.left},
+      pos := s.pos.withViewportPadding 3 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 3)).map Prod.snd)}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
@@ -2303,7 +2331,7 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | _ => pure ()
   return s
 
-/-- A margin hint as its pixels and its percentage part (`marginParts`'s form). -/
+/-- A margin hint as its pixels and its percentage part. -/
 def hintEdge : Option Length → Option (Float × Float)
   | some (.px v) => some (v, 0)
   | some (.percent p) => some (0, p)
