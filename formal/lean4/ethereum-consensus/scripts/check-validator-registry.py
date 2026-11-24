@@ -80,9 +80,32 @@ def state_fixture(registry_root, fields_count, rng):
     assert merkle(heap[width:]) == heap[1]
     return width, heap[1], siblings
 
+def slot_state_fixture(registry_root, slot, fields_count, rng):
+    width = 1 << (fields_count - 1).bit_length()
+    fields = [rng.randbytes(32) for _ in range(fields_count)] + [ZERO] * (width-fields_count)
+    fields[2] = basic(slot)
+    fields[11] = registry_root
+    layers = [fields]
+    while len(layers[-1]) > 1:
+        q = layers[-1]
+        layers.append([pair(x, y) for x, y in zip(q[::2], q[1::2])])
+    root = layers[-1][0]
+    def branch(pos):
+        return [layer[(pos >> d) ^ 1] for d, layer in enumerate(layers[:-1])]
+    def reconstruct_field(pos, value, siblings):
+        for d, sibling in enumerate(siblings):
+            value = pair(sibling, value) if pos & (1 << d) else pair(value, sibling)
+        return value
+    reg, sl = branch(11), branch(2)
+    assert reconstruct_field(11, registry_root, reg) == root
+    assert reconstruct_field(2, basic(slot), sl) == root
+    assert reconstruct_field(2, basic(slot ^ 1), sl) != root
+    return root, reg, sl
+
 def cases():
     rng = random.Random(881)
     state_rng = random.Random(896)
+    slot_rng = random.Random(901)
     rows = []
     def add(op, count, index, epoch, common, v, root, siblings, expected):
         key, cred, *numbers = v
@@ -172,6 +195,46 @@ def cases():
         add(op, count, index, epoch, 1, v, root,
             siblings + [b"x"] + state_sibs, "error chunk_width")
         add(op, count, index, epoch, 1, v, b"x", combined, "error chunk_width")
+        # Mainnet slot proves the epoch used in slashability and selects
+        # the layout at Electra. All non-target fields are synthetic.
+        electra_slot = 364032 * 32
+        slot = [0, 31, 32, 33, activation*32-1, activation*32,
+                withdrawable*32-1, withdrawable*32, electra_slot-1,
+                electra_slot, electra_slot+31, MAX64][i % 12]
+        slot_epoch = slot // 32
+        slot_v = v
+        if i % 12 >= 8:
+            slot_v = (*v[:5], slot_epoch, slot_epoch, slot_epoch+1)
+        slot_root, slot_reg = fixture(slot_v, count, index)
+        fields_count = 28 if slot < electra_slot else 37
+        sr, reg, sl = slot_state_fixture(slot_root, slot, fields_count, slot_rng)
+        both = slot_reg + [sr] + reg + sl
+        expected_slot = ("candidate_not_authenticated" if not slot_v[3]
+                         and slot_v[5] <= slot_epoch < slot_v[7] else "not_slashable")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both, expected_slot)
+        add("slotstate", count, index, slot, 0, slot_v, slot_root, both, "error not_common")
+        add("slotstate", count, index, slot ^ 1, 1, slot_v, slot_root, both, "slot_root_mismatch")
+        bad_sl = sl.copy()
+        bad_sl[i % len(sl)] = changed(bad_sl[i % len(sl)])
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [sr] + reg + bad_sl, "slot_root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [changed(sr)] + reg + sl, "slot_root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, changed(slot_root), both, "state_root_mismatch")
+        bad_reg = slot_reg.copy()
+        bad_reg[i % 40] = changed(bad_reg[i % 40])
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            bad_reg + [sr] + reg + sl, "root_mismatch")
+        add("slotstate", count, index, slot, 1, (changed(slot_v[0]), *slot_v[1:]),
+            slot_root, both, "root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both[:-1], "error branch_length")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both + [ZERO], "error branch_length")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [sr] + reg + [b"x"] + sl[1:], "error chunk_width")
+        wrong_sr, wrong_reg, wrong_sl = slot_state_fixture(
+            slot_root, slot, 37 if fields_count == 28 else 28, slot_rng)
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [wrong_sr] + wrong_reg + wrong_sl, "error branch_length")
     # Transport errors must not turn into proof or candidate verdicts.
     valid = rows[0][0].split(" ")
     for field, value, error in [
@@ -219,7 +282,17 @@ def main():
         pass
     else:
         raise ValueError("state comparator corruption not detected")
-    print(f"Prepared {len(rows)} rows; five comparator controls detected", flush=True)
+    slot_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("slotstate "))
+    forged = expected.copy()
+    forged[slot_row] = "slot_root_mismatch"
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("slot comparator corruption not detected")
+    assert len(rows) == 4613
+    print(f"Prepared {len(rows)} rows; six comparator controls detected", flush=True)
     if sys.argv[1:] == ["--self-test"]:
         return
     if len(sys.argv) < 2:
