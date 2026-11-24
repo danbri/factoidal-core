@@ -2754,34 +2754,64 @@ from this engine's layout of its arena as it stands (`WasmVM.Hosts.Page.Reads`):
 when a read first asks, once until the DOM or the viewport changes, as a browser forces
 a layout. The layout is that of a render with the session's `layout` request. -/
 
+private abbrev BoxesByNode := Std.HashMap Nat (List Rendering.Layout.Box)
+
+private def addBox (b : Rendering.Layout.Box) (map : BoxesByNode) : BoxesByNode :=
+  map.insert b.source (b :: map[b.source]?.getD [])
+
+private def boxesByNode (boxes : List Rendering.Layout.Box) : BoxesByNode :=
+  boxes.foldr addBox {}
+
+private theorem boxesByNode_eq (boxes : List Rendering.Layout.Box) (node : Nat) :
+    (boxesByNode boxes)[node]?.getD [] = boxes.filter (·.source == node) := by
+  induction boxes with
+  | nil => simp [boxesByNode]
+  | cons b boxes ih =>
+    simp only [boxesByNode, List.foldr_cons, addBox, Std.HashMap.getElem?_insert]
+    by_cases h : b.source = node
+    · subst node
+      simpa [boxesByNode] using ih
+    · simpa [beq_iff_eq, h, boxesByNode] using ih
+
+private def boxIndex (boxes : Array Rendering.Layout.Box) : BoxesByNode :=
+  boxes.foldr addBox {}
+
+private theorem boxIndex_eq (boxes : Array Rendering.Layout.Box) (node : Nat) :
+    (boxIndex boxes)[node]?.getD [] = boxes.toList.filter (·.source == node) := by
+  simpa [boxesByNode, boxIndex, Array.foldr_toList] using boxesByNode_eq boxes.toList node
+
+#print axioms boxIndex_eq
+
+/-- Keep fragment order when taking the union used by CSSOM geometry. -/
+private def boxBounds (boxes : List Rendering.Layout.Box) : Option WebHit.Bounds :=
+  boxes.foldl (init := (none : Option WebHit.Bounds)) fun acc b =>
+    let rect : WebHit.Bounds := (b.x,b.y,b.x+b.width,b.y+b.height)
+    some ((acc.map (·.union rect)).getD rect)
+
 /-- The padding box of node `node`'s laid-out boxes, width and height in CSS pixels (its
 border box less its borders, as op 17's client size): the containing block that percentage
 insets refer to (`Rendering.ComputedGeneric.insetBase`). `none` when the node has no box. -/
-def paddingBoxOf (l : Laid) (node : Nat) : Option (Float × Float) :=
-  let box := l.boxes.foldl (init := (none : Option WebHit.Bounds)) fun acc b =>
-    if b.source != node then acc else
-    let r : WebHit.Bounds := (b.x,b.y,b.x+b.width,b.y+b.height)
-    some ((acc.map (·.union r)).getD r)
-  box.map fun (x0,y0,x1,y1) =>
+private def paddingBoxFrom (l : Laid) (boxes : List Rendering.Layout.Box) (node : Nat) : Option (Float × Float) :=
+  (boxBounds boxes).map fun (x0,y0,x1,y1) =>
     let e : Rendering.CSS.Edges := match l.styles.get with
       | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
       | .error _ => {}
     (max 0 (x1-x0-e.left-e.right), max 0 (y1-y0-e.top-e.bottom))
+
+def paddingBoxOf (l : Laid) (node : Nat) : Option (Float × Float) :=
+  paddingBoxFrom l (l.boxes.toList.filter (·.source == node)) node
 
 /-- The answer of a layout read (op 35, the hit test, is below): op 17 "x y w h left top width height parent ox oy" (the border box
 in the page, then the client box: inside the borders, then the offset parent's node
 (-1: none) and the box's corner from that parent's padding edge; eight zeros for an SVG
 element inside an `svg`, which has no CSS box, CSSOM View §6); op 18 an SVG element's bounding box in its
 user space, "x y w h" (`WebHit.boundsOf`). -/
-def readAnswer (l : Laid) (node op : Nat) : Option String :=
+private def readAnswerFrom (l : Laid) (boxesFor : Nat → List Rendering.Layout.Box)
+    (node op : Nat) : Option String :=
   let line := fun (xs : List Float) => " ".intercalate (xs.map Rendering.FloatFormat.format)
-  let box := l.boxes.foldl (init := (none : Option WebHit.Bounds)) fun acc b =>
-    if b.source != node then acc else
-    let r : WebHit.Bounds := (b.x,b.y,b.x+b.width,b.y+b.height)
-    some ((acc.map (·.union r)).getD r)
   match op with
   | 17 =>
-    match box with
+    match boxBounds (boxesFor node) with
     | some (x0,y0,x1,y1) =>
       let styles : Array Rendering.CSS.Computed := match l.styles.get with
         | .ok styles => styles
@@ -2792,7 +2822,7 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
       let (parent,ox,oy) : Float × Float × Float := match Rendering.Layout.offsetParent l.dom styles node with
         | none => (-1,x0,y0)
         | some p =>
-          match l.boxes.find? (·.source == p) with
+          match (boxesFor p).head? with
           | none => (-1,x0,y0)
           | some b =>
             -- A `body` that is not positioned is the offset parent in name only: the offsets
@@ -2852,7 +2882,7 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
     | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
   -- of `width` and `height`), "" when the node has no box
-  | 21 => match box, l.styles.get with
+  | 21 => match boxBounds (boxesFor node), l.styles.get with
     | some (x0,y0,x1,y1), .ok styles =>
       -- The stored cascade is before viewport edge resolution. The script layout has
       -- a CSS-pixel scene, so use the same viewport that renderStyled used.
@@ -2863,6 +2893,19 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
                   max 0 (y1-y0-b.top-b.bottom-s.padding.top-s.padding.bottom)])
     | _, _ => some ""
   | _ => none
+
+def readAnswer (l : Laid) (node op : Nat) : Option String :=
+  readAnswerFrom l (fun id => l.boxes.toList.filter (·.source == id)) node op
+
+/-- The indexed read returns the same answer as scanning the layout's boxes. -/
+private theorem readAnswer_indexed_eq (l : Laid) (node op : Nat) :
+    readAnswerFrom l (fun id => (boxIndex l.boxes)[id]?.getD []) node op = readAnswer l node op := by
+  have lookups : (fun id => (boxIndex l.boxes)[id]?.getD []) =
+      (fun id => l.boxes.toList.filter (·.source == id)) := funext (boxIndex_eq l.boxes)
+  rw [lookups]
+  rfl
+
+#print axioms readAnswer_indexed_eq
 
 /-- `document.fonts` (CSS Font Loading 3 §5), `node_query` op 22: the faces of the
 page's `@font-face` rules as JSON, each with its family, descriptors and status:
@@ -3007,6 +3050,14 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   let request := withAnimated (layoutRequest request) overrides
   let held := heldNamed h ((namedImages request).toOption.getD [])
   let laid : Thunk (Except String Laid) := Thunk.mk fun _ => layOutDOM h request none dom width height held (none,none) kept
+  -- Only geometry queries force the index. The same measurement and its subsequent
+  -- geometry queries share one index; changing the layout drops it along with the measure.
+  let indexed : Thunk (Except String BoxesByNode) := Thunk.mk fun _ =>
+    laid.get.map fun l => boxIndex l.boxes
+  let boxesFor := fun node => match indexed.get with
+    | .ok boxes => boxes[node]?.getD []
+    | .error _ => []
+
   -- what the cascade reads: the flat tree, the rules, the tree scopes, the element state
   let inputs : Thunk (Except String (DOM.Dom × List Rendering.CSS.Rule × Option Rendering.CSS.TreeScope × Rendering.CSS.ElementState × Float)) :=
     Thunk.mk fun _ =>
@@ -3078,7 +3129,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
              functions := Thunk.mk fun _ => Rendering.ComputedGeneric.functionsOf sheetText.get,
              -- the containing block of a percentage inset: asked only for one, it lays the page out
              paddingBox := fun p => match laid.get with
-               | .ok l => paddingBoxOf l p
+               | .ok l => paddingBoxFrom l (boxesFor p) p
                | .error _ => none,
              -- the `@property` registrations of the page's sheets, read when a custom property is asked
              registered := Thunk.mk fun _ =>
@@ -3101,7 +3152,7 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
     let env : Rendering.MediaQuery.Env := if !asksMedia then {medium := medium request} else
       let viewport := match q.startsWith "\x02", (parts[2]?).bind String.toNat? with
         | true, some f => (match laid.get with
-          | .ok l => paddingBoxOf l f
+          | .ok l => paddingBoxFrom l (boxesFor f) f
           | .error _ => none)
         | _, _ => none
       { mediaEnv (medium request) width height 100 with
@@ -3228,12 +3279,12 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
             else Rendering.Animation.Computed.resolvedAt view node (op - 200) fun _ =>
               -- the laid out border box, for a percentage of a box whose size is not a length
               match laid.get with
-              | .ok l => (readAnswer l node 17).bind Rendering.Animation.Computed.sizeOfBox
+              | .ok l => (readAnswerFrom l boxesFor node 17).bind Rendering.Animation.Computed.sizeOfBox
               | .error _ => none)
         else some ""
       | .error _ => none
     else match laid.get with
-    | .ok l => readAnswer l node op
+    | .ok l => readAnswerFrom l boxesFor node op
     | .error _ => none
   (answers,left)
 
