@@ -88,6 +88,35 @@ private def layoutExpected :=
 #guard formatParsedRewrite layoutInput == some layoutExpected
 #guard (rewriteQuery "ASK { ?item wdt:P31 wd:Q5 . SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" } }").rewrite_status == "rewritten"
 
+private def sliceRangeInput :=
+  "SELECT (COUNT(*) AS ?total) WHERE { SERVICE bd:slice { " ++
+  "?item wdt:P31 wd:Q5 . bd:serviceParam bd:slice.range ?count . } }"
+
+#guard (rewriteQuery sliceRangeInput).rewrites.map (·.variant_id) == ["range-count"]
+#guard (rewriteQuery sliceRangeInput).rewritten_query.any fun text =>
+  let rewritten := ((text.splitOn "\n# Original query:").headD "")
+  (rewritten.splitOn "(COUNT(*) AS ?total)").length == 2 &&
+  (rewritten.splitOn "(count(*) AS ?count)").length == 2
+#guard (rewriteQuery "ASK { SERVICE bd:slice { { ?item wdt:P31 wd:Q5 } } }").rewrite_status ==
+  "skipped_unsupported"
+
+private def commentedInput :=
+  "#defaultView:Graph\r\nSELECT ?item ?itemLabel WHERE {\r\n" ++
+  "  ?item <urn:#property> \"a # literal\" . # keep this note\r\n" ++
+  "  SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\" . # keep this note\r\n" ++
+  "    # label notes https://example.org/#fragment\r\n  }\r\n}"
+
+private def rewrittenBodyWithComments (preserveComments : Bool) : String :=
+  ((rewriteQuery commentedInput (preserveComments := preserveComments)).rewritten_query.getD "")
+    |>.splitOn "\n# Original query:" |>.headD ""
+
+#guard (sourceComments (rewrittenBodyWithComments false)).map (·.text) == ["#defaultView:Graph"]
+#guard (sourceComments (rewrittenBodyWithComments true)).map (·.text) ==
+  ["#defaultView:Graph", "# keep this note", "# keep this note", "# label notes https://example.org/#fragment"]
+#guard (rewrittenBodyWithComments true).startsWith "#defaultView:Graph\r\n"
+#guard ((rewrittenBodyWithComments true).splitOn " . # keep this note\r\n").length == 2
+#guard (parseSparql (rewrittenBodyWithComments true)).isOk
+
 private def distanceExample :=
   "SELECT ?d WHERE { BIND(geof:distance(?a, CONCAT(\"x\", \"y\"), \"meter\") AS ?d) }"
 private def distanceOutput :=

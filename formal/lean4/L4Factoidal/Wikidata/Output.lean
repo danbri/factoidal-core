@@ -1,4 +1,5 @@
 import L4Factoidal.Wikidata.Source
+import L4Factoidal.SPARQL.SourceComments
 
 namespace L4Factoidal.Wikidata
 open L4Factoidal.SPARQL
@@ -32,6 +33,19 @@ def appendOriginalQuery (output original : String) : String :=
   let comment := String.join ((linesWithEndings original).map fun (line, _) =>
     if line.isEmpty then "#\n" else "# " ++ line ++ "\n")
   output ++ "\n# Original query:\n" ++ comment
+
+/-- Keep source comments still present after the edits where they are.
+Carry comments from removed text as standalone comments in source order. -/
+def restoreSourceComments (output original : String) : String :=
+  let retained := (sourceComments output).foldl (fun (counts : Std.HashMap String Nat) comment =>
+    counts.insert comment.text (counts.getD comment.text 0 + 1)) {}
+  let (_, missing) := (sourceComments original).foldl (fun (counts, missing) comment =>
+    match counts.getD comment.text 0 with
+    | 0 => (counts, comment.text :: missing)
+    | n + 1 => (counts.insert comment.text n, missing)) (retained, [])
+  if missing.isEmpty then output else
+    output ++ (if output.endsWith "\n" then "" else "\n") ++
+      String.join (missing.reverse.map (· ++ "\n"))
 
 private def forbiddenPrefix (name iri : String) : Bool :=
   ["bd", "gas", "hint", "mwapi"].contains name ||

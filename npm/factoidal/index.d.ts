@@ -657,33 +657,194 @@ export interface WikidataRewriteDiagnostic {
 export interface WikidataRewriteResult {
   schema_version: 1;
   rewrite_status: 'rewritten' | 'unchanged' | 'parse_error' | 'blazegraph_error' |
-    'skipped_unsupported' | 'validation_failed';
+    'ambiguous_conflicting' | 'skipped_unsupported' | 'validation_failed';
   rewritten_query: string | null;
   rewrites: { rule_id: string; variant_id: string }[];
   warnings: WikidataRewriteDiagnostic[];
   errors: WikidataRewriteDiagnostic[];
 }
 
+export interface SparqlSourceComment {
+  /** Exact source text including the `#`, without the newline. */
+  text: string;
+  /** Half-open source range measured in Unicode code points. */
+  start: number;
+  end: number;
+}
+
 export interface SparqlQueryStructure {
   form: 'select' | 'ask' | 'construct' | 'describe';
   variables: string[];
   sse: string;
+  comments?: SparqlSourceComment[];
 }
 
-/** Parse a query without evaluating it. The S-expression preserves property paths.
+/** Inspect a query without evaluating it. The display S-expression preserves
+ * property paths and abbreviates details such as VALUES rows and ORDER BY keys.
  * Set wdqs to use Wikidata's implicit prefixes.
  */
 export function parseSparqlStructure(
   query: string,
-  options?: { wdqs?: boolean; version?: '1.1' | '1.2' }
+  options?: { wdqs?: boolean; version?: '1.1' | '1.2'; includeComments?: boolean }
 ): Promise<SparqlQueryStructure>;
+
+/** Half-open range in the original query, in Unicode code points unless marked UTF-16. */
+export interface SparqlSourceSpan {
+  start: number;
+  end: number;
+}
+
+/** Provenance of an AST node in the original query text. */
+export type SparqlNodeSource =
+  /** One contiguous occurrence in the original query. */
+  | { origin: 'exact'; span: SparqlSourceSpan; spans?: never; reason?: string }
+  /** One or more authored ranges that contributed to a normalised node. */
+  | { origin: 'derived'; span?: never; spans: [SparqlSourceSpan, ...SparqlSourceSpan[]]; reason: string }
+  /** A parser-created node with no authored counterpart. */
+  | { origin: 'synthetic'; span?: never; spans?: never; reason: string }
+  /** A node whose authored occurrence could not be mapped. */
+  | { origin: 'unmapped'; span?: never; spans?: never; reason: string };
+
+export interface SparqlLocatedNode {
+  source: SparqlNodeSource;
+}
+
+export type SparqlVariable = SparqlLocatedNode & { kind: 'var'; name: string };
+export type SparqlIri = SparqlLocatedNode & { kind: 'iri'; iri: string };
+export type SparqlBlankNode = SparqlLocatedNode & { kind: 'bnode'; id: string; generated: boolean };
+export type SparqlLiteral = SparqlLocatedNode & {
+  kind: 'literal'; value: string; datatype: string; language: string | null; direction: 'ltr' | 'rtl' | null;
+};
+export type SparqlWildcard = SparqlLocatedNode & { kind: 'wildcard' };
+export interface SparqlTripleTerm<T> extends SparqlLocatedNode {
+  kind: 'tripleTerm'; subject: T; predicate: T; object: T;
+}
+export type SparqlPatternTerm = SparqlVariable | SparqlIri | SparqlBlankNode | SparqlLiteral |
+  SparqlTripleTerm<SparqlPatternTerm>;
+
+export type SparqlPropertyPath = SparqlLocatedNode & (
+  | SparqlIri
+  | { kind: 'sequence' | 'alternative'; left: SparqlPropertyPath; right: SparqlPropertyPath }
+  | { kind: 'inverse' | 'zeroOrMore' | 'oneOrMore' | 'zeroOrOne'; path: SparqlPropertyPath }
+  | { kind: 'negatedSet'; paths: SparqlPropertyPath[] }
+);
+
+export type SparqlAggregate = SparqlLocatedNode & {
+  kind: 'aggregate'; fn: 'count' | 'sum' | 'min' | 'max' | 'avg' | 'groupConcat' | 'sample';
+  distinct: boolean; arg: SparqlExpression | SparqlWildcard; separator?: string | null;
+};
+
+export type SparqlExpression = SparqlLocatedNode & (
+  | SparqlVariable | SparqlIri | SparqlLiteral | SparqlAggregate
+  | { kind: 'boolLit'; value: boolean }
+  | { kind: 'numericLit' | 'decimalLit' | 'doubleLit'; value: string }
+  | { kind: 'arith' | 'compare'; operator: string; left: SparqlExpression; right: SparqlExpression }
+  | { kind: 'and' | 'or' | 'strDt' | 'strLang' | 'strStarts' | 'strEnds' | 'contains' |
+    'strBefore' | 'strAfter' | 'sameTerm'; left: SparqlExpression; right: SparqlExpression }
+  | { kind: 'unaryMinus' | 'unaryPlus' | 'not' | 'isIri' | 'isBlank' | 'isLiteral' | 'isNumeric' |
+    'str' | 'lang' | 'datatype' | 'iriFn' | 'hasLang' | 'hasLangDir' | 'langDir' | 'strLen' |
+    'uCase' | 'lCase' | 'encodeForUri' | 'abs' | 'round' | 'ceil' | 'floor' | 'md5' | 'sha1' |
+    'sha256' | 'sha384' | 'sha512' | 'year' | 'month' | 'day' | 'hours' | 'minutes' | 'seconds' |
+    'timezone' | 'tz' | 'ttSubject' | 'ttPredicate' | 'ttObject' | 'isTriple'; arg: SparqlExpression }
+  | { kind: 'bound'; variable: string }
+  | { kind: 'cond'; condition: SparqlExpression; then: SparqlExpression; else: SparqlExpression }
+  | { kind: 'coalesce' | 'concat'; args: SparqlExpression[] }
+  | { kind: 'inList' | 'notInList'; arg: SparqlExpression; args: SparqlExpression[] }
+  | { kind: 'substr'; arg: SparqlExpression; start: SparqlExpression; length: SparqlExpression | null }
+  | { kind: 'replace'; arg: SparqlExpression; pattern: SparqlExpression; replacement: SparqlExpression;
+    flags: SparqlExpression | null }
+  | { kind: 'regex'; arg: SparqlExpression; pattern: SparqlExpression; flags: SparqlExpression | null }
+  | { kind: 'now' }
+  | { kind: 'strLangDir'; lexical: SparqlExpression; language: SparqlExpression; direction: SparqlExpression }
+  | { kind: 'existsPat' | 'notExistsPat'; pattern: SparqlQueryPattern }
+  | { kind: 'functionCall'; iri: string; args: SparqlExpression[] }
+  | SparqlTripleTerm<SparqlExpression>
+);
+
+/** Terms in VALUES use the SPARQL Results JSON representation. */
+export type SparqlAstValue =
+  | { type: 'uri' | 'bnode'; value: string }
+  | { type: 'literal'; value: string; datatype?: string; 'xml:lang'?: string; 'its:dir'?: 'ltr' | 'rtl' }
+  | { type: 'triple'; value: { subject: SparqlAstValue; predicate: SparqlAstValue; object: SparqlAstValue } };
+
+export interface SparqlAstTriple extends SparqlLocatedNode {
+  kind: 'triple'; subject: SparqlPatternTerm; predicate: SparqlPatternTerm; object: SparqlPatternTerm;
+}
+
+export type SparqlQueryPattern = SparqlLocatedNode & (
+  | { kind: 'bgp'; triples: SparqlAstTriple[] }
+  | { kind: 'join' | 'union' | 'minus' | 'lateral'; left: SparqlQueryPattern; right: SparqlQueryPattern }
+  | { kind: 'leftJoin'; left: SparqlQueryPattern; right: SparqlQueryPattern; condition: SparqlExpression }
+  | { kind: 'filter'; condition: SparqlExpression; pattern: SparqlQueryPattern }
+  | { kind: 'graph'; graph: SparqlPatternTerm; pattern: SparqlQueryPattern }
+  | { kind: 'bind'; expression: SparqlExpression; variable: string; pattern: SparqlQueryPattern }
+  | { kind: 'values'; variables: string[]; rows: (SparqlAstValue | null)[][] }
+  | { kind: 'service'; endpoint: SparqlIri; silent: boolean; pattern: SparqlQueryPattern }
+  | { kind: 'serviceVar'; endpoint: SparqlVariable; silent: boolean; pattern: SparqlQueryPattern }
+  | { kind: 'subSelect'; query: SparqlQueryAst }
+  | { kind: 'include'; name: string; variables: string[] }
+  | { kind: 'propertyPath'; subject: SparqlPatternTerm; path: SparqlPropertyPath; object: SparqlPatternTerm }
+  | { kind: 'empty' }
+);
+
+export interface SparqlQueryAst extends SparqlLocatedNode {
+  kind: 'query';
+  form: SparqlLocatedNode & (
+    | { kind: 'select'; projection: SparqlWildcard |
+      (SparqlVariable | (SparqlLocatedNode & { kind: 'alias'; expression: SparqlExpression; variable: string }))[] }
+    | { kind: 'ask' }
+    | { kind: 'construct'; template: SparqlAstTriple[] }
+    | { kind: 'describe'; targets: SparqlPatternTerm[] }
+  );
+  dataset: (SparqlLocatedNode & { kind: 'default' | 'named'; iri: string })[];
+  pattern: SparqlQueryPattern;
+  groupBy: (SparqlVariable |
+    (SparqlLocatedNode & { kind: 'expression'; expression: SparqlExpression; alias: string | null }))[] | null;
+  having: SparqlExpression[];
+  modifier: {
+    orderBy: (SparqlLocatedNode & { kind: 'asc' | 'desc'; expression: SparqlExpression })[] | null;
+    distinct: boolean; reduced: boolean; offset: string | null; limit: string | null;
+  };
+  postValues: { variable: string; value: SparqlAstValue }[][] | null;
+  base: string | null;
+}
+
+export interface SparqlQueryDocument {
+  schema_version: 1;
+  parser_version: string;
+  ast: SparqlQueryAst | null;
+  namedSubqueries: { name: string; ast: SparqlQueryAst; span: SparqlSourceSpan }[];
+  diagnostics: { code: string; message: string; offset: number;
+    span: SparqlSourceSpan; utf16Span: SparqlSourceSpan }[];
+  prefixes: Record<string, string>;
+  source: {
+    text: string;
+    offsetEncoding: 'unicode-code-points';
+    span: SparqlSourceSpan;
+    tokens: { kind: string; text: string; span: SparqlSourceSpan; iri?: string }[];
+    blankNodes: { kind: 'anonymous' | 'propertyList' | 'labelled'; id: string; span: SparqlSourceSpan }[];
+    anchors: {
+      kind: 'triple' | 'propertyPath' | 'optional' | 'minus' | 'unionBranch' | 'lateral' | 'filter' | 'bind' | 'values';
+      origin: 'exact' | 'derived'; span: SparqlSourceSpan;
+      subject?: SparqlSourceSpan; predicate?: SparqlSourceSpan; object?: SparqlSourceSpan;
+    }[];
+    comments: SparqlSourceComment[];
+    directives: { kind: 'title' | 'defaultView' | 'view'; value: string; span: SparqlSourceSpan }[];
+  };
+}
+
+/** Parse without evaluation. A query syntax error returns ast: null and diagnostic data. */
+export function parseSparqlAst(
+  query: string,
+  options?: { wdqs?: boolean; version?: '1.1' | '1.2'; base?: string }
+): Promise<SparqlQueryDocument>;
 
 /** Rewrite legacy WDQS syntax in a Lean engine with the wikidataRewrite op.
  * AUTO_LANGUAGE defaults to en; the caller may supply an explicit language.
  */
 export function wikidataRewrite(
   query: string,
-  options?: { language?: string }
+  options?: { language?: string; preserveComments?: boolean }
 ): Promise<WikidataRewriteResult>;
 
 // ---------------------------------------------------------------------
@@ -2404,6 +2565,7 @@ declare const _default: {
   ready: typeof ready;
   wikidataRewrite: typeof wikidataRewrite;
   parseSparqlStructure: typeof parseSparqlStructure;
+  parseSparqlAst: typeof parseSparqlAst;
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
   syntaxFor: typeof syntaxFor;

@@ -15,35 +15,61 @@ private def paramIri := "http://www.bigdata.com/rdf#serviceParam"
 
 -- Binding analysis counterpart:
 -- https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/BindingAnalysis.java
--- This conservative subset describes variables guaranteed by incoming patterns.
-private def definitelyBound : QueryPattern → List String
-  | .bgp triples => (QueryPattern.bgp triples).inScopeVars
-  | .propertyPath s path o => (QueryPattern.propertyPath s path o).inScopeVars
-  | .join left right => definitelyBound left ++ definitelyBound right
-  | .union left right => (definitelyBound left).filter (definitelyBound right).contains
-  | .minus left _ | .leftJoin left _ _ | .filter _ left | .bind _ _ left =>
-    definitelyBound left
-  | .values names rows =>
-    if rows.isEmpty then [] else
-      names.zipIdx.filterMap fun (name, index) =>
-        if rows.all (fun row => row[index]?.any Option.isSome) then some name else none
-  | .subSelect (query@(.mk _ _ pattern _ _ _ _ _)) =>
-    (definitelyBound pattern).filter query.projectedVars.contains
-  | .service _ false body => definitelyBound body
-  | .graph name body => match name with
-    | .var v => v :: definitelyBound body
-    | _ => definitelyBound body
-  | _ => []
+-- Joins need a binding from either side. Unions need one from both sides.
+private inductive BindingTest where
+  | visit (pattern : QueryPattern)
+  | orElse (pattern : QueryPattern)
+  | andAlso (pattern : QueryPattern)
+
+private noncomputable def bindingTestCost : BindingTest → Nat
+  | .visit pattern => 3 * sizeOf pattern + 1
+  | .orElse pattern | .andAlso pattern => 3 * sizeOf pattern + 2
+
+private def definitelyBound (name : String) : List BindingTest → Bool → Bool
+  | [], bound => bound
+  | .orElse pattern :: rest, bound =>
+    if bound then definitelyBound name rest true
+    else definitelyBound name (.visit pattern :: rest) false
+  | .andAlso pattern :: rest, bound =>
+    if bound then definitelyBound name (.visit pattern :: rest) false
+    else definitelyBound name rest false
+  | .visit pattern :: rest, _ => match pattern with
+    | .bgp _ | .propertyPath _ _ _ => definitelyBound name rest (pattern.inScopeVars.contains name)
+    | .join left right => definitelyBound name (.visit left :: .orElse right :: rest) false
+    | .union left right => definitelyBound name (.visit left :: .andAlso right :: rest) false
+    | .minus left _ | .leftJoin left _ _ | .filter _ left | .bind _ _ left =>
+      definitelyBound name (.visit left :: rest) false
+    | .values names rows =>
+      let bound := !rows.isEmpty && names.zipIdx.any fun (column, index) =>
+        column == name && rows.all (fun row => row[index]?.any Option.isSome)
+      definitelyBound name rest bound
+    | .subSelect (query@(.mk _ _ body _ _ _ _ _)) =>
+      if query.projectedVars.contains name then definitelyBound name (.visit body :: rest) false
+      else definitelyBound name rest false
+    | .service _ false body => definitelyBound name (.visit body :: rest) false
+    | .graph graph body =>
+      let graphBound := match graph with | .var v => v == name | _ => false
+      if graphBound then definitelyBound name rest true
+      else definitelyBound name (.visit body :: rest) false
+    | _ => definitelyBound name rest false
+termination_by pending _ => (pending.map bindingTestCost).sum
+decreasing_by all_goals (simp_wf <;> simp [bindingTestCost] <;> omega)
 
 -- `collectVisibleVariables` in the pinned label rule excludes sibling
 -- OPTIONAL/UNION branches in the first pass of automatic output assignment.
-private def strictlyVisible : QueryPattern → List String
-  | .join left right => strictlyVisible left ++ strictlyVisible right
-  | .leftJoin left _ _ | .minus left _ | .filter _ left => strictlyVisible left
-  | .bind _ name left => name :: strictlyVisible left
-  | .union _ _ => []
-  | .service endpoint _ body => if endpoint.val == labelEndpoint then [] else body.inScopeVars
-  | pattern => pattern.inScopeVars
+private def strictlyVisible : List QueryPattern → List String → List String
+  | [], found => found.reverse
+  | .join left right :: rest, found => strictlyVisible (left :: right :: rest) found
+  | .leftJoin left _ _ :: rest, found | .minus left _ :: rest, found | .filter _ left :: rest, found =>
+    strictlyVisible (left :: rest) found
+  | .bind _ name left :: rest, found => strictlyVisible (left :: rest) (name :: found)
+  | .union _ _ :: rest, found => strictlyVisible rest found
+  | .service endpoint _ body :: rest, found =>
+    let found := if endpoint.val == labelEndpoint then found else body.inScopeVars.reverseAux found
+    strictlyVisible rest found
+  | pattern :: rest, found => strictlyVisible rest (pattern.inScopeVars.reverseAux found)
+termination_by pending _ => (pending.map (fun p => 3 * sizeOf p + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
 
 private def outerLabel : QueryPattern → Option (QueryPattern × QueryPattern)
   | .filter _ pattern | .bind _ _ pattern => outerLabel pattern
@@ -114,7 +140,7 @@ private def emit (incoming : QueryPattern) (available : List String) (languages 
         .error s!"Label entity ?{name} has no incoming binding"
       else
         let entityVar := "?" ++ name
-        if (definitelyBound incoming).contains name then .ok (entityVar, entityVar, "", value :: used)
+        if definitelyBound name [.visit incoming] false then .ok (entityVar, entityVar, "", value :: used)
         else
           let guarded := allocate (value :: used) (name ++ "__label_subject")
           .ok (entityVar, "?" ++ guarded,
@@ -162,7 +188,7 @@ def rewriteOuterLabel (query : Query) (language : String) (used laterBound : Lis
       match output.entity with
       | .var name => available.contains name
       | _ => false
-    let strict := strictlyVisible query.pattern
+    let strict := strictlyVisible [query.pattern] []
     let (first, second) := supported.partition fun output =>
       match output.entity with | .var name => strict.contains name | _ => true
     pure (first ++ second)

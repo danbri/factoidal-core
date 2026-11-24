@@ -2478,3 +2478,54 @@ L4Factoidal_SPARQL_GpuQuery_pattern  # (b) lowered query-algebra nesting; the on
 # --- 2026-11-24, viewport calculation syntax and fixed first-letter tables ---
 L4Factoidal_Rendering_CSS_usesViewport  # (b) nested calculation syntax; List.any walks siblings without adding one recursive call per sibling
 L4Factoidal_Rendering_Generated_categoryRanges  # (c) first-letter categories are three fixed lists over the checked-in Unicode general category data; no document strings reach the sort
+# --- 2026-11-24, SPARQL query document serializers ---
+L4Factoidal_SPARQL_decodeIncludes  # (b) named-query JSON nesting. One unit of fuel per object or array child from 2 * original query length + 64. List.mapTR loops over siblings
+L4Factoidal_SPARQL_exprJson  # (b) depth of child expressions and EXISTS patterns. Argument lists use the exprListJson accumulator
+L4Factoidal_SPARQL_exprListJson  # (b) depth of an argument or HAVING expression. The emitted sibling loop is a tail call
+L4Factoidal_SPARQL_exprOptionJson  # (b) one optional expression child, followed by its expression depth
+L4Factoidal_SPARQL_formJson  # (b) query form depth through projection expressions and their subqueries. Template and target lists use List.mapTR
+L4Factoidal_SPARQL_groupByJson  # (b) one optional list of GROUP BY expressions. The groupListJson loop runs as a tail call over its siblings
+L4Factoidal_SPARQL_groupJson  # (b) one GROUP BY item, followed by the nesting of its expression
+L4Factoidal_SPARQL_groupListJson  # (b) depth of an individual GROUP BY item's expression. The emitted sibling loop is a tail call
+L4Factoidal_SPARQL_modifierJson  # (b) query modifier depth through ORDER BY expressions. Row counts do not set the depth
+L4Factoidal_SPARQL_orderByJson  # (b) one optional list of order items. The orderListJson loop runs as a tail call over its siblings
+L4Factoidal_SPARQL_orderJson  # (b) one order item, followed by the nesting of its expression
+L4Factoidal_SPARQL_orderListJson  # (b) depth of one ORDER BY expression. The emitted sibling loop is a tail call
+L4Factoidal_SPARQL_pathJson  # (b) nesting of property-path constructors. The pathListJson loop runs as a tail call over negated-set siblings
+L4Factoidal_SPARQL_pathListJson  # (b) depth of one member of a negated path set. The emitted sibling loop is a tail call
+L4Factoidal_SPARQL_patternJson  # (b) query pattern depth, including subqueries. Triples and VALUES rows use List.mapTR (20,000 VALUES rows passed the 512 KiB native stack canary)
+L4Factoidal_SPARQL_patternTermJson  # (b) nesting of a quoted RDF triple term. Scalar term leaves do not recurse
+L4Factoidal_SPARQL_projectionJson  # (b) one SELECT projection item, followed by the nesting of its alias expression
+L4Factoidal_SPARQL_projectionListJson  # (b) depth of an individual SELECT projection expression. The emitted sibling loop is a tail call
+L4Factoidal_SPARQL_queryAstJson  # (b) query AST nesting through pattern, subquery, projection and modifier children. Dataset, VALUES and clause lists use tail loops
+# --- 2026-11-24, source provenance replay ---
+# The query, pattern and term loops consume an entry budget of min 1024 (token count + 32).
+# Replay exhaustion preserves the canonical AST. Property-path detail has its own 64-unit budget.
+L4Factoidal_SPARQL_traceCollection  # (c) at most 1024 units of replay fuel when descending into a collection item. Sibling cells loop by tail call
+L4Factoidal_SPARQL_traceExpr  # (c) at most 1024 units of replay fuel for descent into unary, binary, argument, parenthesised or EXISTS syntax
+L4Factoidal_SPARQL_traceExprArgs  # (c) sibling argument iteration is a tail call. Descent into one argument uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_traceExprFields  # (c) sibling argument fields loop by tail call. One expression descent uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_traceGroup  # (c) each brace-delimited group descent consumes replay fuel, at most 1024
+L4Factoidal_SPARQL_traceGroupBody  # (c) sibling clauses loop by tail call. Descent into one nested group or expression consumes replay fuel, at most 1024
+L4Factoidal_SPARQL_traceGroupBy  # (c) sibling GROUP BY items loop by tail call. Descent into one condition uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_traceGroupParts  # (c) consumes replay fuel at each group entry and nested SELECT descent, at most 1024
+L4Factoidal_SPARQL_traceHaving  # (c) sibling HAVING items loop by tail call. Descent into a condition uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_traceNegatedPaths  # (c) at most 64 units of path fuel across negated-set members and each member's inverse path. Sibling iteration is a tail call
+L4Factoidal_SPARQL_traceObject  # (c) descends into one RDF term with decreased replay fuel, at most 1024
+L4Factoidal_SPARQL_traceObjects  # (c) comma-separated siblings loop by tail call. Descent into one object uses decreased replay fuel, at most 1024
+L4Factoidal_SPARQL_traceOrderBy  # (c) sibling sort keys loop by tail call. Descent into a key expression uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_tracePath  # (c) at most 64 units of path fuel for descent into path operators, parentheses and negated sets
+L4Factoidal_SPARQL_tracePredicates  # (c) semicolon-separated siblings loop by tail call. One predicate's objects consume decreased replay fuel, at most 1024
+L4Factoidal_SPARQL_traceProjection  # (c) sibling SELECT items loop by tail call. Descent into an alias expression uses the remaining replay fuel, at most 1024
+L4Factoidal_SPARQL_traceQuery  # (c) at most 1024 units of replay fuel for descent from a query into its template, WHERE pattern or subquery
+L4Factoidal_SPARQL_traceTerm  # (c) bracket-property and RDF-collection descent uses decreased replay fuel, at most 1024
+L4Factoidal_SPARQL_traceUnion  # (c) each right-associated UNION branch consumes a unit of replay fuel, at most 1024
+# --- 2026-11-24, bounded Wikidata query formatting ---
+# These private renderers are entered under formatParsedRewrite's 8192 UTF-8 byte input guard.
+# The initial budget is 128 and each recursive descent passes less fuel. Exhaustion returns none.
+L4Factoidal_Wikidata_renderQuerySyntax  # (c) query and subquery syntax through a WHERE group, at most 128 units of shared formatter fuel
+L4Factoidal_Wikidata_renderGroupSyntax  # (c) group syntax through a nested SELECT or a group body, at most 128 units of shared formatter fuel
+L4Factoidal_Wikidata_renderElements  # (c) group elements and descent into a nested group or UNION consume shared formatter fuel, at most 128
+L4Factoidal_Wikidata_renderUnion  # (c) UNION branches and their nested groups consume shared formatter fuel, at most 128
+L4Factoidal_Wikidata_renderExpr  # (c) expression child depth within the remaining formatter fuel, at most 128. List.mapM loops over arguments
+L4Factoidal_Wikidata_renderPath  # (c) property-path child depth within the remaining formatter fuel, at most 128. List.mapM loops over set members

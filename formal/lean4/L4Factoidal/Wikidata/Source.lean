@@ -14,18 +14,18 @@ structure LocatedToken where
   start : Nat
   stop : Nat
 
-private def scan (allowPercent : Bool) : Nat → Nat → List Char → List LocatedToken → List LocatedToken
+private def scan (allowPercent v12 : Bool) : Nat → Nat → List Char → List LocatedToken → List LocatedToken
   | 0, _, _, acc => acc.reverse
   | fuel + 1, offset, chars, acc =>
-    let (token, start, stop, rest) := nextToken false offset chars
-    if token != .eof then scan allowPercent fuel stop rest (⟨token, start, stop⟩ :: acc)
+    let (token, start, stop, rest) := nextToken v12 offset chars
+    if token != .eof then scan allowPercent v12 fuel stop rest (⟨token, start, stop⟩ :: acc)
     else if allowPercent && start < stop && chars[start - offset]? == some '%' then
       let (name, stop, tail) := scanWhile (fun c => c.isAlphanum || c == '_') stop rest []
-      scan allowPercent fuel stop tail (⟨.invalid ("%" ++ String.ofList name), start, stop⟩ :: acc)
+      scan allowPercent v12 fuel stop tail (⟨.invalid ("%" ++ String.ofList name), start, stop⟩ :: acc)
     else acc.reverse
 
-def sourceTokens (text : String) (allowPercent := false) : List LocatedToken :=
-  scan allowPercent (text.length + 1) 0 text.toList []
+def sourceTokens (text : String) (allowPercent := false) (v12 := false) : List LocatedToken :=
+  scan allowPercent v12 (text.length + 1) 0 text.toList []
 
 def sourceState (tokens : List LocatedToken) (defaults := defaultPrefixes) :
     Except L4Factoidal.Syntax.ParseError (PState × TStream) :=
@@ -42,15 +42,15 @@ structure Edit where
   stop : Nat
   replacement : String
 
-private def splice (offset : Nat) (rest : List Char) : List Edit → List String
-  | [] => [String.ofList rest]
-  | edit :: edits =>
-    String.ofList (rest.take (edit.start - offset)) :: edit.replacement ::
-      splice edit.stop (rest.drop (edit.stop - offset)) edits
+private def splice : List Edit → Nat → List Char → List String → List String
+  | [], _, rest, pieces => (String.ofList rest :: pieces).reverse
+  | edit :: edits, offset, rest, pieces =>
+    let unchanged := String.ofList (rest.take (edit.start - offset))
+    splice edits edit.stop (rest.drop (edit.stop - offset)) (edit.replacement :: unchanged :: pieces)
 
 /-- The rule planners supply disjoint ranges in source order. -/
 def applyEdits (text : String) (edits : List Edit) : String :=
-  String.join (splice 0 text.toList edits)
+  String.join (splice edits 0 text.toList [])
 
 @[simp] theorem applyEdits_empty (text : String) : applyEdits text [] = text := by
   simp [applyEdits, splice]

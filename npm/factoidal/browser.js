@@ -99,6 +99,7 @@ export const literalFromValue = api.literalFromValue;
 export const ready = api.ready;
 export const wikidataRewrite = api.wikidataRewrite;
 export const parseSparqlStructure = api.parseSparqlStructure;
+export const parseSparqlAst = api.parseSparqlAst;
 export const engineTables = api.engineTables;
 export const sameValue = api.sameValue;
 export const syntaxFor = api.syntaxFor;

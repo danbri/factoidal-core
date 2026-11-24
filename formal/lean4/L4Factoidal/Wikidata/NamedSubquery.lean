@@ -66,24 +66,31 @@ private def closeGroup (depth : Nat) : List LocatedToken → Option (LocatedToke
     | .rbrace => if depth == 0 then some (token, rest) else closeGroup (depth - 1) rest
     | _ => closeGroup depth rest
 
-private def findBlocks (chars : Array Char) : Nat → List LocatedToken → List Block
-  | 0, _ | _, [] => []
-  | fuel + 1, word :: rest =>
+private def findBlocks (chars : Array Char) (qlever : Bool) : Nat → List LocatedToken →
+    List Block → List Block
+  | 0, _, blocks | _, [], blocks => blocks.reverse
+  | fuel + 1, word :: rest, blocks =>
     let found : Option (Block × List LocatedToken) := do
       if word.token != .withKw then none else
-        let openBrace :: body := rest | none
-        if openBrace.token != .lbrace then none else
+        let (name, body, stop, tail) ← if qlever then do
+          let nameToken :: asWord :: openBrace :: body := rest | none
+          guard (asWord.token == .asKw && openBrace.token == .lbrace)
+          let (name, _) ← readName nameToken
+          let (closeBrace, tail) ← closeGroup 0 body
+          let body := slice chars openBrace.start closeBrace.stop
+          some (name, "SELECT * WHERE " ++ body, closeBrace.stop, tail)
+        else do
+          let openBrace :: body := rest | none
+          guard (openBrace.token == .lbrace)
           let (closeBrace, after) ← closeGroup 0 body
-          let asWord :: nameTokens := after | none
-          let nameToken :: tail := nameTokens | none
-          if asWord.token != .asKw then none else
-            let (name, stop) ← readName nameToken
-            let body := (slice chars openBrace.stop closeBrace.start).trimAscii.toString
-            some (⟨name, body, word.start, stop, references body.toList.toArray (sourceTokens body true)⟩,
-              tail)
+          let asWord :: nameToken :: tail := after | none
+          guard (asWord.token == .asKw)
+          let (name, stop) ← readName nameToken
+          some (name, (slice chars openBrace.stop closeBrace.start).trimAscii.toString, stop, tail)
+        some (⟨name, body, word.start, stop, references body.toList.toArray (sourceTokens body true)⟩, tail)
     match found with
-    | some (block, tail) => block :: findBlocks chars fuel tail
-    | none => findBlocks chars fuel rest
+    | some (block, tail) => findBlocks chars qlever fuel tail (block :: blocks)
+    | none => findBlocks chars qlever fuel rest blocks
 
 private def wildcard (text : String) : Bool :=
   match (sourceTokens text).map LocatedToken.token with
@@ -103,9 +110,10 @@ private def orderBlocks (done : List Block) : Nat → List Block → Except Prob
     | none => orderBlocks done 0 remaining
     | some next => orderBlocks (next :: done) fuel (remaining.filter (·.name != next.name))
 
-def plan (text : String) (tokens : List LocatedToken) : Except Problem (Option Plan) := do
+def plan (text : String) (tokens : List LocatedToken) (qlever := false) (inspect := false) :
+    Except Problem (Option Plan) := do
   let chars := text.toList.toArray
-  let blocks := findBlocks chars tokens.length tokens
+  let blocks := findBlocks chars qlever tokens.length tokens []
   let outer := (references chars tokens).filter fun ref =>
     !blocks.any (fun block => block.start ≤ ref.start && ref.start < block.stop)
   if blocks.isEmpty && outer.isEmpty then return none
@@ -120,10 +128,11 @@ def plan (text : String) (tokens : List LocatedToken) : Except Problem (Option P
     if !seen.contains ref.name then
       throw ⟨"blazegraph_error", "named_subquery_undefined_reference",
         s!"INCLUDE %{ref.name} refers to a named subquery this query never defines."⟩
-  for ref in all do
-    if blocks.any (fun block => block.name == ref.name && wildcard block.body) then
-      throw ⟨"skipped_unsupported", "named_subquery_select_star_included",
-        s!"The named subquery %{ref.name} uses SELECT * and cannot be safely referenced by INCLUDE; declare its projected variables explicitly."⟩
+  unless inspect do
+    for ref in all do
+      if blocks.any (fun block => block.name == ref.name && wildcard block.body) then
+        throw ⟨"skipped_unsupported", "named_subquery_select_star_included",
+          s!"The named subquery %{ref.name} uses SELECT * and cannot be safely referenced by INCLUDE; declare its projected variables explicitly."⟩
   let blocks ← orderBlocks [] blocks.length (blocks.mergeSort (fun a b => a.name ≤ b.name))
   return some ⟨blocks, outer⟩
 
@@ -133,12 +142,12 @@ private def variables (names : List String) : String :=
   String.join (names.map fun name => " ?" ++ name)
 
 def substitute (text : String) (refs : List Reference) (blocks : List PreparedBlock)
-    (extra : List Edit := []) : String :=
+    (extra : List Edit := []) (markerPrefix : String := placeholderPrefix) : String :=
   let edits := refs.map fun ref =>
     let vars := ((blocks.find? (·.name == ref.name)).map (·.vars)).getD []
     let columns := variables vars
     let undefs := String.join (vars.map fun _ => " UNDEF")
-    (⟨ref.start, ref.stop, s!"VALUES (?{placeholderPrefix}{ref.name}{columns}) \{ (UNDEF{undefs}) }"⟩ : Edit)
+    (⟨ref.start, ref.stop, s!"VALUES (?{markerPrefix}{ref.name}{columns}) \{ (UNDEF{undefs}) }"⟩ : Edit)
   applyEdits text ((edits ++ extra).mergeSort (fun a b => a.start ≤ b.start))
 
 private def prefixLine (line : String) : Bool :=
@@ -157,33 +166,31 @@ private def possiblePlaceholder : List LocatedToken → Option String
     if placeholderPrefix.isPrefixOf name then some name else none
   | _ => none
 private def restoreEdits (chars : Array Char) (blocks : List PreparedBlock) :
-    List LocatedToken → Except Problem (List Edit)
-  | [] => .ok []
-  | keyword :: tail => do
-    let next := fun (_ : Unit) => restoreEdits chars blocks tail
-    if keyword.token != .values then return ← next ()
-    let some varName := possiblePlaceholder tail | return ← next ()
-    let _ :: body := tail.dropWhile (·.token != .lbrace) | return ← next ()
-    let some (closeBrace, rest) := closeGroup 0 body | return ← next ()
-    let name := (varName.drop placeholderPrefix.length).toString
-    let some block := blocks.find? (·.name == name) |
-      throw ⟨"validation_failed", "named_subquery_unresolved_include_placeholder",
-        s!"Internal placeholder variable ?{varName} could not be resolved."⟩
-    let nextToken := (rest.head?.map (·.start)).getD chars.size
-    let gap := (chars.extract closeBrace.stop nextToken).toList.takeWhile Char.isWhitespace
-    let afterSpace := closeBrace.stop + gap.length
-    let stop := if let some dot := rest.head? then
-      if dot.token == .dot && afterSpace == dot.start then dot.stop else afterSpace
-      else afterSpace
-    let modifiers := if block.modifiers.isEmpty then "" else " " ++ block.modifiers
-    let ending := if chars[stop]? == some '\n' then "" else "\n"
-    let edit : Edit := ⟨keyword.start, stop,
-      s!"\{ SELECT{variables block.vars} WHERE \{ INCLUDE %{name} }{modifiers} }{ending}"⟩
-    let edits ← next ()
-    return edit :: edits
+    List LocatedToken → List Edit → Except Problem (List Edit)
+  | [], edits => .ok edits.reverse
+  | keyword :: tail, edits =>
+    if keyword.token != .values then restoreEdits chars blocks tail edits else do
+      let some varName := possiblePlaceholder tail | restoreEdits chars blocks tail edits
+      let _ :: body := tail.dropWhile (·.token != .lbrace) | restoreEdits chars blocks tail edits
+      let some (closeBrace, rest) := closeGroup 0 body | restoreEdits chars blocks tail edits
+      let name := (varName.drop placeholderPrefix.length).toString
+      let some block := blocks.find? (·.name == name) |
+        throw ⟨"validation_failed", "named_subquery_unresolved_include_placeholder",
+          s!"Internal placeholder variable ?{varName} could not be resolved."⟩
+      let nextToken := (rest.head?.map (·.start)).getD chars.size
+      let gap := (chars.extract closeBrace.stop nextToken).toList.takeWhile Char.isWhitespace
+      let afterSpace := closeBrace.stop + gap.length
+      let stop := if let some dot := rest.head? then
+        if dot.token == .dot && afterSpace == dot.start then dot.stop else afterSpace
+        else afterSpace
+      let modifiers := if block.modifiers.isEmpty then "" else " " ++ block.modifiers
+      let ending := if chars[stop]? == some '\n' then "" else "\n"
+      let edit : Edit := ⟨keyword.start, stop,
+        s!"\{ SELECT{variables block.vars} WHERE \{ INCLUDE %{name} }{modifiers} }{ending}"⟩
+      restoreEdits chars blocks tail (edit :: edits)
 
 private def restore (text : String) (blocks : List PreparedBlock) : Except Problem String :=
-  (restoreEdits text.toList.toArray blocks (sourceTokens text)).map (applyEdits text)
+  (restoreEdits text.toList.toArray blocks (sourceTokens text) []).map (applyEdits text)
 
 def prepareBlock (name : String) (query : Query) (rewritten : String)
     (blocks : List PreparedBlock) : Except Problem PreparedBlock := do

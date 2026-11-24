@@ -89,6 +89,7 @@ def coreOpNames : List String :=
   , "queryRaw"
   , "wikidataRewrite"
   , "parseSparqlStructure"
+  , "parseSparqlAst"
   , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames ++ containerPathOpNames
     ++ literalOpNames
 
@@ -309,8 +310,13 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "rhoDfFragmentCheck"   => some (arity1 op rhoDfFragmentCheck args)
   | "rdfsPlusClosure"      => some (arity1 op rdfsPlusClosure args)
   | "queryRaw"             => some (arity3Now op (fun a b c n => queryRawBy extra a b c n) args)
-  | "wikidataRewrite"      => some (arity2 op Ops.wikidataRewrite args)
-  | "parseSparqlStructure" => some (arity3 op Ops.parseSparqlStructure args)
+  | "wikidataRewrite" => some (match args with
+    | [query, language, comments] => Ops.wikidataRewrite query language (comments == "true")
+    | _ => arity2 op (fun query language => Ops.wikidataRewrite query language) args)
+  | "parseSparqlStructure" => some (match args with
+    | [query, wdqs, version, comments] => Ops.parseSparqlStructure query wdqs version (comments == "true")
+    | _ => arity3 op (fun query wdqs version => Ops.parseSparqlStructure query wdqs version) args)
+  | "parseSparqlAst" => some (arity2 op Ops.parseSparqlAst args)
   | "shaclValidate"        => some (arity2 op shaclValidate args)
   -- The durable update log of a browser host (`Wasm/Ops/DeltaLog.lean`,
   -- https://github.com/danbri/factoidal/issues/728).

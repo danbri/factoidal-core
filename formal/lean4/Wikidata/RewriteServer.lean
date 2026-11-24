@@ -19,7 +19,7 @@ private def protocolError (requestId queryId : Option String) (code message : St
 private def requiredString (request : Json) (field : String) : Option String :=
   ((request.getObjVal? field).bind Json.getStr?).toOption
 
-private def handle (line : String) (language : String) : Json := Id.run do
+private def handle (line : String) (language : String) (preserveComments : Bool) : Json := Id.run do
   let .ok request := Json.parse line |
     return protocolError none none "rewrite_engine_failure" "Unexpected rewrite-engine failure." "engine_error"
   let some requestId := requiredString request "request_id" |
@@ -33,17 +33,18 @@ private def handle (line : String) (language : String) : Json := Id.run do
     return fail "unsupported_protocol_version" "Only protocol version 1 is supported."
   let some query := requiredString request "query" |
     return fail "invalid_request" "Missing or non-string field: query"
-  let result := toJson (L4Factoidal.Wikidata.rewriteQuery query language)
+  let result := toJson (L4Factoidal.Wikidata.rewriteQuery query language preserveComments)
   let result := (result.setObjVal! "contract_version" (toJson (1 : Nat))).setObjVal! "query_id" (toJson queryId)
   return Json.mkObj (envelope (some requestId) (some queryId) "ok" ++
     [("query_sha256", toJson (L4Factoidal.Crypto.sha256Hex query)), ("result", result)])
 
 def main (args : List String) : IO UInt32 := do
-  let some language := (match args with
+  let preserveComments := args.contains "--preserve-comments"
+  let some language := (match args.erase "--preserve-comments" with
     | [] => some ""
     | ["--language", language] => some language
     | _ => none) |
-    IO.eprintln "usage: l4wikidata-rewriter [--language TAG]"
+    IO.eprintln "usage: l4wikidata-rewriter [--language TAG] [--preserve-comments]"
     return 1
   let input ← IO.getStdin
   let output ← IO.getStdout
@@ -51,6 +52,6 @@ def main (args : List String) : IO UInt32 := do
     let line ← input.getLine
     if line.isEmpty then break
     unless line.trimAscii.isEmpty do
-      output.putStrLn (handle line language).compress
+      output.putStrLn (handle line language preserveComments).compress
       output.flush
   return 0

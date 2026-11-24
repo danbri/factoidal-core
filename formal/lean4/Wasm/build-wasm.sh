@@ -368,12 +368,20 @@ LIBC_LIST="$WORK/lib-c.list"; : > "$LIBC_LIST"
 # carries its own `_lean_main` (the runners l4w3c, l4shacl, l4rif, …),
 # and linking two of them is a duplicate-symbol error. The wasm module
 # is the LIBRARY plus Wasm_{Abi,Exports}; executables stay native.
+# Other namespaces also contain native runners (Wikidata/RewriteServer,
+# for example). Detect their generated C entry point instead of assuming
+# every executable lives under Harness. The object purge below also removes
+# cached objects for these excluded units.
 while IFS= read -r f; do
   rel="${f#$LEAN_DIR/.lake/build/ir/}"
   b="$(echo "$rel" | sed 's|/|_|g; s|\.c$||')"
   [ "$b" = "Wasm_Main" ] && continue
   [ "$b" = "Wasm_Cli" ] && continue
   case "$b" in Harness_*) continue;; esac
+  if grep -Eq '^[[:space:]]*int[[:space:]]+main[[:space:]]*\(' "$f"; then
+    echo "  (skipping native executable entry point: $rel)"
+    continue
+  fi
   # Lake never deletes the ir of a module that was deleted or renamed;
   # a stale .c whose .lean source is gone duplicates symbols with the
   # module that replaced it (RIF/Core.c vs RIF/Syntax.c). Compile only

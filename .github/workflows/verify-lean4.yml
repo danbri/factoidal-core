@@ -13,6 +13,7 @@ on:
     paths:
       - 'formal/lean4/**'
       - 'tests/assurance/**'
+      - 'tests/sparql/**'
       - 'tools/check-owl-reader-contracts.py'
       - 'tools/check-atomic-direct-corpus.py'
       - 'tools/check-owl-public-boundary.py'
@@ -140,10 +141,13 @@ jobs:
 
       - name: Build QT4 runner and native dispatch for regressions
         working-directory: formal/lean4
-        run: lake build l4qt4 l4wasm-cli
+        run: lake build l4qt4 l4wasm-cli l4sparql-document WikidataRegression
 
       - name: Checked XML routing on the actual native dispatch
         run: node --test tests/hub/xml-routing-native.test.mjs
+
+      - name: SPARQL query document source ranges and AST parity
+        run: node tests/sparql/query_document_source.mjs --native formal/lean4/.lake/build/bin/l4sparql-document
 
       - name: Valid IETF dates return correct values without panic diagnostics
         run: node --test tests/xpath4/parse-ietf-date-native.test.mjs

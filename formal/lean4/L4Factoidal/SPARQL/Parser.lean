@@ -1796,7 +1796,8 @@ def pSubstr (fuel : Nat) (st : PState) (ts : TStream) : Except ParseError (Expr 
 /-- [127] Aggregate — COUNT / SUM / MIN / MAX / AVG / SAMPLE, with the
 `COUNT(*)` and `COUNT(DISTINCT *)` special case. §18.5.1 forbids an
 aggregate inside an aggregate's argument. The star is encoded as
-`Expr.boolLit true`, which is what `Query.evalAggregate` matches on. -/
+`Expr.boolLit true` for compatibility with the evaluator and store fast
+paths. The actual `true` argument is encoded as a typed RDF literal. -/
 def pAggregate (fuel : Nat) (st : PState) (fn : AggregateFn) (ts : TStream) : Except ParseError (Expr × TStream) :=
   match fuel with
   | 0     => pErr "recursion limit" ts
@@ -1806,12 +1807,17 @@ def pAggregate (fuel : Nat) (st : PState) (fn : AggregateFn) (ts : TStream) : Ex
                        | .distinct => (true, advTok ts1)
                        | _         => (false, ts1)
     match peekTok ts2 with
-    | .star => do
-      let (_, ts3) ← expectTok .rparen (advTok ts2)
-      .ok (.aggregate fn dist (.boolLit true), ts3)
+    | .star => match fn with
+      | .count => do
+        let (_, ts3) ← expectTok .rparen (advTok ts2)
+        .ok (.aggregate fn dist (.boolLit true), ts3)
+      | _ => pErr "only COUNT accepts a wildcard argument" ts2
     | _ => do
       let (e, ts3) ← pExpr f st ts2
       let (_, ts4) ← expectTok .rparen ts3
+      let e := match fn, e with
+        | .count, .boolLit true => .lit (mkTypedLiteral "true" RDF.xsdBoolean)
+        | _, e => e
       if exprHasAggregateFull e then pErr "nested aggregate in aggregate argument" ts3
       else .ok (.aggregate fn dist e, ts4)
 

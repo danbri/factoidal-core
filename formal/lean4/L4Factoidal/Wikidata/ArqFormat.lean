@@ -12,6 +12,7 @@ open L4Factoidal.SPARQL L4Factoidal.RDF
 private structure FormatContext where
   prefixes : List (String × String)
   blanks : Std.HashMap String String
+  syntheticCountSelects : List Nat
 
 private def renderIri (prefixes : FormatContext) (iri : WfIri) : String :=
   (prefixes.prefixes.findSome? fun (name, namespaceIri) =>
@@ -215,40 +216,43 @@ private inductive TripleSpan where
   | basic (triples : Bgp)
   | path (subject : PatternSubject) (path : PropertyPath) (object : PatternTerm)
 
-private def tripleSpans (fuel : Nat) (pattern : QueryPattern) (tail : List TripleSpan) :
-    Option (List TripleSpan) := do
-  let fuel + 1 := fuel | none
-  match pattern with
-  | .bgp triples => match tail with
-    | .basic next :: rest => return .basic (triples ++ next) :: rest
-    | _ => return .basic triples :: tail
-  | .propertyPath subject path object =>
-    return .path subject path object :: tail
-  | .join left right =>
-    tripleSpans fuel left (← tripleSpans fuel right tail)
-  | .empty => pure tail
-  | _ => none
+-- Work from right to left so adjacent basic spans can be prepended in order.
+private def tripleSpans : List (Nat × QueryPattern) → List TripleSpan → Option (List TripleSpan)
+  | [], spans => some spans
+  | (0, _) :: _, _ => none
+  | (f + 1, pattern) :: pending, spans => match pattern with
+    | .bgp triples =>
+      let spans := match spans with
+        | .basic next :: rest => .basic (triples ++ next) :: rest
+        | _ => .basic triples :: spans
+      tripleSpans pending spans
+    | .propertyPath subject path object => tripleSpans pending (.path subject path object :: spans)
+    | .join left right => tripleSpans ((f, right) :: (f, left) :: pending) spans
+    | .empty => tripleSpans pending spans
+    | _ => none
+termination_by pending _ => (pending.map (fun (_, p) => 3 * sizeOf p + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
 
 /-- Render consecutive simple triples as one width-aligned run. A property
 path separates runs even though it is part of the same source triple block. -/
 private def renderTriplesBlock (context : FormatContext) (fuel : Nat)
     (pattern : QueryPattern) : Option (List String) := do
-  let spans ← tripleSpans fuel pattern []
+  let spans ← tripleSpans [(fuel, pattern)] []
   let groups ← spans.mapM fun span => match span with
     | .basic triples => renderTriples context triples
     | .path s p o => do
       return [(← renderSubject context s) ++ " " ++ (← renderPath context fuel false p) ++
         " " ++ (← renderTerm context o)]
-  return addDots groups
+  return addDots groups []
 where
-  addDots : List (List String) → List String
-    | [] => []
-    | [last] => last
-    | block :: tail =>
-      let dotted := match block.reverse with
-        | [] => []
-        | last :: rest => ((last ++ " .") :: rest).reverse
-      dotted ++ addDots tail
+  addDots : List (List String) → List String → List String
+    | [], lines => lines.reverse
+    | [last], lines => (last.reverseAux lines).reverse
+    | block :: tail, lines =>
+      let lines := match block.reverse with
+        | [] => lines
+        | last :: rest => (last ++ " .") :: (rest ++ lines)
+      addDots tail lines
 
 private def renderData (prefixes : FormatContext) (indent : Nat) (pattern : QueryPattern) : Option String := do
   let .values names values := pattern | none
@@ -279,23 +283,24 @@ private def withoutIndent (indent : Nat) (text : String) : String :=
   String.ofList (text.toList.drop indent)
 
 private def selectText (prefixes : FormatContext) (fuel : Nat) (qualification : String)
-    (selection : SelectClause) : Option String := do
+    (selection : SelectClause) (syntheticCount : Bool) : Option String := do
   let items ← match selection with
     | .all => some "*"
     | .vars items => do
       let names ← items.mapM fun item => match item with
         | .var name => some ("?" ++ name)
+        | .expr (.aggregate .count false (.boolLit true)) name =>
+          some ((if syntheticCount then "(count(*)" else "(COUNT(*)") ++ " AS ?" ++ name ++ ")")
         | .expr expr name => do return "(" ++ (← renderExpr prefixes fuel expr) ++ " AS ?" ++ name ++ ")"
       pure (String.intercalate " " names)
   return "SELECT" ++ qualification ++ "  " ++ items
 
-private def orderDirections (state : PState) (fuel : Nat) (tokens : TStream) : List Bool :=
-  match fuel with
-  | 0 => []
-  | f + 1 =>
+private def orderDirections (state : PState) : Nat → TStream → List Bool → List Bool
+  | 0, _, flags => flags.reverse
+  | f + 1, tokens, flags =>
     match pOrderCondition f state tokens with
-    | .error _ => []
-    | .ok (_, rest) => (peekTok tokens == .asc) :: orderDirections state f rest
+    | .error _ => flags.reverse
+    | .ok (_, rest) => orderDirections state f rest ((peekTok tokens == .asc) :: flags)
 
 private def renderModifiers (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
     (ts : TStream) : Option (List String × TStream) := do
@@ -311,7 +316,7 @@ private def renderModifiers (prefixes : FormatContext) (state : PState) (fuel in
     | none => some []
     | some conditions => do
       let order := ts.dropWhile (fun token => token.tok != .order)
-      let flags := orderDirections state fuel (advTok (advTok order))
+      let flags := orderDirections state fuel (advTok (advTok order)) []
       guard (flags.length == conditions.length)
       (conditions.zip flags).mapM fun (condition, asc) => match condition with
         | .asc expr => do
@@ -345,7 +350,8 @@ private def renderQuerySyntax (prefixes : FormatContext) (state : PState) (fuel 
         | .reduced => (" REDUCED", advTok rest)
         | _ => ("", rest)
       let (selection, rest) ← (pSelectVars fuel state rest).toOption
-      pure (← selectText prefixes fuel qualification selection, rest)
+      pure (← selectText prefixes fuel qualification selection
+        (prefixes.syntheticCountSelects.contains (peekPos ts)), rest)
     | _ => none
   let rest := if peekTok rest == .whereKw then advTok rest else rest
   let (body, rest) ← renderGroupSyntax prefixes state fuel (indent + 2) rest
@@ -366,12 +372,13 @@ private def renderGroupSyntax (prefixes : FormatContext) (state : PState) (fuel 
     return (groupText indent lines, rest)
 
 private def renderUnion (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
-    (ts : TStream) : Option (String × TStream) := do
+    (ts : TStream) (groups : List String) : Option (String × TStream) := do
   let fuel + 1 := fuel | none
   let (group, rest) ← renderGroupSyntax prefixes state fuel (indent + 2) ts
-  if peekTok rest != .union then return (group, rest)
-  let (more, rest) ← renderUnion prefixes state fuel indent (advTok rest)
-  return (group ++ "\n" ++ spaces indent ++ "UNION\n" ++ more, rest)
+  let groups := group :: groups
+  if peekTok rest != .union then
+    return (String.intercalate ("\n" ++ spaces indent ++ "UNION\n") groups.reverse, rest)
+  renderUnion prefixes state fuel indent (advTok rest) groups
 
 private def renderElements (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
     (ts : TStream) (acc : List String) : Option (List String × TStream) := do
@@ -386,7 +393,7 @@ private def renderElements (prefixes : FormatContext) (state : PState) (fuel ind
     | .lbrace => do
       let (group, tail) ← renderGroupSyntax prefixes state fuel indent ts
       if peekTok tail == .union then
-        let (union, tail) ← renderUnion prefixes state fuel indent ts
+        let (union, tail) ← renderUnion prefixes state fuel indent ts []
         pure ([withoutIndent indent union], tail)
       else pure ([withoutIndent indent group], tail)
     | .optional | .minusKw => do
@@ -444,7 +451,7 @@ private def formatPrefix (name iri : String) : String :=
 
 /-- Reproduce the pinned ARQ layout for supported syntax. The caller validates
 both the input and the result. An unported case retains the source layout. -/
-def formatParsedRewrite (text : String) : Option String := do
+def formatParsedRewrite (text : String) (syntheticCountOrdinals : List Nat := []) : Option String := do
   guard (text.utf8ByteSize <= 8192)
   let tokens := sourceTokens text
   let (state, ts) ← (sourceState tokens []).toOption
@@ -452,7 +459,12 @@ def formatParsedRewrite (text : String) : Option String := do
   let defaults := defaultPrefixes.filter fun (name, _) =>
     ["rdfs", "schema", "skos"].contains name && (lookupPrefix name state.prefixes).isNone
   let prefixes := state.prefixes ++ defaults
-  let (body, rest) ← renderQuerySyntax ⟨prefixes, collectBlankNames ts {}⟩ state 128 0 ts
+  -- ARQ's generated AggCount renders as lowercase count(*). Authored
+  -- projections retain the normal uppercase aggregate formatting.
+  let syntheticCounts := if syntheticCountOrdinals.isEmpty then [] else
+    ((ts.filter (·.tok == .select)).zipIdx).filterMap fun (token, index) =>
+      if syntheticCountOrdinals.contains index then some token.pos else none
+  let (body, rest) ← renderQuerySyntax ⟨prefixes, collectBlankNames ts {}, syntheticCounts⟩ state 128 0 ts
   guard (tokensOnlyEof rest)
   let used := (sourceTokens body).filterMap fun token => match token.token with
     | .pname name => some (splitPname name).1
