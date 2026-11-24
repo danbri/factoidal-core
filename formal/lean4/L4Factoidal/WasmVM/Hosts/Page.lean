@@ -1397,6 +1397,15 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           else if name == "class" then (h.dom.dom.get (a 0)).parent.map fun p => (p, true)
           else none
         | .error _ => none
+      -- a child added, removed or replaced, or the text of an element set: the selectors that
+      -- can see it (`:empty`, `:nth-child`, sibling combinators, the element's own later
+      -- siblings) are of its parent `a 0` and of that parent's siblings, so the subtree under
+      -- the parent's parent is styled again, as for a `class` write (with `:has()` in the
+      -- rules, or a large subtree, the whole document is; `Host.measureNow`). Before
+      -- 2026-11-24 such a write made the next read style the whole document (issue 871).
+      else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" || nm == "replace_child" ||
+          nm == "text_content_set" then
+        (h.dom.dom.get (a 0)).parent.map fun p => (p, true)
       else none
     let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
     let reads := if readOnlyImports.contains nm then h.reads
