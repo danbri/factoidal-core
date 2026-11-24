@@ -1,0 +1,10 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-transaction-list"
+root = "EVMCleanroom.TransactionListCLI"

@@ -1,4 +1,4 @@
-name: Independent Lean Cancun blob call
+name: Independent Lean Cancun calls and ordered transaction lists
 on:
   pull_request:
     paths:
@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Build the root proofs, guards and both native transaction entries
+      - name: Build root proofs, guards and all three native transaction entries
         working-directory: formal/lean4
         env:
           LEAN_NUM_THREADS: "1"
@@ -36,7 +36,33 @@ jobs:
           lake -d evm-cleanroom clean
           lake -d evm-cleanroom build EVMCleanroom evm-call-transaction 2>&1 | tee /tmp/blob-call-root-build.txt
           lake -d evm-cleanroom -f lakefile-blob-call.toml build evm-blob-call 2>&1 | tee /tmp/blob-call-build.txt
-          sha256sum evm-cleanroom/.lake/build/bin/evm-blob-call evm-cleanroom/.lake/build/bin/evm-call-transaction | tee /tmp/blob-call-binaries.txt
+          lake -d evm-cleanroom -f lakefile-transaction-list.toml build evm-transaction-list 2>&1 | tee /tmp/transaction-list-build.txt
+          sha256sum evm-cleanroom/.lake/build/bin/evm-blob-call evm-cleanroom/.lake/build/bin/evm-call-transaction evm-cleanroom/.lake/build/bin/evm-transaction-list | tee /tmp/blob-call-binaries.txt
+      - name: Check pre-parser JSON resource admission in all three transaction commands
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/check-transaction-json-guard.py \
+            | tee /tmp/transaction-json-guard-results.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          assert x["kind"] == "transaction-json-preparse-resource-guards", x
+          assert x["cases"] == x["matched"] == x["guardedInvocations"] == len(x["rows"]) == 90, x
+          assert x["failed"] == 0 and not x["failures"] and x["lexicalGuardRefusals"] == 42, x
+          assert x["perExecutable"] == dict.fromkeys(["evm-call-transaction", "evm-blob-call", "evm-transaction-list"], 30), x
+          assert x["baselineParityCases"] == x["baselineInvocations"] == 0 and not x["baselineParity"], x
+          assert x["limits"] == {"depth": 64, "numberTokenBytes": 96, "exponentMagnitude": 78,
+              "virtualMemoryBytes": 8589934592, "stackBytes": 67108864, "timeoutSeconds": 30}, x
+          assert len({row["id"] for row in x["rows"]}) == 90 and all(row["matched"] for row in x["rows"]), x
+          assert sum(row["lexicalGuardRefusal"] for row in x["rows"]) == 42, x
+          assert set(x["nativeSha256"]) == set(x["perExecutable"]) and all(len(value) == 64 for value in x["nativeSha256"].values()), x'
+      - name: Check the bounded ordered-list JSON transport
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/check-transaction-list-transport.py .lake/build/bin/evm-transaction-list \
+            | tee /tmp/transaction-list-transport.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["cases"]==x["matched"]==len(x["rows"])==22 and not x["failures"] and all(row["matched"] for row in x["rows"]),x'
       - name: Audit actual theorem axioms, negative controls and exact source imports
         working-directory: formal/lean4/evm-cleanroom
         env:
@@ -51,6 +77,20 @@ jobs:
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==8 and x["wrappedPositiveAccepted"],x'
           python3 scripts/check-blobhash-axioms.py --require-head --out /tmp/blob-call-claims.json --transcripts-dir /tmp/blob-call-axioms \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["theorems"]==30 and x["sourceFiles"]==7 and x["requireHead"],x'
+      - name: Audit ordered-list and JSON-admission proofs with their executable sources
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_NUM_THREADS: "1"
+          LEAN_STACK_SIZE_KB: "65536"
+          MIMALLOC_ARENA_RESERVE: "67108864"
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          python3 scripts/check-transaction-list-axioms.py --selftest \
+            | tee /tmp/transaction-list-axiom-controls.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==9 and x["wrappedPositiveAccepted"] and x["sourceDriftRejected"],x'
+          python3 scripts/check-transaction-list-axioms.py --require-head --out /tmp/transaction-list-claims.json --transcripts-dir /tmp/transaction-list-axioms \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["theorems"]==46 and x["sourceFiles"]==2 and x["requireHead"],x'
       - name: Install the existing pinned reference clients
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -77,6 +117,7 @@ jobs:
           printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
           tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
           export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          printf 'EVM_GETH_EXE=%s\n' "$EVM_GETH_EXE" >> "$GITHUB_ENV"
           printf 'd8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da  %s\n' "$EVM_GETH_EXE" | sha256sum --check
           node scripts/differential/blobhash-transactions.mjs .lake/build/bin/evm-blob-call .lake/build/bin/evm-call-transaction \
             | tee /tmp/blobhash-transactions.json | python3 -c '
@@ -98,6 +139,55 @@ jobs:
               "changedSignedAccessList", "changedReceiptStatus",
               "changedStateBalance", "changedLogData", "changedStorageWord", "omittedRow"], True), x["negativeControls"]
           assert len(x["nativeSha256"]) == len(x["ordinaryNativeSha256"]) == 64, x'
+      - name: Compare whole ordered transaction lists against both existing clients
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          node scripts/differential/transaction-list.mjs .lake/build/bin/evm-transaction-list \
+            | tee /tmp/transaction-list-results.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          assert x["kind"] == "ordered-cancun-transaction-lists-vs-ethereumjs-and-geth" and x["mode"] == "full", x
+          assert x["cases"] == x["passed"] == x["clientAgreement"] == len(x["rows"]) == 36, x
+          assert x["executionMatches"] == 30 and x["admissionRefusals"] == x["rejectedAdmissions"] == 5, x
+          assert x["indeterminateAdmissions"] == 0 and x["localBoundaries"] == 1, x
+          assert x["nativeInvocations"] == 52 and x["primaryNativeInvocations"] == 36 and x["controlNativeInvocations"] == 16, x
+          assert x["acceptedListTransactions"] == 327 and x["allListTransactions"] == 344, x
+          assert x["successfulReceipts"] == 321 and x["intentionalFailedReceipts"] == 6, x
+          assert x["uniqueSignedByteStrings"] == 308 and x["controlsRun"], x
+          assert x["localResourceLists"] == 2 and x["localResourceTransactions"] == 512, x
+          assert x["failed"] == x["kzgOperations"] == 0 and not x["failures"], x["failures"]
+          assert len({row["id"] for row in x["rows"]}) == 36 and all(row["nativeInvocations"] == 1 for row in x["rows"]), x
+          execution = [row for row in x["rows"] if row["category"] == "execution"]
+          assert len(execution) == 30 and all(row["ethereumJSMatched"] and row["gethMatched"] and row["systemStateChecked"] for row in execution), x
+          assert x["negativeControls"] == dict.fromkeys([
+              "changedGas", "changedSignedChainId", "changedSignedAccessList", "changedOutputByte",
+              "changedBlobBurn", "changedBlobGas", "changedSignedHashByte", "changedSignedHashOrder",
+              "changedReceiptStatus", "changedStateBalance", "changedLogData", "changedStorageWord",
+              "omittedRow", "changedFinalGas", "changedFinalBlobGas", "changedCumulativeGas",
+              "omittedReceipt", "reorderedTransactions", "reorderedReceipts", "changedSignedNonce",
+              "omittedSignedTransaction", "changedSignedBlobFeeCap",
+              "shiftedReferenceRejectionIndexes", "bothReferencesAcceptInvalidList",
+              "bothReferencesRejectLocalBoundary"], True), x["negativeControls"]
+          controls = {row["id"]: row for row in x["localControls"]}
+          assert len(x["localControls"]) == len(controls) == 16 and all(row["matched"] for row in controls.values()), x
+          assert set(controls) == {
+              "declared-final-gas-plus-one", "declared-final-gas-minus-one",
+              "declared-final-blob-plus-one", "declared-final-blob-minus-one",
+              "malformed-middle-entry", "unsupported-middle-kind", "ordinary-middle-blob-fields",
+              "blob-middle-missing-fields", "middle-fuel-exhaustion", "middle-missing-state-witness",
+              "aggregate-fuel-one-over", "native-reordered-envelopes", "empty-before-cancun",
+              "empty-at-prague", "aggregate-observation-exact-cap", "aggregate-observation-one-over"}, controls
+          for name, size in (("aggregate-observation-exact-cap", 16777216), ("aggregate-observation-one-over", 16777217)):
+              row = controls[name]
+              assert row["outputBytes"] == size and row["referenceClientsAgree"] and row["ethereumJSExecuted"] and row["gethExecuted"], row
+          exact = controls["aggregate-observation-exact-cap"]
+          assert exact["status"] == "executed" and exact["nativeComparison"] == "exact-execution" and exact["ethereumJSMatched"] and exact["gethMatched"], exact
+          excess = controls["aggregate-observation-one-over"]
+          assert excess["status"] == "indeterminate" and excess["index"] == 255 and excess["nativeComparison"] == "local-resource-refusal", excess
+          assert "ethereumJSMatched" not in excess and "gethMatched" not in excess, excess
+          assert len(x["nativeSha256"]) == 64, x'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -105,9 +195,16 @@ jobs:
           path: |
             /tmp/blob-call-root-build.txt
             /tmp/blob-call-build.txt
+            /tmp/transaction-list-build.txt
+            /tmp/transaction-json-guard-results.json
+            /tmp/transaction-list-transport.json
             /tmp/blob-call-binaries.txt
             /tmp/blob-call-axioms/
             /tmp/blob-call-axiom-controls.json
             /tmp/blob-call-claims.json
+            /tmp/transaction-list-axioms/
+            /tmp/transaction-list-axiom-controls.json
+            /tmp/transaction-list-claims.json
+            /tmp/transaction-list-results.json
             /tmp/blob-call-results.json
             /tmp/blobhash-transactions.json

@@ -95,6 +95,56 @@ witnesses, and does not verify KZG sidecars or complete block inventories.
 [Signed EthereumJS and Geth comparisons](scripts/differential/blobhash-transactions.mjs) ·
 [Integration evidence](../../../docs/20261124-evm-blobhash-integration.md)
 
+## Ordered Cancun transaction lists
+
+`evm-transaction-list` executes an entire decoded list from one initial
+witness inventory and a common checked header pair. Lean derives the state
+and cumulative execution/blob gas for every successor, resets transaction
+warmth/original storage/refunds/logs/hash context, and requires exact final
+header gas totals. A failed receipt continues with its settled effects; a
+rejected or indeterminate entry stops with its index and no accepted partial
+result. The local bounds are 256 entries, 1,000,000 reserved instruction steps
+and 16 MiB of retained logical output/log bytes.
+
+From `formal/lean4/`:
+
+```sh
+lake -d evm-cleanroom -f lakefile-transaction-list.toml build evm-transaction-list
+evm-cleanroom/.lake/build/bin/evm-transaction-list \
+  --dangerously-enable-unverified-keccak --transaction-list REQUEST.json
+```
+
+The request contains `schemaVersion: 1`, `parentHeader`, `childHeader`,
+`accounts` and `transactions`. Each entry contains `fuel`, the existing
+decoded `transaction` envelope, and for type 3 the paired
+`blobVersionedHashes` and `maxFeePerBlobGas` fields. It accepts no intermediate
+witnesses or prefix counters. The transport fixture linked below contains a
+synthetic request in its `input` field beside the expected response. Extract
+that field before passing it to the executable; from `formal/lean4/`:
+
+```sh
+python3 -c 'import json; print(json.dumps(json.load(open("evm-cleanroom/scripts/fixtures/transaction-list-transport.json"))["input"]))' > REQUEST.json
+```
+
+This covers the existing type-0/1/2/3 call slice during mainnet Cancun.
+Signature and witness authentication, trie commitments, beacon-root system
+processing, withdrawals and complete block validation remain unfinished.
+The resource caps are local refusal limits, not consensus maxima or total
+heap bounds.
+
+All three transaction JSON CLIs now check structure before standard parsing:
+at most 64 nested containers, 96 bytes per numeric token, and exponent
+magnitude 78. Quoted/escaped string content does not count towards those
+lexical limits. Excess returns a defined `inputError` before recursive or
+numeric JSON parsing; this includes the retained deep-input crash regression.
+
+[Runner](EVMCleanroom/TransactionList.lean) ·
+[Actual execution proofs](EVMCleanroom/TransactionListProofs.lean) ·
+[Executable guards](EVMCleanroom/TransactionListTests.lean) ·
+[Transport fixture](scripts/fixtures/transaction-list-transport.json) ·
+[Signed list comparison](scripts/differential/transaction-list.mjs) ·
+[Evidence and limits](../../../docs/20261124-evm-transaction-list.md)
+
 ## Calldata and bounded CALL execution
 
 `evm-subset --frame-call HEX CALLDATA_HEX GAS FUEL` executes one frame with ABI

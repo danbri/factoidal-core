@@ -362,7 +362,10 @@ def entryFrame (p : Request) (entered : TxWorld) (budget : Budget) : State :=
   { frameInput entered p.tx.to budget.frameGas false p.fork.profile p.tx.sender p.tx.sender with
     callData := ByteView.ofArray p.tx.data, callValue := p.tx.value }
 
-private def runAdmitted (p : Request) (w : TxWorld) (budget : Budget) : Outcome :=
+/-- Lower-level execution after admission. The public transaction entries
+    construct the world and budget only after their checks; this helper does
+    not itself authenticate or admit caller-supplied values. -/
+def runAdmitted (p : Request) (w : TxWorld) (budget : Budget) : Outcome :=
   let escrow := debitSender w p.tx.sender budget
   match pay escrow p.tx.sender p.tx.to p.tx.value with
   | .error _ => .indeterminate (.unsupported "value-transfer-unavailable")

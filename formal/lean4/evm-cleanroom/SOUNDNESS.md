@@ -247,6 +247,48 @@ source pins and falsification controls. Neither establishes a full Ethereum
 refinement proof. Reproduction, exact counts and remaining work are recorded in
 `docs/20261124-evm-blobhash-integration.md` at the repository root.
 
+## Ordered Cancun transaction-list boundary
+
+`TransactionList.run` accepts one initial witness inventory, one checked
+parent/child header pair and an ordered decoded list. Every successor witness
+comes from the actual settled world, with the same address/key coverage.
+Transaction-local original storage, warmth, refunds, logs and hash context are
+created afresh by the existing transaction runner. Failed receipts retain
+their settled gas/nonce/blob effects; a rejection or indeterminate result
+returns no accepted partial state or receipts.
+
+`run_accepted` connects the public result to successive actual `runEntry` and
+`advance` results, the final witnesses, one ordered receipt per input, exact
+receipt gas/blob sums and cumulative gas, and exact declared header totals.
+Supporting statements follow cumulative gas through the actual ordinary/blob
+admission, execution and settlement path. Other statements preserve covered
+storage values and coverage, and establish local input/fuel/observation
+bounds and indexed refusals. These are implementation properties, not a
+separate Ethereum semantic refinement.
+
+The signed list matrix independently executes identical bytes through
+EthereumJS block execution and a Geth transaction batch. Native JSON still
+contains decoded envelopes and supplied initial witnesses. Signature recovery,
+receipt/trie codecs, compiler/runtime and experimental Keccak remain trusted.
+The native path does not yet validate trie commitments, process withdrawals
+or beacon-root system code, authenticate the complete block inventory or
+perform chain selection.
+
+The 256-entry, aggregate fuel and logical observation limits are local
+refusal bounds. Byte views can retain immutable backing functions beyond
+their logical size, and JSON output size is checked after serialisation.
+No total heap, wall-clock or general runtime safety bound follows. Exact
+counts, actual axiom sets, two-client controls and evidence are recorded in
+`docs/20261124-evm-transaction-list.md` at the repository root.
+
+The shared JSON codec also runs `TransactionTransport.parseWith` before the
+standard parser. Its finite byte scan bounds depth, numeric-token length and
+exponent magnitude while handling quoted/escaped content separately. This
+closes a reproduced stack overflow below the file-size cap. Scanner-step,
+fold and parser-continuation statements concern this lexical admission check;
+the standard JSON parser, UTF-8/file transport and runtime remain trusted.
+This does not establish full JSON grammar correctness or a general heap bound.
+
 ## Highest-value next proof obligations
 
 1. Establish a *separate*, independently authored EELS-compatible state-transition

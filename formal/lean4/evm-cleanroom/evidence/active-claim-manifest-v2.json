@@ -20,7 +20,7 @@
     "EVMCleanroom/EELSBridge.lean": "56913328b037db8e48d43b1e47719922b795868d",
     "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
     "EVMCleanroom/CLI.lean": "a29b476c20a44592ff52ddf7cd4aec3a8e7da481",
-    "EVMCleanroom.lean": "b828e1d8c6b747bc23d3df8c5327f57bf9295f35",
+    "EVMCleanroom.lean": "4b006a6bf0764471af5a86895a2cc5fbb3b49611",
     "scripts/eels/run-lean-contract-state-tests.mjs": "5ad7f6042bedf508f3847ac4d999caf2134e1394",
     "scripts/eels/contract-selftest.mjs": "c77302841e95f37c60d84e98aa839eb7749263ed",
     "scripts/differential/call-slice.mjs": "6cb157bf79048031edc58c4a9b96d83454abacd9",
@@ -93,21 +93,21 @@
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json": "f65142e9ea2680bcae1f37a08474b0220b8e671f",
     "scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json": "63e3d0056f977342910b11b5977b0ba8081a6825",
     "scripts/rpc/evidence/ethereum-sepolia-12191766-swaprouter02-factory.json": "a3ea5a1a4a2c118a32e92c9aeee7c05c4f2a9de2",
-    "EVMCleanroom/CallTransaction.lean": "c64625a6d8bc8acda7879fca7fd6da98cb57a384",
+    "EVMCleanroom/CallTransaction.lean": "9cd1ae422b84d8d4af04e3164ad4f5f84e0fe2b7",
     "EVMCleanroom/CallTransactionProofs.lean": "3c8dbf6a1e9f494e75db35e56fa915d1d2b079ca",
     "EVMCleanroom/HashLogProofs.lean": "71107d9dcdae0cd7fa5246607dee95ddff1ff37c",
     "EVMCleanroom/HashLogTests.lean": "bb5929112dfebaa2e70ca2c29fbd47eea360d97e",
     "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
-    "README.md": "bb264957cc9eaff64c520e4f35ccac74e818a507",
+    "README.md": "78b3931afefc77f00cb53b8da9d6838cb77cb942",
     "evidence/historical-1cat-shanghai-19100013.json": "2aea250f921b10e9ad22abd8fc68314d1ac610f0",
     "scripts/differential/hash-log.mjs": "91703959a8c3c60b9f61d1bda54d69eeb59e87a8",
     "scripts/eels/call-transaction-differential.mjs": "e32c075294cee7f891033ffafbcd51f803722cac",
     "scripts/eels/replay-authenticated-contract.mjs": "4b0f7257abbb96a2fbee8003c42aa1f9ba9d33f3",
-    "SOUNDNESS.md": "b028992ee4d0a66113dae546d8236932fa60d38c",
+    "SOUNDNESS.md": "6e751b3413efc1e655c4f81a63b392273e5c2482",
     "ROADMAP.md": "bcf5b808df8f645cdb7deefb13459ca9d078001f",
     "WORLD.md": "6894676748f7cc2c984c0a456c7ee80624214ce4",
     "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
-    "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
+    "EVMCleanroom/CLITransaction.lean": "ced4997fca759c16bb8a48616a8c25650ce4c228",
     "scripts/eels/call-transaction-cli-routing.mjs": "15d66bda0da9c3475cba63b91f30d44bcad2b463",
     "EVMCleanroom/CallFamilyTests.lean": "7d0f0cf068e7adbcf20be41e77000ef32519c9be",
     "scripts/differential/call-family.mjs": "c7a8d2851c484c6d6820a54e3c6cfee9bc2dc920",
@@ -121,7 +121,7 @@
     "scripts/differential/identity-transaction.mjs": "8fd93342b5431e5e24c54e2fc5442bdf00fd1788",
     "lake-manifest.json": "9c79a0f8a1a5e644a3ecd9acda133dade7416a71",
     "EVMCleanroom/BlobCall.lean": "97f192d8d0465409ec91fda5fdaa8296578b73f5",
-    "EVMCleanroom/BlobCallCLI.lean": "46d9f046773bbb37760a78ff2ca17b4d4980ccb5",
+    "EVMCleanroom/BlobCallCLI.lean": "8801705739269cf700dc4323adc740466da973c0",
     "EVMCleanroom/BlobCallProofs.lean": "7083701bb6e737721f1d9c4d7141186f22b59c3e",
     "EVMCleanroom/BlobHashProofs.lean": "b7890b0496daec19a067e173034b4a530a72b8de",
     "EVMCleanroom/BlobHashTests.lean": "b2ac2162373af3ec1fdeb4ad537685eca5f41a86",
@@ -133,7 +133,27 @@
     "scripts/differential/blob-call.mjs": "c327d2c0e9604600cdd963eebdcc48fd706f1f3d",
     "scripts/differential/package.json": "2b16a6de6cb14101f65e2f379a7ede78399d6000",
     "scripts/eels/package.json": "77eb29940be5001f459b9a54aee329b60213cf17",
-    "scripts/differential/blobhash-transactions.mjs": "db671648c3f4de03358d476095d15bafd5d297cb"
+    "scripts/differential/blobhash-transactions.mjs": "db671648c3f4de03358d476095d15bafd5d297cb",
+    "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
+    "EVMCleanroom/TransactionCodec.lean": "cd1b25c2ac99ab60d78cd5c6d988d5de81d5cc3e",
+    "EVMCleanroom/TransactionList.lean": "f5a78cbea6216c2a543bf7bebfd5fa30faa9e336",
+    "EVMCleanroom/TransactionListCLI.lean": "026730665f08f42765aaa95cdd161487b8e31089",
+    "EVMCleanroom/TransactionListProofs.lean": "3e8e228d335849cae72acf66f5365f6aa116f6fa",
+    "EVMCleanroom/TransactionListTests.lean": "84e5661d8b6b3b9b32d96c1601e4566390f0ee0f",
+    "evidence/active-london-claims.json": "e4cc502481594eca10853e5c87bf43a20062e77d",
+    "lakefile-london.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1",
+    "lakefile-transaction-list.toml": "06c7546da8fb974004f5ddfe9172f5b21fe1d0ac",
+    "scripts/check-london-claims.py": "2d94b953a5def39e2e0084591366911d9643d9e8",
+    "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2",
+    "scripts/check-transaction-list-axioms.py": "9bdb4d69aaa25cc53c8698e6b512c96432e581c7",
+    "scripts/check-transaction-list-transport.py": "caa65fcb6bfa5581dc01dd1aee514cfa2fcedf24",
+    "scripts/differential/transaction-cli-timing.mjs": "0c03e21cdf9709edb77360aa770ebba30761fb67",
+    "scripts/differential/transaction-list.mjs": "16da3e022e0d14af586fbd56110f26fa1e1b9d32",
+    "scripts/fixtures/transaction-list-transport.json": "6d97439f9614a435eb01b60bcdd88a62faf8386d",
+    "EVMCleanroom/TransactionTransport.lean": "6b287a981b30fa92275ca9876d903bf342f3a92a",
+    "EVMCleanroom/TransactionTransportProofs.lean": "b3696ee6afb178673c5ddd88428caacb908577e1",
+    "EVMCleanroom/TransactionTransportTests.lean": "226e739168fc17df4991b11da303d0cf3f34d015",
+    "scripts/check-transaction-json-guard.py": "8dfbd45fbe08337cc908360ae5dfc27c69b51b5a"
   },
   "theorem_inventory": [
     {
@@ -2573,6 +2593,492 @@
       ],
       "scope": "Successful actual header/blob admission plus actual successful value transfer yield exactly the original ordered hash words in the executing frame and establish its six-word bound; external signatures, witnesses and KZG remain unverified.",
       "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in blobhash-adapter-build-2.log; defining source Git blob 7083701bb6e737721f1d9c4d7141186f22b59c3e. Dedicated and complete active compiler-output gates recheck these exact claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.witnessWorld_fresh",
+      "source_symbol": "witnessWorld_fresh",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable transaction boundary. Says: constructing the next transaction world snapshots its current account storage as original storage and clears the refund, log journal, blob hashes and effective execution price from any earlier transaction. Does not say: that the supplied witnesses are authenticated or complete.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.witnessWorld_fresh_warmth",
+      "source_symbol": "witnessWorld_fresh_warmth",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable transaction boundary. Says: initial warmth is determined only by the new transaction's sender, recipient, beneficiary, precompile range and access list; slot warmth is precisely the new access list, with no earlier world involved. Does not say: that the externally supplied access list is valid.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.finish_cumulativeGasUsed",
+      "source_symbol": "finish_cumulativeGasUsed",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable settlement accounting. Says: actual successful fee settlement adds precisely this receipt's gas charge to the supplied prefix counter. Does not say: that the prefix represents an authenticated block.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.settleFrame_cumulativeGasUsed",
+      "source_symbol": "settleFrame_cumulativeGasUsed",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable settlement composition. Says: stopped, returned, reverted and exceptional frames all retain the exact prefix-plus-receipt gas accounting of the real settlement function. Does not say: that an indeterminate frame produces a receipt.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.runAdmitted_cumulativeGasUsed",
+      "source_symbol": "runAdmitted_cumulativeGasUsed",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable transaction composition. Says: the real admitted transaction path preserves exact cumulative gas accounting through escrow, value transfer, execution and settlement. Does not say: that this lower-level function admits the envelope itself.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.runWithBlobHashes_cumulativeGasUsed",
+      "source_symbol": "runWithBlobHashes_cumulativeGasUsed",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public execution accounting. Says: every actual result of the shared ordinary/blob execution entry adds exactly its own settled charge to the supplied prefix gas counter. Does not say: that the prefix or explicit blob context is authenticated.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshWitness_projection",
+      "source_symbol": "refreshWitness_projection",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: executable witness projection. Says: refresh copies the settled account's existence, balance, nonce and code, while retaining the supplied address and ordered storage-key list. Does not say: that unlisted storage has become witnessed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshWitness_listed_storage",
+      "source_symbol": "refreshWitness_listed_storage",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable witness projection. Says: every listed storage key refreshes to the settled world's exact value, including zero; lookup remains independent of old slot values. Does not say: anything about the value of an unlisted key.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshWitnesses_inventory",
+      "source_symbol": "refreshWitnesses_inventory",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: executable witness inventory preservation. Says: refreshing a settled world neither adds, removes nor reorders witnessed addresses. Does not say: that the initial witness inventory covers the whole state.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshWitnesses_find",
+      "source_symbol": "refreshWitnesses_find",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: executable lookup correspondence. Says: account lookup in refreshed witnesses selects the same original inventory entry and then refreshes its values. Does not say: that duplicate input addresses pass admission.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshed_request_coverage",
+      "source_symbol": "refreshed_request_coverage",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable witness coverage preservation. Says: the next real request's account and slot coverage is exactly the original inventory's coverage, despite refreshing all covered values. Does not say: that an unwitnessed account or slot can execute.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.refreshed_request_original",
+      "source_symbol": "refreshed_request_original",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable transaction-original storage. Says: after refresh from a previous settled world, the next request's original value for a covered slot is that previous post-state value. Does not say: that the prior transaction succeeded rather than reverted.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.countFits_iff",
+      "source_symbol": "countFits_iff",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: bounded-prefix resource check. Says: the executable bounded-prefix counter accepts exactly lists whose length is at most its allowance. Does not say: that list elements themselves satisfy any resource limit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.preflight_bounded",
+      "source_symbol": "preflight_bounded",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: aggregate resource admission. Says: actual list preflight acceptance enforces the transaction count, total reserved instruction fuel and aggregate input-byte bounds. Does not say: that executing within those limits establishes consensus.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.preflight_too_many",
+      "source_symbol": "preflight_too_many",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: defined resource refusal. Says: more than 256 entries gives the resource refusal before any header hashing, witness refresh or entry execution. Does not say: that 256 entries are necessarily executable.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.preflight_aggregate_limit",
+      "source_symbol": "preflight_aggregate_limit",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: defined aggregate resource refusal. Says: exceeding the total reserved-fuel or input-byte allowance produces the resource refusal, including when an earlier resource check also fails. Does not say: that per-transaction resource admission has succeeded.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.advance_observation_limit",
+      "source_symbol": "advance_observation_limit",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: defined retained-output refusal. Says: the actual advance function refuses before extending the receipt list whenever accumulated output, log data, topics and addresses exceed the observation budget. Does not say: that the prior EVM frame allocated no temporary memory.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.advance_exact",
+      "source_symbol": "advance_exact",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: executable prefix update. Says: within the retained-observation budget, advance refreshes exactly the settled state, adds actual gas/blob charges, prepends this receipt and increments the index once. Does not say: that the supplied transition was produced by runEntry.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.advance_checked",
+      "source_symbol": "advance_checked",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable prefix projection. Says: successful advance has the exact refreshed state, counters, receipt order and bounded observation count shown by the implementation. Does not say: that arbitrary caller-created transitions are valid.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.runEntry_cumulativeGasUsed",
+      "source_symbol": "runEntry_cumulativeGasUsed",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: actual entry-to-prefix accounting. Says: either ordinary execution or the admitted blob path returns exactly prefix gas plus its real settled receipt charge, including status zero. Does not say: that supplied headers or decoded envelopes are authentic.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.loop_receipt_trace",
+      "source_symbol": "loop_receipt_trace",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: ordered executable receipt trace. Says: a completed loop appends the exact receipts of successive real entry results in execution order, preserving all existing receipt data. Each successor uses the actual advance state of its predecessor, and the trace ends with exactly the completed loop's final witnesses. Does not say: that the trace's initial witnesses or envelopes are authentic.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.loop_order",
+      "source_symbol": "loop_order",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: structural execution correspondence. Says: a completed actual loop adds one receipt and one index per input, preserves input kind order and the existing prefix of receipt kinds, and retains the same address inventory. Does not say: that an entry can finish when its underlying runner refuses.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.loop_accounting",
+      "source_symbol": "loop_accounting",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: actual loop accounting invariant. Says: starting from balanced prefix counters and correct cumulative receipts, every completed loop retains exact receipt gas/blob sums, cumulative receipt gas and the retained-observation bound. Does not say: that these receipts are serialised or trie-authenticated.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.loop_entry_refused",
+      "source_symbol": "loop_entry_refused",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: indexed failure propagation. Says: an entry refusal stops the actual loop at the current index with the same reason and exposes no successful suffix or partial cursor. Does not say: that the failed entry is invalid when its reason is local.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.loop_advance_refused",
+      "source_symbol": "loop_advance_refused",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: indexed retained-output refusal. Says: an observation-budget refusal after a real entry stops the list at that entry's index and preserves the refusal instead of accepting a prefix. Does not say: that the preceding individual frame was not executed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.finish_checked",
+      "source_symbol": "finish_checked",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: exact declared-total admission. Says: final acceptance preserves the actual loop observations and requires both execution-gas and blob-gas totals to equal the child header exactly. Does not say: that the supplied list matches the header's transaction root.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.run_accepted",
+      "source_symbol": "run_accepted",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public list execution contract. Says: every accepted public run has one ordered receipt per input, exact receipt gas/blob sums and cumulative gas, unchanged witness address inventory, bounded retained observations, and exact header totals. Does not say: that signatures, trie roots, withdrawals or chain membership were authenticated by this transition.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.run_preflight_refused",
+      "source_symbol": "run_preflight_refused",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public preflight refusal. Says: a failed actual preflight returns its reason before any entry or header processing, with no fabricated transaction index. Does not say: that local resource refusal establishes block invalidity.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionList.blob_position_refused",
+      "source_symbol": "blob_position_refused",
+      "source": "EVMCleanroom/TransactionListProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: list-owned refusal classification. Says: the blob adapter's inconsistent block-position refusal becomes a definite declaration rejection in the list adapter, whose public run derives its prefix gas and blob counters from previous executions. Does not say: that the standalone partial-position blob adapter changed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-list-proof-guards-build-5.log; defining source Git blob 3e8e228d335849cae72acf66f5365f6aa116f6fa. The dedicated and complete active compiler-output gates recheck these exact local-model claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.structural_bounded",
+      "source_symbol": "structural_bounded",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable structural-step invariant. Says: every successful structural step preserves the nesting bound and resets numeric counters to zero or a one-byte numeric start. Does not say: that opening and closing delimiters form valid JSON.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_bounded",
+      "source_symbol": "step_bounded",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable lexical-step invariant. Says: every successful byte step preserves all three scanner bounds, including quoted, escaped and numeric bytes. Does not say: that arbitrary unbounded caller-created states are safe.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.feed_error",
+      "source_symbol": "feed_error",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: executable error persistence. Says: once the scanner has refused, feeding any further byte preserves the exact error without invoking the lexical step. Does not say: that the finite outer fold stops traversing its input.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.feed_bounded",
+      "source_symbol": "feed_bounded",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable fold-step invariant. Says: feeding a bounded successful state or any prior refusal can only yield another bounded successful state or a refusal. Does not say: that every input byte can be accepted.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.scan_bounded",
+      "source_symbol": "scan_bounded",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: actual scanner resource invariant. Says: scanning any finite byte array from the real empty initial state can return only depths at most 64, numeric spans at most 96 bytes and exponent magnitudes at most 78. Does not say: that successful scanning establishes JSON grammar validity or a complete runtime memory bound.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_depth_limit",
+      "source_symbol": "step_depth_limit",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: exact nesting refusal. Says: an unquoted array or object opener at the depth limit is rejected by the actual byte step before the JSON parser is selected. Does not say: that mismatched delimiters are accepted by JSON parsing.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_number_limit",
+      "source_symbol": "step_number_limit",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: exact numeric-token refusal. Says: another numeric byte at the token-span limit produces the token refusal, independently of whether that spelling would be valid JSON. Does not say: that quoted decimal strings have this numeric-token limit.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_exponent_limit",
+      "source_symbol": "step_exponent_limit",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: exact exponent refusal. Says: an exponent digit whose updated magnitude exceeds 78 produces the exponent refusal when the token itself still fits its byte allowance. Does not say: that malformed numeric spelling passes the JSON grammar.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_exponent_exact",
+      "source_symbol": "step_exponent_exact",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: exact accepted exponent step. Says: a digit within both numeric bounds updates the actual scanner's magnitude and byte count exactly, retaining the structural state. Does not say: that a complete valid JSON number has been parsed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_quoted_escaped",
+      "source_symbol": "step_quoted_escaped",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: quoted-byte correspondence. Says: an escaped byte inside a string clears only the escape flag, even when that byte is a quote, bracket, slash or digit. Does not say: that every escape spelling is valid JSON.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_quoted_escape",
+      "source_symbol": "step_quoted_escape",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: quoted-byte correspondence. Says: an unescaped backslash in a string sets the actual scanner's escape flag without changing depth or numeric counters. Does not say: which following escape spellings the JSON parser accepts.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_quoted_close",
+      "source_symbol": "step_quoted_close",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: quoted-byte correspondence. Says: an unescaped closing quote leaves string mode and preserves all structural and numeric counters. Does not say: that the enclosing JSON document is complete.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.step_quoted_literal",
+      "source_symbol": "step_quoted_literal",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: quoted-byte correspondence. Says: other unescaped string bytes leave the scanner state unchanged; string-contained openers and exponent digits cannot consume those limits. Does not say: that control characters are valid unescaped JSON characters.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.parseWith_refused",
+      "source_symbol": "parseWith_refused",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable parser-continuation refusal. Says: any continuation, of any result type, receives the same scanner refusal; the executable match selects its error branch before the parser. Does not say: that the compiler/runtime's evaluation strategy is proved.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.parseWith_checked",
+      "source_symbol": "parseWith_checked",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable parser continuation. Says: after successful resource admission, the actual helper returns exactly the supplied parser's result, retaining its grammar decisions. Does not say: that resource admission itself establishes valid JSON.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.parseJSON_scan_refused",
+      "source_symbol": "parseJSON_scan_refused",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: shared native-codec refusal boundary. Says: the public parseJSON used by all three transaction CLIs returns the actual byte-scanner refusal before selecting Lean.Json.parse. Does not say: that the standard parser itself is resource-verified.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.TransactionTransport.parseJSON_checked",
+      "source_symbol": "parseJSON_checked",
+      "source": "EVMCleanroom/TransactionTransportProofs.lean",
+      "axioms_printed": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: shared native-codec correspondence. Says: safe input reaches exactly the original Lean.Json.parse, including its normal decimal/exponent spellings and malformed-input errors. Does not say: that any particular input satisfies the later schema.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
     }
   ],
   "external_evidence": {
@@ -3284,7 +3790,7 @@
     "Contract creation (CREATE and CREATE2), precompiles other than identity and fork-exact frame and transaction rules beyond the restricted nested call-family dispatcher",
     "Lean MPT/RLP implementation and correspondence, plus independent refinement and security review of the opt-in Keccak implementation",
     "General receipt commitments, log and transaction rules, and complete block validity",
-    "General multi-transaction and multi-fork replay, persistent state, Engine API, networking and beacon-chain consensus for a complete execution and consensus client. Current authenticated mainnet evidence covers a restricted Frontier transfer and the witness-limited Shanghai 1CAT call.",
+    "Authenticated general transaction/block and multi-fork replay, persistent state, Engine API, networking and beacon-chain consensus for a complete execution and consensus client. Bounded decoded Cancun lists now derive prefix state and counters internally; current authenticated mainnet evidence remains a restricted Frontier transfer and the witness-limited Shanghai 1CAT call.",
     "Independent expert review"
   ],
   "review_status": "not independently reviewed; CI asserts this exact source inventory and runs theorem/audit/test gates",
@@ -4026,5 +4532,148 @@
     },
     "limits": "Local-model proofs, not normative EELS refinement. Lean receives decoded externally authenticated envelopes and state witnesses; signature recovery and trie/receipt codecs remain host trust boundaries. No KZG proof or sidecar verification, complete block validation, Prague transaction execution or live transaction submission.",
     "source_pins": 126
+  },
+  "transaction_list_integration": {
+    "date": "2026-11-24",
+    "issue": "https://github.com/danbri/factoidal-core/issues/867",
+    "baseCommit": "2e8a64e86b1578017cc96bcc4045d801ed6319c9",
+    "scope": "Ordered decoded type-0/1/2/3 Cancun call transactions from one supplied initial witness inventory and one checked header pair. Every intermediate witness, receipt and gas/blob counter is derived inside Lean; accepted final totals must equal the child header. No partial accepted result is exposed after a refusal.",
+    "newSelectedTheorems": 46,
+    "selectedTheorems": 292,
+    "selectedTheoremSources": 27,
+    "sourcePins": 146,
+    "guards": 80,
+    "actualAxiomSets": {
+      "none": 7,
+      "propext": 8,
+      "propext,Quot.sound": 22,
+      "propext,Classical.choice,Quot.sound": 9
+    },
+    "actualAxiomEvidence": "All 46 additions were observed uniquely in successful Lean 4.33.1 compiler output: 29 ordered-list statements and 17 lexical-admission/parser-continuation statements. The final dedicated 46-claim audit and complete 292-claim audit across 27 selected sources passed on 24 November 2026; exact source consistency covers 146 reviewed pins. These are local compiler results, not a hosted-CI or normative Ethereum refinement claim.",
+    "resourceBounds": {
+      "transactions": 256,
+      "reservedInstructionFuel": 1000000,
+      "inputPayloadBytes": 16777216,
+      "logicalObservationBytes": 16777216,
+      "serializedOutputBytes": 67108864,
+      "requestFileBytes": 16777216,
+      "jsonDepth": 64,
+      "jsonNumberTokenBytes": 96,
+      "jsonExponentMagnitude": 78
+    },
+    "differential": {
+      "cases": 36,
+      "passed": 36,
+      "executionMatches": 30,
+      "admissionRefusals": 5,
+      "rejectedAdmissions": 5,
+      "indeterminateAdmissions": 0,
+      "localBoundaries": 1,
+      "clientAgreement": 36,
+      "acceptedListTransactions": 327,
+      "allListTransactions": 344,
+      "successfulReceipts": 321,
+      "intentionalFailedReceipts": 6,
+      "uniqueSignedByteStrings": 308,
+      "nativeInvocations": 52,
+      "primaryNativeInvocations": 36,
+      "controlNativeInvocations": 16,
+      "localResourceLists": 2,
+      "localResourceTransactions": 512,
+      "kzgOperations": 0
+    },
+    "negativeControls": [
+      "changedGas",
+      "changedSignedChainId",
+      "changedSignedAccessList",
+      "changedOutputByte",
+      "changedBlobBurn",
+      "changedBlobGas",
+      "changedSignedHashByte",
+      "changedSignedHashOrder",
+      "changedReceiptStatus",
+      "changedStateBalance",
+      "changedLogData",
+      "changedStorageWord",
+      "omittedRow",
+      "changedFinalGas",
+      "changedFinalBlobGas",
+      "changedCumulativeGas",
+      "omittedReceipt",
+      "reorderedTransactions",
+      "reorderedReceipts",
+      "changedSignedNonce",
+      "omittedSignedTransaction",
+      "changedSignedBlobFeeCap",
+      "shiftedReferenceRejectionIndexes",
+      "bothReferencesAcceptInvalidList",
+      "bothReferencesRejectLocalBoundary"
+    ],
+    "nativeLocalControls": 16,
+    "resourceReferenceBoundary": "Both separately counted 256-transaction lists execute in EthereumJS and Geth and their reference observations agree. Lean matches the exact 16 MiB list; the one-byte-over list produces a local resource refusal at index 255 and is not counted as a matching execution.",
+    "testEvidence": {
+      "nativeSha256": "d09ba67cb393c6af338ae0c26872fe0331ff86aeb65d7e8b334d8398b2522fdd",
+      "signedReportSha256": "ff3e56deaec8c8ff4cb99725f8d8283565a0e0fcf1c4fed175596faba5a3f484",
+      "signedHarnessGitBlob": "16da3e022e0d14af586fbd56110f26fa1e1b9d32",
+      "transportCases": 22,
+      "transportFixtureSha256": "54a19a00268be07cde0e5ea931b58860933ef83c468e464a3c8df4b4af81b6ff",
+      "codecBeforeAfterByteMatches": 12,
+      "dedicatedAuditControls": 9,
+      "guardCases": 90,
+      "guardLexicalRefusals": 42,
+      "guardBaselineParityCases": 9,
+      "guardBaselineAcceptedCases": 6,
+      "guardBaselineRefusalCases": 3,
+      "guardReportSha256": "aa0be89bc7e794cba8699fb6bb127e25e73717448e7d5378798df816e2b2e576",
+      "guardNativeSha256": {
+        "evm-blob-call": "f580a6df4195472f8d26c0b1b85dd21c3a2f1ee24f0d3f383cb4f02d9e1e2c61",
+        "evm-call-transaction": "5a2077e3c1f4913f87baa589f2a1dda5f024b4b2cbdd24d61a3cae471676b906",
+        "evm-transaction-list": "d09ba67cb393c6af338ae0c26872fe0331ff86aeb65d7e8b334d8398b2522fdd"
+      },
+      "guardedCodecParityReportSha256": "2290c8039875d7bedc65fc5c1040ad3f5932b9a7aa5728cb783349f1727704cf",
+      "guardedTransportReportSha256": "18234686d03ace4b08b58f108df65225b763854dfc13cc49b489c3b401de5637",
+      "dedicatedSourceClosurePins": 47,
+      "guardDefaultCiReportSha256": "220f783f6c628d58fcf6adeb2f6d8c5a4f1e474a23ecdaf84d56af073e86c6b9",
+      "sourceAuditReports": {
+        "transaction-list-claims-guarded-final.json": "63c2555d762b9c1c1717eea1d8aec3c1725da0b0a530994d582293b5f03f6b59",
+        "transaction-list-active-axioms-guarded-final.json": "bf11d023f2ad273d75994da4e20fc9c61a8f510c7fdd74cdf4a87834c593b753",
+        "transaction-list-blobhash-claims-guarded-final.json": "ba3d6da7bd2d67a28b82d0b1017c4d83e539d9fd68d815262d2799a36202e02e",
+        "transaction-list-identity-claims-guarded-final.json": "283f47b8ba506bc3b71da1a2aae1d0198aabc44b4ff9ea67d8ef672d4950f03b"
+      }
+    },
+    "londonGateRepair": {
+      "activeManifest": "evidence/active-london-claims.json",
+      "historicalManifest": "evidence/2026-11-23-london-header/claims.json",
+      "historicalManifestSha256": "a39c702297555dd0e89ced375c73c3440d471c00f72c9fae7cc8ab8e035d06d2",
+      "actualTheorems": 6,
+      "sourcePins": 6,
+      "auditControls": 4,
+      "formulaCases": 1555,
+      "formulaMismatches": 0,
+      "formulaComparatorControls": 3,
+      "explanation": "The former gate pinned the dated root import file and failed after BLOBHASH integration. The dated evidence is preserved unchanged; a separate active manifest carries the six reviewed current pins and is checked against actual compiler output."
+    },
+    "notClaimed": [
+      "Signed-byte decoding or signature and witness authentication in Lean",
+      "Transaction/state/receipt trie commitment validation or authenticated complete block inventory",
+      "Beacon-root system processing, nonempty withdrawals, chain selection or KZG sidecar verification",
+      "General Ethereum/EELS semantic refinement",
+      "A wall-clock, total heap or compiler/runtime safety bound from the logical local caps"
+    ],
+    "validationStatus": "All local guarded native, source, compiler-axiom, ledger and comparator gates passed; exact-HEAD binding and hosted CI are checked after source publication.",
+    "listSelectedTheorems": 29,
+    "transportSelectedTheorems": 17,
+    "listGuards": 36,
+    "transportGuards": 44,
+    "jsonGuardRepair": {
+      "reproducedCrash": "A valid 6000034-byte JSON payload with 3000000 nested arrays passed the file cap and aborted the pre-guard standard parser with stack overflow.",
+      "admission": "The shared TransactionCodec.parseJSON now invokes the pure Lean lexical resource scanner before Lean.Json.parse in all three transaction CLIs.",
+      "errors": [
+        "json-nesting-limit",
+        "json-number-token-limit",
+        "json-exponent-limit"
+      ],
+      "scope": "Scanner bounds and exact parser-continuation behaviour are proved; full JSON grammar correctness and compiler/runtime heap or stack safety remain outside these local-model claims."
+    }
   }
 }

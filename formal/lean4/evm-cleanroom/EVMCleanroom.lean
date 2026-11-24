@@ -38,3 +38,7 @@ import EVMCleanroom.IdentityTransactionTests
 import EVMCleanroom.BlobHashProofs
 import EVMCleanroom.BlobHashTests
 import EVMCleanroom.BlobCallProofs
+import EVMCleanroom.TransactionListProofs
+import EVMCleanroom.TransactionListTests
+import EVMCleanroom.TransactionTransportProofs
+import EVMCleanroom.TransactionTransportTests
