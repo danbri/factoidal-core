@@ -145,6 +145,31 @@ def bumpFirst (name : String) (f : Int → Int) : List (String × Int × Nat) �
   | [] => []
   | (n, v, o) :: rest => if n == name then (n, f v, o) :: rest else (n, v, o) :: bumpFirst name f rest
 
+/-- The start of a `reversed(name)` counter that element `k` resets with no integer (CSS
+Lists 3 §4.4): minus the sum of the increments of `name` in its scope (`k`, its descendants,
+its later siblings and theirs), leaving out the subtrees of other elements that reset `name`
+(they count their own) and elements that make no box. At most `d.size + 1` steps. -/
+def reversedStart (d : Dom) (styles : Array Computed) (makesBox : Nat → Bool) (k : Nat) (name : String) : Int := Id.run do
+  let later := match (d.get k).parent with
+    | some p => ((d.get p).kids.toList.dropWhile (· != k))
+    | none => [k]
+  let mut pending := later
+  let mut sum : Int := 0
+  for _ in [0:d.size + 1] do
+    match pending with
+    | [] => pure ()
+    | j :: rest =>
+      pending := rest
+      let n := d.get j
+      let s := (styles[j]?).getD {}
+      if n.type == .element && s.display != .none && makesBox j then
+        if j != k && s.pos.counterReset.any (·.1 == name) then pure ()
+        else
+          for (m, v) in s.pos.counterIncrement do
+            if m == name then sum := sum + v
+          pending := n.kids.toList ++ pending
+  return -sum
+
 /-- The counters in scope at each node where `record` holds (CSS 2.1 §12.4.1): `d` is walked
 in tree order (a `::before` is its element's first child, an `::after` its last). An element
 that makes a box (`makesBox`, and not `display: none`) applies its `counter-reset` (a new
@@ -172,6 +197,7 @@ def counterScopes (d : Dom) (styles : Array Computed) (makesBox record : Nat →
           if n.type == .element then
             let owner := n.parent.getD 0
             for (name, v) in s.pos.counterReset do
+              let v := if s.pos.counterReversed.contains name then reversedStart d styles makesBox k name else v
               inst := (name, v, owner) :: inst
             for (name, v) in s.pos.counterIncrement do
               inst := if inst.any (·.1 == name) then bumpFirst name (· + v) inst else (name, v, owner) :: inst

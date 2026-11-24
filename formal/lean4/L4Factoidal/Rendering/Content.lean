@@ -240,9 +240,33 @@ def counterPairs (dflt : Int) : List CssValues.CV → Option (List (String × In
 where bad (n : String) : Bool :=
   ["none", "initial", "inherit", "unset", "default", "revert", "revert-layer"].contains (CssValues.lower n)
 
+/-- The names of `reversed(name)` with no integer in a `counter-reset` value (CSS Lists 3
+§4.4): such a counter starts at the number its increments count down from (`Generated`). -/
+def reversedNames (value : String) : List String :=
+  let cvs := CssValues.stripWs (CssValues.CV.parse value)
+  (List.range cvs.length).filterMap fun i => match (cvs[i]? : Option CssValues.CV), (cvs[i+1]? : Option CssValues.CV) with
+    | some (.fn f args), next =>
+      if CssValues.lower f != "reversed" then none else
+      match CssValues.stripWs args, next with
+      | [.tok (.ident n)], some (.tok (.num _ true)) => none
+      | [.tok (.ident n)], _ => some n
+      | _, _ => none
+    | _, _ => none
+
+/-- `reversed(name)` read as the name (its start is worked out later). -/
+def unreverse : List CssValues.CV → List CssValues.CV
+  | [] => []
+  | .fn f args :: rest =>
+    if CssValues.lower f == "reversed" then
+      match CssValues.stripWs args with
+      | [one] => one :: unreverse rest
+      | _ => .fn f args :: unreverse rest
+    else .fn f args :: unreverse rest
+  | c :: rest => c :: unreverse rest
+
 /-- A counter declaration's value: `none` gives no pairs. -/
 def counterList (value : String) (dflt : Int) : Option (List (String × Int)) :=
-  match CssValues.stripWs (CssValues.CV.parse value) with
+  match unreverse (CssValues.stripWs (CssValues.CV.parse value)) with
   | [.tok (.ident k)] => if CssValues.lower k == "none" then some [] else counterPairs dflt [.tok (.ident k)]
   | cvs => counterPairs dflt cvs
 
@@ -252,6 +276,9 @@ def counterList (value : String) (dflt : Int) : Option (List (String × Int)) :=
 #guard counterList "a -3" 0 == some [("a", -3)]
 #guard counterList "a 1.5" 0 == none
 #guard counterList "inherit" 0 == none
+#guard counterList "reversed(foo)" 0 == some [("foo", 0)]
+#guard counterList "reversed(foo) 5 bar" 0 == some [("foo", 5), ("bar", 0)]
+#guard reversedNames "reversed(foo) bar reversed(baz) 3" == ["foo"]
 
 private def romanDigits : List (Nat × String) :=
   [(1000,"m"),(900,"cm"),(500,"d"),(400,"cd"),(100,"c"),(90,"xc"),(50,"l"),(40,"xl"),(10,"x"),(9,"ix"),(5,"v"),(4,"iv"),(1,"i")]

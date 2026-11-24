@@ -194,6 +194,8 @@ structure PositionStyle where
   counterReset : List (String × Int) := []
   counterIncrement : List (String × Int) := []
   counterSet : List (String × Int) := []
+  /-- The `reversed(name)` counters of `counter-reset` with no integer. -/
+  counterReversed : List String := []
   /-- `white-space: nowrap` (CSS Text 3 §3; inherited): lines do not break at the spaces
   of this text. -/
   nowrap : Bool := false
@@ -314,7 +316,7 @@ def PositionStyle.set (fontSize : Float) (p : PositionStyle) (property value : S
   if name == "counter-reset" || name == "counter-increment" || name == "counter-set" then
     let dflt : Int := if name == "counter-increment" then 1 else 0
     let put := fun (l : List (String × Int)) =>
-      if name == "counter-reset" then {p with counterReset := l}
+      if name == "counter-reset" then {p with counterReset := l, counterReversed := if l.isEmpty then [] else Content.reversedNames value}
       else if name == "counter-increment" then {p with counterIncrement := l} else {p with counterSet := l}
     match Content.counterList value dflt with
     | some l => some (put l)

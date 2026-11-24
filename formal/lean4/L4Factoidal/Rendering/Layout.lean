@@ -1003,7 +1003,10 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- with its background, borders, padding and size. Until 2026-11-23 only its contents
     -- were kept: `<a><div class=votearrow></div></a>` drew nothing (Hacker News).
     let sized := fun (l : CSS.Length) => match l with | .auto => false | _ => true
-    let boxed := s.display.isBlockLevel && (sized s.width || sized s.height || s.background.isSome ||
+    -- a block of zero height with no border or padding collapses through (CSS 2.1 §8.3.1): no box
+    let collapsing := (match s.height with | .px h => h == 0 | _ => false) && s.padding.top == 0 && s.padding.bottom == 0 &&
+      s.borderEdges.top == 0 && s.borderEdges.bottom == 0
+    let boxed := s.display.isBlockLevel && !collapsing && (sized s.width || sized s.height || s.background.isSome ||
       s.backgroundImage.isSome || s.backgroundGradient.isSome || s.borderEdges.top > 0 || s.borderEdges.bottom > 0 ||
       s.borderEdges.left > 0 || s.borderEdges.right > 0)
     let mut out : Array Inline := if boxed then #[.blockBreak s, .openAtomic id s]

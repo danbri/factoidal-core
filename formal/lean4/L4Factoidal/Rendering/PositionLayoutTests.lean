@@ -451,6 +451,8 @@ private def beforeTexts (page sheet : String) : Option (List String) := do
 #guard beforeTexts "<p>a</p><p style='display:none'>b</p><p>c</p>"
   "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
 #guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
+  "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["2", "1", "0"]
 
 -- `::first-letter` (CSS Pseudo-Elements 4 §2.3): the letter and its punctuation in an element
 -- of their own, with the rule's style; the rest stays in the page's text node.
