@@ -1460,10 +1460,11 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     -- `flow-root` is a block that is the root of a block formatting context (`pos.flowRoot`)
     -- `contents`: no box of its own (`pos.contents`; `Generated.flattenContents`); what is
     -- left of it is an inline box that is never laid out
-    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root", contents := d.value == "contents"}}
+    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root",
+                                       contents := d.value == "contents", listItem := d.value == "list-item"}}
     match (if d.value == "flow-root" then "block" else if d.value == "contents" then "inline" else d.value) with
     | "none" => return {s with display := .none}
-    | "block" => return {s with display := .block}
+    | "block" | "list-item" => return {s with display := .block}
     | "inline" => return {s with display := .inline}
     | "inline-block" => return {s with display := .inlineBlock}
     | "table" => return {s with display := .table}
@@ -1910,7 +1911,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     match (CssValues.specified "display" d.value) with
     | none => none
     | some t =>
-      if ["flex", "grid", "flow-root", "list-item", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
+      if ["flex", "grid", "flow-root", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
       else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
       else if t == "run-in" then value "inline"
       -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
@@ -2043,7 +2044,9 @@ widths, the style and the colour. -/
 def copyProperty (property : String) (source s : Computed) : Option Computed :=
   let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
   match property with
-  | "display" => some {s with display := source.display}
+  | "display" => some {s with display := source.display,
+                              pos := {s.pos with flowRoot := source.pos.flowRoot, contents := source.pos.contents,
+                                                 listItem := source.pos.listItem}}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
   | "margin-top" =>
@@ -2768,6 +2771,10 @@ def userAgentSheet : String :=
   -- a drop-down list shows its selected option (`Layout.controlItems`), with room for its arrow
   "select{display:inline-block;padding:1px 4px;border:1px solid #767676;background-color:#ffffff;white-space:nowrap}" ++
   "select>*{display:none}" ++
+  -- HTML §15.3.7 and §15.5.5: a summary marker belongs to the first summary of details.
+  "li{display:list-item}" ++
+  "details>summary:first-of-type{display:list-item;list-style-type:disclosure-closed;list-style-position:inside}" ++
+  "details[open]>summary:first-of-type{list-style-type:disclosure-open}" ++
   -- HTML §15.3.6
   "sub,sup{font-size:smaller}" ++
   -- HTML §15.4.1: `iframe { border: 2px inset; }`
