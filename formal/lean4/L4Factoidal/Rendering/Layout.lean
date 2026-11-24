@@ -1139,12 +1139,29 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
     out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline-s.rise+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
 
+-- An empty fragment has no right edge. Keep it at minus infinity until the
+-- measured width is clamped, so that shifting it cannot create an edge.
+private def inlineRight (r : Result) : Float :=
+  match r.inlineFlowRight with
+  | some x => x
+  | none => r.boxes.foldl (fun x b => max x (b.x+b.width)) (-1.0/0.0)
+
+private def mergeInlineRight (a b : Result) : Option Float :=
+  if a.inlineFlowRight.isNone && b.inlineFlowRight.isNone then none
+  else some (max (inlineRight a) (inlineRight b))
+
+@[inline] private def pushInlineBox (r : Result) (box : Box) : Result :=
+  {r with
+    boxes := r.boxes.push box
+    inlineFlowRight := r.inlineFlowRight.map (fun x => max x (box.x+box.width))}
+
 /-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
 its glyph positions moved by the same amount. -/
 private def shiftResult (dx dy : Float) (r : Result) : Result :=
   let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
   let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
   {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs,
+          inlineFlowRight := r.inlineFlowRight.map (·+dx),
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
           baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
@@ -1280,7 +1297,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        out := pushInlineBox {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run}
+          ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
@@ -1288,14 +1306,17 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
         let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩}
+        out := pushInlineBox
+          {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run}
+          ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
       let top := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
-      out := {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes,
-                       boxes := out.boxes.push ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩}
+      out := pushInlineBox
+        {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes}
+        ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
@@ -1308,8 +1329,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         | .bottom => y+ascent+descent-height
       -- The box is the border box, inside the margins.
       let m := s.margin
-      out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
-                       boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
+      out := pushInlineBox {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes)}
+        ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩
       extent := some (x+offset,x+offset+width)
     | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
@@ -1320,7 +1341,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let moved := shiftResult (x+offset) top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
-                       pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
+                       inlineFlowRight := mergeInlineRight out moved, pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
       extent := some (x+offset,x+offset+width)
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
     | .openInline id s continued =>
@@ -1331,7 +1352,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | (f,fs) :: rest =>
         let f := f.close (x+offset) (s.padding.right+s.borderEdges.right)
         let (box,nodes) := fragment f fs true
-        out := {out with boxes := out.boxes.push box}
+        out := pushInlineBox out box
         under := under ++ nodes
         frames := InlineBox.merge rest f fs.margin.left fs.margin.right true
       | [] => pure ()
@@ -1342,7 +1363,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     match frames with
     | (f,fs) :: rest =>
       let (box,nodes) := fragment f fs false
-      out := {out with boxes := out.boxes.push box}
+      out := pushInlineBox out box
       under := under ++ nodes
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
@@ -1360,7 +1381,7 @@ private theorem lineLayout_static_only (font : FontProfile) (items : Array (Floa
 
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
-   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+   inlineFlowRight := mergeInlineRight a b, pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
    lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
 
 /-- A word of preformatted text: it never wraps. -/
@@ -1700,22 +1721,49 @@ private def append (a b : Result) : Result :=
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
    lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
 
+private def transformInlineBorderBox (s : Computed) (x y w h : Float) (r : Result) : Result :=
+  if s.pos.transform.isEmpty then r else
+    let (ox,ofWidth,oy,ofHeight) := s.pos.transformOrigin
+    let t := CSS.BoxTransform.about .float (CSS.BoxTransform.matrixOf s.pos.transform w h)
+      (x+ox+ofWidth*w) (y+oy+ofHeight*h)
+    {r.transformed t with inlineFlowRight := some (inlineRight r)}
+
+/-- Applying the inline-block's transform preserves the right edge used for sizing. -/
+theorem transformInlineBorderBox_inlineRight (s : Computed) (x y w h : Float) (r : Result) :
+    inlineRight (transformInlineBorderBox s x y w h r) = inlineRight r := by
+  unfold transformInlineBorderBox
+  split <;> rfl
+
 /-- An inline-block's border and decorations around its already positioned content. -/
 def framedAtomic (id : Nat) (s : Computed) (w h : Float) (inner : Result) : Inline :=
   let m := s.margin
   let box : Box := ⟨id,m.left,m.top,w,h⟩
+  let framed :=
+    {inner with
+      nodes := decorations id s m.left m.top w h ++ inner.nodes
+      boxes := #[box] ++ inner.boxes
+      inlineFlowRight := inner.inlineFlowRight.map (fun x => max x (box.x+box.width))}
   .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
-    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
+    (transformInlineBorderBox s m.left m.top w h framed)
 
-/-- Kind: frame. Says: framing an inline-block retains its own border box followed by
-all positioned child boxes in order, with the child's glyph runs and baselines.
-Does not say: which dimensions or glyph positions layout computes. -/
-theorem framedAtomic_preserves (id : Nat) (s : Computed) (w h : Float) (inner : Result) :
+/-- With an empty transform, framing retains the border box and the child's geometry. -/
+theorem framedAtomic_preserves (id : Nat) (s : Computed) (w h : Float) (inner : Result)
+    (hEmpty : s.pos.transform.isEmpty = true) :
     match framedAtomic id s w h inner with
     | .atomic owner _ _ _ r =>
       owner = id ∧ r.boxes = #[⟨id,s.margin.left,s.margin.top,w,h⟩] ++ inner.boxes ∧
         r.runs = inner.runs ∧ r.baseline = inner.baseline ∧ r.lastBaseline = inner.lastBaseline
-    | _ => False := ⟨rfl,rfl,rfl,rfl,rfl⟩
+    | _ => False := by
+  simp [framedAtomic, transformInlineBorderBox, hEmpty]
+
+/-- The line still aligns its inline-block by the same baselines. -/
+theorem framedAtomic_baselines (id : Nat) (s : Computed) (w h : Float) (inner : Result) :
+    match framedAtomic id s w h inner with
+    | .atomic _ _ _ _ r => r.baseline = inner.baseline ∧ r.lastBaseline = inner.lastBaseline
+    | _ => False := by
+  by_cases hEmpty : s.pos.transform.isEmpty = true
+  · simp [framedAtomic, transformInlineBorderBox, hEmpty]
+  · simp [framedAtomic, transformInlineBorderBox, hEmpty, Result.transformed]
 
 /-- Kind: sizing. Says: the enclosing line measures the framed inline-block as one
 item of its margin-box width. Does not say: how its content width was chosen. -/
@@ -1723,7 +1771,9 @@ theorem framedAtomic_lineWidth (font : FontProfile) (rtl : Option Bool) (id : Na
     (s : Computed) (w h : Float) (inner : Result) :
     itemWidth font rtl (framedAtomic id s w h inner) = .ok (s.margin.left+w+s.margin.right) := rfl
 
+#print axioms transformInlineBorderBox_inlineRight
 #print axioms framedAtomic_preserves
+#print axioms framedAtomic_baselines
 #print axioms framedAtomic_lineWidth
 
 /-- An open inline-block. Its line width supplies the containing width of a nested
@@ -1755,7 +1805,9 @@ private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array 
   let p := s.padding
   let m := s.margin
   let content ← inlineLayout font items 0 0 frame.lineWidth (some {s with textAlign := .left})
-  let used := frame.fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
+  let used := match frame.fixed with
+    | some width => width
+    | none => max 0 (inlineRight content)
   -- Lines are aligned in the width the box has (`text-align`), once it is known.
   let leftAligned := s.textAlign == .left || (s.textAlign == .start && s.direction == .ltr) ||
     (s.textAlign == .end_ && s.direction == .rtl)
@@ -1882,7 +1934,7 @@ inductive Task where
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
-private def lineExtent (r : Result) : Float := r.boxes.foldl (fun m b => max m (b.x+b.width)) 0
+private def lineExtent (r : Result) : Float := max 0 (inlineRight r)
 
 /-! ### Multi-column layout (CSS Multi-column Layout 1)
 
@@ -2557,7 +2609,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
                 pure (shrinkWidth cs.width lo hi width)
             let r ← layoutTask dom styles font embedding pictures fuel (sub <| .sized child (max 0 (outer-edges)) none) 0 0 width
-            inline := inline.push (.atomic child cs outer r.height r)
+            -- This result is a block formatting context, whose boxes are
+            -- measured by its own sizing pass.
+            inline := inline.push (.atomic child cs outer r.height {r with inlineFlowRight := none})
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then

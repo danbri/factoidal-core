@@ -512,18 +512,15 @@ stylesheet the host could not fetch, and sheets past 8 MiB. -/
 def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
     Except String (List (String × String) × List WebAccept.Diagnostic) := do
   let given ← importedSheets request
-  -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
-  -- removes only the external-fetch refusal; it is never used for layout.
-  let validation := {dom with nodes := dom.nodes.map (fun n =>
-    if stylesheet n then {n with attrs := n.attrs.filter (fun a => a.lname != "href")} else n)}
-  WebRender.validateStyleBoundaries validation
+  -- The same source order governs both HTML and inline SVG author rules.
   let base := baseURL dom (str request "url")
   let mut sheets : List (String × String) := []
   let mut bytes := 0
   let mut ds : List WebAccept.Diagnostic := []
   for id in dom.treeOrder 0 do
     let n := dom.get id
-    let inline := DOM.Dom.isHtmlElement n "style"
+    let inline := DOM.Dom.isHtmlElement n "style" ||
+      (n.type == .element && n.ns == some DOM.svgNS && n.lname == "style")
     if !inline && !(stylesheet n && Rendering.CSS.hasAttribute n "href") then continue
     let (active,d) ← activeSheetIn m env n id
     ds := ds ++ d
@@ -2305,10 +2302,11 @@ read (the reader reads the whole document tree, where the taken-out roots stay i
 the document with no SVG at all (`WebRender.makeReplacedNoSvg`). Its type has no refusal: in
 liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg`). -/
 def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font)
+    (cascade : Option (Array Rendering.CSS.Computed) := none) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
       Option WebRender.StoreEntry × NativeSVGText.Words :=
-  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
+  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts cascade with
   | .ok (e,p,s,w) => (e,p,dom,[],s,w)
   | .error e =>
     let (bare,n) := stripSvg dom
@@ -2521,22 +2519,24 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
+  -- Resolve styles before building the SVG view so both renderers use one cascade.
+  let state := withPointer dom (← elementState dom url request) pointer
+  let dom := styleAttributesAbsolute dom url
+  let made := Rendering.Generated.styled treeScope dom rules textScale state
+  let cascade := if (WebRender.documentElement dom).any (fun id =>
+    DOM.Dom.isHtmlElement (dom.get id) "html") then made.toOption.map (·.2) else none
   let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
     | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
     | none => match m with
       | .strict => do
-        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts
+        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts cascade
         pure (e,p,dom,[],s,w)
-      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts)
+      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts cascade)
   modify (·.merge {store := madeStore,words := madeWords})
-  -- A window shorter than the chrome still lays out, on one row.
-  let state := withPointer dom (← elementState dom url request) pointer
-  -- The cascade of the page, made before the fonts: the layout of `dom` below draws with it
-  -- (`renderWithStyles_made`), so it is made once, and it says whether any text resolves to
-  -- `serif` (`textWantsSerif`) before the first layout.
-  -- background URLs of `style` attributes absolute against the document (sheets: `rulesOfSheets`)
-  let dom := styleAttributesAbsolute dom url
-  let made := Rendering.Generated.styled treeScope dom rules textScale state
+  -- The liberal fallback may have removed SVG roots and changed selector matches.
+  let state ← if d0.isEmpty then pure state else
+    pure (withPointer dom (← elementState dom url request) pointer)
+  let made := if d0.isEmpty then made else Rendering.Generated.styled treeScope dom rules textScale state
   -- background images decoded into the cascade (issue 704); none on most pages
   let (made,bgStore,bgLimits) := attachBackgrounds kept.stores images made
   modify (·.merge {store := bgStore})
