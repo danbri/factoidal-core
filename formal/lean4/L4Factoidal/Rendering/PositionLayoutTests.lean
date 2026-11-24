@@ -363,6 +363,23 @@ private def inlineBlock := "<div id=o><span id=w><div id=d>AB</div></span></div>
 #guard box inlineBlock "#w{display:inline-block;width:50px} #d{width:20px;height:10px}" "w" == some (0,0,50,10)
 -- ...as wide as its content when it has no width.
 #guard box inlineBlock "#w{display:inline-block} #d{width:20px;height:10px}" "w" == some (0,0,20,10)
+
+-- Nested inline-blocks must retain block descendants and use their padded widths.
+private def nestedBlockChildren :=
+  "<div><div id=nav><div id=item1><div><a id=link1>AB</a></div></div>" ++
+  "<div id=item2><div><a id=link2>CD</a></div></div></div></div>"
+private def nestedBlockCss :=
+  "#nav,#item1,#item2{display:inline-block;vertical-align:top} a{display:block} "
+private def nestedBlockPadded := nestedBlockCss ++ "a{padding:8px} "
+private def widthOf (r : Option (Float × Float × Float × Float)) : Option Float := r.map (·.2.2.1)
+#guard widthOf (box nestedBlockChildren nestedBlockCss "nav") == some 24
+#guard widthOf (box nestedBlockChildren nestedBlockPadded "nav") == some 56
+#guard box nestedBlockChildren nestedBlockPadded "link1" == some (0,0,28,23)
+#guard box nestedBlockChildren nestedBlockPadded "link2" == some (28,0,28,23)
+-- Min-content allows a line break between the two items, not through either item.
+#guard widthOf (box nestedBlockChildren nestedBlockPadded "nav" 28) == some 28
+#guard box nestedBlockChildren nestedBlockPadded "link2" 28 == some (0,23,28,23)
+
 -- vertical-align of an atomic box in its line (CSS 2.1 §10.8.1): the 30px box makes the
 -- line 30 high; the 10px box is at its top, its bottom, its middle (the baseline plus a
 -- quarter em, here 1.75), or with its bottom edge on the baseline.

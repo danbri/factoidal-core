@@ -9,7 +9,7 @@ import L4Factoidal.HTML.AccessibleTree
 same scene as the page, so one WebGPU pass draws the window. The default look is flat
 (owner, 2026-11-16: the old toolbar looked "like 1993"): light or dark faces, a rounded
 address field with a focus ring, and line icons drawn as vector strokes. The older looks stay
-as themes: "classic" (NeXT bevels) and "arcade". Lettering is the engine's bitmap font.
+as themes: "classic" (NeXT bevels) and "arcade". The default address field uses the host's held monospace face when available.
 
 The host keeps the `Shell` value between calls and sends it back. It makes no
 decision here: Lean says what a click, a key or an address means. -/
@@ -442,6 +442,33 @@ private def text (c : Rendering.Color) (value : String) (x y size : Nat) : List 
   value.toList.zipIdx.flatMap fun (ch,i) =>
     if ch == ' ' then [] else bitmapNodes c (glyphRows ch) 5 (x+i*6*size) y size
 
+/-- Glyph outlines for printable ASCII, indexed from U+0020. Prepared once
+when the host supplies its bundled monospace face. -/
+structure AddressFont where
+  advance : Nat := 1
+  glyphs : Array (Option (List Rendering.Geometry)) := #[]
+
+private def addressText (font : AddressFont) (c : Rendering.Color)
+    (value : String) (x y size : Nat) : List Rendering.Node :=
+  if font.glyphs.isEmpty then text c value x y size else
+  let scale := Float.ofNat (6*size) / Float.ofNat (max 1 font.advance)
+  let baseline := Float.ofNat (y+7*size)
+  value.toList.zipIdx.flatMap fun (ch,i) =>
+    if ch == ' ' then [] else
+    let left := x+i*6*size
+    let paths := if ch.toNat < 32 then none else font.glyphs[ch.toNat-32]?.join
+    match paths with
+    | none => bitmapNodes c (glyphRows ch) 5 left y size
+    | some shapes =>
+      [.group none ⟨scale,0,0,scale,Float.ofNat left,baseline⟩
+        (shapes.map fun geometry => .paint {primitive := {geometry, style := {fill := .solid c}}})]
+
+/-- With no held face, address text is drawn by the existing bitmap path. -/
+theorem addressText_empty (c : Rendering.Color) (value : String) (x y size : Nat) :
+    addressText {} c value x y size = text c value x y size := rfl
+
+#print axioms addressText_empty
+
 private def charWidth (s : Shell) : Nat := 6*dot s
 private def fit (s : Shell) (value : String) (room : Nat) : String :=
   let limit := room/charWidth s
@@ -709,7 +736,7 @@ private def flatTab (s : Shell) (t : Theme) (box : Box) (index : Nat) : List Ren
 /-- The address field of the flat look: a pill in the field colour, ringed in the accent while
 it has the focus; a search mark, then the text, the selection and a thin caret. The text
 columns are those of the classic field (`addressNodes`), so a press lands on the same letter. -/
-private def flatAddress (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
+private def flatAddress (font : AddressFont) (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
   let u := unit s
   let size := dot s
   let textX := box.x+22*u
@@ -721,11 +748,11 @@ private def flatAddress (s : Shell) (t : Theme) (box : Box) : List Rendering.Nod
   let hi := column (max s.anchor s.cursor)
   let selecting := s.focused && hi > lo
   let piece := fun (c : Rendering.Color) (a b : Nat) =>
-    text c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
+    addressText font c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
   let body := if s.address.isEmpty && !s.focused
-    then text t.muted (fit s "Search or type a URL" room) textX textY size
+    then addressText font t.muted (fit s "Search or type a URL" room) textX textY size
     else if selecting then piece t.wellInk 0 lo ++ piece t.selectedInk lo hi ++ piece t.wellInk hi shown.length
-    else text t.wellInk shown textX textY size
+    else addressText font t.wellInk shown textX textY size
   let marked := if selecting
     then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
   let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-2*u) (max 1 (3*u/2)) (7*size+4*u)] else []
@@ -759,7 +786,7 @@ private def flatFind (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :
 /-- The controls of the full chrome in a flat theme: the tab strip, the toolbar, round
 buttons that show a circle while pressed, and the settings button always in a circle of the
 field colour, so it is easy to find. -/
-private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
+private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) (font : AddressFont) : List Rendering.Node := Id.run do
   let u := unit s
   let row := tabRow s width
   let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
@@ -772,7 +799,7 @@ private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Render
     | ["close",_] =>
       out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.muted "close" box (12*u) 1.8
     | ["newTab"] => out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "newTab" box (14*u)
-    | ["address"] => out := out ++ flatAddress s t box
+    | ["address"] => out := out ++ flatAddress font s t box
     | ["find"] => out := out ++ flatFind s t box
     | ["copyAddress"] | ["pasteGo"] =>
       let size := menuSize s width
@@ -986,10 +1013,10 @@ def splashNodes (label : String) (ms width top rows : Nat) (reduce : Bool) : Lis
 folding: the controls slide up and fade into the chrome's face over the first half of the
 fold, the chrome is shorter (`height`), and the domain shrinks to the middle of the strip
 and fades in over the second half. -/
-def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
+def nodes (s : Shell) (width : Nat) (font : AddressFont := {}) : List Rendering.Node :=
   let t := themeOf s
   let controlNodes := fun (s : Shell) (t : Theme) (width : Nat) =>
-    if t.flat then flatControlNodes s t width else controlNodes s t width
+    if t.flat then flatControlNodes s t width font else controlNodes s t width
   if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width ++ swipeNodes s t width else
   let p := min 100 s.collapse
   let lift := fullHeight s width-height s width
@@ -1005,20 +1032,20 @@ def pageClip (s : Shell) (width height' : Nat) : Rendering.ClipRect :=
 
 /-- Put a page rendered below the chrome and the chrome into one scene. The page is clipped to its part of the window
 (`pageClip`), so no page ink reaches the chrome (`compose_page_clipped`). -/
-def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
+def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) (font : AddressFont := {}) : Rendering.Scene :=
   let top := Float.ofNat (height s width)-Float.ofNat s.scroll
   let shift : Rendering.Transform := ⟨1,0,0,1,0,top⟩
   {page with
     height := height'
     mapping := {page.mapping with viewportHeight := Float.ofNat height'}
-    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width
+    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width font
     links := Rendering.moveLinks (· + top) page.links}
 
 /-- Security: every primitive of the page in a composed frame carries the page's part
 of the window as a clip, so its ink can not paint the chrome. -/
-theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+theorem composeWithFont_page_clipped (font : AddressFont) (s : Shell) (page : Rendering.Scene) (width height' : Nat)
     (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
-    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (node : Rendering.Node) (head : (compose s page width height' font).tree.head? = some node)
     (h : item ∈ node.lower parent groups) :
     (pageClip s width height').lowerUnder parent ∈ item.primitive.clips := by
   have e : node = .clipped none Rendering.identity (pageClip s width height')
@@ -1027,6 +1054,15 @@ theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height'
     exact head.symm
   subst e
   exact Rendering.lower_clipped _ _ _ _ _ _ _ h
+
+theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+    (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
+    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (h : item ∈ node.lower parent groups) :
+    (pageClip s width height').lowerUnder parent ∈ item.primitive.clips :=
+  composeWithFont_page_clipped {} s page width height' parent groups item node head h
+
+#print axioms composeWithFont_page_clipped
 
 /-- The page under the chrome keeps every link of the page, moved down by the chrome less
 the scroll and nothing else (`LinkTheorems.moveLinks_getElem`; issue 1268). -/

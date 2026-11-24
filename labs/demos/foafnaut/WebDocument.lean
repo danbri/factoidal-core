@@ -1449,12 +1449,13 @@ theorem pageLayer_links (page : Rendering.Scene) (extra : List Rendering.Node) (
     (pageLayer page extra b).links = Rendering.moveLinks (· - Float.ofNat b.top) page.links := rfl
 
 /-- The chrome layer: window rows `0 .. WebShell.height`. -/
-def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) : Rendering.Scene :=
+def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat)
+    (addressFont : WebShell.AddressFont := {}) : Rendering.Scene :=
   let top := max 1 (WebShell.height shell width)
   {page with
     height := top
     mapping := {page.mapping with viewportHeight := Float.ofNat top}
-    tree := WebShell.nodes shell width
+    tree := WebShell.nodes shell width addressFont
     glyphRuns := #[]
     links := #[]}
 
@@ -1465,10 +1466,11 @@ def bandTop (shell : WebShell.Shell) (width : Nat) : Nat :=
 
 /-- The chrome layer alone, for a change of `collapse` (op `chromeLayer`): its scene is the
 chrome's nodes, rows `0 .. top`. No layout and no page. -/
-def chromeScene (shell : WebShell.Shell) (width : Nat) : Rendering.Scene :=
+def chromeScene (shell : WebShell.Shell) (width : Nat)
+    (addressFont : WebShell.AddressFont := {}) : Rendering.Scene :=
   let top := max 1 (WebShell.height shell width)
   {width,height := top,mapping := {viewportWidth := Float.ofNat width,viewportHeight := Float.ofNat top},
-   tree := WebShell.nodes shell width}
+   tree := WebShell.nodes shell width addressFont}
 
 /-- The blit of a page GPU canvas (docs/designissues/2026-11-08-page-gpu.md) into the page
 layer: the canvas texture scaled to the canvas box `r` (x, y, width, height in layer
@@ -1652,7 +1654,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
-    (retainOn : Bool := true) (splashing : Bool := false) :
+    (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {}) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1661,7 +1663,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let b := band shell.scroll view
   let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
   let (chromeText,chromeSections) ←
-    WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
+    WebRender.artifactWith (chromeLayer shell page width addressFont) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
@@ -1709,6 +1711,8 @@ structure Holds where
   whose cascade has monospace text, and a host that has not given it learns from
   `Laid.wantsMono`. -/
   mono : Array Rendering.SfntProfile.Font := #[]
+  /-- Outlines of the held monospace face for the default address field. -/
+  addressFont : WebShell.AddressFont := {}
 
 instance : Inhabited Holds := ⟨{}⟩
 
@@ -1749,6 +1753,20 @@ private def loadSerifFont (h : Holds) (bytes : ByteArray) (family sha256 : Strin
     ({h with serif := #[font]}, .ok (JSON.Json.object [("serif",.string font.family),
       ("glyphs",.number (toString font.face.numGlyphs))]).toString)
 
+private def addressFontOf (font : Rendering.SfntProfile.Font) : WebShell.AddressFont := Id.run do
+  let cell := (font.face.glyph font.bytes 'M').toOption
+  let advance := (cell.bind fun g => font.face.advances[g]?).getD 0
+  if advance == 0 then return {}
+  let mut glyphs := #[]
+  for cp in [32:127] do
+    let paths : Option (List Rendering.Geometry) := do
+      let g ← (font.face.glyphCp font.bytes cp).toOption
+      if g == 0 then none else
+        let commands ← (Rendering.SfntOutline.outline font.bytes font.dir g font.cff).toOption
+        (Rendering.FontProvider.outlineGeometry 0 ⟨g,commands⟩).toOption
+    glyphs := glyphs.push paths
+  return {advance,glyphs}
+
 /-- Hold the monospace face (`fontLoad` mode 4): the policy refuses it or it replaces the one
 held. Layouts draw with it the text whose family list resolves to `monospace`
 (`FontFaceRule.genericOf`). -/
@@ -1756,7 +1774,7 @@ private def loadMonoFont (h : Holds) (bytes : ByteArray) (family sha256 : String
   match Rendering.SfntProfile.Font.read bytes family sha256 with
   | .error e => (h, .error e)
   | .ok font =>
-    ({h with mono := #[font]}, .ok (JSON.Json.object [("mono",.string font.family),
+    ({h with mono := #[font], addressFont := addressFontOf font}, .ok (JSON.Json.object [("mono",.string font.family),
       ("glyphs",.number (toString font.face.numGlyphs))]).toString)
 
 /-- The held fonts that a layout depends on, by family and SHA-256, in order (the `fonts`
@@ -3736,7 +3754,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let form : NativeSVG.DataForm := if bytes then (if cpuPixels request then .sectionsCpu 0 else .sections 0)
       else if request.field? "binary" == some (.bool true) then .base64 else .decimal
     let checks := request.field? "checks" != some (.bool false)
-    let scene := chromeScene shell width
+    let scene := chromeScene shell width (← get).holds.addressFont
     let (text,sections) ← WebRender.artifactWith scene #[] none live form checks false
     return ("{\"top\":" ++ toString scene.height ++ ",\"chrome\":" ++ text ++ "}",sections)
   if str request "op" == "imageDrop" then
@@ -3948,12 +3966,12 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     if request.field? "layers" == some (.bool true) then
       return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty))
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont)
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
   return withWants laid <| withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
-    | some value => WebShell.compose value page width height
+    | some value => WebShell.compose value page width height holds.addressFont
     | none => page)) boxes face live form checks tree)
 
 /-- The layout source of the engine: `Engine.frame`, which keeps layouts in the state. -/
