@@ -415,8 +415,10 @@ private def sample : Dom := Id.run do
 
 -- node 1 host, 2 and 3 light children, 4 the shadow root, 5 the named slot
 #guard sample.findSlottables 5 == #[2]
-#guard sample.flatChildren 1 == #[2]
-#guard (sample.flat.get 1).kids == #[2] && (sample.flat.get 2).parent == some 1
+#guard sample.flatChildren 1 == #[5] && sample.flatChildren 5 == #[2]
+#guard (let flat := sample.flat
+  (flat.get 1).kids == #[5] && (flat.get 5).kids == #[2] &&
+  (flat.get 5).parent == some 1 && (flat.get 2).parent == some 5)
 #guard sample.eventPath 2 false == [2, 5, 4, 1, 0]
 #guard sample.eventPath 5 false == [5, 4] && sample.eventPath 5 true == [5, 4, 1, 0]
 #guard sample.retarget 5 0 == some 1 && sample.retarget 5 4 == some 5
