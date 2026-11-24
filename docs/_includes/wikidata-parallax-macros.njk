@@ -1,0 +1,17 @@
+{#- Shared pieces for the Wikidata set-browsing (Parallax) pages. -#}
+
+{%- macro thumb(id, entities, thumbBase, size=64, cls="thumb", fallback="") -%}
+{%- set e = entities[id] -%}
+{%- if e and e.image -%}
+<img class="{{ cls }}" src="{{ thumbBase }}{{ e.image | urlencode }}?width={{ size * 2 }}" alt="" width="{{ size }}" height="{{ size }}" loading="lazy" decoding="async">
+{%- else -%}
+<span class="{{ cls }} thumb-none" aria-hidden="true">{{ ((e.label if e else (id or fallback)) or "?") | string | replace("?", "") | first | upper }}</span>
+{%- endif -%}
+{%- endmacro -%}
+
+{#- "art museum (Q207694)" -> "art museum" -#}
+{%- macro bare(text) -%}{{ text | replace(r/ \((Q|P)\d+\)/g, "") | replace(r/ \[redirect → Q\d+\]/g, "") }}{%- endmacro -%}
+
+{%- macro tierBadge(tier) -%}
+<span class="tier tier-{{ tier | lower }}" title="Tier {{ tier }}">{{ "Beyond" if tier == "N" else tier }}</span>
+{%- endmacro -%}
