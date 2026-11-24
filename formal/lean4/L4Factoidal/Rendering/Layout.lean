@@ -1533,9 +1533,14 @@ private def widthVariance (widths : Array Float) : Float :=
   let mean := widths.foldl (· + ·) 0 / Float.ofNat widths.size
   widths.foldl (fun sum width => sum + (width - mean) * (width - mean)) 0
 
+/-- A breaking width with the same number of lines as the ordinary layout. -/
+private abbrev CountPreservingWidth (words : Array WrapMeasure) (available : Float) :=
+  { w : Float // (wrappedWidths words w).size = (wrappedWidths words available).size }
+
 /-- Search for a more even wrap with the normal line count. Limit the search to
 ten lines and twelve probes. A reduced breaking width never changes the box width. -/
-private def balancedWidth (words : Array WrapMeasure) (available : Float) : Option Float := Id.run do
+private def chooseBalancedWidth (words : Array WrapMeasure) (available : Float) :
+    Option (CountPreservingWidth words available) := Id.run do
   let normal := wrappedWidths words available
   if normal.size <= 1 || normal.size > 10 then return none
   let mut lo := words.foldl (fun w item => max w item.width) 0
@@ -1549,10 +1554,27 @@ private def balancedWidth (words : Array WrapMeasure) (available : Float) : Opti
     if proposed.size > normal.size then lo := width
     else
       hi := width
-      if proposed.size == normal.size && widthVariance proposed < score then
-        score := widthVariance proposed
-        choice := some width
+      if h : proposed.size = normal.size then
+        let candidate := widthVariance proposed
+        if candidate < score then
+          score := candidate
+          choice := some ⟨width, h⟩
   return choice
+
+private def balancedWidth (words : Array WrapMeasure) (available : Float) : Option Float :=
+  (chooseBalancedWidth words available).map (·.val)
+
+private theorem balancedWidth_preservesCount (words : Array WrapMeasure) (available width : Float)
+    (selected : balancedWidth words available = some width) :
+    (wrappedWidths words width).size = (wrappedWidths words available).size := by
+  unfold balancedWidth at selected
+  cases h : chooseBalancedWidth words available with
+  | none => simp [h] at selected
+  | some good =>
+    simp only [h, Option.map_some, Option.some.injEq] at selected
+    exact selected ▸ good.property
+
+#print axioms balancedWidth_preservesCount
 
 /-- Measure text in a constant-width horizontal line box. Inline boxes with no
 horizontal edges fit the same model. For other participants, let the ordinary

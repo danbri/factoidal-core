@@ -17,3 +17,7 @@ the computed mode is nowrap.
 
 Issue #957 has the paired real-page screenshots and the reduced Chrome and
 Foafnaut measurements.
+
+The packing model carries a Lean proof that a selected width preserves the
+ordinary model line count. Native layout tests cover the integration. Hover
+repaint also checks the new flags before reusing a layout.
