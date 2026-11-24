@@ -11,26 +11,20 @@ wikidataResults: true
 <div class="wdqs">
   <header class="intro">
     <div>
+      <a class="endpoint-link" href="https://query-next.wikidata.org/">Wikidata · QLever</a>
       <h1>Wikidata result views</h1>
-      <p>Explore the example or open the query editor to try your own SPARQL.</p>
+      <p>Explore the same SPARQL results as maps, photos, graphs and charts. Each group shares one query.</p>
     </div>
-    <button id="example" type="button">Load graph example</button>
+    <div class="intro-actions">
+      <button id="batch-run" type="button" class="primary" disabled>Load live examples</button>
+      <a href="#query-editor" id="editor-link">Try your own query</a>
+    </div>
+    <p id="batch-state" role="status" class="batch-status">Saved previews are shown below. Live requests start when you press Load.</p>
   </header>
+  <nav id="gallery-nav" class="gallery-nav" aria-label="Example groups"></nav>
+  <div id="gallery" aria-label="Wikidata gallery"></div>
 
-  <section class="results" aria-label="Results">
-    <p id="result-state" role="status"></p>
-    <div class="result-toolbar">
-      <div role="tablist" aria-label="Result format">
-        <button type="button" id="visual-tab" role="tab" aria-controls="visual-panel" aria-selected="true">Visualisation</button>
-        <button type="button" id="raw-tab" role="tab" aria-controls="raw-panel" aria-selected="false" tabindex="-1">Raw results</button>
-      </div>
-      <label id="view-choice" for="view">View <select id="view"></select></label>
-    </div>
-    <div id="visual-panel" role="tabpanel" aria-labelledby="visual-tab" tabindex="0"></div>
-    <div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab" tabindex="0" hidden></div>
-  </section>
-
-  <details class="editor-panel">
+  <details class="editor-panel" id="query-editor">
     <summary>Query editor</summary>
     <label for="query">SPARQL query</label>
     <div class="code-editor">
@@ -38,18 +32,26 @@ wikidataResults: true
       <textarea id="query" rows="11" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
     </div>
     <div class="actions">
-      <label for="endpoint">Endpoint
-        <select id="endpoint">
-          <option value="classic">Classic · Blazegraph</option>
-          <option value="qlever">New · QLever</option>
-        </select>
-      </label>
       <label for="language">Label language <input id="language" value="en" maxlength="48" size="7"></label>
-      <button id="run" type="button" class="primary">Run query</button>
+      <button id="run" type="button" class="primary">Run on QLever</button>
       <button id="inspect" type="button">Show parsed structure</button>
     </div>
     <p id="parse-state" role="status"></p>
     <pre id="parsed" tabindex="0" aria-label="Parsed SPARQL structure" hidden></pre>
+    <section class="editor-results" aria-label="Query results">
+      <p id="result-state" role="status"></p>
+      <div id="result-panels" hidden>
+        <div class="result-toolbar">
+          <div role="tablist" aria-label="Result format">
+            <button type="button" id="visual-tab" role="tab" aria-controls="visual-panel" aria-selected="true">Visualisation</button>
+            <button type="button" id="raw-tab" role="tab" aria-controls="raw-panel" aria-selected="false" tabindex="-1">Raw results</button>
+          </div>
+          <label id="view-choice" for="view">View <select id="view"></select></label>
+        </div>
+        <div id="visual-panel" role="tabpanel" aria-labelledby="visual-tab" tabindex="0"></div>
+        <div id="raw-panel" role="tabpanel" aria-labelledby="raw-tab" tabindex="0" hidden></div>
+      </div>
+    </section>
     <p><a href="https://mlp-wikidata-workbench.danbri.chatgpt.site/">Rewrite and compare classic queries in the workbench</a></p>
   </details>
 </div>

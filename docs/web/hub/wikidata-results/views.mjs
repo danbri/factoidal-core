@@ -70,7 +70,7 @@ function renderImages(root, { vars, rows, options }) {
       const url = commonsImage(row[key]);
       if (!url) continue;
       const figure = element('figure');
-      const file = linkOrText('', url);
+      const file = linkOrText('', url.replace(/\/wiki\/Special:FilePath\/(.+?)(?:\?.*)?$/i, '/wiki/File:$1'));
       file.append(image(url, caption || 'Commons image'));
       figure.append(file, element('figcaption', caption || '?' + key));
       const details = element('details');
@@ -485,7 +485,8 @@ function renderChart(root, { vars, rows, options }, name) {
     note(root, 'This chart needs two number, date or label columns.');
     return;
   }
-  let [x, y] = columns;
+  let x = columns.find(column => optionVars(options.x).includes(column.name)) ?? columns[0];
+  let y = columns.find(column => optionVars(options.y).includes(column.name)) ?? columns.find(column => column !== x);
   const tools = element('div', undefined, 'view-tools');
   const plot = element('div');
   const names = columns.map(column => [column.name, '?' + column.name]);
@@ -499,7 +500,7 @@ function renderChart(root, { vars, rows, options }, name) {
     }
     const bars = name === 'BarChart';
     const xScale = scale(points.map(point => point[0]), 145, 725);
-    const yScale = scale(points.map(point => point[1]), 348, 24, bars);
+    const yScale = scale(points.map(point => point[1]), 348, 24, bars || name === 'AreaChart');
     const ctx = canvasOf(plot, `${viewNames[name]} of ?${y.name} by ?${x.name}`);
     axes(ctx, x, y, xScale, yScale, points);
     const coords = points.map(([a, b]) => [xScale.at(a), yScale.at(b)]);

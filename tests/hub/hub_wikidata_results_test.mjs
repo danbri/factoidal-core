@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { exampleQuery, exampleResults } from '../../docs/web/hub/wikidata-results/example.mjs';
+import { groups } from '../../docs/web/hub/wikidata-results/example.mjs';
+import { batchSize, qleverUrl, queryQlever, runBatch } from '../../docs/web/hub/wikidata-results/qlever.mjs';
 import {
   axisColumn, commonsImage, displayedVars, graphData, highlightTokens, mapGeometry, numberValue, viewDirectives, viewNames,
 } from '../../docs/web/hub/wikidata-results/view-data.mjs';
 import { createResultViews } from '../../docs/web/hub/wikidata-results/views.mjs';
 
-const { head: { vars }, results: { bindings } } = exampleResults;
+const london = groups.find(group => group.id === 'london');
+const orbits = groups.find(group => group.id === 'orbits');
+const planets = groups.find(group => group.id === 'planets');
+const { head: { vars }, results: { bindings } } = orbits.preview.data;
 const wkt = value => ({ datatype: 'http://www.opengis.net/ont/geosparql#wktLiteral', value });
 
 test('all documented WDQS views and the graph builder have replaceable handlers', () => {
@@ -17,13 +21,20 @@ test('all documented WDQS views and the graph builder have replaceable handlers'
   assert.equal(createResultViews([['Graph', custom]]).get('Graph'), custom);
 });
 
+test('the gallery has a separate card for each view and shares six distinct queries', () => {
+  const cards = groups.flatMap(group => group.views.map(view => view.id));
+  assert.deepEqual(cards.sort(), [...Object.keys(viewNames), 'Ask', 'Rdf'].sort());
+  assert.equal(new Set(groups.map(group => group.query)).size, 6);
+  assert.ok(groups.every(group => !/\b(?:hint:|SERVICE)\b/.test(group.query)));
+});
+
 test('view tags read options from comments and ignore literal strings and IRIs', () => {
-  const query = exampleQuery + '\n#view:Map{"layer":"?placeLabel"}\n' +
+  const query = london.query + '\n#view:Map{"layer":"?placeLabel"}\n' +
     'BIND("""\n#defaultView:Tree\n""" AS ?example) <https://example.org/#defaultView>\n';
   const config = viewDirectives(query);
-  assert.equal(config.title, 'Three cities in England');
-  assert.equal(config.defaultView, 'Graph');
-  assert.deepEqual(config.options.get('Map'), { hide: '?coord', layer: '?placeLabel' });
+  assert.equal(config.title, 'London landmarks');
+  assert.equal(config.defaultView, 'Map');
+  assert.deepEqual(config.options.get('Map'), { hide: ['?coord', '?image'], layer: '?placeLabel' });
   assert.equal(viewDirectives('#defaultView:Table').hasDefaultView, true);
   assert.equal(viewDirectives('#view:Map{}').hasDefaultView, false);
   assert.equal(viewDirectives('#defaultView:Words').unknownView, 'Words');
@@ -33,17 +44,17 @@ test('view tags read options from comments and ignore literal strings and IRIs',
 
 test('graph edges follow the projected item order and share nodes across rows', () => {
   const model = graphData(vars, bindings);
-  assert.deepEqual(model.nodes.map(node => node.label), ['England', 'London', 'Liverpool', 'Manchester']);
-  assert.deepEqual(model.edges, ['Q84', 'Q24826', 'Q18125'].map(target => ({
-    source: 'Q21', target, label: 'contains',
-  })));
-  const swapped = graphData(vars, bindings, ['place', 'region'], '');
-  assert.equal(swapped.edges[0].source, 'Q84');
-  assert.equal(swapped.edges[0].target, 'Q21');
+  assert.equal(model.nodes.length, 9);
+  assert.deepEqual(model.edges[0], { source: 'Q525', target: 'Q2', label: 'orbited by' });
+  assert.ok(model.edges.some(edge => edge.source === 'Q2' && edge.target === 'Q405'));
+  const swapped = graphData(vars, bindings, ['body', 'parent'], '');
+  assert.equal(swapped.edges[0].source, 'Q2');
+  assert.equal(swapped.edges[0].target, 'Q525');
 });
 
 test('map accepts CRS84 shapes without swapping longitude and latitude', () => {
-  assert.deepEqual(mapGeometry(bindings[0].coord), { type: 'Point', coordinates: [-.128, 51.507] });
+  assert.deepEqual(mapGeometry(london.preview.data.results.bindings[0].coord),
+    { type: 'Point', coordinates: [-.12457, 51.50067] });
   assert.deepEqual(mapGeometry(wkt('LINESTRING(-2 1, 3 4)')),
     { type: 'LineString', coordinates: [[-2, 1], [3, 4]] });
   assert.deepEqual(mapGeometry(wkt('<http://www.opengis.net/def/crs/OGC/1.3/CRS84> POLYGON((0 0, 3 0, 3 3, 0 0))')),
@@ -55,11 +66,51 @@ test('map accepts CRS84 shapes without swapping longitude and latitude', () => {
 });
 
 test('chart axes distinguish numbers, dates and labels', () => {
-  assert.equal(axisColumn(bindings, 'score').value(bindings[0].score), 4);
-  assert.equal(axisColumn(bindings, 'year').format(Date.parse(bindings[0].year.value)), '1801-01-01');
-  assert.equal(axisColumn(bindings, 'placeLabel').value(bindings[1].placeLabel), 1);
-  assert.equal(axisColumn(bindings, 'coord'), null);
-  assert.equal(numberValue({ ...bindings[0].score, value: 'NaN' }), null);
+  const rows = planets.preview.data.results.bindings;
+  const dates = groups.find(group => group.id === 'apollo').preview.data.results.bindings;
+  assert.equal(axisColumn(rows, 'diameterKm').value(rows[0].diameterKm), 4879);
+  assert.equal(axisColumn(dates, 'landing').format(Date.parse(dates[0].landing.value)), '1969-07-20');
+  assert.equal(axisColumn(rows, 'planet').value(rows[1].planet), 1);
+  assert.equal(axisColumn(bindings, 'body'), null);
+  assert.equal(numberValue({ ...rows[0].diameterKm, value: 'NaN' }), null);
+});
+
+test('live batches are capped at five, paced and sequential, and stop on backpressure', async () => {
+  const events = [];
+  const run = async ({ id }) => {
+    events.push('start ' + id);
+    await Promise.resolve();
+    events.push('finish ' + id);
+  };
+  const pause = () => events.push('pause');
+  await runBatch(groups, run, pause);
+  assert.deepEqual(events, groups.slice(0, batchSize).flatMap(({ id }, index) =>
+    [...(index ? ['pause'] : []), 'start ' + id, 'finish ' + id]));
+  const limited = [];
+  await runBatch(groups, async ({ id }) => { limited.push(id); return false; }, pause);
+  assert.deepEqual(limited, ['london']);
+});
+
+test('SELECT, ASK and CONSTRUCT share the QLever transport', async () => {
+  let requests = 0;
+  for (const group of [london, groups[4], groups[5]]) {
+    const expected = group.preview;
+    const rdf = expected.kind === 'rdf';
+    const actual = await queryQlever(group.query, { fetchResult: async (url, options) => {
+      requests += 1;
+      assert.equal(url.split('?')[0], qleverUrl);
+      assert.equal(new URL(url).searchParams.get('query'), group.query);
+      assert.equal(options.method, 'GET');
+      return new Response(rdf ? expected.data : JSON.stringify(expected.data), { headers: {
+        'Content-Type': rdf ? expected.contentType : 'application/sparql-results+json; charset=utf-8',
+      }});
+    }});
+    assert.deepEqual(actual, expected);
+  }
+  assert.equal(requests, 3);
+  await assert.rejects(queryQlever('ASK {}', {
+    fetchResult: async () => new Response('Try later', { status: 429 }),
+  }), { status: 429 });
 });
 
 test('image grid recognises Commons file URLs', () => {
