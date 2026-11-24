@@ -310,7 +310,7 @@ private def stateAt (html css id : String) (hover active : Option String := none
 private def rgb255 (c : Color) : Nat × Nat × Nat :=
   ((c.r*255).round.toUInt32.toNat,(c.g*255).round.toUInt32.toNat,(c.b*255).round.toUInt32.toNat)
 private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>B</a> <button id='k'>OK</button></p>"
-#guard userAgentRules.length == 19
+#guard userAgentRules.length == 20
 -- the form controls have boxes: a text field and a checkbox are inline-blocks of a fixed size; a hidden input none
 #guard ((stateAt "<p><input id='i'><input id='h' type=hidden><input id='c' type=checkbox></p>" "" "i").toOption.map (·.display)) == some .inlineBlock
 #guard ((stateAt "<p><input id='i'><input id='h' type=hidden><input id='c' type=checkbox></p>" "" "h").toOption.map (·.display)) == some .none
