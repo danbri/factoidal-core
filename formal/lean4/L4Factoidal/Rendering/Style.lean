@@ -2772,6 +2772,8 @@ inline-block with a raised border, sunken while it is `:active`), and the form c
 the ones that HTML gives (`#0000EE`, `#551A8B`, `#FF0000`); the button colours are
 this profile's choice, since HTML leaves a button's look to the platform. -/
 def userAgentSheet : String :=
+  -- CSS Shadow 1 §4.1.1, overridable in author sheets.
+  "slot{display:contents}" ++
   ":link{color:#0000ee}" ++
   ":visited{color:#551a8b}" ++
   -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.

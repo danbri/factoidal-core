@@ -22,3 +22,10 @@ slot outside the shadow tree. The replay still has separate colour
 scheme, SVG mask and script latency differences to investigate.
 
 Specification: [CSS Shadow Module Level 1](https://drafts.csswg.org/css-shadow-1/#host-selector).
+
+The first exact native check reached the new cascade guard and showed
+that matching alone was insufficient. The layout tree removed each slot
+and spliced its assigned nodes directly into its parent. It now keeps the
+slot as the parent and assigns `display: contents` through the user agent
+sheet. This lets author `display` override it and lets assigned nodes
+inherit from the slot, as CSS Shadow 1 §4.1 requires.

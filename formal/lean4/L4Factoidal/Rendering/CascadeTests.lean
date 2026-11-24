@@ -301,7 +301,7 @@ private def dropdownRule := ":host(:not([loaded], :focus-within)) slot[name=drop
 private def dropdownPage (loaded : Bool) :=
   "<div id='h'" ++ (if loaded then " loaded" else "") ++
   "><template shadowrootmode='open'><button>Toggle</button><slot id='inside' name='dropdown'></slot>" ++
-  "</template><p slot='dropdown'>Menu</p></div><slot id='outside' name='dropdown'></slot>"
+  "</template><p id='menu' slot='dropdown'>Menu</p></div><slot id='outside' name='dropdown'></slot>"
 
 private def dropdownHidden (loaded focused : Bool) : Option (Bool × Bool) := do
   let original := DOM.parseHtmlDocument (dropdownPage loaded)
@@ -317,6 +317,16 @@ private def dropdownHidden (loaded focused : Bool) : Option (Bool × Bool) := do
 #guard dropdownHidden true false == some (false, false)
 #guard dropdownHidden false true == some (false, false)
 #guard agreesIn (dropdownPage false) "" dropdownRule
+
+private def slotStyles : Option (Bool × Float) := do
+  let dom := DOM.parseHtmlDocument (dropdownPage true)
+  let rules ← (scopedRules dom "" "slot[name=dropdown]{color:#ff0000}").toOption
+  let styles ← (computeAllIn (TreeScope.of dom) dom.flat rules 1 {}).toOption
+  let inside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "inside")
+  let menu ← dom.getElementById 0 "menu"
+  return ((← styles[inside]?).pos.contents, (← styles[menu]?).color.r)
+
+#guard slotStyles == some (true, 1)
 
 -- A page with no shadow tree never takes the scoped path: `:host` and `::slotted()` rules
 -- go in no bucket, and match nothing.
