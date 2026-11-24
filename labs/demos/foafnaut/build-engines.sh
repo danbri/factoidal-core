@@ -72,7 +72,7 @@ done
 # Fresh RDF/Turtle/JSON closure for the FOAF view. No JavaScript RDF parser.
 # Prim/FloatOfNat first: SVG.lean imports it (its csimp theorems make Float conversions the fast twins).
 # Par/Chunked: SVG.lean lists tiles in parallel chunks with it (issue 398).
-CORE_MODULES=(Prim/FloatOfNat Par/Chunked Codec/Crc32 Codec/Inflate RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
+CORE_MODULES=(Prim/FloatOfNat Par/Chunked Codec/Crc32 Codec/Inflate Codec/WebP Codec/VP8LPrefix Codec/VP8LPlane Codec/VP8LDecode RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
   Syntax/NTriples Syntax/IriResolve RDF/IriSyntax NatBounds Syntax/Turtle
   JSON/Value JSON/Parser JSON/Serialize UI/Geometry UI/LayoutPolicy UI/PolicyProtocol UI/Presentation Math/Affine Tdb2/Format Rendering/FloatFormat Rendering/Path Rendering/Scene)
 CLOSURE=lean-4.33.1
