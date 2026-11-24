@@ -292,4 +292,131 @@ theorem checkStateCommonValidator_delegates (layout : RegistryStateLayout)
 #print axioms EthereumConsensus.SSZ.checkStateCommonValidator_mismatch
 #print axioms EthereumConsensus.SSZ.checkStateCommonValidator_delegates
 
+
+/-- Mainnet preset and activation boundary, pinned to the consensus-specs
+    revision above (presets/mainnet/phase0.yaml and configs/mainnet.yaml).
+    No caller-supplied epoch or fork layout is used by the new entry point. -/
+def mainnetRegistryEpoch (slot : UInt64) : UInt64 :=
+  UInt64.ofNat (slot.toNat / 32)
+
+def mainnetRegistryLayout (slot : UInt64) : RegistryStateLayout :=
+  if mainnetRegistryEpoch slot < 364032 then .phase0Deneb else .electraFulu
+
+def registrySlotGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 34
+  | .electraFulu => 66
+
+def verifyMainnetStateSlot (slot : UInt64) (siblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError ByteProofResult :=
+  let layout := mainnetRegistryLayout slot
+  if siblings.length ≠ registryStateDepth layout then .error .branchLength
+  else
+    match uint64Root slot with
+    | .error _ => .error .basicRoot
+    | .ok leaf =>
+      (verifyByteBranch (registryStateDepth layout) (registrySlotGindex layout)
+        leaf.bytes siblings stateRoot).mapError RegistryError.proof
+
+inductive MainnetSlotCandidateVerdict where
+  | slotRootMismatch
+  | stateVerdict (verdict : StateCandidateVerdict)
+  deriving BEq, DecidableEq, Repr
+
+/-- Check the slot and registry against one supplied state commitment.
+    This fixes the epoch used in eligibility and the SSZ layout, conditional
+    on that commitment; it does not authenticate the commitment or BLS votes. -/
+def checkMainnetSlotCommonValidator (slot : UInt64)
+    (prepared : PreparedAttesterSlashing) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
+    (registryRoot : ByteArray) (stateSiblings slotSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError MainnetSlotCandidateVerdict :=
+  match verifyMainnetStateSlot slot slotSiblings stateRoot with
+  | .error e => .error e
+  | .ok result =>
+    if result.matchesRoot then
+      match checkStateCommonValidator (mainnetRegistryLayout slot) prepared
+          (mainnetRegistryEpoch slot) index length v siblings registryRoot
+          stateSiblings stateRoot with
+      | .error e => .error e
+      | .ok verdict => .ok (.stateVerdict verdict)
+    else .ok .slotRootMismatch
+
+/-- Kind: layout. Says: the slot field is at position 2 in each layout.
+    Does not say: either supplied state is canonical. -/
+theorem registrySlot_gindices :
+    registrySlotGindex .phase0Deneb = 34 ∧ registrySlotGindex .electraFulu = 66 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: linkage. Says: the mainnet earlier layout is selected before Electra.
+    Does not say: the slot is authenticated. -/
+theorem mainnetRegistryLayout_before (slot : UInt64)
+    (h : mainnetRegistryEpoch slot < 364032) :
+    mainnetRegistryLayout slot = .phase0Deneb := by
+  simp only [mainnetRegistryLayout, if_pos h]
+
+/-- Kind: linkage. Says: Electra and the later layout are selected at the boundary.
+    Does not say: future layout-changing forks are covered. -/
+theorem mainnetRegistryLayout_after (slot : UInt64)
+    (h : ¬ mainnetRegistryEpoch slot < 364032) :
+    mainnetRegistryLayout slot = .electraFulu := by
+  simp only [mainnetRegistryLayout, if_neg h]
+
+/-- Kind: admission. Says: a wrong slot branch count is refused.
+    Does not say: an admitted branch is valid. -/
+theorem verifyMainnetStateSlot_bad_branch (slot : UInt64)
+    (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length ≠ registryStateDepth (mainnetRegistryLayout slot)) :
+    verifyMainnetStateSlot slot siblings stateRoot = .error .branchLength := by
+  simp only [verifyMainnetStateSlot, if_pos h]
+
+/-- Kind: linkage. Says: the slot proof checks the locally derived uint64 leaf
+    and mainnet layout with concrete SHA-256. Does not say: the root is canonical. -/
+theorem verifyMainnetStateSlot_delegates (slot : UInt64)
+    (siblings : List ByteArray) (stateRoot : ByteArray) (leaf : Chunk)
+    (h : siblings.length = registryStateDepth (mainnetRegistryLayout slot))
+    (hl : uint64Root slot = .ok leaf) :
+    verifyMainnetStateSlot slot siblings stateRoot =
+      (verifyByteBranch (registryStateDepth (mainnetRegistryLayout slot))
+        (registrySlotGindex (mainnetRegistryLayout slot)) leaf.bytes siblings
+        stateRoot).mapError RegistryError.proof := by
+  simp [verifyMainnetStateSlot, h, hl]
+
+/-- Kind: linkage. Says: a mismatching slot proof prevents candidate admission.
+    Does not say: the supplied root is canonical. -/
+theorem checkMainnetSlotCommonValidator_mismatch (slot : UInt64)
+    (p : PreparedAttesterSlashing) (index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings : List ByteArray) (stateRoot : ByteArray)
+    (result : ByteProofResult)
+    (hp : verifyMainnetStateSlot slot slotSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = false) :
+    checkMainnetSlotCommonValidator slot p index length v siblings registryRoot
+      stateSiblings slotSiblings stateRoot = .ok .slotRootMismatch := by
+  simp [checkMainnetSlotCommonValidator, hp, hm]
+
+/-- Kind: linkage. Says: the candidate path receives the derived epoch,
+    layout and identical state root only after the slot branch matches.
+    Does not say: signatures or canonical chain history are authenticated. -/
+theorem checkMainnetSlotCommonValidator_delegates (slot : UInt64)
+    (p : PreparedAttesterSlashing) (index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings : List ByteArray) (stateRoot : ByteArray)
+    (result : ByteProofResult) (verdict : StateCandidateVerdict)
+    (hp : verifyMainnetStateSlot slot slotSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = true)
+    (hc : checkStateCommonValidator (mainnetRegistryLayout slot) p
+      (mainnetRegistryEpoch slot) index length v siblings registryRoot
+      stateSiblings stateRoot = .ok verdict) :
+    checkMainnetSlotCommonValidator slot p index length v siblings registryRoot
+      stateSiblings slotSiblings stateRoot = .ok (.stateVerdict verdict) := by
+  simp [checkMainnetSlotCommonValidator, hp, hm, hc]
+
+#print axioms EthereumConsensus.SSZ.registrySlot_gindices
+#print axioms EthereumConsensus.SSZ.mainnetRegistryLayout_before
+#print axioms EthereumConsensus.SSZ.mainnetRegistryLayout_after
+#print axioms EthereumConsensus.SSZ.verifyMainnetStateSlot_bad_branch
+#print axioms EthereumConsensus.SSZ.verifyMainnetStateSlot_delegates
+#print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_delegates
+
 end EthereumConsensus.SSZ
