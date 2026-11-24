@@ -82,6 +82,27 @@ private def dispatch : List String → Except String String
       let proof ← (verifyValidatorAt length index.toNat v siblings expected).mapError errorName
       return (if proof.matchesRoot then "match " else "mismatch ") ++
         L4Factoidal.Crypto.bytesToHex proof.root.bytes
+    else if op == "slotstate" then
+      -- For this operation the wire's ep field is a slot, not an epoch.
+      let depth := registryStateDepth (mainnetRegistryLayout epoch)
+      if siblings.length ≠ 41 + 2 * depth then throw "branch_length"
+      let stateRoot ← match siblings.drop 40 with
+        | root :: _ => .ok root
+        | [] => .error "branch_length"
+      let zero ← containerZeroRoot.mapError (fun _ => "basic_root")
+      let prepared : PreparedAttesterSlashing := {
+        commonIndices := if included then [index] else []
+        firstSigningRoot := zero
+        secondSigningRoot := zero }
+      let verdict ← (checkMainnetSlotCommonValidator epoch prepared index length v
+        (siblings.take 40) expected ((siblings.drop 41).take depth)
+        (siblings.drop (41 + depth)) stateRoot).mapError errorName
+      return match verdict with
+        | .slotRootMismatch => "slot_root_mismatch"
+        | .stateVerdict .stateRootMismatch => "state_root_mismatch"
+        | .stateVerdict (.registryVerdict .rootMismatch) => "root_mismatch"
+        | .stateVerdict (.registryVerdict .notSlashable) => "not_slashable"
+        | .stateVerdict (.registryVerdict .candidateNotAuthenticated) => "candidate_not_authenticated"
     else if op == "state32" || op == "state64" then
       let layout : RegistryStateLayout := if op == "state32" then .phase0Deneb else .electraFulu
       if siblings.length ≠ 41 + registryStateDepth layout then throw "branch_length"
