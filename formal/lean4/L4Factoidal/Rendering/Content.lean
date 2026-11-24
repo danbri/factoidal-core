@@ -240,6 +240,28 @@ def counterPairs (dflt : Int) : List CssValues.CV → Option (List (String × In
 where bad (n : String) : Bool :=
   ["none", "initial", "inherit", "unset", "default", "revert", "revert-layer"].contains (CssValues.lower n)
 
+private def counterPairsGo (dflt : Int) : List CssValues.CV → List (String × Int) → Option (List (String × Int))
+  | [], acc => some acc.reverse
+  | .tok (.ident n) :: .tok (.num v true) :: rest, acc =>
+    if counterPairs.bad n then none else counterPairsGo dflt rest ((n, v.num) :: acc)
+  | .tok (.ident n) :: rest, acc =>
+    if counterPairs.bad n then none else counterPairsGo dflt rest ((n, dflt) :: acc)
+  | _, _ => none
+
+private theorem counterPairsGo_eq (dflt : Int) (xs : List CssValues.CV) (acc : List (String × Int)) :
+    counterPairsGo dflt xs acc = (counterPairs dflt xs).map (acc.reverse ++ ·) := by
+  fun_induction counterPairs dflt xs generalizing acc <;>
+    simp_all [counterPairsGo, counterPairs, Option.map_map, Function.comp_def, List.reverse_cons, List.append_assoc]
+
+def counterPairsLoop (dflt : Int) (xs : List CssValues.CV) : Option (List (String × Int)) :=
+  counterPairsGo dflt xs []
+
+@[csimp] theorem counterPairs_eq_loop : @counterPairs = @counterPairsLoop := by
+  funext dflt xs
+  simp [counterPairsLoop, counterPairsGo_eq]
+
+#print axioms counterPairs_eq_loop
+
 /-- The names of `reversed(name)` with no integer in a `counter-reset` value (CSS Lists 3
 §4.4): such a counter starts at the number its increments count down from (`Generated`). -/
 def reversedNames (value : String) : List String :=
@@ -263,6 +285,22 @@ def unreverse : List CssValues.CV → List CssValues.CV
       | _ => .fn f args :: unreverse rest
     else .fn f args :: unreverse rest
   | c :: rest => c :: unreverse rest
+
+def unreverseLoop (xs : List CssValues.CV) : List CssValues.CV :=
+  xs.map fun c => match c with
+    | .fn f args =>
+      if CssValues.lower f == "reversed" then
+        match CssValues.stripWs args with
+        | [one] => one
+        | _ => c
+      else c
+    | _ => c
+
+@[csimp] theorem unreverse_eq_loop : @unreverse = @unreverseLoop := by
+  funext xs
+  fun_induction unreverse xs <;> simp_all [unreverse, unreverseLoop]
+
+#print axioms unreverse_eq_loop
 
 /-- A counter declaration's value: `none` gives no pairs. -/
 def counterList (value : String) (dflt : Int) : Option (List (String × Int)) :=
