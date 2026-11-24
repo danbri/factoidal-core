@@ -49,6 +49,81 @@ private def errorName : RegistryError → String
   | .proof _ => "proof_error"
   | .notCommon => "not_common"
 
+private def signingErrorName : StateSigningError → String
+  | .forkWidth => "fork_width"
+  | .basicRoot => "basic_root"
+  | .branchLength => "branch_length"
+  | .proof .chunkWidth => "chunk_width"
+  | .proof _ => "proof_error"
+  | .forkMismatch => "fork_mismatch"
+  | .genesisMismatch => "genesis_mismatch"
+  | .preparation .resourceLimit => "resource_limit"
+  | .preparation .badIndices => "bad_indices"
+  | .preparation .notConflicting => "not_conflicting"
+  | .preparation .noCommonIndices => "no_common_indices"
+  | .preparation .signing _ => "signing_error"
+  | .registry e => errorName e
+
+private def slotVerdictName : MainnetSlotCandidateVerdict → String
+  | .slotRootMismatch => "slot_root_mismatch"
+  | .stateVerdict .stateRootMismatch => "state_root_mismatch"
+  | .stateVerdict (.registryVerdict .rootMismatch) => "root_mismatch"
+  | .stateVerdict (.registryVerdict .notSlashable) => "not_slashable"
+  | .stateVerdict (.registryVerdict .candidateNotAuthenticated) => "candidate_not_authenticated"
+
+private def readVote : List String → Except String AttestationData
+  | [slot, idx, beacon, sourceEp, source, targetEp, target] => do
+    let s ← readU64 slot
+    let i ← readU64 idx
+    let b ← readHex beacon
+    let se ← readU64 sourceEp
+    let sr ← readHex source
+    let te ← readU64 targetEp
+    let tr ← readHex target
+    (checkedAttestationData s i b se sr te tr).mapError (fun _ => "vote_width")
+  | _ => .error "parse_error"
+
+private def readIndices (s : String) : Except String (List UInt64) :=
+  if s == "-" then .ok [] else (s.splitOn ",").mapM readU64
+
+private def dispatchStateVotes (slot index : UInt64) (length : Nat)
+    (v : RegistryValidator) (registryRoot : ByteArray) (rest : List String) :
+    Except String String := do
+  let depth := registryStateDepth (mainnetRegistryLayout slot)
+  let proofCount := 41 + 4 * depth
+  if rest.length ≠ proofCount + 20 then throw "branch_length"
+  let siblings ← (rest.take proofCount).mapM readHex
+  let stateRoot ← match siblings.drop 40 with
+    | root :: _ => .ok root
+    | [] => .error "branch_length"
+  match rest.drop proofCount with
+  | prev :: curr :: activation :: genesis :: tail => do
+    let prevVersion ← readHex prev
+    let currVersion ← readHex curr
+    let activationEpoch ← readU64 activation
+    let genesisRoot ← readHex genesis
+    let context : ForkContext := {
+      previousVersion := prevVersion
+      currentVersion := currVersion
+      activationEpoch := activationEpoch
+      genesisValidatorsRoot := genesisRoot }
+    let a ← readVote (tail.take 7)
+    let b ← readVote ((tail.drop 7).take 7)
+    match tail.drop 14 with
+    | [leftText, rightText] => do
+      let left ← readIndices leftText
+      let right ← readIndices rightText
+      let result ← (checkStateVotes slot context a b left right index length v
+        (siblings.take 40) registryRoot ((siblings.drop 41).take depth)
+        ((siblings.drop (41 + depth)).take depth)
+        ((siblings.drop (41 + 2 * depth)).take depth)
+        (siblings.drop (41 + 3 * depth)) stateRoot).mapError signingErrorName
+      return slotVerdictName result.2 ++ " " ++
+        L4Factoidal.Crypto.bytesToHex result.1.firstSigningRoot.bytes ++ " " ++
+        L4Factoidal.Crypto.bytesToHex result.1.secondSigningRoot.bytes
+    | _ => throw "parse_error"
+  | _ => throw "parse_error"
+
 private def dispatch : List String → Except String String
   | op :: count :: idx :: ep :: common :: key :: cred :: balance :: slashed ::
       eligible :: activation :: exit :: withdrawable :: root :: rest => do
@@ -74,6 +149,9 @@ private def dispatch : List String → Except String String
       exitEpoch := exitEpoch
       withdrawableEpoch := withdrawableEpoch }
     let expected ← readHex root
+    if op == "fullstate" then
+      if included then throw "parse_error"
+      return ← dispatchStateVotes epoch index length v expected rest
     let siblings ← rest.mapM readHex
     if op == "root" then
       let leaf ← (validatorRoot v).mapError errorName
@@ -141,7 +219,8 @@ def main : IO Unit := do
   repeat
     let line ← input.getLine
     if line.isEmpty then break
-    let result := if line.utf8ByteSize > 4096 then .error "resource_limit"
+    let limit := if line.startsWith "fullstate " then 8192 else 4096
+    let result := if line.utf8ByteSize > limit then .error "resource_limit"
       else dispatch (line.trimAscii.toString.splitOn " ")
     output.putStrLn (match result with
       | .ok value => value
