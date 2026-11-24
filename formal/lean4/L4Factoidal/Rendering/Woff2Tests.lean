@@ -15,6 +15,7 @@ fontTools and against `woff2_decompress`, is `tools/fonts/woff2_vectors.py`.
 -/
 import L4Factoidal.Rendering.Woff2
 import L4Factoidal.Rendering.FontPolicy
+import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Crypto.SHA2
 
 namespace L4Factoidal.Rendering.Woff2
@@ -221,6 +222,12 @@ private def shaOf (w : ByteArray) : Option (Nat × String) :=
   | .ok s => match FontPolicy.readDirectory s with
     | .ok dir => dir.size == 13
     | .error _ => false
+  | .error _ => false
+-- The font reader (`SfntProfile.Font.read`, with the standard font policy) reads each file:
+-- six glyphs, 1000 units per em.
+#guard [w_plain, w_glyf, w_hmtx].all fun w =>
+  match SfntProfile.Font.read w "Noto Sans" "00" with
+  | .ok f => f.face.numGlyphs == 6 && f.face.unitsPerEm == 1000
   | .error _ => false
 -- The whole font sums to 0xB1B0AFBA (head checkSumAdjustment).
 #guard match toSfnt w_glyf with
