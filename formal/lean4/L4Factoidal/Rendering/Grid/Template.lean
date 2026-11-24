@@ -180,6 +180,19 @@ def TrackList.expand (list : TrackList) (auto : Nat) : Axis :=
     | .repeat .autoFill body => Axis.addRepeat false body (min auto maxTracks) a
     | .repeat .autoFit body => Axis.addRepeat true body (min auto maxTracks) a) {}
 
+/-- The tracks a track list asks for with a fixed number of them: its own tracks and each
+`repeat(n, …)` as `n` times the tracks of its body. An automatic repetition is not counted: its
+number comes from the size of the container, which is at most 4096 pixels wide. More than
+`maxTracks` are cut by `expand`; the host reports the hit with this number (issue 865). One pass
+over the entries. -/
+def TrackList.tracksWanted (list : TrackList) : Nat :=
+  list.entries.foldl (fun n e =>
+    match e with
+    | .part (.track _) => n + 1
+    | .part (.names _) => n
+    | .repeat (.times k) body => n + k * (body.filter fun p => match p with | .track _ => true | .names _ => false).length
+    | .repeat _ _ => n) 0
+
 /-- The track list has an automatic repetition. -/
 def TrackList.hasAutoRepeat (list : TrackList) : Bool :=
   list.entries.any fun e => match e with
@@ -403,6 +416,10 @@ private def tpx (n : Nat) : TrackSize := .breadth (.length (n * unitsPerPx) 0)
 #guard (TrackList.expand ⟨[.repeat (.times 2) [.names ["a"], .track (tpx 10)], .part (.track (tpx 20)),
     .part (.names ["b"])], false⟩ 0).tracks.size == 3
 -- repeat(auto-fill, 100px) in 350px with a 10px gap: three columns (330px with gaps)
+-- tracks wanted (issue 865): the fixed ones, repetitions counted, names and automatic repetitions not
+#guard (TrackList.tracksWanted ⟨[.repeat (.times 2) [.names ["a"], .track (tpx 10)], .part (.track (tpx 20)), .repeat .autoFill [.track (tpx 100)]], false⟩) == 3
+#guard (TrackList.tracksWanted ⟨[.repeat (.times 200000) [.track (tpx 10)]], false⟩) == 200000
+#guard (TrackList.expand ⟨[.repeat (.times 200000) [.track (tpx 10)]], false⟩ 0).tracks.size == maxTracks
 #guard TrackList.autoCount ⟨[.repeat .autoFill [.track (tpx 100)]], false⟩ (some (350 * unitsPerPx)) (10 * unitsPerPx) == 3
 #guard TrackList.autoCount ⟨[.repeat .autoFill [.track (tpx 100)]], false⟩ (some (50 * unitsPerPx)) 0 == 1
 #guard TrackList.autoCount ⟨[.repeat .autoFill [.track (tpx 100)]], false⟩ none 0 == 1

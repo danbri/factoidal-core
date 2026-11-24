@@ -468,4 +468,26 @@ private def gradientAt (html css : String) : Option Bool := do
 #guard hinted "<ul><li><ul><li>x</ul></ul>" "" "ul" fun s => s.margin.top == 16 && s.margin.left == 40
 #guard hinted "<h1>x</h1>" "" "h1" fun s => (s.margin.top - 0.67*32).abs < 0.001
 
+-- Limits that the host reports (issue 865). The fallback levels a value needs, and the fuel: a value
+-- of 32 nested fallbacks is invalid (every name missing), one of 31 is not.
+private def nestedFallbacks (n : Nat) : String := String.join (List.replicate n "var(--a, ") ++ "1px" ++ "".pushn ')' n
+#guard CssVars.fallbackLevels "10px" == 0
+#guard CssVars.fallbackLevels "var(--a)" == 2
+#guard CssVars.fallbackLevels "var(--a, var(--b, 1px)) var(--c)" == 3
+#guard CssVars.fallbackLevels "calc(var(--a) + (1px))" == 2
+#guard CssVars.fallbackLevels (nestedFallbacks 31) == CssVars.maxFallbacks
+#guard CssVars.fallbackLevels (nestedFallbacks 32) == CssVars.maxFallbacks + 1
+#guard CssVars.value (fun _ => .missing) (nestedFallbacks 31) == .value "1px"
+#guard CssVars.value (fun _ => .missing) (nestedFallbacks 32) == .missing
+-- the size at which a substitution stopped: 0 when it did not, else more than the limit
+private def big : String := "".pushn 'x' 600000
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a)").2 == 0
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a) var(--a)").1 == .missing
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a) var(--a)").2 > CssVars.maxValueBytes
+-- a `content` value of more parts than `maxPieces` is not a value, and says how many it asked for
+#guard Content.piecesWanted (String.join (List.replicate 65 "'a' ")) == 65
+#guard (Content.read (String.join (List.replicate 65 "'a' "))).isNone
+#guard (Content.read (String.join (List.replicate 64 "'a' "))).isSome
+#guard Content.piecesWanted "'a' / 'b' 'c'" == 1
+
 end L4Factoidal.Rendering.CascadeTests
