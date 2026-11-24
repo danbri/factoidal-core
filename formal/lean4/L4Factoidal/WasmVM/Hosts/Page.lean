@@ -253,7 +253,7 @@ writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
   each turn's part). A list: a page asks a few kinds of read. -/
   queries : Nat := 0
   queryOps : Array (Nat × Nat) := #[]
-  /-- Of a page with animations: its last measure (`Host.measureNow`). -/
+  /-- The last measure of the page (`Host.measureNow`): with no animation since 2026-11-24 too. -/
   styleKept : Option StyleKept := none
   /-- The elements to style again: those whose `style` attribute was written since the
   last measure and the parents of those whose `class` was, when nothing else of the
@@ -702,7 +702,7 @@ animation, or with an animation or transition declaration (measure op 28), has a
 change first (`Animation.styleChange`), and its layout takes the animated values
 (`Animation.overrides`); any other page takes neither step.
 
-Such a page keeps its styles (`StyleKept`). When only `style` attributes and `class`
+Every page keeps its styles (`StyleKept`; until 2026-11-24 only a page with animations did, and every read after a write of any other page styled the whole document, issue 871). When only `style` attributes and `class`
 attributes were written since its last measure (`Reads.styleWrites`), the cascade is of
 the subtrees of those elements, and of the parents of the elements whose `class` was
 written when no rule has `:has()` and those subtrees are small (`subtreesWithin`;
@@ -759,7 +759,11 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     match last with
     | none =>
       let candidates := (((base 0 28 "").getD "").splitOn " ").filterMap String.toNat?
-      if h.anim.idle && candidates.isEmpty then keep h base none
+      -- a page with no animation keeps its styles too, so the reads after `style` and
+      -- `class` writes style only what was written (issue 871)
+      if h.anim.idle && candidates.isEmpty then
+        keep h base (some { width := w, height := ht, base := baseLeft.get, final := baseLeft.get, overrides := [],
+                            candidates := [], now := h.anim.now, epoch := h.reads.animEpoch })
       else
         let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some candidates)
         -- nothing a style reads was written since the last measure of this viewport: no
@@ -789,10 +793,11 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
         -- the page's last animation ended in this style change: the state with it cancelled is
         -- the page's state (it was dropped here, and the animation went on as if still declared:
         -- no cancel event, no rejected promise), its acts and events wait for a frame, and
-        -- the page keeps no styles
+        -- the page keeps its styles for the next measure
         let h : Host := { h with anim := L4Factoidal.Rendering.Animation.noteAnimated anim [] }
         let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
-        keep h base none
+        keep h base (some { width := w, height := ht, base := baseLeft.get, final := baseLeft.get, overrides := [],
+                            candidates := [], now := h.anim.now, epoch := h.reads.animEpoch })
       else if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
         -- the same time and the same animations: the effect stacks of the written elements
         let ovs := k.overrides.filter (fun o => !dirty o.node) ++
