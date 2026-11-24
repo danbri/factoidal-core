@@ -61,14 +61,36 @@ def iterationMark (c : UInt32) : Bool :=
   else if mode == .loose && iterationMark c then cID
   else resolve raw gc
 
+private def characterProperties (c : UInt32) : UInt8 × UInt8 :=
+  (lbTable.get c, gcTable.get c)
+
+/-- The two Unicode table results for each Latin-1 code point. Constructed on the
+first layout that needs them, using the same generated tables as the reference. -/
+private def latin1Properties : Thunk (Array (UInt8 × UInt8)) :=
+  Thunk.mk fun _ => Array.ofFn (fun i : Fin 256 => characterProperties (UInt32.ofNat i.val))
+
+@[inline] private def cachedCharacterProperties (c : UInt32) : UInt8 × UInt8 :=
+  if h : c.toNat < 256 then
+    latin1Properties.get[c.toNat]'(by simpa [latin1Properties] using h)
+  else characterProperties c
+
+/-- Every cached entry, including controls, and every fallback returns the original
+packed line-break and general-category values. -/
+theorem cachedCharacterProperties_eq (c : UInt32) :
+    cachedCharacterProperties c = characterProperties c := by
+  unfold cachedCharacterProperties
+  split
+  · simp [latin1Properties]
+  · rfl
+
 /-- Cut the text into units (LB1, LB9, LB10). A character that attaches to the
 previous unit gets no break before it. -/
-def units (cs : Array Char) (mode : Mode := .strict) : Array LBUnit := Id.run do
+private def unitsWith (properties : UInt32 → UInt8 × UInt8) (cs : Array Char)
+    (mode : Mode) : Array LBUnit := Id.run do
   let mut us : Array LBUnit := Array.mkEmpty cs.size
   for i in [0:cs.size] do
     let c := cs[i]!
-    let v := lbTable.get c.val
-    let gc := gcTable.get c.val
+    let (v, gc) := properties c.val
     let k := resolveIn mode c.val (v &&& 63) gc
     if (k == cCM || k == cZWJ) && us.size > 0 && !noAttach (us[us.size - 1]!).cls then
       us := us.modify (us.size - 1) fun u => { u with zwj := k == cZWJ }
@@ -81,6 +103,18 @@ def units (cs : Array Char) (mode : Mode := .strict) : Array LBUnit := Id.run do
                       pf := k == cQU && gc == 4, epCn := v &&& 0x80 != 0 && gc == 1,
                       zwj := false, dc := c.val == 0x25CC, start := i }
   return us
+
+/-- The line-break units, with a direct lookup for common code points. -/
+def units (cs : Array Char) (mode : Mode := .strict) : Array LBUnit :=
+  unitsWith cachedCharacterProperties cs mode
+
+theorem units_eq_uncached (cs : Array Char) (mode : Mode) :
+    units cs mode = unitsWith characterProperties cs mode := by
+  unfold units
+  rw [show cachedCharacterProperties = characterProperties from funext cachedCharacterProperties_eq]
+
+#print axioms cachedCharacterProperties_eq
+#print axioms units_eq_uncached
 
 private def sot : UInt8 := 255   -- no unit (start of text); also eot
 
