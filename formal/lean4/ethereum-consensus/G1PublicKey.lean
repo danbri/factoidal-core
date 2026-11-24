@@ -207,6 +207,120 @@ theorem decodePublicKey_candidate_bad_subgroup (bytes : ByteArray) (q : AffinePo
 #print axioms EthereumConsensus.BLS.decodePublicKey_candidate_bad_coordinates
 #print axioms EthereumConsensus.BLS.decodePublicKey_candidate_bad_subgroup
 
+inductive AggregateError where
+  | resourceLimit
+  | emptyKeys
+  | invalidKey (reason : KeyError)
+  | infinitySum
+  | invalidSum
+  deriving Repr, DecidableEq
+
+def maxAggregateKeys : Nat := 2048
+
+-- The caller has checked the key count. One tail call per key.
+private def aggregateLoop : List ByteArray → Projective → Except AggregateError Projective
+  | [], acc => .ok acc
+  | bytes :: rest, acc =>
+    match decodePublicKey bytes with
+    | .error e => .error (.invalidKey e)
+    | .ok q => aggregateLoop rest (addMixed acc q)
+
+private def normalise (p : Projective) : AffinePoint :=
+  let zi := powLoop 381 p.z (modulus - 2) 1
+  let zi2 := sq zi
+  ⟨mulF p.x zi2, mulF p.y (mulF zi2 zi)⟩
+
+private def finishAggregate (p : Projective) : Except AggregateError AffinePoint :=
+  if p.z = 0 then .error .infinitySum
+  else
+    let q := normalise p
+    if coordinateChecks q (largeY q.y) then
+      if subgroupCheck q then .ok q else .error .invalidSum
+    else .error .invalidSum
+
+/-- Sum every validated compressed key, including repeated keys. This is the
+public-key phase of FastAggregateVerify, not signature authentication. -/
+def aggregatePublicKeys (keys : List ByteArray) : Except AggregateError AffinePoint :=
+  if keys.length > maxAggregateKeys then .error .resourceLimit
+  else if keys.isEmpty then .error .emptyKeys
+  else
+    match aggregateLoop keys infinity with
+    | .error e => .error e
+    | .ok p => finishAggregate p
+
+/-- Kind: resource bound. Says: oversize lists refuse before point arithmetic.
+Does not say: the transport allocates no memory before calling this function. -/
+theorem aggregatePublicKeys_over_limit (keys : List ByteArray)
+    (h : keys.length > maxAggregateKeys) :
+    aggregatePublicKeys keys = .error .resourceLimit := by
+  simp only [aggregatePublicKeys, if_pos h]
+
+/-- Kind: admission. Says: zero keys are not an aggregate verification input.
+Does not say: the consensus-specific empty committee exception is implemented. -/
+theorem aggregatePublicKeys_empty :
+    aggregatePublicKeys [] = .error .emptyKeys := by
+  rfl
+
+/-- Kind: linkage. Says: a singleton fold uses the actual decoded point.
+Does not say: normalisation refines projective arithmetic. -/
+theorem aggregateLoop_singleton (bytes : ByteArray) (q : AffinePoint) (p : Projective)
+    (h : decodePublicKey bytes = .ok q) :
+    aggregateLoop [bytes] p = .ok (addMixed p q) := by
+  simp only [aggregateLoop, h]
+
+/-- Kind: rejection. Says: the first invalid key is not ignored by the fold.
+Does not say: every mathematical invalidity is detected by the decoder. -/
+theorem aggregateLoop_bad_first (bytes : ByteArray) (rest : List ByteArray)
+    (p : Projective) (e : KeyError) (h : decodePublicKey bytes = .error e) :
+    aggregateLoop (bytes :: rest) p = .error (.invalidKey e) := by
+  simp only [aggregateLoop, h]
+
+/-- Kind: rejection. Says: a zero projective Z cannot produce a public key.
+Does not say: the group law is proved. -/
+theorem finishAggregate_infinity (p : Projective) (h : p.z = 0) :
+    finishAggregate p = .error .infinitySum := by
+  simp only [finishAggregate, if_pos h]
+
+/-- Kind: linkage. Says: a returned aggregate passes both actual point checks.
+Does not say: the arithmetic refines the mathematical sum. -/
+theorem finishAggregate_ok (p : Projective) (result : AffinePoint)
+    (h : finishAggregate p = .ok result) :
+    coordinateChecks result (largeY result.y) = true ∧ subgroupCheck result = true := by
+  by_cases hz : p.z = 0
+  · simp [finishAggregate, hz] at h
+  · by_cases hc : coordinateChecks (normalise p) (largeY (normalise p).y) = true
+    · by_cases hs : subgroupCheck (normalise p) = true
+      · simp only [finishAggregate, if_neg hz, if_pos hc, if_pos hs, Except.ok.injEq] at h
+        subst result
+        exact ⟨hc, hs⟩
+      · simp only [finishAggregate, if_neg hz, if_pos hc, if_neg hs] at h
+        cases h
+    · simp only [finishAggregate, if_neg hz, if_neg hc] at h
+      cases h
+
+/-- Kind: linkage. Says: the public aggregate entry point returns only checked
+points. Does not say: the BLS signature is verified. -/
+theorem aggregatePublicKeys_ok (keys : List ByteArray) (result : AffinePoint)
+    (h : aggregatePublicKeys keys = .ok result) :
+    coordinateChecks result (largeY result.y) = true ∧ subgroupCheck result = true := by
+  by_cases hl : keys.length > maxAggregateKeys
+  · simp [aggregatePublicKeys, hl] at h
+  · by_cases he : keys.isEmpty = true
+    · simp [aggregatePublicKeys, hl, he] at h
+    · cases hf : aggregateLoop keys infinity with
+      | error e => simp [aggregatePublicKeys, hl, he, hf] at h
+      | ok p =>
+        simp only [aggregatePublicKeys, if_neg hl, if_neg he, hf] at h
+        exact finishAggregate_ok p result h
+
+#print axioms EthereumConsensus.BLS.aggregatePublicKeys_over_limit
+#print axioms EthereumConsensus.BLS.aggregatePublicKeys_empty
+#print axioms EthereumConsensus.BLS.aggregateLoop_singleton
+#print axioms EthereumConsensus.BLS.aggregateLoop_bad_first
+#print axioms EthereumConsensus.BLS.finishAggregate_infinity
+#print axioms EthereumConsensus.BLS.finishAggregate_ok
+#print axioms EthereumConsensus.BLS.aggregatePublicKeys_ok
+
 end EthereumConsensus.BLS
 
 -- Test transport only; the native verdict and coordinates are emitted by Lean.
@@ -240,14 +354,36 @@ private def dispatch (s : String) : Except String String := do
   let p ← (decodePublicKey bytes).mapError errorName
   return "ok " ++ toString p.x ++ " " ++ toString p.y
 
+private def aggregateErrorName : AggregateError → String
+  | .resourceLimit => "resource_limit"
+  | .emptyKeys => "empty_keys"
+  | .invalidKey e => errorName e
+  | .infinitySum => "infinity_sum"
+  | .invalidSum => "invalid_sum"
+
+private def dispatchAggregate (parts : List String) : Except String String := do
+  if parts.length > maxAggregateKeys then throw "resource_limit"
+  let mut keys : List ByteArray := []
+  for part in parts do
+    keys := (← readHex part) :: keys
+  let p ← (aggregatePublicKeys keys.reverse).mapError aggregateErrorName
+  return "ok " ++ toString p.x ++ " " ++ toString p.y
+
+private def dispatchLine (line : String) : Except String String :=
+  if line.utf8ByteSize > 200000 then .error "resource_limit"
+  else
+    let s := line.trimAscii.toString
+    match s.splitOn " " with
+    | "agg" :: parts => dispatchAggregate parts
+    | _ => if line.utf8ByteSize > 256 then .error "resource_limit" else dispatch s
+
 def main : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
     let line ← input.getLine
     if line.isEmpty then break
-    let result := if line.utf8ByteSize > 256 then .error "resource_limit"
-      else dispatch line.trimAscii.toString
+    let result := dispatchLine line
     output.putStrLn (match result with
       | .ok value => value
       | .error error => "error " ++ error)
