@@ -70,14 +70,14 @@ private def fromDomain {α : Type} (result : Except DomainError α) :
     | .versionWidth => "version_width"
     | .container _ => "container_error")
 
-private def getSlashingData (request : Json) (prefix : String) : Except String AttestationData := do
-  let slot ← getUInt64 request (prefix ++ "slot")
-  let index ← getUInt64 request (prefix ++ "committee_index")
-  let beacon ← getHex request (prefix ++ "beacon_block_root") 32
-  let se ← getUInt64 request (prefix ++ "source_epoch")
-  let sr ← getHex request (prefix ++ "source_root") 32
-  let te ← getUInt64 request (prefix ++ "target_epoch")
-  let tr ← getHex request (prefix ++ "target_root") 32
+private def getSlashingData (request : Json) (keyPrefix : String) : Except String AttestationData := do
+  let slot ← getUInt64 request (keyPrefix ++ "slot")
+  let index ← getUInt64 request (keyPrefix ++ "committee_index")
+  let beacon ← getHex request (keyPrefix ++ "beacon_block_root") 32
+  let se ← getUInt64 request (keyPrefix ++ "source_epoch")
+  let sr ← getHex request (keyPrefix ++ "source_root") 32
+  let te ← getUInt64 request (keyPrefix ++ "target_epoch")
+  let tr ← getHex request (keyPrefix ++ "target_root") 32
   fromContainer (checkedAttestationData slot index beacon se sr te tr)
 
 private def getSlashingIndices (request : Json) (key : String) : Except String (List UInt64) := do
@@ -89,9 +89,9 @@ private def getSlashingIndices (request : Json) (key : String) : Except String (
     indices := indices.push (UInt64.ofNat value)
   return indices.toList
 
-private def slashingKeys (prefix : String) : List String :=
+private def slashingKeys (keyPrefix : String) : List String :=
   ["slot", "committee_index", "beacon_block_root", "source_epoch",
-    "source_root", "target_epoch", "target_root"].map (prefix ++ ·)
+    "source_root", "target_epoch", "target_root"].map (keyPrefix ++ ·)
 
 private def dispatch (request : Json) : Except String Json := do
   let op ← request.getObjValAs? String "op"
