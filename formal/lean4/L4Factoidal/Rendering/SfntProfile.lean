@@ -113,10 +113,10 @@ def Font.colourOf (f : Font) (g : Nat) : Option FontProvider.Colour := do
 private def shaped (f : Font) (text : String) (rtl : Option Bool) :
     Except String (String × Bool × Array Placed) := do
   let s ← SfntShape.shape f.bytes f.dir f.face text (direction := rtl)
-  let chars := FontData.byteToCharMap text
+  let chars := FontData.byteToCharArray text
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
-    let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
+    let some cluster := FontData.charAtByte? chars byte | throw "font profile: cluster inside a character"
     out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome,
       SfntFallback.recategorize g.codepoint (SfntFallback.modifiedCcc g.codepoint)⟩
   return (s.script,s.rtl,out)
