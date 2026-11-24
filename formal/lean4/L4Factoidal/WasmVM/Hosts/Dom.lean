@@ -249,8 +249,11 @@ structure State where
   edit : L4Factoidal.DOM.Editing.Flags := {}
   deriving Inhabited
 
-/-- Bounds, as in `WebRenderScript`. -/
-def maxString : Nat := 65536
+/-- Bounds, as in `WebRenderScript`. A string a script gives the DOM (text, an attribute
+value, a style sheet's text) is at most 16 MiB: at 64 KiB, the style text MediaWiki's
+loader writes was refused, and Wikipedia's scripts stopped with "DOM budget exceeded"
+(2026-11-23). -/
+def maxString : Nat := 16777216
 def maxAttrName : Nat := 256
 def maxNodes : Nat := 1048576
 def maxRequests : Nat := 4096

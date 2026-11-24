@@ -17,7 +17,8 @@ private def field (value : JSON.Json) (name : String) : Except String JSON.Json 
 
 private def string (value : JSON.Json) : Except String String := do
   let .string value := value | throw "script command: expected string"
-  if value.utf8ByteSize > 65536 then throw "script command: string exceeds 64KiB"
+  -- the bound of `Hosts.Dom.maxString` (16 MiB; it was 64 KiB until 2026-11-23)
+  if value.utf8ByteSize > 16777216 then throw "script command: string exceeds 16MiB"
   return value
 
 private def nodeId (value : JSON.Json) : Except String Nat := do
