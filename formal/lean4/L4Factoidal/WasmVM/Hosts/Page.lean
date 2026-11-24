@@ -717,14 +717,28 @@ def underAny (dom : Arena) (roots : List Nat) (n : Nat) : Bool := Id.run do
     | some c => if roots.contains c then return true else cur := (dom.get c).parent
   return false
 
-/-- A node of the subtrees of `roots` is a `style` or `link` element: a write that adds,
-removes or changes one changes the page's rules, and a partial restyle keeps the rules of
-the last measure (`Carry.rules`), so such a write styles the whole document. Past
-`subtreeLimit` nodes the answer is yes. -/
+/-- A node that can carry rules: a `style` element, or a `link` element whose `rel` has the
+keyword `stylesheet` (HTML §4.6.7; the engine reads no other `link` as a sheet,
+`WebDocument.stylesheet`). A `link` of another type (`preload`, `icon`, MediaWiki's
+`mw-deduplicated-inline-style`) carries none. -/
+def carriesRules (x : L4Factoidal.DOM.Node) : Bool :=
+  x.lname == "style" ||
+  (x.lname == "link" &&
+    match x.attrs.find? (fun a => a.ns.isNone && a.lname == "rel") with
+    | none => false
+    | some a => (a.value.toLower.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c')).any
+        (fun t => t.toString == "stylesheet"))
+
+/-- A node of the subtrees of `roots` carries rules (`carriesRules`): a write that adds or
+removes one changes the page's rules, and a partial restyle keeps the rules of the last
+measure (`Carry.rules`), so such a write styles the whole document. Past `subtreeLimit`
+nodes the answer is yes. Until 2026-11-24 every `link` element counted: zh.wikipedia
+inserts 59 `<link rel="mw-deduplicated-inline-style">`, and each insert styled the whole
+document (issue 871). -/
 def touchesSheets (dom : Arena) (roots : List Nat) : Bool :=
   match subtreesWithin dom (roots.filter (· < dom.size)) with
   | none => true
-  | some ns => ns.any fun n => let x := dom.get n; x.lname == "style" || x.lname == "link"
+  | some ns => ns.any fun n => carriesRules (dom.get n)
 
 /-- Whether `n` is a `style` or `link` element (or not a node): a child written under it may change the rules. -/
 def sheetParent (dom : Arena) (n : Nat) : Bool :=
@@ -739,7 +753,7 @@ def childWriteWhy (dom : Arena) (parent : Nat) (nodes : List Nat) : String :=
   match subtreesWithin dom (nodes.filter (· < dom.size)) with
   | none => "large"
   | some ns =>
-    if ns.any (fun n => let x := dom.get n; x.lname == "style" || x.lname == "link") then "sheet"
+    if ns.any (fun n => carriesRules (dom.get n)) then "sheet"
     else if (dom.get parent).parent.isNone then "root" else "other"
 
 /-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
@@ -2213,18 +2227,23 @@ def aboutBlank : Arena := Id.run do
 
 -- `touchesSheets`: in about:blank (html 1, head 2, body 3) with a `style` element (4) in the
 -- head and a `div` (5, with a child 6) in the body, a write under the head or of the style
--- element changes the rules; one of the div does not; a detached `link` (7) appended does.
+-- element changes the rules; one of the div does not; a detached `link rel=stylesheet` (7)
+-- appended does, and a detached `link rel=preload` (8) does not.
 private def sheetsArena : Arena :=
   let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
+  let link := fun (d : Arena) (rel : String) =>
+    d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := "link", attrs := #[{ lname := "rel", value := rel }] }
   let (d, st) := el aboutBlank "style"
   let d := d.linkChild 2 st none
   let (d, dv) := el d "div"
   let d := d.linkChild 3 dv none
   let (d, sp) := el d "span"
   let d := d.linkChild dv sp none
-  (el d "link").1
+  let (d, _) := link d "stylesheet"
+  (link d "preload").1
 #guard touchesSheets sheetsArena [4] && touchesSheets sheetsArena [2] && touchesSheets sheetsArena [0]
 #guard !touchesSheets sheetsArena [5] && !touchesSheets sheetsArena [3, 6] && touchesSheets sheetsArena [3, 7]
+#guard !touchesSheets sheetsArena [8] && !touchesSheets sheetsArena [3, 8]
 
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
@@ -2381,5 +2400,13 @@ def Session.changes (s : Session) : Nat := s.host.dom.changes
 so a host lays the page out again only then (`changed`). A write of the value an
 attribute or data already has records nothing. -/
 def changed (before after : Session) : Bool := after.changes != before.changes
+
+-- `carriesRules` (issue 871): a style element, and a link whose rel has `stylesheet`
+#guard carriesRules ({ lname := "style" } : L4Factoidal.DOM.Node)
+#guard carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "Alternate  StyleSheet" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "mw-deduplicated-inline-style" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "preload" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link" } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "div", attrs := #[{ lname := "rel", value := "stylesheet" }] } : L4Factoidal.DOM.Node)
 
 end L4Factoidal.WasmVM.Hosts.Page
