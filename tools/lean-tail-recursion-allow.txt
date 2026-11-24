@@ -2372,6 +2372,7 @@ L4Factoidal_Rendering_CssValues_hasFn  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_badSubstitution  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_hasBadToken  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel expressions of a relative colour, fuel 16
+L4Factoidal_Rendering_ImportTree_walkPath  # (c) CSS @import production entry points sheetsOf and lackingOf use maxDepth = 8; sibling edges are a loop and at most maxSheets = 64 occurrences are followed.
 L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2
 # --- MathML strict content, OpenMath, Core vocabulary (2026-11-14; https://github.com/danbri/factoidal-core/pull/433)
 L4Factoidal_MathML_exprEq*  # (b) nesting of a Content expression (exprEq, exprEqList, exprEqRows): a list continues by a tail call through &&, inside the mutual block
