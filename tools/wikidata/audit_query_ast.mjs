@@ -29,8 +29,33 @@ function checkSource(doc, text) {
     const { start, end } = item.span ?? item;
     assert.equal(chars.slice(start, end).join(''), item.text);
   }
-  for (const anchor of doc.source.anchors) {
-    assert.ok(anchor.span.start < anchor.span.end && anchor.span.end <= chars.length);
+  const checkSpan = ({ start, end }) => {
+    assert.ok(Number.isInteger(start) && Number.isInteger(end));
+    assert.ok(0 <= start && start < end && end <= chars.length);
+  };
+  for (const anchor of doc.source.anchors) checkSpan(anchor.span);
+  for (const ast of [doc.ast, ...doc.namedSubqueries.map(definition => definition.ast)]) {
+    for (const node of walk(ast)) {
+      assert.ok(node.source, `missing source on ${node.kind}`);
+      const { origin, span, spans, reason } = node.source;
+      assert.ok(Object.hasOwn(origins, origin), `unknown source origin ${origin}`);
+      origins[origin]++;
+      if (origin === 'exact') {
+        checkSpan(span);
+        assert.equal(spans, undefined);
+      } else {
+        assert.equal(typeof reason, 'string');
+        assert.ok(reason.length > 0);
+        assert.equal(span, undefined);
+        if (origin === 'derived') {
+          assert.ok(Array.isArray(spans) && spans.length > 0);
+          spans.forEach(checkSpan);
+        } else {
+          assert.equal(spans, undefined);
+          if (origin === 'unmapped') unmappedReasons[reason] = (unmappedReasons[reason] ?? 0) + 1;
+        }
+      }
+    }
   }
 }
 
@@ -84,6 +109,8 @@ function checkTargets(row, original, replacement) {
 }
 
 let originalsParsed = 0;
+const origins = { exact: 0, derived: 0, synthetic: 0, unmapped: 0 };
+const unmappedReasons = {};
 let replacementsParsed = 0;
 let replacements = 0;
 let namedReplacements = 0;
@@ -147,5 +174,6 @@ assert.ok((await parseSparqlAst(body)).ast);
 
 assert.equal(targets, Object.keys(checks).length);
 console.log(JSON.stringify({ queries: queries.length, originalsParsed, replacementsParsed,
-  replacements, namedReplacements, targets, originalDiagnostics, replacementDiagnostics }, null, 2));
+  replacements, namedReplacements, targets, originalDiagnostics, replacementDiagnostics,
+  origins, unmappedReasons }, null, 2));
 if (replacementDiagnostics.length) process.exitCode = 1;

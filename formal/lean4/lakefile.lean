@@ -896,8 +896,14 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- See L4Factoidal/SPARQL/Parser.lean and Harness/SparqlSyntaxProbe.lean.
 @[default_target] lean_exe «l4sparql-probe» where root := `Harness.SparqlSyntaxProbe
 
+-- Native JSONL runner for the public SPARQL query-document source tests.
+lean_exe «l4sparql-document» where root := `Harness.QueryDocumentRun
+
 -- Wikimedia rewriter JSONL v1 transport backed by the Factoidal Lean rules.
 lean_exe «l4wikidata-rewriter» where root := `Wikidata.RewriteServer
+
+-- Compile the rewrite fixtures explicitly in CI without importing tests in Wasm.
+lean_lib WikidataRegression where roots := #[`L4Factoidal.Wikidata.RewriteTests]
 
 -- Verifiable Credentials Data Integrity (eddsa-rdfc-2022) + did:key
 -- probe (Harness/VcProbe.lean): the RFC 8032 Ed25519 vectors through

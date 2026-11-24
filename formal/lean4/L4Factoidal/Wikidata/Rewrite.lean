@@ -40,20 +40,17 @@ private structure ServiceSite where
   iri : String
   body : List LocatedToken
 
-private def services (state : PState) : List LocatedToken → List ServiceSite
-  | site :: rest =>
-    let tail : List LocatedToken := match rest with
-      | head :: remainder => if head.token == Token.silent then remainder else rest
-      | [] => []
-    let remaining := services state rest
-    if site.token != .service then remaining
-    else match tail with
-    | endpoint :: body =>
-      match tokenIri state endpoint.token with
-      | some iri => ⟨site.start, endpoint, iri, body⟩ :: remaining
-      | none => remaining
-    | [] => remaining
-  | [] => []
+private def services (state : PState) : List LocatedToken → List ServiceSite → List ServiceSite
+  | [], found => found.reverse
+  | site :: rest, found =>
+    let found := if site.token != .service then found else Id.run do
+      let tail := match rest with
+        | head :: remainder => if head.token == Token.silent then remainder else rest
+        | [] => []
+      let endpoint :: body := tail | return found
+      let some iri := tokenIri state endpoint.token | return found
+      return ⟨site.start, endpoint, iri, body⟩ :: found
+    services state rest found
 
 private def bodyEnd : Nat → List LocatedToken → Option (Nat × List LocatedToken)
   | depth, token :: rest =>
@@ -212,7 +209,7 @@ private def afterParse (original current language : String) (steps : List Rewrit
   if let some token := pendingToken state bodyTokens then
     return failure "skipped_unsupported" "unsupported_proprietary_feature" "post-parse"
       "This proprietary term or function needs another rewrite rule" (some token.start) steps
-  let sites := services state bodyTokens
+  let sites := services state bodyTokens []
   if let some site := sites.find? (fun site => site.iri != BdSlice.endpoint && pendingFeature site.iri) then
     return failure "skipped_unsupported" "unsupported_proprietary_service" "post-parse" site.iri (some site.start) steps
   let subgraphs ← match sites.mapM subgraphEdit with

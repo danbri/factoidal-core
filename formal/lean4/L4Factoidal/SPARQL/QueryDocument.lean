@@ -1,4 +1,4 @@
-import L4Factoidal.SPARQL.QueryJson
+import L4Factoidal.SPARQL.SourceProvenance
 import L4Factoidal.SPARQL.SourceComments
 import L4Factoidal.SPARQL.QuerySourceAnchors
 import L4Factoidal.Wikidata.NamedSubquery
@@ -111,13 +111,13 @@ private def namedQuery (text prologue : String) (tokens : List LocatedToken)
       throw ("named_subquery_parse_error", ⟨s!"Could not parse named subquery %{block.name}", block.start⟩)
     let variables := query.projectedVars.filter fun v => !marker.isPrefixOf v
     prepared := ⟨block.name, variables, "", "", []⟩ :: prepared
-    blocks := .object [("name", .string block.name), ("ast", encode query),
+    blocks := .object [("name", .string block.name), ("ast", transformedQuerySources (encode query)),
       ("span", span block.start block.stop)] :: blocks
   let removes := plan.blocks.map fun block => (⟨block.start, block.stop, ""⟩ : Wikidata.Edit)
   let outer := NamedSubquery.substitute text plan.references prepared removes marker
   let query ← (parseUnloweredQuery outer true version base).mapError fun error =>
     ("named_subquery_outer_parse_error", ⟨error.msg, 0⟩)
-  return (encode query, blocks.reverse)
+  return (transformedQuerySources (encode query) (some text.length), blocks.reverse)
 
 private def directiveJson (comment : SourceComment) : Option Json := do
   let body := ((comment.text.drop 1).toString).trimAscii.toString
@@ -152,7 +152,7 @@ def parseQueryDocument (text : String) (wdqs := false) (version : SparqlVersion 
       | _ => false)
   let result : Except (String × ParseError) (Json × List Json) := do
     match parseUnloweredQuery text wdqs version base with
-    | .ok query => pure (queryAstJson query, [])
+    | .ok query => pure (queryAstWithSources chars.size tokens prologue body query, [])
     | .error error =>
       if !wdqs || !text.contains '%' then throw ("sparql_parse_error", error) else
       match NamedSubquery.plan text tokens (qlever := qlever) (inspect := true) with

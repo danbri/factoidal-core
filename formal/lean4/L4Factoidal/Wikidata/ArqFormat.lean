@@ -216,40 +216,43 @@ private inductive TripleSpan where
   | basic (triples : Bgp)
   | path (subject : PatternSubject) (path : PropertyPath) (object : PatternTerm)
 
-private def tripleSpans (fuel : Nat) (pattern : QueryPattern) (tail : List TripleSpan) :
-    Option (List TripleSpan) := do
-  let fuel + 1 := fuel | none
-  match pattern with
-  | .bgp triples => match tail with
-    | .basic next :: rest => return .basic (triples ++ next) :: rest
-    | _ => return .basic triples :: tail
-  | .propertyPath subject path object =>
-    return .path subject path object :: tail
-  | .join left right =>
-    tripleSpans fuel left (← tripleSpans fuel right tail)
-  | .empty => pure tail
-  | _ => none
+-- Work from right to left so adjacent basic spans can be prepended in order.
+private def tripleSpans : List (Nat × QueryPattern) → List TripleSpan → Option (List TripleSpan)
+  | [], spans => some spans
+  | (0, _) :: _, _ => none
+  | (f + 1, pattern) :: pending, spans => match pattern with
+    | .bgp triples =>
+      let spans := match spans with
+        | .basic next :: rest => .basic (triples ++ next) :: rest
+        | _ => .basic triples :: spans
+      tripleSpans pending spans
+    | .propertyPath subject path object => tripleSpans pending (.path subject path object :: spans)
+    | .join left right => tripleSpans ((f, right) :: (f, left) :: pending) spans
+    | .empty => tripleSpans pending spans
+    | _ => none
+termination_by pending _ => (pending.map (fun (_, p) => 3 * sizeOf p + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
 
 /-- Render consecutive simple triples as one width-aligned run. A property
 path separates runs even though it is part of the same source triple block. -/
 private def renderTriplesBlock (context : FormatContext) (fuel : Nat)
     (pattern : QueryPattern) : Option (List String) := do
-  let spans ← tripleSpans fuel pattern []
+  let spans ← tripleSpans [(fuel, pattern)] []
   let groups ← spans.mapM fun span => match span with
     | .basic triples => renderTriples context triples
     | .path s p o => do
       return [(← renderSubject context s) ++ " " ++ (← renderPath context fuel false p) ++
         " " ++ (← renderTerm context o)]
-  return addDots groups
+  return addDots groups []
 where
-  addDots : List (List String) → List String
-    | [] => []
-    | [last] => last
-    | block :: tail =>
-      let dotted := match block.reverse with
-        | [] => []
-        | last :: rest => ((last ++ " .") :: rest).reverse
-      dotted ++ addDots tail
+  addDots : List (List String) → List String → List String
+    | [], lines => lines.reverse
+    | [last], lines => (last.reverseAux lines).reverse
+    | block :: tail, lines =>
+      let lines := match block.reverse with
+        | [] => lines
+        | last :: rest => (last ++ " .") :: (rest ++ lines)
+      addDots tail lines
 
 private def renderData (prefixes : FormatContext) (indent : Nat) (pattern : QueryPattern) : Option String := do
   let .values names values := pattern | none
@@ -292,13 +295,12 @@ private def selectText (prefixes : FormatContext) (fuel : Nat) (qualification : 
       pure (String.intercalate " " names)
   return "SELECT" ++ qualification ++ "  " ++ items
 
-private def orderDirections (state : PState) (fuel : Nat) (tokens : TStream) : List Bool :=
-  match fuel with
-  | 0 => []
-  | f + 1 =>
+private def orderDirections (state : PState) : Nat → TStream → List Bool → List Bool
+  | 0, _, flags => flags.reverse
+  | f + 1, tokens, flags =>
     match pOrderCondition f state tokens with
-    | .error _ => []
-    | .ok (_, rest) => (peekTok tokens == .asc) :: orderDirections state f rest
+    | .error _ => flags.reverse
+    | .ok (_, rest) => orderDirections state f rest ((peekTok tokens == .asc) :: flags)
 
 private def renderModifiers (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
     (ts : TStream) : Option (List String × TStream) := do
@@ -314,7 +316,7 @@ private def renderModifiers (prefixes : FormatContext) (state : PState) (fuel in
     | none => some []
     | some conditions => do
       let order := ts.dropWhile (fun token => token.tok != .order)
-      let flags := orderDirections state fuel (advTok (advTok order))
+      let flags := orderDirections state fuel (advTok (advTok order)) []
       guard (flags.length == conditions.length)
       (conditions.zip flags).mapM fun (condition, asc) => match condition with
         | .asc expr => do
@@ -370,12 +372,13 @@ private def renderGroupSyntax (prefixes : FormatContext) (state : PState) (fuel 
     return (groupText indent lines, rest)
 
 private def renderUnion (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
-    (ts : TStream) : Option (String × TStream) := do
+    (ts : TStream) (groups : List String) : Option (String × TStream) := do
   let fuel + 1 := fuel | none
   let (group, rest) ← renderGroupSyntax prefixes state fuel (indent + 2) ts
-  if peekTok rest != .union then return (group, rest)
-  let (more, rest) ← renderUnion prefixes state fuel indent (advTok rest)
-  return (group ++ "\n" ++ spaces indent ++ "UNION\n" ++ more, rest)
+  let groups := group :: groups
+  if peekTok rest != .union then
+    return (String.intercalate ("\n" ++ spaces indent ++ "UNION\n") groups.reverse, rest)
+  renderUnion prefixes state fuel indent (advTok rest) groups
 
 private def renderElements (prefixes : FormatContext) (state : PState) (fuel indent : Nat)
     (ts : TStream) (acc : List String) : Option (List String × TStream) := do
@@ -390,7 +393,7 @@ private def renderElements (prefixes : FormatContext) (state : PState) (fuel ind
     | .lbrace => do
       let (group, tail) ← renderGroupSyntax prefixes state fuel indent ts
       if peekTok tail == .union then
-        let (union, tail) ← renderUnion prefixes state fuel indent ts
+        let (union, tail) ← renderUnion prefixes state fuel indent ts []
         pure ([withoutIndent indent union], tail)
       else pure ([withoutIndent indent group], tail)
     | .optional | .minusKw => do

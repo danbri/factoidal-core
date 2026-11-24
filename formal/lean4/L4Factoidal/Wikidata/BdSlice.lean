@@ -27,15 +27,20 @@ private structure Statement where
   object : PatternTerm
   vars : List String
 
-private def statements : QueryPattern → Option (List Statement)
-  | .empty => some []
-  | .bgp triples => some (triples.map fun triple =>
+private def statements : List QueryPattern → List Statement → Option (List Statement)
+  | [], found => some found.reverse
+  | .empty :: rest, found => statements rest found
+  | .bgp triples :: rest, found =>
+    let found := triples.foldl (fun acc triple =>
       let pred := match triple.p with | .iri iri => some iri.val | _ => none
-      ⟨triple.s, pred, triple.o, (QueryPattern.bgp [triple]).inScopeVars⟩)
-  | pat@(.propertyPath subject _ object) =>
-      some [⟨subject, none, object, pat.inScopeVars⟩]
-  | .join left right => do return (← statements left) ++ (← statements right)
-  | _ => none
+      ⟨triple.s, pred, triple.o, (QueryPattern.bgp [triple]).inScopeVars⟩ :: acc) found
+    statements rest found
+  | pat@(.propertyPath subject _ object) :: rest, found =>
+    statements rest (⟨subject, none, object, pat.inScopeVars⟩ :: found)
+  | .join left right :: rest, found => statements (left :: right :: rest) found
+  | _ :: _, _ => none
+termination_by pending _ => (pending.map (fun p => 3 * sizeOf p + 1)).sum
+decreasing_by all_goals (simp_wf <;> (try simp only [List.map_cons, List.sum_cons]) <;> omega)
 
 private def isParameter (statement : Statement) : Bool :=
   match statement.subject with
@@ -79,7 +84,7 @@ def plan (text : String) (state : PState) (body : List LocatedToken) (stop : Nat
   let pattern ← if peekTok stream == .rbrace then pure .empty else do
     let .ok (pattern, rest) := pTriplesBlock topFuel state (.empty, []) stream | throw invalidBody
     if peekTok rest == .rbrace then pure pattern else throw invalidBody
-  let some triples := statements pattern | throw invalidBody
+  let some triples := statements [pattern] [] | throw invalidBody
   let (params, kept) := triples.partition isParameter
   let (seen, range) ← readParameters params
   let statement ← match kept with

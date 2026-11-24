@@ -42,15 +42,15 @@ structure Edit where
   stop : Nat
   replacement : String
 
-private def splice (offset : Nat) (rest : List Char) : List Edit → List String
-  | [] => [String.ofList rest]
-  | edit :: edits =>
-    String.ofList (rest.take (edit.start - offset)) :: edit.replacement ::
-      splice edit.stop (rest.drop (edit.stop - offset)) edits
+private def splice : List Edit → Nat → List Char → List String → List String
+  | [], _, rest, pieces => (String.ofList rest :: pieces).reverse
+  | edit :: edits, offset, rest, pieces =>
+    let unchanged := String.ofList (rest.take (edit.start - offset))
+    splice edits edit.stop (rest.drop (edit.stop - offset)) (edit.replacement :: unchanged :: pieces)
 
 /-- The rule planners supply disjoint ranges in source order. -/
 def applyEdits (text : String) (edits : List Edit) : String :=
-  String.join (splice 0 text.toList edits)
+  String.join (splice edits 0 text.toList [])
 
 @[simp] theorem applyEdits_empty (text : String) : applyEdits text [] = text := by
   simp [applyEdits, splice]

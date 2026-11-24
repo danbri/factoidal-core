@@ -36,7 +36,7 @@ are represented as `select` queries with a wildcard projection, for inspection.
 comments. Source spans and diagnostic `span` are zero-based Unicode
 code-point ranges with an exclusive end, counted from that string's first
 character. Editor code can use `diagnostic.utf16Span` directly with
-JavaScript string indices. The ranges currently cover the document,
+JavaScript string indices. The ranges cover the document,
 tokens, comments, recognised presentation directives, authored blank-node
 syntax and named definitions. Prefixed-name tokens in the query body carry
 both their exact spelling and resolved `iri`. `source.blankNodes` distinguishes
@@ -51,13 +51,24 @@ separate ranges for the shared parts. An editor can compare a trailing
 comment's start with the preceding triple or clause's end. These are
 source anchors and have independent identity from normalised AST nodes.
 
-The parser normalises some syntax, including implicit joins and expanded
-triples. Mapping individual AST nodes to source ranges, and mapping and
-classifying generated nodes in rewrites, remain open. Derive explainer
-meaning from the replacement tree and obtain Martin's comments from the
-classic document. Its text and notes remain available even if the original
-has a syntax diagnostic. WDQS labels, comments and titles are annotations
-and do not affect the parsed query's semantics.
+Each AST object with a `kind` now has a `source` member. Its `origin` is
+`exact` for one authored occurrence (`span`), `derived` for syntax expanded
+or combined by the parser (nonempty `spans` and `reason`), `synthetic` for
+an implicit algebra node (`reason`, no range), or `unmapped` when the
+original-source correspondence has not been established (`reason`, no
+range). These ranges use the same Unicode code-point convention.
+Repeated variable or literal values keep their separate occurrences.
+See the [source provenance contract](designissues/2026-11-24-sparql-source-provenance.md)
+for abbreviation, OPTIONAL, collection and fallback behaviour.
+
+Named-subquery descendants remain unmapped because their parser input is
+assembled from transformed fragments. Linking generated replacement nodes
+back to the classic query also remains open: a replacement document's spans
+refer to that replacement's own `source.text`. Derive explainer meaning
+from the replacement tree and obtain Martin's comments from the classic
+document. Its text and notes remain available even if the original has a
+syntax diagnostic. WDQS labels, comments and titles are annotations and do
+not affect the parsed query's semantics.
 
 The rewriter defaults to the pinned Wikimedia formatting path. With
 `preserveComments: true`, ordinary rewrites keep inline comments where

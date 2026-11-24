@@ -688,58 +688,78 @@ export function parseSparqlStructure(
   options?: { wdqs?: boolean; version?: '1.1' | '1.2'; includeComments?: boolean }
 ): Promise<SparqlQueryStructure>;
 
+/** Half-open range in the original query, in Unicode code points unless marked UTF-16. */
 export interface SparqlSourceSpan {
   start: number;
   end: number;
 }
 
-export type SparqlVariable = { kind: 'var'; name: string };
-export type SparqlIri = { kind: 'iri'; iri: string };
-export type SparqlBlankNode = { kind: 'bnode'; id: string; generated: boolean };
-export type SparqlLiteral = {
+/** Provenance of an AST node in the original query text. */
+export type SparqlNodeSource =
+  /** One contiguous occurrence in the original query. */
+  | { origin: 'exact'; span: SparqlSourceSpan; spans?: never; reason?: string }
+  /** One or more authored ranges that contributed to a normalised node. */
+  | { origin: 'derived'; span?: never; spans: [SparqlSourceSpan, ...SparqlSourceSpan[]]; reason: string }
+  /** A parser-created node with no authored counterpart. */
+  | { origin: 'synthetic'; span?: never; spans?: never; reason: string }
+  /** A node whose authored occurrence could not be mapped. */
+  | { origin: 'unmapped'; span?: never; spans?: never; reason: string };
+
+export interface SparqlLocatedNode {
+  source: SparqlNodeSource;
+}
+
+export type SparqlVariable = SparqlLocatedNode & { kind: 'var'; name: string };
+export type SparqlIri = SparqlLocatedNode & { kind: 'iri'; iri: string };
+export type SparqlBlankNode = SparqlLocatedNode & { kind: 'bnode'; id: string; generated: boolean };
+export type SparqlLiteral = SparqlLocatedNode & {
   kind: 'literal'; value: string; datatype: string; language: string | null; direction: 'ltr' | 'rtl' | null;
 };
-export type SparqlWildcard = { kind: 'wildcard' };
-export interface SparqlTripleTerm<T> {
+export type SparqlWildcard = SparqlLocatedNode & { kind: 'wildcard' };
+export interface SparqlTripleTerm<T> extends SparqlLocatedNode {
   kind: 'tripleTerm'; subject: T; predicate: T; object: T;
 }
 export type SparqlPatternTerm = SparqlVariable | SparqlIri | SparqlBlankNode | SparqlLiteral |
   SparqlTripleTerm<SparqlPatternTerm>;
 
-export type SparqlPropertyPath = SparqlIri |
-  { kind: 'sequence' | 'alternative'; left: SparqlPropertyPath; right: SparqlPropertyPath } |
-  { kind: 'inverse' | 'zeroOrMore' | 'oneOrMore' | 'zeroOrOne'; path: SparqlPropertyPath } |
-  { kind: 'negatedSet'; paths: SparqlPropertyPath[] };
+export type SparqlPropertyPath = SparqlLocatedNode & (
+  | SparqlIri
+  | { kind: 'sequence' | 'alternative'; left: SparqlPropertyPath; right: SparqlPropertyPath }
+  | { kind: 'inverse' | 'zeroOrMore' | 'oneOrMore' | 'zeroOrOne'; path: SparqlPropertyPath }
+  | { kind: 'negatedSet'; paths: SparqlPropertyPath[] }
+);
 
-export type SparqlAggregate = {
+export type SparqlAggregate = SparqlLocatedNode & {
   kind: 'aggregate'; fn: 'count' | 'sum' | 'min' | 'max' | 'avg' | 'groupConcat' | 'sample';
   distinct: boolean; arg: SparqlExpression | SparqlWildcard; separator?: string | null;
 };
 
-export type SparqlExpression = SparqlVariable | SparqlIri | SparqlLiteral | SparqlAggregate |
-  { kind: 'boolLit'; value: boolean } |
-  { kind: 'numericLit' | 'decimalLit' | 'doubleLit'; value: string } |
-  { kind: 'arith' | 'compare'; operator: string; left: SparqlExpression; right: SparqlExpression } |
-  { kind: 'and' | 'or' | 'strDt' | 'strLang' | 'strStarts' | 'strEnds' | 'contains' |
-    'strBefore' | 'strAfter' | 'sameTerm'; left: SparqlExpression; right: SparqlExpression } |
-  { kind: 'unaryMinus' | 'unaryPlus' | 'not' | 'isIri' | 'isBlank' | 'isLiteral' | 'isNumeric' |
+export type SparqlExpression = SparqlLocatedNode & (
+  | SparqlVariable | SparqlIri | SparqlLiteral | SparqlAggregate
+  | { kind: 'boolLit'; value: boolean }
+  | { kind: 'numericLit' | 'decimalLit' | 'doubleLit'; value: string }
+  | { kind: 'arith' | 'compare'; operator: string; left: SparqlExpression; right: SparqlExpression }
+  | { kind: 'and' | 'or' | 'strDt' | 'strLang' | 'strStarts' | 'strEnds' | 'contains' |
+    'strBefore' | 'strAfter' | 'sameTerm'; left: SparqlExpression; right: SparqlExpression }
+  | { kind: 'unaryMinus' | 'unaryPlus' | 'not' | 'isIri' | 'isBlank' | 'isLiteral' | 'isNumeric' |
     'str' | 'lang' | 'datatype' | 'iriFn' | 'hasLang' | 'hasLangDir' | 'langDir' | 'strLen' |
     'uCase' | 'lCase' | 'encodeForUri' | 'abs' | 'round' | 'ceil' | 'floor' | 'md5' | 'sha1' |
     'sha256' | 'sha384' | 'sha512' | 'year' | 'month' | 'day' | 'hours' | 'minutes' | 'seconds' |
-    'timezone' | 'tz' | 'ttSubject' | 'ttPredicate' | 'ttObject' | 'isTriple'; arg: SparqlExpression } |
-  { kind: 'bound'; variable: string } |
-  { kind: 'cond'; condition: SparqlExpression; then: SparqlExpression; else: SparqlExpression } |
-  { kind: 'coalesce' | 'concat'; args: SparqlExpression[] } |
-  { kind: 'inList' | 'notInList'; arg: SparqlExpression; args: SparqlExpression[] } |
-  { kind: 'substr'; arg: SparqlExpression; start: SparqlExpression; length: SparqlExpression | null } |
-  { kind: 'replace'; arg: SparqlExpression; pattern: SparqlExpression; replacement: SparqlExpression;
-    flags: SparqlExpression | null } |
-  { kind: 'regex'; arg: SparqlExpression; pattern: SparqlExpression; flags: SparqlExpression | null } |
-  { kind: 'now' } |
-  { kind: 'strLangDir'; lexical: SparqlExpression; language: SparqlExpression; direction: SparqlExpression } |
-  { kind: 'existsPat' | 'notExistsPat'; pattern: SparqlQueryPattern } |
-  { kind: 'functionCall'; iri: string; args: SparqlExpression[] } |
-  SparqlTripleTerm<SparqlExpression>;
+    'timezone' | 'tz' | 'ttSubject' | 'ttPredicate' | 'ttObject' | 'isTriple'; arg: SparqlExpression }
+  | { kind: 'bound'; variable: string }
+  | { kind: 'cond'; condition: SparqlExpression; then: SparqlExpression; else: SparqlExpression }
+  | { kind: 'coalesce' | 'concat'; args: SparqlExpression[] }
+  | { kind: 'inList' | 'notInList'; arg: SparqlExpression; args: SparqlExpression[] }
+  | { kind: 'substr'; arg: SparqlExpression; start: SparqlExpression; length: SparqlExpression | null }
+  | { kind: 'replace'; arg: SparqlExpression; pattern: SparqlExpression; replacement: SparqlExpression;
+    flags: SparqlExpression | null }
+  | { kind: 'regex'; arg: SparqlExpression; pattern: SparqlExpression; flags: SparqlExpression | null }
+  | { kind: 'now' }
+  | { kind: 'strLangDir'; lexical: SparqlExpression; language: SparqlExpression; direction: SparqlExpression }
+  | { kind: 'existsPat' | 'notExistsPat'; pattern: SparqlQueryPattern }
+  | { kind: 'functionCall'; iri: string; args: SparqlExpression[] }
+  | SparqlTripleTerm<SparqlExpression>
+);
 
 /** Terms in VALUES use the SPARQL Results JSON representation. */
 export type SparqlAstValue =
@@ -747,11 +767,11 @@ export type SparqlAstValue =
   | { type: 'literal'; value: string; datatype?: string; 'xml:lang'?: string; 'its:dir'?: 'ltr' | 'rtl' }
   | { type: 'triple'; value: { subject: SparqlAstValue; predicate: SparqlAstValue; object: SparqlAstValue } };
 
-export interface SparqlAstTriple {
+export interface SparqlAstTriple extends SparqlLocatedNode {
   kind: 'triple'; subject: SparqlPatternTerm; predicate: SparqlPatternTerm; object: SparqlPatternTerm;
 }
 
-export type SparqlQueryPattern =
+export type SparqlQueryPattern = SparqlLocatedNode & (
   | { kind: 'bgp'; triples: SparqlAstTriple[] }
   | { kind: 'join' | 'union' | 'minus' | 'lateral'; left: SparqlQueryPattern; right: SparqlQueryPattern }
   | { kind: 'leftJoin'; left: SparqlQueryPattern; right: SparqlQueryPattern; condition: SparqlExpression }
@@ -764,20 +784,25 @@ export type SparqlQueryPattern =
   | { kind: 'subSelect'; query: SparqlQueryAst }
   | { kind: 'include'; name: string; variables: string[] }
   | { kind: 'propertyPath'; subject: SparqlPatternTerm; path: SparqlPropertyPath; object: SparqlPatternTerm }
-  | { kind: 'empty' };
+  | { kind: 'empty' }
+);
 
-export interface SparqlQueryAst {
+export interface SparqlQueryAst extends SparqlLocatedNode {
   kind: 'query';
-  form: { kind: 'select'; projection: SparqlWildcard |
-    (SparqlVariable | { kind: 'alias'; expression: SparqlExpression; variable: string })[] } |
-    { kind: 'ask' } | { kind: 'construct'; template: SparqlAstTriple[] } |
-    { kind: 'describe'; targets: SparqlPatternTerm[] };
-  dataset: { kind: 'default' | 'named'; iri: string }[];
+  form: SparqlLocatedNode & (
+    | { kind: 'select'; projection: SparqlWildcard |
+      (SparqlVariable | (SparqlLocatedNode & { kind: 'alias'; expression: SparqlExpression; variable: string }))[] }
+    | { kind: 'ask' }
+    | { kind: 'construct'; template: SparqlAstTriple[] }
+    | { kind: 'describe'; targets: SparqlPatternTerm[] }
+  );
+  dataset: (SparqlLocatedNode & { kind: 'default' | 'named'; iri: string })[];
   pattern: SparqlQueryPattern;
-  groupBy: (SparqlVariable | { kind: 'expression'; expression: SparqlExpression; alias: string | null })[] | null;
+  groupBy: (SparqlVariable |
+    (SparqlLocatedNode & { kind: 'expression'; expression: SparqlExpression; alias: string | null }))[] | null;
   having: SparqlExpression[];
   modifier: {
-    orderBy: { kind: 'asc' | 'desc'; expression: SparqlExpression }[] | null;
+    orderBy: (SparqlLocatedNode & { kind: 'asc' | 'desc'; expression: SparqlExpression })[] | null;
     distinct: boolean; reduced: boolean; offset: string | null; limit: string | null;
   };
   postValues: { variable: string; value: SparqlAstValue }[][] | null;
