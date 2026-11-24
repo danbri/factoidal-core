@@ -14,3 +14,4 @@ import EthereumConsensus.SSZ.BasicTypes
 
 import EthereumConsensus.SSZ.ContainerRoots
 import EthereumConsensus.SSZ.SigningDomains
+import EthereumConsensus.SSZ.AttestationData
