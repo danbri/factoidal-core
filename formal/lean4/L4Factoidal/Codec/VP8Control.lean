@@ -1,9 +1,11 @@
 import L4Factoidal.Codec.WebP
+import L4Factoidal.Codec.VP8Tables
 
 /-!
-The lossy WebP key-frame control prefix (RFC 6386 §§7, 9, 19.2).
-The arithmetic decoder reads only its indexed partition. Coefficient partitions
-are returned as spans of the source; macroblock and pixel decoding follow them.
+The lossy WebP key-frame control partition (RFC 6386 §§7, 9, 11, 13, 19).
+The arithmetic decoder reads only its indexed partition. The prefix indexes the
+separate coefficient partitions, and the prediction reader decodes macroblock
+modes and coefficient probabilities.
 -/
 namespace L4Factoidal.Codec.VP8
 
@@ -194,6 +196,209 @@ def inspect (src : ByteArray) (image : WebP.Image src.size) : Except String (Fra
   let last ← subspan source offset (source.size-offset)
   return {profile, shown, controlSpan, control, continuation, coefficients := coefficients.push last}
 
+/-- A flattened coefficient table is ordered by block type, frequency band,
+preceding coefficient context and entropy decision node. -/
+def coefficientIndex (kind : Fin 4) (band : Fin 8) (context : Fin 3)
+    (node : Fin 11) : Fin 1056 :=
+  ⟨((kind.val * 8 + band.val) * 3 + context.val) * 11 + node.val, by
+    have := kind.isLt
+    have := band.isLt
+    have := context.isLt
+    have := node.isLt
+    omega⟩
+
+theorem coefficientIndex_injective
+    {kind₁ kind₂ : Fin 4} {band₁ band₂ : Fin 8} {context₁ context₂ : Fin 3}
+    {node₁ node₂ : Fin 11}
+    (equal : coefficientIndex kind₁ band₁ context₁ node₁ =
+      coefficientIndex kind₂ band₂ context₂ node₂) :
+    kind₁ = kind₂ ∧ band₁ = band₂ ∧ context₁ = context₂ ∧ node₁ = node₂ := by
+  have index := congrArg Fin.val equal
+  simp only [coefficientIndex] at index
+  have := kind₁.isLt
+  have := kind₂.isLt
+  have := band₁.isLt
+  have := band₂.isLt
+  have := context₁.isLt
+  have := context₂.isLt
+  have := node₁.isLt
+  have := node₂.isLt
+  refine ⟨Fin.ext ?_, Fin.ext ?_, Fin.ext ?_, Fin.ext ?_⟩ <;> omega
+
+structure Entropy where
+  probabilities : Array UInt8
+  probabilityCount : probabilities.size = 1056
+  skipProbability : Option Nat
+
+def Entropy.probability (entropy : Entropy) (kind : Fin 4) (band : Fin 8)
+    (context : Fin 3) (node : Fin 11) : UInt8 :=
+  let index := coefficientIndex kind band context node
+  entropy.probabilities[index.val]'(by simpa only [entropy.probabilityCount] using index.isLt)
+
+private def readEntropy : Read Entropy := do
+  let mut probabilities := #[]
+  for i in List.finRange 1056 do
+    let update := coefficientUpdateProbabilities[i.val]'(by
+      simpa only [coefficientUpdateProbabilities_size] using i.isLt)
+    let probability ← if (← readProb update.toNat) then
+      pure (UInt8.ofNat (← readLiteral 8))
+    else pure (coefficientDefaults[i.val]'(by
+      simpa only [coefficientDefaults_size] using i.isLt))
+    probabilities := probabilities.push probability
+  let skipProbability ← if (← readProb 128) then pure (some (← readLiteral 8)) else pure none
+  if count : probabilities.size = 1056 then
+    return ⟨probabilities, count, skipProbability⟩
+  throw "invalid VP8 coefficient probability count"
+
+inductive IntraMode where
+  | dc | trueMotion | vertical | horizontal | leftDown | rightDown | verticalRight
+  | verticalLeft | horizontalDown | horizontalUp
+  deriving Inhabited, Repr, BEq
+
+/-- RFC 6386 §11.2 subblock context order. -/
+def IntraMode.index : IntraMode → Nat
+  | .dc => 0
+  | .trueMotion => 1
+  | .vertical => 2
+  | .horizontal => 3
+  | .leftDown => 4
+  | .rightDown => 5
+  | .verticalRight => 6
+  | .verticalLeft => 7
+  | .horizontalDown => 8
+  | .horizontalUp => 9
+
+private theorem IntraMode.index_lt (mode : IntraMode) : mode.index < 10 := by
+  cases mode <;> decide
+
+private def readSubblockMode (above left : IntraMode) : Read IntraMode := do
+  let offset := (above.index * 10 + left.index) * 9
+  let branch (i : Fin 9) := readProb (subblockProbabilities[offset+i.val]'(by
+    rw [subblockProbabilities_size]
+    have := above.index_lt
+    have := left.index_lt
+    have := i.isLt
+    dsimp [offset]
+    omega)).toNat
+  if !(← branch 0) then return .dc
+  if !(← branch 1) then return .trueMotion
+  if !(← branch 2) then return .vertical
+  if !(← branch 3) then
+    if !(← branch 4) then return .horizontal
+    return if (← branch 5) then .verticalRight else .rightDown
+  if !(← branch 6) then return .leftDown
+  if !(← branch 7) then return .verticalLeft
+  return if (← branch 8) then .horizontalUp else .horizontalDown
+
+inductive LumaPrediction where
+  | whole (mode : IntraMode)
+  | subblocks (modes : Array IntraMode)
+  deriving Repr
+
+structure Macroblock where
+  segment : Nat
+  skipCoefficients : Bool
+  luma : LumaPrediction
+  chroma : IntraMode
+  deriving Repr
+
+private def readSegmentIndex (segmentation : Option Segmentation) : Read Nat := do
+  let some s := segmentation | return 0
+  if !s.mapUpdate then return 0
+  let high ← readProb (s.probabilities[0]?.getD 255)
+  let low ← readProb (s.probabilities[if high then 2 else 1]?.getD 255)
+  return (if high then 2 else 0) + (if low then 1 else 0)
+
+private def readLumaWhole : Read IntraMode := do
+  if (← readProb 156) then
+    return if (← readProb 128) then .trueMotion else .horizontal
+  return if (← readProb 163) then .vertical else .dc
+
+private def readChroma : Read IntraMode := do
+  if !(← readProb 142) then return .dc
+  if !(← readProb 114) then return .vertical
+  return if (← readProb 183) then .trueMotion else .horizontal
+
+private def readMacroblock (segmentation : Option Segmentation) (skip : Option Nat)
+    (above : Array IntraMode) (offset : Nat) (left : Array IntraMode) :
+    Read (Macroblock × Array IntraMode × Array IntraMode) := do
+  let segment ← readSegmentIndex segmentation
+  let skipCoefficients ← match skip with | some probability => readProb probability | none => pure false
+  let mut above := above
+  let mut left := left
+  let luma ← if (← readProb 145) then do
+      let mode ← readLumaWhole
+      for x in [:4] do
+        above := above.set! (offset+x) mode
+      left := Array.replicate 4 mode
+      pure (.whole mode)
+    else do
+      let mut modes := #[]
+      for y in [:4] do
+        let mut previous := left[y]?.getD .dc
+        for x in [:4] do
+          let column := offset+x
+          previous ← readSubblockMode (above[column]?.getD .dc) previous
+          above := above.set! column previous
+          modes := modes.push previous
+        left := left.set! y previous
+      pure (.subblocks modes)
+  let chroma ← readChroma
+  return (⟨segment, skipCoefficients, luma, chroma⟩, above, left)
+
+private theorem macroblockExtent_le (extent : Nat) : (extent+15) / 16 ≤ extent := by
+  apply Nat.lt_succ_iff.mp
+  apply (Nat.div_lt_iff_lt_mul (by decide : 0 < 16)).2
+  omega
+
+/-- The raster has at most one prediction record per source pixel, so the
+existing WebP pixel budget also bounds the number of such records. -/
+theorem macroblockGrid_capacity (width height : Nat) :
+    ((height+15) / 16) * ((width+15) / 16) ≤ width * height := by
+  simpa only [Nat.mul_comm height width] using
+    Nat.mul_le_mul (macroblockExtent_le height) (macroblockExtent_le width)
+
+structure Prediction (limit : Nat) where
+  frame : Frame limit
+  entropy : Entropy
+  columns : Nat
+  rows : Nat
+  macroblocks : Array Macroblock
+  macroblockCount : macroblocks.size = rows * columns
+
+private def readMacroblocks (control : Control) (entropy : Entropy) (columns rows : Nat) :
+    Read (Array Macroblock) := do
+  let mut above := Array.replicate (4 * columns) IntraMode.dc
+  let mut blocks := Array.emptyWithCapacity (rows * columns)
+  for _ in [:rows] do
+    let mut left := Array.replicate 4 IntraMode.dc
+    for column in [:columns] do
+      let (block, nextAbove, nextLeft) ← readMacroblock control.segmentation
+        entropy.skipProbability above (4 * column) left
+      above := nextAbove
+      left := nextLeft
+      blocks := blocks.push block
+  return blocks
+
+/-- Read entropy updates and prediction records from the first partition.
+Residual decoding uses the separately indexed partitions in `frame`. -/
+def inspectPrediction (src : ByteArray) (image : WebP.Image src.size) :
+    Except String (Prediction src.size) := do
+  let frame ← inspect src image
+  let columns := (image.width+15) / 16
+  let rows := (image.height+15) / 16
+  let readPrediction := do
+    let entropy ← readEntropy
+    let blocks ← readMacroblocks frame.control entropy columns rows
+    pure (entropy, blocks)
+  let ((entropy, macroblocks), _) ←
+    ((readPrediction.run ⟨src,frame.controlSpan⟩).run frame.continuation)
+  if count : macroblocks.size = rows * columns then
+    return ⟨frame, entropy, columns, rows, macroblocks, count⟩
+  throw "invalid VP8 macroblock count"
+
 #print axioms arithmeticSplit_between
+#print axioms coefficientIndex_injective
+#print axioms macroblockGrid_capacity
 
 end L4Factoidal.Codec.VP8
