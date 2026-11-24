@@ -69,7 +69,7 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "example.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/gdsl-app/${name}`);
   }
-  for (const name of ["app.mjs", "example.mjs", "gallery.mjs", "qlever.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "example.mjs", "gallery.mjs", "inspect.mjs", "qlever.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/wikidata-results/${name}`);
   }
   eleventyConfig.addPassthroughCopy('web/hub/wikidata-results/photos');

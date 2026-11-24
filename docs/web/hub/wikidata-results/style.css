@@ -65,6 +65,11 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .view-card h3 { margin: 0; font-size: 1.12rem; font-weight: 720; }
 .view-description { margin: .35rem 0 .85rem; color: var(--muted); font-size: .92rem; }
 .view-panel { min-width: 0; overflow-wrap: anywhere; }
+.view-panel:empty { min-height: 10rem; }
+.view-card[data-view="Map"] .view-panel:empty { min-height: clamp(21rem, 46vw, 29rem); }
+.view-card[data-view="ImageGrid"] .view-panel:empty { min-height: 17rem; }
+.view-card:is([data-view="Graph"], [data-view="GraphBuilder"]) .view-panel:empty { min-height: clamp(17rem, 29vw, 24rem); }
+.view-card[data-view="TreeMap"] .view-panel:empty { min-height: clamp(15rem, 28vw, 22rem); }
 .editor-panel { padding: clamp(.85rem, 2.5vw, 1.5rem); border: 1px solid var(--line); border-radius: .9rem; margin-bottom: 1rem; background: var(--paper); scroll-margin-top: 1rem; }
 .editor-results { margin-top: 1rem; }
 .editor-panel > summary { cursor: pointer; font-weight: 650; }

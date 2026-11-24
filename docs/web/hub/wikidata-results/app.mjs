@@ -1,9 +1,9 @@
 import '../assets/sparql-result-elements.mjs';
-import { groups } from './example.mjs?v=gallery-photos';
-import { drawRaw, element, mountGallery } from './gallery.mjs?v=gallery-photos';
+import { groups } from './example.mjs?v=gallery-preview';
+import { drawRaw, element, mountGallery } from './gallery.mjs?v=gallery-preview';
 import { queryQlever } from './qlever.mjs';
-import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs?v=gallery-photos';
-import { createResultViews } from './views.mjs?v=gallery-photos';
+import { highlightTokens, viewDirectives, viewNames } from './view-data.mjs?v=gallery-preview';
+import { createResultViews } from './views.mjs?v=gallery-preview';
 
 const $ = id => document.getElementById(id);
 const editor = $('query');
@@ -30,9 +30,11 @@ let gallery;
 
 function fetchRuntime() {
   if (!runtime) {
-    runtime = import('../../../npm/factoidal/browser.js').then(api => {
-      api.setAssetsUrl(new URL('../assets/l4/', import.meta.url));
-      return api;
+    runtime = import('./inspect.mjs').then(async ({ inspectSparql }) => {
+      const { browserEngine } = await import('../../../npm/factoidal/lib/browser-engine.mjs');
+      const assetsUrl = new URL('../assets/l4/', import.meta.url);
+      const engine = await browserEngine('l4factoidal-core', assetsUrl).loadEngine();
+      return query => inspectSparql(engine, query);
     });
     runtime.catch(() => { runtime = undefined; });
   }
@@ -81,13 +83,17 @@ async function inspectQuery() {
   $('parsed').hidden = true;
   $('parse-state').textContent = 'Parsing with Factoidal Wasm…';
   try {
-    const api = await fetchRuntime();
-    const structure = await api.parseSparqlStructure(editor.value, { wdqs: true });
+    const inspect = await fetchRuntime();
     if (id !== parseJob) return;
-    $('parsed').textContent = structure.sse;
+    const { form, sse, variables } = inspect(editor.value);
+    if (sse === undefined) {
+      $('parse-state').textContent = 'Valid ' + form.toUpperCase() + ' query. This engine can check syntax.';
+      return;
+    }
+    $('parsed').textContent = sse;
     $('parsed').hidden = false;
-    $('parse-state').textContent = structure.form.toUpperCase() + ' query' +
-      (structure.variables.length ? ' · ' + structure.variables.map(variable => '?' + variable).join(', ') : '');
+    $('parse-state').textContent = form.toUpperCase() + ' query' +
+      (variables.length ? ' · ' + variables.map(variable => '?' + variable).join(', ') : '');
   } catch (error) {
     if (id === parseJob) $('parse-state').textContent = error.message;
   }
@@ -241,5 +247,9 @@ visualTab.parentElement.onkeydown = event => {
   selectTab(event.key === 'Home' || (event.key !== 'End' && !visualSelected), true);
 };
 view.onchange = draw;
+$('query-editor').addEventListener('toggle', event => {
+  if (event.currentTarget.open) paintEditor();
+});
 gallery = mountGallery({ groups, views, onEdit: openEditor, canRun: () => !controller, onChange: controls });
-loadQuery(groups[0].query);
+editor.value = groups[0].query;
+controls();
