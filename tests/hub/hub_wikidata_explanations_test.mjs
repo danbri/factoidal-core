@@ -38,3 +38,17 @@ test('the data carries its licence and provenance', () => {
   assert.match(data.corpus.attribution, /Martin Poulter/);
   assert.ok(data.labels.retrieved);
 });
+
+test('Parallax tiers: every explained query is classified, and the indexes match', () => {
+  const tiers = {};
+  for (const q of queries.filter(q => !q.stub)) {
+    assert.ok(q.parallax, q.id);
+    assert.match(q.parallax.tier, /^[ABCDN]$/, q.id);
+    assert.equal(q.parallax.tier === 'N', q.parallax.blockers.length > 0, `${q.id}: blockers iff tier N`);
+    tiers[q.parallax.tier] = (tiers[q.parallax.tier] || 0) + 1;
+    for (const n of q.parallax.negations) assert.match(n, /^(exclude|require): /, q.id);
+  }
+  assert.deepEqual(data.parallax.tiers, tiers);
+  for (const { tier, ids } of data.parallax.byTier)
+    assert.deepEqual(ids, queries.filter(q => q.parallax?.tier === tier).map(q => q.id), tier);
+});
