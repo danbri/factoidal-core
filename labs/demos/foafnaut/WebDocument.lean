@@ -1649,7 +1649,9 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
   -- so a change of `collapse` keeps the band and only the chrome layer is drawn again.
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
-  let b := band shell.scroll view
+  let scrollEnd := WebPrint.contentHeight boxes
+  let b := if shell.scroll == 0 then L4Factoidal.FrameCost.firstBand view scrollEnd
+    else band shell.scroll view
   let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
   let (chromeText,chromeSections) ←
     WebRender.artifactWith (chromeLayer shell page width addressFont) #[] face live form.next checks tree
@@ -1658,7 +1660,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
     ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
     ("splash",.bool splashing),
-    ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
+    ("scrollLimit",number (scrollLimit scrollEnd view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
   return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
     pageSections ++ chromeSections)

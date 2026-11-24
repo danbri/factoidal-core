@@ -58,6 +58,49 @@ theorem band_height_le (scroll view : Nat) (small : view ≤ maxLayerRows) :
   simp only [band,margin,maxLayerRows,bandMargin] at *
   omega
 
+/-- At the start of a long document, use the texture's available space to keep
+more forward scroll in the compositor. Later bands retain the symmetric margin. -/
+def firstBand (view content : Nat) : Band :=
+  let base := band 0 view
+  {base with height := max base.height (min content (min maxLayerRows (view + 2560)))}
+
+/-- The extra first-band rows do not reduce the original visible range. -/
+theorem firstBand_fits (view content scroll : Nat)
+    (fits : (band 0 view).fits view scroll = true) :
+    (firstBand view content).fits view scroll = true := by
+  rw [Band.fits, Bool.and_eq_true] at fits ⊢
+  refine ⟨fits.1, decide_eq_true ?_⟩
+  exact Nat.le_trans (of_decide_eq_true fits.2) (Nat.add_le_add_left (Nat.le_max_left ..) _)
+
+theorem firstBand_height_le (view content : Nat) (small : view ≤ maxLayerRows) :
+    (firstBand view content).height ≤ maxLayerRows := by
+  exact Nat.max_le.mpr ⟨band_height_le 0 view small,
+    Nat.le_trans (Nat.min_le_right ..) (Nat.min_le_left ..)⟩
+
+theorem firstBand_short (view content : Nat) (short : content ≤ (band 0 view).height) :
+    firstBand view content = band 0 view := by
+  dsimp only [firstBand]
+  rw [Nat.max_eq_left (Nat.le_trans (Nat.min_le_left ..) short)]
+
+theorem firstBand_keeps_forward (view content scroll : Nat)
+    (within : scroll + view + refreshMargin ≤ content)
+    (withinTexture : scroll + view + refreshMargin ≤ maxLayerRows)
+    (withinExtra : scroll + refreshMargin ≤ 2560) :
+    (firstBand view content).keeps view scroll = true := by
+  have rows : scroll + view + refreshMargin ≤ min content (min maxLayerRows (view + 2560)) :=
+    Nat.le_min.mpr ⟨within, Nat.le_min.mpr ⟨withinTexture, by omega⟩⟩
+  have high : min content (min maxLayerRows (view + 2560)) ≤ (firstBand view content).height :=
+    Nat.le_max_right ..
+  have kept := Nat.le_trans rows high
+  simp only [Band.keeps, Band.keepFrom, Band.keepTo, firstBand, band, Nat.zero_sub,
+    if_true, Bool.and_eq_true, decide_eq_true_eq] at *
+  exact ⟨Nat.zero_le _, by omega⟩
+
+#print axioms firstBand_fits
+#print axioms firstBand_height_le
+#print axioms firstBand_short
+#print axioms firstBand_keeps_forward
+
 /-- Every scroll that the host keeps is in the band. -/
 theorem keep_fits (b : Band) (view scroll : Nat) (tall : view ≤ b.height)
     (low : b.keepFrom ≤ scroll) (high : scroll ≤ b.keepTo view) : b.fits view scroll = true := by
