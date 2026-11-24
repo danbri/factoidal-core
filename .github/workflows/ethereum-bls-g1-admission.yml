@@ -1,0 +1,112 @@
+name: Independent Lean BLS G1 public key admission
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - '.github/workflows/ethereum-bls-g1-admission.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  g1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-consensus
+    env:
+      LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Audit exact source pins and oracle controls
+        run: |
+          set -euo pipefail
+          node scripts/check-g1-public-key.mjs --self-test | tee "$RUNNER_TEMP/g1-oracle.log"
+          python3 - <<'PY' | tee "$RUNNER_TEMP/g1-source-pins.json"
+          import json, pathlib, re, subprocess
+          paths = ["G1PublicKey.lean", "scripts/check-g1-public-key.mjs",
+                   "lean-toolchain", "lake-manifest.json", "lakefile.toml",
+                   "../../../.github/workflows/ethereum-bls-g1-admission.yml"]
+          root = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
+          pins = {}
+          for path in paths:
+              src = pathlib.Path(path).resolve()
+              rel = str(src.relative_to(root))
+              blob = subprocess.check_output(["git","hash-object",str(src)],text=True).strip()
+              assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
+              pins[rel] = blob
+          source = pathlib.Path("G1PublicKey.lean").read_text()
+          assert re.findall(r"^import\s+(\S+)\s*$",source,re.M) == ["Lean"]
+          assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",source,re.M)
+          assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
+          assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
+          print(json.dumps({"head":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
+                            "tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),
+                            "source_pins":pins},sort_keys=True))
+          PY
+      - name: Compile standalone native Lean and capture actual axiom reports
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lean --version | tee "$RUNNER_TEMP/g1-toolchain.log"
+          lean --deps G1PublicKey.lean | tee "$RUNNER_TEMP/g1-imports.log"
+          lean -o "$RUNNER_TEMP/G1PublicKey.olean" -c "$RUNNER_TEMP/g1.c" G1PublicKey.lean 2>&1 | tee "$RUNNER_TEMP/g1-axioms.log"
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/g1-public-key" "$RUNNER_TEMP/g1.c" 2>&1 | tee "$RUNNER_TEMP/g1-native-build.log"
+          ldd "$RUNNER_TEMP/g1-public-key" | tee "$RUNNER_TEMP/g1-link.log"
+          nm -u "$RUNNER_TEMP/g1-public-key" | tee "$RUNNER_TEMP/g1-symbols.log"
+          if grep -E ' (EVP_|EC_|BN_|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/g1-symbols.log"; then exit 1; fi
+      - name: Audit exact printed theorem inventory
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+          text = (pathlib.Path(os.environ["RUNNER_TEMP"])/"g1-axioms.log").read_text()
+          expected = {"EthereumConsensus.BLS."+n for n in
+            ("decodePublicKey_wrong_width","admitPoint_ok","coordinateChecks_sound","decodePublicKey_ok")}
+          def audit(t):
+              reports = re.findall(r"'(EthereumConsensus\.BLS\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
+              if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
+                  raise ValueError("wrong theorem inventory")
+              for n,a in reports:
+                  if not set(filter(None,(v.strip() for v in a.split(",")))) <= {"propext","Classical.choice","Quot.sound"}:
+                      raise ValueError("unpermitted axiom: "+n)
+          audit(text)
+          for bad in ["",text+"\n"+text,text.replace("EthereumConsensus.BLS.decodePublicKey_ok","EthereumConsensus.BLS.other"),text+"\n'EthereumConsensus.BLS.other' depends on axioms: [sorryAx]"]:
+              try:
+                  audit(bad)
+              except ValueError:
+                  continue
+              raise ValueError("audit mutation escaped")
+          print("Actual four theorem reports and four falsification controls passed")
+          PY
+      - name: Compare native key admission against independent affine oracle
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          node scripts/check-g1-public-key.mjs "$RUNNER_TEMP/g1-public-key" | tee "$RUNNER_TEMP/g1-results.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-g1-public-key-evidence
+          path: |
+            ${{ runner.temp }}/g1-source-pins.json
+            ${{ runner.temp }}/g1-oracle.log
+            ${{ runner.temp }}/g1-toolchain.log
+            ${{ runner.temp }}/g1-imports.log
+            ${{ runner.temp }}/g1-axioms.log
+            ${{ runner.temp }}/g1-native-build.log
+            ${{ runner.temp }}/g1-link.log
+            ${{ runner.temp }}/g1-symbols.log
+            ${{ runner.temp }}/g1-results.log
