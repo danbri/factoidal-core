@@ -16,34 +16,84 @@ private def paramIri := "http://www.bigdata.com/rdf#serviceParam"
 -- Binding analysis counterpart:
 -- https://gitlab.wikimedia.org/repos/wikidata-platform/wikidata-query-rewriter/-/blob/e13dcdb96d65bb97a28095cac19a6f0c6f9c9f74/java-rewriter/src/main/java/io/github/andreawesterinen/wikidata/rewriter/BindingAnalysis.java
 -- This conservative subset describes variables guaranteed by incoming patterns.
-private def definitelyBound : QueryPattern → List String
-  | .bgp triples => (QueryPattern.bgp triples).inScopeVars
-  | .propertyPath s path o => (QueryPattern.propertyPath s path o).inScopeVars
-  | .join left right => definitelyBound left ++ definitelyBound right
-  | .union left right => (definitelyBound left).filter (definitelyBound right).contains
-  | .minus left _ | .leftJoin left _ _ | .filter _ left | .bind _ _ left =>
-    definitelyBound left
-  | .values names rows =>
-    if rows.isEmpty then [] else
-      names.zipIdx.filterMap fun (name, index) =>
-        if rows.all (fun row => row[index]?.any Option.isSome) then some name else none
-  | .subSelect (query@(.mk _ _ pattern _ _ _ _ _)) =>
-    (definitelyBound pattern).filter query.projectedVars.contains
-  | .service _ false body => definitelyBound body
-  | .graph name body => match name with
-    | .var v => v :: definitelyBound body
-    | _ => definitelyBound body
-  | _ => []
+private theorem patternSizePositive (pattern : QueryPattern) : 0 < sizeOf pattern := by
+  cases pattern <;> simp <;> omega
+
+private inductive BoundTask where
+  | visit (pattern : QueryPattern)
+  | join
+  | union
+  | project (names : List String)
+  | prepend (name : String)
+
+private noncomputable def BoundTask.weight : BoundTask → Nat
+  | .visit pattern => 3 * sizeOf pattern
+  | _ => 1
+
+private noncomputable def boundWeight : List BoundTask → Nat
+  | [] => 0
+  | task :: rest => task.weight + boundWeight rest
+
+private def definitelyBound (pattern : QueryPattern) : List String :=
+  go [.visit pattern] []
+where
+  -- A visit pushes one result. A reduction consumes its child results and
+  -- pushes one result, preserving source order and duplicates.
+  go : List BoundTask → List (List String) → List String
+    | [], values => values.headD []
+    | .visit pattern :: rest, values =>
+      match pattern with
+      | .join left right => go (.visit left :: .visit right :: .join :: rest) values
+      | .union left right => go (.visit left :: .visit right :: .union :: rest) values
+      | .minus left _ | .leftJoin left _ _ | .filter _ left | .bind _ _ left =>
+        go (.visit left :: rest) values
+      | .subSelect (query@(.mk _ _ body _ _ _ _ _)) =>
+        go (.visit body :: .project query.projectedVars :: rest) values
+      | .service _ false body => go (.visit body :: rest) values
+      | .graph (.var name) body => go (.visit body :: .prepend name :: rest) values
+      | .graph _ body => go (.visit body :: rest) values
+      | .bgp _ | .propertyPath _ _ _ => go rest (pattern.inScopeVars :: values)
+      | .values names rows =>
+        let bound := if rows.isEmpty then [] else
+          names.zipIdx.filterMap fun (name, index) =>
+            if rows.all (fun row => row[index]?.any Option.isSome) then some name else none
+        go rest (bound :: values)
+      | _ => go rest ([] :: values)
+    | .join :: rest, right :: left :: values => go rest ((left ++ right) :: values)
+    | .union :: rest, right :: left :: values => go rest ((left.filter right.contains) :: values)
+    | .project names :: rest, child :: values => go rest ((child.filter names.contains) :: values)
+    | .prepend name :: rest, child :: values => go rest ((name :: child) :: values)
+    | _, _ => []
+  termination_by tasks _ => boundWeight tasks
+  decreasing_by
+    all_goals simp [boundWeight, BoundTask.weight]
+    all_goals first | omega | exact patternSizePositive _
 
 -- `collectVisibleVariables` in the pinned label rule excludes sibling
 -- OPTIONAL/UNION branches in the first pass of automatic output assignment.
-private def strictlyVisible : QueryPattern → List String
-  | .join left right => strictlyVisible left ++ strictlyVisible right
-  | .leftJoin left _ _ | .minus left _ | .filter _ left => strictlyVisible left
-  | .bind _ name left => name :: strictlyVisible left
-  | .union _ _ => []
-  | .service endpoint _ body => if endpoint.val == labelEndpoint then [] else body.inScopeVars
-  | pattern => pattern.inScopeVars
+private noncomputable def visibleWeight : List QueryPattern → Nat
+  | [] => 0
+  | pattern :: rest => sizeOf pattern + visibleWeight rest
+
+private def strictlyVisible (pattern : QueryPattern) : List String :=
+  go [pattern] []
+where
+  go : List QueryPattern → List String → List String
+    | [], acc => acc.reverse
+    | pattern :: rest, acc =>
+      match pattern with
+      | .join left right => go (left :: right :: rest) acc
+      | .leftJoin left _ _ | .minus left _ | .filter _ left => go (left :: rest) acc
+      | .bind _ name left => go (left :: rest) (name :: acc)
+      | .union _ _ => go rest acc
+      | .service endpoint _ body =>
+        if endpoint.val == labelEndpoint then go rest acc
+        else go rest (body.inScopeVars.reverse ++ acc)
+      | _ => go rest (pattern.inScopeVars.reverse ++ acc)
+  termination_by pending _ => visibleWeight pending
+  decreasing_by
+    all_goals simp [visibleWeight]
+    all_goals first | omega | exact patternSizePositive _
 
 private def outerLabel : QueryPattern → Option (QueryPattern × QueryPattern)
   | .filter _ pattern | .bind _ _ pattern => outerLabel pattern

@@ -69,9 +69,16 @@ module.exports = function(eleventyConfig) {
   for (const name of ["app.mjs", "example.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/gdsl-app/${name}`);
   }
-  for (const name of ["app.mjs", "example.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
+  for (const name of ["app.mjs", "example.mjs", "gallery.mjs", "inspect.mjs", "qlever.mjs", "view-data.mjs", "views.mjs", "style.css"]) {
     eleventyConfig.addPassthroughCopy(`web/hub/wikidata-results/${name}`);
   }
+  eleventyConfig.addPassthroughCopy('web/hub/wikidata-results/photos');
+  // Static page: the explanations are rendered at build time from the directory data file,
+  // which is also published as explanations.json for reuse.
+  eleventyConfig.addPassthroughCopy("web/hub/wikidata-explanations/style.css");
+  eleventyConfig.addPassthroughCopy({
+    "web/hub/wikidata-explanations/wikidata-explanations.11tydata.json": "web/hub/wikidata-explanations/explanations.json",
+  });
   // Publish the *same* audited browser-safe EVM→WASM compiler sources that
   // the Node differential suite tests (no second handwritten implementation).
   for (const name of ["evm-to-wasm.mjs", "evm-policy.mjs"]) {

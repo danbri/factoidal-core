@@ -42,18 +42,40 @@ structure Edit where
   stop : Nat
   replacement : String
 
-private def splice (offset : Nat) (rest : List Char) : List Edit → List String
+private def splice (offset : Nat) (rest : List Char) (edits : List Edit) : List String :=
+  go offset rest edits []
+where
+  go (offset : Nat) (rest : List Char) (edits : List Edit) (acc : List String) :
+      List String :=
+    match edits with
+    | [] => (String.ofList rest :: acc).reverse
+    | edit :: edits =>
+      let unchanged := String.ofList (rest.take (edit.start - offset))
+      go edit.stop (rest.drop (edit.stop - offset)) edits (edit.replacement :: unchanged :: acc)
+
+private noncomputable def spliceSpec (offset : Nat) (rest : List Char) : List Edit → List String
   | [] => [String.ofList rest]
   | edit :: edits =>
     String.ofList (rest.take (edit.start - offset)) :: edit.replacement ::
-      splice edit.stop (rest.drop (edit.stop - offset)) edits
+      spliceSpec edit.stop (rest.drop (edit.stop - offset)) edits
+
+private theorem splice_go_eq (offset : Nat) (rest : List Char) (edits : List Edit)
+    (acc : List String) :
+    splice.go offset rest edits acc = acc.reverse ++ spliceSpec offset rest edits := by
+  induction edits generalizing offset rest acc with
+  | nil => simp [splice.go, spliceSpec]
+  | cons edit edits ih => simp [splice.go, spliceSpec, ih, List.append_assoc]
+
+private theorem splice_eq (offset : Nat) (rest : List Char) (edits : List Edit) :
+    splice offset rest edits = spliceSpec offset rest edits := by
+  simp [splice, splice_go_eq]
 
 /-- The rule planners supply disjoint ranges in source order. -/
 def applyEdits (text : String) (edits : List Edit) : String :=
   String.join (splice 0 text.toList edits)
 
 @[simp] theorem applyEdits_empty (text : String) : applyEdits text [] = text := by
-  simp [applyEdits, splice]
+  simp [applyEdits, splice, splice.go]
 
 /-- Materialise referenced WDQS defaults while honouring user declarations.
 -/
