@@ -700,7 +700,9 @@ export type SparqlLiteral = {
   kind: 'literal'; value: string; datatype: string; language: string | null; direction: 'ltr' | 'rtl' | null;
 };
 export type SparqlWildcard = { kind: 'wildcard' };
-export type SparqlTripleTerm<T> = { kind: 'tripleTerm'; subject: T; predicate: T; object: T };
+export interface SparqlTripleTerm<T> {
+  kind: 'tripleTerm'; subject: T; predicate: T; object: T;
+}
 export type SparqlPatternTerm = SparqlVariable | SparqlIri | SparqlBlankNode | SparqlLiteral |
   SparqlTripleTerm<SparqlPatternTerm>;
 
@@ -796,6 +798,11 @@ export interface SparqlQueryDocument {
     span: SparqlSourceSpan;
     tokens: { kind: string; text: string; span: SparqlSourceSpan; iri?: string }[];
     blankNodes: { kind: 'anonymous' | 'propertyList' | 'labelled'; id: string; span: SparqlSourceSpan }[];
+    anchors: {
+      kind: 'triple' | 'propertyPath' | 'optional' | 'minus' | 'unionBranch' | 'lateral' | 'filter' | 'bind' | 'values';
+      origin: 'exact' | 'derived'; span: SparqlSourceSpan;
+      subject?: SparqlSourceSpan; predicate?: SparqlSourceSpan; object?: SparqlSourceSpan;
+    }[];
     comments: SparqlSourceComment[];
     directives: { kind: 'title' | 'defaultView' | 'view'; value: string; span: SparqlSourceSpan }[];
   };

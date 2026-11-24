@@ -43,6 +43,14 @@ both their exact spelling and resolved `iri`. `source.blankNodes` distinguishes
 `[]`, a property list, and an explicit blank-node label. For ordinary
 SPARQL queries its IDs join generated bracket nodes to the parsed AST.
 
+`source.anchors` gives ranges for recognised authored triples, property paths,
+and explicit graph clauses such as OPTIONAL, MINUS, UNION branches, FILTER and
+BIND. A triple with a written subject, predicate, and object has `origin:
+"exact"`. A triple produced from `;` or `,` has `origin: "derived"` with
+separate ranges for the shared parts. An editor can compare a trailing
+comment's start with the preceding triple or clause's end. These are
+source anchors and have independent identity from normalised AST nodes.
+
 The parser normalises some syntax, including implicit joins and expanded
 triples. Mapping individual AST nodes to source ranges, and mapping and
 classifying generated nodes in rewrites, remain open. Derive explainer
@@ -65,3 +73,10 @@ Build and exercise the Node/Wasm path from the repository root.
 bash formal/lean4/Wasm/build-wasm.sh
 node tools/wikidata/audit_query_ast.mjs /path/to/mlp-all-queries.json
 ```
+
+The corpus audit on the published 580-query English document yields an
+AST for 576 originals and all 559 available replacements. There are 23
+QLever named-subquery replacements. Three originals return a projection
+alias diagnostic (`mlp-316`, `mlp-318`, `mlp-374`). `mlp-533` returns an
+unexpected trailing token diagnostic. The audit checks AST and source
+constructs used by each of the explainer's 13 target examples.

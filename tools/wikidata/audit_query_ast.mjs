@@ -29,6 +29,9 @@ function checkSource(doc, text) {
     const { start, end } = item.span ?? item;
     assert.equal(chars.slice(start, end).join(''), item.text);
   }
+  for (const anchor of doc.source.anchors) {
+    assert.ok(anchor.span.start < anchor.span.end && anchor.span.end <= chars.length);
+  }
 }
 
 const checks = {
@@ -66,7 +69,14 @@ function checkTargets(row, original, replacement) {
     assert.ok(nodes.some(node => node.kind === 'literal' && node.value === 'Confucius' && node.language === 'en'));
     assert.equal(doc.ast.modifier.distinct, true);
   }
-  if (row.id === 'mlp-382') assert.ok(original.source.comments.some(note => /published in/i.test(note.text)));
+  if (row.id === 'mlp-382') {
+    const note = original.source.comments.find(comment => /published in/i.test(comment.text));
+    assert.ok(note);
+    const chars = Array.from(original.source.text);
+    assert.ok(original.source.anchors.some(anchor => anchor.kind === 'triple' &&
+      chars.slice(anchor.span.start, anchor.span.end).join('').includes('wdt:P1433') &&
+      /^[. \t]*$/.test(chars.slice(anchor.span.end, note.start).join(''))));
+  }
   if (row.id === 'mlp-248') assert.ok(nodes.some(node => node.kind === 'aggregate' && node.fn === 'sample'));
   if (row.id === 'mlp-117') assert.ok(doc.ast.having.length && doc.ast.groupBy.length);
   if (row.id === 'mlp-329') assert.equal(row.lean_rewrite_status, 'skipped_unsupported');
@@ -117,6 +127,12 @@ const invalid = await parseSparqlAst('# 🗺\nASK {} }');
 assert.equal(invalid.ast, null);
 assert.deepEqual(invalid.diagnostics[0].span, { start: 11, end: 12 });
 assert.deepEqual(invalid.diagnostics[0].utf16Span, { start: 12, end: 13 });
+
+const abbreviated = await parseSparqlAst('ASK { ?s <urn:p> ?a, ?b ; <urn:q> ?c }');
+assert.deepEqual(abbreviated.source.anchors.map(item =>
+  [item.origin, abbreviated.source.text.slice(item.span.start, item.span.end)]),
+[['exact', '?s <urn:p> ?a'], ['derived', '?b'], ['derived', '<urn:q> ?c']]);
+assert.ok(abbreviated.source.anchors.every(item => item.subject.start === 6));
 
 const preserveInput = '#title: 🗺 test\nSELECT ?x ?xLabel WHERE { ?x wdt:P31 wd:Q5 . # inline\n' +
   'SERVICE wikibase:label { bd:serviceParam wikibase:language "en" . # relocated\n} }';

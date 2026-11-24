@@ -1,5 +1,6 @@
 import L4Factoidal.SPARQL.QueryJson
 import L4Factoidal.SPARQL.SourceComments
+import L4Factoidal.SPARQL.QuerySourceAnchors
 import L4Factoidal.Wikidata.NamedSubquery
 
 namespace L4Factoidal.SPARQL
@@ -12,6 +13,13 @@ def sourceCommentJson (comment : SourceComment) : Json :=
   .object [("text", .string comment.text), ("start", offset comment.start), ("end", offset comment.stop)]
 
 private def span (start stop : Nat) : Json := .object [("start", offset start), ("end", offset stop)]
+
+private def anchorJson (anchor : QuerySourceAnchor) : Json :=
+  let encode := fun range : QuerySourceRange => span range.start range.stop
+  let parts := [("subject", anchor.subject), ("predicate", anchor.predicate), ("object", anchor.object)]
+  .object ([("kind", .string anchor.kind), ("span", encode anchor.range),
+    ("origin", .string (if anchor.derived then "derived" else "exact"))] ++
+    parts.filterMap fun (key, value) => value.map fun range => (key, encode range))
 
 private def lexemeKind : Token → String
   | .pname _ => "prefixedName"
@@ -163,6 +171,7 @@ def parseQueryDocument (text : String) (wdqs := false) (version : SparqlVersion 
     ("source", .object [("text", .string text), ("offsetEncoding", .string "unicode-code-points"),
       ("span", span 0 chars.size), ("tokens", .array (tokens.map (lexemeJson chars prologue (peekPos body)))),
       ("blankNodes", .array (authoredBlankNodes tokens [] [])),
+      ("anchors", .array ((querySourceAnchors prologue tokens body).map anchorJson)),
       ("comments", .array (comments.map sourceCommentJson)),
       ("directives", .array (comments.filterMap directiveJson))])]
 
