@@ -9,3 +9,5 @@ The stored value uses the CSS Values evaluator's existing font-unit model. Expre
 The included Lean theorem states that every pixel size returned by the evaluator is nonnegative. Six guards cover three viewport widths, min, the nonnegative range, and exclusion of a function needing a containing-block percentage. At a 16px root font, the result at 1280px is 119.4944px and reaches the 120px cap at 1440px. The native build checks which declarations and guards compile. Browser geometry and visual acceptance need separate measurements.
 
 Related to [desktop acceptance](https://github.com/danbri/factoidal-core/issues/712).
+
+An ordinary computed-value calculation such as `calc(10px * 2)` stays on the existing path. The deferred path tests the calculation tree for units whose pixel conversion changes with the viewport. Native CI on the preceding candidate compiled the nonnegative proof and then caught the constant-calc regression in the existing cascade tests.

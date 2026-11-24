@@ -61,13 +61,27 @@ def ratToFloat (r : Rat) : Float := Float.ofInt r.num / Float.ofNat r.den
 def tableRat (x : Float) : Rat :=
   if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
 
+/-- A unit varies with the viewport exactly when changing both viewport dimensions
+changes its conversion factor. Font metrics stay fixed in the two contexts. -/
+private def usesViewport : Nat → CssValues.Calc → Bool
+  | 0, _ => false
+  | fuel + 1, expression => match expression with
+    | .val _ unit =>
+      let narrow : CssValues.Ctx := {viewportW := 100, viewportH := 100}
+      let wide : CssValues.Ctx := {viewportW := 200, viewportH := 200}
+      narrow.pxPer unit != wide.pxPer unit
+    | .sum terms | .prod terms | .fn _ terms => terms.any (usesViewport fuel)
+    | .neg inner | .inv inner => usesViewport fuel inner
+    | .kw _ => false
+
 /-- Read a length-valued sizing function without substituting a default viewport.
-Percentages which require a layout basis are handled by the existing length paths. -/
+Percentages that require a layout basis and calculations independent of the viewport
+are handled by the existing length paths. -/
 def viewportSizeMath (fontSize : Float) (source : String) : Option Length := do
   let [part] := CssValues.stripWs (CssValues.CV.parse source) | none
   let expr ← CssValues.Calc.parse part
   let fuel := CssValues.Calc.depth 64 expr + 4
-  if expr.type .percent fuel == some (CssValues.Ty.ofKind .length) then
+  if usesViewport fuel expr && expr.type .percent fuel == some (CssValues.Ty.ofKind .length) then
     some (.viewportMath expr (tableRat fontSize))
   else none
 
@@ -103,6 +117,7 @@ private def sizeAt (source : String) (viewport : Rat) : Option Rat := do
 #guard sizeAt "max(-10px, -2vw)" 1280 == some 0
 #guard sizeAt "min(100px, 40vw)" 200 == some 80
 #guard (sizeAt "clamp(20px, 50%, 120px)" 1280).isNone
+#guard (viewportSizeMath 16 "calc(10px * 2)").isNone
 
 /-- The components of the computed value of `value` for `property` by the property table,
 with font-relative lengths in px against `fontSize`; `none` when it is not a value of the
