@@ -145,16 +145,62 @@ def bumpFirst (name : String) (f : Int → Int) : List (String × Int × Nat) �
   | [] => []
   | (n, v, o) :: rest => if n == name then (n, f v, o) :: rest else (n, v, o) :: bumpFirst name f rest
 
+/-- The `list-item` counter of HTML lists (HTML §15.3.8, CSS Lists 3 §4.5): whether `k` is an
+`ol` with the `reversed` attribute. -/
+def reversedList (d : Dom) (k : Nat) : Bool :=
+  let n := d.get k
+  n.type == .element && n.lname == "ol" && hasAttribute n "reversed"
+
+/-- The increments of element `k`: its `counter-increment`, and for an `li` that does not name
+`list-item` there, `list-item` by 1 (by -1 in a reversed `ol`). -/
+def incrementsOf (d : Dom) (styles : Array Computed) (k : Nat) : List (String × Int) :=
+  let n := d.get k
+  let own := ((styles[k]?).getD {}).pos.counterIncrement
+  if n.type == .element && n.lname == "li" && !own.any (·.1 == "list-item") then
+    let step : Int := if (n.parent.map (reversedList d)).getD false then -1 else 1
+    own ++ [("list-item", step)]
+  else own
+
+/-- The sets of element `k`: its `counter-set`, and for an `li` with an integer `value`
+attribute that does not name `list-item` there, `list-item` to that value. -/
+def setsOf (d : Dom) (styles : Array Computed) (k : Nat) : List (String × Int) :=
+  let n := d.get k
+  let own := ((styles[k]?).getD {}).pos.counterSet
+  if n.type == .element && n.lname == "li" && !own.any (·.1 == "list-item") then
+    match (attrValue n "value").trim.toInt? with
+    | some v => own ++ [("list-item", v)]
+    | none => own
+  else own
+
+/-- The resets of element `k`, with `true` for a `reversed(name)` with no integer: its
+`counter-reset`, and for an `ol`, `ul` or `menu` that does not name `list-item` there,
+`list-item` (HTML §15.3.8): to `start - 1` (`start + 1` when reversed; no `start` attribute:
+0, or the reversed start). -/
+def resetsOf (d : Dom) (styles : Array Computed) (k : Nat) : List (String × Int × Bool) :=
+  let n := d.get k
+  let s := (styles[k]?).getD {}
+  let own := s.pos.counterReset.map fun (m, v) => (m, v, s.pos.counterReversed.contains m)
+  if n.type == .element && (n.lname == "ol" || n.lname == "ul" || n.lname == "menu") &&
+      !own.any (·.1 == "list-item") then
+    let rev := reversedList d k
+    match (if n.lname == "ol" then (attrValue n "start").trim.toInt? else none) with
+    | some v => own ++ [("list-item", if rev then v + 1 else v - 1, false)]
+    | none => own ++ [("list-item", 0, rev)]
+  else own
+
 /-- The start of a `reversed(name)` counter that element `k` resets with no integer (CSS
-Lists 3 §4.4): minus the sum of the increments of `name` in its scope (`k`, its descendants,
-its later siblings and theirs), leaving out the subtrees of other elements that reset `name`
-(they count their own) and elements that make no box. At most `d.size + 1` steps. -/
+Lists 3 §4.4.2): minus the sum of the increments of `name` in its scope (`k`, its
+descendants, its later siblings and theirs), minus the last of them, so that the last
+element that increments shows minus its increment. The subtrees of other elements that reset
+`name` (they count their own) and elements that make no box are left out. At most
+`d.size + 1` steps. -/
 def reversedStart (d : Dom) (styles : Array Computed) (makesBox : Nat → Bool) (k : Nat) (name : String) : Int := Id.run do
   let later := match (d.get k).parent with
     | some p => ((d.get p).kids.toList.dropWhile (· != k))
     | none => [k]
   let mut pending := later
   let mut sum : Int := 0
+  let mut last : Int := 0
   for _ in [0:d.size + 1] do
     match pending with
     | [] => pure ()
@@ -163,12 +209,14 @@ def reversedStart (d : Dom) (styles : Array Computed) (makesBox : Nat → Bool) 
       let n := d.get j
       let s := (styles[j]?).getD {}
       if n.type == .element && s.display != .none && makesBox j then
-        if j != k && s.pos.counterReset.any (·.1 == name) then pure ()
+        if j != k && (resetsOf d styles j).any (·.1 == name) then pure ()
         else
-          for (m, v) in s.pos.counterIncrement do
-            if m == name then sum := sum + v
+          for (m, v) in incrementsOf d styles j do
+            if m == name then
+              sum := sum + v
+              last := v
           pending := n.kids.toList ++ pending
-  return -sum
+  return -(sum + last)
 
 /-- The counters in scope at each node where `record` holds (CSS 2.1 §12.4.1): `d` is walked
 in tree order (a `::before` is its element's first child, an `::after` its last). An element
@@ -196,12 +244,12 @@ def counterScopes (d : Dom) (styles : Array Computed) (makesBox record : Nat →
         if !skip && (n.type == .element || n.type == .document || n.type == .fragment) then
           if n.type == .element then
             let owner := n.parent.getD 0
-            for (name, v) in s.pos.counterReset do
-              let v := if s.pos.counterReversed.contains name then reversedStart d styles makesBox k name else v
+            for (name, v, rev) in resetsOf d styles k do
+              let v := if rev then reversedStart d styles makesBox k name else v
               inst := (name, v, owner) :: inst
-            for (name, v) in s.pos.counterIncrement do
+            for (name, v) in incrementsOf d styles k do
               inst := if inst.any (·.1 == name) then bumpFirst name (· + v) inst else (name, v, owner) :: inst
-            for (name, v) in s.pos.counterSet do
+            for (name, v) in setsOf d styles k do
               inst := if inst.any (·.1 == name) then bumpFirst name (fun _ => v) inst else (name, v, owner) :: inst
             if record k then out := out.set! k inst
           stack := n.kids.toList.map ((true, ·)) ++ [(false, k)] ++ stack

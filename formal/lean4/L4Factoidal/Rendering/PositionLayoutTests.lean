@@ -452,7 +452,16 @@ private def beforeTexts (page sheet : String) : Option (List String) := do
   "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
 #guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
 #guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
-  "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["2", "1", "0"]
+  "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["3", "2", "1"]
+-- the start of a reversed counter: the last element that increments shows minus its increment
+#guard beforeTexts "<div><p>a</p><p>b</p><p>c</p></div>"
+  "div{counter-reset:reversed(n)} p{counter-increment:n -2} p::before{content:counter(n)}" == some ["6", "4", "2"]
+-- the `list-item` counter of HTML lists
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["1", "2", "3"]
+#guard beforeTexts "<ol start=9><li>a</li><li value=20>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["9", "20", "21"]
+#guard beforeTexts "<ol reversed><li>a</li><li>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["3", "2", "1"]
+#guard beforeTexts "<ol reversed start=5><li>a</li><li>b</li></ol>" "li::before{content:counter(list-item)}" == some ["5", "4"]
+#guard beforeTexts "<ol><li>a<ol><li>b</li></ol></li></ol>" "li::before{content:counters(list-item, '.')}" == some ["1", "1.1"]
 
 -- `::first-letter` (CSS Pseudo-Elements 4 §2.3): the letter and its punctuation in an element
 -- of their own, with the rule's style; the rest stays in the page's text node.
