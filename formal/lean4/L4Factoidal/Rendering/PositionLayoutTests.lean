@@ -659,6 +659,21 @@ private def wraps := "<div id=d>ab cd <span id=s>ef gh ij</span> kl</div>"
 -- and its min-content width is the whole line
 #guard box "<div id=f>ab cd ef</div>" "#f{float:left;white-space:nowrap} body{width:20px}" "f" == some (0,0,48,7)
 #guard box wraps "#d{width:60px;white-space:nowrap} #s{white-space:normal}" "d" == some (0,0,60,14)
+
+-- The opening quote fits after the preceding word but the nonbreaking span doesn't.
+-- Measure the quote and word before placing either, then keep them on the same line.
+private def quotedNowrap := "<div id=row>aaaaaa <span id=key>bbbbbb</span></div>"
+private def quoteStyle := "#key{white-space:nowrap} #key::before{content:'X'} "
+private def quotePositions (width : Nat) : Option (Float × Float × Bool × Bool) := do
+  let style := quoteStyle ++ "#row{width:" ++ toString width ++ "px}"
+  let (_, firstY) ← at? quotedNowrap style "aaaaaa"
+  let (x, y) ← at? quotedNowrap style "X"
+  let (bx, by_) ← at? quotedNowrap style "bbbbbb"
+  return (x,bx,y == by_,y > firstY)
+
+#guard quotePositions 50 == some (0,6,true,true)
+#guard quotePositions 100 == some (42,48,true,false)
+
 -- `text-transform` (CSS Text 3 §2.1): the text of the runs, one character for one
 private def texts (html extra : String) : Option (List String) :=
   (render html extra).toOption.map fun (scene,_) => scene.glyphRuns.toList.map (·.text)
