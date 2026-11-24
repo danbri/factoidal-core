@@ -1457,7 +1457,10 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           -- `link` element (`media`, `href`, `disabled`) may change the rules. Before
           -- 2026-11-24 only `class` was noted, and Wikipedia's `aria-haspopup` writes styled
           -- the whole document (issue 871).
-          else if touchesSheets d [a 0] then none
+          -- Only the written element itself: an attribute of an element that holds a `style`
+          -- or `link` element changes no rules. Until 2026-11-24 its whole subtree was
+          -- checked, and a class write on a large container styled the whole document.
+          else if a 0 >= d.size || (let x := d.get (a 0); x.lname == "style" || x.lname == "link") then none
           else (d.get (a 0)).parent.map fun p => (p, true)
         | .error _ => none
       -- a child added, removed or replaced, or the text of an element set: the selectors that
