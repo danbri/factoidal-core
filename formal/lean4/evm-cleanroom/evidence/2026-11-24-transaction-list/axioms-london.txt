@@ -1,0 +1,20 @@
+evm-cleanroom/EVMCleanroom/HeaderFees.lean:155:21: warning: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+evm-cleanroom/EVMCleanroom/HeaderFees.lean:156:18: warning: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [hfirst, hparent]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'EVMCleanroom.HeaderFees.nextBaseFee_at_target' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.HeaderFees.nextBaseFee_above' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.HeaderFees.nextBaseFee_below' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.HeaderFees.expected_firstLondon' depends on axioms: [propext]
+'EVMCleanroom.HeaderFees.checkHeader_sound' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.HeaderFees.missing_parent_refused' depends on axioms: [propext]

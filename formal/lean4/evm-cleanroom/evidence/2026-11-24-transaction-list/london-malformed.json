@@ -1,0 +1,8 @@
+{
+  "exitCode": 2,
+  "output": {
+    "status": "inputError",
+    "reason": "invalid-mode"
+  },
+  "nativeSha256": "567392ad6ca1f50ed4a453acf97824a8ccbd42c1a56780cc6f3a3d9fcbb43fe5"
+}

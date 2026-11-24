@@ -247,6 +247,67 @@ controls, 1,555 formula cases, all three comparator mutations and malformed
 transport guard pass locally. This repairs a stale assurance input; it does
 not change London fee arithmetic.
 
+## Published implementation and measured cost
+
+The implementation is published at
+[`91cae62479cbd3a13775b3dd15f502646c11db41`](https://github.com/danbri/factoidal-core/commit/91cae62479cbd3a13775b3dd15f502646c11db41),
+tree `7d8ef4d75ef64e634574ee4a313294e9072e4f4f`. The subsequent evidence
+commit adds this record and the
+[dated evidence bundle](../formal/lean4/evm-cleanroom/evidence/2026-11-24-transaction-list/).
+It changes no executable or proof source.
+
+The post-publication audit actually re-elaborated all 46 new statements and
+required all 47 dedicated implementation, proof and support pins to match
+Git HEAD. A separate comparison matched every one of the 146 active source
+pins to that same commit. The complete local compiler audit checks 292
+selected statements across 27 files. The new statements use these actual
+axiom sets: seven empty, eight `propext`, 22 `propext` with `Quot.sound`,
+and nine using all three permitted foundations. These are selected local
+theorems, not a count of independently established Ethereum requirements.
+
+The paired timing run on 24 November 2026 uses the unchanged ordinary and
+blob CLI requests against separately built predecessor source
+`85da2a6b307c0a0269257344d889051ce6902e82` and the published implementation
+above. The predecessor binary hashes match the BLOBHASH milestone's
+published hashes. Each path has 12 warm-up pairs and 160 measured pairs,
+alternating order under the shared timing and compiler locks. Every
+invocation must return byte-identical output with the expected successful
+status and no stderr.
+
+| Path and statistic | Before (ms) | After (ms) |
+| --- | ---: | ---: |
+| Ordinary call, median | 31.84 | 33.37 |
+| Ordinary call, p95 | 41.42 | 47.19 |
+| Ordinary call, p99 | 53.58 | 82.80 |
+| Ordinary call, maximum | 60.40 | 114.71 |
+| Blob call, median | 31.22 | 32.29 |
+| Blob call, p95 | 39.10 | 41.66 |
+| Blob call, p99 | 74.50 | 61.78 |
+| Blob call, maximum | 94.10 | 89.04 |
+
+These measurements include process launch, file and JSON input, transaction
+execution, JSON output and exit. Medians increased by approximately 4.8%
+and 3.4%, respectively; the ordinary path also has a larger observed tail.
+No individual component cost, speed improvement, stable latency guarantee
+or whole-list throughput result is inferred. Raw nanosecond samples,
+nearest-rank quantiles, paired differences, binary identities, request/output
+hashes and machine details are retained in `cli-timings.json`.
+
+The raw development crash report is also retained unchanged. It records the
+payload size, nesting, process exit and stack-overflow stderr, but does not
+itself embed the executable hash or process-limit settings. Its association
+with the retained pre-guard development binary and documented limits comes
+from the execution session. It is not attributed to a published list-source
+commit. The guarded regression, published source audit and timing reports
+carry their own native or source identities.
+
+The evidence bundle gives reproduction commands and SHA-256 checksums.
+Hosted checks are pending at evidence publication; their outcome is recorded
+in the linked tracking issue and draft PR. The predecessor's broader Lean
+corpus passed. The repository npm job remains blocked before tests by its
+missing ancestor web-release prerequisite. No main merge or release-gate
+bypass is part of this continuation.
+
 ## Remaining complete-system work
 
 This is a decoded transaction-list transition. It does not yet authenticate

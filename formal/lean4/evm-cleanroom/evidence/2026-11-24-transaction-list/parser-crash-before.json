@@ -1,0 +1,7 @@
+{
+  "inputBytes": 6000034,
+  "nesting": 3000000,
+  "returncode": -6,
+  "stdout": "",
+  "stderr": "\nStack overflow detected. Aborting.\n"
+}
