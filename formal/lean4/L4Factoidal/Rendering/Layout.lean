@@ -1178,10 +1178,28 @@ private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) 
     | .outOfFlow id => some {id, x := x+offset, y}
     | _ => none
 
+/-- A line's text box is also needed by intrinsic sizing. A glyph run and its
+paint are built only when the caller will draw the line. -/
+private def appendLineWord (out : Result) (box : Box) (emitText : Bool)
+    (glyphRun : Unit → GlyphRun) (paint : GlyphRun → Array Node) : Result :=
+  let measured := {out with boxes := out.boxes.push box}
+  if emitText then
+    let run := glyphRun ()
+    {measured with nodes := measured.nodes ++ paint run, runs := measured.runs.push run}
+  else measured
+
+private theorem appendLineWord_boxes (out : Result) (box : Box) (emitText : Bool)
+    (glyphRun : Unit → GlyphRun) (paint : GlyphRun → Array Node) :
+    (appendLineWord out box emitText glyphRun paint).boxes = out.boxes.push box := by
+  cases emitText <;> rfl
+
+#print axioms appendLineWord_boxes
+
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
-    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[])
+    (emitText : Bool := true) : Except String Result := do
   -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
   if items.all (fun item => isStaticPlaceholder item.2) then
     return {pending := staticLinePositions items x y}
@@ -1277,18 +1295,23 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
         let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx
-        let glyphs := chars.toArray.mapIdx fun i c =>
-          ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩}
-        extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
+        let width := advance*Float.ofNat chars.length
+        let glyphRun := fun _ : Unit =>
+          let glyphs := chars.toArray.mapIdx fun i c =>
+            ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
+          (⟨source.paint,font.family,s.fontSize,text,glyphs⟩ : GlyphRun)
+        out := appendLineWord out ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩ emitText glyphRun
+          (fun run => glyphNodes font run s)
+        extent := some (x+offset,x+offset+width)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
         let width := word.advance*s.fontSize/font.unitsPerEm
-        let glyphs := word.glyphs.map fun glyph =>
-          ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
-        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩}
+        let glyphRun := fun _ : Unit =>
+          let glyphs := word.glyphs.map fun glyph =>
+            ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
+          (⟨source.paint,font.family,s.fontSize,text,glyphs⟩ : GlyphRun)
+        out := appendLineWord out ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩ emitText glyphRun
+          (fun run => shapedNodes word run s (x+offset) (y+ascent) width)
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
@@ -1490,7 +1513,8 @@ positioned glyph runs are consumed to paint the actual word geometry. With bidi
 each line is reordered (`bidiLine`). -/
 def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
+    (band : Float → Float × Float := fun _ => (0,available))
+    (emitText : Bool := true) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
   let bidi := needsBidi rtlBlock plain items0
@@ -1607,7 +1631,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
           openBoxes := openBoxes ++ waiting
           waiting := #[]
         let (row,dirs) := place line lineIdx cursorX
-        let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
+        let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs emitText
         out := appendResult out row
         first := false
         (line,lineIdx) := continuedStarts openBoxes
@@ -1621,7 +1645,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
         openBoxes := openBoxes ++ waiting
         waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
+      let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs emitText
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
       first := false
       (line,lineIdx) := continuedStarts openBoxes
@@ -1668,7 +1692,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
           | _ => break
       if cursorX > 0 && cursorX+gap+whole > (bandAt out.height first).2 && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
-        out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs)
+        out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs emitText)
         (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
         fresh := false
@@ -1691,7 +1715,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       content := true
   if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
+    let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs emitText
     out := appendResult out (if content then row else {row with height := 0})
   return out
 
@@ -2198,8 +2222,8 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     let inlineWidths (items : Array Inline) (indent : Float := 0) : Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
       let strut : Option Computed := if indent == 0 then none else some {textIndent := .px indent, textAlign := .left}
-      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0 strut
-      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 strut
+      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0 strut (emitText := false)
+      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 strut (emitText := false)
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
