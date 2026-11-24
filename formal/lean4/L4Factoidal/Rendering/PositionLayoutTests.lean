@@ -26,6 +26,16 @@ private def at? (html extra text : String) (width : Nat := 200) : Option (Float 
 
 private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</div></div><div id=z>ZZ</div>"
 
+-- A sized or painted block inside an inline keeps its box (CSS 2.1 §9.2.1.1).
+private def reds (html : String) : Nat :=
+  match render html "" with
+  | .ok (scene, _) => (Node.lowerListTR ⟨1,0,0,1,0,0⟩ [] scene.tree).foldl (fun n p =>
+      if ((reprStr p.primitive.style.fill).splitOn "r := 1.000000, g := 0.000000").length > 1 then n+1 else n) 0
+  | .error _ => 999
+#guard reds "<p>A<a href=x><div style='width:10px;height:10px;background:red'></div></a>B</p>" == 1
+#guard reds "<a href=x><div style='width:10px;height:10px;background:red'></div></a>" == 1
+#guard reds "<div style='width:10px;height:10px;background:red'></div>" == 1
+
 -- Relative: the box moves, the flow after it does not.
 #guard box page "#a{position:relative;left:10px;top:3px}" "a" == some (10,3,200,7)
 #guard box page "#a{position:relative;left:10px;top:3px}" "c" == some (0,7,200,14)

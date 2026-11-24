@@ -752,6 +752,9 @@ inductive Inline where
   | word (source : TextSource) (style : Computed) (text : String) (start : Nat)
   | space (source : TextSource) (style : Computed)
   | lineBreak (style : Computed)
+  /-- The edge of a block box inside an inline box (CSS 2.1 §9.2.1.1): it ends the line
+  when the line has content, and is nothing on an empty line. -/
+  | blockBreak (style : Computed)
   /-- A replaced element (`img`, inline `svg`): its margin box and paint at the origin. -/
   | replaced (source : Nat) (style : Computed) (width height : Float) (nodes : List Node)
   /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
@@ -894,7 +897,7 @@ theorem textItems_preLine_blankLine (id : TextSource) (style : Computed)
 #guard (textItems (.node 1) {preserveSegmentBreaks := true} "a  b\n \n  c").map
     (fun
       | .word _ _ word start => (word, start)
-      | .lineBreak _ => ("\n", 0)
+      | .lineBreak _ | .blockBreak _ => ("\n", 0)
       | .space .. => (" ", 0)
       | _ => ("?", 0)) == [("a", 0), (" ", 0), ("b", 3), ("\n", 0), ("\n", 0), ("c", 9)]
 
@@ -1003,7 +1006,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     let boxed := s.display.isBlockLevel && (sized s.width || sized s.height || s.background.isSome ||
       s.backgroundImage.isSome || s.backgroundGradient.isSome || s.borderEdges.top > 0 || s.borderEdges.bottom > 0 ||
       s.borderEdges.left > 0 || s.borderEdges.right > 0)
-    let mut out : Array Inline := if boxed then #[.lineBreak s, .openAtomic id s]
+    let mut out : Array Inline := if boxed then #[.blockBreak s, .openAtomic id s]
       else if s.display.isBlockLevel then #[.lineBreak s]
       else if s.display == .inlineBlock then #[.openAtomic id s]
       else (if s.display == .inline then #[.openInline id s false] else #[]) ++ (bidiOpen s).map .bidiMark
@@ -1011,7 +1014,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- a form control's own text (its value, label or placeholder)
     out := out ++ controlItems dom id s
     if s.display == .inline && s.background.isSome && !s.masked then out := out.map (withBackground s)
-    return if boxed then (out.push .closeAtomic).push (.lineBreak s)
+    return if boxed then (out.push .closeAtomic).push (.blockBreak s)
       else if s.display.isBlockLevel then out.push (.lineBreak s)
       else if s.display == .inlineBlock then out.push .closeAtomic
       else out ++ (bidiClose s).map .bidiMark ++ (if s.display == .inline then #[.closeInline id s] else #[])
@@ -1146,7 +1149,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     descent := d*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
-    | .word _ s _ _ | .space _ s | .lineBreak s =>
+    | .word _ s _ _ | .space _ s | .lineBreak s | .blockBreak s =>
       let leading := lineLeading font s
       let (a,d) := font.metricsOf s
       ascent := max ascent (a*s.fontSize/font.unitsPerEm+leading)
@@ -1324,7 +1327,7 @@ character (CSS Writing Modes 3 §2.4.1). -/
 private def bidiChars : Inline → Array Char
   | .word _ _ text _ => text.toList.toArray
   | .space _ _ => #[' ']
-  | .lineBreak _ => #[' ']
+  | .lineBreak _ | .blockBreak _ => #[' ']
   | .replaced .. | .atomic .. => #['￼']
   | .bidiMark c => #[c]
   | .openAtomic _ _ | .closeAtomic | .outOfFlow _ | .openInline .. | .closeInline .. => #[]
@@ -1402,7 +1405,7 @@ def bidiLine (line : Array (Float × Inline)) (levels paras : Array Nat) (lineEn
   for q in [0:n] do
     let j := n-1-q
     match line[j]!.2 with
-    | .space _ _ | .lineBreak _ | .bidiMark _ | .openInline .. | .closeInline .. => ls := ls.set! j (paras[j]?.getD 0)
+    | .space _ _ | .lineBreak _ | .blockBreak _ | .bidiMark _ | .openInline .. | .closeInline .. => ls := ls.set! j (paras[j]?.getD 0)
     | _ => break
   let order := Unicode.reorderByLevels (Array.range n) ls
   let width := fun (j : Nat) => (if j+1 < n then line[j+1]!.1 else lineEnd) - line[j]!.1
@@ -1536,6 +1539,25 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       line := line.push (cursorX,item)
       lineIdx := lineIdx.push k
       content := true
+    | .blockBreak _ =>
+      -- the starts and ends of inline boxes are not content: a line of only those is empty
+      let real := line.any fun (_, it) => match it with
+        | .openInline .. | .closeInline .. | .bidiMark _ | .outOfFlow _ => false
+        | _ => true
+      if content && real then
+        if !waiting.isEmpty then
+          (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
+          openBoxes := openBoxes ++ waiting
+          waiting := #[]
+        let (row,dirs) := place line lineIdx cursorX
+        let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
+        out := appendResult out row
+        first := false
+        (line,lineIdx) := continuedStarts openBoxes
+        cursorX := 0
+        pendingSpace := none
+        content := false
+        fresh := false
     | .lineBreak _ =>
       if !waiting.isEmpty then
         (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
