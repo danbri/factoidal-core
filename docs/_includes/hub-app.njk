@@ -17,6 +17,6 @@
     <a href="{{ appSource or 'https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/data-compositor' }}">Source</a>
   </nav>
   <main>{{ content | safe }}</main>
-  <script type="module" src="{{ ((appBase or '/web/hub/data-compositor') ~ '/app.mjs') | url }}"></script>
+  {% if not appNoScript %}<script type="module" src="{{ ((appBase or '/web/hub/data-compositor') ~ '/app.mjs') | url }}"></script>{% endif %}
 </body>
 </html>
