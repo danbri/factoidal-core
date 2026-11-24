@@ -682,6 +682,14 @@ def facesOf (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) 
   if !sheets.any (fun (_,src) => (src.splitOn "@font-face").length > 1 || (src.toLower.splitOn "@font-face").length > 1) then #[]
   else Rendering.FontFaceRule.ofSheets env.medium Syntax.resolveIri sheets
 
+/-- The resource limit on `@font-face` rules (`FontFaceRule.maxFaces`), when `faces` (of
+`facesOf`) is at it: the number of rules the sheets have. Issue 865. -/
+def faceLimits (env : Rendering.MediaQuery.Env) (sheets : List (String × String))
+    (faces : Array Rendering.FontFaceRule.Face) : List WebAccept.LimitHit :=
+  if faces.size < Rendering.FontFaceRule.maxFaces then [] else
+  let blocks := sheets.foldl (fun n (_,src) => n + (Rendering.CSS.fontFaceBlocks env.medium src).length) 0
+  WebAccept.LimitHit.check "maxFaces" Rendering.FontFaceRule.maxFaces blocks "@font-face rules"
+
 /-- The `@font-face` rules of the document's sheets, in the request's mode. -/
 def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
     Except String (Array Rendering.FontFaceRule.Face) :=
@@ -2510,7 +2518,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .error _ => ({},0)
   let picturesWanted := redrawn.2
   let pictures := withPictures redrawn.1 pictures
-  let limits := bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
+  let limits := faceLimits env sheets faces ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
     "SVG images shown larger than their pictures"
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures

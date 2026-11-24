@@ -785,6 +785,10 @@ private def backgroundsPage (n : Nat) : String := "<!doctype html><title>B</titl
 #guard mentions (renderText (backgroundsPage 65) [asks]) "\"limit\":\"maxBackgroundImages\"" == 1
 #guard mentions (renderText (backgroundsPage 65) [liberal,asks]) "\"limit\":\"maxBackgroundImages\"" == 1
 #guard mentions (renderText (backgroundsPage 3) [asks]) "\"diagnostics\"" == 0
+-- 70 `@font-face` rules, past `FontFaceRule.maxFaces` (64)
+private def facesPage : String := "<!doctype html><title>F</title><style>" ++
+  String.join ((List.range 70).map fun i => "@font-face{font-family:f" ++ toString i ++ ";src:url(f" ++ toString i ++ ".woff2)}") ++ "</style><p>A</p>"
+#guard mentions (renderText facesPage [asks]) "\"limit\":\"maxFaces\"" == 1
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.
