@@ -36,7 +36,13 @@
   {
    "id": "desktop-govuk",
    "url": "https://www.gov.uk/",
-   "note": "Desktop acceptance: hero, search, and popular-link icons"
+   "note": "Priority desktop homepage: hero, search form geometry, navigation, and popular-link icons"
+  },
+  {
+   "id": "desktop-w3c-home",
+   "url": "https://w3.org/",
+   "note": "Priority desktop homepage: canonical redirect, header and hero layout, navigation, and SVG assets",
+   "attribution": "World Wide Web Consortium, W3C homepage, https://www.w3.org/"
   },
   {
    "id": "desktop-frogfind",

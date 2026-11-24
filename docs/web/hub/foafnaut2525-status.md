@@ -26,7 +26,7 @@ foafnaut2525 is a web rendering engine written in Lean. It aims to become a brow
 - Arabic letters join, and mixed left-to-right and right-to-left text is ordered by the Unicode bidi algorithm. Emoji draw from Noto Emoji.
 - Momentum scrolling, swipes for back and forward, a folding address bar, Copy address and Paste and go, and printing.
 - Links work anywhere on a long page, with theorems that every link region is kept.
-- Text starts larger, and settings have large text-size buttons.
+- Text starts at 100%, and settings have large text-size buttons.
 
 ## Measured scores
 

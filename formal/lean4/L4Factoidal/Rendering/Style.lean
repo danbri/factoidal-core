@@ -3664,6 +3664,92 @@ def attributesReachParentOnly (rules : List Rule) : Bool :=
     | some c => selectorsUseHas [c]
     | none => false
 
+/-- What the arguments of the rules' `:has()`s read of an element: its class names
+(lower case), its attribute names (lower case; `id`, `lang`, `dir` for those selectors),
+and whether a pseudo-class there reads more (`:checked`, `:disabled`, ... : `anyAttr`). -/
+structure HasReads where
+  classes : List String := []
+  attrs : List String := []
+  anyAttr : Bool := false
+  deriving Inhabited, BEq
+
+/-- The pseudo-classes that read the place of an element among its siblings or its
+children only: an attribute write changes none of them. -/
+def structuralPseudo (n : String) : Bool :=
+  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
+   "only-of-type", "scope"].contains n || n.startsWith "heading("
+
+/-- `HasReads` of the rules: the simple selectors inside each `:has()`, also inside
+`:not()`, `:is()` and `:nth-child(… of …)` there, and `:has()`s found inside those lists
+outside a `:has()`. A work list, bounded: past the bound, or with a `:has()` already worked
+out against a document (`Simple.anchors`, whose arguments are gone), none. -/
+def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
+  let mut pending : List (Bool × DOM.Selectors.Complex) :=
+    rules.flatMap fun r => r.selectors.filterMap fun s => s.complex.map ((false, ·))
+  let mut out : HasReads := {}
+  for _ in [:1048576] do
+    match pending with
+    | [] => return some { out with classes := out.classes.eraseDups, attrs := out.attrs.eraseDups }
+    | (inHas, .mk parts) :: rest =>
+      let mut more := rest
+      for (_, simples) in parts do
+        for s in simples do
+          match s with
+          | .has l => more := l.map ((true, ·)) ++ more
+          | .anchors _ => return none
+          | .nth _ _ _ (some l) => more := l.map ((inHas, ·)) ++ more
+          | .not l => more := l.map ((inHas, ·)) ++ more
+          | .is l => more := l.map ((inHas, ·)) ++ more
+          | .cls v => if inHas then out := { out with classes := v.toLower :: out.classes }
+          | .id _ => if inHas then out := { out with attrs := "id" :: out.attrs }
+          | .attr _ name _ _ _ _ => if inHas then out := { out with attrs := name.toLower :: out.attrs }
+          | .lang _ => if inHas then out := { out with attrs := "lang" :: out.attrs }
+          | .pseudo n =>
+            if inHas && !structuralPseudo n then
+              if n.startsWith "dir(" then out := { out with attrs := "dir" :: out.attrs }
+              else out := { out with anyAttr := true }
+          | _ => pure ()
+      pending := more
+  return none
+
+/-- The class names of a `class` attribute value (split at ASCII whitespace), lower case. -/
+def classTokens (s : String) : List String :=
+  ((s.map fun c => if c == '\t' || c == '\n' || c == '\r' || c == '\x0c' then ' ' else c).splitOn " ").filterMap
+    fun t => if t.isEmpty then none else some t.toLower
+
+/-- A write of attribute `name` of an element from `old` to `new` changes no class name and
+no attribute that the `:has()` arguments read (`hasArgumentReads`): every `:has()` of the
+document then holds where it held before the write, and the matching of the other
+selectors reads the written element only in its parent's subtree, as with no `:has()`
+(`attributesReachParentOnly`). Class names compare in lower case, so a quirks-mode page
+is covered too. -/
+def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
+  let name := name.toLower
+  if name == "class" then
+    let o := classTokens old
+    let n := classTokens new
+    !r.attrs.contains "class" &&
+      !((o.filter (!n.contains ·)) ++ (n.filter (!o.contains ·))).any r.classes.contains
+  else !r.anyAttr && !r.attrs.contains name
+
+#guard (match parse ".a:has(.b, [data-x]) .c { color: red } .d:has(> p:dir(rtl)) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.classes == ["b"] && r.attrs.length == 2 && r.attrs.contains "data-x" &&
+        r.attrs.contains "dir" && !r.anyAttr
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(.b) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.unaffected "class" "x y" "x y z" && !r.unaffected "class" "x" "x B" &&
+        !r.unaffected "class" "b x" "x" && r.unaffected "aria-expanded" "false" "true"
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(:checked) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => !r.unaffected "aria-expanded" "false" "true" && r.unaffected "class" "" "q"
+    | none => false
+  | .error _ => false)
+
 /-! ### Animated values in the cascade
 
 CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
