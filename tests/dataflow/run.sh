@@ -25,13 +25,14 @@ if [ "$rc" -ne 1 ]; then
   echo "dataflow negative test: expected exit 1 from the report on negativeRegistry, got $rc" >&2
   exit 1
 fi
-if printf "%s\n" "$out" | grep -q "BEGIN-INVENTORY"; then
+## Search the captured report without a pipe: grep -q can exit before a writer finishes.
+if grep -q "BEGIN-INVENTORY" <<< "$out"; then
   printf "%s\n" "$out"
   echo "dataflow negative test: the report printed an inventory for negativeRegistry" >&2
   exit 1
 fi
 for i in 1 2 3 4 5 6 7 8 9 10; do
-  if ! printf "%s\n" "$out" | grep -q "^negative $i:"; then
+  if ! grep -q "^negative $i:" <<< "$out"; then
     printf "%s\n" "$out"
     echo "dataflow negative test: no error line for negative entry $i" >&2
     exit 1
