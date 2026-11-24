@@ -778,6 +778,13 @@ private def deepPage := "<!doctype html><title>D</title><p>Top</p>" ++ String.jo
   String.join (List.replicate 80 "</div>")
 #guard renderText deepPage [] == ""
 #guard mentions (renderText deepPage [liberal,asks]) "\"feature\":\"nesting depth\"" == 1
+-- A resource limit that a page reaches is reported in both modes (issue 865): 65 different
+-- background images, past `maxBackgroundImages` (64); a page under the limit reports nothing.
+private def backgroundsPage (n : Nat) : String := "<!doctype html><title>B</title>" ++
+  String.join ((List.range n).map fun i => s!"<div style='width:4px;height:4px;background-image:url(b{i}.png)'></div>")
+#guard mentions (renderText (backgroundsPage 65) [asks]) "\"limit\":\"maxBackgroundImages\"" == 1
+#guard mentions (renderText (backgroundsPage 65) [liberal,asks]) "\"limit\":\"maxBackgroundImages\"" == 1
+#guard mentions (renderText (backgroundsPage 3) [asks]) "\"diagnostics\"" == 0
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.

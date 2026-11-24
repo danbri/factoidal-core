@@ -94,6 +94,33 @@ def Diagnostic.json (d : Diagnostic) : JSON.Json :=
 
 def diagnosticsJSON (ds : List Diagnostic) : JSON.Json := .array (ds.map Diagnostic.json)
 
+/-- A resource limit that a page reached (issue
+https://github.com/danbri/factoidal-core/issues/865): the limit's name in the code, its
+value, how much the page asked for, and where. A hit is not a skip: the page is drawn in
+both modes, with what the limit let through, and the hit is reported. -/
+structure LimitHit where
+  name : String
+  limit : Nat
+  wanted : Nat
+  «where» : String
+  deriving Repr, DecidableEq, Inhabited
+
+/-- A hit as a diagnostic entry of a render answer (the shape of `Diagnostic.json`, with the
+numbers too). -/
+def LimitHit.json (l : LimitHit) : JSON.Json :=
+  .object [("source",.string "System"),("severity",.string "warning"),("feature",.string "resource limit"),
+    ("where",.string l.«where»),("action",.string "the rest not drawn"),
+    ("message",.string s!"{l.name}: {l.wanted} asked, limit {l.limit}"),
+    ("limit",.string l.name),("max",.number (toString l.limit)),("wanted",.number (toString l.wanted))]
+
+/-- A hit when `wanted` is above `limit`, else none. -/
+def LimitHit.check (name : String) (limit wanted : Nat) (where_ : String) : List LimitHit :=
+  if wanted > limit then [{name, limit, wanted, «where» := where_}] else []
+
+theorem LimitHit.check_silent (name : String) (limit wanted : Nat) (w : String) (h : wanted ≤ limit) :
+    LimitHit.check name limit wanted w = [] := by
+  simp [LimitHit.check, Nat.not_lt.mpr h]
+
 /-- A skip point. In strict mode the refusal; in liberal mode the fallback value and the report. -/
 def skip (m : Mode) (s : Skip) (where_ refusal : String) (fallback : α) : Except String (α × List Diagnostic) :=
   match m with

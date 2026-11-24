@@ -2139,6 +2139,8 @@ structure Laid where
   treeScope : Option Rendering.CSS.TreeScope := none
   /-- What liberal mode skipped (`WebAccept`); empty in strict mode. -/
   diagnostics : List WebAccept.Diagnostic := []
+  /-- The resource limits this layout reached (`WebAccept.LimitHit`), in both modes. -/
+  limits : List WebAccept.LimitHit := []
   /-- What a frame paints on this layout with no layout: the `transform` of script
   slots and SVG animations (`WebPaint`). -/
   paint : WebPaint.Plan := {}
@@ -2308,11 +2310,10 @@ def maxVectorRedraws : Nat := 16
 box sizing): a stretched picture blurs its edges. Tile size by `Layout.backgroundTileSize`
 against the padding box; at most `maxVectorRedraws`, each with its own paint-table id. -/
 def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Array Rendering.CSS.Computed) :
-    Array Rendering.CSS.Computed := Id.run do
+    Array Rendering.CSS.Computed × Nat := Id.run do
   let mut out := styles
   let mut count := 0
   for i in [0:styles.size] do
-    if count ≥ maxVectorRedraws then break
     let st := styles[i]!
     let some (_,b) := st.backgroundBitmap | continue
     let some (nw,nh,ratio) := st.backgroundNatural | continue
@@ -2328,10 +2329,13 @@ def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Arra
     if !(tw.isFinite && th.isFinite) || tw < 1 || th < 1 || tw > 4096 || th > 4096 then continue
     let (tw,th) := (tw.round.toUInt32.toNat, th.round.toUInt32.toNat)
     if tw ≤ b.width && th ≤ b.height then continue
-    let some bitmap := WebRender.vectorPictureAt bytes tw th | continue
+    -- past the limit: counted (`vectorRedrawsWanted`), not drawn
     count := count+1
+    if count > maxVectorRedraws then continue
+    let some bitmap := WebRender.vectorPictureAt bytes tw th | continue
     out := out.set! i {st with backgroundBitmap := some (2*backgroundPictureBase+i,bitmap)}
-  return out
+  -- with the number that wanted drawing again (`maxVectorRedraws` reports past it)
+  return (out,count)
 
 /-- The pictures of `img` elements with an SVG image shown larger than its picture, drawn
 again at the size they are shown (`Layout.fitScale` of the box and `object-fit`), as SVG
@@ -2340,10 +2344,10 @@ in px (content box sizing), at most `maxVectorRedraws`, each with its own paint-
 The picture keeps the image's natural size, so it is placed as before. -/
 @[noinline] def redrawnPictures (images : List (String × ByteArray)) (keys : List (Nat × String))
     (styles : Array Rendering.CSS.Computed) (pictures : Rendering.Layout.Pictures) :
-    Std.TreeMap Nat Rendering.Layout.Picture := Id.run do
+    Std.TreeMap Nat Rendering.Layout.Picture × Nat := Id.run do
   let mut found : Std.TreeMap Nat Rendering.Layout.Picture := {}
+  let mut wanted := 0
   for (id,key) in keys do
-    if found.size ≥ maxVectorRedraws then break
     let some picture := pictures id | continue
     -- a fragment (`#view`, `#svgView(...)`) picks a view, which the store's picture has
     if key.contains '#' then continue
@@ -2361,11 +2365,14 @@ The picture keeps the image's natural size, so it is placed as before. -/
     if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
     let some bytes := images.lookup key | continue
     if !WebRender.looksLikeSVG bytes then continue
+    -- past the limit: counted, not drawn
+    wanted := wanted+1
+    if found.size ≥ maxVectorRedraws then continue
     let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
     let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
     let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
     found := found.insert id made
-  return found
+  return (found,wanted)
 
 /-- `pictures` with the pictures of `found` in place of theirs. -/
 def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : Rendering.Layout.Pictures) :
@@ -2380,12 +2387,14 @@ def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : 
 background image gives its cascade back as it is. -/
 def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × ByteArray))
     (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
-    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry :=
+    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry × List WebAccept.LimitHit :=
   match made with
-  | .error e => (.error e,none)
+  | .error e => (.error e,none,[])
   | .ok (d,styles) =>
-    let keys := (styles.toList.filterMap (·.backgroundImage)).eraseDups.take maxBackgroundImages
-    if keys.isEmpty then (.ok (d,styles),none) else
+    let all := (styles.toList.filterMap (·.backgroundImage)).eraseDups
+    let keys := all.take maxBackgroundImages
+    let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
+    if keys.isEmpty then (.ok (d,styles),none,[]) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pics := WebRender.picturesOf store (styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·))
     -- the natural size of each SVG background, read once for each URL (a page can name one
@@ -2400,7 +2409,8 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
         {st with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap),backgroundNatural := natural}
       | none => st
     let styles := styles.mapIdx attach
-    (.ok (d,redrawVectorBackgrounds images styles),entry)
+    let (styles,wanted) := redrawVectorBackgrounds images styles
+    (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures")
 
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
@@ -2468,7 +2478,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let dom := styleAttributesAbsolute dom url
   let made := Rendering.Generated.styled treeScope dom rules textScale state
   -- background images decoded into the cascade (issue 704); none on most pages
-  let (made,bgStore) := attachBackgrounds kept.stores images made
+  let (made,bgStore,bgLimits) := attachBackgrounds kept.stores images made
   modify (·.merge {store := bgStore})
   -- With the serif face held, the family lookup goes in only for a page that has serif text;
   -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
@@ -2495,10 +2505,13 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- SVG images of `img` shown larger than their pictures, drawn again at their size
   -- (a map, made once here: as a function-valued `match`, it was made again for each
   -- picture the layout asked for; see `WebRender.picturesOf`)
-  let redrawn : Std.TreeMap Nat Rendering.Layout.Picture := match made with
+  let redrawn : Std.TreeMap Nat Rendering.Layout.Picture × Nat := match made with
     | .ok (_,styles) => redrawnPictures images (WebRender.htmlImageKeys dom documentURL) styles pictures
-    | .error _ => {}
-  let pictures := withPictures redrawn pictures
+    | .error _ => ({},0)
+  let picturesWanted := redrawn.2
+  let pictures := withPictures redrawn.1 pictures
+  let limits := bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
+    "SVG images shown larger than their pictures"
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
@@ -2558,7 +2571,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     |> fun l => {l with styles := Thunk.pure (.ok styles)}
     |> fun l => {l with paint := paint}
     |> fun l => {l with wantsSerif := wantsSerif}
-    |> fun l => {l with wantsMono := wantsMono},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with wantsMono := wantsMono}
+    |> fun l => {l with limits := limits},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
@@ -3423,8 +3437,10 @@ private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == so
 (`WebAccept.Diagnostic.json`) at the end of its JSON head. Other frames pay nothing. -/
 def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
   let (text,sections) := answer
-  if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
-  else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
+  if request.field? "diagnostics" != some (.bool true) || (laid.diagnostics.isEmpty && laid.limits.isEmpty) || !text.endsWith "}" then answer
+  else
+    let entries := laid.diagnostics.map WebAccept.Diagnostic.json ++ laid.limits.map WebAccept.LimitHit.json
+    ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (JSON.Json.array entries).toString ++ "}",sections)
 
 /-- A render answer of a layout whose text wants the serif face or the monospace face that the
 engine does not hold (`Laid.wantsSerif`, `Laid.wantsMono`) says `"wantsSerif":true` or
