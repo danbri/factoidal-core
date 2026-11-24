@@ -1782,13 +1782,14 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
           | .openInline _ ws _ => whole := whole+inlineLead ws
           | .closeInline _ ws => whole := whole+inlineTrail ws
           | .word source ws text start =>
-            match between with
-            | some ss =>
-              if ss.pos.nowrap then
-                whole := whole+(← spaceWidth font ss)+(← itemWidth font none (.word source ws text start))
-                between := none
-              else break
-            | none => break
+            -- Use the same boundary rule as placement. A generated quote and
+            -- its word can be separate items with no intervening space.
+            if !(between.getD ws).pos.nowrap then break
+            let gap ← match between with
+              | some ss => spaceWidth font ss
+              | none => pure 0
+            whole := whole+gap+(← itemWidth font none (.word source ws text start))
+            between := none
           | _ => break
       let room := (bandAt out.height first).2
       let wrapRoom := balanced.getD room
