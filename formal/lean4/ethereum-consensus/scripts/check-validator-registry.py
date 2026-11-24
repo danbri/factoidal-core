@@ -102,6 +102,103 @@ def slot_state_fixture(registry_root, slot, fields_count, rng):
     assert reconstruct_field(2, basic(slot ^ 1), sl) != root
     return root, reg, sl
 
+
+def context_fixture(registry_root, slot, context, rng):
+    prev, curr, activation, genesis = context
+    fields = [rng.randbytes(32) for _ in range(28 if slot < 364032*32 else 37)]
+    fields[1] = genesis
+    fields[2] = basic(slot)
+    fields[3] = merkle([prev.ljust(32,b"\0"), curr.ljust(32,b"\0"), basic(activation), ZERO])
+    fields[11] = registry_root
+    fields += [ZERO] * ((1 << (len(fields)-1).bit_length()) - len(fields))
+    # Heap construction, independent from the Lean bottom-up branch API.
+    width = len(fields)
+    heap = [ZERO] * width + fields
+    for j in range(width-1, 0, -1):
+        heap[j] = pair(heap[j*2], heap[j*2+1])
+    def proof(pos):
+        node = width + pos
+        siblings = []
+        while node > 1:
+            siblings.append(heap[node ^ 1])
+            node //= 2
+        # Cross-check all four fields against a layer-built root.
+        value = fields[pos]
+        for d, sibling in enumerate(siblings):
+            value = pair(sibling, value) if pos & (1 << d) else pair(value,sibling)
+        assert value == heap[1] == merkle(fields)
+        return siblings
+    return heap[1], [proof(pos) for pos in (11,2,3,1)]
+
+def vote_root(context, vote):
+    prev, curr, activation, genesis = context
+    slot, idx, block, se, sr, te, tr = vote
+    version = prev if te < activation else curr
+    domain = bytes([1,0,0,0]) + pair(version.ljust(32,b"\0"),genesis)[:28]
+    object_root = merkle([basic(slot),basic(idx),block,pair(basic(se),sr),
+                          pair(basic(te),tr),ZERO,ZERO,ZERO])
+    return pair(object_root,domain).hex()
+
+def fullstate_cases():
+    rng = random.Random(908)
+    rows = []
+    def wire(seq):
+        return [x.hex() if isinstance(x, bytes) else str(x) for x in seq]
+    for i in range(128):
+        slot = [31,32,364032*32-1,364032*32][i % 4]
+        epoch = slot//32
+        count, index = 3, i % 3
+        v = (rng.randbytes(48),rng.randbytes(32),32_000_000_000,
+             (i//4)%2,0,0,MAX64,MAX64)
+        rr, ss = fixture(v,count,index)
+        c = (rng.randbytes(4),rng.randbytes(4), max(3,epoch), rng.randbytes(32))
+        root, branches = context_fixture(rr,slot,c,rng)
+        ep = c[2]
+        if i % 2:
+            # Directional surround votes exercise both sides of fork selection.
+            a = (64,0,rng.randbytes(32),0,ZERO,ep+1,ZERO)
+            b = (32,0,rng.randbytes(32),1,ZERO,ep-1,ZERO)
+        else:
+            # A double vote at exactly the fork boundary.
+            a = (64,0,rng.randbytes(32),0,ZERO,ep,ZERO)
+            b = (64,0,rng.randbytes(32),0,ZERO,ep,ZERO)
+        left = right = str(index)
+        def emit(expected, ctx=c, va=a, vb=b, l=left, r=right,
+                 br=branches, sr=root, registry=rr, state_slot=slot, reg_sibs=ss):
+            tokens = ["fullstate",str(count),str(index),str(state_slot),"0",
+                      *wire(v),registry.hex(),*wire(reg_sibs),sr.hex(),
+                      *wire([x for branch in br for x in branch]),
+                      *wire(ctx),*wire(va),*wire(vb),l,r]
+            row = " ".join(tokens)
+            assert len(row.encode())+1 <= 8192
+            rows.append((row,expected))
+        suffix = " "+vote_root(c,a)+" "+vote_root(c,b)
+        verdict = "not_slashable" if v[3] else "candidate_not_authenticated"
+        emit(verdict+suffix)
+        emit("error not_conflicting",vb=a)
+        emit("error bad_indices",l="-")
+        emit("error bad_indices",l=f"{index},{index}")
+        emit("error no_common_indices",r=str((index+1)%count))
+        emit("error resource_limit",l=",".join(map(str,range(33))))
+        for field in range(4):
+            edited = list(c)
+            edited[field] = changed(c[field]) if isinstance(c[field],bytes) else c[field]^1
+            emit("error genesis_mismatch" if field==3 else "error fork_mismatch",ctx=edited)
+        for j, verdict_name in enumerate(["state_root_mismatch","slot_root_mismatch",
+                                          "error fork_mismatch","error genesis_mismatch"]):
+            altered = [branch.copy() for branch in branches]
+            altered[j][i%len(altered[j])] = changed(altered[j][i%len(altered[j])])
+            emit(verdict_name + (suffix if j<2 else ""),br=altered)
+        emit("error fork_width",ctx=(b"x",*c[1:]))
+        emit("error chunk_width",ctx=(*c[:3],b"x"))
+        emit("slot_root_mismatch"+suffix,state_slot=slot^1)
+        emit("state_root_mismatch"+suffix,registry=changed(rr))
+        bad = ss.copy()
+        bad[i%40] = changed(bad[i%40])
+        emit("root_mismatch"+suffix,reg_sibs=bad)
+        emit("error not_common",l=str((index+1)%count),r=str((index+1)%count))
+    return rows
+
 def cases():
     rng = random.Random(881)
     state_rng = random.Random(896)
@@ -250,6 +347,8 @@ def cases():
         edited[field] = value
         rows.append((" ".join(edited), "error " + error))
     rows.extend([("bad", "error parse_error"), ("x" * 4097, "error resource_limit")])
+    assert len(rows) == 4613
+    rows.extend(fullstate_cases())
     return rows
 
 def compare(rows, actual):
@@ -291,8 +390,17 @@ def main():
         pass
     else:
         raise ValueError("slot comparator corruption not detected")
-    assert len(rows) == 4613
-    print(f"Prepared {len(rows)} rows; six comparator controls detected", flush=True)
+    full_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("fullstate "))
+    forged = expected.copy()
+    forged[full_row] = forged[full_row][:-1] + ("0" if forged[full_row][-1] != "0" else "1")
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("signing root comparator corruption not detected")
+    assert len(rows) == 7173
+    print(f"Prepared {len(rows)} rows; seven comparator controls detected", flush=True)
     if sys.argv[1:] == ["--self-test"]:
         return
     if len(sys.argv) < 2:
