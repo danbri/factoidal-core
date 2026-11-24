@@ -59,11 +59,15 @@ def verifyValidatorAt (length index : Nat) (v : RegistryValidator)
   if length > validatorRegistryLimit then .error .registryLength
   else if index ≥ length then .error .indexOutside
   else if siblings.length ≠ 40 then .error .branchLength
-  else do
-    let leaf ← validatorRoot v
-    let lengthChunk ← (uint64Root (UInt64.ofNat length)).mapError (fun _ => .basicRoot)
-    (verifyByteBranch 41 (validatorRegistryGindex index) leaf.bytes
-      (siblings ++ [lengthChunk.bytes]) registryRoot).mapError RegistryError.proof
+  else
+    match validatorRoot v with
+    | .error e => .error e
+    | .ok leaf =>
+      match uint64Root (UInt64.ofNat length) with
+      | .error _ => .error .basicRoot
+      | .ok lengthChunk =>
+        (verifyByteBranch 41 (validatorRegistryGindex index) leaf.bytes
+          (siblings ++ [lengthChunk.bytes]) registryRoot).mapError RegistryError.proof
 
 def slashableValidatorModel (v : RegistryValidator) (epoch : UInt64) : Prop :=
   v.slashed = false ∧ v.activationEpoch ≤ epoch ∧ epoch < v.withdrawableEpoch
@@ -83,11 +87,13 @@ def checkCommonValidator (prepared : PreparedAttesterSlashing) (epoch index : UI
     (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
     (registryRoot : ByteArray) : Except RegistryError RegistryCandidateVerdict :=
   if index ∉ prepared.commonIndices then .error .notCommon
-  else do
-    let result ← verifyValidatorAt length index.toNat v siblings registryRoot
-    if !result.matchesRoot then return .rootMismatch
-    else if isSlashableValidator v epoch then return .candidateNotAuthenticated
-    else return .notSlashable
+  else
+    match verifyValidatorAt length index.toNat v siblings registryRoot with
+    | .error e => .error e
+    | .ok result =>
+      if !result.matchesRoot then .ok .rootMismatch
+      else if isSlashableValidator v epoch then .ok .candidateNotAuthenticated
+      else .ok .notSlashable
 
 /-- Kind: admission. Says: lengths above the protocol list limit refuse.
     Does not say: any admitted length is authentic. -/
@@ -125,7 +131,7 @@ theorem verifyValidatorAt_delegates (length index : Nat) (v : RegistryValidator)
     verifyValidatorAt length index v siblings root =
       (verifyByteBranch 41 (validatorRegistryGindex index) leaf.bytes
         (siblings ++ [lenChunk.bytes]) root).mapError RegistryError.proof := by
-  simp [verifyValidatorAt, hl, hi, hs, hv, hc]
+  simp only [verifyValidatorAt, if_neg hl, if_neg hi, if_neg hs, hv, hc]
 
 /-- Kind: refinement. Says: eligibility uses the activation/withdrawable
     interval and slashed flag, not the exit epoch. Does not say: the validator
@@ -142,11 +148,39 @@ theorem checkCommonValidator_not_common (p : PreparedAttesterSlashing)
     checkCommonValidator p epoch index length v siblings root = .error .notCommon := by
   simp only [checkCommonValidator, if_pos h]
 
+/-- Kind: linkage. Says: a mismatching admitted membership proof cannot
+    yield a slashing candidate, even when the validator is eligible.
+    Does not say: the supplied root is authentic. -/
+theorem checkCommonValidator_mismatch (p : PreparedAttesterSlashing)
+    (epoch index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (result : ByteProofResult)
+    (hm : index ∈ p.commonIndices)
+    (hp : verifyValidatorAt length index.toNat v siblings root = .ok result)
+    (hb : result.matchesRoot = false) :
+    checkCommonValidator p epoch index length v siblings root = .ok .rootMismatch := by
+  simp [checkCommonValidator, hm, hp, hb]
+
+/-- Kind: linkage. Says: a common, eligible validator with a matching
+    membership proof yields only an unauthenticated candidate.
+    Does not say: either signature or the BeaconState has been authenticated. -/
+theorem checkCommonValidator_candidate (p : PreparedAttesterSlashing)
+    (epoch index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (result : ByteProofResult)
+    (hm : index ∈ p.commonIndices)
+    (hp : verifyValidatorAt length index.toNat v siblings root = .ok result)
+    (hb : result.matchesRoot = true)
+    (hv : isSlashableValidator v epoch = true) :
+    checkCommonValidator p epoch index length v siblings root = .ok .candidateNotAuthenticated := by
+  simp [checkCommonValidator, hm, hp, hb, hv]
+
 #print axioms EthereumConsensus.SSZ.verifyValidatorAt_over_length
 #print axioms EthereumConsensus.SSZ.verifyValidatorAt_outside
 #print axioms EthereumConsensus.SSZ.verifyValidatorAt_bad_branch
 #print axioms EthereumConsensus.SSZ.verifyValidatorAt_delegates
 #print axioms EthereumConsensus.SSZ.isSlashableValidator_iff
 #print axioms EthereumConsensus.SSZ.checkCommonValidator_not_common
+
+#print axioms EthereumConsensus.SSZ.checkCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkCommonValidator_candidate
 
 end EthereumConsensus.SSZ
