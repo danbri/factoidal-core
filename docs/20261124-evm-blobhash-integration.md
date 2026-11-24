@@ -193,6 +193,52 @@ Prague blob transaction execution, full block-inventory equality, signatures,
 remaining precompiles, complete fork coverage, networking and consensus remain
 obligations of the full independent client goal.
 
+## Published implementation and timing
+
+The source checkpoint is
+[`85da2a6b307c0a0269257344d889051ce6902e82`](https://github.com/danbri/factoidal-core/commit/85da2a6b307c0a0269257344d889051ce6902e82),
+tree `e1f3e475c367681410573c004a6b9273e00af273`, with the two predecessor
+commits as parents. A post-publication dedicated audit passed with
+`--require-head`, matching all 39 imported/support source files to that commit.
+The later evidence checkpoint changes this worknote and archived reports only.
+
+Native SHA256 values:
+
+| Executable | SHA256 |
+| --- | --- |
+| `evm-subset` | `0fcf78570a399f9941063ec1419fd62b14dfeb956a3f1af9bcce1d36e670758e` |
+| `evm-call-transaction` | `7a7c99e7e9957596f1cb8298cf2eaa0425aa1cb896eab3c0ebc5b4f46f98f9cd` |
+| `evm-blob-call` | `fc33d369b084791173ec178c100fce347acf24af52efb7f0b1d64c554587f510` |
+| `evm-identity-precompile` | `f54f0f8a2756d6b3ab5ba12698f7624de242e35577c5da4fce052ddf170d6089` |
+
+The paired timing runner compares the original blob checkpoint to this
+combined identity/BLOBHASH checkpoint. It therefore measures the complete
+branch change, not an isolated BLOBHASH-only change. Each retained path uses
+12 warm-up pairs and 160 measured pairs, alternating launch order and checking
+the complete pre-existing CLI result on every run. Timing includes process
+launch, native interpretation, JSON serialisation and exit.
+
+| Path and revision | p50 ms | p95 ms | p99 ms | Max ms | Min ms | Spread ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Existing frame/ABI, before | 3.525 | 4.934 | 12.008 | 16.094 | 3.128 | 12.966 |
+| Existing frame/ABI, after | 3.542 | 4.677 | 10.640 | 27.721 | 3.172 | 24.549 |
+| Existing CALL/storage, before | 3.645 | 4.458 | 5.222 | 8.968 | 3.049 | 5.919 |
+| Existing CALL/storage, after | 3.658 | 4.633 | 5.067 | 27.540 | 3.185 | 24.355 |
+
+Medians remain close in this sample, while both after-build maximums are
+higher. These process-inclusive measurements do not establish a speedup or a
+latency bound. Raw pairs, machine information and source/binary identities are
+retained in the timing report.
+
+[Full evidence and provenance](../formal/lean4/evm-cleanroom/evidence/2026-11-24-blobhash-integration/provenance.json) ·
+[Signed comparisons](../formal/lean4/evm-cleanroom/evidence/2026-11-24-blobhash-integration/signed-transactions.json) ·
+[Published-source axiom audit](../formal/lean4/evm-cleanroom/evidence/2026-11-24-blobhash-integration/blobhash-axioms.json) ·
+[Paired timings](../formal/lean4/evm-cleanroom/evidence/2026-11-24-blobhash-integration/timing.json)
+
+Hosted results are recorded on the draft PR at its submitted head. A passing
+local checkpoint does not substitute for the repository's full build-release
+and premerge gates; this work does not merge the stack into main.
+
 ## Reproduction
 
 All Lake commands use `formal/lean4` as their explicit working directory and
