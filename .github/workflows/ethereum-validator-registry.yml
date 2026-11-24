@@ -83,8 +83,11 @@ jobs:
               "checkCommonValidator_mismatch", "checkCommonValidator_candidate",
               "registryState_phase0Deneb", "registryState_electraFulu",
               "verifyRegistryInState_bad_branch", "verifyRegistryInState_delegates",
-              "checkStateCommonValidator_mismatch", "checkStateCommonValidator_delegates")}
-          assert names == expected and len(reports) == 14 and {n for n,_ in reports} == expected
+              "checkStateCommonValidator_mismatch", "checkStateCommonValidator_delegates",
+              "registrySlot_gindices", "mainnetRegistryLayout_before", "mainnetRegistryLayout_after",
+              "verifyMainnetStateSlot_bad_branch", "verifyMainnetStateSlot_delegates",
+              "checkMainnetSlotCommonValidator_mismatch", "checkMainnetSlotCommonValidator_delegates")}
+          assert names == expected and len(reports) == 21 and {n for n,_ in reports} == expected
           for name, axioms in reports:
               assert set(filter(None, (a.strip() for a in axioms.split(",")))) <= {"propext","Classical.choice","Quot.sound"}, name
           a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
