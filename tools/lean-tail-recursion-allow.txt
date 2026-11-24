@@ -2478,3 +2478,13 @@ L4Factoidal_SPARQL_GpuQuery_pattern  # (b) lowered query-algebra nesting; the on
 # --- 2026-11-24, viewport calculation syntax and fixed first-letter tables ---
 L4Factoidal_Rendering_CSS_usesViewport  # (b) nested calculation syntax; List.any walks siblings without adding one recursive call per sibling
 L4Factoidal_Rendering_Generated_categoryRanges  # (c) first-letter categories are three fixed lists over the checked-in Unicode general category data; no document strings reach the sort
+
+# WDQS ARQ formatting (issue 928). The private renderers share the 128 units
+# passed by formatParsedRewrite, with one unit consumed per recursive descent.
+L4Factoidal_Wikidata_renderElements # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderExpr # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderGroupSyntax # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderPath # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderQuerySyntax # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderUnion # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_tripleSpans # (c) shared ARQ formatter fuel starts at 128

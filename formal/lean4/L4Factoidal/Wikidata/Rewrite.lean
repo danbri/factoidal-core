@@ -39,20 +39,23 @@ private structure ServiceSite where
   iri : String
   body : List LocatedToken
 
-private def services (state : PState) : List LocatedToken → List ServiceSite
-  | site :: rest =>
-    let tail : List LocatedToken := match rest with
-      | head :: remainder => if head.token == Token.silent then remainder else rest
-      | [] => []
-    let remaining := services state rest
-    if site.token != .service then remaining
-    else match tail with
-    | endpoint :: body =>
-      match tokenIri state endpoint.token with
-      | some iri => ⟨site.start, endpoint, iri, body⟩ :: remaining
-      | none => remaining
-    | [] => remaining
-  | [] => []
+private def services (state : PState) (tokens : List LocatedToken) : List ServiceSite :=
+  go tokens []
+where
+  go : List LocatedToken → List ServiceSite → List ServiceSite
+  | [], acc => acc.reverse
+  | site :: rest, acc =>
+    if site.token != .service then go rest acc
+    else
+      let tail := match rest with
+        | head :: remainder => if head.token == Token.silent then remainder else rest
+        | [] => []
+      match tail with
+      | endpoint :: body =>
+        match tokenIri state endpoint.token with
+        | some iri => go rest (⟨site.start, endpoint, iri, body⟩ :: acc)
+        | none => go rest acc
+      | [] => go rest acc
 
 private def bodyEnd : Nat → List LocatedToken → Option (Nat × List LocatedToken)
   | depth, token :: rest =>
