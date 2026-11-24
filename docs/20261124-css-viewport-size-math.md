@@ -11,3 +11,9 @@ The included Lean theorem states that every pixel size returned by the evaluator
 Related to [desktop acceptance](https://github.com/danbri/factoidal-core/issues/712).
 
 An ordinary computed-value calculation such as `calc(10px * 2)` stays on the existing path. The deferred path tests the calculation tree for units whose pixel conversion changes with the viewport. Native CI on the preceding candidate compiled the nonnegative proof and then caught the constant-calc regression in the existing cascade tests.
+
+## The image in the full page
+
+The first paired render of the captured W3C homepage still showed a 360 px logo at both widths. In the full-page geometry probe, fixing only the wrapper to 120 px or 69.9104 px left the picture at 360 px. Giving the image content-box sizing as a diagnostic restored the image to the wrapper's dimensions. W3C applies border-box sizing globally. That converts its image's percentage max-inline-size to a calculation in `contentBoxed`. Replaced-element sizing omitted that representation.
+
+The replaced-element horizontal resolver now handles the same offset calculation for the ordinary natural size and explicit aspect-ratio paths. Its theorem states the exact used length when the basis is positive. The zero basis used for intrinsic measurement still defers the percentage. This change targets the image size and header height. The hero's horizontal alignment and the live navigation remain separate checks.
