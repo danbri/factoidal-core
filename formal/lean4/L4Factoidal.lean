@@ -477,6 +477,7 @@ import L4Factoidal.Codec.Brotli
 import L4Factoidal.Codec.BrotliTests
 import L4Factoidal.Codec.WebP
 import L4Factoidal.Codec.VP8LPrefix
+import L4Factoidal.Codec.VP8LPlane
 import L4Factoidal.Codec.VP8Control
 import L4Factoidal.Qlvr.Id
 import L4Factoidal.Tdb2.Format

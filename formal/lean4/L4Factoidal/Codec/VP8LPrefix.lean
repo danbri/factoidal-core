@@ -89,7 +89,9 @@ def readPrefix (alphabet : Nat) : BitM (Prefix alphabet) := do
   if h : first < alphabet then
     if !pair then return .single ⟨first, h⟩
     let second ← readBits 8
-    if second ≥ alphabet || second == first then throw "invalid VP8L simple prefix pair"
+    if second ≥ alphabet then throw "VP8L simple prefix symbol outside alphabet"
+    -- RFC 9649 allows both entries to name the same leaf.
+    if second == first then return .single ⟨first, h⟩
     let lengths := (Array.replicate alphabet 0).set! first 1 |>.set! second 1
     ofExcept (makePrefix alphabet lengths)
   else throw "VP8L simple prefix symbol outside alphabet"
@@ -113,7 +115,8 @@ def readGroup (cacheSize : Nat) : BitM (Group cacheSize) := do
 #guard !(makePrefix 3 #[1, 1, 1]).isOk
 #guard !(makePrefix 2 #[2, 2]).isOk
 #guard !(makePrefix 19 (Array.replicate 19 0)).isOk
-#guard !((readPrefix 40).run {data := ⟨#[0x1b, 0x00]⟩, pos := 0}).isOk
+#guard (((do readSymbol (← readPrefix 40) : BitM (Fin 40)).run
+    {data := ⟨#[0x1b, 0x00]⟩, pos := 0}).toOption.map (fun (symbol,s) => (symbol.val,s.pos))) == some (1,12)
 #guard !((readPrefix 40).run {data := ⟨#[0xfd, 0x07]⟩, pos := 0}).isOk
 #guard !((readPrefix 40).run {data := ByteArray.empty, pos := 0}).isOk
 
