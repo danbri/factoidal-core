@@ -31,11 +31,12 @@ def checkedContainerRoot (bytes : ByteArray) : Except ContainerError Chunk :=
 
 /-- The four-byte fork version is a basic SSZ byte vector. The version's
     field root is its four bytes followed by 28 zeros, not their digest. -/
-def checkedVersionRoot (bytes : ByteArray) : Except ContainerError Chunk := do
-  if bytes.size ≠ 4 then throw .versionWidth
-  match checkedBasicRoot bytes with
-  | .ok root => return root
-  | .error _ => throw .basicRoot
+def checkedVersionRoot (bytes : ByteArray) : Except ContainerError Chunk :=
+  if bytes.size ≠ 4 then .error .versionWidth
+  else
+    match checkedBasicRoot bytes with
+    | .ok root => .ok root
+    | .error _ => .error .basicRoot
 
 /-- Convert the existing uint64 basic codec to its SSZ Merkle chunk. -/
 def containerUInt64Root (value : UInt64) : Except ContainerError Chunk :=
@@ -72,11 +73,16 @@ structure SigningData where
 /-- Admit all three 32-byte fields before constructing a typed header. -/
 def checkedBeaconBlockHeader (slot proposerIndex : UInt64)
     (parentRoot stateRoot bodyRoot : ByteArray) :
-    Except ContainerError BeaconBlockHeader := do
-  let parent ← checkedContainerRoot parentRoot
-  let state ← checkedContainerRoot stateRoot
-  let body ← checkedContainerRoot bodyRoot
-  return ⟨slot, proposerIndex, parent, state, body⟩
+    Except ContainerError BeaconBlockHeader :=
+  match checkedContainerRoot parentRoot with
+  | .error e => .error e
+  | .ok parent =>
+    match checkedContainerRoot stateRoot with
+    | .error e => .error e
+    | .ok state =>
+      match checkedContainerRoot bodyRoot with
+      | .error e => .error e
+      | .ok body => .ok ⟨slot, proposerIndex, parent, state, body⟩
 
 def checkedCheckpoint (epoch : UInt64) (root : ByteArray) :
     Except ContainerError Checkpoint := do
@@ -121,12 +127,17 @@ def beaconHeaderTree (slot proposer parent state body zero : Chunk) : Chunk :=
 /-- The actual typed header entry calls the existing executable basic-root
     codec and then beaconHeaderTree. The zero leaf cannot be caller-supplied. -/
 def beaconBlockHeaderRoot (header : BeaconBlockHeader) :
-    Except ContainerError Chunk := do
-  let slotRoot ← containerUInt64Root header.slot
-  let proposerRoot ← containerUInt64Root header.proposerIndex
-  let zeroRoot ← containerZeroRoot
-  return beaconHeaderTree slotRoot proposerRoot header.parentRoot
-    header.stateRoot header.bodyRoot zeroRoot
+    Except ContainerError Chunk :=
+  match containerUInt64Root header.slot with
+  | .error e => .error e
+  | .ok slotRoot =>
+    match containerUInt64Root header.proposerIndex with
+    | .error e => .error e
+    | .ok proposerRoot =>
+      match containerZeroRoot with
+      | .error e => .error e
+      | .ok zeroRoot => .ok (beaconHeaderTree slotRoot proposerRoot
+          header.parentRoot header.stateRoot header.bodyRoot zeroRoot)
 
 def checkpointRoot (checkpoint : Checkpoint) : Except ContainerError Chunk := do
   let epochRoot ← containerUInt64Root checkpoint.epoch
@@ -150,7 +161,7 @@ theorem checkedContainerRoot_wrong_width (bytes : ByteArray)
 theorem checkedVersionRoot_wrong_width (bytes : ByteArray)
     (h : bytes.size ≠ 4) :
     checkedVersionRoot bytes = .error .versionWidth := by
-  simp [checkedVersionRoot, h]
+  simp only [checkedVersionRoot, if_neg h]
 
 /-- Kind: admission. Says: malformed parent bytes never construct a
     header with a substituted parent. Does not say: a 32-byte parent exists. -/
@@ -159,15 +170,14 @@ theorem checkedBeaconBlockHeader_bad_parent
     (h : parent.size ≠ 32) :
     checkedBeaconBlockHeader slot proposer parent state body =
       .error .rootWidth := by
-  simp [checkedBeaconBlockHeader, checkedContainerRoot, Chunk.ofBytes,
-    h, bind, Except.bind]
+  simp only [checkedBeaconBlockHeader, checkedContainerRoot_wrong_width parent h]
 
 /-- Kind: structure. Says: one header byte encoding has precisely the
     five declared field widths and the canonical field order. -/
 theorem beaconBlockHeaderWire_size (header : BeaconBlockHeader) :
     (beaconBlockHeaderWire header).size = 112 := by
-  simp [beaconBlockHeaderWire, ByteArray.size_append, encodeUInt64_size,
-    header.parentRoot.width, header.stateRoot.width, header.bodyRoot.width]
+  simp only [beaconBlockHeaderWire, ByteArray.size_append, encodeUInt64_size,
+    header.parentRoot.width, header.stateRoot.width, header.bodyRoot.width] <;> decide
 
 /-- Kind: structure. Says: the root path has exactly the seven ordered
     parent hashes of five field roots and three zeros. Does not say:
@@ -190,14 +200,14 @@ theorem beaconBlockHeaderRoot_delegates (header : BeaconBlockHeader)
     beaconBlockHeaderRoot header =
       .ok (beaconHeaderTree slot proposer header.parentRoot
         header.stateRoot header.bodyRoot zero) := by
-  simp [beaconBlockHeaderRoot, hs, hp, hz, bind, Except.bind]
+  simp only [beaconBlockHeaderRoot, hs, hp, hz]
 
 /-- Kind: structure. Checkpoint has exactly one uint64 and one Root.
     Does not say: the checkpoint is justified or finalised. -/
 theorem checkpointWire_size (checkpoint : Checkpoint) :
     (checkpointWire checkpoint).size = 40 := by
-  simp [checkpointWire, ByteArray.size_append, encodeUInt64_size,
-    checkpoint.root.width]
+  simp only [checkpointWire, ByteArray.size_append, encodeUInt64_size,
+    checkpoint.root.width] <;> decide
 
 /-- Kind: structure. SigningData uses its two 32-byte fields in order.
     Does not say: a BLS signature was checked. -/
@@ -214,8 +224,8 @@ theorem forkDataRoot_ordered (value : ForkData) :
 /-- Kind: structure. A signing payload is exactly two SSZ Root fields. -/
 theorem signingDataWire_size (value : SigningData) :
     (signingDataWire value).size = 64 := by
-  simp [signingDataWire, ByteArray.size_append,
-    value.objectRoot.width, value.domain.width]
+  simp only [signingDataWire, ByteArray.size_append,
+    value.objectRoot.width, value.domain.width] <;> decide
 
 private def hasError (r : Except ContainerError α) (expected : ContainerError) : Bool :=
   match r with
