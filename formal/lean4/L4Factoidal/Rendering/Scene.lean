@@ -210,8 +210,8 @@ private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Floa
   (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
 /-- Select the position within one tile before sampling texels. Subtracting a
 floored multiple also handles points before the origin. -/
-private def tileCoordinate (repeat : Bool) (size : Nat) (p : Float) : Float :=
-  if repeat then
+private def tileCoordinate (repeats : Bool) (size : Nat) (p : Float) : Float :=
+  if repeats then
     let period := Float.ofNat size
     p - (p/period).floor*period
   else p
