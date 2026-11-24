@@ -3205,6 +3205,32 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
   return ((styles[body]?).bind (·.background)).map (body,·)
 
+/-- CSS Display 3 §2.4: a replaced element with internal table display participates
+as an atomic inline box. Table construction reads this used display, while the
+computed style retains the authored value. -/
+def replacedDisplay (display : Display) (replaced : Bool) : Display :=
+  if display.isTableInternal && replaced then .inlineBlock else display
+
+/-- An ordinary box keeps its display, including actual non-replaced table cells. -/
+theorem replacedDisplay_ordinary (display : Display) :
+    replacedDisplay display false = display := by
+  simp [replacedDisplay]
+
+#print axioms replacedDisplay_ordinary
+
+private def usedReplacedDisplay (dom : Dom) (pictures : Pictures) (id : Nat) (display : Display) :
+    Display :=
+  if display.isTableInternal then
+    let node := dom.get id
+    let replaced := DOM.Dom.isHtmlElement node "input" || DOM.Dom.isHtmlElement node "img" ||
+      (blankReplaced node).isSome || node.ns == some DOM.svgNS || (pictures id).isSome
+    replacedDisplay display replaced
+  else display
+
+#guard replacedDisplay .tableCell true == .inlineBlock
+#guard replacedDisplay .tableCell false == .tableCell
+#guard replacedDisplay .none true == .none
+
 /-- The scene of a tree whose styles are computed: existing DOM input, explicit viewport
 and font data, immutable scene output. `pictures` holds the decoded content of replaced
 elements. -/
@@ -3213,8 +3239,9 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
-  let styles := computed.map fun s =>
-    {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
+  let styles := computed.mapIdx fun id s =>
+    {s with display := usedReplacedDisplay dom pictures id s.display,
+            width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
             backgroundSize := s.backgroundSize.atViewport vw vh,
