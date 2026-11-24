@@ -109,7 +109,7 @@ private def namedQuery (text prologue : String) (tokens : List LocatedToken)
     let fragment := NamedSubquery.substitute block.body block.references prepared (markerPrefix := marker)
     let .ok query := parseUnloweredQuery (prologue ++ "\n" ++ fragment) true version base |
       throw ("named_subquery_parse_error", ⟨s!"Could not parse named subquery %{block.name}", block.start⟩)
-    let variables := query.projectedVars.filter fun v => !marker.isPrefixOf v
+    let variables := (NamedSubquery.includedVariables query).filter fun v => !marker.isPrefixOf v
     prepared := ⟨block.name, variables, "", "", []⟩ :: prepared
     blocks := .object [("name", .string block.name), ("ast", transformedQuerySources (encode query)),
       ("span", span block.start block.stop)] :: blocks

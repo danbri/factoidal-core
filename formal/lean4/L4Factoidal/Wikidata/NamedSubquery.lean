@@ -192,17 +192,22 @@ private def restoreEdits (chars : Array Char) (blocks : List PreparedBlock) :
 private def restore (text : String) (blocks : List PreparedBlock) : Except Problem String :=
   (restoreEdits text.toList.toArray blocks (sourceTokens text) []).map (applyEdits text)
 
+/-- Projected variables reachable when the query is included. An authored
+projection can mention a variable that its group never puts in scope. -/
+def includedVariables (query : Query) : List String :=
+  let aliases := match query.form with
+    | .select (.vars items) => items.filterMap fun item => match item with
+      | .expr _ name => some name
+      | .var _ => none
+    | _ => []
+  let reachable := aliases ++ query.pattern.inScopeVars
+  query.projectedVars.filter (reachable.contains ·)
+
 def prepareBlock (name : String) (query : Query) (rewritten : String)
     (blocks : List PreparedBlock) : Except Problem PreparedBlock := do
   let .select select := query.form |
     throw ⟨"parse_error", "original_query_parse_error", "Named subquery must be a SELECT query."⟩
-  let aliases := match select with
-    | .all => []
-    | .vars items => items.filterMap fun item => match item with
-      | .expr _ name => some name
-      | .var _ => none
-  let reachable := aliases ++ query.pattern.inScopeVars
-  let vars := query.projectedVars.filter (reachable.contains ·)
+  let vars := includedVariables query
   let extra := prefixes (standalone rewritten)
   let restored ← restore rewritten blocks
   let stripped := (String.intercalate "\n" ((restored.splitOn "\n").drop (leadingLines restored).length)).trimAscii.toString

@@ -42,6 +42,27 @@ RDF 1.2 in JSON-LD (JSON-LD-star: `@triple`, `@reifies`, `@annotation`,
 `@direction`) needs the option `rdfstar`: `jsonldToRdf(text, { rdfstar: true })`
 and `dataset.serialize({ format: 'jsonld', rdfstar: true })`.
 
+## Inspect a SPARQL query
+
+`parseSparqlAst` returns a versioned query document for use in editors and
+other tools. Set `wdqs: true` to enable Wikidata prefixes and named subqueries.
+Parsing only needs the query text.
+
+```js
+import { parseSparqlAst } from "@factoidal/core";
+
+const document = await parseSparqlAst(
+  "# People\nSELECT ?item WHERE { ?item wdt:P31/wdt:P279* wd:Q5 }",
+  { wdqs: true },
+);
+console.log(document.ast?.pattern, document.source.comments);
+```
+
+An invalid query returns `ast: null` and diagnostics. Node spans count
+Unicode code points in the original text. A diagnostic's `utf16Span` can
+be used directly with JavaScript string offsets.
+[Query document schema and examples](https://github.com/danbri/factoidal-core/blob/main/docs/20261124-sparql-query-document.md)
+
 ## Mixed CPU/WebGPU SPARQL
 
 The ordinary `query(data, sparql, options)` and `dataset.query(sparql, options)`
