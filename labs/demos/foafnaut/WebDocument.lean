@@ -550,6 +550,10 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
         if bytes+t.utf8ByteSize ≤ 8388608 then
           bytes := bytes+t.utf8ByteSize
           sheets := (u,t)::sheets
+        else
+          -- reported as for a sheet of the document (issue 865); before, it was left out silently
+          let (_,d) ← WebAccept.skip m .stylesheetBytes s!"@import {u}" "document stylesheets exceed 8 MiB" ()
+          ds := ds ++ d
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
 
@@ -1784,16 +1788,27 @@ def Holds.fontNames (h : Holds) : List (String × String) :=
   (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map (fun f => ("serif:" ++ f.family,f.sha256)) ++
     h.mono.toList.map fun f => ("mono:" ++ f.family,f.sha256)
 
+/-- The web fonts a render names (`webFonts`: `[{url,sha256}]`), as (URL, SHA-256). -/
+def namedWebFonts (request : JSON.Json) : List (String × String) :=
+  match request.field? "webFonts" with
+    | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
+      | some (.string u),some (.string h) => some (u,h)
+      | _,_ => none
+    | _ => []
+
+/-- A hit when the render names more different web fonts (by SHA-256) than the engine holds
+at once (`maxWebFonts`): the oldest are let go, and text in those faces is drawn in a
+fallback font (issue 865). -/
+def webFontLimits (request : JSON.Json) : List WebAccept.LimitHit :=
+  WebAccept.LimitHit.check "maxWebFonts" maxWebFonts ((namedWebFonts request).map (·.2)).eraseDups.length
+    "web fonts named by the render"
+
 /-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
 font of the first source URL of each face that the request names with a held SHA-256,
 with the rule's family and `unicode-range`. -/
 def webFaceFonts (h : Holds) (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Json) :
     Array (Option Rendering.SfntProfile.Font) :=
-  let named : List (String × String) := match request.field? "webFonts" with
-    | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
-      | some (.string u),some (.string h) => some (u,h)
-      | _,_ => none
-    | _ => []
+  let named := namedWebFonts request
   if named.isEmpty then faces.map (fun _ => none) else
   let held := h.webFonts
   faces.map fun face => do
@@ -2570,7 +2585,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .error _ => ({},0)
   let picturesWanted := redrawn.2
   let pictures := withPictures redrawn.1 pictures
-  let limits := faceLimits env sheets faces ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
+  let limits := faceLimits env sheets faces ++ webFontLimits request ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
     "SVG images shown larger than their pictures"
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
