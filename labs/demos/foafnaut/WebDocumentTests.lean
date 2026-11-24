@@ -805,10 +805,11 @@ private def namedFonts (n : Nat) : String × JSON.Json := ("webFonts",.array ((L
 #guard mentions (renderText facesPage [asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
 #guard mentions (renderText facesPage [liberal,asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
 #guard mentions (renderText facesPage [asks,namedFonts 3]) "\"limit\":\"maxWebFonts\"" == 0
--- a 1×2 image repeated over a box of 400×300: 60000 tiles, past `maxBackgroundTiles` (4096)
+-- A 1×2 image repeated across 400×300 uses one repeating paint record.
 private def tilesPage : String := "<!doctype html><title>T</title><div style='width:400px;height:300px;" ++
   "background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGP4z8DAwMDwHwAIAAH/B2G9UwAAAABJRU5ErkJggg==);background-size:1px 2px'></div>"
-#guard mentions (renderText tilesPage [asks]) "\"limit\":\"maxBackgroundTiles\"" == 1
+#guard renderText tilesPage [asks] != ""
+#guard mentions (renderText tilesPage [asks]) "\"diagnostics\"" == 0
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.

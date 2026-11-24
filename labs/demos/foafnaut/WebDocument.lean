@@ -683,21 +683,6 @@ def facesOf (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) 
   if !sheets.any (fun (_,src) => (src.splitOn "@font-face").length > 1 || (src.toLower.splitOn "@font-face").length > 1) then #[]
   else Rendering.FontFaceRule.ofSheets env.medium Syntax.resolveIri sheets
 
-/-- The resource limit on the tiles of one background image (`Layout.maxBackgroundTiles`):
-the boxes of a layout whose image needs more tiles paint its colour only. One report, with
-the largest number asked and the number of boxes. Issue 865. -/
-def tileLimits (boxes : Array Rendering.Layout.Box) (styles : Array Rendering.CSS.Computed) : List WebAccept.LimitHit := Id.run do
-  let mut most := 0
-  let mut count := 0
-  for b in boxes do
-    let some st := styles[b.source]? | continue
-    let some (_,bitmap) := st.backgroundBitmap | continue
-    let n := Rendering.Layout.backgroundTileCount bitmap st b.x b.y b.width b.height
-    if n > Rendering.Layout.maxBackgroundTiles then
-      count := count+1
-      most := max most n
-  return WebAccept.LimitHit.check "maxBackgroundTiles" Rendering.Layout.maxBackgroundTiles most s!"{count} boxes with a background image"
-
 /-- The resource limit on `@font-face` rules (`FontFaceRule.maxFaces`), when `faces` (of
 `facesOf`) is at it: the number of rules the sheets have. Issue 865. -/
 def faceLimits (env : Rendering.MediaQuery.Env) (sheets : List (String × String))
@@ -2647,7 +2632,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     |> fun l => {l with paint := paint}
     |> fun l => {l with wantsSerif := wantsSerif}
     |> fun l => {l with wantsMono := wantsMono}
-    |> fun l => {l with limits := limits ++ tileLimits boxes styles},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with limits := limits},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads

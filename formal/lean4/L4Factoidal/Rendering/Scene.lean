@@ -76,6 +76,8 @@ structure ImageRecord where
   map : Transform
   id : Nat
   bitmap : Bitmap
+  repeatX : Bool := false
+  repeatY : Bool := false
   deriving Repr
 inductive Paint where
   | none | solid (color : Color) | current
@@ -180,11 +182,13 @@ def Gradient.lower (g : Gradient) (bounds : Float × Float × Float × Float) : 
 
 def imageRecordHeaderWords : Nat := 9
 /-- Wire form: the map's x row and the width, its y row and the height, then the
-word offset of the pixels from the start of the paint table. Each pixel is one
-word, red in the low byte. The shader reads this layout. -/
+word offset of the pixels from the start of the paint table. A negative dimension
+marks a repeating axis. Each pixel is one word, red in the low byte. -/
 def ImageRecord.words (g : ImageRecord) (pixels : Nat) : List Float :=
-  [g.map.a,g.map.c,g.map.e,Float.ofNat g.bitmap.width,
-   g.map.b,g.map.d,g.map.f,Float.ofNat g.bitmap.height,Float.ofNat pixels]
+  let width := Float.ofNat g.bitmap.width
+  let height := Float.ofNat g.bitmap.height
+  [g.map.a,g.map.c,g.map.e,if g.repeatX then -width else width,
+   g.map.b,g.map.d,g.map.f,if g.repeatY then -height else height,Float.ofNat pixels]
 theorem ImageRecord.words_length (g : ImageRecord) (pixels : Nat) :
     (g.words pixels).length = imageRecordHeaderWords := rfl
 
@@ -204,11 +208,25 @@ private def Bitmap.texel (b : Bitmap) (x y : Nat) : Float × Float × Float × F
    Float.ofNat (b.rgba.get! (i+2)).toNat/255*a,a)
 private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Float × Float × Float × Float :=
   (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
+/-- Select the position within one tile before sampling texels. Subtracting a
+floored multiple also handles points before the origin. -/
+private def tileCoordinate (repeats : Bool) (size : Nat) (p : Float) : Float :=
+  if repeats then
+    let period := Float.ofNat size
+    p - (p/period).floor*period
+  else p
+
+#guard tileCoordinate true 69 (-0.5) == 68.5
+#guard tileCoordinate true 69 69.5 == 0.5
+#guard tileCoordinate false 69 69.5 == 69.5
+
 /-- Colour and opacity at a point of the primitive's local frame, as `[r,g,b,a]`:
-bilinear on premultiplied pixels, and beyond the edge the edge pixels. The shader
+bilinear on premultiplied pixels with edge sampling within each tile. The shader
 states the same steps in `imageSample`. -/
 def ImageRecord.colorAt (g : ImageRecord) (x y : Float) : List Float :=
   let (u,v) := Math.Affine2.applyPoint .float g.map x y
+  let u := tileCoordinate g.repeatX g.bitmap.width u
+  let v := tileCoordinate g.repeatY g.bitmap.height v
   -- An image drawn at its own size on whole pixels (unit scale, no rotation, a whole-pixel
   -- offset) shows its pixels as they are, as browsers draw it: each sample takes the pixel it
   -- falls in. Before 2026-11-22 bilinear sampling at the raster's sub-pixel samples mixed each
