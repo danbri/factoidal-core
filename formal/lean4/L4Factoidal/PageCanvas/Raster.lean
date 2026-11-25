@@ -129,6 +129,22 @@ where
       if width ≥ xs.size then a
       else go fuel (sortPass key a xs.size width xs.size 0 (Array.emptyWithCapacity xs.size)) (2 * width)
 
+/-- One row of `coverageIn`: the running sum of `diff` plus `direct`, clamped to 0..1, into
+`cov` at `base + i` for columns `i < w`, from column `i` to `stop - 1`, with `diff` and
+`direct` set back to zero there. A tail call with the sum as a `Float` argument: as a `for`
+loop the sum was loop state and was boxed at each pixel (issue 1098). -/
+def rowSums (w base stop : Nat) : Nat → Nat → Float → FloatArray → FloatArray → FloatArray →
+    FloatArray × FloatArray × FloatArray
+  | 0, _, _, cov, diff, direct => (cov, diff, direct)
+  | fuel+1, i, run, cov, diff, direct =>
+    if i >= stop then (cov, diff, direct) else
+    let run := run + diff[i]!
+    let cov := if i < w then
+        let c := run + direct[i]!
+        cov.set! (base + i) (if c <= 0 then 0 else if c >= 1 then 1 else c)
+      else cov
+    rowSums w base stop fuel (i + 1) run cov (diff.set! i 0) (direct.set! i 0)
+
 /-- The coverage values of polygons with edges `es` under `rule`, in `box`, and for each
 row of the box the columns `[lo, hi)` that may be covered (outside them the value is 0). -/
 def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × Array (Nat × Nat) := Id.run do
@@ -194,15 +210,10 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
       spans := spans.push (0, 0)
     else
       spans := spans.push (lo, hiC)
-    let mut run := 0.0
-    let base := j * box.w
-    for i in [lo:hi+1] do
-      run := run + diff[i]!
-      if i < box.w then
-        let c := run + direct[i]!
-        cov := cov.set! (base + i) (if c <= 0 then 0 else if c >= 1 then 1 else c)
-      diff := diff.set! i 0
-      direct := direct.set! i 0
+    let (cov', diff', direct') := rowSums box.w (j * box.w) (hi + 1) (hi + 1 - lo) lo 0 cov diff direct
+    cov := cov'
+    diff := diff'
+    direct := direct'
   return (cov, spans)
 
 /-- The coverage of polygons with edges `es` under `rule`, in the canvas `W × H`. -/
@@ -224,8 +235,8 @@ theorem coverage_within (W H : Nat) (es : Array Edge) (rule : FillRule) :
     (coverage W H es rule).box.y + (coverage W H es rule).box.h ≤ H :=
   edgeBox_within W H es
 
-/-- The coverage values of an axis-aligned rectangle (exact) in `box`. -/
-def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
+/-- The coverage values of an axis-aligned rectangle (exact) in `box`, the reference. -/
+def rectCoverageInRef (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
   let mut cov := fzeros (box.w * box.h)
   for j in [0:box.h] do
     let py := nf (box.y + j)
@@ -234,6 +245,22 @@ def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
       let px := nf (box.x + i)
       let cx := max 0 (min (px + 1) x1 - max px x0)
       cov := cov.set! (j * box.w + i) (min 1 (cx * cy))
+  return cov
+
+/-- `rectCoverageInRef` with the horizontal share of each column computed once (the same
+expression, so the same value) and the values pushed in row order (issue 1098: a full-canvas
+`fillRect` made 1.6 M values, each with ten Float operations). -/
+def rectCoverageIn (box : Box) (x0 y0 x1 y1 : Float) : FloatArray := Id.run do
+  let mut cxs := FloatArray.emptyWithCapacity box.w
+  for i in [0:box.w] do
+    let px := nf (box.x + i)
+    cxs := cxs.push (max 0 (min (px + 1) x1 - max px x0))
+  let mut cov := FloatArray.emptyWithCapacity (box.w * box.h)
+  for j in [0:box.h] do
+    let py := nf (box.y + j)
+    let cy := max 0 (min (py + 1) y1 - max py y0)
+    for i in [0:box.w] do
+      cov := cov.push (min 1 (cxs[i]! * cy))
   return cov
 
 /-- The coverage of an axis-aligned rectangle (exact). -/

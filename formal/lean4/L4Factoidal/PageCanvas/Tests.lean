@@ -163,4 +163,39 @@ def diffFails : List Nat := Id.run do
 #guard diffW * diffH ≥ tableMin
 #guard rowConstant ((Style.gradient 1).ready (fun _ => some { kind := .linear 0 2 0 35, stops := #[⟨0, RGBA.black⟩] }) (fun _ => none) { a := 1.25, d := 1.25 } false)
 
+-- The rectangle coverage with column shares computed once is the reference, value for value.
+#guard [(⟨0, 0, 64, 40⟩, 0.0, 0.0, 64.0, 40.0), (⟨3, 2, 48, 30⟩, 3.25, 2.5, 50.75, 31.5),
+    (⟨0, 0, 64, 40⟩, -5.0, -5.0, 100.0, 100.0), (⟨10, 10, 1, 1⟩, 10.2, 10.3, 10.7, 10.9),
+    (⟨0, 0, 0, 5⟩, 1.0, 1.0, 1.0, 3.0)].all fun ((b : Box), x0, y0, x1, y1) =>
+  (rectCoverageIn b x0 y0 x1 y1).data.map Float.toBits == (rectCoverageInRef b x0 y0 x1 y1).data.map Float.toBits
+
+/-- The row loop of `coverageIn` as it was before `rowSums` (a `for` loop), the reference. -/
+def rowSumsRef (w base lo hi : Nat) (cov diff direct : FloatArray) : FloatArray × FloatArray × FloatArray := Id.run do
+  let mut cov := cov
+  let mut diff := diff
+  let mut direct := direct
+  let mut run := 0.0
+  for i in [lo:hi+1] do
+    run := run + diff[i]!
+    if i < w then
+      let c := run + direct[i]!
+      cov := cov.set! (base + i) (if c <= 0 then 0 else if c >= 1 then 1 else c)
+    diff := diff.set! i 0
+    direct := direct.set! i 0
+  return (cov, diff, direct)
+
+/-- Floats in -0.6 .. 1.4 from noise bytes, some of them exact multiples of 1/16. -/
+def noiseFloats (n seed : Nat) : FloatArray :=
+  (noise n seed).foldl (init := FloatArray.empty) fun acc b =>
+    acc.push (if b % 3 == 0 then nf (b.toNat % 16) / 16 else nf b.toNat / 128 - 0.6)
+
+-- `rowSums` is the old row loop, bit for bit, on every span of a 20-column row.
+#guard (List.range 21).all fun lo => (List.range 21).all fun hi =>
+  lo > hi ||
+  let w := 20
+  let (c1, d1, e1) := rowSums w 40 (hi + 1) (hi + 1 - lo) lo 0 (noiseFloats 80 lo) (noiseFloats 22 (hi + 5)) (noiseFloats 22 (lo + hi + 9))
+  let (c2, d2, e2) := rowSumsRef w 40 lo hi (noiseFloats 80 lo) (noiseFloats 22 (hi + 5)) (noiseFloats 22 (lo + hi + 9))
+  c1.data.map Float.toBits == c2.data.map Float.toBits && d1.data.map Float.toBits == d2.data.map Float.toBits &&
+    e1.data.map Float.toBits == e2.data.map Float.toBits
+
 end L4Factoidal.PageCanvas.Tests
