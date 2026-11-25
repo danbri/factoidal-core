@@ -150,7 +150,9 @@ private def everyChange (file : ByteArray) : Bool :=
 #guard (base64 "aG k=\n".toUTF8 0).toOption.map (·.toList) == some [104,105]
 #guard (base64 "a!k=".toUTF8 0).toOption.isNone
 #guard (base64 "aGk=aGk=".toUTF8 0).toOption.isNone
-#guard (dataBytes "data:text/plain,hi").toOption.isNone
+-- URL decoding returns bytes. The image decoder still rejects a plain text body.
+#guard (dataBytes "data:text/plain,hi").toOption.map (·.toList) == some [104,105]
+#guard ((dataBytes "data:text/plain,hi").bind decode).toOption.isNone
 #guard (dataBytes "data:image/png;base64,aGk=").toOption.map (·.size) == some 2
 #guard (decode "not an image".toUTF8).toOption.isNone
 -- Images held reduced (2026-11-14): the size from the file's header, with no decoding.

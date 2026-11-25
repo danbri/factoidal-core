@@ -2481,10 +2481,7 @@ The picture keeps the image's natural size, so it is placed as before. -/
     if st.pos.borderBox then continue
     let .px w := st.width | continue
     let .px h := st.height | continue
-    let (iw,ih) := picture.size
-    if iw <= 0 || ih <= 0 then continue
-    let (sx,sy) := Rendering.Layout.fitScale st.objectFit iw ih w h
-    let (dw,dh) := (iw*sx,ih*sy)
+    let (dw,dh) := picture.fittedSize st.objectFit w h
     if !(dw.isFinite && dh.isFinite) || dw < 1 || dh < 1 || dw > 4096 || dh > 4096 then continue
     let (dw,dh) := (dw.round.toUInt32.toNat,dh.round.toUInt32.toNat)
     if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
@@ -2494,7 +2491,7 @@ The picture keeps the image's natural size, so it is placed as before. -/
     wanted := wanted+1
     if found.size ≥ maxVectorRedraws then continue
     let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
-    let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
+    let natural := picture.natural.getD (Rendering.Layout.PictureSize.fromPixels picture.bitmap.width picture.bitmap.height)
     let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
     found := found.insert id made
   return (found,wanted)
@@ -2514,7 +2511,7 @@ private def attachBackgroundPicture (picture : Rendering.Layout.Pictures)
   | some pic =>
     let natural := match style.backgroundImage.bind (naturals.lookup ·) with
       | some n => some n
-      | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
+      | none => pic.natural.map fun n => (some n.width,some n.height,n.ratio)
     {style with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap), backgroundNatural := natural}
   | none => style
 

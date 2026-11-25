@@ -773,15 +773,25 @@ theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.ma
     decorations id s x y w h = background id s x y w h ++ borderNodes id s x y w h := by
   simp [decorations, borderPaint, borderImageNodes, hm, hb]
 
+/-- Intrinsic dimensions in CSS pixels. A source can retain a ratio even when
+both dimensions are below one layout unit. A single-axis SVG can have none. -/
+structure PictureSize where
+  width : Float
+  height : Float
+  ratio : Option Float
+
+def PictureSize.fromPixels (w h : Nat) : PictureSize :=
+  ⟨Float.ofNat w, Float.ofNat h, if w == 0 || h == 0 then none else some (Float.ofNat w / Float.ofNat h)⟩
+
 /-- The content of a replaced element that Lean decoded or drew: the image of an
 `img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.
 `id` names the bitmap in the paint table, so one bitmap used twice is stored once. -/
 structure Picture where
   id : Nat
   bitmap : Bitmap
-  /-- The size of the image in CSS pixels, when `bitmap` holds fewer pixels than the image
-  has (a host that keeps a large image reduced); none: the size of `bitmap`. -/
-  natural : Option (Nat × Nat) := none
+  /-- Natural CSS dimensions when the bitmap is held reduced or the element's
+  selected image has a non-unit pixel density. Otherwise use the bitmap's dimensions. -/
+  natural : Option PictureSize := none
 /-- The picture of an element, by DOM node. `none` when it has none, or when its
 image is missing, broken or refused: an `img` then shows its `alt` text. -/
 abbrev Pictures := Nat → Option Picture
@@ -793,21 +803,24 @@ def unbounded : Float := 1.0e30
 /-- CSS 2.1 §10.4, the table for a replaced element whose `width` and `height` are
 both auto: the intrinsic size `w` by `h` within the limits, with its ratio kept where
 the limits allow it. -/
-def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
+def constrainBoth (w h minW maxW minH maxH : Float)
+    (ratio : Option Float := if w > 0 && h > 0 then some (w/h) else none) : Float × Float :=
   let maxW := max minW maxW
   let maxH := max minH maxH
-  if w <= 0 || h <= 0 then (min maxW (max minW w),min maxH (max minH h))
-  else if w > maxW && h > maxH then
-    if maxW/w <= maxH/h then (maxW,max minH (maxW*h/w)) else (max minW (maxH*w/h),maxH)
-  else if w < minW && h < minH then
-    if minW/w <= minH/h then (min maxW (minH*w/h),minH) else (minW,min maxH (minW*h/w))
-  else if w < minW && h > maxH then (minW,maxH)
-  else if w > maxW && h < minH then (maxW,minH)
-  else if w > maxW then (maxW,max (maxW*h/w) minH)
-  else if w < minW then (minW,min (minW*h/w) maxH)
-  else if h > maxH then (max (maxH*w/h) minW,maxH)
-  else if h < minH then (min (minH*w/h) maxW,minH)
-  else (w,h)
+  match ratio with
+  | none => (min maxW (max minW w),min maxH (max minH h))
+  | some r =>
+    if w > maxW && h > maxH then
+      if maxW <= maxH*r then (maxW,max minH (maxW/r)) else (max minW (maxH*r),maxH)
+    else if w < minW && h < minH then
+      if minW <= minH*r then (min maxW (minH*r),minH) else (minW,min maxH (minW/r))
+    else if w < minW && h > maxH then (minW,maxH)
+    else if w > maxW && h < minH then (maxW,minH)
+    else if w > maxW then (maxW,max (maxW/r) minH)
+    else if w < minW then (minW,min (minW/r) maxH)
+    else if h > maxH then (max (maxH*r) minW,maxH)
+    else if h < minH then (min (minH*r) maxW,minH)
+    else (w,h)
 
 /-- Resolve a replaced element's horizontal length. A calculation can come from
 `contentBoxed`, where a percentage size of a border box loses its horizontal edges.
@@ -830,13 +843,17 @@ theorem replacedHorizontal_calc (s : Computed) (available p offset : Float) (h :
 #guard replacedHorizontal {} 120 (.calc 1 (-8)) == some 112
 #guard (replacedHorizontal {} 0 (.calc 1 (-8))).isNone
 
+private def sizeRatio (intrinsic : Option (Float × Float)) : Option Float :=
+  intrinsic.bind fun (w,h) => if w > 0 && h > 0 then some (w/h) else none
+
 /-- CSS 2.1 §10.3.2 and §10.6.2, with the limits of §10.4 and §10.7: the used content
 width and height of a replaced element. `intrinsic` is the size of its content when it
 has one, which gives the ratio too; with none, 300 by 150. `available` is the width of
 the containing block. It is 0 while widths are measured, and then a percentage counts
 as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
 no definite containing block height. -/
-def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
+def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float)
+    (ratio : Option Float := sizeRatio intrinsic) : Float × Float :=
   let horizontal := replacedHorizontal s available
   let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
   let minW := (horizontal s.minWidth).getD 0
@@ -846,7 +863,6 @@ def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (availa
   -- §10.4: a minimum wins over a maximum.
   let clampW := fun (w : Float) => max 0 (max minW (min maxW w))
   let clampH := fun (h : Float) => max 0 (max minH (min maxH h))
-  let ratio := intrinsic.bind fun (w,h) => if w > 0 && h > 0 then some (w/h) else none
   match horizontal s.width,vertical s.height with
   | some w,some h => (clampW w,clampH h)
   | some w,none =>
@@ -856,7 +872,7 @@ def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (availa
     let h := clampH h
     (clampW (match ratio with | some r => h*r | none => (intrinsic.map Prod.fst).getD 300),h)
   | none,none => match intrinsic with
-    | some (w,h) => constrainBoth w h minW maxW minH maxH
+    | some (w,h) => constrainBoth w h minW maxW minH maxH ratio
     | none => (clampW 300,clampH 150)
 
 /-- The used content width and height of a replaced element: `replacedNatural`, or with
@@ -864,12 +880,12 @@ def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (availa
 layout units): a given width or height gives the other, and with both auto the natural
 width is taken within the limits of both axes. `aspect-ratio: auto <ratio>` keeps the
 ratio of content that has one. An element with no `aspect-ratio` costs one test. -/
-def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
+def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available : Float)
+    (ratio : Option Float := sizeRatio intrinsic) : Float × Float :=
   match s.pos.ratio with
-  | none => replacedNatural s intrinsic available
+  | none => replacedNatural s intrinsic available ratio
   | some (rn,rd) =>
-    let natural := intrinsic.any fun (w,h) => w > 0 && h > 0
-    if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
+    if rn == 0 || rd == 0 || (s.pos.ratioAuto && ratio.isSome) then replacedNatural s intrinsic available ratio else
     let horizontal := replacedHorizontal s available
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
     let width := horizontal s.width
@@ -964,8 +980,14 @@ theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto
 reduced, the size of the image it was made from (`natural`). -/
 def Picture.size (p : Picture) : Float × Float :=
   match p.natural with
-  | some (w,h) => (Float.ofNat w,Float.ofNat h)
+  | some n => (n.width,n.height)
   | none => (Float.ofNat p.bitmap.width,Float.ofNat p.bitmap.height)
+
+/-- Size a decoded image using its source ratio independently of rounded CSS dimensions. -/
+def Picture.usedSize (p : Picture) (s : Computed) (available : Float) : Float × Float :=
+  let intrinsic := some p.size
+  let ratio := match p.natural with | some n => n.ratio | none => sizeRatio intrinsic
+  replacedSize s intrinsic available ratio
 
 /-- A picture that is not held reduced has the size of its bitmap, as before. -/
 theorem Picture.size_whole (p : Picture) (h : p.natural = none) :
@@ -980,6 +1002,20 @@ def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
   | .cover => let k := max (w/iw) (h/ih); (k,k)
   | .none => (1,1)
   | .scaleDown => let k := min 1 (min (w/iw) (h/ih)); (k,k)
+
+/-- CSS Images 3 §5.3 and §5.5. Fit the concrete object using the source ratio even
+when its CSS dimensions have rounded down. `object-fit: none` uses the natural size. -/
+def Picture.fittedSize (p : Picture) (fit : ObjectFit) (w h : Float) : Float × Float :=
+  let (iw,ih) := p.size
+  match fit with
+  | .fill => (w,h)
+  | .none => (iw,ih)
+  | .contain | .cover | .scaleDown =>
+    let ratio := match p.natural with
+      | some n => n.ratio
+      | none => if iw > 0 && ih > 0 then some (iw/ih) else none
+    let size := backgroundTileSize (if fit == .cover then .cover else .contain) none none ratio w h
+    if fit == .scaleDown && iw <= size.1 && ih <= size.2 then (iw,ih) else size
 
 /-- CSS Images 3 §5.6 resolves position percentages against the space left by the
 fitted object. That space can be negative when the object exceeds the box. -/
@@ -996,24 +1032,22 @@ theorem pictureOffset_percent (roomX roomY x y : Float) :
 
 /-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
-  let (iw,ih) := picture.size
-  if !s.paintVisible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
-  let (sx,sy) := fitScale s.objectFit iw ih w h
-  let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
+  if !s.paintVisible || w <= 0 || h <= 0 || picture.bitmap.width == 0 || picture.bitmap.height == 0 then [] else
+  let (dw,dh) := picture.fittedSize s.objectFit w h
+  if dw <= 0 || dh <= 0 then [] else
+  let (offsetX,offsetY) := pictureOffset s.objectPosition (w-dw) (h-dh)
   let dx := x+offsetX
   let dy := y+offsetY
 
   let left := max x dx
   let top := max y dy
-  let right := min (x+w) (dx+iw*sx)
-  let bottom := min (y+h) (dy+ih*sy)
+  let right := min (x+w) (dx+dw)
+  let bottom := min (y+h) (dy+dh)
   if right <= left || bottom <= top then [] else
-  -- `map` goes to pixels of the bitmap: for a picture held reduced, a pixel of the bitmap
-  -- covers `iw/width` by `ih/height` pixels of the image.
-  let (kx,ky) := match picture.natural with
-    | some _ => (Float.ofNat picture.bitmap.width/iw,Float.ofNat picture.bitmap.height/ih)
-    | none => (1,1)
-  let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
+  -- Sample the full backing bitmap across the fitted rectangle, independent of density.
+  let kx := Float.ofNat picture.bitmap.width / dw
+  let ky := Float.ofNat picture.bitmap.height / dh
+  let map : Transform := ⟨kx,0,0,ky,-dx*kx,-dy*ky⟩
   let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
   let image := Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩
   if (usedCornerLengths s).isNone then [image] else
@@ -1303,7 +1337,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     if s.pos.isAbsolute then return #[.outOfFlow id]
     -- A replaced element with a picture: an `img`, and later a `video` or `canvas`.
     if let some picture := pictures id then
-      let (w,h) := replacedSize s (some picture.size) available
+      let (w,h) := picture.usedSize s available
       let (ow,oh,nodes) := replacedBox id s w h (fun x y => pictureNodes id s picture x y w h)
       return #[.replaced id s ow oh nodes]
     -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
@@ -2908,7 +2942,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         | .percent _,_ | _,.percent _ => min w (intrinsicLimits s 0)
         | _,_ => w
       if let some picture := pictures id then
-        let w := (replacedSize s (some picture.size) 0).1
+        let w := (picture.usedSize s 0).1
         return (compressible w+add,w+add)
       if let some size := blankReplaced n then
         let w := (replacedSize s size 0).1
@@ -3605,7 +3639,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | some _ => {s with width := .px width, minWidth := .auto, maxWidth := .auto,
                             height := match imposedHeight with | some h => .px (max 0 (h-edgesY)) | none => s.height}
       if let some picture := pictures id then
-        let (w,h) := replacedSize sized (some picture.size) available
+        let (w,h) := picture.usedSize sized available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if let some size := blankReplaced n then
         let (w,h) := replacedSize sized size available
