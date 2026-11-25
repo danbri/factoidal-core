@@ -49,4 +49,25 @@ for i in (0,3):
     assert lk==",".join(k.hex() for k in keys[:3])
     assert rk==",".join(k.hex() for k in keys[1:])
     cases.append({"line":line.removeprefix("allsigners "),"evidence":[a,b,lk,rk,eligible],"rejections":[[l.removeprefix("allsigners "),e] for l,e in part[1:]]})
+# A genuine commitment with a nonempty signer intersection but no eligible
+# validator. Fixture 1 has validator 2 already slashed. Keep its state root,
+# votes and witnesses; select [0,2] and [2,3] rather than [0,1,2] and [1,2,3].
+line, expected = rows[33]
+label,a,b,lk,rk,eligible = expected.split()
+assert label == "prepared_not_authenticated" and eligible == "1"
+tokens = line.removeprefix("allsigners ").split(" ")
+assert tokens[0] == "32"
+offset = 4 + 4*5 + 4 + 14  # fixed fields, state branches, context, votes
+assert tokens[offset:offset+4] == ["0,1,2","1,2,3","3","3"]
+witnesses = tokens[offset+4:]
+assert len(witnesses) == 6*49
+w = [witnesses[i*49:(i+1)*49] for i in range(6)]
+assert [r[0] for r in w] == ["0","1","2","1","2","3"]
+assert w[2] == w[4] and w[2][4] == "1"
+assert [r[1] for r in w] == [keys[i].hex() for i in (0,1,2,1,2,3)]
+selected = [*tokens[:offset],"0,2","2,3","2","2",*w[0],*w[2],*w[4],*w[5]]
+cases.append({"line":" ".join(selected),
+              "evidence":[a,b,",".join(keys[i].hex() for i in (0,2)),
+                          ",".join(keys[i].hex() for i in (2,3)),"-"],
+              "emptyEligible":True,"rejections":[]})
 print(json.dumps(cases))
