@@ -20,7 +20,7 @@ private def noSVG : Embedding := fun _ _ _ _ => .ok []
 private def picture : Picture := ⟨0,⟨40,20,ByteArray.mk (Array.replicate (40*20*4) 255)⟩,none⟩
 /-- The same image held at half its size on each side (a host that keeps a large image
 reduced): 20 by 10 pixels that stand for 40 by 20. -/
-private def reducedPicture : Picture := ⟨0,⟨20,10,ByteArray.mk (Array.replicate (20*10*4) 255)⟩,some (40,20)⟩
+private def reducedPicture : Picture := ⟨0,⟨20,10,ByteArray.mk (Array.replicate (20*10*4) 255)⟩,some (PictureSize.fromPixels 40 20)⟩
 -- A picture held reduced has the size of its image, and is painted in the same rectangle with
 -- a map that reaches half as many pixels on each side.
 #guard reducedPicture.size == picture.size

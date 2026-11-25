@@ -305,17 +305,22 @@ def plainSource (dom : DOM.Dom) (id : Nat) : Option String :=
 
 /-- The source chosen among the candidates of the element's source set that the engine can
 decode; the `src` when there is none. -/
-def chosenSource (dom : DOM.Dom) (id : Nat) : Option String :=
+def chosenRequest (dom : DOM.Dom) (id : Nat) : Option (String × Rat) :=
+  let fallback := fun _ : Unit => (plainSource dom id).map (·,1)
   let (set,size) := HTML.ImageSource.sourceSet dom id sourceEnv
   match HTML.ImageSource.selectFrom sourceEnv.dpr size (set.filter fun s => !undecodablePath s.url) with
-  | some (source,_) =>
+  | some (source,density) =>
     let url := source.url.trimAscii.toString
-    if url.isEmpty then plainSource dom id else some url
-  | none => plainSource dom id
+    if url.isEmpty then fallback () else some (url,density)
+  | none => fallback ()
+
+/-- The image and current pixel density for this element. -/
+def imageRequest (dom : DOM.Dom) (id : Nat) : Option (String × Rat) :=
+  if plainImage dom id then (plainSource dom id).map (·,1) else chosenRequest dom id
 
 /-- The URL, as written, of the image an `img` shows. -/
 def imageSource (dom : DOM.Dom) (id : Nat) : Option String :=
-  if plainImage dom id then plainSource dom id else chosenSource dom id
+  (imageRequest dom id).map Prod.fst
 
 /-- Kind: property (zero cost, and no change). Says: an `img` with no `srcset` outside a
 `picture` shows its `src`, as before: no source set is made for it. Does not say: which
@@ -323,7 +328,7 @@ candidate another `img` shows (that is `HTML.ImageSource.selectFrom`, with
 `selectFrom_mem`: one of the element's own sources). -/
 theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = true) :
     imageSource dom id = plainSource dom id := by
-  simp [imageSource, h]
+  cases hs : plainSource dom id <;> simp [imageSource, imageRequest, h, hs]
 
 /-- An image handled by the static decoder in an `object` or `embed`. An explicit type
 takes precedence over a filename; the URL can also be a typed data URL. -/
@@ -349,17 +354,21 @@ private def embeddedImageSource (n : DOM.Node) : Option String := do
 
 /-- HTML images, image embeds and video posters, keyed by the node that displays them.
 Resolve each nonempty source with the same image-store key as SVG images. -/
-def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
-  let mut out : Array (Nat × String) := #[]
+def htmlImageRequests (dom : DOM.Dom) (base : Option String) : List (Nat × String × Rat) := Id.run do
+  let mut out : Array (Nat × String × Rat) := #[]
   for id in [0:dom.size] do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "img" then
-      if let some src := imageSource dom id then out := out.push (id,NativeSVG.imageKey base src)
+      if let some (src,density) := imageRequest dom id then out := out.push (id,NativeSVG.imageKey base src,density)
     else if DOM.Dom.isHtmlElement n "video" then
       let poster := (Rendering.CSS.attrValue n "poster").trimAscii.toString
-      if !poster.isEmpty then out := out.push (id,NativeSVG.imageKey base poster)
-    else if let some src := embeddedImageSource n then out := out.push (id,NativeSVG.imageKey base src)
+      if !poster.isEmpty then out := out.push (id,NativeSVG.imageKey base poster,1)
+    else if let some src := embeddedImageSource n then out := out.push (id,NativeSVG.imageKey base src,1)
   return out.toList
+
+/-- Fetch and store keys depend on the URL alone. -/
+def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) :=
+  (htmlImageRequests dom base).map fun (id,key,_) => (id,key)
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)
 
@@ -415,7 +424,7 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
     let rgba ← if (NativeSVGText.plainAttr attrs "viewport-fill").isSome then pure white
       else do pure (alphaFrom white (← draw (some "#000000")))
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
-    return ({width := rw, height := rh, rgba},w,h)
+    return ({width := rw, height := rh, rgba},w,h,NativeSVGForgiving.naturalSize attrs)
 
 /-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
 none for a file that is not SVG or does not read. -/
@@ -460,13 +469,64 @@ def vectorPictureAt (bytes : ByteArray) (tw th : Nat) : Option Rendering.Bitmap 
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
   NativeSVG.imageStoreOf keys images vectorPicture
 
-/-- The picture of each `img` whose image decoded within the limits of the store. -/
+private def storedPicture (store : NativeImage.Store) (key : String) :
+    Option (Rendering.Layout.Picture × Option NativeImage.VectorAxes) := do
+  let (.ok (id,bitmap),axes) ← store.entries.get? key | none
+  let natural := (store.natural key).map fun (w,h) => Rendering.Layout.PictureSize.fromPixels w h
+  return (⟨id,bitmap,natural⟩,axes)
+
+/-- The picture of each element whose image decoded within the limits of the store. -/
 @[noinline] def picturesMap (store : NativeImage.Store) (keys : List (Nat × String)) :
     Std.TreeMap Nat Rendering.Layout.Picture :=
   keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
-    match store.get? key with
-    | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap,store.natural key⟩
-    | _ => out) {}
+    match storedPicture store key with
+    | some (p,_) => out.insert id p
+    | none => out) {}
+
+/-- A finite, non-negative binary64 length as an exact rational, including fractional SVG lengths. -/
+private def imageLength (v : Float) : Rat :=
+  if !v.isFinite || v <= 0 then 0 else
+  let (fraction,exponent) := v.frExp
+  let significand := (fraction * 9007199254740992).toUInt64.toNat
+  (significand : Rat) * (2 : Rat) ^ (exponent - 53)
+
+/-- The source's CSS dimensions at this element's selected pixel density. The
+largest actual axis saturates at the layout coordinate bound. The other axis
+scales by the same factor. Missing SVG axes use their default object dimensions. -/
+private def densityMetrics (p : Rendering.Layout.Picture) (density : Rat)
+    (vector : Option NativeImage.VectorAxes) : Option Rendering.Layout.PictureSize := Id.run do
+  let (w,h) := p.size
+  let (nw,nh,ratio) := vector.getD (some w,some h,if h > 0 then some (w/h) else none)
+  if nw.isNone && nh.isNone then return p.natural
+  let width := (nw.orElse fun _ => do return (← nh) * (← ratio)).map imageLength
+  let height := (nh.orElse fun _ => do return (← nw) / (← ratio)).map imageLength
+  let largest := max (width.getD 0) (height.getD 0)
+  let scale := if density ≤ 0 then 33554431 / largest else min (1 / density) (33554431 / largest)
+  let css := fun (v : Rat) => Float.ofNat ((v * scale * 64).floor.toNat) / 64
+  return some ⟨(width.map css).getD 300,(height.map css).getD 150,ratio⟩
+
+def densityPicture (p : Rendering.Layout.Picture) (density : Rat) (axes : Option NativeImage.VectorAxes) :
+    Rendering.Layout.Picture :=
+  if density == 1 then p else {p with natural := densityMetrics p density axes}
+
+/-- Density changes only an element's intrinsic metrics. It cannot replace its
+backing pixels or allocate a new paint-table ID. -/
+theorem densityPicture_resource (p : Rendering.Layout.Picture) (d : Rat) (v : Option NativeImage.VectorAxes) :
+    (densityPicture p d v).id = p.id ∧ (densityPicture p d v).bitmap = p.bitmap := by
+  unfold densityPicture
+  split <;> exact ⟨rfl,rfl⟩
+
+#print axioms densityPicture_resource
+
+/-- Each element takes its selected density, while every use of a URL shares the
+bitmap and its paint-table ID. The optional SVG axes came from the same decode. -/
+@[noinline] def requestedPictures (store : NativeImage.Store) (requests : List (Nat × String × Rat)) :
+    Std.TreeMap Nat Rendering.Layout.Picture := Id.run do
+  let mut found : Std.TreeMap Nat Rendering.Layout.Picture := {}
+  for (id,key,density) in requests do
+    if let some (p,axes) := storedPicture store key then
+      found := found.insert id (densityPicture p density axes)
+  return found
 
 /-- Reference lookup for the pictures of `keys` in `store`. The layout paths bind
 `picturesMap` outside their lookup closures so the native compiler does not rebuild
@@ -675,10 +735,10 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
     (cascade : Option (Array Rendering.CSS.Computed) := none) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
       Option StoreEntry × NativeSVGText.Words) := do
-  let imgs := htmlImageKeys dom documentURL
+  let imgs := htmlImageRequests dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
-    let (store,made) := storeIn kept (imgs.map (·.2)) images
-    let found := picturesMap store imgs
+    let (store,made) := storeIn kept (imgs.map (·.2.1)) images
+    let found := requestedPictures store imgs
     return (embedding dom,(fun id => found.get? id),made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
@@ -691,10 +751,10 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   -- Each image decodes once for the document, not once for each SVG root. The keys are
   -- those of the tree as it was read (`storeKeys`: text lowered to glyphs names no image),
   -- so a store made ahead of the layout (`storeAhead`) is the one found here.
-  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
+  let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2.1)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
-  let found := picturesMap store imgs
+  let found := requestedPictures store imgs
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
@@ -709,9 +769,9 @@ def makeReplacedNoSvg (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option 
     (images : List (String × ByteArray)) (refusal : String) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
       Option StoreEntry × NativeSVGText.Words :=
-  let imgs := htmlImageKeys dom documentURL
-  let (store,made) := storeIn kept (imgs.map (·.2)) images
-  let found := picturesMap store imgs
+  let imgs := htmlImageRequests dom documentURL
+  let (store,made) := storeIn kept (imgs.map (·.2.1)) images
+  let found := requestedPictures store imgs
   (fun _ _ _ _ => .error refusal,(fun id => found.get? id),made,{})
 
 /-- Precomputing the lookup table in the SVG fallback preserves the picture
@@ -719,8 +779,9 @@ lookup for every ID, including missing or refused images. -/
 theorem makeReplacedNoSvg_pictures (kept : StoresKept) (dom : DOM.Dom)
     (documentURL : Option String) (images : List (String × ByteArray)) (refusal : String) :
     (makeReplacedNoSvg kept dom documentURL images refusal).2.1 =
-      let imgs := htmlImageKeys dom documentURL
-      picturesOf (storeIn kept (imgs.map (·.2)) images).1 imgs := rfl
+      let imgs := htmlImageRequests dom documentURL
+      let found := requestedPictures (storeIn kept (imgs.map (·.2.1)) images).1 imgs
+      fun id => found.get? id := rfl
 
 /-- Kind: safety. Says: the embedding of `makeReplacedNoSvg` answers every `svg` root with its
 refusal and nothing else, so the layout that takes it (liberal mode, `quiet`) draws no SVG and

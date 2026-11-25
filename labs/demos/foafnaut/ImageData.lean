@@ -19,7 +19,22 @@ def maxDocumentPixels : Nat := 1048576
 
 /-- A decoded image, or the refusal that names why it is not one. -/
 abbrev Entry := Except String (Nat × Bitmap)
-abbrev Store := Std.HashMap String Entry
+/-- SVG intrinsic width, height and aspect ratio, independent of its raster viewport. -/
+abbrev VectorAxes := Option Float × Option Float × Option Float
+
+/-- Keep a vector's intrinsic axes on the existing resource entry. Lookup, paint IDs
+and the pixel budget continue to use a single table keyed by the resource URL. -/
+structure Store where
+  entries : Std.HashMap String (Entry × Option VectorAxes) := {}
+  deriving Inhabited
+
+def Store.get? (store : Store) (key : String) : Option Entry :=
+  (store.entries.get? key).map Prod.fst
+
+def Store.insert (store : Store) (key : String) (entry : Entry) (axes : Option VectorAxes := none) : Store :=
+  ⟨store.entries.insert key (entry,axes)⟩
+
+def Store.size (store : Store) : Nat := store.entries.size
 
 private def isWebP (bytes : ByteArray) : Bool :=
   bytes.size ≥ 12 && bytes.extract 0 4 == "RIFF".toUTF8 && bytes.extract 8 12 == "WEBP".toUTF8
@@ -233,41 +248,41 @@ def naturalSize (bytes : ByteArray) : Option (Nat × Nat) :=
 format; else the picture it drew and the size of the image in CSS pixels (an SVG document
 drawn at twice its size has a picture with four times the pixels of its size). The SVG
 reader is a later module, so a caller gives it (`WebRender.vectorPicture`). -/
-abbrev VectorReader := ByteArray → Option (Except String (Bitmap × Nat × Nat))
+abbrev VectorReader := ByteArray → Option (Except String (Bitmap × Nat × Nat × VectorAxes))
 
 /-- Bytes as a picture, and the size of the image when it is not the picture's: a raster
 format (`decode`), else what `vector` reads. -/
-def decodeWith (vector : VectorReader) (bytes : ByteArray) : Except String (Bitmap × Option (Nat × Nat)) :=
+def decodeWith (vector : VectorReader) (bytes : ByteArray) : Except String (Bitmap × Option (Nat × Nat) × Option VectorAxes) :=
   match decode bytes with
-  | .ok b => .ok (b,none)
+  | .ok b => .ok (b,none,none)
   | .error message =>
     match vector bytes with
-    | some (.ok (b,w,h)) => .ok (b,if w == b.width && h == b.height then none else some (w,h))
+    | some (.ok (b,w,h,axes)) => .ok (b,(if w == b.width && h == b.height then none else some (w,h)),some axes)
     | some (.error refusal) => .error refusal
     | none => .error message
 
 /-- With no vector reader, `decodeWith` is `decode`. -/
 theorem decodeWith_none (bytes : ByteArray) :
-    decodeWith (fun _ => none) bytes = (decode bytes).map fun b => (b,none) := by
+    decodeWith (fun _ => none) bytes = (decode bytes).map fun b => (b,none,none) := by
   unfold decodeWith
   cases decode bytes <;> rfl
 
 /-- What `decodeWith` answers for one file: the picture and the image's own size when it
 is not the picture's, or the refusal. -/
-abbrev Decoded := Except String (Bitmap × Option (Nat × Nat))
+abbrev Decoded := Except String (Bitmap × Option (Nat × Nat) × Option VectorAxes)
 
 /-- Add one decoded image to the store under `href`, held at factor `k` (`reduce`). The
     document budget is checked from the pixels already held, so no later image can pass it. -/
 def Store.addDecoded (store : Store) (used : Nat) (href : String) (decoded : Decoded) (k : Nat := 1) : Store × Nat :=
   match decoded with
   | .error message => (store.insert href (.error message),used)
-  | .ok (whole,own) =>
+  | .ok (whole,own,axes) =>
     let bitmap := reduce whole k
     let size := bitmap.width*bitmap.height
     if used+size > maxDocumentPixels then
       (store.insert href (.error s!"image pixels of the document exceed {maxDocumentPixels}"),used)
     else
-      let store := store.insert href (.ok (store.size,bitmap))
+      let store := store.insert href (.ok (store.size,bitmap)) axes
       -- The image's own size, when the held picture has another: a vector image's size, or
       -- the size of the whole bitmap of an image held reduced.
       let natural := match own with

@@ -1209,12 +1209,12 @@ the image, the size of the picture drawn for it, and the root as the picture nee
 
 /-- A length of the root in CSS pixels: a positive number, with `px` or with no unit. A
 percentage or another unit gives none: the dimension then comes from the viewBox. -/
-def rootPixels (value : Option String) : Option Float :=
+def rootPixels (value : Option String) (allowZero : Bool := false) : Option Float :=
   value.bind fun v =>
     let t := v.trimAscii.toString
     let t := if t.endsWith "px" then (t.dropEnd 2).toString else t
     match NativeSVG.numberReference t with
-    | .ok n => if n > 0 then some n else none
+    | .ok n => if n > 0 || (allowZero && n == 0) then some n else none
     | .error _ => none
 
 /-- The width and height of a `viewBox` when both are positive. -/
@@ -1248,10 +1248,10 @@ def imageSize (attrs : List NamespaceAttribute) : Nat × Nat :=
 §5.1, SVG 2 §8.2): `width` and `height` when they are lengths (a percentage is none); the
 ratio of the `viewBox`, else of `width` and `height` when both are lengths. -/
 def naturalSize (attrs : List NamespaceAttribute) : Option Float × Option Float × Option Float :=
-  let w := rootPixels (plainAttr attrs "width")
-  let h := rootPixels (plainAttr attrs "height")
+  let w := rootPixels (plainAttr attrs "width") true
+  let h := rootPixels (plainAttr attrs "height") true
   let ratio := match w, h, rootViewBox (plainAttr attrs "viewBox") with
-    | some w, some h, _ => some (w/h)
+    | some w, some h, _ => if w > 0 && h > 0 then some (w/h) else none
     | _, _, some (bw,bh) => some (bw/bh)
     | _, _, none => none
   (w,h,ratio)
