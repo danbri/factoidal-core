@@ -128,25 +128,27 @@ def cmd_check(args):
         if name.endswith('.wasm'):
             br = brotli_size(p)
             if br is None:
-                print(f'note {name}.br: brotli not installed, compressed size not checked')
+                print(f'note {name}.br: status=unchecked reason=brotli-not-installed '
+                      '(compressed size not checked)')
             else:
                 sizes[name + '.br'] = br
         for n, size in sizes.items():
             measured[n] = size
             budget = data['budgets'].get(key, {}).get(n, data['budgets'].get('any', {}).get(n))
             if budget is None:
-                print(f'note {n}: {size:,} B; no budget recorded for {key}')
+                print(f'note {n}: measured_bytes={size} status=no-budget platform={key}')
                 continue
             ratio = size / budget - 1
-            if size > budget * (1 + tol):
-                print(f'FAIL {n}: {size:,} B is {ratio:+.2%} against the budget {budget:,} B '
-                      f'(limit {tol:+.0%}; tools/binary-budget.json, issue 551)')
+            ceiling = int(budget * (1 + tol))
+            receipt = (f'measured_bytes={size} baseline_bytes={budget} ceiling_bytes={ceiling} '
+                       f'change={ratio:+.2%}')
+            if size > ceiling:
+                print(f'FAIL {n}: {receipt} over_bytes={size - ceiling} '
+                      f'(tools/binary-budget.json, issue 551)')
                 failed = True
-            elif ratio < -tol:
-                print(f'ok {n}: {size:,} B, {ratio:+.2%} against {budget:,} B: lower the budget '
-                      f'(tools/binary-budget.py check --update)')
             else:
-                print(f'ok {n}: {size:,} B, {ratio:+.2%} against {budget:,} B')
+                hint = ' (tools/binary-budget.py check --update)' if ratio < -tol else ''
+                print(f'ok {n}: {receipt} remaining_bytes={ceiling - size}{hint}')
     if update and not failed:
         for n, size in measured.items():
             scope = 'any' if n.startswith('web-render.wasm') else key
