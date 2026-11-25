@@ -3293,7 +3293,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if markerItems.isEmpty || s.pos.listInside then pure content else do
         let marker ← inlineLayout font markerItems 0 innerY unbounded (some {s with textAlign := .left})
         let gap := s.fontSize/2
-        let dx := if s.direction == .rtl then innerX+width+gap else innerX-lineExtent marker-gap
+        -- An outside marker follows the first line's available inline-start
+        -- edge where a preceding float intrudes into this block.
+        let (offset, room) := if around.isEmpty then (0, width)
+          else floatBand around innerX width innerY s.lineHeight
+        let start := innerX+offset
+        let dx := if s.direction == .rtl then start+room+gap else start-lineExtent marker-gap
         let marker := marker.shift dx 0
         pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
                            height := max content.height marker.height}

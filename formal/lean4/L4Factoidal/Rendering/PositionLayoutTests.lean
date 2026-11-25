@@ -270,6 +270,14 @@ private def listed := "<ul id=u><li id=i>AA</li><li id=j>BB</li></ul>"
 private def xOf (html extra text : String) : Option Float := (at? html extra text).map (·.1)
 #guard xOf listed "" "AA" == some 40
 #guard xOf listed "" "*" == some 30.5
+-- A float changes the line band and outside marker together. An equal margin
+-- provides the reference placement without a float, including for an empty item.
+private def besideMarker := "<div id=f></div><div id=m></div>"
+#guard xOf besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" == some 86.5
+#guard at? besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" ==
+  at? "<div id=m>&nbsp;</div>" "#m{margin-left:96px;display:list-item;list-style:square}" "*"
+#guard xOf besideMarker "#f{float:right;width:96px;height:96px} #m{margin-left:40px;display:list-item}" "*" == some 30.5
+
 #guard box listed "" "i" == (box listed "ul{list-style:none}" "i")
 -- `list-style-type: none` (also through `list-style`, and inherited) draws no marker.
 #guard xOf listed "ul{list-style-type:none}" "*" == none
