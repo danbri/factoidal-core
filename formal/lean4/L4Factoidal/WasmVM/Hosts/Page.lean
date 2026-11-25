@@ -2367,8 +2367,7 @@ private def sheetsArena : Arena :=
 -- A value request without a dirty-value change keeps pending restyles.
 -- An actual value change retains the conservative full recascade.
 #guard
-  let (dom, n) := aboutBlank.create { type := .element, doc := 0,
-    ns := some L4Factoidal.DOM.htmlNS, lname := "input" }
+  let (dom, n) := aboutBlank.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := "input" }
   let dom := dom.linkChild 3 n none
   let r : Reads := { styleWrites := some [3] }
   let same := nodeQueryWrote r dom dom n Hosts.Dom.valueOp "t"
