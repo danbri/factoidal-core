@@ -582,10 +582,156 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
 #guard (borderBands .groove ⟨1,1,1⟩ true 4).map (fun (_,_,c) => c.r) == [0.6,1]
 #guard (borderBands .groove ⟨1,1,1⟩ false 4).map (fun (_,_,c) => c.r) == [1,0.6]
 
+/-- Tiles of one edge or the middle along one axis (CSS Backgrounds 3 §6.6): the destination
+range starts at `d0` and is `dlen` long; one slice scaled to the edge is `tile` long. Each tile
+is `(start, length, from, to)`, `from` and `to` being fractions of the slice that it shows.
+`stretch` is one tile. `repeat` tiles are centred on the range and the end tiles cut. `round`
+fits a whole number of tiles, at least one, by scaling them. `space` draws a whole number of
+unscaled tiles with equal gaps (also at both ends), none when one does not fit. At most 4096
+tiles; more draws none. -/
+def borderImageTiles (mode : BorderImageRepeat) (d0 dlen tile : Float) : Array (Float × Float × Float × Float) :=
+  if !(dlen > 0) || !dlen.isFinite then #[] else
+  match mode with
+  | .stretch => #[(d0,dlen,0,1)]
+  | .tile =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := (dlen/tile-0.000001).ceil
+    if k > 4096 then #[] else
+    let n := (max k 1).toUInt64.toNat
+    let start := d0+(dlen-n.toFloat*tile)/2
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do
+        let a := start+i.toFloat*tile
+        let lo := max a d0
+        let hi := min (a+tile) (d0+dlen)
+        if hi > lo then out := out.push (lo,hi-lo,(lo-a)/tile,(hi-a)/tile)
+      return out
+  | .round =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := max 1 (dlen/tile).round
+    if k > 4096 then #[] else
+    let n := k.toUInt64.toNat
+    let t := dlen/n.toFloat
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do out := out.push (d0+i.toFloat*t,t,0,1)
+      return out
+  | .space =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := (dlen/tile+0.000001).floor
+    if k < 1 || k > 4096 then #[] else
+    let n := k.toUInt64.toNat
+    let gap := max 0 ((dlen-n.toFloat*tile)/(n.toFloat+1))
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do out := out.push (d0+gap+i.toFloat*(tile+gap),tile,0,1)
+      return out
+
+/-- The border image of a border box at `(x,y)`, size `w` by `h` (CSS Backgrounds 3 §6.7): the
+nine parts of the image cut by `border-image-slice`, each drawn into its part of the border
+image area (the border box grown by `border-image-outset`) as wide as `border-image-width`
+says; the middle only with `fill`. Slices are in bitmap pixels; a slice larger than the image
+is the image. When the widths of two opposite sides together exceed the area, all four are
+reduced by one factor. A part with no pixels or no width is not drawn. The middle of a
+repeated or rounded image scales as the top or left edge does (the specification leaves it
+the same). None when the box has no decoded border image or no border: the border style is
+drawn then (§6.1). `border-style: none` on every side leaves the box without it, as in
+`borderNodes`. -/
+def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array Node) :=
+  match s.borderImage.bitmap with
+  | none => none
+  | some (pic,b) =>
+  if !s.hasBorder then none else
+  if !s.visible || w <= 0 || h <= 0 || b.width == 0 || b.height == 0 then some #[] else
+  let bi := s.borderImage
+  let pos : Float → Bool := fun v => decide (v > 0)
+  let edges := s.borderEdges
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let outsetOf : BorderImageAmount → Float → Float := fun a bw => match a with
+    | .number n => n*bw | .length v => v | _ => 0
+  let ot := outsetOf bi.outset.top edges.top
+  let orr := outsetOf bi.outset.right edges.right
+  let ob := outsetOf bi.outset.bottom edges.bottom
+  let ol := outsetOf bi.outset.left edges.left
+  let ax := x-ol
+  let ay := y-ot
+  let aw := w+ol+orr
+  let ah := h+ot+ob
+  let sliceOf : BorderImageAmount → Float → Float := fun a full => match a with
+    | .number n => min n full | .percent p => min (p*full) full | .length v => min v full | .auto => full
+  let st := sliceOf bi.slice.top ih
+  let sRight := sliceOf bi.slice.right iw
+  let sb := sliceOf bi.slice.bottom ih
+  let sl := sliceOf bi.slice.left iw
+  let widthOf : BorderImageAmount → Float → Float → Float → Float := fun a bw full slicePx => match a with
+    | .number n => n*bw | .length v => v | .percent p => p*full | .auto => slicePx
+  let wt0 := widthOf bi.width.top edges.top ah st
+  let wr0 := widthOf bi.width.right edges.right aw sRight
+  let wb0 := widthOf bi.width.bottom edges.bottom ah sb
+  let wl0 := widthOf bi.width.left edges.left aw sl
+  let fx := if wl0+wr0 > aw && wl0+wr0 > 0 then aw/(wl0+wr0) else 1
+  let fy := if wt0+wb0 > ah && wt0+wb0 > 0 then ah/(wt0+wb0) else 1
+  let f := min fx fy
+  let wt := wt0*f
+  let wr := wr0*f
+  let wb := wb0*f
+  let wl := wl0*f
+  let emit := fun (xs ys : Array (Float × Float × Float × Float)) (sx sy sw sh : Float) => Id.run do
+    let mut out : Array Node := #[]
+    for (dx,dw,fx0,fx1) in xs do
+      for (dy,dh,fy0,fy1) in ys do
+        let mx := ((fx1-fx0)*sw)/dw
+        let my := ((fy1-fy0)*sh)/dh
+        let image : ImageRecord :=
+          {map := ⟨mx,0,0,my,sx+fx0*sw-dx*mx,sy+fy0*sh-dy*my⟩, id := pic, bitmap := b, repeatX := false, repeatY := false}
+        out := out.push (.paint ⟨some id,{geometry := .rect dx dy dw dh,style := {fill := .image image}}⟩)
+    return out
+  let one := fun (d0 dlen : Float) => #[(d0,dlen,(0 : Float),(1 : Float))]
+  let innerW := aw-wl-wr
+  let innerH := ah-wt-wb
+  let midW := iw-sl-sRight
+  let midH := ih-st-sb
+  let out : Array Node := Id.run do
+    let mut out : Array Node := #[]
+    -- corners
+    if pos sl && pos st && pos wl && pos wt then out := out ++ emit (one ax wl) (one ay wt) 0 0 sl st
+    if pos sRight && pos st && pos wr && pos wt then out := out ++ emit (one (ax+aw-wr) wr) (one ay wt) (iw-sRight) 0 sRight st
+    if pos sl && pos sb && pos wl && pos wb then out := out ++ emit (one ax wl) (one (ay+ah-wb) wb) 0 (ih-sb) sl sb
+    if pos sRight && pos sb && pos wr && pos wb then out := out ++ emit (one (ax+aw-wr) wr) (one (ay+ah-wb) wb) (iw-sRight) (ih-sb) sRight sb
+    -- edges
+    if pos midW && pos innerW then
+      if pos st && pos wt then
+        out := out ++ emit (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wt/st))) (one ay wt) sl 0 midW st
+      if pos sb && pos wb then
+        out := out ++ emit (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wb/sb))) (one (ay+ah-wb) wb) sl (ih-sb) midW sb
+    if pos midH && pos innerH then
+      if pos sl && pos wl then
+        out := out ++ emit (one ax wl) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wl/sl))) 0 st sl midH
+      if pos sRight && pos wr then
+        out := out ++ emit (one (ax+aw-wr) wr) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wr/sRight))) (iw-sRight) st sRight midH
+    -- the middle, only with `fill`
+    if bi.fill && pos midW && pos midH && pos innerW && pos innerH then
+      let scaleX : Float := if pos st && pos wt then wt/st else if pos sb && pos wb then wb/sb else 1
+      let scaleY : Float := if pos sl && pos wl then wl/sl else if pos sRight && pos wr then wr/sRight else 1
+      let xs := borderImageTiles bi.repeatX (ax+wl) innerW (midW*scaleX)
+      let ys := borderImageTiles bi.repeatY (ay+wt) innerH (midH*scaleY)
+      if xs.size*ys.size > 4096 then
+        out := out ++ emit (one (ax+wl) innerW) (one (ay+wt) innerH) sl st midW midH
+      else out := out ++ emit xs ys sl st midW midH
+    return out
+  some out
+
+/-- The border of a border box: its border image when it has a decoded one, else the
+border style (CSS Backgrounds 3 §6.1). -/
+def borderPaint (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  (borderImageNodes id s x y w h).getD (borderNodes id s x y w h)
+
 /-- Background, then border, of a border box. None for a box whose mask image is not drawn
 (`Computed.masked`): unmasked, the background of an icon would be a filled box. -/
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if s.masked then #[] else background id s x y w h ++ borderNodes id s x y w h
+  if s.masked then #[] else background id s x y w h ++ borderPaint id s x y w h
 
 /-- Kind: safety of the paint (no undrawn mask shows as a filled box). Says: a box whose
 mask image is not drawn paints no background and no border. Does not say: anything about
@@ -594,11 +740,12 @@ theorem decorations_masked (id : Nat) (s : Computed) (x y w h : Float) (hm : s.m
     decorations id s x y w h = #[] := by
   simp [decorations, hm]
 
-/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask the
-decorations are the background and the border, as before. -/
-theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false) :
+/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask and no
+decoded border image the decorations are the background and the border, as before. -/
+theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false)
+    (hb : s.borderImage.bitmap = none) :
     decorations id s x y w h = background id s x y w h ++ borderNodes id s x y w h := by
-  simp [decorations, hm]
+  simp [decorations, borderPaint, borderImageNodes, hm, hb]
 
 /-- The content of a replaced element that Lean decoded or drew: the image of an
 `img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.

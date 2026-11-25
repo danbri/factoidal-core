@@ -585,15 +585,15 @@ private def urlArg (p : String) : Option (String × String) :=
       if inner.length == cs.length then none else
       some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
 
-/-- Whether the declaration that the text after `t` is in names a background property or
-`content` (a `url()` there is an image too, CSS Content 3 §2.1): the
+/-- Whether the declaration that the text after `t` is in names a background property,
+`border-image` (CSS Backgrounds 3 §6) or `content` (a `url()` there is an image too, CSS Content 3 §2.1): the
 text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
 declaration before it did (`prev`). -/
 private def inBackground (prev : Bool) (t : String) : Bool :=
   let cs := t.toLower.toList
   let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
   let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1 ||
-    ((String.ofList l).splitOn "content").length > 1
+    ((String.ofList l).splitOn "content").length > 1 || ((String.ofList l).splitOn "border-image").length > 1
   if tail.length < cs.length then mentions tail else prev || mentions cs
 
 private def resolveBackgroundUrl (base u : String) : String :=
@@ -640,6 +640,9 @@ def backgroundUrlsOf (base text : String) : List String := Id.run do
 #guard backgroundUrlsAbsolute "https://a.test/s.css" "a{content:url(#frag)}" == "a{content:url(#frag)}"
 #guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
   ["https://a.test/a b.png","https://a.test/c.png"]
+#guard backgroundUrlsOf "https://a.test/s.css" "div { border-image: url(\"stripes.png\") 0 35 0 0 repeat }" == ["https://a.test/stripes.png"]
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "div{border-image-source:url(b.png)}" ==
+  "div{border-image-source:url(\"https://a.test/css/b.png\")}"
 #guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
 #guard backgroundUrlsAbsolute "https://a.test/s.css" "p{background:url(#a),url('#b')}" ==
   "p{background:url(#a),url('#b')}"
@@ -2506,6 +2509,16 @@ be eta-expanded inside the style loop, rebuilding the map for every element. -/
     (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
   styles.mapIdx (attachBackgroundPicture (fun id => pictures.get? id) naturals)
 
+/-- The decoded picture of each element's `border-image-source`, in the same paint-table ids as
+a background of the same URL (one image, one entry). An image that did not decode leaves the
+border style to draw (CSS Backgrounds 3 §6.1). -/
+@[noinline] def attachBorderPictures (pictures : Std.TreeMap Nat Rendering.Layout.Picture)
+    (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
+  styles.mapIdx fun id st =>
+    match pictures.get? id with
+    | some pic => {st with borderImage := {st.borderImage with bitmap := some (pic.id+backgroundPictureBase,pic.bitmap)}}
+    | none => st
+
 theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Nat × String))
     (naturals : List (String × (Option Float × Option Float × Option Float)))
     (styles : Array Rendering.CSS.Computed) :
@@ -2544,17 +2557,20 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
   | .error e => (.error e,none,[],{})
   | .ok (d,styles) =>
     let generated := generatedImages base d
-    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ generated.map (·.2)).eraseDups
+    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ (styles.toList.filterMap (·.borderImage.source)) ++
+      generated.map (·.2)).eraseDups
     let keys := all.take maxBackgroundImages
     let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
     if keys.isEmpty then (.ok (d,styles),none,[],{}) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
+    let borderKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.borderImage.source.map (i,·)
     -- the natural size of each SVG background, read once for each URL (a page can name one
     -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
     let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
       if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
     let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
+    let styles := attachBorderPictures (WebRender.picturesMap store borderKeys) styles
     let (styles,wanted) := redrawVectorBackgrounds images styles
     let pictures := (WebRender.picturesMap store (generated.filter (keys.contains ·.2))).map fun _ p =>
       {p with id := generatedPictureBase+p.id}

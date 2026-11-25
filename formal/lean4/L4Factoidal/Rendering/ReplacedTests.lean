@@ -266,6 +266,58 @@ private def beside := "<p id=a>AA</p>"
 #guard generatedWords beside "#a::before{content:url(a.png) url(a.png)}" == .ok [("AA",40)]
 -- a counter beside an image
 #guard generatedWords beside "#a::before{content:'1' url(a.png)}" == .ok [("1",0),("AA",46)]
+
+/-! `border-image` (CSS Backgrounds 3 §6, https://github.com/danbri/factoidal-core/issues/874):
+a 6 by 6 picture, 100 by 60 border boxes. The paint records are `(x,y,w,h,map.a,map.d)`. -/
+private def borderPicture : Bitmap := ⟨6,6,ByteArray.mk (Array.replicate (6*6*4) 255)⟩
+private def boxStyle (bi : BorderImage) (widths : Edges := ⟨10,10,10,10⟩) : Computed :=
+  {borderStyles := .all .solid, borderWidth := widths, borderImage := {bi with bitmap := some (7,borderPicture)}}
+private def partsOf (s : Computed) : Option (List (Float × Float × Float × Float × Float × Float)) :=
+  (borderImageNodes 1 s 0 0 100 60).map fun nodes => nodes.toList.filterMap fun
+    | Node.paint ⟨_,painted⟩ =>
+      match painted.geometry, painted.style.fill with
+      | .rect x y w h, .image r => some (x,y,w,h,r.map.a,r.map.d)
+      | _, _ => none
+    | _ => none
+private def near (a b : Float) : Bool := (a-b).abs < 0.000001
+private def sameParts (a b : List (Float × Float × Float × Float × Float × Float)) : Bool :=
+  a.length == b.length && (a.zip b).all fun ((a0,a1,a2,a3,a4,a5),(b0,b1,b2,b3,b4,b5)) =>
+    near a0 b0 && near a1 b1 && near a2 b2 && near a3 b3 && near a4 b4 && near a5 b5
+-- slice 2 on a 6 pixel picture, width 1 (the border is 10 wide): eight parts, the middle only with `fill`
+private def sliced : BorderImage := {slice := .all (.number 2)}
+#guard (partsOf (boxStyle sliced)).map List.length == some 8
+#guard (partsOf (boxStyle {sliced with fill := true})).map List.length == some 9
+-- the corners are stretched from 2 to 10 px (0.2 picture px per px); the top edge from 2 to 80
+#guard (partsOf (boxStyle sliced)).map (fun ps => sameParts (ps.take 1) [(0,0,10,10,0.2,0.2)]) == some true
+#guard (partsOf (boxStyle sliced)).map (fun ps => sameParts (ps.drop 4 |>.take 1) [(10,0,80,10,0.025,0.2)]) == some true
+-- the fill covers the inside of the border
+#guard (partsOf (boxStyle {sliced with fill := true})).map (fun ps => sameParts (ps.drop 8) [(10,10,80,40,0.025,0.05)]) == some true
+-- no decoded image, no border style: the border style is drawn
+#guard (borderImageNodes 1 {borderStyles := .all .solid,borderWidth := ⟨10,10,10,10⟩} 0 0 100 60).isNone
+#guard (borderImageNodes 1 {borderImage := {bitmap := some (7,borderPicture)}} 0 0 100 60).isNone
+-- the image replaces the border style: the same `borderPaint` is the image's nodes
+#guard (borderPaint 1 (boxStyle sliced) 0 0 100 60).size == 8
+#guard (borderPaint 1 {borderStyles := .all .solid,borderWidth := ⟨10,10,10,10⟩} 0 0 100 60).size ==
+  (borderNodes 1 {borderStyles := .all .solid,borderWidth := ⟨10,10,10,10⟩} 0 0 100 60).size
+-- jvns.ca: `0 35 0 0 repeat`, here slice 4 of 6 on the right only, a 4 px right border: the right
+-- edge is the picture's last 4 columns, tiled down the side at 4 px wide and 6 px high: 60/6 = 10 tiles
+#guard (partsOf (boxStyle {slice := ⟨.number 0,.number 4,.number 0,.number 0⟩,repeatX := .tile,repeatY := .tile} ⟨0,4,0,0⟩)).map
+  (fun ps => (ps.length, ps.all fun (x,_,w,h,_,_) => near x 96 && near w 4 && near h 6)) == some (10, true)
+-- `border-image-width` as a length and `outset` move and resize the parts
+#guard (partsOf (boxStyle {sliced with width := .all (.length 5)})).map (fun ps => sameParts (ps.take 1) [(0,0,5,5,0.4,0.4)]) == some true
+#guard (partsOf (boxStyle {sliced with outset := .all (.length 3)})).map (fun ps => sameParts (ps.take 1) [(-3,-3,10,10,0.2,0.2)]) == some true
+-- widths that together exceed the box are reduced by one factor: 80 + 80 > 100 reduces 80 to 50
+#guard (partsOf (boxStyle {sliced with width := .all (.length 80)})).map (fun ps => sameParts (ps.take 1) [(0,0,30,30,2/30,2/30)]) == some true
+-- the tiles of one edge, CSS Backgrounds 3 §6.6
+#guard (borderImageTiles .stretch 10 80 99).size == 1
+#guard (borderImageTiles .round 0 70 30).size == 2 && near (borderImageTiles .round 0 70 30)[1]!.1 35
+#guard (borderImageTiles .space 0 100 30).size == 3 && near (borderImageTiles .space 0 100 30)[0]!.1 2.5
+#guard (borderImageTiles .space 0 20 30).isEmpty
+-- repeat: centred, the end tiles cut: 70 px of 30 px tiles start at -10; the first shows 2/3 of its picture
+#guard (borderImageTiles .tile 0 70 30).size == 3 && near (borderImageTiles .tile 0 70 30)[0]!.2.1 20 &&
+  near (borderImageTiles .tile 0 70 30)[0]!.2.2.1 (1/3)
+#guard (borderImageTiles .tile 0 70 35).size == 2
+
 end L4Factoidal.Rendering.ReplacedTests
 
 #print axioms L4Factoidal.Rendering.Layout.pictureOffset_default
