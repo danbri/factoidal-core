@@ -129,6 +129,8 @@ function start(g) {
     if (k < last) badge(k, c);
     return c;
   }
+  // "Run" fetches a sample: a query without a LIMIT of its own gets one (the whole query can have 100,000s of rows).
+  const limited = (q) => (/\bLIMIT\s+\d+\s*(OFFSET\s+\d+\s*)?$/i.test(q.replace(/#[^\n]*$/gm, '').trim()) ? q : `${q.trim()}\nLIMIT 50`);
   // The whole query counted as a subquery; its own PREFIX lines move outside.
   const stripPrefixes = (q) => q.replace(/^\s*PREFIX[^\n]*\n/gim, '');
 
@@ -144,7 +146,7 @@ function start(g) {
         ui.status.textContent = c.items != null ? `${fmt.format(c.items)} distinct ?${g.steps[cur].v} in ${fmt.format(c.rows)} rows` : `${fmt.format(c.rows)} rows`;
       } else {
         const t0 = performance.now();
-        const j = await sparql(ui.text.value, t.signal);
+        const j = await sparql(limited(ui.text.value), t.signal);
         ui.status.textContent = `${fmt.format(j.results.bindings.length)} rows in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
         ui.result.append(table(j));
       }
@@ -178,7 +180,7 @@ function start(g) {
     const tr = t.createTHead().insertRow();
     for (const v of vars) { const th = document.createElement('th'); th.textContent = `?${v}`; tr.append(th); }
     const body = t.createTBody();
-    for (const row of j.results.bindings) {
+    for (const row of j.results.bindings.slice(0, 200)) {
       const r = body.insertRow();
       for (const v of vars) {
         const c = r.insertCell(), x = row[v];

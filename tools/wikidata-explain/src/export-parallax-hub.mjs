@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { astOf, nameOf, parallaxId } from './run.mjs';
 import { buildFlow } from './flow.mjs';
 import { grammarOf } from './grammar.mjs';
+import { prefixesFor } from './sparql.mjs';
 import { plainReason } from './plain.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,6 +60,10 @@ for (const q of corpusDoc.queries) {
   for (const code of whyCodes(grammar.program)) grammar.lex[code] = plainReason(code);
   // The whole query, as rewritten for QLever and checked there: the stepper's last step.
   grammar.full = q.lean_replacement_query.replace(/\n# Original query:[\s\S]*$/, '').replace(/^#title:.*\n/, '').trim();
+  // Some rewrites lean on WDQS's built-in prefixes; QLever needs each one declared.
+  const declared = new Set([...grammar.full.matchAll(/^\s*PREFIX\s+(\w*):/gim)].map(m => m[1]));
+  const missing = prefixesFor(grammar.full.replace(/^\s*PREFIX[^\n]*\n/gim, '')).split('\n').filter(l => l && !declared.has(/^PREFIX (\w*):/.exec(l)[1]));
+  if (missing.length) grammar.full = `${missing.join('\n')}\n${grammar.full}`;
   flow.why = flow.beyond.map(b => ({ code: b, text: plainReason(b) }));
   // The page draws blocks; the set list itself is not needed there.
   const { sets: flowSets, looseEdges, ...flowOut } = flow;

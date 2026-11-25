@@ -109,3 +109,12 @@ test('stepping: every step adds SPARQL placed in the whole query, and the steps 
   }
   assert.ok(steps > 1500, `only ${steps} steps`);
 });
+
+test('the whole query (the last step) declares every prefix it uses, as QLever requires', () => {
+  for (const q of queries) {
+    const full = q.grammar.full;
+    const declared = new Set([...full.matchAll(/^\s*PREFIX\s+(\w*):/gim)].map(m => m[1]));
+    const body = full.replace(/^\s*PREFIX[^\n]*\n/gim, '').replace(/"(?:[^"\\]|\\.)*"|<[^>\s]*>|#[^\n]*/g, ' ');
+    for (const m of body.matchAll(/(?:^|[^\w:.?$-])([A-Za-z][\w-]*):[A-Za-z_\d]/g)) assert.ok(declared.has(m[1]), `${q.id}: ${m[1]}: is not declared`);
+  }
+});

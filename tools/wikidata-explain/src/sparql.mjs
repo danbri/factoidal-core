@@ -158,6 +158,6 @@ export const indent = (s, by = '  ') => s.split('\n').map(l => by + l).join('\n'
 
 /** PREFIX lines for the prefixes a text uses. */
 export function prefixesFor(text) {
-  const used = Object.keys(PREFIXES).filter(p => new RegExp(`(^|[\\s(/|^!{,])${p}:`).test(text));
+  const used = Object.keys(PREFIXES).filter(p => new RegExp(`(^|[^\\w:.-])${p}:`).test(text));
   return used.map(p => `PREFIX ${p}: <${PREFIXES[p]}>`).join('\n');
 }
