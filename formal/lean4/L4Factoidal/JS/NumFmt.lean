@@ -201,7 +201,7 @@ def precisionDigits (s : String) (n : UInt64) (e : Int) (p : Nat) : String :=
 fast path when `f ≤ 19` and the scaled value fits in 64 bits, else `fixed`. -/
 def fixedOf (x : Float) (f : Nat) : String :=
   let b := x.toBits
-  let n := if x == 0 then 0 else if f ≤ 19 then scaledUp (mantOf b) (expOf b) f true else noFast
+  let n := if f > 19 then noFast else if x == 0 then 0 else scaledUp (mantOf b) (expOf b) f true
   if n == noFast then
     let (s, num, den) := ofFloat x
     fixed s num den f
@@ -248,6 +248,11 @@ def expoShortest (x : Float) : String :=
 #guard (let (s, n, d) := ofFloat 0.5; (fixed s n d 0, fixed s n d 1)) == ("1", "0.5")
 #guard (let (s, n, d) := ofFloat 1.45; fixed s n d 1) == "1.4"
 #guard (let (s, n, d) := ofFloat 123.456; expo s n d (shortestFrac 123.456)) == "1.23456e+2"
+
+-- Zero with more fraction digits than the fast path takes (`pow10` has 20 entries): the exact
+-- path. Before 2026-11-25 `fixedOf 0 20` read `pow10[20]`, a panic in compiled code.
+#guard fixedOf 0.0 20 == "0.00000000000000000000" && fixedOf 0.0 19 == "0.0000000000000000000"
+#guard fixedOf (-0.0) 100 == "0." ++ String.ofList (List.replicate 100 '0')
 
 -- Expected failure of the reference, https://github.com/danbri/factoidal-core/issues/1131:
 -- `XPath4.shortestDigits` gives 17 digits for 2^-705 (bits 0x13E0000000000000); the shortest

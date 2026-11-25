@@ -8,7 +8,8 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 leanjs=$1; n=$2; seed=$3; qjs=${4:-}
 out=$(mktemp); rc=0
-"$leanjs" numfmt-diff "$n" "$seed" "$out" || rc=1
+# a panic in compiled Lean returns a default value and the run goes on: abort instead
+LEAN_ABORT_ON_PANIC=1 "$leanjs" numfmt-diff "$n" "$seed" "$out" || rc=1
 cp "$here/ryu-differential/check.js" "$here/ryu-differential/check.mjs"
 node "$here/ryu-differential/node-main.mjs" "$out" || rc=1
 if [ -n "$qjs" ]; then "$qjs" -m "$here/ryu-differential/qjs-main.js" "$out" || rc=1; fi

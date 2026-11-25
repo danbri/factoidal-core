@@ -90,6 +90,15 @@ same files, before and after. `leanjs bench`: fib(24) 29 ms, loop 67 ms, before 
 - `PageCanvas/Wire.lean` `jsNumber` compared with the `Nat` literal 2^53, which the generated C
   read from text at each call. It is now a `@[noinline]` constant (`twoPow53Nat`).
 
+- Our own error, found before landing: `fixedOf` took the fast path for zero with 20 or more
+  fraction digits and read `pow10[20]`. In compiled Lean an out-of-bounds `[i]!` prints a panic
+  and returns a default value, and the run goes on; here the default happened to give the right
+  text, so the differential test reported 0 differences while the code was wrong. The message
+  was on standard error, which the first runs did not keep. Repaired (`fixedOf` checks `f > 19`
+  first, `#guard` in `NumFmt.lean`), and `tools/ryu-differential.sh` now runs `leanjs` with
+  `LEAN_ABORT_ON_PANIC=1`, so a panic fails the test. Rule for any differential test of
+  compiled Lean: abort on panic, or count the panic messages.
+
 ## 5. Commands
 
 ```sh
