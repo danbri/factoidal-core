@@ -444,11 +444,11 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   for i in [0:n] do
     let item := items[i]!
-    let is := styles[i]!
     let a := plan.areas.getD i default
-    let m := is.margin
     let extent := Grid.spanExtent colStarts colSizes a.col a.colSpan
     let areaW := gridPx extent.2
+    let is := if swapRecord then styles[i]! else withLayoutEdges styles[i]! areaW
+    let m := is.margin
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
     let justify := gridJustifyItem is s rtl
     let stretch := justify == .stretch
@@ -479,7 +479,9 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let r ← if kids.heightSensitive item then
         kids.layout item x box.y {available := areaW, width := some width, height := fixed,
                                   measure := box.measure || fixed.isNone}
-      else kids.content item x box.y width
+      else match kids.contentInArea with
+        | some content => content item x box.y width areaW
+        | none => kids.content item x box.y width
     let natural := if kids.heightSensitive item then r.height-m.top-m.bottom
       else fixed.getD (clampOpt minH maxH r.height+padV)
     let outerH := gridUnits (natural+m.top+m.bottom)
@@ -553,10 +555,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut lastBaseline : Option GridBaselineChoice := none
   for i in [0:n] do
     let item := items[i]!
-    let is := styles[i]!
+    let (r,measuredX,measuredWidth,natural,areaW) := laid[i]!
+    let is := if swapRecord then styles[i]! else withLayoutEdges styles[i]! areaW
     let a := plan.areas.getD i default
     let m := is.margin
-    let (r,measuredX,measuredWidth,natural,areaW) := laid[i]!
     let extent := Grid.spanExtent rowStarts rowSizes a.row a.rowSpan
     let areaH := gridPx extent.2
     let ratioWidth := is.pos.ratio.bind fun _ =>
@@ -607,7 +609,11 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
           let again ← kids.layout item x y {available := areaW, width := some width, height := some height}
           -- the measuring pass is work done too
           pure {again with work := again.work+r.work}
-      else pure (kids.frame item x y width height (r.shift 0 (y-box.y)))
+      else
+        let content := r.shift 0 (y-box.y)
+        pure <| match kids.frameInArea with
+          | some frame => frame item x y width height areaW content
+          | none => kids.frame item x y width height content
     if horizontal then
       let bottom := y+m.top+height
       let parallel := is.pos.writingMode == .horizontalTb

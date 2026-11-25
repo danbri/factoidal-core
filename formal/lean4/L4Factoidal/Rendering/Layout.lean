@@ -3304,6 +3304,29 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       heightSensitive := fun item => match item with
         | .element id => sizesItself dom styles pictures id
         | .anonymous _ _ => false}
+    let placedGridStyles (id : Nat) (width areaWidth : Float) : Array Computed :=
+      let before := styles[id]!
+      let used := withLayoutEdges before areaWidth
+      let styles := if before.pos.percentEdges then styles.set! id used else styles
+      let contentWidth := max 0 (width-(horizontalEdges used-used.margin.left-used.margin.right))
+      gridItemEdges dom styles id contentWidth
+    let gridChildren : Children := {children with
+      layout := fun item ix iy c => match item, c.width with
+        | .element id, some width =>
+          layoutTask dom (placedGridStyles id width c.available) font embedding pictures fuel
+            (if c.measure then Task.rough (.sized id width c.height) else sub <| .sized id width c.height)
+            ix iy c.available
+        | _, _ => children.layout item ix iy c
+      contentInArea := some fun item ix iy width areaWidth => match item with
+        | .element id =>
+          layoutTask dom (placedGridStyles id width areaWidth) font embedding pictures fuel
+            (sub <| .inner id width) ix iy width
+        | .anonymous _ _ => children.content item ix iy width
+      frameInArea := some fun item ix iy width height areaWidth content => match item with
+        | .element id =>
+          let used := withLayoutEdges styles[id]! areaWidth
+          frameBox id used (ix+used.margin.left) (iy+used.margin.top) width height content
+        | .anonymous _ _ => children.frame item ix iy width height content}
     -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
     -- `(cx,cy,cw,ch)`; `at'` has its static position.
     let absolute (at' : Pending) (cx cy cw ch : Float)
@@ -3583,7 +3606,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, measure}
         else if s.display.isGrid then
-          gridLayout children s (collectItems dom styles id)
+          gridLayout (if defersGridEdges s then gridChildren else children) s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, source := some id, measure}
         else if s.columnCount.isNone && s.columnWidth.isNone then
           flow s id n.kids lead innerX innerY width (if joinsTop then unbounded else 0) around definite
