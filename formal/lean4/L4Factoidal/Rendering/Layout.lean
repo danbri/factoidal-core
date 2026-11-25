@@ -2212,8 +2212,8 @@ private def listMarkerItems (dom : Dom) (styles : Array Computed) (font : FontPr
       -- The generated bullet or disclosure symbol is a single typographic unit.
       -- There is no inter-character spacing in that unit. Number labels still
       -- use their inherited letter spacing between the characters.
-      let markerStyle := {s with preformatted := true,
-        letterSpacing := if label.length == 1 then .px 0 else s.letterSpacing}
+      let spacing := if label.length == 1 then CSS.Length.px 0 else s.letterSpacing
+      let markerStyle := {s with preformatted := true, letterSpacing := spacing}
       (textItems (.node id) markerStyle label).toArray
 
 /-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
