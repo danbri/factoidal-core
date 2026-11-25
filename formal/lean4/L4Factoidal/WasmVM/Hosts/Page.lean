@@ -1443,7 +1443,13 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
           let (st, r) := Hosts.Dom.putOut mem st (a 4) (a 5) bytes
           (h, st, r)
       else
-      let (canvas, answer) := L4Factoidal.PageCanvas.Wire.call h.dom.canvas (canvasEnvOf h) (a 0) b
+      -- The store is taken out of the host first, so it has one reference and each canvas
+      -- bitmap is drawn in place (issue 1098: a shared store copied the bitmap at its first
+      -- pixel write, 6.4 MB for a 1600 x 1000 canvas, at every batch).
+      let env := canvasEnvOf h
+      let store := h.dom.canvas
+      let h := { h with dom := { h.dom with canvas := {} } }
+      let (canvas, answer) := L4Factoidal.PageCanvas.Wire.call store env (a 0) b
       let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) (.ok answer)
       ({ h with dom := { h.dom with canvas } }, st, r)
   | "node_query" =>

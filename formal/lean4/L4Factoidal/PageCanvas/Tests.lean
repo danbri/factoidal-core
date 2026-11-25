@@ -89,4 +89,78 @@ def pixel (w h : Nat) (cmds : List Cmd) (x y : Nat) : List Nat :=
 -- 1,000 rectangles at one place: the fill is the same as one.
 #guard pixel 10 10 ((List.range 1000).map (fun _ => Cmd.rect 0 0 5 5) ++ [.fill 0 .nonzero]) 2 2 == [0, 0, 0, 255]
 
+/-! ### `composite` against `compositeRef` (issue 1098)
+
+The fast source-over path must give the bytes of the reference. Each case draws on a
+destination of pseudo-random bytes, under each clip (none; random bytes with 0 and 255 among
+them), and takes the opaque, table and per-pixel branches of `compositeOver`. -/
+
+/-- Pseudo-random bytes (a linear congruential sequence). -/
+def noise (n seed : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity n
+  let mut v := seed
+  for _ in [0:n] do
+    v := (v * 1103515245 + 12345) % 2147483648
+    out := out.push (v / 65536 % 256).toUInt8
+  return out
+
+/-- A clip mask with whole, empty and partial pixels. -/
+def noiseMask (n seed : Nat) : ByteArray :=
+  (noise n seed).foldl (init := ByteArray.empty) fun acc b =>
+    acc.push (if b < 70 then 0 else if b < 170 then 255 else b)
+
+def diffW : Nat := 64
+def diffH : Nat := 40
+
+/-- Draws of every kind of paint and coverage, at each alpha. -/
+def diffDraws : List Draw := Id.run do
+  let W := diffW
+  let H := diffH
+  let covs : List Coverage := [
+    rectCoverage W H 0 0 (nf W) (nf H),
+    rectCoverage W H 3.25 2.5 50.75 31.5,
+    rectCoverage W H (-5) (-5) 100 100,
+    coverage W H (edgesOf #[⟨FloatArray.mk #[2, 1, 60, 8, 20, 39], true⟩]) .nonzero,
+    coverage W H (edgesOf #[⟨FloatArray.mk #[0, 0, 64, 0, 64, 40, 0, 40], true⟩,
+      ⟨FloatArray.mk #[10, 10, 30, 10, 30, 30, 10, 30], true⟩]) .evenodd]
+  let grad : Gradient := { kind := .linear 0 2 0 35, stops := #[⟨0, ⟨32, 48, 96, 1⟩⟩, ⟨1, ⟨192, 128, 80, 1⟩⟩] }
+  let gradA : Gradient := { grad with stops := #[⟨0, ⟨255, 0, 0, 0.5⟩⟩, ⟨1, ⟨0, 0, 255, 1⟩⟩] }
+  let gradX : Gradient := { grad with kind := .linear 3 0 60 4 }
+  let rad : Gradient := { grad with kind := .radial 30 20 2 30 20 25 }
+  let ready := fun (g : Gradient) (m : Matrix) => (Style.gradient 1).ready (fun _ => some g) (fun _ => none) m false
+  let readies : List Ready := [
+    .solid (RGBA.px ⟨16, 19, 31, 1⟩), .solid (RGBA.px ⟨224, 0, 0, 1⟩), .solid (RGBA.px ⟨255, 128, 0, 0.6⟩),
+    .solid Px.zero, ready grad {}, ready grad { a := 1.25, d := 1.25 }, ready grad { a := -0.0, b := -0.0, c := 0, d := 2, f := -3 },
+    ready gradA { a := 1.25, d := 1.25 }, ready gradX {}, ready rad {},
+    .pattern {} ⟨⟨2, 2, ByteArray.mk #[255, 0, 0, 255, 0, 128, 0, 128, 0, 0, 255, 255, 10, 20, 30, 40]⟩, ⟨true, true⟩, {}, false⟩ true]
+  let mut out := []
+  for cov in covs do
+    for r in readies do
+      for a in [1.0, 0.5, 0.3] do
+        for clip in [none, some (noiseMask (W * H) 7)] do
+          out := ⟨r, cov, a, .sourceOver, clip⟩ :: out
+  return out
+
+/-- The draws whose fast result differs from the reference (none). -/
+def diffFails : List Nat := Id.run do
+  let bm := noise (diffW * diffH * 4) 11
+  let mut bad := []
+  let mut i := 0
+  for d in diffDraws do
+    if composite diffW diffH bm d != compositeRef diffW diffH bm d then bad := i :: bad
+    i := i + 1
+  return bad
+
+#guard diffDraws.length == 330
+#guard diffFails == []
+-- The operators other than source-over are the reference itself.
+#guard
+  let bm := noise (diffW * diffH * 4) 3
+  let d : Draw := ⟨.solid (RGBA.px ⟨255, 0, 0, 0.5⟩), rectCoverage diffW diffH 1 1 30 30, 1, .multiply, none⟩
+  composite diffW diffH bm d == compositeRef diffW diffH bm d
+-- The branches were taken: the opaque fill, the table (a draw of at least `tableMin` pixels) and
+-- a constant gradient row.
+#guard diffW * diffH ≥ tableMin
+#guard rowConstant ((Style.gradient 1).ready (fun _ => some { kind := .linear 0 2 0 35, stops := #[⟨0, RGBA.black⟩] }) (fun _ => none) { a := 1.25, d := 1.25 } false)
+
 end L4Factoidal.PageCanvas.Tests

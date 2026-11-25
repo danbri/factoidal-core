@@ -395,9 +395,10 @@ theorem Draw.visits_within (W H : Nat) (dr : Draw)
     (dr.visits W H).x + (dr.visits W H).w ≤ W ∧ (dr.visits W H).y + (dr.visits W H).h ≤ H := by
   unfold Draw.visits; split <;> simp_all
 
-/-- Composite one draw into `bm` (`W × H`). Only the pixels of `Draw.visits` are
-visited; the clip mask decides the rest. -/
-def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
+/-- Composite one draw into `bm` (`W × H`), the reference: each visited pixel through
+`blendPixel` on `Px` values. Only the pixels of `Draw.visits` are visited; the clip mask
+decides the rest. `composite` gives the same bytes faster for source-over. -/
+def compositeRef (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
   let mut out := bm
   let box := dr.cov.box
   let v := dr.visits W H
@@ -424,6 +425,130 @@ def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
       out := out.set! (k+2) (toByte r.b)
       out := out.set! (k+3) (toByte r.a)
   return out
+
+/-! ### Source-over without `Px` values (issue 1098)
+
+A frame of a canvas game paints its whole canvas several times (a background, a gradient sky
+under a clip, overlays with `globalAlpha`). `compositeRef` builds three or four `Px` values a
+pixel (heap objects). `compositeOver` does the same arithmetic on the channels one by one,
+with three exact shortcuts. Each result byte is the byte of `compositeRef`:
+
+- `overChannel` is the arithmetic of `blendPixel .sourceOver` for one channel, in the same
+  order (theorem `blendPixel_sourceOver`).
+- An opaque source with weight 1 inside the clip (mask byte 255) gives the source itself:
+  `s * 1 * 1 + d * (1 - 1 * 1)` is `s + d * 0`, which is `s` (or `+0` for `s = -0`) for every
+  finite `d`, and `d` is a byte over 255. The four bytes are made once a draw (a colour) or
+  once a row (a gradient that is constant along rows) and written with no arithmetic.
+- A solid colour with weight `alpha` inside the clip changes each channel by a function of its
+  own destination byte only. For a large draw, `overTable` holds that function for the 256
+  bytes, made by `overChannel` itself, so a pixel is four table reads.
+- A linear gradient whose direction has no x part, under a transform with no x part in its
+  y row (`rowConstant`), has one colour along each row: `(u - x0) * dx` is a zero, and a
+  zero added to a number is that number; only the sign of a zero can change, and the gradient
+  lookup clamps both zeros to the first entry.
+
+The two Float facts are not proved in Lean (Float arithmetic is opaque to the kernel): the
+`#guard` cases of `Tests.lean` compare `composite` with `compositeRef` byte for byte on
+scenes that take every branch. -/
+
+/-- One channel of source-over (`blendPixel .sourceOver`): source channel `s`, weight `w`
+(coverage times global alpha), weighted source alpha `sa = s.a * w`, mask `m`, destination
+channel `d`. -/
+@[inline] def overChannel (s w sa m d : Float) : Float :=
+  let r := s * w * 1 + d * (1 - sa)
+  if m >= 1 then r else d + (r - d) * m
+
+/-- `blendPixel .sourceOver` is `overChannel` on each channel. -/
+theorem blendPixel_sourceOver (s : Px) (c m : Float) (d : Px) :
+    blendPixel .sourceOver s c m d =
+      if m <= 0 then d else
+      ⟨overChannel s.r c (s.a * c) m d.r, overChannel s.g c (s.a * c) m d.g,
+       overChannel s.b c (s.a * c) m d.b, overChannel s.a c (s.a * c) m d.a⟩ := by
+  have hc : (Op.sourceOver == Op.clear) = false := rfl
+  unfold blendPixel compose Px.scale overChannel
+  by_cases h0 : m <= 0
+  · simp [h0]
+  · by_cases h1 : m >= 1 <;> simp [h0, h1, hc]
+
+/-- The byte `overChannel` gives for each destination byte, for the four channels of a
+solid colour `p` at weight `w` inside the clip (`m = 1`): 1,024 bytes, channel-major. -/
+def overTable (p : Px) (w : Float) : ByteArray := Id.run do
+  let sa := p.a * w
+  let mut t := ByteArray.emptyWithCapacity 1024
+  for ch in [0:4] do
+    let s := if ch == 0 then p.r else if ch == 1 then p.g else if ch == 2 then p.b else p.a
+    for db in [0:256] do
+      t := t.push (toByte (overChannel s w sa 1 (db.toUInt8.toFloat / 255)))
+  return t
+
+/-- A linear gradient with one colour along each device row (see the section comment). -/
+def rowConstant : Ready → Bool
+  | .linear inv x0 _ dx _ _ _ =>
+    -- `u` stays finite on the canvas (sides at most `maxSide`) when these are bounded.
+    let small := fun (v : Float) => v.abs <= 1e15
+    dx == 0 && inv.b == 0 && small inv.a && small inv.c && small inv.e && small x0
+  | _ => false
+
+/-- Pixels a solid draw must cover before `overTable` is made for it. -/
+def tableMin : Nat := 2048
+
+/-- `compositeRef` for a bounded draw with source-over, with no `Px` built for most pixels
+(see the section comment). -/
+def compositeOver (W : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
+  let mut out := bm
+  let box := dr.cov.box
+  let alpha := dr.alpha
+  let (solid, sp) := match dr.ready with
+    | .solid p => (true, p)
+    | _ => (false, Px.zero)
+  let rowConst := rowConstant dr.ready
+  let fixed := solid || rowConst
+  let useTable := solid && box.w * box.h >= tableMin
+  let table := if useTable then overTable sp alpha else ByteArray.empty
+  for j in [0:box.h] do
+    let y := box.y + j
+    let (lo, hi) := dr.cov.spans.getD j (0, box.w)
+    if lo >= hi then continue
+    let s := if solid then sp else if rowConst then dr.ready.at (box.x + lo) y else Px.zero
+    let opaqueRow := fixed && s.a == 1
+    let (b0, b1, b2, b3) := (toByte s.r, toByte s.g, toByte s.b, toByte s.a)
+    let rowBase := y * W
+    let covBase := j * box.w
+    for i in [lo:hi] do
+      let x := box.x + i
+      let idx := rowBase + x
+      let mb : UInt8 := match dr.clip with
+        | none => 255
+        | some b => b[idx]!
+      if mb == 0 then continue
+      let c := dr.cov.cov[covBase + i]!
+      if c <= 0 then continue
+      let w := c * alpha
+      let k := idx * 4
+      if mb == 255 && w == 1 && opaqueRow then
+        out := out.set! k b0
+        out := out.set! (k+1) b1
+        out := out.set! (k+2) b2
+        out := out.set! (k+3) b3
+      else if mb == 255 && useTable && c == 1 then
+        out := out.set! k table[out[k]!.toNat]!
+        out := out.set! (k+1) table[256 + out[k+1]!.toNat]!
+        out := out.set! (k+2) table[512 + out[k+2]!.toNat]!
+        out := out.set! (k+3) table[768 + out[k+3]!.toNat]!
+      else
+        let p := if fixed then s else dr.ready.at x y
+        let m := mb.toFloat / 255
+        let sa := p.a * w
+        out := out.set! k (toByte (overChannel p.r w sa m (out[k]!.toFloat / 255)))
+        out := out.set! (k+1) (toByte (overChannel p.g w sa m (out[k+1]!.toFloat / 255)))
+        out := out.set! (k+2) (toByte (overChannel p.b w sa m (out[k+2]!.toFloat / 255)))
+        out := out.set! (k+3) (toByte (overChannel p.a w sa m (out[k+3]!.toFloat / 255)))
+  return out
+
+/-- Composite one draw into `bm` (`W × H`): `compositeOver` for source-over, else
+`compositeRef`. Same bytes as `compositeRef` (the `#guard` cases of `Tests.lean`). -/
+def composite (W H : Nat) (bm : ByteArray) (dr : Draw) : ByteArray :=
+  if dr.op == .sourceOver then compositeOver W bm dr else compositeRef W H bm dr
 
 /-- The draw's result, only when it has the size of the bitmap it was given (a final
 check: every canvas command keeps its bitmap's size, `Canvas.apply_size`). -/
