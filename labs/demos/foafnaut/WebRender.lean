@@ -797,15 +797,65 @@ theorem layoutJSON_of_head (s : Rendering.Scene) (runs : Array Rendering.GlyphRu
     layoutJSON s boxes font = layoutHead boxes runs font ++ layoutTail s.links := by
   subst h; rfl
 
+/-- The layout header closed with the mark `"layoutSections":true`: the boxes, glyph runs and
+link regions are not in the text but in the sections of `layoutSections` (issue
+https://github.com/danbri/factoidal-core/issues/1124, stage B; request field `layoutSections`). -/
+def layoutHeadOnly (font : Option Rendering.FontProvider.Face) : String :=
+  layoutHeader font ++ ",\"layoutSections\":true}"
+
+@[inline] private def pushF64 (b : ByteArray) (x : Float) : ByteArray :=
+  let w := x.toBits
+  b.push w.toUInt8 |>.push (w >>> 8).toUInt8 |>.push (w >>> 16).toUInt8 |>.push (w >>> 24).toUInt8
+    |>.push (w >>> 32).toUInt8 |>.push (w >>> 40).toUInt8 |>.push (w >>> 48).toUInt8 |>.push (w >>> 56).toUInt8
+
+@[inline] private def pushNat (b : ByteArray) (n : Nat) : ByteArray := pushF64 b (Float.ofNat n)
+
+/-- Boxes, glyph runs and link regions as two sections, in place of the JSON arrays of
+`layoutJSON` (issue 1124, stage B). The first is float64 little-endian numbers: the counts of
+boxes, runs, glyphs and links; each box as `[source, x, y, width, height]`; each run as
+`[source, fontSize, fontStart, fontBytes, textStart, textBytes, glyphCount]`; the glyphs of
+every run in run order, each as `[index, x, y, advance, clusterStart, clusterEnd]`; each link as
+`[sourceNode, hrefStart, hrefBytes, x, y, width, height]`. The second is UTF-8: the run fonts,
+run texts and link targets that the starts and byte counts name. Every number is the Lean
+`Float` itself (a natural number below 2^53 is exact), so a host reads the values that
+`layoutJSON` writes as decimal text, without the text. One pass over each array; no list. -/
+def layoutSections (boxes : Array Rendering.Layout.Box) (runs : Array Rendering.GlyphRun)
+    (links : Array Rendering.LinkRegion) : ByteArray × ByteArray := Id.run do
+  let glyphs := runs.foldl (fun n r => n+r.glyphs.size) 0
+  let mut nums := ByteArray.emptyWithCapacity (8*(4+5*boxes.size+7*runs.size+6*glyphs+7*links.size))
+  let mut text := ByteArray.emptyWithCapacity 4096
+  nums := pushNat (pushNat (pushNat (pushNat nums boxes.size) runs.size) glyphs) links.size
+  for b in boxes do
+    nums := pushF64 (pushF64 (pushF64 (pushF64 (pushNat nums b.source) b.x) b.y) b.width) b.height
+  for r in runs do
+    let fontStart := text.size
+    text := text ++ r.font.toUTF8
+    let textStart := text.size
+    text := text ++ r.text.toUTF8
+    nums := pushNat (pushNat (pushNat (pushNat (pushNat (pushF64 (pushNat nums r.source) r.fontSize)
+      fontStart) (textStart-fontStart)) textStart) (text.size-textStart)) r.glyphs.size
+  for r in runs do
+    for g in r.glyphs do
+      nums := pushNat (pushNat (pushF64 (pushF64 (pushF64 (pushNat nums g.index) g.x) g.y) g.advance) g.clusterStart) g.clusterEnd
+  for l in links do
+    let start := text.size
+    text := text ++ l.href.toUTF8
+    nums := pushF64 (pushF64 (pushF64 (pushF64 (pushNat (pushNat (pushNat nums l.sourceNode) start) (text.size-start))
+      l.x) l.y) l.width) l.height
+  return (nums,text)
+
 /-- Shared checked scene serialization for HTML and structured-document frontends:
 the artifact with the storage floats and tile words in the form `form`, and the
 sections that it names. -/
 def artifactWith (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
-    (font : Option Rendering.FontProvider.Face) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) :
+    (font : Option Rendering.FontProvider.Face) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool)
+    (layoutOff : Bool := false) :
     Except String (String × Array ByteArray) := do
   let native ← WebRenderSVG.toScene scene
   let (value,sections) ← native.artifactWith live form checks tree
-  let value := (value.dropEnd 1).toString ++ ",\"webRender\":" ++ layoutJSON scene boxes font
+  -- `layoutOff`: the boxes, glyph runs and links go in sections (`layoutSections`), not here.
+  let value := (value.dropEnd 1).toString ++ ",\"webRender\":" ++
+    (if layoutOff then layoutHeadOnly font else layoutJSON scene boxes font)
   match form with
   -- The scene drawn on the CPU (`SVGRaster`): the section after the tile words.
   | .sectionsCpu k => return (value ++ ",\"pixelsSection\":" ++ toString (k+2) ++ "}",sections.push native.rgba)

@@ -5,6 +5,7 @@ import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {WorkerReply,WorkerRequest} from "./native_html_worker.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
+import {attachLayout} from "./native_html_layout.ts";
 
 export type CompileClient={
   call(name:RemoteCall,...args:unknown[]):Promise<{value:unknown;workerMs:number}>;
@@ -41,7 +42,10 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true,ordinary=0;
   const fail=(error:Error)=>{alive=false;for(const p of pending.values())p.reject(error);pending.clear();};
-  worker.onmessage=event=>{const reply=event.data as WorkerReply;const p=pending.get(reply.id);if(p){pending.delete(reply.id);p.resolve(reply);}};
+  worker.onmessage=event=>{const reply=event.data as WorkerReply;const p=pending.get(reply.id);
+    // A layers answer with layout sections: its decoding getters again on this side (attachLayout).
+    if(reply.ok)attachLayout((reply.value as {page?:{webRender?:Record<string,unknown>}}|undefined)?.page?.webRender);
+    if(p){pending.delete(reply.id);p.resolve(reply);}};
   worker.onerror=event=>{event.preventDefault();fail(new Error("engine worker: "+event.message));};
   worker.onmessageerror=()=>fail(new Error("engine worker: unreadable message"));
   type Body=WorkerRequest extends infer R?R extends {id:number}?Omit<R,"id">:never:never;

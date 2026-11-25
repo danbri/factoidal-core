@@ -5,6 +5,7 @@ import {allFinite} from "./finite_floats.ts";
 // @ts-ignore generated release module
 import createModule from "./.build/native-html/runtime/web-render.mjs";
 import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
+import {attachLayout} from "./native_html_layout.ts";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
 /** The answer of accessibilityTree: the nodes in tree order, or `unchanged` for the layout of `since`. */
@@ -467,6 +468,14 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     if(head?.error)throw new Error(`Lean HTML: ${head.error}`);
     for(const scene of [head,head.page,head.chrome])
       if(scene&&typeof scene==="object")placeSections(scene as Record<string,unknown>,buffer,sections);
+    // Layout sections (issue 1124 stage B): views of the buffer, decoded when read.
+    const layout=head.layout as {section?:unknown;strings?:unknown}|undefined,page=head.page as {webRender?:Record<string,unknown>}|undefined;
+    if(layout&&page?.webRender&&typeof layout.section==="number"&&typeof layout.strings==="number"){
+      const nums=sections[layout.section],text=sections[layout.strings];
+      if(!nums||!text)throw new Error("Unexpected Lean layout sections");
+      page.webRender.layoutData={nums:new Uint8Array(buffer,nums[0],nums[1]),text:new Uint8Array(buffer,text[0],text[1])};
+      delete head.layout;attachLayout(page.webRender);
+    }
     return head;
   };
   return {
@@ -567,7 +576,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     },
     /** One render as two layers; the options must carry a shell. */
     compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):HTMLLayers {
-      const result=renderCall(source,{binary:true,...options,layers:true,op:"render"},width,height);
+      // layoutSections: boxes, glyph runs and links as sections (an engine from before answers JSON).
+      const result=renderCall(source,{binary:true,layoutSections:answers!=="text",...options,layers:true,op:"render"},width,height);
       const place=result.layers as HTMLLayerPlace|undefined;
       if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
         throw new Error("Unexpected published Lean HTML layers ABI");

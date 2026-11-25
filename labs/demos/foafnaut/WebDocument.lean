@@ -1609,6 +1609,8 @@ structure KeptPage where
   `layoutText` that every band of the layout shares (`WebRender.layoutJSON_of_head`); empty
   when not made. -/
   layoutHead : String := ""
+  /-- Made with the boxes, glyph runs and links left out of the text (`layoutSections`). -/
+  layoutOff : Bool := false
 
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
@@ -1643,11 +1645,12 @@ the answer that `artifactWith` gives again for these inputs. -/
 set_option compiler.extract_closed false in
 private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) : Except String (String × Array ByteArray) :=
+    (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) (layoutOff : Bool := false) :
+    Except String (String × Array ByteArray) :=
   unsafeBaseIO do
     let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
       ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree &&
-      (retainOn || k.retained.isNone)
+      (retainOn || k.retained.isNone) && k.layoutOff == layoutOff
     let kept ← keptPageRef.get
     match kept.find? same with
     | some k =>
@@ -1658,7 +1661,8 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
       -- `pageArtifact` (the reference) stays the plain path, that `partial_frame_test.ts`
       -- compares this with.
-      let previous : Option KeptPage := kept.find? fun (k : KeptPage) => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
+      let previous : Option KeptPage := kept.find? fun (k : KeptPage) => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome &&
+        k.layoutOff == layoutOff
       match form,checks,tree,retainOn with
       | .sections first,false,false,true =>
         let layoutText := previous.bind fun k =>
@@ -1668,7 +1672,7 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
         -- (the layer's glyph runs are the page's, and the
         -- head reads no link: `pageLayer_layoutJSON`); only the links, moved for the band,
         -- are written again.
-        let (layoutText,head) := match layoutText with
+        let (layoutText,head) := if layoutOff then (WebRender.layoutHeadOnly face,"") else match layoutText with
           | some text => (text,(previous.map fun (k : KeptPage) => k.layoutHead).getD "")
           | none =>
             let head := match kept.find? fun (k : KeptPage) => !k.layoutHead.isEmpty && ptrEq k.boxes boxes && ptrEq k.face face &&
@@ -1697,13 +1701,13 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head⟩ : KeptPage) :: kept).take keptPageSlots)
+          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head,layoutOff⟩ : KeptPage) :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           return .ok answer
       | _,_,_,_ =>
-        let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree
+        let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree layoutOff
         if let .ok answer := made then
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,""⟩ :: kept).take keptPageSlots)
+          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,"",layoutOff⟩ :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
         return made
 
@@ -1715,14 +1719,15 @@ only change is in the chrome: loading, the address, a pressed chrome control, th
 @[implemented_by pageArtifactImpl]
 def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree : Bool) (_retainOn : Bool := true) : Except String (String × Array ByteArray) :=
-  WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree
+    (form : NativeSVG.DataForm) (checks tree : Bool) (_retainOn : Bool := true) (layoutOff : Bool := false) :
+    Except String (String × Array ByteArray) :=
+  WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff
 
 theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
-    (form : NativeSVG.DataForm) (checks tree retainOn : Bool) :
-    pageArtifact page extra b boxes face live form checks tree retainOn =
-      WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree := rfl
+    (form : NativeSVG.DataForm) (checks tree retainOn layoutOff : Bool) :
+    pageArtifact page extra b boxes face live form checks tree retainOn layoutOff =
+      WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff := rfl
 
 /-- A data form as numbers, for the keys of kept answers. -/
 def formCode : NativeSVG.DataForm → Nat × Nat
@@ -1793,20 +1798,28 @@ def plainArtifact (scene : Rendering.Scene) (marks : List Rendering.Node) (shell
     | some value => WebShell.compose value page width height addressFont
     | none => page)) boxes face live form checks tree
 
+/-- The view under the chrome and the band of the page layer of a layers answer. A chrome that
+may fold: the band covers the view under the strip, the most it shows, so a change of
+`collapse` keeps the band and only the chrome layer is drawn again. -/
+def layersBand (shell : WebShell.Shell) (width height : Nat) : Nat × Band :=
+  let top := WebShell.height shell width
+  let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
+  (view,band shell.scroll view)
+
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
     (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {})
-    (chrome : Option (String × Array ByteArray) := none) :
+    (chrome : Option (String × Array ByteArray) := none)
+    (layout : Option (ByteArray × ByteArray) := none) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
-  -- A chrome that may fold: the band covers the view under the strip, the most it shows,
-  -- so a change of `collapse` keeps the band and only the chrome layer is drawn again.
-  let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
-  let b := band shell.scroll view
-  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
+  let (view,b) := layersBand shell width height
+  -- `layout`: the boxes, glyph runs and links of this band as sections (`WebRender.layoutSections`,
+  -- request field `layoutSections`), given by the caller; the page's text then leaves them out.
+  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn layout.isSome
   -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
   let (chromeText,chromeSections) ← match chrome with
     | some answer => pure answer
@@ -1818,8 +1831,18 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     ("splash",.bool splashing),
     ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
     (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
-  return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
-    pageSections ++ chromeSections)
+  let first := match form with
+    | .sections k | .sectionsCpu k => k
+    | _ => 0
+  match layout with
+  | some (nums,text) =>
+    let at_ := first+pageSections.size+chromeSections.size
+    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
+      ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
+      pageSections ++ chromeSections ++ #[nums,text])
+  | none =>
+    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
+      pageSections ++ chromeSections)
 
 /-- The fonts the engine holds between calls, so that a scroll does not read them
 again. The first is the primary font; the others draw the characters it lacks, in
@@ -3699,6 +3722,9 @@ structure Engine where
   plainKept : Option (PlainKey × (String × Array ByteArray)) := none
   /-- Chrome layers and answers with no layers given again from `chromeKept` and `plainKept`. -/
   keptWhole : Nat × Nat := (0,0)
+  /-- The layout sections of the last band (`WebRender.layoutSections`), by the layout's number
+  and the band's top (issue 1124, stage B). -/
+  layoutKept : Option ((Nat × Nat) × (ByteArray × ByteArray)) := none
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -4250,9 +4276,29 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
           let answer ← chromeArtifact value scene width holds.addressFont face live form.next checks tree
           modify fun e => {e with chromeKept := some (chromeKey,answer)}
           pure answer
+      -- `layoutSections:true` (a host with section answers): the boxes, glyph runs and links of
+      -- the band as two sections, kept by the layout's number and the band's top.
+      let sectionForm := match form with | .sections _ | .sectionsCpu _ => true | _ => false
+      let layout ← if request.field? "layoutSections" == some (.bool true) && sectionForm then do
+          let (_,b) := layersBand value width height
+          let made := fun (_ : Unit) => WebRender.layoutSections boxes scene.glyphRuns
+            (Rendering.moveLinks (· - Float.ofNat b.top) scene.links)
+          if laid.serial == 0 || !laid.paint.empty then pure (some (made ()))
+          else
+            let key := (laid.serial,b.top)
+            match (← get).layoutKept with
+            | some (k,sections) => if k == key then pure (some sections) else
+                let sections := made ()
+                modify fun e => {e with layoutKept := some (key,sections)}
+                pure (some sections)
+            | none =>
+              let sections := made ()
+              modify fun e => {e with layoutKept := some (key,sections)}
+              pure (some sections)
+        else pure none
       return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome))
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout)
   -- The answer of the last frame when its inputs are these (`PlainKey`): the layout's own
   -- scene (no paint values; a number the engine gave), no marks.
   let plainKey : Option PlainKey :=
