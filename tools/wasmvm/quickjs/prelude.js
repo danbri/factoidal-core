@@ -18209,9 +18209,8 @@
   // ==== focus: the focused element (HTML §6.6) ============================================
   // Which node `focus()` focuses is Lean's (DOM.Focus, node_query 189: the element when it is
   // a focusable area, else the first focusable area of a shadow tree that delegates focus).
-  // The focused element is the page's state, mirrored into the arena (`Node.states` bit 8) for
-  // `:focus`, `:focus-visible` and `:focus-within`. A page that never calls focus() does
-  // nothing here.
+  // The focused element and its visible indicator are mirrored into the arena
+  // (Node.states bits 8 and 32, respectively).
   const inputValueGetter = Object.getOwnPropertyDescriptor(named.HTMLInputElement.prototype, 'value').get;
   const textareaValueGetter = Object.getOwnPropertyDescriptor(named.HTMLTextAreaElement.prototype, 'value').get;
   const textControlValue = el => {
@@ -18220,13 +18219,24 @@
       return inputValueGetter.call(el);
     return undefined;
   };
-  let focusedId = -1;
-  const focusBit = (id, on) => { const b = n.treeOp(id, 0, 31); if (typeof b !== 'number' || b < 0) return; const nb = on ? b | 8 : b & ~8; if (nb !== b) n.treeOp(id, nb, 30); };
+  let focusedId = -1, focusVisible = false, keyboardFocus = true;
+  const focusBits = (id, focused, visible = false) => {
+    const bits = n.treeOp(id, 0, 31);
+    if (typeof bits !== 'number' || bits < 0) return;
+    const next = (bits & ~(8 | 32)) | (focused ? 8 | (visible ? 32 : 0) : 0);
+    if (next !== bits) n.treeOp(id, next, 30);
+  };
+  const takesTextInput = el =>
+    el instanceof named.HTMLTextAreaElement ||
+    (el instanceof named.HTMLInputElement &&
+      ['text', 'search', 'url', 'tel', 'email', 'password', 'number'].includes(typeState(el))) ||
+    (el instanceof HTMLElement && el.isContentEditable === true);
   // the focused node, or -1: an element that left its document no longer has the focus
   const focusCurrent = () => {
     if (focusedId >= 0 && !connectedId(focusedId)) {
-      focusBit(focusedId, false);
+      focusBits(focusedId, false);
       focusedId = -1;
+      focusVisible = false;
       focusedTextEdit = null;
     }
     return focusedId;
@@ -18238,15 +18248,23 @@
   };
   // The focus update steps (HTML §6.6.4): commit changed text before blur and focusout,
   // then fire focus and focusin at the new element (-1: the viewport).
-  const focusMove = to => {
+  const focusMove = (to, visibility) => {
     const from = focusCurrent();
-    if (from === to) return;
+    if (from === to) {
+      if (to >= 0 && visibility !== undefined && visibility !== focusVisible) {
+        focusVisible = visibility;
+        focusBits(to, true, focusVisible);
+      }
+      return;
+    }
     const oldEl = from >= 0 ? wrap(from) : null, newEl = to >= 0 ? wrap(to) : null;
+    const showIndicator = visibility ?? (takesTextInput(newEl) || (from >= 0 ? focusVisible : keyboardFocus));
     if (from >= 0) {
       const edit = focusedTextEdit;
       focusedTextEdit = null;
-      focusBit(from, false);
+      focusBits(from, false);
       focusedId = -1;
+      focusVisible = false;
       if (edit?.edited) {
         const value = textControlValue(oldEl);
         if (value !== undefined && value !== edit.initialValue) fire(oldEl, 'change', { bubbles: true });
@@ -18258,7 +18276,8 @@
       focusedId = to;
       const value = textControlValue(newEl);
       if (value !== undefined) focusedTextEdit = { element: newEl, initialValue: value, edited: false };
-      focusBit(to, true);
+      focusVisible = showIndicator;
+      focusBits(to, true, focusVisible);
       fireFocusEvent(newEl, 'focus', false, oldEl);
       fireFocusEvent(newEl, 'focusin', true, oldEl);
     }
@@ -18266,7 +18285,14 @@
   const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
   for (const C of [HTMLElement, SVGElement, MathMLElement]) {
     // an editing host that takes the focus gets the selection first (node_query 177 "f": a caret at its first caret position unless the selection is in it)
-    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } });
+    define(C.prototype, 'focus', function focus(options = undefined) {
+      const visibility = options?.focusVisible;
+      const t = focusQuery(nodeId(this), '');
+      if (t >= 0) {
+        n.query(t, 177, 'f');
+        focusMove(t, visibility === undefined ? undefined : Boolean(visibility));
+      }
+    });
     define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
   }
   // `activeElement` (DOM §4.5, HTML §6.6.6): the focused element retargeted against the
@@ -18284,7 +18310,22 @@
   // A press of the user's pointer on node `id` (Lean asks, after a `mousedown` that no listener
   // canceled: Hosts.PageEvents.lowPointer): the focusable area there takes the focus, else the
   // focused element loses it. Which area is Lean's (DOM.Focus.pressTarget, node_query 189 "p").
-  const pressFocus = id => { const t = focusQuery(id, 'p'); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } else focusMove(-1); };
+  const pressFocus = id => {
+    keyboardFocus = false;
+    const t = focusQuery(id, 'p');
+    if (t >= 0) n.query(t, 177, 'f');
+    focusMove(t, t >= 0 && takesTextInput(wrap(t)));
+  };
+  const noteFocusInput = (type, e) => {
+    if (type === 'pointerdown' || type === 'mousedown' || type === 'touchstart') keyboardFocus = false;
+    if (type !== 'keydown' || e.altKey || e.ctrlKey || e.metaKey || ['Alt', 'Control', 'Meta', 'Shift'].includes(e.key)) return;
+    keyboardFocus = true;
+    const id = focusCurrent();
+    if (id >= 0 && !focusVisible) {
+      focusVisible = true;
+      focusBits(id, true, true);
+    }
+  };
   // ==== end focus ==========================================================================
 
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
@@ -19364,6 +19405,7 @@
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
+      noteFocusInput(type, e);
       // "update the current document readiness" fires readystatechange at the document
       // the document's milestones (Navigation Timing 2 §4: domInteractive, DOMContentLoaded's start)
       if (type === 'DOMContentLoaded' && target === 0) { navNote('domInteractive'); navNote('domContentLoadedEventStart'); }

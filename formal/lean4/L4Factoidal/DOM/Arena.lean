@@ -137,7 +137,8 @@ structure Node where
   (`DOM.Selectors`), as bits: 1 a popover that is showing (`:popover-open`, HTML §6.12);
   2 a modal dialog (`:modal`); 4 a custom element that is defined (HTML §4.13.3: an element
   with a custom element name matches `:defined` only then); 8 the focused element (`:focus`,
-  `DOM.Focus`). 0 for every node a parser makes; a clone starts at 0. -/
+  `DOM.Focus`); 32 the visible focus indication (`:focus-visible`).
+  0 for every node a parser makes; a clone starts at 0. -/
   states : Nat := 0
 deriving Inhabited, Repr
 
