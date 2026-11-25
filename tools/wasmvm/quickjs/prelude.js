@@ -15032,17 +15032,23 @@
   // The document commands (styleWithCSS and the like) work from a text control only when
   // the control is in editable content.
   const controlInEditable = el => el.parentElement !== null && el.parentElement.isContentEditable === true;
-  const controlCommand = (el, commandId, value) => {
+  let focusedTextEdit = null;
+  const controlCommand = (el, commandId, value, userEdit = false) => {
     let command = String(commandId).toLowerCase(), text = String(value);
     if (miscEdit.includes(command) && command !== 'selectall') return null;
     if (command === 'inserthtml') { const t = document.createElement('template'); t.innerHTML = text; text = t.content.textContent; command = 'inserttext'; }
     const r = controlQuery(el, command, text);
     if (r === '') return false;
     const at = r.indexOf('\u0000'), [start, end, inputType] = r.slice(0, at).split(' '), next = r.slice(at + 1);
-    if (next !== el.value) el.value = next;
+    const previous = el.value;
+    if (next !== previous) {
+      el.value = next;
+      const edit = focusedTextEdit;
+      if (userEdit && edit?.element === el && textControlValue(el) !== previous) edit.edited = true;
+    }
     el.setSelectionRange(Number(start), Number(end));
     if (inputType !== '-') {
-      const e = new InputEvent('input', { bubbles: true, cancelable: false, inputType, data: inputType === 'insertText' ? text : null });
+      const e = new InputEvent('input', { bubbles: true, composed: true, inputType, data: inputType === 'insertText' ? text : null });
       state(e).trusted = true;
       dispatch(el, e);
     }
@@ -15062,7 +15068,7 @@
       if (r[0] !== '1') return false;
       if (r.length > 2) {
         // the `input` event of the command (the draft's step 7; no `beforeinput`, as browsers)
-        const e = new InputEvent('input', { bubbles: true, cancelable: false, inputType: r[2], data: r.length > 3 ? r.slice(3).join('\u0000') : null });
+        const e = new InputEvent('input', { bubbles: true, composed: true, inputType: r[2], data: r.length > 3 ? r.slice(3).join('\u0000') : null });
         state(e).trusted = true;
         dispatch(wrap(Number(r[1])), e);
       }
@@ -18184,23 +18190,56 @@
   // The focused element is the page's state, mirrored into the arena (`Node.states` bit 8) for
   // `:focus`, `:focus-visible` and `:focus-within`. A page that never calls focus() does
   // nothing here.
+  const inputValueGetter = Object.getOwnPropertyDescriptor(named.HTMLInputElement.prototype, 'value').get;
+  const textareaValueGetter = Object.getOwnPropertyDescriptor(named.HTMLTextAreaElement.prototype, 'value').get;
+  const textControlValue = el => {
+    if (el instanceof named.HTMLTextAreaElement) return textareaValueGetter.call(el);
+    if (el instanceof named.HTMLInputElement && ['text', 'search', 'url', 'tel', 'password'].includes(typeState(el)))
+      return inputValueGetter.call(el);
+    return undefined;
+  };
   let focusedId = -1;
   const focusBit = (id, on) => { const b = n.treeOp(id, 0, 31); if (typeof b !== 'number' || b < 0) return; const nb = on ? b | 8 : b & ~8; if (nb !== b) n.treeOp(id, nb, 30); };
   // the focused node, or -1: an element that left its document no longer has the focus
-  const focusCurrent = () => { if (focusedId >= 0 && !connectedId(focusedId)) { focusBit(focusedId, false); focusedId = -1; } return focusedId; };
+  const focusCurrent = () => {
+    if (focusedId >= 0 && !connectedId(focusedId)) {
+      focusBit(focusedId, false);
+      focusedId = -1;
+      focusedTextEdit = null;
+    }
+    return focusedId;
+  };
   const fireFocusEvent = (el, type, bubbles, related) => {
     const e = new FocusEvent(type, { bubbles, composed: true, relatedTarget: related, view: window });
     state(e).trusted = true;
     dispatch(el, e);
   };
-  // The focus update steps (HTML §6.6.4): blur and focusout at the old element, then focus and
-  // focusin at the new one (-1: the viewport).
+  // The focus update steps (HTML §6.6.4): commit changed text before blur and focusout,
+  // then fire focus and focusin at the new element (-1: the viewport).
   const focusMove = to => {
     const from = focusCurrent();
     if (from === to) return;
     const oldEl = from >= 0 ? wrap(from) : null, newEl = to >= 0 ? wrap(to) : null;
-    if (from >= 0) { focusBit(from, false); focusedId = -1; fireFocusEvent(oldEl, 'blur', false, newEl); fireFocusEvent(oldEl, 'focusout', true, newEl); }
-    if (to >= 0 && focusedId === -1 && connectedId(to)) { focusedId = to; focusBit(to, true); fireFocusEvent(newEl, 'focus', false, oldEl); fireFocusEvent(newEl, 'focusin', true, oldEl); }
+    if (from >= 0) {
+      const edit = focusedTextEdit;
+      focusedTextEdit = null;
+      focusBit(from, false);
+      focusedId = -1;
+      if (edit?.edited) {
+        const value = textControlValue(oldEl);
+        if (value !== undefined && value !== edit.initialValue) fire(oldEl, 'change', { bubbles: true });
+      }
+      fireFocusEvent(oldEl, 'blur', false, newEl);
+      fireFocusEvent(oldEl, 'focusout', true, newEl);
+    }
+    if (to >= 0 && focusedId === -1 && connectedId(to)) {
+      focusedId = to;
+      const value = textControlValue(newEl);
+      if (value !== undefined) focusedTextEdit = { element: newEl, initialValue: value, edited: false };
+      focusBit(to, true);
+      fireFocusEvent(newEl, 'focus', false, oldEl);
+      fireFocusEvent(newEl, 'focusin', true, oldEl);
+    }
   };
   const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
   for (const C of [HTMLElement, SVGElement, MathMLElement]) {
@@ -19270,7 +19309,7 @@
       if (type === '@edit') {
         let d = {}; try { d = JSON.parse(n.query(0, 16, '')); } catch {}
         const el = wrap(target);
-        if (el && typeof d.command === 'string' && typeof el.selectionStart === 'number') controlCommand(el, d.command, String(d.value ?? ''));
+        if (el && typeof d.command === 'string' && typeof el.selectionStart === 'number') controlCommand(el, d.command, String(d.value ?? ''), true);
         return '';
       }
       // click, auxclick and contextmenu of pointer input are PointerEvents (Pointer Events 3 §4.2.12); a click with no pointer data is a MouseEvent
