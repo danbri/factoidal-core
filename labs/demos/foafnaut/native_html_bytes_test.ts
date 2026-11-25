@@ -23,12 +23,30 @@ const bytesOf=(part:unknown)=>{
   if(Array.isArray(part))return new Uint8Array(new Uint32Array(part).buffer);
   throw new Error("scene part is not an array");
 };
-const rest=(scene:Partial<HTMLArtifact>)=>{const {data:_d,tiles:_t,damage:_x,...other}=scene as Partial<HTMLArtifact>&{damage?:unknown};return JSON.stringify(other);};
+// The layout of a layers page answer with layout sections (issue 1124 stage B) is compared apart:
+// its boxes, glyph runs and links, strings exactly and numbers within the rounding of Lean's
+// decimal text in the text answer (`toString` of a Float keeps 6 decimals: 373.685313 for
+// 373.68531253425044), which the float64 sections do not have.
+const near=(a:unknown,b:unknown):boolean=>{
+  if(typeof a==="number"&&typeof b==="number")return a===b||Math.abs(a-b)<=Math.max(5.1e-7,1e-9*Math.abs(a));
+  if(Array.isArray(a)&&Array.isArray(b))return a.length===b.length&&a.every((x,i)=>near(x,b[i]));
+  if(a&&b&&typeof a==="object"&&typeof b==="object"){
+    const ka=Object.keys(a).sort(),kb=Object.keys(b).sort();
+    return JSON.stringify(ka)===JSON.stringify(kb)&&ka.every(k=>near((a as Record<string,unknown>)[k],(b as Record<string,unknown>)[k]));
+  }
+  return a===b;
+};
+const layoutParts=["boxes","glyphRuns","links"] as const;
+const rest=(scene:Partial<HTMLArtifact>)=>{const {data:_d,tiles:_t,damage:_x,webRender,...other}=scene as Partial<HTMLArtifact>&{damage?:unknown;webRender?:Record<string,unknown>};
+  const header=webRender&&Object.fromEntries(Object.entries(webRender).filter(([k])=>k!=="layoutSections"&&k!=="layoutData"&&!(layoutParts as readonly string[]).includes(k)));
+  return JSON.stringify({...other,webRender:header});};
 function sameScene(bytes:Partial<HTMLArtifact>,text:Partial<HTMLArtifact>,label:string){
   assert(bytes.data instanceof Float32Array&&bytes.tiles instanceof Uint32Array,`${label}: bytes answer has no sections`);
   assert.deepEqual(bytesOf(bytes.data),bytesOf(text.data),`${label}: storage bytes differ`);
   assert.deepEqual(bytesOf(bytes.tiles),bytesOf(text.tiles),`${label}: tile words differ`);
   assert.equal(rest(bytes),rest(text),`${label}: other fields differ`);
+  const bw=(bytes as {webRender?:Record<string,unknown>}).webRender,tw=(text as {webRender?:Record<string,unknown>}).webRender;
+  for(const part of layoutParts)assert(near(bw?.[part],tw?.[part]),`${label}: webRender ${part} differ`);
 }
 async function pair(nativeEngine?:string):Promise<[HTMLEngine,HTMLEngine]> {
   const bytes=await loadHTML(nativeEngine,"bytes"),text=await loadHTML(nativeEngine,"text");

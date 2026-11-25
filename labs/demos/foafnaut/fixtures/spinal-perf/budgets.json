@@ -128,16 +128,14 @@
     "measured": 147456,
     "was": 2251520,
     "what": "pixels drawn a tick: the damage of the zoom, now its stage (paint boxes cut to clips), was the whole band"
+   },
+   "probe.second_over_first": {
+    "max": 0.5,
+    "measured": 0.019,
+    "what": "a second whole-page frame with the CPU probe of the unchanged document is markedly cheaper than the first: the engine gives the last answer with no layers again when its inputs are the same (WebDocument.PlainKey, issue https://github.com/danbri/factoidal-core/issues/1124 stage A). Measured 2026-11-25 on a 4-vCPU Linux VM: 713.5 ms then 13.2 ms. Was a known failure of issue 450 (measured 1.008)."
    }
   },
-  "known_failures": {
-   "probe.second_over_first": {
-    "want_max": 0.5,
-    "measured": 1.008,
-    "issue": "https://github.com/danbri/factoidal-core/issues/450",
-    "what": "a second whole-page frame with the CPU probe of the unchanged document costs as much as the first (about 500 ms), although the layout is kept (frameWork.kept 1): the probe's work with the web font is done again each frame. Without the web font the probe frame is about 90 ms. When this meets want_max, spinal_perf_test.ts fails: move the entry to native with a max and update issue 450."
-   }
-  }
+  "known_failures": {}
  },
  "hub": {
   "measured": "2026-11-15, Apple M1, headless Chrome 157 with WebGPU (adapter apple metal-3), 45 s; the published Hub (engine as deployed) and the same with this checkout's host files: both runs within the margins below; after takeTurn (wip/spinal-layers): 46 of 46 frames layered, layout median 35 ms, draw median 553 ms, max 3,480 ms (the draw follows the zoom's scale; see issue 450); wip/spinal-edges engine of build.yml 43736222189 (--runtime), 2026-11-15: 91 frames in 45 s, draw median 44 ms, p95 114, max 194, GPU median 29.5 ms. The published Hub meets these budgets once an engine with these changes is deployed.; wip/spinal25 Wasm engine of build.yml 43778627420 with its host files, 2026-11-16: 116 frames in 45 s, draw median 25 ms, p95 34, max 115, GPU median 18.7, max 76.1",

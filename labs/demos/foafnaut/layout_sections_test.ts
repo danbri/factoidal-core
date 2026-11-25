@@ -16,7 +16,7 @@ const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",i
 const shell={tabs:[{title:"t"}],active:0,address:"https://example.invalid/",cursor:0,focused:false,canBack:false,canForward:false,
   loading:false,scale:1,theme:"light",pages:1,scroll:0,pressed:""};
 const near=(a:unknown,b:unknown):boolean=>{
-  if(typeof a==="number"&&typeof b==="number")return a===b||Math.abs(a-b)<=1e-9*Math.max(1,Math.abs(a));
+  if(typeof a==="number"&&typeof b==="number")return a===b||Math.abs(a-b)<=Math.max(5.1e-7,1e-9*Math.abs(a));
   if(Array.isArray(a)&&Array.isArray(b))return a.length===b.length&&a.every((x,i)=>near(x,b[i]));
   if(a&&b&&typeof a==="object"&&typeof b==="object"){
     const ka=Object.keys(a).sort(),kb=Object.keys(b).sort();
