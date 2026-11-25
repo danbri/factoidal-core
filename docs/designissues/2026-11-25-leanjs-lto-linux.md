@@ -8,7 +8,7 @@ Tracking: https://github.com/danbri/factoidal-core/issues/471. The method and th
 
 ## What changed
 
-`formal/lean4/lakefile.lean`, on x86-64 Linux, unless `lake build -K leanjsLto=off`:
+`formal/lean4/lakefile.lean`, on x86-64 Linux, with `lake build -K leanjsLto=on`:
 
 - The C of the `JS` library's modules (`L4Factoidal.JS.*`, the engine) is compiled with
   `-flto=thin -ffat-lto-objects`: each object holds machine code and ThinLTO bitcode.
@@ -25,7 +25,7 @@ Tracking: https://github.com/danbri/factoidal-core/issues/471. The method and th
 Needs on the build machine: `clang++` with libc++ headers (`libc++-dev libc++abi-dev`), `gmp.h`
 (`libgmp-dev`, GMP 6.3.0 here, as the toolchain's `libgmp.a`), `git` and network for the first fetch
 of the pinned sources (or `LEANRT_LTO_LEAN_SRC` naming a Lean checkout). Without them the build stops
-with a message that names `-K leanjsLto=off`; it does not fall back silently. macOS and other hosts
+with a message; it does not fall back silently. macOS and other hosts
 build `leanjs` as before.
 
 Not changed: the native engine library (`build-web-render.sh --native`). Its Linux path has no LTO
@@ -87,3 +87,13 @@ in front of mimalloc's heap, and its shipped build already uses initial-exec thr
 - Build: the `JS` modules' C compiles about twice as long (machine code and bitcode); the `leanjs`
   link runs ThinLTO over the engine (about 1 minute on 4 vCPUs). Other executables do not change.
 - `leanjs` size: 14,624,672 to about 14,942,424 bytes (+2.2%).
+
+## Landing state (2026-11-25)
+
+Landed on `main` as opt-in (`-K leanjsLto=on`), not as the default. Reason: the `leanjs` step of
+`danbri/factoidal-builds` `build.yml` installs no libc++, libc++abi or gmp headers, and the LTO
+binary is 2.2 % larger, above the 2 % tolerance of `tools/binary-budget.py`. A default that
+fails there would stop every Linux release. To make it the default: add those packages to that
+step, raise the `leanjs` budget by hand with this record as the reason, then change
+`leanjsLto` in `lakefile.lean` to `!= some "off"`. Tracking:
+https://github.com/danbri/factoidal-core/issues/471.

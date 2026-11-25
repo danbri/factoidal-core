@@ -294,10 +294,11 @@ extern_lib libl4hostread pkg := do
   buildStaticLib (pkg.staticLibDir / name) #[hr]
 
 /-- True when `leanjs` is linked with link-time optimisation (see `lean_lib JS` below): on
-x86-64 Linux unless `-K leanjsLto=off`. The macOS linker reads only its own compiler's bitcode,
-so other hosts build without it. -/
+x86-64 Linux with `-K leanjsLto=on`. Opt-in until the factoidal-builds Linux image installs
+libc++, libc++abi and gmp headers and the leanjs size budget allows +2.2 % (issue 471). The
+macOS linker reads only its own compiler's bitcode, so other hosts build without it. -/
 def leanjsLto : Bool :=
-  get_config? leanjsLto != some "off" &&
+  get_config? leanjsLto == some "on" &&
     System.Platform.target.startsWith "x86_64-" && (System.Platform.target.splitOn "linux").length > 1
 
 /-- The runtime units of `ffi/leanrt-lto.sh` as ThinLTO bitcode, for the link of `leanjs`. Rebuilt
@@ -363,7 +364,7 @@ lean_lib LeanJSHost where
 -- elaborator (leanjs was 110.9 MB with it, 11 MB without; issue 551, tools/binary-budget.py).
 --
 -- Link-time optimisation of `leanjs` (issue 471; record
--- docs/designissues/2026-11-25-leanjs-lto-linux.md): on x86-64 Linux, by default, the C of the
+-- docs/designissues/2026-11-25-leanjs-lto-linux.md): on x86-64 Linux with `-K leanjsLto=on`, the C of the
 -- `JS` library's modules is compiled as fat ThinLTO objects (machine code and bitcode in one
 -- object), and `leanjs` is linked with ThinLTO over that bitcode and over the bitcode of the
 -- runtime units an allocation and a free pass through (`leanrt_lto`, `ffi/leanrt-lto.sh`), so
@@ -371,8 +372,8 @@ lean_lib LeanJSHost where
 -- are inlined into the engine. Other executables that link the `JS` modules use the machine
 -- code of the same objects, as before (the linker reads the bitcode only with
 -- `--fat-lto-objects`). Measured on Linux: 0.926 of the instructions (geometric mean of five
--- libraries), the Test262 subset's verdict list unchanged. `lake build -K leanjsLto=off leanjs`
--- builds without it; other hosts build without it.
+-- libraries), the Test262 subset's verdict list unchanged. Without `-K leanjsLto=on`, and on
+-- other hosts, `leanjs` builds without it.
 @[default_target] lean_lib JS where
   roots := #[`L4Factoidal.JS, `L4Factoidal.JS.FuelMono]
   moreLeancArgs := if leanjsLto then #["-flto=thin", "-ffat-lto-objects"] else #[]

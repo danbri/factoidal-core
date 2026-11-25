@@ -19,7 +19,7 @@
 # LEAN_USE_GMP as the release builds define it, so object.cpp agrees with the toolchain's
 # mpz.cpp about how a big number is stored. Needs clang++ with libc++ headers (Debian/Ubuntu:
 # libc++-dev libc++abi-dev) and gmp.h (libgmp-dev, GMP 6.x as the toolchain's libgmp.a).
-# To build `leanjs` without this: `lake build -K leanjsLto=off leanjs`.
+# It runs only with `lake build -K leanjsLto=on leanjs`.
 set -euo pipefail
 OUT=${1:?usage: leanrt-lto.sh OUT_DIR [TOOLCHAIN_PREFIX]}
 mkdir -p "$OUT"
@@ -28,7 +28,7 @@ VERSION=$("$PREFIX/bin/lean" --version | sed -E 's/^Lean \(version ([^ ,]+).*/\1
 [ -n "$VERSION" ] || { echo "leanrt-lto: cannot read the Lean version" >&2; exit 1; }
 CXX=${LEANRT_CXX:-clang++}
 CC=${LEANRT_CC:-clang}
-fail(){ echo "leanrt-lto: $1" >&2; echo "leanrt-lto: to build leanjs without link-time optimisation: lake build -K leanjsLto=off leanjs" >&2; exit 1; }
+fail(){ echo "leanrt-lto: $1" >&2; echo "leanrt-lto: to build leanjs without link-time optimisation: lake build leanjs (no -K leanjsLto=on)" >&2; exit 1; }
 command -v "$CXX" >/dev/null || fail "$CXX not found (set LEANRT_CXX)"
 echo '#include <vector>' | "$CXX" -stdlib=libc++ -x c++ -fsyntax-only - 2>/dev/null \
   || fail "$CXX can not compile against libc++ (install libc++-dev libc++abi-dev)"
