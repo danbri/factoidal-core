@@ -1521,17 +1521,38 @@ private def imageKeysAt : Nat → Option String → NamespaceNode → List Strin
 def imageKeys (root : NamespaceNode) (base : Option String := none) : List String :=
   (imageKeysAt 64 base root).eraseDups
 
+/-- Experiment for issue 1079. Spend only spare space on the first four large
+raster sources. Source order is a test proxy for viewport priority. -/
+private def rasterPriorityFactors
+    (headers : List (String × Option (Nat × Nat))) (factor : Nat) : List (String × Nat) := Id.run do
+  if factor ≤ 1 || headers.any (fun entry => entry.2.isNone) then return []
+  let sizes := headers.filterMap fun (key, size) => size.map fun s => (key, s)
+  let preferred := max 1 (factor / 2)
+  let mut spare := NativeImage.maxDocumentPixels - NativeImage.heldPixels (sizes.map (·.2)) factor
+  let mut upgrades := []
+  for (key, w, h) in (sizes.filter fun (_, w, h) => w*h > NativeImage.smallPixels).take 4 do
+    let (baseW, baseH) := NativeImage.reducedSize w h factor
+    let (nextW, nextH) := NativeImage.reducedSize w h preferred
+    let extra := nextW*nextH-baseW*baseH
+    if extra ≤ spare then
+      spare := spare-extra
+      upgrades := (key, preferred) :: upgrades
+  return upgrades
+
 /-- As `imageStoreOf`, with the bytes of each image read by `dec` (`NativeImage.decodeWith`
 of a vector reader, or a decoder that gives what it gave before for the same bytes:
 `WebRender.memoDecode`). -/
 def imageStoreOfWith (dec : ByteArray → NativeImage.Decoded) (keys : List String)
     (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
   let keys := keys.eraseDups
-  let sizes := keys.filterMap fun key =>
-    if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
-    else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
-  let k := NativeImage.factorFor sizes
+  let headers := keys.filterMap fun key =>
+    let bytes := if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption
+      else (supplied.find? (·.1 == key)).map (·.2)
+    bytes.map fun data => (key, NativeImage.naturalSize data)
+  let factor := NativeImage.factorFor (headers.filterMap (·.2))
+  let upgrades := rasterPriorityFactors headers factor
   (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
+    let k := ((upgrades.find? (·.1 == key)).map (·.2)).getD factor
     if key.toLower.startsWith "data:" then
       match NativeImage.dataBytes key with
       | .error message => (state.1.insert key (.error message),state.2)
