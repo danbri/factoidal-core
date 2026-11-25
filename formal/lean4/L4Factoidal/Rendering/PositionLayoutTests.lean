@@ -689,6 +689,21 @@ private def quotePositions (width : Nat) : Option (Float × Float × Bool × Boo
 #guard quotePositions 50 == some (0,6,true,true)
 #guard quotePositions 100 == some (42,48,true,false)
 
+-- CSS Text 3 §1.5. Empty inline boxes and an out-of-flow element do not
+-- turn adjacent text fragments into independently wrappable words.
+private def splitWord := "<div id=p>un<span></span>bro<b></b>ken</div>"
+private def splitWordWithPosition := "<div id=p>un<i id=abs></i>broken</div>"
+#guard box splitWord "#p{width:0}" "p" == some (0,0,0,7)
+#guard at? splitWord "#p{width:0}" "ken" == some (30,0)
+#guard at? splitWordWithPosition "#p{width:0;position:relative} #abs{position:absolute}" "broken" == some (12,0)
+#guard at? "<div id=p>un<br>broken</div>" "#p{width:200px}" "broken" == some (0,7)
+
+-- Move the link and its comma as one run when the link alone would fit.
+private def linkComma := "<div id=p>aa <a>hello</a>, next</div>"
+#guard at? linkComma "#p{width:50px}" "hello" == some (0,7)
+#guard at? linkComma "#p{width:50px}" "," == some (30,7)
+#guard at? linkComma "#p{width:54px}" "hello" == some (18,0)
+
 -- `text-transform` (CSS Text 3 §2.1): the text of the runs, one character for one
 private def texts (html extra : String) : Option (List String) :=
   (render html extra).toOption.map fun (scene,_) => scene.glyphRuns.toList.map (·.text)
