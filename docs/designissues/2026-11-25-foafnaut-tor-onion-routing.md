@@ -138,8 +138,11 @@ Findings:
 3. Relay cell crypto is the limit: 143 KB/s on the page thread. AES-128-CTR needs a host
    primitive (WebCrypto on the JavaScript hosts, HACL* on native, as
    `skills/crypto-policy` already says for AES) before Tor data rates are usable.
-4. `arti-client` does not compile for wasm: tokio's networking is not available on wasm targets.
-   A wasm Tor client needs an Arti runtime (`tor-rtcompat`) over host sockets.
+4. `arti-client` 0.48.0 with its `tokio` feature does not compile for wasm: tokio's networking is
+   not available on wasm targets. With `default-features = false` and the patch of item 5, it
+   compiles for `wasm32-unknown-unknown` (checked 2026-11-25). It still needs an Arti runtime
+   (`tor-rtcompat`) for wasm and a transport the host provides; neither is in Arti 0.48.0
+   (section 9).
 5. `saturating-time` 0.6.0 (used by `tor-netdoc`) does not compile for `wasm32-unknown-unknown`:
    it names `std::time::Instant` where `web-time-compat` gives `web_time::Instant`. The probe used
    a local patch. Not reported upstream: owner rule of 2026-11-25 in `CLAUDE.md`, "Never report
@@ -152,3 +155,33 @@ Findings:
    (`runBudget`, 5 million steps for one run). Load large modules with `fetch`.
 8. Not measured: a full live consensus (about 8000 relays). The test consensus has 6 relays; do
    not extrapolate from it.
+
+## 9. Other work on Tor in wasm (web search, 2026-11-25)
+
+Read from the pages on 2026-11-25; nothing here was run.
+
+- Ethereum Foundation, "Embedding Tor in Browser Wallets, Frontends, and dApps", 2026-03-20,
+  https://reads.ethereum.foundation/blog/embedding-arti-in-the-browser/ (npm package tor-js). Arti
+  on a fork (voltrevo/arti, branch wasm-arti-client) for `wasm32-unknown-unknown`. A custom
+  `WasmRuntime` (timers from gloo_timers, wall clock from `Date.now`, tasks from
+  `spawn_local`). Transport: Snowflake only (WebSocket or WebRTC, then KCP, SMUX, rustls, Tor).
+  Directory: a bootstrap archive over HTTPS, kept in IndexedDB; first bootstrap about 3 minutes in
+  wasm against about 15 s native, then reduced. Onion services: not stated. Their caveats: shared
+  JavaScript context with the page, the bootstrap server sees the user's address, wasm
+  fingerprinting, experimental rustls crypto provider, no audit yet. New crates `tor-time` and
+  `tor-async-compat` were in review upstream.
+- webtor-rs, https://github.com/ethereum/webtor-rs: a browser Tor client on Arti crates
+  (README: Arti 1.8.0, tor-proto 0.37.0), about 1.2 MB gzipped. Transports: Snowflake (WebSocket
+  and WebRTC) and WebTunnel. Onion services not implemented. No fingerprinting protection; no
+  audit.
+- Echalote, https://www.npmjs.com/package/@hazae41/echalote: a TypeScript Tor client over
+  Snowflake and Meek. Its README says it is experimental with security issues; a third-party
+  comparison says it does not validate TLS.
+- https://github.com/brewsterkahle/onionpress/issues/154 (WASM Tor in browser, closed as a
+  duplicate on 2026-10-11): a comment cites Arti merge requests !3816 (arti-client builds for
+  wasm32 with no default features), !3763 (a web example) and !3600, and says Arti has no wasm CI.
+  Not checked against Arti's GitLab.
+
+For Foafnaut: the runtime of item 4 and a host transport (Snowflake or WebTunnel on the Hub; raw
+TCP on desktop) are the missing parts; the tor-js runtime is the nearest existing design. Its
+clock reads `Date.now`, which in a Foafnaut page is the virtual clock (section 8, item 6).
