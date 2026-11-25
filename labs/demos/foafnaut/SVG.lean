@@ -3993,16 +3993,48 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
+/-- True when a piece of `tests` whose box (four floats of `boxes` a piece) holds `q` passes its
+    test at `q`: `culled.any fun ((x0,y0,x1,y1),c) => x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env`,
+    over arrays of unboxed floats, a piece at a time from `i`. -/
+def piecesAnyFrom (boxes : FloatArray) (tests : Array (Prepared Bool)) (env : Env) (q : Float × Float)
+    (i : Nat) : Bool :=
+  if h : i < tests.size then
+    if boxes.get! (4*i) <= q.1 && q.1 <= boxes.get! (4*i+2) && boxes.get! (4*i+1) <= q.2 &&
+        q.2 <= boxes.get! (4*i+3) && (tests[i]).eval env then true
+    else piecesAnyFrom boxes tests env q (i+1)
+  else false
+termination_by tests.size - i
+
+/-- `PreparedCoverage` with the fill test left out (false) where the form allows it. A form
+    with its own closure (`local`) keeps its test, which may then hold. The CPU raster uses it
+    for a record whose fill alpha is exactly 0 (`SVGRaster.prep`): the colour is the same whether
+    the fill test holds or not. -/
+def PreparedCoverage.withoutFill : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse .. => .analytic inverse #[] (.constant false) (.constant false)
+  | .analytic inverse data _ stroke => .analytic inverse data (.constant false) stroke
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutFill
+
+/-- As `withoutFill`, for the stroke test. -/
+def PreparedCoverage.withoutStroke : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse x y w h => .rectFill inverse x y w h
+  | .analytic inverse data fill _ => .analytic inverse data fill (.constant false)
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutStroke
+
 /-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
     point is in the piece's box (`pieceBox`). A point outside the box is outside the
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
     is geometry over Float), and the CPU raster's differential test checks it. -/
-def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (fillLive strokeLive : Bool := true) : PreparedCoverage :=
   match p.dashParts with
   | none => p.prepareCoverage data base
   | some pieces =>
-    -- The edge and point counts are found once here, not at each sample.
-    let fill : Prepared Bool := match p.geometry with
+    -- The edge and point counts are found once here, not at each sample. A paint that is
+    -- known to add nothing (`fillLive`, `strokeLive` false: its alpha is exactly 0) has its
+    -- test left out: the colour is the same whether that test holds or not.
+    let fill : Prepared Bool := if !fillLive then .constant false else match p.geometry with
       | .polygon points =>
         let count := points.length
         ((boundsCondition base).prepare data).and
@@ -4012,13 +4044,14 @@ def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) 
         .dynamic (fun env => pathHitFast env.data base count p.style.rule env.position)
       | g => (fillCondition g base).prepare data
     let start := base+20+geometryTailSize p.geometry
-    let culled := (pieces.zipIdx.map fun (piece,i) =>
+    let culled := if !strokeLive then #[] else (pieces.zipIdx.map fun (piece,i) =>
       let o := start+20*i
       (pieceBox piece data[o+16]!,(pieceCondition piece o).prepare data)).toArray
+    let boxes : FloatArray := ⟨(culled.map fun (b,_) => [b.1,b.2.1,b.2.2.1,b.2.2.2]).toList.flatten.toArray⟩
+    let tests : Array (Prepared Bool) := culled.map (·.2)
     let inner : PreparedCoverage := .local p.transform.inverse fun q =>
       let env : Env := {data,position := q}
-      (fill.eval env,culled.any fun ((x0,y0,x1,y1),c) =>
-        x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env)
+      (fill.eval env,piecesAnyFrom boxes tests env q 0)
     match p.clips with
     | [] => inner
     | clips => .clipped (clipPass data (p.clipStart base) clips) inner

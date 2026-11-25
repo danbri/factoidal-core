@@ -246,6 +246,9 @@ structure Prep where
   edgeCount : Option Nat
   /-- The paint rows when both paints are constant, else none (the closures of `sample` are used). -/
   rows : Option PaintRows
+  /-- False when the fill (stroke) paint is constant with alpha exactly 0: its test adds nothing. -/
+  fillLive : Bool
+  strokeLive : Bool
   x0 : Float
   y0 : Float
   x1 : Float
@@ -256,10 +259,20 @@ private def infinity : Float := 1.0/0.0
 /-- `Primitive.screenBox`, the box `Scene.tiles` lists by; no box means every pixel. -/
 def prep (m : Mapping) (data : Array Float) (item : Item) : Prep :=
   let (x0,y0,x1,y1) := (item.1.screenBox m).getD (-infinity,-infinity,infinity,infinity)
+  let rows := paintRows? item.1
+  -- A constant paint of alpha +0 gives the same colour whether its test holds or not
+  -- (`overRows`: `fa` and `sa` are the literal 0 on both branches), so its test is left out.
+  let fillLive := match rows with | some r => r.fa.toBits != 0 | none => true
+  let strokeLive := match rows with | some r => r.sa.toBits != 0 | none => true
   let sample := item.1.prepareSample data item.2
   -- A dashed stroke tests only the pieces whose box holds the point.
-  let sample := if item.1.dashParts.isSome then {sample with coverage := item.1.prepareCoverageCulled data item.2} else sample
-  ⟨item,sample,item.1.pathEdges?,paintRows? item.1,x0,y0,x1,y1⟩
+  let sample :=
+    if item.1.dashParts.isSome then {sample with coverage := item.1.prepareCoverageCulled data item.2 fillLive strokeLive}
+    else
+      let c := sample.coverage
+      let c := if fillLive then c else c.withoutFill
+      {sample with coverage := if strokeLive then c else c.withoutStroke}
+  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,x0,y0,x1,y1⟩
 
 /-- True when the box of `r` meets the pixel square at `(x,y)`. -/
 @[inline] def Prep.meetsRow (r : Prep) (y : Float) : Bool := r.y0 <= y+1 && y <= r.y1
@@ -276,11 +289,14 @@ def Prep.forRow (m : Mapping) (data : Array Float) (yf : Float) (r : Prep) : Pre
   match r.edgeCount with
   | none => r
   | some count =>
+    -- A fill that adds nothing needs no edge lists (its test is already left out in `prep`).
+    if !r.fillLive then r else
     let wx := (world m (max 0 r.x0) yf).1
     let spans := sampleRows.map fun dy =>
       let py := pathSampleY (r.item.1.localPoint wx (world m wx (yf+dy)).2)
       (py,pathSpansAt data r.item.2 count py)
-    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageSpans data r.item.2 spans}}
+    let c := r.item.1.prepareCoverageSpans data r.item.2 spans
+    {r with sample := {r.sample with coverage := if r.strokeLive then c else c.withoutStroke}}
 
 /-- `overColors` with the paint rows as floats, the same Float operations in the same order. -/
 @[inline] def overRows (r : PaintRows) (opacity : Float) (fillHit strokeHit : Bool) (dst : Color) : Color :=
@@ -301,7 +317,7 @@ def sampleFast (m : Mapping) (prepared : Array Prep) (column : Float) (x y : Flo
   else
     let position := world m x y
     prepared.foldl (fun c r =>
-      if r.meetsColumn column then
+      if r.meetsColumn column && (r.fillLive || r.strokeLive) then
         -- A record that covers no sample leaves the colour as it is: its paint has
         -- alpha 0 in `overColors`, so the colour gains 0 and keeps all of itself.
         let hits := r.sample.coverage.eval position
