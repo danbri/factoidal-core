@@ -2705,16 +2705,23 @@ def hintEdge : Option Length → Option (Float × Float)
   | _ => none
 
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
-`video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
-`width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
-`object`, `marquee` and an image button map to the horizontal and vertical margins; the
+`video`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
+`width` and `height` properties; `hr` width too. For `canvas`, the attributes give an
+`auto <ratio>` hint, and the bitmap gives the natural size. `hspace` and `vspace` of
+`img`, `embed`, `object`, `marquee` and an image button map to the horizontal and vertical margins; the
 `border` of `img`, `object` and an image button to the border widths, with a solid border.
 All below author CSS. A percentage height resolves against a definite containing height
 (`Fragment.percentHeights`) and is read as `auto` otherwise. -/
 def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
+  if DOM.Dom.isHtmlElement n "canvas" then
+    let w := HTML.Dimension.parseNonNegative (attrValue n "width")
+    let h := HTML.Dimension.parseNonNegative (attrValue n "height")
+    return match w,h with
+      | some w,some h => {s with pos := {s.pos with ratio := some (w,h), ratioAuto := true}}
+      | _,_ => s
   let tag := n.lname
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
-  let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
+  let sized := imageInput || ["img","video","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
   -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
   let mut s := if tag == "video" then {s with objectFit := .contain} else s
@@ -2731,6 +2738,15 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
     if let some b := pixelLengthAttribute (attrValue n "border") then
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyles := .all .solid}
   return s
+
+/-- Canvas bitmap attributes leave the preferred CSS width and height unchanged. -/
+theorem replacedHints_canvas_size (n : DOM.Node) (s : Computed) (h : DOM.Dom.isHtmlElement n "canvas" = true) :
+    (replacedHints n s).width = s.width ∧ (replacedHints n s).height = s.height := by
+  unfold replacedHints
+  simp only [h, if_true, Id.run, pure]
+  split <;> exact ⟨rfl,rfl⟩
+
+#print axioms replacedHints_canvas_size
 
 /-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
 `source` element its image comes from (here: the first earlier `source` sibling with a
@@ -2884,6 +2900,7 @@ cascade takes from no UA rule. -/
 def hintedProperties (before after : Computed) : List String :=
   (if after.width.same before.width then [] else ["width"]) ++
   (if after.height.same before.height then [] else ["height"]) ++
+  (if after.pos.ratio == before.pos.ratio && after.pos.ratioAuto == before.pos.ratioAuto then [] else ["aspect-ratio"]) ++
   (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
   (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
   (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++

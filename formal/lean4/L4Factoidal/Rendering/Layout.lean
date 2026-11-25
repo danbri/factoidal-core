@@ -940,8 +940,8 @@ not draw a child document or a video frame in its container yet. -/
 def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
   if DOM.Dom.isHtmlElement n "canvas" then
     let whole := fun (name : String) (fallback : Nat) =>
-      let digits := ((CSS.attrValue n name).toList.dropWhile fun c => c == ' ' || c == '\t' || c == '\n').takeWhile Char.isDigit
-      if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
+      let value := HTML.Dimension.parseNonNegative (CSS.attrValue n name)
+      (value.filter (· ≤ 99999)).getD fallback
     some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
   else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
   else none
