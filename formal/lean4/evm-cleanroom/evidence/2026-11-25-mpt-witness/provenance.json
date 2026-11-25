@@ -1,8 +1,20 @@
 {
   "artifacts": {
     "evidence/2026-11-25-mpt-witness/README.md": {
-      "bytes": 10300,
-      "sha256": "87c32a671b23576a12b565baa5e53739b4adf5e0fe728897eb88a94654c6b929"
+      "bytes": 10894,
+      "sha256": "96fe4d68a5a11c0534bc2e138626cfa145d816f7ffe04204aa3a25f88e3b00ca"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts-published-head/CanonicalRLP.txt": {
+      "bytes": 643,
+      "sha256": "3db6dc0a8fbcb62e8fa249d3c5adba10dcc98b51dc23e4069eb4cbbcb1a96a8f"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts-published-head/MPT.txt": {
+      "bytes": 452,
+      "sha256": "b79b615cc47dee42efefdcb9cdbd0a528556e7d2db97657341190d45823e6156"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts-published-head/WitnessAdmissionProofs.txt": {
+      "bytes": 1671,
+      "sha256": "a6f70a71debc6315d31afbbd9b6bc2ad7743b3b2e3c5a668cedc8ec837ac153c"
     },
     "evidence/2026-11-25-mpt-witness/axiom-transcripts/CanonicalRLP.txt": {
       "bytes": 643,
@@ -152,6 +164,10 @@
       "bytes": 502,
       "sha256": "e2a3636d8754268cab27e11aff4cb46f7ac9404d663f7ceb7b09ad7558f60dc1"
     },
+    "evidence/2026-11-25-mpt-witness/runtime-gate-published-head.json": {
+      "bytes": 7281,
+      "sha256": "1e1c45439f524d896bc3966a822f4f212488670fa41a92d7154422f1c1ac3693"
+    },
     "evidence/2026-11-25-mpt-witness/runtime-gate.json": {
       "bytes": 7281,
       "sha256": "dbd97117b88e6c596e9bfc0f3220a64fac2959baec6cd2fbc6760b2c3f58c1b4"
@@ -175,6 +191,10 @@
     "evidence/2026-11-25-mpt-witness/witness-axiom-controls.json": {
       "bytes": 576,
       "sha256": "7425ee4980bb8a5c27f07db1b55d9091b93ec4f9f81a834075d86e79f3ebf8d8"
+    },
+    "evidence/2026-11-25-mpt-witness/witness-axioms-published-head.json": {
+      "bytes": 16719,
+      "sha256": "e045260f12207f827880e588425a351c3905adac378f92a34ba2ade84348a041"
     },
     "evidence/2026-11-25-mpt-witness/witness-axioms.json": {
       "bytes": 16720,
@@ -260,7 +280,7 @@
     "sha256": "e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550",
     "version": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)"
   },
-  "generatedAt": "2026-11-25T15:31:40.321148+00:00",
+  "generatedAt": "2026-11-25T15:35:57.089756+00:00",
   "kind": "independent-lean-witness-checkpoint-evidence",
   "nativeBinaries": {
     "proof": {
@@ -284,6 +304,13 @@
     "transactionListFailed": 0,
     "transactionLists": 36
   },
+  "publishedSourceAudit": {
+    "head": "aeff0b2122bd02eeba2fc44e3b63bbd67fdf6afc",
+    "requireHead": true,
+    "selectedTheorems": 32,
+    "sha256": "e045260f12207f827880e588425a351c3905adac378f92a34ba2ade84348a041",
+    "tree": "e54488419fd7a2b1a6e8f417cf0d3a759db73b19"
+  },
   "qualifications": [
     "No fresh Geth or EthereumJS execution is claimed. Their November24 outcomes are pinned retained evidence; current native proof admission and execution are newly run.",
     "All30 completed-execution requests first reproduce their historical request hashes. Six refusal/boundary requests use an explicitly documented block-gas-limit declaration for an originally unobserved final execution-gas total.",
@@ -291,7 +318,7 @@
     "Runtime protocol witness checking is hashing/decoding/traversal, not Lean proof search. Pre-pruning linked elaborator machinery and its removal are recorded separately.",
     "Supplied root/canonical-chain trust, experimental Keccak, decoded signature/sender trust, absent block system processing, poststate commitments, full client coverage and compiler/runtime assurance remain open."
   ],
-  "repositoryHeadAtPackaging": "40c3f0335501677d782df566ef7fd1e8a5cc4ad5",
+  "repositoryHeadAtPackaging": "aeff0b2122bd02eeba2fc44e3b63bbd67fdf6afc",
   "schemaVersion": 1,
   "sourceIdentity": "Use the exact current source blobs in witness-axioms.json and witness-source-manifest.json. Pre-publication HEAD is the predecessor; later required-HEAD evidence is separate."
 }

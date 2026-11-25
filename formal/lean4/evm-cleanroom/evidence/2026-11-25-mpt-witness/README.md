@@ -148,8 +148,14 @@ limits before hashing.
 `provenance.json` and `SHA256SUMS` bind the retained files and binary/compiler
 identities. Run `sha256sum --check SHA256SUMS` from this directory. Local
 pre-publication reports truthfully retain the predecessor HEAD metadata;
-the source pins describe the changed working files. A later required-HEAD
-audit, if present, is an additional record rather than a rewrite of that run.
+the source pins describe the changed working files. The separate
+`witness-axioms-published-head.json` and `axiom-transcripts-published-head/`
+freshly check all 32 additions with `--require-head` against published source
+[`aeff0b2122bd02eeba2fc44e3b63bbd67fdf6afc`](https://github.com/danbri/factoidal-core/commit/aeff0b2122bd02eeba2fc44e3b63bbd67fdf6afc),
+tree `e54488419fd7a2b1a6e8f417cf0d3a759db73b19`.
+`runtime-gate-published-head.json` is bound to that exact audit and passes
+both final executables. This evidence update does not change production
+source, configurations, harnesses or source pins.
 
 ## Reproduce
 
@@ -177,7 +183,9 @@ does not impose a noisy timing threshold on CI.
 
 ## Retained raw whitespace
 
-`whitespace-check.json` records the staged check. New source and configuration
+`whitespace-check.json` records the source checkpoint staged check. New source and configuration
 files have no whitespace errors. Eight exact raw-artifact paths retain
 upstream fixture spacing, compiler transcript blank lines or disassembler
 spacing so their recorded bytes are not rewritten.
+The three later published-head transcripts retain the same compiler-emitted
+final blank lines as their original counterparts.
