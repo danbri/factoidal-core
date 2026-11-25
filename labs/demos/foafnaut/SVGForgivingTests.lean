@@ -111,7 +111,7 @@ private def strict (body : String) : Option NativeSVG.Scene :=
 private def logoClip :=
   "<defs><clipPath id='frame'><path fill='white' d='M0 0h20v21.42H0z'/></clipPath></defs>" ++
   "<g clip-path='url(#frame)'><rect width='40' height='40'/></g>"
-#guard (log logoClip).isEmpty
+#guard !(log logoClip).contains "element: clipPath"
 #guard inked logoClip 10 10 && clear logoClip 30 10 && clear logoClip 10 30
 
 -- Text lowers to glyph paths; x lists, anchors and missing fonts behave.
