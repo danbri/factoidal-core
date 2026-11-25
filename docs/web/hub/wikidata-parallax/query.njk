@@ -1,7 +1,7 @@
 ---
 layout: hub-app.njk
 appBase: /web/hub/wikidata-parallax
-appNoScript: true
+wikidataEndpoints: true
 appCommonsImages: true
 appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/wikidata-parallax
 appEngineLabel: All queries as set browsing
@@ -30,20 +30,52 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
     <p class="q-tier">{{ m.tierBadge(q.tier) }} {{ tierNote[q.tier] }}</p>
   </header>
 
-  {{ b.highlightStyle(q.blocks.vars) | safe }}
-  <section class="blocks" aria-label="The query as blocks">
-    {%- for v in q.blocks.vars %}<span class="hl-anchor" id="hl-{{ v }}"></span>{% endfor %}
+  {{ b.highlightStyle(q.grammar.vars) | safe }}
+  {%- set ctx = {entities: entities, thumb: thumb, lex: q.grammar.lex} %}
+  {%- set dump = q.grammar.program | dump %}
+  <section class="blocks" aria-label="The query as blocks" data-steps="{{ q.grammar.steps | length }}">
+    {%- for v in q.grammar.vars %}<span class="hl-anchor" id="hl-{{ v }}"></span>{% endfor %}
     <p class="blocks-key">
       <span class="key key-set">a set of items</span>
       <span class="key key-pivot">pivot to a related set</span>
       {%- if q.tier == "N" %}<span class="key key-op">beyond browsing</span>{% endif %}
-      {%- if "any property" in (q.blocks | dump) %}<span class="key key-wild">any property</span>{% endif %}
-      {%- if "\"join\"" in (q.blocks | dump) or q.blocks.conditions | length %}<span class="key key-hex">condition</span>{% endif %}
-      <span class="key-hint">Point at or select a set or <span class="var">?name</span> to see everywhere it is used.</span>
+      {%- if "\"any\":true" in dump %}<span class="key key-wild">any property</span>{% endif %}
+      {%- if "\"op\":\"join\"" in dump or q.grammar.program.where | length %}<span class="key key-hex">condition</span>{% endif %}
+      <span class="key-hint">Point at or select a set or <span class="var">?name</span> to see everywhere it is used. Orange blocks fold away: select their top bar.</span>
       <a class="hl-clear" href="#">Clear highlight</a>
     </p>
-    {{ b.program(q.blocks, {entities: entities, thumb: thumb}) | safe }}
+    <div class="step-tools" hidden>
+      <button type="button" class="st-start">Step through the query</button>
+      <button type="button" class="st-counts">Count every step on Wikidata</button>
+      <button type="button" class="st-fold">Fold all blocks</button>
+    </div>
+    {{ b.program(q.grammar.program, ctx) | safe }}
   </section>
+  <script type="application/json" id="grammar">{{ {steps: q.grammar.steps, prefixes: q.grammar.prefixes, full: q.grammar.full, id: q.id} | dump | replace("</", "<\\/") | safe }}</script>
+  <aside class="drawer" hidden aria-label="Draft query">
+    <div class="dr-bar">
+      <button type="button" class="dr-prev" aria-label="Previous step">‹</button>
+      <span class="dr-title" aria-live="polite"></span>
+      <button type="button" class="dr-next" aria-label="Next step">›</button>
+      <button type="button" class="dr-toggle" aria-expanded="true">Hide query</button>
+      <button type="button" class="dr-close" aria-label="Stop stepping">×</button>
+    </div>
+    <div class="dr-body">
+      <textarea class="dr-sparql" spellcheck="false" aria-label="Draft SPARQL for this step"></textarea>
+      <div class="dr-actions">
+        <button type="button" class="dr-count">Count</button>
+        <button type="button" class="dr-run">Run (first 50 rows)</button>
+        <label>on <select class="dr-endpoint">
+          <option value="https://qlever.dev/api/wikidata">QLever (qlever.dev)</option>
+          <option value="https://query.wikidata.org/sparql">Wikidata Query Service</option>
+          <option value="https://query-next.wikidata.org/sparql">Wikidata QLever (query-next)</option>
+        </select></label>
+        <a class="dr-open" href="#" target="_blank" rel="noopener">Open in a new tab</a>
+        <span class="dr-status" role="status"></span>
+      </div>
+      <div class="dr-result"></div>
+    </div>
+  </aside>
 
   {%- if q.flow.extensions | length or q.flow.aggregate %}
   <section class="panel">

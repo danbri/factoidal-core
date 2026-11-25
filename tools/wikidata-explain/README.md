@@ -65,6 +65,8 @@ Chips are worded as removing a positive facet value, e.g. "exclude: occupation i
 
 Negated combinations ("not (A and B)"), negations tied to a second column, conditions inside the negation, and deeper chains stay blocked.
 
+`src/grammar.mjs` turns each query into an abstract grammar for the block page: chains of set browsing, plus combine nodes for the operations browsing lacks, with the SPARQL of each step and a separate lexicon of words (see [GRAMMAR.md](GRAMMAR.md)). `src/sparql.mjs` writes the IR back out as SPARQL. `node src/export-parallax-hub.mjs <out.json>` writes the hub page's data.
+
 ## Known limits
 
 - Only L1 (precise) rendering exists. L2 and L3 are not written yet.

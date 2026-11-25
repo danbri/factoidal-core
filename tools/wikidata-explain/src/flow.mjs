@@ -8,6 +8,7 @@
 import { flatten, recogniseLabels, exprText } from './explain.mjs';
 import { compact } from './names.mjs';
 import { describePath, classifyParallax } from './parallax.mjs';
+import { elemText, iriText, pathText, litText, termText } from './sparql.mjs';
 
 const P31 = 'http://www.wikidata.org/prop/direct/P31';
 const qid = (iri) => { const m = /^http:\/\/www\.wikidata\.org\/entity\/(Q\d+)$/.exec(iri || ''); return m ? m[1] : null; };
@@ -33,36 +34,41 @@ export function buildFlow(q, px, nameOf) {
   // Variables an "any of" OR narrows are sets, never leaf columns.
   // So are variables an exclusion applies to: the chip needs a set to sit on.
   const anchors = new Set([...(px.extensions || []).filter(e => e.anchor), ...(px.negations || []).filter(n => !n.stage)].map(e => e.anchor.slice(1)));
-  const valuesOf = (v) => elems.find(x => x.kind === 'values' && x.vars.length === 1 && x.vars[0] === v)?.rows.map(r => r[0]).filter(Boolean);
+  const valuesEl = (v) => elems.find(x => x.kind === 'values' && x.vars.length === 1 && x.vars[0] === v);
+  const valuesOf = (v) => valuesEl(v)?.rows.map(r => r[0]).filter(Boolean);
+  // An edge's SPARQL, with the VALUES that fix its other end or its property, when there are.
+  const srcWith = (e, ...vs) => [...vs.map(v => v && valuesEl(v) ? elemText(valuesEl(v)) : null).filter(Boolean), ...[].concat(e.src)];
 
   // Edges: {s, o, prop, optional, text}
   const edges = [];
-  const addEdge = (s, o, prop, optional) => edges.push({ s, o, prop, optional });
+  // pt: the property as SPARQL (an IRI, a path, or ?p), the key the page's lexicon names it by.
+  const addEdge = (s, o, prop, optional, src, pt) => edges.push({ s, o, prop, optional, src, pt });
   const propOfTriple = (tr) => tr.p.t === 'iri' ? nm(tr.p.iri)
     : (valuesOf(tr.p.name) ? `any of ${valuesOf(tr.p.name).map(t => nm(t.iri)).join(', ')}` : 'any property');
-  const take = (x, optional) => {
+  // src: the SPARQL an edge stands for (a whole OPTIONAL group for its edges).
+  const take = (x, optional, src) => {
     if (x.kind === 'triple') {
       if (LABEL_VAR.test(x.triple.o.name || '') || LABEL_VAR.test(x.triple.s.name || '')) return;
-      addEdge(x.triple.s, x.triple.o, propOfTriple(x.triple), optional);
-    } else if (x.kind === 'path') addEdge(x.s, x.o, describePath(x.path, nm), optional);
+      addEdge(x.triple.s, x.triple.o, propOfTriple(x.triple), optional, src || [x.triple.p.t === 'var' && valuesEl(x.triple.p.name) ? elemText(valuesEl(x.triple.p.name)) : null, elemText(x)].filter(Boolean), x.triple.p.t === 'iri' ? iriText(x.triple.p.iri) : `?${x.triple.p.name}`);
+    } else if (x.kind === 'path') addEdge(x.s, x.o, describePath(x.path, nm), optional, src || elemText(x), pathText(x.path));
   };
-  const conditions = [];
+  const conditions = [], conditionSrc = [];
   elems.forEach((el, i) => {
     if (consumed.has(i)) return;
     if (el.kind === 'triple' || el.kind === 'path') take(el, false);
-    else if (el.kind === 'optional') for (const x of flatten(el.p)) take(x, true);
+    else if (el.kind === 'optional') { const src = elemText(el); for (const x of flatten(el.p)) take(x, true, src); }
     else if (el.kind === 'union') {
       // Same property, different values: one facet with several values.
       const arms = el.branches.map(b => flatten(b));
       if (arms.every(a => a.length === 1 && a[0].kind === 'triple' && a[0].triple.p.t === 'iri'
         && a[0].triple.p.iri === arms[0][0].triple.p.iri && JSON.stringify(a[0].triple.s) === JSON.stringify(arms[0][0].triple.s)
         && a[0].triple.o.t === 'iri')) {
-        addEdge(arms[0][0].triple.s, { t: 'any', iris: arms.map(a => a[0].triple.o.iri) }, nm(arms[0][0].triple.p.iri), false);
+        addEdge(arms[0][0].triple.s, { t: 'any', iris: arms.map(a => a[0].triple.o.iri) }, nm(arms[0][0].triple.p.iri), false, elemText(el), iriText(arms[0][0].triple.p.iri));
       }
     } else if (el.kind === 'filter' && !/"(not)?[eE]xistsPat"/.test(JSON.stringify(el.cond))) {
-      conditions.push(exprText(el.cond, { iri: nm }));
+      conditions.push(exprText(el.cond, { iri: nm })); conditionSrc.push(elemText(el));
     } else if (el.kind === 'bind' && !/Label$|Description$|__/.test(el.v)) {
-      conditions.push(`?${el.v} = ${exprText(el.e, { iri: nm })}`);
+      conditions.push(`?${el.v} = ${exprText(el.e, { iri: nm })}`); conditionSrc.push(elemText(el));
     }
   });
 
@@ -80,17 +86,19 @@ export function buildFlow(q, px, nameOf) {
 
   const used = new Set(), seen = new Set();
   const facetValue = (t) => {
-    if (t.t === 'iri') return [{ id: qid(t.iri), text: nm(t.iri) }];
-    if (t.t === 'any') return t.iris.map(i => ({ id: qid(i), text: nm(i) }));
-    if (t.t === 'lit') return [{ text: JSON.stringify(t.lex) }];
-    if (t.t === 'bnode') return [{ text: 'any value' }];
-    return [{ text: '?' }];
+    if (t.t === 'iri') return [{ id: qid(t.iri), text: nm(t.iri), term: iriText(t.iri) }];
+    if (t.t === 'any') return t.iris.map(i => ({ id: qid(i), text: nm(i), term: iriText(i) }));
+    if (t.t === 'lit') return [{ text: JSON.stringify(t.lex), term: litText(t) }];
+    if (t.t === 'bnode') return [{ text: 'any value', term: '[]' }];
+    return [{ text: "?", term: termText(t) }];
   };
   const degree = (v) => edges.filter(e => key(e.s) === v || key(e.o) === v).length + (anchors.has(v) ? 1 : 0);
   const sets = [];
   const visit = (v, via) => {
     seen.add(v);
     const set = { var: v, via, facets: [], columns: [], chips: [] };
+    // A set fixed by VALUES (the query names its items).
+    if (valuesOf(v)) { set.values = valuesOf(v).flatMap(facetValue); set.valuesSrc = elemText(valuesEl(v)); }
     sets.push(set);
     const mine = edges.map((e, i) => [e, i]).filter(([e, i]) => !used.has(i) && (key(e.s) === v || key(e.o) === v));
     const children = [];
@@ -103,15 +111,16 @@ export function buildFlow(q, px, nameOf) {
       const ok = key(other);
       // A blank node with properties of its own (a [ ps:… ; pq:… ] statement) is a set, not "any value".
       if (!ok || (ok.startsWith('_') && degree(ok) === 1)) {
-        if (!fwd && other.t === 'iri') { set.facets.push({ prop: e.prop, values: facetValue(other), reverse: true, optional: e.optional }); continue; }
-        set.facets.push({ prop, values: facetValue(other), optional: e.optional });
+        const src = srcWith(e);
+        if (!fwd && other.t === 'iri') { set.facets.push({ prop: e.prop, pt: e.pt, values: facetValue(other), reverse: true, optional: e.optional, src }); continue; }
+        set.facets.push({ prop, pt: e.pt, inv: !fwd, values: facetValue(other), optional: e.optional, src });
         continue;
       }
       const vals = valuesOf(ok);
-      if (vals && degree(ok) === 1) { set.facets.push({ prop, values: vals.flatMap(facetValue), optional: e.optional }); continue; }
+      if (vals && degree(ok) === 1) { set.facets.push({ prop, pt: e.pt, inv: !fwd, values: vals.flatMap(facetValue), optional: e.optional, src: srcWith(e, ok) }); continue; }
       if (seen.has(ok)) { used.delete(i); continue; } // cycle: left for "beyond"
-      if (degree(ok) > 1) children.push({ v: ok, i, via: { from: v, prop, optional: e.optional } });
-      else set.columns.push({ var: ok, prop, optional: e.optional });
+      if (degree(ok) > 1) children.push({ v: ok, i, via: { from: v, prop, pt: e.pt, inv: !fwd, optional: e.optional, src: srcWith(e) } });
+      else set.columns.push({ var: ok, prop, pt: e.pt, inv: !fwd, optional: e.optional, src: srcWith(e) });
     }
     // A child reached meanwhile by another route closes a cycle: its edge stays outside the tree.
     for (const c of children) { if (seen.has(c.v)) used.delete(c.i); else visit(c.v, c.via); }
@@ -127,28 +136,29 @@ export function buildFlow(q, px, nameOf) {
     const stmt = set.via && / statement \(P\d+\)$/.test(set.via.prop) ? set.via.prop.replace(/ \(P\d+\)$/, '') + 's' : null;
     set.title = type ? type.values[0].text : stmt || `?${set.var}`;
     set.typeId = type?.values[0].id || null;
+    set.typeSrc = type?.src || null;
   }
   for (const n of px.negations || []) {
     const s = sets.find(x => `?${x.var}` === n.anchor && !x.stage);
-    (s ? s.chips : (sets[0]?.chips || [])).push({ kind: 'exclude', label: n.label.replace(/^(exclude|require): /, '') + (n.stage ? ' (inside the grouped stage)' : ''), verb: n.label.split(':')[0] });
+    (s ? s.chips : (sets[0]?.chips || [])).push({ kind: 'exclude', label: n.label.replace(/^(exclude|require): /, '') + (n.stage ? ' (inside the grouped stage)' : ''), verb: n.label.split(':')[0], src: n.stage ? null : n.src });
   }
   // An "any of" OR sits on the set it narrows; with nothing else to draw, that set starts the flow.
   for (const e of (px.extensions || []).filter(e => e.anchor)) {
     let s = sets.find(x => `?${x.var}` === e.anchor);
     if (!s) { s = { var: e.anchor.slice(1), via: null, depth: 0, facets: [], columns: [], chips: [], title: e.anchor, typeId: null }; sets.unshift(s); }
-    s.chips.push({ kind: 'or', verb: 'any', label: e.label.replace(/^any of: /, '') });
+    s.chips.push({ kind: 'or', verb: 'any', label: e.label.replace(/^any of: /, ''), src: e.src });
   }
   // Subqueries: their own sets, drawn as a grouped stage joined on its output columns.
   for (const el of elems.filter(x => x.kind === 'subselect')) {
     const inner = buildFlow(el.q, classifyParallax(el.q, nameOf), nameOf);
     const outs = (el.q.select === 'all' ? [] : el.q.select).map(it => it.var);
     inner.sets.forEach((s, k) => sets.push({ ...s, stage: k === 0 ? { joins: outs.filter(v => vars.has(v) || projected.includes(v)) } : true }));
-    conditions.push(...inner.conditions);
+    conditions.push(...inner.conditions); conditionSrc.push(...inner.conditionSrc);
   }
   const edgeText = new Set(edges.map(e => e.prop));
   const extensions = (px.extensions || []).filter(e => !e.anchor && !(e.kind === 'path' && edgeText.has(e.label)) && !(e.kind === 'or' && edgeText.has(e.label.replace(/^via /, ''))));
   const beyond = [...(px.blockers || [])];
-  const looseEdges = edges.filter((e, i) => !used.has(i)).map(e => ({ s: key(e.s), o: key(e.o), prop: e.prop, optional: e.optional }));
+  const looseEdges = edges.filter((e, i) => !used.has(i)).map(e => ({ s: key(e.s), o: key(e.o), prop: e.prop, pt: e.pt, optional: e.optional, src: srcWith(e) }));
   const loose = edges.filter((e, i) => !used.has(i)).map(e => `${key(e.s) ? '?' + key(e.s) : nm(e.s.iri || '')} ${e.prop} ${key(e.o) ? '?' + key(e.o) : facetValue(e.o).map(x => x.text).join(', ')}`);
 
   const entities = new Set();
@@ -157,8 +167,8 @@ export function buildFlow(q, px, nameOf) {
   for (const e of extensions) collect(e.label);
 
   return {
-    sets: sets.map(({ var: v, title, typeId, via, depth, facets, columns, chips, stage }) => ({ var: v, title, typeId, via, depth, stage, facets: facets.filter(f => !(f.prop === nm(P31) && f.values.length === 1 && f.values[0].id === typeId)), columns, chips })),
-    conditions, extensions, beyond, loose, looseEdges, entities: [...entities],
+    sets: sets.map(({ var: v, title, typeId, typeSrc, values, valuesSrc, via, depth, facets, columns, chips, stage }) => ({ var: v, title, typeId, typeSrc, values, valuesSrc, via, depth, stage, facets: facets.filter(f => !(f.prop === nm(P31) && f.values.length === 1 && f.values[0].id === typeId)), columns, chips })),
+    conditions, conditionSrc, extensions, beyond, loose, looseEdges, entities: [...entities],
     aggregate: (q.select === 'all' ? [] : q.select).some(it => it.expr?.e === 'aggregate'),
   };
 }
