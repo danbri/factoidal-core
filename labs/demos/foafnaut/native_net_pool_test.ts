@@ -112,6 +112,8 @@ Deno.test("two origins, two partitions or two pinned addresses never share a con
     }
     assert(ipv4.connections()-before===1&&ipv6.connections()===1,
       `addresses: expected one new connection to each address, got ${ipv4.connections()-before} and ${ipv6.connections()}`);
+    const unpooled=await netAnswer(wire(24,ipv4,{address:"::1"}),{timeoutMs:10000});
+    assert(unpooled.status===200&&ipv6.connections()===2,"one-shot IPv6 request did not open its own connection");
     // 2 origins + 3 partitions of one origin + 2 pinned addresses
     assert(pool.entries.size===7,`clients: ${pool.entries.size}`);
   }finally{pool.close();await a.stop();await b.stop();await ipv4.stop();await ipv6?.stop();}
@@ -170,4 +172,3 @@ Deno.test("bounds: at most maxClients clients; an idle client closes after idleM
     assert((await netAnswer(wire(30,servers[0]),{timeoutMs:10000},pool)).status===200&&servers[0].connections()===n+1,"no new connection after the idle close");
   }finally{pool.close();for(const s of servers)await s.stop();}
 });
-
