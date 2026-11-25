@@ -48,6 +48,13 @@
    "handwritten": true
   },
   {
+   "page": "newtab.html",
+   "title": "New tab",
+   "handwritten": true,
+   "shows": "the page a new tab opens: links to Settings, the console and the browser's own pages, a search form that works as words typed in the address bar, a SPARQL form over the built-in FOAF sample, a Wikipedia form, and a link to the Particle Rex game; plain HTML with no script, no web font and no image, so a new tab opens at once",
+   "doesNotShow": "dark colours: pages are drawn light (prefers-color-scheme: dark never holds), so its dark style block is not used yet"
+  },
+  {
    "page": "books-xslt1.xml",
    "title": "XML with XSLT 1.0"
   },
@@ -388,6 +395,15 @@
    "appRefused": "does not execute scripts",
    "shows": "an animated bar chart with a gradient, a line with round joins, dots and text labels, drawn by getContext('2d') each animation frame; Lean rasterises every pixel",
    "doesNotShow": "images from the network; without the new engine the canvas stays blank"
+  },
+  {
+   "page": "particle-rex.html",
+   "title": "Particle Rex, a one-button canvas game",
+   "handwritten": true,
+   "needs": "page scripts, Canvas 2D (L4Factoidal.PageCanvas), requestAnimationFrame, keyboard and pointer events in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "a one-button game in one HTML file (about 3,900 lines): a full-window canvas drawn every animation frame with gradients, clips, transforms, sprites drawn into other canvases and getImageData; Space, Enter, W, A, S, D and the arrow keys, click and touch",
+   "doesNotShow": "network use other than the Google Fonts sheet (Liberation Mono is the offline face); sound needs Web Audio, and the game runs without it"
   },
   {
    "page": "spinal-tap-sparql.html",

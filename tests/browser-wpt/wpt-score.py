@@ -112,6 +112,16 @@ class VariantRng(random.Random):
     """The generator of the variant strata (seed + 1)."""
 
 
+def done_in(jsonl):
+    try:
+        # Workers append newline-terminated JSON records. A concurrent read can
+        # see part of the last record, including part of a UTF-8 character.
+        with open(jsonl, "rb") as results:
+            return {json.loads(line)["file"] for line in results if line.endswith(b"\n") and line.strip()}
+    except FileNotFoundError:
+        return set()
+
+
 def cmd_run(a):
     """Run a list in --jobs parts, restarting a part past a test that stalls."""
     names = [l.strip() for l in open(a.list) if l.strip() and not l.startswith("#")]
@@ -146,12 +156,6 @@ def cmd_run(a):
         else:
             server.kill()
             sys.exit("wptserve did not start (see wptserve.log in --dir)")
-
-    def done_in(jsonl):
-        try:
-            return {json.loads(l)["file"] for l in open(jsonl) if l.strip()}
-        except FileNotFoundError:
-            return set()
 
     def start(i):
         lst, jsonl, err = (os.path.join(a.dir, f"part{i}.{x}") for x in ("list", "jsonl", "log"))

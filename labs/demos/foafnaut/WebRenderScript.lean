@@ -98,7 +98,8 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
   | "setStates" =>
     exactly ["nodeId","states"]
     let states ← node "states"
-    if states ≥ 16 then throw "script command: states exceed bound"
+    if states ≥ L4Factoidal.WasmVM.Hosts.Dom.elementStateLimit then
+      throw "script command: states exceed bound"
     return .setStates (← node "nodeId") states
   | "adoptNode" => exactly ["nodeId","document"]; return .adoptNode (← node "nodeId") (← node "document")
   | "importNode" =>
@@ -167,6 +168,13 @@ def applyCommands (dom : DOM.Dom) (commands : JSON.Json) : Except String DOM.Dom
     current ← applyCommand current command
     if current.size > 1048576 then throw "script commands: arena exceeds node budget"
   return current
+
+private def stateRoundTrip (states : Nat) : Option Nat :=
+  let dom : DOM.Dom := {nodes := #[{type := .element}]}
+  ((applyCommand dom (commandJson (.setStates 0 states))).toOption).map fun d => (d.get 0).states
+
+#guard stateRoundTrip 56 == some 56
+#guard stateRoundTrip 64 == none
 
 private def attrValue (node : DOM.Node) (name : String) : String :=
   ((node.attrs.find? (fun attr => attr.ns.isNone && attr.lname == name)).map (·.value)).getD ""

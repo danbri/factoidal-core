@@ -13,6 +13,7 @@ is read from the element's attributes and the tree. The answers are for the page
 -/
 import L4Factoidal.DOM.FormControls
 import L4Factoidal.HTML.InputValue
+import L4Factoidal.JS.Regex
 import L4Factoidal.WHATWG.URL.Parser
 
 namespace L4Factoidal.DOM.FormValidity
@@ -61,10 +62,21 @@ def validEmail (s : String) : Bool :=
       !cs.isEmpty && cs.length ≤ 63 && cs.all isLabelChar && cs.head? != some '-' && cs.getLast? != some '-'
   | _ => false
 
-/-- The validity states that are functions of the tree and the value: bit 1 valueMissing,
-2 typeMismatch, 32 rangeUnderflow, 64 rangeOverflow, 128 stepMismatch. (patternMismatch is
-the page's, a JavaScript regular expression; tooLong and tooShort need a user edit;
-customError is the page's message.) -/
+/-- A nonempty text control value must match the entire ECMAScript `v` pattern.
+A malformed pattern imposes no constraint. -/
+def patternMismatch (d : Dom) (k : NodeId) (t value : String) : Bool :=
+  if value.isEmpty || !["text", "search", "url", "tel", "email", "password"].contains t then false
+  else match (attr? d k "pattern").bind (fun p => (L4Factoidal.JS.Re.compile p "v").toOption) with
+  | none => false
+  | some re =>
+    let re := { re with node := .seq [.bol, re.node, .eol] }
+    let satisfies := fun v => (L4Factoidal.JS.Re.exec re (L4Factoidal.JS.Str.unitChars v) 0).isSome
+    if t == "email" && (attr? d k "multiple").isSome then !(value.splitOn ",").all satisfies
+    else !satisfies value
+
+/-- The validity states computed from the tree and value: bit 1 valueMissing,
+2 typeMismatch, 4 patternMismatch, 32 rangeUnderflow, 64 rangeOverflow, 128 stepMismatch.
+The custom error is kept with the element's state; length checks require a user edit. -/
 def validityBits (d : Dom) (k : NodeId) (value : String) : Nat :=
   let b := fun (c : Bool) (bit : Nat) => if c then bit else 0
   let required := (attr? d k "required").isSome
@@ -104,7 +116,28 @@ def validityBits (d : Dom) (k : NodeId) (value : String) : Nat :=
         let a := attrsOf d k
         b (InputValue.rangeUnderflow ty a x) 32 + b (InputValue.rangeOverflow ty a x) 64 + b (InputValue.stepMismatch ty a x) 128
       | _, _ => 0
-    b missing 1 + b mismatch 2 + numeric
+    b missing 1 + b mismatch 2 + b (patternMismatch d k t value) 4 + numeric
+
+/-- The value for validation in the DOM, including input sanitization and textarea newlines. -/
+def constraintValue (d : Dom) (k : NodeId) : String :=
+  if isHtml d k ["input"] then
+    InputValue.sanitize (inputType d k) (attr? d k "multiple").isSome (attrsOf d k) (inputValue d k)
+  else if isHtml d k ["textarea"] then
+    ((d.textContent k).getD "").replace "\r\n" "\n" |>.replace "\r" "\n"
+  else ""
+
+/-- A control fails its constraints through a custom error (state bit 16) or its value. -/
+def failsConstraints (d : Dom) (k : NodeId) : Bool :=
+  (d.get k).states / 16 % 2 == 1 || validityBits d k (constraintValue d k) != 0
+
+/-- HTML §4.16.3: `some true` matches :valid; `some false` matches :invalid.
+A form checks its owned controls. A fieldset checks its descendants. -/
+def selectorValidity (d : Dom) (k : NodeId) : Option Bool :=
+  let invalidCandidate := fun j => willValidate d j && failsConstraints d j
+  if isHtml d k ["form"] then some (!(FormControls.formElements d k).any invalidCandidate)
+  else if isHtml d k ["fieldset"] then some (!(d.treeOrder k false).any invalidCandidate)
+  else if willValidate d k then some (!failsConstraints d k)
+  else none
 
 /-- `node_query` op 188 on element `k`: `q` is a letter, then U+0000-separated arguments.
 "S" value: the sanitized value. "N" value: the value as a number (a JavaScript number

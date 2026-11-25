@@ -10,7 +10,13 @@ the computed colour of the canvas element is not known to the context in this en
 Serialisation is HTML §4.12.5.1.5 "serialization of a color": `#rrggbb` when opaque,
 otherwise `rgba(r, g, b, a)` with the alpha as CSS Color 4 §15.2 says (two decimals when
 they give back the same 8-bit alpha, else three).
+
+`Prim.FloatOfNat` is imported for its `csimp` twins: without it each `Float` literal left in a
+pixel loop of this library (`0.5` in `composite`, `coverageIn`, `samplePattern`) went through
+`Float.ofScientific`, which reads 2^53 from decimal text through GMP at every call (17 % of the
+window's samples on Particle Rex, issue 1031).
 -/
+import L4Factoidal.Prim.FloatOfNat
 namespace L4Factoidal.PageCanvas
 
 /-- A natural number as a Float, through the machine conversion (`Nat.toFloat` goes

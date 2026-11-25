@@ -281,7 +281,9 @@ def cachedChars (s : String) : M (Array Char) := do
 resizable buffer with no length): its length follows the buffer's (`typedLenOf`). No typed
 array has this many elements (a buffer holds at most `maxBufferBytes`), so a fixed length is
 never it. -/
-def autoLen : Nat := 2 ^ 53
+-- noinline: one value made at start; inlined, the generated C read 2^53 from decimal text through
+-- GMP at each `typedOob` and `typedLenOf` call (each Float64Array access; issue 1031).
+@[noinline] def autoLen : Nat := 2 ^ 53
 
 /-- The steps a value's size is worth to a built-in that walks it: a step for every 64
 bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed

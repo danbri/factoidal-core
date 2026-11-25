@@ -12,8 +12,8 @@ What is here, as values:
 
   * `entryList`: the entry list of a form (§4.10.21.4) over the Lean DOM arena. The values
     are the arena's: an `input`'s value is its `value` attribute, as prelude.js's `value`
-    accessor keeps it; a `select`'s selected options are those with `selected` (else the
-    first option of a single-select that is not disabled); a `textarea`'s is its text.
+    accessor keeps it; a `select`'s options and selectedness come from `DOM.FormControls`;
+    a `textarea`'s value is its text.
   * `pickEncoding`: the form's encoding (§4.10.21.5): the first label of `accept-charset`
     that is an encoding, UTF-8 when it has none that is, else the document's encoding;
     then "get an output encoding".
@@ -40,7 +40,7 @@ with an encoder, on encodable and unencodable inputs.
 
 No `partial`, no `sorry`.
 -/
-import L4Factoidal.DOM.Forms
+import L4Factoidal.DOM.FormControls
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.WHATWG.Encoding.Core
 import L4Factoidal.WHATWG.Encoding.Theorems
@@ -73,23 +73,11 @@ def optionValue (d : Dom) (o : NodeId) : String :=
   | some v => v
   | none => stripCollapse ((d.textContent o).getD "")
 
-/-- An option is disabled when it or its `optgroup` parent has `disabled` (§4.10.10). -/
-def optionDisabled (d : Dom) (o : NodeId) : Bool :=
-  (attr? d o "disabled").isSome ||
-    match (d.get o).parent with
-    | some p => isHtml d p ["optgroup"] && (attr? d p "disabled").isSome
-    | none => false
+/-- The disabledness rule shared with the DOM option collection. -/
+abbrev optionDisabled := FormControls.optionDisabled
 
-/-- The selected options of a `select` in tree order: those with `selected`; for a select
-that is not `multiple` and has none, the first option that is not disabled (the
-selectedness setting algorithm for a display size of 1). -/
-def selectedOptions (d : Dom) (sel : NodeId) : Array NodeId :=
-  let opts := (d.treeOrder sel false).filter (isHtml d · ["option"])
-  let chosen := opts.filter fun o => (attr? d o "selected").isSome
-  if !chosen.isEmpty || (attr? d sel "multiple").isSome then chosen
-  else match opts.find? (!optionDisabled d ·) with
-    | some o => #[o]
-    | none => #[]
+/-- The current selection of a select, shared with its script API and rendering. -/
+abbrev selectedOptions := FormControls.selectedOptions
 
 /-- The entry list of `form` (§4.10.21.4) with `submitter` (none for `form.submit()`),
 and the name of the encoding for a hidden `_charset_` control. Only the controls in the
@@ -132,6 +120,25 @@ def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName
     else
       out := out.push (name, (attr? d k "value").getD "")
   return out
+
+private def submitChoice (switched : Bool) : Dom :=
+  {nodes := #[
+    {type := .element, ns := some htmlNS, lname := "form", kids := #[1]},
+    {type := .element, ns := some htmlNS, lname := "select", parent := some 0, kids := #[2,3,4],
+      attrs := #[{lname := "name", value := "choice"}]},
+    {type := .element, ns := some htmlNS, lname := "option", parent := some 1,
+      attrs := #[{lname := "value", value := "original"}, {lname := "selected", value := ""}],
+      checkedness := if switched then some false else none},
+    {type := .element, ns := some htmlNS, lname := "option", parent := some 1,
+      attrs := #[{lname := "value", value := "changed"}],
+      checkedness := if switched then some true else none},
+    {type := .element, ns := some htmlNS, lname := "hr", parent := some 1, kids := #[5]},
+    {type := .element, ns := some htmlNS, lname := "option", parent := some 4,
+      attrs := #[{lname := "value", value := "blocked"}, {lname := "selected", value := ""}]}]}
+
+-- A blocked descendant never contributes. A programmatic selection is sent.
+#guard entryList (submitChoice false) 0 none "UTF-8" == #[("choice", "original")]
+#guard entryList (submitChoice true) 0 none "UTF-8" == #[("choice", "changed")]
 
 /-- §4.10.21.6: every CR not followed by LF, and every LF not preceded by CR, becomes
 CR LF. -/
@@ -226,9 +233,12 @@ def target (d : Dom) (form : NodeId) (submitter : Option NodeId) (baseTarget : S
 serialized entry list in the form's encoding). POST with the urlencoded type, when the action
 is http(s) (`postScheme`): the action URL and the serialized entry list as the body ("submit
 as entity body"). `none` when it navigates nowhere here: the action does not parse, `dialog`,
-POST as `multipart/form-data` or `text/plain` (not done), `javascript:` and `mailto:` URLs. -/
+POST as `multipart/form-data` or `text/plain` (not done), `javascript:` and `mailto:` URLs.
+`getSchemes`: schemes of the user agent's own pages that a GET submits to as to http ("mutate
+action URL"). §4.10.21.3 leaves a scheme not in its table to the user agent, which should act
+as for a similar scheme; none by default. A POST never goes to one (`plan_post_http`). -/
 def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String) (docEncoding : Encoding)
-    (baseTarget : String := "") : Option Plan :=
+    (baseTarget : String := "") (getSchemes : List String := []) : Option Plan :=
   let action := (submitterAttr d submitter "formaction" <|> attr? d form "action").getD ""
   let action := if action.isEmpty then docURL else action
   match URL.parseUrl action (if docURL.isEmpty then none else some docURL) with
@@ -237,7 +247,7 @@ def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String)
     let enc := pickEncoding (attr? d form "accept-charset") docEncoding
     let entries := serialize enc (pairs (entryList d form submitter enc.name))
     if method d form submitter == "get" then
-      if ["http", "https", "data", "file"].contains parsed.scheme then
+      if ["http", "https", "data", "file"].contains parsed.scheme || getSchemes.contains parsed.scheme then
         some { target := target d form submitter baseTarget, url := { parsed with query := some entries }.href }
       else none
     else if method d form submitter == "post" && enctype d form submitter == "application/x-www-form-urlencoded" &&
@@ -249,8 +259,8 @@ def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String)
 /-- Kind: property of `plan`. Says: a submission Lean plans is a GET or a POST, nothing else.
 Does not say: that the host makes the request, or anything of its URL. -/
 theorem plan_method {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
-    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
-    (h : plan d form submitter docURL docEncoding baseTarget = some p) : p.method = "get" ∨ p.method = "post" := by
+    {docEncoding : Encoding} {baseTarget : String} {getSchemes : List String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget getSchemes = some p) : p.method = "get" ∨ p.method = "post" := by
   simp only [plan] at h
   split at h
   · cases h
@@ -267,8 +277,8 @@ action parsed to (`postScheme`), so a form never sends its fields in a body to a
 `data:`, `javascript:` or `mailto:` URL; and a GET has no body. Does not say: which origin the
 URL has (a form may post to another site, as on the web), or that the URL is reachable. -/
 theorem plan_post_http {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
-    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
-    (h : plan d form submitter docURL docEncoding baseTarget = some p) :
+    {docEncoding : Encoding} {baseTarget : String} {getSchemes : List String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget getSchemes = some p) :
     (p.method = "post" → ∃ u : URL.Url, postScheme u.scheme = true ∧ p.url = u.href) ∧ (p.method = "get" → p.body = "") := by
   simp only [plan] at h
   split at h

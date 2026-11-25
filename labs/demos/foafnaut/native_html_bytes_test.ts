@@ -1,6 +1,6 @@
 // Bytes answers (issue 1268): `web_document_call_bin` gives the storage floats and tile
 // words as raw sections beside a JSON head, with no Base64. The JSON text answer with
-// Base64 stays the reference. For every demo page and four requests (one frame, one
+// Base64 stays the reference. For every supported HTML demo and four requests (one frame, one
 // frame scrolled, layers, the CPU probes), the two give the same storage bytes, the same
 // tile words and the same other fields, from the Wasm engine and, when it is built, the
 // native library. The bytes engine also takes its font as bytes (`web_document_font_call_bin`)
@@ -13,10 +13,10 @@ import {inputURL,loadFontData,loadFontFile,prepareHTML} from "./native_html_docu
 const font=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url).pathname;
 const library=new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const pagesDir=new URL("./pages/",import.meta.url).pathname;
-// A page that is an expected refusal (manifest "refused" or "appRefused", with its issue) has no scene.
-const refusedPages=new Set((JSON.parse(Deno.readTextFileSync(pagesDir+"manifest.json")).pages as {page:string;refused?:string;appRefused?:string}[])
-  .filter(p=>p.refused||p.appRefused).map(p=>p.page));
-const pages=[...Deno.readDirSync(pagesDir)].map(e=>e.name).filter(n=>n.endsWith(".html")&&!refusedPages.has(n)).sort();
+// Registered HTML demos that the still-image host can render. Original source captures in the
+// same directory are not demo pages. A manifest refusal has no scene to compare.
+const manifest=JSON.parse(Deno.readTextFileSync(pagesDir+"manifest.json")) as {pages:{page:string;refused?:string;appRefused?:string}[]};
+const pages=manifest.pages.filter(p=>p.page.endsWith(".html")&&!p.refused&&!p.appRefused).map(p=>p.page).sort();
 
 const bytesOf=(part:unknown)=>{
   if(part instanceof Float32Array||part instanceof Uint32Array)return new Uint8Array(part.buffer,part.byteOffset,part.byteLength);
@@ -63,11 +63,11 @@ async function compare(nativeEngine?:string){
   assert.throws(()=>bytes.compile("<p>a</p>",10,10,{images:3}),/document images must be an array/);
   return scenes;
 }
-Deno.test("bytes answers give the bytes of the Base64 answers on every demo page (Wasm)",async()=>{
+Deno.test("bytes answers give the bytes of the Base64 answers on supported HTML demo pages (Wasm)",async()=>{
   const scenes=await compare();
   console.log(`Wasm: ${scenes} scenes equal (${pages.length} pages)`);
 });
-Deno.test({name:"bytes answers give the bytes of the Base64 answers on every demo page (native library)",
+Deno.test({name:"bytes answers give the bytes of the Base64 answers on supported HTML demo pages (native library)",
   ignore:(()=>{try{Deno.statSync(library);return false;}catch{return true;}})(),
   fn:async()=>{const scenes=await compare(library);console.log(`native: ${scenes} scenes equal (${pages.length} pages)`);}});
 

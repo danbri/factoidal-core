@@ -5,7 +5,7 @@ import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForP
 import {Downloaded,inputURL,loadFontFile,prepareHTML as prepareDocument,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
-import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
+import {addEntries,consoleRequest,noteDiagnostics,reportPageEntries,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
 import {loadNativeWindow,pointerButton,pointerClicks,pointerModifiers,type NativeEvent as UIEvent} from "./native_window.ts";
@@ -93,6 +93,10 @@ async function main() {
     // as one JSON line {"type":"native-html-skip",...} on standard output when it is first kept.
     else if(arg==="--liberal-report"){const how=args.shift();if(how!=="json")throw new Error("--liberal-report needs json");
       reportSystemEntries(entry=>console.log(JSON.stringify({type:"native-html-skip",t:Math.round(performance.now()),...entry})));}
+    // Each page console entry (a script log or an uncaught script error) as one JSON line
+    // {"type":"native-html-page-console",...} on standard output, up to the console's own cap.
+    else if(arg==="--page-console"){const how=args.shift();if(how!=="json")throw new Error("--page-console needs json");
+      reportPageEntries(entry=>console.log(JSON.stringify({type:"native-html-page-console",t:Math.round(performance.now()),severity:entry.severity,message:entry.message})));}
     // The off-screen window in points and its backing scale (`--offscreen-size 1280x1600@1`), and the text
     // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
     else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");
@@ -333,8 +337,10 @@ async function main() {
     sayEngine("main-thread");
     if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
-    // The spare worker lays out the page a new tab shows first (the start page), at the window's size.
-    const warm=async(client:CompileClient)=>{const r=requestAt(home,0);
+    // The spare worker lays out the page a new tab shows first (the new tab page, else the
+    // first page), at the window's size.
+    // (It does not wait for the new tab page: a call made while the spare warms could go to it.)
+    const warm=async(client:CompileClient)=>{const r=requestAt(newTabReady??home,0);
       return layered?client.compileLayers(r.source,width,height,r.options):client.compile(r.source,width,height,r.options);};
     const startWorkers=(font:typeof workerFont)=>startTabWorkers({perTab:!oneEngineWorker,cap:engineWorkerCap,nativeEngine,spare:spareWorker,warm,
       start:copy=>startCompileWorker(font,copy,logAll),log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
@@ -757,6 +763,8 @@ async function main() {
     revisionShown.set(document,revision);
     if(!first||revision>0){pageChangedNow();tellSession(document);}
   };
+  // Set once the router exists (below): a form's GET to a foafnaut: page, routed as a link.
+  let formRoute:((url:string,page:typeof document)=>void)|undefined;
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
     // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3):
     // GET loads the URL; POST sends the body Lean serialized; `_blank` opens a new tab.
@@ -768,7 +776,10 @@ async function main() {
       if(blocked)addEntries(page,[{source:"System",severity:"warning",feature:"form submission",where:nav.url,message:"a new tab that no press or key asked for",action:"not opened"}]);
       else{
         if(nav.target==="_blank"){newTab();leaveAddress();}
-        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined,page.url);
+        // A GET to a page of this browser (foafnaut:sparql?q=..., the new tab page's forms) goes
+        // where Lean routes it as a link from this page (WebRoute): no more than a link may do.
+        if(/^foafnaut:/i.test(nav.url))formRoute?formRoute(nav.url,page):refuse(nav.url,"the router is not ready");
+        else navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined,page.url);
       }
     }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
@@ -898,7 +909,29 @@ async function main() {
     session?.setPress(undefined);
     if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
   };
-  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0,id:nextTab++});showTab(tabs.length-1);focusAddress();};
+  // The new tab page (pages/newtab.html; owner, 2026-11-25: "we could make a better 'new tab'
+  // page"): handwritten and light. It is prepared once, after the first frame, and the spare
+  // engine worker lays it out, so Command-T shows it at once. Every new tab shows that one
+  // document, as every new tab showed the first page before: a copy for each tab cost about 1 s
+  // more to the first frame on the Linux rig (the worker's layout of a document it has not seen),
+  // so form text typed in one new tab shows in another until it is submitted. Until the page is
+  // ready a new tab shows the first page, as before.
+  const newTabURL=new URL("./pages/newtab.html",import.meta.url).href;
+  let newTabSpare:Promise<typeof document>|undefined,newTabReady:typeof document|undefined;
+  function newTabNext(){
+    // Prepared on the worker of the tab shown now (never on a spare that is still warming).
+    const prepare=()=>prepareHTML(lean,newTabURL,undefined,undefined,{liberal}),tab=tabs[active].id;
+    newTabSpare??=(worker?worker.withTab(tab,prepare):prepare()).then(page=>{newTabReady=page;return page;},error=>{
+      console.error("Native HTML: new tab page not prepared:",String(error));newTabSpare=undefined;throw error;});
+    return newTabSpare;
+  }
+  const newTabPage=()=>{
+    const page=newTabReady;
+    if(!page)newTabNext().catch(()=>{});
+    trace("native-html-new-tab",{page:page?"newtab":"first",url:(page??home).url});
+    return page??home;
+  };
+  const newTab=()=>{keepTab();const page=newTabPage();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0,id:nextTab++});showTab(tabs.length-1);focusAddress();};
   // Closed tabs, the last one last, for Shift-Command-T (issue 1268).
   const closed:typeof tabs=[];
   const closeTab=(index:number)=>{
@@ -1373,6 +1406,7 @@ async function main() {
     // A page link loads only with --follow-links; the browser's own pages always do.
     else if(route.route!=="navigate"||follow)navigate(route.url,true,undefined,route.route==="navigate"?document.url:"");
   };
+  formRoute=(url,page)=>followRoute(router.route({...site,href:url,base:page.baseURL||page.url,outside:""}) as LinkRoute);
   // A link opened in a new tab (issue 1031: Command-click, middle click). Routes that are not
   // a page load (commands, system, refusals) do what a plain click does. The tab opens in front:
   // loading a tab that is not shown is not written yet (issue 1031), so "backgroundTab" opens it
@@ -1829,7 +1863,8 @@ async function main() {
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
       // After the first frame: the spare engine worker for the next new tab starts.
-      if(totals.length===1)worker?.prewarm();
+      // The new tab page first, then the spare worker, which warms on it when it is ready.
+      if(totals.length===1)newTabNext().catch(()=>{}).finally(()=>worker?.prewarm());
       // A tab shown (new, or chosen): the time to its first presented frame, and whether it got
       // its engine worker when it was shown (a new tab).
       // (a frame started before the tab was shown does not count, even when it shows the same page)
