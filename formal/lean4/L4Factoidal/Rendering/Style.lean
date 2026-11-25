@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.Forms
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
@@ -2885,7 +2886,7 @@ a text field its `value` (a password field a bullet for each character), else it
 (`Submit`, `Reset`); a file chooser its button and state; a drop-down list the label of the
 option it shows (`shownOption`); a `textarea` with no text its `placeholder`. Line breaks in
 a one-line control become spaces. `none` for every other node, and when there is nothing to
-show. The value a person types is the host's and is not shown here. -/
+show. A text field uses its current value, including edits applied to the arena. -/
 def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
   let n := dom.get id
   let oneLine := fun (t : String) => String.ofList (t.toList.map fun c => if c == '\n' || c == '\r' || c == '\t' then ' ' else c)
@@ -2893,14 +2894,15 @@ def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
   else if n.lname == "input" then
     let t0 := (attrValue n "type").trimAscii.toString.toLower
     let t := if knownInputTypes.contains t0 then t0 else ""
-    let value := oneLine (attrValue n "value")
     if t == "submit" || t == "reset" || t == "button" then
+      let value := oneLine (attrValue n "value")
       if hasAttribute n "value" then (if value.isEmpty then none else some (value, false))
       else if t == "submit" then some ("Submit", false)
       else if t == "reset" then some ("Reset", false)
       else none
     else if t == "file" then some ("Choose File", false)
     else if textualInputTypes.contains t then
+      let value := oneLine (Forms.inputValue dom id)
       if !value.isEmpty then some ((if t == "password" then String.ofList (value.toList.map fun _ => '•') else value), false)
       else
         let p := oneLine (attrValue n "placeholder")
@@ -2931,6 +2933,10 @@ private def controlTextOf (source tag : String) : Option (String × Bool) :=
 #guard controlTextOf "<input placeholder='Search'>" "input" == some ("Search", true)
 #guard controlTextOf "<input value='hello' placeholder='Search'>" "input" == some ("hello", false)
 #guard controlTextOf "<input type=password value='abc'>" "input" == some ("•••", false)
+#guard
+  let dom := DOM.parseHtmlDocument "<input id=p type=password value=old>"
+  let id := (dom.getElementById 0 "p").getD 0
+  controlText (dom.setNode id fun node => {node with dirtyValue := some "live"}) id == some ("••••", false)
 #guard controlTextOf "<input type=submit>" "input" == some ("Submit", false)
 #guard controlTextOf "<input type=submit value=Go>" "input" == some ("Go", false)
 #guard controlTextOf "<input type=checkbox>" "input" == none

@@ -14,6 +14,21 @@ private def size (html : String) (sources : List String) : Option Float := do
   let styles ← (Rendering.CSS.computeAll dom rules).toOption
   let id ← dom.getElementById 0 "target"
   return (← styles[id]?).fontSize
+private def editedInput := "<form><input id=field name=q value=original placeholder=hint></form>"
+
+/-- Exercise the same command-to-render path the desktop uses after keyboard input. -/
+private def editedInputText (value : JSON.Json) : Option (List String) := do
+  let dom := DOM.parseHtmlDocument editedInput
+  let id ← dom.getElementById 0 "field"
+  let command := json [("op",.string "setValue"),("nodeId",.number (toString id)),("value",value)]
+  let request := WebDocument.layoutRequest (json [("commands",.array [command])])
+  let laid ← (WebDocument.layOut {} ⟨editedInput,request,320,180,0,[],[],(none,none)⟩).toOption
+  return laid.scene.glyphRuns.toList.map (·.text)
+
+#guard editedInputText (.string "typed") == some ["typed"]
+#guard editedInputText (.string "") == some ["hint"]
+#guard editedInputText .null == some ["original"]
+
 private def sheetSource := "<style>p{font-size:10px}</style><link rel=stylesheet href=one.css><style>p{font-size:30px}</style><p id=target>A</p>"
 -- Embedded/external sheets share document source order, rather than grouping
 -- fetched sheets at the beginning or end of the cascade.
