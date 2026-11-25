@@ -377,7 +377,7 @@ private def dispatchLine (line : String) : Except String String :=
     | "agg" :: parts => dispatchAggregate parts
     | _ => if line.utf8ByteSize > 256 then .error "resource_limit" else dispatch s
 
-def main : IO Unit := do
+def EthereumConsensus.BLS.G1PublicKeyCLI.run : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
