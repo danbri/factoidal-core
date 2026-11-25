@@ -141,7 +141,8 @@ HTML encoding sniffing and the Encoding Standard's decoders), given the HTTP cha
 ("" for none); undefined when the engine has no such export. The answer is the encoding's
 name, a line feed and the text. */
 export type DecodeBackend=(bytes:Uint8Array,charset:string,fallback:string,locale:string)=>string;
-type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend};
+type LinkPicker=(text:string,width:number,height:number,x:number,y:number)=>string;
+type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend;hit?:LinkPicker};
 /** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
@@ -158,11 +159,19 @@ export function nativeBackends(path:string):Backends {
     web_document_decode_call_bin:{parameters:["buffer","u32","buffer"],result:"pointer",optional:true},
     // With the user's default for undeclared pages and the system's language (WebDocument.decodeBinWith).
     web_document_decode2_call_bin:{parameters:["buffer","u32","buffer","buffer","buffer"],result:"pointer",optional:true},
+    web_render_hit:{parameters:["buffer","u32","u32","f64","f64"],result:"pointer",optional:true},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
   const size=new Uint32Array(1);
+  const hit=library.symbols.web_render_hit;
   return {
+    hit:hit?(text,width,height,x,y)=>{
+      const pointer=hit(cstring(text),width,height,x,y);
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
+      finally{library.symbols.web_render_free(pointer);}
+    }:undefined,
     text:(html,request,width,height)=>{
       const pointer=library.symbols.web_document_call(cstring(html),cstring(request),width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
@@ -200,7 +209,7 @@ export function nativeBackends(path:string):Backends {
 }
 export function nativeBackend(path:string):DocumentBackend {return nativeBackends(path).text;}
 /** Backend 1: the Wasm module. */
-function wasmBackends(module:Module):Backends {
+function wasmBackends(module:Module):Backends & {hit:LinkPicker} {
   const callDocument=(name:string,html:string,request:string,width:number,height:number,extra:number[]=[])=>{
     const args=[width,height,...extra],numeric=args.map(()=>"number");
     if(html.length+request.length<=512*1024)
@@ -222,6 +231,12 @@ function wasmBackends(module:Module):Backends {
     }finally{module._free(input);}
   };
   return {
+    hit:(text,width,height,x,y)=>{
+      const pointer=module.ccall("web_render_hit","number",["string","number","number","number","number"],[text,width,height,x,y]);
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return module.UTF8ToString(pointer);}
+      finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+    },
     text:(html,request,width,height)=>{
       const pointer=callDocument("web_document_call",html,request,width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
@@ -405,20 +420,18 @@ function hostTrace(backends:Backends):Backends {
   }) as Backends;
 }
 export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes") {
-  const module = await createModule() as unknown as Module;
-  const backends=hostTrace(nativeEngine?nativeBackends(nativeEngine):wasmBackends(module));
+  const native=nativeEngine?nativeBackends(nativeEngine):undefined;
+  // Older native libraries can still use the Wasm link picker. Current ones
+  // provide the same C entry point and need no second document engine.
+  const wasm=native?.hit?undefined:wasmBackends(await createModule() as unknown as Module);
+  const backends=hostTrace(native??wasm!);
   const backend=backends.text;
-  function call(name:string,types:string[],args:unknown[]) {
-    const pointer=module.ccall(name,"number",types,args);
-    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
-    try {
-      const result=JSON.parse(module.UTF8ToString(pointer));
-      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result;
-    } finally {module.ccall("web_render_free",null,["number"],[pointer]);}
-  }
-  const pickLinks=(text:string,width:number,height:number,x:number,y:number):LinkTarget|null=>
-    call("web_render_hit",["string","number","number","number","number"],[text,width,height,x,y]);
+  const hit=native?.hit??wasm!.hit;
+  const pickLinks=(text:string,width:number,height:number,x:number,y:number):LinkTarget|null=>{
+    const result=JSON.parse(hit(text,width,height,x,y));
+    if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+    return result;
+  };
   // Bytes of JSON request sent to Lean for renders: the last one and the most (frame_work_test.ts).
   const sent={renders:0,lastRenderBytes:0,maxRenderBytes:0};
   const countRender=(request:string)=>{
