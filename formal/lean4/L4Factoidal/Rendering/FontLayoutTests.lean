@@ -54,4 +54,22 @@ private def nonEmMetrics : Except String (List Float) := do
   let (scene,_) ← Layout.render dom rules (.ofFace face) noSVG 100 100
   return scene.glyphRuns.toList.map fun run => (run.glyphs[0]?).map (·.y) |>.getD 999
 #guard nonEmMetrics.toOption == some [(-2 : Float),18]
+-- A zero-sized line can keep two inline boxes together across markup whitespace.
+private def zeroFontPair (size : String) (spacing : String := "") : Except String (Float × Bool) := do
+  let face ← Face.make #[space]
+  let dom := DOM.parseHtmlDocument "<div><span id=a></span> <span id=b></span></div>"
+  let rules ← CSS.parse ("body{margin:0;font-family:TestShape;font-size:" ++ size ++ ";" ++ spacing ++
+    "}div{width:100px}span{display:inline-block;vertical-align:top;width:50px;height:10px}")
+  let (_,boxes) ← Layout.render dom rules (.ofFace face) noSVG 100 100
+  let child := fun name => (dom.getElementById 0 name).bind fun id => boxes.find? (·.source == id)
+  let some a := child "a" | throw "missing first inline box"
+  let some b := child "b" | throw "missing second inline box"
+  return (b.x-a.x,a.y == b.y)
+
+#guard (zeroFontPair "0").toOption == some (50,true)
+#guard (zeroFontPair "20px").toOption == some (0,false)
+#guard (zeroFontPair "0" "word-spacing:1px").toOption == some (0,false)
+#guard (zeroFontPair "0" "letter-spacing:1px").toOption == some (0,false)
+#guard ((run "fi AA" "body{font-size:0}").toOption.map fun r => (Node.lowerListTR ⟨1,0,0,1,0,0⟩ [] r.1.tree).isEmpty) == some true
+
 end L4Factoidal.Rendering.FontLayoutTests

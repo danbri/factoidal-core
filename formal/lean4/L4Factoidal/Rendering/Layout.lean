@@ -106,6 +106,8 @@ def letterSpaced (word : FontProvider.Word) (extra : Float) : FontProvider.Word 
 not the direction of its script (see `shapedWordDir`). -/
 private def FontProfile.word (font : FontProfile) (style : Computed) (text : String)
     (rtl : Option Bool := none) : Except String (Option FontProvider.Word) := do
+  -- Zero-sized text uses the unshaped spacing path and has no glyph outlines.
+  if style.fontSize == 0 then return none
   match font.shapedWord with
   | none => return none
   | some shape =>
@@ -1375,7 +1377,7 @@ def glyphTransform (s : Computed) (scale x y rise : Float) : Transform :=
 
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
   let mut out := #[]
-  if !s.paintVisible then return out
+  if !s.paintVisible || run.fontSize == 0 then return out
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
@@ -1636,7 +1638,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes}
         ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩
       extent := some (x+offset,x+offset+advance)
-      if s.underline && s.paintVisible then
+      if s.underline && s.paintVisible && s.fontSize > 0 then
         let thickness := max 1 (s.fontSize/14)
         out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>

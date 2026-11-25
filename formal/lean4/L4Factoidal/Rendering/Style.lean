@@ -1973,7 +1973,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
     let v ← pixels d.value
-    if v <= 0 then throw "font-size must be positive"
+    if v < 0 then throw "font-size must be non-negative"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
     if d.value == "0px" then
@@ -4063,9 +4063,19 @@ are rounded to match the supplied-font raster contract; explicit line heights
 scale too. Geometry, SVG viewports and DOM source are unchanged. -/
 def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   if scale == 1 then s else
-  let size := max 1 (s.fontSize*scale).round
+  let size := if s.fontSize == 0 then s.fontSize else max 1 (s.fontSize*scale).round
   let height := (s.lineHeightFactor.map (size*·)).getD (s.lineHeight*scale)
   {s with fontSize := size, lineHeight := height}
+
+/-- Reader text scaling preserves a computed zero font size. -/
+theorem Computed.scaleText_fontSize_zero (s : Computed) (scale : Float) (h : (s.fontSize == 0) = true) :
+    (s.scaleText scale).fontSize = s.fontSize := by
+  unfold Computed.scaleText
+  split
+  · rfl
+  · rfl
+
+#print axioms Computed.scaleText_fontSize_zero
 
 /-- The style of node `id` under the style `parent` of its parent: an element's cascade
 (`computedFrom`). SVG descendants keep the HTML inherited box style but also
