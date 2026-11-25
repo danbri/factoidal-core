@@ -637,7 +637,7 @@ private def dispatch (s : String) : Except String String :=
   | ["maproot",root] => mapRootDispatch root
   | _ => dispatchHash s
 
-def main : IO Unit := do
+def EthereumConsensus.BLS.HashToFieldCLI.run : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
