@@ -170,6 +170,15 @@ async function main() {
     else if(arg==="--steps"){const file=args.shift();if(!file)throw new Error("--steps needs a JSON file");
       commands=(JSON.parse(Deno.readTextFileSync(file)) as (string|number[])[]).flatMap(step=>typeof step==="string"&&step.startsWith("type:")
         ?[...step.slice(5)].map(c=>[9,c.codePointAt(0)!,0]):[step]);}
+    // Desktop gestures (issue 1031), five rounds on a page whose first link has text after it on
+    // its line: a double and a triple click on that text, Command-A and Command-C (Control on Linux), a right
+    // click on the link and on the text, a plain click, and last a middle click on the link (a new
+    // tab). "atLink:K:F" and "atText:K:F" send window event kind K with flags F (modifiers, click
+    // count << 8, button << 16) there. Read native-html-gesture queuedToActionMs, the copy's time
+    // after its key (native-html-test-key to native-html-copy) and native-html-input-latency.
+    else if(arg==="--gesture-sweep")commands=[[5,53,0],...Array.from({length:5},()=>["atText:2:512","atText:4:512","hold",
+      "atText:2:768","atText:4:768","hold","a","hold","c","hold","atLink:13:65536","hold","atText:13:65536","hold","atText:2:256","atText:4:256","hold"]).flat(),
+      "atLink:2:131072","atLink:4:131072","hold","hold"];
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
@@ -2203,6 +2212,13 @@ async function main() {
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
+        else if(typeof step==="string"&&/^at(Link|Text):/.test(step)){
+          // The first link's centre, or 60 backing pixels right of its end on its row.
+          const [where,kind,flags]=step.split(":"),link=frame.webRender.links[0] as number[];
+          const x=Math.round(where==="atLink"?link[2]+link[4]/2:link[2]+link[4]+60),y=Math.round(windowRow(link[3]+link[5]/2));
+          trace("native-html-test-gesture",{step,x,y});
+          if(!native.testEventFlags(Number(kind),x,y,Number(flags)))native.testEvent(Number(kind),x,y);
+        }
         else if(step==="hold")stepAt=performance.now()+300;
         else if(step==="press-link"){
           const link=frame.webRender.links[0] as number[];pressAt=[Math.round(link[2]+link[4]/2),Math.round(windowRow(link[3]+link[5]/2))];
@@ -2322,6 +2338,7 @@ async function main() {
           if(!ok){console.error(`Native HTML shortcut sweep: ${step} failed; ${tabs.length} tabs, tab ${active} shown, scroll ${scroll} of ${scrollLimit()}`);Deno.exitCode=1;}
         }
         else if(typeof step==="string")trace("native-html-test-key",{key:step,handled:native.testKey(step,"+_ZTG{}".includes(step))});
+        else if(step&&step.length>3)native.testEventFlags(step[0],step[1],step[2],step[3]);
         else if(step)native.testEvent(step[0],step[1],step[2]);else{if(native.readClipboard()===lastCopied)native.writeClipboard(savedClipboard);running=false;}
       }
       // Page script timers and animation frames: the virtual clock of the page's event loop
