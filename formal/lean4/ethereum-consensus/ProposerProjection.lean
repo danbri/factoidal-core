@@ -88,9 +88,7 @@ def acceptProjection (q : ProjectionRequest) (p : PartialCommitment) :
     else .error .projectedRegistryMismatch
 
 private def projectChecked (q : ProjectionRequest) : Except ProjectionError PartialCommitment :=
-  match buildProjection q with
-  | .error e => .error e
-  | .ok p => acceptProjection q p
+  (buildProjection q).bind (acceptProjection q)
 
 /-- The only public authenticated commitment projection entry point
     authenticates the raw input before constructing and checking new roots. -/
@@ -166,13 +164,14 @@ theorem authentication_verdicts (q : ProjectionRequest) (e : ProposerEvidence)
 Does not say: anything about the computations supplying those stages. -/
 private theorem checkedSequence_success {E A B : Type}
     (input : Except E A) (next : A → Except E B) (out : B)
-    (h : (match input with
-          | .error e => (Except.error e : Except E B)
-          | .ok a => next a) = Except.ok out) :
+    (h : input.bind next = Except.ok out) :
     ∃ a : A, input = .ok a ∧ next a = .ok out := by
   cases input with
   | error e => cases h
   | ok a => exact ⟨a, rfl, h⟩
+
+-- Elaboration must not unfold the cryptographic producer during unification.
+attribute [local irreducible] buildProjection
 
 /-- Kind: security linkage. Says: success of the exported raw-input path
 requires both concrete BLS verdicts and both concrete replacement membership
@@ -193,14 +192,10 @@ theorem successful_projection (q : ProjectionRequest) (out : PartialCommitment)
   | ok e =>
     have hs := h
     rw [authentication_success q e ha] at hs
-    have hseq : (match buildProjection q with
-      | .error reason => (Except.error reason : Except ProjectionError PartialCommitment)
-      | .ok p => acceptProjection q p) = Except.ok out := by
-        delta projectChecked at hs
-        exact hs
+    delta projectChecked at hs
     obtain ⟨p, _, hc⟩ :=
       @checkedSequence_success ProjectionError PartialCommitment PartialCommitment
-        (buildProjection q) (acceptProjection q) out hseq
+        (buildProjection q) (acceptProjection q) out hs
     obtain ⟨he, r, t, hr, hb, ht, hd⟩ := accepted_projection q p out hc
     obtain ⟨h1, h2⟩ := authentication_verdicts q e ha
     subst out
