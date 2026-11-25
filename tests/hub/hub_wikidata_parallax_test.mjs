@@ -17,9 +17,10 @@ test('a set-browsing query draws as one tree: no edges left outside it, no block
     assert.ok(q.sets >= 1, q.id);
     assert.deepEqual(q.flow.loose, [], q.id);
     assert.deepEqual(q.flow.beyond, [], q.id);
-    const ops = q.blocks.items.filter(it => it.op).map(it => it.op.op);
+    const parts = q.grammar.program.parts;
+    const ops = parts.filter(p => p.t === 'combine').map(p => p.op);
     assert.ok(ops.every(o => o === 'stage'), `${q.id}: ${ops}`);
-    assert.ok(q.blocks.items.filter(it => it.chain).length <= 1, `${q.id}: one chain at most`);
+    assert.ok(parts.filter(p => p.t === 'chain').length <= 1, `${q.id}: one chain at most`);
   }
 });
 
@@ -36,37 +37,75 @@ test('every entity a page shows has a card with a label', () => {
 });
 
 test('exclusion chips are worded as removing a facet value', () => {
-  const pieces = (prog) => prog.items.flatMap(it => it.chain ? it.chain.rows.flat() : it.op.slots.flatMap(pieces));
+  const steps = (prog) => prog.parts.flatMap(p => p.t === 'chain' ? p.rows.flat() : p.args.flatMap(steps));
   let n = 0;
-  for (const q of queries) for (const p of pieces(q.blocks)) for (const c of p.chips || []) {
+  for (const q of queries) for (const p of steps(q.grammar.program)) for (const k of p.keep || []) {
     n++;
-    assert.match(c.verb, /^(exclude|require|any)$/, q.id);
-    assert.doesNotMatch(c.label, / is not /, q.id);
+    assert.match(k.mode, /^(exclude|require|anyOf)$/, q.id);
+    assert.ok(q.grammar.lex[k.key], `${q.id}: no words for a chip`);
+    assert.doesNotMatch(q.grammar.lex[k.key], / is not /, q.id);
   }
   assert.ok(n > 100, `only ${n} chips drawn`);
 });
 
-test('a query beyond set browsing is drawn as blocks: chains, plus an operation or an any-property piece', () => {
-  const OPS = new Set(['join', 'either', 'except', 'optional', 'stage', 'loop']);
+test('a query beyond set browsing is drawn as blocks: chains, plus an operation or an any-property step', () => {
+  const OPS = new Set(['join', 'either', 'except', 'optional', 'stage', 'link']);
   const walk = (prog, out) => {
-    for (const it of prog.items) {
-      if (it.chain) {
-        for (const row of it.chain.rows) {
-          assert.ok(row.length && row.every((p, i) => (p.kind === 'pivot') === (i % 2 === 1)), 'pieces alternate set, pivot, set');
-          for (const p of row) if (p.wild) out.wild++;
+    for (const part of prog.parts) {
+      if (part.t === 'chain') {
+        for (const row of part.rows) {
+          assert.ok(row.length && row.every((p, i) => (p.t === 'pivot') === (i % 2 === 1)), 'steps alternate set, pivot, set');
+          for (const p of row) if (p.any) out.wild++;
         }
       } else {
-        assert.ok(OPS.has(it.op.op), it.op.op);
-        assert.ok(it.op.slots.length || it.op.extras.length, `${it.op.op} block is empty`);
+        assert.ok(OPS.has(part.op), part.op);
+        assert.ok(part.args.length, `${part.op} block is empty`);
         out.ops++;
-        it.op.slots.forEach(s => walk(s, out));
+        part.args.forEach(a => walk(a, out));
       }
     }
     return out;
   };
   for (const q of queries) {
- if (q.tier !== 'N') continue;
-    const r = walk(q.blocks, { ops: 0, wild: 0 });
+    if (q.tier !== 'N') continue;
+    const r = walk(q.grammar.program, { ops: 0, wild: 0 });
     assert.ok(r.ops + r.wild > 0, `${q.id}: nothing marks what goes beyond browsing`);
   }
+});
+
+test('the grammar is data only: every word a block shows comes from the lexicon', () => {
+  for (const q of queries) {
+    const { program, lex } = q.grammar;
+    const json = JSON.stringify(program);
+    // No English in the program: op names, SPARQL terms, variables, step numbers only.
+    assert.doesNotMatch(json, /"(label|title|name|text|whyText)":/, q.id);
+    const walk = (prog) => prog.parts.forEach(p => p.t === 'chain'
+      ? p.rows.flat().forEach(s => {
+        if (s.v) assert.ok(lex[`?${s.v}`], `${q.id}: no name for ?${s.v}`);
+        if (s.t === 'pivot') assert.ok(lex[s.p], `${q.id}: no words for ${s.p}`);
+        for (const x of [...(s.narrow || []), ...(s.show || [])]) assert.ok(lex[x.p], `${q.id}: no words for ${x.p}`);
+      })
+      : p.args.forEach(walk));
+    walk(program);
+  }
+});
+
+test('stepping: every step adds SPARQL placed in the whole query, and the steps are drawn', async () => {
+  const { draftQuery, fragmentsUpTo } = await import('../../docs/web/hub/wikidata-parallax/draft.mjs');
+  let steps = 0;
+  for (const q of queries) {
+    const g = q.grammar;
+    assert.ok(g.full && /SELECT/i.test(g.full), `${q.id}: no whole query`);
+    g.steps.forEach((s, k) => {
+      steps++;
+      for (const f of s.sparql) assert.ok(f.at >= 0, `${q.id} step ${k}: fragment not found in the query: ${f.s}`);
+      const d = draftQuery(g, k);
+      const open = (d.match(/\{/g) || []).length, close = (d.match(/\}/g) || []).length;
+      assert.equal(open, close, `${q.id} step ${k}: unbalanced draft`);
+      assert.ok(fragmentsUpTo(g.steps, k).length >= fragmentsUpTo(g.steps, Math.max(0, k - 1)).length, `${q.id}: drafts only grow`);
+    });
+    const n = (JSON.stringify(g.program).match(/"step":/g) || []).length + (g.program.whereStep != null ? 1 : 0);
+    assert.equal(n, g.steps.length, `${q.id}: every step is drawn once`);
+  }
+  assert.ok(steps > 1500, `only ${steps} steps`);
 });

@@ -25,6 +25,7 @@ import type {AccessibilityAnswer} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
+import {startTabWorkers,type TabWorkers} from "./native_html_tabs.ts";
 import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
@@ -52,14 +53,14 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let windowSize:[number,number]|undefined;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -128,6 +129,12 @@ async function main() {
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
     else if(arg==="--wasm-engine")wasmEngine=true;
+    // One engine worker for every tab, as before issue 1031 (for comparison); else one per tab,
+    // at most --engine-workers N live (default 8; tabs beyond it share, native_html_tabs.ts).
+    else if(arg==="--one-engine-worker")oneEngineWorker=true;
+    // No warmed spare worker for the next new tab (native_html_tabs.ts, "Spare").
+    else if(arg==="--no-spare-engine-worker")spareWorker=false;
+    else if(arg==="--engine-workers"){engineWorkerCap=Number(args.shift());if(!Number.isInteger(engineWorkerCap)||engineWorkerCap<1)throw new Error("--engine-workers needs a whole number of 1 or more");}
     // One Lean frame for each scroll step, as before the two layers (for comparison).
     else if(arg==="--single-frame")layered=false;
     // No press look (no darkening, no :active frame): the behaviour before issue 1268, for comparison.
@@ -166,7 +173,8 @@ async function main() {
     // everyday use (daily_use_check.ts). Two more forms: "type:TEXT" types each character as a
     // key of the window; "tap:X,Y" presses and releases at X,Y in page rows (layout units, as a
     // link's rectangle); "title=X" checks the shown page's title, waiting for it up to 10 s (20 s
-    // while a page loads).
+    // while a page loads). "go:URL" navigates the shown tab; "now:N:MS" runs the next N steps MS
+    // apart without waiting for the page to settle (input in one tab while another loads).
     else if(arg==="--steps"){const file=args.shift();if(!file)throw new Error("--steps needs a JSON file");
       commands=(JSON.parse(Deno.readTextFileSync(file)) as (string|number[])[]).flatMap(step=>typeof step==="string"&&step.startsWith("type:")
         ?[...step.slice(5)].map(c=>[9,c.codePointAt(0)!,0]):[step]);}
@@ -256,9 +264,10 @@ async function main() {
   const defaultFont=new URL("../../../third_party/fonts/noto-sans/NotoSans-Regular.ttf",import.meta.url);
   let workerFont:{path:string;family:string}|undefined;
   if(!bitmapFont)workerFont={path:fontFile??decodeURIComponent(defaultFont.pathname),family:fontFile?"font":"Noto Sans"};
-  // Every engine call that can take more than about 2 ms runs in one worker, in order. `lean` is that
+  // Every engine call that can take more than about 2 ms runs in an engine worker: one per tab (native_html_tabs.ts),
+  // or one for all tabs with --one-engine-worker. Each worker takes its calls in order. `lean` is that
   // engine (promises), or the main-thread engine when the worker can not start (said once, loudly) or in --check-engine.
-  let worker:CompileClient|undefined,mainFont=false;
+  let worker:TabWorkers|undefined,mainFont=false;
   type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"aboutPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
   const prepareHTML:typeof prepareDocument=(reader,url,signal,inline,accept)=>
@@ -324,12 +333,17 @@ async function main() {
     sayEngine("main-thread");
     if(workerFont)try{mainFallbacks=typeof (await loadFontFile(engine,workerFont.path,workerFont.family))?.fonts==="number";}catch(error){if(fontFile)throw error;console.error("Native HTML: bitmap font, because Noto Sans did not load:",String(error));}
   } else {
-    try{worker=await startCompileWorker(workerFont,nativeEngine,logAll);}
+    // The spare worker lays out the page a new tab shows first (the start page), at the window's size.
+    const warm=async(client:CompileClient)=>{const r=requestAt(home,0);
+      return layered?client.compileLayers(r.source,width,height,r.options):client.compile(r.source,width,height,r.options);};
+    const startWorkers=(font:typeof workerFont)=>startTabWorkers({perTab:!oneEngineWorker,cap:engineWorkerCap,nativeEngine,spare:spareWorker,warm,
+      start:copy=>startCompileWorker(font,copy,logAll),log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
+    try{worker=await startWorkers(workerFont);}
     catch(error){
       if(workerFont&&!fontFile){
         console.error("Native HTML: bitmap font, because Noto Sans did not load or the worker failed:",String(error));
         workerFont=undefined;
-        try{worker=await startCompileWorker(undefined,nativeEngine,logAll);}catch(error2){await useMainEngine(String(error2));}
+        try{worker=await startWorkers(undefined);}catch(error2){await useMainEngine(String(error2));}
       } else if(fontFile)throw error;
       else await useMainEngine(String(error));
     }
@@ -837,7 +851,11 @@ async function main() {
   // Lean edits the text (findEdit), finds the matches in the laid-out page (findInPage) and
   // draws them and the field. `asked` drops answers that a newer question replaced.
   const find={open:false,focused:false,query:"",current:0,count:0,asked:0};
-  const tabs:{document:typeof document;history:typeof history;scroll:number}[]=[{document,history,scroll:0}];
+  // Each tab has a number that stays the same while it is open: its engine worker is found by it.
+  let nextTab=1;
+  const tabs:{document:typeof document;history:typeof history;scroll:number;id:number}[]=[{document,history,scroll:0,id:0}];
+  // The time a tab was shown, until its first frame is presented (native-html-tab-first-frame).
+  let tabShown:{id:number;at:number;fresh:boolean}|undefined;const tabFirstFrames:number[]=[];
   // The tab icon of a page: Lean prepares it once from the bytes the page fetched (HTML §4.6.7.8).
   const icons=new WeakMap<object,unknown>();
   const iconOf=(page:typeof document)=>{
@@ -863,9 +881,10 @@ async function main() {
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
     ({document,history,scroll}=tabs[index]);field=showURL(document.url);dirty=true;
+    const id=tabs[index].id;tabShown={id,at:performance.now(),fresh:!worker?.ownWorker(id)};worker?.show(id);
     native?.setHistory(history.canBack,history.canForward);
   };
-  const keepTab=()=>{tabs[active]={document,history,scroll};};
+  const keepTab=()=>{tabs[active]={document,history,scroll,id:tabs[active].id};};
   // The composite darkens Lean's rectangles at once (no Lean call); a Lean frame that
   // includes the press replaces the darkening (renderFrame).
   const startPress=(answer:{control?:string;active?:number;rects:number[][]})=>{
@@ -878,18 +897,22 @@ async function main() {
     session?.setPress(undefined);
     if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
   };
-  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0});showTab(tabs.length-1);focusAddress();};
+  const newTab=()=>{keepTab();tabs.push({document:home,history:engine.historyPush({entries:[],index:0},home.url),scroll:0,id:nextTab++});showTab(tabs.length-1);focusAddress();};
   // Closed tabs, the last one last, for Shift-Command-T (issue 1268).
   const closed:typeof tabs=[];
   const closeTab=(index:number)=>{
     if(tabs.length===1){running=false;return;}
-    keepTab();closed.push(tabs[index]);if(closed.length>25)closed.shift();tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+    keepTab();closed.push(tabs[index]);if(closed.length>25)closed.shift();const [gone]=tabs.splice(index,1);showTab(Math.min(active>index?active-1:active,tabs.length-1));
+    // Its engine worker ends with it (when no other tab shares it).
+    worker?.close(gone.id);
   };
   // One tab for each source: an XML page opens its XML, its XSLT and the result.
   const viewSource=async()=>{
     for(const item of document.sources){
-      const page=await prepareHTML(lean,item.url+"#source",undefined,await lean.sourcePage(item.kind,item.url,item.source));
-      keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0});showTab(tabs.length-1);
+      // Prepared on the worker of the tab it opens in.
+      const id=nextTab++,prepare=async()=>prepareHTML(lean,item.url+"#source",undefined,await lean.sourcePage(item.kind,item.url,item.source));
+      const page=await (worker?worker.withTab(id,prepare):prepare());
+      keepTab();tabs.push({document:page,history:engine.historyPush({entries:[],index:0},page.url),scroll:0,id});showTab(tabs.length-1);
     }
   };
   // The FOAF graph is a page whose model and frames come from Lean's graph app.
@@ -1483,7 +1506,9 @@ async function main() {
     if(answer.tab!==undefined&&answer.tab!==active){keepTab();showTab(answer.tab);}
     if(answer.scrollTo!==undefined)scrollBy(answer.scrollTo-scroll);
     if(answer.action==="stop"&&loading){controller?.abort();loading=false;dirty=true;trace("native-html-stop",{url:document.url});}
-    if(answer.action==="reopenTab"){const tab=closed.pop();if(tab){keepTab();tabs.push(tab);showTab(tabs.length-1);}}
+    // A reopened tab gets a new engine worker, which holds none of the page's images or script
+    // session: with one worker per tab its page is loaded again.
+    if(answer.action==="reopenTab"){const tab=closed.pop();if(tab){keepTab();tabs.push(tab);showTab(tabs.length-1);if(worker?.ownWorker(tab.id))navigate(document.url,false);}}
     if(answer.refused)console.error(`Native HTML ${answer.action}: ${answer.refused}`);
     if(answer.action==="closeTab")closeTab(active);
     if(answer.action==="settings")navigate(settingsURL);
@@ -1555,7 +1580,10 @@ async function main() {
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,cookies:cookiesFor(initiator),...(request?{request}:{})})).then(next=>{
+    // Every engine call of this navigation goes to the worker of this tab, also after another tab is shown.
+    const tabId=tabs[active].id;
+    const load=()=>(target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,cookies:cookiesFor(initiator),...(request?{request}:{})}));
+    (worker?worker.withTab(tabId,load):load()).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1576,7 +1604,7 @@ async function main() {
       refuse(target,error);
     });
   };
-  let lastStep=0,stepAt=0,pressAt=[0,0];
+  let lastStep=0,stepAt=0,pressAt=[0,0],unsettled={left:0,gap:0};
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
   let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
@@ -1593,6 +1621,11 @@ async function main() {
       engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
       gestures:{count:gestureLatencies.length,byGesture:gestureCounts,queuedToActionMsP50:percentile(gestureLatencies,0.5),queuedToActionMsMax:gestureLatencies.length?Math.max(...gestureLatencies):null},
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
+      // Engine workers (native_html_tabs.ts): mode, starts with time and resident memory, sharing at the cap.
+      engineWorkers:worker?worker.stats():null,
+      // The resident memory of the whole process at exit (every engine worker is a thread of it).
+      processRssMB:(()=>{try{return Math.round(Deno.memoryUsage().rss/1048576);}catch{return null;}})(),
+      tabFirstFrame:{count:tabFirstFrames.length,p50Ms:percentile(tabFirstFrames,0.5),p95Ms:percentile(tabFirstFrames,0.95),maxMs:tabFirstFrames.length?Math.max(...tabFirstFrames):null},
       frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
       // After the first frame is presented: the figure the 50 ms target is judged on.
@@ -1611,7 +1644,7 @@ async function main() {
     
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nengine workers: ${line.engineWorkers?`${line.engineWorkers.mode}, ${line.engineWorkers.started} started (${line.engineWorkers.starts.map(w=>`${w.ms} ms, +${Math.round((w.rssAfterMB-w.rssBeforeMB)*10)/10} MB`).join("; ")}), ${line.engineWorkers.live} live, most ${line.engineWorkers.maxLive}, cap ${line.engineWorkers.cap}, ${line.engineWorkers.sharedTabs} tabs shared, ${line.engineWorkers.sparesTaken} spares taken`:"none (main thread)"}; process resident ${line.processRssMB} MB\ntab shown to first frame: ${line.tabFirstFrame.count} tabs, p50 ${line.tabFirstFrame.p50Ms} ms, p95 ${line.tabFirstFrame.p95Ms} ms, max ${line.tabFirstFrame.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
   };
   // The pipeline trace (--pipe-trace): events of the main thread, and the most blocking GPU
   // waits seen between two pumps (HostPipeline.Model: at most one).
@@ -1794,6 +1827,14 @@ async function main() {
       resizeAt=undefined;lastLayoutMs=compiled-frameStart;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
+      // After the first frame: the spare engine worker for the next new tab starts.
+      if(totals.length===1)worker?.prewarm();
+      // A tab shown (new, or chosen): the time to its first presented frame, and whether it got
+      // its engine worker when it was shown (a new tab).
+      // (a frame started before the tab was shown does not count, even when it shows the same page)
+      if(tabShown&&frameStart>=tabShown.at&&nextDocument===document&&tabs[active]?.id===tabShown.id){
+        const shownMs=ms(tabShown.at,result.presentedAt);tabFirstFrames.push(shownMs);
+        trace("native-html-tab-first-frame",{tab:tabShown.id,ms:shownMs,newWorker:tabShown.fresh,workers:worker?.stats().live??0});tabShown=undefined;}
       if(result.checked)checkedFrames++;
       lastActivity=Math.max(lastActivity,finished);
       settle(stamps,result.presentedAt);
@@ -2218,15 +2259,20 @@ async function main() {
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
       const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
-      if(commands&&frame&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
+      // "now:N:MS" (a test step): the next N steps run MS apart, without waiting for the page to settle.
+      if(typeof commands?.[0]==="string"&&/^now:\d+:\d+$/.test(commands[0])){const [,n,gap]=(commands.shift() as string).split(":");unsettled={left:Number(n),gap:Number(gap)};}
+      if(commands&&frame&&session?.frames&&performance.now()>=stepAt&&(settled||(unsettled.left>0)||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
+        if(unsettled.left>0){unsettled.left--;stepAt=performance.now()+unsettled.gap;}
         if(step==="graph")shellCommand("graph","");
         else if(typeof step==="string"&&step.startsWith("link")){
           // A press and release on a link of the page: link is the first, link1 the second.
           const link=frame.webRender.links[Number(step.slice(4))] as number[],x=Math.round(link[2]+link[4]/2),y=Math.round(windowRow(link[3]+link[5]/2));
           native.testEvent(2,x,y);native.testEvent(4,x,y);
         }
+        // "go:URL" (a test step): navigate the shown tab, as the address bar would.
+        else if(typeof step==="string"&&step.startsWith("go:"))navigate(step.slice(3));
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
         else if(typeof step==="string"&&/^at(Link|Text):/.test(step)){
           // The first link's centre, or 60 backing pixels right of its end on its row.

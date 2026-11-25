@@ -30,6 +30,7 @@ import { flatten, recogniseLabels, exprText } from './explain.mjs';
 import { exprVars, scope } from './scope.mjs';
 import { negationFacet } from './negation.mjs';
 import { compact } from './names.mjs';
+import { patternText, elemText } from './sparql.mjs';
 
 const P31 = 'http://www.wikidata.org/prop/direct/P31';
 const P279 = 'http://www.wikidata.org/prop/direct/P279';
@@ -89,13 +90,13 @@ const nodeKey = (t) => t.t === 'var' ? `?${t.name}` : t.t === 'bnode' ? `_${t.id
 export function classifyParallax(q, nm = defaultName) {
   const flags = new Set(), blockers = new Set();
   const negations = [], extensions = [];
-  const ext = (kind, label, anchor) => { if (!extensions.some(e => e.kind === kind && e.label === label)) extensions.push(anchor ? { kind, label, anchor } : { kind, label }); };
+  const ext = (kind, label, anchor, src) => { if (!extensions.some(e => e.kind === kind && e.label === label)) extensions.push(anchor ? { kind, label, anchor, src } : { kind, label }); };
   const extraNodes = new Set();
   const outer = scope(q.pattern);
   const negate = (p, op) => {
     const r = negationFacet(p, outer, op, nm);
     if (!r.ok) { blockers.add(r.blocker); return; }
-    negations.push({ op, anchor: r.anchor, label: r.label });
+    negations.push({ op, anchor: r.anchor, label: r.label, src: op === 'minus' ? `MINUS { ${patternText(p)} }` : `FILTER(${op === 'exists' ? '' : 'NOT '}EXISTS { ${patternText(p)} })` });
     for (const n of r.needs) flags.add(n);
   };
   const edges = []; // [a, b] undirected, between node keys
@@ -144,7 +145,7 @@ export function classifyParallax(q, nm = defaultName) {
       }
     }
     if (res.every(r => r.ok) && new Set(res.map(r => r.anchor)).size === 1) {
-      ext('or', `any of: ${res.map(r => r.label.replace(/^require: /, '')).join(' | ')}`, res[0].anchor);
+      ext('or', `any of: ${res.map(r => r.label.replace(/^require: /, '')).join(' | ')}`, res[0].anchor, elemText(el));
       for (const r of res) for (const n of r.needs) flags.add(n);
       extraNodes.add(res[0].anchor);
       return;

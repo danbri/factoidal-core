@@ -409,6 +409,9 @@ Not levers: `-O2` against `-O3`; another C compiler; another Lean backend; `ST.R
    a budget for the larger library.
 2. The same for Linux (`leanc -flto=thin` with the toolchain's `lld`; the runtime units are already rebuilt
    there) and for `leanjs`, measured in CI, where Test262 runs spend their time.
+   `leanjs` on x86-64 Linux: done 2026-11-25, the default (`lakefile.lean`, `leanjsLto`); 0.926 of
+   instructions on the corpus: [2026-11-25-leanjs-lto-linux.md](2026-11-25-leanjs-lto-linux.md). The
+   Linux native engine library is not changed yet.
 3. Heartbeat off in the Wasm engine, with a timing that can be read (lever 9).
 4. Levers 2 to 4, 6 and 7 inside the guarded fast-path structure of the tier-1 work, each with its lemma.
 5. The undo log's write test as a non-inlined function (section F), with a before and after of `leanjs`.

@@ -798,4 +798,16 @@ replaced by assignment; Function.prototype[@@hasInstance] was missing; `source` 
 #guard out "function* g() { var o = { [yield 1]: yield 2, k: 0 }; return Object.keys(o).join() + ' ' + o.x; } var it = g(); it.next(); it.next('x'); print(it.next(5).value)" == ["x,k 5"]
 #guard out "async function f() { class D extends (await Promise.resolve(Array)) {} return new D(1, 2).length; } f().then(function (v) { print(v); })" == ["2"]
 
+/-! ## The register machine's global name cache after `delete`
+
+The machine remembers the slot of a global name in the global object's property map
+(`HeapOf.globalCache`) and checks, at each use, that the slot holds that name. A map of more
+than eight keys keeps an erased key in its slot as a tombstone, so after `delete` the check
+passed and the machine read the old value (and wrote to the dead slot) where the evaluator
+throws a ReferenceError. Found 2026-11-25 (issue 471); the check now asks the map whether the
+slot is still the name's (`PropMap.liveAt`). -/
+
+#guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } var s = 0; for (var j = 0; j < 50; j++) s += f(); delete globalThis.zz; var r; try { r = f(); } catch (e) { r = e.constructor.name; } print(s, r)" == ["50 ReferenceError"]
+#guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } function g(v) { zz = v; } for (var j = 0; j < 50; j++) { g(j); f(); } delete globalThis.zz; g(7); print('zz' in globalThis, f(), Object.keys(globalThis).indexOf('zz') > 0)" == ["true 7 true"]
+
 end L4Factoidal.JS.Tests
