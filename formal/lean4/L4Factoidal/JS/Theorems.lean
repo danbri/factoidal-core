@@ -134,12 +134,11 @@ theorem keyOfNum_numIndex (x : Float) (h : numIndex x < noIndex) : keyOfNum x = 
   by_cases h4 : (isIntegral x && decide (x.abs < tenPow21)) = true
   · rw [numIndex, if_neg h1, if_neg h2, if_neg h3, if_pos h4] at h ⊢
     rw [keyOfNum, numToString, if_neg h1, if_neg h2, if_neg h3, if_pos h4]
-    show toString (truncInt x) = _
     cases hti : truncInt x with
     | ofNat i =>
       rw [hti] at h
       by_cases hlt : i < noIndex
-      · simp only [hlt, if_true]; rfl
+      · simp only [hlt, if_true, decide_true, Bool.true_or]; rfl
       · simp only [hlt, if_false] at h; exact absurd h (Nat.lt_irrefl _)
     | negSucc i => rw [hti] at h; exact absurd h (Nat.lt_irrefl _)
   · rw [numIndex, if_neg h1, if_neg h2, if_neg h3, if_neg h4] at h; exact absurd h (Nat.lt_irrefl _)

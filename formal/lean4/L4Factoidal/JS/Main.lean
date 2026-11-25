@@ -127,6 +127,34 @@ def numfmtDiff (n : Nat) (seed : UInt64) (out? : Option String) : IO UInt32 := d
         bad := bad + 1
         if bad ≤ 20 then IO.println s!"DIFF bits {x.toBits} fast {f} ref {r}"
   IO.println s!"numfmt-diff: {xs.size * 2} doubles, {bad} differences"
+  -- toFixed, toPrecision, toExponential: the fast paths against the exact path, on every 16th
+  -- double above and on `n / 8` random doubles from 2^-24 to 2^40 (both signs)
+  let mut ys : Array Float := #[]
+  for i in [0:xs.size / 16] do ys := ys.push (Float.ofBits xs[i * 16]!)
+  let mut s := seed + 1
+  for _ in [0:n / 8] do
+    s := xorshift s
+    let e := 1003 + (s >>> 52) % 64
+    ys := ys.push (Float.ofBits ((s &&& 0x800FFFFFFFFFFFFF) ||| (e <<< 52)))
+  let mut badF := 0
+  for x in ys do
+    let (sg, num, den) := NumFmt.ofFloat x
+    let mut ds : Array (String × String × String) := #[]
+    if x.abs < tenPow21 then
+      for f in [0, 1, 2, 3, 5, 10, 19, 20] do
+        ds := ds.push (s!"toFixed({f})", NumFmt.fixedOf x f, NumFmt.fixed sg num den f)
+    for p in [1, 2, 4, 7, 12, 17, 19, 21] do
+      ds := ds.push (s!"toPrecision({p})", NumFmt.precisionOf x p, NumFmt.precision sg num den p)
+    for f in [0, 1, 3, 6, 16, 18, 20] do
+      ds := ds.push (s!"toExponential({f})", NumFmt.expoOf x f, NumFmt.expo sg num den f)
+    ds := ds.push ("toExponential()", NumFmt.expoShortest x,
+      NumFmt.expo sg num den (if num == 0 then 0 else NumFmt.shortestFracRef x))
+    for (what, a, b) in ds do
+      if a != b then
+        badF := badF + 1
+        if badF ≤ 20 then IO.println s!"DIFF bits {x.toBits} {what} fast {a} exact {b}"
+  IO.println s!"numfmt-diff: {ys.size} doubles through toFixed, toPrecision, toExponential, {badF} differences"
+  bad := bad + badF
   if let some o := out? then IO.FS.writeFile o ("\n".intercalate lines.toList ++ "\n")
   return if bad == 0 then 0 else 1
 
@@ -141,7 +169,10 @@ def numfmtBench (n : Nat) : IO Unit := do
   let m := Nat.min n 20000
   for x in xs[0:m] do len := len + (numToStringRef x).length
   let t2 ← IO.monoNanosNow
-  IO.println s!"numToString: {(t1 - t0) / n} ns per conversion; numToStringRef: {(t2 - t1) / m} ns per conversion ({len})"
+  let t3 ← IO.monoNanosNow
+  for x in xs do len := len + (NumFmt.fixedOf x 2).length + (NumFmt.precisionOf x 4).length
+  let t4 ← IO.monoNanosNow
+  IO.println s!"numToString: {(t1 - t0) / n} ns per conversion; numToStringRef: {(t2 - t1) / m} ns per conversion; toFixed(2) and toPrecision(4) together: {(t4 - t3) / n} ns ({len})"
 
 def main (args : List String) : IO UInt32 := do
   -- `BUBBLEPOP_VM=off`: the register machine is off for the run (the heap's `useVm`)

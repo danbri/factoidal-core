@@ -4339,16 +4339,16 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       if id == (.x .numberToPrecision) && (a0 matches .undef) then return .str (numToString x)
       let f := toIntegerOrInf (← core.toNum a0)
       if !x.isFinite then return .str (numToString x)
-      let (neg, num, den) := NumFmt.ofFloat x
+      -- 64-bit fast paths with the exact path behind them (JS/NumFmt.lean, issue 1076)
       if id == (.x .numberToExponential) then
         if f < 0 || f > 100 then throwErr .range "toExponential() argument must be between 0 and 100"
         if a0 matches .undef then
           -- as many digits as Number::toString gives
-          return .str (NumFmt.expo neg num den (if num == 0 then 0 else NumFmt.shortestFrac x))
-        pure (.str (NumFmt.expo neg num den f.toUInt64.toNat))
+          return .str (NumFmt.expoShortest x)
+        pure (.str (NumFmt.expoOf x f.toUInt64.toNat))
       else
         if f < 1 || f > 100 then throwErr .range "toPrecision() argument must be between 1 and 100"
-        pure (.str (NumFmt.precision neg num den f.toUInt64.toNat))
+        pure (.str (NumFmt.precisionOf x f.toUInt64.toNat))
     | (.x .stringLocaleCompare) =>
       match ← thisPrim thisV with
       | .undef | .null => throwErr .type "String.prototype.localeCompare called on null or undefined"
@@ -6871,9 +6871,8 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         let d := toIntegerOrInf (← core.toNum a0)
         if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
         if x.abs ≥ 1e21 || !x.isFinite then pure (.str (numToString x)) else
-        -- exact digits (JS/NumFmt.lean)
-        let (neg, num, den) := NumFmt.ofFloat x
-        pure (.str (NumFmt.fixed neg num den d.toUInt64.toNat))
+        -- a 64-bit fast path with the exact path behind it (JS/NumFmt.lean, issue 1076)
+        pure (.str (NumFmt.fixedOf x d.toUInt64.toNat))
     | .numberIsInteger => pure (.bool (match a0 with | .num x => isIntegral x | _ => false))
     | .booleanCtor =>
       let b := toBool a0

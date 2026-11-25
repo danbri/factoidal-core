@@ -154,6 +154,14 @@ def natToRadix (b n : Nat) : String := Id.run do
       k := k / b
   return String.ofList out
 
+/-- 2^53 as a `Float`, made once when the module starts. Written in place, in a function small
+enough to be inlined, the literal is read from decimal text at each call (its mantissa,
+90071992547409920, is a `Nat` literal above 2^32; checked in the generated C of Lean 4.33.1). -/
+@[noinline] def twoPow53F : Float := 9007199254740992.0
+
+/-- No array index: the bound of `arrayIndex?` (2^32 - 1). -/
+def noIndex : Nat := 4294967295
+
 /-- Number::toString with radix 10 (§6.1.6.1.20): the reference, with exact rational arithmetic
 (`XPath4.shortestDigits`, about 20 µs for a fraction). `numToString` gives the same text by Ryū;
 `leanjs numfmt-diff` compares the two. -/
@@ -161,7 +169,7 @@ def numToStringRef (x : Float) : String :=
   if x.isNaN then "NaN"
   else if x == 0 then "0"
   else if x.isInf then (if x < 0 then "-Infinity" else "Infinity")
-  else if isIntegral x && x.abs < tenPow21 then
+  else if isIntegral x && x.abs < twoPow53F then
     let i := truncInt x
     toString i
   else
@@ -196,8 +204,11 @@ def numToString (x : Float) : String :=
   else if x == 0 then "0"
   else if x.isInf then (if x < 0 then "-Infinity" else "Infinity")
   else if isIntegral x && x.abs < tenPow21 then
-    let i := truncInt x
-    toString i
+    -- An integer below 2^53 is its own shortest digits; above, an integer's exact digits can be
+    -- longer than the shortest (2^60 is 1152921504606847000, not ...976): issue 1076.
+    match truncInt x with
+    | .ofNat n => if n < noIndex || x.abs < twoPow53F then toString (Int.ofNat n) else Ryu.finiteToString x
+    | .negSucc n => if x.abs < twoPow53F then toString (Int.negSucc n) else Ryu.finiteToString x
   else Ryu.finiteToString x
 
 /-- StrWhiteSpaceChar (§7.1.4.1): WhiteSpace and LineTerminator. -/
@@ -311,10 +322,6 @@ theorem toNat_toUInt32_eq_emod (i : Int32) : i.toUInt32.toNat = (i.toInt % 42949
   simp only [show ((2 : Nat) ^ 32 : Nat) = 4294967296 from by decide]
   split <;> omega
 
-/-- 2^53 as a `Float`, made once when the module starts. Written in place, in a function small
-enough to be inlined, the literal is read from decimal text at each call (its mantissa,
-90071992547409920, is a `Nat` literal above 2^32; checked in the generated C of Lean 4.33.1). -/
-@[noinline] def twoPow53F : Float := 9007199254740992.0
 
 /-- `toInt32` for compiled code: the low 32 bits of `x.toInt64` when `|x| < 2^53`. -/
 def toInt32Fast (x : Float) : Int :=
@@ -379,8 +386,6 @@ def arrayIndex? (s : String) : Option Nat :=
     let n := s.foldl (fun a c => a * 10 + (c.toNat - 48)) 0
     if n < 4294967295 then some n else none
 
-/-- No array index: the bound of `arrayIndex?` (2^32 - 1). -/
-def noIndex : Nat := 4294967295
 
 /-- The array index a Number is as a property key, with no key string made: `noIndex` when its
 key (`numToString`) is not a canonical array index. It follows the cases of `numToString`, so
