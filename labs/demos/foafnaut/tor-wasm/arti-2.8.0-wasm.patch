@@ -1,16 +1,18 @@
 diff --git a/crates/arti-client/src/client.rs b/crates/arti-client/src/client.rs
-index b493250..f36ae51 100644
+index b493250..fa773c0 100644
 --- a/crates/arti-client/src/client.rs
 +++ b/crates/arti-client/src/client.rs
-@@ -1115,7 +1115,10 @@ impl<R: Runtime> TorClient<R> {
+@@ -1115,7 +1115,12 @@ impl<R: Runtime> TorClient<R> {
          }
          #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
          {
 -            unimplemented!()
-+            // Foafnaut wasm build: Arti has no persistent state manager on wasm yet.
-+            // State (guards, circuit timeouts) is kept in memory and lost when the page closes.
++            // Foafnaut wasm build: Arti has no persistent state manager on wasm. State (guards,
++            // circuit timeouts) is kept in memory unless the embedder saves and restores it.
++            // A new manager over the process-wide store, so the embedder can keep the state
++            // between runs (tor_persist::wasm_shared_state: snapshot and preload).
 +            let _ = config;
-+            Ok(TestingStateMgr::new())
++            Ok(tor_persist::wasm_shared_state().new_manager())
          }
      }
  
@@ -335,6 +337,58 @@ index 0000000..223cf70
 +    fn cached_protocol_recommendations(&self) -> Result<Option<(SystemTime, ProtoStatuses)>> {
 +        Ok(self.protocols.clone())
 +    }
++}
+diff --git a/crates/tor-persist/src/lib.rs b/crates/tor-persist/src/lib.rs
+index 7043537..2899c06 100644
+--- a/crates/tor-persist/src/lib.rs
++++ b/crates/tor-persist/src/lib.rs
+@@ -80,6 +80,8 @@ pub use handle::{DynStorageHandle, StorageHandle};
+ pub use serde_json::Value as JsonValue;
+ #[cfg(feature = "testing")]
+ pub use testing::TestingStateMgr;
++#[cfg(all(feature = "testing", target_arch = "wasm32", target_os = "unknown"))]
++pub use testing::wasm_shared_state;
+ 
+ /// An object that can manage persistent state.
+ ///
+diff --git a/crates/tor-persist/src/testing.rs b/crates/tor-persist/src/testing.rs
+index 75e92c5..bbb68ad 100644
+--- a/crates/tor-persist/src/testing.rs
++++ b/crates/tor-persist/src/testing.rs
+@@ -90,6 +90,21 @@ impl TestingStateMgr {
+     }
+ 
+     /// Return an error Resource corresponding to a given `key`.
++    /// Foafnaut wasm build: a copy of every stored entry (key to JSON text), so an embedder
++    /// with no file system can keep the state somewhere else.
++    pub fn snapshot(&self) -> HashMap<String, String> {
++        let inner = self.inner.lock().expect("Lock poisoned.");
++        let storage = inner.storage.lock().expect("Lock poisoned.");
++        storage.entries.clone()
++    }
++
++    /// Foafnaut wasm build: put entries (key to JSON text) back, before a client starts.
++    pub fn preload(&self, entries: HashMap<String, String>) {
++        let inner = self.inner.lock().expect("Lock poisoned.");
++        let mut storage = inner.storage.lock().expect("Lock poisoned.");
++        storage.entries.extend(entries);
++    }
++
+     fn err_resource(&self, key: &str) -> Resource {
+         Resource::Temporary {
+             key: key.to_string(),
+@@ -334,3 +349,12 @@ mod test {
+         assert!(old2.into_option().is_none());
+     }
+ }
++
++/// Foafnaut wasm build: the one state store of this process on wasm32-unknown-unknown.
++/// `arti-client` takes its state manager from it there; the embedder reads and fills it
++/// with `snapshot` and `preload`.
++#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
++pub fn wasm_shared_state() -> &'static TestingStateMgr {
++    static SHARED: std::sync::OnceLock<TestingStateMgr> = std::sync::OnceLock::new();
++    SHARED.get_or_init(TestingStateMgr::new)
 +}
 diff --git a/crates/tor-rtcompat/src/impls.rs b/crates/tor-rtcompat/src/impls.rs
 index 34459aa..2cf0012 100644

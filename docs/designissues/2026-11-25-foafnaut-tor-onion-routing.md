@@ -436,3 +436,54 @@ Answer:
   authorities' signatures on the consensus; the Ethereum path has no equivalent check yet.
 - In this container, HTTPS goes through a gateway that terminates TLS, so it can read RPC
   requests made from here.
+
+## 14. Keeping Tor state between runs (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "sure (more than cookies?)" (to persistent state for the Deno
+worker), then "could this be LWS pods but local not networked?"
+
+### 14.1 What the state is, and how it compares with cookies
+
+Arti stored two records in the private-network runs: `guards` (the guard sample and the
+confirmed guards: relay identities with times) and `circuit_timeouts` (circuit build times).
+Keys are not in it (the keystore is ephemeral).
+
+- A cookie is sent to a site on each request. This state is never sent to any site.
+- Read from the device, this state shows that the user runs Tor and names the user's guards.
+  The guard set changes slowly and is close to unique, so someone who also watches traffic at a
+  guard can use it to link that traffic to this device. C tor and Tor Browser keep the same data
+  in a state file on disk, in clear text.
+- So it is less exposed than a cookie to sites, and more sensitive than a cookie on a device
+  that someone else can read.
+
+Rules for this build: keep it sealed at rest; keep it local (never copy it to a remote pod);
+keep it apart from page-visible storage; give the user a way to delete it.
+
+### 14.2 Local LWS storage (proposed, not built)
+
+Foafnaut already keeps bookmarks, history and settings in a local LWS storage
+(`labs/demos/foafnaut/native_state.ts`: `lws-serve` on 127.0.0.1, authorization on, a did:key
+owned by the browser). Tor state can go in a container of a local LWS storage of its own, with
+`FACTOIDAL_LWS_KEY` set (sealed with ChaCha20-Poly1305 from HACL*), never synced to a remote pod.
+The host process reads and writes it; the Tor worker gets no access to it. A storage written in
+clear text is refused for Tor state: the state stays in memory instead, with a warning. Tracking:
+https://github.com/danbri/factoidal-core/issues/1058 (its expected failure: the module reports
+`state_backend()` "lws-sealed" only when the host says so).
+
+### 14.3 Built now
+
+- Arti patch (6th change): `tor-persist` `TestingStateMgr` gets `snapshot` and `preload`, and on
+  wasm one process-wide store (`wasm_shared_state`) that `arti-client` uses.
+- Module exports: `state_snapshot`, `state_load`, `set_state_store` (accepts only
+  "lws-sealed"), `close`.
+- Host: `--restart-check` runs a client, takes the state, starts a second worker with it and
+  compares the guards; the state stays in the host process. `--hold MS` waits before the
+  snapshot.
+- Finding: Arti stores its state every 60 s (`tor-circmgr/src/lib.rs`, `fire_in(60 s)`). It also
+  stores when the circuit manager is dropped, but dropping the client did not do that here (no
+  "Flushed persistent state" line), so other references stay alive. A host must take a snapshot
+  at least every 60 s, so a crash loses at most that much.
+- Result: `chutney/run.sh` PASS for bootstrap, exit request, onion service request and "same
+  guards after restart" (18 guard identity entries before and after). `node --test
+  xfail.test.cjs`: 7 pass, 0 fail (out of 7). The patch now touches 10 files: 323 lines added,
+  7 removed.

@@ -19,8 +19,8 @@
 //! EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 //! WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW. The transport is not trusted for real users.
 //! - Blocking work: run at once on the calling thread (there are no threads).
-//! - State (guards, keys): Arti's in-memory state manager on wasm (`TestingStateMgr`), so it is
-//!   lost when the page closes. See the record for the risk.
+//! - State (guards, circuit build times): Arti's in-memory state manager on wasm, which the host
+//!   can read out (`state_snapshot`) and load back (`state_load`). Keys: ephemeral keystore.
 
 use std::io::{Error as IoError, ErrorKind, Result as IoResult};
 use std::net::SocketAddr;
@@ -447,11 +447,46 @@ impl UdpProvider for WasmRuntime {
     }
 }
 
-/// Where Arti keeps its state (guards, circuit build times, keys, directory cache) in this
-/// build: "memory". A page reload loses it. Expected-failure test: xfail.test.cjs.
+/// Where the host keeps Arti's state between runs: "none" until the host reports a store with
+/// `set_state_store`. Only "lws-sealed" (a local, encrypted LWS storage) is accepted.
+/// Expected-failure test: xfail.test.cjs (https://github.com/danbri/factoidal-core/issues/1058).
+static STATE_STORE: std::sync::Mutex<&'static str> = std::sync::Mutex::new("none");
+
 #[wasm_bindgen]
 pub fn state_backend() -> String {
-    "memory".into()
+    STATE_STORE.lock().map(|s| s.to_string()).unwrap_or_else(|_| "none".into())
+}
+
+/// The host says where it keeps the state. Only "lws-sealed" is accepted.
+#[wasm_bindgen]
+pub fn set_state_store(kind: &str) -> bool {
+    let ok = kind == "lws-sealed";
+    if ok {
+        if let Ok(mut s) = STATE_STORE.lock() {
+            *s = "lws-sealed";
+        }
+    }
+    ok
+}
+
+/// Arti's state (guards, circuit build times, ...) as one JSON object: key to JSON text.
+/// Sensitive: it names this client's guards. The host must keep it sealed and local.
+#[wasm_bindgen]
+pub fn state_snapshot() -> String {
+    serde_json::to_string(&tor_persist::wasm_shared_state().snapshot()).unwrap_or_else(|_| "{}".into())
+}
+
+/// Put back state saved by `state_snapshot`, before `bootstrap`. Returns the number of keys.
+#[wasm_bindgen]
+pub fn state_load(json: &str) -> i32 {
+    match serde_json::from_str::<std::collections::HashMap<String, String>>(json) {
+        Ok(m) => {
+            let n = m.len() as i32;
+            tor_persist::wasm_shared_state().preload(m);
+            n
+        }
+        Err(_) => -1,
+    }
 }
 
 /// True when this module runs in a dedicated worker, where no other page script can read its
@@ -556,6 +591,13 @@ pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
 
 thread_local! {
     static CLIENT: std::cell::RefCell<Option<std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Drop the client of the last `bootstrap`. Arti flushes its state when its circuit manager
+/// is dropped, so call this before `state_snapshot` at the end of a session.
+#[wasm_bindgen]
+pub fn close() -> bool {
+    CLIENT.with(|c| c.borrow_mut().take()).is_some()
 }
 
 /// Through the client of the last `bootstrap`, open a stream to `host:port` (the exit resolves

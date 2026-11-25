@@ -25,9 +25,9 @@ test('xfail: bootstrap reaches 100% with no host transport, as in a page (https:
   });
 });
 
-test('xfail: state is persistent (memory only: https://github.com/danbri/factoidal-core/issues/1058)', async () => {
+test('xfail: state is kept in a sealed local LWS storage (https://github.com/danbri/factoidal-core/issues/1058)', async () => {
   await ready;
-  await xfail('https://github.com/danbri/factoidal-core/issues/1058', async () => wasm_bindgen.state_backend() !== 'memory');
+  await xfail('https://github.com/danbri/factoidal-core/issues/1058', async () => wasm_bindgen.state_backend() === 'lws-sealed');
 });
 
 test('xfail: runs in a dedicated worker (https://github.com/danbri/factoidal-core/issues/1059)', async () => {
@@ -65,4 +65,14 @@ test('no debug lines by default (they can carry relay addresses)', async () => {
   wasm_bindgen.log_debug(true);
   try { await wasm_bindgen.bootstrap(2000); } finally { console.log = orig; wasm_bindgen.log_debug(false); }
   assert.ok(seen2.some((l) => /^arti\s+DEBUG/.test(l)), 'control: debug lines visible when switched on');
+});
+
+test('state can be read out and loaded back', async () => {
+  await ready;
+  const before = JSON.parse(wasm_bindgen.state_snapshot());
+  assert.equal(typeof before, 'object');
+  assert.equal(wasm_bindgen.state_load('{"foafnaut_test":"{\\"x\\":1}"}'), 1);
+  assert.equal(JSON.parse(wasm_bindgen.state_snapshot()).foafnaut_test, '{"x":1}');
+  assert.equal(wasm_bindgen.state_load('not json'), -1);
+  assert.equal(wasm_bindgen.set_state_store('file'), false, 'only a sealed LWS store is accepted');
 });
