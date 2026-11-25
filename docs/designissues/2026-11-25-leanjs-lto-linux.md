@@ -51,6 +51,9 @@ from the same objects and flags as the Lake target; the Lake-built program has t
 | pako (N=32) | 5,358,094,394 | 5,048,695,981 | 0.942 |
 | geometric mean | | | **0.926** |
 
+The program that `lake build leanjs` makes with this change (commit of this record) gives 0.924,
+0.928, 0.921, 0.935 and 0.947 (geometric mean **0.931**), and the same Test262 verdict list.
+
 CPU time (user + system, `wait4`), size 4N and the micro set, 7 interleaved rounds (order reversed
 every other round), median; the spread between runs of one program was up to 40% (other builds on
 the machine), so read the direction:
