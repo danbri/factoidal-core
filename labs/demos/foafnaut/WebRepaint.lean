@@ -47,6 +47,11 @@ private def optEq {α : Type} (eq : α → α → Bool) : Option α → Option �
   | none, none => true
   | _, _ => false
 
+private def cornerLengthsEq (a b : CSS.CornerLengths) : Bool :=
+  let pairEq := fun (x y : CSS.Length × CSS.Length) => lengthEq x.1 y.1 && lengthEq x.2 y.2
+  pairEq a.topLeft b.topLeft && pairEq a.topRight b.topRight &&
+    pairEq a.bottomRight b.bottomRight && pairEq a.bottomLeft b.bottomLeft
+
 /-- Every field of `Computed` but the colours is equal, and a background, a border and
 an underline are there in both or in neither: the two styles lay out the same and make
 the same paints. The anonymous constructor names every field in order, so a field added
@@ -57,7 +62,7 @@ def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
-    borderColors,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
+    borderColors,cornerLengths,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
@@ -74,7 +79,7 @@ def sameShape (a b : Computed) : Bool :=
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
   preserveSegmentBreaks == b.preserveSegmentBreaks &&
-  edgesEq borderWidth b.borderWidth &&
+  edgesEq borderWidth b.borderWidth && optEq cornerLengthsEq cornerLengths b.cornerLengths &&
   -- each side's style, and whether its colour is drawn
   (borderStyles.toList.zip b.borderStyles.toList).all (fun (x,y) => x == y) &&
   (borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => (x.resolve a.color).isSome == (y.resolve b.color).isSome) &&
@@ -101,6 +106,9 @@ def sameShape (a b : Computed) : Bool :=
 
 #guard !sameShape {} {balanceText := true}
 #guard !sameShape {} {balanceWrap := false}
+#guard !sameShape {} {cornerLengths := some {topLeft := (.px 10,.px 12)}}
+#guard !sameShape {cornerLengths := some {topLeft := (.px 10,.px 12)}}
+  {cornerLengths := some {topLeft := (.px 10,.px 13)}}
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=
