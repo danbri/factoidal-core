@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>New tab</title>
+<!-- The page a new tab opens (Command-T, the + button). Handwritten and light, so a new tab is
+     quick: no script, no web font, no image. The forms are plain GET forms: the browser routes a
+     foafnaut: action as a link (WebRoute), so the search words open this browser's own search
+     page and go nowhere else until you press a button there. -->
+<style>
+body{margin:0;font-family:sans-serif;font-size:15px;line-height:22px;color:#1f2328;background:#eef1f5}
+main{max-width:760px;margin:0 auto;padding:18px 16px 28px}
+p{margin:0}
+a{color:#1a4fa0}
+.top{padding:4px 0 10px}
+h1{margin:0;font-size:26px;line-height:34px;color:#14213d}
+.sub{padding-top:2px;color:#5a6270}
+.tiles{padding-top:6px}
+.tiles a{display:inline-block;margin:0 8px 8px 0;padding:6px 14px;border-radius:10px;background:#ffffff;border:1px solid #cfd5de;color:#14213d;font-weight:bold;text-decoration:none}
+.tiles a.main{background:#14213d;border:1px solid #14213d;color:#ffffff}
+.card{margin:10px 0 0;padding:12px 14px 14px;background:#ffffff;border:1px solid #d5dae2;border-radius:12px}
+h2{margin:0;font-size:17px;line-height:24px;color:#184078}
+.note{padding:2px 0 8px;font-size:13px;line-height:19px;color:#5a6270}
+.field{width:60%;font-size:15px;line-height:22px;padding:4px 8px;border:2px solid #8a94a3;border-radius:6px;background:#ffffff;color:#1f2328}
+.query{display:block;width:96%;height:118px;margin-bottom:8px;font-family:monospace;font-size:13px;line-height:18px;padding:6px 8px;border:2px solid #8a94a3;border-radius:6px;background:#fbfcfd;color:#1f2328}
+.go{font-size:15px;line-height:22px;padding:4px 14px;border:2px solid #0b57d0;border-radius:6px;background:#0b57d0;color:#ffffff;font-weight:bold}
+.dino{margin-top:14px;padding:10px 14px;background:#e6f4ea;border:1px solid #b7dcc2;border-radius:12px}
+.dino a{text-decoration:none;color:#1e5b31;font-weight:bold}
+.rex{font-size:44px;line-height:52px}
+.foot{padding-top:14px;font-size:13px;color:#5a6270}
+@media (prefers-color-scheme: dark){
+body{color:#e6e9ee;background:#12161d}
+a{color:#9cc4ff}
+h1{color:#ffffff}
+h2{color:#9cc4ff}
+.sub,.note,.foot{color:#a7b0bc}
+.tiles a{background:#1d2430;border:1px solid #344055;color:#e6e9ee}
+.tiles a.main{background:#9cc4ff;border:1px solid #9cc4ff;color:#12161d}
+.card{background:#1a2029;border:1px solid #2e3746}
+.field,.query{background:#0f141b;border:2px solid #4a566a;color:#e6e9ee}
+.dino{background:#173323;border:1px solid #2c5a3d}
+.dino a{color:#b9f0c9}
+}
+</style></head><body><main>
+<div class="top">
+<h1>New tab</h1>
+<p class="sub">Type an address or words in the bar above, or start here.</p>
+</div>
+<p class="tiles"><a class="main" href="foafnaut:settings">Settings</a> <a class="main" href="foafnaut:console">Console</a> <a href="start.html">Start page</a> <a href="index.html">Demos</a> <a href="foafnaut:graph">FOAF graph</a> <a href="foafnaut:sparql">SPARQL planner</a> <a href="foafnaut:bookmarks">Bookmarks</a> <a href="foafnaut:history">History</a> <a href="foafnaut:about">About</a></p>
+<div class="card">
+<h2>Search</h2>
+<p class="note">As words typed in the address bar: they open this browser's search page (your open tabs, bookmarks and history) and go to no one until you press a button there.</p>
+<form action="foafnaut:search" method="get"><input class="field" type="text" name="q" value="" aria-label="Words to search for"> <button class="go" type="submit">Search</button></form>
+</div>
+<div class="card">
+<h2>Ask the FOAF sample (SPARQL)</h2>
+<p class="note">Runs in the built-in engine over its FOAF sample (eight people, their ages and friends), and draws the query plan.</p>
+<form action="foafnaut:sparql" method="get"><textarea class="query" name="q" aria-label="SPARQL query">PREFIX foaf: &lt;http://xmlns.com/foaf/0.1/&gt;
+SELECT ?name ?age WHERE {
+  ?p foaf:name ?name ; foaf:age ?age .
+  FILTER(?age &gt; 30)
+}
+ORDER BY ?age</textarea><button class="go" type="submit">Run query</button></form>
+</div>
+<div class="card">
+<h2>Wikipedia</h2>
+<p class="note">Sends the words to Wikipedia when you press the button, and opens its answer in this tab.</p>
+<form action="https://en.wikipedia.org/wiki/Special:Search" method="get"><input class="field" type="text" name="search" value="" aria-label="Wikipedia search"> <button class="go" type="submit">Look up</button></form>
+</div>
+<p class="dino"><a class="rex" href="particle-rex.html" title="Particle Rex">&#x1F996;</a> <a href="particle-rex.html">Particle Rex</a>, a one-button game.</p>
+<p class="foot">This page is <a href="newtab.html">newtab.html</a> in the pages folder. Settings: the gear at the right of the toolbar or :settings. Console: Option-Command-J or :console.</p>
+</main></body></html>

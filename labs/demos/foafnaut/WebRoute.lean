@@ -423,9 +423,25 @@ inductive Builtin where
   | refuse (reason : String)
   deriving Repr, DecidableEq
 
+/-- The argument a page takes from a form's GET (`foafnaut:NAME?QUERY`, HTML §4.10.21.3
+"mutate action URL"): the search page takes the words of field `q`, as the address bar gives
+them (`searchPageURL`); another page takes the query as it is (`q=QUERY&step=N` for SPARQL). -/
+def formArgument (page : String) (query : List Char) : List Char :=
+  if page == "search" then
+    ((((String.ofList query).splitOn "&").find? (·.startsWith "q=")).map (·.toList.drop 2)).getD []
+  else query
+
 def builtin (rest : List Char) : Builtin :=
   let (name, after) := rest.span (· != '/')
   let argument := after.drop 1
+  -- A form's GET to a page: `foafnaut:NAME?QUERY` is `foafnaut:NAME/ARGUMENT`.
+  let (name, after, argument) := match name.span (· != '?') with
+    | (page, '?' :: query) =>
+      if after.isEmpty && (builtinPages.find? (·.1.toList == page)).any (·.2) then
+        let arg := formArgument (String.ofList page) query
+        (page, (if arg.isEmpty then [] else '/' :: arg), arg)
+      else (name, after, argument)
+    | _ => (name, after, argument)
   if name == "graph".toList then
     if after.isEmpty then .graph else .refuse "foafnaut:graph takes no argument"
   else match builtinPages.find? (·.1.toList == name) with
@@ -516,6 +532,14 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:console" == .page "console" "foafnaut:console"
 #guard route hub here "foafnaut:accessibility" == .page "accessibility" "foafnaut:accessibility"
 #guard route hub here "foafnaut:console/2" == .page "console" "foafnaut:console/2"
+-- A form's GET (the new tab page): the query is the page's argument; search takes field q.
+#guard route hub here "foafnaut:sparql?q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"
+#guard route hub here "foafnaut:search?q=lean+browser" == .page "search" "foafnaut:search/lean+browser"
+#guard route hub here "foafnaut:search?x=1&q=a" == .page "search" "foafnaut:search/a"
+#guard route hub here "foafnaut:search?q=" == .page "search" "foafnaut:search"
+#guard route hub here "foafnaut:settings?x=1" == .refuse "foafnaut:settings?x=1" "this browser has no such page"
+#guard route hub here "foafnaut:theme?x=dark" == .refuse "foafnaut:theme?x=dark" "this browser has no such page"
+#guard route hub here "foafnaut:search-engine?q=x" == .refuse "foafnaut:search-engine?q=x" "this browser has no such page"
 #guard route hub here "foafnaut:liberal/on" == .command "liberal" "on"
 #guard route hub here "foafnaut:theme/arcade" == .command "theme" "arcade"
 #guard route hub here "foafnaut:classic/off" == .command "classic" "off"

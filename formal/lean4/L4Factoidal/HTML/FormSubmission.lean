@@ -226,9 +226,12 @@ def target (d : Dom) (form : NodeId) (submitter : Option NodeId) (baseTarget : S
 serialized entry list in the form's encoding). POST with the urlencoded type, when the action
 is http(s) (`postScheme`): the action URL and the serialized entry list as the body ("submit
 as entity body"). `none` when it navigates nowhere here: the action does not parse, `dialog`,
-POST as `multipart/form-data` or `text/plain` (not done), `javascript:` and `mailto:` URLs. -/
+POST as `multipart/form-data` or `text/plain` (not done), `javascript:` and `mailto:` URLs.
+`getSchemes`: schemes of the user agent's own pages that a GET submits to as to http ("mutate
+action URL"). §4.10.21.3 leaves a scheme not in its table to the user agent, which should act
+as for a similar scheme; none by default. A POST never goes to one (`plan_post_http`). -/
 def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String) (docEncoding : Encoding)
-    (baseTarget : String := "") : Option Plan :=
+    (baseTarget : String := "") (getSchemes : List String := []) : Option Plan :=
   let action := (submitterAttr d submitter "formaction" <|> attr? d form "action").getD ""
   let action := if action.isEmpty then docURL else action
   match URL.parseUrl action (if docURL.isEmpty then none else some docURL) with
@@ -237,7 +240,7 @@ def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String)
     let enc := pickEncoding (attr? d form "accept-charset") docEncoding
     let entries := serialize enc (pairs (entryList d form submitter enc.name))
     if method d form submitter == "get" then
-      if ["http", "https", "data", "file"].contains parsed.scheme then
+      if ["http", "https", "data", "file"].contains parsed.scheme || getSchemes.contains parsed.scheme then
         some { target := target d form submitter baseTarget, url := { parsed with query := some entries }.href }
       else none
     else if method d form submitter == "post" && enctype d form submitter == "application/x-www-form-urlencoded" &&
@@ -249,8 +252,8 @@ def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String)
 /-- Kind: property of `plan`. Says: a submission Lean plans is a GET or a POST, nothing else.
 Does not say: that the host makes the request, or anything of its URL. -/
 theorem plan_method {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
-    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
-    (h : plan d form submitter docURL docEncoding baseTarget = some p) : p.method = "get" ∨ p.method = "post" := by
+    {docEncoding : Encoding} {baseTarget : String} {getSchemes : List String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget getSchemes = some p) : p.method = "get" ∨ p.method = "post" := by
   simp only [plan] at h
   split at h
   · cases h
@@ -267,8 +270,8 @@ action parsed to (`postScheme`), so a form never sends its fields in a body to a
 `data:`, `javascript:` or `mailto:` URL; and a GET has no body. Does not say: which origin the
 URL has (a form may post to another site, as on the web), or that the URL is reachable. -/
 theorem plan_post_http {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
-    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
-    (h : plan d form submitter docURL docEncoding baseTarget = some p) :
+    {docEncoding : Encoding} {baseTarget : String} {getSchemes : List String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget getSchemes = some p) :
     (p.method = "post" → ∃ u : URL.Url, postScheme u.scheme = true ∧ p.url = u.href) ∧ (p.method = "get" → p.body = "") := by
   simp only [plan] at h
   split at h

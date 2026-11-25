@@ -48,6 +48,13 @@
    "handwritten": true
   },
   {
+   "page": "newtab.html",
+   "title": "New tab",
+   "handwritten": true,
+   "shows": "the page a new tab opens: links to Settings, the console and the browser's own pages, a search form that works as words typed in the address bar, a SPARQL form over the built-in FOAF sample, a Wikipedia form, and a link to the Particle Rex game; plain HTML with no script, no web font and no image, so a new tab opens at once",
+   "doesNotShow": "dark colours: pages are drawn light (prefers-color-scheme: dark never holds), so its dark style block is not used yet"
+  },
+  {
    "page": "books-xslt1.xml",
    "title": "XML with XSLT 1.0"
   },
