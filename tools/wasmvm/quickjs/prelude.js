@@ -18049,22 +18049,11 @@
     class ValidityState { constructor() { throw new TypeError('Illegal constructor'); } }
     def('ValidityState', ValidityState);
     const validityEl = new WeakMap(), validityObj = new WeakMap(), customMessage = new WeakMap();
-    const patternMismatch = el => {
-      const p = el.getAttribute('pattern'), t = typeState(el);
-      if (p === null || !['text', 'search', 'url', 'tel', 'email', 'password'].includes(t)) return false;
-      const v = inputValue(el);
-      if (v === '') return false;
-      let re;
-      try { re = new RegExp('^(?:' + p + ')$', 'v'); } catch { try { re = new RegExp('^(?:' + p + ')$', 'u'); } catch { return false; } }
-      return t === 'email' && el.hasAttribute('multiple') ? !v.split(',').every(x => re.test(x)) : !re.test(v);
-    };
-    // The validity states as bits: 1 valueMissing, 2 typeMismatch, 4 patternMismatch, 8 tooLong,
-    // 16 tooShort, 32 rangeUnderflow, 64 rangeOverflow, 128 stepMismatch, 256 badInput,
-    // 512 customError. Lean decides 1, 2, 32, 64 and 128; the pattern is a JavaScript regular
-    // expression; tooLong and tooShort need a user edit, which a script's value is not.
+    // Lean supplies the tree- and value-dependent validity bits, including the
+    // pattern. This realm keeps the custom error message.
     const validityBits = el => {
       let bits = 0;
-      if (el instanceof I) { bits = Number(vq(el, 'V', inputValue(el))) || 0; if (patternMismatch(el)) bits |= 4; }
+      if (el instanceof I) bits = Number(vq(el, 'V', inputValue(el))) || 0;
       else if (el instanceof T) bits = Number(vq(el, 'V', el.value)) || 0;
       else if (el instanceof S) bits = Number(vq(el, 'V', '')) || 0;
       if ((customMessage.get(el) ?? '') !== '') bits |= 512;
@@ -18095,7 +18084,11 @@
       method(C, 'reportValidity', function reportValidity() { return check(this); });
       method(C, 'setCustomValidity', function setCustomValidity(message) {
         if (arguments.length < 1) throw new TypeError("Failed to execute 'setCustomValidity': 1 argument required.");
-        customMessage.set(this, String(message));
+        const text = String(message), id = nodeId(this);
+        const bits = chk(n.treeOp(id, 0, 31));
+        const next = text === '' ? bits & ~16 : bits | 16;
+        if (next !== bits) chk(n.treeOp(id, next, 30));
+        customMessage.set(this, text);
       });
     }
     // "Statically validate the constraints" of a form (HTML §4.10.21.3)
