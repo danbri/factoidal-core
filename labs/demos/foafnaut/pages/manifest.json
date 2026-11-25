@@ -390,6 +390,15 @@
    "doesNotShow": "images from the network; without the new engine the canvas stays blank"
   },
   {
+   "page": "particle-rex.html",
+   "title": "Particle Rex, a one-button canvas game",
+   "handwritten": true,
+   "needs": "page scripts, Canvas 2D (L4Factoidal.PageCanvas), requestAnimationFrame, keyboard and pointer events in the engine and the guest",
+   "appRefused": "does not execute scripts",
+   "shows": "a one-button game in one HTML file (about 3,900 lines): a full-window canvas drawn every animation frame with gradients, clips, transforms, sprites drawn into other canvases and getImageData; Space, Enter, W, A, S, D and the arrow keys, click and touch",
+   "doesNotShow": "network use other than the Google Fonts sheet (Liberation Mono is the offline face); sound needs Web Audio, and the game runs without it"
+  },
+  {
    "page": "spinal-tap-sparql.html",
    "title": "Spın̈al Tap: a SPARQL client for Wikidata",
    "handwritten": true,

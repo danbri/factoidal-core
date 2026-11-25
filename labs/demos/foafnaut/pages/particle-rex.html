@@ -6,9 +6,15 @@
 <title>Particle Rex</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap">
 <style>
+/* Offline fallback face (Foafnaut copy, issue 1031): when the Google Fonts sheet above does not load, the game
+   draws with Liberation Mono (SIL Open Font Licence 1.1; third_party/fonts/liberation-mono), first the Hub's copy,
+   then the repository's. */
+@font-face{font-family:"Particle Rex Mono";font-display:swap;
+  src:url("../fonts/liberation-mono/LiberationMono-Regular.ttf") format("truetype"),
+      url("../../../../third_party/fonts/liberation-mono/LiberationMono-Regular.ttf") format("truetype")}
 /* layout: one full-viewport canvas; the game draws its own 600x150 strip and later opens it to the whole page */
 :root{--page:#ffffff;--ink:#535353;--hint:#9a9a9a;--focus:#ff8a3c;
-  --display:"Silkscreen","Courier New",ui-monospace,monospace;--body:"Silkscreen","Courier New",ui-monospace,monospace;color-scheme:light}
+  --display:"Silkscreen","Particle Rex Mono","Courier New",ui-monospace,monospace;--body:"Silkscreen","Particle Rex Mono","Courier New",ui-monospace,monospace;color-scheme:light}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--page:#202124;--ink:#acacac;--hint:#77787b;color-scheme:dark}}
 :root[data-theme="dark"]{--page:#202124;--ink:#acacac;--hint:#77787b;color-scheme:dark}
 html,body{height:100%;margin:0;overflow:hidden;background:var(--page);color:var(--ink);font-family:var(--body);
@@ -20,7 +26,7 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
 </head>
 <body>
 <canvas id="c" tabindex="0" role="application" aria-label="Particle Rex, a one-button game"></canvas>
-<p class="sr">One-button game. Tap, click, or press space. Shimmering rainbow things are good to collect. Bombs with a red glow cost a heart. Each zone shows what a tap does. Press M to mute. In god mode, press G for the cheat panel.</p>
+<p class="sr">One-button game. Tap, click, or press space, Enter, W or the up arrow; hold the key to hold. In a zone where a tap turns, the arrow keys and W, A, S and D turn toward that direction and do nothing when you already go that way. Down and S do nothing in the jump zones. Shimmering rainbow things are good to collect. Bombs with a red glow cost a heart. Each zone shows what a tap does. Press M to mute. In god mode, press G for the cheat panel.</p>
 <script>(() => {
   "use strict";
   const canvas = document.getElementById("c"),
@@ -42,7 +48,7 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
   const rgbCss = (a) => "rgb(" + (a[0] | 0) + "," + (a[1] | 0) + "," + (a[2] | 0) + ")";
   const HUES = [...Array(36)].map((_, i) => "hsl(" + i * 10 + ",95%,62%)"),
     hue = (t) => HUES[(((t | 0) % 36) + 36) % 36];
-  const FONT = 'Silkscreen,"Courier New",ui-monospace,monospace';
+  const FONT = 'Silkscreen,"Particle Rex Mono","Courier New",ui-monospace,monospace';
   const REDUCED_MOTION = matchMedia("(prefers-reduced-motion:reduce)").matches;
 
   /* ---------- zones are data. mode decides what one tap does.
@@ -3743,7 +3749,30 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
     muted = !muted;
     if (audioCtx) masterGain.gain.setTargetAtTime(muted ? 0 : 0.7, audioCtx.currentTime, 0.05);
   }
-  const TAP_KEYS = ["Space", "ArrowUp", "Enter", "KeyW"];
+  // Keys. Space and Enter are the one button. W, A, S, D and the arrow keys name a direction: in a zone
+  // where a tap turns (the up/down zones, the left/right zones, the lane zone) a direction key taps only
+  // when that tap moves the player toward that direction; in the other zones only W and Up tap.
+  // Before a run and after a crash every one of these keys starts the run. No key adds an action.
+  const TAP_KEYS = ["Space", "Enter"];
+  const DIR_KEYS = {
+    KeyW: "up", ArrowUp: "up", KeyS: "down", ArrowDown: "down",
+    KeyA: "left", ArrowLeft: "left", KeyD: "right", ArrowRight: "right",
+  };
+  const AXIS = { turn: "v", lane: "v", shoot: "h", flow: "h", zoom: "h" };
+  function keyTaps(want) {
+    if (state !== "play") return 1;
+    const ax = AXIS[zone.mode];
+    if (!ax) return want === "up";
+    if ((ax === "v") !== (want === "up" || want === "down")) return 0;
+    const s = want === "up" || want === "right" ? 1 : -1;
+    if (zone.mode === "lane") {
+      // a lane tap steps by dir and bounces at the outer lanes: tap only if the step it makes goes our way
+      const d = player.lane + player.dir < 0 || player.lane + player.dir > 3 ? -player.dir : player.dir;
+      return d === s;
+    }
+    return -player.dir === s; // a tap flips dir
+  }
+  const downKeys = new Set();
   addEventListener("keydown", (e) => {
     if (e.code === "KeyM") {
       toggleMute();
@@ -3759,13 +3788,17 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
       return;
     }
     if (menuOpen) return;
-    if (TAP_KEYS.includes(e.code)) {
+    const dir = DIR_KEYS[e.code];
+    if (TAP_KEYS.includes(e.code) || dir) {
       e.preventDefault();
-      if (!e.repeat) press();
+      if (e.repeat) return;
+      if (dir && !keyTaps(dir)) return;
+      downKeys.add(e.code);
+      press();
     }
   });
   addEventListener("keyup", (e) => {
-    if (TAP_KEYS.includes(e.code)) release();
+    if (downKeys.delete(e.code) && downKeys.size === 0) release();
   });
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -3822,6 +3855,7 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
   addEventListener("pointercancel", release);
   addEventListener("blur", () => {
     held = 0;
+    downKeys.clear();
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   addEventListener("resize", resize);
