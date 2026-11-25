@@ -3661,14 +3661,21 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- width by the ratio (of the border box with `box-sizing: border-box`). It is the least
       -- height (§5.2: the automatic minimum is the content) unless the box clips or has a
       -- `min-height` of its own: then it is the height.
-      let ratioHeight : Option Float := match s.pos.ratio,s.height with
-        | some (rn,rd),.auto =>
-          if imposedHeight.isSome || rn == 0 || rd == 0 then none else
-          let borderRatio := s.pos.borderBox && !s.pos.ratioAuto
-          let across := if borderRatio then width+edgesX else width
-          let h := LU.toPx (Ratio.heightFor rn rd (LU.ofPx across))
-          some (max 0 (if borderRatio then h-edgesY else h))
-        | _,_ => none
+      let ratioHeight : Option Float := do
+        let (rn,rd) ← s.pos.ratio
+        let autoHeight := match s.height with
+          | .auto => true
+          | .percent _ | .calc _ _ =>
+            -- An unresolved percentage height behaves as auto in ordinary block flow.
+            s.display == Display.block && s.pos.writingMode == WritingMode.horizontalTb &&
+              imposedWidth.isNone && !contentOnly && !s.pos.isAbsolute && s.pos.float == FloatSide.none &&
+              (resolvedHeight dom styles id).isNone
+          | _ => false
+        if !autoHeight || imposedHeight.isSome || rn == 0 || rd == 0 then none else
+        let borderRatio := s.pos.borderBox && !s.pos.ratioAuto
+        let across := if borderRatio then width+edgesX else width
+        let h := LU.toPx (Ratio.heightFor rn rd (LU.ofPx across))
+        some (max 0 (if borderRatio then h-edgesY else h))
       let ratioFixed := ratioHeight.isSome && (s.clipOverflow || (match s.minHeight with | .auto => false | _ => true))
       let minHeight := match ratioHeight with
         | some h => if ratioFixed then minHeight else max minHeight h
