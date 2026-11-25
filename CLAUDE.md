@@ -1078,6 +1078,20 @@ in finely sliced parallel. Make this a priority."
   issue 1031 names its measurement (for gestures: `native-html-gesture` `queuedToActionMs` and the
   `gestures` block of `--perf-summary`) and reports it before and after.
 
+### Foafnaut is native first; the in-browser build is a curio (owner, 2026-11-25)
+
+Owner, verbatim: "I have never, NEVER, said we are WASM first. The ability to run inside another
+browser is largely a curio at this point, and was always destined to be constrained (e.g. loading
+fucking pages from the web...)."
+
+- The native desktop browser is the product. A limit of the wasm build (no Lean threads, one
+  module per Web Worker, cross-origin fetch) is not a reason to shape the native design.
+- Native designs use what Lean gives natively (tasks, dedicated threads, promises, mutexes,
+  channels, `IO.Process.spawn`) where it measures better; the wasm build may lag or differ.
+- Cost of not having this rule: on 2026-11-25 a session told the owner "Much of our design came
+  from this wasm-first path". No owner statement and no record supports it; the recorded reason
+  for one Deno worker per tab is engine state held per loaded library copy, not wasm.
+
 ### Foafnaut: one engine worker per tab; a new tab page (owner, 2026-11-25)
 
 Owner, verbatim: "one engine per tab seems good" and "It was always fairly snappy opening up a new
