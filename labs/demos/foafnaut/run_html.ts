@@ -905,9 +905,12 @@ async function main() {
     if(was.framed||was.asked)dirty=true;else if(layered&&current)pressPresent=true;
   };
   // The new tab page (pages/newtab.html; owner, 2026-11-25: "we could make a better 'new tab'
-  // page"): handwritten and light. One copy is prepared ahead (after the first frame, and again
-  // each time a tab takes it), so Command-T shows it at once, and each tab has its own copy (its
-  // form fields are its own). Until the first copy is ready a new tab shows the first page, as before.
+  // page"): handwritten and light. It is prepared once, after the first frame, and the spare
+  // engine worker lays it out, so Command-T shows it at once. Every new tab shows that one
+  // document, as every new tab showed the first page before: a copy for each tab cost about 1 s
+  // more to the first frame on the Linux rig (the worker's layout of a document it has not seen),
+  // so form text typed in one new tab shows in another until it is submitted. Until the page is
+  // ready a new tab shows the first page, as before.
   const newTabURL=new URL("./pages/newtab.html",import.meta.url).href;
   let newTabSpare:Promise<typeof document>|undefined,newTabReady:typeof document|undefined;
   function newTabNext(){
@@ -919,8 +922,7 @@ async function main() {
   }
   const newTabPage=()=>{
     const page=newTabReady;
-    if(page){newTabReady=undefined;newTabSpare=undefined;}
-    newTabNext().catch(()=>{});
+    if(!page)newTabNext().catch(()=>{});
     trace("native-html-new-tab",{page:page?"newtab":"first",url:(page??home).url});
     return page??home;
   };
