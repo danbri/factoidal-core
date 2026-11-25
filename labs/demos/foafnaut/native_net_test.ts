@@ -68,11 +68,12 @@ Deno.test("pinned https goes through the tunnel to the given address; TLS checks
         assert(sockets.size===before+1,`expected one new connection, got ${sockets.size-before}`);
         const wrong=await netAnswer({...wire,url:`https://other.test:${port}/`},opts,batch);
         assert(wrong.status===0,`wrong name accepted in batch: ${JSON.stringify(wrong)}`);
-        const oneShot=await netAnswer({...wire,method:"POST"},opts,batch);
-        assert(oneShot.status===200&&sockets.size===before+2,`one-shot POST failed: ${JSON.stringify(oneShot)}`);
+        // a POST of the same key uses the same pooled connection (no cookies, no change to what is sent)
+        const post=await netAnswer({...wire,method:"POST"},opts,batch);
+        assert(post.status===200&&sockets.size===before+1,`pooled POST failed: ${JSON.stringify(post)} ${sockets.size-before}`);
       }finally{batch.close();}
       const oneShot=await netAnswer(wire,opts);
-      assert(oneShot.status===200&&sockets.size===before+3,`ordinary fetch failed: ${JSON.stringify(oneShot)}`);
+      assert(oneShot.status===200&&sockets.size===before+2,`ordinary fetch failed: ${JSON.stringify(oneShot)}`);
     }finally{await server.shutdown();}
   }finally{await Deno.remove(dir,{recursive:true});}
 });
