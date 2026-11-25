@@ -3781,6 +3781,7 @@ def linkHeight (viewport document : Float) : Float := max viewport document
 has none, paints the whole canvas, and not the element's own box. -/
 def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Color) := Id.run do
   let some root := (dom.get 0).kids.find? (fun k => (dom.get k).type == .element) | return none
+  if (styles[root]?).any (·.transparent) then return none
   if let some c := (styles[root]?).bind (·.background) then return some (root,c)
   if (dom.get root).lname != "html" then return none
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
@@ -3842,10 +3843,8 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     | some (id,_) => styles.modify id fun s => {s with background := none}
     | none => styles
   let result ← layoutRoot dom styles font embedding pictures vw vh
-  let rootTransparent := ((dom.get 0).kids.find? (fun k => (dom.get k).type == .element)).any
-    fun id => (styles[id]!).transparent
   let result : Result := match canvas with
-    | some (id,c) => if rootTransparent then result else {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
+    | some (id,c) => {result with nodes := #[Node.paint ⟨some id,{geometry := .rect 0 0 vw (max vh result.height),style := {fill := .solid c}}⟩] ++ result.nodes}
     | none => result
   if result.nodes.size > 1048576 then throw "HTML paint count exceeds 1048576"
   -- Links are kept down to the foot of the document, not the viewport: a host that scrolls
