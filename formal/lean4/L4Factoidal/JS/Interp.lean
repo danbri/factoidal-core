@@ -244,38 +244,6 @@ def charge (k : Nat) : M Unit := do
   if h.full then throw (.halt heapFullMsg)
   set { h with steps := h.steps - k }
 
-/-- ECMA-262 §10.4.2.4 for Arrays stored as ordinary properties. Conversion
-can run user code twice, so read the current length descriptor after both
-conversions. No deletion in the subsequent scan invokes user code. -/
-def setGeneralArrayLength (number : Value → M Float) (id : Nat) (request : Desc) : M Bool := do
-  let length ← match request.value with
-    | none => pure none
-    | some value =>
-      let n := toUint32 (← number value)
-      let x ← number value
-      if Float.ofNat n != x then throwErr .range "Invalid array length"
-      pure (some n)
-  let o ← getObj id
-  let some (.data (.num old) writable enumerable configurable) := o.getOwn "length" | return false
-  let prop := PropV.data (.num old) writable enumerable configurable
-  let request := { request with value := length.map (fun n => .num (Float.ofNat n)) }
-  if !request.allowedOn prop then return false
-  let storeLength := fun (arr : Obj) (n : Float) =>
-    arr.putOwn "length" (.data (.num n) (request.writable.getD writable) enumerable configurable)
-  match length with
-  | some n =>
-    if Float.ofNat n < old then
-      charge o.keys.size
-      let (resultLen, result) := o.shrinkGeneralArray n
-      modifyObj id fun _ => storeLength result (Float.ofNat resultLen)
-      return resultLen == n
-    else
-      modifyObj id fun current => storeLength current (Float.ofNat n)
-      return true
-  | none =>
-    modifyObj id fun current => storeLength current old
-    return true
-
 /-- The longest string `repeat` and `padStart` make: 256 MiB of UTF-8. -/
 def maxStringBytes : Nat := 268435456
 
@@ -435,6 +403,38 @@ def Obj.shrinkGeneralArray (o : Obj) (length : Nat) : Nat × Obj := Id.run do
         if !prop.configurable then return (index + 1, result)
         result := { result with props := result.props.erase key }
   return (length, result)
+
+/-- ECMA-262 §10.4.2.4 for Arrays stored as ordinary properties. Conversion
+can run user code twice, so read the current length descriptor after both
+conversions. No deletion in the subsequent scan invokes user code. -/
+def setGeneralArrayLength (number : Value → M Float) (id : Nat) (request : Desc) : M Bool := do
+  let length ← match request.value with
+    | none => pure none
+    | some value =>
+      let n := toUint32 (← number value)
+      let x ← number value
+      if Float.ofNat n != x then throwErr .range "Invalid array length"
+      pure (some n)
+  let o ← getObj id
+  let some (.data (.num old) writable enumerable configurable) := o.getOwn "length" | return false
+  let prop := PropV.data (.num old) writable enumerable configurable
+  let request := { request with value := length.map (fun n => .num (Float.ofNat n)) }
+  if !request.allowedOn prop then return false
+  let storeLength := fun (arr : Obj) (n : Float) =>
+    arr.putOwn "length" (.data (.num n) (request.writable.getD writable) enumerable configurable)
+  match length with
+  | some n =>
+    if Float.ofNat n < old then
+      charge o.keys.size
+      let (resultLen, result) := o.shrinkGeneralArray n
+      modifyObj id fun _ => storeLength result (Float.ofNat resultLen)
+      return resultLen == n
+    else
+      modifyObj id fun current => storeLength current (Float.ofNat n)
+      return true
+  | none =>
+    modifyObj id fun current => storeLength current old
+    return true
 
 /-- GetFunctionRealm (§7.3.24): the realm of a function, through bound functions to their
 target and through proxies to theirs (a revoked proxy is a TypeError); the running realm for
