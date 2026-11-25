@@ -779,10 +779,23 @@ async function main() {
   const gesturePlatform=Deno.build.os==="darwin"?"mac":"other";
   let pressGesture="follow",middlePress:{x:number;y:number}|undefined;
   const gestureLatencies:number[]=[],gestureCounts:Record<string,number>={};
-  const gestureDone=(gesture:string,event:UIEvent,fields:Record<string,unknown>)=>{
-    const flags=event.flags??0,ms=Math.round((performance.now()-eventAt)*10)/10;
+  const gestureDone=(gesture:string,event:UIEvent|undefined,fields:Record<string,unknown>,queuedAt=eventAt)=>{
+    const flags=event?.flags??0,ms=Math.round((performance.now()-queuedAt)*10)/10;
     gestureLatencies.push(ms);gestureCounts[gesture]=(gestureCounts[gesture]??0)+1;
     trace("native-html-gesture",{gesture,button:pointerButton(flags),modifiers:pointerModifiers(flags),clicks:pointerClicks(flags),queuedToActionMs:ms,...fields});
+  };
+  // A frame that shows a gesture's answer (a new selection, an open or closed menu, an address
+  // bar edit) goes in the worker's gesture lane: it does not wait for queued script turns.
+  let gestureFrame=false;
+  // The selected text of the page as shown, for copy: in the worker's gesture lane, so it waits
+  // only for the call that is running, never for queued script turns or renders (issue 1031).
+  const shownSelectedText=async(page:typeof document)=>{
+    const request=(page as {request?:Page["request"]}).request;
+    if(worker?.alive&&request&&!(page as Page).graph){
+      const {source,options}=request(width,height,shown());
+      return (await worker.gestureCall("selectedText",source,width,height,options)).value as string;
+    }
+    return await page.selectedText(width,height,shown());
   };
   const pressOverlayMs:number[]=[],pressFrameMs:number[]=[];
   // A press held this long gets a Lean frame with `:active` (and the sunken chrome button).
@@ -1357,7 +1370,15 @@ async function main() {
     else if(name==="close")closeTab(Number(index));
     else if(name==="tabs"){keepTab();showTab((active+1)%tabs.length);}
   };
-  const edit=(answer:ShellEdit&{clipboard?:string|null})=>{const {clipboard:_,...next}=answer;field=next;dirty=true;};
+  const edit=(answer:ShellEdit&{clipboard?:string|null})=>{const {clipboard:_,...next}=answer;field=next;dirty=true;gestureFrame=true;};
+  // Copy (Command-C, a menu's Copy): the selected text comes from the gesture lane; the clipboard
+  // is written when it arrives. Trace native-html-gesture "copy" with its queuedToActionMs.
+  const copySelection=(queuedAt:number)=>{
+    shownSelectedText(document).then(text=>{
+      if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
+      gestureDone("copy",undefined,{characters:text?.length??0},queuedAt);
+    }).catch(error=>console.error("Native HTML copy failed:",String(error)));
+  };
   // The address menu: Lean says when a press opens it; any other edit closes it. An engine
   // without the op shellActions has none.
   const menuOps=(()=>{try{return Array.isArray(engine.shellActions({},1));}catch{return false;}})();
@@ -1424,13 +1445,8 @@ async function main() {
     if(answer.action==="savePage")savePage().catch(error=>console.error("Native HTML save failed:",String(error)));
     if(answer.action==="print")printDocument().catch(error=>console.error("Native HTML print failed:",String(error)));
     if(answer.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
-    if(answer.action==="selectAll"){view.selection="all";dirty=true;}
-    if(answer.action==="copy"&&view.selection){
-      // The selected text is made in the worker; the clipboard is written when it arrives.
-      Promise.resolve(document.selectedText(width,height,shown())).then(text=>{
-        if(text){native!.writeClipboard(text);lastCopied=text;trace("native-html-copy",{characters:text.length});}
-      }).catch(error=>console.error("Native HTML copy failed:",String(error)));
-    }
+    if(answer.action==="selectAll"){view.selection="all";dirty=true;gestureFrame=true;}
+    if(answer.action==="copy"&&view.selection)copySelection(eventAt);
   };
   // File > Open File… (Command-O): the system panel; the file's URL goes the way of a typed
   // address (Lean's route). Off screen there is no panel.
@@ -1658,6 +1674,8 @@ async function main() {
       const sentWidth=width,sentHeight=height;
       // The press this frame includes (`active`, `shell.pressed`), if any.
       const carried=pressed;if(carried)carried.asked=true;
+      // A gesture's frame of the page shown: the worker's gesture lane (issue 1031).
+      const gesture=gestureFrame&&nextDocument===document;gestureFrame=false;
       // A prefetch for another state would only hold the worker: drop it if it has not started.
       if(prefetching&&!sameState(prefetching.key,stateKey(nextDocument,request.options,sentWidth,sentHeight)))worker?.dropLow();
       // Events from here on mark the page dirty again: latest state wins, in the next frame.
@@ -1665,11 +1683,11 @@ async function main() {
       let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
         if(layered){
-          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options));bandMs=workerMs;}
+          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options,gesture));bandMs=workerMs;}
           else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
           next=nextLayers.page;
         }
-        else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options));}
+        else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options,gesture));}
         else{where="main";next=engine.compile(request.source,sentWidth,sentHeight,request.options);}
       }catch(error){
         if(worker&&!worker.alive){
@@ -1912,7 +1930,7 @@ async function main() {
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
           scriptPointer("down",event.a,event.b,press,typeof answer.sourceNode!=="number");
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
-          if(view.selection){view.selection=undefined;dirty=true;}
+          if(view.selection){view.selection=undefined;dirty=true;gestureFrame=true;}
         }
         // `:hover` (links only): a new frame when the link under the pointer changes, and only
         // when an author rule names `:hover`.
@@ -1920,7 +1938,7 @@ async function main() {
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
-        if(event.kind===3&&press&&press.page===document&&!(press.page as Page).graph){view.selection=movePress(press,event.a,event.b);dirty=true;scriptPointer("move",event.a,event.b,press);}
+        if(event.kind===3&&press&&press.page===document&&!(press.page as Page).graph){view.selection=movePress(press,event.a,event.b);dirty=true;gestureFrame=true;scriptPointer("move",event.a,event.b,press);}
         if(event.kind===4&&pointerButton(event.flags??0)===2){
           const at=middlePress;middlePress=undefined;
           const target=at&&frame?engine.hit(frame,event.a,pageRow(event.b)):undefined;
@@ -1934,7 +1952,7 @@ async function main() {
           // A click begins the SVG animations whose `begin` is a click on what it hits.
           const clock=animation.get(document);
           if(clock?.has&&current){clock.clicks=[...clock.clicks,[Math.round(performance.now()-clock.epoch),released[0],released[1]-current.layers.layers.top+scroll]].slice(-16);clock.running=true;dirty=true;}
-          if(view.selection){view.selection=undefined;dirty=true;}
+          if(view.selection){view.selection=undefined;dirty=true;gestureFrame=true;}
           // A page with scripts: Lean finds the node under the point, and the click is a task of
           // the page's event loop; Lean runs the listeners in QuickJS and changes its DOM.
           if(scriptsOn&&document.script&&!scriptOps.includes("pointer")){
