@@ -614,7 +614,7 @@ def definiteWidth (s : Computed) (element : Bool) (cb : Option Float)
 
 /-- In-flow grid items get their percentage basis during placement. Out-of-flow
 children retain the static pass for descendants with a definite containing width. -/
-private def edgeChildren (node : Node) (style : Computed) (styles : Array Computed) : List Nat :=
+private def edgeChildren (node : DOM.Node) (style : Computed) (styles : Array Computed) : List Nat :=
   let children := node.kids.toList
   if defersGridEdges style then
     children.filter (fun child => (styles[child]!).pos.isAbsolute)
