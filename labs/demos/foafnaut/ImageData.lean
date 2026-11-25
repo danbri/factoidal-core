@@ -1,6 +1,7 @@
 import ImageJPEG
 import ImageGIF
 import L4Factoidal.Codec.VP8Alpha
+import L4Factoidal.WHATWG.URL.PercentEncode
 import Std.Data.HashMap
 
 /- Raster image sources of a document.
@@ -70,14 +71,35 @@ def base64 (text : ByteArray) (start : Nat) : Except String ByteArray := do
       value := value%(match bits with | 0 => 1 | 1 => 2 | 2 => 4 | 3 => 8 | 4 => 16 | 5 => 32 | 6 => 64 | _ => 128)
   return out
 
-/-- RFC 2397, with the base64 form only. -/
+/-- A static image's `data:` URL body (Fetch §4.2). The URL fragment is excluded,
+then the body is percent-decoded before any base64 decoding. -/
 def dataBytes (href : String) : Except String ByteArray := do
+  if (href.take 5).toString.toLower != "data:" then throw "image URL is not a data URI"
   let bytes := href.toUTF8
-  let some comma := (List.range bytes.size).find? (fun i => bytes.get! i == 44)
-    | throw "data URI has no comma"
-  let header := (String.fromUTF8? (bytes.extract 0 comma)).getD ""
-  if !(header.toLower.endsWith ";base64") then throw "data URI is not base64"
-  base64 bytes (comma+1)
+  let finish := (bytes.data.findIdx? (· == 35)).getD bytes.size
+  let some comma := bytes.data.findIdx? (· == 44) | throw "data URI has no comma"
+  if comma ≥ finish then throw "data URI has no comma"
+  let header := (String.fromUTF8? (bytes.extract 5 comma)).getD ""
+  let header := header.trimAsciiEnd.toString.toLower
+  let b64 := header.endsWith "base64" && (header.dropEnd 6).toString.trimAsciiEnd.toString.endsWith ";"
+  let body := bytes.extract (comma+1) finish
+  let body := if body.data.any (· == 37) then L4Factoidal.WHATWG.URL.percentDecode body else body
+  if b64 then base64 body 0 else pure body
+
+private def dataExample (url body : String) : Bool :=
+  (dataBytes url).toOption == some body.toUTF8
+
+#guard dataExample "data:image/svg+xml,%3Csvg%3E%23fff%3C/svg%3E#fragment" "<svg>#fff</svg>"
+#guard dataExample "data:image/svg+xml,<svg%20width='10'/>" "<svg width='10'/>"
+#guard dataExample "data:,a,b+c?d#not-payload" "a,b+c?d"
+#guard dataExample "data:,café%25%G0%" "café%%G0%"
+#guard dataExample "DATA:image/png; BASE64 ,aGk%3D" "hi"
+#guard dataExample "data:image/png;sha=base64,hi" "hi"
+#guard dataExample "data:image/png;base64,aGk=#fragment" "hi"
+#guard dataExample "data:," ""
+#guard (dataBytes "data:image/svg+xml#fragment,missing-comma").toOption.isNone
+#guard (dataBytes "https://example.invalid,a").toOption.isNone
+#guard (dataBytes "data:image/png;base64,a@k=").toOption.isNone
 
 /-! ### Images held at a reduced size (2026-11-14)
 
