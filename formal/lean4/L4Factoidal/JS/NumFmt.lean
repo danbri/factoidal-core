@@ -45,13 +45,13 @@ def fixed (neg : Bool) (num den f : Nat) : String :=
 
 def expStr (e : Int) : String := "e" ++ (if e < 0 then "-" else "+") ++ toString e.natAbs
 
-/-- Number.prototype.toExponential (§21.1.3.2) with `f` fraction digits, of x = ±num/den
-(num = 0 for zero). -/
 /-- The text of toExponential from the digits `m` (`f + 1` of them) and the exponent `e`. -/
 def expoLayout (neg : Bool) (m : String) (e : Int) (f : Nat) : String :=
   let body := if f == 0 then m else String.ofList (m.toList.take 1) ++ "." ++ String.ofList (m.toList.drop 1)
   (if neg then "-" else "") ++ body ++ expStr e
 
+/-- Number.prototype.toExponential (§21.1.3.2) with `f` fraction digits, of x = ±num/den
+(num = 0 for zero). -/
 def expo (neg : Bool) (num den f : Nat) : String :=
   let (m, e) := if num == 0 then (zeros (f + 1), (0 : Int)) else sigDigits num den f
   expoLayout neg m e f
