@@ -856,9 +856,14 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
   // and alphas as the cell loop below; the two passes then cost one drawImage each, not one
   // fillRect and one globalAlpha per cell (about 1,760 calls a frame in play).
   function cellTexture(sp, u, pass) {
-    const us = M.round(u * dpr * unit * 4) / 4,
-      key = (pass ? "i" + inkCss : "c") + us,
-      m = sp.ct || (sp.ct = new Map());
+    const q4 = M.round(u * dpr * unit * 4),
+      us = q4 / 4,
+      key = q4 * 2 + pass; // a number: a string key would print a number at each call
+    if (sp.ctInk !== inkCss) {
+      sp.ct = new Map();
+      sp.ctInk = inkCss;
+    }
+    const m = sp.ct;
     let t = m.get(key);
     if (t) return t;
     if (m.size > 24) m.clear();
