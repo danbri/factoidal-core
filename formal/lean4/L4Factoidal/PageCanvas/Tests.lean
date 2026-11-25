@@ -205,4 +205,74 @@ def noiseFloats (n seed : Nat) : FloatArray :=
 #guard diffCovs.all fun cov => [none, some (noiseMask (diffW * diffH) 7)].all fun old =>
   clipMask diffW (diffW * diffH) cov old == clipMaskRef diffW (diffW * diffH) cov old
 
+
+/-! ### Rectangle uploads (issue 1098)
+
+The host keeps a texture and writes into it only the rectangle of each `pixels` command. After
+every batch, that texture must equal the whole canvas (straight RGBA). -/
+
+/-- The host's reading of `rleRect`'s output (`unrle` of page-gpu.mjs): `n` pixels. -/
+def unrleBytes (b : ByteArray) (n : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (n * 4)
+  let mut i := 0
+  let mut p := 0
+  for _ in [0:n + 1] do
+    if i + 4 > b.size || p >= n then break
+    let head := Wire.u32 b i
+    i := i + 4
+    let k := min (head % 2147483648) (n - p)
+    if head >= 2147483648 then
+      for q in [0:4 * k] do out := out.push b[i + q]!
+      i := i + 4 * (head % 2147483648)
+    else
+      for _ in [0:k] do out := (((out.push b[i]!).push b[i+1]!).push b[i+2]!).push b[i+3]!
+      i := i + 4
+    p := p + k
+  return out
+
+/-- Run the batches on one `w × h` canvas, apply each emitted rectangle to a texture, and
+compare it with the canvas after every batch. Also the total pixels sent. -/
+def uploads (w h : Nat) (batches : List (List Cmd)) : Bool × Nat := Id.run do
+  let mut s : Store := {}
+  let mut tex := ByteArray.mk (Array.replicate (w * h * 4) 0)
+  let mut ok := true
+  let mut sent := 0
+  let mut first := true
+  for b in batches do
+    s := s.run {} ((if first then #[Cmd.init 1 w h true] else #[Cmd.select 1]) ++ b.toArray)
+    first := false
+    let (s', out) := s.emit
+    s := s'
+    for hc in out do
+      match hc with
+      | .pixels _ W _ x y pw ph data =>
+        let px := unrleBytes (rleRect data W x y pw ph) (pw * ph)
+        sent := sent + pw * ph
+        for j in [0:ph] do
+          for i in [0:pw * 4] do
+            tex := tex.set! (((y + j) * w + x) * 4 + i) px[j * pw * 4 + i]!
+      | _ => pure ()
+    match s.canvases.get? 1 with
+    | some c => ok := ok && tex.toList == (c.straight 0 0 w h).toList
+    | none => ok := false
+  return (ok, sent)
+
+-- A small rect after the first frame sends only its own pixels (20 × 10 canvas: 200, then 6).
+#guard uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.fillColor "#f00", .fillRect 3 4 3 2]] == (true, 206)
+-- Fractional edges, alpha, a stroke, a clear, a partial clearRect, a path.
+#guard (uploads 20 10 [[.fillColor "#00f", .fillRect 1.5 2.25 4.5 3],
+  [.alpha 0.5, .fillColor "#f80", .fillRect 10.3 1.7 6 6],
+  [.strokeColor "#000", .lineWidth 2, .strokeRect 2 2 8 5],
+  [.clearRect 4 3 3 3],
+  [.beginPath, .moveTo 1 1, .lineTo 18 8, .lineTo 3 9, .closePath, .fill 0 .nonzero],
+  [.clearRect 0 0 20 10]]).1
+-- An unbounded operator (copy) changes pixels outside the shape.
+#guard (uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.composite "copy", .fillColor "#f00", .fillRect 2 2 3 3]]).1
+-- A shadow is drawn outside the shape's box.
+#guard (uploads 20 10 [[], [.shadowColor "#000", .shadowBlur 4, .shadowX 3, .shadowY 2, .fillColor "#f00", .fillRect 5 3 4 3]]).1
+-- putImageData writes its own rectangle; reset clears all.
+#guard (uploads 8 6 [[], [.putImageData ⟨#[255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 255, 9, 9, 9, 0]⟩ 2 2 3 1 0 0 2 2], [.reset]]).1
+-- A batch that draws nothing sends nothing.
+#guard uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.fillColor "#f00"]] == (true, 200)
+
 end L4Factoidal.PageCanvas.Tests

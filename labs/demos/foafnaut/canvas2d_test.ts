@@ -11,11 +11,11 @@
 import {strict as assert} from "node:assert";
 import {loadHTML,type HTMLEngine,type ScriptTurn} from "./native_html_engine.ts";
 import {scenePage} from "./canvas2d_reference.mjs";
-import {unrle} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
+import {decodePixels} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
 
 const library=Deno.env.get("WEB_RENDER_LIBRARY")??new URL("./.build/web-render/engines/libweb-render.dylib",import.meta.url).pathname;
 const guest=Deno.env.get("QUICKJS_WASM");
-type Turn=ScriptTurn&{gpu?:{k:string;g?:number[];node?:number;w?:number;h?:number;data?:string;rle?:number}[];gpuPage?:number};
+type Turn=ScriptTurn&{gpu?:{k:string;g?:number[];node?:number;x?:number;y?:number;w?:number;h?:number;data?:string;rle?:number}[];gpuPage?:number};
 
 const engine:HTMLEngine=await loadHTML(library);
 if(guest)engine.scriptLoad(await Deno.readFile(guest));
@@ -84,13 +84,19 @@ let frames=0;function f(){c.clearRect(0,0,40,20);c.fillStyle='#0a0';c.fillRect(f
   assert.equal(kinds.filter(k=>k==="canvas").length,1,`${kind}: one texture for the canvas`);
   const pixels=gpu.filter(c=>c.k==="pixels");
   assert.ok(pixels.length>=5,`${kind}: pixels each frame (${pixels.length})`);
+  // The host's texture: each pixels command is the rectangle x, y, w, h drawn since the one
+  // before (issue 1098); the first is the whole canvas.
+  const tex=new Uint8Array(40*20*4);
+  assert.deepEqual([pixels[0].x??0,pixels[0].y??0,pixels[0].w,pixels[0].h],[0,0,40,20],`${kind}: the first pixels are the whole canvas`);
   for(const p of pixels){
-    assert.equal(p.w,40);assert.equal(p.h,20);
-    const raw=Uint8Array.from(atob(p.data!),ch=>ch.charCodeAt(0)),px=unrle(raw,40,20);
-    assert.equal(px.length,40*20*4);
-    // The last frame: the green bar at x 4..13 on transparent (straight RGBA).
-    if(p===pixels.at(-1)){assert.deepEqual([...px.slice(4*(10*40+8),4*(10*40+8)+4)],[0,170,0,255]);assert.equal(px[4*(10*40+30)+3],0);}
+    const x=p.x??0,y=p.y??0,w=p.w!,h=p.h!;
+    assert.ok(w>0&&h>0&&x+w<=40&&y+h<=20,`${kind}: rectangle ${x},${y},${w},${h} inside the canvas`);
+    const px=decodePixels(p);
+    assert.equal(px.length,w*h*4);
+    for(let j=0;j<h;j++)tex.set(px.subarray(j*w*4,(j+1)*w*4),((y+j)*40+x)*4);
   }
+  // The last frame: the green bar at x 4..13 on transparent (straight RGBA).
+  assert.deepEqual([...tex.slice(4*(10*40+8),4*(10*40+8)+4)],[0,170,0,255]);assert.equal(tex[4*(10*40+30)+3],0);
   assert.equal(gpu.find(c=>c.k==="canvas")!.node,pixels[0].g![1]-1073741824);
   engine.scriptSession("",{action:"close"});
 
