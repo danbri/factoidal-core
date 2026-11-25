@@ -324,6 +324,10 @@ structure Computed where
   /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
   false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
   clipHidden : Bool := false
+  /-- The element's computed opacity clamps to zero. -/
+  opacityZero : Bool := false
+  /-- The element or an ancestor is completely transparent. This affects paint only. -/
+  transparent : Bool := false
   /-- `background-image: url(...)` (CSS Backgrounds 3 §3.3), the first layer's URL as the page
   wrote it after the engine resolved it against its sheet (`WebDocument`); none for `none` or a
   gradient. Not inherited. -/
@@ -357,6 +361,9 @@ instance : Inhabited Computed := ⟨{}⟩
 the `background-clip` list repeats to the number of layers. -/
 def Computed.colorClip (s : Computed) : Nat :=
   s.backgroundClip.getD ((s.backgroundLayers - 1) % max 1 s.backgroundClip.length) 0
+
+/-- Visibility affects both paint and hit testing. Zero opacity only affects paint. -/
+def Computed.paintVisible (s : Computed) : Bool := s.visible && !s.transparent
 
 /-- Properties consumed by HTML style/layout, including an embedded SVG root.
 The DOM-to-SVG adapter uses this same list to avoid a second interpretation. -/
@@ -1980,6 +1987,13 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "normal" | "collapse" =>
       return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
     | _ => throw "unsupported CSS white-space"
+  | "opacity" =>
+    let value := trim d.value
+    let percent := value.endsWith "%"
+    let opacity ← number (if percent then (value.dropEnd 1).toString else value)
+    if opacity > 0 && opacity < (if percent then 100 else 1) then
+      throw "partial CSS opacity needs group compositing"
+    return {s with opacityZero := decide (opacity ≤ 0)}
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
     | "hidden" | "collapse" => return {s with visible := false}
@@ -2267,7 +2281,7 @@ def ownProperties : List String :=
    "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
    "text-wrap-style","text-wrap-mode",
-   "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "visibility","opacity","overflow","text-decoration","text-decoration-line","border-style",
    "border-top-left-radius","border-top-right-radius","border-bottom-right-radius","border-bottom-left-radius",
    "border-top-width","border-right-width","border-bottom-width","border-left-width",
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
@@ -2417,6 +2431,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
+  | "opacity" => some {s with opacityZero := source.opacityZero}
   | "text-wrap-style" => some {s with balanceText := source.balanceText}
   | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
   | "white-space" | "white-space-collapse" =>
@@ -2820,7 +2835,15 @@ def finishEffects (parent s : Computed) : Computed :=
   let own : Float := if s.pos.isAbsolute then 0
     else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
   let hidden := parent.clipHidden || s.clippedAway
-  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
+  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden,
+    transparent := parent.transparent || s.opacityZero}
+
+/-- Descendant opacity cannot expose paint under a transparent ancestor. -/
+theorem finishEffects_transparent_parent (parent s : Computed) (h : parent.transparent = true) :
+    (finishEffects parent s).paintVisible = false := by
+  simp [finishEffects, Computed.paintVisible, h]
+
+#print axioms finishEffects_transparent_parent
 
 /-- Kind: property (pages that hide nothing pay nothing). Says: with no clip to nothing on
 the element or above it, its visibility is its own. -/
@@ -4582,6 +4605,12 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   match declarations (property ++ ":" ++ value) with
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
+
+#guard (applyDeclaration {} "opacity" "-0.5").map (·.opacityZero) == some true
+#guard (applyDeclaration {} "opacity" "0%").map (·.opacityZero) == some true
+#guard (applyDeclaration {opacityZero := true} "opacity" "100%").map (·.opacityZero) == some false
+#guard (finishEffects {transparent := true} {opacityZero := false}).visible
+#guard !(finishEffects {transparent := true} {opacityZero := false}).paintVisible
 
 -- `background-image: url(...)` (issue 704): the first layer's URL, case kept, quoted or not.
 #guard firstUrl? "url(a.png)" == some "a.png"

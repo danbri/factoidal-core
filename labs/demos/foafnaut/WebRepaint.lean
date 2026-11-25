@@ -65,7 +65,7 @@ def sameShape (a b : Computed) : Bool :=
     borderColors,cornerLengths,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
-    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
+    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,_opacityZero,transparent,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
      _backgroundPositionX,_backgroundPositionY,backgroundClip,backgroundLayers,svgAuthor,borderImage⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
@@ -104,7 +104,8 @@ def sameShape (a b : Computed) : Bool :=
   fontWeight == b.fontWeight && inheritedWeight == b.inheritedWeight && oblique == b.oblique &&
   -- a masked box, a raised or shifted line and a clipped-away box lay out or paint differently
   masked == b.masked && shift == b.shift && rise == b.rise && centerBlocks == b.centerBlocks &&
-  clipRectEmpty == b.clipRectEmpty && clipPathEmpty == b.clipPathEmpty && clipHidden == b.clipHidden
+  clipRectEmpty == b.clipRectEmpty && clipPathEmpty == b.clipPathEmpty && clipHidden == b.clipHidden &&
+  transparent == b.transparent
 
 #guard !sameShape {} {balanceText := true}
 #guard !sameShape {} {balanceWrap := false}
