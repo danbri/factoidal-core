@@ -7473,9 +7473,9 @@
     }
   };
   const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
+  const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
   {
     const P = named.HTMLImageElement.prototype;
-    const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
     Object.defineProperty(P, 'naturalWidth', { configurable: true, enumerable: true, get() { return ofImg(this, 'w'); } });
     Object.defineProperty(P, 'naturalHeight', { configurable: true, enumerable: true, get() { return ofImg(this, 'h'); } });
     Object.defineProperty(P, 'complete', { configurable: true, enumerable: true, get() { return ofImg(this, 'complete'); } });
@@ -18614,13 +18614,20 @@
     if (typeof r !== 'string' || r === '') return '';
     return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
   }, configurable: true, enumerable: true });
-  // `width` and `height` of an img (HTML §4.8.4.4): the rendered size of the image in CSS
-  // pixels (the content box of Lean's layout, measure op 21), else its natural size, which
-  // is 0 here while images are not decoded for scripts; the setters set the content
-  // attributes (unsigned long).
-  for (const [k, i] of [['width', 0], ['height', 1]])
+  // HTML dimension attributes: use the rendered content box when present, including
+  // a zero-sized box. Otherwise parse the attribute, then fall back to the natural size.
+  for (const [k, i, natural] of [['width', 0, 'w'], ['height', 1, 'h']])
     Object.defineProperty(named.HTMLImageElement.prototype, k, {
-      get() { const s = n.query(nodeId(this), 21, ''); if (typeof s !== 'string' || s === '') return 0; const v = Number(s.split(' ')[i]); return Number.isFinite(v) ? Math.round(v) : 0; },
+      get() {
+        const s = n.query(nodeId(this), 21, '');
+        if (typeof s === 'string' && s !== '') {
+          const v = Number(s.split(' ')[i]);
+          return Number.isFinite(v) ? Math.round(v) : 0;
+        }
+        const digits = /^[\t\n\f\r ]*([+-]?[0-9]+)/.exec(this.getAttribute(k) ?? '');
+        const value = digits ? Number(digits[1]) : NaN;
+        return Number.isFinite(value) && value >= 0 ? value || 0 : ofImg(this, natural);
+      },
       set(v) { let x = Number(v) >>> 0; if (x > 2147483647) x = 0; this.setAttribute(k, String(x)); },
       configurable: true, enumerable: true });
   // ==== end imagesource ===================================================================
