@@ -212,7 +212,7 @@ export class NetPool{
       const port=w.port??443;
       ({client,close:closeTunnel}=tunnelClient(`${u.hostname}:${port}`,w.address!,port,this.opts,{maxPerKey,idleMs}));
     }else{
-      client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:w.address!,port:w.port??80},
+      client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:tcpProxyHost(w.address!),port:w.port??80},
         poolMaxIdlePerHost:maxPerKey,poolIdleTimeout:idleMs});
     }
     this.opened++;
@@ -274,6 +274,11 @@ function b64(bytes:Uint8Array):string{
   return btoa(s);
 }
 
+/** Deno's TCP proxy builds a URI from the hostname and port. */
+function tcpProxyHost(address:string):string{
+  return address.includes(":")&&!address.startsWith("[")?`[${address}]`:address;
+}
+
 /** The host's answer to one wire of a turn (`netRequests` or `netSync`). */
 export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Promise<NetAnswer>{
   const failed={id:w.id,status:0};
@@ -298,7 +303,7 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Pro
         const port=w.port??443;
         ({client,close:done}=tunnelClient(`${u.hostname}:${port}`,w.address,port,opts));
       }else{
-        client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:w.address,port:w.port??80}});
+        client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:tcpProxyHost(w.address),port:w.port??80}});
       }
     }else if(opts.caCerts){
       client=Deno.createHttpClient({caCerts:opts.caCerts});

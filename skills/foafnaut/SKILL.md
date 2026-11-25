@@ -560,9 +560,12 @@ Before an engine change goes to `main`, run it against its base commit:
 `FOAFNAUT_AB_MANIFEST`, `FOAFNAUT_AB_WPT` (the WPT checkout of `skills/wpt-runs`, "Locally")
 and `FOAFNAUT_AB_REALPAGES` (factoidal-builds `third_party/realpages`).
 
-- It makes a native build of each side, runs the 7 CSS reftest suites (CSS2, css-lists,
-  css-backgrounds, css-transitions, css-animations, cssom, selectors) on both, and then the
-  real-page snapshots (status, picture hash, time).
+- It takes main's library from its factoidal-builds release when there is one (checked by
+  sha256), else makes a native build; it builds the branch. It runs the WPT reftests of 9
+  directories on both (CSS2, css-lists, css-backgrounds, css-transitions, css-animations,
+  cssom, selectors, svg, html), then the real-page snapshots (status, picture hash, time).
+  Baseline on main da564916, 2026-11-25: svg 295 pass of 636 (2 min), html 835 of 1,517
+  (7 min).
 - Libraries and suite results are kept by commit under `~/.cache/foafnaut-ab`, so `main`
   is built and measured once per commit. A gate takes about 1.5 hours on a 4-core cloud
   machine when neither side is kept: about 35 minutes for the two builds, which run at the

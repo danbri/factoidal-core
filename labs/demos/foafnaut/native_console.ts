@@ -18,6 +18,12 @@ default, so a host that does not ask pays one comparison per entry. */
 let systemReport:((entry:ConsoleEntry)=>void)|undefined;
 export function reportSystemEntries(report:((entry:ConsoleEntry)=>void)|undefined){systemReport=report;}
 
+/** Who hears each page entry (a script log or an uncaught error) as it is kept (run_html.ts
+--page-console json): none by default. Added for the Particle Rex run of issue 1031, where a
+game stopped drawing and the window showed no reason. */
+let pageReport:((entry:ConsoleEntry)=>void)|undefined;
+export function reportPageEntries(report:((entry:ConsoleEntry)=>void)|undefined){pageReport=report;}
+
 /** The entries of a page, oldest first. */
 export function consoleOf(page:object):ConsoleEntry[]{
   let list=entries.get(page);
@@ -38,7 +44,7 @@ export function addEntries(page:object,list:ConsoleEntry[]){
       if(keys.has(key))continue;
       keys.add(key);
       systemReport?.(entry);
-    }
+    } else pageReport?.(entry);
     kept.push(entry);
   }
 }

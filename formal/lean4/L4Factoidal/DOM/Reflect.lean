@@ -21,7 +21,7 @@ per row when the prelude runs, which the engine does once and copies for each pa
 work per page and none per element. The getter is `get` (one host call); the setter
 converts the value as WebIDL says, then `set` decides the content attribute's new value.
 -/
-import L4Factoidal.DOM.Arena
+import L4Factoidal.DOM.Forms
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.Rendering.FloatFormat
 import L4Factoidal.HTML.Autofill
@@ -517,16 +517,13 @@ def meterValue (d : Dom) (el : NodeId) (which : Nat) : Float :=
   | 4 => clamp low mx ((num "high").getD mx)
   | _ => clamp mn mx ((num "optimum").getD ((mn + mx) / 2))
 
-/-- The `tabIndex` default (HTML §6.6.3): 0 for the elements that are focusable areas by
-default, else -1. A MathML element: 0 for `a` (MathML Core §2.1.3: a link, with or without
-`href`), else -1. -/
+/-- The historical default returned by the `tabIndex` IDL getter (HTML §6.6.3). -/
 def tabIndexDefault (d : Dom) (el : NodeId) : Int :=
   let x := d.get el
-  let n := x.lname
-  if x.ns == some mathmlNS then (if n == "a" then 0 else -1)
-  else if ["button", "input", "select", "textarea", "iframe", "frame", "object", "embed"].contains n then 0
-  else if (n == "a" || n == "area") && (attr d el "href").isSome then 0
-  else if n == "summary" then 0
+  if x.ns == some svgNS || x.ns == some mathmlNS then
+    if x.lname == "a" then 0 else -1
+  else if Forms.isHtml d el ["a", "area", "button", "frame", "iframe", "input", "object", "select", "textarea"]
+      || Forms.isDetailsSummary d el then 0
   else -1
 
 /-- Kind: conformance. Says: a MathML element's `tabIndex` default is 0 for `a` and -1 for every

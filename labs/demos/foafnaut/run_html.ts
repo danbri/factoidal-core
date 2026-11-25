@@ -5,7 +5,7 @@ import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForP
 import {Downloaded,inputURL,loadFontFile,prepareHTML as prepareDocument,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
-import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
+import {addEntries,consoleRequest,noteDiagnostics,reportPageEntries,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
 import {loadNativeWindow,pointerButton,pointerClicks,pointerModifiers,type NativeEvent as UIEvent} from "./native_window.ts";
@@ -93,6 +93,10 @@ async function main() {
     // as one JSON line {"type":"native-html-skip",...} on standard output when it is first kept.
     else if(arg==="--liberal-report"){const how=args.shift();if(how!=="json")throw new Error("--liberal-report needs json");
       reportSystemEntries(entry=>console.log(JSON.stringify({type:"native-html-skip",t:Math.round(performance.now()),...entry})));}
+    // Each page console entry (a script log or an uncaught script error) as one JSON line
+    // {"type":"native-html-page-console",...} on standard output, up to the console's own cap.
+    else if(arg==="--page-console"){const how=args.shift();if(how!=="json")throw new Error("--page-console needs json");
+      reportPageEntries(entry=>console.log(JSON.stringify({type:"native-html-page-console",t:Math.round(performance.now()),severity:entry.severity,message:entry.message})));}
     // The off-screen window in points and its backing scale (`--offscreen-size 1280x1600@1`), and the text
     // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
     else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");

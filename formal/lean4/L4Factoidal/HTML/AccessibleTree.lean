@@ -63,8 +63,14 @@ structure Env where
   rendered : NodeId → Bool := fun _ => true
   /-- `false`: `visibility` is `hidden` or `collapse`. -/
   visible : NodeId → Bool := fun _ => true
+  /-- The element is clipped to nothing by itself or an ancestor. This does not hide its name. -/
+  clipped : NodeId → Bool := fun _ => false
   /-- The border box of an element that has one. -/
   box : NodeId → Option Rect := fun _ => none
+
+/-- The style facts used for names and descriptions in the tree. -/
+def Env.nameStyle (env : Env) : NameStyle :=
+  { displayed := env.rendered, visible := fun k => env.visible k || env.clipped k }
 
 /-- The elements HTML's own style sheet gives no box, read from the markup. -/
 def markupUnrendered (d : Dom) (k : NodeId) : Bool :=
@@ -152,10 +158,11 @@ def clip (s : String) : String := if s.length ≤ maxText then s else (s.take ma
 /-- The accessible description (Accessible Name and Description Computation 1.2 §4.3.2,
 "description"): the nodes `aria-describedby` names, else `aria-description`, else the
 `title` when it is not the name. -/
-def accessibleDescription (d : Dom) (k : NodeId) (name : String) : String :=
+def accessibleDescription (d : Dom) (k : NodeId) (name : String)
+    (style : NameStyle := {}) : String :=
   let refs := match attr? d k "aria-describedby" with
     | some ids => collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-        (byIdIn d k id).map fun j => textAlternative d (d.size + 1) j true true))
+        (byIdIn d k id).map fun j => textAlternative d (d.size + 1) j true true style (hiddenReference d style j)))
     | none => ""
   if !refs.isEmpty then refs else
   let own := collapse ((attr? d k "aria-description").getD "")
@@ -165,10 +172,10 @@ def accessibleDescription (d : Dom) (k : NodeId) (name : String) : String :=
 
 /-- The name in the tree: the document's `title` for the root element, none for a role
 that takes none, else the accessible name. -/
-def treeName (d : Dom) (k : NodeId) (role : String) : String :=
+def treeName (d : Dom) (k : NodeId) (role : String) (style : NameStyle := {}) : String :=
   if nameProhibited.contains role then ""
   else
-    let own := accessibleName d k
+    let own := accessibleName d k style
     if own.isEmpty && isHtml d k ["html"] then
       match (d.treeOrder k).find? (isHtml d · ["title"]) with
       | some t => collapse ((d.textContent t).getD "")
@@ -299,9 +306,9 @@ def entry (d : Dom) (env : Env) (depth : Nat) (k : NodeId) : Entry :=
       box := x.parent.bind env.box }
   else
     let role := computedRole d k
-    let name := clip (treeName d k role)
+    let name := clip (treeName d k role env.nameStyle)
     { depth, id := k, role, name,
-      description := clip (accessibleDescription d k name),
+      description := clip (accessibleDescription d k name env.nameStyle),
       tag := x.lname, props := props d k role, focusable := focusable d k && !disabledControl d k,
       box := env.box k }
 
@@ -532,14 +539,14 @@ theorem labelledby_first (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool) (i
     (he : (d.get k).type = .element) (hh : hiddenEl d k = false)
     (hl : attr? d k "aria-labelledby" = some ids)
     (hne : (collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-        (byIdIn d k id).map fun j => textAlternative d fuel j true true))).isEmpty = false) :
+        (byIdIn d k id).map fun j => textAlternative d fuel j true true {} (hiddenReference d {} j)))).isEmpty = false) :
     textAlternative d (fuel + 1) k false content =
       collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-        (byIdIn d k id).map fun j => textAlternative d fuel j true true)) := by
+        (byIdIn d k id).map fun j => textAlternative d fuel j true true {} (hiddenReference d {} j))) := by
   have h1 : (NodeType.element == NodeType.text) = false := rfl
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, h1, h2, hh, hl, hne]
+  simp [hiddenAt, he, h1, h2, hh, hl, hne]
 
 /-- Says (step 2D before 2E and later): with no `aria-labelledby`, a non-empty `aria-label`
 is the text alternative of an element whose name is not being taken from the content of
@@ -552,7 +559,7 @@ theorem aria_label_second (d : Dom) (k : NodeId) (fuel : Nat) (v : String)
   have h1 : (NodeType.element == NodeType.text) = false := rfl
   have h2 : (NodeType.element != NodeType.element) = false := rfl
   rw [textAlternative]
-  simp [he, h1, h2, hh, hl, hv]
+  simp [hiddenAt, he, h1, h2, hh, hl, hv]
   intro h
   simp [h] at hne
 

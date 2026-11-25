@@ -1,0 +1,3849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Particle Rex</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap">
+<style>
+/* layout: one full-viewport canvas; the game draws its own 600x150 strip and later opens it to the whole page */
+:root{--page:#ffffff;--ink:#535353;--hint:#9a9a9a;--focus:#ff8a3c;
+  --display:"Silkscreen","Courier New",ui-monospace,monospace;--body:"Silkscreen","Courier New",ui-monospace,monospace;color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--page:#202124;--ink:#acacac;--hint:#77787b;color-scheme:dark}}
+:root[data-theme="dark"]{--page:#202124;--ink:#acacac;--hint:#77787b;color-scheme:dark}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--page);color:var(--ink);font-family:var(--body);
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
+canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
+canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0" role="application" aria-label="Particle Rex, a one-button game"></canvas>
+<p class="sr">One-button game. Tap, click, or press space. Shimmering rainbow things are good to collect. Bombs with a red glow cost a heart. Each zone shows what a tap does. Press M to mute. In god mode, press G for the cheat panel.</p>
+<script>(() => {
+  "use strict";
+  const canvas = document.getElementById("c"),
+    ctx = canvas.getContext("2d");
+  const M = Math,
+    rand = M.random,
+    TAU = M.PI * 2,
+    sin = M.sin,
+    cos = M.cos,
+    min = M.min,
+    max = M.max,
+    abs = M.abs;
+  const randRange = (a, b) => a + rand() * (b - a),
+    lerp = (a, b, t) => a + (b - a) * t,
+    clamp = (v, a, b) => (v < a ? a : v > b ? b : v),
+    ease = (t) => t * t * (3 - 2 * t),
+    pick = (a) => a[(rand() * a.length) | 0];
+  const hexToRgb = (h) => [1, 3, 5].map((i) => parseInt(h.substr(i, 2), 16));
+  const rgbCss = (a) => "rgb(" + (a[0] | 0) + "," + (a[1] | 0) + "," + (a[2] | 0) + ")";
+  const HUES = [...Array(36)].map((_, i) => "hsl(" + i * 10 + ",95%,62%)"),
+    hue = (t) => HUES[(((t | 0) % 36) + 36) % 36];
+  const FONT = 'Silkscreen,"Courier New",ui-monospace,monospace';
+  const REDUCED_MOTION = matchMedia("(prefers-reduced-motion:reduce)").matches;
+
+  /* ---------- zones are data. mode decides what one tap does.
+     food = things to grab (always drawn with a rainbow halo), bg = giant soft emoji behind everything,
+     de = [emoji,size,altLo,altHi,parallax,alpha]  bk = [emoji,size,xFrac,yFrac,alpha]
+     wv = [colour,baseAlt,amp,wavelength,parallax,fillDir,alpha,fromCeiling] */
+  const ZONES = {
+    dunes: {
+      name: "DUNES",
+      icon: "🌵",
+      mode: "run",
+      hero: "🦖|🦕|🐊",
+      flip: 1,
+      size: 44,
+      speed: 360,
+      length: 190,
+      hint: "TAP = JUMP · HOLD = HIGHER",
+      top: "#161a40",
+      bot: "#ec7f5c",
+      ink: "#ffe8c8",
+      accent: "#fff3b0",
+      stars: 0.75,
+      rootHz: 220,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [0, 2],
+      food: ["🍒", "🍉", "🍋"],
+      backdrops: ["🌵", "🌞|☀️"],
+      decor: [["☁️", 46, 0.45, 0.8, 0.22, 0.5]],
+      skyObjects: [["🌙|🌕", 40, 0.84, 0.15, 0.95]],
+      waves: [
+        ["#6b3a66", 16, 16, 170, 0.2, 1, 0.6],
+        ["#b9505a", 3, 7, 95, 0.45, 1, 0.7],
+      ],
+      forkA: "slopes",
+      forkB: "maze",
+    },
+    slopes: {
+      name: "SLOPES",
+      icon: "🏔️|⛰️",
+      mode: "ski",
+      hero: "🏂|⛷️|🐧",
+      flip: 1,
+      size: 58,
+      speed: 330,
+      length: 300,
+      hint: "TAP = JUMP · HOLD IN AIR = FLIP",
+      top: "#5aaeee",
+      bot: "#f1e6ff",
+      ink: "#1f3c6c",
+      accent: "#ff7a59",
+      stars: 0,
+      rootHz: 261.6,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [1, 1],
+      food: ["🍩", "🍪", "🧁", "🍫"],
+      backdrops: ["🏔️|⛰️", "❄️", "🌲"],
+      skyObjects: [["☀️|🌞", 64, 0.8, 0.14, 0.9]],
+      waves: [
+        ["#9db9ea", 170, 40, 330, 0.08, 1, 0.75],
+        ["#c3d5f5", 128, 30, 210, 0.16, 1, 0.85],
+      ],
+      forkA: "swarm",
+      forkB: "pond",
+    },
+    maze: {
+      name: "MAZE",
+      icon: "👻",
+      mode: "lane",
+      hero: "🐷|🐹|😋",
+      flip: 0,
+      size: 46,
+      speed: 320,
+      length: 280,
+      hint: "TAP = NEXT LANE · EAT IT ALL",
+      noHazards: 1,
+      top: "#090926",
+      bot: "#18185f",
+      ink: "#e2e6ff",
+      accent: "#ffe14a",
+      stars: 0.25,
+      rootHz: 196,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [1, 3],
+      food: ["🍒", "🍓", "🍊", "🍇"],
+      backdrops: ["👻", "🍒", "🧀"],
+      next: "sea",
+    },
+    pond: {
+      name: "POND",
+      icon: "🪷|🌸",
+      mode: "hop",
+      hero: "🐸",
+      flip: 0,
+      size: 54,
+      speed: 300,
+      length: 300,
+      hint: "IT HOPS BY ITSELF · TAP IN AIR = LEAP",
+      top: "#8fd3e8",
+      bot: "#d9f3c4",
+      ink: "#124a3a",
+      accent: "#ff6fae",
+      stars: 0,
+      rootHz: 246.9,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [2, 1.6],
+      food: ["🪰|🐛", "🍓", "🌸", "🍡"],
+      backdrops: ["🪷|🌸", "🌿", "🐟"],
+      flock: [14, "#2f7f86"],
+      ambient: ["#ffffff", 4, -10, 2.5, 4],
+      waves: [
+        ["#5fb7d4", 3, 3, 80, 0.9, 1, 0.95],
+        ["#3f97bd", -14, 5, 130, 0.6, 1, 0.9],
+      ],
+      forkA: "banyan",
+      forkB: "sea",
+    },
+    sea: {
+      name: "SEA",
+      icon: "🌊",
+      mode: "turn",
+      hero: "🐋|🐳|🐟",
+      flip: 1,
+      size: 62,
+      speed: 320,
+      length: 300,
+      hint: "TAP = TURN UP / DOWN",
+      top: "#22a9bd",
+      bot: "#052a4a",
+      ink: "#d6fbff",
+      accent: "#8ff5ff",
+      stars: 0,
+      rootHz: 196,
+      scale: [0, 2, 5, 7, 9],
+      mapPos: [2.6, 3],
+      food: ["🐟", "🍤", "🦐", "🐠"],
+      backdrops: ["🐙", "🐚", "🐢"],
+      rays: 1,
+      ambient: ["#d4fbff", 6, -42, 2.8, 3],
+      waves: [
+        ["#c4f6ff", 14, 6, 70, 1.2, -1, 0.3, 1],
+        ["#0a3a52", -4, 10, 130, 0.8, 1, 0.9],
+      ],
+      flock: [90, "#0e5a74"],
+      forkA: "river",
+      forkB: "cave",
+    },
+    river: {
+      name: "RIVER",
+      icon: "🦆",
+      mode: "flow",
+      hero: "🦆",
+      flip: 0,
+      rotation: 1.571,
+      size: 54,
+      speed: 300,
+      length: 290,
+      hint: "TAP = TURN · FOLLOW THE WATER",
+      follower: "🐥|🐤",
+      top: "#2f8fc4",
+      bot: "#4fb4d8",
+      ink: "#f2fff6",
+      accent: "#fff06a",
+      stars: 0,
+      rootHz: 196,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [3.6, 2.4],
+      food: ["🍞|🥖", "🐟", "🌰", "🍇"],
+      backdrops: ["🪷|🌸", "🐟", "🌿"],
+      next: "woods",
+    },
+    cave: {
+      name: "CAVE",
+      icon: "🦇",
+      mode: "turn",
+      hero: "🦇",
+      flip: 0,
+      size: 54,
+      speed: 320,
+      length: 300,
+      hint: "TAP = TURN · WALLS ARE SOFT",
+      cave: 1,
+      top: "#120d22",
+      bot: "#2b1d47",
+      ink: "#e9dcff",
+      accent: "#b58cff",
+      stars: 0,
+      rootHz: 146.8,
+      scale: [0, 3, 5, 7, 10],
+      mapPos: [3.6, 3.6],
+      food: ["💎", "🍄", "🔮|💜", "🐞"],
+      backdrops: ["🦇", "💎", "🕸️"],
+      flock: [26, "#d8ff8a"],
+      ambient: ["#b58cff", 6, 0, 2.5, 4],
+      forkA: "woods",
+      forkB: "banyan",
+    },
+    woods: {
+      name: "WOODS",
+      icon: "🌲",
+      mode: "zoom",
+      hero: "🦉|🦅",
+      size: 62,
+      speed: 320,
+      length: 300,
+      hint: "TAP = TURN LEFT / RIGHT",
+      top: "#1b2a44",
+      bot: "#f0a868",
+      ink: "#fff0d8",
+      accent: "#ffd24a",
+      stars: 0.5,
+      rootHz: 146.8,
+      scale: [0, 3, 5, 7, 10],
+      mapPos: [4.6, 3],
+      ground: "#1d3324",
+      line: "#6f9a63",
+      food: ["🍄", "🌰", "🍎", "🍇"],
+      backdrops: ["🌕", "🦌", "🍂"],
+      trees: ["🌲", "🌳", "🌲"],
+      flock: [20, "#ffe680"],
+      forkA: "banyan",
+      forkB: "trench",
+    },
+    banyan: {
+      name: "BANYAN",
+      icon: "🌴",
+      mode: "swing",
+      hero: "🐒|🐵",
+      flip: 1,
+      size: 56,
+      speed: 300,
+      length: 300,
+      hint: "TAP = LET GO · ROPES CATCH YOU",
+      noHazards: 1,
+      top: "#bfe39a",
+      bot: "#1c5a3c",
+      ink: "#f6ffe2",
+      accent: "#ffd24a",
+      stars: 0,
+      rootHz: 293.7,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [5.4, 1.6],
+      food: ["🥭|🍑", "🍌", "🍍", "🥥|🍈"],
+      backdrops: ["🌿", "🦜", "🍃"],
+      ambient: ["#e4ffc0", 5, 24, 3, 5],
+      flock: [18, "#fff3a0"],
+      next: "swarm",
+    },
+    swarm: {
+      name: "SWARM",
+      icon: "👾",
+      mode: "shoot",
+      hero: "🚀",
+      rotation: -0.785,
+      size: 54,
+      speed: 300,
+      length: 300,
+      hint: "TAP = TURN · IT FIRES FOR YOU",
+      top: "#04020f",
+      bot: "#1c1042",
+      ink: "#e6e0ff",
+      accent: "#7cf0ff",
+      stars: 1,
+      rootHz: 174.6,
+      scale: [0, 2, 7, 9, 14],
+      mapPos: [6.2, 0.8],
+      food: ["⭐", "💎", "🍬"],
+      backdrops: ["🪐|🌕", "🌍|🌎", "🌙"],
+      next: "trench",
+    },
+    trench: {
+      name: "TRENCH",
+      icon: "🛰️|📡",
+      mode: "zoom",
+      hero: "🚀",
+      rotation: -0.785,
+      size: 58,
+      speed: 370,
+      length: 320,
+      hint: "TAP = TURN LEFT / RIGHT",
+      top: "#04050f",
+      bot: "#16234f",
+      ink: "#cfe8ff",
+      accent: "#6fe3ff",
+      stars: 1,
+      rootHz: 207.7,
+      scale: [0, 3, 5, 7, 10],
+      mapPos: [7, 2.2],
+      ground: "#080b18",
+      line: "#6fe3ff",
+      walls: 1,
+      food: ["💎", "⭐", "🔋|💡"],
+      backdrops: ["🪐|🌕", "🌑", "🛰️|📡"],
+      hole: "echo",
+      forkA: "dunes",
+      forkB: "dunes",
+    },
+    echo: {
+      name: "ECHO",
+      icon: "🔁|🌀",
+      mode: "loop",
+      hero: "🦖|🦕|🐊",
+      flip: 1,
+      size: 46,
+      speed: 300,
+      length: 1e9,
+      hint: "TAP = JUMP · HOLD = HIGHER",
+      top: "#05031a",
+      bot: "#2a0f4a",
+      ink: "#fff1d6",
+      accent: "#ffd27a",
+      stars: 1,
+      rootHz: 220,
+      scale: [0, 2, 4, 7, 9],
+      mapPos: [8, 2.2],
+      food: ["🍑", "🍇", "🍊", "🍓", "🍒"],
+      backdrops: ["🪐|🌕", "🌌|✨", "🌙"],
+      noHazards: 1,
+      next: "dunes",
+    },
+  };
+  for (const k in ZONES) {
+    const r = ZONES[k];
+    r.pal = { top: hexToRgb(r.top), bot: hexToRgb(r.bot), ink: hexToRgb(r.ink), st: r.stars };
+    r.accentRgb = hexToRgb(r.accent);
+    r.decor = r.decor || [];
+    r.skyObjects = r.skyObjects || [];
+    r.waves = r.waves || [];
+  }
+  const ZONE_COUNT = Object.keys(ZONES).length,
+    START_LIVES = 4,
+    MAX_LIVES = 5,
+    MAX_FOLLOWERS = 30,
+    MAX_PARTICLES = 900,
+    RUN_GRAVITY = 2160, // the original dino's 0.6 px/frame² at 60 fps
+    RUN_JUMP = 600;
+
+  /* ---------- state */
+  let winW,
+    winH,
+    unit,
+    viewW,
+    viewH,
+    playH,
+    thumbH = 0,
+    dpr,
+    groundY,
+    bandH,
+    skyH,
+    playerX,
+    clipL,
+    clipT,
+    clipR,
+    clipB,
+    isTouch = matchMedia("(pointer:coarse)").matches;
+  let state = "ready",
+    time = 0,
+    lastMs = 0,
+    score = 0,
+    hiScore = 0,
+    seenZones = { dunes: 1 },
+    muted = 0,
+    introScale = 1,
+    lastHundred = 0,
+    milestoneT = 0,
+    lives = START_LIVES,
+    heartLostT = 0;
+  let mode, // the entry of MODES the current zone uses
+    zone = ZONES.dunes,
+    zoneKey = "dunes",
+    zoneDist = 0,
+    zoneTime = 0,
+    gateAt = 1e9,
+    gate = null,
+    depth = 0,
+    lap = 0,
+    seedAtDist = 45,
+    autoWakeDist = 150,
+    seedCooldown = 0;
+  let awake = 0,
+    chroma = 0,
+    openness = 0,
+    unroll = 0,
+    speed = 0,
+    scrollX = 0,
+    scrollY = 0,
+    scrollZ = 0,
+    quietT = 0,
+    spawnT = 0,
+    sparkT = 0,
+    decorT = 0,
+    eaten = 0,
+    zoneVis = 0;
+  let items = [],
+    decor = [],
+    particles = [],
+    rings = [],
+    floaters = [],
+    backdrops = [],
+    bullets = [],
+    ropes = [],
+    boidList = [],
+    pads = [],
+    card = null;
+  let shake = 0,
+    flash = 0,
+    flashColor = "#fff",
+    redFlash = 0,
+    scoreBump = 0,
+    warp = 0,
+    whiteout = 0,
+    overTime = 0,
+    combo = 0,
+    comboTime = 0,
+    groundAlpha = 1;
+  let held = 0,
+    jumpBuffer = 0,
+    tapped = 0,
+    inkCss = "#535353",
+    outlineCss = "rgba(0,0,0,.5)",
+    classicPal = { bg: [255, 255, 255], ink: [83, 83, 83], hint: [154, 154, 154] };
+  let godMode = 0,
+    menuOpen = 0,
+    eggTaps = 0,
+    eggSince = 9,
+    eggBoom = 0,
+    godBannerT = 0;
+  const cheats = { inv: 1, spd: 1, box: 0 },
+    EGG_EMOJI = "🐣|🐥|🥚",
+    SPEED_STEPS = [0.5, 1, 1.5, 2.5];
+  let formX = 0,
+    formY = 0,
+    fireT = 0,
+    bombT = 0,
+    camY = 0,
+    laneHalfW = 150,
+    horizonY = 0,
+    floorY = 0,
+    scoreX = 0,
+    scoreY = 0;
+  let palette = { top: [255, 255, 255], bot: [255, 255, 255], ink: [83, 83, 83], st: 0 };
+  const player = {
+    y: 0,
+    vy: 0,
+    on: 1,
+    jumps: 0,
+    inv: 0,
+    shock: 0,
+    sz: 44,
+    cut: 0,
+    k: 1,
+    spin: 0,
+    ang: 0,
+    sx: 60,
+    sy: 0,
+    hw: 12,
+    hh: 14,
+    lane: 1,
+    dir: 1,
+    lx: 0,
+    vx: 0,
+    rope: 0,
+    best: 0,
+    last: -1,
+    lt: 0,
+    X: 0,
+    Y: 0,
+    fx: 0,
+    fy: 0,
+  };
+  const FOCAL = 240,
+    Z_FAR = 1500,
+    Z_SPEED = 1.6;
+
+  /* ---------- organic helpers: value noise, fractal noise, and one boid flock shared by followers (f) and ambient schools */
+  const hash2 = (x, y) => {
+    let h = (M.imul(x, 374761393) + M.imul(y, 668265263)) | 0;
+    h = M.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  function noise(x, y) {
+    const xi = M.floor(x),
+      yi = M.floor(y),
+      a = x - xi,
+      b = y - yi,
+      u = a * a * (3 - 2 * a),
+      w = b * b * (3 - 2 * b);
+    return lerp(lerp(hash2(xi, yi), hash2(xi + 1, yi), u), lerp(hash2(xi, yi + 1), hash2(xi + 1, yi + 1), u), w);
+  }
+  const fbm = (x, y) =>
+    noise(x, y) * 0.6 + noise(x * 2.1 + 7, y * 2.1 + 3) * 0.3 + noise(x * 4.3 + 1, y * 4.3 + 9) * 0.1;
+  function stepBoids(dt, v) {
+    const n = boidList.length,
+      my = clipT + (playH - clipT) * 0.45,
+      vert = mode.view === "top";
+    for (let i = 0; i < n; i++) {
+      const b = boidList[i];
+      let cx = 0,
+        cy = 0,
+        ax = 0,
+        ay = 0,
+        sx = 0,
+        sy = 0,
+        k = 0;
+      for (let j = 0; j < n; j++) {
+        const o = boidList[j];
+        if (i === j || o.f !== b.f) continue;
+        const dx = o.x - b.x,
+          dy = o.y - b.y,
+          d2 = dx * dx + dy * dy;
+        if (d2 < 3600) {
+          k++;
+          cx += dx;
+          cy += dy;
+          ax += o.vx;
+          ay += o.vy;
+          if (d2 < 420) {
+            sx -= dx;
+            sy -= dy;
+          }
+        }
+      }
+      if (k) {
+        b.vx += ((cx / k) * 0.9 + (ax / k - b.vx) * 1.3 + sx * 7) * dt;
+        b.vy += ((cy / k) * 0.9 + (ay / k - b.vy) * 1.3 + sy * 7) * dt;
+      }
+      const a = fbm(b.x * 0.004 + time * 0.05, b.y * 0.004 + (b.f ? 9 : 0)) * TAU * 2;
+      b.vx += cos(a) * 70 * dt;
+      b.vy += sin(a) * 70 * dt;
+      const dx = player.sx - b.x,
+        dy = player.sy - b.y,
+        d = M.hypot(dx, dy) || 1;
+      if (b.f) {
+        const pl = (d > 52 ? 5 : -3) * min(d, 220) * dt;
+        b.vx += (dx / d) * pl;
+        b.vy += (dy / d) * pl;
+        b.vx *= 1 - min(1, 1.6 * dt);
+        b.vy *= 1 - min(1, 1.6 * dt);
+      } else {
+        if (d < 120) {
+          b.vx -= (dx / d) * 560 * dt;
+          b.vy -= (dy / d) * 560 * dt;
+        }
+        b.vy += (my - b.y) * 0.35 * dt;
+        b.vx += (viewW * 0.5 - b.x) * 0.05 * dt;
+        if (vert) b.y += v * 0.2 * dt;
+        else b.x -= v * 0.2 * dt;
+        if (b.x < -40) b.x = viewW + 40;
+        if (b.y > viewH + 40) b.y = clipT - 40;
+      }
+      const sp = M.hypot(b.vx, b.vy) || 1,
+        mx = b.f ? 340 : 150,
+        mn = b.f ? 0 : 50;
+      if (sp > mx) {
+        b.vx *= mx / sp;
+        b.vy *= mx / sp;
+      } else if (sp < mn) {
+        b.vx *= mn / sp;
+        b.vy *= mn / sp;
+      }
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+  }
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement),
+      v = (n, d) => {
+        const s = cs.getPropertyValue(n).trim();
+        return /^#[0-9a-f]{6}$/i.test(s) ? hexToRgb(s) : d;
+      };
+    classicPal = {
+      bg: v("--page", [255, 255, 255]),
+      ink: v("--ink", [83, 83, 83]),
+      hint: v("--hint", [154, 154, 154]),
+    };
+    if (zoneKey === "dunes" && !awake && chroma < 0.01)
+      palette = { top: classicPal.bg.slice(), bot: classicPal.bg.slice(), ink: classicPal.ink.slice(), st: 0 };
+  }
+  function resize() {
+    dpr = min(devicePixelRatio || 1, 2);
+    winW = innerWidth || 600;
+    winH = innerHeight || 300;
+    canvas.width = (winW * dpr) | 0;
+    canvas.height = (winH * dpr) | 0;
+    viewW = clamp(winW, 380, 760);
+    unit = winW / viewW;
+    if (winH / unit < 300) {
+      unit = winH / 300;
+      viewW = winW / unit;
+    }
+    viewH = winH / unit;
+    thumbH = isTouch && winH > winW * 1.15 ? viewH * 0.24 : 0;
+    playH = viewH - thumbH;
+  }
+  function layout() {
+    const o = ease(openness),
+      cy = playH / 2,
+      sw_ = min(viewW, 600);
+    groundY = lerp(cy + 52, playH * 0.84, o);
+    clipL = lerp((viewW - sw_) / 2, 0, o);
+    clipR = lerp((viewW + sw_) / 2, viewW, o);
+    clipT = lerp(cy - 75, 0, o);
+    clipB = lerp(cy + 75, playH, o);
+    skyH = groundY - clipT;
+    bandH = min(groundY - 40, 460);
+    playerX = lerp((viewW - sw_) / 2 + 50, max(70, viewW * 0.17), o);
+    scoreX = clipR - 64;
+    scoreY = clipT + 26;
+  }
+
+  /* ---------- emoji digitizer: draw the glyph off screen, box-sample it into a grid of coloured cells */
+  const scratch = document.createElement("canvas");
+  scratch.width = scratch.height = 96;
+  const scratchCtx = scratch.getContext("2d", { willReadFrequently: true });
+  const EMOJI_FONT = '"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji","Twemoji Mozilla",sans-serif';
+  function rasterEmoji(ch) {
+    scratchCtx.clearRect(0, 0, 96, 96);
+    scratchCtx.textAlign = "center";
+    scratchCtx.textBaseline = "middle";
+    scratchCtx.font = "60px " + EMOJI_FONT;
+    scratchCtx.fillStyle = "#888";
+    scratchCtx.fillText(ch, 48, 51);
+    return scratchCtx.getImageData(0, 0, 96, 96).data;
+  }
+  function scanPixels(d) {
+    let n = 0,
+      c = 0,
+      s = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (d[i + 3] > 60) {
+        n++;
+        s = (s + i) % 1e9;
+        if (abs(d[i] - d[i + 1]) > 24 || abs(d[i + 1] - d[i + 2]) > 24) c++;
+      }
+    return [n, c, s];
+  }
+  const TOFU_SUM = scanPixels(rasterEmoji("͸"))[2],
+    spriteCache = {};
+  function makeSprite(spec, N, flip) {
+    const key = spec + N + (flip | 0);
+    if (spriteCache[key]) return spriteCache[key];
+    let d,
+      ok = 0,
+      mono = 0;
+    for (const ch of spec.split("|")) {
+      d = rasterEmoji(ch);
+      const [n, c, s] = scanPixels(d);
+      if (c > 8) {
+        ok = 1;
+        break;
+      }
+      if (n > 40 && s !== TOFU_SUM) {
+        ok = mono = 1;
+        break;
+      }
+    }
+    const tint = "hsl(" + ((spec.codePointAt(0) * 47) % 360) + ",65%,62%)",
+      cells = [];
+    let w,
+      h,
+      x0 = 96,
+      y0 = 96,
+      x1 = -1,
+      y1 = -1;
+    if (ok)
+      for (let y = 0; y < 96; y++)
+        for (let x = 0; x < 96; x++)
+          if (d[(y * 96 + x) * 4 + 3] > 60) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+    if (!ok || x1 < 0) {
+      w = h = N;
+      for (let j = 0; j < N; j++)
+        for (let i = 0; i < N; i++) {
+          const dx = i - N / 2 + 0.5,
+            dy = j - N / 2 + 0.5;
+          if (dx * dx + dy * dy < (N * N) / 4) cells.push({ x: dx, y: dy, c: tint, l: 0.5, a: 1, k: rand() * TAU });
+        }
+    } else {
+      const bw = x1 - x0 + 1,
+        bh = y1 - y0 + 1,
+        sc = N / max(bw, bh);
+      w = max(1, M.round(bw * sc));
+      h = max(1, M.round(bh * sc));
+      for (let j = 0; j < h; j++)
+        for (let i = 0; i < w; i++) {
+          let r = 0,
+            gg = 0,
+            b = 0,
+            a = 0,
+            n = 0;
+          const xa = x0 + (((i * bw) / w) | 0),
+            xb = max(xa + 1, x0 + ((((i + 1) * bw) / w) | 0)),
+            ya = y0 + (((j * bh) / h) | 0),
+            yb = max(ya + 1, y0 + ((((j + 1) * bh) / h) | 0));
+          for (let y = ya; y < yb; y++)
+            for (let x = xa; x < xb; x++) {
+              const q = (y * 96 + x) * 4,
+                al = d[q + 3] / 255;
+              r += d[q] * al;
+              gg += d[q + 1] * al;
+              b += d[q + 2] * al;
+              a += al;
+              n++;
+            }
+          if (a / n > 0.4) {
+            r /= a;
+            gg /= a;
+            b /= a;
+            const qz = (v) => min(255, (((v | 0) >> 4) << 4) + 8);
+            cells.push({
+              x: (flip ? w - 1 - i : i) - w / 2 + 0.5,
+              y: j - h / 2 + 0.5,
+              c: mono ? tint : "rgb(" + qz(r) + "," + qz(gg) + "," + qz(b) + ")",
+              l: mono ? 0.5 : (0.3 * r + 0.59 * gg + 0.11 * b) / 255,
+              a: min(1, (a / n) * 1.25),
+              k: rand() * TAU,
+            });
+          }
+        }
+      cells.sort((p, q) => (p.c < q.c ? -1 : p.c > q.c ? 1 : 0));
+    }
+    return (spriteCache[key] = { w, h, cells });
+  }
+  const spriteFor = (em, size, fl) => makeSprite(em, clamp(M.round(size / 2.3), 10, 30), fl);
+  // cached textures: 0 = chunky cells with gaps (items), 1 = soft colour, 2 = soft grey (giant blurred backdrops)
+  function textureOf(sp, kind) {
+    const key = "t" + kind;
+    if (sp[key]) return sp[key];
+    const mk = (w, h) => {
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        return c;
+      },
+      q = kind ? 1 : 6,
+      o = kind ? 5 : 0,
+      c = mk(sp.w * q + o * 2, sp.h * q + o * 2),
+      x = c.getContext("2d");
+    for (const e of sp.cells) {
+      const l = (e.l * 255) | 0;
+      x.globalAlpha = e.a;
+      x.fillStyle = kind > 1 ? "rgb(" + l + "," + l + "," + l + ")" : e.c;
+      x.fillRect((e.x + sp.w / 2 - 0.5) * q + o, (e.y + sp.h / 2 - 0.5) * q + o, kind ? 1 : 5, kind ? 1 : 5);
+    }
+    if (!kind) return (sp[key] = c);
+    const b = mk(c.width * 4, c.height * 4),
+      y = b.getContext("2d");
+    y.imageSmoothingEnabled = true;
+    y.globalAlpha = 0.09; // box blur by accumulation
+    for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) y.drawImage(c, i * 4, j * 4, b.width, b.height);
+    return (sp[key] = b);
+  }
+  const makeGlow = (c) => {
+      const k = document.createElement("canvas");
+      k.width = k.height = 64;
+      const x = k.getContext("2d"),
+        r = x.createRadialGradient(32, 32, 2, 32, 32, 32);
+      r.addColorStop(0, c + "dd");
+      r.addColorStop(0.5, c + "55");
+      r.addColorStop(1, c + "00");
+      x.fillStyle = r;
+      x.fillRect(0, 0, 64, 64);
+      return k;
+    },
+    GLOW_WHITE = makeGlow("#ffffff"),
+    GLOW_RED = makeGlow("#ff1a1a");
+  function makeTextSprite(s) {
+    const c = document.createElement("canvas"),
+      x = c.getContext("2d", { willReadFrequently: true });
+    c.width = 480;
+    c.height = 42;
+    x.font = "700 24px " + FONT;
+    x.textAlign = "center";
+    x.textBaseline = "middle";
+    x.fillStyle = "#fff";
+    x.fillText(s, 240, 21);
+    const d = x.getImageData(0, 0, 480, 42).data,
+      raw = [];
+    let i0 = 999,
+      i1 = -1,
+      j0 = 999,
+      j1 = -1;
+    for (let j = 0; j < 14; j++)
+      for (let i = 0; i < 160; i++)
+        if (d[((j * 3 + 1) * 480 + i * 3 + 1) * 4 + 3] > 120) {
+          raw.push([i, j]);
+          if (i < i0) i0 = i;
+          if (i > i1) i1 = i;
+          if (j < j0) j0 = j;
+          if (j > j1) j1 = j;
+        }
+    return {
+      w: max(1, i1 - i0 + 1),
+      h: max(1, j1 - j0 + 1),
+      cells: raw.map(([i, j]) => ({ x: i - (i0 + i1) / 2, y: j - (j0 + j1) / 2, k: rand() * TAU })),
+    };
+  }
+
+  /* ---------- drawing. ds = live cells (ink pass fades out as colour fades in), di = cached texture */
+  function drawCells(sp, cx, cy, size, al, loose) {
+    const u = size / max(sp.w, sp.h),
+      d = u * 0.88,
+      h = d / 2,
+      cs = sp.cells,
+      n = cs.length;
+    let lc = "";
+    for (let pass = 0; pass < 2; pass++) {
+      const k = pass ? 1 - chroma : chroma;
+      if (k < 0.01) continue;
+      if (pass) ctx.fillStyle = inkCss;
+      for (let i = 0; i < n; i++) {
+        const c = cs[i];
+        if (!pass && c.c !== lc) ctx.fillStyle = lc = c.c;
+        ctx.globalAlpha = al * c.a * k * (pass ? 1 - 0.45 * c.l : 1);
+        let x = cx + c.x * u,
+          y = cy + c.y * u;
+        if (loose) {
+          x += sin(time * 2.6 + c.k) * loose;
+          y += cos(time * 2.1 + c.k * 1.7) * loose;
+        }
+        ctx.fillRect(x - h, y - h, d, d);
+      }
+    }
+  }
+  function drawTexture(sp, x, y, size, al) {
+    const m = max(sp.w, sp.h),
+      w = (sp.w / m) * size,
+      h = (sp.h / m) * size;
+    ctx.globalAlpha = al;
+    ctx.drawImage(textureOf(sp, 0), x - w / 2, y - h / 2, w, h);
+  }
+  const drawSprite = (sp, x, y, size, al) =>
+    chroma < 0.99 ? drawCells(sp, x, y, size, al, 0) : drawTexture(sp, x, y, size, al);
+  function emit(x, y, vx, vy, life, s, c, gv, sc) {
+    if (particles.length < MAX_PARTICLES)
+      particles.push({ x, y, vx, vy, l: life, m: life, s, c, g: gv || 0, sc: sc == null ? 0.6 : sc });
+  }
+  function burst(o) {
+    const sp = o.sp,
+      u = (o.size * o.sc) / max(sp.w, sp.h),
+      st = max(1, (sp.cells.length / 40) | 0);
+    for (let i = 0; i < sp.cells.length; i += st) {
+      const c = sp.cells[i];
+      emit(
+        o.sx + c.x * u,
+        o.sy + c.y * u,
+        randRange(-140, 100),
+        randRange(-150, 90),
+        randRange(0.5, 1.1),
+        max(2, u * 0.9),
+        chroma > 0.5 ? c.c : inkCss,
+        180,
+        0.4,
+      );
+    }
+  }
+  // feedback vocabulary: good = rainbow ripple + stars that fly to the score; bad = red/black ring, a cross, shake
+  const addRing = (x, y, good, big) => rings.push({ x, y, t: 0, good, big });
+  function emitStars(x, y, n) {
+    for (let i = 0; i < n && particles.length < MAX_PARTICLES; i++)
+      particles.push({
+        x,
+        y,
+        vx: randRange(-240, 240),
+        vy: randRange(-280, 140),
+        l: 1.6,
+        m: 1.6,
+        s: randRange(5, 9),
+        c: hue(rand() * 360),
+        g: 0,
+        sc: 0,
+        to: 1,
+      });
+  }
+  const addFloater = (x, y, s, c) => floaters.push({ x, y, s, t: 0, c });
+  function drawText(s, x, y, n, w, al, mx) {
+    let px = max(n, 13 / unit);
+    ctx.font = (w || 700) + " " + px.toFixed(1) + "px " + FONT;
+    if (mx) {
+      const m = ctx.measureText(s).width;
+      if (m > mx) {
+        px *= mx / m;
+        ctx.font = (w || 700) + " " + px.toFixed(1) + "px " + FONT;
+      }
+    }
+    ctx.textAlign = al || "center";
+    if (chroma > 0.05) {
+      ctx.lineWidth = px * 0.3;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = outlineCss;
+      ctx.strokeText(s, x, y);
+    }
+    ctx.fillText(s, x, y);
+  }
+
+  /* ---------- the player is a swarm: every cell is a particle on a spring to its home in the current emoji */
+  const swarm = {
+    p: [],
+    u: 1,
+    hh: 20,
+    set(sp, size, cx, cy) {
+      const u = (this.u = size / max(sp.w, sp.h)),
+        cs = sp.cells,
+        p = this.p,
+        n0 = p.length;
+      for (let i = 0; i < cs.length; i++) {
+        const c = cs[i];
+        let q = p[i];
+        if (!q) {
+          const s = n0 ? p[(rand() * n0) | 0] : 0;
+          q = p[i] = { x: s ? s.x : cx + c.x * u, y: s ? s.y : cy + c.y * u, vx: 0, vy: 0 };
+        }
+        q.hx = c.x * u;
+        q.hy = c.y * u;
+        q.c = c.c;
+        q.l = c.l;
+        q.a = c.a;
+        q.k = c.k;
+        q.on = 1;
+        if (n0) {
+          q.vx += randRange(-170, 170);
+          q.vy += randRange(-170, 170);
+        }
+      }
+      for (let i = cs.length; i < n0; i++)
+        emit(p[i].x, p[i].y, randRange(-90, 90), randRange(-90, 90), 0.8, u, p[i].c, 0, 0.4);
+      p.length = cs.length;
+      this.hh = (sp.h * u) / 2;
+    },
+    step(dt, cx, cy, rigid, loose, ang, legs, k) {
+      const ca = cos(ang) * k,
+        sa = sin(ang) * k,
+        p = this.p,
+        ly = this.hh * 0.4;
+      for (let i = 0; i < p.length; i++) {
+        const q = p[i];
+        if (!q.on) continue;
+        let hx = q.hx;
+        const hy = q.hy;
+        if (legs && hy > ly) hx += sin(time * 21 + (q.hx > 0 ? 3.1 : 0)) * legs;
+        let tx = cx + hx * ca - hy * sa,
+          ty = cy + hx * sa + hy * ca;
+        if (loose) {
+          tx += sin(time * 2.6 + q.k) * loose;
+          ty += cos(time * 2.1 + q.k * 1.7) * loose;
+        }
+        q.vx += ((tx - q.x) * 340 - q.vx * 24) * dt;
+        q.vy += ((ty - q.y) * 340 - q.vy * 24) * dt;
+        q.x += q.vx * dt;
+        q.y += q.vy * dt;
+        if (rigid > 0) {
+          q.x += (tx - q.x) * rigid;
+          q.y += (ty - q.y) * rigid;
+        }
+      }
+    },
+    draw(al, k) {
+      const p = this.p,
+        d = this.u * k * 0.88,
+        h = d / 2;
+      let lc = "";
+      for (let pass = 0; pass < 2; pass++) {
+        const c = pass ? 1 - chroma : chroma;
+        if (c < 0.01) continue;
+        if (pass) ctx.fillStyle = inkCss;
+        for (let i = 0; i < p.length; i++) {
+          const q = p[i];
+          if (!q.on) continue;
+          if (!pass && q.c !== lc) ctx.fillStyle = lc = q.c;
+          ctx.globalAlpha = al * q.a * c * (pass ? 1 - 0.45 * q.l : 1);
+          ctx.fillRect(q.x - h, q.y - h, d, d);
+        }
+      }
+    },
+  };
+
+  /* ---------- sound: square blips while monochrome, pentatonic plucks and a drone once the colour arrives */
+  let audioCtx = null,
+    masterGain,
+    delayNode,
+    padGain,
+    padOscs,
+    noAudio = 0;
+  function initAudio() {
+    if (noAudio) return;
+    if (audioCtx) {
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+      return;
+    }
+    try {
+      const C = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new C();
+      masterGain = audioCtx.createGain();
+      masterGain.gain.value = muted ? 0 : 0.7;
+      masterGain.connect(audioCtx.destination);
+      delayNode = audioCtx.createDelay(1);
+      delayNode.delayTime.value = 0.32;
+      const fb = audioCtx.createGain();
+      fb.gain.value = 0.4;
+      delayNode.connect(fb);
+      fb.connect(delayNode);
+      const wet = audioCtx.createGain();
+      wet.gain.value = 0.45;
+      delayNode.connect(wet);
+      wet.connect(masterGain);
+      padGain = audioCtx.createGain();
+      padGain.gain.value = 0;
+      const lp = audioCtx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.value = 650;
+      padGain.connect(lp);
+      lp.connect(masterGain);
+      padOscs = ["sine", "sine", "triangle"].map((ty, i) => {
+        const o = audioCtx.createOscillator(),
+          n = audioCtx.createGain();
+        o.type = ty;
+        o.frequency.value = 110 * [1, 1.5, 2.005][i];
+        n.gain.value = [0.05, 0.03, 0.018][i];
+        o.connect(n);
+        n.connect(padGain);
+        o.start();
+        return o;
+      });
+      updatePad();
+    } catch (e) {
+      audioCtx = null;
+      noAudio = 1;
+    }
+  }
+  function playTone(f, d, ty, v, wet, f2, dl) {
+    if (!audioCtx || muted) return;
+    try {
+      const t = audioCtx.currentTime + (dl || 0),
+        o = audioCtx.createOscillator(),
+        n = audioCtx.createGain();
+      o.type = ty;
+      o.frequency.setValueAtTime(f, t);
+      if (f2) o.frequency.exponentialRampToValueAtTime(f2, t + d);
+      n.gain.setValueAtTime(0.0001, t);
+      n.gain.linearRampToValueAtTime(v, t + 0.01);
+      n.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(n);
+      n.connect(masterGain);
+      if (wet) n.connect(delayNode);
+      o.start(t);
+      o.stop(t + d + 0.05);
+    } catch (e) {}
+  }
+  const noteHz = (i) => {
+      i = M.round(i);
+      return zone.rootHz * M.pow(2, zone.scale[((i % 5) + 5) % 5] / 12 + M.floor(i / 5));
+    },
+    isClassic = () => chroma < 0.5;
+  function updatePad() {
+    if (!audioCtx) return;
+    try {
+      const t = audioCtx.currentTime,
+        on = (awake || zoneKey !== "dunes") && state === "play";
+      padGain.gain.setTargetAtTime(on ? 1 : 0, t, 1.2);
+      [1, 1.5, 2.005].forEach((m, i) => padOscs[i].frequency.setTargetAtTime((zone.rootHz / 2) * m, t, 0.8));
+    } catch (e) {}
+  }
+  const sfxJump = () =>
+      isClassic() ? playTone(520, 0.1, "square", 0.045, 0, 760) : playTone(noteHz(2), 0.3, "sine", 0.1, 1),
+    sfxTurn = () => playTone(noteHz(player.dir > 0 ? 3 : 1), 0.22, "sine", 0.07, 1),
+    sfxBoom = () => {
+      if (isClassic()) playTone(150, 0.25, "square", 0.06, 0, 60);
+      else {
+        playTone(110, 0.5, "sawtooth", 0.2, 0, 28);
+        playTone(62, 0.6, "square", 0.1, 0, 30);
+      }
+    },
+    sfxMilestone = () => {
+      if (isClassic()) {
+        playTone(660, 0.09, "square", 0.04);
+        playTone(990, 0.16, "square", 0.04, 0, 0, 0.09);
+      }
+    },
+    sfxSpark = () => playTone(noteHz(combo % 12), 0.45, "sine", 0.1, 1),
+    sfxTreat = () => {
+      playTone(noteHz(combo % 10), 0.4, "sine", 0.13, 1);
+      playTone(noteHz((combo % 10) + 2), 0.6, "sine", 0.1, 1, 0, 0.08);
+      playTone(noteHz((combo % 10) + 4), 0.8, "triangle", 0.05, 1, 0, 0.16);
+    },
+    sfxGate = () => {
+      for (let i = 0; i < 5; i++) playTone(noteHz(i * 2), 1.2, "sine", 0.09, 1, 0, i * 0.1);
+    },
+    sfxWake = () => {
+      for (let i = 0; i < 8; i++) playTone(noteHz(i), 1.4, "sine", 0.08, 1, 0, i * 0.09);
+    },
+    sfxOver = () =>
+      isClassic()
+        ? playTone(200, 0.4, "square", 0.05, 0, 50)
+        : [4, 2, 0, -3].forEach((n, i) => playTone(noteHz(n), 1.5, "sine", 0.1, 1, 0, i * 0.22)),
+    sfxWarp = () => {
+      playTone(60, 3, "sine", 0.25, 1, 30);
+      playTone(880, 2.6, "sine", 0.04, 1, 110);
+    };
+
+  function saveProgress() {
+    try {
+      localStorage.setItem("particle-rex-2", JSON.stringify({ hi: hiScore, seen: seenZones, god: godMode }));
+    } catch (e) {}
+  }
+  function loadProgress(d) {
+    try {
+      const s = JSON.parse(localStorage.getItem("particle-rex-2") || "{}");
+      hiScore = max(s.hi | 0, d && d.hi | 0);
+      godMode = s.god || (d && d.god) ? 1 : 0;
+      Object.assign(seenZones, s.seen || {}, (d && d.seen) || {});
+      for (const k in seenZones) if (!ZONES[k]) delete seenZones[k];
+    } catch (e) {}
+  }
+
+  /* ---------- things in the world. good = grab, bad = dodge, neither = scenery or target */
+  // Every item carries these fields. x/y/y0 are in the mode's own space; the mode's mv() turns them into sx/sy/sc on screen.
+  const itemBase = (o) =>
+    Object.assign(
+      {
+        good: 0,
+        bad: 0,
+        size: 14,
+        hw: 20,
+        hh: 20,
+        x: 0,
+        y: 0,
+        y0: 0,
+        vx: 0,
+        vy: 0,
+        bob: 0,
+        f: 2,
+        ph: 0,
+        t: 0,
+        sx: -999,
+        sy: 0,
+        sc: 1,
+        al: 1,
+        pts: 0,
+      },
+      o,
+    );
+  function addItem(em, size, good, o) {
+    const sp = spriteFor(em, size),
+      u = size / max(sp.w, sp.h),
+      it = itemBase({
+        sp,
+        size,
+        good,
+        bad: !good,
+        W: sp.w * u,
+        H: sp.h * u,
+        hw: sp.w * u * (good ? 0.62 : 0.3), // generous for pickups, stingy for hazards
+        hh: sp.h * u * (good ? 0.62 : 0.36),
+        f: randRange(1.5, 2.6),
+        ph: rand() * TAU,
+        pts: good ? 8 + ((size / 5) | 0) : 0,
+      });
+    Object.assign(it, o);
+    if (it.y0 === 0) it.y0 = it.y;
+    items.push(it);
+    return it;
+  }
+  const spawnX = () => viewW + 70;
+  function addSpark(x, y, o) {
+    const it = Object.assign(itemBase({ spk: 1, good: 1, pts: 2, x, y, y0: y, ph: rand() * TAU }), o);
+    items.push(it);
+    return it;
+  }
+  function addTreat(o) {
+    const h = lives < MAX_LIVES && rand() < 0.09;
+    return addItem(
+      h ? "❤️" : pick(zone.food),
+      h ? 38 : pick([30, 36, 44, 54, 66]),
+      1,
+      Object.assign(h ? { heart: 1 } : {}, o),
+    );
+  }
+  const addBomb = (o) => addItem("💣", pick([32, 40, 50, 62, 76]), 0, o);
+  function addJumpArc(x) {
+    const Tj = (2 * RUN_JUMP) / RUN_GRAVITY;
+    for (let i = 0; i < 5; i++) {
+      const f = 0.18 + i * 0.16,
+        t = f * Tj;
+      addSpark(x + (f - 0.5) * speed * Tj, RUN_JUMP * t - (RUN_GRAVITY * t * t) / 2 + 22);
+    }
+  }
+  function addSparkLine(x, y, n, o) {
+    for (let i = 0; i < n; i++) addSpark(x + i * 42, y, o);
+  }
+  function spawnDecor(x) {
+    const r = zone;
+    if (!r.decor.length) return;
+    const d = pick(r.decor);
+    decor.push({
+      sp: spriteFor(d[0], d[1]),
+      size: d[1],
+      x: x == null ? viewW + d[1] : x,
+      f: lerp(d[2], d[3], rand()),
+      par: d[4],
+      al: d[5],
+      a: 0,
+    });
+  }
+  function spawnBackdrop(em, x) {
+    const sp = makeSprite(em, 22, 0);
+    backdrops.push({
+      img: textureOf(sp, rand() < 0.5 ? 1 : 2),
+      r: sp.h / sp.w,
+      x: x == null ? viewW * 1.3 : x,
+      y: randRange(0.05, 0.75),
+      size: randRange(200, 430),
+      par: randRange(0.04, 0.1),
+      al: randRange(0.1, 0.19),
+      a: 0,
+    });
+  }
+
+  function collect(it) {
+    const x = it.sx,
+      y = it.sy;
+    if (it.seed) {
+      wakeColour();
+      addRing(x, y, 1, 1);
+      emitStars(x, y, 12);
+      return;
+    }
+    if (it.dot) {
+      eaten++;
+      score++;
+      if (eaten % 4 === 0) playTone(noteHz((eaten / 4) % 10), 0.12, "sine", 0.045, 1);
+      emit(x, y, randRange(-40, 40), randRange(-70, -20), 0.4, 3.5, hue(time * 90), 0, 0.5);
+      return;
+    }
+    combo = time - comboTime < 2.5 ? combo + 1 : 0;
+    comboTime = time;
+    score += it.pts;
+    if (it.heart) {
+      lives = min(MAX_LIVES, lives + 1);
+      addFloater(x, y - 20, "+♥", "#ff4d6d");
+    }
+    if (boidList.reduce((a, b) => a + b.f, 0) < MAX_FOLLOWERS)
+      boidList.push({ x, y, vx: randRange(-90, 90), vy: randRange(-90, 90), f: 1, h: rand() * 360 });
+    if (it.spk) {
+      emitStars(x, y, 2);
+      sfxSpark();
+      return;
+    }
+    addRing(x, y, 1);
+    emitStars(x, y, 6 + ((it.size / 7) | 0));
+    addFloater(x, y - it.size * 0.5, "+" + it.pts);
+    sfxTreat();
+    if (zone.mode === "lane") eaten += 6;
+  }
+  function takeHit(it) {
+    const x = it.sx,
+      y = it.sy;
+    lives--;
+    heartLostT = 1;
+    player.inv = 1.8;
+    player.shock = 1;
+    shake = 14;
+    redFlash = 1;
+    combo = 0;
+    addRing(x, y, 0);
+    sfxBoom();
+    for (let i = 0; i < 34; i++)
+      emit(
+        x,
+        y,
+        randRange(-260, 260),
+        randRange(-300, 160),
+        randRange(0.4, 1.1),
+        randRange(3, 7),
+        chroma > 0.5 ? pick(["#ff2a2a", "#ff7a1a", "#111", "#111", "#ffd000"]) : inkCss,
+        300,
+        0.3,
+      );
+    for (const q of swarm.p) {
+      q.vx += randRange(-300, 300);
+      q.vy += randRange(-300, 300);
+    }
+    if (it.sp) burst(it);
+    boidList = boidList.filter((b) => {
+      if (b.f && rand() < 0.45) {
+        emit(b.x, b.y, randRange(-200, 200), randRange(-200, 200), 0.8, 4, "#ff2a2a", 200, 0.3);
+        return 0;
+      }
+      return 1;
+    });
+    if (lives <= 0) die();
+  }
+
+  /* ---------- flow between zones */
+  function showCard(t, how, leg) {
+    card = { sp: t ? makeTextSprite(t) : null, how: how || "", leg, t: 0 };
+  }
+  const difficulty = () => clamp(depth * 0.09 + (zoneDist / zone.length) * 0.25 + lap * 0.25, 0, 1);
+  function resetRun() {
+    introScale = Object.keys(seenZones).length > 1 ? 0.4 : 1;
+    score = 0;
+    lastHundred = 0;
+    depth = 0;
+    lap = 0;
+    awake = 0;
+    chroma = 0;
+    openness = 0;
+    lives = START_LIVES;
+    heartLostT = 0;
+    items.length = decor.length = backdrops.length = rings.length = floaters.length = boidList.length = 0;
+    gate = null;
+    warp = 0;
+    whiteout = 0;
+    card = null;
+    combo = 0;
+    groundAlpha = 1;
+    redFlash = 0;
+    player.y = 0;
+    player.vy = 0;
+    player.on = 1;
+    player.inv = 0;
+    player.shock = 0;
+    zoneKey = "dunes";
+    readTheme();
+    layout();
+    player.sx = playerX;
+    player.sy = groundY - 22;
+    enterZone("dunes", 1);
+  }
+  function enterZone(k, first) {
+    for (const it of items) if (it.bad && it.sp && it.sx > -200) burst(it);
+    items.length = 0;
+    bullets.length = 0;
+    for (const d of decor) d.die = 1;
+    for (const b of backdrops) b.die = 1;
+    zoneKey = k;
+    zone = ZONES[k];
+    zoneDist = 0;
+    zoneTime = 0;
+    gate = null;
+    spawnT = 0.6;
+    sparkT = 1.5;
+    eaten = 0;
+    if (!first) {
+      depth++;
+      quietT = 2.4;
+      player.inv = max(player.inv, 1.8);
+      flash = 1;
+      flashColor = zone.accent;
+      showCard(zone.name, zone.hint, 1);
+      sfxGate();
+      addRing(player.sx, player.sy, 1, 1);
+    }
+    seenZones[k] = 1;
+    saveProgress();
+    speed = zone.speed * (1 + 0.1 * lap);
+    gateAt = k === "dunes" ? 1e9 : zone.length;
+    seedAtDist = 45 * introScale;
+    autoWakeDist = 150 * introScale;
+    seedCooldown = 0;
+    player.sz = zone.size;
+    player.k = 1;
+    player.spin = 0;
+    player.ang = 0;
+    player.vy = 0;
+    swarm.set(spriteFor(zone.hero, player.sz, zone.flip), player.sz, player.sx, player.sy);
+    boidList = boidList.filter((b) => b.f);
+    if (zone.flock)
+      for (let i = 0; i < zone.flock[0]; i++)
+        boidList.push({
+          x: rand() * viewW,
+          y: clipT + rand() * (playH - clipT) * 0.8,
+          vx: randRange(-80, 80),
+          vy: randRange(-80, 80),
+          f: 0,
+        });
+    mode = MODES[zone.mode];
+    mode.init();
+    for (let i = 0; i < 3; i++) spawnDecor(rand() * viewW);
+    zone.backdrops.forEach((e, i) => spawnBackdrop(e, viewW * (0.15 + i * 0.4)));
+    updatePad();
+  }
+  function wakeColour() {
+    awake = 1;
+    gateAt = zoneDist + 190 * introScale;
+    flash = 1;
+    flashColor = "#ffd28a";
+    sfxWake();
+    updatePad();
+    showCard(null, zone.hint, 1);
+    for (let i = 0; i < 70; i++) {
+      const a = (i / 70) * TAU;
+      emit(
+        player.sx,
+        player.sy,
+        cos(a) * randRange(80, 260),
+        sin(a) * randRange(80, 260),
+        randRange(0.8, 1.5),
+        3,
+        hue(i * 5),
+        0,
+        0,
+      );
+    }
+  }
+  function jump() {
+    player.vy = RUN_JUMP;
+    player.on = 0;
+    player.jumps++;
+    player.cut = !held;
+    sfxJump();
+    emitDust(4);
+  }
+  function emitDust(n) {
+    for (let i = 0; i < n; i++)
+      emit(
+        player.sx + randRange(-8, 8),
+        player.sy + player.sz * 0.48,
+        randRange(-60, 20),
+        randRange(-50, -10),
+        0.4,
+        2.2,
+        chroma > 0.5 && zone.mode === "ski" ? "#fff" : inkCss,
+        120,
+        0.8,
+      );
+  }
+  function die() {
+    state = "over";
+    overTime = 0;
+    held = 0;
+    for (const q of swarm.p)
+      if (q.on) {
+        q.on = 0;
+        emit(
+          q.x,
+          q.y,
+          randRange(-200, 200),
+          randRange(-260, 120),
+          randRange(0.8, 1.8),
+          swarm.u * 0.9,
+          chroma > 0.5 ? q.c : inkCss,
+          220,
+          0,
+        );
+      }
+    sfxOver();
+    if (!godMode) hiScore = max(hiScore, score | 0);
+    saveProgress();
+    updatePad();
+  }
+  function rebirth() {
+    lap++;
+    warp = 0;
+    whiteout = 1;
+    awake = 0;
+    chroma = 0;
+    openness = 0;
+    particles.length = 0;
+    rings.length = 0;
+    zoneKey = "dunes";
+    readTheme();
+    layout();
+    player.sx = playerX;
+    player.sy = groundY - 112;
+    enterZone("dunes", 1);
+    player.y = 90;
+    player.on = 0;
+    depth++;
+    introScale = 0.4;
+    seedAtDist = 18;
+    autoWakeDist = 60;
+    quietT = 1.5;
+    showCard("DUNES", "LAP " + (lap + 1));
+  }
+  function openGate() {
+    const z = zone,
+      m = z.mode,
+      a = ZONES[z.forkA].name,
+      b = ZONES[z.forkB].name;
+    gate = { x: viewW + 320, z: Z_FAR, a: z.forkA, b: z.forkB, hole: z.hole, r: [] };
+    quietT = 1e9;
+    if (z.hole) showCard("THE QUIET", "NOTHING TO DO · LET GO");
+    else
+      showCard(
+        "FORK",
+        m === "zoom"
+          ? "LEFT = " + a + " · RIGHT = " + b
+          : m === "turn"
+            ? "HIGH = " + a + " · LOW = " + b
+            : "JUMP = " + a + " · STAY LOW = " + b,
+      );
+  }
+
+  /* ---------- modes: what one tap does, where things spawn, how they move, what the ground looks like */
+  function moveSide(it, dt, v) {
+    it.t += dt;
+    it.x -= (v + it.vx) * dt;
+    if (it.vy) it.y0 += it.vy * dt;
+    if (it.gnd != null) it.y0 = terrainAt(it.x + scrollX) + it.gnd;
+    it.y = it.y0 + (it.bob ? sin(it.t * it.f + it.ph) * it.bob : 0);
+    it.sx = it.x;
+    it.sy = groundY - it.y;
+    return it.x > -140 ? 2 : 0;
+  }
+  function gateSide(dt, v) {
+    gate.x -= v * dt;
+    const r = this.rings(gate.x),
+      big = zone.mode === "turn";
+    gate.r = [
+      [gate.x, groundY - r[0], big ? 46 : 34],
+      [gate.x, groundY - r[1], big ? 46 : 28],
+    ];
+    return gate.x < player.sx;
+  }
+  const initSide = () => {
+    player.y = clamp(groundY - player.sy - player.sz / 2, 0, bandH - player.sz);
+  };
+  const terrainAt = (X) => 62 + 44 * sin(X / 250) + 20 * sin(X / 103 + 1) + 44 * noise(X / 150, 3);
+  const caveMid = (X) => bandH * (0.32 + 0.36 * noise(X / 420, 11)),
+    caveHalf = (X) => 80 + 36 * noise(X / 190, 5),
+    caveFloor = (X) => max(0, caveMid(X) - caveHalf(X)),
+    caveCeil = (X) => min(bandH, caveMid(X) + caveHalf(X));
+  const riverMid = (Y) => viewW / 2 + viewW * 0.2 * (noise(Y / 380, 2) * 2 - 1),
+    riverHalf = (Y) => viewW * 0.2 + viewW * 0.1 * noise(Y / 260, 8);
+  // Shared by the three "tap = turn left / right" modes: ease toward the current direction and bounce off the edges.
+  function steer(dt, maxSpeed, response, lo, hi) {
+    if (tapped) {
+      player.dir = -player.dir;
+      sfxTurn();
+    }
+    player.vx += (player.dir * maxSpeed - player.vx) * min(1, response * dt);
+    player.lx += player.vx * dt;
+    if (player.lx < lo) {
+      player.lx = lo;
+      player.dir = 1;
+    }
+    if (player.lx > hi) {
+      player.lx = hi;
+      player.dir = -1;
+    }
+  }
+  const MODES = {
+    run: {
+      view: "side",
+      init() {
+        initSide();
+        player.on = player.y <= 0 ? 1 : 0;
+        player.jumps = 1;
+        player.cut = 0;
+      },
+      step(dt) {
+        if (tapped) {
+          if (player.on) jump();
+          else jumpBuffer = 0.13;
+        } else if (jumpBuffer > 0) {
+          jumpBuffer -= dt;
+          if (player.on) {
+            jump();
+            jumpBuffer = 0;
+          }
+        }
+        if (!player.on) {
+          player.vy -= RUN_GRAVITY * dt;
+          if (player.cut && player.y >= 28 && player.vy > 300) player.vy = 300;
+          player.y += player.vy * dt;
+          if (player.y <= 0) {
+            player.y = 0;
+            player.vy = 0;
+            player.on = 1;
+            player.jumps = 0;
+            player.sy = groundY - player.sz / 2;
+            emitDust(5);
+          }
+        }
+        player.sx = playerX;
+        player.sy = groundY - player.y - player.sz / 2;
+        player.ang = 0;
+        if (!awake) {
+          seedCooldown -= dt;
+          if (zoneDist > seedAtDist && seedCooldown <= 0 && !items.some((s) => s.seed)) {
+            addSpark(spawnX(), 64, { seed: 1, hw: 30, hh: 30 });
+            seedCooldown = 2.6;
+          }
+          if (zoneDist > autoWakeDist) wakeColour();
+        }
+        if (quietT <= 0 && !gate) {
+          spawnT -= dt;
+          if (spawnT <= 0) {
+            this.ob();
+            spawnT = ((randRange(0.9, 1.65) * (1.25 - difficulty() * 0.4) * 360) / speed) * 1.1;
+          }
+          sparkT -= dt;
+          if (sparkT <= 0 && awake) {
+            rand() < 0.5 ? addSparkLine(spawnX(), 22, 5) : addTreat({ x: spawnX(), y: pick([26, 100]) });
+            sparkT = randRange(2, 3.6);
+          }
+        }
+      },
+      ob() {
+        if (zoneDist > 55 && rand() < 0.22) {
+          const up = rand() < 0.45,
+            it = addItem("🦅|🐦", 34, 0, { x: spawnX() });
+          it.y = it.y0 = (up ? 62 : 6) + it.H / 2;
+          if (up && awake) addSparkLine(spawnX() - 60, 22, 4);
+          return;
+        }
+        const big = rand() < 0.4,
+          n = 1 + ((rand() * min(big ? 2 : 3, 1 + speed / 260)) | 0);
+        let w = 0;
+        for (let i = 0; i < n; i++) {
+          const it = addItem("🌵", big ? 52 : 36, 0, {});
+          w = it.W;
+          it.x = spawnX() + i * w * 0.85;
+          it.y = it.y0 = it.H / 2;
+        }
+        if (awake && rand() < 0.6) addJumpArc(spawnX() + (n - 1) * w * 0.42);
+      },
+      mv: moveSide,
+      gate: gateSide,
+      rings: () => [90, 24],
+      hi: () => player.y > 26,
+    },
+    ski: {
+      view: "side",
+      init() {
+        initSide();
+        player.on = 0;
+        player.y = max(player.y, terrainAt(scrollX + playerX));
+      },
+      step(dt, v) {
+        const h = terrainAt(scrollX + playerX),
+          sl = (terrainAt(scrollX + playerX + 5) - terrainAt(scrollX + playerX - 5)) / 10,
+          G = 700;
+        speed = clamp(speed + (-sl * 460 - (speed - zone.speed * (1 + 0.1 * lap)) * 0.9) * dt, 230, 560);
+        if (player.on) {
+          if (tapped) {
+            player.vy = max(player.vy, 0) * 0.5 + 400;
+            player.on = 0;
+            sfxJump();
+            emitDust(4);
+          } else {
+            const yb = player.y + player.vy * dt - (G * dt * dt) / 2;
+            if (yb > h + 2) {
+              player.on = 0;
+              player.y = yb;
+              player.vy -= G * dt;
+            } else {
+              player.y = h;
+              player.vy = sl * v;
+            }
+          }
+        } else {
+          player.vy -= G * dt;
+          player.y += player.vy * dt;
+          if (held) player.spin += dt * 8;
+          if (player.y <= h) {
+            player.y = h;
+            player.on = 1;
+            player.vy = sl * v;
+            emitDust(7);
+            const n = M.round(player.spin / TAU);
+            player.spin = 0;
+            if (n > 0) {
+              score += 40 * n;
+              addRing(player.sx, player.sy, 1);
+              emitStars(player.sx, player.sy, 10);
+              addFloater(player.sx + 30, player.sy - 50, n > 1 ? "FLIP x" + n : "FLIP!");
+              sfxTreat();
+            }
+          }
+        }
+        player.sx = playerX;
+        player.sy = groundY - player.y - player.sz * 0.46;
+        player.ang = -M.atan(sl) * (player.on ? 1 : 0.4) - player.spin;
+        if (quietT <= 0 && !gate) {
+          spawnT -= dt;
+          if (spawnT <= 0) {
+            const x = spawnX(),
+              r = rand();
+            if (r < 0.3) addSparkLine(x, 0, 6, { gnd: 26 });
+            else if (r < 0.55) {
+              for (let i = 0; i < 5; i++) addSpark(x + i * 48, 0, { gnd: 62 + 70 * sin(((i + 0.5) / 5) * M.PI) });
+              addTreat({ x: x + 96, gnd: 158 });
+            } else if (r < 0.72 + 0.18 * difficulty()) {
+              const b = addBomb({ x: x + 96 });
+              b.gnd = b.H / 2 - 4;
+              for (let i = 0; i < 5; i++) addSpark(x + i * 48, 0, { gnd: b.H + 34 + 44 * sin(((i + 0.5) / 5) * M.PI) });
+            } else {
+              const t = addTreat({ x });
+              t.gnd = t.H / 2 + 10;
+            }
+            spawnT = randRange(1.1, 1.9);
+          }
+        }
+      },
+      back() {
+        const cols = ["#ffffff", "#dfeaff", "#c6d8f8"];
+        for (let k = 0; k < 3; k++) {
+          ctx.fillStyle = cols[k];
+          ctx.globalAlpha = zoneVis;
+          ctx.beginPath();
+          ctx.moveTo(-10, viewH + 10);
+          for (let x = -10; x <= viewW + 10; x += 8) ctx.lineTo(x, groundY - terrainAt(scrollX + x) + k * k * 22);
+          ctx.lineTo(viewW + 10, viewH + 10);
+          ctx.fill();
+        }
+        ctx.fillStyle = "#9fc0f2";
+        ctx.globalAlpha = 0.8 * zoneVis;
+        for (let x = -(scrollX % 14); x < viewW; x += 14) ctx.fillRect(x, groundY - terrainAt(scrollX + x) - 1.5, 3, 3);
+      },
+      mv: moveSide,
+      gate: gateSide,
+      rings: (x) => {
+        const h = terrainAt(x + scrollX);
+        return [h + 132, h + 34];
+      },
+      hi: () => player.y - terrainAt(scrollX + playerX) > 48,
+    },
+    lane: {
+      view: "side",
+      init() {
+        player.lane = 1;
+        player.dir = 1;
+        player.on = 0;
+        this.c = 0;
+        this.g = 2;
+        this.t = 1.5;
+      },
+      L: (i) => bandH * (0.14 + 0.24 * i),
+      step(dt, v) {
+        if (tapped) {
+          if (player.lane + player.dir < 0 || player.lane + player.dir > 3) player.dir = -player.dir;
+          player.lane += player.dir;
+          playTone(noteHz(player.lane * 2), 0.14, "triangle", 0.06, 1);
+        }
+        player.k += (1 + min(2.3, eaten * 0.009) - player.k) * min(1, dt * 4);
+        player.sx = playerX + (player.k - 1) * player.sz * 0.42;
+        player.sy += (groundY - this.L(player.lane) - player.sy) * min(1, dt * 10);
+        player.y = groundY - player.sy - player.sz / 2;
+        player.ang = sin(time * 9) * 0.08;
+        this.c -= v * dt;
+        while (this.c <= 0) {
+          this.c += 36;
+          for (let i = 0; i < 4; i++)
+            items.push(
+              itemBase({ dot: 1, good: 1, size: 8, hw: 11, hh: 11, x: spawnX(), y: this.L(i), y0: this.L(i), ph: i }),
+            );
+        }
+        if (quietT <= 0) {
+          this.g -= dt;
+          if (this.g <= 0) {
+            const i = (rand() * 4) | 0;
+            addItem("👻", 46, 1, {
+              x: spawnX(),
+              y: this.L(i),
+              vx: -v * 0.42,
+              ghost: 1,
+              lane: i,
+              cd: 0,
+              pts: 50,
+            });
+            this.g = randRange(2.2, 3.4);
+          }
+          this.t -= dt;
+          if (this.t <= 0) {
+            addTreat({ x: spawnX(), y: this.L((rand() * 4) | 0) });
+            this.t = randRange(1.4, 2.4);
+          }
+        }
+        for (const it of items)
+          if (it.ghost) {
+            it.cd -= dt;
+            if (it.cd <= 0 && it.lane === player.lane && it.x > player.sx && it.x - player.sx < 280) {
+              it.lane += it.lane <= 0 ? 1 : it.lane >= 3 ? -1 : rand() < 0.5 ? 1 : -1;
+              it.cd = 1;
+            }
+            it.y0 += (this.L(it.lane) - it.y0) * min(1, dt * 5);
+          }
+        if (player.k > 2.3 && rand() < dt * 50)
+          emit(
+            rand() * viewW,
+            groundY - bandH * (0.02 + 0.24 * ((rand() * 5) | 0)),
+            randRange(-30, 30),
+            randRange(-60, 60),
+            0.9,
+            3,
+            "#4d7bff",
+            0,
+            0.6,
+          );
+      },
+      back() {
+        const a = clamp(1 - (player.k - 2.3) / 0.9, 0, 1) * zoneVis;
+        if (a <= 0) return;
+        ctx.strokeStyle = "#4d7bff";
+        ctx.lineWidth = 3.5;
+        ctx.lineCap = "round";
+        const rr = player.sz * player.k * 0.62;
+        for (let j = 0; j < 5; j++) {
+          const by = groundY - bandH * (0.02 + 0.24 * j),
+            d = by - player.sy;
+          ctx.globalAlpha = a * (0.65 + 0.3 * sin(time * 3 + j));
+          ctx.beginPath();
+          for (let x = -12; x <= viewW + 12; x += 12)
+            ctx.lineTo(
+              x,
+              by +
+                sin((x + scrollX) * 0.045 + time * 3 + j) * 3 +
+                (d < 0 ? -1 : 1) * max(0, rr - abs(d)) * M.exp(-M.pow((x - player.sx) / (rr * 1.1), 2)),
+            );
+          ctx.stroke();
+          if (j < 4)
+            for (let c = M.floor(scrollX / 130); c < (scrollX + viewW) / 130 + 1; c++)
+              if ((c * 7 + j * 3) % 5 < 2) {
+                const x = c * 130 - scrollX;
+                ctx.beginPath();
+                ctx.moveTo(x, by);
+                ctx.lineTo(x + sin(time * 3 + c) * 4, by - bandH * 0.085);
+                ctx.stroke();
+              }
+        }
+      },
+      mv: moveSide,
+    },
+    turn: {
+      view: "side",
+      init() {
+        initSide();
+        player.on = 0;
+        player.dir = player.y > bandH / 2 ? -1 : 1;
+      },
+      step(dt) {
+        if (tapped) {
+          player.dir = -player.dir;
+          sfxTurn();
+        }
+        const cv_ = zone.cave,
+          X = scrollX + playerX,
+          lo = cv_ ? caveFloor(X) + 6 : 0,
+          top = (cv_ ? caveCeil(X) - 6 : bandH) - player.sz,
+          yy = (f) =>
+            cv_ ? lerp(caveFloor(scrollX + spawnX()) + 34, caveCeil(scrollX + spawnX()) - 34, f) : f * bandH;
+        player.vy += (player.dir * 170 - player.vy) * min(1, 5 * dt);
+        player.y += player.vy * dt;
+        if (player.y < lo) {
+          player.y = lo;
+          player.dir = 1;
+        }
+        if (player.y > top) {
+          player.y = top;
+          player.dir = -1;
+        }
+        player.sx = playerX;
+        player.sy = groundY - player.y - player.sz / 2;
+        player.ang = -clamp(player.vy / 500, -0.4, 0.4);
+        if (quietT <= 0 && !gate) {
+          spawnT -= dt;
+          if (spawnT <= 0) {
+            const r = rand(),
+              y = yy(randRange(0.12, 0.88));
+            if (r < 0.42) {
+              const a = cv_ ? 0 : randRange(20, 70),
+                f = rand();
+              for (let i = 0; i < 7; i++)
+                addSpark(
+                  spawnX() + i * 46,
+                  cv_
+                    ? lerp(caveFloor(scrollX + spawnX() + i * 46) + 34, caveCeil(scrollX + spawnX() + i * 46) - 34, f)
+                    : clamp(y + a * sin(i * 0.8), 20, bandH - 20),
+                );
+            } else if (r < 0.76 + (0.1 - 0.2 * difficulty())) addTreat({ x: spawnX(), y, bob: randRange(6, 22) });
+            else addBomb({ x: spawnX(), y, bob: 10 });
+            spawnT = randRange(0.9, 1.6);
+          }
+        }
+      },
+      back() {
+        if (!zone.cave) return;
+        for (const s of [1, -1]) {
+          const f = s > 0 ? caveFloor : caveCeil;
+          ctx.fillStyle = "#07050f";
+          ctx.globalAlpha = zoneVis;
+          ctx.beginPath();
+          ctx.moveTo(-12, s > 0 ? viewH + 10 : -10);
+          for (let x = -12; x <= viewW + 12; x += 12) ctx.lineTo(x, groundY - f(scrollX + x));
+          ctx.lineTo(viewW + 12, s > 0 ? viewH + 10 : -10);
+          ctx.fill();
+          ctx.fillStyle = "#a48fd8";
+          ctx.globalAlpha = 0.85 * zoneVis;
+          for (let x = -(scrollX % 10); x < viewW; x += 10) ctx.fillRect(x, groundY - f(scrollX + x) - 1.5, 3, 3);
+          for (let c = M.floor(scrollX / 70); c < (scrollX + viewW) / 70 + 1; c++)
+            if (hash2(c, s + 2) > 0.45) {
+              const X = c * 70 + hash2(c, 7) * 50,
+                x = X - scrollX,
+                y = groundY - f(X) + s * (8 + hash2(c, 4) * 26),
+                k = 5 + hash2(c, 6) * 7; // glowing crystals
+              ctx.globalAlpha = (0.35 + 0.25 * sin(time * 2 + c)) * zoneVis;
+              ctx.drawImage(GLOW_WHITE, x - k * 2.5, y - k * 2.5, k * 5, k * 5);
+              ctx.globalAlpha = zoneVis;
+              ctx.fillStyle = hue(250 + hash2(c, 8) * 90);
+              ctx.fillRect(x - k / 2, y - k, k, k * 2);
+            }
+        }
+      },
+      mv: moveSide,
+      gate: gateSide,
+      rings: (x) =>
+        zone.cave
+          ? [
+              lerp(caveFloor(x + scrollX), caveCeil(x + scrollX), 0.76),
+              lerp(caveFloor(x + scrollX), caveCeil(x + scrollX), 0.24),
+            ]
+          : [bandH * 0.75, bandH * 0.25],
+      hi: () => player.y + player.sz / 2 > (zone.cave ? caveMid(scrollX + playerX) : bandH / 2),
+    },
+    hop: {
+      view: "side",
+      init() {
+        initSide();
+        pads.length = 0;
+        player.on = 0;
+        player.jumps = 1;
+        player.y = max(player.y, 50);
+        this.x = playerX + 70;
+        this.fill(0);
+      },
+      fill(v) {
+        while (this.x < viewW + 420) {
+          const x = this.x,
+            gp = randRange(135, 225),
+            ap = (1500 * M.pow(gp / (v || 300), 2)) / 8,
+            r = rand(),
+            p = { x, w: randRange(66, 104), ph: rand() * TAU, d: 0 };
+          pads.push(p);
+          this.x += gp;
+          if (x < viewW) continue;
+          if (r < 0.4) for (let i = 1; i < 4; i++) addSpark(x + (gp * i) / 4, 34 + ap * 4 * (i / 4) * (1 - i / 4));
+          else if (r < 0.66) addTreat({ x: x + gp / 2, y: ap + 120 });
+          else if (r < 0.74 + 0.08 * difficulty() && quietT <= 0) addItem("💣", pick([32, 40, 50]), 0, { x, y: 26 });
+          else addTreat({ x, y: 34 });
+        }
+      },
+      step(dt, v) {
+        const G = 1500;
+        for (const p of pads) {
+          p.x -= v * dt;
+          p.d = max(0, p.d - dt * 3);
+        }
+        this.x -= v * dt;
+        while (pads.length && pads[0].x < -90) pads.shift();
+        this.fill(v);
+        const go = () => {
+          const p = pads.find((p) => p.x > playerX + 50);
+          player.vy = (G * (p.x - playerX)) / v / 2;
+          player.on = 0;
+          player.jumps = 0;
+        };
+        if (player.on) {
+          if ((player.hopT -= dt) <= 0) {
+            go();
+            playTone(noteHz((rand() * 5) | 0), 0.1, "triangle", 0.04, 1);
+          }
+        } else {
+          player.vy -= G * dt;
+          player.y += player.vy * dt;
+          if (tapped && player.jumps < 1) {
+            player.vy = max(player.vy, 0) * 0.3 + 520;
+            player.jumps = 1;
+            player.spin = 0.01;
+            sfxJump();
+          }
+          if (player.spin > 0 && (player.spin += dt * 10) > TAU) player.spin = 0;
+          if (player.y <= 6 && player.vy < 0) {
+            const p = pads.find((p) => abs(p.x - playerX) < p.w / 2 + 12);
+            if (p) {
+              player.y = 6;
+              player.on = 1;
+              player.hopT = 0.09;
+              player.spin = 0;
+              p.d = 1;
+            } else if (player.y <= -8) {
+              player.y = -8;
+              go();
+              for (let i = 0; i < 10; i++)
+                emit(
+                  playerX + randRange(-14, 14),
+                  groundY,
+                  randRange(-80, 80),
+                  randRange(-230, -80),
+                  0.6,
+                  3.5,
+                  "#e6f8ff",
+                  520,
+                  0.5,
+                );
+              playTone(180, 0.2, "sine", 0.08, 1, 90);
+            }
+          }
+        }
+        player.sx = playerX;
+        player.sy = groundY - player.y - player.sz * 0.42;
+        player.ang = -player.spin;
+      },
+      back() {
+        for (const p of pads) {
+          const y = groundY - 3 + sin(time * 2 + p.ph) * 1.5 + p.d * 4;
+          ctx.globalAlpha = zoneVis;
+          ctx.fillStyle = "#2a7d42";
+          ctx.beginPath();
+          ctx.ellipse(p.x, y + 2, p.w / 2, 10, 0, 0, TAU);
+          ctx.fill();
+          ctx.fillStyle = "#46b862";
+          ctx.beginPath();
+          ctx.moveTo(p.x, y);
+          ctx.ellipse(p.x, y, p.w / 2, 9, 0, 0.5, TAU - 0.1);
+          ctx.fill();
+          if (p.d > 0) {
+            ctx.strokeStyle = "#e6f8ff";
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = p.d * 0.8;
+            ctx.beginPath();
+            ctx.ellipse(p.x, y + 3, p.w / 2 + (1 - p.d) * 26, 10 + (1 - p.d) * 7, 0, 0, TAU);
+            ctx.stroke();
+          }
+        }
+      },
+      mv: moveSide,
+      gate: gateSide,
+      rings: () => [150, 34],
+      hi: () => player.y > 75,
+    },
+    shoot: {
+      view: "top",
+      init() {
+        player.lx = clamp(player.sx, 50, viewW - 50);
+        player.dir = 1;
+        player.vx = 0;
+        fireT = 0.5;
+        bombT = 3;
+        this.e = 0;
+      },
+      step(dt, v) {
+        steer(dt, 200, 6, 44, viewW - 44);
+        player.sx = player.lx;
+        player.sy += (playH - 74 - player.sy) * min(1, dt * 5);
+        player.ang = player.vx / 700;
+        scrollY += v * dt;
+        formX = viewW / 2 + sin(time * 0.7) * viewW * 0.12 + (noise(time * 0.35, 1) - 0.5) * viewW * 0.16;
+        formY = clipT + (playH < 520 ? 74 : 110) + sin(time * 1.3) * 12;
+        if (quietT <= 0 && !items.some((i) => i.foe)) {
+          const cols = clamp(((viewW - 70) / 72) | 0, 3, 6),
+            rows = playH < 520 ? 2 : 3,
+            em = ["👾", "👽", "🛸", "🤖"][this.e++ % 4];
+          for (let r = 0; r < rows; r++)
+            for (let c = 0; c < cols; c++)
+              addItem(em, 42, 0, { foe: 1, bad: 0, ox: (c - (cols - 1) / 2) * 72, oy: r * 58, ent: 1 + r * 0.15 });
+        }
+        fireT -= dt;
+        if (fireT <= 0) {
+          bullets.push({ x: player.sx, y: player.sy - 34 });
+          fireT = 0.2;
+          playTone(990, 0.05, "square", 0.012, 0, 660);
+        }
+        for (let i = bullets.length; i--;) {
+          const b = bullets[i];
+          b.y -= 560 * dt;
+          let gone = b.y < clipT - 20;
+          for (const it of items)
+            if (it.foe && !it.dead && abs(it.sx - b.x) < 28 && abs(it.sy - b.y) < 26) {
+              it.dead = gone = 1;
+              burst(it);
+              addRing(it.sx, it.sy, 1);
+              score += 5;
+              playTone(noteHz(rand() * 8), 0.2, "triangle", 0.07, 1);
+              rand() < 0.3
+                ? addTreat({ x: it.sx, y: it.sy, vy: randRange(120, 160) })
+                : addSpark(it.sx, it.sy, { vy: randRange(130, 180) });
+              break;
+            }
+          if (gone) bullets.splice(i, 1);
+        }
+        bombT -= dt;
+        if (bombT <= 0) {
+          const f = items.filter((i) => i.foe);
+          if (f.length) {
+            const a = pick(f);
+            addBomb({ x: a.sx, y: a.sy, vy: randRange(105, 150) });
+          }
+          bombT = randRange(1.8, 3) * (1.3 - difficulty() * 0.5);
+        }
+      },
+      mv(it, dt) {
+        it.t += dt;
+        if (it.foe) {
+          if (it.dead) return 0;
+          it.ent = max(0, it.ent - dt);
+          it.sx = formX + it.ox;
+          it.sy = formY + it.oy - ease(min(1, it.ent)) * 320;
+          return 1;
+        }
+        it.y += it.vy * dt;
+        it.sx = it.x;
+        it.sy = it.y;
+        return it.sy < playH + 60 ? 2 : 0;
+      },
+      fore() {
+        for (const b of bullets) {
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = hue(time * 300 + b.y);
+          ctx.fillRect(b.x - 2.5, b.y - 9, 5, 18);
+        }
+      },
+    },
+    flow: {
+      view: "top",
+      init() {
+        player.lx = clamp(player.sx, 70, viewW - 70);
+        player.dir = 1;
+        player.vx = 0;
+      },
+      step(dt, v) {
+        const py = playH - 100,
+          c = riverMid(scrollY - py),
+          h = riverHalf(scrollY - py) - player.sz * 0.3;
+        steer(dt, 150, 5, c - h, c + h);
+        player.sx = player.lx;
+        player.sy += (py - player.sy) * min(1, dt * 5);
+        player.ang = player.vx / 420;
+        scrollY += v * dt;
+        if (quietT <= 0) {
+          spawnT -= dt;
+          if (spawnT <= 0) {
+            const Y = scrollY + 50,
+              r = rand(),
+              o = randRange(-0.6, 0.6);
+            if (r < 0.45)
+              for (let k = 0; k < 6; k++) addSpark(riverMid(Y + k * 46) + o * riverHalf(Y + k * 46), -50 - k * 46);
+            else if (r < 0.8 - 0.1 * difficulty()) addTreat({ x: riverMid(Y) + o * riverHalf(Y), y: -50, bob: 8 });
+            else addBomb({ x: riverMid(Y) + o * riverHalf(Y), y: -50 });
+            spawnT = randRange(0.9, 1.5);
+          }
+        }
+      },
+      mv(it, dt, v) {
+        it.t += dt;
+        it.y += v * dt;
+        it.sx = it.x + (it.bob ? sin(it.t * it.f + it.ph) * it.bob : 0);
+        it.sy = it.y;
+        return it.sy < playH + 80 ? 2 : 0;
+      },
+      back() {
+        for (const s of [-1, 1]) {
+          ctx.globalAlpha = zoneVis;
+          ctx.fillStyle = "#3f8a4a";
+          ctx.beginPath();
+          ctx.moveTo(s * viewW * 2 + viewW / 2, -12);
+          for (let y = -12; y <= viewH + 12; y += 12)
+            ctx.lineTo(riverMid(scrollY - y) + s * (riverHalf(scrollY - y) + 18), y);
+          ctx.lineTo(s * viewW * 2 + viewW / 2, viewH + 12);
+          ctx.fill();
+          ctx.fillStyle = "#efe2ae";
+          for (let y = -(12 - (scrollY % 12)); y < viewH; y += 12)
+            ctx.fillRect(riverMid(scrollY - y) + s * (riverHalf(scrollY - y) + 18) - 2, y, 4, 5);
+        }
+        ctx.fillStyle = "#fff";
+        for (let i = 0; i < 34; i++) {
+          const y = ((i * 97 + scrollY * 1.2) % (viewH + 40)) - 20,
+            Y = scrollY - y;
+          ctx.globalAlpha = 0.22 * zoneVis;
+          ctx.fillRect(riverMid(Y) + (hash2(i, 3) * 2 - 1) * riverHalf(Y) * 0.85 + sin(time + i) * 4, y, 2.5, 16);
+        }
+      },
+    },
+    zoom: {
+      view: "depth",
+      init() {
+        player.lx = 0;
+        player.dir = 1;
+        player.vx = 0;
+        this.r = 1;
+        this.t = 0;
+        this.geo();
+      },
+      geo() {
+        laneHalfW = min(150, viewW * 0.36);
+        horizonY = clipT + (playH - clipT) * 0.34;
+        floorY = playH - 44;
+      },
+      pr(x, y, z) {
+        const s = FOCAL / (z + FOCAL);
+        return [viewW / 2 + (x - player.lx * 0.55) * s, horizonY + (floorY - horizonY) * s - y * s, s];
+      },
+      step(dt) {
+        this.geo();
+        steer(dt, 170, 5, -laneHalfW, laneHalfW);
+        player.sx = viewW / 2 + player.lx * 0.45;
+        player.sy += (floorY - player.sz * 0.5 - 8 + sin(time * 3) * 3 - player.sy) * min(1, dt * 6);
+        player.ang = player.vx / 420;
+        if (quietT <= 0 && !gate) {
+          this.r -= dt;
+          if (this.r <= 0) {
+            const L = [-0.72, 0, 0.72],
+              i = (rand() * 3) | 0,
+              x = L[i] * laneHalfW,
+              r = rand();
+            if (r < 0.42) for (let k = 0; k < 5; k++) addSpark(x, 0, { z: Z_FAR + k * 95, yy: 34, hw: 26, hh: 40 });
+            else if (r < 0.72) addTreat({ x, z: Z_FAR, yy: 40 });
+            else {
+              const b = addBomb({ x, z: Z_FAR });
+              b.yy = b.H / 2 + 6;
+              b.hw = b.W * 0.34;
+              for (let k = 0; k < 4; k++)
+                addSpark(L[(i + 1) % 3] * laneHalfW, 0, { z: Z_FAR + k * 95, yy: 34, hw: 26, hh: 40 });
+            }
+            this.r = randRange(0.55, 0.95) * (1.2 - difficulty() * 0.3);
+          }
+        }
+        if (zone.trees) {
+          this.t -= dt;
+          if (this.t <= 0) {
+            const s = randRange(210, 340);
+            addItem(pick(zone.trees), s, 0, {
+              deco: 1,
+              bad: 0,
+              x: (rand() < 0.5 ? -1 : 1) * (laneHalfW + 100 + rand() * 230),
+              z: Z_FAR,
+              yy: s * 0.46,
+            });
+            this.t = 0.075;
+          }
+        }
+      },
+      mv(it, dt, v) {
+        it.z -= v * Z_SPEED * dt;
+        if (it.z < -FOCAL * 0.5) return 0;
+        const p = this.pr(it.x, it.yy, it.z);
+        it.sx = p[0];
+        it.sy = p[1];
+        it.sc = p[2];
+        it.al = clamp(1.5 - (it.z / Z_FAR) * 1.5, 0, 1);
+        return it.z < 40 && it.z > -56 ? 2 : 1;
+      },
+      back() {
+        this.geo();
+        const z = zone,
+          W2 = laneHalfW + 34,
+          pr = (x, y, d) => this.pr(x, y, d);
+        ctx.globalAlpha = zoneVis;
+        ctx.fillStyle = z.ground;
+        ctx.fillRect(-9, horizonY, viewW + 18, viewH);
+        ctx.strokeStyle = z.line;
+        ctx.lineWidth = 1.6;
+        if (z.walls) {
+          for (const s of [-1, 1]) {
+            const a = pr(s * W2, 0, -90),
+              b = pr(s * W2, 0, Z_FAR),
+              c = pr(s * W2, 170, Z_FAR),
+              d = pr(s * W2, 170, -90);
+            ctx.globalAlpha = 0.85 * zoneVis;
+            ctx.fillStyle = "#0d1530";
+            ctx.beginPath();
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+            ctx.lineTo(c[0], c[1]);
+            ctx.lineTo(d[0], d[1]);
+            ctx.lineTo(s * viewW * 2, d[1]);
+            ctx.lineTo(s * viewW * 2, a[1]);
+            ctx.fill();
+            ctx.globalAlpha = 0.7 * zoneVis;
+            ctx.beginPath();
+            ctx.moveTo(a[0], a[1]);
+            ctx.lineTo(b[0], b[1]);
+            ctx.moveTo(d[0], d[1]);
+            ctx.lineTo(c[0], c[1]);
+            ctx.stroke();
+          }
+        }
+        for (let k = 0; k < 12; k++) {
+          const zz = k * 140 - (scrollZ % 140),
+            p = pr(-W2, 0, zz),
+            q = pr(W2, 0, zz);
+          ctx.globalAlpha = clamp(1.2 - (zz / Z_FAR) * 1.3, 0, 1) * 0.6 * zoneVis;
+          ctx.beginPath();
+          if (z.walls) {
+            ctx.moveTo(p[0], p[1] - 170 * p[2]);
+            ctx.lineTo(p[0], p[1]);
+            ctx.lineTo(q[0], q[1]);
+            ctx.lineTo(q[0], q[1] - 170 * q[2]);
+          } else {
+            ctx.moveTo(-9, p[1]);
+            ctx.lineTo(viewW + 9, p[1]);
+          }
+          ctx.stroke();
+        }
+      },
+      gate(dt, v) {
+        gate.z = max(gate.hole ? 70 : -9, gate.z - v * Z_SPEED * dt);
+        const a = this.pr(gate.hole ? 0 : -laneHalfW * 0.62, gate.hole ? 80 : 60, gate.z),
+          b = this.pr(laneHalfW * 0.62, 60, gate.z);
+        gate.r = gate.hole
+          ? [[a[0], a[1], 100 * a[2]]]
+          : [
+              [a[0], a[1], 62 * a[2]],
+              [b[0], b[1], 62 * b[2]],
+            ];
+        return gate.z < 0;
+      },
+      hi: () => player.lx < 0,
+    },
+    swing: {
+      view: "climb",
+      init() {
+        ropes.length = 0;
+        camY = 0;
+        player.rope = 0;
+        player.best = 0;
+        player.last = -1;
+        player.lt = 0;
+        player.fx = player.fy = 0;
+        for (let i = 0; i < 7; i++) this.rope();
+      },
+      rope() {
+        const i = ropes.length,
+          ax = viewW / 2 + (i % 2 ? 1 : -1) * min(105, viewW * 0.25) + randRange(-16, 16),
+          ay = 175 + i * 132;
+        ropes.push({ ax, ay, L: 118, ph: rand() * TAU, w: randRange(1.9, 2.3) });
+        if (i) {
+          const q = ropes[i - 1];
+          addTreat({ x: ax + randRange(-50, 50), wy: ay - 110 + randRange(-10, 40) });
+          for (let k = 1; k < 4; k++)
+            addSpark(lerp(q.ax, ax, k / 4), 0, { wy: lerp(q.ay, ay, k / 4) - 70 + 50 * sin((k / 4) * M.PI) });
+        }
+      },
+      end(r) {
+        const th = 0.95 * sin(r.w * time + r.ph);
+        return [r.ax + r.L * sin(th), r.ay - r.L * cos(th), th, 0.95 * r.w * cos(r.w * time + r.ph)];
+      },
+      step(dt) {
+        while (ropes.length < player.best + 7) this.rope();
+        if (player.rope >= 0) {
+          const r = ropes[player.rope],
+            e = this.end(r);
+          player.X = e[0];
+          player.Y = e[1];
+          player.ang = -e[2];
+          if (tapped) {
+            const n = this.end(ropes[player.rope + 1]);
+            player.fx = r.L * e[3] * cos(e[2]) * 0.4 + (n[0] - player.X) / 0.95;
+            player.fy = r.L * e[3] * sin(e[2]) * 0.4 + 500;
+            player.last = player.rope;
+            player.rope = -1;
+            player.lt = 0.4;
+            sfxJump();
+          }
+        } else {
+          player.lt -= dt;
+          player.fy -= 820 * dt;
+          player.X += player.fx * dt;
+          player.Y += player.fy * dt;
+          player.ang -= dt * 7;
+          if (player.X < 26) {
+            player.X = 26;
+            player.fx = abs(player.fx) * 0.6;
+          }
+          if (player.X > viewW - 26) {
+            player.X = viewW - 26;
+            player.fx = -abs(player.fx) * 0.6;
+          }
+          for (let j = max(0, player.best - 2); j < ropes.length; j++) {
+            if (j === player.last && player.lt > 0) continue;
+            const e = this.end(ropes[j]),
+              dx = e[0] - player.X,
+              dy = e[1] - player.Y,
+              d = M.hypot(dx, dy);
+            if (d < 52) {
+              player.rope = j;
+              if (j > player.best) {
+                zoneDist += 13 * (j - player.best);
+                score += 10 * (j - player.best);
+                player.best = j;
+                addRing(player.sx, player.sy, 1);
+                emitStars(player.sx, player.sy, 5);
+                sfxTreat();
+              }
+              break;
+            }
+            if (d < 140 && player.fy < 260) {
+              player.fx += dx * 6 * dt;
+              player.fy += dy * 6 * dt;
+            }
+          }
+          if (player.rope < 0 && player.Y < ropes[player.best].ay - 118 - 250) {
+            player.rope = player.best;
+            playTone(noteHz(0), 0.4, "sine", 0.1, 1, noteHz(5));
+          }
+        }
+        const ty = player.Y - (groundY - clipT) * 0.42;
+        camY += (ty - camY) * min(1, dt * (ty > camY ? 2.5 : 0.8));
+        player.sx = player.X;
+        player.sy = groundY - (player.Y - camY) + player.sz * 0.3;
+      },
+      mv(it, dt) {
+        it.t += dt;
+        it.sx = it.x;
+        it.sy = groundY - (it.wy - camY);
+        return it.sy < viewH + 80 ? 2 : 0;
+      },
+      back() {
+        const tx = viewW / 2 - 36,
+          sp = viewH + 60;
+        ctx.globalAlpha = zoneVis;
+        ctx.fillStyle = "#6b4a2e";
+        ctx.fillRect(tx, -9, 72, viewH + 18);
+        ctx.fillStyle = "#543820";
+        for (let i = 0; i < 16; i++)
+          ctx.fillRect(tx + ((i * 37) % 58), ((((i * 83 + camY) % sp) + sp) % sp) - 30, 11, 28);
+        ctx.strokeStyle = "#3f6e3a";
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.35 * zoneVis;
+        for (let i = 0; i < 9; i++) {
+          const x = (i * 131 + 40) % viewW;
+          ctx.beginPath();
+          ctx.moveTo(x, -9);
+          ctx.lineTo(x + sin(time + i) * 8, viewH);
+          ctx.stroke();
+        }
+        ctx.lineCap = "round";
+        for (const r of ropes) {
+          const e = this.end(r),
+            ay = groundY - (r.ay - camY);
+          if (ay < -260 || ay > viewH + 260) continue;
+          const kx = e[0],
+            ky = groundY - (e[1] - camY);
+          ctx.globalAlpha = zoneVis;
+          ctx.strokeStyle = "#6b4a2e";
+          ctx.lineWidth = 13;
+          ctx.beginPath();
+          ctx.moveTo(viewW / 2, ay + 12);
+          ctx.lineTo(r.ax, ay);
+          ctx.stroke();
+          ctx.strokeStyle = "#f0e2b0";
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(r.ax, ay);
+          ctx.lineTo(kx, ky);
+          ctx.stroke();
+          ctx.globalAlpha = 0.6 * zoneVis;
+          ctx.drawImage(GLOW_WHITE, kx - 30, ky - 30, 60, 60);
+          ctx.globalAlpha = zoneVis;
+          ctx.fillStyle = hue(time * 60 + r.ph * 20);
+          ctx.fillRect(kx - 7, ky - 7, 14, 14);
+        }
+      },
+    },
+    // ECHO: a tiny planet, one lap every LAP seconds. You are recorded; each earlier lap of you comes back and
+    // runs beside you, replaying exactly what you did, so the chorus can light fruit no single run could.
+    // Everything here is in planet units: the planet's radius is 150, heights are above its surface.
+    loop: {
+      view: "orbit",
+      LAP: 7,
+      GAP: 0.18, // each echo trails one more lap and this much further behind, so they line up behind you
+      ECHOES: 5,
+      HEIGHTS: [23, 81, 113], // fruit centres: on the ground, a short hop, a held jump
+      init() {
+        this.t = 0;
+        this.w = TAU / this.LAP;
+        this.hist = []; // [time, height] of the player; echoes read it back
+        this.prevH = [];
+        this.pen = [];
+        this.shown = 0;
+        this.end = 0;
+        this.lapN = 0;
+        player.y = 0;
+        player.vy = 0;
+        player.on = 1;
+        player.cut = 0;
+        const cols = [[0, 1], [1, 2], [0, 2], [0, 1, 2], [1], [0, 2], [0, 1, 2]];
+        this.fruit = [];
+        cols.forEach((lv, c) =>
+          lv.forEach((l) =>
+            this.fruit.push({
+              th: ((c + 1) / cols.length) * TAU,
+              lv: l,
+              h: this.HEIGHTS[l],
+              sp: spriteFor(pick(zone.food), 30),
+              lit: -1,
+              last: [],
+            }),
+          ),
+        );
+        this.mand = document.createElement("canvas"); // the planet's face: a mandala drawn by every runner's path
+        this.mand.width = this.mand.height = 512;
+        this.mctx = this.mand.getContext("2d");
+        const sp = spriteFor(zone.hero, zone.size, zone.flip),
+          src = textureOf(sp, 0);
+        this.ghostR = sp.h / sp.w;
+        this.ghost = [1, 2, 3, 4, 5].map((i) => {
+          const c = document.createElement("canvas"),
+            x = c.getContext("2d");
+          c.width = src.width;
+          c.height = src.height;
+          x.drawImage(src, 0, 0);
+          x.globalCompositeOperation = "source-atop";
+          x.globalAlpha = 0.65;
+          x.fillStyle = this.tint(i);
+          x.fillRect(0, 0, c.width, c.height);
+          return c;
+        });
+        this.geo();
+      },
+      tint: (i) => hue(150 + i * 50),
+      geo() {
+        const k = (this.k = clamp(min((playH - clipT - 70) / 400, viewW / 440), 0.45, 1.3));
+        this.cx = viewW / 2;
+        const e = ease(clamp(this.end / 2.4, 0, 1)); // the bloom: the planet's face rises to fill the screen
+        this.cy = lerp(clipT + 70 + 290 * k, (clipT + playH) / 2, e);
+        this.zoom = 1 + e * (min(viewW, playH - clipT) / (300 * k) - 0.9);
+      },
+      // planet angle and height -> screen x, y and the screen angle there
+      at(th, h) {
+        const a = th - this.w * this.t - M.PI / 2,
+          r = (150 + h) * this.k * this.zoom;
+        return [this.cx + cos(a) * r, this.cy + sin(a) * r, a];
+      },
+      past(t) {
+        const H = this.hist;
+        let lo = 0,
+          hi = H.length - 1;
+        if (hi < 1 || t < H[0][0]) return null;
+        while (hi - lo > 1) {
+          const m = (lo + hi) >> 1;
+          if (H[m][0] <= t) lo = m;
+          else hi = m;
+        }
+        const a = H[lo],
+          b = H[hi],
+          f = b[0] > a[0] ? clamp((t - a[0]) / (b[0] - a[0]), 0, 1) : 0;
+        return lerp(a[1], b[1], f);
+      },
+      sing(i, n) {
+        playTone(noteHz(n), i ? 0.7 : 0.45, i ? "triangle" : "sine", i ? 0.06 : 0.1, 1);
+      },
+      bloom(why) {
+        if (this.end) return;
+        this.end = 0.001;
+        showCard("BLOOM", why);
+        flash = 1;
+        flashColor = zone.accent;
+        sfxWake();
+        addRing(this.cx, this.cy, 1, 1);
+        for (const f of this.fruit) {
+          const [x, y] = this.at(f.th, f.h);
+          emitStars(x, y, 4);
+        }
+        score += 100;
+      },
+      finish() {
+        this.bloom("");
+        this.end = max(this.end, 1.6);
+      },
+      step(dt) {
+        const T = (this.t += dt),
+          L = this.LAP + this.GAP;
+        if (this.end) {
+          this.end += dt;
+          whiteout = ease(clamp((this.end - 2.4) / 1.2, 0, 1));
+          if (this.end > 3.7) return rebirth();
+        }
+        this.geo();
+        if (tapped && player.on && !this.end) {
+          player.vy = 520;
+          player.on = 0;
+          player.cut = !held;
+          this.sing(0, 2);
+        }
+        if (!player.on) {
+          player.vy -= 1500 * dt;
+          if (player.cut && player.y >= 28 && player.vy > 300) player.vy = 300;
+          player.y += player.vy * dt;
+          if (player.y <= 0) {
+            player.y = 0;
+            player.vy = 0;
+            player.on = 1;
+          }
+        }
+        this.hist.push([T, player.y]);
+        while (this.hist[0][0] < T - (this.ECHOES + 0.5) * L) this.hist.shift();
+        // who is running right now: you, then each earlier lap of you that has had time to exist
+        const run = [{ i: 0, th: this.w * T, h: player.y }];
+        for (let i = 1; i <= this.ECHOES; i++) {
+          const h = this.past(T - i * L);
+          if (h == null) break;
+          run.push({ i, th: this.w * (T - i * L), h });
+          if (h > 0 && !(this.prevH[i] > 0)) this.sing(i, 2 + i);
+          this.prevH[i] = h;
+        }
+        this.run = run;
+        const n = run.length - 1;
+        if (n > this.shown) {
+          this.shown = n;
+          if (n === 1) showCard(null, "THAT'S YOU · ONE LAP AGO");
+          if (n === 2) showCard(null, "LIGHT EVERY FRUIT AT ONCE");
+        }
+        const lapNow = (T / this.LAP) | 0;
+        if (lapNow > this.lapN) {
+          this.lapN = lapNow;
+          playTone(noteHz(-5), 1.8, "sine", 0.12, 1);
+          if (lapNow >= 12) this.bloom("THE LOOP LETS YOU GO");
+        }
+        // fruit: any runner lights it; it stays lit for a little over one lap
+        let lit = 0;
+        for (const f of this.fruit) {
+          for (const r of run) {
+            const d = ((((r.th - f.th) % TAU) + TAU + M.PI) % TAU) - M.PI;
+            if (abs(d) * 150 < 26 && abs(r.h + 23 - f.h) < 26) {
+              if (f.lit < T) {
+                const [x, y] = this.at(f.th, f.h);
+                addRing(x, y, 1);
+                emitStars(x, y, r.i ? 3 : 6);
+                score += 5;
+                scoreBump = 1;
+              }
+              if (T - (f.last[r.i] || -9) > 1) this.sing(r.i, f.lv * 2 + (f.th * 3) / TAU);
+              f.last[r.i] = T;
+              f.lit = T + this.LAP + 1.2;
+            }
+          }
+          if (f.lit > T) lit++;
+        }
+        this.lit = lit;
+        if (lit === this.fruit.length) this.bloom("EVERY LAP OF YOU, AT ONCE");
+        // mandala: each runner's height becomes a radius inside the planet, mirrored six ways
+        const m = this.mctx;
+        m.globalCompositeOperation = "destination-out";
+        m.globalAlpha = 0.004;
+        m.fillRect(0, 0, 512, 512);
+        m.globalCompositeOperation = "lighter";
+        m.lineWidth = 1.6;
+        for (const r of run) {
+          const rr = 256 * (0.93 - clamp(r.h / 120, 0, 1) * 0.8),
+            p = this.pen[r.i];
+          this.pen[r.i] = [r.th, rr];
+          if (!p || abs(p[0] - r.th) > 0.3) continue;
+          m.strokeStyle = r.i ? this.tint(r.i) : hue(time * 25);
+          m.globalAlpha = r.i ? 0.3 : 0.45;
+          m.beginPath();
+          for (let j = 0; j < 6; j++)
+            for (const s of [1, -1]) {
+              const o = (j * TAU) / 6;
+              m.moveTo(256 + cos(s * p[0] + o) * p[1], 256 + sin(s * p[0] + o) * p[1]);
+              m.lineTo(256 + cos(s * r.th + o) * rr, 256 + sin(s * r.th + o) * rr);
+            }
+          m.stroke();
+        }
+        const [px, py] = this.at(this.w * T, player.y + 23);
+        player.sx = px;
+        player.sy = py;
+        player.k = this.k * this.zoom;
+        player.ang = 0;
+        if (rand() < dt * 30)
+          for (const r of run) {
+            const [x, y] = this.at(r.th, r.h + 10);
+            emit(x, y, randRange(-20, 20), randRange(-20, 20), 0.7, 3, r.i ? this.tint(r.i) : zone.accent, 0, 0);
+          }
+      },
+      mv: () => 0,
+      back() {
+        this.geo();
+        const k = this.k * this.zoom,
+          R = 150 * k,
+          cx = this.cx,
+          cy = this.cy,
+          T = this.t,
+          a0 = -this.w * T - M.PI / 2;
+        ctx.globalAlpha = zoneVis;
+        const gr = ctx.createRadialGradient(cx, cy - R * 0.4, R * 0.1, cx, cy, R);
+        gr.addColorStop(0, "#3a2470");
+        gr.addColorStop(1, "#100828");
+        ctx.fillStyle = gr;
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, 0, TAU);
+        ctx.fill();
+        ctx.save();
+        ctx.clip();
+        ctx.translate(cx, cy);
+        ctx.rotate(a0);
+        ctx.globalAlpha = zoneVis;
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(this.mand, -R, -R, 2 * R, 2 * R);
+        ctx.restore();
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = inkCss;
+        for (let i = 0; i < 96; i++) {
+          const a = (i / 96) * TAU + a0;
+          ctx.globalAlpha = 0.5 * zoneVis;
+          ctx.fillRect(cx + cos(a) * R - 1.5, cy + sin(a) * R - 1.5, 3, 3);
+        }
+        // the start line: where each lap begins
+        ctx.strokeStyle = zone.accent;
+        ctx.lineWidth = 3;
+        ctx.globalAlpha = 0.8 * zoneVis;
+        ctx.beginPath();
+        ctx.moveTo(cx + cos(a0) * (R - 8), cy + sin(a0) * (R - 8));
+        ctx.lineTo(cx + cos(a0) * (R + 14), cy + sin(a0) * (R + 14));
+        ctx.stroke();
+        const fs = 30 * k,
+          fade = 1 - clamp(this.end / 1.5, 0, 1);
+        for (const f of this.fruit) {
+          const [x, y] = this.at(f.th, f.h),
+            [bx, by] = this.at(f.th, 0),
+            on = f.lit > T;
+          ctx.strokeStyle = inkCss;
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.16 * zoneVis * fade;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(x, y);
+          ctx.stroke();
+          if (on) {
+            const left = (f.lit - T) / (this.LAP + 1.2);
+            ctx.globalAlpha = 0.6 * fade;
+            ctx.drawImage(GLOW_WHITE, x - fs * 1.4, y - fs * 1.4, fs * 2.8, fs * 2.8);
+            ctx.strokeStyle = hue(f.lv * 60 + time * 40);
+            ctx.lineWidth = 3;
+            ctx.globalAlpha = fade;
+            ctx.beginPath();
+            ctx.arc(x, y, fs * 0.8, -M.PI / 2, -M.PI / 2 + TAU * left);
+            ctx.stroke();
+            drawTexture(f.sp, x, y, fs * 1.1, fade);
+          } else if (fade > 0) {
+            drawHalo(x, y, fs, 8);
+            drawTexture(f.sp, x, y, fs, 0.9 * fade);
+          }
+        }
+        for (const r of this.run || []) {
+          if (!r.i) continue;
+          const [x, y, a] = this.at(r.th, r.h + 23),
+            s = zone.size * k,
+            img = this.ghost[r.i - 1];
+          ctx.globalAlpha = 0.35;
+          ctx.drawImage(GLOW_WHITE, x - s * 0.8, y - s * 0.8, s * 1.6, s * 1.6);
+          ctx.save();
+          ctx.translate(x, y);
+          ctx.rotate(a + M.PI / 2);
+          ctx.globalAlpha = 0.85 - r.i * 0.08;
+          ctx.drawImage(img, -s / 2, (-s * this.ghostR) / 2, s, s * this.ghostR);
+          ctx.restore();
+        }
+        if (!this.end) {
+          ctx.fillStyle = "#ffffff";
+          ctx.globalAlpha = zoneVis;
+          drawText(this.lit + " / " + this.fruit.length, cx, cy + 9, 22);
+          ctx.globalAlpha = 0.7 * zoneVis;
+          drawText("LIT", cx, cy + 32, 11, 400);
+        }
+      },
+    },
+  };
+
+  /* ---------- per-frame simulation */
+  function update(dt) {
+    const z = zone,
+      m = mode,
+      top = m.view === "top",
+      depth = m.view === "depth";
+    if (z.mode !== "ski") speed = min(z.speed * (1.3 + 0.1 * lap), speed + 4 * dt);
+    let v = speed;
+    if (warp > 0) v *= max(0.12, 1 - warp / 2.2);
+    const dp = v * dt * 0.025;
+    score += dp;
+    zoneDist += dp;
+    scrollX += v * dt;
+    scrollZ += v * Z_SPEED * dt;
+    zoneTime += dt;
+    if (((score / 100) | 0) > lastHundred) {
+      lastHundred = (score / 100) | 0;
+      milestoneT = 1.2;
+      sfxMilestone();
+    }
+    quietT -= dt;
+    player.inv -= dt;
+    player.shock = max(0, player.shock - dt * 1.6);
+    m.step(dt, v);
+    tapped = 0;
+    player.hw = player.sz * player.k * 0.3;
+    player.hh = player.sz * player.k * 0.32;
+    if (depth) items.sort((a, b) => b.z - a.z);
+    for (let i = items.length; i--;) {
+      const it = items[i],
+        r = m.mv(it, dt, v);
+      if (!r) {
+        items.splice(i, 1);
+        continue;
+      }
+      if (
+        r > 1 &&
+        (it.good || it.bad) &&
+        abs(it.sx - player.sx) < it.hw * it.sc + player.hw &&
+        abs(it.sy - player.sy) < it.hh * it.sc + player.hh
+      ) {
+        if (it.good) {
+          items.splice(i, 1);
+          collect(it);
+        } else if (player.inv <= 0 && !(godMode && cheats.inv)) {
+          items.splice(i, 1);
+          takeHit(it);
+          if (state !== "play") return;
+        }
+      } else if (it.bad && it.sp && chroma > 0.5 && z.mode !== "run" && rand() < dt * 14)
+        emit(
+          it.sx + it.W * 0.3 * it.sc,
+          it.sy - it.H * 0.42 * it.sc,
+          randRange(-30, 30),
+          randRange(-70, -20),
+          0.35,
+          3 * it.sc,
+          rand() < 0.5 ? "#ffd000" : "#ff4a1a",
+          0,
+          0.9,
+        );
+    }
+    if (!gate && zoneDist > gateAt && warp <= 0) {
+      if (z.next) {
+        enterZone(z.next);
+        return;
+      }
+      openGate();
+    }
+    if (gate) {
+      const cross = m.gate(dt, v);
+      if (gate.hole) {
+        if (warp <= 0 && gate.z < 520) {
+          warp = 0.001;
+          player.inv = 9;
+          items = items.filter((i) => !i.bad);
+          sfxWarp();
+        }
+      } else if (cross) {
+        enterZone(m.hi() ? gate.a : gate.b);
+        return;
+      }
+    }
+    if (warp > 0) {
+      warp += dt;
+      whiteout = ease(clamp((warp - 1) / 1.5, 0, 1));
+      if (warp > 2.7) {
+        // the black hole at the end of the trench opens onto ECHO; ECHO's bloom then starts the next lap
+        warp = 0;
+        whiteout = 1;
+        enterZone(zone.hole);
+        return;
+      }
+    }
+    decorT -= dt;
+    if (decorT <= 0) {
+      spawnDecor();
+      decorT = randRange(0.9, 2.4);
+    }
+    const a = z.ambient;
+    if (a && rand() < a[1] * dt && particles.length < MAX_PARTICLES - 20) {
+      emit(rand() * viewW * 1.15, randRange(clipT, clipB), a[6] || randRange(-8, 8), a[2], a[4], a[3], a[0], 0, 0.3);
+      particles[particles.length - 1].ff = 1;
+    }
+    if (chroma > 0.5 && (z.mode !== "run" || !player.on) && rand() < dt * 50) {
+      const q = swarm.p[(rand() * swarm.p.length) | 0];
+      if (q && q.on)
+        emit(
+          q.x,
+          q.y,
+          top || depth ? 0 : -30,
+          top ? 90 : depth ? 60 : randRange(-12, 12),
+          0.6,
+          swarm.u * player.k * 0.8,
+          q.c,
+          0,
+          m.view === "side" ? 0.7 : 0,
+        );
+    }
+  }
+
+  function tick(dt, v) {
+    // runs in every state
+    const tg =
+        zoneKey === "dunes" && !awake
+          ? { top: classicPal.bg, bot: classicPal.bg, ink: classicPal.ink, st: 0 }
+          : zone.pal,
+      k = 1 - M.exp(-dt * 1.5);
+    for (const n of ["top", "bot", "ink"]) for (let i = 0; i < 3; i++) palette[n][i] += (tg[n][i] - palette[n][i]) * k;
+    palette.st += (tg.st - palette.st) * k;
+    inkCss = rgbCss(palette.ink);
+    outlineCss =
+      0.3 * palette.ink[0] + 0.59 * palette.ink[1] + 0.11 * palette.ink[2] > 140
+        ? "rgba(0,0,20,.6)"
+        : "rgba(255,255,255,.8)";
+    const on = awake || zoneKey !== "dunes" ? 1 : 0;
+    chroma = clamp(chroma + (on ? 1 : -1) * dt * 0.6, 0, 1);
+    if (on) openness = min(1, openness + dt * 0.38);
+    zoneVis = zoneKey === "dunes" ? chroma : clamp(zoneTime / 1.2, 0, 1);
+    groundAlpha += ((zone.mode === "run" ? 1 : 0) - groundAlpha) * min(1, dt * 3);
+    if (state !== "ready") unroll = min(1, unroll + dt * 1.5);
+    shake = max(0, shake - dt * 26);
+    flash = max(0, flash - dt * 1.6);
+    redFlash = max(0, redFlash - dt * 1.5);
+    scoreBump = max(0, scoreBump - dt * 4);
+    heartLostT = max(0, heartLostT - dt);
+    milestoneT = max(0, milestoneT - dt);
+    if (warp <= 0) whiteout = max(0, whiteout - dt * 0.8);
+    if (card && (card.t += dt) > 4.4) card = null;
+    for (let i = rings.length; i--;) if ((rings[i].t += dt) > (rings[i].big ? 1.4 : 0.9)) rings.splice(i, 1);
+    for (let i = floaters.length; i--;) {
+      const f = floaters[i];
+      f.y -= 46 * dt;
+      if ((f.t += dt) > 1.1) floaters.splice(i, 1);
+    }
+    for (let i = decor.length; i--;) {
+      const d = decor[i];
+      d.x -= v * d.par * dt;
+      d.a = d.die ? d.a - dt * 1.5 : min(1, d.a + dt);
+      if (d.x < -d.size || d.a < 0) decor.splice(i, 1);
+    }
+    const md = zone.mode;
+    for (let i = backdrops.length; i--;) {
+      const b = backdrops[i];
+      if (mode.view === "top") b.y += (v * b.par * dt) / viewH;
+      else b.x -= (mode.view === "side" ? v * b.par : 8) * dt;
+      b.a = b.die ? b.a - dt : min(1, b.a + dt * 0.6);
+      if (b.a < 0) {
+        backdrops.splice(i, 1);
+        continue;
+      }
+      if (b.x < -b.size) {
+        b.x = viewW + b.size;
+        b.y = randRange(0.05, 0.75);
+      }
+      if (b.y > 1.3) b.y = -0.4;
+    }
+    for (let i = particles.length; i--;) {
+      const p = particles[i];
+      if ((p.l -= dt) <= 0) {
+        particles[i] = particles[particles.length - 1];
+        particles.pop();
+        continue;
+      }
+      if (p.to) {
+        if (p.m - p.l > 0.22) {
+          p.vx += (scoreX - p.x) * 30 * dt;
+          p.vy += (scoreY - p.y) * 30 * dt;
+          const f = 1 - min(1, 5 * dt);
+          p.vx *= f;
+          p.vy *= f;
+          if (abs(scoreX - p.x) < 24 && abs(scoreY - p.y) < 24) {
+            p.l = 0;
+            scoreBump = 1;
+          }
+        }
+      } else if (p.ff) {
+        const a = fbm(p.x * 0.005, p.y * 0.005 + time * 0.08) * TAU * 2,
+          f = 1 - min(1, dt);
+        p.vx = (p.vx + cos(a) * 110 * dt) * f;
+        p.vy = (p.vy + sin(a) * 110 * dt) * f;
+      } else p.vy += p.g * dt;
+      p.x += (p.vx - v * p.sc) * dt;
+      p.y += p.vy * dt;
+    }
+    stepBoids(dt, v);
+    const run = md === "run",
+      play = state === "play";
+    if (!play && run) {
+      player.sx = playerX;
+      player.sy = groundY - player.y - player.sz / 2;
+    }
+    swarm.step(
+      dt,
+      player.sx,
+      player.sy - (run && player.on && play ? abs(sin(time * 11)) * 1.6 : 0),
+      (run ? lerp(1, 0.45, chroma) : 0.4) * (1 - player.shock),
+      chroma * 0.5,
+      (zone.rotation || 0) + player.ang,
+      (run || md === "loop") && player.on && play ? 1.5 : 0,
+      player.k,
+    );
+  }
+
+  /* ---------- rendering */
+  function drawWave(w, al) {
+    const base = groundY - (w[7] ? bandH + w[1] : w[1]),
+      ph = scrollX * w[4],
+      L = w[3],
+      a = w[2],
+      edge = w[5] > 0 ? viewH + 10 : -10,
+      f = (x) => base - a * (sin((x + ph) / L) + 0.4 * sin(((x + ph) / L) * 2.7 + 1));
+    ctx.fillStyle = w[0];
+    ctx.globalAlpha = w[6] * al;
+    ctx.beginPath();
+    ctx.moveTo(-10, edge);
+    for (let x = -10; x <= viewW + 10; x += 10) ctx.lineTo(x, f(x));
+    ctx.lineTo(viewW + 10, edge);
+    ctx.fill();
+    ctx.globalAlpha = min(1, w[6] * al * 1.4);
+    for (let x = -(ph % 8); x < viewW; x += 8) ctx.fillRect(x, f(x) - 1.2, 2.4, 2.4);
+  }
+  function drawHalo(x, y, sz, n) {
+    ctx.globalAlpha = 0.6;
+    ctx.drawImage(GLOW_WHITE, x - sz * 1.15, y - sz * 1.15, sz * 2.3, sz * 2.3);
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * TAU + time * 1.6,
+        d = max(3, sz * 0.1);
+      ctx.fillStyle = hue(time * 90 + (i * 360) / n);
+      ctx.fillRect(x + cos(a) * sz * 0.74 - d / 2, y + sin(a) * sz * 0.74 - d / 2, d, d);
+    }
+  }
+  function drawItem(it) {
+    const x = it.sx,
+      y = it.sy,
+      s = it.sc;
+    if (x < -200 || x > viewW + 200 || it.al <= 0) return;
+    if (it.spk) {
+      const a = (it.seed ? 12 : 7.5) * s * (1 + 0.2 * sin(time * 6 + it.ph));
+      ctx.globalAlpha = 0.55 * it.al;
+      ctx.drawImage(GLOW_WHITE, x - a * 2.6, y - a * 2.6, a * 5.2, a * 5.2);
+      ctx.globalAlpha = it.al;
+      ctx.fillStyle = hue(time * 160 + it.ph * 57);
+      ctx.fillRect(x - a * 0.32, y - a, a * 0.64, a * 2);
+      ctx.fillRect(x - a, y - a * 0.32, a * 2, a * 0.64);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(x - a * 0.32, y - a * 0.32, a * 0.64, a * 0.64);
+      return;
+    }
+    if (it.dot) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = hue(time * 120 + it.x * 0.5);
+      ctx.fillRect(x - 4, y - 4, 8, 8);
+      return;
+    }
+    const sz = it.size * s * (it.good ? 1 + 0.07 * sin(time * 5 + it.ph) : 1);
+    if (it.good) drawHalo(x, y, sz, 8);
+    else if (it.bad && chroma > 0.3) {
+      const p = 0.75 + 0.25 * sin(time * 9 + it.ph);
+      ctx.globalAlpha = p * chroma * it.al;
+      ctx.drawImage(GLOW_RED, x - sz * 1.25, y - sz * 1.25, sz * 2.5, sz * 2.5);
+    }
+    zone.mode === "run" ? drawSprite(it.sp, x, y, sz, 1) : drawTexture(it.sp, x, y, sz, it.al);
+  }
+  function drawGate() {
+    const rr = gate.r;
+    if (!rr.length) return;
+    if (gate.hole) {
+      const r = rr[0],
+        k = r[2] * (1 + warp * 1.5);
+      ctx.globalAlpha = 0.9;
+      ctx.drawImage(GLOW_WHITE, r[0] - k * 2, r[1] - k * 2, k * 4, k * 4);
+      ctx.lineWidth = max(2, k * 0.12);
+      for (let j = 0; j < 3; j++) {
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = hue(time * 120 + j * 40);
+        ctx.beginPath();
+        ctx.arc(r[0], r[1], k * (1 - j * 0.2), 0, TAU);
+        ctx.stroke();
+      }
+      return;
+    }
+    if (mode.view !== "depth") {
+      ctx.fillStyle = inkCss;
+      for (let y = clipT; y < clipB; y += 8) {
+        ctx.globalAlpha = 0.25 + 0.2 * sin(y * 0.2 - time * 4);
+        ctx.fillRect(gate.x - 1.5, y, 3, 4);
+      }
+    }
+    [gate.a, gate.b].forEach((k, i) => {
+      const r = rr[i],
+        d = ZONES[k],
+        x = r[0],
+        y = r[1],
+        rad = r[2];
+      if (rad < 3) return;
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(GLOW_WHITE, x - rad * 1.5, y - rad * 1.5, rad * 3, rad * 3);
+      for (let j = 0; j < 20; j++) {
+        const a = (j / 20) * TAU + time * 1.3,
+          q = max(2.5, rad * 0.1);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = hue(time * 90 + j * 18);
+        ctx.fillRect(x + cos(a) * rad * (mode.view === "depth" ? 1 : 0.6) - q / 2, y + sin(a) * rad - q / 2, q, q);
+      }
+      drawTexture(spriteFor(d.icon, 40), x, y, rad * 0.95, 1);
+      ctx.fillStyle = inkCss;
+      ctx.globalAlpha = 1;
+      if (mode.view === "depth") drawText(d.name, x, y - rad - 10, 15);
+      else drawText(d.name, x - rad * 0.6 - 10, y + 5, 14, 700, "right");
+    });
+  }
+  function drawMap(x, y, s) {
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = inkCss;
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    for (const k in ZONES) {
+      const r = ZONES[k];
+      for (const t of r.hole ? [r.hole] : r.next ? [r.next] : [r.forkA, r.forkB]) {
+        const q = ZONES[t];
+        ctx.moveTo(x + r.mapPos[0] * s, y + r.mapPos[1] * s);
+        ctx.lineTo(x + q.mapPos[0] * s, y + q.mapPos[1] * s);
+      }
+    }
+    ctx.stroke();
+    for (const k in ZONES) {
+      const r = ZONES[k],
+        d = (k === zoneKey ? 0.34 + 0.06 * sin(time * 5) : seenZones[k] ? 0.26 : 0.14) * s;
+      ctx.globalAlpha = seenZones[k] ? 1 : 0.4;
+      ctx.fillStyle = seenZones[k] ? r.accent : inkCss;
+      ctx.fillRect(x + r.mapPos[0] * s - d, y + r.mapPos[1] * s - d, d * 2, d * 2);
+    }
+  }
+  const STARS = [...Array(110)].map(() => ({
+    x: rand(),
+    y: rand(),
+    z: randRange(0.2, 1),
+    tw: randRange(0.5, 2.5),
+    ph: rand() * TAU,
+    s: randRange(1, 2.6),
+  }));
+  const GROUND_SPECKS = [...Array(46)].map(() => ({ x: rand() * 900, dy: randRange(3, 13), w: randRange(2, 7) }));
+  const padScore = (n) => ("0000" + (n | 0)).slice(-5);
+
+  // draw() paints one frame back to front; each function below is one layer of it
+  function drawSky() {
+    const gr = ctx.createLinearGradient(0, clipT, 0, clipB);
+    gr.addColorStop(0, rgbCss(palette.top));
+    gr.addColorStop(1, rgbCss(palette.bot));
+    ctx.fillStyle = gr;
+    ctx.fillRect(-20, -20, viewW + 40, viewH + 40);
+    if (palette.st > 0.02) {
+      ctx.fillStyle = inkCss;
+      for (const s of STARS) {
+        const x = (((s.x * viewW - scrollX * s.z * 0.03) % viewW) + viewW) % viewW,
+          y = (s.y * viewH + scrollY * s.z * 0.12) % viewH;
+        ctx.globalAlpha = palette.st * (0.35 + 0.65 * abs(sin(time * s.tw + s.ph))) * s.z;
+        ctx.fillRect(x, y, s.s, s.s);
+      }
+    }
+    ctx.imageSmoothingEnabled = true;
+    for (const b of backdrops) {
+      ctx.globalAlpha = b.al * max(0, b.a) * (zoneKey === "dunes" ? chroma : 1);
+      ctx.drawImage(b.img, b.x - b.size / 2, clipT + b.y * (playH - clipT) - (b.size * b.r) / 2, b.size, b.size * b.r);
+    }
+    ctx.imageSmoothingEnabled = false;
+    for (const b of zone.skyObjects)
+      drawCells(spriteFor(b[0], b[1]), b[2] * viewW, clipT + b[3] * (playH - clipT), b[1], b[4] * zoneVis, 0);
+    if (zone.rays) {
+      ctx.fillStyle = "#fff";
+      const t = groundY - bandH - 14,
+        sp = viewW + 300;
+      for (let i = 0; i < 5; i++) {
+        const x = ((((i * 190 - scrollX * 0.15) % sp) + sp) % sp) - 100;
+        ctx.globalAlpha = 0.05 * zoneVis * (1 + 0.5 * sin(time + i));
+        ctx.beginPath();
+        ctx.moveTo(x, t);
+        ctx.lineTo(x + 50, t);
+        ctx.lineTo(x - 70, groundY + 20);
+        ctx.lineTo(x - 160, groundY + 20);
+        ctx.fill();
+      }
+    }
+  }
+  function drawWorld() {
+    for (const w of zone.waves) drawWave(w, zoneVis);
+    if (mode.back) mode.back();
+    if (state !== "ready")
+      for (const d of decor)
+        drawCells(
+          d.sp,
+          d.x,
+          groundY - d.f * skyH - (d.sp.h * d.size) / max(d.sp.w, d.sp.h) / 2,
+          d.size,
+          d.al * max(0, d.a),
+          0,
+        );
+    if (groundAlpha > 0.01) {
+      ctx.fillStyle = inkCss;
+      ctx.globalAlpha = groundAlpha;
+      ctx.fillRect(0, groundY, viewW, 1.3);
+      const sp = viewW + 60;
+      ctx.globalAlpha = groundAlpha * 0.8;
+      for (const s of GROUND_SPECKS) {
+        const x = ((((s.x - scrollX) % sp) + sp) % sp) - 30;
+        ctx.fillRect(x, groundY + s.dy, s.w, 1.2);
+      }
+    }
+    if (gate) drawGate();
+    for (const it of items) drawItem(it);
+    if (mode.fore) mode.fore();
+    if (godMode && cheats.box) {
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 1;
+      for (const it of items)
+        if (it.good || it.bad) {
+          ctx.strokeStyle = it.good ? "#3f6" : "#f33";
+          ctx.strokeRect(it.sx - it.hw * it.sc, it.sy - it.hh * it.sc, it.hw * it.sc * 2, it.hh * it.sc * 2);
+        }
+      ctx.strokeStyle = "#fff";
+      ctx.strokeRect(player.sx - player.hw, player.sy - player.hh, player.hw * 2, player.hh * 2);
+    }
+    const fe = zone.follower && spriteFor(zone.follower, 20),
+      fc = zone.flock && zone.flock[1];
+    for (const b of boidList) {
+      const sp = M.hypot(b.vx, b.vy) || 1,
+        ux = b.vx / sp,
+        uy = b.vy / sp;
+      if (!b.f) {
+        ctx.globalAlpha = 0.75 * zoneVis;
+        ctx.fillStyle = fc || inkCss;
+        ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
+        ctx.fillRect(b.x - ux * 4.5 - 1.3, b.y - uy * 4.5 - 1.3, 2.6, 2.6);
+      } else if (fe) drawTexture(fe, b.x, b.y, 20, 1);
+      else {
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(GLOW_WHITE, b.x - 10, b.y - 10, 20, 20);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = hue(b.h + time * 40);
+        ctx.fillRect(b.x - 2.8, b.y - 2.8, 5.6, 5.6);
+        ctx.globalAlpha = 0.6;
+        ctx.fillRect(b.x - ux * 6 - 1.6, b.y - uy * 6 - 1.6, 3.2, 3.2);
+      }
+    }
+    if (state === "play" && (palette.st > 0.4 || zone.mode === "turn")) {
+      const A = zone.accentRgb,
+        c = "rgba(" + A[0] + "," + A[1] + "," + A[2] + ",",
+        rg = ctx.createRadialGradient(player.sx, player.sy, 2, player.sx, player.sy, 90);
+      rg.addColorStop(0, c + 0.3 * zoneVis + ")");
+      rg.addColorStop(1, c + "0)");
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = rg;
+      ctx.fillRect(player.sx - 90, player.sy - 90, 180, 180);
+    }
+    swarm.draw(player.inv > 0 && player.inv < 5 && state === "play" ? 0.55 + 0.4 * sin(time * 28) : 1, player.k);
+  }
+  function drawEffects() {
+    for (const p of particles) {
+      ctx.globalAlpha = min(1, (p.l / p.m) * 1.6);
+      ctx.fillStyle = p.c;
+      if (p.to) {
+        const s = p.s * (1 + 0.3 * sin(time * 20 + p.x));
+        ctx.fillRect(p.x - s, p.y - s * 0.3, s * 2, s * 0.6);
+        ctx.fillRect(p.x - s * 0.3, p.y - s, s * 0.6, s * 2);
+      } else ctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
+    }
+    for (const r of rings) {
+      const L = r.big ? 1.4 : 0.9,
+        k = r.t / L,
+        al = 1 - k;
+      if (r.good) {
+        ctx.lineWidth = (r.big ? 8 : 5) * al + 1;
+        for (let j = 0; j < 3; j++) {
+          ctx.globalAlpha = al;
+          ctx.strokeStyle = hue(time * 140 + j * 50 + r.x);
+          ctx.beginPath();
+          ctx.arc(r.x, r.y, (r.big ? 560 : 170) * ease(k) * (1 - j * 0.24) + 8, 0, TAU);
+          ctx.stroke();
+        }
+      } else if (chroma > 0.5) {
+        ctx.lineWidth = 7 * al + 1;
+        ctx.globalAlpha = al;
+        ctx.strokeStyle = "#ff2020";
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 160 * ease(k) + 10, 0, TAU);
+        ctx.stroke();
+        ctx.strokeStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, 115 * ease(k) + 6, 0, TAU);
+        ctx.stroke();
+        ctx.save();
+        ctx.translate(r.x, r.y);
+        ctx.rotate(0.785);
+        ctx.fillStyle = "#ff2020";
+        ctx.fillRect(-28, -5, 56, 10);
+        ctx.fillRect(-5, -28, 10, 56);
+        ctx.restore();
+      }
+    }
+    for (const f of floaters) {
+      ctx.globalAlpha = min(1, (1.1 - f.t) * 2.5);
+      ctx.fillStyle = f.c || "#fff";
+      drawText(f.s, f.x, f.y, 17);
+    }
+  }
+  function drawCard() {
+    if (card) {
+      const a = card.t,
+        i = ease(clamp(a / 0.7, 0, 1)),
+        ou = ease(clamp((a - 3.5) / 0.8, 0, 1)),
+        al = i * (1 - ou),
+        cx = viewW / 2;
+      let y = clipT + skyH * 0.2;
+      ctx.fillStyle = inkCss;
+      if (card.sp) {
+        const sp = card.sp,
+          u = min(7, min(viewW * 0.72, 320) / sp.w);
+        ctx.globalAlpha = al;
+        for (const c of sp.cells)
+          ctx.fillRect(
+            cx + c.x * u + cos(c.k) * 170 * (1 - i) + ou * (60 + c.k * 24),
+            y + c.y * u + sin(c.k * 1.3) * 100 * (1 - i) - ou * sin(c.k) * 46,
+            u * 0.86,
+            u * 0.86,
+          );
+        y += (sp.h * u) / 2 + 26;
+      }
+      if (card.how) {
+        ctx.globalAlpha = al;
+        drawText(card.how, cx, y, 15, 700, "center", viewW - 30);
+        y += 38;
+      }
+      if (card.leg && !gate) {
+        const f = spriteFor(zone.food[0], 34),
+          nb = zone.noHazards,
+          x0 = nb ? cx - 44 : cx - 118;
+        ctx.globalAlpha = al * 0.6;
+        ctx.drawImage(GLOW_WHITE, x0 - 30, y - 30, 60, 60);
+        drawTexture(f, x0, y, 30, al);
+        ctx.fillStyle = inkCss;
+        ctx.globalAlpha = al;
+        drawText("GRAB", x0 + 24, y + 6, 14, 700, "left");
+        if (!nb) {
+          const b = spriteFor(zoneKey === "dunes" ? "🌵" : "💣", 34);
+          ctx.globalAlpha = al * 0.9;
+          ctx.drawImage(GLOW_RED, cx + 2, y - 34, 68, 68);
+          drawTexture(b, cx + 36, y, 30, al);
+          ctx.fillStyle = inkCss;
+          ctx.globalAlpha = al;
+          drawText("DODGE", cx + 62, y + 6, 14, 700, "left");
+        }
+      }
+    }
+  }
+  function drawThumbPad() {
+    // thumb pad on phones held upright: taps land below the action
+    if (thumbH > 0) {
+      const a = ease(openness),
+        y = playH,
+        r = thumbH * 0.3;
+      ctx.globalAlpha = a;
+      ctx.fillStyle = rgbCss(palette.bot);
+      ctx.fillRect(0, y, viewW, thumbH);
+      ctx.globalAlpha = 0.5 * a;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, y, viewW, thumbH);
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = inkCss;
+      ctx.fillRect(0, y, viewW, 1.5);
+      ctx.strokeStyle = inkCss;
+      ctx.lineWidth = held ? 5 : 2.5;
+      ctx.globalAlpha = held ? 0.9 : 0.4 + 0.15 * sin(time * 3);
+      ctx.beginPath();
+      ctx.arc(viewW / 2, y + thumbH / 2, r * (held ? 0.92 : 1), 0, TAU);
+      ctx.stroke();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = inkCss;
+      ctx.font = "700 " + (r * 0.42).toFixed(1) + "px " + FONT;
+      ctx.textAlign = "center";
+      ctx.fillText("TAP", viewW / 2, y + thumbH / 2 + r * 0.15);
+    }
+  }
+  function drawHud() {
+    // HUD: hearts left, score right
+    ctx.fillStyle = inkCss;
+    ctx.textBaseline = "alphabetic";
+    const hs = lerp(13, 24, chroma),
+      hp = hs * 1.15;
+    if (state !== "ready") {
+      for (let i = 0; i < max(4, lives); i++) {
+        const x = clipL + 12 + hs / 2 + i * hp,
+          y = clipT + 12 + hs / 2,
+          lost = i === lives && heartLostT > 0;
+        if (i < lives) drawSprite(spriteFor("❤️", 26), x, y, hs * (1 + 0.08 * sin(time * 4 + i)), 1);
+        else {
+          drawSprite(
+            spriteFor("🖤", 26),
+            x + (lost ? randRange(-3, 3) : 0),
+            y,
+            hs * (lost ? 1 + heartLostT * 0.6 : 0.9),
+            lost ? 1 : 0.3,
+          );
+          if (lost && chroma > 0.5) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(0.785);
+            ctx.globalAlpha = heartLostT;
+            ctx.fillStyle = "#ff2020";
+            ctx.fillRect(-hs * 0.7, -2.5, hs * 1.4, 5);
+            ctx.fillRect(-2.5, -hs * 0.7, 5, hs * 1.4);
+            ctx.restore();
+            ctx.fillStyle = inkCss;
+          }
+        }
+      }
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = inkCss;
+      const sz = lerp(11, 21, chroma) * (1 + scoreBump * 0.35);
+      if (hiScore)
+        drawText(
+          "HI " + padScore(hiScore),
+          clipR - 12,
+          clipT + lerp(22, 30, chroma) + lerp(13, 18, chroma),
+          lerp(9, 11, chroma),
+          400,
+          "right",
+        );
+      if (!(milestoneT > 0 && ((milestoneT * 4) | 0) % 2))
+        drawText(padScore(score), clipR - 12, clipT + lerp(22, 30, chroma), sz, 700, "right");
+    }
+    ctx.fillStyle = inkCss;
+    ctx.globalAlpha = muted ? 0.35 : 0.75;
+    ctx.font = "700 " + max(14, 15 / unit).toFixed(1) + "px " + FONT;
+    ctx.textAlign = "left";
+    ctx.fillText("♪", clipL + 12, clipT + hs + 34);
+    if (muted) {
+      ctx.globalAlpha = 0.8;
+      ctx.fillRect(clipL + 9, clipT + hs + 28, 16, 1.6);
+    }
+    if (openness > 0.9 && (gate || state === "over"))
+      drawMap(
+        state === "over" ? viewW / 2 - 88 : clipL + 22,
+        state === "over" ? clipT + skyH * 0.42 + 62 : clipT + hs + 62,
+        state === "over" ? 22 : 13,
+      );
+    if (state === "ready") {
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = rgbCss(classicPal.hint);
+      drawText(thumbH ? "TAP" : "TAP · CLICK · SPACE", viewW / 2, clipB + 24, 10, 400);
+    }
+    if (state === "over") {
+      const y = clipT + skyH * 0.42,
+        n = Object.keys(seenZones).length;
+      ctx.fillStyle = inkCss;
+      ctx.globalAlpha = min(1, overTime * 2);
+      drawText(isClassic() ? "G A M E   O V E R" : "S C A T T E R E D", viewW / 2, y, 17, 700, "center", viewW - 30);
+      ctx.globalAlpha = min(1, overTime * 2) * (0.6 + 0.3 * sin(time * 4));
+      if (overTime > 0.7) drawText("TAP TO GO AGAIN", viewW / 2, y + 24, 11, 400);
+      if (n > 1) {
+        ctx.globalAlpha = 0.85;
+        drawText("ZONES FOUND " + n + " / " + ZONE_COUNT, viewW / 2, y + 46, 11, 400);
+      }
+    }
+  }
+  function drawChick() {
+    const es = spriteFor(EGG_EMOJI, 30);
+    ctx.imageSmoothingEnabled = false;
+    if (eggBoom) {
+      const k = eggBoom,
+        q = min(1, k * 1.6);
+      drawTexture(
+        es,
+        lerp(viewW - 45, viewW / 2, q),
+        lerp(playH - 45, viewH / 2, q),
+        lerp(64, max(viewW, viewH) * 3.6, k * k * k),
+        k < 0.8 ? 1 : (1 - k) / 0.2,
+      );
+    } else if (godMode) drawTexture(es, viewW - 28, playH - 28, 30 * (1 + 0.06 * sin(time * 4)), 1);
+    else if (state === "ready") {
+      const sz = 22 * [1, 1.7, 2.7][eggTaps];
+      drawCells(es, viewW - 12 - sz / 2 + (eggTaps ? randRange(-1.2, 1.2) : 0), playH - 12 - sz / 2, sz, 0.85, 0);
+    }
+    if (godBannerT > 0) {
+      ctx.globalAlpha = min(1, godBannerT);
+      ctx.fillStyle = hue(time * 120);
+      const y = min(playH - 70, clipB + 64);
+      drawText("GOD MODE", viewW / 2, y, 22);
+      ctx.fillStyle = inkCss;
+      drawText("TAP THE CHICK · OR PRESS G", viewW / 2, y + 22, 11, 400, "center", viewW - 30);
+    }
+  }
+  function draw() {
+    ctx.setTransform(dpr * unit, 0, 0, dpr * unit, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = rgbCss(classicPal.bg);
+    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(clipL, clipT, lerp(playerX + 30, clipR, ease(unroll)) - clipL, (openness > 0.999 ? viewH : clipB) - clipT);
+    ctx.clip();
+    if (shake > 0 && !REDUCED_MOTION) ctx.translate(randRange(-1, 1) * shake, randRange(-1, 1) * shake);
+    drawSky();
+    drawWorld();
+    drawEffects();
+    drawCard();
+    if (flash > 0 && !REDUCED_MOTION) {
+      ctx.globalAlpha = flash * 0.3;
+      ctx.fillStyle = flashColor;
+      ctx.fillRect(-20, -20, viewW + 40, viewH + 40);
+    }
+    ctx.restore();
+    drawThumbPad();
+    drawHud();
+    drawChick();
+    if (menuOpen) drawMenu();
+    if (redFlash > 0) {
+      const a = redFlash * (REDUCED_MOTION ? 0.15 : 0.38);
+      ctx.globalAlpha = a;
+      ctx.fillStyle = "#e00000";
+      ctx.fillRect(0, 0, viewW, viewH);
+      ctx.globalAlpha = redFlash;
+      ctx.strokeStyle = "#ff1010";
+      ctx.lineWidth = 14;
+      ctx.strokeRect(0, 0, viewW, viewH);
+    }
+    if (whiteout > 0) {
+      ctx.globalAlpha = whiteout;
+      ctx.fillStyle = rgbCss(classicPal.bg);
+      ctx.fillRect(0, 0, viewW, viewH);
+    }
+  }
+
+  function frame(ms) {
+    requestAnimationFrame(frame);
+    const rt = min(0.033, max(0, (ms - lastMs) / 1000) || 0);
+    lastMs = ms;
+    time += rt;
+    layout();
+    stepEgg(rt);
+    if (!menuOpen) {
+      const n = godMode ? M.ceil(cheats.spd) : 1,
+        dt = (rt * (godMode ? cheats.spd : 1)) / n;
+      for (let i = 0; i < n; i++) {
+        if (state === "play") update(dt);
+        else if (state === "over") overTime += dt;
+        tick(dt, state === "play" ? speed * (warp > 0 ? max(0.12, 1 - warp / 2.2) : 1) : 0);
+      }
+    }
+    draw();
+  }
+
+  /* ---------- god mode: three quick taps on the chick on the front page; then the chick sits bottom right and opens this panel */
+  function stepEgg(dt) {
+    eggSince += dt;
+    godBannerT = max(0, godBannerT - dt);
+    if (eggSince > 1.1 && !eggBoom) eggTaps = 0;
+    if (eggBoom && (eggBoom += dt / 1.1) >= 1) {
+      eggBoom = 0;
+      eggTaps = 0;
+      godMode = 1;
+      godBannerT = 4;
+      saveProgress();
+      sfxWake();
+    }
+  }
+  function jumpToZone(k) {
+    if (state !== "play") {
+      resetRun();
+      state = "play";
+      unroll = 1;
+    }
+    awake = 1;
+    openness = 1;
+    chroma = 1;
+    enterZone(k);
+    if (k === "dunes") gateAt = 190;
+    updatePad();
+  }
+  function skipZone() {
+    if (state !== "play") {
+      resetRun();
+      state = "play";
+      unroll = 1;
+      quietT = 1;
+    }
+    if (zoneKey === "dunes" && !awake) wakeColour();
+    if (mode.finish) mode.finish();
+    else if (zone.next) enterZone(zone.next);
+    else gateAt = min(gateAt, zoneDist);
+    updatePad();
+  }
+  function menuButtons() {
+    const w = min(viewW - 20, 400),
+      x = (viewW - w) / 2,
+      gp = 5,
+      zr = M.ceil(ZONE_COUNT / 4),
+      h = clamp((playH - 56) / (zr + 4) - gp, 24, 44),
+      y0 = max(6, (playH - (40 + (zr + 4) * (h + gp))) / 2) + 40,
+      b = [],
+      cw = (w - 3 * gp) / 4,
+      hw = (w - gp) / 2;
+    Object.keys(ZONES).forEach((k, i) =>
+      b.push({
+        x: x + (i % 4) * (cw + gp),
+        y: y0 + ((i / 4) | 0) * (h + gp),
+        w: cw,
+        h,
+        s: ZONES[k].name,
+        on: k === zoneKey,
+        a() {
+          jumpToZone(k);
+          menuOpen = 0;
+        },
+      }),
+    );
+    const row = (r, i, s, on, a) => b.push({ x: x + i * (hw + gp), y: y0 + r * (h + gp), w: hw, h, s, on, a });
+    row(zr + 0, 0, "SKIP ZONE", 0, () => {
+      skipZone();
+      menuOpen = 0;
+    });
+    row(zr + 0, 1, "LAP " + (lap + 1) + "  +", 0, () => {
+      lap++;
+    });
+    row(zr + 1, 0, "INVINCIBLE " + (cheats.inv ? "ON" : "OFF"), cheats.inv, () => {
+      cheats.inv = !cheats.inv;
+    });
+    row(zr + 1, 1, "SPEED x" + cheats.spd, cheats.spd !== 1, () => {
+      cheats.spd = SPEED_STEPS[(SPEED_STEPS.indexOf(cheats.spd) + 1) % 4];
+    });
+    row(zr + 2, 0, "FULL HEARTS", 0, () => {
+      lives = MAX_LIVES;
+    });
+    row(zr + 2, 1, "HITBOXES " + (cheats.box ? "ON" : "OFF"), cheats.box, () => {
+      cheats.box = !cheats.box;
+    });
+    row(zr + 3, 0, "LEAVE GOD MODE", 0, () => {
+      godMode = menuOpen = 0;
+      cheats.inv = 1;
+      cheats.spd = 1;
+      cheats.box = 0;
+      saveProgress();
+    });
+    row(zr + 3, 1, "RESUME", 1, () => {
+      menuOpen = 0;
+    });
+    return { b, x, w, y: y0 - 40, h: 40 + (zr + 4) * (h + gp) };
+  }
+  function drawLabel(s, x, y, n, al, mx) {
+    const px = max(n, 12.5 / unit);
+    ctx.font = "700 " + px.toFixed(1) + "px " + FONT;
+    const m = ctx.measureText(s).width;
+    if (m > mx) ctx.font = "700 " + ((px * mx) / m).toFixed(1) + "px " + FONT;
+    ctx.textAlign = al;
+    ctx.fillText(s, x, y);
+  }
+  function drawMenu() {
+    const m = menuButtons();
+    ctx.globalAlpha = 0.74;
+    ctx.fillStyle = "#05060f";
+    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "#14173a";
+    ctx.fillRect(m.x - 8, m.y - 6, m.w + 16, m.h + 10);
+    ctx.strokeStyle = hue(time * 60);
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(m.x - 8, m.y - 6, m.w + 16, m.h + 10);
+    drawTexture(spriteFor(EGG_EMOJI, 30), m.x + 16, m.y + 17, 26, 1);
+    ctx.fillStyle = "#fff";
+    drawLabel("GOD MODE", m.x + 36, m.y + 24, 17, "left", m.w - 44);
+    for (const b of m.b) {
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = b.on ? "#ffd24a" : "#2b3170";
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.fillStyle = b.on ? "#14173a" : "#fff";
+      drawLabel(b.s, b.x + b.w / 2, b.y + b.h / 2 + 5, 12, "center", b.w - 8);
+    }
+  }
+
+  /* ---------- input: one button */
+  function beginRun() {
+    state = "play";
+    quietT = 1.3;
+    const k = location.hash.slice(1);
+    if (ZONES[k] && k !== "dunes") {
+      awake = 1;
+      enterZone(k);
+    }
+    updatePad();
+  }
+  function press() {
+    initAudio();
+    if (state === "ready") {
+      beginRun();
+      tapped = held = 1;
+      return;
+    }
+    if (state === "over") {
+      if (overTime > 0.7) {
+        resetRun();
+        unroll = 1;
+        beginRun();
+      }
+      return;
+    }
+    held = 1;
+    tapped = 1;
+  }
+  function release() {
+    initAudio();
+    held = 0;
+    player.cut = 1;
+  }
+  function toggleMute() {
+    muted = !muted;
+    if (audioCtx) masterGain.gain.setTargetAtTime(muted ? 0 : 0.7, audioCtx.currentTime, 0.05);
+  }
+  const TAP_KEYS = ["Space", "ArrowUp", "Enter", "KeyW"];
+  addEventListener("keydown", (e) => {
+    if (e.code === "KeyM") {
+      toggleMute();
+      return;
+    }
+    if (e.code === "KeyG" && godMode) {
+      menuOpen = !menuOpen;
+      held = 0;
+      return;
+    }
+    if (e.code === "Escape") {
+      menuOpen = 0;
+      return;
+    }
+    if (menuOpen) return;
+    if (TAP_KEYS.includes(e.code)) {
+      e.preventDefault();
+      if (!e.repeat) press();
+    }
+  });
+  addEventListener("keyup", (e) => {
+    if (TAP_KEYS.includes(e.code)) release();
+  });
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    canvas.focus({ preventScroll: true });
+    if (e.pointerType === "touch" && !isTouch) {
+      isTouch = 1;
+      resize();
+    }
+    const x = e.clientX / unit,
+      y = e.clientY / unit,
+      hs = lerp(13, 24, chroma);
+    if (menuOpen) {
+      initAudio();
+      const m = menuButtons();
+      for (const b of m.b)
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+          b.a();
+          playTone(880, 0.06, "square", 0.03);
+          return;
+        }
+      if (x < m.x - 8 || x > m.x + m.w + 8 || y < m.y - 6 || y > m.y + m.h + 4) menuOpen = 0;
+      return;
+    }
+    if (eggBoom) return;
+    if (godMode) {
+      if (x > viewW - 58 && y > playH - 58 && y < playH + 4) {
+        initAudio();
+        menuOpen = 1;
+        held = 0;
+        return;
+      }
+    } else if (state === "ready") {
+      const sz = 22 * [1, 1.7, 2.7][eggTaps];
+      if (x > viewW - 26 - sz && y > playH - 26 - sz && y < playH + 4) {
+        initAudio();
+        eggTaps = eggSince < 1.1 ? eggTaps + 1 : 1;
+        eggSince = 0;
+        playTone(330 * eggTaps, 0.16, "square", 0.04, 0, 520 * eggTaps);
+        if (eggTaps >= 3) {
+          eggBoom = 0.001;
+          eggTaps = 2;
+        }
+        return;
+      }
+    }
+    if (abs(x - clipL - 18) < 22 && abs(y - clipT - hs - 28) < 20) {
+      initAudio();
+      toggleMute();
+      return;
+    }
+    press();
+  });
+  addEventListener("pointerup", release);
+  addEventListener("pointercancel", release);
+  addEventListener("blur", () => {
+    held = 0;
+  });
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  addEventListener("resize", resize);
+  const darkQuery = matchMedia("(prefers-color-scheme:dark)");
+  if (darkQuery.addEventListener) darkQuery.addEventListener("change", readTheme);
+  new MutationObserver(readTheme).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+
+  function boot(d) {
+    loadProgress(d);
+    resize();
+    resetRun();
+    if (document.fonts && document.fonts.load) document.fonts.load("700 16px Silkscreen").catch(() => {});
+    requestAnimationFrame(frame);
+  }
+  const hot = window.claude && window.claude.hot;
+  if (hot && hot.snapshot) hot.snapshot(() => ({ hi: hiScore, seen: seenZones, god: godMode }));
+  if (hot && hot.ready) hot.ready(boot);
+  else boot((hot && hot.data) || {});
+})();
+</script>
+</body>
+</html>

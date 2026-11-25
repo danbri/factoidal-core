@@ -2930,9 +2930,15 @@
     const flush = () => {
       queued = false;
       if (q.length === 0) return;
-      // Numbers as text (op 203) unless the batch carries bytes (op 200): filling a typed
-      // array costs more than joining in BubblePopJS, and Lean reads both exactly.
-      const text = tailLen === 0, payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
+      // Numbers as text (op 203) when every number is an integer and the batch carries no
+      // bytes, else binary (op 200). Lean reads both exactly. In BubblePopJS joining integers
+      // costs less than filling a typed array, but a fraction costs about 20 microseconds
+      // to print (shortest digits by exact arithmetic) against about 1 to pack: a game frame
+      // of 2,000 fillRect calls with fractional coordinates spent most of its time in the
+      // join (issue 1031, Particle Rex).
+      let text = tailLen === 0;
+      if (text) for (let i = 0; i < q.length; i++) { const v = q[i]; if (v !== Math.trunc(v)) { text = false; break; } }
+      const payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
       q = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
       const r = n.gpu(text ? 203 : 200, header, payload);
       if (typeof r === 'number') console.warn('Canvas 2D: import error ' + r);
@@ -7473,9 +7479,9 @@
     }
   };
   const imgTouch = id => { if (imgLazy.delete(id)) updateImage(id); };
+  const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
   {
     const P = named.HTMLImageElement.prototype;
-    const ofImg = (el, k) => { imgTouch(nodeId(el)); const st = imgStates.get(nodeId(el)); return st ? st[k] : (k === 'complete' ? true : 0); };
     Object.defineProperty(P, 'naturalWidth', { configurable: true, enumerable: true, get() { return ofImg(this, 'w'); } });
     Object.defineProperty(P, 'naturalHeight', { configurable: true, enumerable: true, get() { return ofImg(this, 'h'); } });
     Object.defineProperty(P, 'complete', { configurable: true, enumerable: true, get() { return ofImg(this, 'complete'); } });
@@ -17774,8 +17780,8 @@
 
     // ---- select and option ----
     const optionIds = sel => idsOf(fq(sel, 'o')), selectedIds = sel => idsOf(fq(sel, 's'));
-    // the nearest ancestor select of an option
-    const selectOf = o => { for (let p = o.parentNode; p; p = p.parentNode) if (p instanceof S) return p; return null; };
+    // Lean supplies the owning select using the same subtree boundaries as options.
+    const selectOf = o => one(fq(o, 'p'));
     const setSelected = (k, v) => { chk(n.treeOp(k, v ? 1 : 0, 6)); };
     const optionsOf = cachedColl(), selectedOf = cachedColl();
     prop(S, 'options', function () { const sel = this; return optionsOf(sel, () => { const c = collectionOf(() => optionIds(sel), HTMLOptionsCollection.prototype, false); ownerOf.set(c, sel); return c; }); });
@@ -17820,7 +17826,12 @@
     prop(O, 'selected', function () { const sel = selectOf(this); return sel ? selectedIds(sel).includes(nodeId(this)) : fq(this, 'x') === '1'; }, function (v) {
       const id = nodeId(this), sel = selectOf(this);
       setSelected(id, !!v);
-      if (v && sel && !sel.hasAttribute('multiple')) for (const k of optionIds(sel)) if (k !== id) setSelected(k, false);
+      if (v && sel && !sel.hasAttribute('multiple')) {
+        for (const k of optionIds(sel)) if (k !== id) setSelected(k, false);
+      } else if (!v && sel) {
+        const fallback = fq(this, 'r');
+        if (fallback !== '') setSelected(Number(fallback), true);
+      }
     });
     prop(O, 'index', function () { const sel = selectOf(this); return sel ? Math.max(0, optionIds(sel).indexOf(nodeId(this))) : 0; });
     prop(O, 'form', function () { const sel = selectOf(this); return sel ? formOf(sel) : null; });
@@ -18038,22 +18049,11 @@
     class ValidityState { constructor() { throw new TypeError('Illegal constructor'); } }
     def('ValidityState', ValidityState);
     const validityEl = new WeakMap(), validityObj = new WeakMap(), customMessage = new WeakMap();
-    const patternMismatch = el => {
-      const p = el.getAttribute('pattern'), t = typeState(el);
-      if (p === null || !['text', 'search', 'url', 'tel', 'email', 'password'].includes(t)) return false;
-      const v = inputValue(el);
-      if (v === '') return false;
-      let re;
-      try { re = new RegExp('^(?:' + p + ')$', 'v'); } catch { try { re = new RegExp('^(?:' + p + ')$', 'u'); } catch { return false; } }
-      return t === 'email' && el.hasAttribute('multiple') ? !v.split(',').every(x => re.test(x)) : !re.test(v);
-    };
-    // The validity states as bits: 1 valueMissing, 2 typeMismatch, 4 patternMismatch, 8 tooLong,
-    // 16 tooShort, 32 rangeUnderflow, 64 rangeOverflow, 128 stepMismatch, 256 badInput,
-    // 512 customError. Lean decides 1, 2, 32, 64 and 128; the pattern is a JavaScript regular
-    // expression; tooLong and tooShort need a user edit, which a script's value is not.
+    // Lean supplies the tree- and value-dependent validity bits, including the
+    // pattern. This realm keeps the custom error message.
     const validityBits = el => {
       let bits = 0;
-      if (el instanceof I) { bits = Number(vq(el, 'V', inputValue(el))) || 0; if (patternMismatch(el)) bits |= 4; }
+      if (el instanceof I) bits = Number(vq(el, 'V', inputValue(el))) || 0;
       else if (el instanceof T) bits = Number(vq(el, 'V', el.value)) || 0;
       else if (el instanceof S) bits = Number(vq(el, 'V', '')) || 0;
       if ((customMessage.get(el) ?? '') !== '') bits |= 512;
@@ -18084,7 +18084,11 @@
       method(C, 'reportValidity', function reportValidity() { return check(this); });
       method(C, 'setCustomValidity', function setCustomValidity(message) {
         if (arguments.length < 1) throw new TypeError("Failed to execute 'setCustomValidity': 1 argument required.");
-        customMessage.set(this, String(message));
+        const text = String(message), id = nodeId(this);
+        const bits = chk(n.treeOp(id, 0, 31));
+        const next = text === '' ? bits & ~16 : bits | 16;
+        if (next !== bits) chk(n.treeOp(id, next, 30));
+        customMessage.set(this, text);
       });
     }
     // "Statically validate the constraints" of a form (HTML §4.10.21.3)
@@ -18614,13 +18618,21 @@
     if (typeof r !== 'string' || r === '') return '';
     return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
   }, configurable: true, enumerable: true });
-  // `width` and `height` of an img (HTML §4.8.4.4): the rendered size of the image in CSS
-  // pixels (the content box of Lean's layout, measure op 21), else its natural size, which
-  // is 0 here while images are not decoded for scripts; the setters set the content
-  // attributes (unsigned long).
-  for (const [k, i] of [['width', 0], ['height', 1]])
+  // HTML dimension attributes: use the rendered content box when present, including
+  // a zero-sized box. Otherwise parse the attribute, then fall back to the natural size.
+  for (const [k, i, natural] of [['width', 0, 'w'], ['height', 1, 'h']])
     Object.defineProperty(named.HTMLImageElement.prototype, k, {
-      get() { const s = n.query(nodeId(this), 21, ''); if (typeof s !== 'string' || s === '') return 0; const v = Number(s.split(' ')[i]); return Number.isFinite(v) ? Math.round(v) : 0; },
+      get() {
+        const id = nodeId(this), s = n.query(id, 21, '');
+        if (typeof s === 'string' && s !== '') {
+          const v = Number(s.split(' ')[i]);
+          return Number.isFinite(v) ? Math.round(v) : 0;
+        }
+        const attr = n0.attr(id, k);
+        const digits = typeof attr === 'string' ? /^[\t\n\f\r ]*([+-]?[0-9]+)/.exec(attr) : null;
+        const value = digits ? Number(digits[1]) : NaN;
+        return value >= 0 && value <= 0xffffffff ? value || 0 : ofImg(this, natural);
+      },
       set(v) { let x = Number(v) >>> 0; if (x > 2147483647) x = 0; this.setAttribute(k, String(x)); },
       configurable: true, enumerable: true });
   // ==== end imagesource ===================================================================
