@@ -264,9 +264,12 @@ private def checkedTarget (q : Option Point) : Except MapError (Option Point) :=
   | none => .ok none
   | some p => if onTarget p then .ok (some p) else .error .internalInvariant
 
+private def primeCheck (u : Fp2) (q : Point) : Bool :=
+  decide (square q.y = rhsPrime q.x) && (sign0 q.y == sign0 u)
+
 private def mapped (u : Fp2) : Except MapError (Option Point) :=
   let q := swu u
-  if square q.y = rhsPrime q.x ∧ sign0 q.y = sign0 u then checkedTarget (iso q)
+  if primeCheck u q then checkedTarget (iso q)
   else .error .internalInvariant
 
 def mapField (u : Fp2) : Except MapError (Option Point) :=
@@ -309,6 +312,27 @@ theorem checkedTarget_ok (q out : Point) (h : checkedTarget (some q) = .ok (some
   · simp only [checkedTarget,if_neg hc] at h
     cases h
 
+/-- Kind: public output invariant.
+Says: a successful finite map output passes the actual target-curve check.
+Does not say: completeness or normative isogeny refinement. -/
+theorem mapField_ok (u : Fp2) (out : Point)
+    (h : mapField u = .ok (some out)) : onTarget out = true := by
+  by_cases hc : canonical u = true
+  · rw [mapField_delegates u hc] at h
+    by_cases hp : primeCheck u (swu u) = true
+    · simp only [mapped,if_pos hp] at h
+      cases hi : iso (swu u) with
+      | none =>
+        simp only [hi,checkedTarget,Except.ok.injEq] at h
+        cases h
+      | some p =>
+        rw [hi] at h
+        exact (checkedTarget_ok p out h).2
+    · simp only [mapped,if_neg hp] at h
+      cases h
+  · simp only [mapField,if_neg hc] at h
+    cases h
+
 /-- Kind: exceptional output.
 Says: the target checker preserves infinity.
 Does not say: the isogeny's exceptional inputs are complete. -/
@@ -333,6 +357,7 @@ theorem mapSigningRoot_delegates (root : ByteArray) (a : Array Nat)
 #print axioms EthereumConsensus.BLS.G2Map.mapField_noncanonical
 #print axioms EthereumConsensus.BLS.G2Map.mapField_delegates
 #print axioms EthereumConsensus.BLS.G2Map.checkedTarget_ok
+#print axioms EthereumConsensus.BLS.G2Map.mapField_ok
 #print axioms EthereumConsensus.BLS.G2Map.checkedTarget_infinity
 #print axioms EthereumConsensus.BLS.G2Map.mapSigningRoot_hash_error
 #print axioms EthereumConsensus.BLS.G2Map.mapSigningRoot_delegates
@@ -390,11 +415,7 @@ private def mapRootDispatch (root : String) : Except String String := do
   let (a,b) ← (EthereumConsensus.BLS.G2Map.mapSigningRoot bytes).mapError mapErrorName
   return "ok " ++ printMapPoint a ++ " ; " ++ printMapPoint b
 
-private def dispatch (s : String) : Except String String := do
-  match s.splitOn " " with
-  | ["map",a,b] => return ← mapDispatch a b
-  | ["maproot",root] => return ← mapRootDispatch root
-  | _ => pure ()
+private def dispatchHash (s : String) : Except String String := do
   let result ← match s.splitOn " " with
     | ["pop", root] => do
       let bytes ← readHex root
@@ -405,6 +426,12 @@ private def dispatch (s : String) : Except String String := do
       (hashToField m d).mapError errorName
     | _ => throw "operation"
   return "ok " ++ String.intercalate " " (result.toList.map toString)
+
+private def dispatch (s : String) : Except String String :=
+  match s.splitOn " " with
+  | ["map",a,b] => mapDispatch a b
+  | ["maproot",root] => mapRootDispatch root
+  | _ => dispatchHash s
 
 def main : IO Unit := do
   let input ← IO.getStdin
