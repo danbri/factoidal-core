@@ -38,6 +38,38 @@ Network (`labs/demos/foafnaut/native_net.ts`, `Net/PageFetch.lean`):
   connection pool must keep (pool key, stream limit, response to its owner, close fails pending
   requests, HTTP/2 flow control window). No pool implements it yet.
 
+## 1a. Related work already in the tree (added 2026-11-25)
+
+There is no single tracking issue for threads and processes. The pieces:
+
+- https://github.com/danbri/factoidal-core/pull/490 (merged 2026-11-16; Lean task manager,
+  parallel SVG tile listing, `HostPipeline` model with trace checks in `test.sh`). Measured on an
+  Apple M1: the task pool gives 5 to 10% of a first frame (Spinal Tap 161 to 156 ms). The host
+  pipeline change in the same PR gave the large gain: article scroll input latency p50 880 ms to
+  47 ms. Cost recorded there: a first version gave the tasks every retained item; Lean marked all
+  captured values as shared between threads, and engine p50 went from 40 to 49.6 ms. Pass a task
+  only the data it changes.
+- Same PR, recorded limit: with Deno 2.9 a window surface cannot be made in a worker
+  (`raw-window-metal`: "can only access NSView on the main thread"). Off screen, a GPU device in a
+  worker works (main thread's longest gap 37 ms against 73 ms).
+- https://github.com/danbri/factoidal-core/pull/600 (open; presenter: one proved compositor
+  `step` for every host, design for threaded scrolling, `Presenter/Spec.lean`).
+- https://github.com/danbri/factoidal-core/pull/418 (merged; page `Worker` API, execution
+  interleaved on one thread).
+- https://github.com/danbri/factoidal-core/issues/498 (Veil models). Its `FramePipeline` model
+  already has pages on several engine workers (2 pages, 2 workers, 3,726 states checked; a worker
+  holds one page, a page one worker). So section 3 below implements a design that is already
+  modelled.
+- https://github.com/danbri/factoidal-core/issues/398 (GPU retained scene, glyph atlas, compute
+  binning). It is a GPU issue; its comments hold the threading notes of PR 490.
+- Paralliverse (`L4Factoidal/Paralliverse/`, project
+  https://github.com/danbri/factoidal-core/issues/604): typed static `Program`s whose CPU
+  interpreter runs every list map through `Par.mapChunks`, with one compositional theorem
+  (`ProgramCPU.lean`) for every program and every worker count, and a GPU word-map path.
+- GDSL 0.2 and PVGraph (`docs/specs/gdsl-0.2.md`, `docs/designissues/2026-11-22-gdsl-app-api.md`,
+  https://github.com/danbri/factoidal-core/issues/741): typed acyclic dataflow graphs with Lean
+  reference semantics and a Lean-owned GPU plan.
+
 ## 2. What Lean gives for concurrency
 
 - Pure code: `Task.spawn f` has the meaning `⟨f ()⟩` in the logic. A parallel map has the meaning
@@ -145,9 +177,10 @@ loops as components), `FramePipeline`, `GpuProtocol`. Add, before each implement
 
 - `DnsCache`: an entry is used only within its lifetime and only in its partition; a transfer's
   pin never changes after the first answer; every used address passed the egress check.
-- `TabWorkers` (section 3) and later `SiteProcesses` (section 4): each message goes to the worker
-  or process of its tab; a renderer receives only bytes for its own site; terminating one worker
-  fails only its own requests.
+- Section 3: check the implementation against the existing `FramePipeline` model (it already has
+  several engine workers) by the trace checker that issue 498 lists as next. Later a
+  `SiteProcesses` model (section 4): a renderer receives only bytes for its own site; terminating
+  one worker or process fails only its own requests.
 - The pool implementation is checked against `HttpConnections` by a differential trace test: the
   host records its connection events, and Lean checks the trace against the model's transitions,
   as `HostContract/Trace.lean` does for the host contract.
@@ -160,7 +193,12 @@ method; say so where a claim needs it.
 1. Connection pool and HTTP/2 (section 5), with the realpages measurement.
 2. DNS cache, then speculative resolution (section 6), with its privacy rules.
 3. One engine worker per tab (section 3).
-4. `Par.mapChunks` in style, layout, shaping and image decode, at the places a profile names.
+4. Data-parallel engine work (image decode, glyph raster, shaping of independent runs, style of
+   independent subtrees), at the places a profile names. Write it as a Paralliverse `Program` where
+   the work is a typed map, so the CPU refinement theorem covers it and the same program can later
+   go to the GPU word-map path or a PVGraph; use bare `Par.mapChunks` only where the work does not
+   fit a `Program`. PR 490 shows the expected size of this gain is small until a profile says
+   otherwise.
 5. Processes per site (section 4).
 
 Each step gets an issue with its measurement command before work starts.
