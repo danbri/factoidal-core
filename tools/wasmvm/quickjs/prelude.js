@@ -18229,7 +18229,8 @@
   const takesTextInput = el =>
     el instanceof named.HTMLTextAreaElement ||
     (el instanceof named.HTMLInputElement &&
-      ['text', 'search', 'url', 'tel', 'email', 'password', 'number'].includes(typeState(el))) ||
+      ['text', 'search', 'url', 'tel', 'email', 'password', 'number',
+        'date', 'datetime-local', 'month', 'time', 'week'].includes(typeState(el))) ||
     (el instanceof HTMLElement && el.isContentEditable === true);
   // the focused node, or -1: an element that left its document no longer has the focus
   const focusCurrent = () => {
@@ -18311,13 +18312,15 @@
   // canceled: Hosts.PageEvents.lowPointer): the focusable area there takes the focus, else the
   // focused element loses it. Which area is Lean's (DOM.Focus.pressTarget, node_query 189 "p").
   const pressFocus = id => {
-    keyboardFocus = false;
     const t = focusQuery(id, 'p');
-    if (t >= 0) n.query(t, 177, 'f');
+    // A press on a plain area can blur, but does not choose a pointer-focused control.
+    if (t >= 0) {
+      keyboardFocus = false;
+      n.query(t, 177, 'f');
+    }
     focusMove(t, t >= 0 && takesTextInput(wrap(t)));
   };
   const noteFocusInput = (type, e) => {
-    if (type === 'pointerdown' || type === 'mousedown' || type === 'touchstart') keyboardFocus = false;
     if (type !== 'keydown' || e.altKey || e.ctrlKey || e.metaKey || ['Alt', 'Control', 'Meta', 'Shift'].includes(e.key)) return;
     keyboardFocus = true;
     const id = focusCurrent();
@@ -18326,6 +18329,21 @@
       focusBits(id, true, true);
     }
   };
+  // The focused input can start accepting text after its type changes in a click handler.
+  // Preserve an explicit visibility choice when the type already supported text entry.
+  {
+    const setAttr = n.setAttr, removeAttr = n.removeAttr;
+    const focusedType = (id, name) => id === focusedId && String(name).toLowerCase() === 'type';
+    const updateInputType = (id, change) => {
+      const input = wrap(id);
+      const wasNonText = input instanceof named.HTMLInputElement && !takesTextInput(input);
+      const result = change();
+      if (result === 0 && wasNonText && id === focusCurrent() && takesTextInput(input)) focusMove(id, true);
+      return result;
+    };
+    n.setAttr = (id, name, value) => focusedType(id, name) ? updateInputType(id, () => setAttr(id, name, value)) : setAttr(id, name, value);
+    n.removeAttr = (id, name) => focusedType(id, name) ? updateInputType(id, () => removeAttr(id, name)) : removeAttr(id, name);
+  }
   // ==== end focus ==========================================================================
 
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
