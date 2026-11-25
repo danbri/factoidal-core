@@ -472,10 +472,73 @@ def insetPairCanon (v : String) : String :=
 #guard rangeLonghandCanon false "entry 0%, exit 10%" == "entry, exit 10%" && rangeLonghandCanon true "cover 100%" == "cover"
 #guard rangeLonghandCanon true "calc(10% + 10px)" == "calc(10% + 10px)" && insetPairCanon "auto auto, 1px 2px" == "auto, 1px 2px"
 
+/-- The four values of a sides shorthand as the shorthand writes them. -/
+def collapse4 (t r b l : String) : List String :=
+  if l == r then (if b == t then (if r == t then [t] else [t, r]) else [t, r, b]) else [t, r, b, l]
+
+/-- One to four values as the four sides (CSS Box 3 §3.2). -/
+def expand4 : List String → Option (String × String × String × String)
+  | [a] => some (a, a, a, a)
+  | [a, b] => some (a, b, a, b)
+  | [a, b, c] => some (a, b, c, b)
+  | [a, b, c, d] => some (a, b, c, d)
+  | _ => none
+
+private abbrev RadiusAxis := String × String × String × String
+
+private def compactRadiusAxis (axis : RadiusAxis) : List String :=
+  collapse4 axis.1 axis.2.1 axis.2.2.1 axis.2.2.2
+
+/-- CSS Backgrounds 3 §4.1: the omitted vertical axis copies the horizontal axis. -/
+private def expandRadiusParts (horizontal : List String) (vertical : Option (List String)) :
+    Option (RadiusAxis × RadiusAxis) := do
+  let x ← expand4 horizontal
+  let y ← match vertical with
+    | some values => expand4 values
+    | none => some x
+  return (x, y)
+
+private def compactRadiusParts (x y : RadiusAxis) : List String × Option (List String) :=
+  (compactRadiusAxis x, if x = y then none else some (compactRadiusAxis y))
+
+private def radiusAxes (value : String) : Option (RadiusAxis × RadiusAxis) :=
+  let pieces := (stripWs (CV.parse value)).map fun cv => serialize [cv]
+  let horizontal := pieces.takeWhile (· != "/")
+  match pieces.drop horizontal.length with
+  | [] => expandRadiusParts horizontal none
+  | "/" :: vertical => if vertical.contains "/" then none else expandRadiusParts horizontal (some vertical)
+  | _ => none
+
+private def radiusText (x y : RadiusAxis) : String :=
+  let (horizontal, vertical) := compactRadiusParts x y
+  let left := " ".intercalate horizontal
+  match vertical with
+  | none => left
+  | some values => left ++ " / " ++ " ".intercalate values
+
+private def cornerRadiusText (x y : String) : String := if x == y then x else x ++ " " ++ y
+
+private def radiusLonghands (row : Property) (value : String) : Option (List (String × String)) := do
+  let ((a,b,c,d),(e,f,g,h)) ← radiusAxes value
+  return row.longhands.zip [cornerRadiusText a e, cornerRadiusText b f,
+    cornerRadiusText c g, cornerRadiusText d h]
+
+private def radiusCorner (value : String) : Option (String × String) :=
+  match (stripWs (CV.parse value)).map (fun cv => serialize [cv]) with
+  | [x] => some (x, x)
+  | [x, y] => some (x, y)
+  | _ => none
+
+private def radiiFromCorners (values : List String) : String :=
+  match values.mapM radiusCorner with
+  | some [(a,e),(b,f),(c,g),(d,h)] => radiusText (a,b,c,d) (e,f,g,h)
+  | _ => ""
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
+  | "border-radius" => ((radiusAxes v).map fun (x,y) => radiusText x y).getD v
   | "scale" => if v == "none" then v else scaleCanon v
   | "rotate" => rotateCanon v
   | "transform" => transformCanon v
@@ -1043,6 +1106,7 @@ def expandF : Nat → String → String → Option (List (String × String))
           | none =>
             if hasSubstitution cvs then (if badSubstitution 32 cvs then none else some [(p, canonical)])
             else if p == "background" then (backgroundExpand top).orElse fun _ => some [(p, canonical)]
+            else if p == "border-radius" then radiusLonghands row canonical
             else if p == "mask" then (maskExpand top).orElse fun _ => some [(p, canonical)]
             else if p == "background-position" then
               match (listItems canonical).mapM positionXY with
@@ -1262,6 +1326,7 @@ def recombineF : Nat → Property → (String → String) → String
       | v :: rest =>
         if cssWide.contains v then (if rest.all (· == v) then v else "")
         else if vs.any cssWide.contains then ""
+        else if row.name == "border-radius" then radiiFromCorners vs
         else
           match shapeOf row with
           | none => ""
@@ -1341,25 +1406,14 @@ def recombineF : Nat → Property → (String → String) → String
               | shown => " ".intercalate (shown.map (·.1))
 
 /-- A shorthand that `recombine` writes from its longhands: one of a generic shape, or
-`background` and `background-position` (written by layers). -/
+the shorthands with dedicated expansion and recombination. -/
 def recombinable (row : Property) : Bool :=
-  (shapeOf row).isSome || (listItemG row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
+  (shapeOf row).isSome || (listItemG row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask" ||
+    row.name == "border-radius"
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
 def recombine (row : Property) (get : String → String) : String := recombineF 4 row get
-
-/-- The four values of a sides shorthand as the shorthand writes them. -/
-def collapse4 (t r b l : String) : List String :=
-  if l == r then (if b == t then (if r == t then [t] else [t, r]) else [t, r, b]) else [t, r, b, l]
-
-/-- One to four values as the four sides (CSS Box 3 §3.2). -/
-def expand4 : List String → Option (String × String × String × String)
-  | [a] => some (a, a, a, a)
-  | [a, b] => some (a, b, a, b)
-  | [a, b, c] => some (a, b, c, b)
-  | [a, b, c, d] => some (a, b, c, d)
-  | _ => none
 
 /-- Kind: round trip. Says: the shortest sides form of four values expands back to the same
 four values, so writing a sides shorthand from its longhands loses nothing. Does not say:
@@ -1551,7 +1605,34 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | some s => computed ctx row.name s
   | none => row.initial
 
+/-- Kind: round trip. The compact form of two radius axes expands to those same axes. -/
+private theorem expand_compact_radius_axes (x y : RadiusAxis) :
+    let (h, v) := compactRadiusParts x y
+    expandRadiusParts h v = some (x, y) := by
+  have axis (a : RadiusAxis) : expand4 (compactRadiusAxis a) = some a := by
+    rcases a with ⟨a,b,c,d⟩
+    exact expand4_collapse4 a b c d
+  by_cases same : x = y
+  · subst y
+    simp [compactRadiusParts, expandRadiusParts, axis]
+  · simp [compactRadiusParts, expandRadiusParts, axis, same]
+
 /-! ### Tests -/
+
+#guard specified "border-radius" "1px 1px 1px 1px / 1px 1px 2% 1px" == some "1px / 1px 1px 2%"
+#guard specified "-webkit-border-radius" "1px 2% 2% 2% / 1px 2% 3px 2%" == some "1px 2% 2% / 1px 2% 3px"
+#guard expand "border-radius" "10% 20% / 4px 8px 12px" == some [
+  ("border-top-left-radius", "10% 4px"), ("border-top-right-radius", "20% 8px"),
+  ("border-bottom-right-radius", "10% 12px"), ("border-bottom-left-radius", "20% 8px")]
+#guard (lookup "border-radius").map (fun row => recombine row fun _ => "12px") == some "12px"
+#guard (lookup "border-radius").map (fun row =>
+  recombine row (fun name => if name == "border-top-left-radius" then "20px" else "10px")) ==
+  some "20px 10px 10px"
+#guard (specified "border-radius" "10px / -1px").isNone
+#guard (specified "border-radius" "10px / 20px / 30px").isNone
+#guard (specified "border-radius" "10px 20px 30px 40px 50px").isNone
+#guard (specified "border-radius" "10px inherit").isNone
+
 
 -- rule lists (CSS Gaps 1 §4.3)
 #guard expand "column-rule" "repeat(auto, 5px solid yellow, 10px dotted blue)" == some [("column-rule-width", "repeat(auto, 5px, 10px)"),
