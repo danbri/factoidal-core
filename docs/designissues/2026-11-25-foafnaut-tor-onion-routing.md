@@ -287,3 +287,37 @@ clone has the same file.
   engine time (three runs).
 - Tests: `node --test xfail.test.cjs`: 4 pass, 0 fail (out of 4: three expected failures and the
   refused-connection check). `run.sh`: page clock expected failure holds (raw clock 0 ms).
+
+## 11. What Deno can give the Arti wasm client (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "we don't yet have a transport. What can be done with Deno?"
+
+The desktop host is Deno. A Deno Worker of the host (not the page) can run the Arti module and
+give it what a page cannot. Checked in this container on 2026-11-25:
+
+| Need | Deno | Issue it closes |
+|---|---|---|
+| Transport | `Deno.connect` opens raw TCP (needs `--allow-net`). | https://github.com/danbri/factoidal-core/issues/1060 |
+| TLS | `Deno.connectTls` checks certificates against Web PKI and its `handshake()` gives only `alpnProtocol` (checked), not the peer certificate. Tor relays use self-signed link certificates, and Arti needs the peer certificate and RFC 5705 keying material. So TLS runs inside the module (rustls) over the raw TCP stream. | part of 1060 |
+| Real clock | `Date.now()` in Deno is the real clock. | https://github.com/danbri/factoidal-core/issues/1061 (for the worker; pages still need it) |
+| Randomness | `crypto.getRandomValues` from the operating system. | none needed |
+| State | `Deno.writeFile` and `Deno.readFile` in the host's state directory, sealed at rest. | https://github.com/danbri/factoidal-core/issues/1058 |
+| Isolation | A Deno Worker is a separate isolate: no page script can read its memory. Pages reach it only through a narrow message interface. | https://github.com/danbri/factoidal-core/issues/1059 |
+
+Other Deno routes, not chosen: `Deno.Command` can start a C tor or Arti program and use its SOCKS
+port (route A, section 3), which needs a separate binary; Deno FFI to a native Arti library has
+no stable C interface to call.
+
+Rules for the transport: the Worker accepts only IP literals and ports from the consensus (no
+name lookup); the engine's Egress decision gets a Tor route mode with no local resolution
+(section 2, item 1); no request falls back to a direct connection.
+
+Testing:
+- This container cannot reach the Tor network: a TCP connection to the fallback relay
+  171.25.193.9:443 opens, but the TLS certificate is issued by "Anthropic, Egress Gateway SDS
+  Issuing CA (production)" (checked with `openssl s_client`). Arti must refuse that link, because
+  the relay's CERTS cell will not match it. That refusal is a negative test that can run here.
+- A local Tor test network can run here: Ubuntu has C tor 0.4.9.11 (`apt-cache policy tor`), and
+  chutney builds a private network of authorities, relays and an onion service. Arti then
+  bootstraps against that network, end to end, with no public traffic.
+- The live network can be tested on the owner's Mac.
