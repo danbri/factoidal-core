@@ -342,9 +342,19 @@ Measuring:
 ### Measure BubblePopKit and BubblePopJS with no Mac
 
 A Linux cloud session can build and measure everything that is CPU work: the native build of
-BubblePopKit (`web-render-native`) and BubblePopJS (`leanjs`). It can not run the window, the
-GPU or the Deno host. Record of the first such session, with every number and command:
+BubblePopKit (`web-render-native`) and BubblePopJS (`leanjs`). Record of the first such session,
+with every number and command:
 [docs/designissues/2026-11-09-foafnaut-perf-exploration.md](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md).
+
+Since 2026-11-25 it can also run the window and the Deno host from source, under Xvfb with Mesa
+software Vulkan and the newest released engine of main:
+`tools/foafnaut-linux-rig/setup.sh` (apt packages, the two release sets checked by sha256,
+`libnative-window.so` built from this checkout), then
+`tools/foafnaut-linux-rig/run.sh --html FILE --scroll-sweep --perf-summary` (use a sweep so the run
+exits). Host changes (input, queues, workers, network) are measured as they are. GPU times are
+software Vulkan times: do not compare them with a Mac. A Lean engine change needs an engine build
+first. Before this, the cost of having no rig: on 2026-11-25 the gesture work of issue 1031 was
+pushed with only a type check, because the window could not run here.
 
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then

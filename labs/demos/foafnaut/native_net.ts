@@ -8,15 +8,32 @@
 // - `address` and `port`: connect to that address only. The name is not resolved again, so
 //   a second DNS answer cannot move the request (DNS rebinding). `http`: Deno's client with a
 //   TCP transport to the address. `https`: Deno's client uses an authenticated local tunnel.
-//   TLS still verifies the URL's name. A synchronous answer sequence may reuse a tunnel
-//   to the same authority and address.
+//   TLS still verifies the URL's name. With a `NetPool` the client (and for https the
+//   tunnel) is reused, see below.
 // - otherwise (an IP literal, a page loaded from a local address): a plain fetch.
+//
+// Connection pool (`NetPool`, issue 1031; contract: formal/veil/FoafnautModels/HttpConnections.lean):
+// one client per pool key (origin, network partition, pinned address and port), never shared
+// across keys; HTTP/1.1 keep-alive and HTTP/2 by ALPN come from Deno's client. At most
+// `maxPerKey` requests at a time per key (no HTTP/1.1 pipelining; later ones wait), at most
+// `maxClients` pooled clients (an idle one is evicted; when all are busy a request gets a
+// one-shot client), idle clients close after `idleMs`. Closing a client aborts its pending
+// requests, which answer status 0. A request's answer is returned to its own call, by id.
+// A wire with no `address` is not pooled.
+//
+// DNS cache (`DnsCache`, `NetPool.dns`, issue 1031): resolve-only answers kept per (partition,
+// host name), 60 s, 256 entries, failures not cached, concurrent lookups shared; the answer is
+// the same `{id, addresses}` as a fresh one, so Egress.choose still runs in Lean on every
+// transfer. Without a pool there is no cache.
 //
 // Every fetch: redirect "manual" (each hop goes back to the engine), no cookies (Deno's fetch
 // has no cookie jar), a body of at most 64 MiB, 300 s at most.
 
 export type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string;
-  resolve?:boolean;address?:string;port?:number};
+  resolve?:boolean;address?:string;port?:number;
+  /** Network partition: the top-level site of the page that made the request. The Lean wire does
+   *  not carry it yet; the host sets it. Absent means the pool's `partition` option, else "". */
+  partition?:string};
 export type NetAnswer={id:number;status?:number;statusText?:string;headers?:[string,string][];bodyBase64?:string;addresses?:string[]};
 
 const MAX_BODY=67108864;
@@ -24,14 +41,79 @@ const MAX_BODY=67108864;
 /** Extra trust roots (tests only: a local TLS server's certificate). */
 export type NetOptions={caCerts?:string[];timeoutMs?:number};
 
+export type NetPoolOptions=NetOptions&{maxClients?:number;maxPerKey?:number;idleMs?:number;partition?:string;
+  /** DNS cache (issue 1031). Off with `dnsCache:false`. Default lifetime 60 s, at most 256 entries. */
+  dnsCache?:boolean;dnsTtlMs?:number;dnsMaxEntries?:number;
+  /** Replaces Deno.resolveDns for A and AAAA (tests). Gives the addresses of one record type. */
+  resolver?:(host:string,type:"A"|"AAAA")=>Promise<string[]>;
+  now?:()=>number};
+
+/** Resolve-only answers, kept per (partition, host name). The cache stores the raw address list
+ *  that a fresh lookup gave; it never filters, orders or picks (Egress.choose in Lean does, on
+ *  every transfer, on this list). Deno.resolveDns gives no TTL (its return type is string[] or
+ *  record objects without a TTL field), so the lifetime is fixed: a hit does not renew it. An
+ *  empty answer (every lookup failed or the name has no A or AAAA record) is not cached: a
+ *  transient failure must not block the page for a period, and a failing lookup is cheap to
+ *  repeat. Concurrent lookups of one key share one resolution (also an empty one). The cache
+ *  has no part in the pin: a transfer takes its address from the answer it got, and a later
+ *  change here never moves a request in flight. Least recently used entries leave first. */
+export class DnsCache{
+  readonly stats={resolutions:0,hits:0,shared:0};
+  private entries=new Map<string,{addresses:string[];expires:number}>();
+  private pending=new Map<string,Promise<string[]>>();
+  constructor(private o:{ttlMs?:number;maxEntries?:number;enabled?:boolean;
+    resolver?:(host:string,type:"A"|"AAAA")=>Promise<string[]>;now?:()=>number}={}){}
+  get size(){return this.entries.size;}
+  private lookup=async(host:string):Promise<string[]>=>{
+    this.stats.resolutions++;
+    const r=this.o.resolver??((h:string,t:"A"|"AAAA")=>Deno.resolveDns(h,t) as Promise<string[]>);
+    const found=await Promise.allSettled([r(host,"A"),r(host,"AAAA")]);
+    return found.flatMap(x=>x.status==="fulfilled"?x.value:[]);
+  };
+  /** The addresses of `host` for `partition`. A new array on every call. */
+  async resolve(partition:string,host:string):Promise<string[]>{
+    if(this.o.enabled===false)return this.lookup(host);
+    const key=JSON.stringify([partition,host]),now=(this.o.now??Date.now)();
+    const hit=this.entries.get(key);
+    if(hit){
+      if(hit.expires>now){this.entries.delete(key);this.entries.set(key,hit);this.stats.hits++;return [...hit.addresses];}
+      this.entries.delete(key);
+    }
+    const inflight=this.pending.get(key);
+    if(inflight){this.stats.shared++;return [...await inflight];}
+    const p=this.lookup(host);
+    this.pending.set(key,p);
+    try{
+      const addresses=await p;
+      if(addresses.length>0){
+        this.entries.set(key,{addresses:[...addresses],expires:(this.o.now??Date.now)()+(this.o.ttlMs??60000)});
+        const max=this.o.maxEntries??256;
+        while(this.entries.size>max)this.entries.delete(this.entries.keys().next().value as string);
+      }
+      return [...addresses];
+    }finally{this.pending.delete(key);}
+  }
+  /** Bounded speculative resolve for the host names of visible links: at most `max` distinct
+   *  names (the first ones), `max` 0 does nothing. Answers are cached like any other; nothing
+   *  is sent to a server. Off by default (max defaults to 0). Not wired into the window host. */
+  async prefetch(partition:string,hosts:string[],max=0):Promise<number>{
+    const names=[...new Set(hosts)].slice(0,Math.max(0,max));
+    await Promise.all(names.map(h=>this.resolve(partition,h)));
+    return names.length;
+  }
+  clear(){this.entries.clear();}
+}
+
 type Tunnel = {client:Deno.HttpClient; close:()=>void};
 
 /** Keep transport pinned to one authority and one Lean-approved address.
  * The inner TLS session still verifies the URL hostname. */
-function tunnelClient(target:string,address:string,port:number,opts:NetOptions,reusable=false):Tunnel{
+function tunnelClient(target:string,address:string,port:number,opts:NetOptions,pool?:{maxPerKey:number;idleMs:number}):Tunnel{
+  const reusable=pool!==undefined;
   const secret=crypto.randomUUID();
   const expected="Basic "+btoa("p:"+secret);
   const listener=Deno.listen({hostname:"127.0.0.1",port:0});
+  if(pool)listener.unref();// an idle pooled tunnel does not keep the process alive
   let listening=true,closed=false;
   const connections=new Set<Deno.Conn>();
   const closeConnection=(conn:Deno.Conn)=>{
@@ -73,14 +155,14 @@ function tunnelClient(target:string,address:string,port:number,opts:NetOptions,r
   try{
     client=Deno.createHttpClient({proxy:{transport:"http",url:`http://127.0.0.1:${listener.addr.port}`,
       basicAuth:{username:"p",password:secret}},...(opts.caCerts?{caCerts:opts.caCerts}:{}),
-      ...(reusable?{poolMaxIdlePerHost:1,poolIdleTimeout:10000}:{})});
+      ...(pool?{poolMaxIdlePerHost:pool.maxPerKey,poolIdleTimeout:pool.idleMs}:{})});
   }catch(error){clearTimeout(timer);stopListening();throw error;}
   void (async()=>{
     while(listening){
       let conn:Deno.Conn;
       try{conn=await listener.accept();}catch{break;}
       if(!reusable){stopListening();clearTimeout(timer);}
-      if(closed||connections.size>=8)closeConnection(conn);
+      if(closed||connections.size>=(pool?2*pool.maxPerKey+2:8))closeConnection(conn);
       else void bridge(conn);
     }
   })();
@@ -94,33 +176,98 @@ function tunnelClient(target:string,address:string,port:number,opts:NetOptions,r
   }};
 }
 
-type PinnedHTTPSBatch = {get:(host:string,address:string,port:number)=>Deno.HttpClient; close:()=>void};
+type Entry={key:string;client:Deno.HttpClient;closeTunnel?:()=>void;active:number;idle?:ReturnType<typeof setTimeout>;closed:boolean;
+  pending:Set<AbortController>;waiters:((ok:boolean)=>void)[]};
+type Lease={client:Deno.HttpClient;signal:AbortSignal;release:()=>void};
 
-/** Reuse connections only within the caller's synchronous answer sequence. */
-export function pinnedHTTPSBatch(opts:NetOptions={}):PinnedHTTPSBatch{
-  const tunnels=new Map<string,Tunnel>();
-  return {
-    get(host,address,port){
-      const key=JSON.stringify([host,address,port]);
-      let tunnel=tunnels.get(key);
-      if(tunnel)tunnels.delete(key);
-      else{
-        if(tunnels.size>=4){
-          const oldest=tunnels.keys().next().value!;
-          tunnels.get(oldest)!.close();
-          tunnels.delete(oldest);
-        }
-        tunnel=tunnelClient(`${host}:${port}`,address,port,opts,true);
+/** Pooled clients, one per key. Keep the contract of HttpConnections.lean (see the header). */
+export class NetPool{
+  readonly opts:Required<Pick<NetPoolOptions,"maxClients"|"maxPerKey"|"idleMs">>&NetPoolOptions;
+  readonly entries=new Map<string,Entry>();
+  /** Clients ever opened, for measurement. */
+  opened=0;
+  /** One cache per pool: a separate pool (a private session) never shares it. */
+  readonly dns:DnsCache;
+  constructor(opts:NetPoolOptions={}){
+    this.opts={...opts,maxClients:opts.maxClients??8,maxPerKey:opts.maxPerKey??6,idleMs:opts.idleMs??30000};
+    this.dns=new DnsCache({ttlMs:opts.dnsTtlMs,maxEntries:opts.dnsMaxEntries,enabled:opts.dnsCache!==false,resolver:opts.resolver,now:opts.now});
+  }
+  key(w:NetWire,u:URL):string{
+    return JSON.stringify([u.protocol,u.hostname,u.port,w.partition??this.opts.partition??"",w.address,w.port??null]);
+  }
+  private drop(e:Entry){
+    if(e.closed)return;
+    e.closed=true;
+    if(e.idle!==undefined)clearTimeout(e.idle);
+    if(this.entries.get(e.key)===e)this.entries.delete(e.key);
+    for(const c of e.pending)c.abort();
+    for(const wake of e.waiters.splice(0))wake(false);
+    if(e.closeTunnel)e.closeTunnel();
+    else try{e.client.close();}catch{/* already closed */}
+  }
+  private make(key:string,w:NetWire,u:URL):Entry{
+    const {maxPerKey,idleMs}=this.opts;
+    let client:Deno.HttpClient,closeTunnel:(()=>void)|undefined;
+    if(u.protocol==="https:"){
+      const port=w.port??443;
+      ({client,close:closeTunnel}=tunnelClient(`${u.hostname}:${port}`,w.address!,port,this.opts,{maxPerKey,idleMs}));
+    }else{
+      client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:w.address!,port:w.port??80},
+        poolMaxIdlePerHost:maxPerKey,poolIdleTimeout:idleMs});
+    }
+    this.opened++;
+    return {key,client,closeTunnel,active:0,closed:false,pending:new Set(),waiters:[]};
+  }
+  /** A lease on the key's client, or undefined when every pooled client is busy and the pool is
+   *  full (the caller then uses a one-shot client). Throws when `signal` aborts first or the
+   *  client closes while waiting. */
+  async acquire(w:NetWire,u:URL,signal:AbortSignal):Promise<Lease|undefined>{
+    const key=this.key(w,u);
+    let e=this.entries.get(key);
+    if(e){this.entries.delete(key);this.entries.set(key,e);}
+    else{
+      if(this.entries.size>=this.opts.maxClients){
+        const idle=[...this.entries.values()].find(x=>x.active===0);
+        if(!idle)return undefined;
+        this.drop(idle);
       }
-      tunnels.set(key,tunnel);
-      return tunnel.client;
-    },
-    close(){
-      for(const tunnel of tunnels.values())tunnel.close();
-      tunnels.clear();
-    },
-  };
+      e=this.make(key,w,u);
+      this.entries.set(key,e);
+    }
+    if(e.idle!==undefined){clearTimeout(e.idle);e.idle=undefined;}
+    const entry=e;
+    if(entry.active>=this.opts.maxPerKey){
+      const ok=await new Promise<boolean>(resolve=>{
+        const wake=(v:boolean)=>{signal.removeEventListener("abort",onAbort);resolve(v);};
+        const onAbort=()=>{const i=entry.waiters.indexOf(wake);if(i>=0)entry.waiters.splice(i,1);resolve(false);};
+        entry.waiters.push(wake);
+        signal.addEventListener("abort",onAbort,{once:true});
+      });
+      if(!ok||entry.closed)throw new Error("pool: request not started");
+      // the slot was handed over: `active` already counts this request
+    }else entry.active++;
+    const ctrl=new AbortController();
+    entry.pending.add(ctrl);
+    return {client:entry.client,signal:AbortSignal.any([signal,ctrl.signal]),release:()=>{
+      entry.pending.delete(ctrl);
+      if(entry.closed)return;
+      const next=entry.waiters.shift();
+      if(next){next(true);return;}
+      entry.active--;
+      if(entry.active===0){
+        const t=setTimeout(()=>this.drop(entry),this.opts.idleMs);
+        Deno.unrefTimer(t);
+        entry.idle=t;
+      }
+    }};
+  }
+  /** Close every client; pending requests fail and none is answered later. */
+  close(){for(const e of [...this.entries.values()])this.drop(e);}
 }
+
+/** Kept name: a pool of the caller's lifetime. */
+export type PinnedHTTPSBatch=NetPool;
+export function pinnedHTTPSBatch(opts:NetPoolOptions={}):NetPool{return new NetPool(opts);}
 
 function b64(bytes:Uint8Array):string{
   let s="";for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));
@@ -128,29 +275,28 @@ function b64(bytes:Uint8Array):string{
 }
 
 /** The host's answer to one wire of a turn (`netRequests` or `netSync`). */
-export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:PinnedHTTPSBatch):Promise<NetAnswer>{
+export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Promise<NetAnswer>{
   const failed={id:w.id,status:0};
   // a WebSocket connection's wires go to socketOpen / socketWrite / socketClose
   if(w.method.startsWith("WEBSOCKET"))return failed;
   if(w.resolve){
     try{
       const host=new URL(w.url).hostname;
+      if(batch)return {id:w.id,addresses:await batch.dns.resolve(w.partition??batch.opts.partition??"",host)};
       const found=await Promise.allSettled([Deno.resolveDns(host,"A"),Deno.resolveDns(host,"AAAA")]);
       return {id:w.id,addresses:found.flatMap(r=>r.status==="fulfilled"?r.value:[])};
     }catch{return {id:w.id,addresses:[]};}
   }
-  let client:Deno.HttpClient|undefined,pooled=false,done:(()=>void)|undefined;
+  let client:Deno.HttpClient|undefined,lease:Lease|undefined,done:(()=>void)|undefined;
+  const timeout=AbortSignal.timeout(opts.timeoutMs??300000);
   try{
     if(w.address){
       const u=new URL(w.url);
-      if(u.protocol==="https:"){
+      lease=batch?await batch.acquire(w,u,timeout):undefined;
+      if(lease)client=lease.client;
+      else if(u.protocol==="https:"){
         const port=w.port??443;
-        if(batch&&w.method==="GET"&&w.bodyBase64===undefined){
-          client=batch.get(u.hostname,w.address,port);
-          pooled=true;
-        }else{
-          ({client,close:done}=tunnelClient(`${u.hostname}:${port}`,w.address,port,opts));
-        }
+        ({client,close:done}=tunnelClient(`${u.hostname}:${port}`,w.address,port,opts));
       }else{
         client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:w.address,port:w.port??80}});
       }
@@ -159,15 +305,16 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:PinnedHTTPSB
     }
     const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
     const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",
-      signal:AbortSignal.timeout(opts.timeoutMs??300000),...(client?{client}:{})} as RequestInit);
+      signal:lease?.signal??timeout,...(client?{client}:{})} as RequestInit);
     const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
     for(;reader;){const {done:end,value}=await reader.read();if(end)break;total+=value.length;if(total>MAX_BODY){await reader.cancel();return failed;}parts.push(value);}
     const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
     return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)};
   }catch{return failed;}
   finally{
-    if(done)done();
-    else if(!pooled)try{client?.close();}catch{/* closed */}
+    if(lease)lease.release();
+    else if(done)done();
+    else try{client?.close();}catch{/* closed */}
   }
 }
 
