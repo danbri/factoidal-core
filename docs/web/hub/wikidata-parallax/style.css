@@ -148,16 +148,16 @@ a.val:hover { text-decoration: underline; }
 .key-hex::before { background: var(--hex); clip-path: polygon(30% 0, 70% 0, 100% 50%, 70% 100%, 30% 100%, 0 50%); width: 1.2rem; }
 .prog { display: flex; flex-direction: column; gap: .7rem; }
 .chain { display: flex; flex-direction: column; gap: .45rem; }
-.pz-row { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; row-gap: .5rem; align-items: stretch; }
+.pz-row { position: relative; list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; row-gap: .9rem; align-items: center; }
 .pz-branch { margin-left: 1.6rem; }
 .pz { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .4rem; min-height: 2.7rem; max-width: 100%;
   padding: .45rem .95rem .45rem 1.35rem; border-radius: .45rem; background: var(--pc); color: #fff; font-size: .92rem; line-height: 1.3;
   box-shadow: inset 0 -2px 0 rgb(0 0 0 / .18); }
-.pz:first-child { padding-left: .95rem; }
+.pz:first-of-type { padding-left: .95rem; }
 /* the notch: a half-circle cut from the left edge … */
-.pz:not(:first-child)::before { content: ""; position: absolute; left: 0; top: 50%; width: 10px; height: 20px; margin-top: -10px; border-radius: 0 10px 10px 0; background: var(--hole); z-index: 1; }
+.pz:not(:first-of-type)::before { content: ""; position: absolute; left: 0; top: 50%; width: 10px; height: 20px; margin-top: -10px; border-radius: 0 10px 10px 0; background: var(--hole); z-index: 1; }
 /* … and the tab that fits into the next piece's notch */
-.pz:not(:last-child)::after { content: ""; position: absolute; right: -8px; top: 50%; width: 8px; height: 16px; margin-top: -8px; border-radius: 0 8px 8px 0; background: var(--pc); z-index: 2; }
+.pz:not(:last-of-type)::after { content: ""; position: absolute; right: -8px; top: 50%; width: 8px; height: 16px; margin-top: -8px; border-radius: 0 8px 8px 0; background: var(--pc); z-index: 2; }
 .pz-set { --pc: var(--pz-set); max-width: min(100%, 30rem); }
 .pz-pivot { --pc: var(--pz-pivot); }
 .pz-wild { --pc: var(--pz-wild); }
@@ -301,3 +301,14 @@ body.has-drawer { padding-bottom: 64vh; }
 }
 .st-status { font-size: .8rem; color: var(--exclude); align-self: center; }
 .st-status:empty { display: none; }
+
+/* Use the width: the blocks keep the title's left edge but run on to the
+   right edge of the window, so a chain stays on one line where it can. */
+@media (min-width: 40rem) {
+  .px-detail .blocks { width: calc((100vw + 100%) / 2 - 2rem); max-width: 110rem; }
+  .blocks-key, .step-tools { max-width: 68rem; }
+}
+/* Where a row still wraps, a dotted line carries the flow to the next line (drawn by app.mjs). */
+.pz.wrap-in { margin-left: 1.1rem; }
+.wrap-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; }
+.wrap-path path { fill: none; stroke: var(--faint); stroke-width: 2; stroke-dasharray: 1.5 5; stroke-linecap: round; }

@@ -14,6 +14,56 @@ const data = $('#grammar');
 const blocks = $('.blocks');
 const drawer = $('.drawer');
 if (data && blocks && drawer) start(JSON.parse(data.textContent));
+if (blocks) linkWraps(blocks);
+
+// Where a chain's row wraps onto a new line, draw a dotted line from the end of
+// one line to the start of the next, so the flow still reads as one pipeline.
+// Redrawn whenever a row changes size (window width, folding, counts).
+function linkWraps(root) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const draw = (row) => {
+    row.querySelector(':scope > .wrap-path')?.remove();
+    const items = [...row.children].filter(x => x.matches('li.pz'));
+    if (!row.offsetParent || items.length < 2) { items.forEach(x => x.classList.remove('wrap-in')); return; }
+    // Marking a piece moves it a little, which can change the wrapping: settle first.
+    for (let pass = 0; pass < 3; pass++) {
+      let changed = false;
+      items.forEach((x, i) => {
+        const w = i > 0 && x.offsetTop >= items[i - 1].offsetTop + items[i - 1].offsetHeight / 2;
+        if (w !== x.classList.contains('wrap-in')) { x.classList.toggle('wrap-in', w); changed = true; }
+      });
+      if (!changed) break;
+    }
+    const breaks = items.filter(x => x.classList.contains('wrap-in'));
+    if (!breaks.length) return;
+    const R = row.getBoundingClientRect();
+    const box = (el) => { const b = el.getBoundingClientRect(); return { l: b.left - R.left, r: b.right - R.left, t: b.top - R.top, b: b.bottom - R.top, m: b.top - R.top + b.height / 2 }; };
+    let d = '';
+    for (const el of breaks) {
+      const i = items.indexOf(el), a = box(items[i - 1]), b = box(el);
+      // The gap between the two lines: below everything on the line before, above everything on this one.
+      const lineAbove = items.slice(0, i).filter(x => !x.classList.contains('wrap-in') || items.indexOf(x) >= i - 1).map(box).filter(x => x.b > a.t).reduce((m, x) => Math.max(m, x.b), a.b);
+      const lineBelow = items.slice(i).map(box).filter(x => x.t < b.b).reduce((m, x) => Math.min(m, x.t), b.t);
+      const gap = (lineAbove + lineBelow) / 2, x1 = a.r + 9, x2 = Math.max(3, b.l - 11);
+      d += `M${x1} ${a.m}h7V${gap}H${x2}V${b.m}h${b.l - x2 - 3}`;
+    }
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('class', 'wrap-path');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d);
+    svg.append(path);
+    row.append(svg);
+  };
+  let queued = false;
+  const all = () => { queued = false; root.querySelectorAll('.pz-row').forEach(draw); };
+  const soon = () => { if (!queued) { queued = true; requestAnimationFrame(all); } };
+  const ro = new ResizeObserver(soon);
+  root.querySelectorAll('.pz-row').forEach(r => ro.observe(r));
+  root.addEventListener('toggle', soon, true);
+  addEventListener('load', soon);
+  soon();
+}
 
 function start(g) {
   const n = g.steps.length;          // steps 0..n-1, then n: the whole query
