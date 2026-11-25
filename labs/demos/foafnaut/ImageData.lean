@@ -1,7 +1,7 @@
 import ImageJPEG
 import ImageGIF
 import L4Factoidal.Codec.VP8Alpha
-import L4Factoidal.WHATWG.URL.PercentEncode
+import L4Factoidal.WHATWG.URL.PercentDecode
 import Std.Data.HashMap
 
 /- Raster image sources of a document.
