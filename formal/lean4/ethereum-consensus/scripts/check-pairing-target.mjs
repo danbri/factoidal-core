@@ -42,6 +42,13 @@ function makeRows(){
  row("mul",[p,...zero().slice(1)],basis(0),"error noncanonical");
  row("mul",basis(0),[p,...zero().slice(1)],"error noncanonical");
  row("pow",basis(0),2n**4572n,"error exponent_limit");
+ // Exact exponent admission boundary and precedence; expected values independent of Lean.
+ row("pow",zero(),0n,ok(basis(0)));
+ row("pow",zero(),1n,ok(zero()));
+ row("pow",basis(0),2n**4572n-1n,ok(basis(0)));
+ row("pow",basis(0),2n**4572n+1n,"error exponent_limit");
+ row("pow",[p,...zero().slice(1)],2n**4572n,"error noncanonical");
+ row("final",[p,...zero().slice(1)],null,"error noncanonical");
  rows.push({input:"mul 1 2",expected:"error width"},{input:"pow x "+zero().join(" "),expected:"error invalid_decimal"},{input:"final "+Array(12).fill("-1").join(" "),expected:"error invalid_decimal"},{input:"bogus",expected:"error operation"},{input:"x".repeat(4097),expected:"error resource_limit"});
  return rows;
 }
