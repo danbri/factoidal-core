@@ -1972,14 +1972,24 @@
     constructor(type, init = undefined) { super(type, init); state(this).submitter = initOf(init).submitter ?? null; }
     get submitter() { return state(this).submitter; }
   }
-  // The form submission algorithm up to navigation (HTML §4.10.21.3 steps 6.5-6.7): the
-  // submit event; a navigation would follow, but nothing loads here.
+  // HTML §4.10.22.3: validate and fire the submit event before asking Lean to plan navigation.
+  const firingSubmissionEvents = new WeakSet();
+  let checkForm;
   const submitForm = (form, submitter) => {
-    if (!form.isConnected) return; // a form that is not connected does not submit (§4.10.21.3 step 1)
-    if (formsSandboxed(form)) return; // nor one of a document with the sandboxed forms flag (step 3)
-    const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: submitter === form ? null : submitter });
-    state(e).trusted = true;
-    if (dispatch(form, e)) planSubmission(form, submitter === form ? null : submitter);
+    if (!form.isConnected || formsSandboxed(form) || firingSubmissionEvents.has(form)) return;
+    const button = submitter === form ? null : submitter;
+    const skipValidation = n.attr(nodeId(form), 'novalidate') !== null ||
+      (button !== null && n.attr(nodeId(button), 'formnovalidate') !== null);
+    firingSubmissionEvents.add(form);
+    try {
+      if (!skipValidation && !checkForm(form)) return;
+      const e = new SubmitEvent('submit', { bubbles: true, cancelable: true, submitter: button });
+      state(e).trusted = true;
+      if (!dispatch(form, e)) return;
+    } finally {
+      firingSubmissionEvents.delete(form);
+    }
+    planSubmission(form, button);
   };
   // ---- encoding100: the form submission algorithm after the submit event (HTML §4.10.21.3)
   // is Lean's (node_query 170, HTML.FormSubmission): the entry list, the form's encoding,
@@ -2001,7 +2011,19 @@
   };
   Object.defineProperties(named.HTMLFormElement.prototype, {
     submit: { value() { planSubmission(this, null); }, writable: true, configurable: true },
-    requestSubmit: { value(submitter) { submitForm(this, submitter ?? this); }, writable: true, configurable: true },
+    requestSubmit: { value(submitter) {
+      const formId = nodeId(this);
+      if (!htmlEl(formId) || str(formId, 0) !== 'form') throw new TypeError('Illegal invocation');
+      if (submitter != null) {
+        const id = nodeId(submitter);
+        const tag = htmlEl(id) ? str(id, 0) : '';
+        const type = typeState(submitter);
+        if (!((tag === 'button' && type === 'submit') || (tag === 'input' && (type === 'submit' || type === 'image'))))
+          throw new TypeError('The submitter is not a submit button.');
+        if (formOf(submitter) !== this) throw new DOMException('The submitter does not belong to this form.', 'NotFoundError');
+      }
+      submitForm(this, submitter ?? this);
+    }, writable: true, configurable: true },
     reset: { value() { resetForm(this); }, writable: true, configurable: true },
   });
   const fire = (target, type, init) => { const e = new Event(type, init); state(e).trusted = true; return dispatch(target, e); };
@@ -18060,7 +18082,7 @@
       });
     }
     // "Statically validate the constraints" of a form (HTML §4.10.21.3)
-    const checkForm = form => { let ok = true; for (const k of idsOf(fq(form, 'e'))) if (!check(wrap(k))) ok = false; return ok; };
+    checkForm = form => { let ok = true; for (const k of idsOf(fq(form, 'e'))) if (!check(wrap(k))) ok = false; return ok; };
     method(F, 'checkValidity', function checkValidity() { return checkForm(this); });
     method(F, 'reportValidity', function reportValidity() { return checkForm(this); });
   }
