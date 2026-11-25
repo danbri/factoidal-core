@@ -292,6 +292,28 @@ private def sliced : BorderImage := {slice := .all (.number 2)}
 #guard (partsOf (boxStyle sliced)).map (fun ps => sameParts (ps.drop 4 |>.take 1) [(10,0,80,10,0.025,0.2)]) == some true
 -- the fill covers the inside of the border
 #guard (partsOf (boxStyle {sliced with fill := true})).map (fun ps => sameParts (ps.drop 8) [(10,10,80,40,0.025,0.05)]) == some true
+-- each part draws its own slice: the top left corner gets the 2 by 2 slice, the top edge the 2 by
+-- 2 slice next to it, each with its own paint-table id
+private def partImages (s : Computed) : List ImageRecord :=
+  ((borderImageNodes 1 s 0 0 100 60).getD #[]).toList.filterMap fun
+    | Node.paint ⟨_,painted⟩ => match painted.style.fill with | .image r => some r | _ => none
+    | _ => none
+#guard (partImages (boxStyle sliced)).map (fun r => (r.bitmap.width,r.bitmap.height)) ==
+  [(2,2),(2,2),(2,2),(2,2),(2,2),(2,2),(2,2),(2,2)]
+#guard (partImages (boxStyle sliced)).map (·.id) == [0,1,2,3,4,5,6,7].map (borderSliceIdBase+7*9+·)
+-- a picture whose two left columns are red and the rest blue: the right edge of the top left
+-- corner shows red only (before 2026-11-25 it mixed in the blue of the top edge's slice)
+private def twoColour : Bitmap := ⟨6,6,ByteArray.mk <| Id.run do
+  let mut out : Array UInt8 := #[]
+  for _ in [0:6] do
+    for i in [0:6] do
+      out := out ++ (if i < 2 then #[255,0,0,255] else #[0,0,255,255])
+  return out⟩
+#guard match partImages {boxStyle sliced with borderImage := {sliced with bitmap := some (7,twoColour)}} with
+  | corner :: _ => match corner.colorAt 9.9 5 with
+    | [r,g,b,a] => near r 1 && near g 0 && near b 0 && near a 1
+    | _ => false
+  | [] => false
 -- no decoded image, no border style: the border style is drawn
 #guard (borderImageNodes 1 {borderStyles := .all .solid,borderWidth := ⟨10,10,10,10⟩} 0 0 100 60).isNone
 #guard (borderImageNodes 1 {borderImage := {bitmap := some (7,borderPicture)}} 0 0 100 60).isNone

@@ -197,6 +197,28 @@ def Bitmap.word (b : Bitmap) (index : Nat) : Nat :=
   let at_ := fun (k : Nat) => (b.rgba.get! (index*4+k)).toNat
   at_ 0+at_ 1*256+at_ 2*65536+at_ 3*16777216
 
+/-- The pixels of the rectangle from column `x0` and row `y0`, `w` wide and `h` high, as a bitmap
+of their own; the rectangle is first cut to the bitmap. A record that draws the result samples
+only these pixels: at its edges the sampler takes the edge pixel, not a pixel beyond it. The
+nine parts of a border image are drawn so (CSS Backgrounds 3 §6.2), each from its own slice. -/
+def Bitmap.crop (b : Bitmap) (x0 y0 w h : Nat) : Bitmap := Id.run do
+  let x0 := min x0 b.width
+  let y0 := min y0 b.height
+  let w := min w (b.width-x0)
+  let h := min h (b.height-y0)
+  let mut out := ByteArray.emptyWithCapacity (w*h*4)
+  for j in [0:h] do
+    let start := ((y0+j)*b.width+x0)*4
+    out := b.rgba.copySlice start out out.size (w*4)
+  return {width := w, height := h, rgba := out}
+
+#guard let b : Bitmap := ⟨3,2,⟨#[1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 6,6,6,6]⟩⟩
+  let c := b.crop 1 0 2 2
+  c.width == 2 && c.height == 2 && c.rgba.toList == [2,2,2,2, 3,3,3,3, 5,5,5,5, 6,6,6,6]
+#guard let b : Bitmap := ⟨3,2,⟨#[1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 6,6,6,6]⟩⟩
+  let c := b.crop 2 1 5 5
+  c.width == 1 && c.height == 1 && c.rgba.toList == [6,6,6,6]
+
 /-- Index of a sample on one axis: the nearest pixel beyond the edge. -/
 private def edgeIndex (v : Float) (size : Nat) : Nat :=
   if v <= 0 then 0 else min (size-1) v.toUInt64.toNat

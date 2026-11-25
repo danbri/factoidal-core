@@ -628,6 +628,10 @@ def borderImageTiles (mode : BorderImageRepeat) (d0 dlen tile : Float) : Array (
       for i in [0:n] do out := out.push (d0+gap+i.toFloat*(tile+gap),tile,0,1)
       return out
 
+/-- Paint-table ids of the parts of border images: part `k` (0 to 8) of picture `p` has id
+`borderSliceIdBase+9*p+k`. The picture ids of a page are far below this base. -/
+def borderSliceIdBase : Nat := 17592186044416
+
 /-- The border image of a border box at `(x,y)`, size `w` by `h` (CSS Backgrounds 3 §6.7): the
 nine parts of the image cut by `border-image-slice`, each drawn into its part of the border
 image area (the border box grown by `border-image-outset`) as wide as `border-image-width`
@@ -678,14 +682,24 @@ def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array
   let wr := wr0*f
   let wb := wb0*f
   let wl := wl0*f
-  let emit := fun (xs ys : Array (Float × Float × Float × Float)) (sx sy sw sh : Float) => Id.run do
+  -- Each part samples its own slice (`Bitmap.crop`), so bilinear sampling at the part's edges
+  -- takes the slice's edge pixels and not those of the next slice. Before 2026-11-25 every part
+  -- sampled the whole image, and the seams between parts mixed in the colours of the
+  -- neighbouring slices (WPT border-image-image-type-001, -002, -004 and -005 differed only there).
+  let emit := fun (part : Nat) (xs ys : Array (Float × Float × Float × Float)) (sx sy sw sh : Float) => Id.run do
+    let cx := sx.floor
+    let cy := sy.floor
+    let slice := b.crop cx.toUInt64.toNat cy.toUInt64.toNat
+      ((sx+sw).ceil-cx).toUInt64.toNat ((sy+sh).ceil-cy).toUInt64.toNat
+    let sliceId := borderSliceIdBase+pic*9+part
     let mut out : Array Node := #[]
     for (dx,dw,fx0,fx1) in xs do
       for (dy,dh,fy0,fy1) in ys do
         let mx := ((fx1-fx0)*sw)/dw
         let my := ((fy1-fy0)*sh)/dh
         let image : ImageRecord :=
-          {map := ⟨mx,0,0,my,sx+fx0*sw-dx*mx,sy+fy0*sh-dy*my⟩, id := pic, bitmap := b, repeatX := false, repeatY := false}
+          {map := ⟨mx,0,0,my,sx-cx+fx0*sw-dx*mx,sy-cy+fy0*sh-dy*my⟩, id := sliceId, bitmap := slice,
+           repeatX := false, repeatY := false}
         out := out.push (.paint ⟨some id,{geometry := .rect dx dy dw dh,style := {fill := .image image}}⟩)
     return out
   let one := fun (d0 dlen : Float) => #[(d0,dlen,(0 : Float),(1 : Float))]
@@ -696,21 +710,21 @@ def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array
   let out : Array Node := Id.run do
     let mut out : Array Node := #[]
     -- corners
-    if pos sl && pos st && pos wl && pos wt then out := out ++ emit (one ax wl) (one ay wt) 0 0 sl st
-    if pos sRight && pos st && pos wr && pos wt then out := out ++ emit (one (ax+aw-wr) wr) (one ay wt) (iw-sRight) 0 sRight st
-    if pos sl && pos sb && pos wl && pos wb then out := out ++ emit (one ax wl) (one (ay+ah-wb) wb) 0 (ih-sb) sl sb
-    if pos sRight && pos sb && pos wr && pos wb then out := out ++ emit (one (ax+aw-wr) wr) (one (ay+ah-wb) wb) (iw-sRight) (ih-sb) sRight sb
+    if pos sl && pos st && pos wl && pos wt then out := out ++ emit 0 (one ax wl) (one ay wt) 0 0 sl st
+    if pos sRight && pos st && pos wr && pos wt then out := out ++ emit 1 (one (ax+aw-wr) wr) (one ay wt) (iw-sRight) 0 sRight st
+    if pos sl && pos sb && pos wl && pos wb then out := out ++ emit 2 (one ax wl) (one (ay+ah-wb) wb) 0 (ih-sb) sl sb
+    if pos sRight && pos sb && pos wr && pos wb then out := out ++ emit 3 (one (ax+aw-wr) wr) (one (ay+ah-wb) wb) (iw-sRight) (ih-sb) sRight sb
     -- edges
     if pos midW && pos innerW then
       if pos st && pos wt then
-        out := out ++ emit (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wt/st))) (one ay wt) sl 0 midW st
+        out := out ++ emit 4 (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wt/st))) (one ay wt) sl 0 midW st
       if pos sb && pos wb then
-        out := out ++ emit (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wb/sb))) (one (ay+ah-wb) wb) sl (ih-sb) midW sb
+        out := out ++ emit 5 (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wb/sb))) (one (ay+ah-wb) wb) sl (ih-sb) midW sb
     if pos midH && pos innerH then
       if pos sl && pos wl then
-        out := out ++ emit (one ax wl) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wl/sl))) 0 st sl midH
+        out := out ++ emit 6 (one ax wl) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wl/sl))) 0 st sl midH
       if pos sRight && pos wr then
-        out := out ++ emit (one (ax+aw-wr) wr) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wr/sRight))) (iw-sRight) st sRight midH
+        out := out ++ emit 7 (one (ax+aw-wr) wr) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wr/sRight))) (iw-sRight) st sRight midH
     -- the middle, only with `fill`
     if bi.fill && pos midW && pos midH && pos innerW && pos innerH then
       let scaleX : Float := if pos st && pos wt then wt/st else if pos sb && pos wb then wb/sb else 1
@@ -718,8 +732,8 @@ def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array
       let xs := borderImageTiles bi.repeatX (ax+wl) innerW (midW*scaleX)
       let ys := borderImageTiles bi.repeatY (ay+wt) innerH (midH*scaleY)
       if xs.size*ys.size > 4096 then
-        out := out ++ emit (one (ax+wl) innerW) (one (ay+wt) innerH) sl st midW midH
-      else out := out ++ emit xs ys sl st midW midH
+        out := out ++ emit 8 (one (ax+wl) innerW) (one (ay+wt) innerH) sl st midW midH
+      else out := out ++ emit 8 xs ys sl st midW midH
     return out
   some out
 
