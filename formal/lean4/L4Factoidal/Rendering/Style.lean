@@ -866,6 +866,45 @@ def gradientArgs (value : String) : Option String := do
     out := out.push c
   none
 
+/-- The words of a `border-image` value, with `/` a word of its own outside a `url()`. -/
+def borderImageWords (value : String) : List String :=
+  (topWords value).flatMap fun w =>
+    if w.toLower.startsWith "url(" || !w.contains '/' then [w] else
+    let parts := w.splitOn "/"
+    (parts.zipIdx.flatMap fun (p,i) => (if i == 0 then [] else ["/"]) ++ (if p.isEmpty then [] else [p]))
+
+/-- The longhands of a `border-image` value (CSS Backgrounds 3 §6.7) as text, the omitted parts at
+their initial values, so that the cascade keeps one winner for each longhand in source order; a
+CSS-wide keyword is that keyword on each. None for a value with more than two slashes. -/
+def borderImageLonghands (value : String) : Option (List (String × String)) := Id.run do
+  let names := ["border-image-source","border-image-slice","border-image-width","border-image-outset","border-image-repeat"]
+  if CssValues.cssWide.contains (trim value).toLower then return some (names.map fun n => (n,(trim value).toLower))
+  let mut source := "none"
+  let mut group := 0
+  let mut slice : List String := []
+  let mut width : List String := []
+  let mut outset : List String := []
+  let mut modes : List String := []
+  for w in borderImageWords value do
+    let t := (trim w).toLower
+    if w == "/" then group := group+1
+    else if t.startsWith "url(" || t == "none" then source := w
+    else if ["stretch","repeat","round","space"].contains t then modes := modes ++ [w]
+    else if t == "fill" then slice := slice ++ [w]
+    else if group == 0 then slice := slice ++ [w]
+    else if group == 1 then width := width ++ [w]
+    else outset := outset ++ [w]
+  if group > 2 then return none
+  let join := fun (l : List String) (initial : String) => if l.isEmpty then initial else " ".intercalate l
+  return some [("border-image-source",source),("border-image-slice",join slice "100%"),
+    ("border-image-width",join width "1"),("border-image-outset",join outset "0"),("border-image-repeat",join modes "stretch")]
+
+/-- The initial values of the border image longhands: what the `border` shorthand sets (CSS
+Backgrounds 3 §4.4). -/
+def borderImageInitial : List (String × String) :=
+  [("border-image-source","none"),("border-image-slice","100%"),("border-image-width","1"),
+   ("border-image-outset","0"),("border-image-repeat","stretch")]
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -886,6 +925,14 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
         rasterPlacement ++ (whole :: acc) else
+    -- `border-image` as its longhands, and the `border` shorthand resetting them (CSS Backgrounds 3
+    -- §4.4, §6.7), each winning in source order like any longhand
+    if key == "border-image" && !CssVars.mentions d.value then
+      match borderImageLonghands d.value with
+      | some ls => (ls.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
+      | none => acc else
+    if key == "border" && !CssVars.mentions d.value then
+      (borderImageInitial.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ (whole :: acc) else
     if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
@@ -1461,13 +1508,6 @@ private def borderImageSource (w : String) : Except String (Option String) := do
     return some u
   throw "border-image-source: only url() is drawn"
 
-/-- The words of a `border-image` value, with `/` a word of its own outside a `url()`. -/
-private def borderImageWords (value : String) : List String :=
-  (topWords value).flatMap fun w =>
-    if w.toLower.startsWith "url(" || !w.contains '/' then [w] else
-    let parts := w.splitOn "/"
-    (parts.zipIdx.flatMap fun (p,i) => (if i == 0 then [] else ["/"]) ++ (if p.isEmpty then [] else [p]))
-
 /-- The `border-image` shorthand (§6.7): `<source> || <slice> [/ <width>? [/ <outset>]?]? || <repeat>`;
 every omitted part takes its initial value. -/
 private def borderImageShorthand (fontSize : Float) (value : String) : Except String BorderImage := do
@@ -1998,6 +2038,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let ws := topWords d.value
     let fill := ws.any fun w => (trim w).toLower == "fill"
     let amounts := ws.filter fun w => (trim w).toLower != "fill"
+    let amounts := if amounts.isEmpty then ["100%"] else amounts
     return {s with borderImage := {s.borderImage with slice := ← borderImageSides s.fontSize true false false amounts, fill}}
   | "border-image-width" =>
     return {s with borderImage := {s.borderImage with width := ← borderImageSides s.fontSize true true true (topWords d.value)}}
