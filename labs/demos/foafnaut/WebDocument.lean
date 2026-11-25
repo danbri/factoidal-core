@@ -1278,6 +1278,13 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
     -- Paste and go answers the address to go to in `go`, not for the clipboard.
     let key := if str request "action" == "pasteGo" then "go" else "clipboard"
     return some (JSON.Json.object (fields ++ [(key,match copied with | some t => .string t | none => .null)])).toString
+  -- The context menu of a press on the page (issue 1031; WebShell.openContext): `link` is the
+  -- address of the link under the press in the frame on screen (null: none), `selection`
+  -- whether the page has a selection. The answer is the edit state with the menu open.
+  if op == "shellContext" then
+    let link := match request.field? "link" with | some (.string h) => if h.isEmpty then none else some h | _ => none
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    return some (shell.openContext link (request.field? "selection" == some (.bool true))).editJson.toString
   -- The key table for a host with no menu, which must decide at once which keys it keeps.
   if op == "keyTable" then
     let platform := str request "platform" "other"

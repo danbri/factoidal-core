@@ -1,4 +1,4 @@
-import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
+import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit,type MenuAction} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
 import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
@@ -1383,8 +1383,34 @@ async function main() {
   // without the op shellActions has none.
   const menuOps=(()=>{try{return Array.isArray(engine.shellActions({},1));}catch{return false;}})();
   const openMenu=()=>{if(!menuOps)return;if(!focused)focusAddress();edit(engine.shellEdit(shell(),"menu"));trace("native-html-menu",{open:field.menu===true});};
-  const closeMenu=()=>{if(field.menu)edit(engine.shellEdit(shell(),"closeMenu"));};
+  const closeMenu=()=>{if(field.menu||field.context)edit(engine.shellEdit(shell(),"closeMenu"));};
   const menuPress=(x:number,y:number,how:string)=>{if(menuOps&&engine.shellMenu(shell(),x,y,width,how).menu)openMenu();};
+  // A right click, or Control-click on macOS (issue 1031): on the address bar the address menu;
+  // on the page Lean's context menu, for the link under the point in the frame on screen, with
+  // Copy when there is a selection. No worker call: the answer does not wait for page scripts.
+  const contextPress=(x:number,y:number,event:UIEvent)=>{
+    if(!menuOps)return;
+    const hit=engine.shellMenu(shell(),x,y,width,"context");
+    if(hit.menu){openMenu();gestureDone("menu",event,{menu:"address"});return;}
+    if(hit.control!==null||(document as Page).graph)return;
+    const link=frame?engine.hit(frame,x,pageRow(y))?.href??null:null;
+    const opened=engine.shellContext(shell(),link,!!view.selection);
+    if(!opened)return;
+    if(focused)leaveAddress();
+    edit(opened);trace("native-html-menu",{open:true,context:opened.context});
+    gestureDone("menu",event,{menu:opened.context});
+  };
+  // A button of the context menu: Lean's action table says what it does; the host does it.
+  const runMenuAction=(action:MenuAction)=>{
+    if(action.action==="copy"&&action.text){native!.writeClipboard(action.text);lastCopied=action.text;trace("native-html-copy",{characters:action.text.length,from:"context"});}
+    else if(action.action==="openTab"&&action.text)openInTab(action.text);
+    else if(action.action==="back")windowCommand(6);
+    else if(action.action==="forward")windowCommand(7);
+    else if(action.action==="reload")windowCommand(8);
+    else if(action.action==="viewSource")viewSource().catch(error=>refuse(document.url,error));
+    else if(action.action==="copySelection"&&view.selection)copySelection(eventAt);
+    gestureDone("menuItem",undefined,{action:action.action});
+  };
   // An address from the bar (Return, or Paste and go): Lean routes it as typed.
   const goTo=(target:string)=>{
     leaveAddress();
@@ -1896,8 +1922,8 @@ async function main() {
           }else command();
         }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
-        // Kind 13, a right click (native_window.m): Lean may open the address menu.
-        if(event.kind===13)menuPress(event.a,event.b,"context");
+        // Kind 13, a right click (native_window.m): the address menu or the page's context menu.
+        if(event.kind===13)contextPress(event.a,event.b,event);
         if(event.kind===3&&holding){holding.x=event.a;holding.y=event.b;}
         if(event.kind===4)holding=undefined;
         if(event.kind===12)gestureWheel(event.a,event.b);
@@ -1911,7 +1937,7 @@ async function main() {
           // Lean says what the press does. A plain press makes no extra call.
           const flags=event.flags??0,button=pointerButton(flags);
           pressGesture=flags&15||button?engine.linkGesture(gesturePlatform,button,pointerModifiers(flags)):"follow";
-          if(pressGesture==="menu"){menuPress(event.a,event.b,"context");gestureDone("menu",event,{});return;}
+          if(pressGesture==="menu"){contextPress(event.a,event.b,event);return;}
           if(button===2){middlePress={x:event.a,y:event.b};return;}
           // Hit coordinates and boxes belong to the successfully presented frame.
           // One small Lean call: the control or the link pressed, and what the composite darkens.
@@ -1919,12 +1945,16 @@ async function main() {
           const control=answer.control;
           if(control){
             if(answer.rects.length)startPress({control,rects:answer.rects});
+            // A context menu button: its action is read before the press closes the menu.
+            const menuAction=field.context?engine.shellActions(shell(),width).find(action=>action.control===control):undefined;
             if(control!=="address"&&control!=="copyAddress"&&control!=="pasteGo")closeMenu();
+            if(menuAction){runMenuAction(menuAction);return;}
             chrome(control);
             if(control==="address")holding={x:event.a,y:event.b,startX:event.a,startY:event.b,at:performance.now()};
             return;
           }
           if(focused)leaveAddress();
+          if(field.context)closeMenu();
           if(find.focused){find.focused=false;dirty=true;}
           press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
