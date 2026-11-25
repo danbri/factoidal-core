@@ -2957,6 +2957,21 @@ theorem keepStoreAhead_rest (h : Holds) (kept : Kept) (html : String) (request :
   unfold keepStoreAhead
   split <;> exact ⟨rfl,rfl,rfl⟩
 
+/-- Partial restyles may only touch a few nodes, while repeated ancestor tests ask
+for the same class words repeatedly. Read the keys of each node when first needed. -/
+@[noinline] private def memoElementKeys (tree : DOM.Dom) : Array (Thunk Rendering.CSS.ElemKey) :=
+  Array.ofFn (n := tree.size) fun i => Thunk.mk fun _ => Rendering.CSS.readKeys tree i.val
+
+private def elementKeyWithMemo (tree : DOM.Dom) (memo : Array (Thunk Rendering.CSS.ElemKey))
+    (id : Nat) : Rendering.CSS.ElemKey :=
+  match memo[id]? with
+  | some found => found.get
+  | none => Rendering.CSS.readKeys tree id
+
+private theorem elementKeyWithMemo_eq (tree : DOM.Dom) (id : Nat) :
+    elementKeyWithMemo tree (memoElementKeys tree) id = Rendering.CSS.readKeys tree id := by
+  by_cases h : id < tree.size <;> simp [elementKeyWithMemo, memoElementKeys, h, Thunk.get]
+
 /-- A matcher of rules for the reads of `measure` (the animation rules of op 28 and op 24, and
 the rules of the computed values): the rule buckets and the element keys of the tree, made
 once. It is data, passed to the functions that use it: a closure over the tables was
@@ -2964,8 +2979,9 @@ compiled with the tables made again at each call (each element read the keys of 
 document, n², 64 s in one script turn of a Wikipedia article on 2026-11-15). -/
 inductive RuleMatcher where
   | empty
-  /-- With no key table: the keys of an element read when a rule tests it (a few elements). -/
-  | keysRead (ix : Rendering.CSS.RuleIndex) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
+  /-- Partial restyles keep a lazily populated key table for their current arena. -/
+  | keysMemo (ix : Rendering.CSS.RuleIndex) (ks : Thunk (Array (Thunk Rendering.CSS.ElemKey)))
+      (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
   | plain (ix : Rendering.CSS.RuleIndex) (ks : Rendering.CSS.ElemKeys) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
   | scoped (ix : Rendering.CSS.ScopedIndex) (ks : Rendering.CSS.ElemKeys) (ts : Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState)
 
@@ -2979,9 +2995,20 @@ def RuleMatcher.make (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
 /-- The matches of element `id`: a look in the tables. -/
 def RuleMatcher.matched : RuleMatcher → Nat → List Rendering.CSS.Match
   | .empty, _ => []
-  | .keysRead ix tree state, id => ix.matched (Rendering.CSS.readKeys tree) tree id state
+  | .keysMemo ix ks tree state, id => ix.matched (elementKeyWithMemo tree ks.get) tree id state
   | .plain ix ks tree state, id => ix.matched (ks.get tree) tree id state
   | .scoped ix ks ts state, id => ix.matched (ks.get ts.tree) ts id state
+
+/-- The memo returns each element's current-arena keys, including during ancestor matches. -/
+theorem RuleMatcher.keysMemo_matched (ix : Rendering.CSS.RuleIndex) (tree : DOM.Dom)
+    (state : Rendering.CSS.ElementState) (id : Nat) :
+    (RuleMatcher.keysMemo ix (Thunk.mk fun _ => memoElementKeys tree) tree state).matched id =
+      ix.matched (Rendering.CSS.readKeys tree) tree id state := by
+  change ix.matched (elementKeyWithMemo tree (memoElementKeys tree)) tree id state = _
+  rw [show elementKeyWithMemo tree (memoElementKeys tree) = Rendering.CSS.readKeys tree from
+    funext (elementKeyWithMemo_eq tree)]
+
+#print axioms RuleMatcher.keysMemo_matched
 
 /-- Kind: equivalence. The tables give the matches of the bucket matcher with the keys read
 once, as `CSS.computeAll` and `CSS.computeAllIn` take them: the data form changes when the
@@ -3081,8 +3108,8 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       | some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
       | none =>
         match carry with
-        -- a few elements are asked for: their keys are read when a rule tests them
-        | some _ => .keysRead index.get flat state
+        -- Initialise the table only when the partial restyle first asks for a key.
+        | some _ => .keysMemo index.get (Thunk.mk fun _ => memoElementKeys flat) flat state
         | none => .plain index.get (Rendering.CSS.ElemKeys.of flat) flat state
     let matchesOf := Rendering.CSS.withAnimated state matcher.matched
     -- an element's matches are made once a measure: the property table asks for them
