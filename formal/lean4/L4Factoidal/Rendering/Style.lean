@@ -1,6 +1,7 @@
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Forms
+import L4Factoidal.DOM.FormControls
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
@@ -3145,22 +3146,14 @@ def optionLabel (dom : Dom) (o : Nat) : String :=
   let label := attrValue n "label"
   if !label.isEmpty then label else " ".intercalate (words ((dom.textContent o).getD ""))
 
-/-- The `option` elements of a `select` (HTML §4.10.7, the list of options): its `option`
-children and those of its `optgroup` children, in tree order; 256 children read at each
-level. -/
+/-- The options of a select from the same DOM collection exposed to scripts. -/
 def selectOptions (dom : Dom) (sel : Nat) : List Nat :=
-  let isEl := fun (k : Nat) (name : String) => (dom.get k).type == .element && (dom.get k).lname == name
-  ((dom.get sel).kids.toList.take 256).flatMap fun k =>
-    if isEl k "option" then [k]
-    else if isEl k "optgroup" then ((dom.get k).kids.toList.take 256).filter (isEl · "option")
-    else []
+  (DOM.FormControls.optionList dom sel).toList
 
-/-- The option a drop-down list shows (HTML §4.10.7, the selectedness setting algorithm):
-the last option that is selected (its `selected` attribute, or what a script set,
-`Node.checkedness`), else the first option. -/
+/-- A collapsed select shows the first currently selected option. It uses
+the same list and selectedness logic as `select.selectedOptions` and form submission. -/
 def shownOption (dom : Dom) (sel : Nat) : Option Nat :=
-  let opts := selectOptions dom sel
-  (opts.reverse.find? fun o => (dom.get o).checkedness.getD (hasAttribute (dom.get o) "selected")).orElse fun _ => opts.head?
+  (DOM.FormControls.selectedOptions dom sel)[0]?
 
 /-- `input` types whose box shows a line of text (HTML §4.10.5): the textual states, and an
 unknown or absent type (the Text state). -/
