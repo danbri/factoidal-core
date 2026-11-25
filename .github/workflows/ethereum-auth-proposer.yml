@@ -132,7 +132,7 @@ jobs:
           import os,pathlib,re
           log=(pathlib.Path(os.environ["RUNNER_TEMP"])/"auth-proposer-ProposerProjection-axioms.log").read_text()
           prefix="EthereumConsensus.SSZ.ProposerProjection."
-          expected={prefix+n for n in ("mark_overflow","mark_checked","authentication_error","authentication_success")}
+          expected={prefix+n for n in ("mark_overflow","mark_checked","authentication_error","authentication_success","accepted_projection","authentication_verdicts","successful_projection")}
           def audit(s):
               rows=re.findall(r"'(EthereumConsensus\.SSZ\.ProposerProjection\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)",s)
               if len(rows)!=len(expected) or {n for n,_ in rows}!=expected: raise ValueError("inventory")
@@ -144,7 +144,7 @@ jobs:
               try: audit(bad)
               except ValueError: continue
               raise ValueError("mutation escaped")
-          print("Four actual projection theorem reports and four axiom controls passed")
+          print("Seven actual projection theorem reports and four axiom controls passed")
           PY
       - name: Native raw proposer authentication
         run: |
