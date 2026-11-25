@@ -79,13 +79,13 @@ def finalPower (a : Array Nat) : Except FieldError (Array Nat) := do
 Does not say: the transport bounds allocations before reading. -/
 theorem multiply_width (a b : Array Nat) (h : a.size ≠ 12) :
     multiply a b = .error .width := by
-  simp [multiply,admitInput,h]
+  simp [multiply,admitInput,h] <;> rfl
 
 /-- Kind: admission. Says: noncanonical input refuses before multiplication.
 Does not say: field representation completeness. -/
 theorem multiply_noncanonical (a b : Array Nat) (h : a.size = 12)
     (hc : canonical a ≠ true) : multiply a b = .error .noncanonical := by
-  simp [multiply,admitInput,h,hc]
+  simp [multiply,admitInput,h,hc] <;> rfl
 
 /-- Kind: output invariant. Says: the actual checked output is canonical and unchanged.
 Does not say: the arithmetic is a mathematical field. -/
@@ -115,7 +115,7 @@ Does not say: an exact wall-clock resource bound. -/
 theorem power_limit (a : Array Nat) (e : Nat) (h : a.size = 12)
     (hc : canonical a = true) (he : e ≥ 2^4572) :
     power a e = .error .exponentLimit := by
-  simp [power,admitInput,h,hc,he]
+  simp [power,admitInput,h,hc,he] <;> rfl
 
 #print axioms EthereumConsensus.BLS.Target.multiply_width
 #print axioms EthereumConsensus.BLS.Target.multiply_noncanonical
