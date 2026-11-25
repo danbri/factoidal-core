@@ -35,9 +35,16 @@ export type CompileClient={
   /** The engine methods that run in the worker, as promise-returning functions. */
   engine:Record<RemoteCall,(...args:unknown[])=>Promise<unknown>>;
   readonly alive:boolean;
+  /** The engine uses an engine session of its own in a library that other workers share
+   * (docs/designissues/2026-11-26-foafnaut-engine-sessions.md); false with its own copy, Wasm,
+   * or an engine from before sessions. */
+  readonly session?:boolean;
   terminate():void;
 };
-export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string,logAll=false):Promise<CompileClient> {
+/** How long a worker with a session may take to free it and close after `terminate` (its call
+ * in progress runs to its end) before the worker is stopped. */
+const END_GRACE_MS=30000;
+export async function startCompileWorker(font?:{path:string;family:string},nativeEngine?:string,logAll=false,session=false):Promise<CompileClient> {
   const worker=new Worker(new URL("./native_html_worker.ts",import.meta.url),{type:"module"});
   const pending=new Map<number,{resolve:(reply:WorkerReply)=>void;reject:(error:Error)=>void}>();
   let next=0,alive=true,ordinary=0;
@@ -53,8 +60,9 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
     if(!alive){reject(new Error("engine worker is not running"));return;}
     const id=++next;pending.set(id,{resolve,reject});worker.postMessage({...request,id});
   });
-  const init=await send({op:"init",font,nativeEngine,...(logAll?{logAll}:{})});
+  const init=await send({op:"init",font,nativeEngine,...(logAll?{logAll}:{}),...(session?{session}:{})});
   if(!init.ok)throw new Error(init.error);
+  const ownSession=!!(init.value as {session?:boolean}|undefined)?.session;
   const invoke=async(lane:"ordinary"|"input"|"gesture",name:RemoteCall,...args:unknown[])=>{
     ordinary++;
     let reply:WorkerReply;
@@ -68,6 +76,7 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
   const names=REMOTE_CALLS;
   const engine=Object.fromEntries(names.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
+    session:ownSession,
     get alive(){return alive;},
     get pending(){return ordinary;},
     get inFlight(){return pending.size;},
@@ -101,6 +110,14 @@ export async function startCompileWorker(font?:{path:string;family:string},nativ
       const {value,workerMs}=await invoke(gesture?"gesture":"ordinary","compileLayers",source,width,height,options);
       return {layers:value as HTMLLayers,workerMs};
     },
-    terminate(){alive=false;worker.terminate();},
+    // A worker with a session frees it and closes itself after its call in progress; stopping
+    // the worker at once would leave the session's engine state in the shared library.
+    terminate(){
+      if(!alive)return;
+      if(!ownSession){alive=false;worker.terminate();return;}
+      const ending=new Error("engine worker ended");
+      worker.postMessage({op:"end",id:++next});fail(ending);
+      const stop=setTimeout(()=>worker.terminate(),END_GRACE_MS);Deno.unrefTimer(stop);
+    },
   };
 }

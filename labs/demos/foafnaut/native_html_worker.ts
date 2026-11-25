@@ -13,6 +13,11 @@
 // newer low request replaces a low one that has not started; the replaced one is answered
 // `dropped`. `dropLow` drops the low request that has not started. A low request that has
 // started runs to its end: a Lean call can not be stopped.
+//
+// With `session` at init (native library only), the engine uses an engine session of its own,
+// so every worker shares one loaded library (docs/designissues/2026-11-26-foafnaut-engine-sessions.md).
+// `end` drops the requests that have not started, frees the session after the call that runs,
+// and closes the worker.
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
 import {loadFontFile} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
@@ -22,7 +27,8 @@ import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
 export type {RemoteCall};
-export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean}
+export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean;session?:boolean}
+  |{id:number;op:"end"}
   |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean;gesture?:boolean}
   |{id:number;op:"dropLow"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
@@ -45,10 +51,11 @@ const handle=async(request:WorkerRequest)=>{
     const start=performance.now();
     if(request.op==="init"){
       if(request.logAll)logGate.setAll(true);
-      engine=loadHTML(request.nativeEngine);const e=await engine;
+      engine=loadHTML(request.nativeEngine,"bytes",{session:!!request.session});const e=await engine;
       if(request.font&&typeof (await loadFontFile(e,request.font.path,request.font.family))?.fonts==="number")
         fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(e,fonts));
-      scope.postMessage({id:request.id,ok:true,ms:performance.now()-start} satisfies WorkerReply);
+      // `value.session`: the engine has a session of its own (false with an engine from before sessions).
+      scope.postMessage({id:request.id,ok:true,value:{session:e.sessionOwn},ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
     if(request.op==="serifFont"||request.op==="monoFont"){
@@ -83,9 +90,18 @@ const queue=htmlQueue<WorkerRequest>();
 const drop=(request:WorkerRequest)=>scope.postMessage({id:request.id,ok:false,error:"dropped",dropped:true} satisfies WorkerReply);
 // A Lean call holds this thread. The pump takes in messages waiting as tasks before choosing
 // the next request, even with ordinary work queued: one of them may be input or a gesture.
-const pump=htmlPump(queue,handle);
+const pump=htmlPump(queue,async request=>{if(request.op==="end"){await finish();return;}await handle(request);});
+// `end`: no request after it runs; the session is freed when the call that runs is done.
+let ending=false;
+const finish=async()=>{
+  for(const r of queue.drain())drop(r);
+  try{(await engine)?.endSession();}catch{/* never started */}
+  (globalThis as unknown as {close():void}).close();
+};
 scope.onmessage=event=>{
   const request=event.data;
+  if(request.op==="end"){ending=true;for(const r of queue.drain())drop(r);queue.push(request);pump();return;}
+  if(ending){drop(request);return;}
   if(request.op==="dropLow"){const low=queue.dropLow();if(low)drop(low);scope.postMessage({id:request.id,ok:true,ms:0} satisfies WorkerReply);return;}
   const dropped=queue.push(request);if(dropped)drop(dropped);
   pump();

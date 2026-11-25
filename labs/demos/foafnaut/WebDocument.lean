@@ -1621,21 +1621,17 @@ structure KeptPage where
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
 
-initialize keptPageRef : IO.Ref (List KeptPage) ← IO.mkRef []
-/-- Page layers made and given again from `keptPageRef`; then primitives compiled again, kept
-and moved with their geometry kept by the retained compile. -/
-initialize pageWorkRef : IO.Ref (Nat × Nat × Nat × Nat × Nat) ← IO.mkRef (0,0,0,0,0)
-/-- Answers numbered for `damage.id`. -/
-initialize pageIdRef : IO.Ref Nat ← IO.mkRef 0
-
-set_option compiler.extract_closed false in
-private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
-  unsafeBaseIO do
-    let work ← pageWorkRef.get
-    if reset then pageWorkRef.set (0,0,0,0,0)
-    return work
-/-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
-@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
+/-- The page layer answers an engine keeps (`pageArtifact`), a field of `Engine`, so each
+engine session has its own (docs/designissues/2026-11-26-foafnaut-engine-sessions.md, D2;
+before, three `initialize` cells of the process). -/
+structure KeptPages where
+  /-- The last `keptPageSlots` answers, newest first. -/
+  pages : List KeptPage := []
+  /-- Page layers made and given again; then primitives compiled again, kept and moved with
+  their geometry kept by the retained compile (op `frameWork`). -/
+  work : Nat × Nat × Nat × Nat × Nat := (0,0,0,0,0)
+  /-- The last number given to `damage.id`. -/
+  lastId : Nat := 0
 
 private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
@@ -1649,19 +1645,17 @@ are the same objects as those it was made from (`ptrEq`; the entry holds them, s
 addresses are not used again while it is kept) and the band and flags are equal. So it is
 the answer that `artifactWith` gives again for these inputs. -/
 set_option compiler.extract_closed false in
-private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+private unsafe def pageArtifactImpl (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) (layoutOff : Bool := false) :
-    Except String (String × Array ByteArray) :=
-  unsafeBaseIO do
+    KeptPages × Except String (String × Array ByteArray) := Id.run do
     let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
       ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree &&
       (retainOn || k.retained.isNone) && k.layoutOff == layoutOff
-    let kept ← keptPageRef.get
+    let kept := kp.pages
     match kept.find? same with
     | some k =>
-      pageWorkRef.modify fun (m,g,x) => (m,g+1,x)
-      return .ok k.answer
+      return ({kp with work := let (m,g,x) := kp.work; (m,g+1,x)},.ok k.answer)
     | none =>
       let layer := pageLayer page extra b
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
@@ -1696,9 +1690,9 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
               (ptrEq a.primitive.style b.primitive.style || WebPaint.sameStyle bitmaps a.primitive.style b.primitive.style) then a.movedOf b
           else NativeSVG.Reuse.different
         match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first (some layoutText) with
-        | .error e => return .error e
+        | .error e => return (kp,.error e)
         | .ok (retained,damage,value,sections,layout,recompiled,moved) =>
-          let id := (← pageIdRef.modifyGet fun n => (n+1,n+1))
+          let id := kp.lastId+1
           let number := fun (n : Nat) => toString n
           let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
             (match previous.bind (·.retained),damage with
@@ -1707,32 +1701,36 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head,layoutOff⟩ : KeptPage) :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
-          return .ok answer
+          let pages := (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head,layoutOff⟩ : KeptPage) :: kept).take keptPageSlots)
+          let (m,g,a,r,c) := kp.work
+          return ({pages,work := (m+1,g,a+recompiled,r+(retained.items.size-recompiled-moved),c+moved),lastId := id},.ok answer)
       | _,_,_,_ =>
         let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree layoutOff
-        if let .ok answer := made then
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,"",layoutOff⟩ :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
-        return made
+        match made with
+        | .ok answer =>
+          let work := let (m,g,x) := kp.work; (m+1,g,x)
+          return ({kp with pages := (⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,"",layoutOff⟩ :: kept).take keptPageSlots, work},made)
+        | .error _ => return (kp,made)
 
 /-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page,
 with its curves off the band made lines (`WebPaint.cull`: the same pixels, fewer edges for a
 zoomed group);
 the engine gives a kept answer again when the inputs are the same objects (a frame whose
-only change is in the chrome: loading, the address, a pressed chrome control, the menu). -/
+only change is in the chrome: loading, the address, a pressed chrome control, the menu).
+The kept answers are the engine's own (`kp`, `Engine.pages`); the reference body keeps none. -/
 @[implemented_by pageArtifactImpl]
-def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+def pageArtifact (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) (_retainOn : Bool := true) (layoutOff : Bool := false) :
-    Except String (String × Array ByteArray) :=
-  WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff
+    KeptPages × Except String (String × Array ByteArray) :=
+  (kp,WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff)
 
-theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+/-- Kind: equality. Says: the answer of `pageArtifact` (its reference body) is `artifactWith` of
+the culled page layer, whatever the kept answers. Does not say: what the implementation keeps. -/
+theorem pageArtifact_eq (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree retainOn layoutOff : Bool) :
-    pageArtifact page extra b boxes face live form checks tree retainOn layoutOff =
+    (pageArtifact kp page extra b boxes face live form checks tree retainOn layoutOff).2 =
       WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff := rfl
 
 /-- A data form as numbers, for the keys of kept answers. -/
@@ -1967,52 +1965,56 @@ def layersBand (shell : WebShell.Shell) (width height : Nat) : Nat × Band :=
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   (view,band shell.scroll view)
 
-/-- The answer to a render with `layers:true`. -/
-def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
+/-- The answer to a render with `layers:true`, and the page layer answers kept after it
+(`pageArtifact`). -/
+def layersJSON (kp : KeptPages) (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
     (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {})
     (chrome : Option (String × Array ByteArray) := none)
     (layout : Option (ByteArray × ByteArray) := none) (held : Option (Nat × ByteArray × ByteArray) := none) :
-    Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) := do
+    KeptPages × Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) :=
   let top := WebShell.height shell width
   let (view,b) := layersBand shell width height
   -- `layout`: the boxes, glyph runs and links of this band as sections (`WebRender.layoutSections`,
   -- request field `layoutSections`), given by the caller; the page's text then leaves them out.
-  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn layout.isSome
-  -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
-  let (chromeText,chromeSections) ← match chrome with
-    | some answer => pure answer
-    | none => chromeArtifact shell page width addressFont face live form.next checks tree
-  let number := fun (n : Nat) => JSON.Json.number (toString n)
-  let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
-    ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
-    ("splash",.bool splashing),
-    ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
-    (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
-  let first := match form with
-    | .sections k | .sectionsCpu k => k
-    | _ => 0
-  -- `held` (issue 1124, stage C): the page answer the host holds (`pageForHost`). The second
-  -- result is this frame's page answer whole (its id and sections), for the engine to keep.
-  -- Only for a host with layout sections (the one that sends `have`): `pageAnswerId` reads the
-  -- page text, which without them holds the boxes, glyph runs and links (about 400 KB).
-  let sent : Option (Nat × ByteArray × ByteArray) := if layout.isNone then none else
-    match pageAnswerId pageText,pageSections with
-    | some id,#[data,tiles] => some (id,data,tiles)
-    | _,_ => none
-  let ((pageText,pageSections),keptPage) := pageForHost pageText pageSections held
-  match (if keptPage then none else layout) with
-  | some (nums,text) =>
-    let at_ := first+pageSections.size+chromeSections.size
-    return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
-      ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
-      pageSections ++ chromeSections ++ #[nums,text]),sent)
-  | none =>
-    return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
-      pageSections ++ chromeSections),sent)
+  let (kp,pageAnswer) := pageArtifact kp page extra b boxes face live form checks tree retainOn layout.isSome
+  let answer : Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) := do
+    let (pageText,pageSections) ← pageAnswer
+    -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
+    let (chromeText,chromeSections) ← match chrome with
+      | some answer => pure answer
+      | none => chromeArtifact shell page width addressFont face live form.next checks tree
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
+      ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
+      ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
+      ("splash",.bool splashing),
+      ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
+      (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
+    let first := match form with
+      | .sections k | .sectionsCpu k => k
+      | _ => 0
+    -- `held` (issue 1124, stage C): the page answer the host holds (`pageForHost`). The second
+    -- result is this frame's page answer whole (its id and sections), for the engine to keep.
+    -- Only for a host with layout sections (the one that sends `have`): `pageAnswerId` reads the
+    -- page text, which without them holds the boxes, glyph runs and links (about 400 KB).
+    let sent : Option (Nat × ByteArray × ByteArray) := if layout.isNone then none else
+      match pageAnswerId pageText,pageSections with
+      | some id,#[data,tiles] => some (id,data,tiles)
+      | _,_ => none
+    let ((pageText,pageSections),keptPage) := pageForHost pageText pageSections held
+    match (if keptPage then none else layout) with
+    | some (nums,text) =>
+      let at_ := first+pageSections.size+chromeSections.size
+      return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
+        ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
+        pageSections ++ chromeSections ++ #[nums,text]),sent)
+    | none =>
+      return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
+        pageSections ++ chromeSections),sent)
+  (kp,answer)
 
 /-- The fonts the engine holds between calls, so that a scroll does not read them
 again. The first is the primary font; the others draw the characters it lacks, in
@@ -3891,8 +3893,8 @@ structure Engine where
   opaqueImages : Std.HashSet String := {}
   opaqueFull : Bool := false
   /-- The `@font-face` faces of the last script session started that has web fonts
-  (`canvasFaceFonts`, issue 1075): its Canvas 2D text picks them by family. One engine worker
-  holds one tab, so this is that tab's page; a frame that starts later with web fonts of its
+  (`canvasFaceFonts`, issue 1075): its Canvas 2D text picks them by family. One engine (a worker
+  or a session) holds one tab, so this is that tab's page; a frame that starts later with web fonts of its
   own replaces it. -/
   canvasFaces : Array Rendering.SfntProfile.Font := #[]
   /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
@@ -3910,6 +3912,9 @@ structure Engine where
   /-- The last page layer answers given, whole: `damage.id`, storage bytes, tile bytes
   (`pageForHost`, issue 1124 stage C); at most `pagesSentSlots`. -/
   pagesSent : List (Nat × ByteArray × ByteArray) := []
+  /-- The page layer answers kept for the next frame, their counts and the last `damage.id`
+  (`pageArtifact`, `layersJSON`). -/
+  pages : KeptPages := {}
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -4243,7 +4248,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   if str request "op" == "frameWork" then
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) ← modifyGet fun e => (e.frameWork,if reset then {e with frameWork := (0,0,0)} else e)
-    let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
+    let (pagesMade,pagesKept,recompiled,reused,moved) ← modifyGet fun e =>
+      (e.pages.work,if reset then {e with pages := {e.pages with work := (0,0,0,0,0)}} else e)
     let (chromesKept,framesKept) ← modifyGet fun e => (e.keptWhole,if reset then {e with keptWhole := (0,0)} else e)
     let paints ← modifyGet fun e => (e.paintWork,if reset then {e with paintWork := 0} else e)
     let number := fun (n : Nat) => JSON.Json.number (toString n)
@@ -4492,9 +4498,11 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
         | _ => none
       let sentPages := (← get).pagesSent
       let held := haveId.bind fun h => sentPages.find? (·.1 == h)
-      let (answer,sent) ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+      let (kp,result) := layersJSON (← get).pages value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
         (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout held
+      modify fun e => {e with pages := kp}
+      let (answer,sent) ← result
       if let some page := sent then
         modify fun e => {e with pagesSent := (page :: e.pagesSent.filter (·.1 != page.1)).take pagesSentSlots}
       return withWants laid <| withDiagnostics request laid answer

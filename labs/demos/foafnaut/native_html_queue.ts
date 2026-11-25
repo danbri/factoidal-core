@@ -25,6 +25,8 @@ export function htmlQueue<T extends QueueRequest>(){
     },
     shift:()=>gesture.shift()??input.shift()??ordinary.shift()??dropLow(),
     dropLow,
+    /** Every request not started, in lane order; the queue is then empty (an engine that ends). */
+    drain(){const all=[...gesture,...input,...ordinary,...(low?[low]:[])];gesture.length=0;input.length=0;ordinary.length=0;low=undefined;return all;},
   };
 }
 export type HTMLQueue<T extends QueueRequest>=ReturnType<typeof htmlQueue<T>>;
