@@ -2202,7 +2202,19 @@ theorem listMarker_none (dom : Dom) (font : FontProfile) (id : Nat)
 private def listMarkerItems (dom : Dom) (styles : Array Computed) (font : FontProfile)
     (id : Nat) (s : Computed) : Array Inline :=
   if !s.pos.listItem then #[]
-  else (textItems (.node id) s (listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode styles)).toArray
+  else
+    let text := listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode styles
+    if s.pos.listInside then (textItems (.node id) s text).toArray
+    else
+      -- The outside gap is supplied by layout. The generated suffix space is
+      -- only needed for inside markers, where it separates the marker and text.
+      let label := text.trimAscii.toString
+      -- The generated bullet or disclosure symbol is a single typographic unit.
+      -- There is no inter-character spacing in that unit. Number labels still
+      -- use their inherited letter spacing between the characters.
+      let markerStyle := {s with preformatted := true,
+        letterSpacing := if label.length == 1 then .px 0 else s.letterSpacing}
+      (textItems (.node id) markerStyle label).toArray
 
 /-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
 block container (a cell's contents, or an anonymous cell's), or a table (an element,
@@ -3394,17 +3406,17 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           {content with height := max content.height (floatsHeight content.floats innerY), floats := #[],
                         marginBottom := if floatsHeight content.floats innerY > content.height then 0 else content.marginBottom}
         else content
-      -- An outside marker: beside the first line, ending half an em before the content edge
-      -- (after it in a right-to-left item). It takes no room in the line and is not part of
-      -- the item's box; an item with nothing else in it is one line high.
+      -- An outside marker is placed at inline-start of the border box (CSS Lists 3 §3.5).
+      -- When floats intrude, use their available band alongside the first line.
+      -- An item with nothing else in it is one line high.
       let content ← if markerItems.isEmpty || s.pos.listInside then pure content else do
-        let marker ← inlineLayout font markerItems 0 innerY unbounded (some {s with textAlign := .left})
+        let strut := {s with textAlign := .left, textIndent := .px 0}
+        let marker ← inlineLayout font markerItems 0 innerY unbounded (some strut)
         let gap := s.fontSize/2
-        -- An outside marker follows the first line's available inline-start
-        -- edge where a preceding float intrudes into this block.
-        let (offset, room) := if around.isEmpty then (0, width)
-          else floatBand around innerX width innerY s.lineHeight
-        let start := innerX+offset
+        let borderWidth := width+edgesX
+        let (offset, room) := if around.isEmpty then (0, borderWidth)
+          else floatBand around outerX borderWidth innerY s.lineHeight
+        let start := outerX+offset
         let dx := if s.direction == .rtl then start+room+gap else start-lineExtent marker-gap
         let marker := marker.shift dx 0
         pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
