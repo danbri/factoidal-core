@@ -15055,8 +15055,11 @@
     if (el.localName !== 'textarea' && el.localName !== 'input') return null;
     try { return typeof el.selectionStart === 'number' && typeof el.setSelectionRange === 'function' ? el : null; } catch { return null; }
   };
-  const controlQuery = (el, command, value) => editQuery(179,
-    [command, el.localName === 'textarea' ? '1' : '0', el.selectionStart, el.selectionEnd, value, el.value].join('\u0000'));
+  const controlQuery = (el, command, value) => {
+    const r = n.query(nodeId(el), 179,
+      [command, el.localName === 'textarea' ? '1' : '0', el.selectionStart, el.selectionEnd, value, el.value].join('\u0000'));
+    return typeof r === 'string' ? r : '';
+  };
   // The document commands (styleWithCSS and the like) work from a text control only when
   // the control is in editable content.
   const controlInEditable = el => el.parentElement !== null && el.parentElement.isContentEditable === true;
@@ -15067,7 +15070,7 @@
     if (command === 'inserthtml') { const t = document.createElement('template'); t.innerHTML = text; text = t.content.textContent; command = 'inserttext'; }
     const r = controlQuery(el, command, text);
     if (r === '') return false;
-    const at = r.indexOf('\u0000'), [start, end, inputType] = r.slice(0, at).split(' '), next = r.slice(at + 1);
+    const at = r.indexOf('\u0000'), [start, end, inputType, dataStart] = r.slice(0, at).split(' '), next = r.slice(at + 1);
     const previous = el.value;
     if (next !== previous) {
       el.value = next;
@@ -15076,7 +15079,8 @@
     }
     el.setSelectionRange(Number(start), Number(end));
     if (inputType !== '-') {
-      const e = new InputEvent('input', { bubbles: true, composed: true, inputType, data: inputType === 'insertText' ? text : null });
+      const data = inputType === 'insertText' ? (dataStart === undefined ? text : next.slice(Number(dataStart), Number(start))) : null;
+      const e = new InputEvent('input', { bubbles: true, composed: true, inputType, data });
       state(e).trusted = true;
       dispatch(el, e);
     }
