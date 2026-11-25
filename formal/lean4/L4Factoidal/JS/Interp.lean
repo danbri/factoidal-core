@@ -8086,8 +8086,9 @@ def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
   | none =>
     let g := h.obj h.realm.globalObj
     let slot := h.globalCache[site]!
+    -- after `delete` the name may still be in a big map's keys as a tombstone (`PropMap.liveAt`)
     match g.props.ks[slot]?, g.props.vs[slot]? with
-    | some k, some (.data v ..) => if k == x then v else .hole
+    | some k, some (.data v ..) => if k == x && g.props.liveAt slot x then v else .hole
     | _, _ => .hole
 
 /-- Assign a global name through the cache: only when no lexical binding shadows it and the
@@ -8100,7 +8101,7 @@ def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
   let g := h.obj gid
   match g.props.ks[slot]?, g.props.vs[slot]? with
   | some k, some (.data _ true e c) =>
-    if k == x then
+    if k == x && g.props.liveAt slot x then
       updateObj gid fun o =>
         (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
     else pure false

@@ -1048,4 +1048,50 @@ theorem holdableIn_prim (reg : Option Obj) (v : Value) (hv : ∀ i, v ≠ .obj i
 
 end Weak
 
+/-! ## The register machine's global name cache -/
+
+section GlobalCache
+variable {H : Type}
+
+/-- **Kind: soundness of a cache guard.**
+
+Says: when `vmGlobalHit` answers a value (not `Value.hole`), no environment from `env` outward
+binds `x`, and the global object's property map gives `x` a data property with that value.
+Hypothesis `hsmall`: in a small map (no hash map), `x` is in at most one slot.
+
+Does not say: that the machine's read of a global name equals the evaluator's `lookup` (that also
+needs the `with` objects and the prototype chain, which this does not cover); anything about
+`vmGlobalSet`. -/
+theorem vmGlobalHit_sound (h : HeapOf H) (env : Nat) (x : String) (site : Nat) (v : Value)
+    (hv : vmGlobalHit h env x site = v) (hh : v ≠ .hole)
+    (hsmall : (h.obj h.realm.globalObj).props.big = none → ∀ (i j : Nat), j < i →
+      (h.obj h.realm.globalObj).props.ks[j]? = some x → (h.obj h.realm.globalObj).props.ks[i]? ≠ some x) :
+    h.findEnv x 100000 env = none ∧
+      ∃ w e c, (h.obj h.realm.globalObj).props.get? x = some (.data v w e c) := by
+  unfold vmGlobalHit at hv
+  cases hfe : h.findEnv x 100000 env with
+  | some _ =>
+    rw [hfe] at hv
+    exact absurd hv.symm hh
+  | none =>
+    rw [hfe] at hv
+    refine ⟨rfl, ?_⟩
+    simp only at hv
+    split at hv
+    · rename_i k w0 w e c hks hvs
+      split at hv
+      · rename_i hc
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨hkx, hl⟩ := hc
+        subst hkx
+        subst hv
+        refine ⟨w, e, c, ?_⟩
+        rw [PropMap.get?_of_slot _ _ _ hks hl (fun hb j hj hjk => hsmall hb _ j hj hjk hks), hvs]
+      · exact absurd hv.symm hh
+    · exact absurd hv.symm hh
+
+#print axioms vmGlobalHit_sound
+
+end GlobalCache
+
 end L4Factoidal.JS
