@@ -131,3 +131,22 @@ Deno.test({name:"each worker after the first loads its own copy of the native li
   pool.terminate();
   await Deno.remove(dir,{recursive:true});
 }});
+
+Deno.test("a warmed spare worker is taken by the next new tab; it counts toward the cap", async () => {
+  const {made,start}=fakes();
+  const warmed:number[]=[];
+  const pool=await startTabWorkers({perTab:true,cap:2,start,spare:true,log:()=>{},
+    warm:async client=>{warmed.push((await client.call("inspect","warm")).value as number);}});
+  pool.prewarm();
+  pool.prewarm();
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assertEquals(made.length,2,"one spare only");
+  pool.show(1);
+  assertEquals((await pool.call("inspect","x")).value,1,"the new tab has the spare");
+  assertEquals(warmed,[1],"the spare laid out a page before the tab's call");
+  assertEquals(pool.stats().sparesTaken,1);
+  pool.show(2);
+  await pool.call("inspect","y");
+  assertEquals(made.length,2,"at the cap (2) the third tab shares");
+  pool.terminate();
+});

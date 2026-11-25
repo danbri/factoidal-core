@@ -22,15 +22,21 @@
 // loses its pages' script sessions and held images, and its tab would pay a worker start when
 // shown again. A worker ends when its last tab closes.
 //
+// Spare: a new engine lays out its first page slowly (measured on the Linux rig: about 0.9 s for
+// the start page, against 0.04 s on a worker that laid it out before), and a worker start with
+// its library copy takes 0.1 to 0.8 s. So with `spare`, prewarm() starts one worker with no tab
+// and lays out a page on it (`warm`); the next new tab takes it, and another spare starts 2 s
+// later. The spare counts toward the cap. Cost: the resident memory of one more worker.
+//
 // perTab false: one worker for every tab (the old mode, --one-engine-worker), through the same code.
 import {AsyncLocalStorage} from "node:async_hooks";
 import type {CompileClient} from "./native_html_compile.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
-export type WorkerStart={tab:number;worker:number;ms:number;rssBeforeMB:number;rssAfterMB:number;copyMs:number;shared:boolean};
+export type WorkerStart={/** -1: a spare */tab:number;warmMs?:number;worker:number;ms:number;rssBeforeMB:number;rssAfterMB:number;copyMs:number;shared:boolean};
 export type TabWorkerStats={mode:"per-tab"|"one";cap:number;started:number;live:number;maxLive:number;sharedTabs:number;
-  failedStarts:number;starts:WorkerStart[]};
+  failedStarts:number;sparesTaken:number;starts:WorkerStart[]};
 export type TabWorkers=CompileClient&{
   /** Run `work` with its engine calls on the worker of `tab` (started if it has none). */
   withTab<T>(tab:number,work:()=>T):T;
@@ -40,6 +46,8 @@ export type TabWorkers=CompileClient&{
   close(tab:number):void;
   /** True when `tab` has a worker of its own, started for it (not shared, not the one worker). */
   ownWorker(tab:number):boolean;
+  /** Start the spare worker, if the options ask for one and there is none (after the first frame). */
+  prewarm():void;
   stats():TabWorkerStats;
 };
 type Slot={serial:number;client?:CompileClient;ready:Promise<CompileClient>;tabs:Set<number>;
@@ -54,6 +62,10 @@ export type TabWorkerOptions={
   log:(record:Record<string,unknown>)=>void;
   /** Directory for the copies of the native library (default: the system temporary directory). */
   tmpDir?:string;
+  /** Keep one warmed worker with no tab for the next new tab (per-tab mode only). */
+  spare?:boolean;
+  /** Lay out a page on a spare worker, so its engine is warm. */
+  warm?:(client:CompileClient)=>Promise<unknown>;
 };
 const rssMB=()=>{try{return Math.round(Deno.memoryUsage().rss/1048576*10)/10;}catch{return -1;}};
 const round=(ms:number)=>Math.round(ms*10)/10;
@@ -73,9 +85,10 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
   // Given to every worker started later, in this order, before any other call.
   const replay:{op:"serifFont"|"monoFont";path:string;family:string}[]=[];
   let quickjs:Uint8Array|undefined;
+  let spare:Slot|undefined,sparesTaken=0,spareTimer:ReturnType<typeof setTimeout>|undefined;
   const live=()=>slots.filter(slot=>!slot.ended);
   const startSlot=(tab:number,first:boolean):Slot=>{
-    const slot:Slot={serial:++serial,tabs:new Set([tab]),sessions:new Map(),fontSources:new Set(),ended:false,ready:undefined!};
+    const slot:Slot={serial:++serial,tabs:new Set(tab<0?[]:[tab]),sessions:new Map(),fontSources:new Set(),ended:false,ready:undefined!};
     slots.push(slot);maxLive=Math.max(maxLive,live().length);
     slot.ready=(async()=>{
       const t0=performance.now(),rss0=rssMB();
@@ -95,7 +108,10 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       for(const r of replay)(r.op==="serifFont"?client.serifFont(r.path,r.family):client.monoFont(r.path,r.family)).catch(()=>{});
       if(quickjs)client.call("scriptLoad",quickjs).catch(()=>{});
       slot.client=client;
-      const record:WorkerStart={tab,worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false};
+      // A spare lays out a page before a tab takes it (calls of a tab that takes it meanwhile wait behind it).
+      let warmMs:number|undefined;
+      if(tab<0&&options.warm){const w0=performance.now();await options.warm(client).catch(()=>{});warmMs=round(performance.now()-w0);}
+      const record:WorkerStart={tab,...(warmMs!==undefined?{warmMs}:{}),worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false};
       starts.push(record);
       options.log({type:"native-html-engine-worker",state:"started",...record,live:live().length,mode:options.perTab?"per-tab":"one"});
       if(slot.ended)client.terminate();
@@ -118,7 +134,12 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     if(have&&!have.ended)return have;
     let slot:Slot;
     const running=live();
-    if(running.length<cap)slot=startSlot(tab,slots.length===0);
+    if(spare&&!spare.ended){
+      slot=spare;spare=undefined;slot.tabs.add(tab);sparesTaken++;
+      options.log({type:"native-html-engine-worker",state:"spare-taken",tab,worker:slot.serial,live:running.length});
+      clearTimeout(spareTimer);spareTimer=setTimeout(prewarm,2000);
+    }
+    else if(running.length<cap)slot=startSlot(tab,slots.length===0);
     else{
       const last=(s:Slot)=>Math.max(-1,...[...s.tabs].map(t=>shownAt.get(t)??-1));
       slot=running.reduce((a,b)=>last(b)<last(a)?b:a);
@@ -128,6 +149,10 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     tabSlot.set(tab,slot);
     return slot;
   };
+  function prewarm(){
+    if(!options.perTab||!options.spare||dead||(spare&&!spare.ended)||live().length>=cap)return;
+    spare=startSlot(-1,false);
+  }
   const tabNow=()=>als.getStore()??active;
   // A worker that does not start: its tabs share a live worker, said once; with none, the calls fail.
   const clientOf=async(slot:Slot):Promise<CompileClient>=>{
@@ -171,7 +196,9 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     slot.fontSources.add(source);
     client.pageFonts(source).catch(()=>{});
   };
-  type Lane="call"|"inputCall";
+  // "gestureCall": the gesture lane of a client that has one (branch wip/1031-input-lane); else an ordinary call.
+  type Lane="call"|"inputCall"|"gestureCall";
+  type Invoke=(name:RemoteCall,...args:unknown[])=>Promise<{value:unknown;workerMs:number}>;
   const route=async(lane:Lane,name:RemoteCall,args:unknown[])=>{
     let slot:Slot;
     if(name==="scriptSession"){
@@ -186,7 +213,8 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     if(name==="scriptLoad")quickjs=args[0] as Uint8Array;
     if(name==="compile"||name==="compileLayers")fontsFor(slot,client,args[0]);
     try{
-      const answer=await client[lane](name,...args);
+      const lanes=client as unknown as Record<Lane,Invoke|undefined>;
+      const answer=await (lanes[lane]??lanes.call)!(name,...args);
       if(name==="scriptSession")mapTurn(slot,answer.value);
       return answer;
     }catch(error){watch(slot,client);throw error;}
@@ -208,7 +236,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
   const first=startSlot(0,true);tabSlot.set(0,first);shownAt.set(0,performance.now());
   await first.ready;
   const sum=(f:(c:CompileClient)=>number)=>live().reduce((n,s)=>n+(s.client?f(s.client):0),0);
-  const pool:TabWorkers={
+  const pool={
     get alive(){return !dead;},
     get pending(){return sum(c=>c.pending);},
     get inFlight(){return sum(c=>c.inFlight);},
@@ -220,9 +248,11 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       slot.tabs.delete(tab);
       if(!slot.tabs.size&&options.perTab&&live().length>1)endSlot(slot,"tab closed");
     },
+    prewarm,
     ownWorker:tab=>{const slot=tabSlot.get(tab);return !!slot&&options.perTab&&slot.tabs.size===1&&!slot.ended;},
-    stats:()=>({mode:options.perTab?"per-tab":"one",cap,started:starts.length,live:live().length,maxLive,sharedTabs,failedStarts,starts}),
+    stats:()=>({mode:options.perTab?"per-tab":"one",cap,started:starts.length,live:live().length,maxLive,sharedTabs,failedStarts,sparesTaken,starts}),
     call,inputCall,engine,
+    gestureCall:(name:RemoteCall,...args:unknown[])=>route("gestureCall",name,args),
     async prefetchLayers(source,width,height,opts){const {slot,client}=await current();fontsFor(slot,client,source);return client.prefetchLayers(source,width,height,opts);},
     dropLow(){const slot=tabSlot.get(active);if(slot&&!slot.ended)slot.client?.dropLow();},
     async serifFont(path,family){replay.push({op:"serifFont",path,family});const {client}=await current();return client.serifFont(path,family);},
@@ -239,7 +269,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       try{return await client.compile(...args);}catch(error){watch(slot,client);throw error;}},
     async compileLayers(...args){const {slot,client}=await current();fontsFor(slot,client,args[0]);
       try{return await client.compileLayers(...args);}catch(error){watch(slot,client);throw error;}},
-    terminate(){for(const slot of slots)endSlot(slot,"quit");},
-  };
+    terminate(){clearTimeout(spareTimer);for(const slot of slots)endSlot(slot,"quit");},
+  } as TabWorkers;
   return pool;
 }

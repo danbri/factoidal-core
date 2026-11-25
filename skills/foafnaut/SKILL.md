@@ -129,8 +129,12 @@ Desktop host (Deno, TypeScript, macOS only):
 - `LAB/native_window.m`, `LAB/native_window.ts`: the Cocoa window library
   (`libnative-window.dylib`) and its FFI binding. Input queue: `ng_create_offscreen` and
   friends. `native_window_queue_test.ts` checks the queue.
-- `LAB/native_html_worker.ts`, `LAB/native_html_compile.ts`: the engine worker. One ordered
-  queue for every slow engine call.
+- `LAB/native_html_worker.ts`, `LAB/native_html_compile.ts`: an engine worker. One ordered
+  queue for every slow engine call of its tabs.
+- `LAB/native_html_tabs.ts`: one engine worker per tab, at most 8 live (`--engine-workers N`);
+  routes each call to its tab's worker, a script session's calls to the worker that holds it.
+  `--one-engine-worker` keeps one worker for all tabs. Trace `native-html-engine-worker`,
+  `native-html-tab-first-frame`; summary `engineWorkers`, `tabFirstFrame`, `processRssMB`.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
