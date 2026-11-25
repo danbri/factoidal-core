@@ -7,3 +7,12 @@ This change carries physical corner radii into layout and uses the existing path
 Lean 4.33.1 checked normalization bounds and stability when all sides fit, zero insets, square-corner elision, and the adjacent-square condition for asymmetric overrun in the geometry model. These results concern integer layout units and scene geometry. The integrated native build, Web Platform reftests, and archived W3C replay check the production path.
 
 [CSS Backgrounds and Borders Level 3](https://www.w3.org/TR/css-backgrounds-3/#corners) · [Issue #973](https://github.com/danbri/factoidal-core/issues/973)
+
+## Solid borders
+
+A continuous solid border uses the same normalized outer radii and inset
+curve as a clipped background. The border paints between two contours.
+When the inner arc reaches across the padding box, its hole is clipped to
+that box and the rest of the outer contour is painted in disjoint strips.
+This applies to solid borders with one resolved colour, including unequal
+edge widths. Other styles still use the existing side paint.

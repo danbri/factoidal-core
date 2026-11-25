@@ -332,20 +332,24 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
 private def radiusUnits (size : Float) : Nat :=
   (max 0 (size*64)).floor.toUInt64.toNat
 
-/-- Resolve percentages against the outer box, normalize once and subtract the
-edges of the paint box. The resulting arc may extend past that rectangle. -/
-private def roundedOutline (s : Computed) (outerW outerH : Float) (insets : Edges)
-    (x y w h : Float) : Option Contour := do
+/-- Resolve percentages against the outer box before applying any paint inset. -/
+private def resolvedRadii (s : Computed) (w h : Float) : Option Corners.Radii := do
   let lengths ← s.cornerLengths
   let resolve := fun (pair : CSS.Length × CSS.Length) =>
-    Corners.Radius.mk (radiusUnits ((CSS.resolve outerW pair.1).getD 0))
-      (radiusUnits ((CSS.resolve outerH pair.2).getD 0))
+    Corners.Radius.mk (radiusUnits ((CSS.resolve w pair.1).getD 0))
+      (radiusUnits ((CSS.resolve h pair.2).getD 0))
   let radii : Corners.Radii := ⟨resolve lengths.topLeft,resolve lengths.topRight,
     resolve lengths.bottomRight,resolve lengths.bottomLeft⟩
-  let radii := radii.normalize (radiusUnits outerW) (radiusUnits outerH)
-  let edges : Corners.Insets := ⟨radiusUnits insets.top,radiusUnits insets.right,
-    radiusUnits insets.bottom,radiusUnits insets.left⟩
-  (radii.inset edges).outline x y w h
+  return radii.normalize (radiusUnits w) (radiusUnits h)
+
+private def cornerInsets (edges : Edges) : Corners.Insets :=
+  ⟨radiusUnits edges.top,radiusUnits edges.right,radiusUnits edges.bottom,radiusUnits edges.left⟩
+
+/-- The resulting arc may extend past the inset rectangle. -/
+private def roundedOutline (s : Computed) (outerW outerH : Float) (insets : Edges)
+    (x y w h : Float) : Option Contour := do
+  let radii ← resolvedRadii s outerW outerH
+  (radii.inset (cornerInsets insets)).outline x y w h
 
 /-- A rounded outline carries the same paint mapping as the original rectangle.
 The rectangular clip retains the extent of a fitted picture or a single tile and
@@ -444,6 +448,51 @@ def dashMarks (dotted : Bool) (length thick : Float) : Array (Float × Float) :=
   for i in [0:n] do out := out.push (i.toFloat*(mark+gap), mark)
   return out
 
+private def rectangularContour (x y w h : Float) : Contour :=
+  .path ⟨x,y⟩ [.line ⟨x+w,y⟩,.line ⟨x+w,y+h⟩,.line ⟨x,y+h⟩] true
+
+/-- Paint a continuous solid border with one colour. Keep the inner curve
+identical to the curve used for backgrounds clipped to the padding box. -/
+private def roundedSolidBorder (id : Nat) (s : Computed) (b : Edges)
+    (x y w h : Float) : Option (Array Node) := do
+  let radii ← resolvedRadii s w h
+  let outer ← radii.outline x y w h
+  let st := s.borderStyles
+  let pc := s.borderColors
+  let sides := [(b.top,st.top,pc.top),(b.right,st.right,pc.right),
+    (b.bottom,st.bottom,pc.bottom),(b.left,st.left,pc.left)].filter (fun (width,_,_) => width > 0)
+  let (_,_,paint) ← sides.head?
+  let color ← paint.resolve s.color
+  let sameSolid := fun (_,style,paint) =>
+    style == BorderStyle.solid && match paint.resolve s.color with
+      | some c => c.r == color.r && c.g == color.g && c.b == color.b
+      | none => false
+  if !sides.all sameSolid then none else
+  let fill := fun (contours : List Contour) =>
+    Node.paint ⟨some id,{geometry := .path contours,style := {fill := .solid color,rule := .evenodd}}⟩
+  let ix := x+b.left
+  let iy := y+b.top
+  let iw := w-b.left-b.right
+  let ih := h-b.top-b.bottom
+  if iw <= 0 || ih <= 0 then some #[fill [outer]] else
+  let r := radii.inset (cornerInsets b)
+  let inner := (r.outline ix iy iw ih).getD (rectangularContour ix iy iw ih)
+  let ring := fill [outer,inner]
+  let corners := [r.topLeft,r.topRight,r.bottomRight,r.bottomLeft]
+  if corners.all (fun corner =>
+      corner.isSquare || (corner.x <= radiusUnits iw && corner.y <= radiusUnits ih)) then
+    some #[ring]
+  else
+    -- An inset arc can reach through the opposite side. Restrict the hole to
+    -- the inner rectangle and paint the outer curve in the four disjoint strips.
+    let clip := fun (node : Node) (cx cy cw ch : Float) =>
+      Node.clipped none identity ⟨cx,cy,cw,ch,identity⟩ [node]
+    let outerPaint := fill [outer]
+    let strips := [(x,y,w,b.top),(x,iy+ih,w,b.bottom),(x,iy,b.left,ih),(ix+iw,iy,b.right,ih)]
+    let strips := strips.filterMap fun (cx,cy,cw,ch) =>
+      if cw <= 0 || ch <= 0 then none else some (clip outerPaint cx cy cw ch)
+    some ((clip ring ix iy iw ih :: strips).toArray)
+
 /-- The border of a border box at `(x,y)`, size `w` by `h`. Each side has its own style and
 colour. Where two sides meet with the same bands, the top and bottom sides take the corner,
 as rectangles; where they differ, the corner is split on its diagonal (CSS Backgrounds 3
@@ -452,6 +501,7 @@ sides are marks along the side, without the diagonal. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
   if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  if let some rounded := roundedSolidBorder id s b x y w h then return rounded
   let st := s.borderStyles
   let pc := s.borderColors
   let bands := fun (style : BorderStyle) (paint : BorderColor) (start : Bool) (thick : Float) =>
