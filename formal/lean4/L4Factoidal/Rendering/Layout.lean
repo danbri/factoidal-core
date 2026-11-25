@@ -2077,9 +2077,16 @@ private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array 
   let leftAligned := s.textAlign == .left || (s.textAlign == .start && s.direction == .ltr) ||
     (s.textAlign == .end_ && s.direction == .rtl)
   let content ← if leftAligned then pure content else inlineLayout font items 0 0 used (some s)
-  let height := match s.height with
+  let preferredHeight := match s.height with
     | .percent _ => content.height
     | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
+  -- Percentage limits that have a definite containing height are resolved before
+  -- inline layout. An unresolved percentage has no height basis in this line.
+  let heightLimit : CSS.Length → Option Float
+    | .px h => some (max 0 h)
+    | .minContent | .maxContent | .fitContent => some content.height
+    | _ => none
+  let height := clampOpt ((heightLimit s.minHeight).getD 0) (heightLimit s.maxHeight) preferredHeight
   let w := b.left+p.left+used+p.right+b.right
   let h := b.top+p.top+height+p.bottom+b.bottom
   let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
