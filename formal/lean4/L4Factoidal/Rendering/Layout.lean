@@ -872,16 +872,47 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
     if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
     let horizontal := replacedHorizontal s available
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
-    let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
-    let maxW := (horizontal s.maxWidth).map fun m => LU.ofPx (max 0 m)
-    let minH := LU.ofPx (max 0 ((vertical s.minHeight).getD 0))
-    let maxH := (vertical s.maxHeight).map fun m => LU.ofPx (max 0 m)
+    -- The lengths have been converted to content sizes by contentBoxed. Restore the
+    -- border-box coordinates for a bare ratio, including the floor from its edges.
+    let (edgesX,edgesY) := if s.pos.borderBox && !s.pos.ratioAuto then
+      let border := s.borderEdges
+      (border.left+border.right+s.padding.left+s.padding.right,
+       border.top+border.bottom+s.padding.top+s.padding.bottom)
+      else (0,0)
+    let ratioWidth := fun w => LU.ofPx (max 0 w + edgesX)
+    let ratioHeight := fun h => LU.ofPx (max 0 h + edgesY)
+    let minW := ratioWidth ((horizontal s.minWidth).getD 0)
+    let maxW := (horizontal s.maxWidth).map ratioWidth
+    let minH := ratioHeight ((vertical s.minHeight).getD 0)
+    let maxH := (vertical s.maxHeight).map ratioHeight
     let size : Int × Int := (match horizontal s.width,vertical s.height with
-      | some w,some h => (LU.clamp minW maxW (LU.ofPx (max 0 w)),LU.clamp minH maxH (LU.ofPx (max 0 h)))
-      | some w,none => Ratio.fromWidth rn rd (LU.ofPx (max 0 w)) minW maxW minH maxH
-      | none,some h => Ratio.fromHeight rn rd (LU.ofPx (max 0 h)) minW maxW minH maxH
-      | none,none => Ratio.autoSize rn rd (LU.ofPx (max 0 ((intrinsic.map Prod.fst).getD 300))) minW maxW minH maxH)
-    (LU.toPx size.1,LU.toPx size.2)
+      | some w,some h => (LU.clamp minW maxW (ratioWidth w),LU.clamp minH maxH (ratioHeight h))
+      | some w,none => Ratio.fromWidth rn rd (ratioWidth w) minW maxW minH maxH
+      | none,some h => Ratio.fromHeight rn rd (ratioHeight h) minW maxW minH maxH
+      | none,none => Ratio.autoSize rn rd (ratioWidth ((intrinsic.map Prod.fst).getD 300)) minW maxW minH maxH)
+    (max 0 (LU.toPx size.1-edgesX),max 0 (LU.toPx size.2-edgesY))
+
+-- CSS Sizing 4 aspect-ratio/box-sizing-{dimensions,squashed}.html. Compare the
+-- returned content sizes after the normal contentBoxed conversion.
+private def replacedRatioFixture : Computed :=
+  {borderWidth := ⟨15,15,15,15⟩, borderStyles := .all .solid, padding := ⟨5,5,5,5⟩,
+   pos := {borderBox := true, ratio := some (2,1)}}
+
+private def replacedTallRatioFixture : Computed :=
+  {replacedRatioFixture with width := .px 20, pos := {replacedRatioFixture.pos with ratio := some (1,2)}}
+
+#guard replacedSize (contentBoxed {replacedRatioFixture with width := .px 100}) (some (20,50)) 800 == (60,10)
+#guard replacedSize (contentBoxed {replacedRatioFixture with width := .px 50}) (some (20,50)) 800 == (10,0)
+#guard replacedSize (contentBoxed {replacedRatioFixture with height := .px 20}) (some (20,50)) 800 == (40,0)
+#guard replacedSize (contentBoxed {replacedRatioFixture with maxHeight := .px 20}) (some (20,50)) 800 == (40,0)
+#guard replacedSize (contentBoxed {replacedRatioFixture with width := .percent 0.5, maxWidth := .px 90})
+    (some (20,50)) 200 == (50,5)
+private def replacedRatioAutoFixture : Computed :=
+  {replacedRatioFixture with width := .px 100, pos := {replacedRatioFixture.pos with ratioAuto := true}}
+
+#guard replacedSize (contentBoxed replacedTallRatioFixture) (some (20,50)) 800 == (0,40)
+#guard replacedSize (contentBoxed replacedRatioAutoFixture) (some (20,50)) 800 == (60,150)
+#guard replacedSize (contentBoxed replacedRatioAutoFixture) none 800 == (60,30)
 
 /-- A replaced element with no decoded content here, and its natural size when it has one.
 A `canvas` has the natural size of its `width` and `height` attributes, 300 by 150 without
