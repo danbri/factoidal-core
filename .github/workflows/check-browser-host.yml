@@ -1,56 +1,37 @@
 name: Browser host controls
-
 on:
-  pull_request:
-    paths:
-      - 'labs/demos/foafnaut/web-render/**'
-      - 'labs/demos/foafnaut/tools/font-broker.mjs'
-      - 'labs/demos/foafnaut/gpu_transport.ts'
-      - 'labs/demos/foafnaut/render_plan.ts'
-      - 'tools/package-web-render.py'
-      - 'tests/test_package_web_render.py'
-      - '.github/workflows/check-browser-host.yml'
   push:
-    branches: [main]
-    paths:
-      - 'labs/demos/foafnaut/web-render/**'
-      - 'labs/demos/foafnaut/tools/font-broker.mjs'
-      - 'labs/demos/foafnaut/gpu_transport.ts'
-      - 'labs/demos/foafnaut/render_plan.ts'
-      - 'tools/package-web-render.py'
-      - 'tests/test_package_web_render.py'
-      - '.github/workflows/check-browser-host.yml'
+    branches: [claude/check-portable-network-pool-fixture]
   workflow_dispatch: {}
-
 permissions:
   contents: read
-
-concurrency:
-  group: browser-host-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  host:
-    name: Packaging, actual QuickJS and HTTP navigation
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  net-pool:
+    name: Network pool on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - uses: actions/setup-python@v5
+          fetch-depth: 3
+          sparse-checkout: |
+            labs/demos/foafnaut/native_net.ts
+            labs/demos/foafnaut/native_net_pool_test.ts
+            labs/demos/foafnaut/native_net_dns_test.ts
+          sparse-checkout-cone-mode: false
+      - uses: denoland/setup-deno@v2
         with:
-          python-version: '3.12'
-      - name: Package integrity and source identity controls
-        run: python3 tests/test_package_web_render.py
-      - name: Fetch and verify the pinned QuickJS reactor
-        run: node labs/demos/foafnaut/web-render/script-engine/fetch-reactor.mjs
-      - name: Actual QuickJS execution, isolation and event cancellation
-        run: node --test labs/demos/foafnaut/web-render/script-engine/session.test.mjs
-      - name: Actual HTTP byte transport and navigation transitions
-        run: node labs/demos/foafnaut/web-render/check-navigation.mjs
-
-# These controls need no Lean compilation or GPU. Relocated Chrome/WebGPU,
-# native/WASM parity and standards comparisons have separate runtime evidence;
-# this job does not claim to run those checks.
+          deno-version: v2.9.4
+      - name: Reproduce old fixture
+        continue-on-error: true
+        working-directory: labs/demos/foafnaut
+        run: |
+          git show HEAD~2:labs/demos/foafnaut/native_net_pool_test.ts > baseline_pool_test.ts
+          deno test --allow-net --allow-run --allow-read --allow-write --filter 'two origins' baseline_pool_test.ts
+      - name: Verify patched fixture
+        working-directory: labs/demos/foafnaut
+        run: deno test --allow-net --allow-run --allow-read --allow-write native_net_pool_test.ts native_net_dns_test.ts
