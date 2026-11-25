@@ -2018,7 +2018,7 @@ def Command.apply (d : Dom) : Command → Except String Dom
 theorem apply_setStates (d : Dom) (n states : Nat)
     (node : n < d.size) (fits : states < elementStateLimit) :
     (Command.setStates n states).apply d = .ok (d.setNode n fun x => {x with states}) := by
-  simp [Command.apply, checkNode, node, Nat.not_le.mpr fits]
+  simp [Command.apply, checkNode, node, Nat.not_le.mpr fits] <;> rfl
 
 #print axioms apply_setStates
 
