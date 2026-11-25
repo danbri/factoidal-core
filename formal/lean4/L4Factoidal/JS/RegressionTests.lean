@@ -817,4 +817,25 @@ Wikipedia, "United States") threw "normalize is not a function". -/
 #guard out "print('\\u0041\\u030A'.normalize() === '\\u00C5', '\\u00C5'.normalize('NFD').length, '\\uFB01'.normalize('NFKC'), '\\uFB01'.normalize('NFC') === '\\uFB01', '\\u1E9B\\u0323'.normalize('NFKD').length, String.prototype.normalize.length)" == ["true 2 fi true 3 0"]
 #guard out "try { 'a'.normalize('nfc'); } catch (e) { print(e instanceof RangeError); } try { String.prototype.normalize.call(null); } catch (e) { print(e instanceof TypeError); } print('a\\uD800b'.normalize().length, '\\uD800\\u0301'.normalize('NFD').length, 'abc'.normalize(undefined))" == ["true", "true", "3 2 abc"]
 
+#guard out r#"var f = String.prototype.normalize, boxed = new String('x');
+  boxed.toString = function () { return 'e\u0301'; };
+  print(f.call(boxed) === '\u00E9');
+  print(f.call(1234) === '1234');"# == ["true", "true"]
+
+#guard out r#"var f = String.prototype.normalize, calls = '';
+  var recv = {toString: function () { calls += 'r'; return 'e\u0301'; }};
+  var form = {toString: function () { calls += 'f'; return 'NFC'; }};
+  print(f.call(recv, form) === '\u00E9'); print(calls);
+  try { f.call(null, form); } catch (e) { print(e.name); } print(calls);
+  try { f.call({toString: function () { throw 17; }}, form); } catch (e) { print(e); } print(calls);
+  try { f.call('ASCII', 'nfc'); } catch (e) { print(e.name); }
+  try { f.call('ASCII', null); } catch (e) { print(e.name); }
+  try { f.call(Symbol(), form); } catch (e) { print(e.name); } print(calls);
+  try { f.call('ASCII', Symbol()); } catch (e) { print(e.name); }"# ==
+  ["true", "rf", "TypeError", "rf", "17", "rf", "RangeError", "RangeError", "TypeError", "rf", "TypeError"]
+
+#guard out r#"var s = 'e\u0301\uD800\u0301\uDC00\uDBFC\uDC00\uFB01';
+  print(s.normalize('NFKC') === '\u00E9\uD800\u0301\uDC00\uDBFC\uDC00fi');
+  print(('e\uD800\u0301').normalize('NFC') === 'e\uD800\u0301');"# == ["true", "true"]
+
 end L4Factoidal.JS.Tests

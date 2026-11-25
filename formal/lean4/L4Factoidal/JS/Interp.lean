@@ -4370,12 +4370,17 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       let form ← match a0 with
         | .undef => pure "NFC"
         | v => core.toStr v
-      match form with
-      | "NFC" => pure (.str (Unicode.Normalization.nfc s))
-      | "NFD" => pure (.str (Unicode.Normalization.nfd s))
-      | "NFKC" => pure (.str (Unicode.Normalization.nfkc s))
-      | "NFKD" => pure (.str (Unicode.Normalization.nfkd s))
-      | _ => throwErr .range "The normalization form should be one of NFC, NFD, NFKC, NFKD."
+      let normalize ← match form with
+        | "NFC" => pure Unicode.Normalization.nfc
+        | "NFD" => pure Unicode.Normalization.nfd
+        | "NFKC" => pure Unicode.Normalization.nfkc
+        | "NFKD" => pure Unicode.Normalization.nfkd
+        | _ => throwErr .range "The normalization form should be one of NFC, NFD, NFKC, NFKD."
+      if Str.isAscii s then return .str s
+      charge s.utf8ByteSize
+      let result := normalize s
+      checkStrLen result.utf8ByteSize
+      pure (.str result)
     | (.x .symbolFor) | (.x .symbolKeyFor) =>
       -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
       let h ← get

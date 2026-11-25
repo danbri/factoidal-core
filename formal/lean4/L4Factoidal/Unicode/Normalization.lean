@@ -17,6 +17,7 @@ checks every code point of the standard) needs no conversion. The String
 functions are wrappers. All loops are `for`/`while` loops.
 -/
 import Std.Data.HashMap
+import Init.Data.Array.Sort.Lemmas
 import L4Factoidal.Unicode.RangeTable
 import L4Factoidal.Unicode.NormData
 
@@ -84,8 +85,8 @@ def decompInto (compat : Bool) (c : Nat) (out : Array Nat) : Array Nat :=
       | some d => out ++ d
       | none => out.push c
 
-/-- The canonical ordering algorithm: a stable insertion sort of each run of
-non-starters by combining class. -/
+/-- Stable canonical ordering of each run of non-starters by combining class.
+Short runs sort in place. Long runs use a stable merge sort to avoid quadratic work. -/
 def reorder (xs : Array Nat) : Array Nat := Id.run do
   let mut a := xs
   let n := a.size
@@ -97,17 +98,23 @@ def reorder (xs : Array Nat) : Array Nat := Id.run do
       let mut j := i + 1
       while j < n && ccc a[j]! != 0 do
         j := j + 1
-      -- sort a[i..j]
-      let mut k := i + 1
-      while k < j do
-        let x := a[k]!
-        let cx := ccc x
-        let mut m := k
-        while m > i && ccc a[m - 1]! > cx do
-          a := a.set! m a[m - 1]!
-          m := m - 1
-        a := a.set! m x
-        k := k + 1
+      if j - i > 32 then
+        let ordered := (a.extract i j).mergeSort (fun x y => ccc x ≤ ccc y)
+        let mut k := i
+        for x in ordered do
+          a := a.set! k x
+          k := k + 1
+      else
+        let mut k := i + 1
+        while k < j do
+          let x := a[k]!
+          let cx := ccc x
+          let mut m := k
+          while m > i && ccc a[m - 1]! > cx do
+            a := a.set! m a[m - 1]!
+            m := m - 1
+          a := a.set! m x
+          k := k + 1
       i := j
   return a
 
@@ -183,5 +190,28 @@ def nfkc (s : String) : String := stringOfCps (nfkcCps (cpsOfString s))
 #guard nfd "각" == "각"
 #guard nfc "각" == "각"
 #guard nfc "" == ""
+
+/-- Kind: ordering. Says: two equal-class code points keep their input order
+when a combining run uses the merge sort. Does not say: that the caller
+selects only a single non-starter run. -/
+theorem mergeCombiningClass_stable {xs : Array Nat} {a b : Nat}
+    (hClass : ccc a = ccc b) (hOrder : [a,b].Sublist xs.toList) :
+    [a,b].Sublist (xs.mergeSort (fun a b => ccc a ≤ ccc b)).toList := by
+  apply Array.pair_sublist_mergeSort
+  · intro a b c h₁ h₂
+    simp only [decide_eq_true_eq] at *
+    exact Nat.le_trans h₁ h₂
+  · intro a b
+    simpa using Nat.le_total (ccc a) (ccc b)
+  · simp [hClass]
+  · exact hOrder
+
+-- The long run orders different classes, keeps equal classes in input order,
+-- and leaves a separate run on the other side of the starter.
+#guard
+  let marks := (List.replicate 20 [0x0301, 0x0300, 0x0327]).flatten.toArray
+  let stable := (List.replicate 20 [0x0301, 0x0300]).flatten.toArray
+  reorder (marks ++ #[0x10F000, 0x0301, 0x0327]) ==
+    Array.replicate 20 0x0327 ++ stable ++ #[0x10F000, 0x0327, 0x0301]
 
 end L4Factoidal.Unicode.Normalization
