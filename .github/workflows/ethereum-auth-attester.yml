@@ -70,6 +70,7 @@ jobs:
               code=a["mask_comments_and_strings"](path.read_text())
               assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b",code,re.M),m
               deps=a["direct_imports"](path)
+              assert all(not a["bundled"](d) or d == "Init" for d in deps), (m, deps)
               for d in sorted(deps): visit(d)
               pending.remove(m)
               graph[m]=sorted(deps)
@@ -136,6 +137,7 @@ jobs:
           set -euo pipefail
           python3 scripts/test-native-runtime.py
           python3 scripts/check-native-runtime.py "$RUNNER_TEMP/auth-attester-build/authenticated-attester" --report "$RUNNER_TEMP/auth-attester-runtime.json"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["runtimeInitializerDefined"] and not r["fullBootstrapDefined"], r' "$RUNNER_TEMP/auth-attester-runtime.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

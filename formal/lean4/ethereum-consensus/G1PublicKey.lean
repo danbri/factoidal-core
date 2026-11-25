@@ -1,4 +1,4 @@
-import Lean
+import Init
 
 /-! Experimental public-key admission for BLS12-381 G1. No private scalars,
 signature verification, pairing or production state-transition acceptance.

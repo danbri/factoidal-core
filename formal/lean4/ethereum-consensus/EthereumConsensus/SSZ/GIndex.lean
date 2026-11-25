@@ -1,4 +1,4 @@
-import Lean
+import Init
 
 /-!
 # Ethereum consensus SSZ generalized indices and proof branches

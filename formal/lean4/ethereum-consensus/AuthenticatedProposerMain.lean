@@ -1,9 +1,8 @@
 import ProposerProjection
-import Lean
 
 /-! Bounded test transport. The protocol decision is in checkProposerState.
     Output is authenticated relative to the supplied commitment, never a canonical-state verdict. -/
-open Lean EthereumConsensus.SSZ
+open EthereumConsensus.SSZ
 open EthereumConsensus.SSZ.AuthenticatedProposer
 open EthereumConsensus.BLS EthereumConsensus.BLS.Verify
 

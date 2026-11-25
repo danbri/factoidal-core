@@ -1,4 +1,4 @@
-import Lean
+import Init
 
 /-! Experimental compressed G2 signature admission, not a signature verdict.
 Field and twist: RFC 9380 section 8.8.2. Serialization is the Ethereum

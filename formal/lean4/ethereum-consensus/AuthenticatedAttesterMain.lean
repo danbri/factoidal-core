@@ -1,11 +1,10 @@
 import AuthenticatedAttester
-import Lean
 
 /-! Bounded line transport for registry proof differential tests.
     Fields are space separated, with the 40 sibling hex strings last.
     The common-index flag constructs a synthetic prepared record for
     testing the candidate adapter, not for authenticating signatures. -/
-open Lean EthereumConsensus.SSZ
+open EthereumConsensus.SSZ
 open EthereumConsensus.SSZ.AuthenticatedAttester
 open EthereumConsensus.BLS EthereumConsensus.BLS.Verify
 

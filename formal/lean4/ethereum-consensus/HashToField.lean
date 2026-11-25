@@ -1,4 +1,4 @@
-import Lean
+import Init
 import L4Factoidal.Crypto.SHA2
 
 /-! Experimental public-message hash-to-field for BLS12-381 G2.

@@ -1,4 +1,4 @@
-import Lean
+import Init
 
 /-! Experimental pairing target field for BLS12-381.
 Six coefficients of w, each an (Fp real, Fp imaginary) pair.
