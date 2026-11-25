@@ -538,7 +538,9 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
           let (_,d) ← WebAccept.skip m .stylesheetMissing (sheetWhere n id)
             s!"stylesheet resource missing or duplicated for node {id}" ()
           ds := ds ++ d
-    if bytes+source.utf8ByteSize > 8388608 then
+    -- the engine's own limit on the text of the sheets (`maxSheetBytes`): a sheet past it is
+    -- left out whole and reported, so the engine never has to cut a sheet (issue 865)
+    if bytes+source.utf8ByteSize > Rendering.CSS.maxSheetBytes then
       let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 8 MiB" ()
       ds := ds ++ d
       continue
@@ -547,7 +549,7 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     -- the sheets it imports that the host gave, before it, within the same bound of bytes
     if !given.isEmpty then
       for (u,t) in Rendering.ImportTree.sheetsOf importEdges Syntax.resolveIri (fun url => given.lookup url) from_ source do
-        if bytes+t.utf8ByteSize ≤ 8388608 then
+        if bytes+t.utf8ByteSize ≤ Rendering.CSS.maxSheetBytes then
           bytes := bytes+t.utf8ByteSize
           sheets := (u,t)::sheets
         else
@@ -696,6 +698,65 @@ def faceLimits (env : Rendering.MediaQuery.Env) (sheets : List (String × String
   if faces.size < Rendering.FontFaceRule.maxFaces then [] else
   let blocks := sheets.foldl (fun n (_,src) => n + (Rendering.CSS.fontFaceBlocks env.medium src).length) 0
   WebAccept.LimitHit.check "maxFaces" Rendering.FontFaceRule.maxFaces blocks "@font-face rules"
+
+/-- The resource limits of the declarations of `rules` (issue 865), each reported once with the
+largest number asked and the number of declarations:
+`Content.maxPieces` (a `content` value with more parts is dropped),
+`CssVars.maxValueBytes` (a custom property, or a value with `var()` replaced, longer than the limit
+is invalid at computed-value time) and `CssVars.maxFallbacks` (`var()` fallbacks nested that deep).
+The custom properties are resolved as one flat environment (every rule's, the last winning), so a
+value that grows through references is found where its references are found. A declaration of a
+`style` attribute is not looked at. -/
+def declarationLimits (rules : List Rendering.CSS.Rule) : List WebAccept.LimitHit := Id.run do
+  let decls := rules.flatMap (·.declarations)
+  let mentioning := decls.filter fun d => Rendering.CssVars.mentions d.value
+  let mut pieces := 0
+  let mut piecesCount := 0
+  for d in decls do
+    if d.property == "content" then
+      let n := Rendering.CSS.Content.piecesWanted d.value
+      if n > Rendering.CSS.Content.maxPieces then
+        piecesCount := piecesCount + 1
+        pieces := max pieces n
+  let mut bytes := 0
+  let mut bytesCount := 0
+  let mut levels := 0
+  let mut levelsCount := 0
+  if !mentioning.isEmpty || decls.any (·.property.startsWith "--") then
+    let own := decls.filterMap fun d => if d.property.startsWith "--" then some (d.property,d.value) else none
+    let vars := Rendering.CssVars.resolve {} own
+    for d in decls do
+      if d.property.startsWith "--" && d.value.utf8ByteSize > Rendering.CssVars.maxValueBytes then
+        bytesCount := bytesCount + 1
+        bytes := max bytes d.value.utf8ByteSize
+      else if Rendering.CssVars.mentions d.value then
+        let reached := (Rendering.CssVars.substituteR vars.find Rendering.CssVars.maxFallbacks d.value).2
+        if reached > Rendering.CssVars.maxValueBytes then
+          bytesCount := bytesCount + 1
+          bytes := max bytes reached
+        let deep := Rendering.CssVars.fallbackLevels d.value
+        if deep > Rendering.CssVars.maxFallbacks then
+          levelsCount := levelsCount + 1
+          levels := max levels deep
+  return WebAccept.LimitHit.check "maxPieces" Rendering.CSS.Content.maxPieces pieces s!"{piecesCount} content values with too many parts"
+    ++ WebAccept.LimitHit.check "maxValueBytes" Rendering.CssVars.maxValueBytes bytes s!"{bytesCount} custom property values longer than the limit"
+    ++ WebAccept.LimitHit.check "maxFallbacks" Rendering.CssVars.maxFallbacks levels s!"{levelsCount} values with var() fallbacks nested too deep"
+
+/-- The resource limit on the tracks of a grid axis (`Grid.maxTracks`): an axis with more fixed
+tracks than that (a `repeat(n, …)` counts `n` times) has the rest cut. One report, with the most
+tracks asked and the number of axes. An automatic repetition is not counted
+(`TrackList.tracksWanted`). Issue 865. -/
+def gridLimits (styles : Array Rendering.CSS.Computed) : List WebAccept.LimitHit := Id.run do
+  let mut most := 0
+  let mut count := 0
+  for st in styles do
+    if st.grid.templateColumns.entries.isEmpty && st.grid.templateRows.entries.isEmpty then continue
+    for list in [st.grid.templateColumns, st.grid.templateRows] do
+      let n := list.tracksWanted
+      if n > Rendering.Grid.maxTracks then
+        count := count + 1
+        most := max most n
+  return WebAccept.LimitHit.check "maxTracks" Rendering.Grid.maxTracks most s!"{count} grid track lists"
 
 /-- The `@font-face` rules of the document's sheets, in the request's mode. -/
 def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
@@ -2602,7 +2663,7 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .error _ => ({},0)
   let picturesWanted := redrawn.2
   let pictures := withPictures redrawn.1 pictures
-  let limits := faceLimits env sheets faces ++ webFontLimits request ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
+  let limits := faceLimits env sheets faces ++ declarationLimits rules ++ (match made with | .ok (_,styles) => gridLimits styles | .error _ => []) ++ webFontLimits request ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
     "SVG images shown larger than their pictures"
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
   let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
