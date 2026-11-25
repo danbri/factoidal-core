@@ -45,6 +45,10 @@
 // console lines), as wptrunner does for each browser. Variants run when the engine has
 // their API (a worker variant once Worker exists).
 //
+// --diagnostic-layout-images: give script-session layout the page's statically discovered
+// image bytes, as the desktop host does. Use for paired image geometry diagnostics; event
+// and lazy-loading tests still need the stock runner. Scored release runs leave it off.
+//
 // --engine native (default): the engine library labs/demos/foafnaut/.build/web-render/
 // engines/libweb-render.dylib. wasm: the engine's Wasm build. bench: the same session
 // through `lake exe wasmvm-bench page` (formal/lean4), for work on the guest without an
@@ -87,6 +91,8 @@ const origin="http://web-platform.test",secureOrigin="https://web-platform.test"
 // wpt-hosts.ts for this process only. Without it, the runner reads the files of the
 // checkout and makes wptserve's wrappers itself (the older path).
 const wptserveMode=args.includes("--wptserve");
+const layoutImageHost=args.includes("--diagnostic-layout-images")
+  ?await import("../../labs/demos/foafnaut/native_html_document.ts"):undefined;
 // --dangerously-enable-webdriver-endpoint (with --wptserve): wdspec names of webdriver/tests/classic/ run, with
 // pytest from the WPT tree (wdspec-run.py) against the engine's WebDriver endpoint. The endpoint is remote control
 // of the browser: off without this flag, on 127.0.0.1 only, behind a 128-bit secret the engine makes
@@ -98,6 +104,26 @@ const serveSpec:WptServe={domains:wptDomains,subdomains:wptSubdomains,ports:wptP
 const serveOrigin=`http://web-platform.test:${wptPorts.http[0]}`,serveSecureOrigin=`https://web-platform.test:${wptPorts.https[0]}`;
 let serve:{fetcher:ReturnType<typeof wptFetcher>;stop?:()=>Promise<void>}|undefined;
 const isWptHost=(url:string)=>wptserveMode?!("refused" in wptRoute(url,serveSpec)):[origin,secureOrigin].includes(new URL(url).origin);
+/** Read an optional diagnostic image up to the engine's budget; discard an oversized body. */
+async function boundedBody(response:Response,maxBytes:number):Promise<Uint8Array|undefined>{
+  const reader=response.body?.getReader();
+  if(!reader)return undefined;
+  const chunks:Uint8Array[]=[];
+  let length=0;
+  try{
+    for(;;){
+      const next=await reader.read();
+      if(next.done)break;
+      length+=next.value.length;
+      if(length>maxBytes)return undefined;
+      chunks.push(next.value);
+    }
+  }finally{await reader.cancel();}
+  const bytes=new Uint8Array(length);
+  let offset=0;
+  for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+  return bytes;
+}
 /** Reach the local wptserve, or start one (wpt-score.py serve) that stops with this process. */
 async function startServe() {
   try{serveSpec.caPEM=await Deno.readTextFile(join(wpt,"tools/certs/cacert.pem"));}catch{/* HTTPS pages then fail: no CA */}
@@ -434,10 +460,22 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       else if(/\/test262\/test\/.*\.js$/.test(path)&&new URL(url).search==="?strict")source='"use strict";\n'+source;
       return source;}catch{return undefined;}
   };
-  const readBytes=async(url:string):Promise<Uint8Array|undefined>=>{
-    if(http){try{const r=await http.fetch(url);if(!r.ok){await r.body?.cancel();return undefined;}return new Uint8Array(await r.arrayBuffer());}catch{return undefined;}}
-    const path=scriptFile(url);if(!path)return undefined;
-    try{return await Deno.readFile(path);}catch{return undefined;}
+  const readBytes=async(url:string,maxBytes?:number):Promise<Uint8Array|undefined>=>{
+    try{
+      if(http){
+        const response=await http.fetch(url,maxBytes===undefined?undefined:{signal:AbortSignal.timeout(10000)});
+        if(!response.ok){await response.body?.cancel();return undefined;}
+        if(maxBytes===undefined)return new Uint8Array(await response.arrayBuffer());
+        return await boundedBody(response,maxBytes);
+      }
+      const path=scriptFile(url);if(!path)return undefined;
+      if(maxBytes!==undefined){
+        const {isFile,size}=await Deno.stat(path);
+        if(!isFile||size>maxBytes)return undefined;
+      }
+      const data=await Deno.readFile(path);
+      return maxBytes===undefined||data.length<=maxBytes?data:undefined;
+    }catch{return undefined;}
   };
   /** The host's answer to one script fetch of a worker: status 0 is a network error. */
   const hostFetch=async(f:{id:number;url:string}):Promise<{id:number;status:number;url:string;contentType:string;contentTypeOptions?:string;referrerPolicy?:string;source:string}>=>{
@@ -523,7 +561,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       ({html,encoding}=decode(bytes,contentType));url=`${origin}/${pageOf(file)}`;
     }
     const t0=performance.now();
-    type Facts={scripts:{nodeId:number;src:string;url:string;kind?:string}[];stylesheets?:{nodeId:number;url:string}[]};
+    type Facts={scripts:{nodeId:number;src:string;url:string;kind?:string}[];stylesheets?:{nodeId:number;url:string}[];images?:{key:string;url:string}[]};
     let facts=engine.inspect(html,{url}) as unknown as Facts;
     const sources=new Map<string,string|undefined>();
     for(const s of facts.scripts)if(s.src&&!sources.has(s.url))sources.set(s.url,await readText(s.url));
@@ -594,8 +632,29 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         }
       }catch{/* an engine without the op, or a page it refuses */}
     }
-    const layout=sheetResources.length||sheetFailures.length||webFonts.length||imported.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,
-      ...(webFonts.length?{webFonts}:{}),...(imported.length?{imported}:{})}}:{};
+    let imageFields:Record<string,unknown>={};
+    const layoutImageRequests=facts.images??[];
+    if(layoutImageHost&&layoutImageRequests.length){
+      const limit=await layoutImageHost.pageImageLimit(engine);
+      const fetched:{key:string;bytes:Uint8Array}[]=[];
+      const seen=new Set<string>();
+      let total=0;
+      for(const {key,url:src} of layoutImageRequests){
+        if(seen.has(key)||!isWptHost(src))continue;
+        seen.add(key);
+        const remaining=Math.min(layoutImageHost.MAX_IMAGE_BYTES,limit-total);
+        if(remaining<=0)break;
+        const bytes=await readBytes(src,remaining);
+        if(!bytes?.length)continue;
+        total+=bytes.length;
+        fetched.push({key,bytes});
+      }
+      imageFields=await layoutImageHost.imageOptions(engine,fetched);
+      console.log(JSON.stringify({type:"diagnostic-layout-images",file,listed:layoutImageRequests.length,held:fetched.length,bytes:total}));
+    }
+    const layout=sheetResources.length||sheetFailures.length||webFonts.length||imported.length||Object.keys(imageFields).length
+      ?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,...imageFields,
+        ...(webFonts.length?{webFonts}:{}),...(imported.length?{imported}:{})}}:{};
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for
