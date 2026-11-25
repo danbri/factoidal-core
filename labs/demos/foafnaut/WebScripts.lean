@@ -1400,8 +1400,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     -- `meta` elements) decides which of its classic scripts run; the others are violations
     let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
       (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom doc.base doc.scripts
-    let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly",
-                         cspMeta := doc.cspMeta, cspViolations }
+    let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta := doc.cspMeta, cspViolations }
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
       | none => LeanJS.prepare
