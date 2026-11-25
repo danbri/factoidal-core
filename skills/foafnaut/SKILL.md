@@ -395,6 +395,11 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   --branch v0.18.0 https://github.com/quickjs-ng/quickjs`, then `cc -O2 -D_GNU_SOURCE
   -funsigned-char -I. quickjs.c libregexp.c libunicode.c dtoa.c quickjs-libc.c qjs.c
   gen/repl.c gen/standalone.c -lm -lpthread -ldl -o qjs`) and `node --jitless`.
+- Number::toString and toFixed, toPrecision, toExponential (Ryū and 64-bit fast paths, exact
+  path behind them): `leanjs numfmt-diff N SEED` against the exact reference,
+  `tools/ryu-differential.sh LEANJS N SEED [QJS]` against Node (QuickJS-NG is wrong at some
+  powers of two), `leanjs numfmt-bench` for the time. Record:
+  `docs/designissues/2026-11-25-number-tostring-ryu.md`.
 - What BubblePopJS allocates, by constructor shape and by function, its reference-count operations and
   copied bytes, with no Lean build: `labs/demos/foafnaut/bubblepop_perf/alloc/build-count.sh` makes a
   counting `leanjs` from the generated C; `leancount.py` and `opcount.py` read the counts (per run, per

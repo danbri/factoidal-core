@@ -117,6 +117,7 @@ on any difference. -/
 def numfmtDiff (n : Nat) (seed : UInt64) (out? : Option String) : IO UInt32 := do
   let xs := numfmtInputs n seed
   let mut bad := 0
+  let mut refLong := 0
   let mut lines : Array String := #[]
   for b in xs do
     for x in [Float.ofBits b, Float.ofBits (b ^^^ 0x8000000000000000)] do
@@ -124,9 +125,16 @@ def numfmtDiff (n : Nat) (seed : UInt64) (out? : Option String) : IO UInt32 := d
       if out?.isSome then lines := lines.push s!"{(Nat.toDigits 16 x.toBits.toNat).asString} {f}"
       let r := numToStringRef x
       if f != r then
-        bad := bad + 1
-        if bad ≤ 20 then IO.println s!"DIFF bits {x.toBits} fast {f} ref {r}"
-  IO.println s!"numfmt-diff: {xs.size * 2} doubles, {bad} differences"
+        -- `XPath4.shortestDigits` reads back only the nearest decimal of each length, so where
+        -- the interval is narrower below than above (a power of two) it can miss the shortest
+        -- text and give one digit more. Counted apart when the fast text is shorter and reads
+        -- back as `x`.
+        if f.length < r.length && (strToNumber f).toBits == x.toBits && b &&& 0xFFFFFFFFFFFFF == 0 then
+          refLong := refLong + 1
+        else
+          bad := bad + 1
+          if bad ≤ 20 then IO.println s!"DIFF bits {x.toBits} fast {f} ref {r}"
+  IO.println s!"numfmt-diff: {xs.size * 2} doubles, {bad} differences; {refLong} powers of two where the reference is one digit longer than the shortest"
   -- toFixed, toPrecision, toExponential: the fast paths against the exact path, on every 16th
   -- double above and on `n / 8` random doubles from 2^-24 to 2^40 (both signs)
   let mut ys : Array Float := #[]
@@ -134,8 +142,8 @@ def numfmtDiff (n : Nat) (seed : UInt64) (out? : Option String) : IO UInt32 := d
   let mut s := seed + 1
   for _ in [0:n / 8] do
     s := xorshift s
-    let e := 1003 + (s >>> 52) % 64
-    ys := ys.push (Float.ofBits ((s &&& 0x800FFFFFFFFFFFFF) ||| (e <<< 52)))
+    let e : UInt64 := (1003 : UInt64) + (s >>> (52 : UInt64)) % (64 : UInt64)
+    ys := ys.push (Float.ofBits ((s &&& (0x800FFFFFFFFFFFFF : UInt64)) ||| (e <<< (52 : UInt64))))
   let mut badF := 0
   for x in ys do
     let (sg, num, den) := NumFmt.ofFloat x

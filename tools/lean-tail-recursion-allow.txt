@@ -2490,3 +2490,4 @@ L4Factoidal_Wikidata_renderPath # (c) shared ARQ formatter fuel starts at 128
 L4Factoidal_Wikidata_renderQuerySyntax # (c) shared ARQ formatter fuel starts at 128
 L4Factoidal_Wikidata_renderUnion # (c) shared ARQ formatter fuel starts at 128
 L4Factoidal_Wikidata_tripleSpans # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_JS_Ryu_pushDigits  # (c) one frame per decimal digit written; every caller passes at most 20 digits (a UInt64 has at most 20), so at most 20 frames; issue 1076

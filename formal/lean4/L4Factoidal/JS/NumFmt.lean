@@ -112,9 +112,27 @@ def noFast : UInt64 := 0xFFFFFFFFFFFFFFFF
   let e := (b >>> 52) &&& 0x7FF
   (if e == 0 then 1 else Int.ofNat e.toNat) - 1075
 
+/-- `⌊m × 2^e2 / 10^j⌋` (`round = false`), or the integer nearest it, the larger on a tie
+(`round = true`), for `m < 2^53` and `1 ≤ j ≤ 19`; `noFast` when the integer part of
+`m × 2^e2` is 2^63 or more. With `I` that integer part and `F < 1` the rest, the nearest integer
+is `⌊(I + F + 10^j / 2) / 10^j⌋ = ⌊(I + 5 × 10^(j-1)) / 10^j⌋`, because `10^j / 2` is an integer
+and `F < 1`. -/
+def scaledDown (m : UInt64) (e2 : Int) (j : Nat) (round : Bool) : UInt64 :=
+  let i : UInt64 :=
+    if e2 ≥ 0 then
+      let e := e2.toNat
+      if e < 64 && (m <<< e.toUInt64) >>> e.toUInt64 == m then m <<< e.toUInt64 else noFast
+    else
+      let sh := (-e2).toNat
+      if sh ≥ 64 then 0 else m >>> sh.toUInt64
+  if i ≥ 0x8000000000000000 then noFast
+  else
+    let p := Ryu.pow10[j]!
+    if round then (i + 5 * Ryu.pow10[j - 1]!) / p else i / p
+
 /-- `⌊m × 2^e2 × 10^k⌋` (`round = false`), or the integer nearest it, the larger on a tie
 (`round = true`), for `m < 2^53` and `k ≤ 19`; `noFast` when that is 2^64 - 1 or more. -/
-def scaled (m : UInt64) (e2 : Int) (k : Nat) (round : Bool) : UInt64 :=
+def scaledUp (m : UInt64) (e2 : Int) (k : Nat) (round : Bool) : UInt64 :=
   let p := Ryu.pow10[k]!
   let lo := m * p
   let hi := Ryu.mulHi m p
@@ -137,6 +155,10 @@ def scaled (m : UInt64) (e2 : Int) (k : Nat) (round : Bool) : UInt64 :=
       else if hi2 >>> s.toUInt64 != 0 then noFast
       else (lo2 >>> s.toUInt64) ||| (hi2 <<< (64 - s).toUInt64)
 
+/-- `scaledUp` for `0 ≤ k ≤ 19`, `scaledDown` for `-19 ≤ k < 0`. -/
+@[inline] def scaled (m : UInt64) (e2 : Int) (k : Int) (round : Bool) : UInt64 :=
+  if k ≥ 0 then scaledUp m e2 k.toNat round else scaledDown m e2 (-k).toNat round
+
 /-- `p` significant digits of `|x| = m × 2^e2` (`1 ≤ p ≤ 19`), rounded half up, as `n` with
 `10^(p-1) ≤ n < 10^p` and the exponent `e` with `10^e ≤ |x| < 10^(e+1)` (as `sigDigits`);
 `digits = noFast` when the scale `10^(p-1-e)` is out of range. -/
@@ -147,22 +169,39 @@ def sigFast (m : UInt64) (e2 : Int) (p : Nat) : Ryu.Decimal :=
     | 0 => { digits := noFast, exp10 := 0 }
     | fuel + 1 =>
       let k : Int := Int.ofNat p - 1 - e
-      if k < 0 || k > 19 then { digits := noFast, exp10 := 0 } else
-      let t := scaled m e2 k.toNat false
+      if k < -19 || k > 19 then { digits := noFast, exp10 := 0 } else
+      let t := scaled m e2 k false
       if t == noFast then { digits := noFast, exp10 := 0 }
       else if t < Ryu.pow10[p - 1]! then go (e - 1) fuel
       else if t ≥ Ryu.pow10[p]! then go (e + 1) fuel
       else
-        let n := scaled m e2 k.toNat true
+        let n := scaled m e2 k true
         if n == Ryu.pow10[p]! then { digits := Ryu.pow10[p - 1]!, exp10 := e + 1 }
         else { digits := n, exp10 := e }
   go ((b * 78913) / 262144) 4
+
+/-- `expoLayout` from the `f + 1` digits of `n` (`f ≤ 18`), after the sign `s`. -/
+def expoDigits (s : String) (n : UInt64) (e : Int) (f : Nat) : String :=
+  let s := if f == 0 then Ryu.pushDigits s n 1 else
+    let q := Ryu.pow10[f]!
+    Ryu.pushDigits ((Ryu.pushDigits s (n / q) 1).push '.') (n % q) f
+  Ryu.pushExp s e
+
+/-- `precisionLayout` from the `p` digits of `n` (`1 ≤ p ≤ 19`), after the sign `s`. -/
+def precisionDigits (s : String) (n : UInt64) (e : Int) (p : Nat) : String :=
+  if e < -6 || e ≥ Int.ofNat p then expoDigits s n e (p - 1)
+  else if e == Int.ofNat p - 1 then Ryu.pushDigits s n p
+  else if e ≥ 0 then
+    let w := p - 1 - e.toNat
+    let q := Ryu.pow10[w]!
+    Ryu.pushDigits ((Ryu.pushDigits s (n / q) (e.toNat + 1)).push '.') (n % q) w
+  else Ryu.pushDigits (Ryu.pushZeros (s ++ "0.") (-(e + 1)).toNat) n p
 
 /-- Number.prototype.toFixed (§21.1.3.3) of a finite `x` with `|x| < 10^21`, `f ≤ 100`: the
 fast path when `f ≤ 19` and the scaled value fits in 64 bits, else `fixed`. -/
 def fixedOf (x : Float) (f : Nat) : String :=
   let b := x.toBits
-  let n := if x == 0 then 0 else if f ≤ 19 then scaled (mantOf b) (expOf b) f true else noFast
+  let n := if x == 0 then 0 else if f ≤ 19 then scaledUp (mantOf b) (expOf b) f true else noFast
   if n == noFast then
     let (s, num, den) := ofFloat x
     fixed s num den f
@@ -183,7 +222,7 @@ def expoOf (x : Float) (f : Nat) : String :=
   if r.digits == noFast then
     let (s, num, den) := ofFloat x
     expo s num den f
-  else expoLayout (x < 0) (Ryu.pushDigits "" r.digits (f + 1)) r.exp10 f
+  else expoDigits (if x < 0 then "-" else "") r.digits r.exp10 f
 
 /-- Number.prototype.toPrecision (§21.1.3.5) of a finite `x` with `p` significant digits
 (`1 ≤ p ≤ 100`): the fast path for `p ≤ 19`, else `precision`. -/
@@ -194,7 +233,7 @@ def precisionOf (x : Float) (p : Nat) : String :=
   if r.digits == noFast then
     let (s, num, den) := ofFloat x
     precision s num den p
-  else precisionLayout (x < 0) (Ryu.pushDigits "" r.digits p) r.exp10 p
+  else precisionDigits (if x < 0 then "-" else "") r.digits r.exp10 p
 
 /-- `toExponential()` with no argument (§21.1.3.2 step 10): as many digits as Number::toString. -/
 def expoShortest (x : Float) : String :=
@@ -209,5 +248,11 @@ def expoShortest (x : Float) : String :=
 #guard (let (s, n, d) := ofFloat 0.5; (fixed s n d 0, fixed s n d 1)) == ("1", "0.5")
 #guard (let (s, n, d) := ofFloat 1.45; fixed s n d 1) == "1.4"
 #guard (let (s, n, d) := ofFloat 123.456; expo s n d (shortestFrac 123.456)) == "1.23456e+2"
+
+-- Expected failure of the reference, https://github.com/danbri/factoidal-core/issues/1131:
+-- `XPath4.shortestDigits` gives 17 digits for 2^-705 (bits 0x13E0000000000000); the shortest
+-- text that reads back, which Ryū and Node give, has 16. When the reference is repaired this
+-- guard fails: change it to `(5940911144672375, -213)` and close the issue.
+#guard XPath4.shortestDigits false (Float.ofBits 0x13E0000000000000) == (59409111446723744, -213)
 
 end L4Factoidal.JS.NumFmt

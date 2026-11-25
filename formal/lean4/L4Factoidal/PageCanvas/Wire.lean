@@ -100,6 +100,11 @@ def textBatchOp : Nat := 203
 def pow10 : Array Float := #[1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14,
   1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22]
 
+/-- 2^53, made once when the module starts. Written in place in `jsNumber`, the literal is above
+2^32, and the generated C read it from decimal text at each call (`lean::mpz::init_str`, 1.1 % of
+the samples of a Particle Rex frame: https://github.com/danbri/factoidal-core/issues/1076). -/
+@[noinline] def twoPow53Nat : Nat := 9007199254740992
+
 /-- A number as JavaScript prints it (`Number::toString`): digits, a fraction, an
 exponent, `NaN`, `Infinity`. Exact: a mantissa below 2^53 with a power of ten up to 22 is
 one correctly rounded operation (both are exact Floats); anything else goes through
@@ -127,7 +132,7 @@ def jsNumber (b : ByteArray) (start stop : Nat) : Float := Id.run do
       x := x * 10 + (b[i]!.toNat - 48); i := i + 1
     e := e + (if eneg then -(Int.ofNat x) else Int.ofNat x)
   let v : Float :=
-    if m < 9007199254740992 && e.natAbs ≤ 22 then
+    if m < twoPow53Nat && e.natAbs ≤ 22 then
       if e ≥ 0 then nf m * pow10[e.toNat]! else nf m / pow10[e.natAbs]!
     else if e ≥ 0 then OfScientific.ofScientific m false e.toNat else OfScientific.ofScientific m true e.natAbs
   return if neg then -v else v

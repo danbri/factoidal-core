@@ -15,9 +15,15 @@ the reference implementation, with its full 128-bit tables): fixed-width `UInt64
 128-bit product made from four 32-bit products, two constant tables (`RyuTables.lean`), no `Nat`
 arithmetic and no `Float` arithmetic.
 
-Status: checked by differential test against `XPath4.shortestDigits` and against Node and
-QuickJS-NG (`tools/ryu-differential.sh`); not proved. `numToString` keeps the exact algorithm as
-`numToStringRef` (`JS/Number.lean`).
+Status: checked by differential test, not proved. `leanjs numfmt-diff 3000000 987654321`:
+6,057,106 doubles (random bit patterns, every power of two and its neighbours, decimal powers,
+subnormals, integers from 2^53, fractions), 0 differences against the exact reference
+`numToStringRef` (`JS/Number.lean`) except 92 powers of two where the reference gives one digit
+more than the shortest (its defect: https://github.com/danbri/factoidal-core/issues/1131).
+`tools/ryu-differential.sh` with Node 22: 0 differences on 2,059,016 doubles. So there is no
+`@[csimp]` equality with the reference: the two functions are not equal.
+
+Design record: `docs/designissues/2026-11-25-number-tostring-ryu.md`.
 -/
 namespace L4Factoidal.JS.Ryu
 
@@ -242,5 +248,7 @@ namespace L4Factoidal.JS.Ryu
   1.7976931348623157e308, -2.5, 4.35].map finiteToString ==
   ["0.1", "0.30000000000000004", "123.456", "1e+21", "1e-7", "0.000001", "5e-324",
    "1.7976931348623157e+308", "-2.5", "4.35"]
+
+#guard finiteToString (Float.ofBits 0x13E0000000000000) == "5.940911144672375e-213"
 
 end L4Factoidal.JS.Ryu
