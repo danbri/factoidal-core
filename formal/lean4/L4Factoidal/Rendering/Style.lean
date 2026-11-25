@@ -2835,7 +2835,10 @@ def finishEffects (parent s : Computed) : Computed :=
   let own : Float := if s.pos.isAbsolute then 0
     else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
   let hidden := parent.clipHidden || s.clippedAway
-  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden,
+  {s with
+    rise := parent.rise + own
+    clipHidden := hidden
+    visible := s.visible && !hidden
     transparent := parent.transparent || s.opacityZero}
 
 /-- Descendant opacity cannot expose paint under a transparent ancestor. -/
