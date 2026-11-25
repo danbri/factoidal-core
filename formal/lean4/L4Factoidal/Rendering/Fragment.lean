@@ -612,6 +612,14 @@ def definiteWidth (s : Computed) (element : Bool) (cb : Option Float)
     else cb.map fun c => limit (max 0 (c-s.margin.left-s.margin.right-inside))
   | _ => none
 
+/-- In-flow grid items get their percentage basis during placement. Out-of-flow
+children retain the static pass for descendants with a definite containing width. -/
+private def edgeChildren (node : Node) (style : Computed) (styles : Array Computed) : List Nat :=
+  let children := node.kids.toList
+  if defersGridEdges style then
+    children.filter (fun child => (styles[child]!).pos.isAbsolute)
+  else children
+
 /-- The pass down the tree: `pending` holds nodes with the width of their containing block.
 One step a node; `fuel` is the number of nodes. -/
 def percentEdgesLoop (dom : Dom) (contentSizes : Bool) :
@@ -628,16 +636,14 @@ def percentEdgesLoop (dom : Dom) (contentSizes : Bool) :
         if contentSizes then withLayoutEdges s w else withEdges s w
       else s
     let own := definiteWidth s (n.type == .element) cb contentSizes
-    let pending := if defersGridEdges s then rest
-      else (n.kids.toList.map (fun k => (k,own))) ++ rest
+    let pending := ((edgeChildren n s out).map (fun k => (k,own))) ++ rest
     percentEdgesLoop dom contentSizes fuel pending (if resolve then out.set! id s else out)
 
 /-- Resolve an item's descendants from the content width already assigned by placement.
 Nested horizontal grids defer their own items to their own tracks. -/
 def gridItemEdges (dom : Dom) (styles : Array Computed) (id : Nat) (width : Float) : Array Computed :=
-  if defersGridEdges styles[id]! then styles else
-    percentEdgesLoop dom true (dom.size+1)
-      ((dom.get id).kids.toList.map fun k => (k, some width)) styles
+  percentEdgesLoop dom true (dom.size+1)
+    ((edgeChildren (dom.get id) styles[id]! styles).map fun k => (k, some width)) styles
 
 /-- The styles with the percentage margins and padding of each box resolved against the
 width of its containing block, where the styles make that width definite (`definiteWidth`:
