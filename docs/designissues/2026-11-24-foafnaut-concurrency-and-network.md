@@ -141,6 +141,8 @@ Where we use something else, and the reason recorded for it:
 Open question (not measured): which of our worker and Emscripten paths could become Lean tasks or
 `IO.Process` children on native builds with no loss. Measure before changing.
 
+Inventory of these paths (step 1, nothing measured): `2026-11-25-lean-native-concurrency-audit.md`.
+
 ## 3. One engine worker per tab (first step for tabs and windows)
 
 A document is a Lean value, so it can live in its own worker.
