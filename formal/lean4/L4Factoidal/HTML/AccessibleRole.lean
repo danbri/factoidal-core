@@ -591,7 +591,7 @@ private def nameWithHiddenSpans (referenceHidden : Bool) : String :=
 -- display, the root's explicit hiding, or its visibility.
 private def nameAtUnboxedRoot (html : String) (visible allowUnboxedRoot : Bool) : String :=
   let d := DOM.parseHtmlDocument html
-  match (d.treeOrder 0).find? (isHtml d · ["button"]) with
+  match (d.treeOrder 0).find? (isHtml d · ["area", "button"]) with
   | some k => accessibleName d k {displayed := fun n => n != k && attr? d n "id" != some "child",
                                   visible := fun n => n != k || visible, allowUnboxedRoot}
   | none => "?"
@@ -601,9 +601,9 @@ private def nameAtUnboxedRoot (html : String) (visible allowUnboxedRoot : Bool) 
 #guard nameAtUnboxedRoot "<button>Open</button>" false true == ""
 #guard nameAtUnboxedRoot "<button aria-hidden=true>Open</button>" true true == ""
 #guard nameAtUnboxedRoot "<button hidden>Open</button>" true true == ""
-#guard nameAtUnboxedRoot "<area alt='' title=Fallback>" true true == ""
-#guard nameAtUnboxedRoot "<area alt='' title=Fallback aria-label=Label>" true true == "Label"
-#guard nameAtUnboxedRoot "<area title=Fallback>" true true == "Fallback"
+#guard nameAtUnboxedRoot "<map><area alt='' title=Fallback></map>" true true == ""
+#guard nameAtUnboxedRoot "<map><area alt='' title=Fallback aria-label=Label></map>" true true == "Label"
+#guard nameAtUnboxedRoot "<map><area title=Fallback></map>" true true == "Fallback"
 
 #guard nameWithHiddenSpans false == "Open"
 #guard nameWithHiddenSpans true == "Open details"
