@@ -1,4 +1,4 @@
-import AuthenticatedProposer
+import ProposerProjection
 import Lean
 
 /-! Bounded test transport. The protocol decision is in checkProposerState.
@@ -132,7 +132,7 @@ private def readHeader : List String → Except String BeaconBlockHeader
     (checkedBeaconBlockHeader s i p t b).mapError (fun _ => "header_width")
   | _ => .error "parse_error"
 
-private def dispatch : List String → Except String String
+private def dispatch (project : Bool) : List String → Except String String
   | sigA :: sigB :: slot :: count :: key :: cred :: balance :: slashed :: eligible :: activation ::
       exit :: withdrawable :: prev :: curr :: forkEpoch :: genesis :: registry ::
       state :: rest => do
@@ -173,6 +173,25 @@ private def dispatch : List String → Except String String
     let a ← readHeader (rest.take 5)
     let b ← readHeader ((rest.drop 5).take 5)
     let siblings ← (rest.drop 10).mapM readHex
+    if project then
+      let q : EthereumConsensus.SSZ.ProposerProjection.ProjectionRequest := {
+        slot := currentSlot, first := a, second := b, context := context
+        length := length, validator := v, member := siblings.take 40
+        registryRoot := registryRoot, registrySiblings := (siblings.drop 40).take depth
+        slotSiblings := (siblings.drop (40 + depth)).take depth
+        forkSiblings := (siblings.drop (40 + 2 * depth)).take depth
+        genesisSiblings := siblings.drop (40 + 3 * depth)
+        stateRoot := stateRoot, sigA := sa, sigB := sb }
+      let projection ← (EthereumConsensus.SSZ.ProposerProjection.authenticateAndProject q).mapError
+        (fun e => match e with
+          | .authentication reason => authErrorName reason
+          | .epochOverflow => "epoch_overflow"
+          | .registry reason => errorName reason
+          | .proof _ => "projection_proof_error")
+      return "partial_validator_projection " ++
+        toString projection.validator.withdrawableEpoch.toNat ++ " " ++
+        L4Factoidal.Crypto.bytesToHex projection.projectedRegistryRoot.bytes ++ " " ++
+        L4Factoidal.Crypto.bytesToHex projection.projectedStateRoot.bytes
     let result ← (authenticateState currentSlot a b context length v
       (siblings.take 40) registryRoot ((siblings.drop 40).take depth)
       ((siblings.drop (40 + depth)).take depth)
@@ -191,7 +210,9 @@ def main : IO Unit := do
     let line ← input.getLine
     if line.isEmpty then break
     let result := if line.utf8ByteSize > 8704 then .error "resource_limit"
-      else dispatch (line.trimAscii.toString.splitOn " ")
+      else match line.trimAscii.toString.splitOn " " with
+        | "project" :: rest => dispatch true rest
+        | rest => dispatch false rest
     output.putStrLn (match result with
       | .ok value => value
       | .error error => "error " ++ error)
