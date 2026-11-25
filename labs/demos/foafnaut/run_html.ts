@@ -344,18 +344,16 @@ async function main() {
     :(engine as unknown as Record<string,(...a:unknown[])=>unknown>)[name](...args);
   // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
   // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
-  const syncAnswers=async(t:unknown)=>{
+  const syncAnswers=async(t:unknown,pageURL?:string)=>{
     if(!(t as ScriptTurn|undefined)?.netSync)return t;
     let i=0,fetchMs=0,engineMs=0;
-    try{
-      for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
-        const t0=performance.now();
-        const a=await netFetch((t as ScriptTurn).netSync!,(t as ScriptTurn).session);
-        const t1=performance.now();
-        t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
-        fetchMs+=t1-t0;engineMs+=performance.now()-t1;
-      }
-    }finally{/* the window's pool keeps its connections */}
+    for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+      const t0=performance.now();
+      const a=await netFetch((t as ScriptTurn).netSync!,(t as ScriptTurn).session,pageURL);
+      const t1=performance.now();
+      t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+      fetchMs+=t1-t0;engineMs+=performance.now()-t1;
+    }
     // The requests a turn waited for (module graphs, sync XMLHttpRequest): each answer makes
     // the action again, so their count and the engine's time show a graph fetched one by one.
     if(i>0)console.log(JSON.stringify({type:"native-html-sync",t:Math.round(performance.now()),requests:i,fetchMs:Math.round(fetchMs),engineMs:Math.round(engineMs)}));
@@ -430,13 +428,19 @@ async function main() {
   // yet, so the host sets it: the top-level origin of the page of the session (an approximation
   // of the site: stricter than a site), or the session itself when its page is not the current one.
   const netPool=pinnedHTTPSBatch();
-  const partitionOf=(session:number)=>{
-    if(document.script?.session===session){try{return new URL(document.url).origin;}catch{/* none */}}
+  const partitionOf=(session:number,pageURL?:string)=>{
+    const url=pageURL??(document.script?.session===session?document.url:undefined);
+    if(url!==undefined){
+      try{
+        const origin=new URL(url).origin;
+        if(origin!=="null")return origin;
+      }catch{/* use the session partition */}
+    }
     return `session:${session}`;
   };
-  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number],session?:number)=>{
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number],session?:number,pageURL?:string)=>{
+    const wire=session===undefined||w.partition!==undefined?w:{...w,partition:partitionOf(session,pageURL)};
     netInFlight++;
-    const wire=session===undefined||w.partition!==undefined?w:{...w,partition:partitionOf(session)};
     return netAnswer(wire,undefined,netPool).finally(()=>{netInFlight--;});
   };
   // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
@@ -494,13 +498,16 @@ async function main() {
         // Before the native window exists, use its requested size or the legacy startup viewport.
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
           catch{return {width:windowSize?.[0]??1280,height:windowSize?.[1]??800,textScalePercent:100,zoomUnit:100};}})();
-        const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
+        // The first document is still being prepared while its startup requests run.
+        // Use this page's URL to partition them without reading the active document.
+        const first=await scriptCallRaw("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
           // The start in slices (page-load.mjs startSliceSteps): the page is shown after its classic
           // scripts and the first slice of the rest; the timer turns go on with the start.
           ...(startSlicesOn?{sliceSteps:startSliceSteps}:{}),
-          ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})}) as ScriptTurn;
+          ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})});
+        const turn=await syncAnswers(first,pageURL) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
