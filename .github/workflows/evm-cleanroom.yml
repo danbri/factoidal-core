@@ -36,15 +36,34 @@ jobs:
           build: true
           axiom-audit: true
           axiom-audit-root: EVMCleanroom
+      - name: Build additional witness proof roots for the expanded active ledger
+        working-directory: formal/lean4
+        env:
+          LEAN_NUM_THREADS: "1"
+          LEAN_STACK_SIZE_KB: "32768"
+          MIMALLOC_ARENA_RESERVE: "64M"
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("evm-cleanroom")
+          source = (root / "lakefile-witness.toml").read_text()
+          assert "moreLeanArgs" not in source
+          (root / "lakefile-witness-ci.toml").write_text(source.replace(
+              'version = "0.1.0"', 'version = "0.1.0"\nmoreLeanArgs = ["-j1", "-M2048", "-s32768"]', 1))
+          PY
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-witness-ci.toml build \
+            EVMCleanroom.CanonicalRLPTests EVMCleanroom.MPT EVMCleanroom.WitnessAdmissionProofs
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==292 and x["files"]==146,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==170,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==5,x'
-          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==292 and x["sourceFiles"]==27,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==324 and x["sourceFiles"]==30,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |

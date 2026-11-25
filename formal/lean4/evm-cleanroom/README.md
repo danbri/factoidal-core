@@ -127,8 +127,10 @@ python3 -c 'import json; print(json.dumps(json.load(open("evm-cleanroom/scripts/
 ```
 
 This covers the existing type-0/1/2/3 call slice during mainnet Cancun.
-Signature and witness authentication, trie commitments, beacon-root system
-processing, withdrawals and complete block validation remain unfinished.
+This original mode trusts decoded witness values. The proof-bearing mode below
+authenticates the starting inventory. Signature authentication, output trie
+commitments, beacon-root system processing, withdrawals and complete block
+validation remain unfinished.
 The resource caps are local refusal limits, not consensus maxima or total
 heap bounds.
 
@@ -144,6 +146,51 @@ numeric JSON parsing; this includes the retained deep-input crash regression.
 [Transport fixture](scripts/fixtures/transaction-list-transport.json) ·
 [Signed list comparison](scripts/differential/transaction-list.mjs) ·
 [Evidence and limits](../../../docs/20261124-evm-transaction-list.md)
+
+## Independent Lean state-witness verification
+
+`--authenticated-transaction-list` derives the initial account and storage
+inventory from Merkle Patricia proofs under **field 3 of the supplied parent
+header**. The request supplies addresses, code bytes, requested storage keys
+and proof nodes. Lean derives account presence, nonce, balance and storage
+values from the proved leaves, and checks code against the account's code hash
+before entering the existing ordered runner. Authentication is relative to
+that supplied commitment; canonical-chain selection remains external.
+
+The new canonical RLP reader and secure-trie verifier are independent Lean
+implementations. They use the repository's experimental Keccak implementation
+and require its existing explicit opt-in. Runtime admission does not invoke a
+JavaScript trie or another Ethereum client.
+
+From `formal/lean4/`:
+
+```sh
+lake -d evm-cleanroom -f lakefile-witness.toml build evm-transaction-list evm-witness-proof
+evm-cleanroom/.lake/build/bin/evm-transaction-list \
+  --dangerously-enable-unverified-keccak --authenticated-transaction-list REQUEST.json
+evm-cleanroom/.lake/build/bin/evm-transaction-list \
+  --dangerously-enable-unverified-keccak --state-witness WITNESSES.json
+evm-cleanroom/.lake/build/bin/evm-witness-proof \
+  --dangerously-enable-unverified-keccak --mpt-proof PROOF.json
+evm-cleanroom/.lake/build/bin/evm-witness-proof --rlp ENCODING.json
+```
+
+The authenticated list uses `schemaVersion: 2`; standalone witness and
+primitive requests use version 1. Proof nodes form a bounded unordered bag.
+A missing referenced node refuses admission and cannot establish absence.
+Unknown fields in proof objects, list entries and top-level requests are
+refused. Duplicate JSON member names, including escaped aliases, are refused
+throughout the authenticated request. The retained decoded transaction and
+access-list objects still ignore additional field names. Proof failure
+returns an indeterminate list result before
+execution. A proved present-but-empty account is preserved by standalone
+admission and explicitly refused by the current executor's narrower profile.
+
+[Input schemas, model and reproduction](../../../docs/20261125-evm-witness-admission.md) ·
+[Path verifier](EVMCleanroom/MPT.lean) ·
+[Admission and execution linkage](EVMCleanroom/WitnessAdmissionProofs.lean) ·
+[Independent fixture harness](scripts/witness/run.mjs) ·
+[Tracking issue #1043](https://github.com/danbri/factoidal-core/issues/1043)
 
 ## Calldata and bounded CALL execution
 

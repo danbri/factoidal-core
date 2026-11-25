@@ -1,0 +1,87 @@
+
+/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-transaction-list:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000fb0a0 <main>:
+   fb0a0:	55                   	push   %rbp
+   fb0a1:	41 56                	push   %r14
+   fb0a3:	53                   	push   %rbx
+   fb0a4:	89 fd                	mov    %edi,%ebp
+   fb0a6:	e8 15 14 29 00       	call   38c4c0 <lean_setup_args>
+   fb0ab:	49 89 c6             	mov    %rax,%r14
+   fb0ae:	31 c0                	xor    %eax,%eax
+   fb0b0:	e8 fb 0d 27 00       	call   36beb0 <lean_initialize_runtime_module>
+   fb0b5:	bf 01 00 00 00       	mov    $0x1,%edi
+   fb0ba:	e8 11 fd ff ff       	call   fadd0 <initialize_evm__cleanroom_EVMCleanroom_TransactionListCLI>
+   fb0bf:	48 89 c3             	mov    %rax,%rbx
+   fb0c2:	e8 69 21 27 00       	call   36d230 <lean_io_mark_end_initialization>
+   fb0c7:	81 7b 04 ff ff ff 00 	cmpl   $0xffffff,0x4(%rbx)
+   fb0ce:	77 24                	ja     fb0f4 <main+0x54>
+   fb0d0:	8b 03                	mov    (%rbx),%eax
+   fb0d2:	83 f8 02             	cmp    $0x2,%eax
+   fb0d5:	7c 5f                	jl     fb136 <main+0x96>
+   fb0d7:	ff c8                	dec    %eax
+   fb0d9:	89 03                	mov    %eax,(%rbx)
+   fb0db:	e8 40 a5 20 00       	call   305620 <lean_init_task_manager>
+   fb0e0:	48 8d 3d 09 ff ff ff 	lea    -0xf7(%rip),%rdi        # faff0 <run_main>
+   fb0e7:	89 ee                	mov    %ebp,%esi
+   fb0e9:	4c 89 f2             	mov    %r14,%rdx
+   fb0ec:	e8 bf 22 20 00       	call   2fd3b0 <lean_run_main>
+   fb0f1:	48 89 c3             	mov    %rax,%rbx
+   fb0f4:	e8 b7 a5 20 00       	call   3056b0 <lean_finalize_task_manager>
+   fb0f9:	81 7b 04 ff ff ff 00 	cmpl   $0xffffff,0x4(%rbx)
+   fb100:	77 17                	ja     fb119 <main+0x79>
+   fb102:	48 8b 43 08          	mov    0x8(%rbx),%rax
+   fb106:	48 d1 e8             	shr    $1,%rax
+   fb109:	8b 0b                	mov    (%rbx),%ecx
+   fb10b:	83 f9 02             	cmp    $0x2,%ecx
+   fb10e:	7c 34                	jl     fb144 <main+0xa4>
+   fb110:	ff c9                	dec    %ecx
+   fb112:	89 0b                	mov    %ecx,(%rbx)
+   fb114:	5b                   	pop    %rbx
+   fb115:	41 5e                	pop    %r14
+   fb117:	5d                   	pop    %rbp
+   fb118:	c3                   	ret
+   fb119:	48 89 df             	mov    %rbx,%rdi
+   fb11c:	e8 8f 1f 27 00       	call   36d0b0 <lean_io_result_show_error>
+   fb121:	8b 0b                	mov    (%rbx),%ecx
+   fb123:	83 f9 02             	cmp    $0x2,%ecx
+   fb126:	7c 33                	jl     fb15b <main+0xbb>
+   fb128:	ff c9                	dec    %ecx
+   fb12a:	89 0b                	mov    %ecx,(%rbx)
+   fb12c:	b8 01 00 00 00       	mov    $0x1,%eax
+   fb131:	5b                   	pop    %rbx
+   fb132:	41 5e                	pop    %r14
+   fb134:	5d                   	pop    %rbp
+   fb135:	c3                   	ret
+   fb136:	85 c0                	test   %eax,%eax
+   fb138:	74 a1                	je     fb0db <main+0x3b>
+   fb13a:	48 89 df             	mov    %rbx,%rdi
+   fb13d:	e8 be 8b 20 00       	call   303d00 <lean_dec_ref_cold>
+   fb142:	eb 97                	jmp    fb0db <main+0x3b>
+   fb144:	85 c9                	test   %ecx,%ecx
+   fb146:	74 cc                	je     fb114 <main+0x74>
+   fb148:	48 89 df             	mov    %rbx,%rdi
+   fb14b:	48 89 c3             	mov    %rax,%rbx
+   fb14e:	e8 ad 8b 20 00       	call   303d00 <lean_dec_ref_cold>
+   fb153:	48 89 d8             	mov    %rbx,%rax
+   fb156:	5b                   	pop    %rbx
+   fb157:	41 5e                	pop    %r14
+   fb159:	5d                   	pop    %rbp
+   fb15a:	c3                   	ret
+   fb15b:	b8 01 00 00 00       	mov    $0x1,%eax
+   fb160:	85 c9                	test   %ecx,%ecx
+   fb162:	74 b0                	je     fb114 <main+0x74>
+   fb164:	48 89 df             	mov    %rbx,%rdi
+   fb167:	e8 94 8b 20 00       	call   303d00 <lean_dec_ref_cold>
+   fb16c:	eb be                	jmp    fb12c <main+0x8c>
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section __lcxx_override:
+
+Disassembly of section .plt:

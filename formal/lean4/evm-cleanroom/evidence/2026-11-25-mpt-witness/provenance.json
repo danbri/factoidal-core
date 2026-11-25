@@ -1,0 +1,297 @@
+{
+  "artifacts": {
+    "evidence/2026-11-25-mpt-witness/README.md": {
+      "bytes": 10300,
+      "sha256": "87c32a671b23576a12b565baa5e53739b4adf5e0fe728897eb88a94654c6b929"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts/CanonicalRLP.txt": {
+      "bytes": 643,
+      "sha256": "3db6dc0a8fbcb62e8fa249d3c5adba10dcc98b51dc23e4069eb4cbbcb1a96a8f"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts/MPT.txt": {
+      "bytes": 452,
+      "sha256": "b79b615cc47dee42efefdcb9cdbd0a528556e7d2db97657341190d45823e6156"
+    },
+    "evidence/2026-11-25-mpt-witness/axiom-transcripts/WitnessAdmissionProofs.txt": {
+      "bytes": 1671,
+      "sha256": "a6f70a71debc6315d31afbbd9b6bc2ad7743b3b2e3c5a668cedc8ec837ac153c"
+    },
+    "evidence/2026-11-25-mpt-witness/baseline-build.log": {
+      "bytes": 39468,
+      "sha256": "a68a75dbef73c48fb000902078a55fa5ddbc8194b5113afd40595b2e992ffddc"
+    },
+    "evidence/2026-11-25-mpt-witness/legacy-list-transport-before-runtime-pruning.json": {
+      "bytes": 5003,
+      "sha256": "0b2b3f08353bfa049e305118cd9ef16b7f2686e87f670f293fc554a4ec8ddaac"
+    },
+    "evidence/2026-11-25-mpt-witness/legacy-list-transport.json": {
+      "bytes": 3841,
+      "sha256": "d7b82005998c5e0ee77ac6f8e74bd9da750f623d4c7149c7bb804bd69545ea69"
+    },
+    "evidence/2026-11-25-mpt-witness/native-build-before-runtime-pruning.log": {
+      "bytes": 42320,
+      "sha256": "0916388611a563ab3ea6c35cf4b6ccaa6aaf876ed1102b298161c9887c392881"
+    },
+    "evidence/2026-11-25-mpt-witness/native-build.log": {
+      "bytes": 43943,
+      "sha256": "30228670193dec82f712aa729dd4604f0bf4abf46f6f516e8aa86c6e18315e5b"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/active-claim-manifest-v2.json": {
+      "bytes": 311347,
+      "sha256": "78f29d15ca11466ffb4ecf33ed7d131e7ec4383939d9f3cdec756640ddbe15c6"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/axiom-transcripts/CanonicalRLP.txt": {
+      "bytes": 643,
+      "sha256": "3db6dc0a8fbcb62e8fa249d3c5adba10dcc98b51dc23e4069eb4cbbcb1a96a8f"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/axiom-transcripts/MPT.txt": {
+      "bytes": 452,
+      "sha256": "b79b615cc47dee42efefdcb9cdbd0a528556e7d2db97657341190d45823e6156"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/axiom-transcripts/WitnessAdmissionProofs.txt": {
+      "bytes": 1671,
+      "sha256": "a6f70a71debc6315d31afbbd9b6bc2ad7743b3b2e3c5a668cedc8ec837ac153c"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/runtime-gate-before.json": {
+      "bytes": 14975,
+      "sha256": "b905c630ba0c414ab514a6439a8c05045a41304657c5bc68254c6adbe6bb2491"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/source-ledger.json": {
+      "bytes": 118,
+      "sha256": "3bcda4c8016e907a3bf231dcb06567377e76866fd1afa23aac741cc07ded8567"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/tail-audit.json": {
+      "bytes": 189,
+      "sha256": "b41809165204f92bb3c5bb40520d098b6434eecdcffd16a946e76f6827fc57d3"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/tail-audit.txt": {
+      "bytes": 1280,
+      "sha256": "10edca4d384c1ee26c50b0f46c436267d786242e5e954a349ddd18bae5439259"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/witness-axiom-controls.json": {
+      "bytes": 436,
+      "sha256": "3ca3b81aff16ea98e487068434a0c1fc33f6503c241a7d7dadec9d33b2c08da2"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/witness-axioms.json": {
+      "bytes": 15752,
+      "sha256": "05f90af45706f0d408d2213c72943929db7231f4d445b6a144cd6c80e2c31573"
+    },
+    "evidence/2026-11-25-mpt-witness/pre-import-pruning/witness-source-manifest.json": {
+      "bytes": 2516,
+      "sha256": "5958dd5725646296bb10542ef1d7f1fbe861a9e05f5abb13d46c15efb240b364"
+    },
+    "evidence/2026-11-25-mpt-witness/rlp-guards-build.log": {
+      "bytes": 1137,
+      "sha256": "e6794d67475fdfa5a7d00a2a62b0324a347e12389e2fe5dffe2aa9fa8f8205d0"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.after-pruning.authenticated.output.json": {
+      "bytes": 2090,
+      "sha256": "8f05ccbfe37e29b3a636bbbd7520d106b21c904f51943ab02967b10e53badf70"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.after-pruning.evm-transaction-list.main.txt": {
+      "bytes": 4137,
+      "sha256": "cedcc2e7a818853728c9dcc076347297579569a1b7effa1e76dff45f19c5c38b"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.after-pruning.evm-witness-proof.main.txt": {
+      "bytes": 4135,
+      "sha256": "c667d53d4512237835fa3a652d8177569a06df80ce02682b6a978ada04b0557f"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.after-pruning.json": {
+      "bytes": 19184,
+      "sha256": "5556f55b8cfa555c541f2536833e49215a6f978b9879636604d4e6afef9aef10"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.after-pruning.state.output.json": {
+      "bytes": 624,
+      "sha256": "41115a6726b4ae3ef6e439d4cebcffffd22292e58fe53418ae708403825330e8"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.authenticated-request.json": {
+      "bytes": 16491,
+      "sha256": "944a85cb510f89b7afeb888c213aea46f69aea76a7b6e85f0f7df85b7a57c1b0"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.authenticated.output.json": {
+      "bytes": 2090,
+      "sha256": "8f05ccbfe37e29b3a636bbbd7520d106b21c904f51943ab02967b10e53badf70"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.json": {
+      "bytes": 20481,
+      "sha256": "cec88e71d5c6ffff058ea82faffa89fb3fc99a21e8cfa4d1ba719b76a61da18b"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.json-initializer.txt": {
+      "bytes": 8245,
+      "sha256": "229d24693bfb5500bcccbbbe50d0af056c2b9fe1b2517302b4605924dfc57ef8"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.state.output.json": {
+      "bytes": 624,
+      "sha256": "41115a6726b4ae3ef6e439d4cebcffffd22292e58fe53418ae708403825330e8"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.state.strace.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.strace.stderr.txt": {
+      "bytes": 247,
+      "sha256": "01c79a7d47475a07737aecab58d739206fd0dcf4a572f2efdab84f037f393c00"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.before-pruning.strace.stdout.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.json-import-only.bootstrap.txt": {
+      "bytes": 1838,
+      "sha256": "d002fa99aa9bf8aab00ce17465c84868c5582803801b7fc901e1f9ace3886d82"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.json-import-only.json": {
+      "bytes": 13655,
+      "sha256": "9efdab1828ac9accc20b3caec16ae0746eeadbf3a87febee77e9b5e5546aba29"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-boundary.state-request.json": {
+      "bytes": 3324,
+      "sha256": "a6c284221d4a473056ece8e1c94a8ffe987a799ec6761ebf6418afebc8b5d385"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-gate-controls.json": {
+      "bytes": 502,
+      "sha256": "e2a3636d8754268cab27e11aff4cb46f7ac9404d663f7ceb7b09ad7558f60dc1"
+    },
+    "evidence/2026-11-25-mpt-witness/runtime-gate.json": {
+      "bytes": 7281,
+      "sha256": "dbd97117b88e6c596e9bfc0f3220a64fac2959baec6cd2fbc6760b2c3f58c1b4"
+    },
+    "evidence/2026-11-25-mpt-witness/source-ledger.json": {
+      "bytes": 118,
+      "sha256": "efaef33027afec5579acc0e5b6c74b559490c26038e38d89db7172cfab268568"
+    },
+    "evidence/2026-11-25-mpt-witness/tail-audit.json": {
+      "bytes": 189,
+      "sha256": "b41809165204f92bb3c5bb40520d098b6434eecdcffd16a946e76f6827fc57d3"
+    },
+    "evidence/2026-11-25-mpt-witness/tail-audit.txt": {
+      "bytes": 1280,
+      "sha256": "10edca4d384c1ee26c50b0f46c436267d786242e5e954a349ddd18bae5439259"
+    },
+    "evidence/2026-11-25-mpt-witness/whitespace-check.json": {
+      "bytes": 4072,
+      "sha256": "7a38a5d7dbaf75392e4e011b163b562f2c79319a954403575ce7db94224d9c0e"
+    },
+    "evidence/2026-11-25-mpt-witness/witness-axiom-controls.json": {
+      "bytes": 576,
+      "sha256": "7425ee4980bb8a5c27f07db1b55d9091b93ec4f9f81a834075d86e79f3ebf8d8"
+    },
+    "evidence/2026-11-25-mpt-witness/witness-axioms.json": {
+      "bytes": 16720,
+      "sha256": "b3323f7edfe0da02277214441545b75d500343cd871b78618a55d2ef500354a6"
+    },
+    "evidence/active-claim-manifest-v2.json": {
+      "bytes": 311821,
+      "sha256": "91f84697bef6edb7d008cff120e9579590e41160c6eeb50948155a8f916105ed"
+    },
+    "evidence/mpt-authenticated-list-results-before-runtime-pruning.json": {
+      "bytes": 22370,
+      "sha256": "8c463ed116ebb096ac13a974452186c18959ba95b14da3a9eb2e9939291eb567"
+    },
+    "evidence/mpt-authenticated-list-results.json": {
+      "bytes": 22380,
+      "sha256": "98444bf30d0d6e403aa3623fca474e742432b0069067f4b4fe66b87d60cb7ba9"
+    },
+    "evidence/mpt-benchmark-before-runtime-pruning.json": {
+      "bytes": 316810,
+      "sha256": "c5e1d283e094336d09f9bb0de827fd123c01c98915bac5323472135042618c33"
+    },
+    "evidence/mpt-benchmark.json": {
+      "bytes": 317501,
+      "sha256": "ac6b51160bf12ab386986537420919b957fdd8eb0d5d97fc5f0e0fe1efe1b203"
+    },
+    "evidence/mpt-generated-fixtures.json": {
+      "bytes": 288965,
+      "sha256": "dd0839677b1f198c375ce34216bcbcd707935ebb65058cd0adbd1fd931869402"
+    },
+    "evidence/mpt-native-results-before-runtime-pruning.json": {
+      "bytes": 113797,
+      "sha256": "a7ab445b195dcd1b1faf683d186919e79418b714651b96ac397b4cd639e374d7"
+    },
+    "evidence/mpt-native-results.json": {
+      "bytes": 113693,
+      "sha256": "7662e67037408e09b5be919fc4a49338e5cb34d6cb62acdf3d7861b678180760"
+    },
+    "evidence/mpt-runtime-output-parity.json": {
+      "bytes": 1701,
+      "sha256": "9b67f77185857da207c0e6a7e1361932c1a14304baf82fb0d8ae1cd1bf7f51b1"
+    },
+    "evidence/mpt-sources.json": {
+      "bytes": 5241,
+      "sha256": "5cbd374dd7ee9732699c51c267b70f9f657576b0eecf2c949711ae9c95ddc622"
+    },
+    "evidence/mpt-upstream-LICENSE.txt": {
+      "bytes": 1064,
+      "sha256": "c496a8b7ea33537e8e083a20b82b0ebc0191e3a04486a32329e0215a25b1dada"
+    },
+    "evidence/mpt-upstream-rlp-invalid.json": {
+      "bytes": 2616,
+      "sha256": "f90bf5745d21bfa7fbfeabaf5b6d1c66bae10051b1c0a054eecd424d488385d7"
+    },
+    "evidence/mpt-upstream-rlp-valid.json": {
+      "bytes": 8102,
+      "sha256": "dd11055db749a21d8ee7aae7810ac30d19a89e2c6dadba9967f7bd567ad5fc00"
+    },
+    "evidence/mpt-upstream-secure-trie.json": {
+      "bytes": 3255,
+      "sha256": "487f9e1e404e46dc0a54d526b14927d3a5ba90f7f52625e7d49cd170974ce9ff"
+    },
+    "evidence/witness-source-manifest.json": {
+      "bytes": 46008,
+      "sha256": "149123554691890aa3b2043c86f476bb540b9de897d2a32d03af0495675bf654"
+    }
+  },
+  "baseImplementation": "40c3f0335501677d782df566ef7fd1e8a5cc4ad5",
+  "baselineNativeSha256": "d09ba67cb393c6af338ae0c26872fe0331ff86aeb65d7e8b334d8398b2522fdd",
+  "buildPolicy": {
+    "compilerLock": "/tmp/ethereum-mpt-lean.lock",
+    "externalLakePackages": [],
+    "lakePackage": "evm-cleanroom",
+    "leanMemoryMB": 2048,
+    "leanStackKB": 32768,
+    "mimallocArenaReserve": "64M",
+    "threads": 1,
+    "virtualMemoryKB": 4194304,
+    "workingDirectory": "formal/lean4"
+  },
+  "compiler": {
+    "archiveSha256": "890afd185370f85666025b883914ab4f4b339136f8c96167b69cfb62aecaf235",
+    "officialRelease": "https://github.com/leanprover/lean4/releases/tag/v4.33.1",
+    "sha256": "e8baaa71855a616dc351028f3ad2200051b0671f423a1696a100e809302d5550",
+    "version": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)"
+  },
+  "generatedAt": "2026-11-25T15:31:40.321148+00:00",
+  "kind": "independent-lean-witness-checkpoint-evidence",
+  "nativeBinaries": {
+    "proof": {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-witness-proof",
+      "sha256": "1b346ba5356058e3a013c4e7397882904495db2afca3f9389800628a12c3c2f0"
+    },
+    "transactionList": {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list",
+      "sha256": "f2499ce6ea3d4e1562699bf26426b6e6b698d9c2ea63492a9e2d5f1e2b1196ef"
+    }
+  },
+  "observed": {
+    "comparatorFalsifications": 20,
+    "expandedActiveClaimSelection": 324,
+    "integrationControls": 7,
+    "listNativeInvocations": 114,
+    "nativeCorpusCases": 189,
+    "nativeCorpusFailed": 0,
+    "newTheorems": 32,
+    "retainedActiveClaimRecords": 292,
+    "transactionListFailed": 0,
+    "transactionLists": 36
+  },
+  "qualifications": [
+    "No fresh Geth or EthereumJS execution is claimed. Their November24 outcomes are pinned retained evidence; current native proof admission and execution are newly run.",
+    "All30 completed-execution requests first reproduce their historical request hashes. Six refusal/boundary requests use an explicitly documented block-gas-limit declaration for an originally unobserved final execution-gas total.",
+    "Fresh local theorem elaboration covers all32 additions. The full324 audit belongs to the preserved hosted workflow unless separately recorded.",
+    "Runtime protocol witness checking is hashing/decoding/traversal, not Lean proof search. Pre-pruning linked elaborator machinery and its removal are recorded separately.",
+    "Supplied root/canonical-chain trust, experimental Keccak, decoded signature/sender trust, absent block system processing, poststate commitments, full client coverage and compiler/runtime assurance remain open."
+  ],
+  "repositoryHeadAtPackaging": "40c3f0335501677d782df566ef7fd1e8a5cc4ad5",
+  "schemaVersion": 1,
+  "sourceIdentity": "Use the exact current source blobs in witness-axioms.json and witness-source-manifest.json. Pre-publication HEAD is the predecessor; later required-HEAD evidence is separate."
+}

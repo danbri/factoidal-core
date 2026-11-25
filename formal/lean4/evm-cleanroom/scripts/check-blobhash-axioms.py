@@ -147,7 +147,8 @@ def source_pins(manifest, require_head):
             if not line.startswith("import "):
                 continue
             for module in line.split()[1:]:
-                if module == "Std" or module.startswith("Std.") or module == "Lean.Data.Json":
+                if module == "Std" or module.startswith("Std.") or module in {
+                        "Lean.Data.Json.Parser", "Lean.Data.Json.FromToJson.Basic"}:
                     continue
                 require(module.startswith("EVMCleanroom."), "unapproved import: " + module)
                 pending.append(module.replace(".", "/") + ".lean")

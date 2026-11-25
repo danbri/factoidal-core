@@ -1,7 +1,8 @@
 import EVMCleanroom.CLIEncoding
 import EVMCleanroom.CallTransaction
 import EVMCleanroom.TransactionTransport
-import Lean.Data.Json
+import Lean.Data.Json.Parser
+import Lean.Data.Json.FromToJson.Basic
 
 /-!
 Shared JSON byte transport for decoded transaction entry points. This module

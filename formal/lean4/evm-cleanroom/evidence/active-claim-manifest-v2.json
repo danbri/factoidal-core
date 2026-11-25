@@ -98,7 +98,7 @@
     "EVMCleanroom/HashLogProofs.lean": "71107d9dcdae0cd7fa5246607dee95ddff1ff37c",
     "EVMCleanroom/HashLogTests.lean": "bb5929112dfebaa2e70ca2c29fbd47eea360d97e",
     "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
-    "README.md": "78b3931afefc77f00cb53b8da9d6838cb77cb942",
+    "README.md": "ab2b2a808ca989753e277fa101525cc327505652",
     "evidence/historical-1cat-shanghai-19100013.json": "2aea250f921b10e9ad22abd8fc68314d1ac610f0",
     "scripts/differential/hash-log.mjs": "91703959a8c3c60b9f61d1bda54d69eeb59e87a8",
     "scripts/eels/call-transaction-differential.mjs": "e32c075294cee7f891033ffafbcd51f803722cac",
@@ -129,23 +129,23 @@
     "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
     "EVMCleanroom/HeaderRLP.lean": "3144954f2fcff97da1ac1e54f7be6b63d6ccb667",
     "lakefile-blob-call.toml": "5ba03901414d2da9fa02c84224a1c562c5d62cb5",
-    "scripts/check-blobhash-axioms.py": "cb7e41c48765c315de31af812e471c62e6bffd91",
+    "scripts/check-blobhash-axioms.py": "0309e37bec30533c4af828a1976e6ba96ac4f57d",
     "scripts/differential/blob-call.mjs": "c327d2c0e9604600cdd963eebdcc48fd706f1f3d",
     "scripts/differential/package.json": "2b16a6de6cb14101f65e2f379a7ede78399d6000",
     "scripts/eels/package.json": "77eb29940be5001f459b9a54aee329b60213cf17",
     "scripts/differential/blobhash-transactions.mjs": "db671648c3f4de03358d476095d15bafd5d297cb",
     "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
-    "EVMCleanroom/TransactionCodec.lean": "cd1b25c2ac99ab60d78cd5c6d988d5de81d5cc3e",
+    "EVMCleanroom/TransactionCodec.lean": "9ede7f7f3bb35d2b8cae37f973d6df9aca36ae36",
     "EVMCleanroom/TransactionList.lean": "f5a78cbea6216c2a543bf7bebfd5fa30faa9e336",
-    "EVMCleanroom/TransactionListCLI.lean": "026730665f08f42765aaa95cdd161487b8e31089",
+    "EVMCleanroom/TransactionListCLI.lean": "84312831746c588cceb7c9b0574e6512c4fe97d4",
     "EVMCleanroom/TransactionListProofs.lean": "3e8e228d335849cae72acf66f5365f6aa116f6fa",
     "EVMCleanroom/TransactionListTests.lean": "84e5661d8b6b3b9b32d96c1601e4566390f0ee0f",
     "evidence/active-london-claims.json": "e4cc502481594eca10853e5c87bf43a20062e77d",
     "lakefile-london.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1",
-    "lakefile-transaction-list.toml": "06c7546da8fb974004f5ddfe9172f5b21fe1d0ac",
+    "lakefile-transaction-list.toml": "c06d0c1786710c82320555f6dbdb9b8c41c359ad",
     "scripts/check-london-claims.py": "2d94b953a5def39e2e0084591366911d9643d9e8",
     "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2",
-    "scripts/check-transaction-list-axioms.py": "9bdb4d69aaa25cc53c8698e6b512c96432e581c7",
+    "scripts/check-transaction-list-axioms.py": "5662d83ed8b8cf1449cb520d68e522a955a710c4",
     "scripts/check-transaction-list-transport.py": "caa65fcb6bfa5581dc01dd1aee514cfa2fcedf24",
     "scripts/differential/transaction-cli-timing.mjs": "0c03e21cdf9709edb77360aa770ebba30761fb67",
     "scripts/differential/transaction-list.mjs": "16da3e022e0d14af586fbd56110f26fa1e1b9d32",
@@ -153,7 +153,31 @@
     "EVMCleanroom/TransactionTransport.lean": "6b287a981b30fa92275ca9876d903bf342f3a92a",
     "EVMCleanroom/TransactionTransportProofs.lean": "b3696ee6afb178673c5ddd88428caacb908577e1",
     "EVMCleanroom/TransactionTransportTests.lean": "226e739168fc17df4991b11da303d0cf3f34d015",
-    "scripts/check-transaction-json-guard.py": "8dfbd45fbe08337cc908360ae5dfc27c69b51b5a"
+    "scripts/check-transaction-json-guard.py": "8dfbd45fbe08337cc908360ae5dfc27c69b51b5a",
+    "EVMCleanroom/CanonicalRLP.lean": "973a0360d2806707e828dfaa2af406dbc86b3b95",
+    "EVMCleanroom/CanonicalRLPTests.lean": "0ff14367da267ea241579f0129327bb3193626ba",
+    "EVMCleanroom/MPT.lean": "29c7a91e3269243865ac912b9bdb44784caeb915",
+    "EVMCleanroom/WitnessAdmission.lean": "8d803c4d3ef2c677a6df26f4f4d851a80f8dada4",
+    "EVMCleanroom/WitnessAdmissionProofs.lean": "17fc82f8ff15fff9a6547dff25748532b118b837",
+    "EVMCleanroom/WitnessJSON.lean": "3349d175fc6359129dff2bc297643fdfec1139ed",
+    "EVMCleanroom/WitnessPrimitiveCLI.lean": "2a03f61abb4081ff94ae99156fc490927442f034",
+    "evidence/2026-11-24-transaction-list/list-execution.json": "73f0123db40a290545c9b5b4a7f8659405dd4388",
+    "evidence/mpt-generated-fixtures.json": "d045177a1b209d4ec5f2344cd7726b03b8df25a4",
+    "evidence/mpt-sources.json": "b606bff196b3647fd4197de63775a5738b37a2f9",
+    "evidence/mpt-upstream-LICENSE.txt": "8433e6f87c909d20b61eb8e3c3c217e12cb7d71b",
+    "evidence/mpt-upstream-rlp-invalid.json": "21d0b2d14332292c9a9bd5becb73ad6a5bacba62",
+    "evidence/mpt-upstream-rlp-valid.json": "cb0d9fd399f140d6bab9d411033f8be131df8df0",
+    "evidence/mpt-upstream-secure-trie.json": "473f96419a49ca6493a1460f93f46b254fb095a7",
+    "evidence/witness-source-manifest.json": "bab1b4bf3e29e7bbe27a6e4d497897d49558bbcd",
+    "lakefile-witness.toml": "cec738d6474febe6858e0171df2bd29ef50c6288",
+    "scripts/check-witness-axioms.py": "a4996c20ff796838679afe53926c3be8b82c7f79",
+    "scripts/witness/README.md": "3139a47f208b7e13152b7e011151b1037f1fff38",
+    "scripts/witness/corpus.mjs": "ca5f362bdeae00b2155d9d7689c2294a7e03b873",
+    "scripts/witness/oracle.mjs": "8242ed0c5707b841bbaf7c26aac94afefbe5af81",
+    "scripts/witness/run.mjs": "ff826446070653f07b2d6c7987797cf1e8976d37",
+    "scripts/witness/transaction-lists.mjs": "eae966c69c72d1c9369a0edcc654d6fc52484df3",
+    "scripts/witness/bench.mjs": "45e62043adcb12ad8fb02fdf3b1cffa37744dc52",
+    "scripts/check-witness-runtime.py": "c77fbc547c0927f76dd9cdac1046f95dc27922de"
   },
   "theorem_inventory": [
     {
@@ -3079,6 +3103,336 @@
       ],
       "scope": "Kind: shared native-codec correspondence. Says: safe input reaches exactly the original Lean.Json.parse, including its normal decimal/exponent spellings and malformed-input errors. Does not say: that any particular input satisfies the later schema.",
       "provenance": "Actual Lean 4.33.1 #print axioms observed on 24 November 2026 in transaction-transport-proof-build-3.log; defining source Git blob b3696ee6afb178673c5ddd88428caacb908577e1. The dedicated and complete active compiler-output gates recheck these exact lexical-admission and parser-continuation claims."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.decode_over_limit",
+      "source_symbol": "decode_over_limit",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: resource admission. Says: an input over the byte limit refuses before decoding or extracting arrays. Does not say: the input is invalid Ethereum data or bound process memory.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.admitHeader_bounds",
+      "source_symbol": "admitHeader_bounds",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [],
+      "scope": "Kind: bounds. Says: an admitted header advances and both byte slices lie inside its range. Does not say: the range is an Ethereum trie node or prove grammar refinement.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.readHeader_bounds",
+      "source_symbol": "readHeader_bounds",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [],
+      "scope": "Kind: decoder bounds. Says: the actual header parser returns only nonempty, in-range byte extents. Does not say: all canonical encodings are admitted under the resource policy.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.validateSegments_zero",
+      "source_symbol": "validateSegments_zero",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [],
+      "scope": "Kind: resource boundary. Says: exhausted validation fuel with pending input returns a resource refusal. Does not say: an arbitrary supplied fuel is sufficient or prove a physical stack bound.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.decode_input_bound",
+      "source_symbol": "decode_input_bound",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: resource admission. Says: every successful public decode had at most the configured input bytes. Does not say: the limit is a protocol maximum or a measured allocation bound.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.decode_source",
+      "source_symbol": "decode_source",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: whole-input consumption and source linkage. Says: a successful decode used a header ending at the actual input end, returned that header's exact source view, and completed recursive segment validation. Does not say: the validation algorithm refines an independent RLP grammar or that these bytes authenticate any root.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.decode_keeps_encoded",
+      "source_symbol": "decode_keeps_encoded",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [],
+      "scope": "Kind: source linkage. Says: successful whole-input decoding retains the exact bytes supplied for hashing. Does not say: those bytes authenticate any root or represent a complete trie.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.CanonicalRLP.scalar_success",
+      "source_symbol": "scalar_success",
+      "source": "EVMCleanroom/CanonicalRLP.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: integer admission. Says: a successful integer result is a width-bounded byte string with no leading zero, and equals the actual big-endian fold of that payload. Does not say: its RLP envelope was validated or the integer is an account balance.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 973a0360d2806707e828dfaa2af406dbc86b3b95. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.checked_hash",
+      "source_symbol": "checked_hash",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: commitment boundary. Says: every resolved hash node's bytes have exactly the requested digest. Does not say: Keccak collision resistance or canonical-chain membership.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.checked_inline",
+      "source_symbol": "checked_inline",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: encoding boundary. Says: an embedded child is exactly the referenced bytes and shorter than 32. Does not say: all unvisited subtrees are normalised Ethereum tries.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.walk_zero",
+      "source_symbol": "walk_zero",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: resource refusal. Says: zero traversal fuel returns the explicit resource result on every input. Does not say: a resource refusal is an invalid Ethereum proof or transaction.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.walk_success",
+      "source_symbol": "walk_success",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable path boundary. Says: any returned traversal value carries the checked root-to-result path. Does not say: the supplied commitment is a canonical Ethereum state root.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.lookup_success",
+      "source_symbol": "lookup_success",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public executable boundary. Says: successful public lookup passed size admission and either matched the empty-trie commitment or returned a checked path from the supplied root/key. Does not say: canonical-chain validity, collision resistance or full refinement of the decoder/trie model against the normative specification.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.MPT.lookup_preflight_refused",
+      "source_symbol": "lookup_preflight_refused",
+      "source": "EVMCleanroom/MPT.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public refusal boundary. Says: a rejected size/shape preflight cannot reach hashing or traversal in the public lookup definition and retains the exact refusal. Does not say: all resource use outside this Lean function is bounded.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 29c7a91e3269243865ac912b9bdb44784caeb915. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.account_count_exhausted",
+      "source_symbol": "account_count_exhausted",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: resource refusal. Says: a nonempty account suffix at the account-count boundary is refused. Does not say: this implementation limit is an Ethereum validity rule.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.slot_count_exhausted",
+      "source_symbol": "slot_count_exhausted",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [],
+      "scope": "Kind: resource refusal. Says: a nonempty storage suffix at the per-account boundary is refused. Does not say: all protocol-valid witness inventories fit this interface.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.byte_budget_refused",
+      "source_symbol": "byte_budget_refused",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: resource refusal. Says: crossing the aggregate byte limit yields the resource constructor. Does not say: the compiled runtime has a universal physical memory bound.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.proof_count_refused",
+      "source_symbol": "proof_count_refused",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: resource refusal. Says: the per-proof count guard refuses before the node scan begins. Does not say: a larger proof is an invalid Ethereum block.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.preflight_refused",
+      "source_symbol": "preflight_refused",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable composition. Says: a failed preflight propagates without entering the account-admission loop. Does not say: source evaluation alone proves native timing or allocation bounds.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.account_lookup_connected",
+      "source_symbol": "account_lookup_connected",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable authentication linkage. Says: any admitted account consumed the actual trie lookup at the hashed address under the supplied root, and its exact lookup result fed account decoding. Does not say: the root belongs to the canonical chain or Keccak is refined.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.storage_lookup_connected",
+      "source_symbol": "storage_lookup_connected",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable authentication linkage. Says: each admitted slot consumed the actual lookup at its own hashed word key. Does not say: a missing proof can establish nonmembership.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.absent_storage_zero",
+      "source_symbol": "absent_storage_zero",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "propext"
+      ],
+      "scope": "Kind: executable storage interpretation. Says: authenticated slot absence produces the requested key with value zero. Does not say: a failing lookup is absence.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.present_account_decoded",
+      "source_symbol": "present_account_decoded",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable account decoding linkage. Says: a present lookup result must pass the actual account decoder, and that decoded leaf is the one passed to the code/storage commitment checker. Does not say: account RLP refinement has been established independently.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.checked_account_fields",
+      "source_symbol": "checked_account_fields",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable commitment and projection linkage. Says: a checked present account's code hashes to the proved code commitment; its slots are admitted against that leaf's storage root; returned fields are exactly the decoded nonce/balance and admitted code/slots. Does not say: complete trie reconstruction or cryptographic security is proved.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.storage_loop_covered",
+      "source_symbol": "storage_loop_covered",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable storage output coverage. Says: every new slot returned by the tail loop came from successful admission of an input key under this same storage root. Does not say: unrequested keys have been witnessed or can be accessed.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.admitted_storage_connected",
+      "source_symbol": "admitted_storage_connected",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable storage authentication linkage. Says: every slot returned by actual list admission has an input whose hashed key was looked up by MPT under exactly this root, and the result decoded to it. Does not say: lookup success establishes canonical-chain membership.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.account_loop_covered",
+      "source_symbol": "account_loop_covered",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable output coverage. Says: every new witness returned by the tail loop came from a successful admission of an input under this same root; no unauthenticated value is added. Does not say: the root is authenticated by a consensus client.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.admitted_witnesses_connected",
+      "source_symbol": "admitted_witnesses_connected",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public admission coverage. Says: every witness returned by the exported admission entry has an actual successful input admission under its supplied root, after preflight. Does not say: a transaction signature, header or full state has been validated.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.account_loop_length",
+      "source_symbol": "account_loop_length",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: executable inventory preservation. Says: successful account traversal returns exactly as many accounts as the input list and accumulated prefix contain together. Does not say: this count establishes account identity or complete EVM coverage.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.admitted_inventory_length",
+      "source_symbol": "admitted_inventory_length",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: public inventory preservation. Says: the actual exported admission entry returns exactly as many witnesses as there are inputs; output authentication is established by separate linkage lemmas. Does not say: this count alone establishes a bijection or permits unlisted accesses.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.authentication_refused",
+      "source_symbol": "authentication_refused",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: runner refusal composition. Says: proof-admission failure returns indeterminate and never a completed list. Does not say: malformed witness evidence proves an Ethereum block invalid.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
+    },
+    {
+      "name": "EVMCleanroom.WitnessAdmission.authenticated_run_accepted",
+      "source_symbol": "authenticated_run_accepted",
+      "source": "EVMCleanroom/WitnessAdmissionProofs.lean",
+      "axioms_printed": [
+        "Quot.sound",
+        "propext"
+      ],
+      "scope": "Kind: actual execution authentication linkage. Says: every accepted authenticated-list result is the existing list executor's result on exactly the inventory admitted under field 3 of its own parent header. Does not say: signatures, canonical-chain membership or post-state roots are checked.",
+      "provenance": "Actual Lean 4.33.1 #print axioms observed on 25 November 2026 in the successful 66-job witness build; defining source Git blob 17fc82f8ff15fff9a6547dff25748532b118b837. The dedicated witness gate re-elaborates this declaration and compares its exact printed dependencies; current transcripts are under evidence/2026-11-25-mpt-witness/axiom-transcripts/."
     }
   ],
   "external_evidence": {
@@ -4675,5 +5029,30 @@
       ],
       "scope": "Scanner bounds and exact parser-continuation behaviour are proved; full JSON grammar correctness and compiler/runtime heap or stack safety remain outside these local-model claims."
     }
+  },
+  "witness_admission_integration": {
+    "issue": "https://github.com/danbri/factoidal-core/issues/1043",
+    "selected_additions": 32,
+    "retained_selected_theorems": 292,
+    "selected_theorems": 324,
+    "selected_theorem_sources": 3,
+    "source_closure_lean_files": 32,
+    "source_manifest": "evidence/witness-source-manifest.json",
+    "dedicated_auditor": "scripts/check-witness-axioms.py",
+    "actual_axiom_transcripts": "evidence/2026-11-25-mpt-witness/axiom-transcripts/",
+    "runtime_boundary": "Own pure Lean RLP and MPT with explicit experimental Keccak acceptance. Two precise JSON runtime imports, their pinned standard-library closure, and a scoped generated-startup binding are audited separately from theorem correctness. The actual ELF gate requires project entry symbols and excludes linked proof-engine families/full Lean initialization.",
+    "verification_boundary": "The dedicated CI requires fresh compilation, all 32 actual axiom reports, 189 native corpus cases with 20 comparator controls, and 36 authenticated ordered lists with seven controls. Earlier 292 claim records are unchanged. Hosted current-revision CI remains pending.",
+    "not_claimed": [
+      "canonical-chain or consensus authentication",
+      "decoded transaction sender/signature authentication",
+      "post-state, transaction or receipt root construction",
+      "global trie normalisation",
+      "Keccak refinement or collision resistance",
+      "full EELS refinement or complete Ethereum implementation"
+    ],
+    "runtime_checker": "scripts/check-witness-runtime.py",
+    "runtime_source_modules": 422,
+    "source_pins": 170,
+    "prior_runtime_evidence": "evidence/2026-11-25-mpt-witness/pre-import-pruning/"
   }
 }
