@@ -63,6 +63,7 @@ inductive NativeX where
   | atomics (op : Nat)
   /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/
   | stringIsWellFormed | stringToWellFormed
+  | stringNormalize
   /-- Date.prototype methods (§21.4.4, `dateMethodNames`), `Date.UTC`, `Date.parse`. -/
   | dateMethod (k : Nat) | dateUTC | dateParse
   /-- Iterator (§27.1.3): the constructor, `Iterator.from`, the lazy methods that make an

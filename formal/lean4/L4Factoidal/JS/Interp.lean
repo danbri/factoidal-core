@@ -4396,6 +4396,22 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         if i + 1 < count && i + 1 < args.size then
           out := Str.jsAppend out (← core.toStr (argD args (i + 1)))
       pure (.str out)
+    | (.x .stringNormalize) =>
+      -- RequireObjectCoercible, ToString on the receiver, then the optional form.
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype.normalize called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr thisV
+      let form ← match a0 with
+        | .undef => pure "NFC"
+        | v => core.toStr v
+      let some normalize := Str.normalizer? form |
+        throwErr .range "The normalization form must be NFC, NFD, NFKC, or NFKD"
+      if Str.isAscii s then return .str s
+      charge s.utf8ByteSize
+      let result := normalize s
+      checkStrLen result.utf8ByteSize
+      pure (.str result)
     | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
       let tp ← thisPrim thisV
       match tp with
@@ -5304,7 +5320,8 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     | (.x (.asyncFromSync _)) => moreNativeAsyncIter core r id thisV args newTarget
     | (.x .arrayFromAsync) => moreNativeFromAsync core r id thisV args newTarget
     | (.x (.fromAsyncStep _)) => moreNativeFromAsync core r id thisV args newTarget
-    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) => moreNativeString core r id thisV args newTarget
+    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) | (.x .stringNormalize) =>
+      moreNativeString core r id thisV args newTarget
     | _ => throwErr .type "not a function"
 
 /-- RegExp, the String methods with a RegExp, Proxy, JSON.parse, ArrayBuffer, the typed
@@ -13479,6 +13496,7 @@ def initRealm : M Unit := do
   let sp := (← realm).stringProto
   method sp "isWellFormed" (.x .stringIsWellFormed) 0
   method sp "toWellFormed" (.x .stringToWellFormed) 0
+  method sp "normalize" (.x .stringNormalize) 0
   initSpecies
   initBuiltinsMore
 

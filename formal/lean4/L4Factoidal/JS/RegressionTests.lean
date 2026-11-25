@@ -810,4 +810,38 @@ slot is still the name's (`PropMap.liveAt`). -/
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } var s = 0; for (var j = 0; j < 50; j++) s += f(); delete globalThis.zz; var r; try { r = f(); } catch (e) { r = e.constructor.name; } print(s, r)" == ["50 ReferenceError"]
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } function g(v) { zz = v; } for (var j = 0; j < 50; j++) { g(j); f(); } delete globalThis.zz; g(7); print('zz' in globalThis, f(), Object.keys(globalThis).indexOf('zz') > 0)" == ["true 7 true"]
 
+
+/-! ## String normalization -/
+
+#guard out r#"print(('e\u0301').normalize() === '\u00E9');
+  print(('e\u0301').normalize(undefined) === '\u00E9');
+  print(('\u00E9').normalize('NFD') === 'e\u0301');
+  print(('\uFB01\u00E9').normalize('NFKC') === 'fi\u00E9');
+  print(('\uFB01\u00E9').normalize('NFKD') === 'fie\u0301');"# ==
+  ["true", "true", "true", "true", "true"]
+
+#guard out r#"var f = String.prototype.normalize;
+  print(f.name + ':' + f.length + ':' + String.prototype.propertyIsEnumerable('normalize'));
+  try { new f(); } catch (e) { print(e.name); }
+  var boxed = new String('x');
+  boxed.toString = function () { return 'e\u0301'; };
+  print(f.call(boxed) === '\u00E9');
+  print(f.call(1234) === '1234');"# == ["normalize:0:false", "TypeError", "true", "true"]
+
+#guard out r#"var f = String.prototype.normalize, calls = '';
+  var recv = {toString: function () { calls += 'r'; return 'e\u0301'; }};
+  var form = {toString: function () { calls += 'f'; return 'NFC'; }};
+  print(f.call(recv, form) === '\u00E9'); print(calls);
+  try { f.call(null, form); } catch (e) { print(e.name); } print(calls);
+  try { f.call({toString: function () { throw 17; }}, form); } catch (e) { print(e); } print(calls);
+  try { f.call('ASCII', 'nfc'); } catch (e) { print(e.name); }
+  try { f.call('ASCII', null); } catch (e) { print(e.name); }
+  try { f.call(Symbol(), form); } catch (e) { print(e.name); } print(calls);
+  try { f.call('ASCII', Symbol()); } catch (e) { print(e.name); }"# ==
+  ["true", "rf", "TypeError", "rf", "17", "rf", "RangeError", "RangeError", "TypeError", "rf", "TypeError"]
+
+#guard out r#"var s = 'e\u0301\uD800\u0301\uDC00\uDBFC\uDC00\uFB01';
+  print(s.normalize('NFKC') === '\u00E9\uD800\u0301\uDC00\uDBFC\uDC00fi');
+  print(('e\uD800\u0301').normalize('NFC') === 'e\uD800\u0301');"# == ["true", "true"]
+
 end L4Factoidal.JS.Tests
