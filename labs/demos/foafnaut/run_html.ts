@@ -52,11 +52,12 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
+  let windowSize:[number,number]|undefined;
   let accessibilityOn=false;
   let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
@@ -95,6 +96,13 @@ async function main() {
     // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
     else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");
       if(!m)throw new Error("--offscreen-size needs WIDTHxHEIGHT[@SCALE]");shotSize=[Number(m[1]),Number(m[2]),Number(m[3]??2)];}
+    else if(arg==="--window-size"){
+      const m=/^(\d{1,4})x(\d{1,4})$/.exec(args.shift()??"");
+      if(!m)throw new Error("--window-size needs WIDTHxHEIGHT in window points");
+      const w=Number(m[1]),h=Number(m[2]);
+      if(w<1||w>4096||h<1||h>4096)throw new Error("--window-size dimensions must be between 1 and 4096");
+      windowSize=[w,h];
+    }
     else if(arg==="--text-size"){textSize=Number(args.shift());if(!(textSize>=50&&textSize<=1000))throw new Error("--text-size needs a percentage from 50 to 1000");}
     // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
     // events go through the window library's queue as before, from a window that is never shown.
@@ -205,6 +213,7 @@ async function main() {
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
   const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
   early?.appStart();
+  if(windowSize&&offscreen)throw new Error("Use --offscreen-size for an off-screen window");
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
   else nativeEngine??=siblingEngine();
@@ -466,9 +475,9 @@ async function main() {
         if(!plan.run){if(plan.notice)throw new Error(plan.notice);return undefined;}
         // The viewport (innerWidth, innerHeight) and the render request that lays the page out
         // for its scripts' layout reads; an engine without them ignores the fields.
-        // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
+        // Before the native window exists, use its requested size or the legacy startup viewport.
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
-          catch{return {width:1280,height:800,textScalePercent:100,zoomUnit:100};}})();
+          catch{return {width:windowSize?.[0]??1280,height:windowSize?.[1]??800,textScalePercent:100,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
@@ -480,7 +489,7 @@ async function main() {
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
-        for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
+        for(const line of turn.logs)console.log(`page: ${line.replace(/^^A(\w+)^A/,"$1: ")}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
         console.log(JSON.stringify({type:"native-html-script",cause:"start",engine:plan.engine,t:Math.round(performance.now()),session:turn.session,
           commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,
@@ -534,7 +543,7 @@ async function main() {
     }
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
-  }),width=1280,height=800;
+  }),width=windowSize?.[0]??1280,height=windowSize?.[1]??800;
   // Geometry is taken from the last presented frame. In a window, the first compile
   // belongs to renderFrame, when the real backing size and chrome are known.
   let frame:HTMLArtifact|undefined;
@@ -717,7 +726,7 @@ async function main() {
       }
     }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
-    for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
+    for(const line of turn.logs)console.log(`page: ${line.replace(/^^A(\w+)^A/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,
@@ -1532,7 +1541,8 @@ async function main() {
     let target:PresentTarget={offscreen:true};
     if(offscreen)native.createOffscreen(shotSize[0],shotSize[1],shotSize[2],windowTitle(document));
     else{
-      const handles=native.create(800,500,windowTitle(document));
+      const [windowWidth,windowHeight]=windowSize??[800,500];
+      const handles=native.create(windowWidth,windowHeight,windowTitle(document));
       target=new Deno.UnsafeWindowSurface(nativeSurfaceOptions(handles,width,height));
       native.showAfterSurface();
     }
