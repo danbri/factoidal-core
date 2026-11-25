@@ -10,6 +10,7 @@ import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.Temporal.Parse
 import L4Factoidal.Prim.Float16
+import L4Factoidal.Unicode.Normalization
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -4357,6 +4358,24 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       let a := Str.units s
       let b := Str.units t
       pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
+    | (.x .stringNormalize) =>
+      -- §22.1.3.15: RequireObjectCoercible(this), ToString, the form (NFC when undefined),
+      -- a RangeError for any other form. A lone surrogate is held as a character of plane 16
+      -- (`Str.loneChar`), which has class 0 and no decomposition, so it is left as it is, as a
+      -- lone surrogate is by the normalization of other engines.
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype.normalize called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr thisV
+      let form ← match a0 with
+        | .undef => pure "NFC"
+        | v => core.toStr v
+      match form with
+      | "NFC" => pure (.str (Unicode.Normalization.nfc s))
+      | "NFD" => pure (.str (Unicode.Normalization.nfd s))
+      | "NFKC" => pure (.str (Unicode.Normalization.nfkc s))
+      | "NFKD" => pure (.str (Unicode.Normalization.nfkd s))
+      | _ => throwErr .range "The normalization form should be one of NFC, NFD, NFKC, NFKD."
     | (.x .symbolFor) | (.x .symbolKeyFor) =>
       -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
       let h ← get
@@ -5270,6 +5289,7 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     | (.x .objectHasOwn) => moreNativeObject core r id thisV args newTarget
     | (.x (.groupBy _)) => moreNativeWeak core r id thisV args newTarget
     | (.x .stringLocaleCompare) => moreNativeString core r id thisV args newTarget
+    | (.x .stringNormalize) => moreNativeString core r id thisV args newTarget
     | (.x (.errorStack false)) => moreNativeObject core r id thisV args newTarget
     | (.x (.errorStack true)) => moreNativeObject core r id thisV args newTarget
     | (.x .aggregateErrorCtor) => moreNativeObject core r id thisV args newTarget
@@ -13194,6 +13214,7 @@ def initRealm : M Unit := do
     method sc "fromCodePoint" .stringFromCodePoint 1
     method sc "raw" (.x .stringRaw) 1
   method stringProto "localeCompare" (.x .stringLocaleCompare) 1
+  method stringProto "normalize" (.x .stringNormalize) 0
   -- Annex B.2.2.15, B.2.2.16: trimLeft and trimRight are trimStart and trimEnd
   for (alias, nm) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd"), ("toLocaleUpperCase", "toUpperCase"),
       ("toLocaleLowerCase", "toLowerCase")] do
