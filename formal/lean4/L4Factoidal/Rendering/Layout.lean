@@ -929,6 +929,28 @@ private def replacedDefiniteRatioFixture : Computed :=
 #guard replacedSize (contentBoxed replacedWithoutRatioFixture) (some (20,50)) 800 == (60,150)
 #guard replacedSize (contentBoxed replacedDefiniteRatioFixture) (some (20,50)) 800 == (60,20)
 
+/-- CSS Sizing 4: the parts of automatic block width transferred from height. The
+widths here are content-box sizes, after converting through a border-box ratio if needed. -/
+private structure BlockRatioWidth where
+  preferred : Option Float := none
+  minimum : Float := 0
+  maximum : Option Float := none
+
+private def transferredBlockWidth (s : Computed) (edgesX edgesY : Float) : BlockRatioWidth :=
+  match s.pos.ratio with
+  | some (rn, rd) =>
+    if rn == 0 || rd == 0 then {} else
+    let borderRatio := s.pos.borderBox && !s.pos.ratioAuto
+    let transfer := fun h =>
+      let w := LU.toPx (Ratio.widthFor rn rd (LU.ofPx (if borderRatio then h+edgesY else h)))
+      max 0 (if borderRatio then w-edgesX else w)
+    let lo := match s.minHeight with | .px h => h | _ => 0
+    let hi := match s.maxHeight with | .px h => some h | _ => none
+    match s.height with
+    | .px h => {preferred := some (transfer (clampOpt lo hi (max 0 h)))}
+    | _ => {minimum := transfer lo, maximum := hi.map transfer}
+  | none => {}
+
 /-- A replaced element with no decoded content here, and its natural size when it has one.
 A `canvas` has the natural size of its `width` and `height` attributes, 300 by 150 without
 them (HTML §4.12.5.1). An `iframe`, and a `video` with no frame or poster drawn, are
@@ -3557,8 +3579,23 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- CSS Sizing 3 §3.2: `width`, `min-width` or `max-width` given as a keyword is a
       -- width of the contents (measured only when a keyword is used) or the fill width.
       let fill := available-margin.left-margin.right-edgesX
+      let transfer : BlockRatioWidth := match s.width with
+        | .auto =>
+          if s.pos.ratio.isSome && s.display == Display.block && s.pos.writingMode == WritingMode.horizontalTb &&
+              imposedWidth.isNone && imposedHeight.isNone && !contentOnly &&
+              !s.pos.isAbsolute && s.pos.float == FloatSide.none &&
+              n.lname != "img" && n.ns != some DOM.svgNS && (pictures id).isNone && (blankReplaced n).isNone then
+            transferredBlockWidth s edgesX edgesY
+          else {}
+        | _ => {}
+      -- Only a width derived from a definite height is ratio-dependent. With non-scrollable
+      -- overflow its automatic minimum is min-content, capped by the explicit max-width.
+      let ratioMinContent := transfer.preferred.isSome && !s.pos.scrolls &&
+        (!s.clipOverflow || s.overflowClipOnly) &&
+        (match s.minWidth with | .auto => true | _ => false)
       let keyed := imposedWidth.isNone && (s.width.isKeyword || s.minWidth.isKeyword || s.maxWidth.isKeyword)
-      let (contentLo,contentHi) ← if keyed then intrinsic dom styles font embedding pictures fuel (.inner id 0)
+      let (contentLo,contentHi) ← if keyed || ratioMinContent then
+          intrinsic dom styles font embedding pictures fuel (.inner id 0)
         else pure (0,0)
       let widthOf := fun (l : CSS.Length) => match keywordWidth l contentLo contentHi fill with
         | some w => some w
@@ -3566,11 +3603,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let width := match imposedWidth with
         | some w => max 0 (w-edgesX)
         | none =>
-          let width := (widthOf s.width).getD fill
-          let width := match widthOf s.maxWidth with
-            | some m => min width m
-            | none => width
-          max 0 (max ((widthOf s.minWidth).getD 0) width)
+          let automatic := transfer.preferred.getD (clampOpt transfer.minimum transfer.maximum fill)
+          let width := (widthOf s.width).getD (if ratioMinContent then max contentLo automatic else automatic)
+          max 0 (clampOpt ((widthOf s.minWidth).getD 0) (widthOf s.maxWidth) width)
       -- The parent resolves an imposed box's margins. In horizontal normal flow,
       -- use the containing block's direction, even when the child has its own.
       let move := fun outer =>

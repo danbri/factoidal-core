@@ -61,7 +61,7 @@ its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
-    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
+    lineHeightFactor,visible,clipOverflow,overflowClipOnly,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
     borderColors,cornerLengths,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
@@ -78,7 +78,8 @@ def sameShape (a b : Computed) : Bool :=
   borderImage.source.isNone && b.borderImage.source.isNone &&
   columnCount == b.columnCount && optEq (· == ·) columnWidth b.columnWidth &&
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
-  visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
+  visible == b.visible && clipOverflow == b.clipOverflow && overflowClipOnly == b.overflowClipOnly &&
+  underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
   preserveSegmentBreaks == b.preserveSegmentBreaks &&
   edgesEq borderWidth b.borderWidth && optEq cornerLengthsEq cornerLengths b.cornerLengths &&
