@@ -1,0 +1,150 @@
+name: Independent Lean BLS G2 map
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - '.github/workflows/ethereum-bls-g2-map.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  g2-map:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-consensus
+    env:
+      LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Audit source pins and independent known answer
+        run: |
+          set -euo pipefail
+          python3 scripts/check-hash-to-field.py --self-test | tee "$RUNNER_TEMP/hash-field-oracle.log"
+          node scripts/check-g2-map.mjs --self-test | tee "$RUNNER_TEMP/g2-map-oracle.log"
+          python3 - <<'PY' | tee "$RUNNER_TEMP/hash-field-source-pins.json"
+          import json, pathlib, re, subprocess
+          def git(*args):
+              return subprocess.check_output(["git",*args], text=True).strip()
+          root = pathlib.Path(git("rev-parse","--show-toplevel"))
+          paths = ["HashToField.lean", "../L4Factoidal/Crypto/SHA2.lean",
+                   "scripts/check-hash-to-field.py", "scripts/check-g2-map.mjs", "G2Signature.lean", "lean-toolchain", "lake-manifest.json",
+                   "lakefile.toml", "../../../.github/workflows/ethereum-bls-g2-map.yml"]
+          pins = {}
+          for path in paths:
+              src = pathlib.Path(path).resolve()
+              rel = str(src.relative_to(root))
+              blob = git("hash-object",str(src))
+              assert blob == git("rev-parse","HEAD:"+rel)
+              pins[rel] = blob
+          for path, expected in [("HashToField.lean",["Lean","L4Factoidal.Crypto.SHA2"]),
+                                 ("../L4Factoidal/Crypto/SHA2.lean",[])]:
+              code = pathlib.Path(path).read_text()
+              # Strip comments for the source-level guard; native imports are logged below.
+              code = re.sub(r"/-.*?-/", "", code, flags=re.S)
+              code = re.sub(r"--[^\n]*", "", code)
+              assert re.findall(r"^import\s+(\S+)\s*$",code,re.M) == expected
+              assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",code,re.M)
+          assert pins["formal/lean4/ethereum-consensus/G2Signature.lean"] == "9a135cce63739f5e62017e98bd76a888b0d89306"
+          assert pins["formal/lean4/L4Factoidal/Crypto/SHA2.lean"] == "92737f4d83035745dba29ef2c3867b01b8dfa50f"
+          assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
+          assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
+          print(json.dumps({"head":git("rev-parse","HEAD"),"tree":git("rev-parse","HEAD^{tree}"),"source_pins":pins},sort_keys=True))
+          PY
+      - name: Compile pure SHA and hash-to-field and print actual theorem axioms
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lean --version | tee "$RUNNER_TEMP/hash-field-toolchain.log"
+          mkdir -p "$RUNNER_TEMP/h2f/L4Factoidal/Crypto"
+          lean --root=.. --deps ../L4Factoidal/Crypto/SHA2.lean | tee "$RUNNER_TEMP/hash-field-sha-imports.log"
+          lean --root=.. -o "$RUNNER_TEMP/h2f/L4Factoidal/Crypto/SHA2.olean" -c "$RUNNER_TEMP/h2f/sha.c" ../L4Factoidal/Crypto/SHA2.lean
+          export LEAN_PATH="$RUNNER_TEMP/h2f"
+          lean --deps HashToField.lean | tee "$RUNNER_TEMP/hash-field-imports.log"
+          lean -o "$RUNNER_TEMP/h2f/HashToField.olean" -c "$RUNNER_TEMP/h2f/field.c" HashToField.lean 2>&1 | tee "$RUNNER_TEMP/hash-field-axioms.log"
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/h2f/hash-field" "$RUNNER_TEMP/h2f/sha.c" "$RUNNER_TEMP/h2f/field.c"
+          ldd "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-link.log"
+          nm -u "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-symbols.log"
+          if grep -E ' (EVP_|EC_|BN_|SHA256|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/hash-field-symbols.log"; then exit 1; fi
+      - name: Audit exact actual theorem reports and negative controls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"hash-field-axioms.log").read_text()
+          prefix = "EthereumConsensus.BLS.HashField."
+          expected = {prefix+n for n in ("hashToField_over_limit","hashToField_bad_dst","hashToField_delegates",
+              "checkedCoefficients_ok","hashToField_ok","consensusHashToField_wrong_width","consensusHashToField_delegates")}
+          def audit(t):
+              reports = re.findall(r"'(EthereumConsensus\.BLS\.HashField\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
+              if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
+                  raise ValueError("wrong theorem inventory")
+              for n,a in reports:
+                  if not set(filter(None,(v.strip() for v in a.split(",")))) <= {"propext","Classical.choice","Quot.sound"}:
+                      raise ValueError("unpermitted axiom: "+n)
+          audit(log)
+          for bad in ["",log+"\n"+log,log.replace(prefix+"hashToField_ok",prefix+"other"),
+                      re.sub(r"('(EthereumConsensus\.BLS\.HashField\.\w+)') (?:depends on axioms:\s*\[[^]]*\]|does not depend on any axioms)",r"\1 depends on axioms: [sorryAx]",log,count=1)]:
+              try:
+                  audit(bad)
+              except ValueError:
+                  continue
+              raise ValueError("audit mutation escaped")
+          print("Seven actual theorem reports and four audit controls passed")
+          PY
+      - name: Compare native Lean outputs with independent hashlib oracle
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          python3 scripts/check-hash-to-field.py "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-results.log"
+      - name: Audit actual map theorem reports and native G2 map
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"hash-field-axioms.log").read_text()
+          prefix = "EthereumConsensus.BLS.G2Map."
+          expected = {prefix+n for n in ("mapField_noncanonical","mapField_delegates","checkedTarget_ok",
+              "checkedTarget_infinity","mapField_ok","mapSigningRoot_hash_error","mapSigningRoot_delegates")}
+          def audit(t):
+              reports = re.findall(r"'(EthereumConsensus\.BLS\.G2Map\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
+              if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
+                  raise ValueError("wrong map theorem inventory")
+              for n,a in reports:
+                  if not set(filter(None,(v.strip() for v in a.split(",")))) <= {"propext","Classical.choice","Quot.sound"}:
+                      raise ValueError("unpermitted axiom: "+n)
+          audit(log)
+          for bad in ["",log+"\n"+log,log.replace(prefix+"checkedTarget_ok",prefix+"other"),
+                      re.sub(r"('(EthereumConsensus\.BLS\.G2Map\.\w+)') (?:depends on axioms:\s*\[[^]]*\]|does not depend on any axioms)",r"\1 depends on axioms: [sorryAx]",log,count=1)]:
+              try:
+                  audit(bad)
+              except ValueError:
+                  continue
+              raise ValueError("map audit mutation escaped")
+          print("Seven actual map theorem reports and four audit controls passed")
+          PY
+          node scripts/check-g2-map.mjs "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/g2-map-results.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-g2-map-evidence
+          path: |
+            ${{ runner.temp }}/hash-field-*.log
+            ${{ runner.temp }}/g2-map-*.log
+            ${{ runner.temp }}/hash-field-source-pins.json
