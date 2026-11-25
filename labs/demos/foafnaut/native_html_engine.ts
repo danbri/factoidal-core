@@ -624,6 +624,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     printLayout:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       documentCall(source,{...options,op:"printLayout"},width,height) as PrintLayout,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
+    // Where the keyboard focus goes when a page commits (WebShell.focusOnCommit, issue 1077):
+    // "page" or "address"; null from an older engine, which has no such operation.
+    shellCommitFocus:(request:{url:string;newTab:boolean;focused:boolean;typed:boolean}):"page"|"address"|null=>{
+      try{return (documentCall("",{op:"shellCommitFocus",...request}) as {focus:"page"|"address"}).focus;}
+      catch(error){if(String(error).includes("unknown document operation"))return null;throw error;}
+    },
     // The FOAF graph page: the model is Lean's; the host keeps it as text.
     graphStart:(rdf:string,width:number,height:number,shell:unknown)=>documentCall("",{op:"graphStart",rdf,width,height,shell}) as GraphFrame,
     graphEvent:(model:string,kind:number,a:number,b:number,width:number,shell:unknown)=>documentCall("",{op:"graphEvent",model,kind,a,b,width,shell}) as GraphFrame,

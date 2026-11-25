@@ -1300,6 +1300,11 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
     let num (k : String) : Nat := match request.field? k with | some (.number n) => n.toNat?.getD 0 | _ => 0
     return some (JSON.Json.object [("gesture",.string (WebShell.linkGesture (str request "platform" "other") (num "button") (num "modifiers")))]).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
+  -- Where the keyboard focus goes when a page commits (issue 1077): "page" or "address".
+  if op == "shellCommitFocus" then
+    let flag (k : String) : Bool := match request.field? k with | some (.bool b) => b | _ => false
+    return some (JSON.Json.object [("focus",.string (WebShell.focusOnCommit (str request "url") (flag "newTab")
+      (flag "focused") (flag "typed")))]).toString
   if let some answer ← WebGraph.op op request then return some answer
   if let some answer ← WebEventLoop.op op request then return some answer
   -- Boundary traces of host shells checked against the host contract (WebHostContract).
@@ -2191,9 +2196,15 @@ private def heldBytes (h : Holds) (names : List (String × String)) : List (Stri
 /-- What Canvas 2D draws with (L4Factoidal.PageCanvas): the fonts the engine holds, the SVG
 path parser (`new Path2D(d)`), and the held images by key, decoded by Lean when a page
 draws one (the canvas keeps it decoded). -/
-def canvasEnv (h : Holds) (opaqueKeys : Std.HashSet String := {}) (opaqueFull : Bool := false) : L4Factoidal.PageCanvas.Env :=
+def canvasEnv (h : Holds) (opaqueKeys : Std.HashSet String := {}) (opaqueFull : Bool := false)
+    (faces : Array Rendering.SfntProfile.Font := #[]) : L4Factoidal.PageCanvas.Env :=
+  let fonts := (h.font.map (·.fonts)).getD #[]
+  let held := fonts.toList.map (L4Factoidal.PageCanvas.Text.familyKey ·.family)
   { imageOpaque := fun key => opaqueFull || opaqueKeys.contains key,
-    fonts := (h.font.map (·.fonts)).getD #[],
+    fonts,
+    -- the faces a family list asks for (issue 1075): the page's `@font-face` faces (`faces`,
+    -- `canvasFaceFonts`), then the monospace or the serif face the host gave
+    familyFaces := L4Factoidal.PageCanvas.Text.familyFaces faces h.serif h.mono held,
     svgPath := fun d => (NativeSVGPath.parse NativeSVG.number d).toOption,
     image := fun key => (h.images.find? (·.key == key)).bind fun img =>
       match NativeImage.decode img.bytes with
@@ -3032,6 +3043,16 @@ def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json)
     WebRender.storeAhead kept.stores dom (if url.isEmpty then none else some url) images
   | _, _ => none
 
+/-- The page's `@font-face` faces that the engine holds, each named by its rule's family
+(`webFaceFonts`), from the page and the layout fields of a script session's start: Canvas 2D
+text picks them by its family list as the page's text does (issue 1075). -/
+def canvasFaceFonts (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) : Array Rendering.SfntProfile.Font :=
+  let layout := layoutRequest ((request.field? "layout").getD (.object []))
+  if (namedWebFonts layout).isEmpty then #[] else
+  match (parseIn kept html (DOM.xmlSyntax (str layout "url") (str layout "syntax"))).1 with
+  | .ok dom => (webFaceFonts h ((fontFaces dom layout).toOption.getD #[]) layout).filterMap id
+  | .error _ => #[]
+
 /-- `kept` with the store of `storeAheadOf`: the layouts that the scripts' reads ask for
 before the first frame then find the store and decode no image. -/
 def keepStoreAhead (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) : Kept :=
@@ -3594,6 +3615,11 @@ structure Engine where
   `maxOpaqueImages` every image is taken as not origin-clean (`opaqueFull`). -/
   opaqueImages : Std.HashSet String := {}
   opaqueFull : Bool := false
+  /-- The `@font-face` faces of the last script session started that has web fonts
+  (`canvasFaceFonts`, issue 1075): its Canvas 2D text picks them by family. One engine worker
+  holds one tab, so this is that tab's page; a frame that starts later with web fonts of its
+  own replaces it. -/
+  canvasFaces : Array Rendering.SfntProfile.Font := #[]
   /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
   until a host asks for a tree. -/
   axLive : Option (String × List HTML.AccessibleTree.Region) := none
@@ -3960,11 +3986,14 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let (opaqueKeys, opaqueFull) := ((← get).opaqueImages, (← get).opaqueFull)
     -- Before the scripts' first layout read: the store of the page's images (`keepStoreAhead`).
     if str request "action" == "start" then
-      modify fun e => {e with kept := keepStoreAhead holds e.kept html request}
+      modify fun e =>
+        let faces := canvasFaceFonts holds e.kept html request
+        {e with kept := keepStoreAhead holds e.kept html request, canvasFaces := if faces.isEmpty then e.canvasFaces else faces}
     let held ← modifyGet fun e => (e.scripts,{e with scripts := {}})
     let kept := (← get).kept
+    let faces := (← get).canvasFaces
     let (held,answer) ← WebScripts.opSections held "scriptSession" html request (fun r => some (measure holds r kept))
-      (fun _ => canvasEnv holds opaqueKeys opaqueFull)
+      (fun _ => canvasEnv holds opaqueKeys opaqueFull faces)
     modify fun e => {e with scripts := held}
     match answer with
     | .ok (some a) => return a

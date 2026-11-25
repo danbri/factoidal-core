@@ -8,7 +8,7 @@ import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportPageEntries,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
-import {loadNativeWindow,pointerButton,pointerClicks,pointerModifiers,type NativeEvent as UIEvent} from "./native_window.ts";
+import {keyIdOf,keyReleases,loadNativeWindow,pointerButton,pointerClicks,pointerModifiers,type NativeEvent as UIEvent} from "./native_window.ts";
 import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -155,12 +155,13 @@ async function main() {
     else if(arg==="--bitmap-font")bitmapFont=true;
     else if(arg==="--resize-sweep")sweep=[[800,500],[700,500],[600,500],[500,500],[400,500],[800,300],[800,500]];
     else if(arg==="--paste-sweep")pasted=args.shift();
-    // The window starts with the address bar focused; Escape leaves it, so A and C act on the page.
+    // The window starts with the page focused (issue 1077; Escape here goes to the page), so A and C act on the page.
     else if(arg==="--command-sweep")commands=["=","+","-","_","0",[5,53,0],"a","c",[2,60,60],[3,300,60],[4,300,60],"c",[2,60,60],[4,60,60],"link"];
-    // The address bar as a Mac text field (issue 1268): focused and all selected at start and in a
-    // new tab; typing replaces; Command-Z, Shift-Command-Z, A, C, X, V; Shift and Option with arrows.
-    // "focus:all" checks the start state; "addr=X", "sel=X" and "clip=X" check the text (@url: the page URL).
-    else if(arg==="--edit-sweep")commands=["focus:all",[9,120,0],"addr=x","z","addr=@url","Z","addr=x","a","c","clip=x","x","addr=","clip=x",
+    // The address bar as a Mac text field (issue 1268): focused and all selected after Command-L and
+    // in a new tab; typing replaces; Command-Z, Shift-Command-Z, A, C, X, V; Shift and Option with arrows.
+    // A window that opens a page starts with the page focused (issue 1077: "unfocused").
+    // "focus:all" checks the focused state; "addr=X", "sel=X" and "clip=X" check the text (@url: the page URL).
+    else if(arg==="--edit-sweep")commands=["unfocused","l","focus:all",[9,120,0],"addr=x","z","addr=@url","Z","addr=x","a","c","clip=x","x","addr=","clip=x",
       "v","addr=x",[9,121,0],"addr=xy",[5,123,1],"sel=y","c","clip=y",[5,51,0],"addr=x","v","addr=xy",[5,123,4],"sel=","addr=xy",
       "z","addr=x","t","focus:all",[5,53,0],"unfocused"];
     // Tab and scroll keys of Lean's key table through the real menu and key path (issue 1268):
@@ -413,7 +414,7 @@ async function main() {
         if(shotFile&&!shotAtEnd&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
-  let scriptsOn=false,scriptOps:string[]=[];
+  let scriptsOn=false,scriptOps:string[]=[],keyPhases=false;
   // The page script setting (WebRenderScript.plan): "" is Lean's default for this host (the
   // Lean engine where the engine has it). Lean says what a setting means; an engine from
   // before the op (probed once) runs QuickJS-NG, as before.
@@ -501,8 +502,8 @@ async function main() {
   if(!scriptsOff&&!check) {
     try{
       const t0=performance.now();
-      const info=(await scriptCall("scriptInfo")) as {ops?:string[];engines?:string[]};
-      scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"];
+      const info=(await scriptCall("scriptInfo")) as {ops?:string[];engines?:string[];keyPhases?:boolean};
+      scriptOps=info.ops??[];scriptEngines=info.engines??["quickjs"];keyPhases=info.keyPhases===true;
       // The QuickJS guest is read and given to the engine (which decodes and validates it:
       // about a second) when a page is first to run on it, not at every start of the window:
       // the built-in engine runs pages by default and needs no module. An engine with
@@ -730,7 +731,14 @@ async function main() {
   let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
   // (a page whose session is starting after its first press takes keys too: they wait for it)
   const pageTakesKeys=()=>scriptsOn&&(!!document.script||lazyStarts.has(document))&&scriptOps.includes("key");
-  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;key?:string;modifiers?:number},after?:()=>void)=>{
+  // Issue 1074: with a window that reports key releases and an engine with key phases, a key
+  // goes to the page as a down (each auto-repeat another down) and an up; Lean decides from the
+  // keys the session holds (HostKeys.actionsAt). `pageKeysHeld` names, by the window's key id,
+  // the request of each key down sent to a page, so that its up names the same key (a key's
+  // text, which the window gives after its down). A Command or Control chord stays a whole press.
+  type KeyRequest={text?:string;mac?:number;key?:string;modifiers?:number;phase?:"down"|"up"};
+  const pageKeysHeld=new Map<number,{page:typeof document;request:KeyRequest}>(),keyModifiers=new Map<number,number>();
+  const scriptKey=(page:typeof document,request:KeyRequest,after?:()=>void,queuedAt=eventAt)=>{
     const starting=lazyStarts.get(page);
     keyChain=keyChain.then(async()=>{
       if(starting)await starting;
@@ -738,8 +746,15 @@ async function main() {
       const session=page.script.session;
       const turn=await scriptCall("scriptSession","",{action:"key",session,...request}) as ScriptTurn;
       scriptTurn(page,turn,"key");
+      // The key path's time from the window's queue to the page's answer (issue 1074).
+      gestureDone("key",undefined,{phase:request.phase??"press",text:request.text!==undefined},queuedAt);
       if(after&&turn.keyDefault!==false&&page===document)after();
     }).catch(error=>{scriptFailed(page,error,"key");if(page===document)after?.();});
+  };
+  // Every key the page holds goes up: the window lost the focus, or the page is left.
+  const releasePageKeys=()=>{
+    for(const {page,request} of pageKeysHeld.values())scriptKey(page,{...request,phase:"up"});
+    pageKeysHeld.clear();
   };
   // The session lays the page out for its scripts with the request of its start: tell it what
   // arrived since (a sheet, an imported sheet, images: WebScripts.takeLayout), with the view as at start.
@@ -1155,6 +1170,14 @@ async function main() {
     dirty=true;
   };
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
+  // Where the focus goes when a page commits (issue 1077): Lean decides; `addressTyped` says the
+  // person typed in the address bar since the last navigation started.
+  let addressTyped=false;
+  const commitFocus=(page:typeof document)=>{
+    const focus=engine.shellCommitFocus({url:page.url,newTab:page.url===newTabURL,focused,typed:addressTyped});
+    trace("native-html-commit-focus",{url:page.url,focus,typed:addressTyped});
+    return focus;
+  };
   // The engine's limit for the layers on screen (page-load.mjs scrollLimitOf, shared with the Hub).
   const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame?.webRender.boxes as number[][]|undefined,height,scale);
   const scrollBy=(amount:number)=>{
@@ -1609,7 +1632,7 @@ async function main() {
   // `initiator`: the page that started the navigation (a link, a form), "" for an address a
   // person typed or chose: the engine's same-site rule for cookies reads it.
   const navigate=(target:string,push=true,request?:DocumentRequest,initiator="")=>{
-    const from=document.url;
+    const from=document.url;addressTyped=false;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
@@ -1713,8 +1736,11 @@ async function main() {
     // A visible window uses the desktop clipboard; off-screen sweeps use their private one.
     const savedClipboard=commands||pasted?native.readClipboard():"";
     if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
-    // A new window starts in the address bar with the address selected (issue 1268).
-    focusAddress();
+    // A new window: the page it opens has committed, so the focus goes where Lean says a commit
+    // sends it (WebShell.focusOnCommit, issue 1077): the page, as Chrome, Firefox and Safari do;
+    // the address bar, with the address selected (issue 1268), for a new tab page or about:blank,
+    // and with an older engine.
+    if(commitFocus(document)!=="page")focusAddress();
     // The splash: drawn by the engine over the first page while it loads, with the engine's own
     // release. Its clock starts at its first shown frame; the page loads and draws as without it.
     if(splashArg==="on"||(splashArg===undefined&&!offscreen&&!checkAll&&!sweep&&!commands&&!pasted&&!printPDF&&!check&&!shotFile&&!watchSeconds)){
@@ -1895,6 +1921,9 @@ async function main() {
       if(nextDocument!==document)view.selection=undefined;
       const newPage=nextDocument!==document;
       if(newPage){scroll=0;if(!focused)field=showURL(nextDocument.url);}frame=next;document=nextDocument;
+      // A page that commits takes the keyboard focus from the address bar (issue 1077), unless
+      // the person typed there during the load (WebShell.focusOnCommit).
+      if(newPage&&focused&&commitFocus(nextDocument)==="page")leaveAddress();
       // Find stays open on a new page and looks again there, from its first match.
       if(newPage&&find.open&&find.query){find.current=0;runFind(false);}
       // Composite offsets are relative to the band; nodeAt takes document scroll.
@@ -1949,6 +1978,8 @@ async function main() {
     };
     const handle=(event:UIEvent)=>{
         if(event.kind===6){running=false;return;}
+        // The window lost the focus (kind 14): the keys the page holds go up (issue 1074).
+        if(event.kind===POINTER_CANCEL)releasePageKeys();
         // End input on its owning page, even after a tab change or address focus.
         if(event.kind===4||event.kind===POINTER_CANCEL){
           endPress();holding=undefined;
@@ -1978,6 +2009,12 @@ async function main() {
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
+        // A key up (issue 1074): the page's key goes up.
+        if(event.kind===17){
+          const id=keyIdOf(event),held=pageKeysHeld.get(id);
+          if(held){pageKeysHeld.delete(id);scriptKey(held.page,{...held.request,modifiers:event.b,phase:"up"});}
+          return;
+        }
         // SDL reports a key from the active keyboard layout. Linux has no AppKit menu to
         // take shortcuts before the field, so use the engine's platform key table here.
         const linuxCommand=event.key===undefined?undefined:linuxKeys?.get(
@@ -1994,6 +2031,7 @@ async function main() {
           graphInput(event.kind,event.a,event.b);return;
         }
         if(event.kind===5&&focused&&!(event.b&2)){
+          if(event.a!==36&&event.a!==53)addressTyped=true;
           if(event.a===36)goTo(field.address);
           else if(event.a===53)leaveAddress();
           // Shift, Option and Command change what the key does; Lean decides.
@@ -2001,11 +2039,27 @@ async function main() {
           return;
         }
         if(event.kind===9&&focused){
+          addressTyped=true;
           edit(engine.shellText(shell(),String.fromCodePoint(event.a)));
           return;
         }
         // Typed text goes to the page's focused element (Space went as its key).
         if(event.kind===9){
+          const fromKey=keyPhases&&keyReleases(event.flags??0);
+          if(fromKey){
+            // The text of a key down (issue 1074). Space went down as its named key: its text
+            // is nothing more. Other text goes down as its key and is held until the key's up;
+            // a second character of one key (a composition) is typed whole.
+            const id=event.b,held=pageKeysHeld.get(id),text=String.fromCodePoint(event.a);
+            spaceSent=false;
+            if(held&&held.request.text===undefined&&event.a===32)return;
+            if(!pageTakesKeys())return;
+            if(held?.request.text!==undefined&&held.request.text!==text){scriptKey(document,{text});return;}
+            const request:KeyRequest={text,modifiers:keyModifiers.get(id)??0,phase:"down"};
+            pageKeysHeld.set(id,{page:document,request});
+            scriptKey(document,request);
+            return;
+          }
           if(event.a===32&&spaceSent){spaceSent=false;return;}
           if(pageTakesKeys())scriptKey(document,{text:String.fromCodePoint(event.a)});
           return;
@@ -2020,7 +2074,15 @@ async function main() {
             spaceSent=event.a===49&&!(event.b&10);
             // SDL supplies committed printable text separately; a Control chord has no text.
             const key=event.key!==undefined&&(event.b&10)?{key:event.key}:{mac:event.a};
-            scriptKey(document,{...key,modifiers:event.b},command);
+            const keyId=keyIdOf(event);keyModifiers.set(keyId,event.b);
+            // A key down from a window that reports releases (issue 1074), with no Command or
+            // Control: held until its up. A key with text has no actions for its code (Lean,
+            // HostKeys.ofMac); its text (kind 9, next) then goes down as its key.
+            if(keyPhases&&keyReleases(event.flags??0)&&!(event.b&10)){
+              const request:KeyRequest={...key,modifiers:event.b,phase:"down"};
+              pageKeysHeld.set(keyId,{page:document,request});
+              scriptKey(document,request,command);
+            }else scriptKey(document,{...key,modifiers:event.b},command);
           }else command();
         }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}

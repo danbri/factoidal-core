@@ -34,6 +34,9 @@ parser (for `new Path2D(d)`), the decoded images of the page by URL key, and its
 decoders (encoded bytes to a bitmap: `ImageDecoder`, a bitmap of kind 5). -/
 structure Env where
   fonts : Array SfntProfile.Font := #[]
+  /-- The faces a `font` family list draws with before `fonts` (issue 1075,
+  `Text.familyFaces`): the page's `@font-face` faces, the monospace and the serif face. -/
+  familyFaces : String → Array SfntProfile.Font := fun _ => #[]
   svgPath : String → Option (List Rendering.Contour) := fun _ => none
   image : String → Option Bitmap := fun _ => none
   decode : ByteArray → Option Bitmap := fun _ => none
@@ -522,7 +525,7 @@ def Run.shape (r : Run) (font : Font) (s : String) : Run × Option Text.Shaped :
   match r.store.shaped.get? key with
   | some w => (r, some w)
   | none =>
-    match Text.shape r.env.fonts font s with
+    match Text.shape r.env.fonts font s (r.env.familyFaces font.family) with
     | some w =>
       let cache := if r.store.shaped.size ≥ 1024 then {} else r.store.shaped
       ({ r with store := { r.store with shaped := cache.insert key w } }, some w)

@@ -111,6 +111,9 @@ static void enqueueFlags(uint32_t type, int32_t a, int32_t b, uint32_t flags) {
   events[eventHead + eventCount++] = (struct NGEvent){type, a, b, time, flags};
 }
 static void enqueue(uint32_t type, int32_t a, int32_t b) { enqueueFlags(type, a, b, 0); }
+// The key whose keyDown is being interpreted (its committed text names it), or -1.
+static int32_t textKey=-1;
+static uint32_t textRepeat;
 uint32_t ng_event_size(void) { return (uint32_t)sizeof(struct NGEvent); }
 static uint32_t pointerModifiers(NSEventModifierFlags flags) {
   return ((flags&NSEventModifierFlagShift)?1:0) | ((flags&NSEventModifierFlagCommand)?2:0) |
@@ -274,11 +277,28 @@ static NSString *axString(id value) { return [value isKindOfClass:NSString.class
     ((flags&NSEventModifierFlagCommand)?2:0) |
     ((flags&NSEventModifierFlagOption)?4:0) |
     ((flags&NSEventModifierFlagControl)?8:0);
-  enqueue(5,event.keyCode,modifiers);
+  // Keys (issue 1074): kind 5 a key down, flags bit 0 an auto-repeat, bit 1 "this window
+  // reports key releases" (kind 17). The text the key types (kind 9) names the key in b,
+  // with flags bit 1 (and bit 0 for a repeat). An older host reads no flags: a whole press.
+  uint32_t repeat=event.isARepeat?1u:0u;
+  enqueueFlags(5,event.keyCode,modifiers,2u|repeat);
   // AppKit resolves keyboard layouts/dead keys into committed text. Lean
   // receives special keys separately and owns all editing and shortcuts.
-  if (!(flags&(NSEventModifierFlagCommand|NSEventModifierFlagControl)))
+  if (!(flags&(NSEventModifierFlagCommand|NSEventModifierFlagControl))) {
+    textKey=event.keyCode;textRepeat=repeat;
     [self interpretKeyEvents:@[event]];
+    textKey=-1;textRepeat=0;
+  }
+}
+// Kind 17, a key up (issue 1074): the key code and the modifiers held. AppKit sends no key up
+// for a key released while Command is held; the host takes chords as whole presses.
+- (void)keyUp:(NSEvent *)event {
+  NSEventModifierFlags flags=event.modifierFlags;
+  int32_t modifiers=((flags&NSEventModifierFlagShift)?1:0) |
+    ((flags&NSEventModifierFlagCommand)?2:0) |
+    ((flags&NSEventModifierFlagOption)?4:0) |
+    ((flags&NSEventModifierFlagControl)?8:0);
+  enqueueFlags(17,event.keyCode,modifiers,2u);
 }
 - (void)insertText:(id)value { [self insertText:value replacementRange:NSMakeRange(NSNotFound,0)]; }
 - (void)insertText:(id)value replacementRange:(NSRange)range {
@@ -286,7 +306,9 @@ static NSString *axString(id value) { return [value isKindOfClass:NSString.class
   NSString *text=[value isKindOfClass:[NSAttributedString class]] ? [value string] : value;
   NSData *scalars=[text dataUsingEncoding:NSUTF32LittleEndianStringEncoding];
   const uint32_t *chars=scalars.bytes;
-  for (NSUInteger i=0;i<scalars.length/4;i++) enqueue(9,(int32_t)chars[i],0);
+  for (NSUInteger i=0;i<scalars.length/4;i++)
+    if (textKey>=0) enqueueFlags(9,(int32_t)chars[i],textKey,2u|textRepeat);
+    else enqueue(9,(int32_t)chars[i],0);
 }
 - (void)doCommandBySelector:(SEL)selector { (void)selector; /* key event already sent to Lean */ }
 @end

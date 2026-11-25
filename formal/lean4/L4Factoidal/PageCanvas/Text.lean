@@ -5,11 +5,14 @@ L4Factoidal.PageCanvas.Text: the `font` attribute and text of Canvas 2D (HTML §
 `parseFont` reads the CSS `font` shorthand (CSS Fonts 4 §2.8) as the canvas uses it:
 style, variant, weight, stretch, size (with relative sizes against 10px, the canvas
 default), an optional line height (dropped), and the family list. Text is shaped by the
-Lean shaper (`Rendering.SfntProfile.wordIn`) with the fonts the engine holds, and its
-glyph outlines become a path.
+Lean shaper (`Rendering.SfntProfile.wordIn`) with the faces its family list asks for
+(`familyFaces`: the page's `@font-face` faces, then the monospace or the serif face, as the
+page's text picks them; issue 1075), then the fonts the engine holds, and its glyph outlines
+become a path.
 -/
 import L4Factoidal.PageCanvas.State
 import L4Factoidal.Rendering.SfntProfile
+import L4Factoidal.Rendering.FontFaceRule
 
 namespace L4Factoidal.PageCanvas
 open L4Factoidal.Rendering
@@ -133,6 +136,60 @@ def fontsFor (fonts : Array SfntProfile.Font) (family : String) : Array SfntProf
     | none => fonts
   | none => fonts
 
+/-- A family name of a family list as CSS matches it: no quotes, ASCII lower case. -/
+def familyKey (n : String) : String := Color.asciiLower ((Color.trim n).replace "\"" "" |>.replace "'" "")
+
+/-- What a family name of the list asks for (CSS Fonts 4 §5.2, as the page's text resolves
+it, `FontFaceRule.genericOf`): the monospace face (`monospace`, `ui-monospace`, Courier New,
+Menlo, ... or the family of the monospace face held), the serif face (`serif`, Times, ... or
+the family of the serif face held), the held fonts (`sans-serif`, `system-ui`, a held family,
+...), or nothing (a name the engine does not know: the next one decides). -/
+inductive Ask where
+  | mono
+  | serif
+  | held
+  | next
+  deriving DecidableEq, Repr
+
+def askOf (serifFamily monoFamily : Option String) (held : List String) (n : String) : Ask :=
+  if FontFaceRule.monoNames.contains n || monoFamily == some n then .mono
+  else if FontFaceRule.serifNames.contains n || serifFamily == some n then .serif
+  else if FontFaceRule.endsSearch held n || FontFaceRule.firstFontNames.contains n then .held
+  else .next
+
+/-- The faces a canvas `font` family list draws with before the held fonts (issue 1075;
+HTML §4.12.5.1.6 uses the document's font sources): for each family in order, the page's
+`@font-face` faces of that name (`web`, each named by its rule's family), until a family that
+asks for the monospace face, the serif face or the held fonts. A list that asks for none of
+them ends with the serif face, the user agent's default (as `FontFaceRule.genericOf_nil`). -/
+def familyFaces (web serif mono : Array SfntProfile.Font) (held : List String) (family : String) :
+    Array SfntProfile.Font :=
+  let serifFamily := serif[0]?.map (familyKey ·.family)
+  let monoFamily := mono[0]?.map (familyKey ·.family)
+  let rec go : List String → Array SfntProfile.Font → Array SfntProfile.Font
+    | [], out => out ++ serif
+    | n :: rest, out =>
+      let out := out ++ web.filter (familyKey ·.family == n)
+      match askOf serifFamily monoFamily held n with
+      | .mono => out ++ mono
+      | .serif => out ++ serif
+      | .held => out
+      | .next => go rest out
+  go ((family.splitOn ",").map familyKey) #[]
+
+-- what each name asks for, with no face held: the lists of Particle Rex and the generics
+#guard askOf none none ["noto sans"] "monospace" == .mono
+#guard askOf none none ["noto sans"] "courier new" == .mono
+#guard askOf none (some "liberation mono") ["noto sans"] "liberation mono" == .mono
+#guard askOf none none ["noto sans"] "sans-serif" == .held
+#guard askOf none none ["noto sans"] "noto sans" == .held
+#guard askOf none none ["noto sans"] "serif" == .serif
+#guard askOf none none ["noto sans"] "silkscreen" == .next
+#guard ((",".splitOn ",").map familyKey) == ["", ""]
+#guard familyKey " \"Particle Rex Mono\"" == "particle rex mono"
+-- with no face held, nothing goes before the held fonts
+#guard (familyFaces #[] #[] #[] ["noto sans"] "Silkscreen, \"Particle Rex Mono\", monospace").size == 0
+
 /-- The shaped text: its glyphs, advance and metrics, in font units, and the scale
 from font units to CSS pixels. -/
 structure Shaped where
@@ -142,9 +199,10 @@ structure Shaped where
 /-- Text replaced as HTML §4.12.5.1.13 says (every ASCII whitespace becomes a space). -/
 def prepare (s : String) : String := s.map fun c => if Color.isSpace c then ' ' else c
 
-def shape (fonts : Array SfntProfile.Font) (font : Font) (text : String) : Option Shaped := do
-  if fonts.isEmpty || font.size <= 0 then none
-  let fs := fontsFor fonts font.family
+def shape (fonts : Array SfntProfile.Font) (font : Font) (text : String)
+    (front : Array SfntProfile.Font := #[]) : Option Shaped := do
+  let fs := front ++ fontsFor fonts font.family
+  if fs.isEmpty || font.size <= 0 then none
   let px := max 1 (min 512 font.size.round.toUInt64.toNat)
   match SfntProfile.wordIn fs (prepare text) px with
   | .ok w => some ⟨w, font.size / w.unitsPerEm⟩

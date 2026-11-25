@@ -56,7 +56,9 @@ argument for `start`:
 - `key` (BubblePopJS sessions): a key a person pressed in a host, on the same path as
   `actions` (`WebDriver.HostKeys`): `text` (committed text, typed as Element Send Keys
   types it), or `mac` (a macOS virtual key code) or `key` (a DOM key value), with
-  `modifiers` (1 Shift, 2 Command, 4 Option, 8 Control). The turn's `keyDefault` says
+  `modifiers` (1 Shift, 2 Command, 4 Option, 8 Control), and `phase` "down" or "up" from a
+  host that reports key releases (a held key: downs, the later ones repeats, then one up;
+  `HostKeys.actionsAt`); with no `phase`, a whole press. `info` has `keyPhases`. The turn's `keyDefault` says
   whether the host may scroll for the key (its `keydown` was not canceled and it went to
   no text control or editing host). A press gives the focus to the focusable area there (as
   `actions` does), and Enter in a field of a form submits it (`DOM.FormControls.implicitSubmission`).
@@ -1482,8 +1484,14 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   | "key" =>
     -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
     -- (`WebDriver.HostKeys`) on the same trusted path as `actions`
+    -- `phase` "down" or "up" (issue 1074): a key that goes down, repeats or goes up, from a
+    -- host that reports key releases; absent, a whole press. The keys the session holds decide
+    -- the modifiers that change and whether a down is a repeat (`HostKeys.actionsAt`).
     match hostKeyOf request with
-    | some k => run (performInput [WebDriver.HostKeys.sourceOf k] false)
+    | some k =>
+      let phase := WebDriver.HostKeys.Phase.ofString (str request "phase")
+      let bits := (natField request "modifiers").getD 0
+      run fun a => performInput [WebDriver.HostKeys.sourceAt phase a.page.trusted.actions.keys k bits] false a
     | none => keep "scriptSession: key needs text, mac or key"
   | "actions" =>
     -- input of the user as WebDriver's Perform Actions; the one place the trusted input state changes
@@ -1847,7 +1855,9 @@ def op {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (name htm
     let (loaded, bytes, aot) := (held.module.isSome || held.aot.isSome, held.moduleBytes, held.aot.isSome)
     return (held, .ok <| some (JSON.Json.object [("ops",.array (actions.map .string)),("module",.bool loaded),
       ("bytes",num bytes),("engine",.string "QuickJS-NG in WasmVM"),("aot",.bool true),("aotLoaded",.bool aot),
-      ("engines",.array [.string "quickjs", .string "bubblepop"])]).toString)
+      ("engines",.array [.string "quickjs", .string "bubblepop"]),
+      -- the `key` action takes `phase` (issue 1074); an older engine has no such field
+      ("keyPhases",.bool true)]).toString)
   let (held, action, html, request) :=
     if action == "syncAnswer" then
       match held.pendingSync with
