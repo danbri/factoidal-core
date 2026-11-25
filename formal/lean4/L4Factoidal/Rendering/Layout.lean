@@ -782,8 +782,8 @@ structure Picture where
   /-- The size of the image in CSS pixels, when `bitmap` holds fewer pixels than the image
   has (a host that keeps a large image reduced); none: the size of `bitmap`. -/
   natural : Option (Nat × Nat) := none
-/-- The picture of an element, by DOM node. `none` when it has none, or when its
-image is missing, broken or refused: an `img` then shows its `alt` text. -/
+/-- The picture of an element, by DOM node. `none` when its image is not held,
+including when it is missing, broken or refused. -/
 abbrev Pictures := Nat → Option Picture
 def noPictures : Pictures := fun _ => none
 
@@ -913,6 +913,29 @@ theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto
     (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
     replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
   simp [replacedNatural, replacedHorizontal, hw, hh, hmw, hxw, hmh, hxh]
+
+/-- An authored image placeholder without a decoded picture (HTML §15.4.2).
+An empty alt or an image without a source has no natural size here. With no
+alt and a possible source, reserve the authored box only if both axes are
+given: the layout has no pending/error state from which to size an icon.
+A nonempty alt keeps the text fallback. -/
+private def authoredImagePlaceholder (dom : Dom) (n : DOM.Node) (s : Computed) : Bool :=
+  if !DOM.Dom.isHtmlElement n "img" then false else
+  let width := match s.width with
+    | .px _ | .percent _ | .calc _ _ | .stretch => true
+    | _ => false
+  let height := match s.height with | .px _ => true | _ => false
+  if CSS.hasAttribute n "alt" then
+    (CSS.attrValue n "alt").isEmpty && (width || height)
+  else if width && height then true
+  else if !width && !height then false
+  else
+    (CSS.attrValue n "src").trimAscii.isEmpty && (CSS.attrValue n "srcset").trimAscii.isEmpty &&
+      !(n.parent.any fun id => DOM.Dom.isHtmlElement (dom.get id) "picture")
+
+private def replacedWithoutPicture (dom : Dom) (n : DOM.Node) (s : Computed) :
+    Option (Option (Float × Float)) :=
+  if authoredImagePlaceholder dom n s then some (some (0,0)) else blankReplaced n
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/
@@ -1183,8 +1206,8 @@ theorem textItems_preLine_blankLine (id : TextSource) (style : Computed)
       | .space .. => (" ", 0)
       | _ => ("?", 0)) == [("a", 0), (" ", 0), ("b", 3), ("\n", 0), ("\n", 0), ("c", 9)]
 
-/-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
-`alt=""` (an image that adds nothing), and `[image]` with no `alt`. -/
+/-- The text fallback for an unresolved image: its `alt` text in brackets,
+nothing for `alt=""`, and `[image]` with no `alt`. -/
 private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
   if !CSS.hasAttribute n "alt" then (textItems (.node id) s "[image]").toArray
   else
@@ -1260,12 +1283,12 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       let (w,h) := replacedSize s (some picture.size) available
       let (ow,oh,nodes) := replacedBox id s w h (fun x y => pictureNodes id s picture x y w h)
       return #[.replaced id s ow oh nodes]
-    -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
-    if let some size := blankReplaced n then
+    -- A blank replaced box or an authored image placeholder.
+    if let some size := replacedWithoutPicture dom n s then
       let (w,h) := replacedSize s size available
       let (ow,oh,nodes) := replacedBox id s w h (fun _ _ => [])
       return #[.replaced id s ow oh nodes]
-    -- An image that is missing, broken or refused stands as its description, and stays a link.
+    -- Other unresolved images keep their description and any enclosing link.
     if n.lname == "img" then return altItems id s n
     if n.lname == "br" then return #[.lineBreak s]
     if n.ns == some DOM.svgNS then
@@ -2638,7 +2661,7 @@ private def sizesItself (dom : Dom) (styles : Array Computed) (pictures : Pictur
   let s := styles[id]!
   let n := dom.get id
   s.display.isFlex || s.display.isGrid || s.display.isTable || (pictures id).isSome ||
-    (blankReplaced n).isSome || n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.containsAbsolutes
+    (replacedWithoutPicture dom n s).isSome || n.ns == some DOM.svgNS || n.lname == "hr" || s.pos.containsAbsolutes
 
 private def cellStyle (styles : Array Computed) : Table.Source → Computed
   | .element id => styles[id]!
@@ -2864,7 +2887,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       if let some picture := pictures id then
         let w := (replacedSize s (some picture.size) 0).1
         return (compressible w+add,w+add)
-      if let some size := blankReplaced n then
+      if let some size := replacedWithoutPicture dom n s then
         let w := (replacedSize s size 0).1
         return (compressible w+add,w+add)
       if n.ns == some DOM.svgNS then
@@ -3105,7 +3128,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             -- table, a flex container, a box that clips, a replaced element) is beside the floats.
             let cn := dom.get child
             let plain := cs.display == .block && !cs.clipOverflow && !cs.pos.formattingRoot && (pictures child).isNone &&
-              (blankReplaced cn).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
+              (replacedWithoutPicture dom cn cs).isNone && cn.ns != some DOM.svgNS && cn.lname != "hr"
             let r ← if plain then layoutTask dom styles font embedding pictures fuel (sub <| .flowed child floats) innerX top width
               else if floats.isEmpty then layoutTask dom styles font embedding pictures fuel (sub <| .box child) innerX top width
               else do
@@ -3561,7 +3584,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if let some picture := pictures id then
         let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
-      if let some size := blankReplaced n then
+      if let some size := replacedWithoutPicture dom n s then
         let (w,h) := replacedSize sized size available
         return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
