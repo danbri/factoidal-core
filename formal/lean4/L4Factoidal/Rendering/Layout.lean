@@ -376,7 +376,7 @@ private def roundedPaint (outline : Contour) (node : Node) : Node :=
   | _ => node
 
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if !s.visible || w <= 0 || h <= 0 then #[] else
+  if !s.paintVisible || w <= 0 || h <= 0 then #[] else
   match s.background with
   | none => #[]
   | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
@@ -394,7 +394,7 @@ def backgroundArea (s : Computed) (x y w h : Float) : Float × Float × Float ×
   (x+l,y+t,w-l-b.right-p.right,h-t-b.bottom-p.bottom)
 
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if !s.visible || w <= 0 || h <= 0 then #[] else
+  if !s.paintVisible || w <= 0 || h <= 0 then #[] else
   let (cx,cy,cw,ch) := backgroundArea s x y w h
   if cw <= 0 || ch <= 0 then #[] else
   let colour := backgroundColour id s cx cy cw ch
@@ -512,7 +512,7 @@ as rectangles; where they differ, the corner is split on its diagonal (CSS Backg
 sides are marks along the side, without the diagonal. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
-  if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  if !s.paintVisible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
   if let some rounded := roundedSolidBorder id s b x y w h then return rounded
   let st := s.borderStyles
   let pc := s.borderColors
@@ -659,7 +659,7 @@ def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array
   | none => none
   | some (pic,b) =>
   if !s.hasBorder then none else
-  if !s.visible || w <= 0 || h <= 0 || b.width == 0 || b.height == 0 then some #[] else
+  if !s.paintVisible || w <= 0 || h <= 0 || b.width == 0 || b.height == 0 then some #[] else
   let bi := s.borderImage
   let pos : Float → Bool := fun v => decide (v > 0)
   let edges := s.borderEdges
@@ -951,7 +951,7 @@ theorem pictureOffset_percent (roomX roomY x y : Float) :
 /-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
   let (iw,ih) := picture.size
-  if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
+  if !s.paintVisible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
   let (sx,sy) := fitScale s.objectFit iw ih w h
   let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
   let dx := x+offsetX
@@ -989,7 +989,7 @@ def replacedBox (id : Nat) (s : Computed) (w h : Float) (content : Float → Flo
   let bw := b.left+p.left+w+p.right+b.right
   let bh := b.top+p.top+h+p.bottom+b.bottom
   (m.left+bw+m.right,m.top+bh+m.bottom,
-   (decorations id s m.left m.top bw bh).toList ++ content (m.left+b.left+p.left) (m.top+b.top+p.top))
+   (decorations id s m.left m.top bw bh).toList ++ (if s.transparent then [] else content (m.left+b.left+p.left) (m.top+b.top+p.top)))
 
 /-- CSS 2.1 §10.3.3: how far `margin-left: auto` moves a block-level box whose margin
 box is `outer` wide in a containing block `available` wide. Both auto: half the room
@@ -1329,7 +1329,7 @@ def glyphTransform (s : Computed) (scale x y rise : Float) : Transform :=
 
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
   let mut out := #[]
-  if !s.visible then return out
+  if !s.paintVisible then return out
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
@@ -1375,7 +1375,7 @@ def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (
 
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do
-  if !s.visible then return #[]
+  if !s.paintVisible then return #[]
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
@@ -1431,7 +1431,7 @@ font's ascent and descent, from `top`. -/
 private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x top width : Float) : Array Node :=
   match s.background with
   | some c =>
-    if !s.visible || width <= 0 then #[] else
+    if !s.paintVisible || width <= 0 then #[] else
     let (a,d) := font.metricsOf s
     #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
@@ -1590,7 +1590,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes}
         ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩
       extent := some (x+offset,x+offset+advance)
-      if s.underline && s.visible then
+      if s.underline && s.paintVisible then
         let thickness := max 1 (s.fontSize/14)
         out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
@@ -3473,7 +3473,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let edgesY := border.top+border.bottom+padding.top+padding.bottom
       if n.lname == "hr" then
         let w := imposedWidth.getD available
-        return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
+        let nodes := if s.transparent then #[] else
+          #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩]
+        return {nodes,height := 17}
       -- CSS 2.1 §10.4: the width, then `max-width`, then `min-width` (a minimum wins).
       -- CSS Sizing 3 §3.2: `width`, `min-width` or `max-width` given as a keyword is a
       -- width of the contents (measured only when a keyword is used) or the fill width.
@@ -3812,6 +3814,7 @@ def linkHeight (viewport document : Float) : Float := max viewport document
 has none, paints the whole canvas, and not the element's own box. -/
 def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Color) := Id.run do
   let some root := (dom.get 0).kids.find? (fun k => (dom.get k).type == .element) | return none
+  if (styles[root]?).any (·.transparent) then return none
   if let some c := (styles[root]?).bind (·.background) then return some (root,c)
   if (dom.get root).lname != "html" then return none
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
