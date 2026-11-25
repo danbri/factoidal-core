@@ -181,8 +181,11 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     if(!target){
       const size=`${frame.width}x${frame.height}`;
       if(!slot.texture||slot.size!==size){
+        const textureStart=performance.now();
         slot.texture?.destroy();stats.layerTextures++;
-        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
+        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});
+        steps.allocateTexture=Math.round((performance.now()-textureStart)*10)/10;
+        slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
       }
     }
     const damage=(frame as unknown as {damage?:Damage}).damage;
@@ -194,13 +197,21 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     const tileWords=frame.tiles;
     const uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
+    const bufferStart=performance.now();
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
     if(tileWords)slot.tiles=grow(slot.tiles,tileBytes,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST);
+    steps.prepareBuffers=Math.round((performance.now()-bufferStart)*10)/10;
     const want=`${uniformBytes}|${tileBytes}|${JSON.stringify(p.pipeline)}`;
     if(!slot.bind||slot.bindKey!==want||slot.uniform.buffer!==before[0]||slot.tiles?.buffer!==before[1]){
       const entries:GPUBindGroupEntry[]=[{binding:p.bindGroup.binding,resource:{buffer:slot.uniform.buffer,offset:0,size:uniformBytes}}];
       if(tileWords)entries.push({binding:p.bindGroup.binding+1,resource:{buffer:slot.tiles!.buffer,offset:0,size:tileBytes}});
-      slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;stats.bindGroups++;
+      const layoutStart=performance.now();
+      const layout=pipeline.getBindGroupLayout(p.bindGroup.layoutIndex);
+      const bindStart=performance.now();
+      slot.bind=device.createBindGroup({layout,entries});
+      steps.resolveBindingLayout=Math.round((bindStart-layoutStart)*10)/10;
+      steps.createBindGroup=Math.round((performance.now()-bindStart)*10)/10;
+      slot.bindKey=want;stats.bindGroups++;
     }
     steps.prepareResources=Math.round((performance.now()-resourceStart)*10)/10;
     const write=()=>{
