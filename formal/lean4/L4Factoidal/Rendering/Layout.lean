@@ -329,12 +329,24 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
 
 #guard (backgroundTiles 1 1 ⟨69,69,ByteArray.empty⟩ {} 0 0 1280 19182).size == 1
 
+/-- The corner radii that paint uses: none on a table or an internal table element in the
+collapsing border model, where CSS Backgrounds 3 §5.3 says user agents ignore `border-radius`
+(WPT ttwf-reftest-borderRadius); else the computed ones. -/
+def usedCornerLengths (s : Computed) : Option CornerLengths :=
+  let tablePart := [Display.table, .inlineTable, .tableRowGroup, .tableHeaderGroup, .tableFooterGroup,
+    .tableRow, .tableCell, .tableColumn, .tableColumnGroup].contains s.display
+  if s.borderCollapse && tablePart then none else s.cornerLengths
+
+#guard (usedCornerLengths {display := .tableCell, borderCollapse := true, cornerLengths := some {}}).isNone
+#guard (usedCornerLengths {display := .tableCell, cornerLengths := some {}}).isSome
+#guard (usedCornerLengths {display := .block, borderCollapse := true, cornerLengths := some {}}).isSome
+
 private def radiusUnits (size : Float) : Nat :=
   (max 0 (size*64)).floor.toUInt64.toNat
 
 /-- Resolve percentages against the outer box before applying any paint inset. -/
 private def resolvedRadii (s : Computed) (w h : Float) : Option Corners.Radii := do
-  let lengths ← s.cornerLengths
+  let lengths ← usedCornerLengths s
   let resolve := fun (pair : CSS.Length × CSS.Length) =>
     Corners.Radius.mk (radiusUnits ((CSS.resolve w pair.1).getD 0))
       (radiusUnits ((CSS.resolve h pair.2).getD 0))
@@ -390,7 +402,7 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   let withGradient := match s.backgroundGradient with
     | none => colour
     | some g => colour.push (.paint ⟨some id,{geometry := .rect cx cy cw ch,style := {fill := gradientPaint g cx cy cw ch}}⟩)
-  let outline := if s.cornerLengths.isNone then none else
+  let outline := if (usedCornerLengths s).isNone then none else
     let b : Edges := if s.colorClip == 0 then {} else s.borderEdges
     let p := if s.colorClip == 2 then s.padding else {}
     let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
@@ -958,7 +970,7 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
   let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
   let image := Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩
-  if s.cornerLengths.isNone then [image] else
+  if (usedCornerLengths s).isNone then [image] else
     let b := s.borderEdges
     let p := s.padding
     let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
@@ -1523,7 +1535,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let nodes := if (s.background.isNone || reordered) && !s.hasBorder then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
                                borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
-                                                                  right := if ended then s.borderWidth.right else 0}}
+                                                                  right := if ended then s.borderWidth.right else 0},
+                               -- a box broken over lines rounds only the corners of its own start
+                               -- and end sides (CSS Backgrounds 3 §5.3, box-decoration-break: slice;
+                               -- WPT border-radius-012)
+                               cornerLengths := s.cornerLengths.map fun c =>
+                                 let zero : CSS.Length × CSS.Length := (.px 0,.px 0)
+                                 let c := if f.start then c else {c with topLeft := zero, bottomLeft := zero}
+                                 if ended then c else {c with topRight := zero, bottomRight := zero}}
         left top width height
     ((⟨f.id,left,top,width,height⟩ : Box),nodes)
   for k in [0:items.size] do
