@@ -280,15 +280,16 @@ theorem up_starts_with_key (held : List String) (raw : Char) :
   (ofDomKey k).map (fun c => (Keys.ofRaw c).key) == some k
 
 -- phases (issue 1074): a held key is a down, downs while held, then one up
-#guard downFrom [] (Char.ofNat 0xE00D) 0 == [.keyDown ""]
-#guard upFrom [" "] (Char.ofNat 0xE00D) == [.keyUp ""]
+private def k (n : Nat) : String := String.singleton (Char.ofNat n)
+#guard downFrom [] (Char.ofNat 0xE00D) 0 == [.keyDown (k 0xE00D)]
+#guard upFrom [" "] (Char.ofNat 0xE00D) == [.keyUp (k 0xE00D)]
 -- Shift and an arrow: Shift goes down first; at the release of the arrow, Shift goes up too
-#guard downFrom [] (Char.ofNat 0xE013) 1 == [.keyDown "", .keyDown ""]
-#guard upFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) == [.keyUp "", .keyUp ""]
+#guard downFrom [] (Char.ofNat 0xE013) 1 == [.keyDown (k 0xE008), .keyDown (k 0xE013)]
+#guard upFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) == [.keyUp (k 0xE013), .keyUp (k 0xE008)]
 -- Shift released between two downs of a held key: it goes up before the repeat
-#guard downFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) 0 == [.keyUp "", .keyDown ""]
+#guard downFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) 0 == [.keyUp (k 0xE008), .keyDown (k 0xE013)]
 -- another key still held: the modifier stays held at this release
-#guard upFrom ["Shift", "ArrowUp", "ArrowLeft"] (Char.ofNat 0xE013) == [.keyUp ""]
+#guard upFrom ["Shift", "ArrowUp", "ArrowLeft"] (Char.ofNat 0xE013) == [.keyUp (k 0xE013)]
 -- text of one character goes down and up as its key; a composition is typed whole at its down
 #guard actionsAt .down [] (.text "w") == [.keyDown "w"]
 #guard actionsAt .up ["w"] (.text "w") == [.keyUp "w"]
