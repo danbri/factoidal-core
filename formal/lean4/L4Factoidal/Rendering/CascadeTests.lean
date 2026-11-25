@@ -460,6 +460,16 @@ private def gradientAt (html css : String) : Option Bool := do
 #guard gradientAt "<div></div>" "div{background:linear-gradient(#fed,#fff)} div{background:#eee}" == some false
 #guard gradientAt "<div></div>" "div{background-color:red}" == some false
 
+-- CSS-wide keywords on the shorthand also set background-image.
+private def imageParent := "<div><span>text</span></div>"
+#guard hinted imageParent "div{background:url(flag.svg) no-repeat}span{background:inherit}" "span"
+  (fun s => s.backgroundImage == some "flag.svg" && s.backgroundRepeat == (false,false))
+#guard hinted imageParent "div{background:linear-gradient(red,blue)}span{background:inherit}" "span"
+  (fun s => s.backgroundGradient.isSome)
+#guard hinted imageParent "div{background:url(flag.svg)}span{background:url(other.svg);background:unset}" "span"
+  (fun s => s.backgroundImage.isNone)
+
+
 -- HTML §15.3.3 and §15.3.8: the user agent's block margins are 1em of the element's own font
 -- size, and 0 for a list in a list (`Style.startMargin`, `Style.insideList`).
 #guard marginOf pageT "" == some [16, 0, 16, 0]
