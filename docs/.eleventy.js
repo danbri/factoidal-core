@@ -76,6 +76,7 @@ module.exports = function(eleventyConfig) {
   // Static page: the explanations are rendered at build time from the directory data file,
   // which is also published as explanations.json for reuse.
   eleventyConfig.addPassthroughCopy("web/hub/wikidata-explanations/style.css");
+  eleventyConfig.addPassthroughCopy("web/hub/wikidata-parallax/style.css");
   eleventyConfig.addPassthroughCopy({
     "web/hub/wikidata-explanations/wikidata-explanations.11tydata.json": "web/hub/wikidata-explanations/explanations.json",
   });

@@ -1,0 +1,76 @@
+---
+layout: hub-app.njk
+title: Wikidata queries as set browsing
+appBase: /web/hub/wikidata-parallax
+appNoScript: true
+appCommonsImages: true
+appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/wikidata-parallax
+appEngineLabel: Query explanations
+appEngineUrl: ../wikidata-explanations/
+permalink: /web/hub/wikidata-parallax/index.html
+---
+{%- import "wikidata-parallax-macros.njk" as m -%}
+<div class="px">
+  <header class="px-hero">
+    <p class="eyebrow">Martin Poulter's Wikidata queries</p>
+    <h1>Queries as set browsing</h1>
+    <p class="lede">Many Wikidata queries can be done by browsing. Start from a set of things, narrow it with facets,
+    then step along a property to a related set. That is how Freebase Parallax worked (Huynh, 2008).
+    This page shows which of the {{ counts.classified }} parsed queries can be built that way, and draws each one as a flow of sets.</p>
+
+    <figure class="legend" aria-label="How to read a flow">
+      <div class="legend-flow">
+        <span class="lg-set">Set</span>
+        <span class="lg-chip">facet = value</span>
+        <span class="lg-chip lg-exclude">excludes …</span>
+        <span class="lg-arrow">pivot →</span>
+        <span class="lg-set">Related set</span>
+      </div>
+      <figcaption>Start from a set, narrow it with facets, remove items with exclusions, then pivot along a property to a related set.</figcaption>
+    </figure>
+  </header>
+
+  <nav class="tiers" aria-label="Tiers">
+    {%- for t in tiers %}
+    <a class="tier-tile tile-{{ t.tier | lower }}" href="#tier-{{ t.tier | lower }}">
+      <span class="tile-num">{{ t.ids | length }}</span>
+      <span class="tile-name">{{ t.name }}</span>
+    </a>
+    {%- endfor %}
+  </nav>
+  <p class="note">{{ counts.withExclusions }} of the browsable queries use exclusions, and {{ counts.withExtensions }} use
+  OR, path or grouping steps beyond classic Parallax. {{ counts.total - counts.classified }} queries could not be parsed and are not shown.</p>
+
+  {%- for t in tiers %}
+  <section class="tier-section" id="tier-{{ t.tier | lower }}" aria-labelledby="h-{{ t.tier | lower }}">
+    <h2 id="h-{{ t.tier | lower }}">{{ m.tierBadge(t.tier) }} {{ t.name }} <span class="count">{{ t.ids | length }}</span></h2>
+    <ul class="cards">
+    {%- for q in queries %}{% if q.tier == t.tier %}
+      {%- set lead = q.startId %}
+      <li class="card">
+        <a href="{{ q.id }}/">
+          {{ m.thumb(lead, entities, thumb, 56, "thumb", q.start or q.title) | safe }}
+          <span class="card-body">
+            <span class="card-title">{{ q.title }}</span>
+            <span class="card-meta">
+              {%- if q.start %}from <b>{{ m.bare(q.start) }}</b>{% endif %}
+              {%- if q.sets > 1 %} · {{ q.sets }} sets{% endif %}
+              {%- for k in q.kinds %} · <span class="kind kind-{{ k }}">{{ {"exclude": "excludes", "or": "OR", "path": "paths", "derived": "grouped"}[k] }}</span>{% endfor %}
+            </span>
+            {%- if q.tier == "N" and q.flow.beyond | length %}<span class="card-why">{{ q.flow.beyond | first }}</span>{% endif %}
+          </span>
+        </a>
+      </li>
+    {%- endif %}{% endfor %}
+    </ul>
+  </section>
+  {%- endfor %}
+
+  <footer class="px-about">
+    <p>Each query is classified from its parsed Factoidal rewrite by rules (<code>explain/src/parallax.mjs</code>); no language model is used.
+    Tier A is classic Parallax. B adds value filters or computed columns. C passes through statements and qualifiers, much like Freebase's
+    mediator nodes. D uses subclasses to choose a type. An exclusion counts only if a single facet chip can show it.</p>
+    <p>Queries: {{ corpus.attribution }}, <a href="{{ corpus.license_url }}">{{ corpus.license }}</a>. Labels from Wikidata ({{ sources.labels }}, CC0).
+    Thumbnails come from Wikimedia Commons; follow an image to see its own licence. Generated {{ generated }}.</p>
+  </footer>
+</div>

@@ -23,13 +23,6 @@ permalink: /web/hub/wikidata-explanations/index.html
   "R-MINUS-NOSHARED": "an exclusion that removes nothing",
   "R-EXTERNAL": "results depend on an external service"
 } -%}
-{%- set tierText = {
-  "A": "core Parallax: a type, facets and pivots along fixed properties",
-  "B": "A, plus filters on literal values or computed columns",
-  "C": "B, plus hops through statement nodes (p:/ps:/pq:), like Freebase CVTs",
-  "D": "any of the above, plus subclass closure (P31/P279*) to choose the type",
-  "N": "not an operation on one set of entities; see the blockers"
-} -%}
 <div class="wdx">
   <header class="intro">
     <h1>Wikidata query explanations</h1>
@@ -56,32 +49,6 @@ permalink: /web/hub/wikidata-explanations/index.html
     </dl>
   </nav>
 
-  <section class="parallax-summary" aria-labelledby="parallax-h">
-    <h2 id="parallax-h">As set browsing (Freebase Parallax)</h2>
-    <p>Which queries can be expressed as browsing sets of entities, in the style of Freebase Parallax (Huynh, 2008)?
-    That means starting from a type, narrowing by facets (property = value), pivoting along properties to related sets,
-    and showing optional properties as columns. Each query gets the lowest tier that fits.</p>
-    <p>Negation (<code>MINUS</code>, <code>FILTER NOT EXISTS</code>) counts only where a single facet chip can show it.
-    Chips are worded as removing a facet value, e.g. "exclude: occupation includes economist", because
-    "occupation is not economist" misleads for properties with several values. A negation that combines several conditions,
-    or that depends on another column, is listed as a blocker.</p>
-    <p class="counts">{% for t in ["A", "B", "C", "D", "N"] %}{{ t }}: {{ parallax.tiers[t] or 0 }}{% if not loop.last %} · {% endif %}{% endfor %}
-    · {{ parallax.withNegation }} of the mappable queries use exclusion chips · {{ counts.total - counts.explained }} not parsed, so not classified</p>
-    <dl>
-    {%- for group in parallax.byTier %}
-      <dt>Tier {{ group.tier }}: {{ tierText[group.tier] }} ({{ group.ids | length }})</dt>
-      <dd>{% for id in group.ids %}<a href="#{{ id }}">{{ id | replace("mlp-", "") }}</a>{% if not loop.last %} {% endif %}{% endfor %}</dd>
-    {%- endfor %}
-    </dl>
-    <details><summary>Why the other {{ parallax.tiers.N }} are not set browsing (a query can have several reasons)</summary>
-    <dl>
-    {%- for group in parallax.byBlocker %}
-      <dt>{{ group.blocker | escape }} ({{ group.ids | length }})</dt>
-      <dd>{% for id in group.ids %}<a href="#{{ id }}">{{ id | replace("mlp-", "") }}</a>{% if not loop.last %} {% endif %}{% endfor %}</dd>
-    {%- endfor %}
-    </dl>
-    </details>
-  </section>
 
   {%- for q in queries %}
   <article class="query" id="{{ q.id }}">
@@ -104,17 +71,7 @@ permalink: /web/hub/wikidata-explanations/index.html
       {%- if q.diagnostics | length %} ({{ q.diagnostics | join(", ") | escape }}){% endif %}</p>
     {%- else %}
     <pre class="explanation">{{ q.explanation | escape }}</pre>
-    {%- if q.parallax %}
-    <div class="parallax">
-      <p><strong>As set browsing:</strong> tier {{ q.parallax.tier }}, {{ tierText[q.parallax.tier] }}.</p>
-      {%- if q.parallax.negations | length %}
-      <ul class="chips" aria-label="Exclusion facets">{% for n in q.parallax.negations %}<li>{{ n | escape }}</li>{% endfor %}</ul>
-      {%- endif %}
-      {%- if q.parallax.blockers | length %}
-      <ul class="blockers">{% for b in q.parallax.blockers %}<li>{{ b | escape }}</li>{% endfor %}</ul>
-      {%- endif %}
-    </div>
-    {%- endif %}
+    <p class="parallax-link"><a href="../wikidata-parallax/{{ q.id }}/">See it as set browsing</a></p>
     {%- endif %}
     {%- if q.rewritten %}
     <details><summary>Factoidal rewrite (explained above)</summary><pre class="sparql"><code>{{ q.rewritten | escape }}</code></pre></details>
