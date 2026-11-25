@@ -132,10 +132,46 @@ for(const fixture of fixtures){
   for(const [bad,expected] of rejections)put(sa,sb,bad,expected);
 }
 rows.push(['x'.repeat(8705),'error resource_limit']);
+// Independent SHA-256 branch-fold oracle for partial validator commitment projection.
+// Original witness roots must also reproduce the independently built sparse-tree fixture.
+const pair=(a,b)=>h(Buffer.concat([a,b]));
+const u64=n=>{const b=Buffer.alloc(32);b.writeBigUInt64LE(BigInt(n));return b;};
+const fold=(leaf,index,siblings)=>{let v=leaf;for(const s of siblings){
+  v=(index&1n)?pair(s,v):pair(v,s);index>>=1n;
+}return v;};
+function expectedProjection(line){
+  const key=Buffer.from(line[2],'hex'),cred=Buffer.from(line[3],'hex');
+  const epoch=BigInt(line[0])/32n, old=BigInt(line[9]);
+  const next=old>epoch+8192n?old:epoch+8192n;
+  const index=BigInt(line[17]),depth=BigInt(line[0])>=364032n*32n?6:5;
+  const member=line.slice(26,66).map(x=>Buffer.from(x,'hex'));
+  const state=line.slice(66,66+depth).map(x=>Buffer.from(x,'hex'));
+  const keyRoot=pair(key.subarray(0,32),Buffer.concat([key.subarray(32),Buffer.alloc(16)]));
+  const leaf=(slashed,withdrawable)=>pair(
+    pair(pair(keyRoot,cred),pair(u64(line[4]),u64(slashed))),
+    pair(pair(u64(line[6]),u64(line[7])),pair(u64(line[8]),u64(withdrawable))));
+  const registry=(v)=>pair(fold(v,index,member),u64(line[1]));
+  const stateRoot=(v)=>fold(v,11n,state);
+  const before=registry(leaf(line[5],old));
+  check(before.toString('hex')===line[14],'old registry witness');
+  check(stateRoot(before).toString('hex')===line[15],'old state witness');
+  const after=registry(leaf(1,next)), root=stateRoot(after);
+  check(!after.equals(before)&&!root.equals(stateRoot(before)),'projection changed both roots');
+  return 'partial_validator_projection '+next+' '+after.toString('hex')+' '+root.toString('hex');
+}
+const retained=rows.slice();
+for(const [request,verdict] of retained){
+  if(verdict==='error resource_limit')continue;
+  const tokens=request.split(' ');
+  const value=verdict.startsWith('authenticated_')?expectedProjection(tokens.slice(2)):verdict;
+  rows.push(['project '+request,value]);
+}
+rows.push(['project '+'x'.repeat(8705),'error resource_limit']);
+check(rows.filter(x=>x[1].startsWith('partial_validator_projection ')).length===2,'projection fixture count');
 const expected=rows.map(r=>r[1]);
 function compare(actual){check(actual.length===expected.length,'row count');for(let i=0;i<actual.length;i++)check(actual[i]===expected[i],'row '+i+': '+actual[i]+' != '+expected[i]);}
 compare(expected);
-const controls=[expected.slice(1),[...expected,'extra'],expected.map((x,i)=>i===0?'error first_mismatch':x),expected.map((x,i)=>i===1?expected[0]:x),expected.map((x,i)=>i===2?expected[0]:x)];
+const controls=[expected.slice(1),[...expected,'extra'],expected.map((x,i)=>i===0?'error first_mismatch':x),expected.map((x,i)=>i===1?expected[0]:x),expected.map((x,i)=>i===2?expected[0]:x),expected.map(x=>x.startsWith('partial_validator_projection ')?x.replace(/.$/,'z'):x)];
 for(const c of controls){let caught=false;try{compare(c);}catch{caught=true;}check(caught,'mutation escaped');}
 console.log(JSON.stringify({rows:rows.length,authenticated:expected.filter(x=>x.startsWith('authenticated_')).length,controls:controls.length}));
 if(process.argv[2]!=='--self-test'){
