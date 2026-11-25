@@ -431,17 +431,21 @@ def formArgument (page : String) (query : List Char) : List Char :=
     ((((String.ofList query).splitOn "&").find? (·.startsWith "q=")).map (·.toList.drop 2)).getD []
   else query
 
-def builtin (rest : List Char) : Builtin :=
+/-- The name, the text after it and the argument of a `foafnaut:` address: `NAME/ARGUMENT`,
+or a form's GET to a page that takes an argument, `NAME?QUERY` (`formArgument`). -/
+def nameAndArgument (rest : List Char) : List Char × List Char × List Char :=
   let (name, after) := rest.span (· != '/')
-  let argument := after.drop 1
-  -- A form's GET to a page: `foafnaut:NAME?QUERY` is `foafnaut:NAME/ARGUMENT`.
-  let (name, after, argument) := match name.span (· != '?') with
-    | (page, '?' :: query) =>
-      if after.isEmpty && (builtinPages.find? (·.1.toList == page)).any (·.2) then
-        let arg := formArgument (String.ofList page) query
-        (page, (if arg.isEmpty then [] else '/' :: arg), arg)
-      else (name, after, argument)
-    | _ => (name, after, argument)
+  let plain : List Char × List Char × List Char := (name, after, after.drop 1)
+  match name.span (· != '?') with
+  | (page, '?' :: query) =>
+    if after.isEmpty && (builtinPages.find? (fun (p : String × Bool) => p.1.toList == page)).any (fun p => p.2) then
+      let arg := formArgument (String.ofList page) query
+      (page, (if arg.isEmpty then [] else '/' :: arg), arg)
+    else plain
+  | _ => plain
+
+def builtin (rest : List Char) : Builtin :=
+  let (name, after, argument) := nameAndArgument rest
   if name == "graph".toList then
     if after.isEmpty then .graph else .refuse "foafnaut:graph takes no argument"
   else match builtinPages.find? (·.1.toList == name) with
