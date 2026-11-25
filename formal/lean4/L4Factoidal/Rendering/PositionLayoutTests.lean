@@ -793,6 +793,16 @@ private def inside := "<div id=c><div id=k>K</div></div>"
 #guard box inside "#k{margin:0 10%}" "k" == some (20,0,160,7)
 -- top and bottom are of the width too
 #guard box inside "#c{width:100px} #k{padding-top:10%;padding-bottom:20%}" "k" == some (0,0,100,37)
+
+-- An empty inline wrapper around an out-of-flow item contributes no strut.
+-- The containing block's percentage padding still sizes and positions the item.
+private def mediaPlaceholder :=
+  "<div id=c><div id=m><picture> <span id=p>AA</span> </picture></div><div id=k>ZZ</div></div>"
+private def mediaPlaceholderCss :=
+  "#c{width:160px} #m{position:relative;padding-bottom:56.25%} #p{position:absolute;inset:0}"
+#guard box mediaPlaceholder mediaPlaceholderCss "m" == some (0,0,160,90)
+#guard box mediaPlaceholder mediaPlaceholderCss "p" == some (0,0,160,90)
+#guard at? mediaPlaceholder mediaPlaceholderCss "ZZ" == some (0,90)
 #guard box inside "#c{width:100px} #k{margin-top:10%}" "k" == some (0,10,100,7)
 -- the containing block's own width may be a percentage, or what its margins leave
 #guard box inside "#c{width:50%} #k{margin-left:10%}" "k" == some (10,0,90,7)

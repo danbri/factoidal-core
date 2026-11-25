@@ -1268,6 +1268,17 @@ private def isStaticPlaceholder : Inline → Bool
   | .outOfFlow _ => true
   | _ => false
 
+private def hasLineBoxEdges (e : Edges) : Bool :=
+  e.top != 0 || e.right != 0 || e.bottom != 0 || e.left != 0
+
+/-- An unadorned inline boundary or a static position does not require a line box
+(CSS 2.2 §9.4.2). Keep the positions even when the line contributes no height. -/
+private def needsLineBox : Inline → Bool
+  | .outOfFlow _ | .bidiMark _ => false
+  | .openInline _ s _ | .closeInline _ s =>
+      hasLineBoxEdges s.margin || hasLineBoxEdges s.padding || hasLineBoxEdges s.borderEdges
+  | _ => true
+
 private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) : Array Pending :=
   items.filterMap fun (offset, item) => match item with
     | .outOfFlow id => some {id, x := x+offset, y}
@@ -1280,15 +1291,17 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
   if items.all (fun item => isStaticPlaceholder item.2) then
     return {pending := staticLinePositions items x y}
+  let lineExists := items.any fun (_, item) => needsLineBox item
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
   let mut tallBottom : Float := 0
-  if let some style := strut then
-    let leading := lineLeading font style
-    let (a,d) := font.metricsOf style
-    ascent := a*style.fontSize/font.unitsPerEm+leading
-    descent := d*style.fontSize/font.unitsPerEm+leading
+  if lineExists then
+    if let some style := strut then
+      let leading := lineLeading font style
+      let (a,d) := font.metricsOf style
+      ascent := a*style.fontSize/font.unitsPerEm+leading
+      descent := d*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s | .blockBreak s =>
@@ -1322,7 +1335,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
-  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent), lastBaseline := some (y+ascent)}
+  let baseline := if lineExists then some (y+ascent) else none
+  let mut out : Result := {height := ascent+descent, baseline, lastBaseline := baseline}
   -- The inline boxes open at this point of the line, innermost first, each with its
   -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
   let mut frames : List (InlineBox.Frame Float × Computed) := []
