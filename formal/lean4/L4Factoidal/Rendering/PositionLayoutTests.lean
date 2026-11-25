@@ -197,6 +197,33 @@ private def tall := "<div id=f><div id=i><div id=k>K</div></div></div>"
 #guard box page "#a{aspect-ratio:2;width:100px;padding:5px}" "a" == some (0,0,110,60)
 #guard box page "#a{aspect-ratio:2;width:100px;box-sizing:border-box;padding:5px}" "a" == some (0,0,100,50)
 #guard box page "#p{position:absolute;aspect-ratio:2;width:40px}" "p" == some (0,7,40,20)
+-- The ratio can also determine automatic block width from height, within horizontal limits.
+private def ratioBlock := "<div id=a></div>"
+#guard box ratioBlock "#a{aspect-ratio:2;height:20px}" "a" == some (0,0,40,20)
+#guard box ratioBlock "#a{aspect-ratio:2;max-height:20px}" "a" == some (0,0,40,20)
+#guard box ratioBlock "#a{aspect-ratio:2;max-height:20px}" "a" 30 == some (0,0,30,15)
+#guard box ratioBlock "#a{aspect-ratio:2;min-height:20px}" "a" 30 == some (0,0,40,20)
+#guard box ratioBlock "#a{aspect-ratio:2;min-height:20px}" "a" == some (0,0,200,100)
+#guard box ratioBlock "#a{aspect-ratio:2;height:20px;min-width:100px}" "a" == some (0,0,100,20)
+#guard box ratioBlock "#a{aspect-ratio:2;height:20px;max-width:30px}" "a" == some (0,0,30,20)
+#guard box ratioBlock "#a{aspect-ratio:2;height:20px;min-width:50px;max-width:30px}" "a" == some (0,0,50,20)
+#guard box ratioBlock "#a{aspect-ratio:2;height:20px;width:60%}" "a" == some (0,0,120,20)
+#guard box "<div id=p><div id=a></div></div>"
+  "#p{height:60px}#a{aspect-ratio:2;height:50%}" "a" == some (0,0,60,30)
+#guard box ratioBlock "#a{aspect-ratio:2;box-sizing:border-box;border:20px solid;height:20px}" "a" ==
+  some (0,0,80,40)
+#guard box ratioBlock "#a{aspect-ratio:2;box-sizing:border-box;border:20px solid;max-height:20px}" "a" ==
+  some (0,0,80,40)
+#guard box ratioBlock "#a{aspect-ratio:auto 2/1;box-sizing:border-box;border:20px solid;height:60px}" "a" ==
+  some (0,0,80,60)
+private def wideRatioContent := "<div id=a><span style='display:inline-block;width:150px;height:5px'></span></div>"
+private def ratioContentCss := "#a{aspect-ratio:2;height:20px} "
+#guard box wideRatioContent ratioContentCss "a" == some (0,0,150,20)
+#guard box wideRatioContent (ratioContentCss ++ "#a{max-width:70px}") "a" == some (0,0,70,20)
+#guard box wideRatioContent (ratioContentCss ++ "#a{min-width:0}") "a" == some (0,0,40,20)
+#guard box wideRatioContent (ratioContentCss ++ "#a{overflow:clip}") "a" == some (0,0,150,20)
+#guard box wideRatioContent (ratioContentCss ++ "#a{overflow:hidden}") "a" == some (0,0,40,20)
+#guard box wideRatioContent (ratioContentCss ++ "#a{overflow:auto}") "a" == some (0,0,40,20)
 -- A canvas is a replaced box of its natural size: its attributes, or 300 by 150.
 private def drawing := "<div id=o><canvas id=k width=15 height=15>no canvas</canvas></div><div id=z>Z</div>"
 #guard box drawing "" "k" == some (0,0,15,15)
