@@ -32,6 +32,12 @@ const o=document.getElementById('o'),i=document.getElementById('i'),l=document.g
 log('reflect',o.start,i.maxLength,i.size,o.reversed,a.dir,l.pathname,l.hash);
 a.dir='RTL';log('dir',a.getAttribute('dir'),a.dir);
 try{i.size=0}catch(e){log('size',e.name)}
+const carrier=document.createElement('div'),map=carrier.dataset;
+carrier.setAttribute('data-not-rendered-width','10');
+log('dataset',map===carrier.dataset,map instanceof DOMStringMap,map.toString===Object.prototype.toString,
+  'notRenderedWidth' in map,map.notRenderedWidth,Object.keys(map).join(','));
+map.notRenderedWidth='';log('dataset-empty',map.notRenderedWidth==='',carrier.hasAttribute('data-not-rendered-width'));
+delete map.notRenderedWidth;log('dataset-delete','notRenderedWidth' in map,carrier.hasAttribute('data-not-rendered-width'));
 log('style',getComputedStyle(a).display,getComputedStyle(a).getPropertyValue('color'));
 log('css',CSS.supports('display','block'),CSS.supports('(display: grid)'),CSS.supports('not (display: grid)'),CSS.escape('0a'),
   document.fonts.status,typeof document.fonts.ready.then,'color' in getComputedStyle(a),'backgroundColor' in getComputedStyle(a),getComputedStyle(a).length>10);
@@ -72,6 +78,7 @@ Deno.test({name:"DOM breadth: Range, Selection, traversal, markup, reflection, c
   for(const want of ["range llo big worldSec d -1 true","clone <p id=\"a\">llo <b>big</b> world</p><p id=\"c\">Sec</p>",
     "live 4 3","html <p id=\"a\">XXHello <b>big</b> world<i>!</i></p>","sel 1 Range XXHello big world! a 4",
     "sel2 forward false","walk p,i,p","iter 5","reflect -3 12 20 false  /x/y #h","dir RTL rtl","size IndexSizeError",
+    "dataset true true true true 10 notRenderedWidth","dataset-empty true true","dataset-delete false false",
     "style block rgb(0, 0, 0)","css true true false \\30 a loaded function true true true",
     "pi b,a,v first true true 1","pi-toggle true 0 false 1 false","pi-empty true true true",
     "pi-invalid true true true","after DIV 0 new"])

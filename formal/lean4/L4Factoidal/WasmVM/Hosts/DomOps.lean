@@ -18,6 +18,7 @@ InvalidNodeTypeError, -14 IndexSizeError, -15 WrongDocumentError, -16 InvalidSta
 -/
 import L4Factoidal.WasmVM.Hosts.Dom
 import L4Factoidal.DOM.Reflect
+import L4Factoidal.DOM.StringMap
 import L4Factoidal.DOM.XPath.Evaluate
 import L4Factoidal.DOM.XPath.Xslt
 import L4Factoidal.DOM.XmlSerialize
@@ -733,6 +734,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 150 =>
     let n ← nodeArg d (num xs 0)
     return if selContainsNode (← get) n (num xs 1 == 1) then "1" else "0"
+  | 157 =>
+    let n ← nodeArg d id
+    return L4Factoidal.DOM.StringMap.answer (d.get n).attrs q
   | 160 =>
     -- A reflected IDL attribute's row. Legacy callers append a URL; URL reflection
     -- now uses the node document's state instead of that caller-supplied value.
