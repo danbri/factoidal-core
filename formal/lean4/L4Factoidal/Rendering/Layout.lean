@@ -337,7 +337,7 @@ edges of the paint box. The resulting arc may extend past that rectangle. -/
 private def roundedOutline (s : Computed) (outerW outerH : Float) (insets : Edges)
     (x y w h : Float) : Option Contour := do
   let lengths ← s.cornerLengths
-  let resolve := fun (pair : Length × Length) =>
+  let resolve := fun (pair : CSS.Length × CSS.Length) =>
     Corners.Radius.mk (radiusUnits ((CSS.resolve outerW pair.1).getD 0))
       (radiusUnits ((CSS.resolve outerH pair.2).getD 0))
   let radii : Corners.Radii := ⟨resolve lengths.topLeft,resolve lengths.topRight,
