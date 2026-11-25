@@ -18619,14 +18619,15 @@
   for (const [k, i, natural] of [['width', 0, 'w'], ['height', 1, 'h']])
     Object.defineProperty(named.HTMLImageElement.prototype, k, {
       get() {
-        const s = n.query(nodeId(this), 21, '');
+        const id = nodeId(this), s = n.query(id, 21, '');
         if (typeof s === 'string' && s !== '') {
           const v = Number(s.split(' ')[i]);
           return Number.isFinite(v) ? Math.round(v) : 0;
         }
-        const digits = /^[\t\n\f\r ]*([+-]?[0-9]+)/.exec(this.getAttribute(k) ?? '');
+        const attr = n0.attr(id, k);
+        const digits = typeof attr === 'string' ? /^[\t\n\f\r ]*([+-]?[0-9]+)/.exec(attr) : null;
         const value = digits ? Number(digits[1]) : NaN;
-        return Number.isFinite(value) && value >= 0 ? value || 0 : ofImg(this, natural);
+        return value >= 0 && value <= 0xffffffff ? value || 0 : ofImg(this, natural);
       },
       set(v) { let x = Number(v) >>> 0; if (x > 2147483647) x = 0; this.setAttribute(k, String(x)); },
       configurable: true, enumerable: true });
