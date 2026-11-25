@@ -270,7 +270,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     get frames(){return lifecycle?.framesPresented??0;},
     get steps(){return lastSteps;},
     get pixelHash(){return lastHash;},
-    get stats(){return {...stats,layers:{...layered.stats},gpu:gate.stats};},
+    get stats(){return {...stats,pipelineBuilds:stats.pipelineBuilds+layered.stats.pipelineBuilds,layers:{...layered.stats},gpu:gate.stats};},
     /** Submit to done of recent GPU work, ms (about the GPU time, with the gate on). */
     get gpuTimes(){return gate.recent;},
     /** The host loop's turn, right after it took input: GPU waits start only here from now on
