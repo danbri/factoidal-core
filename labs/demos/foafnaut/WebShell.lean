@@ -1404,6 +1404,34 @@ inductive Go where
 tab it opens in, and back leaves it (issue 1268). The host draws this URL with the graph app. -/
 def graphURL : String := "foafnaut:graph"
 
+/-- Where the keyboard focus goes when a page commits in a tab (issue 1077), as Chrome,
+Firefox and Safari do it: to the page, so a game or a page with keyboard shortcuts takes keys
+at once. The address bar keeps the focus only when the person typed in it after the
+navigation started (`typedSince`: their typing is not taken away), and takes it for a new
+tab page (`newTab`) or `about:blank`, where the next thing to do is to type an address.
+The answer is `"address"` or `"page"`. -/
+def focusOnCommit (url : String) (newTab addressFocused typedSince : Bool) : String :=
+  if newTab || url == "about:blank" then "address"
+  else if addressFocused && typedSince then "address"
+  else "page"
+
+/-- Says: a page that is not a new tab page and not `about:blank` gets the focus when it
+commits, unless the person typed in the address bar during its load. Does not say: that the
+page then gives the focus to an element (that is the page's `autofocus` and scripts). -/
+theorem focusOnCommit_page (url : String) (focused : Bool) (h : url ≠ "about:blank") :
+    focusOnCommit url false focused false = "page" := by
+  simp [focusOnCommit, h]
+
+/-- Says: the person's typing in the address bar during a load is kept: the bar keeps the
+focus. -/
+theorem focusOnCommit_typing (url : String) (newTab : Bool) :
+    focusOnCommit url newTab true true = "address" := by
+  unfold focusOnCommit; split <;> rfl
+
+#guard focusOnCommit "file:///particle-rex.html" false true false == "page"
+#guard focusOnCommit "about:blank" false false false == "address"
+#guard focusOnCommit "https://example.org/" true false false == "address"
+
 /-- A browser command. `graph` is the graph page, not a command. -/
 def command (name argument : String) : Go :=
   if name == "graph" && argument.isEmpty then .page graphURL else .command name argument

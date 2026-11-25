@@ -4,7 +4,14 @@ import { linuxKey } from "./linux_keys.ts";
 // `flags` (issue 1031), pointer kinds 2, 4 and 13 only: bits 0-3 the modifiers (1 Shift,
 // 2 Command, 4 Option, 8 Control), bits 8-15 the click count, bits 16-17 the button (0 primary,
 // 1 secondary, 2 middle). Absent with an older window library.
-export type NativeEvent = UIEvent & {key?:string;flags?:number};
+// Keys (issue 1074): kind 5 a key down and 17 a key up (a the macOS key code, b the
+// modifiers); flags bit 0 an auto-repeat, bit 1 "the window reports key releases". Kind 9
+// text with flags bit 1 names the key that typed it in b (`keyId` of its kind 5).
+export type NativeEvent = UIEvent & {key?:string;flags?:number;keyId?:number};
+export const keyRepeat=(flags:number)=>(flags&1)!==0;
+export const keyReleases=(flags:number)=>(flags&2)!==0;
+/** The key identity of a key event: the SDL key code on Linux, the macOS key code otherwise. */
+export const keyIdOf=(event:NativeEvent)=>event.keyId??event.a;
 export const pointerModifiers=(flags:number)=>flags&15;
 export const pointerClicks=(flags:number)=>(flags>>>8)&255;
 export const pointerButton=(flags:number)=>(flags>>>16)&3;
@@ -185,9 +192,12 @@ export function loadNativeWindow() {
     next(): NativeEvent | null {
       if (!symbols.ng_next_event(buffer)) return null;
       const kind=view.getUint32(0,true), a=view.getInt32(4,true), b=view.getInt32(8,true), time=view.getUint32(12,true);
-      if (kind === 16) {
+      // Linux keys (issue 1074): kind 16 a key down, 18 a key up, as macOS kinds 5 and 17
+      // with the macOS code in a; `keyId` is the SDL key code, which kind 9 text names in b.
+      if (kind === 16 || kind === 18) {
         const {key,code} = linuxKey(a);
-        return {kind:5, a:code, b, time, key};
+        const flags = eventSize>=20 ? view.getUint32(16,true) : 0;
+        return {kind:kind===16?5:17, a:code, b, time, key, flags, keyId:a};
       }
       return eventSize>=20 ? {kind,a,b,time,flags:view.getUint32(16,true)} : {kind,a,b,time};
     },

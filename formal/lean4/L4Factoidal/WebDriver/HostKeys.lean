@@ -17,14 +17,21 @@ A host gives one of three things:
   host browser already decided the key).
 
 A key is pressed: the modifiers held go down, the key goes down and up, the modifiers go
-up, the last pressed first (`press`). The window reports no key releases, so a press is
-whole.
+up, the last pressed first (`press`). A host that reports no key releases gives whole
+presses. A host that reports them (issue 1074: the window queues key down, auto-repeat and
+key up as separate events) gives a `Phase`: `down` (`downFrom`) presses the key and leaves
+it held, so a second `down` of a held key is an auto-repeat (`Actions.step` gives `again`,
+the page sees `KeyboardEvent.repeat`); `up` (`upFrom`) releases it. Both read the key names
+the session holds now, so the modifiers follow the host's bits and no modifier stays held
+after the last key is released.
 
-Proved: `mac_named_special` (every named row of `mac` is a WebDriver named key),
+Proved: `down_ends_with_key` and `up_starts_with_key` (a phase acts on its key),
+`mac_named_special` (every named row of `mac` is a WebDriver named key),
 `modifiers_are_modifiers` (the modifier bits give only the four modifier keys),
 `press_balanced` (the keys released are the keys pressed, last first, so no key stays
 held), `text_is_send_keys` (a host's text is Element Send Keys' typing).
-Tested: `#guard`s below.
+Tested: `#guard`s below, among them that from nothing held a down then an up of a key give
+the actions of a whole press (five keys and bit sets; not proved for every key).
 -/
 import L4Factoidal.WebDriver.Actions
 
@@ -93,6 +100,53 @@ def press (raw : Char) (bits : Nat) : List Action :=
   let held := if Keys.isModifier (Keys.ofRaw raw).key then [] else (modifiers bits).map String.singleton
   held.map Action.keyDown ++ [Action.keyDown v, Action.keyUp v] ++ held.reverse.map Action.keyUp
 
+/-- The phase of a host's key event: a whole press (a host that reports no release), a
+key that goes down or repeats (`down`), a key that goes up (`up`). -/
+inductive Phase where
+  | press
+  | down
+  | up
+  deriving Repr, DecidableEq
+
+/-- The phase of a host request's `phase` text; anything else is a whole press. -/
+def Phase.ofString : String → Phase
+  | "down" => .down
+  | "up" => .up
+  | _ => .press
+
+/-- The four modifier keys, as raw keys, in the order of `modifierBits`. -/
+def allModifiers : List Char := modifiers 15
+
+/-- The key name (`KeyboardEvent.key`) of a raw key, as `Actions.State.keys` holds it. -/
+def nameOf (raw : Char) : String := (Keys.ofRaw raw).key
+
+/-- A key goes down with the modifier `bits`, given the key names held (`held`): the
+modifiers held that the bits no longer hold go up, the modifiers of the bits not held go
+down, then the key goes down. A key already held goes down again: an auto-repeat. A modifier
+key itself goes down alone. -/
+def downFrom (held : List String) (raw : Char) (bits : Nat) : List Action :=
+  let v := String.singleton raw
+  if Keys.isModifier (nameOf raw) then [Action.keyDown v] else
+  let want := modifiers bits
+  let drop := allModifiers.filter fun m => held.contains (nameOf m) && !want.contains m
+  let add := want.filter fun m => !held.contains (nameOf m)
+  drop.reverse.map (fun m => Action.keyUp (String.singleton m)) ++
+    add.map (fun m => Action.keyDown (String.singleton m)) ++ [Action.keyDown v]
+
+/-- A key goes up, given the key names held (`held`): the key goes up; when no other key
+than the modifiers is then held, the modifiers held go up too, the last first. -/
+def upFrom (held : List String) (raw : Char) : List Action :=
+  let v := String.singleton raw
+  let after := held.filter (· != nameOf raw)
+  let others := after.filter fun n => !(allModifiers.any fun m => nameOf m == n)
+  let mods := if others.isEmpty then (allModifiers.filter fun m => after.contains (nameOf m)).reverse else []
+  Action.keyUp v :: mods.map (fun m => Action.keyUp (String.singleton m))
+
+/-- The key names held after a key went down from nothing held with the bits. -/
+def heldAfterDown (raw : Char) (bits : Nat) : List String :=
+  if Keys.isModifier (nameOf raw) then [nameOf raw] else
+  (modifiers bits).map nameOf ++ [nameOf raw]
+
 /-- What a host gives for a key. -/
 inductive HostKey where
   | text (s : String)
@@ -109,6 +163,34 @@ def actionsOf : HostKey → List Action
   | .dom key bits => match ofDomKey key with
     | some raw => press raw bits
     | none => []
+
+/-- The raw key of a host's key: the named or chorded key, or the single character a key
+typed. Text of more than one character (a composition) has none: it is typed whole. -/
+def rawOf : HostKey → Option Char
+  | .text s => match s.toList with | [c] => some c | _ => none
+  | .mac code bits => ofMac code bits
+  | .dom key _ => ofDomKey key
+
+/-- The modifier bits of a host's key (text carries the bits of the key that typed it). -/
+def bitsOf : HostKey → Nat → Nat
+  | .text _, bits => bits
+  | .mac _ bits, _ => bits
+  | .dom _ bits, _ => bits
+
+/-- The key actions of a host's key event in a phase, given the key names held: a whole
+press is `actionsOf`; a `down` or an `up` of a key with a raw key is `downFrom` or `upFrom`;
+an `up` of text of more than one character does nothing (it was typed whole at its down). -/
+def actionsAt (phase : Phase) (held : List String) (k : HostKey) (textBits : Nat := 0) : List Action :=
+  match phase, rawOf k with
+  | .press, _ => actionsOf k
+  | .down, some raw => downFrom held raw (bitsOf k textBits)
+  | .down, none => match k with | .text _ => actionsOf k | _ => []
+  | .up, some raw => upFrom held raw
+  | .up, none => []
+
+/-- The input source of a host's key event in a phase. -/
+def sourceAt (phase : Phase) (held : List String) (k : HostKey) (textBits : Nat := 0) : Source :=
+  { id := "host keyboard", kind := .key, actions := actionsAt phase held k textBits }
 
 /-- The input source of a host's key: one key source, as a test driver's would be. -/
 def sourceOf (k : HostKey) : Source := { id := "host keyboard", kind := .key, actions := actionsOf k }
@@ -154,6 +236,19 @@ Keys types a string, so a person's typing and `test_driver.send_keys` give the p
 same events. -/
 theorem text_is_send_keys (s : String) : actionsOf (.text s) = typeable s := rfl
 
+/-- A down acts on its key. Says: the last action of a key going down is that key going
+down, so the page's last event of a host key-down is its `keydown`. -/
+theorem down_ends_with_key (held : List String) (raw : Char) (bits : Nat) :
+    (downFrom held raw bits).getLast? = some (Action.keyDown (String.singleton raw)) := by
+  unfold downFrom
+  split <;> simp
+
+/-- An up acts on its key first. Says: the first action of a key going up is that key going
+up, before any modifier is released. -/
+theorem up_starts_with_key (held : List String) (raw : Char) :
+    (upFrom held raw).head? = some (Action.keyUp (String.singleton raw)) := by
+  simp [upFrom]
+
 /-! ## Tests -/
 
 #guard ofMac 36 0 == some (Char.ofNat 0xE006)
@@ -183,5 +278,27 @@ theorem text_is_send_keys (s : String) : actionsOf (.text s) = typeable s := rfl
 #guard ["Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown",
   "Home", "End", "PageUp", "PageDown", "Shift", "Control", "Alt", "Meta", "F1", "F12", "Insert"].all fun k =>
   (ofDomKey k).map (fun c => (Keys.ofRaw c).key) == some k
+
+-- phases (issue 1074): a held key is a down, downs while held, then one up
+#guard downFrom [] (Char.ofNat 0xE00D) 0 == [.keyDown ""]
+#guard upFrom [" "] (Char.ofNat 0xE00D) == [.keyUp ""]
+-- Shift and an arrow: Shift goes down first; at the release of the arrow, Shift goes up too
+#guard downFrom [] (Char.ofNat 0xE013) 1 == [.keyDown "", .keyDown ""]
+#guard upFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) == [.keyUp "", .keyUp ""]
+-- Shift released between two downs of a held key: it goes up before the repeat
+#guard downFrom ["Shift", "ArrowUp"] (Char.ofNat 0xE013) 0 == [.keyUp "", .keyDown ""]
+-- another key still held: the modifier stays held at this release
+#guard upFrom ["Shift", "ArrowUp", "ArrowLeft"] (Char.ofNat 0xE013) == [.keyUp ""]
+-- text of one character goes down and up as its key; a composition is typed whole at its down
+#guard actionsAt .down [] (.text "w") == [.keyDown "w"]
+#guard actionsAt .up ["w"] (.text "w") == [.keyUp "w"]
+#guard actionsAt .down [] (.text "é!") == typeable "é!"
+#guard actionsAt .up [] (.text "é!") == []
+-- a character key code alone has no actions (its text follows)
+#guard actionsAt .down [] (.mac 0 0) == []
+#guard actionsAt .press [] (.mac 49 0) == press (Char.ofNat 0xE00D) 0
+-- from nothing held, a down then an up of a key give the actions of a whole press
+#guard [(Char.ofNat 0xE00D, 0), (Char.ofNat 0xE013, 1), ('a', 8), ('A', 9), (Char.ofNat 0xE006, 15)].all fun (r, b) =>
+  downFrom [] r b ++ upFrom (heldAfterDown r b) r == press r b
 
 end L4Factoidal.WebDriver.HostKeys

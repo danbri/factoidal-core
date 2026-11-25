@@ -26,6 +26,8 @@ static int logical_width, logical_height, pixel_width, pixel_height;
 static char *private_clipboard;
 static int trace_input;
 static SDL_Keymod text_modifiers;
+static SDL_Keycode text_key;  /* the key of the last key down: the key that types the text after it */
+static int text_repeat;
 static NGEvent *events;
 static unsigned count, head, capacity, dropped;
 
@@ -199,11 +201,17 @@ static void receive(const SDL_Event *event) {
       enqueue(11, (int32_t)lround(event->wheel.preciseY * 16 * scale * direction), 0);
       break;
     }
+    /* Keys (issue 1074): kind 16 a key down, flags bit 0 an auto-repeat, bit 1 "this window
+       reports key releases"; kind 18 a key up. Both have the SDL key code in a and the
+       modifiers in b. The text a key types (kind 9) names that key in b, with flags bit 1. */
     case SDL_KEYDOWN: case SDL_KEYUP:
       text_modifiers = (SDL_Keymod)event->key.keysym.mod;
-      if (event->type == SDL_KEYDOWN &&
-          !(event->key.keysym.sym >= SDLK_LCTRL && event->key.keysym.sym <= SDLK_RGUI))
-        enqueue(16, event->key.keysym.sym, modifiers(text_modifiers));
+      if (!(event->key.keysym.sym >= SDLK_LCTRL && event->key.keysym.sym <= SDLK_RGUI)) {
+        if (event->type == SDL_KEYDOWN) {
+          text_key = event->key.keysym.sym; text_repeat = event->key.repeat ? 1 : 0;
+          enqueue_flags(16, event->key.keysym.sym, modifiers(text_modifiers), 2u | (uint32_t)text_repeat);
+        } else enqueue_flags(18, event->key.keysym.sym, modifiers(text_modifiers), 2u);
+      }
       break;
     case SDL_TEXTINPUT: {
       if ((text_modifiers & (KMOD_CTRL | KMOD_GUI)) && !(text_modifiers & KMOD_MODE)) break;
@@ -212,7 +220,7 @@ static void receive(const SDL_Event *event) {
       if (chars) {
         for (const uint32_t *p = chars; *p; ++p) {
           uint32_t scalar = SDL_SwapLE32(*p);
-          if (scalar >= 32 && scalar != 127) enqueue(9, (int32_t)scalar, 0);
+          if (scalar >= 32 && scalar != 127) enqueue_flags(9, (int32_t)scalar, text_key, 2u | (uint32_t)text_repeat);
         }
         SDL_free(chars);
       }
@@ -239,7 +247,8 @@ int ng_test_key(const char *key, int shift) {
   SDL_Keycode code = SDL_GetKeyFromName(key);
   if (code == SDLK_UNKNOWN) return 0;
   int mods = code == SDLK_LEFT || code == SDLK_RIGHT ? 4 : 8;
-  enqueue(16, code, mods | (shift ? 1 : 0)); return 1;
+  enqueue_flags(16, code, mods | (shift ? 1 : 0), 2u);
+  enqueue_flags(18, code, mods | (shift ? 1 : 0), 2u); return 1;
 }
 /* An off-screen window has a private clipboard. SDL allocated the result of
    either path, and ng_free always uses the matching allocator. */
