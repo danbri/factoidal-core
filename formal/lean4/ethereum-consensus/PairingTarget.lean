@@ -12,7 +12,7 @@ def order : Nat :=
 def finalExponent : Nat := (modulus^12-1)/order
 
 def canonical (a : Array Nat) : Bool :=
-  (a.size == 12) && a.all (fun x => x < modulus)
+  (a.size == 12) && a.all (fun x => decide (x < modulus))
 
 def zero : Array Nat := Array.replicate 12 0
 def one : Array Nat := #[1,0,0,0,0,0,0,0,0,0,0,0]
