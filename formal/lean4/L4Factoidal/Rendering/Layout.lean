@@ -1397,6 +1397,77 @@ private def bidiClassNeeds (c : Char) : Bool :=
   | .R | .AL | .AN | .LRE | .LRO | .RLE | .RLO | .PDF | .LRI | .RLI | .FSI | .PDI => true
   | _ => false
 
+/-- Recheck a run that crosses text sources. Use the original style for each
+piece, with the surrounding text available to the Unicode line-break rules.
+An existing item boundary may join a run without joining its paint or source. -/
+private def appendJoinedText (items : Array Inline) (lo hi : Nat)
+    (out : Array Inline) (glue : Array Bool) : Array Inline × Array Bool := Id.run do
+  let chars := (items.extract lo hi).flatMap fun
+    | .word _ _ text _ => text.toList.toArray
+    | _ => #[]
+  let strict := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .strict
+  let normal := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .normal
+  let loose := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .loose
+  let mut offset := 0
+  let mut out := out
+  let mut glue := glue
+  for k in [lo:hi] do
+    let item := items[k]!
+    match item with
+    | .word source style text start =>
+      let flags := (match lineBreakMode style with
+        | .strict => strict
+        | .normal => normal
+        | .loose => loose).get
+      let n := text.length
+      let mut from_ := 0
+      let mut held := offset > 0 && !(flags[offset]?.getD false)
+      for cut in [1:n] do
+        if flags[offset+cut]?.getD false then
+          let piece := String.ofList (chars.extract (offset+from_) (offset+cut)).toList
+          out := out.push (.word source style piece (start+from_))
+          glue := glue.push held
+          from_ := cut
+          held := false
+      let item := if from_ == 0 then item else
+        .word source style (String.ofList (chars.extract (offset+from_) (offset+n)).toList) (start+from_)
+      out := out.push item
+      glue := glue.push held
+      offset := offset+n
+    | _ =>
+      out := out.push item
+      glue := glue.push false
+  return (out,glue)
+
+/-- Text adjacency ignores inline boundaries and out-of-flow placeholders (CSS
+Text 3 §1.5). White space, forced breaks and atomic boxes end these runs.
+A run confined to one text source already has its own UAX 14 boundaries. -/
+private def joinedInlineText (items : Array Inline) : Array Inline × Array Bool := Id.run do
+  let mut previous : Option TextSource := none
+  let mut joined := false
+  let mut start := 0
+  let mut copied := 0
+  let mut out := #[]
+  let mut glue := #[]
+  for k in [:items.size+1] do
+    match items[k]? with
+    | some (.word source _ _ _) =>
+      if let some p := previous then
+        joined := joined || p.paint != source.paint || p.geometry != source.geometry
+      previous := some source
+    | some (.openInline ..) | some (.closeInline ..) | some (.outOfFlow _) | some (.bidiMark _) => pure ()
+    | _ =>
+      if joined then
+        out := out ++ items.extract copied start
+        glue := glue ++ Array.replicate (start-copied) false
+        (out,glue) := appendJoinedText items start k out glue
+        copied := k
+      previous := none
+      joined := false
+      start := k+1
+  if copied == 0 then return (items,#[])
+  return (out ++ items.extract copied items.size, glue)
+
 /-- The block needs UAX #9: it is right to left or plaintext, or has an inline box
 with `unicode-bidi`, or a character of `bidiClassNeeds`. Otherwise every level is 0
 and the order is logical (`Unicode.reorderByLevels_even`). -/
@@ -1417,7 +1488,7 @@ structure BidiItems where
 
 /-- UAX #9 P1 to I2 over the items of a block (`Unicode.levelsOfText`). A character
 that X9 removes takes the level before it. -/
-def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) : BidiItems := Id.run do
+def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) (held : Array Bool := #[]) : BidiItems := Id.run do
   let mut cs : Array Char := #[]
   let mut starts : Array Nat := #[]
   for it in items do
@@ -1443,7 +1514,7 @@ def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) : BidiItems := 
       for k in [1:chars.size+1] do
         if k == chars.size || lv[st+k]! != lv[st+from_]! then
           out := {items := out.items.push (.word source s (String.ofList (chars.extract from_ k).toList) (start+from_)),
-                  levels := out.levels.push lv[st+from_]!, glue := out.glue.push (from_ > 0),
+                  levels := out.levels.push lv[st+from_]!, glue := out.glue.push (from_ > 0 || held[i]?.getD false),
                   paraLevels := out.paraLevels.push para}
           from_ := k
     | other =>
@@ -1559,12 +1630,13 @@ private theorem balancedWidth_preservesCount (words : Array WrapMeasure) (availa
 /-- Measure text in a constant-width horizontal line box. Inline boxes with no
 horizontal edges fit the same model. For other participants, let the ordinary
 layout handle the whole run. -/
-private def inlineBalanceWidth (font : FontProfile) (items : Array Inline)
+private def inlineBalanceWidth (font : FontProfile) (items : Array Inline) (held : Array Bool)
     (available : Float) : Except String (Option Float) := do
   if items.size > 384 || available <= 0 || !available.isFinite then return none
   let mut words := #[]
   let mut separator := none
-  for item in items do
+  for i in [:items.size] do
+    let item := items[i]!
     match item with
     | .word _ s _ _ =>
       if s.preformatted || s.pos.nowrap then return none
@@ -1573,7 +1645,10 @@ private def inlineBalanceWidth (font : FontProfile) (items : Array Inline)
         | some space => spaceWidth font space
         | none => pure 0
       if width <= 0 || !width.isFinite || gap < 0 || !gap.isFinite then return none
-      words := words.push ⟨width,gap⟩
+      if held[i]?.getD false then
+        let some previous := words.back? | return none
+        words := words.set! (words.size-1) {previous with width := previous.width + gap + width}
+      else words := words.push ⟨width,gap⟩
       separator := none
     | .space _ s =>
       if s.preformatted || s.pos.nowrap then return none
@@ -1598,9 +1673,10 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
     (uniformBand : Bool := true) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
+  let (items0, held) := joinedInlineText items0
   let bidi := needsBidi rtlBlock plain items0
-  let bi : BidiItems := if bidi then bidiItems items0 (if plain then .auto else if rtlBlock then .rtl else .ltr)
-    else ⟨items0, #[], #[], #[]⟩
+  let bi : BidiItems := if bidi then bidiItems items0 (if plain then .auto else if rtlBlock then .rtl else .ltr) held
+    else ⟨items0, #[], held, #[]⟩
   let items := bi.items
   let dirOf := fun (k : Nat) => if bidi then (bi.levels[k]?.map (· % 2 == 1)) else none
   let glued := fun (k : Nat) => bi.glue[k]?.getD false
@@ -1615,7 +1691,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
   let balanced ← if uniformBand && !bidi && firstIndent == 0 &&
       strut.any (fun s => s.balanceText && s.balanceWrap && !s.pos.nowrap && s.pos.writingMode == .horizontalTb) then
-    inlineBalanceWidth font items (band 0).2
+    inlineBalanceWidth font items held (band 0).2
     else pure none
   let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
@@ -1742,39 +1818,39 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       let width ← itemWidth font (dirOf k) item
       -- The item goes on a line with the starts of the inline boxes it begins.
       let lead := if waiting.isEmpty then 0 else waiting.foldl (fun w (_,_,ws) => w+inlineLead ws) 0
-      -- The pieces of a word cut by bidi levels go on one line together.
       let mut whole := width+lead
-      if bidi && !glued k then
-        let mut j := k+1
-        for _ in [0:items.size] do
-          if j < items.size && glued j then
-            whole := whole+(← itemWidth font (dirOf j) items[j]!)
-            j := j+1
-          else break
       let gap ← if cursorX > 0 then match pendingSpace with
         | some (_,s) => spaceWidth font s
         | none => pure 0
         else pure 0
-      -- A line may break before this item: then what follows it with no break between
-      -- (`white-space: nowrap`) must fit on the line with it. Only the first item of such a
-      -- run looks ahead, so a run is measured once.
+      -- At a possible break measure the run that must follow on the same line.
+      -- This includes a word cut by inline boundaries, bidi levels, or nowrap.
       let held := heldByNowrap pendingSpace item
-      if !bidi && !held && cursorX > 0 then
+      if !glued k && (bidi || !held) && cursorX > 0 then
         let mut between : Option Computed := none
+        let mut leading : Float := 0
+        let mut opening : Nat := 0
         for j in [k+1:items.size] do
           match items[j]! with
-          | .space _ ss => if ss.preformatted then break else between := some ss
-          | .openInline _ ws _ => whole := whole+inlineLead ws
-          | .closeInline _ ws => whole := whole+inlineTrail ws
+          | .space _ ss => if bidi || ss.preformatted then break else between := some ss
+          | .openInline _ ws _ =>
+            leading := leading+inlineLead ws
+            opening := opening+1
+          | .closeInline _ ws =>
+            if opening == 0 then whole := whole+inlineTrail ws
+            else
+              leading := leading+inlineTrail ws
+              opening := opening-1
+          | .outOfFlow _ | .bidiMark _ => pure ()
           | .word source ws text start =>
-            -- Use the same boundary rule as placement. A generated quote and
-            -- its word can be separate items with no intervening space.
-            if !(between.getD ws).pos.nowrap then break
+            if !glued j && (bidi || !(between.getD ws).pos.nowrap) then break
             let gap ← match between with
               | some ss => spaceWidth font ss
               | none => pure 0
-            whole := whole+gap+(← itemWidth font none (.word source ws text start))
+            whole := whole+gap+leading+(← itemWidth font (dirOf j) (.word source ws text start))
             between := none
+            leading := 0
+            opening := 0
           | _ => break
       let room := (bandAt out.height first).2
       let wrapRoom := balanced.getD room
