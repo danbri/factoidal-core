@@ -290,6 +290,23 @@ def rendered (s : σ) (n : Nat) : σ × Bool :=
         | none => break
     return (s, true)
 
+/-- Sequential focus within the current document. Evaluate display against the current
+cascade and move the focus through the same event path as the page's focus method. -/
+def sequentialFocus (s : σ) (backward : Bool) : σ := Id.run do
+  let d := (e.host s).dom.dom
+  let current := Hosts.Dom.focusedElement d
+  let root := (current.map (d.shadowIncludingRoot ·)).getD 0
+  let mut work := s
+  for id in L4Factoidal.DOM.Focus.sequentialCandidates d root current backward do
+    let (next, displayed) := e.rendered work id
+    work := next
+    if displayed then
+      let visible := match (e.host work).reads.kept with
+        | none => true
+        | some (_, f) => f id 42 "" != some "hidden"
+      if visible then return (e.dispatch work id "@focus-key").1
+  return work
+
 /-- A key of the user (`up`: its release). `keydown` is fired at the focused element,
 then falls back to the editing host or body when there is no focus. A focused disclosure
 summary handles Space by activating on release. When no listener canceled `keydown`,
@@ -323,10 +340,11 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
   else
     let (s, prevented) := e.dispatchWith s target "keydown" init
     let summarySpace := space && !k.shift && !k.ctrl && !k.alt && !k.cmd && focusedSummary s
+    let tab := k.key == "Tab" && !k.ctrl && !k.alt && !k.cmd
     let p := (e.host s).pointer
     let s := e.setPointer s { p with
       spaceSummary := if space && !again then none else p.spaceSummary
-      keyDefault := some (!prevented && !summarySpace && !Hosts.Dom.keyEdits (e.host s).dom) }
+      keyDefault := some (!prevented && !summarySpace && !tab && !Hosts.Dom.keyEdits (e.host s).dom) }
     let s := Input.afterCancelable prevented (fun s =>
       let (s, pressPrevented) := match press with
         | some pressInit => e.dispatchWith s target "keypress" pressInit
@@ -335,6 +353,7 @@ def key (s : σ) (up : Bool) (init : String) (k : L4Factoidal.DOM.Editing.KeyInp
         if summarySpace then
           if again || !focusedSummary s then s else
             e.setPointer s { (e.host s).pointer with spaceSummary := some target }
+        else if tab then e.sequentialFocus s k.shift
         else
           match Hosts.Dom.keyCommandOf (e.host s).dom k, Hosts.Dom.keyHost (e.host s).dom with
           | some (command, value), some host =>

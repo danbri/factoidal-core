@@ -10,8 +10,8 @@ The focused element is the page's state (it is mirrored into `Node.states` bit 8
 decided here from the tree: the element when it is a focusable area, else, for a shadow host
 whose shadow root delegates focus, the first focusable area inside.
 
-Not decided here: whether the element is being rendered (a `display: none` element is not
-focusable in a browser; here it is, an open item), and sequential (Tab) navigation.
+Sequential navigation within a document uses `sequentialCandidates`. The event host checks
+current render visibility and runs the DOM focus update steps.
 -/
 import L4Factoidal.DOM.Forms
 import L4Factoidal.DOM.Shadow
@@ -214,5 +214,80 @@ private def tree : Dom :=
 #guard pressTarget tree 9 == some 10 && pressTarget tree 1 == none && pressTarget tree 2 == some 2 && pressTarget tree 13 == some 13
 #guard answer tree 9 "p" == "10" && answer tree 1 "p" == ""
 #guard tabindex? " -1" == some (-1) && tabindex? "3px" == some 3 && tabindex? "x" == none && tabindex? "" == none
+
+/-- An `inert` element and its descendants do not take sequential focus. -/
+private def inertForTab (d : Dom) (k : NodeId) : Bool := Id.run do
+  let mut n := k
+  for _ in [0:d.size + 1] do
+    if (attr? d n "inert").isSome then return true
+    let node := d.get n
+    match node.parent.orElse (fun _ => if d.isShadowRoot n then node.host else none) with
+    | some p => n := p
+    | none => return false
+  return false
+
+/-- A sequential focus stop's rank within its document scope. A negative explicit
+`tabindex` still permits programmatic focus but excludes sequential traversal. -/
+def sequentialIndex (d : Dom) (k : NodeId) : Option Nat := do
+  if !focusable d k || inertForTab d k then none else
+  let i := ((attr? d k "tabindex").bind tabindex?).getD 0
+  if i < 0 then none else some i.toNat
+
+/-- Candidate stops in one document's sequential focus navigation scope. Positive
+indices precede the ordinary order. Equal indices preserve tree order. Starting at an
+excluded node, such as a programmatically focused negative `tabindex` element, follows
+or reverses tree order from that node. The caller checks current render visibility. -/
+def sequentialCandidates (d : Dom) (root : NodeId) (current : Option NodeId)
+    (backward : Bool) : List NodeId :=
+  let tree := (d.treeOrder root).toList
+  let stops := tree.filterMap fun k => (sequentialIndex d k).map fun i => (k,i)
+  let ordered := (stops.mergeSort fun a b => b.2 == 0 || (a.2 != 0 && a.2 ≤ b.2)).map (·.1)
+  let travel := fun (nodes : List NodeId) => if backward then nodes.reverse else nodes
+  let next := match current with
+    | none => travel ordered
+    | some k =>
+      let suffix := fun steps => ((travel steps).dropWhile (· != k)).drop 1
+      if ordered.contains k then suffix ordered
+      else if tree.contains k then suffix tree else travel ordered
+  next.filter fun k => (sequentialIndex d k).isSome
+
+/-- Every candidate permits sequential focus before checking renderer visibility. -/
+theorem sequentialCandidates_isStop (d : Dom) (root : NodeId) (current : Option NodeId)
+    (backward : Bool) (k : NodeId) (h : k ∈ sequentialCandidates d root current backward) :
+    (sequentialIndex d k).isSome = true := by
+  unfold sequentialCandidates at h
+  exact (List.mem_filter.mp h).2
+
+private def tabFixture : Dom :=
+  let element := fun (tag id : String) (rest : Array DOM.Attr) =>
+    { type := .element, ns := some htmlNS, lname := tag, parent := some 0,
+      attrs := #[{lname := "id", value := id}] ++ rest : DOM.Node }
+  let button := fun (id index : String) =>
+    element "button" id #[{lname := "tabindex", value := index}]
+  { nodes := #[
+    {type := .document, htmlDoc := true, kids := #[1,2,3,4,5,6,7,8,9]},
+    element "a" "first" #[{lname := "href", value := "#"}],
+    button "tie1" "2",
+    element "input" "skip" #[{lname := "tabindex", value := "-1"}],
+    button "tie2" "2",
+    element "input" "never" #[{lname := "tabindex", value := "1"}, {lname := "disabled",value := ""}],
+    button "zero" "0",
+    button "head" "1",
+    button "invalid" "nope",
+    {element "div" "inert-box" #[{lname := "inert",value := ""}] with kids := #[10]},
+    {button "inert-button" "1" with parent := some 9}] }
+
+private def tabIds (current : Option String := none) (backward := false) : List String :=
+  let matching := current.bind fun id => (tabFixture.treeOrder 0).find? (fun k => attr? tabFixture k "id" == some id)
+  (sequentialCandidates tabFixture 0 matching backward).filterMap (attr? tabFixture · "id")
+
+#guard tabIds == ["head", "tie1", "tie2", "first", "zero", "invalid"]
+#guard tabIds none true == ["invalid", "zero", "first", "tie2", "tie1", "head"]
+#guard tabIds (some "tie1") == ["tie2", "first", "zero", "invalid"]
+#guard tabIds (some "first") true == ["tie2", "tie1", "head"]
+#guard tabIds (some "skip") == ["tie2", "zero", "head", "invalid"]
+#guard tabIds (some "skip") true == ["tie1", "first"]
+#guard tabIds (some "invalid") == []
+#guard sequentialIndex tabFixture 10 == none
 
 end L4Factoidal.DOM.Focus
