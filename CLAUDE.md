@@ -1134,6 +1134,19 @@ can defer for now and add more if concrete usecases arise."
   https://github.com/danbri/factoidal-core/pull/766 (finite-field Diffie-Hellman, dh-es, with
   1024-bit primes behind an opt-in). It stays unmerged until the owner answers on it.
 
+### Never report upstream (owner, 2026-11-25)
+
+Owner, 2026-11-25, verbatim: "Nothing upstream. Sites are swamped with sloppy llm tickets. Never
+report upstream." Said in answer to the question whether to report a defect found in a third-party
+Rust crate (`saturating-time` 0.6.0, section 8 of
+`docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`).
+
+- Never open an issue, pull request, comment or mail on a project outside the owner's own
+  repositories. A defect found in third-party code is recorded here (a design record, and an
+  issue in an owner repository when it blocks work), with a local patch or workaround.
+- This replaces "then it is reported to the Touchstone author" in the LWS entry above and the
+  upstream bug-report route of the vendored `lean-mwe` skill: record the evidence locally.
+
 ### One owner per release (owner, 2026-10-28)
 
 Owner, 2026-10-28, verbatim: "Ok you are release manager for 0.20.0" and
@@ -1233,7 +1246,7 @@ exits 0 in both configurations (open and authorization on), with 0 failed and
 no test inapplicable for a feature we could implement, which is the level of
 the best servers on that page (lws-drupal: 210 passed, 0 failed, 11
 inapplicable). A test is called defective only with the spec text quoted, and
-then it is reported to the Touchstone author, not worked around. First run,
+then it is recorded locally (see "Never report upstream" below), not worked around. First run,
 2026-10-21: 0 tests ran (https://github.com/danbri/factoidal/issues/911).
 Features to add: https://github.com/danbri/factoidal/issues/890 (notifications),
 https://github.com/danbri/factoidal/issues/912 (type index and search),

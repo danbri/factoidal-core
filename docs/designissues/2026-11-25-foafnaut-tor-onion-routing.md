@@ -140,7 +140,8 @@ Findings:
    A wasm Tor client needs an Arti runtime (`tor-rtcompat`) over host sockets.
 5. `saturating-time` 0.6.0 (used by `tor-netdoc`) does not compile for `wasm32-unknown-unknown`:
    it names `std::time::Instant` where `web-time-compat` gives `web_time::Instant`. The probe used
-   a local patch. Not yet reported upstream.
+   a local patch. Not reported upstream: owner rule of 2026-11-25 in `CLAUDE.md`, "Never report
+   upstream".
 6. Page `Date.now()` and `performance.now()` read the virtual script clock (`Page.lean`, "The
    script clock"; it starts near 0). A Tor client needs wall time (consensus validity, onion
    service time periods). The host must give the Tor component real time as a capability; the
