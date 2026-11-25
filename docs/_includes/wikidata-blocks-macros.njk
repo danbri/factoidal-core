@@ -1,60 +1,82 @@
-{#- Block view for queries beyond set browsing: chains of interlocking pieces,
-    held by Scratch-like operator blocks. ctx = {entities, thumb}. -#}
+{#- Block view of a query: chains of interlocking pieces (set, pivot, set …),
+    held together by Scratch-like blocks for operations browsing lacks.
+    ctx = {entities, thumb}. Every variable is marked data-v="name", so the
+    page can light up all uses of one on hover, or on click (#hl-name). -#}
 {%- import "wikidata-parallax-macros.njk" as m -%}
 
+{#- Text with ?variables made into highlight links. Input is already escaped by m.bare. -#}
+{%- macro vt(text) -%}
+{{ m.bare(text) | replace(r/\?([A-Za-z_]\w*)/g, '<a class="v" data-v="$1" href="#hl-$1">?$1</a>') | safe }}
+{%- endmacro -%}
+
 {%- macro val(v, ctx) -%}
-{%- if v.id and ctx.entities[v.id] -%}<a class="pz-val" href="https://www.wikidata.org/wiki/{{ v.id }}">{{ m.thumb(v.id, ctx.entities, ctx.thumb, 18, "mini") | safe }}{{ m.bare(v.text) }}</a>
+{%- if v.id and ctx.entities[v.id] -%}<a class="pz-val" href="https://www.wikidata.org/wiki/{{ v.id }}" title="{{ ctx.entities[v.id].description }} ({{ v.id }})">{{ m.thumb(v.id, ctx.entities, ctx.thumb, 18, "mini") | safe }}{{ m.bare(v.text) }}</a>
 {%- else -%}<span class="pz-val">{{ m.bare(v.text) }}</span>{%- endif -%}
 {%- endmacro -%}
 
-{%- macro piece(p, ctx) -%}
+{%- macro piece(p, ctx, hat=false) -%}
 {%- if p.kind == "set" -%}
-<li class="pz pz-set">
-  <span class="pz-title">{%- if p.typeId %}{{ m.thumb(p.typeId, ctx.entities, ctx.thumb, 22, "mini") | safe }}every {{ m.bare(p.title) }}{% elif p.title.startsWith("?") %}<span class="var">{{ p.title }}</span>{% else %}{{ m.bare(p.title) }}{% endif -%}</span>
-  {%- for f in p.facets %}<span class="pz-in{% if f.optional %} pz-in-opt{% endif %}{% if f.wild %} pz-in-wild{% endif %}">{% if f.reverse %}is {{ m.bare(f.prop) }} of{% else %}{{ m.bare(f.prop) }}{% endif %} = {% for v in f.values %}{{ val(v, ctx) | safe }}{% if not loop.last %} or {% endif %}{% endfor %}</span>{% endfor %}
-  {%- for c in p.chips %}<span class="pz-in pz-in-{{ c.verb }}">{% if c.kind == "or" %}any of: {{ m.bare(c.label) | replace(" | ", " · ") }}{% else %}{{ c.verb }} if {{ m.bare(c.label) }}{% endif %}</span>{% endfor %}
-  {%- if p.columns | length %}<span class="pz-cols">shows {% for c in p.columns | batch(3) | first %}{% if c.wild %}<span class="pz-wildtext">{% endif %}{% if c.prop.startsWith("reverse of ") %}things whose {{ m.bare(c.prop | replace("reverse of ", "")) }} is this{% else %}{{ m.bare(c.prop) }}{% endif %} <span class="var pz-var">?{{ c.var }}</span>{% if c.wild %}</span>{% endif %}{% if c.optional %} (if any){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if p.columns | length > 3 %} and {{ p.columns | length - 3 }} more{% endif %}</span>{% endif %}
+<li class="pz pz-set{% if hat %} pz-hat{% endif %}" data-v="{{ p.var }}">
+  <a class="pz-title" href="#hl-{{ p.var }}" title="The set ?{{ p.var }}{% if p.typeId %}: every {{ p.title }}{% endif %}">
+    {%- if p.typeId %}{{ m.thumb(p.typeId, ctx.entities, ctx.thumb, 44 if hat else 22, "hat-img" if hat else "mini") | safe }}<span>every {{ m.bare(p.title) }}{% if hat and ctx.entities[p.typeId].description %}<span class="pz-desc">{{ ctx.entities[p.typeId].description }}</span>{% endif %}</span>{% else %}{{ m.bare(p.name or p.title) }}{% endif -%}
+  </a>{% if not p.typeId and p.name != p.var %} <a class="v pz-vtag" data-v="{{ p.var }}" href="#hl-{{ p.var }}">?{{ p.var }}</a>{% endif %}
+  {%- for f in p.facets %}<span class="pz-in{% if f.optional %} pz-in-opt{% endif %}{% if f.wild %} pz-in-wild{% endif %}" title="{{ 'is ' + f.prop + ' of' if f.reverse else f.prop }}{% if f.optional %}, where present{% endif %}">{% if f.reverse %}is {{ m.bare(f.prop) }} of{% else %}{{ m.bare(f.prop) }}{% endif %} <span class="eq">=</span> {% for v in f.values %}{{ val(v, ctx) | safe }}{% if not loop.last %} <span class="or">or</span> {% endif %}{% endfor %}</span>{% endfor %}
+  {%- for c in p.chips %}<span class="pz-in pz-in-{{ c.verb }}" title="{{ c.label }}">{% if c.kind == "or" %}any of: {{ m.bare(c.label) | replace(" | ", " · ") }}{% else %}{{ "leave out" if c.verb == "exclude" else "keep" }} if {{ m.bare(c.label) }}{% endif %}</span>{% endfor %}
+  {%- if p.columns | length %}<span class="pz-cols">shows {% for c in p.columns | batch(3) | first %}<span class="pz-col{% if c.wild %} pz-wildtext{% endif %}" title="{{ c.prop }}">{% if c.prop.startsWith("reverse of ") %}things with them as {{ m.bare(c.prop | replace("reverse of ", "")) }}{% else %}{{ m.bare(c.prop) }}{% endif %} <a class="v" data-v="{{ c.var }}" href="#hl-{{ c.var }}">?{{ c.var }}</a></span>{% if c.optional %} <span class="pz-note">if any</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if p.columns | length > 3 %} <span class="pz-note" title="{% for c in p.columns %}{{ c.prop }}{% if not loop.last %}; {% endif %}{% endfor %}">and {{ p.columns | length - 3 }} more</span>{% endif %}</span>{% endif %}
 </li>
 {%- elif p.kind == "pivot" -%}
-<li class="pz pz-pivot{% if p.wild %} pz-wild{% endif %}{% if p.optional %} pz-opt{% endif %}">
-  {%- if p.prop.startsWith("reverse of ") %}to things whose <b>{{ m.bare(p.prop | replace("reverse of ", "")) }}</b> is this{% else %}along <b>{{ m.bare(p.prop) }}</b>{% endif %}
-  {%- if p.optional %} <span class="pz-note">where present</span>{% endif %}
+{%- set back = p.prop.startsWith("reverse of ") -%}
+{%- set prop = p.prop | replace("reverse of ", "") -%}
+<li class="pz pz-pivot{% if p.wild %} pz-wild{% endif %}{% if p.optional %} pz-opt{% endif %}" title="Pivot: {% if back %}go to the things that have the set before as their {{ prop }}{% else %}go to the {{ prop }} of each item in the set before{% endif %}{% if p.optional %}, where there is one{% endif %}">
+  {%- if prop == "any property" %}{{ "anything linking to them" if back else "anything they link to" }}
+  {%- elif back %}things with them as <b>{{ m.bare(prop) }}</b>
+  {%- else %}their <b>{{ m.bare(prop) }}</b>{% endif %}
+  {%- if p.optional %} <span class="pz-note">if any</span>{% endif %}
 </li>
 {%- else -%}
-<li class="pz pz-from">from {% if p.title.startsWith("?") %}<span class="var">{{ p.title }}</span>{% else %}{{ m.bare(p.title) }}{% endif %}</li>
+<li class="pz pz-from" data-v="{{ p.var }}"><a class="pz-title" href="#hl-{{ p.var }}">also from {{ m.bare(p.name or p.title) }}</a></li>
 {%- endif -%}
 {%- endmacro -%}
 
 {%- macro hexes(list) -%}
-{%- for c in list %}<span class="hex">{{ m.bare(c) }}</span>{% endfor -%}
+{%- for c in list %}<span class="hex">{{ vt(c) }}</span>{% endfor -%}
 {%- endmacro -%}
 
-{%- macro program(prog, ctx) -%}
+{%- macro program(prog, ctx, top=true) -%}
 <div class="prog">
 {%- for it in prog.items %}
   {%- if it.chain %}
   <div class="chain">
     {%- for row in it.chain.rows %}
-    <ol class="pz-row{% if not loop.first %} pz-branch{% endif %}">{% for p in row %}{{ piece(p, ctx) | safe }}{% endfor %}</ol>
+    {%- set mainRow = loop.first %}<ol class="pz-row{% if not loop.first %} pz-branch{% endif %}">{% for p in row %}{{ piece(p, ctx, top and mainRow and loop.first) | safe }}{% endfor %}</ol>
     {%- endfor %}
   </div>
   {%- else %}{% set op = it.op %}
   <div class="cb cb-{{ op.op }}">
     <div class="cb-bar"><span class="cb-label">{{ op.label }}</span>
-      {%- if op.op == "join" or op.op == "loop" %} {{ hexes(op.extras) | safe }}{% endif -%}
-      {%- if op.op == "except" %}{% for e in op.extras %} <span class="cb-match">{{ e }}</span>{% endfor %}{% endif -%}
-      {%- if op.why %} <span class="cb-why">({{ op.why }})</span>{% endif -%}
+      {%- if op.op == "join" %} {{ hexes(op.extras) | safe }}{% endif -%}
+      {%- if op.op == "except" %}{% for e in op.extras %} <span class="cb-match">{{ vt(e) }}</span>{% endfor %}{% endif -%}
+      {%- if op.why %} <span class="cb-why" title="{{ op.why }}">{{ op.whyText or op.why }}</span>{% endif -%}
     </div>
     {%- for s in op.slots %}
-    {%- if not loop.first %}<div class="cb-bar cb-mid">{{ "or" if op.op == "either" else "and" }}</div>{% endif %}
-    <div class="cb-mouth">{{ program(s, ctx) | safe }}</div>
+    {%- if not loop.first %}<div class="cb-bar cb-mid">{{ {"either": "or", "join": "with"}[op.op] or "and" }}</div>{% endif %}
+    <div class="cb-mouth">{{ program(s, ctx, false) | safe }}</div>
     {%- endfor %}
-    {%- if op.slots | length %}<div class="cb-bar cb-foot">{% if op.op == "stage" %}{% for e in op.extras %}<span class="cb-label">{{ e }}</span>{% endfor %}{% endif %}</div>{% endif %}
+    {%- if op.slots | length %}<div class="cb-bar cb-foot">{% if op.op == "stage" %}{% for e in op.extras %}<span class="cb-label">{{ vt(e) }}</span>{% endfor %}{% endif %}</div>{% endif %}
   </div>
   {%- endif %}
 {%- endfor %}
 {%- if prog.conditions | length %}
-  <div class="cb cb-where"><div class="cb-bar"><span class="cb-label">keep only where</span> {{ hexes(prog.conditions) | safe }}</div></div>
+  <div class="cb cb-where"><div class="cb-bar"><span class="cb-label">keep only those where</span> {{ hexes(prog.conditions) | safe }}</div></div>
 {%- endif %}
 </div>
+{%- endmacro -%}
+
+{#- Per-page CSS: light up every use of a variable on hover, or after a click. -#}
+{%- macro highlightStyle(vars) -%}
+<style>
+{%- for v in vars %}
+.blocks:has([data-v="{{ v }}"]:hover) [data-v="{{ v }}"], .blocks:has(#hl-{{ v }}:target) [data-v="{{ v }}"] { outline: 3px solid var(--hl-ring); outline-offset: 2px; }
+{%- endfor %}
+</style>
 {%- endmacro -%}

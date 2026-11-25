@@ -94,19 +94,6 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .q-head h1 { margin: 0; font-size: clamp(1.7rem, 4.5vw, 2.7rem); line-height: 1.1; letter-spacing: -.035em; max-width: 52rem; }
 .q-tier { margin: .8rem 0 0; color: var(--muted); }
 
-.flow { list-style: none; margin: 2rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
-.set { position: relative; }
-.depth-1 { margin-left: clamp(1rem, 4vw, 2.5rem); } .depth-2 { margin-left: clamp(2rem, 8vw, 5rem); }
-.depth-3 { margin-left: clamp(3rem, 12vw, 7.5rem); } .depth-4 { margin-left: clamp(4rem, 16vw, 10rem); }
-.pivot { margin: .7rem 0 .45rem; color: var(--muted); font-size: .92rem; }
-.pivot b { color: var(--ink); font-weight: 620; }
-.pivot-arrow { color: var(--accent); font-weight: 700; margin-right: .2rem; }
-.pivot-loose { font-style: italic; }
-.set-card { padding: 1rem 1.1rem; background: var(--paper); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: .9rem; box-shadow: var(--shadow); }
-.set-head { display: flex; gap: .85rem; align-items: center; }
-.set-head .thumb { width: 48px; height: 48px; }
-.set-head h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.015em; }
-.desc { margin: .15rem 0 0; color: var(--muted); font-size: .88rem; }
 .chips { list-style: none; margin: .8rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .45rem; }
 .chip { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .35rem; padding: .3rem .7rem; border-radius: 999px; background: var(--accent-soft); color: var(--ink); font-size: .9rem; line-height: 1.35; }
 .chip .prop { color: var(--accent); font-weight: 620; }
@@ -118,9 +105,6 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .val { color: inherit; text-decoration: none; font-weight: 560; }
 a.val:hover { text-decoration: underline; }
 .or { color: var(--muted); font-size: .82rem; }
-.cols { margin: .8rem 0 0; color: var(--muted); font-size: .92rem; line-height: 1.6; }
-.cols-label { display: inline-block; margin-right: .3rem; padding: 0 .45rem; border-radius: .3rem; background: var(--back); font-size: .76rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--faint); }
-.col { color: var(--ink); }
 .opt { color: var(--faint); font-size: .85em; }
 
 .panel { margin-top: 1.6rem; padding: 1rem 1.15rem; border-radius: .9rem; background: var(--paper); border: 1px solid var(--line); }
@@ -155,7 +139,6 @@ a.val:hover { text-decoration: underline; }
 .chip-any .or { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; }
 .any-label { color: var(--or); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; }
 .alt { font-weight: 540; }
-.pivot-stage .pivot-arrow { color: var(--derived); }
 
 /* ---- Block view (beyond set browsing): Scratch-like pieces and C-blocks ---- */
 .blocks { --pz-set: #3373cc; --pz-pivot: #7448c2; --pz-wild: #c02d68; --pz-from: #24589c; --hex: #2e7d32; --hole: var(--back); margin-top: 1.4rem; }
@@ -210,3 +193,33 @@ a.pz-val:hover { text-decoration: underline; }
 .pz-var { font-size: .95em; opacity: .85; }
 .pz-in-wild { box-shadow: inset 0 0 0 2px var(--pz-wild); }
 .pz-wildtext { padding: 0 .35rem; border-radius: .3rem; background: var(--pz-wild); font-weight: 650; }
+
+/* Names, hover text and highlighting */
+.blocks { --hl-ring: #ffd400; }
+.pz-title { color: inherit; text-decoration: none; font-weight: 700; display: inline-flex; align-items: center; }
+.pz-title:hover, .pz-title:focus-visible { text-decoration: underline; }
+.pz-in .eq, .pz-in .or { color: #5b6670; font-weight: 400; }
+.pz [title], .cb [title] { cursor: help; }
+.pz a[title], .pz-title { cursor: pointer; }
+a.v { color: inherit; font-family: ui-monospace, monospace; font-weight: 600; font-size: .92em; text-decoration: none; border-radius: .25rem; }
+a.v:hover { text-decoration: underline; }
+.hex a.v, .pz a.v { color: #fff; }
+.cb-bar a.v { color: inherit; }
+.pz-col { white-space: normal; }
+.hl-anchor { position: fixed; top: 0; left: 0; width: 0; height: 0; }
+.key-hint { flex-basis: 100%; color: var(--faint); font-size: .8rem; }
+.hl-clear { display: none; font-size: .8rem; }
+.blocks:has(.hl-anchor:target) .hl-clear { display: inline; }
+.blocks:has(.hl-anchor:target) .key-hint { display: none; }
+a.v { white-space: nowrap; }
+/* The first set of a script is a "hat" block, as in Scratch: a curved cap, a bigger picture. */
+.pz-hat { margin-top: 12px; border-top-left-radius: 0; padding-top: .55rem; }
+.pz-hat::before { content: ""; position: absolute; left: 0; top: -12px; width: min(7rem, 100%); height: 24px; border-radius: 50% 50% 0 0 / 100% 100% 0 0; background: var(--pc); }
+.pz-hat .pz-title { gap: .6rem; font-size: 1rem; }
+.hat-img { width: 44px; height: 44px; border-radius: .4rem; object-fit: cover; flex: none; background: rgb(255 255 255 / .2); }
+.hat-img.thumb-none { display: inline-flex; align-items: center; justify-content: center; color: #fff; border: 1px dashed rgb(255 255 255 / .5); font-size: 1rem; }
+.pz-desc { display: block; font-weight: 400; font-size: .8rem; opacity: .9; max-width: 22rem; }
+.pz-hat .pz-title > span { display: flex; flex-direction: column; }
+.pz-vtag { font-size: .78rem; opacity: .85; font-weight: 500; }
+.legend.blocks { --hole: var(--paper); margin-top: 1.6rem; }
+.legend .pz-row { margin-bottom: .2rem; }

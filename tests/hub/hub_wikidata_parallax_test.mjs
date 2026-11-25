@@ -14,15 +14,20 @@ test('tiers partition the classified queries', () => {
 
 test('a set-browsing query draws as one tree: no edges left outside it, no blockers', () => {
   for (const q of queries.filter(q => q.tier !== 'N')) {
-    assert.ok(q.flow.sets.length >= 1, q.id);
+    assert.ok(q.sets >= 1, q.id);
     assert.deepEqual(q.flow.loose, [], q.id);
     assert.deepEqual(q.flow.beyond, [], q.id);
-    for (const s of q.flow.sets.slice(1)) assert.ok(s.via?.from || s.stage, `${q.id}: set ${s.var} is neither a pivot nor a stage`);
+    const ops = q.blocks.items.filter(it => it.op).map(it => it.op.op);
+    assert.ok(ops.every(o => o === 'stage'), `${q.id}: ${ops}`);
+    assert.ok(q.blocks.items.filter(it => it.chain).length <= 1, `${q.id}: one chain at most`);
   }
 });
 
 test('a query beyond set browsing says why', () => {
-  for (const q of queries.filter(q => q.tier === 'N')) assert.ok(q.flow.beyond.length, q.id);
+  for (const q of queries.filter(q => q.tier === 'N')) {
+    assert.ok(q.flow.why.length, q.id);
+    for (const w of q.flow.why) assert.notEqual(w.text, w.code, `${q.id}: no plain wording for "${w.code}"`);
+  }
 });
 
 test('every entity a page shows has a card with a label', () => {
@@ -31,10 +36,14 @@ test('every entity a page shows has a card with a label', () => {
 });
 
 test('exclusion chips are worded as removing a facet value', () => {
-  for (const q of queries) for (const s of q.flow.sets) for (const c of s.chips) {
+  const pieces = (prog) => prog.items.flatMap(it => it.chain ? it.chain.rows.flat() : it.op.slots.flatMap(pieces));
+  let n = 0;
+  for (const q of queries) for (const p of pieces(q.blocks)) for (const c of p.chips || []) {
+    n++;
     assert.match(c.verb, /^(exclude|require|any)$/, q.id);
     assert.doesNotMatch(c.label, / is not /, q.id);
   }
+  assert.ok(n > 100, `only ${n} chips drawn`);
 });
 
 test('a query beyond set browsing is drawn as blocks: chains, plus an operation or an any-property piece', () => {
@@ -56,7 +65,7 @@ test('a query beyond set browsing is drawn as blocks: chains, plus an operation 
     return out;
   };
   for (const q of queries) {
-    if (q.tier !== 'N') { assert.equal(q.blocks, undefined, q.id); continue; }
+ if (q.tier !== 'N') continue;
     const r = walk(q.blocks, { ops: 0, wild: 0 });
     assert.ok(r.ops + r.wild > 0, `${q.id}: nothing marks what goes beyond browsing`);
   }

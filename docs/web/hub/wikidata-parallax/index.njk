@@ -16,17 +16,17 @@ permalink: /web/hub/wikidata-parallax/index.html
     <h1>Queries as set browsing</h1>
     <p class="lede">Many Wikidata queries can be done by browsing. Start from a set of things, narrow it with facets,
     then step along a property to a related set. That is how Freebase Parallax worked (Huynh, 2008).
-    This page shows which of the {{ counts.classified }} parsed queries can be built that way, and draws each one as a flow of sets.</p>
+    This page shows which of the {{ counts.classified }} parsed queries can be built that way, and draws each one as blocks.</p>
 
-    <figure class="legend" aria-label="How to read a flow">
-      <div class="legend-flow">
-        <span class="lg-set">Set</span>
-        <span class="lg-chip">facet = value</span>
-        <span class="lg-chip lg-exclude">excludes …</span>
-        <span class="lg-arrow">pivot →</span>
-        <span class="lg-set">Related set</span>
-      </div>
-      <figcaption>Start from a set, narrow it with facets, remove items with exclusions, then pivot along a property to a related set.</figcaption>
+    <figure class="legend blocks" aria-label="How to read the blocks">
+      <ol class="pz-row" aria-hidden="true">
+        <li class="pz pz-set pz-hat"><span class="pz-title">every painting</span><span class="pz-in">collection <span class="eq">=</span> <b>Ashmolean Museum</b></span></li>
+        <li class="pz pz-pivot">their <b>creator</b></li>
+        <li class="pz pz-set"><span class="pz-title">creator</span><span class="pz-cols">shows date of birth</span></li>
+      </ol>
+      <figcaption>Each query is drawn as blocks that fit together, like Scratch. Start from a set (the block with the curved top),
+      narrow it with facets (white), then pivot (purple) to a related set. For queries that need more than browsing,
+      orange blocks hold chains together: <i>either … or …</i>, <i>leave out those where …</i>, <i>match these up</i>.</figcaption>
     </figure>
   </header>
 
@@ -57,7 +57,7 @@ permalink: /web/hub/wikidata-parallax/index.html
               {%- if q.sets > 1 %} · {{ q.sets }} sets{% endif %}
               {%- for k in q.kinds %} · <span class="kind kind-{{ k }}">{{ {"exclude": "excludes", "or": "OR", "path": "paths", "derived": "grouped"}[k] }}</span>{% endfor %}
             </span>
-            {%- if q.tier == "N" and q.flow.beyond | length %}<span class="card-why">{{ q.flow.beyond | first }}</span>{% endif %}
+            {%- if q.tier == "N" and q.flow.why | length %}<span class="card-why">{{ (q.flow.why | first).text }}</span>{% endif %}
           </span>
         </a>
       </li>

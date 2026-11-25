@@ -16,6 +16,10 @@ import { negationFacet } from './negation.mjs';
 import { classifyParallax } from './parallax.mjs';
 import { buildFlow } from './flow.mjs';
 
+/** "birthPlace" / "birth_place" / "place2" -> "birth place" */
+export const humanize = (v) => String(v).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\d]+/g, ' ').trim().toLowerCase() || v;
+/** A set's name from its variable; short or cryptic names ("x", "obj", "q") read as "items". */
+const nameOfVar = (v) => (v.length < 4 || !/[aeiou]/i.test(v)) ? 'items' : humanize(v);
 const isWild = (prop) => /any property|^(reverse of )?any of /.test(prop || '');
 
 /** Lay out a flow's sets (a forest) as rows of pieces; one chain per root. */
@@ -25,7 +29,7 @@ function chainsOf(flow) {
   // A facet or column along "any property" is marked, like a wildcard pivot.
   const mark = (xs) => xs.map(x => isWild(x.prop) ? { ...x, wild: true } : x);
   const piece = (s) => {
-    const p = { kind: 'set', var: s.var, title: s.title, typeId: s.typeId, facets: mark(s.facets), chips: s.chips, columns: mark(s.columns).sort((a, b) => !!b.wild - !!a.wild) };
+    const p = { kind: 'set', var: s.var, name: s.title.startsWith('?') ? nameOfVar(s.var) : s.title, title: s.title, typeId: s.typeId, facets: mark(s.facets), chips: s.chips, columns: mark(s.columns).sort((a, b) => !!b.wild - !!a.wild) };
     if ([...p.facets, ...p.columns].some(x => x.wild)) p.wild = true;
     return p;
   };
@@ -36,7 +40,7 @@ function chainsOf(flow) {
     const walk = (s, row) => {
       row.push(piece(s));
       const [first, ...rest] = kids(s);
-      for (const k of rest) { const r = [{ kind: 'from', var: s.var, title: s.title }, pivot(k)]; rows.push(r); walk(k, r); }
+      for (const k of rest) { const r = [{ kind: 'from', var: s.var, name: piece(s).name, title: s.title }, pivot(k)]; rows.push(r); walk(k, r); }
       if (first) { row.push(pivot(first)); walk(first, row); }
     };
     const main = [];
@@ -61,7 +65,7 @@ export function blocksOf(q, nameOf, depth = 0) {
   const joinConds = [];
   if (chains.length > 1) {
     joinConds.push(...flow.conditions);
-    ops.push({ op: 'join', label: flow.conditions.length ? 'join where' : 'every combination of', extras: flow.conditions,
+    ops.push({ op: 'join', label: flow.conditions.length ? 'match these up, where' : 'every combination of', extras: flow.conditions,
       slots: chains.map(c => ({ items: [{ chain: c }], conditions: [] })) });
   } else items.push(...chains.map(c => ({ chain: c })));
 
@@ -79,21 +83,34 @@ export function blocksOf(q, nameOf, depth = 0) {
       const p = el.kind === 'minus' ? el.p : el.cond.p ?? el.cond.args[0].p;
       const r = negationFacet(p, outer, el.kind === 'minus' ? 'minus' : 'notExists', nameOf);
       const shared = [...scope(p).may].filter(v => outer.may.has(v)).map(v => `?${v}`);
-      if (!r.ok) ops.push({ op: 'except', label: 'except where', why: r.blocker, extras: shared.length ? [`matched on ${shared.join(' and ')}`] : [], slots: [sub(p)] });
+      if (!r.ok) ops.push({ op: 'except', label: 'leave out those where', why: r.blocker, extras: shared.length ? [`matched on ${shared.join(' and ')}`] : [], slots: [sub(p)] });
     } else if (el.kind === 'optional' && flatten(el.p).some(x => ['optional', 'union', 'minus'].includes(x.kind))) {
-      ops.push({ op: 'optional', label: 'where present, also', slots: [sub(el.p)] });
+      ops.push({ op: 'optional', label: 'where there are any, also', slots: [sub(el.p)] });
     } else if (el.kind === 'subselect') {
       const outs = (el.q.select === 'all' ? [] : el.q.select).map(it => `?${it.var}`);
-      ops.push({ op: 'stage', label: 'a separate stage, computed first', extras: outs.length ? [`hands on ${outs.join(', ')}`] : [], slots: [blocksOf(el.q, nameOf, depth + 1)] });
+      ops.push({ op: 'stage', label: 'first, work this out on its own', extras: outs.length ? [`then pass on ${outs.join(', ')}`] : [], slots: [blocksOf(el.q, nameOf, depth + 1)] });
     }
   });
   // An edge that closes a cycle joins two sets already drawn: show it as its own short chain.
-  const ref = (v) => ({ kind: 'set', var: v, title: v ? `?${v}` : '(a value)', typeId: null, facets: [], chips: [], columns: [] });
-  for (const e of flow.looseEdges) ops.push({ op: 'loop', label: 'and the same items must also link up', extras: [],
+  const ref = (v) => ({ kind: 'set', var: v, name: v ? nameOfVar(v) : 'a value', title: v ? `?${v}` : '(a value)', typeId: null, facets: [], chips: [], columns: [] });
+  for (const e of flow.looseEdges) ops.push({ op: 'loop', label: 'and these must also link up', extras: [],
     slots: [{ items: [{ chain: { rows: [[ref(e.s), { kind: 'pivot', prop: e.prop, optional: !!e.optional, wild: isWild(e.prop) }, ref(e.o)]] } }], conditions: [] }] });
 
-  return {
+  const out = {
     items: [...items, ...ops.map(op => ({ op }))],
     conditions: flow.conditions.filter(c => !joinConds.includes(c)),
   };
+  if (depth === 0) out.vars = [...varsOf(out)].sort();
+  return out;
+}
+
+/** Every variable a program shows: set pieces, columns, and ?names in conditions. */
+function varsOf(prog, vs = new Set()) {
+  const text = (t) => { for (const m of String(t).matchAll(/\?([A-Za-z_]\w*)/g)) vs.add(m[1]); };
+  for (const it of prog.items) {
+    if (it.chain) for (const row of it.chain.rows) for (const p of row) { if (p.var) vs.add(p.var); for (const c of p.columns || []) vs.add(c.var); }
+    else { (it.op.extras || []).forEach(text); it.op.slots.forEach(s => varsOf(s, vs)); }
+  }
+  prog.conditions.forEach(text);
+  return vs;
 }

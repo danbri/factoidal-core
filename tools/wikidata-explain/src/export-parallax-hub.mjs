@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { astOf, nameOf, parallaxId } from './run.mjs';
 import { buildFlow } from './flow.mjs';
 import { blocksOf } from './blocks.mjs';
+import { plainReason } from './plain.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = process.argv[2];
@@ -31,6 +32,9 @@ function startOf(set) {
   if (f) return { start: `items with ${bare(f.prop)} = ${f.values.map(v => bare(v.text)).join(' or ')}`, startId: f.values.find(v => v.id)?.id ?? null };
   return { start: `?${set.var}`, startId: null };
 }
+function plainOps(prog) {
+  for (const it of prog.items) if (it.op) { if (it.op.why) it.op.whyText = plainReason(it.op.why); it.op.slots.forEach(plainOps); }
+}
 function collectBlockEntities(prog, ids) {
   for (const it of prog.items) {
     if (it.chain) for (const row of it.chain.rows) for (const p of row) {
@@ -46,14 +50,18 @@ for (const q of corpusDoc.queries) {
   const px = parallaxId(q.id);
   const flow = buildFlow(ast, px, nameOf);
   flow.entities.forEach(e => entityIds.add(e));
-  // Beyond set browsing: the same chains as interlocking pieces, held by operator blocks.
-  const blocks = px.tier === 'N' ? blocksOf(ast, nameOf) : undefined;
-  if (blocks) collectBlockEntities(blocks, entityIds);
+  // The query as blocks: chains of interlocking pieces, held by operator blocks.
+  const blocks = blocksOf(ast, nameOf);
+  collectBlockEntities(blocks, entityIds);
+  plainOps(blocks);
+  flow.why = flow.beyond.map(b => ({ code: b, text: plainReason(b) }));
+  // The page draws blocks; the set list itself is not needed there.
+  const { sets: flowSets, looseEdges, ...flowOut } = flow;
   const kinds = [...new Set([...(px.negations.length ? ['exclude'] : []), ...px.extensions.map(e => e.kind)])];
   queries.push({
     id: q.id, title: q.title, tier: px.tier, tierName: TIER[px.tier], kinds,
-    ...startOf(flow.sets[0]),
-    sets: flow.sets.length, flow, blocks,
+    ...startOf(flowSets[0]),
+    sets: flowSets.length, flow: flowOut, blocks,
     wdqs: `https://query.wikidata.org/#${encodeURIComponent(q.classic_query)}`,
   });
 }
