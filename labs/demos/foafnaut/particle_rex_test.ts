@@ -9,6 +9,8 @@
 //   the same calls at integer positions (release e4445d14 of main: 64.8 ms and 356.0 ms, ratio 5.49, Linux VM).
 // - Issue 1074 (closed): a key of the window reached the page as keydown and keyup at once,
 //   so a held key was a tap (the game's "hold = higher"). Now: down, repeats, up.
+// - Issue 1077 (closed): after a load the address bar kept the keyboard focus. Now the
+//   committed page takes it (WebShell.focusOnCommit).
 // - Issue 1075 (closed): Canvas 2D text ignored the font family. Now "monospace", the
 //   monospace face's name and a list that ends in a monospace name draw with that face.
 // BubblePopJS sessions on the native library. Run with --allow-read --allow-ffi --allow-env.
@@ -83,4 +85,16 @@ Deno.test({name:"issue 1075: Canvas 2D text takes its face from the family list"
   // Noto Sans: i is narrower than W.
   assert.ok(sans[0]<sans[1]/2,`sans-serif: ${sans}`);
   engine.scriptSession("",{action:"close"});
+}});
+
+Deno.test({name:"issue 1077: a page that commits takes the keyboard focus from the address bar",ignore:!library,fn:async()=>{
+  const engine=await loadHTML(library);
+  const focus=(url:string,newTab:boolean,typed:boolean)=>engine.shellCommitFocus({url,newTab,focused:true,typed});
+  // Before the change the engine had no such decision and the window kept the address bar focused.
+  assert.equal(focus("file:///pages/particle-rex.html",false,false),"page");
+  // The person typed in the address bar during the load: the bar keeps the focus.
+  assert.equal(focus("https://example.org/",false,true),"address");
+  // A new tab page and about:blank: the address bar takes the focus, to type an address.
+  assert.equal(focus("file:///pages/newtab.html",true,false),"address");
+  assert.equal(focus("about:blank",false,false),"address");
 }});
