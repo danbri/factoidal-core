@@ -312,3 +312,10 @@ body.has-drawer { padding-bottom: 64vh; }
 .pz.wrap-in { margin-left: 1.1rem; }
 .wrap-path { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 0; }
 .wrap-path path { fill: none; stroke: var(--faint); stroke-width: 2; stroke-dasharray: 1.5 5; stroke-linecap: round; }
+
+/* A query page's title spans the same width as its blocks, a size smaller,
+   so the title and the chain read as one line each where they can. */
+.px-detail .q-head h1 { max-width: none; font-size: clamp(1.45rem, 2.5vw, 2.3rem); text-wrap: balance; }
+@media (min-width: 40rem) {
+  .px-detail .q-head { width: calc((100vw + 100%) / 2 - 2rem); max-width: 110rem; }
+}
