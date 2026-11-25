@@ -171,6 +171,51 @@ def bumpFirstLoop (name : String) (f : Int → Int) (xs : List (String × Int ×
 
 #print axioms bumpFirst_eq_loop
 
+/-! ### `display: contents` (CSS Display 3 §2.5)
+
+An element with `display: contents` makes no box: its children are laid out as children of
+its parent. In the tree that is laid out, the child list of each node has such a child
+replaced by that child's own children; the element stays in the node array (its number,
+its parent link and its own child list stand: selectors, inheritance and the links of an
+anchor follow them), out of reach of the layout. -/
+
+/-- One level: each child that is a `contents` element replaced by its children. -/
+def contentsPass (dom : Dom) (contents : Nat → Bool) : Dom :=
+  {nodes := dom.nodes.map fun n =>
+    if n.kids.any contents then {n with kids := n.kids.flatMap fun k => if contents k then (dom.get k).kids else #[k]}
+    else n}
+
+/-- Levels until no child list holds a `contents` element; `fuel` bounds the nesting. -/
+def contentsLoop (contents : Nat → Bool) : Nat → Dom → Dom
+  | 0, dom => dom
+  | fuel+1, dom =>
+    if dom.nodes.any (fun n => n.kids.any contents) then contentsLoop contents fuel (contentsPass dom contents) else dom
+
+/-- The tree to lay out with no `display: contents` element in a child list. A page with
+none pays one pass over its styles. Nesting deeper than 64 is left as it is (the layout
+refuses that depth anyway). -/
+def flattenContents (dom : Dom) (styles : Array Computed) : Dom :=
+  if !(styles.any fun s => s.pos.contents) then dom
+  else contentsLoop (fun k => ((styles[k]?).map (·.pos.contents)).getD false && (dom.get k).type == .element) 64 dom
+
+/-- The parent that supplies a box, through any boxless ancestors. The original
+parent chain remains available to selectors and style inheritance. -/
+def boxParent (dom : Dom) (styles : Array Computed) (parent : Option Nat) : Option Nat := Id.run do
+  let mut current := parent
+  for _ in [:64] do
+    let some id := current | break
+    if !((styles[id]?).map (·.pos.contents)).getD false then break
+    current := (dom.get id).parent
+  return current
+
+/-- Counter scope and sibling order follow the generated boxes. The projection
+retains the node numbers used by pseudo-element content. -/
+private def counterTree (dom : Dom) (styles : Array Computed) : Dom :=
+  if !(styles.any fun s => s.pos.contents) then dom
+  else
+    let flat := flattenContents dom styles
+    {nodes := flat.nodes.map fun n => {n with parent := boxParent dom styles n.parent}}
+
 /-- The `list-item` counter of HTML lists (HTML §15.3.8, CSS Lists 3 §4.5): whether `k` is an
 `ol` with the `reversed` attribute. -/
 def reversedList (d : Dom) (k : Nat) : Bool :=
@@ -303,7 +348,7 @@ def fill (base : Nat) (owners : Array Spot) (dom : Dom) (styles : Array Computed
       | .counter .. | .counters .. => true
       | _ => false
   let scopes := if counting then
-      counterScopes dom styles (fun k => k < base || (k - base) % 2 == 1 || (partsOf k).isSome) (· ≥ base)
+      counterScopes (counterTree dom styles) styles (fun k => k < base || (k - base) % 2 == 1 || (partsOf k).isSome) (· ≥ base)
     else #[]
   let mut dom := dom
   let mut styles := styles
@@ -604,33 +649,6 @@ theorem styled_unused (treeScope : Option TreeScope) (dom : Dom) (rules : List R
   unfold styled
   simp only [h, Bool.not_false, ↓reduceIte]
   cases computeFor treeScope dom rules textScale state <;> rfl
-
-/-! ### `display: contents` (CSS Display 3 §2.5)
-
-An element with `display: contents` makes no box: its children are laid out as children of
-its parent. In the tree that is laid out, the child list of each node has such a child
-replaced by that child's own children; the element stays in the node array (its number,
-its parent link and its own child list stand: selectors, inheritance and the links of an
-anchor follow them), out of reach of the layout. -/
-
-/-- One level: each child that is a `contents` element replaced by its children. -/
-def contentsPass (dom : Dom) (contents : Nat → Bool) : Dom :=
-  {nodes := dom.nodes.map fun n =>
-    if n.kids.any contents then {n with kids := n.kids.flatMap fun k => if contents k then (dom.get k).kids else #[k]}
-    else n}
-
-/-- Levels until no child list holds a `contents` element; `fuel` bounds the nesting. -/
-def contentsLoop (contents : Nat → Bool) : Nat → Dom → Dom
-  | 0, dom => dom
-  | fuel+1, dom =>
-    if dom.nodes.any (fun n => n.kids.any contents) then contentsLoop contents fuel (contentsPass dom contents) else dom
-
-/-- The tree to lay out with no `display: contents` element in a child list. A page with
-none pays one pass over its styles. Nesting deeper than 64 is left as it is (the layout
-refuses that depth anyway). -/
-def flattenContents (dom : Dom) (styles : Array Computed) : Dom :=
-  if !(styles.any fun s => s.pos.contents) then dom
-  else contentsLoop (fun k => ((styles[k]?).map (·.pos.contents)).getD false && (dom.get k).type == .element) 64 dom
 
 theorem contentsPass_size (dom : Dom) (contents : Nat → Bool) : (contentsPass dom contents).size = dom.size := by
   simp [contentsPass, Dom.size]
