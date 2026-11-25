@@ -76,8 +76,7 @@ theorem mark_overflow (epoch : UInt64) (v : RegistryValidator)
 is precisely the old record with two fields replaced. Does not implement exit scheduling. -/
 theorem mark_checked (epoch : UInt64) (v : RegistryValidator)
     (h : ¬ epoch.toNat + 8192 ≥ 2 ^ 64) :
-    markValidator epoch v = .ok { v with slashed := true,
-      withdrawableEpoch := max v.withdrawableEpoch (UInt64.ofNat (epoch.toNat + 8192)) } := by
+    markValidator epoch v = .ok { v with slashed := true, withdrawableEpoch := max v.withdrawableEpoch (UInt64.ofNat (epoch.toNat + 8192)) } := by
   simp only [markValidator, if_neg h]
 
 /-- Kind: linkage. Says: failure of raw authentication cannot return any projection.
