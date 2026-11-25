@@ -232,8 +232,7 @@ theorem tate_noncanonical (a : Array Nat) (h : a.size = 6)
     tate a = .error "noncanonical" := by
   have hw : ¬ a.size ≠ 6 := fun hne => hne h
   have hb : (!(a.all (fun x => decide (x < modulus)))) = true := by
-    rw [hc]
-    rfl
+    rw [hc] <;> rfl
   simp only [tate,if_neg hw,if_pos hb]
 
 /-- Kind: admission. Says: the curve predicates gate the actual recurrence.
