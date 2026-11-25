@@ -103,3 +103,49 @@ limit a separate daemon. Hub: bridges only, or no Tor.
 Each is an expected failure that names an open issue until the feature lands (project rule,
 "A stated shortfall"): no DNS query leaves the machine in Tor mode; a `.onion` page loads;
 two partitions use two circuits (two SOCKS credentials on route A).
+
+## 8. Measured: Arti components in a Foafnaut page (2026-11-25)
+
+Owner request, 2026-11-25, verbatim: "try building the tor wasm and running it in a simple page
+using our wasm implementation. I know this is not a secure path for the real thing, but it will
+give a sense for whether this compontent might work easily."
+
+Method. A probe crate on Arti 0.48.0 (`tor-hscrypto`, `tor-netdoc`, `tor-llcrypto`,
+`tor-checkable`), built for `wasm32-unknown-unknown` with `wasm-bindgen` 0.2.130
+(`--target no-modules`), 450 KB of wasm. A page fetched it over local HTTP, instantiated it with
+page `WebAssembly` (BubblePopWASM), and called it from BubblePopJS. Host: the Linux rig
+(`tools/foafnaut-linux-rig`, released engine `build-e4445d14752c`, Xvfb, software Vulkan) on a
+cloud container. Real time is the host's `leanMs` for the page task that made the call. Reference:
+the same module in Node 22. The probe source was not committed.
+
+Results, Foafnaut against Node:
+
+| Step | Foafnaut | Node | Result |
+|---|---|---|---|
+| Parse and check an onion v3 address, blind its key for the current time period; parse a 6-relay microdescriptor consensus (Arti test data) | 81 ms (4.9 million instructions) | 3 to 9 ms | same blinded key as Node; a bad checksum is refused |
+| x25519 key agreement, 20 pairs | 768 ms, 38 ms a pair | 0.55 to 1.2 ms a pair | keys agree |
+| Relay cell crypto, 2000 cells through 3 hops (AES-128-CTR) | 7097 ms, 143 KB/s | 9 to 16 MB/s | round trip correct |
+
+The engine ran about 150 million counted instructions a second.
+
+Findings:
+
+1. The components that need no network run correctly in BubblePopWASM.
+2. Circuit set-up cost is acceptable: about 4 to 6 x25519 operations a hop, so of the order of
+   100 to 300 ms for a 3-hop circuit in this measurement.
+3. Relay cell crypto is the limit: 143 KB/s on the page thread. AES-128-CTR needs a host
+   primitive (WebCrypto on the JavaScript hosts, HACL* on native, as
+   `skills/crypto-policy` already says for AES) before Tor data rates are usable.
+4. `arti-client` does not compile for wasm: tokio's networking is not available on wasm targets.
+   A wasm Tor client needs an Arti runtime (`tor-rtcompat`) over host sockets.
+5. `saturating-time` 0.6.0 (used by `tor-netdoc`) does not compile for `wasm32-unknown-unknown`:
+   it names `std::time::Instant` where `web-time-compat` gives `web_time::Instant`. The probe used
+   a local patch. Not yet reported upstream.
+6. Page `Date.now()` and `performance.now()` read the virtual script clock (`Page.lean`, "The
+   script clock"; it starts near 0). A Tor client needs wall time (consensus validity, onion
+   service time periods). The host must give the Tor component real time as a capability; the
+   probe took it as an argument.
+7. Decoding 600 KB of base64 in a page script stopped at the BubblePopJS step budget
+   (`runBudget`, 5 million steps for one run). Load large modules with `fetch`.
+8. Not measured: a full live consensus (about 8000 relays). The test consensus has 6 relays; do
+   not extrapolate from it.
