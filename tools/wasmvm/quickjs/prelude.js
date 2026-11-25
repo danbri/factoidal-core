@@ -19335,6 +19335,11 @@
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for
       if (type === '@focus') { pressFocus(target); return ''; }
+      if (type === '@focus-key') {
+        n.query(target, 177, 'f');
+        focusMove(target, true);
+        return '';
+      }
       // Enter in a field of a form with no submit button (HTML §4.10.21.2; Lean decided,
       // DOM.FormControls.implicitSubmission): the form is submitted from itself
       if (type === '@submit') { const f = wrap(target); if (f) submitForm(f, f); return ''; }
