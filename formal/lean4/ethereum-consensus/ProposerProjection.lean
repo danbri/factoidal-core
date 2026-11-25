@@ -175,13 +175,19 @@ theorem successful_projection (q : ProjectionRequest) (out : PartialCommitment)
       projectionRegistryCheck q out = .ok r ∧ r.matchesRoot = true ∧
       projectionStateCheck q out = .ok t ∧ t.matchesRoot = true := by
   cases ha : authentication q with
-  | error e => simp [authenticateAndProject, ha] at h
+  | error e =>
+    rw [authentication_error q e ha] at h
+    cases h
   | ok e =>
-    have hs : projectChecked q = .ok out := by simpa [authenticateAndProject, ha] using h
+    have hs := h
+    rw [authentication_success q e ha] at hs
     cases hp : buildProjection q with
-    | error reason => simp [projectChecked, hp] at hs
+    | error reason =>
+      simp only [projectChecked, hp] at hs
+      cases hs
     | ok p =>
-      have hc : acceptProjection q p = .ok out := by simpa [projectChecked, hp] using hs
+      have hc : acceptProjection q p = .ok out := by
+        simpa only [projectChecked, hp] using hs
       obtain ⟨he, r, t, hr, hb, ht, hd⟩ := accepted_projection q p out hc
       obtain ⟨h1, h2⟩ := authentication_verdicts q e ha
       subst out
