@@ -5,3 +5,8 @@ In the [24-page Linux survey](https://github.com/danbri/factoidal-builds/actions
 Record the shader module creation, compilation information query, asynchronous pipeline creation, and validation waits in the existing chrome, page, and composite draw steps. Count pipelines built in both the single and layered paths. These measures identify time spent inside the host calls. They do not attribute it to any specific compiler or driver component.
 
 The experiment keeps the draw order, commands, and pipeline cache unchanged. Compare fresh and reused shader caches while checking frame pixels and input on the same native renderer. Tracks [issue 952](https://github.com/danbri/factoidal-core/issues/952).
+
+
+The [controlled mobile Wikipedia replay](https://github.com/danbri/factoidal-builds/actions/runs/45621104102) compared two fresh caches and their immediate reuse. The graphics phase took 87.71 and 86.88 seconds with empty caches and 1.59 and 1.56 seconds on the repeat launches. All four first screenshots had the same SHA-256 and all four responded to wheel input. The instrumented pipeline and validation calls accounted for less than one second per launch.
+
+The next replay records layer drawing, plan resolution, texture and binding setup, buffer uploads, and surface configuration, acquisition and presentation. The total layer timing contains the per-layer measures.

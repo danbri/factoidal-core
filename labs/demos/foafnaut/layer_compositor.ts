@@ -173,9 +173,11 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
    * bands give the bytes of one draw. */
   type Bands={count:number;between:(units:number)=>Promise<void>};
   async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
+    const planStart=performance.now();
     const p=await plan(frame.width,frame.height,frame.data);
-    const steps:Record<string,number>={};
+    const steps:Record<string,number>={resolvePlan:Math.round((performance.now()-planStart)*10)/10};
     const pipeline=await pipelineFor(p,frame.wgsl,steps);
+    const resourceStart=performance.now();
     if(!target){
       const size=`${frame.width}x${frame.height}`;
       if(!slot.texture||slot.size!==size){
@@ -200,9 +202,12 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       if(tileWords)entries.push({binding:p.bindGroup.binding+1,resource:{buffer:slot.tiles!.buffer,offset:0,size:tileBytes}});
       slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;stats.bindGroups++;
     }
+    steps.prepareResources=Math.round((performance.now()-resourceStart)*10)/10;
     const write=()=>{
+      const uploadStart=performance.now();
       device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset,(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>);
       if(tileWords)device.queue.writeBuffer(slot.tiles!.buffer,0,new Uint32Array(tileWords));
+      steps.uploadBuffers=Math.round((performance.now()-uploadStart)*10)/10;
     };
     // The texture holds answer `damage.base` (scene shader pixels do not read the target): draw
     // only what changed. Off the frame path (`check`, or another target), the whole scene.
