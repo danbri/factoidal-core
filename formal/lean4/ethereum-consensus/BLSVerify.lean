@@ -113,7 +113,7 @@ theorem pairingEquation_true (pk : AffinePoint) (h : G2Map.Point) (sig : G2.Poin
     | error e => simp [pairingEquation, ha, hb] at hv
     | ok b =>
       have he : a = b := by simpa [pairingEquation, ha, hb] using hv
-      exact ⟨a, rfl, hb.trans (congrArg Except.ok he.symm)⟩
+      exact ⟨a, by simp [ha], by simp [hb, he]⟩
 
 #print axioms EthereumConsensus.BLS.Verify.verify_over_limit
 #print axioms EthereumConsensus.BLS.Verify.verify_key_error
