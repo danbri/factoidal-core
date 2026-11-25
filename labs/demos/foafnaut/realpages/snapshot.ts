@@ -198,10 +198,10 @@ for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!on
   for(const [rid,r] of order){
     if(seen.has(r.url)||r.url.startsWith("data:")||r.url.startsWith("blob:"))continue;
     const data=c.bodies.get(rid),len=data?.length??0;
-    // A successful image response with no captured bytes cannot replay the image.
-    // Leave the URL available for a later capture with a body.
-    if(r.type==="Image"&&r.status>=200&&r.status<300&&r.status!==204&&len===0){
-      skipped.push({url:r.url.slice(0,300),reason:"image response body unavailable",bytes:0});
+    // Images and fonts require bytes. Leave an empty successful response out so
+    // another capture of the same URL can supply the resource.
+    if((r.type==="Image"||r.type==="Font")&&r.status>=200&&r.status<300&&r.status!==204&&len===0){
+      skipped.push({url:r.url.slice(0,300),reason:`${r.type.toLowerCase()} response body unavailable`,bytes:0});
       continue;
     }
     seen.add(r.url);
