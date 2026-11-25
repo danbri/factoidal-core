@@ -7403,7 +7403,7 @@
   // error events, its natural size (Lean's HTML.ImageSize from the file's first bytes, web_api
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
-  const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
+  const imgStates = new Map();   // node -> { gen, complete, decodable, w, h, waiters }
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
   // waits until each has its load or error event)
@@ -7420,12 +7420,13 @@
     const el = wrap(id);
     const gen = ++imgGen;
     const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
-    const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
+    const selection = typeof hasSrc === 'string' || typeof hasSet === 'string' ? imgSelection(id, true) : null;
+    const url = selection?.url ?? '';
     // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
     // step 2.2: the current request changed)
     const before = imgStates.get(id);
     if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-    const st = { gen, complete: false, w: 0, h: 0, waiters: [] };
+    const st = { gen, complete: false, decodable: false, w: 0, h: 0, waiters: [] };
     imgStates.set(id, st);
     const settle = ok => {
       st.complete = true;
@@ -7449,8 +7450,10 @@
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
       if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { settle(false); return; }
-      const [w, h] = size.split(' ').map(Number);
-      st.w = w; st.h = h;
+      const natural = n.query(id, 195, 'natural\u0000' + size + '\u0000' + selection.density);
+      if (typeof natural !== 'string' || natural === '') { settle(false); return; }
+      [st.w, st.h] = natural.split(' ').map(Number);
+      st.decodable = true;
       settle(true);
     });
   };
@@ -7489,7 +7492,7 @@
       imgTouch(nodeId(this));
       const st = imgStates.get(nodeId(this));
       if (!st) return Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-      if (st.complete) return st.w > 0 || st.h > 0 ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      if (st.complete) return st.decodable ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       return new Promise((res, rej) => st.waiters.push([res, rej]));
     });
   }
@@ -18610,14 +18613,21 @@
   // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
   // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
   // the viewport of the element's document, resolved against that document's URL.
-  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
-    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+  const imgSelection = (id, request = false) => {
+    const d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
     let size;
     if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
-    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
-    if (typeof r !== 'string' || r === '') return '';
-    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
-  }, configurable: true, enumerable: true });
+    const q = globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1];
+    const r = n.query(id, 195, request ? q + '\u0000request' : q);
+    if (typeof r !== 'string' || r === '') return null;
+    const split = request ? r.indexOf('\n') : 0;
+    if (split < 0) return null;
+    const path = r.slice(split + 1);
+    const url = frame >= 0 ? resolveURL(path, docURL(d)) : resolveURL(path);
+    return url == null ? null : { url, density: r.slice(0, split) };
+  };
+  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', {
+    get() { return imgSelection(nodeId(this))?.url ?? ''; }, configurable: true, enumerable: true });
   // HTML dimension attributes: use the rendered content box when present, including
   // a zero-sized box. Otherwise parse the attribute, then fall back to the natural size.
   for (const [k, i, natural] of [['width', 0, 'w'], ['height', 1, 'h']])
