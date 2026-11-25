@@ -128,6 +128,18 @@ private def text (html : String) : Except String (List String) :=
 #guard text "<img src='b.png' alt=''>" == .ok []
 #guard text "<img src='b.png'>" == .ok ["[image]"]
 #guard text "<img src='b.png' alt='Gone' style='display:block'>" == .ok ["[Gone]"]
+-- WPT img-no-alt-replaced.html and img-empty-alt-replaced-block.html:
+-- keep authored geometry without decoded pixels; an empty alt has zero auto height.
+private def imageBoxSize (html : String) : Except String (Option (Float × Float)) :=
+  (boxes html).map fun rows => rows.head?.map fun (_,_,_,w,h) => (w,h)
+
+#guard imageBoxSize "<img id='i' style='width:100px;height:150px'>" == .ok (some (100,150))
+#guard imageBoxSize "<img id='i' src='b.png' style='width:100px;height:150px'>" == .ok (some (100,150))
+#guard imageBoxSize "<img id='i' alt='' style='width:100px;height:150px'>" == .ok (some (100,150))
+#guard imageBoxSize "<img id='i' src='b.png' alt='' style='width:50px'>" == .ok (some (50,0))
+#guard imageBoxSize "<img id='i' src='b.png' alt='' style='display:block;width:13.75px'>" == .ok (some (13.75,0))
+#guard imageBoxSize "<img id='i' style='width:50px'>" == .ok (some (50,0))
+#guard text "<img src='b.png' alt='Thumb' style='width:100px;height:150px'>" == .ok ["[Thumb]"]
 -- Measured in a table: the image's width.
 #guard (boxes "<table style='border-spacing:0'><tr><td id='c' style='padding:0'><img src='a.png'></td></tr></table>").map (·.head?.map (·.2.2.2.1)) == .ok (some 40)
 
