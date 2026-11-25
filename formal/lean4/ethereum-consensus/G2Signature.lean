@@ -237,7 +237,7 @@ private def dispatch (s : String) : Except String String := do
   return "ok " ++ toString p.x.re ++ " " ++ toString p.x.im ++ " " ++
     toString p.y.re ++ " " ++ toString p.y.im
 
-def main : IO Unit := do
+def EthereumConsensus.BLS.G2SignatureCLI.run : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
