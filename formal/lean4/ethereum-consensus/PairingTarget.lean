@@ -316,7 +316,7 @@ private def dispatch (s : String) : Except String String := do
     | _ => throw "operation"
   return "ok " ++ String.intercalate " " (result.toList.map toString)
 
-def main : IO Unit := do
+def EthereumConsensus.BLS.PairingTargetCLI.run : IO Unit := do
   let input ← IO.getStdin
   let output ← IO.getStdout
   repeat
