@@ -36,6 +36,9 @@ def TextSel.replace (t : TextSel) (a b : Nat) (ins : List Char) : TextSel :=
 def textCommands : List String :=
   ["delete", "forwarddelete", "inserttext", "insertparagraph", "insertlinebreak", "selectall"]
 
+private def insertionChars (multiline : Bool) (arg : List Char) : List Char :=
+  if multiline then arg else arg.filter fun c => c != '\n' && c != '\r'
+
 /-- A command in a text control (`multiline`: a `textarea`): `none` when the command is
 not enabled there; else the value and selection after it, and the `inputType` of its
 `input` event (`none`: no event, the value did not change). -/
@@ -50,7 +53,7 @@ def textEdit (multiline : Bool) (command : String) (arg : List Char) (t : TextSe
     else if t.stop ≥ t.chars.length then some (t, none)
     else some (t.replace t.start (t.start + 1) [], some "deleteContentForward")
   | "inserttext" =>
-    let ins := if multiline then arg else arg.filter fun c => c != '\n' && c != '\r'
+    let ins := insertionChars multiline arg
     some (t.replace t.start t.stop ins, some "insertText")
   | "insertparagraph" =>
     if multiline then some (t.replace t.start t.stop ['\n'], some "insertParagraph") else none
@@ -95,14 +98,14 @@ theorem textEdit_insert (arg : List Char) (t : TextSel) :
     textEdit true "inserttext" arg t =
       some ({ chars := t.chars.take t.start ++ arg ++ t.chars.drop t.stop, start := t.start + arg.length,
               stop := t.start + arg.length }, some "insertText") := by
-  simp [textEdit, TextSel.replace]
+  simp [textEdit, TextSel.replace, insertionChars]
 
 /-- Single line. Says: `insertText` in a single-line control never adds a line feed or
 carriage return that the value did not have. Does not say: that the value had none. -/
 theorem textEdit_singleLine (arg : List Char) (t : TextSel) (r : TextSel × Option String)
     (hr : textEdit false "inserttext" arg t = some r) (c : Char) (hc : c ∈ r.1.chars) (hn : c = '\n' ∨ c = '\r') :
     c ∈ t.chars := by
-  simp only [textEdit, Bool.false_eq_true, if_false, Option.some.injEq] at hr
+  simp only [textEdit, insertionChars, Bool.false_eq_true, if_false, Option.some.injEq] at hr
   subst hr
   simp only [TextSel.replace, List.mem_append, List.mem_filter] at hc
   rcases hc with (hc | hc) | hc
@@ -137,5 +140,69 @@ def unitsOfIndex (cs : List Char) (i : Nat) : Nat :=
 
 #guard indexOfUnits "a😀b".toList 3 == 2
 #guard unitsOfIndex "a😀b".toList 2 == 3
+
+/-- A UTF-16 prefix that ends before a character that would cross the limit. -/
+def takeUnits (cs : List Char) (limit : Nat) : List Char :=
+  let i := indexOfUnits cs limit
+  cs.take (if unitsOfIndex cs i ≤ limit then i else i - 1)
+
+/-- Limit an insertion by the space left after replacing the current selection. A
+programmatic value that already exceeds the limit keeps its unselected text. -/
+def insertTextLimited (multiline : Bool) (arg : List Char) (t : TextSel) (limit : Nat)
+    (inputType : String := "insertText") : TextSel × Option String :=
+  let kept := unitsOfIndex t.chars t.start +
+    (unitsOfIndex t.chars t.chars.length - unitsOfIndex t.chars t.stop)
+  let ins := takeUnits (insertionChars multiline arg) (limit - kept)
+  let r := t.replace t.start t.stop ins
+  (r, if ins.isEmpty && t.start == t.stop then none else some inputType)
+
+/-- Apply the limit to insertions. Deletion, selection, and command availability keep
+using the ordinary editing rules. -/
+def textEditWithLimit (multiline : Bool) (command : String) (arg : List Char) (t : TextSel)
+    (limit : Option Nat) : Option (TextSel × Option String) :=
+  match limit, command with
+  | some max, "inserttext" => some (insertTextLimited multiline arg t max)
+  | some max, "insertlinebreak" =>
+    if multiline then some (insertTextLimited true ['\n'] t max "insertLineBreak") else none
+  | some max, "insertparagraph" =>
+    if multiline then some (insertTextLimited true ['\n'] t max "insertParagraph") else none
+  | _, _ => textEdit multiline command arg t
+
+theorem insertTextLimited_ok (multiline : Bool) (arg : List Char) (t : TextSel)
+    (limit : Nat) (inputType : String) (h : t.ok) : (insertTextLimited multiline arg t limit inputType).1.ok := by
+  exact TextSel.replace_ok _ _ _ _ h.1 h.2
+
+theorem textEditWithLimit_ok (multiline : Bool) (command : String) (arg : List Char)
+    (t : TextSel) (limit : Option Nat) (h : t.ok) (r : TextSel × Option String)
+    (hr : textEditWithLimit multiline command arg t limit = some r) : r.1.ok := by
+  unfold textEditWithLimit at hr
+  split at hr
+  · cases hr; exact insertTextLimited_ok _ _ _ _ _ h
+  · split at hr
+    · cases hr; exact insertTextLimited_ok _ _ _ _ _ h
+    · cases hr
+  · split at hr
+    · cases hr; exact insertTextLimited_ok _ _ _ _ _ h
+    · cases hr
+  · exact textEdit_ok _ _ _ _ h _ hr
+
+#guard takeUnits "👨‍👩‍👧‍👦".toList 10 == "👨‍👩‍👧‍".toList
+#guard takeUnits "😀X".toList 1 == []
+#guard takeUnits "😀X".toList 2 == "😀".toList
+#guard insertTextLimited false "😀X".toList ⟨"abcd".toList, 1, 3⟩ 4 ==
+  (⟨"a😀d".toList, 2, 2⟩, some "insertText")
+#guard insertTextLimited false "X".toList ⟨"abcd".toList, 1, 2⟩ 2 ==
+  (⟨"acd".toList, 1, 1⟩, some "insertText")
+#guard insertTextLimited false "A".toList ⟨[], 0, 0⟩ 0 == (⟨[], 0, 0⟩, none)
+#guard insertTextLimited false "a".toList ⟨"a".toList, 0, 1⟩ 1 ==
+  (⟨"a".toList, 1, 1⟩, some "insertText")
+#guard insertTextLimited true ['\n'] ⟨"a".toList, 1, 1⟩ 1 "insertLineBreak" ==
+  (⟨"a".toList, 1, 1⟩, none)
+#guard textEditWithLimit true "insertlinebreak" [] ⟨"a".toList, 1, 1⟩ (some 1) ==
+  some (⟨"a".toList, 1, 1⟩, none)
+#guard textEditWithLimit false "delete" [] ⟨"abc".toList, 3, 3⟩ (some 1) ==
+  some (⟨"ab".toList, 2, 2⟩, some "deleteContentBackward")
+#guard insertTextLimited true "a\nbc".toList ⟨[], 0, 0⟩ 3 ==
+  (⟨"a\nb".toList, 3, 3⟩, some "insertText")
 
 end L4Factoidal.DOM.Editing

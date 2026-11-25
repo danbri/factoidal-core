@@ -37,6 +37,7 @@ import L4Factoidal.DOM.CustomElements
 import L4Factoidal.HTML.ScriptType
 import L4Factoidal.DOM.ElementRef
 import L4Factoidal.DOM.FormControls
+import L4Factoidal.HTML.Dimension
 import L4Factoidal.HTML.TextSelection
 import L4Factoidal.DOM.FormValidity
 import L4Factoidal.DOM.Focus
@@ -1111,11 +1112,13 @@ an editing host (the selection moves into it).
 
 178 `Selection.modify`: `q` is "alter direction granularity" (`selModify`).
 
-179 a command in a focused text control (`Editing.textEdit`): `q` is the command (with a
+179 a command in text control `id` (`Editing.textEditWithLimit`): `q` is the command (with a
 leading "?" to ask only whether it is enabled there: "1" or "0"), U+0000, "1" for a
 `textarea`, U+0000, the selection start and end (UTF-16 offsets), U+0000, the command's
 value, U+0000, the control's value. The answer is "" when the command is not enabled in a
 text control, else "start end inputType" ("-" for no `input` event), U+0000, the new value.
+A length-limited `insertText` event adds a fourth header field for the UTF-16 start of its
+actual inserted data. The new value from that offset to the returned caret is the data.
 
 The answer of 175 for a command that fires `input` is "1", U+0000, the editing host, U+0000,
 the `inputType`, and U+0000 and the `data` when there is one. -/
@@ -1320,11 +1323,18 @@ def editOpM (ix : L4Factoidal.Rendering.CSS.RuleIndex) (id op : Nat) (q : String
       let t := if t.start ≤ t.stop then t else { t with stop := t.start }
       let query := command.startsWith "?"
       let name := L4Factoidal.DOM.Editing.lower (if query then (command.drop 1).toString else command)
-      match L4Factoidal.DOM.Editing.textEdit (multi == "1") name arg.toList t with
+      let limit ← if query then pure none else do
+        let d := (← get).dom
+        let max := d.getAttributeNS? id none "maxlength" >>= L4Factoidal.HTML.Dimension.parseNonNegative
+        pure (max.filter (· ≤ 2147483647))
+      match L4Factoidal.DOM.Editing.textEditWithLimit (multi == "1") name arg.toList t limit with
       | none => return if query then "0" else ""
       | some (r, inputType) =>
         if query then return "1"
-        return s!"{L4Factoidal.DOM.Editing.unitsOfIndex r.chars r.start} {L4Factoidal.DOM.Editing.unitsOfIndex r.chars r.stop} {inputType.getD "-"}" ++
+        let units := L4Factoidal.DOM.Editing.unitsOfIndex
+        -- The limited insert's actual event data is the new value from here to the caret.
+        let dataStart := if limit.isSome && inputType == some "insertText" then s!" {units t.chars t.start}" else ""
+        return s!"{units r.chars r.start} {units r.chars r.stop} {inputType.getD "-"}{dataStart}" ++
           "\x00" ++ String.ofList r.chars
     | _ => throw (-2)
   | 177 =>
