@@ -112,6 +112,35 @@ There is no single tracking issue for threads and processes. The pieces:
   Lean runtime built for them. Until then, the Hub gets parallelism only from more Web Workers,
   each with its own wasm instance.
 
+### 2a. Lean's own concurrency against what we built (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "Gemini tells me we've been overengineering lean on lean, and lean
+comes with lean compiler/interpreter setup already", then "I was thinking more about threads,
+multiprocess etc., But yes we did fart around with Enscripten in a few places, eg. looking at Lean
+for verifying plugins or wasm untrusted code or managing across processes."
+
+What Lean gives natively, on native builds: threads (`Task.spawn`, `IO.asTask`, the dedicated
+priority), `IO.Promise`, `Std.Mutex`, `Std.Channel`, and subprocesses (`IO.Process.spawn`). Use in
+our Lean code, counted by files on `main` (`formal/lean4/L4Factoidal`, `formal/lean4/Harness`,
+`labs/demos/foafnaut`, 2026-11-25): `Task.spawn` 5, `IO.asTask` 10, `IO.Process.spawn` 6,
+`IO.Promise` 2, `Std.Mutex` 0, channels 0. The native engine starts Lean's task manager
+(`web_render_shim.c`, `FOAFNAUT_LEAN_THREADS`).
+
+Where we use something else, and the reason recorded for it:
+- Wasm (the Hub, the npm package): Lean's wasm runtime has no threads (section 2), so parallel
+  work there needs Web Workers, each with its own module. Lean threads cannot replace them until
+  the runtime is built for wasm threads.
+- Desktop host: Deno owns the window, the GPU and the event loop, and calls the engine through
+  FFI. One engine worker per tab is a Deno worker because the held font is Lean runtime state
+  that is not shared between threads (section 1). Lean tasks inside one engine instance are the
+  alternative to measure (section 3).
+- Isolation (untrusted code, keys): threads share memory, so they give no isolation. A separate
+  process (`IO.Process.spawn` or the host's) or a separate isolate (a Deno or Web Worker) does.
+  The Tor client is in a Deno worker for this reason, and because Arti is Rust, not Lean.
+
+Open question (not measured): which of our worker and Emscripten paths could become Lean tasks or
+`IO.Process` children on native builds with no loss. Measure before changing.
+
 ## 3. One engine worker per tab (first step for tabs and windows)
 
 A document is a Lean value, so it can live in its own worker.
