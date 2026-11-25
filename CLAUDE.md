@@ -1050,6 +1050,16 @@ languages like Lean and Rocq."
 - Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
   tonight." This was for that night; "Work goes on main" above is the standing rule.
 
+### BubblePopJS JIT: mode parameter accepted; LTO default and tier 2 started (owner, 2026-11-25)
+
+Owner, 2026-11-25, verbatim: "yes start on 1 and 2 now too" and "ok launch a subagent to begin
+progressing JIT", to the questions: accept the mode parameter of
+https://github.com/danbri/factoidal-core/pull/557 (tier 1, proved) as the way tiers are switched
+and proved; (1) make the link-time optimised build the default for the native engine; (2) start
+tier 2, inline caches for property reads (target: at least 3 times faster on sites that see one
+shape). Tracking: https://github.com/danbri/factoidal-core/issues/471. Each step reports its
+measurement before and after.
+
 ### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
 
 Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
