@@ -35,7 +35,7 @@ jobs:
           node scripts/check-tate-pairing.mjs --self-test | tee "$RUNNER_TEMP/tate-oracle.log"
           python3 - <<'PY' | tee "$RUNNER_TEMP/target-source-pins.json"
           import json, pathlib, re, subprocess
-          paths = ["PairingTarget.lean", "scripts/check-pairing-target.mjs", "scripts/check-tate-pairing.mjs",
+          paths = ["PairingTarget.lean", "PairingTargetMain.lean", "scripts/check-pairing-target.mjs", "scripts/check-tate-pairing.mjs",
                    "lean-toolchain", "lake-manifest.json", "lakefile.toml",
                    "../../../.github/workflows/ethereum-bls-pairing-target.yml"]
           root = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
@@ -63,7 +63,9 @@ jobs:
           lean --version | tee "$RUNNER_TEMP/target-toolchain.log"
           lean --deps PairingTarget.lean | tee "$RUNNER_TEMP/target-imports.log"
           lean -o "$RUNNER_TEMP/PairingTarget.olean" -c "$RUNNER_TEMP/g2.c" PairingTarget.lean 2>&1 | tee "$RUNNER_TEMP/target-axioms.log"
-          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/pairing-target" "$RUNNER_TEMP/g2.c" 2>&1 | tee "$RUNNER_TEMP/target-native-build.log"
+          export LEAN_PATH="$RUNNER_TEMP/"
+          lean -c "$RUNNER_TEMP/PairingTargetMain.c" PairingTargetMain.lean
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/pairing-target" "$RUNNER_TEMP/g2.c" "$RUNNER_TEMP/PairingTargetMain.c" 2>&1 | tee "$RUNNER_TEMP/target-native-build.log"
           ldd "$RUNNER_TEMP/pairing-target" | tee "$RUNNER_TEMP/target-link.log"
           nm -u "$RUNNER_TEMP/pairing-target" | tee "$RUNNER_TEMP/target-symbols.log"
           if grep -E ' (EVP_|EC_|BN_|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/target-symbols.log"; then exit 1; fi
