@@ -172,6 +172,9 @@ new connection.
   pool key and the same egress rules.
 - Measure: the realpages survey (`skills/realpages-survey`) first frame and load time, with
   connection count per page, before and after.
+- Tor (added 2026-11-25): the pool key needs a route (`direct address` or `tor isolationToken`)
+  in place of the pinned address. See
+  [2026-11-25-foafnaut-tor-onion-routing.md](2026-11-25-foafnaut-tor-onion-routing.md) section 4.
 
 ## 6. DNS cache and speculative resolution
 

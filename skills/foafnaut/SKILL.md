@@ -577,6 +577,9 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
 - [Threads, tabs, processes, DNS and HTTP connections, 2026-11-24](../../docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md):
   what runs on which thread today, one engine worker per tab, processes per site, the connection
   pool and HTTP/2, the DNS cache and speculative resolution, the Veil models to add first.
+- [Tor and onion services, 2026-11-25](../../docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md):
+  three routes (local SOCKS port, embedded Arti, a Lean client), the conflict with Egress DNS
+  pinning, what the pool key and any substrate must allow, and the fingerprint limit.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).
