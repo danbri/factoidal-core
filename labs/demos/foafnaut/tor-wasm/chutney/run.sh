@@ -2,7 +2,9 @@
 # End-to-end test of the Arti wasm transport on a private Tor network (chutney, C tor for every
 # node). Starts the network and two local web servers, runs deno/tor-host.ts with the opt-in,
 # and checks: bootstrap 100%, one request through an exit, one request to an onion service, and
-# the same guards after a second worker starts from the first one's saved state (kept in memory).
+# the same guards after a second worker starts from the state the first one saved in a sealed
+# local LWS storage (deno/tor-state.ts), and no guard identity in clear text in that storage.
+# Needs the @factoidal/core engine bundle (tools/fetch-builds.sh --set web).
 # Exits 0 only when all three pass. No public Tor traffic.
 # Needs: tor (apt), chutney (pip install git+https://gitlab.torproject.org/tpo/core/chutney.git),
 # deno, and build.sh run first.
@@ -31,14 +33,18 @@ chutney --data-dir "$NET" init --net-from-script-path "$HERE/network" --disable-
 chutney --data-dir "$NET" bootstrap >>"$WORK/chutney.log" 2>&1
 ONION=$(find "$NET/nodes/" -path '*h/hidden_service/hostname' -exec cat {} \; | head -1)
 OUT="$WORK/arti.log"
-deno run --unstable-worker-options --allow-net --allow-read "$HERE/../deno/tor-host.ts" \
+# A fresh storage key for this test's sealed state store (never written to disk by the test).
+FOAFNAUT_TOR_STATE_KEY=$(node "$HERE/../../../../../npm/factoidal/bin/factoidal.mjs" lws-keygen 2>/dev/null | tail -1)
+export FOAFNAUT_TOR_STATE_KEY
+deno run --unstable-worker-options --allow-net --allow-read --allow-write --allow-run --allow-env "$HERE/../deno/tor-host.ts" \
   --dangerously-use-unreviewed-tor-transport --config "$NET/nodes/arti.toml" --timeout 120000 \
-  --request 127.0.0.1:4748 --request "$ONION:5858" --restart-check --hold 70000 >"$OUT" 2>&1
+  --request 127.0.0.1:4748 --request "$ONION:5858" --restart-check --hold 70000 --state-dir "$WORK/tor-state" >"$OUT" 2>&1
 grep -E '^\{' "$OUT"
 ok=0
 grep -q '"step":"bootstrap","ok":true' "$OUT" && echo "PASS bootstrap" || { echo "FAIL bootstrap"; ok=1; }
 grep -q 'exit target' "$OUT" && echo "PASS exit request" || { echo "FAIL exit request"; ok=1; }
 grep -q 'onion service target' "$OUT" && echo "PASS onion service request" || { echo "FAIL onion service request"; ok=1; }
-grep -q '"sameGuards":true' "$OUT" && echo "PASS same guards after restart" || { echo "FAIL same guards after restart"; ok=1; }
+grep -q '"via":"sealed LWS storage".*"sameGuards":true' "$OUT" && echo "PASS same guards after restart, through the sealed store" || { echo "FAIL same guards after restart"; ok=1; }
+grep -q '"filesWithGuardIdsInClearText":0' "$OUT" && echo "PASS no guard identity in clear text on disk" || { echo "FAIL state at rest"; ok=1; }
 echo "logs: $WORK"
 exit $ok

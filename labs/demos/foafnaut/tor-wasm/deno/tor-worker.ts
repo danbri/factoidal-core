@@ -59,6 +59,7 @@ type Msg =
   | { id: number; op: "debug"; on: boolean }
   | { id: number; op: "snapshot" }
   | { id: number; op: "close" }
+  | { id: number; op: "store"; kind: string }
   | { id: number; op: "load"; state: string }
   | { id: number; op: "bootstrap"; timeoutMs: number; config?: string }
   | { id: number; op: "stream"; host: string; port: number; request: string; max: number; timeoutMs: number };
@@ -70,6 +71,7 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "debug") result = tor.log_debug(m.on);
   else if (m.op === "snapshot") result = tor.state_snapshot();
   else if (m.op === "close") result = tor.close();
+  else if (m.op === "store") result = tor.set_state_store(m.kind);
   else if (m.op === "load") result = tor.state_load(m.state);
   else if (m.op === "bootstrap") result = await tor.bootstrap(m.timeoutMs, m.config);
   else if (m.op === "stream") result = await tor.stream_request(m.host, m.port, m.request, m.max, m.timeoutMs);

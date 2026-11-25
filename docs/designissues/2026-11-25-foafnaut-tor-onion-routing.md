@@ -487,3 +487,42 @@ https://github.com/danbri/factoidal-core/issues/1058 (its expected failure: the 
   guards after restart" (18 guard identity entries before and after). `node --test
   xfail.test.cjs`: 7 pass, 0 fail (out of 7). The patch now touches 10 files: 323 lines added,
   7 removed.
+
+## 15. Tor state in a sealed local LWS storage (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "2 yes" (to: build the sealed local LWS storage for Tor state).
+
+Code: `labs/demos/foafnaut/tor-wasm/deno/tor-state.ts`; host option `--state-dir DIR`.
+
+- The host starts `factoidal lws-serve DIR/pod` on 127.0.0.1 with authorization on and a did:key
+  owner (`DIR/agent.json`, mode 0600), with `FACTOIDAL_LWS_KEY` taken from
+  `FOAFNAUT_TOR_STATE_KEY`. The key is not written to disk by this code.
+- It uses the storage only when `lws-serve` prints "encryption at rest is ON" (ChaCha20-Poly1305,
+  HACL\*). With no key, or a storage that is not sealed, it does not save and says why; the state
+  stays in memory.
+- The client fetches only that origin. The state is the resource `tor/state.json`. The Tor worker
+  has no access to it; the host loads it into the worker before bootstrap and saves the worker's
+  snapshot after it.
+- The module is told `set_state_store("lws-sealed")` only when that store is in use.
+
+Results (private chutney network, this container):
+
+- `chutney/run.sh`: PASS for bootstrap, exit request, onion service request, "same guards after
+  restart, through the sealed store" (18 guard identity entries before and after), and "no guard
+  identity in clear text on disk" (a scan of every file of the storage for each guard identity
+  string of the snapshot: 0 files).
+- No key: "FOAFNAUT_TOR_STATE_KEY is not set ... so Tor state is not saved".
+- `node --test xfail.test.cjs`: 7 pass, 0 fail (out of 7).
+
+Limits:
+
+- The at-rest scan looks for the identity strings as they appear in Arti's JSON. It cannot see a
+  leak in another encoding; the sealing itself is the storage's (`LWS/DirLock.lean`, HACL\*).
+- The key must come from somewhere safe; an operating system key store is not used yet.
+- The host saves at the end of a run. A long session must save at least every 60 s (section 14.3).
+- The engine bundle for `lws-serve` comes from the `web` set of `danbri/factoidal-builds`
+  (`build-e4445d14752c-web`, sha256 checked, source commit in this history). In this container
+  `tools/fetch-builds.sh` could not list releases (HTTP 403 from the GitHub API), so it was
+  fetched by its tag.
+- Pages: no change. https://github.com/danbri/factoidal-core/issues/1058 stays open for the page
+  path; its expected failure (`state_backend()` is "lws-sealed") still fails there.
