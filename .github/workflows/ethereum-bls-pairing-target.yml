@@ -32,9 +32,10 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/check-pairing-target.mjs --self-test | tee "$RUNNER_TEMP/target-oracle.log"
+          node scripts/check-tate-pairing.mjs --self-test | tee "$RUNNER_TEMP/tate-oracle.log"
           python3 - <<'PY' | tee "$RUNNER_TEMP/target-source-pins.json"
           import json, pathlib, re, subprocess
-          paths = ["PairingTarget.lean", "scripts/check-pairing-target.mjs",
+          paths = ["PairingTarget.lean", "scripts/check-pairing-target.mjs", "scripts/check-tate-pairing.mjs",
                    "lean-toolchain", "lake-manifest.json", "lakefile.toml",
                    "../../../.github/workflows/ethereum-bls-pairing-target.yml"]
           root = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
@@ -73,7 +74,7 @@ jobs:
           import os, pathlib, re
           text = (pathlib.Path(os.environ["RUNNER_TEMP"])/"target-axioms.log").read_text()
           expected = {"EthereumConsensus.BLS.Target."+n for n in
-            ("multiply_width","multiply_noncanonical","checkedOutput_ok","powLoop_zero_exp","powLoop_one","power_limit")}
+            ("multiply_width","multiply_noncanonical","checkedOutput_ok","powLoop_zero_exp","powLoop_one","power_limit","tate_width","tate_noncanonical","tate_curve","tate_ok")}
           def audit(t):
               reports = re.findall(r"'(EthereumConsensus\.BLS\.Target\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
               if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
@@ -88,7 +89,7 @@ jobs:
               except ValueError:
                   continue
               raise ValueError("audit mutation escaped")
-          print("Actual six theorem reports and four falsification controls passed")
+          print("Actual ten theorem reports and four falsification controls passed")
           PY
       - name: Compare native target-field arithmetic against independent polynomial oracle
         run: |
@@ -96,6 +97,7 @@ jobs:
           ulimit -v 8388608
           ulimit -c 0
           node scripts/check-pairing-target.mjs "$RUNNER_TEMP/pairing-target" | tee "$RUNNER_TEMP/target-results.log"
+          node scripts/check-tate-pairing.mjs "$RUNNER_TEMP/pairing-target" | tee "$RUNNER_TEMP/tate-results.log"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -110,3 +112,5 @@ jobs:
             ${{ runner.temp }}/target-link.log
             ${{ runner.temp }}/target-symbols.log
             ${{ runner.temp }}/target-results.log
+            ${{ runner.temp }}/tate-oracle.log
+            ${{ runner.temp }}/tate-results.log
