@@ -466,6 +466,18 @@ structure ElementState where
   nothing. -/
   animated : List (Nat × String × String × Bool) := []
   deriving Repr, BEq, Inhabited
+/-- The reading of one declaration by the property table that does not depend on the style
+(`tableStaticRead`), kept with the property and value it was made for, and computed at most
+once (a `Thunk`) however many elements the declaration reaches. A memo is used for a
+declaration only when its property and value are those of the declaration
+(`tableValueM`). `TableMemo.make` is the one constructor. -/
+structure TableMemo where
+  property : String
+  value : String
+  result : Thunk (Option String)
+
+instance : Repr TableMemo := ⟨fun m _ => "memo " ++ repr m.property⟩
+
 structure Rule where
   selectors : List Selector
   declarations : List Declaration
@@ -493,6 +505,9 @@ structure Rule where
   /-- The same for `::first-letter` (CSS Pseudo-Elements 4 §2.3); `Generated.firstLetters`
   wraps the first letter of the originating element in an element that has these rules. -/
   firstLetter : List Selector := []
+  /-- The table readings of `declarations`, one for each, when there are any (`memoRule`):
+  empty for a rule not yet through `ruleEntries`. -/
+  memos : Array TableMemo := #[]
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -2167,21 +2182,30 @@ def fontSizeKeyword : String → Option Float
 def percentOf (text : String) : Option Float :=
   if text.endsWith "%" then (number (text.dropEnd 1).toString).toOption.map (· / 100) else none
 
-/-- A declaration this profile's parsers refused, written as they read it, when the
-property table reads it: lengths in px, colours as hex, `display` as the nearest box this
-profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
-font size is the element's, or the parent's for `font-size` itself). -/
-def tableValue (s : Computed) (d : Declaration) : Option String :=
+/-- The properties whose reading by the table needs the style so far (the font size):
+`tableDynamic` reads them; every other property is read by `tableStaticRead` from its name
+and value alone. -/
+def tableIsDynamic : String → Bool
+  | "font-size" | "line-height" | "border" | "border-width"
+  | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
+  | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
+  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing"
+  | "letter-spacing" | "word-spacing" | "text-indent" => true
+  | _ => false
+
+/-- The reading of a declaration that does not depend on the style: colours, keywords,
+`display`, border styles. The same for every element, so a sheet reads each declaration
+once (`TableMemo`). -/
+def tableStaticRead (prop val : String) : Option String :=
   let value := fun (v : String) => some v
-  let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
-  match d.property with
-  | "color" | "border-color" => (colorHex d.value).bind fun h => if h == "transparent" then none else value h
+  match prop with
+  | "color" | "border-color" => (colorHex val).bind fun h => if h == "transparent" then none else value h
   | "background-color" | "background" =>
     -- also the colour of a `background` shorthand (`declarations` reads it as the colour)
-    match colorHex d.value with
+    match colorHex val with
     | some h => value h
     | none =>
-      let parts := (CssValues.stripWs (CssValues.CV.parse d.value)).map fun cv => CssValues.serialize [cv]
+      let parts := (CssValues.stripWs (CssValues.CV.parse val)).map fun cv => CssValues.serialize [cv]
       match parts.findSome? colorHex with
       | some h => value h
       | none =>
@@ -2189,10 +2213,54 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
         -- Backgrounds 3 §3.10), when it is a background value at all
         -- (the colour that `declarationsOf` takes from a `background` is a `background-color`
         -- declaration with the shorthand's value)
-        if (d.property == "background" || d.property == "background-color") &&
-            (CssValues.specified "background-color" d.value).isNone && (CssValues.specified "background" d.value).isSome then
+        if (prop == "background" || prop == "background-color") &&
+            (CssValues.specified "background-color" val).isNone && (CssValues.specified "background" val).isSome then
           value "transparent"
         else none
+  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
+    match (CssValues.specified prop val) with
+    | some w => value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid")
+    | none => none
+  | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
+    (colorHex val).bind fun h => if h == "transparent" then none else value h
+  | "border-style" =>
+    match (words val.toLower).head? with
+    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid") else none
+    | none => none
+  | "display" =>
+    match (CssValues.specified "display" val) with
+    | none => none
+    | some t =>
+      if ["flex", "grid", "flow-root", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
+      else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
+      else if t == "run-in" then value "inline"
+      -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
+      else if t == "-webkit-box" then value "flex"
+      else if t == "-webkit-inline-box" then value "inline-flex"
+      else value t
+  | "text-align" =>
+    match (CssValues.specified "text-align" val) with
+    | some "justify" => value "start"
+    | some "-webkit-center" => value "center"
+    | some "-webkit-left" => value "left"
+    | some "-webkit-right" => value "right"
+    | some t => value t
+    | none => none
+  | "text-decoration" | "text-decoration-line" =>
+    if (CssValues.specified "text-decoration" val).isSome then
+      value (if (words val.toLower).contains "underline" then "underline" else "none")
+    else none
+  | _ =>
+    -- a keyword property: the table's canonical form (lower case)
+    (CssValues.specified prop val).bind fun t => if t == val then none else value t
+
+
+/-- The reading of a declaration of a property in `tableIsDynamic`, against the font size of
+the style `s`. -/
+def tableDynamic (s : Computed) (d : Declaration) : Option String :=
+  let value := fun (v : String) => some v
+  let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
+  match d.property with
   | "font-size" =>
     match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
     | none => none
@@ -2220,54 +2288,79 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
       let style := if ["none", "hidden", "solid", "inset", "outset"].contains style then style else "solid"
       let colour := ((ds.lookup "border-top-color").bind colorHex).filter (· != "transparent")
       value (" ".intercalate ([width, style] ++ colour.toList))
-  | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
-    match (CssValues.specified d.property d.value) with
-    | some w => value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid")
-    | none => none
-  | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    (colorHex d.value).bind fun h => if h == "transparent" then none else value h
-  | "border-style" =>
-    match (words d.value.toLower).head? with
-    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid") else none
-    | none => none
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
       " ".intercalate ((words t).map fun w => (CssValues.lineWidthKeyword w).getD w)
-  | "display" =>
-    match (CssValues.specified "display" d.value) with
-    | none => none
-    | some t =>
-      if ["flex", "grid", "flow-root", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
-      else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
-      else if t == "run-in" then value "inline"
-      -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
-      else if t == "-webkit-box" then value "flex"
-      else if t == "-webkit-inline-box" then value "inline-flex"
-      else value t
-  | "text-align" =>
-    match (CssValues.specified "text-align" d.value) with
-    | some "justify" => value "start"
-    | some "-webkit-center" => value "center"
-    | some "-webkit-left" => value "left"
-    | some "-webkit-right" => value "right"
-    | some t => value t
-    | none => none
-  | "text-decoration" | "text-decoration-line" =>
-    if (CssValues.specified "text-decoration" d.value).isSome then
-      value (if (words d.value.toLower).contains "underline" then "underline" else "none")
-    else none
   | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
   | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
   | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing"
   | "letter-spacing" | "word-spacing" | "text-indent" =>
     (tableComputed s.fontSize d.property d.value).bind value
-  | _ =>
-    -- a keyword property: the table's canonical form (lower case)
-    (CssValues.specified d.property d.value).bind fun t => if t == d.value then none else value t
+  | _ => none
+
+/-- A declaration this profile's parsers refused, written as they read it, when the
+property table reads it: lengths in px, colours as hex, `display` as the nearest box this
+profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
+font size is the element's, or the parent's for `font-size` itself). -/
+def tableValue (s : Computed) (d : Declaration) : Option String :=
+  if tableIsDynamic d.property then tableDynamic s d else tableStaticRead d.property d.value
+
+/-- The memo of declaration `d` (`TableMemo`): the reading is made when first asked for. A
+property read against the font size has no style-independent reading, so its memo is none. -/
+def TableMemo.make (d : Declaration) : TableMemo :=
+  ⟨d.property, d.value, Thunk.mk fun _ => if tableIsDynamic d.property then none else tableStaticRead d.property d.value⟩
+
+/-- `tableValue` reading the style-independent part from `memo` when `memo` is that of
+this property and value (`tableValueM_eq`); a memo of another declaration is ignored. -/
+def tableValueM (memo : Option TableMemo) (s : Computed) (d : Declaration) : Option String :=
+  match memo with
+  | some m =>
+    if m.property == d.property && m.value == d.value then
+      (if tableIsDynamic d.property then tableDynamic s d else m.result.get)
+    else tableValue s d
+  | none => tableValue s d
+
+/-- A memo made by `TableMemo.make` for a declaration with the same property and value as
+`d` gives `tableValue`. Kind: equivalence. -/
+theorem tableValueM_make_eq (s : Computed) (d d0 : Declaration)
+    (hp : d0.property = d.property) (hv : d0.value = d.value) :
+    tableValueM (some (TableMemo.make d0)) s d = tableValue s d := by
+  simp only [tableValueM, TableMemo.make, hp, hv, beq_self_eq_true, Bool.and_self, if_true, tableValue]
+  by_cases h : tableIsDynamic d.property = true
+  · simp [h]
+  · simp [h, Thunk.get]
 
 /-- The declaration with the value the table gives (`tableValue`): the same property. -/
 def tableDeclaration (s : Computed) (d : Declaration) : Option Declaration :=
   (tableValue s d).map fun v => { d with value := v }
+
+-- The readings of the table are those from before the split into a static and a dynamic
+-- part (values from the previous `tableValue`), and a memo gives the same reading.
+#guard tableValue {} ⟨"display", "flex", false⟩ == some "block"
+#guard tableValue {} ⟨"display", "inline-grid", false⟩ == some "inline-block"
+#guard tableValue {} ⟨"color", "rgb(1 2 3)", false⟩ == some "#010203"
+#guard tableValue {} ⟨"border-top-style", "ridge", false⟩ == some "ridge"
+#guard tableValue {} ⟨"border-top-style", "dotted", false⟩ == some "dotted"
+#guard tableValue {} ⟨"width", "2em", false⟩ == some "32px"
+#guard tableValue {} ⟨"font-size", "larger", false⟩ == tableValue {} ⟨"font-size", "larger", true⟩
+#guard tableValue {fontSize := 10} ⟨"line-height", "150%", false⟩ == some "15px"
+#guard tableValue {} ⟨"border", "2px dashed red", false⟩ == some "2px solid #ff0000"
+#guard tableValue {} ⟨"visibility", "VISIBLE", false⟩ == some "visible"
+#guard (["display","text-align","color","background","border-top-style","width","font-size","visibility"].all fun p =>
+  ["flex","VISIBLE","rgb(1 2 3)","2em","larger","x y","dotted"].all fun v =>
+    let d : Declaration := ⟨p, v, false⟩
+    tableValueM (some (TableMemo.make d)) {} d == tableValue {} d &&
+    -- a memo made for another value is ignored
+    tableValueM (some (TableMemo.make ⟨p, "flex", false⟩)) {} d == tableValue {} d)
+
+/-- `tableDeclaration` through a memo. -/
+def tableDeclarationM (memo : Option TableMemo) (s : Computed) (d : Declaration) : Option Declaration :=
+  (tableValueM memo s d).map fun v => { d with value := v }
+
+theorem tableDeclarationM_make_eq (s : Computed) (d d0 : Declaration)
+    (hp : d0.property = d.property) (hv : d0.value = d.value) :
+    tableDeclarationM (some (TableMemo.make d0)) s d = tableDeclaration s d := by
+  simp only [tableDeclarationM, tableDeclaration, tableValueM_make_eq s d d0 hp hv]
 
 theorem tableDeclaration_property (s : Computed) (d d' : Declaration) (h : tableDeclaration s d = some d') :
     d'.property = d.property := by
@@ -2362,6 +2455,24 @@ private theorem applyOrKeep_eq (s : Computed) (d : Declaration) : applyOrKeep s 
       obtain ⟨e', he'⟩ := apply_other s d' (by rw [hp]; exact h)
       simp only [he']
       rfl
+
+/-- `applyOrKeep` with the style-independent table reading of `d` taken from `memo`. -/
+private def applyOrKeepM (memo : Option TableMemo) (s : Computed) (d : Declaration) : Computed :=
+  if appliedName d.property then
+    match apply s d with
+    | .ok r => r
+    | .error _ =>
+      match tableDeclarationM memo s d with
+      | some d' => (apply s d').toOption.getD s
+      | none => s
+  else s
+
+/-- Kind: equivalence (a memo of the declaration changes no style). -/
+private theorem applyOrKeepM_make_eq (s : Computed) (d d0 : Declaration)
+    (hp : d0.property = d.property) (hv : d0.value = d.value) :
+    applyOrKeepM (some (TableMemo.make d0)) s d = applyOrKeep s d := by
+  unfold applyOrKeepM applyOrKeep applyOrKeepSlow
+  rw [tableDeclarationM_make_eq s d d0 hp hv]
 
 /-! ### CSS-wide keywords (CSS Cascade 4 §7.3) -/
 
@@ -2499,6 +2610,21 @@ private def applyWinner (parent start s : Computed) (d : Declaration) : Computed
   match wideSource parent start d with
   | some source => (copyProperty d.property source s).getD s
   | none => applyOrKeep s d
+
+/-- `applyWinner` with the table reading of `d` taken from `memo` (`computedFrom`). -/
+private def applyWinnerM (memo : Option TableMemo) (parent start s : Computed) (d : Declaration) : Computed :=
+  match wideSource parent start d with
+  | some source => (copyProperty d.property source s).getD s
+  | none => applyOrKeepM memo s d
+
+/-- Kind: equivalence (a memo of the declaration changes no style). -/
+private theorem applyWinnerM_make_eq (parent start s : Computed) (d d0 : Declaration)
+    (hp : d0.property = d.property) (hv : d0.value = d.value) :
+    applyWinnerM (some (TableMemo.make d0)) parent start s d = applyWinner parent start s d := by
+  unfold applyWinnerM applyWinner
+  cases wideSource parent start d with
+  | some source => rfl
+  | none => exact applyOrKeepM_make_eq s d d0 hp hv
 
 /-- The ordinary winning-declaration path sets a zero pixel line height and
 clears the inherited unitless factor, preserving the remaining style fields. -/
@@ -3239,8 +3365,13 @@ def visitedProperties : List String := ["color","background","background-color",
 and those of its selectors that match. -/
 abbrev Match := Nat × Rule × List Selector
 
+/-- The rule with the table reading of each declaration made ready (`TableMemo`): read at
+most once, when an element first needs it, however many elements the rule matches. -/
+def memoRule (r : Rule) : Rule := {r with memos := r.declarations.toArray.map TableMemo.make}
+
 /-- Every rule with its origin, the user agent's first, in sheet order. -/
-def ruleEntries (rules : List Rule) : List (Nat × Rule) := userAgentRules.map (0,·) ++ rules.map (1,·)
+def ruleEntries (rules : List Rule) : List (Nat × Rule) :=
+  (userAgentRules.map memoRule).map (0,·) ++ (rules.map memoRule).map (1,·)
 
 /-- The entry `e` as a match of element `id`, when one of its selectors matches. -/
 def matchEntry (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule) : Option Match :=
@@ -3823,6 +3954,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         initial := if property == "width" then {initial with width := dimension}
           else {initial with height := dimension}
   let mut winners : Std.TreeMap String (List Nat × Declaration) := {}
+  -- the table readings of the declarations of the rules (`memoRule`), by property
+  let mut memos : Std.TreeMap String TableMemo := {}
   let mut order : Nat := 0
   -- a matched rule or the `style` attribute has a custom property or a `var()`
   let mut usesVars := false
@@ -3833,7 +3966,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     let onlyVisited := matched.all (·.visitedDependent)
     if rule.usesVars then usesVars := true
     if rule.usesLogical then usesLogical := true
-    for d in rule.declarations do
+    for d in rule.declarations, di in [0:rule.declarations.length] do
       if (!onlyVisited || visitedProperties.contains d.property) && !(origin == 0 && !d.important && hinted.contains d.property) then
         let key := ruleKey d.important origin rule.scope.isSome rule.layer specificity order
         -- a side shorthand kept whole (it mentions `var()`) stands for each of its sides
@@ -3841,6 +3974,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         if sides.isEmpty then
           if (winners.get? d.property).all (fun old => lexLE old.1 key) then
             winners := winners.insert d.property (key,d)
+            -- its table reading, made once for the rule (used only for this property and value)
+            if let some m := rule.memos[di]? then memos := memos.insert d.property m
         else
           for side in sides do
             if (winners.get? side).all (fun old => lexLE old.1 key) then winners := winners.insert side (key,d)
@@ -3889,7 +4024,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       | some _ => result
       | none => if (CssValues.specified "font-size" d.value).isSome || (apply result d).toOption.isSome
           then {result with fontSize := parent.fontSize} else result
-    result := applyWinner parent initial base d
+    result := applyWinnerM (memos.get? "font-size") parent initial base d
     -- the user agent's margins are in em of the element's own font size (`startMargin`); an
     -- author `margin` below still wins
     -- (only when the margins are still the user agent's: no presentational hint set them)
@@ -3908,7 +4043,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     if key != "font-size" then
       -- SVG paint goes to the SVG renderer; the root's layout-related properties stay here.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
-      else result := applyWinner parent initial result d
+      else result := applyWinnerM (memos.get? key) parent initial result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   -- The children of a flex or grid container are its items: blockified.
