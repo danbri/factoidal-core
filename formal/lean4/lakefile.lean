@@ -293,6 +293,24 @@ extern_lib libl4hostread pkg := do
   let name := nameToStaticLib "l4hostread"
   buildStaticLib (pkg.staticLibDir / name) #[hr]
 
+/-- True when `leanjs` is linked with link-time optimisation (see `lean_lib JS` below): on
+x86-64 Linux with `-K leanjsLto=on`. Opt-in until the factoidal-builds Linux image installs
+libc++, libc++abi and gmp headers and the leanjs size budget allows +2.2 % (issue 471). The
+macOS linker reads only its own compiler's bitcode, so other hosts build without it. -/
+def leanjsLto : Bool :=
+  get_config? leanjsLto == some "on" &&
+    System.Platform.target.startsWith "x86_64-" && (System.Platform.target.splitOn "linux").length > 1
+
+/-- The runtime units of `ffi/leanrt-lto.sh` as ThinLTO bitcode, for the link of `leanjs`. Rebuilt
+when the script or the toolchain changes. -/
+target leanrt_lto pkg : FilePath := do
+  let dir := pkg.buildDir / "leanrt-lto"
+  let shFile := pkg.dir / "ffi" / "leanrt-lto.sh"
+  let scriptJob ← inputTextFile shFile
+  let sysroot ← getLeanSysroot
+  buildFileAfterDep (dir / "libleanrt-lto.a") scriptJob (extraDepTrace := getLeanTrace) fun scriptFile =>
+    proc { cmd := "bash", args := #[scriptFile.toString, dir.toString, sysroot.toString] }
+
 @[default_target] lean_lib L4Factoidal
 
 -- Checked local ASK attestation, including the exhaustion/resource proofs.
@@ -344,9 +362,25 @@ lean_lib LeanJSHost where
 -- `L4Factoidal.JS.FuelMono` holds the proof tactics (it imports Lean.Elab.Tactic): a root of its
 -- own, built by default, never imported by `L4Factoidal.JS`, so no executable links Lean's
 -- elaborator (leanjs was 110.9 MB with it, 11 MB without; issue 551, tools/binary-budget.py).
+--
+-- Link-time optimisation of `leanjs` (issue 471; record
+-- docs/designissues/2026-11-25-leanjs-lto-linux.md): on x86-64 Linux with `-K leanjsLto=on`, the C of the
+-- `JS` library's modules is compiled as fat ThinLTO objects (machine code and bitcode in one
+-- object), and `leanjs` is linked with ThinLTO over that bitcode and over the bitcode of the
+-- runtime units an allocation and a free pass through (`leanrt_lto`, `ffi/leanrt-lto.sh`), so
+-- that `lean_alloc_small`, `mi_malloc_small`, `lean_dec_ref_cold`, `lean_del_core` and `mi_free`
+-- are inlined into the engine. Other executables that link the `JS` modules use the machine
+-- code of the same objects, as before (the linker reads the bitcode only with
+-- `--fat-lto-objects`). Measured on Linux: 0.926 of the instructions (geometric mean of five
+-- libraries), the Test262 subset's verdict list unchanged. Without `-K leanjsLto=on`, and on
+-- other hosts, `leanjs` builds without it.
 @[default_target] lean_lib JS where
   roots := #[`L4Factoidal.JS, `L4Factoidal.JS.FuelMono]
-lean_exe leanjs where root := `L4Factoidal.JS.Main
+  moreLeancArgs := if leanjsLto then #["-flto=thin", "-ffat-lto-objects"] else #[]
+lean_exe leanjs where
+  root := `L4Factoidal.JS.Main
+  moreLinkObjs := if leanjsLto then #[leanrt_lto] else #[]
+  moreLinkArgs := if leanjsLto then #["-flto=thin", "-O3", "-Wl,--fat-lto-objects"] else #[]
 -- Fuel monotonicity of the evaluator's mutual block (`IH_all`, JS/FuelMonoAll.lean): a chain of
 -- generated proof modules, checked one at a time (about a quarter of an hour, under 2 GB each).
 -- Not a default target: `lake build JSFuelMono`.

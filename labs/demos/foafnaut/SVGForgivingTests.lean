@@ -107,6 +107,13 @@ private def strict (body : String) : Option NativeSVG.Scene :=
 #guard (strict "<defs><clipPath id='c'><rect width='9' height='9'/></clipPath></defs><g clip-path='url(#c)'><rect width='20' height='20'/></g>").isSome
 #guard (strict "<defs><clipPath id='c'><circle r='9'/></clipPath></defs><g clip-path='url(#c)'><rect width='20' height='20'/></g>").isNone
 
+-- The normal browser import preserves a supported clip definition through cleanup.
+private def logoClip :=
+  "<defs><clipPath id='frame'><path fill='white' d='M0 0h20v21.42H0z'/></clipPath></defs>" ++
+  "<g clip-path='url(#frame)'><rect width='40' height='40'/></g>"
+#guard !(log logoClip).contains "element: clipPath"
+#guard inked logoClip 10 10 && clear logoClip 30 10 && clear logoClip 10 30
+
 -- Text lowers to glyph paths; x lists, anchors and missing fonts behave.
 private def font : SVGFont := match SVGFont.parse "<svg xmlns='http://www.w3.org/2000/svg'><font horiz-adv-x='500'><font-face font-family='T' units-per-em='1000'/><glyph unicode='a' glyph-name='a' d='M0 0H100V100Z'/><glyph unicode=' ' glyph-name='space'/></font></svg>" with
   | .ok f => f | .error _ => {}

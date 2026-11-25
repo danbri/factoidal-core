@@ -474,6 +474,19 @@ private def contentNone := WebDocument.compileText contentPage "{\"op\":\"render
 -- bytes that do not decode: as no image
 #guard contentWith "aGk=" == contentNone
 
+-- `border-image` (CSS Backgrounds 3 §6, issue 874 part 2): its URL is made absolute against the
+-- document and listed to fetch; with the image's bytes the border is drawn from the image (the
+-- page differs from the page with no image), with none or with bytes that are not an image, the
+-- border style is drawn and the page is not refused (§6.1).
+private def borderImagePage := "<style>div{border:6px solid red;border-image:url(a.png) 1 repeat}</style><body style='margin:0'><div style='width:20px;height:10px'></div></body>"
+#guard contains (WebDocument.compileText borderImagePage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 60 60)
+  "\"backgroundImages\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
+private def borderWith (bytes : String) := WebDocument.compileText borderImagePage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ bytes ++ "\"}]}") 60 60
+private def borderNone := WebDocument.compileText borderImagePage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 60 60
+#guard !contains (borderWith imageBytes) "\"error\"" && !contains borderNone "\"error\""
+#guard borderWith imageBytes != borderNone
+#guard borderWith "aGk=" == borderNone
+
 -- An SVG file as the image of an `img` (2026-11-14; before, its alt text): the document is drawn
 -- on the CPU into a bitmap of twice its size, with alpha, and laid out by the size of its root.
 private def svgFile := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10' viewBox='0 0 20 10'><rect width='10' height='10' fill='#ff0000'/></svg>"
@@ -727,6 +740,15 @@ private def shellEdit (action text : String) (shell : JSON.Json) : Option JSON.J
 #guard ((shellEdit "cut" "" (json [("address",.string "abc"),("cursor",.number "3"),("anchor",.number "1")])).bind (·.field? "address")) == some (.string "a")
 #guard ((shellEdit "copy" "" (json [("address",.string "abc"),("cursor",.number "3")])).bind (·.field? "clipboard")) == some .null
 #guard (WebDocument.run "" (json [("op",.string "keyTable"),("platform",.string "mac")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"p\"").length > 1)) == some true
+-- Issue 1031: Command-click on macOS opens a background tab; a plain click follows the link.
+#guard (WebDocument.run "" (json [("op",.string "linkGesture"),("platform",.string "mac"),("button",.number "0"),("modifiers",.number "2")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"backgroundTab\"").length > 1)) == some true
+#guard (WebDocument.run "" (json [("op",.string "linkGesture"),("platform",.string "other"),("button",.number "0"),("modifiers",.number "0")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"follow\"").length > 1)) == some true
+-- A double click does not follow a link: it selects a word (issue 1031).
+#guard (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "5",.number "5",.number "5",.number "5"]),("clicks",.number "2")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"select\"").length > 1)) == some true
+#guard (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "5",.number "5",.number "5",.number "5"]),("clicks",.number "1")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"click\"").length > 1)) == some true
+-- The context menu (issue 1031): a link under the press gives the link menu, none the page menu.
+#guard (WebDocument.run "" (json [("op",.string "shellContext"),("shell",.object []),("link",.string "https://x.org/"),("selection",.bool false)]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"context\":\"link\"").length > 1)) == some true
+#guard (WebDocument.run "" (json [("op",.string "shellContext"),("shell",.object []),("link",.null),("selection",.bool true)]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"contextSelection\":true").length > 1)) == some true
 
 -- XHTML (HTML §14): a `.xht` URL is read as XML, so a style sheet in a CDATA section
 -- applies (the WPT reference ref-filled-green-100px-square.xht has one).

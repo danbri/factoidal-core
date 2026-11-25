@@ -91,8 +91,9 @@ check "deno test (pure tests)" deno test --no-check --no-config --no-npm --node-
 # Page requests of the desktop host (native_net.ts): local servers on the loopback interface (the
 # net permission is for the test names, which never resolve); a pinned request goes to its address
 # and to no other; https makes a throwaway
-# certificate with openssl.
-check "native_net tests (pool, DNS cache)" deno test --no-config --no-npm --node-modules-dir=none --allow-net --allow-run=openssl --allow-read --allow-write "$LAB/native_net_test.ts" "$LAB/native_net_pool_test.ts" "$LAB/native_net_dns_test.ts"
+# certificate with openssl. DNS_REAL=1 adds one real DNS lookup to the DNS cache test (off by default:
+# a CI runner may have no DNS).
+check "native_net tests (pool, DNS cache)" deno test --no-config --no-npm --node-modules-dir=none --allow-net --allow-run=openssl --allow-read --allow-write --allow-env=DNS_REAL "$LAB/native_net_test.ts" "$LAB/native_net_pool_test.ts" "$LAB/native_net_dns_test.ts"
 # Frame cost ratchet: frame_cost_test.ts (above) replays the cases of the Lean model
 # (L4Factoidal/FrameCost); the fixture must be the model's output.
 FRAME_COST_CASES="$LAB/../../../formal/lean4/.lake/build/bin/frame-cost-cases"

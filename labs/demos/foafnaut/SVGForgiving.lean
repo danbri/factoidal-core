@@ -21,7 +21,7 @@ open NativeSVGText
 private def maxParses : Nat := 4000
 
 /-- Elements the strict reader reads. Any other element is removed and logged. -/
-private def readable := ["svg","g","use","symbol","defs","style","metadata","title","desc",
+private def readable := ["svg","g","use","symbol","defs","clipPath","style","metadata","title","desc",
   "rect","circle","ellipse","line","polygon","polyline","path",
   "linearGradient","radialGradient","stop","solidColor","image"]
 /-- Elements that paint nothing: their content needs no reader support. -/

@@ -265,11 +265,17 @@ private def overflowCss := "#c{width:100px;height:80px} #p{position:relative;lef
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "#a{height:500px}" "h" == some (200,500)
 
 -- List markers (CSS Lists 3 §3): outside the item's box by default, half an em before its
--- content edge (the list's 40px of padding leaves the room); the item's text is at the edge.
+-- border edge (the list's 40px of padding leaves room for the marker).
 private def listed := "<ul id=u><li id=i>AA</li><li id=j>BB</li></ul>"
 private def xOf (html extra text : String) : Option Float := (at? html extra text).map (·.1)
 #guard xOf listed "" "AA" == some 40
 #guard xOf listed "" "*" == some 30.5
+
+-- Border and padding move the list item's text but leave the outside marker
+-- at the same border edge. Text spacing applies to the principal line.
+#guard xOf listed "#i{border-left:3px solid;padding-left:9px}" "AA" == some 52
+#guard xOf listed "#i,#j{border-left:3px solid;padding-left:9px}" "*" == some 30.5
+#guard xOf listed "#i,#j{text-indent:20px;letter-spacing:4px;white-space:pre}" "*" == some 30.5
 -- A float changes the line band and outside marker together. An equal margin
 -- provides the reference placement without a float, including for an empty item.
 private def besideMarker := "<div id=f></div><div id=m></div>"
@@ -793,6 +799,16 @@ private def inside := "<div id=c><div id=k>K</div></div>"
 #guard box inside "#k{margin:0 10%}" "k" == some (20,0,160,7)
 -- top and bottom are of the width too
 #guard box inside "#c{width:100px} #k{padding-top:10%;padding-bottom:20%}" "k" == some (0,0,100,37)
+
+-- An empty inline wrapper around an out-of-flow item contributes no strut.
+-- The containing block's percentage padding still sizes and positions the item.
+private def mediaPlaceholder :=
+  "<div id=c><div id=m><picture> <span id=p>AA</span> </picture></div><div id=k>ZZ</div></div>"
+private def mediaPlaceholderCss :=
+  "#c{width:160px} #m{position:relative;padding-bottom:56.25%} #p{position:absolute;inset:0}"
+#guard box mediaPlaceholder mediaPlaceholderCss "m" == some (0,0,160,90)
+#guard box mediaPlaceholder mediaPlaceholderCss "p" == some (0,0,160,90)
+#guard at? mediaPlaceholder mediaPlaceholderCss "ZZ" == some (0,90)
 #guard box inside "#c{width:100px} #k{margin-top:10%}" "k" == some (0,10,100,7)
 -- the containing block's own width may be a percentage, or what its margins leave
 #guard box inside "#c{width:50%} #k{margin-left:10%}" "k" == some (10,0,90,7)

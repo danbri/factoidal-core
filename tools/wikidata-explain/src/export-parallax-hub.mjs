@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { astOf, nameOf, parallaxId } from './run.mjs';
 import { buildFlow } from './flow.mjs';
+import { grammarOf } from './grammar.mjs';
+import { plainReason } from './plain.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = process.argv[2];
@@ -30,6 +32,19 @@ function startOf(set) {
   if (f) return { start: `items with ${bare(f.prop)} = ${f.values.map(v => bare(v.text)).join(' or ')}`, startId: f.values.find(v => v.id)?.id ?? null };
   return { start: `?${set.var}`, startId: null };
 }
+/** Every Wikidata item a program names (types, VALUES, facet values). */
+function collectEntities(prog, ids) {
+  const add = (t) => { const m = /^wd:(Q\d+)$/.exec(t || ''); if (m) ids.add(m[1]); };
+  for (const part of prog.parts) {
+    if (part.t === 'chain') for (const row of part.rows) for (const s of row) {
+      add(s.type); (s.values || []).forEach(add); for (const f of s.narrow || []) f.o.forEach(add);
+    } else part.args.forEach(a => collectEntities(a, ids));
+  }
+}
+function whyCodes(prog, out = []) {
+  for (const part of prog.parts) if (part.t === 'combine') { if (part.why) out.push(part.why); part.args.forEach(a => whyCodes(a, out)); }
+  return out;
+}
 const queries = [], entityIds = new Set();
 for (const q of corpusDoc.queries) {
   const ast = astOf(q.id);
@@ -37,11 +52,21 @@ for (const q of corpusDoc.queries) {
   const px = parallaxId(q.id);
   const flow = buildFlow(ast, px, nameOf);
   flow.entities.forEach(e => entityIds.add(e));
+  // The query as blocks: chains of interlocking pieces, held by operator blocks.
+  // The query as an abstract grammar (data only) plus a lexicon of words for it.
+  const grammar = grammarOf(ast, nameOf);
+  collectEntities(grammar.program, entityIds);
+  for (const code of whyCodes(grammar.program)) grammar.lex[code] = plainReason(code);
+  // The whole query, as rewritten for QLever and checked there: the stepper's last step.
+  grammar.full = q.lean_replacement_query.replace(/\n# Original query:[\s\S]*$/, '').replace(/^#title:.*\n/, '').trim();
+  flow.why = flow.beyond.map(b => ({ code: b, text: plainReason(b) }));
+  // The page draws blocks; the set list itself is not needed there.
+  const { sets: flowSets, looseEdges, ...flowOut } = flow;
   const kinds = [...new Set([...(px.negations.length ? ['exclude'] : []), ...px.extensions.map(e => e.kind)])];
   queries.push({
     id: q.id, title: q.title, tier: px.tier, tierName: TIER[px.tier], kinds,
-    ...startOf(flow.sets[0]),
-    sets: flow.sets.length, flow,
+    ...startOf(flowSets[0]),
+    sets: flowSets.length, flow: flowOut, grammar,
     wdqs: `https://query.wikidata.org/#${encodeURIComponent(q.classic_query)}`,
   });
 }

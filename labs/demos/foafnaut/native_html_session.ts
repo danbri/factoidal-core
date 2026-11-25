@@ -131,17 +131,25 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     const next=queue.then(run,run);queue=next.catch(()=>{});return next;
   };
   async function present(width:number,height:number,offset:number,check:boolean,start:number,drawn:Record<string,number>):Promise<DrawResult> {
+    const planStart=performance.now();
     const plan=await layered.plan(width,height,[0,0,0,0]);
+    const configureStart=performance.now();
     configure(plan,width,height);
     const prepared=performance.now();
     const texture=lifecycle!.acquire();
+    const acquired=performance.now();
     if(!texture)return {presented:false,checked:false,pixelHash:lastHash,steps:lastSteps,prepareMs:prepared-start,drawMs:0,presentedAt:0};
     // A press darkening is not Lean's frame: its present is not checked against Lean's probes.
     const checking=check&&!layered.pressed;
     const result=await layered.composite(texture,width,height,offset,checking);
+    const presentStart=performance.now();
     lifecycle!.present();
     const presentedAt=performance.now();
-    const steps={...drawn,...Object.fromEntries(Object.entries(result.steps).map(([k,v])=>["composite."+k,v]))};
+    const steps={...drawn,...Object.fromEntries(Object.entries(result.steps).map(([k,v])=>["composite."+k,v])),
+      "surface.resolvePlan":Math.round((configureStart-planStart)*10)/10,
+      "surface.configure":Math.round((prepared-configureStart)*10)/10,
+      "surface.acquire":Math.round((acquired-prepared)*10)/10,
+      "surface.present":Math.round((presentedAt-presentStart)*10)/10};
     if(checking)lastHash=result.hash;
     lastSteps=steps;lastChecked=checking;last=undefined;
     return {presented:true,checked:checking,pixelHash:result.hash,steps,prepareMs:prepared-start,drawMs:presentedAt-prepared,presentedAt};
@@ -177,6 +185,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     const drawn=await layered.drawLayers(layers,check,bands);
     frameUnits=drawn.units+width*height/1e6;
     const steps=Object.fromEntries([...Object.entries(drawn.chrome.steps).map(([k,v])=>["chrome."+k,v]),...Object.entries(drawn.page.steps).map(([k,v])=>["page."+k,v])]);
+    steps["layers.draw"]=Math.round((performance.now()-start)*10)/10;
     lastLayers={layers,width,height,offset};
     return present(width,height,offset,check,start,steps);
   }
@@ -270,7 +279,7 @@ export async function createHTMLWindowSession(device:GPUDevice,target:PresentTar
     get frames(){return lifecycle?.framesPresented??0;},
     get steps(){return lastSteps;},
     get pixelHash(){return lastHash;},
-    get stats(){return {...stats,layers:{...layered.stats},gpu:gate.stats};},
+    get stats(){return {...stats,pipelineBuilds:stats.pipelineBuilds+layered.stats.pipelineBuilds,layers:{...layered.stats},gpu:gate.stats};},
     /** Submit to done of recent GPU work, ms (about the GPU time, with the gate on). */
     get gpuTimes(){return gate.recent;},
     /** The host loop's turn, right after it took input: GPU waits start only here from now on

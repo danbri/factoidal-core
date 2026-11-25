@@ -469,6 +469,28 @@ private def imageParent := "<div><span>text</span></div>"
 #guard hinted imageParent "div{background:url(flag.svg)}span{background:url(other.svg);background:unset}" "span"
   (fun s => s.backgroundImage.isNone)
 
+-- `border-image` through the cascade (CSS Backgrounds 3 §6, issue 874): the declared source, an
+-- author rule over another, not inherited, and reset by the `border` shorthand after it.
+#guard hinted "<div><span>t</span></div>" "div{border-image:url(stripes.png) 0 35 0 0 repeat}" "div"
+  (fun s => s.borderImage.source == some "stripes.png" && s.borderImage.repeatX == .tile)
+#guard hinted "<div><span>t</span></div>" "div{border-image:url(stripes.png) 0 35 0 0 repeat}" "span"
+  (fun s => s.borderImage.source.isNone)
+#guard hinted "<div><span>t</span></div>" "div{border-image-source:url(a.png)} div{border-image-source:url(b.png)}" "div"
+  (fun s => s.borderImage.source == some "b.png")
+#guard hinted "<div><span>t</span></div>" "div{border-image:url(a.png) 2;border:1px solid red}" "div"
+  (fun s => s.borderImage.source.isNone)
+#guard hinted "<div><span>t</span></div>" "div{border-image:url(a.png) 2}span{border-image:inherit}" "span"
+  (fun s => s.borderImage.source == some "a.png")
+-- longhand after shorthand, in source order; a shorthand after a longhand resets it
+#guard hinted "<div></div>" "div{border-image:url(a.png) 2 repeat;border-image-source:url(b.png)}" "div"
+  (fun s => s.borderImage.source == some "b.png" && s.borderImage.repeatX == .tile)
+#guard hinted "<div></div>" "div{border-image-source:url(b.png);border-image:url(a.png) 2}" "div"
+  (fun s => s.borderImage.source == some "a.png")
+#guard hinted "<div></div>" "div{border-image:url(a.png) 2 fill}" "div"
+  (fun s => s.borderImage.fill)
+#guard hinted "<div></div>" "div{border-image:fill url(a.png)}" "div"
+  (fun s => s.borderImage.fill && s.borderImage.source == some "a.png")
+
 
 -- HTML §15.3.3 and §15.3.8: the user agent's block margins are 1em of the element's own font
 -- size, and 0 for a list in a list (`Style.startMargin`, `Style.insideList`).

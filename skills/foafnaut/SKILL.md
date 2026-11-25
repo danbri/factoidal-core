@@ -346,9 +346,19 @@ Measuring:
 ### Measure BubblePopKit and BubblePopJS with no Mac
 
 A Linux cloud session can build and measure everything that is CPU work: the native build of
-BubblePopKit (`web-render-native`) and BubblePopJS (`leanjs`). It can not run the window, the
-GPU or the Deno host. Record of the first such session, with every number and command:
+BubblePopKit (`web-render-native`) and BubblePopJS (`leanjs`). Record of the first such session,
+with every number and command:
 [docs/designissues/2026-11-09-foafnaut-perf-exploration.md](../../docs/designissues/2026-11-09-foafnaut-perf-exploration.md).
+
+Since 2026-11-25 it can also run the window and the Deno host from source, under Xvfb with Mesa
+software Vulkan and the newest released engine of main:
+`tools/foafnaut-linux-rig/setup.sh` (apt packages, the two release sets checked by sha256,
+`libnative-window.so` built from this checkout), then
+`tools/foafnaut-linux-rig/run.sh --html FILE --scroll-sweep --perf-summary` (use a sweep so the run
+exits). Host changes (input, queues, workers, network) are measured as they are. GPU times are
+software Vulkan times: do not compare them with a Mac. A Lean engine change needs an engine build
+first. Before this, the cost of having no rig: on 2026-11-25 the gesture work of issue 1031 was
+pushed with only a type check, because the window could not run here.
 
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
@@ -537,6 +547,35 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
   Touch only the files you meant. Remove `.lake` and `.wasm-work` after the push.
 - Page-only change: `tools/hub-quick-ship.sh` (no engine build; it refuses other paths,
   prints the deploy command).
+
+### A/B gate for engine changes (`tools/foafnaut-ab.py`)
+
+Before an engine change goes to `main`, run it against its base commit:
+`python3 tools/foafnaut-ab.py gate BASE BRANCH --first /css/css-backgrounds/`, with
+`FOAFNAUT_AB_MANIFEST`, `FOAFNAUT_AB_WPT` (the WPT checkout of `skills/wpt-runs`, "Locally")
+and `FOAFNAUT_AB_REALPAGES` (factoidal-builds `third_party/realpages`).
+
+- It makes a native build of each side, runs the 7 CSS reftest suites (CSS2, css-lists,
+  css-backgrounds, css-transitions, css-animations, cssom, selectors) on both, and then the
+  real-page snapshots (status, picture hash, time).
+- Libraries and suite results are kept by commit under `~/.cache/foafnaut-ab`, so `main`
+  is built and measured once per commit. A gate takes about 1.5 hours on a 4-core cloud
+  machine when neither side is kept: about 35 minutes for the two builds, which run at the
+  same time, then about 1 hour for the suites.
+- The gate passes with 0 tests lost and every page with the same status. Look at each page
+  whose picture changed. A lost test that the owner accepts goes in
+  `--accept TEST=ISSUE` with the issue that records it.
+- When `main` moves before you push: `python3 tools/foafnaut-ab.py overlap BASE NEWMAIN
+  BRANCH`. If no file changed on both sides, the result still holds; rebase and push. If a
+  file did (`Layout.lean` often), read the new diff, and gate again when the two changes
+  can meet.
+- Time numbers are wall-clock. Compare them only from runs on a machine where no build runs.
+
+Cost of not having this (2026-11-25): the gate was a set of scripts in one session's `/tmp`,
+and a new container deletes them. `main` was built 4 times in one day only because it moved.
+PR https://github.com/danbri/factoidal-core/pull/994 went to `main` without a gate and lost 4
+css-backgrounds tests (2 fixed in 42fdbc10; the others are
+https://github.com/danbri/factoidal-core/issues/1038).
 - A new server, protocol or security surface carries the experimental code notice
   (`CLAUDE.md`).
 
@@ -571,6 +610,9 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
 - [Threads, tabs, processes, DNS and HTTP connections, 2026-11-24](../../docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md):
   what runs on which thread today, one engine worker per tab, processes per site, the connection
   pool and HTTP/2, the DNS cache and speculative resolution, the Veil models to add first.
+- [Tor and onion services, 2026-11-25](../../docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md):
+  three routes (local SOCKS port, embedded Arti, a Lean client), the conflict with Egress DNS
+  pinning, what the pool key and any substrate must allow, and the fingerprint limit.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).

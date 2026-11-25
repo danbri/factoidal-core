@@ -130,6 +130,37 @@ def BorderColor.resolve (paint : BorderColor) (currentColor : Color) : Option Co
   | .transparent => none
   | .solid c => some c
 
+/-- One value of `border-image-slice`, `-width` or `-outset` (CSS Backgrounds 3 §6.2 to §6.5):
+a number (image pixels for a slice; a multiple of the border width for a width or outset), a
+length in px, a percentage as a fraction, or `auto` (a width only). -/
+inductive BorderImageAmount where
+  | number (n : Float)
+  | length (px : Float)
+  | percent (fraction : Float)
+  | auto
+  deriving Repr
+
+/-- `border-image-repeat` for one axis (CSS Backgrounds 3 §6.6). -/
+inductive BorderImageRepeat where
+  | stretch | tile | round | space
+  deriving Repr, BEq
+
+/-- The border image properties (CSS Backgrounds 3 §6): source (an absolute URL once the
+engine resolved it against its sheet), the decoded image and its paint-table id (set by the
+host after the cascade, as `Computed.backgroundBitmap` is), slice, `fill`, width, outset and
+the repeat modes of the horizontal and vertical edges. Initial values: no source, slice
+100%, width 1, outset 0, stretch. Not inherited. -/
+structure BorderImage where
+  source : Option String := none
+  bitmap : Option (Nat × Bitmap) := none
+  slice : Sides BorderImageAmount := .all (.percent 1)
+  fill : Bool := false
+  width : Sides BorderImageAmount := .all (.number 1)
+  outset : Sides BorderImageAmount := .all (.number 0)
+  repeatX : BorderImageRepeat := .stretch
+  repeatY : BorderImageRepeat := .stretch
+  deriving Repr
+
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -293,6 +324,10 @@ structure Computed where
   /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
   false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
   clipHidden : Bool := false
+  /-- The element's computed opacity clamps to zero. -/
+  opacityZero : Bool := false
+  /-- The element or an ancestor is completely transparent. This affects paint only. -/
+  transparent : Bool := false
   /-- `background-image: url(...)` (CSS Backgrounds 3 §3.3), the first layer's URL as the page
   wrote it after the engine resolved it against its sheet (`WebDocument`); none for `none` or a
   gradient. Not inherited. -/
@@ -317,12 +352,18 @@ structure Computed where
   backgroundLayers : Nat := 1
   /-- The element's own SVG author winners. The SVG renderer handles paint inheritance. -/
   svgAuthor : List (String × String) := []
+  /-- `border-image` (CSS Backgrounds 3 §6); drawn in place of the border style when its
+  image decoded. -/
+  borderImage : BorderImage := {}
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 /-- The clip of the final layer, which the background colour uses (CSS Backgrounds 3 §3.7):
 the `background-clip` list repeats to the number of layers. -/
 def Computed.colorClip (s : Computed) : Nat :=
   s.backgroundClip.getD ((s.backgroundLayers - 1) % max 1 s.backgroundClip.length) 0
+
+/-- Visibility affects both paint and hit testing. Zero opacity only affects paint. -/
+def Computed.paintVisible (s : Computed) : Bool := s.visible && !s.transparent
 
 /-- Properties consumed by HTML style/layout, including an embedded SVG root.
 The DOM-to-SVG adapter uses this same list to avoid a second interpretation. -/
@@ -832,6 +873,45 @@ def gradientArgs (value : String) : Option String := do
     out := out.push c
   none
 
+/-- The words of a `border-image` value, with `/` a word of its own outside a `url()`. -/
+def borderImageWords (value : String) : List String :=
+  (topWords value).flatMap fun w =>
+    if w.toLower.startsWith "url(" || !w.contains '/' then [w] else
+    let parts := w.splitOn "/"
+    (parts.zipIdx.flatMap fun (p,i) => (if i == 0 then [] else ["/"]) ++ (if p.isEmpty then [] else [p]))
+
+/-- The longhands of a `border-image` value (CSS Backgrounds 3 §6.7) as text, the omitted parts at
+their initial values, so that the cascade keeps one winner for each longhand in source order; a
+CSS-wide keyword is that keyword on each. None for a value with more than two slashes. -/
+def borderImageLonghands (value : String) : Option (List (String × String)) := Id.run do
+  let names := ["border-image-source","border-image-slice","border-image-width","border-image-outset","border-image-repeat"]
+  if CssValues.cssWide.contains (trim value).toLower then return some (names.map fun n => (n,(trim value).toLower))
+  let mut source := "none"
+  let mut group := 0
+  let mut slice : List String := []
+  let mut width : List String := []
+  let mut outset : List String := []
+  let mut modes : List String := []
+  for w in borderImageWords value do
+    let t := (trim w).toLower
+    if w == "/" then group := group+1
+    else if t.startsWith "url(" || t == "none" then source := w
+    else if ["stretch","repeat","round","space"].contains t then modes := modes ++ [w]
+    else if t == "fill" then slice := slice ++ [w]
+    else if group == 0 then slice := slice ++ [w]
+    else if group == 1 then width := width ++ [w]
+    else outset := outset ++ [w]
+  if group > 2 then return none
+  let join := fun (l : List String) (initial : String) => if l.isEmpty then initial else " ".intercalate l
+  return some [("border-image-source",source),("border-image-slice",join slice "100%"),
+    ("border-image-width",join width "1"),("border-image-outset",join outset "0"),("border-image-repeat",join modes "stretch")]
+
+/-- The initial values of the border image longhands: what the `border` shorthand sets (CSS
+Backgrounds 3 §4.4). -/
+def borderImageInitial : List (String × String) :=
+  [("border-image-source","none"),("border-image-slice","100%"),("border-image-width","1"),
+   ("border-image-outset","0"),("border-image-repeat","stretch")]
+
 /-- The declarations of this profile for declarations as written (`SheetReader.Decl`):
 side shorthands as their longhands (`expandSides`), `background` as the colour, the layout
 shorthands (`flex`, `flex-flow`, `gap`, `place-*`) as their longhands, so the cascade
@@ -852,6 +932,14 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
         rasterPlacement ++ (whole :: acc) else
+    -- `border-image` as its longhands, and the `border` shorthand resetting them (CSS Backgrounds 3
+    -- §4.4, §6.7), each winning in source order like any longhand
+    if key == "border-image" && !CssVars.mentions d.value then
+      match borderImageLonghands d.value with
+      | some ls => (ls.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ acc
+      | none => acc else
+    if key == "border" && !CssVars.mentions d.value then
+      (borderImageInitial.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ (whole :: acc) else
     if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
@@ -1363,6 +1451,96 @@ where
         | some t => if t == source then throw e else edgePixel t
         | none => throw e
 
+/-! ### `border-image` (CSS Backgrounds 3 §6) -/
+
+/-- A length of `border-image-width` or `-outset`, in px (any unit the property table reads). -/
+private def borderImagePixels (fontSize : Float) (w : String) : Except String Float := do
+  let v ← match pixels w with
+    | .ok v => pure v
+    | .error e =>
+      match tableComputed fontSize "border-top-width" w with
+      | some t => if t == w then throw e else pixels t
+      | none => throw e
+  if v < 0 then throw "negative border image length"
+  return v
+
+/-- One component: a number, a percentage when `percent`, a length when `lengths`, `auto`
+when `auto`. -/
+private def borderImageAmount (fontSize : Float) (percent lengths auto : Bool) (w : String) :
+    Except String BorderImageAmount := do
+  let t := (trim w).toLower
+  if t == "auto" then
+    if auto then return .auto else throw "auto is not allowed here"
+  if t.endsWith "%" then
+    unless percent do throw "a percentage is not allowed here"
+    let p ← number (t.dropEnd 1).toString
+    if p < 0 then throw "negative border image percentage"
+    return .percent (p/100)
+  match number t with
+  | .ok n => if n < 0 then throw "negative border image number" else return .number n
+  | .error _ =>
+    unless lengths do throw "a length is not allowed here"
+    return .length (← borderImagePixels fontSize t)
+
+private def borderImageSides (fontSize : Float) (percent lengths auto : Bool) (ws : List String) :
+    Except String (Sides BorderImageAmount) := do
+  match Sides.ofList (← ws.mapM (borderImageAmount fontSize percent lengths auto)) with
+  | some x => return x
+  | none => throw "one to four values required"
+
+private def borderImageMode (w : String) : Except String BorderImageRepeat :=
+  match (trim w).toLower with
+  | "stretch" => pure .stretch
+  | "repeat" => pure .tile
+  | "round" => pure .round
+  | "space" => pure .space
+  | _ => throw "unsupported border-image-repeat"
+
+private def borderImageModes (ws : List String) : Except String (BorderImageRepeat × BorderImageRepeat) := do
+  match ← ws.mapM borderImageMode with
+  | [a] => return (a,a)
+  | [a,b] => return (a,b)
+  | _ => throw "border-image-repeat takes one or two keywords"
+
+private def isBorderImageMode (w : String) : Bool :=
+  ["stretch","repeat","round","space"].contains (trim w).toLower
+
+/-- The URL of a `border-image-source` word: `none` has none; a `url()` has it; anything else
+(a gradient) is not drawn. -/
+private def borderImageSource (w : String) : Except String (Option String) := do
+  let t := (trim w).toLower
+  if t == "none" then return none
+  if t.startsWith "url(" then
+    let some u := firstUrl? w | throw "border-image-source: url() not read"
+    return some u
+  throw "border-image-source: only url() is drawn"
+
+/-- The `border-image` shorthand (§6.7): `<source> || <slice> [/ <width>? [/ <outset>]?]? || <repeat>`;
+every omitted part takes its initial value. -/
+private def borderImageShorthand (fontSize : Float) (value : String) : Except String BorderImage := do
+  let mut out : BorderImage := {}
+  let mut group := 0
+  let mut slice : List String := []
+  let mut width : List String := []
+  let mut outset : List String := []
+  let mut modes : List String := []
+  for w in borderImageWords value do
+    if w == "/" then group := group+1
+    else if w.toLower.startsWith "url(" || (trim w).toLower == "none" then out := {out with source := ← borderImageSource w}
+    else if isBorderImageMode w then modes := modes ++ [w]
+    else if (trim w).toLower == "fill" then out := {out with fill := true}
+    else if group == 0 then slice := slice ++ [w]
+    else if group == 1 then width := width ++ [w]
+    else outset := outset ++ [w]
+  if group > 2 then throw "border-image: too many slashes"
+  if !slice.isEmpty then out := {out with slice := ← borderImageSides fontSize true false false slice}
+  if !width.isEmpty then out := {out with width := ← borderImageSides fontSize true true true width}
+  if !outset.isEmpty then out := {out with outset := ← borderImageSides fontSize false true false outset}
+  if !modes.isEmpty then
+    let (a,b) ← borderImageModes modes
+    out := {out with repeatX := a, repeatY := b}
+  return out
+
 /-- The `border-width` shorthand: one to four `borderWidthPx` values. -/
 private def borderEdges (fontSize : Float) (s : String) : Except String Edges := do
   match ← (words s).mapM (borderWidthPx fontSize) with
@@ -1809,6 +1987,13 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "normal" | "collapse" =>
       return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
     | _ => throw "unsupported CSS white-space"
+  | "opacity" =>
+    let value := trim d.value
+    let percent := value.endsWith "%"
+    let opacity ← number (if percent then (value.dropEnd 1).toString else value)
+    if opacity > 0 && opacity < (if percent then 100 else 1) then
+      throw "partial CSS opacity needs group compositing"
+    return {s with opacityZero := decide (opacity ≤ 0)}
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
     | "hidden" | "collapse" => return {s with visible := false}
@@ -1854,12 +2039,28 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | none => throw "border-color requires one to four colours"
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyles := .all .none, borderColors := .all .current}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyles := .all .none, borderColors := .all .current,
+                           borderImage := {}}
     for part in topWords d.value do
       if let .ok style := borderStyle part then out := {out with borderStyles := .all style}
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
       else out := {out with borderColors := .all (← borderPaint part)}
     return out
+  | "border-image" => return {s with borderImage := ← borderImageShorthand s.fontSize d.value}
+  | "border-image-source" => return {s with borderImage := {s.borderImage with source := ← borderImageSource d.value}}
+  | "border-image-slice" =>
+    let ws := topWords d.value
+    let fill := ws.any fun w => (trim w).toLower == "fill"
+    let amounts := ws.filter fun w => (trim w).toLower != "fill"
+    let amounts := if amounts.isEmpty then ["100%"] else amounts
+    return {s with borderImage := {s.borderImage with slice := ← borderImageSides s.fontSize true false false amounts, fill}}
+  | "border-image-width" =>
+    return {s with borderImage := {s.borderImage with width := ← borderImageSides s.fontSize true true true (topWords d.value)}}
+  | "border-image-outset" =>
+    return {s with borderImage := {s.borderImage with outset := ← borderImageSides s.fontSize false true false (topWords d.value)}}
+  | "border-image-repeat" =>
+    let (a,b) ← borderImageModes (topWords d.value)
+    return {s with borderImage := {s.borderImage with repeatX := a, repeatY := b}}
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
     | [a] => if a < 0 then throw "negative border-spacing" else return {s with borderSpacingX := a, borderSpacingY := a}
@@ -2080,7 +2281,7 @@ def ownProperties : List String :=
    "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
    "text-wrap-style","text-wrap-mode",
-   "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "visibility","opacity","overflow","text-decoration","text-decoration-line","border-style",
    "border-top-left-radius","border-top-right-radius","border-bottom-right-radius","border-bottom-left-radius",
    "border-top-width","border-right-width","border-bottom-width","border-left-width",
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
@@ -2088,7 +2289,7 @@ def ownProperties : List String :=
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
    "font-family","letter-spacing","word-spacing","text-indent","background-image","background-clip","background-size","background-repeat",
-   "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
+   "background-position-x","background-position-y","border-image","border-image-source","border-image-slice","border-image-width","border-image-outset","border-image-repeat","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -2230,6 +2431,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
+  | "opacity" => some {s with opacityZero := source.opacityZero}
   | "text-wrap-style" => some {s with balanceText := source.balanceText}
   | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
   | "white-space" | "white-space-collapse" =>
@@ -2241,7 +2443,14 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "border-width" => some {s with borderWidth := source.borderWidth}
   | "border-style" => some {s with borderStyles := source.borderStyles}
   | "border-color" => some {s with borderColors := source.borderColors}
-  | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors}
+  | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors,
+                              borderImage := source.borderImage}
+  | "border-image" => some {s with borderImage := source.borderImage}
+  | "border-image-source" => some {s with borderImage := {s.borderImage with source := source.borderImage.source}}
+  | "border-image-slice" => some {s with borderImage := {s.borderImage with slice := source.borderImage.slice, fill := source.borderImage.fill}}
+  | "border-image-width" => some {s with borderImage := {s.borderImage with width := source.borderImage.width}}
+  | "border-image-outset" => some {s with borderImage := {s.borderImage with outset := source.borderImage.outset}}
+  | "border-image-repeat" => some {s with borderImage := {s.borderImage with repeatX := source.borderImage.repeatX, repeatY := source.borderImage.repeatY}}
   | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
@@ -2626,7 +2835,18 @@ def finishEffects (parent s : Computed) : Computed :=
   let own : Float := if s.pos.isAbsolute then 0
     else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
   let hidden := parent.clipHidden || s.clippedAway
-  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
+  {s with
+    rise := parent.rise + own
+    clipHidden := hidden
+    visible := s.visible && !hidden
+    transparent := parent.transparent || s.opacityZero}
+
+/-- Descendant opacity cannot expose paint under a transparent ancestor. -/
+theorem finishEffects_transparent_parent (parent s : Computed) (h : parent.transparent = true) :
+    (finishEffects parent s).paintVisible = false := by
+  simp [finishEffects, Computed.paintVisible, h]
+
+#print axioms finishEffects_transparent_parent
 
 /-- Kind: property (pages that hide nothing pay nothing). Says: with no clip to nothing on
 the element or above it, its visibility is its own. -/
@@ -3729,7 +3949,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
   if n.type == .element && !svgDescendant then return ← computedFrom dom id (matchesOf id) parent
   let inherited : Computed := {parent with
     svgAuthor := [], display := .inline, width := .auto, height := .auto,
-    margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
+    margin := {}, padding := {}, background := none, backgroundGradient := none, borderImage := {}, clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current, cornerLengths := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
@@ -4389,6 +4609,12 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
 
+#guard (applyDeclaration {} "opacity" "-0.5").map (·.opacityZero) == some true
+#guard (applyDeclaration {} "opacity" "0%").map (·.opacityZero) == some true
+#guard (applyDeclaration {opacityZero := true} "opacity" "100%").map (·.opacityZero) == some false
+#guard (finishEffects {transparent := true} {opacityZero := false}).visible
+#guard !(finishEffects {transparent := true} {opacityZero := false}).paintVisible
+
 -- `background-image: url(...)` (issue 704): the first layer's URL, case kept, quoted or not.
 #guard firstUrl? "url(a.png)" == some "a.png"
 #guard firstUrl? "URL( 'Images/B.PNG' ) no-repeat" == some "Images/B.PNG"
@@ -4434,5 +4660,50 @@ private def borderLeft (property value : String) : Option Float :=
 #guard borderLeft "border-left-width" "-1pt" == none
 #guard borderLeft "border" "1in solid red" == some 96
 #guard borderLeft "border-width" "1pt 2pt 3pt 6pt" == some 8
+
+-- `border-image` (CSS Backgrounds 3 §6; issue 874): the shorthand, its parts and the longhands.
+private def showAmount : BorderImageAmount → String
+  | .number n => s!"n{(n*1000).round.toUInt64}" | .length v => s!"px{(v*1000).round.toUInt64}" | .percent p => s!"%{(p*1000).round.toUInt64}" | .auto => "auto"
+private def showSides (x : Sides BorderImageAmount) : List String := x.toList.map showAmount
+private def borderImageOf (property value : String) : Option BorderImage :=
+  (applyDeclaration ({} : Computed) property value).map (·.borderImage)
+-- initial values: no source, slice 100%, width 1, outset 0, stretch
+#guard (({} : Computed).borderImage.source.isNone && !({} : Computed).borderImage.fill)
+#guard showSides ({} : BorderImage).slice == ["%1000","%1000","%1000","%1000"]
+#guard showSides ({} : BorderImage).width == ["n1000","n1000","n1000","n1000"]
+#guard showSides ({} : BorderImage).outset == ["n0","n0","n0","n0"]
+-- jvns.ca: `border-image: url("stripes.png") 0 35 0 0 repeat`
+#guard (borderImageOf "border-image" "url(\"stripes.png\") 0 35 0 0 repeat").map
+  (fun b => (b.source, showSides b.slice, b.repeatX == .tile, b.repeatY == .tile, b.fill)) ==
+  some (some "stripes.png", ["n0","n35000","n0","n0"], true, true, false)
+-- slice / width / outset, `fill`, two repeat keywords, in any order of the parts
+#guard (borderImageOf "border-image" "url(a.png) 30% fill / 10px 2 auto / 1 5px round space").map
+  (fun b => (showSides b.slice, b.fill, showSides b.width, showSides b.outset, b.repeatX == .round, b.repeatY == .space)) ==
+  some (["%300","%300","%300","%300"], true, ["px10000","n2000","auto","n2000"], ["n1000","px5000","n1000","px5000"], true, true)
+#guard (borderImageOf "border-image" "round url(a.png) 7/3").map
+  (fun b => (b.source, showSides b.slice, showSides b.width, b.repeatX == .round)) ==
+  some (some "a.png", ["n7000","n7000","n7000","n7000"], ["n3000","n3000","n3000","n3000"], true)
+#guard (borderImageOf "border-image" "none").map (·.source) == some none
+-- the longhands
+#guard (borderImageOf "border-image-source" "url(x.png)").map (·.source) == some (some "x.png")
+#guard (borderImageOf "border-image-slice" "fill 2 4").map (fun b => (showSides b.slice, b.fill)) ==
+  some (["n2000","n4000","n2000","n4000"], true)
+#guard (borderImageOf "border-image-width" "auto 1 5px").map (fun b => showSides b.width) ==
+  some ["auto","n1000","px5000","n1000"]
+#guard (borderImageOf "border-image-outset" "1 2px").map (fun b => showSides b.outset) == some ["n1000","px2000","n1000","px2000"]
+#guard (borderImageOf "border-image-repeat" "stretch repeat").map (fun b => (b.repeatX == .stretch, b.repeatY == .tile)) ==
+  some (true, true)
+-- refused values: a negative slice, a gradient (not drawn), an unknown keyword, five values
+#guard (borderImageOf "border-image-slice" "-1").isNone
+#guard (borderImageOf "border-image-source" "linear-gradient(red, blue)").isNone
+#guard (borderImageOf "border-image-repeat" "wobble").isNone
+#guard (borderImageOf "border-image-slice" "1 2 3 4 5").isNone
+#guard (borderImageOf "border-image-width" "10%").isSome && (borderImageOf "border-image-outset" "10%").isNone
+-- the `border` shorthand resets the border image (CSS Backgrounds 3 §4.4)
+#guard ((applyDeclaration ({} : Computed) "border-image-source" "url(x.png)").bind fun s =>
+  applyDeclaration s "border" "1px solid red").map (·.borderImage.source) == some none
+-- it is not inherited from a parent, and `inherit` copies it
+#guard ((copyProperty "border-image-source" ((applyDeclaration ({} : Computed) "border-image-source" "url(x.png)").getD {}) {}).map
+  (·.borderImage.source)) == some (some "x.png")
 
 end L4Factoidal.Rendering.CSS

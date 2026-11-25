@@ -16,6 +16,8 @@ namespace L4Factoidal.JS.Test262
 open L4Factoidal.JS
 
 variable {H : Type}
+-- the run's mode (`leanjs` with `BUBBLEPOP_TIER1=off` runs the reference)
+variable [md : Mode]
 
 structure Meta where
   flags : List String := []

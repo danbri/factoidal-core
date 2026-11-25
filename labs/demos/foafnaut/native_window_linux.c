@@ -13,8 +13,11 @@
 #include <strings.h>
 #include <unistd.h>
 
-typedef struct { uint32_t kind; int32_t a, b; uint32_t time; } NGEvent;
-_Static_assert(sizeof(NGEvent) == 16, "window event ABI");
+/* `flags` (issue 1031), as in native_window.m: for pointer kinds 2, 4 and 13, bits 0-3 the
+   modifiers (1 Shift, 2 Super, 4 Alt, 8 Control), bits 8-15 the click count, bits 16-17 the
+   button (0 primary, 1 secondary, 2 middle). `ng_event_size` tells the host the size. */
+typedef struct { uint32_t kind; int32_t a, b; uint32_t time; uint32_t flags; } NGEvent;
+_Static_assert(sizeof(NGEvent) == 20, "window event ABI");
 static SDL_Window *window;
 static void *display_handle, *window_handle;
 static int surface_system;  /* 1 X11, 2 Wayland */
@@ -30,11 +33,11 @@ int ng_is_main_thread(void) { return gettid() == getpid(); }
 uint32_t ng_event_clock(void) { return SDL_GetTicks(); }
 uint32_t ng_events_dropped(void) { return dropped; }
 
-static void enqueue(uint32_t kind, int32_t a, int32_t b) {
+static void enqueue_flags(uint32_t kind, int32_t a, int32_t b, uint32_t flags) {
   if (count) {
     NGEvent *last = &events[head + count - 1];
     if ((kind == 1 || kind == 3) && last->kind == kind) {
-      last->a = a; last->b = b; return;
+      last->a = a; last->b = b; last->flags = flags; return;
     }
     if (kind == 11 && last->kind == 11) {
       int64_t sum = (int64_t)last->a + a;
@@ -52,14 +55,17 @@ static void enqueue(uint32_t kind, int32_t a, int32_t b) {
     if (!grown) { ++dropped; return; }
     events = grown; capacity = next;
   }
-  events[head + count++] = (NGEvent){kind, a, b, ng_event_clock()};
+  events[head + count++] = (NGEvent){kind, a, b, ng_event_clock(), flags};
 }
+static void enqueue(uint32_t kind, int32_t a, int32_t b) { enqueue_flags(kind, a, b, 0); }
+uint32_t ng_event_size(void) { return (uint32_t)sizeof(NGEvent); }
 int ng_next_event(NGEvent *out) {
   if (!count || !out) return 0;
   *out = events[head++]; if (!--count) head = 0;
   return 1;
 }
 void ng_test_event(uint32_t kind, int32_t a, int32_t b) { enqueue(kind, a, b); }
+void ng_test_event_flags(uint32_t kind, int32_t a, int32_t b, uint32_t flags) { enqueue_flags(kind, a, b, flags); }
 
 static void resize_event(void) {
   if (window) {
@@ -152,14 +158,15 @@ static int modifiers(SDL_Keymod mods) {
   return ((mods & KMOD_SHIFT) ? 1 : 0) | ((mods & KMOD_GUI) ? 2 : 0) |
          ((mods & KMOD_ALT) ? 4 : 0) | ((mods & KMOD_CTRL) ? 8 : 0);
 }
-static void pointer(uint32_t kind, int x, int y) {
+static void pointer_flags(uint32_t kind, int x, int y, uint32_t flags) {
   if (logical_width && logical_height) {
     int px = (int)floor((double)x * pixel_width / logical_width);
     int py = (int)floor((double)y * pixel_height / logical_height);
     if (trace_input && kind != 3) fprintf(stderr, "Input SDL kind=%u backing=(%d,%d)\n", kind, px, py);
-    enqueue(kind, px, py);
+    enqueue_flags(kind, px, py, flags);
   }
 }
+static void pointer(uint32_t kind, int x, int y) { pointer_flags(kind, x, y, (uint32_t)modifiers(SDL_GetModState())); }
 static void receive(const SDL_Event *event) {
   switch (event->type) {
     case SDL_QUIT: enqueue(6, 0, 0); break;
@@ -174,10 +181,17 @@ static void receive(const SDL_Event *event) {
       break;
     case SDL_MOUSEMOTION: pointer(3, event->motion.x, event->motion.y); break;
     case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
+    {
+      /* Modifiers, click count and button with each press (issue 1031). */
+      uint32_t flags = (uint32_t)modifiers(SDL_GetModState()) | ((uint32_t)event->button.clicks << 8);
+      uint32_t kind = event->type == SDL_MOUSEBUTTONDOWN ? 2 : 4;
       if (event->button.button == SDL_BUTTON_LEFT)
-        pointer(event->type == SDL_MOUSEBUTTONDOWN ? 2 : 4, event->button.x, event->button.y);
+        pointer_flags(kind, event->button.x, event->button.y, flags);
+      else if (event->button.button == SDL_BUTTON_MIDDLE)
+        pointer_flags(kind, event->button.x, event->button.y, flags | (2u << 16));
       else if (event->type == SDL_MOUSEBUTTONDOWN && event->button.button == SDL_BUTTON_RIGHT)
-        pointer(13, event->button.x, event->button.y);
+        pointer_flags(13, event->button.x, event->button.y, flags | (1u << 16));
+    }
       break;
     case SDL_MOUSEWHEEL: {
       double scale = logical_height ? (double)pixel_height / logical_height : 1;

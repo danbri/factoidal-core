@@ -585,15 +585,15 @@ private def urlArg (p : String) : Option (String × String) :=
       if inner.length == cs.length then none else
       some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
 
-/-- Whether the declaration that the text after `t` is in names a background property or
-`content` (a `url()` there is an image too, CSS Content 3 §2.1): the
+/-- Whether the declaration that the text after `t` is in names a background property,
+`border-image` (CSS Backgrounds 3 §6) or `content` (a `url()` there is an image too, CSS Content 3 §2.1): the
 text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
 declaration before it did (`prev`). -/
 private def inBackground (prev : Bool) (t : String) : Bool :=
   let cs := t.toLower.toList
   let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
   let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1 ||
-    ((String.ofList l).splitOn "content").length > 1
+    ((String.ofList l).splitOn "content").length > 1 || ((String.ofList l).splitOn "border-image").length > 1
   if tail.length < cs.length then mentions tail else prev || mentions cs
 
 private def resolveBackgroundUrl (base u : String) : String :=
@@ -640,6 +640,9 @@ def backgroundUrlsOf (base text : String) : List String := Id.run do
 #guard backgroundUrlsAbsolute "https://a.test/s.css" "a{content:url(#frag)}" == "a{content:url(#frag)}"
 #guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
   ["https://a.test/a b.png","https://a.test/c.png"]
+#guard backgroundUrlsOf "https://a.test/s.css" "div { border-image: url(\"stripes.png\") 0 35 0 0 repeat }" == ["https://a.test/stripes.png"]
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "div{border-image-source:url(b.png)}" ==
+  "div{border-image-source:url(\"https://a.test/css/b.png\")}"
 #guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
 #guard backgroundUrlsAbsolute "https://a.test/s.css" "p{background:url(#a),url('#b')}" ==
   "p{background:url(#a),url('#b')}"
@@ -937,7 +940,9 @@ private def selection (request : JSON.Json) : Except String (Option WebSelection
   | some (.string "all") => pure (some .all)
   | some value => do
     let (ax,ay,fx,fy) ← points value
-    pure (some (.span ax ay fx fy))
+    -- `selectionClicks`: the click count of the press (issue 1031): 2 whole words, 3 lines.
+    let clicks := match request.field? "selectionClicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    pure (some (WebSelection.Selection.ofClicks clicks ax ay fx fy))
 
 private def scalePercent (request : JSON.Json) : Except String Nat := do
   let percent ← match request.field? "textScalePercent" with
@@ -1278,11 +1283,22 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
     -- Paste and go answers the address to go to in `go`, not for the clipboard.
     let key := if str request "action" == "pasteGo" then "go" else "clipboard"
     return some (JSON.Json.object (fields ++ [(key,match copied with | some t => .string t | none => .null)])).toString
+  -- The context menu of a press on the page (issue 1031; WebShell.openContext): `link` is the
+  -- address of the link under the press in the frame on screen (null: none), `selection`
+  -- whether the page has a selection. The answer is the edit state with the menu open.
+  if op == "shellContext" then
+    let link := match request.field? "link" with | some (.string h) => if h.isEmpty then none else some h | _ => none
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    return some (shell.openContext link (request.field? "selection" == some (.bool true))).editJson.toString
   -- The key table for a host with no menu, which must decide at once which keys it keeps.
   if op == "keyTable" then
     let platform := str request "platform" "other"
     return some (JSON.Json.array ((WebHistory.keyTable.filter (·.1 == platform)).map fun (_,m,k,c) =>
       .object [("modifier",.string m),("key",.string k),("command",.number (toString c))])).toString
+  -- What a press does by its button and modifiers (issue 1031): follow, a tab, or the menu.
+  if op == "linkGesture" then
+    let num (k : String) : Nat := match request.field? k with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    return some (JSON.Json.object [("gesture",.string (WebShell.linkGesture (str request "platform" "other") (num "button") (num "modifiers")))]).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
   if let some answer ← WebGraph.op op request then return some answer
   if let some answer ← WebEventLoop.op op request then return some answer
@@ -1335,7 +1351,10 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   if let some answer ← WebSparql.op op request then return some answer
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
-    return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
+    -- A double or triple click (`clicks`, issue 1031) selects: it is not a click on a link.
+    let clicks := match request.field? "clicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    let click := WebSelection.isClick ax ay fx fy && WebSelection.granularity clicks == .character
+    return some (JSON.Json.object [("action",.string (if click then "click" else "select"))]).toString
   return none
 
 /-- A long page must not fill the GPU buffer with text nobody can see. Glyphs carry
@@ -2506,6 +2525,16 @@ be eta-expanded inside the style loop, rebuilding the map for every element. -/
     (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
   styles.mapIdx (attachBackgroundPicture (fun id => pictures.get? id) naturals)
 
+/-- The decoded picture of each element's `border-image-source`, in the same paint-table ids as
+a background of the same URL (one image, one entry). An image that did not decode leaves the
+border style to draw (CSS Backgrounds 3 §6.1). -/
+@[noinline] def attachBorderPictures (pictures : Std.TreeMap Nat Rendering.Layout.Picture)
+    (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
+  styles.mapIdx fun id st =>
+    match pictures.get? id with
+    | some pic => {st with borderImage := {st.borderImage with bitmap := some (pic.id+backgroundPictureBase,pic.bitmap)}}
+    | none => st
+
 theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Nat × String))
     (naturals : List (String × (Option Float × Option Float × Option Float)))
     (styles : Array Rendering.CSS.Computed) :
@@ -2544,17 +2573,20 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
   | .error e => (.error e,none,[],{})
   | .ok (d,styles) =>
     let generated := generatedImages base d
-    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ generated.map (·.2)).eraseDups
+    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ (styles.toList.filterMap (·.borderImage.source)) ++
+      generated.map (·.2)).eraseDups
     let keys := all.take maxBackgroundImages
     let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
     if keys.isEmpty then (.ok (d,styles),none,[],{}) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
+    let borderKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.borderImage.source.map (i,·)
     -- the natural size of each SVG background, read once for each URL (a page can name one
     -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
     let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
       if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
     let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
+    let styles := attachBorderPictures (WebRender.picturesMap store borderKeys) styles
     let (styles,wanted) := redrawVectorBackgrounds images styles
     let pictures := (WebRender.picturesMap store (generated.filter (keys.contains ·.2))).map fun _ p =>
       {p with id := generatedPictureBase+p.id}

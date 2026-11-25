@@ -5,7 +5,9 @@
 // one thread. The worker holds no page state: each request carries its inputs, and
 // the font is loaded once at start. No GPU or native window is used here.
 //
-// Input runs before ordinary work, in arrival order. All scriptSession turns use that
+// A gesture (issue 1031: copy's selected text, the frame of a new selection or menu) runs
+// first, right after the call that is running, before queued script turns and renders; it
+// writes no script session. Input runs next, before ordinary work, in arrival order. All scriptSession turns use that
 // lane too, so input cannot pass an earlier resize or timer turn of the same session.
 // A request with `low` (a scroll prefetch) runs only when no other request waits, and a
 // newer low request replaces a low one that has not started; the replaced one is answered
@@ -14,14 +16,14 @@
 import {loadHTML,type HTMLArtifact,type HTMLEngine} from "./native_html_engine.ts";
 import {loadFontFile} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts} from "./native_html_fonts.ts";
-import {htmlQueue} from "./native_html_queue.ts";
+import {htmlPump,htmlQueue} from "./native_html_queue.ts";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 export {REMOTE_CALLS};
 export type {RemoteCall};
 export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string};nativeEngine?:string;logAll?:boolean}
-  |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean}
+  |{id:number;op:"call";name:RemoteCall;args:unknown[];input?:boolean;low?:boolean;gesture?:boolean}
   |{id:number;op:"dropLow"}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
   // into this engine, before the calls sent after it.
@@ -78,22 +80,10 @@ const handle=async(request:WorkerRequest)=>{
   }
 };
 const queue=htmlQueue<WorkerRequest>();
-let busy=false;
 const drop=(request:WorkerRequest)=>scope.postMessage({id:request.id,ok:false,error:"dropped",dropped:true} satisfies WorkerReply);
-const pump=async()=>{
-  if(busy)return;
-  busy=true;
-  try{
-    for(;;){
-      // A Lean call holds this thread. Take in messages waiting as tasks before choosing
-      // the next request, even with ordinary work queued: one of them may be input.
-      await new Promise(resolve=>setTimeout(resolve,0));
-      const next=queue.shift();
-      if(!next)break;
-      await handle(next);
-    }
-  }finally{busy=false;}
-};
+// A Lean call holds this thread. The pump takes in messages waiting as tasks before choosing
+// the next request, even with ordinary work queued: one of them may be input or a gesture.
+const pump=htmlPump(queue,handle);
 scope.onmessage=event=>{
   const request=event.data;
   if(request.op==="dropLow"){const low=queue.dropLow();if(low)drop(low);scope.postMessage({id:request.id,ok:true,ms:0} satisfies WorkerReply);return;}

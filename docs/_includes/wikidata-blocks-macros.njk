@@ -1,0 +1,106 @@
+{#- Block view of a query's grammar (tools/wikidata-explain/src/grammar.mjs).
+    The grammar holds only data: variables, SPARQL terms, the SPARQL of each
+    step. Every word shown comes from ctx.lex (keyed by those terms) or from
+    this file, so wording can change without touching the data.
+    ctx = {entities, thumb, lex}. Each variable is marked data-v="name" for
+    highlighting; each step a stepper can visit is marked data-step="k". -#}
+{%- import "wikidata-parallax-macros.njk" as m -%}
+
+{#- Text with ?variables made into highlight links. Input is already escaped by m.bare. -#}
+{%- macro vt(text) -%}
+{{ m.bare(text) | replace(r/\?([A-Za-z_]\w*)/g, '<a class="v" data-v="$1" href="#hl-$1">?$1</a>') | safe }}
+{%- endmacro -%}
+
+{#- A value: a SPARQL term, named from the lexicon; Wikidata items link out. -#}
+{%- macro val(term, ctx) -%}
+{%- set id = term | replace("wd:", "") if (term and term.startsWith("wd:Q")) else null -%}
+{%- if id and ctx.entities[id] -%}<a class="pz-val" href="https://www.wikidata.org/wiki/{{ id }}" title="{{ ctx.entities[id].description }} ({{ id }})">{{ m.thumb(id, ctx.entities, ctx.thumb, 18, "mini") | safe }}{{ m.bare(ctx.lex[term] or term) }}</a>
+{%- else -%}<span class="pz-val">{{ m.bare(ctx.lex[term] or term) }}</span>{%- endif -%}
+{%- endmacro -%}
+
+{%- macro prop(key, ctx) -%}{{ m.bare(ctx.lex[key] or key) }}{%- endmacro -%}
+
+{%- macro stepAttr(s) -%}{% if s.step is defined %} data-step="{{ s.step }}"{% endif %}{%- endmacro -%}
+
+{%- macro piece(p, ctx, hat=false) -%}
+{%- if p.t == "set" -%}
+{%- set typeId = p.type | replace("wd:", "") if p.type else null -%}
+{%- set name = ctx.lex["?" + p.v] or ("?" + p.v) -%}
+<li class="pz pz-set{% if hat %} pz-hat{% endif %}" data-v="{{ p.v }}"{{ stepAttr(p) | safe }}>
+  <a class="pz-title" href="#hl-{{ p.v }}" title="The set ?{{ p.v }}{% if typeId %}: every {{ name }}{% endif %}">
+    {%- if typeId %}{{ m.thumb(typeId, ctx.entities, ctx.thumb, 44 if hat else 22, "hat-img" if hat else "mini") | safe }}<span>every {{ m.bare(name) }}{% if hat and ctx.entities[typeId].description %}<span class="pz-desc">{{ ctx.entities[typeId].description }}</span>{% endif %}</span>{% else %}{{ m.bare(name) }}{% endif -%}
+  </a>{% if not typeId and name != p.v %} <a class="v pz-vtag" data-v="{{ p.v }}" href="#hl-{{ p.v }}">?{{ p.v }}</a>{% endif %}
+  {%- if p.values | length %}<span class="pz-in" title="The query names these items (VALUES)">just {% for t in p.values %}{{ val(t, ctx) | safe }}{% if not loop.last %} <span class="or">or</span> {% endif %}{% endfor %}</span>{% endif %}
+  {%- for f in p.narrow %}<span class="pz-in{% if f.opt %} pz-in-opt{% endif %}{% if f.any %} pz-in-wild{% endif %}" title="{{ f.sparql | join('\n') }}">{% if f.inv %}is {{ prop(f.p, ctx) }} of{% else %}{{ prop(f.p, ctx) }}{% endif %} <span class="eq">=</span> {% for t in f.o %}{{ val(t, ctx) | safe }}{% if not loop.last %} <span class="or">or</span> {% endif %}{% endfor %}{% if f.opt %} <span class="pz-note">where present</span>{% endif %}</span>{% endfor %}
+  {%- for k in p.keep %}<span class="pz-in pz-in-{{ k.mode }}" title="{{ k.sparql }}">{% if k.mode == "anyOf" %}any of: {{ m.bare(ctx.lex[k.key]) | replace(" | ", " · ") }}{% else %}{{ "leave out" if k.mode == "exclude" else "keep" }} if {{ m.bare(ctx.lex[k.key]) }}{% endif %}</span>{% endfor %}
+  {%- if p.show | length %}<span class="pz-cols">shows {% for c in p.show | batch(3) | first %}<span class="pz-col{% if c.any %} pz-wildtext{% endif %}" title="{{ c.sparql | join('\n') }}">{% if c.inv %}things with them as {% endif %}{{ prop(c.p, ctx) }} <a class="v" data-v="{{ c.v }}" href="#hl-{{ c.v }}">?{{ c.v }}</a></span>{% if c.opt %} <span class="pz-note">if any</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if p.show | length > 3 %} <span class="pz-note" title="{% for c in p.show %}{{ ctx.lex[c.p] or c.p }}{% if not loop.last %}; {% endif %}{% endfor %}">and {{ p.show | length - 3 }} more</span>{% endif %}</span>{% endif %}
+  <span class="pz-count" aria-live="polite"></span>
+</li>
+{%- elif p.t == "pivot" -%}
+{%- set name = ctx.lex[p.p] or p.p -%}
+<li class="pz pz-pivot{% if p.any %} pz-wild{% endif %}{% if p.opt %} pz-opt{% endif %}"{{ stepAttr(p) | safe }} title="{% if p.inv %}Go to the things that have the set before as their {{ name }}{% else %}Go to the {{ name }} of each item in the set before{% endif %}{% if p.opt %}, where there is one{% endif %}{% if p.sparql %}&#10;{{ p.sparql | join('\n') }}{% endif %}">
+  {%- if p.any %}{{ "anything linking to them" if p.inv else "anything they link to" }}
+  {%- elif p.inv %}things with them as <b>{{ m.bare(name) }}</b>
+  {%- else %}their <b>{{ m.bare(name) }}</b>{% endif %}
+  {%- if p.opt %} <span class="pz-note">if any</span>{% endif %}
+  <span class="pz-count" aria-live="polite"></span>
+</li>
+{%- else -%}
+<li class="pz pz-from" data-v="{{ p.v }}"><a class="pz-title" href="#hl-{{ p.v }}">also from {{ m.bare(ctx.lex["?" + p.v] or p.v) }}</a></li>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro hexes(list, ctx) -%}
+{%- for c in list %}<span class="hex" title="{{ c }}">{{ vt(ctx.lex[c] or c) }}</span>{% endfor -%}
+{%- endmacro -%}
+
+
+
+{#- A combine block is a <details>: it folds away without any script. -#}
+{%- macro program(prog, ctx, top=true) -%}
+{%- set OPS = {
+  "join": "match these up, where",
+  "either": "either",
+  "except": "leave out those where",
+  "optional": "where there are any, also",
+  "stage": "first, work this out on its own",
+  "link": "and these must also link up"
+} -%}
+<div class="prog">
+{%- for part in prog.parts %}
+  {%- if part.t == "chain" %}
+  <div class="chain">
+    {%- for row in part.rows %}
+    {%- set mainRow = loop.first %}<ol class="pz-row{% if not loop.first %} pz-branch{% endif %}">{% for p in row %}{{ piece(p, ctx, top and mainRow and loop.first) | safe }}{% endfor %}</ol>
+    {%- endfor %}
+  </div>
+  {%- else %}
+  <details class="cb cb-{{ part.op }}" open{{ stepAttr(part) | safe }}>
+    <summary class="cb-bar"><span class="cb-label">{{ "every combination of" if part.op == "join" and not part.on | length else OPS[part.op] }}</span>
+      {%- if part.op == "join" %} {{ hexes(part.on, ctx) | safe }}{% endif -%}
+      {%- if part.op == "except" and part.on | length %} <span class="cb-match">matched on {% for v in part.on %}{{ vt("?" + v) }}{% if not loop.last %} and {% endif %}{% endfor %}</span>{% endif -%}
+      {%- if part.why %} <span class="cb-why" title="{{ part.why }}">{{ ctx.lex[part.why] or part.why }}</span>{% endif -%}
+      <span class="pz-count" aria-live="polite"></span>
+    </summary>
+    {%- for a in part.args %}
+    {%- if not loop.first %}<div class="cb-bar cb-mid">{{ {"either": "or", "join": "with"}[part.op] or "and" }}</div>{% endif %}
+    <div class="cb-mouth">{{ program(a, ctx, false) | safe }}</div>
+    {%- endfor %}
+    <div class="cb-bar cb-foot">{% if part.op == "stage" and part.out | length %}<span class="cb-label">then pass on {% for v in part.out %}{{ vt("?" + v) }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</div>
+  </details>
+  {%- endif %}
+{%- endfor %}
+{%- if prog.where | length %}
+  <div class="cb cb-where"{% if prog.whereStep is defined %} data-step="{{ prog.whereStep }}"{% endif %}><div class="cb-bar"><span class="cb-label">keep only those where</span> {{ hexes(prog.where, ctx) | safe }}<span class="pz-count" aria-live="polite"></span></div></div>
+{%- endif %}
+</div>
+{%- endmacro -%}
+
+{#- Per-page CSS: light up every use of a variable on hover, or after a click. -#}
+{%- macro highlightStyle(vars) -%}
+<style>
+{%- for v in vars %}
+.blocks:has([data-v="{{ v }}"]:hover) [data-v="{{ v }}"], .blocks:has(#hl-{{ v }}:target) [data-v="{{ v }}"] { outline: 3px solid var(--hl-ring); outline-offset: 2px; }
+{%- endfor %}
+</style>
+{%- endmacro -%}

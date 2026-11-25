@@ -1,7 +1,7 @@
 ---
 layout: hub-app.njk
 appBase: /web/hub/wikidata-parallax
-appNoScript: true
+wikidataEndpoints: true
 appCommonsImages: true
 appSource: https://github.com/danbri/factoidal-core/tree/main/docs/web/hub/wikidata-parallax
 appEngineLabel: All queries as set browsing
@@ -15,17 +15,14 @@ eleventyComputed:
 permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
 ---
 {%- import "wikidata-parallax-macros.njk" as m -%}
+{%- import "wikidata-blocks-macros.njk" as b -%}
 {%- set tierNote = {
-  "A": "It can be built entirely by browsing: a set, facets and pivots.",
-  "B": "It can be built by browsing, with a filter on values or a computed column.",
-  "C": "It can be built by browsing through statements, including their qualifiers.",
-  "D": "It can be built by browsing, choosing a type together with its subclasses.",
-  "N": "Part of it can be drawn as sets. The rest needs operations that browsing does not have."
+  "A": "All of it is browsing: start from a set, narrow it, and pivot to related sets.",
+  "B": "All of it is browsing, plus a filter on values or a computed column.",
+  "C": "All of it is browsing, passing through statements and their qualifiers.",
+  "D": "All of it is browsing, choosing a type together with its subclasses.",
+  "N": "Browsing covers only part of it. The orange blocks hold chains of browsing together with operations that browsing does not have."
 } -%}
-{%- macro value(v) -%}
-{%- if v.id and entities[v.id] -%}<a class="val" href="https://www.wikidata.org/wiki/{{ v.id }}">{{ m.thumb(v.id, entities, thumb, 20, "mini") | safe }}{{ m.bare(v.text) }}</a>
-{%- else -%}<span class="val">{{ m.bare(v.text) }}</span>{%- endif -%}
-{%- endmacro -%}
 <div class="px px-detail">
   <p class="crumbs"><a href="../">All queries</a> › <a href="../#tier-{{ q.tier | lower }}">{{ q.tierName }}</a></p>
   <header class="q-head">
@@ -33,68 +30,69 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
     <p class="q-tier">{{ m.tierBadge(q.tier) }} {{ tierNote[q.tier] }}</p>
   </header>
 
-  <ol class="flow" aria-label="Sets in this query">
-  {%- for s in q.flow.sets %}
-    <li class="set depth-{{ s.depth if s.depth < 4 else 4 }}">
-      {%- if s.via and s.via.prop %}
-      <p class="pivot"><span class="pivot-arrow" aria-hidden="true">↳</span> {% if s.via.prop.startsWith("reverse of ") %}pivot to things whose <b>{{ m.bare(s.via.prop | replace("reverse of ", "")) }}</b> is this{% else %}pivot along <b>{{ m.bare(s.via.prop) }}</b>{% endif %}{% if s.via.optional %} <span class="opt">where present</span>{% endif %}</p>
-      {%- elif s.stage and s.stage.joins %}
-      <p class="pivot pivot-stage"><span class="pivot-arrow" aria-hidden="true">⊕</span> a grouped stage, computed on its own{% if s.stage.joins | length %} and joined on {% for j in s.stage.joins %}<span class="var">?{{ j }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
-      {%- elif loop.index > 1 %}
-      <p class="pivot pivot-loose">a separate set, joined to the first by a computed value</p>
-      {%- endif %}
-      <div class="set-card">
-        <div class="set-head">
-          {%- if s.typeId %}{{ m.thumb(s.typeId, entities, thumb, 48) | safe }}{% else %}<span class="thumb thumb-none thumb-set" aria-hidden="true"></span>{% endif %}
-          <div>
-            <h2>{% if s.typeId %}every {{ m.bare(s.title) }}{% elif s.title.startsWith("?") %}<span class="var">{{ s.title }}</span>{% else %}{{ m.bare(s.title) }}{% endif %}</h2>
-            {%- if s.typeId and entities[s.typeId].description %}<p class="desc">{{ entities[s.typeId].description }}</p>{% endif %}
-          </div>
-        </div>
-        {%- if s.facets | length %}
-        <ul class="chips" aria-label="Facets">
-          {%- for f in s.facets %}
-          <li class="chip{% if f.optional %} chip-opt{% endif %}"><span class="prop">{% if f.reverse %}is {{ m.bare(f.prop) }} of{% else %}{{ m.bare(f.prop) }}{% endif %}</span>
-            {%- for v in f.values %}{{ value(v) | safe }}{% if not loop.last %}<span class="or">or</span>{% endif %}{% endfor %}</li>
-          {%- endfor %}
-        </ul>
-        {%- endif %}
-        {%- if s.chips | length %}
-        <ul class="chips" aria-label="Exclusions and alternatives">
-          {%- for c in s.chips %}
-          {%- if c.kind == "or" %}<li class="chip chip-any"><span class="any-label">any of</span>{% for part in c.label.split(" | ") %}<span class="alt">{{ m.bare(part) }}</span>{% if not loop.last %}<span class="or">or</span>{% endif %}{% endfor %}</li>
-          {%- else %}<li class="chip chip-{{ c.verb }}"><span class="sign" aria-hidden="true">{{ "−" if c.verb == "exclude" else "+" }}</span>{{ c.verb }} if {{ m.bare(c.label) }}</li>{% endif %}
-          {%- endfor %}
-        </ul>
-        {%- endif %}
-        {%- if s.columns | length %}
-        <p class="cols"><span class="cols-label">Shows</span>
-          {%- for c in s.columns %} <span class="col">{% if c.prop.startsWith("reverse of ") %}things whose {{ m.bare(c.prop | replace("reverse of ", "")) }} is this{% else %}{{ m.bare(c.prop) }}{% endif %}{% if c.optional %}<span class="opt"> if any</span>{% endif %}</span>{% if not loop.last %},{% endif %}{% endfor %}</p>
-        {%- endif %}
+  {{ b.highlightStyle(q.grammar.vars) | safe }}
+  {%- set ctx = {entities: entities, thumb: thumb, lex: q.grammar.lex} %}
+  {%- set dump = q.grammar.program | dump %}
+  <section class="blocks" aria-label="The query as blocks" data-steps="{{ q.grammar.steps | length }}">
+    {%- for v in q.grammar.vars %}<span class="hl-anchor" id="hl-{{ v }}"></span>{% endfor %}
+    <p class="blocks-key">
+      <span class="key key-set">a set of items</span>
+      <span class="key key-pivot">pivot to a related set</span>
+      {%- if q.tier == "N" %}<span class="key key-op">beyond browsing</span>{% endif %}
+      {%- if "\"any\":true" in dump %}<span class="key key-wild">any property</span>{% endif %}
+      {%- if "\"op\":\"join\"" in dump or q.grammar.program.where | length %}<span class="key key-hex">condition</span>{% endif %}
+      <span class="key-hint">Point at or select a set or <span class="var">?name</span> to see everywhere it is used. Orange blocks fold away: select their top bar.</span>
+      <a class="hl-clear" href="#">Clear highlight</a>
+    </p>
+    <div class="step-tools" hidden>
+      <button type="button" class="st-start">Step through the query</button>
+      <button type="button" class="st-counts">Count every step on Wikidata</button>
+      <button type="button" class="st-fold">Fold all blocks</button>
+    </div>
+    {{ b.program(q.grammar.program, ctx) | safe }}
+  </section>
+  <script type="application/json" id="grammar">{{ {steps: q.grammar.steps, prefixes: q.grammar.prefixes, full: q.grammar.full, id: q.id} | dump | replace("</", "<\\/") | safe }}</script>
+  <aside class="drawer" hidden aria-label="Draft query">
+    <div class="dr-bar">
+      <button type="button" class="dr-prev" aria-label="Previous step">‹</button>
+      <span class="dr-title" aria-live="polite"></span>
+      <button type="button" class="dr-next" aria-label="Next step">›</button>
+      <button type="button" class="dr-toggle" aria-expanded="true">Hide query</button>
+      <button type="button" class="dr-close" aria-label="Stop stepping">×</button>
+    </div>
+    <div class="dr-body">
+      <textarea class="dr-sparql" spellcheck="false" aria-label="Draft SPARQL for this step"></textarea>
+      <div class="dr-actions">
+        <button type="button" class="dr-count">Count</button>
+        <button type="button" class="dr-run">Run (first 50 rows)</button>
+        <label>on <select class="dr-endpoint">
+          <option value="https://qlever.dev/api/wikidata">QLever (qlever.dev)</option>
+          <option value="https://query.wikidata.org/sparql">Wikidata Query Service</option>
+          <option value="https://query-next.wikidata.org/sparql">Wikidata QLever (query-next)</option>
+        </select></label>
+        <a class="dr-open" href="#" target="_blank" rel="noopener">Open in a new tab</a>
+        <span class="dr-status" role="status"></span>
       </div>
-    </li>
-  {%- endfor %}
-  </ol>
+      <div class="dr-result"></div>
+    </div>
+  </aside>
 
-  {%- if q.flow.extensions | length or q.flow.conditions | length or q.flow.aggregate %}
+  {%- if q.flow.extensions | length or q.flow.aggregate %}
   <section class="panel">
     <h2>Also</h2>
     <ul class="steps">
       {%- for e in q.flow.extensions %}
       <li><span class="kind kind-{{ e.kind }}">{{ {"or": "OR", "path": "path", "derived": "grouping"}[e.kind] }}</span> {{ m.bare(e.label) }}</li>
       {%- endfor %}
-      {%- for c in q.flow.conditions %}
-      <li><span class="kind kind-filter">filter</span> {{ m.bare(c) }}</li>
-      {%- endfor %}
       {%- if q.flow.aggregate %}<li><span class="kind kind-derived">count</span> the result is a count or summary of the sets above</li>{% endif %}
     </ul>
   </section>
   {%- endif %}
 
-  {%- if q.flow.beyond | length %}
+  {%- if q.flow.why | length %}
   <section class="panel panel-beyond">
-    <h2>Beyond set browsing</h2>
-    <ul>{% for b in q.flow.beyond %}<li>{{ b }}</li>{% endfor %}{% for l in q.flow.loose %}<li class="loose"><code>{{ m.bare(l) }}</code></li>{% endfor %}</ul>
+    <h2>Why browsing is not enough here</h2>
+    <ul>{% for why in q.flow.why %}<li title="{{ why.code }}">{{ why.text }}</li>{% endfor %}</ul>
   </section>
   {%- endif %}
 

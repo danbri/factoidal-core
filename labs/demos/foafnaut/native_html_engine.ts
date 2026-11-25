@@ -59,9 +59,12 @@ export type FontLoaded = {family:string;glyphs:number;fonts:number};
 export type HistoryAnswer = {history:History;url:string|null;canBack:boolean;canForward:boolean};
 export type GraphFrame = {model:string;commands:string[]};
 /** The address bar's edit state; the host keeps it and sends it back in `shell`. */
-export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean;menu?:boolean};
-/** One button of the address menu (WebShell.menuActions): its rectangle in CSS px, and for copy the text. */
-export type MenuAction = {action:"copy"|"paste";control:string;rect:[number,number,number,number];text?:string};
+export type ShellEdit = {address:string;cursor:number;anchor:number;undo:unknown;redo:unknown;typing:boolean;menu?:boolean;
+  /** The context menu (issue 1031; WebShell.openContext): "", "link" or "page", with its link and selection. */
+  context?:string;contextLink?:string;contextSelection?:boolean};
+/** One button of the address menu or the context menu (WebShell.menuActions): its rectangle in
+CSS px, and for copy and openTab the text. */
+export type MenuAction = {action:"copy"|"paste"|"openTab"|"back"|"forward"|"reload"|"viewSource"|"copySelection";control:string;rect:[number,number,number,number];text?:string};
 export type PrintLayout = {contentHeight:number;pages:[number,number][]};
 export type WasmValue = {type:string;value:string;shown?:string};
 export type WasmRequest = {wasmBase64:string;export?:string;args?:WasmValue[];fuel?:number};
@@ -579,6 +582,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // The control under a press, and whether this press opens the address menu (`how`: tap, hold or context).
     shellMenu:(shell:unknown,x:number,y:number,width:number,how:string,touch=false)=>
       documentCall("",{op:"shellHit",shell,x,y,width,how,touch}) as {control:string|null;menu?:boolean},
+    // The context menu of a press on the page (issue 1031): `link` is the address of the link under
+    // the press in the frame on screen, or null. Lean chooses the menu and its items. An engine
+    // from before the op: undefined, and no menu opens.
+    shellContext:(shell:unknown,link:string|null,selection:boolean)=>{
+      try{return documentCall("",{op:"shellContext",shell,link,selection}) as ShellEdit;}catch{return undefined;}
+    },
     // The address menu's buttons and the text Copy writes; empty with the menu closed.
     shellActions:(shell:unknown,width:number)=>(documentCall("",{op:"shellActions",shell,width}) as {actions:MenuAction[]}).actions,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
@@ -684,7 +693,14 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     keyTable:(platform:string)=>documentCall("",{op:"keyTable",platform}) as {modifier:string;key:string;command:number}[],
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
-    pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
+    // What a press does by its button and modifiers (issue 1031; WebShell.linkGesture): "follow",
+    // "backgroundTab", "foregroundTab" or "menu". Older engines fall back to following the link.
+    linkGesture:(platform:string,button:number,modifiers:number)=>{
+      try{return (documentCall("",{op:"linkGesture",platform,button,modifiers}) as {gesture:string}).gesture;}catch{return "follow";}
+    },
+    // "click" or "select": a press that did not move is a click, except a double or triple click,
+    // which selects words or lines (`clicks`, issue 1031).
+    pointerUp:(selection:number[],clicks=0)=>(documentCall("",{op:"pointerUp",selection,clicks}) as {action:string}).action,
     selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
     // Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count,

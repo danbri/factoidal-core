@@ -329,12 +329,24 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
 
 #guard (backgroundTiles 1 1 ⟨69,69,ByteArray.empty⟩ {} 0 0 1280 19182).size == 1
 
+/-- The corner radii that paint uses: none on a table or an internal table element in the
+collapsing border model, where CSS Backgrounds 3 §5.3 says user agents ignore `border-radius`
+(WPT ttwf-reftest-borderRadius); else the computed ones. -/
+def usedCornerLengths (s : Computed) : Option CornerLengths :=
+  let tablePart := [Display.table, .inlineTable, .tableRowGroup, .tableHeaderGroup, .tableFooterGroup,
+    .tableRow, .tableCell, .tableColumn, .tableColumnGroup].contains s.display
+  if s.borderCollapse && tablePart then none else s.cornerLengths
+
+#guard (usedCornerLengths {display := .tableCell, borderCollapse := true, cornerLengths := some {}}).isNone
+#guard (usedCornerLengths {display := .tableCell, cornerLengths := some {}}).isSome
+#guard (usedCornerLengths {display := .block, borderCollapse := true, cornerLengths := some {}}).isSome
+
 private def radiusUnits (size : Float) : Nat :=
   (max 0 (size*64)).floor.toUInt64.toNat
 
 /-- Resolve percentages against the outer box before applying any paint inset. -/
 private def resolvedRadii (s : Computed) (w h : Float) : Option Corners.Radii := do
-  let lengths ← s.cornerLengths
+  let lengths ← usedCornerLengths s
   let resolve := fun (pair : CSS.Length × CSS.Length) =>
     Corners.Radius.mk (radiusUnits ((CSS.resolve w pair.1).getD 0))
       (radiusUnits ((CSS.resolve h pair.2).getD 0))
@@ -364,7 +376,7 @@ private def roundedPaint (outline : Contour) (node : Node) : Node :=
   | _ => node
 
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if !s.visible || w <= 0 || h <= 0 then #[] else
+  if !s.paintVisible || w <= 0 || h <= 0 then #[] else
   match s.background with
   | none => #[]
   | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
@@ -382,7 +394,7 @@ def backgroundArea (s : Computed) (x y w h : Float) : Float × Float × Float ×
   (x+l,y+t,w-l-b.right-p.right,h-t-b.bottom-p.bottom)
 
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if !s.visible || w <= 0 || h <= 0 then #[] else
+  if !s.paintVisible || w <= 0 || h <= 0 then #[] else
   let (cx,cy,cw,ch) := backgroundArea s x y w h
   if cw <= 0 || ch <= 0 then #[] else
   let colour := backgroundColour id s cx cy cw ch
@@ -390,7 +402,7 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   let withGradient := match s.backgroundGradient with
     | none => colour
     | some g => colour.push (.paint ⟨some id,{geometry := .rect cx cy cw ch,style := {fill := gradientPaint g cx cy cw ch}}⟩)
-  let outline := if s.cornerLengths.isNone then none else
+  let outline := if (usedCornerLengths s).isNone then none else
     let b : Edges := if s.colorClip == 0 then {} else s.borderEdges
     let p := if s.colorClip == 2 then s.padding else {}
     let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
@@ -500,7 +512,7 @@ as rectangles; where they differ, the corner is split on its diagonal (CSS Backg
 sides are marks along the side, without the diagonal. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
-  if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  if !s.paintVisible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
   if let some rounded := roundedSolidBorder id s b x y w h then return rounded
   let st := s.borderStyles
   let pc := s.borderColors
@@ -582,10 +594,170 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
 #guard (borderBands .groove ⟨1,1,1⟩ true 4).map (fun (_,_,c) => c.r) == [0.6,1]
 #guard (borderBands .groove ⟨1,1,1⟩ false 4).map (fun (_,_,c) => c.r) == [1,0.6]
 
+/-- Tiles of one edge or the middle along one axis (CSS Backgrounds 3 §6.6): the destination
+range starts at `d0` and is `dlen` long; one slice scaled to the edge is `tile` long. Each tile
+is `(start, length, from, to)`, `from` and `to` being fractions of the slice that it shows.
+`stretch` is one tile. `repeat` tiles are centred on the range and the end tiles cut. `round`
+fits a whole number of tiles, at least one, by scaling them. `space` draws a whole number of
+unscaled tiles with equal gaps (also at both ends), none when one does not fit. At most 4096
+tiles; more draws none. -/
+def borderImageTiles (mode : BorderImageRepeat) (d0 dlen tile : Float) : Array (Float × Float × Float × Float) :=
+  if !(dlen > 0) || !dlen.isFinite then #[] else
+  match mode with
+  | .stretch => #[(d0,dlen,0,1)]
+  | .tile =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := (dlen/tile-0.000001).ceil
+    if k > 4096 then #[] else
+    let n := (max k 1).toUInt64.toNat
+    let start := d0+(dlen-n.toFloat*tile)/2
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do
+        let a := start+i.toFloat*tile
+        let lo := max a d0
+        let hi := min (a+tile) (d0+dlen)
+        if hi > lo then out := out.push (lo,hi-lo,(lo-a)/tile,(hi-a)/tile)
+      return out
+  | .round =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := max 1 (dlen/tile).round
+    if k > 4096 then #[] else
+    let n := k.toUInt64.toNat
+    let t := dlen/n.toFloat
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do out := out.push (d0+i.toFloat*t,t,0,1)
+      return out
+  | .space =>
+    if !(tile > 0) || !tile.isFinite then #[] else
+    let k := (dlen/tile+0.000001).floor
+    if k < 1 || k > 4096 then #[] else
+    let n := k.toUInt64.toNat
+    let gap := max 0 ((dlen-n.toFloat*tile)/(n.toFloat+1))
+    Id.run do
+      let mut out := #[]
+      for i in [0:n] do out := out.push (d0+gap+i.toFloat*(tile+gap),tile,0,1)
+      return out
+
+/-- Paint-table ids of the parts of border images: part `k` (0 to 8) of picture `p` has id
+`borderSliceIdBase+9*p+k`. The picture ids of a page are far below this base. -/
+def borderSliceIdBase : Nat := 17592186044416
+
+/-- The border image of a border box at `(x,y)`, size `w` by `h` (CSS Backgrounds 3 §6.7): the
+nine parts of the image cut by `border-image-slice`, each drawn into its part of the border
+image area (the border box grown by `border-image-outset`) as wide as `border-image-width`
+says; the middle only with `fill`. Slices are in bitmap pixels; a slice larger than the image
+is the image. When the widths of two opposite sides together exceed the area, all four are
+reduced by one factor. A part with no pixels or no width is not drawn. The middle of a
+repeated or rounded image scales as the top or left edge does (the specification leaves it
+the same). None when the box has no decoded border image or no border: the border style is
+drawn then (§6.1). `border-style: none` on every side leaves the box without it, as in
+`borderNodes`. -/
+def borderImageNodes (id : Nat) (s : Computed) (x y w h : Float) : Option (Array Node) :=
+  match s.borderImage.bitmap with
+  | none => none
+  | some (pic,b) =>
+  if !s.hasBorder then none else
+  if !s.paintVisible || w <= 0 || h <= 0 || b.width == 0 || b.height == 0 then some #[] else
+  let bi := s.borderImage
+  let pos : Float → Bool := fun v => decide (v > 0)
+  let edges := s.borderEdges
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let outsetOf : BorderImageAmount → Float → Float := fun a bw => match a with
+    | .number n => n*bw | .length v => v | _ => 0
+  let ot := outsetOf bi.outset.top edges.top
+  let orr := outsetOf bi.outset.right edges.right
+  let ob := outsetOf bi.outset.bottom edges.bottom
+  let ol := outsetOf bi.outset.left edges.left
+  let ax := x-ol
+  let ay := y-ot
+  let aw := w+ol+orr
+  let ah := h+ot+ob
+  let sliceOf : BorderImageAmount → Float → Float := fun a full => match a with
+    | .number n => min n full | .percent p => min (p*full) full | .length v => min v full | .auto => full
+  let st := sliceOf bi.slice.top ih
+  let sRight := sliceOf bi.slice.right iw
+  let sb := sliceOf bi.slice.bottom ih
+  let sl := sliceOf bi.slice.left iw
+  let widthOf : BorderImageAmount → Float → Float → Float → Float := fun a bw full slicePx => match a with
+    | .number n => n*bw | .length v => v | .percent p => p*full | .auto => slicePx
+  let wt0 := widthOf bi.width.top edges.top ah st
+  let wr0 := widthOf bi.width.right edges.right aw sRight
+  let wb0 := widthOf bi.width.bottom edges.bottom ah sb
+  let wl0 := widthOf bi.width.left edges.left aw sl
+  let fx := if wl0+wr0 > aw && wl0+wr0 > 0 then aw/(wl0+wr0) else 1
+  let fy := if wt0+wb0 > ah && wt0+wb0 > 0 then ah/(wt0+wb0) else 1
+  let f := min fx fy
+  let wt := wt0*f
+  let wr := wr0*f
+  let wb := wb0*f
+  let wl := wl0*f
+  -- Each part samples its own slice (`Bitmap.crop`), so bilinear sampling at the part's edges
+  -- takes the slice's edge pixels and not those of the next slice. Before 2026-11-25 every part
+  -- sampled the whole image, and the seams between parts mixed in the colours of the
+  -- neighbouring slices (WPT border-image-image-type-001, -002, -004 and -005 differed only there).
+  let emit := fun (part : Nat) (xs ys : Array (Float × Float × Float × Float)) (sx sy sw sh : Float) => Id.run do
+    let cx := sx.floor
+    let cy := sy.floor
+    let slice := b.crop cx.toUInt64.toNat cy.toUInt64.toNat
+      ((sx+sw).ceil-cx).toUInt64.toNat ((sy+sh).ceil-cy).toUInt64.toNat
+    let sliceId := borderSliceIdBase+pic*9+part
+    let mut out : Array Node := #[]
+    for (dx,dw,fx0,fx1) in xs do
+      for (dy,dh,fy0,fy1) in ys do
+        let mx := ((fx1-fx0)*sw)/dw
+        let my := ((fy1-fy0)*sh)/dh
+        let image : ImageRecord :=
+          {map := ⟨mx,0,0,my,sx-cx+fx0*sw-dx*mx,sy-cy+fy0*sh-dy*my⟩, id := sliceId, bitmap := slice,
+           repeatX := false, repeatY := false}
+        out := out.push (.paint ⟨some id,{geometry := .rect dx dy dw dh,style := {fill := .image image}}⟩)
+    return out
+  let one := fun (d0 dlen : Float) => #[(d0,dlen,(0 : Float),(1 : Float))]
+  let innerW := aw-wl-wr
+  let innerH := ah-wt-wb
+  let midW := iw-sl-sRight
+  let midH := ih-st-sb
+  let out : Array Node := Id.run do
+    let mut out : Array Node := #[]
+    -- corners
+    if pos sl && pos st && pos wl && pos wt then out := out ++ emit 0 (one ax wl) (one ay wt) 0 0 sl st
+    if pos sRight && pos st && pos wr && pos wt then out := out ++ emit 1 (one (ax+aw-wr) wr) (one ay wt) (iw-sRight) 0 sRight st
+    if pos sl && pos sb && pos wl && pos wb then out := out ++ emit 2 (one ax wl) (one (ay+ah-wb) wb) 0 (ih-sb) sl sb
+    if pos sRight && pos sb && pos wr && pos wb then out := out ++ emit 3 (one (ax+aw-wr) wr) (one (ay+ah-wb) wb) (iw-sRight) (ih-sb) sRight sb
+    -- edges
+    if pos midW && pos innerW then
+      if pos st && pos wt then
+        out := out ++ emit 4 (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wt/st))) (one ay wt) sl 0 midW st
+      if pos sb && pos wb then
+        out := out ++ emit 5 (borderImageTiles bi.repeatX (ax+wl) innerW (midW*(wb/sb))) (one (ay+ah-wb) wb) sl (ih-sb) midW sb
+    if pos midH && pos innerH then
+      if pos sl && pos wl then
+        out := out ++ emit 6 (one ax wl) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wl/sl))) 0 st sl midH
+      if pos sRight && pos wr then
+        out := out ++ emit 7 (one (ax+aw-wr) wr) (borderImageTiles bi.repeatY (ay+wt) innerH (midH*(wr/sRight))) (iw-sRight) st sRight midH
+    -- the middle, only with `fill`
+    if bi.fill && pos midW && pos midH && pos innerW && pos innerH then
+      let scaleX : Float := if pos st && pos wt then wt/st else if pos sb && pos wb then wb/sb else 1
+      let scaleY : Float := if pos sl && pos wl then wl/sl else if pos sRight && pos wr then wr/sRight else 1
+      let xs := borderImageTiles bi.repeatX (ax+wl) innerW (midW*scaleX)
+      let ys := borderImageTiles bi.repeatY (ay+wt) innerH (midH*scaleY)
+      if xs.size*ys.size > 4096 then
+        out := out ++ emit 8 (one (ax+wl) innerW) (one (ay+wt) innerH) sl st midW midH
+      else out := out ++ emit 8 xs ys sl st midW midH
+    return out
+  some out
+
+/-- The border of a border box: its border image when it has a decoded one, else the
+border style (CSS Backgrounds 3 §6.1). -/
+def borderPaint (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  (borderImageNodes id s x y w h).getD (borderNodes id s x y w h)
+
 /-- Background, then border, of a border box. None for a box whose mask image is not drawn
 (`Computed.masked`): unmasked, the background of an icon would be a filled box. -/
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  if s.masked then #[] else background id s x y w h ++ borderNodes id s x y w h
+  if s.masked then #[] else background id s x y w h ++ borderPaint id s x y w h
 
 /-- Kind: safety of the paint (no undrawn mask shows as a filled box). Says: a box whose
 mask image is not drawn paints no background and no border. Does not say: anything about
@@ -594,11 +766,12 @@ theorem decorations_masked (id : Nat) (s : Computed) (x y w h : Float) (hm : s.m
     decorations id s x y w h = #[] := by
   simp [decorations, hm]
 
-/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask the
-decorations are the background and the border, as before. -/
-theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false) :
+/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask and no
+decoded border image the decorations are the background and the border, as before. -/
+theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false)
+    (hb : s.borderImage.bitmap = none) :
     decorations id s x y w h = background id s x y w h ++ borderNodes id s x y w h := by
-  simp [decorations, hm]
+  simp [decorations, borderPaint, borderImageNodes, hm, hb]
 
 /-- The content of a replaced element that Lean decoded or drew: the image of an
 `img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.
@@ -778,7 +951,7 @@ theorem pictureOffset_percent (roomX roomY x y : Float) :
 /-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
   let (iw,ih) := picture.size
-  if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
+  if !s.paintVisible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
   let (sx,sy) := fitScale s.objectFit iw ih w h
   let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
   let dx := x+offsetX
@@ -797,7 +970,7 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
   let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
   let image := Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩
-  if s.cornerLengths.isNone then [image] else
+  if (usedCornerLengths s).isNone then [image] else
     let b := s.borderEdges
     let p := s.padding
     let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
@@ -816,7 +989,7 @@ def replacedBox (id : Nat) (s : Computed) (w h : Float) (content : Float → Flo
   let bw := b.left+p.left+w+p.right+b.right
   let bh := b.top+p.top+h+p.bottom+b.bottom
   (m.left+bw+m.right,m.top+bh+m.bottom,
-   (decorations id s m.left m.top bw bh).toList ++ content (m.left+b.left+p.left) (m.top+b.top+p.top))
+   (decorations id s m.left m.top bw bh).toList ++ (if s.transparent then [] else content (m.left+b.left+p.left) (m.top+b.top+p.top)))
 
 /-- CSS 2.1 §10.3.3: how far `margin-left: auto` moves a block-level box whose margin
 box is `outer` wide in a containing block `available` wide. Both auto: half the room
@@ -1156,7 +1329,7 @@ def glyphTransform (s : Computed) (scale x y rise : Float) : Transform :=
 
 private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Array Node := Id.run do
   let mut out := #[]
-  if !s.visible then return out
+  if !s.paintVisible then return out
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
@@ -1202,7 +1375,7 @@ def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (
 
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do
-  if !s.visible then return #[]
+  if !s.paintVisible then return #[]
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
@@ -1258,7 +1431,7 @@ font's ascent and descent, from `top`. -/
 private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x top width : Float) : Array Node :=
   match s.background with
   | some c =>
-    if !s.visible || width <= 0 then #[] else
+    if !s.paintVisible || width <= 0 then #[] else
     let (a,d) := font.metricsOf s
     #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
@@ -1267,6 +1440,17 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
 private def isStaticPlaceholder : Inline → Bool
   | .outOfFlow _ => true
   | _ => false
+
+private def hasLineBoxEdges (e : Edges) : Bool :=
+  e.top != 0 || e.right != 0 || e.bottom != 0 || e.left != 0
+
+/-- An unadorned inline boundary or a static position does not require a line box
+(CSS 2.2 §9.4.2). Keep the positions even when the line contributes no height. -/
+private def needsLineBox : Inline → Bool
+  | .outOfFlow _ | .bidiMark _ => false
+  | .openInline _ s _ | .closeInline _ s =>
+      hasLineBoxEdges s.margin || hasLineBoxEdges s.padding || hasLineBoxEdges s.borderEdges
+  | _ => true
 
 private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) : Array Pending :=
   items.filterMap fun (offset, item) => match item with
@@ -1280,15 +1464,17 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
   if items.all (fun item => isStaticPlaceholder item.2) then
     return {pending := staticLinePositions items x y}
+  let lineExists := items.any fun (_, item) => needsLineBox item
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
   let mut tallBottom : Float := 0
-  if let some style := strut then
-    let leading := lineLeading font style
-    let (a,d) := font.metricsOf style
-    ascent := a*style.fontSize/font.unitsPerEm+leading
-    descent := d*style.fontSize/font.unitsPerEm+leading
+  if lineExists then
+    if let some style := strut then
+      let leading := lineLeading font style
+      let (a,d) := font.metricsOf style
+      ascent := a*style.fontSize/font.unitsPerEm+leading
+      descent := d*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s | .blockBreak s =>
@@ -1322,7 +1508,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
-  let mut out : Result := {height := ascent+descent, baseline := some (y+ascent), lastBaseline := some (y+ascent)}
+  let baseline := if lineExists then some (y+ascent) else none
+  let mut out : Result := {height := ascent+descent, baseline, lastBaseline := baseline}
   -- The inline boxes open at this point of the line, innermost first, each with its
   -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
   let mut frames : List (InlineBox.Frame Float × Computed) := []
@@ -1348,7 +1535,14 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let nodes := if (s.background.isNone || reordered) && !s.hasBorder then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
                                borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
-                                                                  right := if ended then s.borderWidth.right else 0}}
+                                                                  right := if ended then s.borderWidth.right else 0},
+                               -- a box broken over lines rounds only the corners of its own start
+                               -- and end sides (CSS Backgrounds 3 §5.3, box-decoration-break: slice;
+                               -- WPT border-radius-012)
+                               cornerLengths := s.cornerLengths.map fun c =>
+                                 let zero : CSS.Length × CSS.Length := (.px 0,.px 0)
+                                 let c := if f.start then c else {c with topLeft := zero, bottomLeft := zero}
+                                 if ended then c else {c with topRight := zero, bottomRight := zero}}
         left top width height
     ((⟨f.id,left,top,width,height⟩ : Box),nodes)
   for k in [0:items.size] do
@@ -1396,7 +1590,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes}
         ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩
       extent := some (x+offset,x+offset+advance)
-      if s.underline && s.visible then
+      if s.underline && s.paintVisible then
         let thickness := max 1 (s.fontSize/14)
         out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
@@ -2202,7 +2396,19 @@ theorem listMarker_none (dom : Dom) (font : FontProfile) (id : Nat)
 private def listMarkerItems (dom : Dom) (styles : Array Computed) (font : FontProfile)
     (id : Nat) (s : Computed) : Array Inline :=
   if !s.pos.listItem then #[]
-  else (textItems (.node id) s (listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode styles)).toArray
+  else
+    let text := listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode styles
+    if s.pos.listInside then (textItems (.node id) s text).toArray
+    else
+      -- The outside gap is supplied by layout. The generated suffix space is
+      -- only needed for inside markers, where it separates the marker and text.
+      let label := text.trimAscii.toString
+      -- The generated bullet or disclosure symbol is a single typographic unit.
+      -- There is no inter-character spacing in that unit. Number labels still
+      -- use their inherited letter spacing between the characters.
+      let spacing := if label.length == 1 then CSS.Length.px 0 else s.letterSpacing
+      let markerStyle := {s with preformatted := true, letterSpacing := spacing}
+      (textItems (.node id) markerStyle label).toArray
 
 /-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
 block container (a cell's contents, or an anonymous cell's), or a table (an element,
@@ -3267,7 +3473,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let edgesY := border.top+border.bottom+padding.top+padding.bottom
       if n.lname == "hr" then
         let w := imposedWidth.getD available
-        return {nodes := #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩],height := 17}
+        let nodes := if s.transparent then #[] else
+          #[.paint ⟨some id,{geometry := .rect x (y+8) w 1,style := {fill := .solid ⟨0.5,0.5,0.5⟩}}⟩]
+        return {nodes,height := 17}
       -- CSS 2.1 §10.4: the width, then `max-width`, then `min-width` (a minimum wins).
       -- CSS Sizing 3 §3.2: `width`, `min-width` or `max-width` given as a keyword is a
       -- width of the contents (measured only when a keyword is used) or the fill width.
@@ -3394,17 +3602,17 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           {content with height := max content.height (floatsHeight content.floats innerY), floats := #[],
                         marginBottom := if floatsHeight content.floats innerY > content.height then 0 else content.marginBottom}
         else content
-      -- An outside marker: beside the first line, ending half an em before the content edge
-      -- (after it in a right-to-left item). It takes no room in the line and is not part of
-      -- the item's box; an item with nothing else in it is one line high.
+      -- An outside marker is placed at inline-start of the border box (CSS Lists 3 §3.5).
+      -- When floats intrude, use their available band alongside the first line.
+      -- An item with nothing else in it is one line high.
       let content ← if markerItems.isEmpty || s.pos.listInside then pure content else do
-        let marker ← inlineLayout font markerItems 0 innerY unbounded (some {s with textAlign := .left})
+        let strut := {s with textAlign := .left, textIndent := .px 0}
+        let marker ← inlineLayout font markerItems 0 innerY unbounded (some strut)
         let gap := s.fontSize/2
-        -- An outside marker follows the first line's available inline-start
-        -- edge where a preceding float intrudes into this block.
-        let (offset, room) := if around.isEmpty then (0, width)
-          else floatBand around innerX width innerY s.lineHeight
-        let start := innerX+offset
+        let borderWidth := width+edgesX
+        let (offset, room) := if around.isEmpty then (0, borderWidth)
+          else floatBand around outerX borderWidth innerY s.lineHeight
+        let start := outerX+offset
         let dx := if s.direction == .rtl then start+room+gap else start-lineExtent marker-gap
         let marker := marker.shift dx 0
         pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
@@ -3606,6 +3814,7 @@ def linkHeight (viewport document : Float) : Float := max viewport document
 has none, paints the whole canvas, and not the element's own box. -/
 def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Color) := Id.run do
   let some root := (dom.get 0).kids.find? (fun k => (dom.get k).type == .element) | return none
+  if (styles[root]?).any (·.transparent) then return none
   if let some c := (styles[root]?).bind (·.background) then return some (root,c)
   if (dom.get root).lname != "html" then return none
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none

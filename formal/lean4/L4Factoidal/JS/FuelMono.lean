@@ -20,6 +20,23 @@ heap, so it covers the machine off (the reference) and on. Equal results include
 so equal steps left: a host call (`hostCall`, which receives the steps left) sees the same
 count at either fuel.
 
+## Two modes: the reference and the tiers
+
+The functions of the block take the run's `Mode` (`JS/Value.lean`: which fast tiers are on), and
+the induction hypothesis `IH H t1 t2 n m` relates the block in mode `t1` at fuel `n` to the block
+in mode `t2` at fuel `m`, for modes where `t1` has tier 1 on only if `t2` has. With `t1 = t2` it
+is fuel monotonicity. With `t1 = Mode.ref` and `t2 = Mode.engine` it is the refinement of the
+reference by the engine with tier 1 on (`tier1_evalStmts_refines` and its companions in
+`JS/FuelMonoAll.lean`). The two runs start from the same heap and the same function bodies: the
+mode is a parameter of the evaluator, not data in the heap.
+
+The walk treats the two modes as it treats the two fuels. A site of tier 1
+(`Tier1.withFast on fast c g`) is taken apart by `Le.withFast`, which leaves two goals the walk
+does not touch (`Site`): the implication between the modes, and the soundness of the site's fast
+path against the arm's own code, proved once per site in `JS/Tier1Proofs.lean`. A helper of the
+block that calls none of its functions must be defined before the block: inside it, it would
+take the mode as a hidden argument, and the two sides' conditions would differ.
+
 ## State of the proof (2026-11-16)
 
 Proved: `IH_all` (`JS/FuelMonoAll.lean`), fuel monotonicity of every function of the block that
@@ -96,6 +113,51 @@ theorem Le.bind {x1 x2 : JSM H α} {k1 k2 : α → JSM H β} (hx : Le x1 x2)
     cases x1 s with
     | ok a s' => exact hk a s'
     | error e s' => exact Or.inr rfl
+
+/-- A goal that the walk (`fuel_walk`) leaves as it is: the side conditions of a tier's site
+(`Le.withFast`), closed after the walk by the site's own lemma (`JS/Tier1Proofs.lean`). -/
+def Site (p : Prop) : Prop := p
+
+/-- A site of tier 1 (`Tier1.withFast`), the run on the left with the tier on only if the run on
+the right has it on. Both off: the arms' own code. Both on: the same fast path, then the
+continuations or the arms' code. Off against on (the reference against the tier): the fast path
+must be sound against the arm's code of the reference, `hs`: where the reference does not run
+out of fuel, a `some` of the fast path, continued as the tier does, ends as the arm's code. -/
+theorem Le.withFast {γ : Type} {b1 b2 : Bool} {fast : JSM H (Option γ)} {c1 c2 : γ → JSM H α}
+    {g1 g2 : JSM H α} (hb : Site (b1 = true → b2 = true)) (hg : Le g1 g2)
+    (hc : ∀ b, Le (c1 b) (c2 b))
+    (hs : Site (b1 = false → Le g1 (Tier1.attempt fast c2 g1))) :
+    Le (Tier1.withFast b1 fast c1 g1) (Tier1.withFast b2 fast c2 g2) := by
+  unfold Site at hb hs
+  cases b1 <;> cases b2
+  · exact hg
+  · have hs' := hs rfl
+    intro s
+    show Out (g1 s) ∨ g1 s = Tier1.attempt fast c2 g2 s
+    rcases hs' s with ho | he
+    · exact Or.inl ho
+    · by_cases hout : Out (g1 s)
+      · exact Or.inl hout
+      · right
+        rw [he]
+        show EStateM.bind fast _ s = EStateM.bind fast _ s
+        have he' : g1 s = EStateM.bind fast (fun o => match o with | some b => c2 b | none => g1) s := he
+        unfold EStateM.bind at he' ⊢
+        cases hf : fast s with
+        | ok o s' =>
+          cases o with
+          | some b => rfl
+          | none =>
+            rw [hf] at he'
+            rcases hg s' with ho' | he''
+            · exact absurd (he' ▸ ho') hout
+            · exact he''
+        | error e s' => rfl
+  · exact absurd (hb rfl) (by decide)
+  · exact Le.bind (Le.refl fast) (fun o => by
+      cases o with
+      | none => exact hg
+      | some b => exact hc b)
 
 /-- The handler must pass an out-of-fuel halt on. -/
 theorem Le.tryCatch {x1 x2 : JSM H α} {k1 k2 : Abrupt → JSM H α} (hx : Le x1 x2)
@@ -519,7 +581,7 @@ elab "fuel_hyp" : tactic => do
 
 open Lean Meta Elab Tactic in
 /-- Close `Le (f n a…) (f m a…)`, `f` a function of the evaluator's block, by the field `h_f` of the
-induction hypothesis `ih : IH H n m` (`JS/FuelMonoSteps.lean`), built directly: no elaboration
+induction hypothesis `ih : IH H t1 t2 n m` (`JS/FuelMonoSteps.lean`), built directly: no elaboration
 of a term per candidate field. -/
 elab "fuel_call" ih:ident : tactic => do
   let g ← getMainGoal
@@ -536,8 +598,9 @@ elab "fuel_call" ih:ident : tactic => do
     let ihT ← whnfR (← inferType ihE)
     -- x = f (H := H) n a0 … ak
     let xs := x.getAppArgs
-    unless xs.size ≥ 2 do throwError "fuel_call: no arguments"
-    let pf := mkAppN (mkAppN (mkConst field) ihT.getAppArgs) (#[ihE] ++ xs.extract 2 xs.size)
+    unless xs.size ≥ 3 do throwError "fuel_call: no arguments"
+    -- x = f (H := H) (md := t1) n a0 … ak
+    let pf := mkAppN (mkAppN (mkConst field) ihT.getAppArgs) (#[ihE] ++ xs.extract 3 xs.size)
     -- default transparency: in `coreRun` the answer's type is `CoreOp.Res op`, which reduces to
     -- the function's result type
     if ← isDefEq (← inferType pf) t then
@@ -597,7 +660,8 @@ elab "fuel_late_lemmas" : tactic => do
   let g ← getMainGoal
   let t ← instantiateMVars (← g.getType)
   let args := t.getAppArgs
-  let mut names := [`L4Factoidal.JS.FuelMono.Le.inRealm]
+  let mut names := [`L4Factoidal.JS.FuelMono.Le.inRealm, `L4Factoidal.JS.FuelMono.Le.withFast,
+    `L4Factoidal.JS.FuelMono.Le.binaryGen, `L4Factoidal.JS.FuelMono.Le.updateGen]
   -- a built-in `Natives.f core …`: its lemma is `natives_f_mono`
   if t.isAppOf ``Le && args.size ≥ 4 then
     if args[2]!.isAppOf ``L4Factoidal.JS.setGeneralArrayLength then
@@ -694,6 +758,11 @@ elab "fuel_walk" cap:(ppSpace num)? ih:(ppSpace ident)? : tactic => withEnableIn
       if ← g.isAssigned then
         todo := rest
         continue
+      -- a site's side condition is not the walk's to prove
+      if (← instantiateMVars (← g.getType)).isAppOf ``Site then
+        left := left.push g
+        todo := rest
+        continue
       let mut next : Option (List MVarId) := none
       for i in [0:tacs.size] do
         if next.isSome then continue
@@ -735,16 +804,33 @@ theorem Le.inRealm (k : Nat) {x1 x2 : JSM H α} (hx : Le x1 x2) :
   unfold L4Factoidal.JS.inRealm
   fuel_walk
 
+/-- The arm of `Expr.binary` (`Tier1.binaryGen`), over two evaluators and two `binop`s. -/
+theorem Le.binaryGen {ev1 ev2 : Expr → JSM H Value} {bo1 bo2 : BinOp → Value → Value → JSM H Value}
+    (hev : ∀ e, Le (ev1 e) (ev2 e)) (hbo : ∀ o x y, Le (bo1 o x y) (bo2 o x y))
+    (ctx : Ctx) (op : BinOp) (a b : Expr) :
+    Le (Tier1.binaryGen ev1 bo1 ctx op a b) (Tier1.binaryGen ev2 bo2 ctx op a b) := by
+  delta Tier1.binaryGen
+  fuel_walk
+
+/-- The arm of `Expr.update` on a resolved name (`Tier1.updateGen`). -/
+theorem Le.updateGen {look1 look2 : JSM H Value} {asg1 asg2 : Value → JSM H Unit}
+    {prim1 prim2 : Value → JSM H Value} {num1 num2 : Value → JSM H Float}
+    (hlook : Le look1 look2) (hasg : ∀ v, Le (asg1 v) (asg2 v)) (hprim : ∀ v, Le (prim1 v) (prim2 v))
+    (hnum : ∀ v, Le (num1 v) (num2 v)) (pre inc : Bool) :
+    Le (Tier1.updateGen look1 asg1 prim1 num1 pre inc) (Tier1.updateGen look2 asg2 prim2 num2 pre inc) := by
+  delta Tier1.updateGen
+  fuel_walk
+
 /-- At fuel 0 `iterCloseAbrupt` is out of fuel, as every function of the block is. It threw its
 completion there (with no call), so a run could end differently at fuel 0 than at fuel 1. -/
-theorem iterCloseAbrupt_zero (it : Value) (a : Abrupt) :
-    iterCloseAbrupt (H := H) 0 it a = throw (.halt "fuel") :=
-  (iterCloseAbrupt.eq_def 0 it a).trans rfl
+theorem iterCloseAbrupt_zero (t : Mode) (it : Value) (a : Abrupt) :
+    iterCloseAbrupt (H := H) (md := t) 0 it a = throw (.halt "fuel") :=
+  (iterCloseAbrupt.eq_def (md := t) 0 it a).trans rfl
 
 /-- So, at fuel 0, it is below itself at every fuel. -/
-theorem iterCloseAbrupt_zero_le (m : Nat) (it : Value) (a : Abrupt) :
-    Le (iterCloseAbrupt (H := H) 0 it a) (iterCloseAbrupt m it a) := by
-  rw [iterCloseAbrupt_zero]
+theorem iterCloseAbrupt_zero_le (t1 t2 : Mode) (m : Nat) (it : Value) (a : Abrupt) :
+    Le (iterCloseAbrupt (H := H) (md := t1) 0 it a) (iterCloseAbrupt (md := t2) m it a) := by
+  rw [iterCloseAbrupt_zero t1]
   exact Le.fuel _
 
 end L4Factoidal.JS.FuelMono
