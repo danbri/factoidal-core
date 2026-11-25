@@ -314,10 +314,13 @@ def hiddenEl (d : Dom) (k : NodeId) : Bool :=
 structure NameStyle where
   displayed : NodeId → Bool := fun _ => true
   visible : NodeId → Bool := fun _ => true
+  /-- WebDriver may query a native element whose renderer has no box of its own.
+  Only the root step can ignore that display fact. -/
+  allowUnboxedRoot : Bool := false
 
 /-- A hidden element at the current step of the name computation. -/
-def hiddenAt (d : Dom) (style : NameStyle) (k : NodeId) : Bool :=
-  hiddenEl d k || !style.displayed k || !style.visible k
+def hiddenAt (d : Dom) (style : NameStyle) (k : NodeId) (allowUnboxed : Bool := false) : Bool :=
+  hiddenEl d k || (!allowUnboxed && !style.displayed k) || !style.visible k
 
 /-- Whether the root of an IDREF traversal is hidden. Display and ARIA hiding on an ancestor
 hide the reference too. Computed CSS visibility is taken at the reference itself, since a
@@ -399,7 +402,8 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
     let x := d.get k
     if x.type == .text then x.data
     else if x.type != .element then ""
-    else if hiddenAt d style k && !labelled && (!includeHidden || nonNameElement d k) then ""
+    else if hiddenAt d style k (!content && style.allowUnboxedRoot) &&
+        !labelled && (!includeHidden || nonNameElement d k) then ""
     else
       let byLabelledBy := if labelled then "" else match attr? d k "aria-labelledby" with
         | some ids => collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
@@ -412,6 +416,9 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       | none =>
       let label := (attr? d k "aria-label").map (·.trimAscii.toString) |>.getD ""
       if !label.isEmpty then label else
+      -- An explicitly empty area alternative is still the host-language alternative.
+      if !labelled && !content && style.allowUnboxedRoot &&
+          isHtml d k ["area"] && (attr? d k "alt").any (·.trimAscii.isEmpty) then "" else
       let native := hostLabel d fuel k style
       if !native.isEmpty then native else
       let role := computedRole d k
@@ -579,6 +586,24 @@ private def nameWithHiddenSpans (referenceHidden : Bool) : String :=
       visible := fun k => !referenceHidden || attr? d k "id" != some "ref" }
   let k := (d.treeOrder 0).find? (isHtml d · ["button"])
   (k.map fun i => accessibleName d i style).getD "?"
+
+-- The exception is only for the starting element's display, not a child's
+-- display, the root's explicit hiding, or its visibility.
+private def nameAtUnboxedRoot (html : String) (visible allowUnboxedRoot : Bool) : String :=
+  let d := DOM.parseHtmlDocument html
+  match (d.treeOrder 0).find? (isHtml d · ["button"]) with
+  | some k => accessibleName d k {displayed := fun n => n != k && attr? d n "id" != some "child",
+                                  visible := fun n => n != k || visible, allowUnboxedRoot}
+  | none => "?"
+
+#guard nameAtUnboxedRoot "<button>Open<span id=child> hidden</span></button>" true true == "Open"
+#guard nameAtUnboxedRoot "<button>Open</button>" true false == ""
+#guard nameAtUnboxedRoot "<button>Open</button>" false true == ""
+#guard nameAtUnboxedRoot "<button aria-hidden=true>Open</button>" true true == ""
+#guard nameAtUnboxedRoot "<button hidden>Open</button>" true true == ""
+#guard nameAtUnboxedRoot "<area alt='' title=Fallback>" true true == ""
+#guard nameAtUnboxedRoot "<area alt='' title=Fallback aria-label=Label>" true true == "Label"
+#guard nameAtUnboxedRoot "<area title=Fallback>" true true == "Fallback"
 
 #guard nameWithHiddenSpans false == "Open"
 #guard nameWithHiddenSpans true == "Open details"

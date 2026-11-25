@@ -1507,7 +1507,8 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
         let (host, answers) := a.page.host.measured
         let style : L4Factoidal.HTML.AccessibleRole.NameStyle :=
           { displayed := fun n => (answers.bind fun f => f n 42 "") != some "none"
-            visible := fun n => (answers.bind fun f => f n 42 "") != some "hidden" }
+            visible := fun n => (answers.bind fun f => f n 42 "") != some "hidden"
+            allowUnboxedRoot := (answers.bind fun f => f k 42 "label-root") == some "native-unboxed" }
         (host, L4Factoidal.HTML.AccessibleRole.accessibleName d k style)
       | some k, "properties" | some k, "nodeProperties" =>
         (a.page.host, (L4Factoidal.HTML.AccessibleTree.propertiesIn d k).toString)
