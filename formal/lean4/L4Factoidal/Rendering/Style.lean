@@ -1504,6 +1504,15 @@ def clipPathEmpty (value : String) : Bool :=
 #guard !maskHides "url(#fade)"
 #guard !maskHides "url( '#fade' )"
 
+private def applyFontSizePixels (s : Computed) (value : String) : Except String Computed := do
+  let v ← pixels value
+  if v <= 0 then throw "font-size must be positive"
+  return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
+
+/-- A successful pixel parse sets its own size and preserves the other inputs. -/
+private theorem applyFontSizePixels_base (s : Computed) (base : Float) (value : String) :
+    applyFontSizePixels {s with fontSize := base} value = applyFontSizePixels s value := rfl
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1722,10 +1731,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       return {s with backgroundImage := some u, backgroundGradient := none}
     let some args := gradientArgs d.value | throw "background-image: only linear-gradient() and url() are drawn"
     return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
-  | "font-size" =>
-    let v ← pixels d.value
-    if v <= 0 then throw "font-size must be positive"
-    return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
+  | "font-size" => applyFontSizePixels s d.value
   | "line-height" =>
     if d.value == "0px" then
       return {s with lineHeight := 0, lineHeightFactor := none}
@@ -2230,7 +2236,8 @@ private def fontSizeBase (parent start s : Computed) (d : Declaration) : Compute
 /-- Replacing the old size cannot change the direct parse of a font size in pixels. -/
 private theorem apply_fontSize_base (s : Computed) (base : Float) (value : String) (important : Bool) :
     apply {s with fontSize := base} ⟨"font-size",value,important⟩ =
-      apply s ⟨"font-size",value,important⟩ := rfl
+      apply s ⟨"font-size",value,important⟩ := by
+  simpa only [apply] using applyFontSizePixels_base s base value
 
 /-- Try the direct size once. The fallback consumes the specified value that
 establishes the inherited size as its base. -/
