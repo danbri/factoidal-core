@@ -560,10 +560,10 @@ private def sizeOfRoot (attrs : List (String × String)) : Nat × Nat :=
 #guard NativeSVGForgiving.imageRaster 18 18 == (36,36)
 #guard NativeSVGForgiving.imageRaster 128 128 == (256,256)
 #guard NativeSVGForgiving.imageRaster 200 200 == (200,200)
-#guard NativeSVGForgiving.imageRaster 486 169 == (243,85)
--- 2000 by 1000 is past the budget whole and at a fifth; a sixth (rounded up) fits
-#guard NativeSVGForgiving.imageRaster 2000 1000 == (334,167)
-#guard 334*167 ≤ NativeSVGForgiving.maxImagePixels && 400*200 > NativeSVGForgiving.maxImagePixels
+#guard NativeSVGForgiving.imageRaster 486 169 == (432,151)
+-- A divisor of 45/8 fits; the preceding divisor, 44/8, exceeds the pixel cap.
+#guard NativeSVGForgiving.imageRaster 2000 1000 == (356,178)
+#guard 356*178 ≤ NativeSVGForgiving.maxImagePixels && 364*182 > NativeSVGForgiving.maxImagePixels
 
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
