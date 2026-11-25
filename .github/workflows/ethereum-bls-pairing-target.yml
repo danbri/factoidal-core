@@ -47,7 +47,7 @@ jobs:
               assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
               pins[rel] = blob
           source = pathlib.Path("PairingTarget.lean").read_text()
-          assert re.findall(r"^import\s+(\S+)\s*$",source,re.M) == ["Lean"]
+          assert re.findall(r"^import\s+(\S+)\s*$",source,re.M) == ["Init"]
           assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",source,re.M)
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
           assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")

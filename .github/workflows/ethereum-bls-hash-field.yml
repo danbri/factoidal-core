@@ -48,7 +48,7 @@ jobs:
               blob = git("hash-object",str(src))
               assert blob == git("rev-parse","HEAD:"+rel)
               pins[rel] = blob
-          for path, expected in [("HashToField.lean",["Lean","L4Factoidal.Crypto.SHA2"]),
+          for path, expected in [("HashToField.lean",["Init","L4Factoidal.Crypto.SHA2"]),
                                  ("../L4Factoidal/Crypto/SHA2.lean",[])]:
               code = pathlib.Path(path).read_text()
               # Strip comments for the source-level guard; native imports are logged below.

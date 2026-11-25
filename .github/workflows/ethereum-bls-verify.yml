@@ -36,8 +36,8 @@ jobs:
           import json, pathlib, re, subprocess
           def git(*args): return subprocess.check_output(["git",*args],text=True).strip()
           root=pathlib.Path(git("rev-parse","--show-toplevel"))
-          expected={"G1PublicKey.lean":["Lean"],"G2Signature.lean":["Lean"],
-            "PairingTarget.lean":["Lean"],"HashToField.lean":["Lean","L4Factoidal.Crypto.SHA2"],
+          expected={"G1PublicKey.lean":["Init"],"G2Signature.lean":["Init"],
+            "PairingTarget.lean":["Init"],"HashToField.lean":["Init","L4Factoidal.Crypto.SHA2"],
             "../L4Factoidal/Crypto/SHA2.lean":[],
             "BLSVerify.lean":["G1PublicKey","G2Signature","PairingTarget","HashToField"],
             "BLSVerifyMain.lean":["BLSVerify"]}
@@ -58,10 +58,10 @@ jobs:
               assert blob==git("rev-parse","HEAD:"+rel)
               pins[rel]=blob
           for name,sha in {
-              "G1PublicKey.lean":"d7e64f304280cb505f60252506e1500d3861f398",
-              "G2Signature.lean":"120832a8cf37cb82255e0b94e37551215725fe37",
-              "PairingTarget.lean":"2137b263efea22b0045c9cbc156807b28a82d9fa",
-              "HashToField.lean":"5a187a3cdb8353e2d1a3fae9f552d5418e272e68"}.items():
+              "G1PublicKey.lean":"c046f6d470909b6b65f90d3eebd16eb9fb435806",
+              "G2Signature.lean":"4e3762c7b67542bde20403c9952a65a901001242",
+              "PairingTarget.lean":"c5dd9d71cc73b63212643087bbe3277847ecdbd6",
+              "HashToField.lean":"f504bf8ca4229ea13395326df484a1fd6d92164a"}.items():
               assert pins["formal/lean4/ethereum-consensus/"+name]==sha
           assert pins["formal/lean4/L4Factoidal/Crypto/SHA2.lean"]=="92737f4d83035745dba29ef2c3867b01b8dfa50f"
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"]==[]

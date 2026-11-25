@@ -49,7 +49,7 @@ jobs:
               blob = git("hash-object",str(src))
               assert blob == git("rev-parse","HEAD:"+rel)
               pins[rel] = blob
-          for path, expected in [("HashToField.lean",["Lean","L4Factoidal.Crypto.SHA2"]),
+          for path, expected in [("HashToField.lean",["Init","L4Factoidal.Crypto.SHA2"]),
                                  ("../L4Factoidal/Crypto/SHA2.lean",[])]:
               code = pathlib.Path(path).read_text()
               # Strip comments for the source-level guard; native imports are logged below.
@@ -57,7 +57,7 @@ jobs:
               code = re.sub(r"--[^\n]*", "", code)
               assert re.findall(r"^import\s+(\S+)\s*$",code,re.M) == expected
               assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",code,re.M)
-          assert pins["formal/lean4/ethereum-consensus/G2Signature.lean"] == "120832a8cf37cb82255e0b94e37551215725fe37"
+          assert pins["formal/lean4/ethereum-consensus/G2Signature.lean"] == "4e3762c7b67542bde20403c9952a65a901001242"
           assert pins["formal/lean4/L4Factoidal/Crypto/SHA2.lean"] == "92737f4d83035745dba29ef2c3867b01b8dfa50f"
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
           assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")

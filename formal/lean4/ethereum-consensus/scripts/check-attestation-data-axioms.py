@@ -20,7 +20,7 @@ pins={
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProof.lean": "ff547b1c8547769ec36673c0f6dde3fb29bf40a1",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/MultiProofHelpers.lean": "3bb33d5661020979c55ca7d188bc8af20054132d",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/CheckedBranch.lean": "9c3ebadf0100b86d4e6f9d20b87d6d0311a6e734",
-    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/GIndex.lean": "ec69368d7bf3d4ec1bbe533560ae93e3aaecbb2b",
+    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/GIndex.lean": "68292f05814e61ed0ad6007f155ddc9303c73f2d",
     "formal/lean4/L4Factoidal/Crypto/SHA2.lean": "92737f4d83035745dba29ef2c3867b01b8dfa50f",
     "formal/lean4/ethereum-consensus/scripts/check-attestation-data.py": "c80f83a57d5088bc4b7668d28acb1a001e063755",
     "formal/lean4/ethereum-consensus/lakefile.toml": "b08203129886735a8fbfc2c31fb7027024665d1f",
