@@ -1755,6 +1755,10 @@ private def cornerPair (fontSize : Float) (source : String) : Except String (Len
   | [x,y] => pure (← parse x, ← parse y)
   | _ => throw "a border corner radius takes one or two values"
 
+/-- Share the computed style update across border-image declarations and CSS-wide values. -/
+@[noinline] private def Computed.withBorderImage (s : Computed) (borderImage : BorderImage) : Computed :=
+  {s with borderImage}
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1975,7 +1979,7 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
     let v ← pixels d.value
-    if v <= 0 then throw "font-size must be positive"
+    if v < 0 then throw "font-size must be non-negative"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
     if d.value == "0px" then
@@ -2066,21 +2070,22 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
       else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
       else out := {out with borderColors := .all (← borderPaint part)}
     return out
-  | "border-image" => return {s with borderImage := ← borderImageShorthand s.fontSize d.value}
-  | "border-image-source" => return {s with borderImage := {s.borderImage with source := ← borderImageSource d.value}}
+  | "border-image" => return s.withBorderImage (← borderImageShorthand s.fontSize d.value)
+  | "border-image-source" =>
+    return s.withBorderImage {s.borderImage with source := ← borderImageSource d.value}
   | "border-image-slice" =>
     let ws := topWords d.value
     let fill := ws.any fun w => (trim w).toLower == "fill"
     let amounts := ws.filter fun w => (trim w).toLower != "fill"
     let amounts := if amounts.isEmpty then ["100%"] else amounts
-    return {s with borderImage := {s.borderImage with slice := ← borderImageSides s.fontSize true false false amounts, fill}}
+    return s.withBorderImage {s.borderImage with slice := ← borderImageSides s.fontSize true false false amounts, fill}
   | "border-image-width" =>
-    return {s with borderImage := {s.borderImage with width := ← borderImageSides s.fontSize true true true (topWords d.value)}}
+    return s.withBorderImage {s.borderImage with width := ← borderImageSides s.fontSize true true true (topWords d.value)}
   | "border-image-outset" =>
-    return {s with borderImage := {s.borderImage with outset := ← borderImageSides s.fontSize false true false (topWords d.value)}}
+    return s.withBorderImage {s.borderImage with outset := ← borderImageSides s.fontSize false true false (topWords d.value)}
   | "border-image-repeat" =>
     let (a,b) ← borderImageModes (topWords d.value)
-    return {s with borderImage := {s.borderImage with repeatX := a, repeatY := b}}
+    return s.withBorderImage {s.borderImage with repeatX := a, repeatY := b}
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
     | [a] => if a < 0 then throw "negative border-spacing" else return {s with borderSpacingX := a, borderSpacingY := a}
@@ -2562,12 +2567,18 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "border-color" => some {s with borderColors := source.borderColors}
   | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors,
                               borderImage := source.borderImage}
-  | "border-image" => some {s with borderImage := source.borderImage}
-  | "border-image-source" => some {s with borderImage := {s.borderImage with source := source.borderImage.source}}
-  | "border-image-slice" => some {s with borderImage := {s.borderImage with slice := source.borderImage.slice, fill := source.borderImage.fill}}
-  | "border-image-width" => some {s with borderImage := {s.borderImage with width := source.borderImage.width}}
-  | "border-image-outset" => some {s with borderImage := {s.borderImage with outset := source.borderImage.outset}}
-  | "border-image-repeat" => some {s with borderImage := {s.borderImage with repeatX := source.borderImage.repeatX, repeatY := source.borderImage.repeatY}}
+  | "border-image" => some (s.withBorderImage source.borderImage)
+  | "border-image-source" =>
+    some (s.withBorderImage {s.borderImage with source := source.borderImage.source})
+  | "border-image-slice" =>
+    some (s.withBorderImage {s.borderImage with
+      slice := source.borderImage.slice, fill := source.borderImage.fill})
+  | "border-image-width" =>
+    some (s.withBorderImage {s.borderImage with width := source.borderImage.width})
+  | "border-image-outset" =>
+    some (s.withBorderImage {s.borderImage with outset := source.borderImage.outset})
+  | "border-image-repeat" =>
+    some (s.withBorderImage {s.borderImage with repeatX := source.borderImage.repeatX, repeatY := source.borderImage.repeatY})
   | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
@@ -2836,17 +2847,30 @@ def hintEdge : Option Length → Option (Float × Float)
   | some (.percent p) => some (0, p)
   | _ => none
 
+private def canvasHints (n : DOM.Node) (s : Computed) : Computed :=
+  match HTML.Dimension.parseNonNegative (attrValue n "width"),
+      HTML.Dimension.parseNonNegative (attrValue n "height") with
+  | some w,some h => {s with pos := {s.pos with ratio := some (w,h), ratioAuto := true}}
+  | _,_ => s
+
+private theorem canvasHints_size (n : DOM.Node) (s : Computed) :
+    (canvasHints n s).width = s.width ∧ (canvasHints n s).height = s.height := by
+  unfold canvasHints
+  split <;> exact ⟨rfl,rfl⟩
+
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
-`video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
-`width` and `height` properties; `hr` width too. `hspace` and `vspace` of `img`, `embed`,
-`object`, `marquee` and an image button map to the horizontal and vertical margins; the
+`video`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
+`width` and `height` properties; `hr` width too. For `canvas`, the attributes give an
+`auto <ratio>` hint, and the bitmap gives the natural size. `hspace` and `vspace` of
+`img`, `embed`, `object`, `marquee` and an image button map to the horizontal and vertical margins; the
 `border` of `img`, `object` and an image button to the border widths, with a solid border.
 All below author CSS. A percentage height resolves against a definite containing height
 (`Fragment.percentHeights`) and is read as `auto` otherwise. -/
-def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
+def replacedHints (n : DOM.Node) (s : Computed) : Computed :=
+  if DOM.Dom.isHtmlElement n "canvas" then canvasHints n s else Id.run do
   let tag := n.lname
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
-  let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
+  let sized := imageInput || ["img","video","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
   -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
   let mut s := if tag == "video" then {s with objectFit := .contain} else s
@@ -2863,6 +2887,14 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
     if let some b := pixelLengthAttribute (attrValue n "border") then
       s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyles := .all .solid}
   return s
+
+/-- Canvas bitmap attributes leave the preferred CSS width and height unchanged. -/
+theorem replacedHints_canvas_size (n : DOM.Node) (s : Computed) (h : DOM.Dom.isHtmlElement n "canvas" = true) :
+    (replacedHints n s).width = s.width ∧ (replacedHints n s).height = s.height := by
+  rw [replacedHints, if_pos h]
+  exact canvasHints_size n s
+
+#print axioms replacedHints_canvas_size
 
 /-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
 `source` element its image comes from (here: the first earlier `source` sibling with a
@@ -3016,6 +3048,7 @@ cascade takes from no UA rule. -/
 def hintedProperties (before after : Computed) : List String :=
   (if after.width.same before.width then [] else ["width"]) ++
   (if after.height.same before.height then [] else ["height"]) ++
+  (if after.pos.ratio == before.pos.ratio && after.pos.ratioAuto == before.pos.ratioAuto then [] else ["aspect-ratio"]) ++
   (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
   (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
   (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
@@ -4068,9 +4101,19 @@ are rounded to match the supplied-font raster contract; explicit line heights
 scale too. Geometry, SVG viewports and DOM source are unchanged. -/
 def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   if scale == 1 then s else
-  let size := max 1 (s.fontSize*scale).round
+  let size := if s.fontSize == 0 then s.fontSize else max 1 (s.fontSize*scale).round
   let height := (s.lineHeightFactor.map (size*·)).getD (s.lineHeight*scale)
   {s with fontSize := size, lineHeight := height}
+
+/-- Reader text scaling preserves a computed zero font size. -/
+theorem Computed.scaleText_fontSize_zero (s : Computed) (scale : Float) (h : (s.fontSize == 0) = true) :
+    (s.scaleText scale).fontSize = s.fontSize := by
+  unfold Computed.scaleText
+  split
+  · rfl
+  · rfl
+
+#print axioms Computed.scaleText_fontSize_zero
 
 /-- The style of node `id` under the style `parent` of its parent: an element's cascade
 (`computedFrom`). SVG descendants keep the HTML inherited box style but also

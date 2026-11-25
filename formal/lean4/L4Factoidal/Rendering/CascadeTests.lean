@@ -230,6 +230,12 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT "#t { font: xx-small serif }").map (fun s => (s.fontSize, s.fontFamily)) == some (9, "serif")
 
 -- A zero length, factor or percentage is valid. A negative value is discarded.
+#guard (styleAt pageT "#t { font-size: 0 }").map (fun s => (s.fontSize,s.lineHeight)) == some (0,0)
+#guard (styleAt pageT "#t { font-size: 0%; line-height: 12px }").map
+  (fun s => (s.fontSize,s.lineHeight)) == some (0,12)
+#guard (styleAt pageT "body { font-size: 18px } #t { font-size: -1px }").map (·.fontSize) == some 18
+#guard (styleAt pageT "#t { font-size: 0 }").map (fun s => (s.scaleText 1.5).fontSize) == some 0
+
 #guard (styleAt pageT "#t { line-height: -0px }").map (·.lineHeight) == some 0
 #guard (styleAt pageT "#t { line-height: 0 }").map (·.lineHeightFactor) == some (some 0)
 #guard (styleAt pageT "#t { line-height: 0% }").map (·.lineHeight) == some 0
