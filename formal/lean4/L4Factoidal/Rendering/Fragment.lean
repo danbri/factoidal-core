@@ -230,6 +230,9 @@ structure Children where
   /-- The item's contents depend on its height (a flex or grid container): then it is
   laid out again with `layout` when its height changes, not just framed. -/
   heightSensitive : Item → Bool
+  /-- Horizontal grid gives each item a containing block equal to its grid area. -/
+  contentInArea : Option (Item → (x y width areaWidth : Float) → Except String Result) := none
+  frameInArea : Option (Item → (x y width height areaWidth : Float) → Result → Result) := none
 
 /-- A container's content box, as `layoutTask` resolved it. -/
 structure ContentBox where
@@ -495,16 +498,7 @@ def floatBand (floats : Array Floats.Box) (x width y h : Float) : Float × Float
 def floatsHeight (floats : Array Floats.Box) (y : Float) : Float :=
   if floats.isEmpty then 0 else LU.toPx (Floats.below floats.toList (LU.ofPx y))-y
 
-/-- `box-sizing: border-box` (CSS Sizing 3 §3.3) taken out of a style: `width`, `height`
-and their limits as content-box sizes, which is what the layout reads. A percentage
-becomes that percentage less the padding and border. A table's `width` is read as its
-border box by the table layout itself. -/
-def contentBoxed (s : Computed) : Computed :=
-  if !s.pos.borderBox || s.display.isTable then s else
-  let b := s.borderEdges
-  let p := s.padding
-  let h := b.left+b.right+p.left+p.right
-  let v := b.top+b.bottom+p.top+p.bottom
+private def subtractBoxEdges (s : Computed) (h v : Float) : Computed :=
   let less := fun (d : Float) (l : CSS.Length) => match l with
     | .px w => CSS.Length.px (max 0 (w-d))
     | .percent q => .calc q (-d)
@@ -512,6 +506,13 @@ def contentBoxed (s : Computed) : Computed :=
     | other => other
   {s with width := less h s.width, minWidth := less h s.minWidth, maxWidth := less h s.maxWidth,
           height := less v s.height, minHeight := less v s.minHeight, maxHeight := less v s.maxHeight}
+
+/-- Convert border-box lengths to content-box lengths. Tables do their own conversion. -/
+def contentBoxed (s : Computed) : Computed :=
+  if !s.pos.borderBox || s.display.isTable then s else
+  let b := s.borderEdges
+  let p := s.padding
+  subtractBoxEdges s (b.left+b.right+p.left+p.right) (b.top+b.bottom+p.top+p.bottom)
 
 private def viewportEdgePixels (edges : Edges) (width height : Float)
     (values : List (Nat × ViewportEdge)) : Edges :=
@@ -564,6 +565,21 @@ def withEdges (s : Computed) (width : Float) : Computed :=
                       s.padding.bottom+max 0 (p.2.2.1*width),s.padding.left+max 0 (p.2.2.2*width)⟩,
           pos := {s.pos with marginOf := (0,0,0,0), paddingOf := (0,0,0,0)}}
 
+/-- Resolve percentage edges after the ordinary border-box conversion, subtracting only
+the newly used padding from already converted lengths. -/
+def withLayoutEdges (s : Computed) (width : Float) : Computed :=
+  if !s.pos.percentEdges then s else
+  let used := withEdges s width
+  if !s.pos.borderBox || s.display.isTable then used else
+  let p := used.padding
+  let base := s.padding
+  subtractBoxEdges used ((p.left-base.left)+(p.right-base.right))
+    ((p.top-base.top)+(p.bottom-base.bottom))
+
+/-- Horizontal grid areas determine their contents' percentage basis during placement. -/
+def defersGridEdges (s : Computed) : Bool :=
+  s.display.isGrid && s.pos.writingMode == .horizontalTb
+
 /-- The content width of the box of a node when the styles alone make it definite, given
 the width `cb` of its containing block (when that is definite) and its own style with its
 edges resolved: a length; a percentage of `cb`; for a block-level box in the flow with
@@ -571,14 +587,16 @@ edges resolved: a length; a percentage of `cb`; for a block-level box in the flo
 passes its containing block on. `none`: the width depends on content (a float, an
 inline-block, a table cell, an absolutely positioned box with no length). Limits that are
 lengths apply. -/
-def definiteWidth (s : Computed) (element : Bool) (cb : Option Float) : Option Float :=
+def definiteWidth (s : Computed) (element : Bool) (cb : Option Float)
+    (contentSizes : Bool := false) : Option Float :=
   if !element then cb else
   if s.display == .none then none else
   if s.display == .inline then cb else
   let b := s.borderEdges
   let inside := b.left+b.right+s.padding.left+s.padding.right
   -- `box-sizing: border-box`: a width names the border box
-  let content := fun (w : Float) => if s.pos.borderBox then max 0 (w-inside) else w
+  let content := fun (w : Float) =>
+    if s.pos.borderBox && !contentSizes then max 0 (w-inside) else w
   let limit := fun (w : Float) =>
     let w := match s.maxWidth with
       | .px m => min w (content m)
@@ -596,18 +614,30 @@ def definiteWidth (s : Computed) (element : Bool) (cb : Option Float) : Option F
 
 /-- The pass down the tree: `pending` holds nodes with the width of their containing block.
 One step a node; `fuel` is the number of nodes. -/
-def percentEdgesLoop (dom : Dom) : Nat → List (Nat × Option Float) → Array Computed → Array Computed
+def percentEdgesLoop (dom : Dom) (contentSizes : Bool) :
+    Nat → List (Nat × Option Float) → Array Computed → Array Computed
   | 0, _, out => out
   | _+1, [], out => out
   | fuel+1, (id,cb) :: rest, out =>
     let n := dom.get id
     let s := out[id]!
     -- an absolutely positioned box resolves against a padding box known only in layout
-    let s := match cb with
-      | some w => if s.pos.isAbsolute then s else withEdges s w
-      | none => s
-    let own := definiteWidth s (n.type == .element) cb
-    percentEdgesLoop dom fuel (n.kids.toList.map (fun k => (k,own)) ++ rest) (out.set! id s)
+    let resolve := s.pos.percentEdges && !s.pos.isAbsolute && cb.isSome
+    let s := if resolve then
+        let w := cb.getD 0
+        if contentSizes then withLayoutEdges s w else withEdges s w
+      else s
+    let own := definiteWidth s (n.type == .element) cb contentSizes
+    let pending := if defersGridEdges s then rest
+      else (n.kids.toList.map (fun k => (k,own))) ++ rest
+    percentEdgesLoop dom contentSizes fuel pending (if resolve then out.set! id s else out)
+
+/-- Resolve an item's descendants from the content width already assigned by placement.
+Nested horizontal grids defer their own items to their own tracks. -/
+def gridItemEdges (dom : Dom) (styles : Array Computed) (id : Nat) (width : Float) : Array Computed :=
+  if defersGridEdges styles[id]! then styles else
+    percentEdgesLoop dom true (dom.size+1)
+      ((dom.get id).kids.toList.map fun k => (k, some width)) styles
 
 /-- The styles with the percentage margins and padding of each box resolved against the
 width of its containing block, where the styles make that width definite (`definiteWidth`:
@@ -616,7 +646,7 @@ length for a width); elsewhere a percentage part stays out, as before it was rea
 with no percentage margin or padding pays one pass over its styles. -/
 def percentEdges (dom : Dom) (styles : Array Computed) (width : Float) : Array Computed :=
   if !(styles.any fun s => s.pos.percentEdges) then styles
-  else percentEdgesLoop dom (dom.size+1) [(0,some width)] styles
+  else percentEdgesLoop dom false (dom.size+1) [(0,some width)] styles
 
 /-- Kind: frame. Says: a page with no percentage margin or padding is left as it is. -/
 theorem percentEdges_unused (dom : Dom) (styles : Array Computed) (width : Float)
@@ -624,8 +654,9 @@ theorem percentEdges_unused (dom : Dom) (styles : Array Computed) (width : Float
   simp [percentEdges, h]
 
 /-- Kind: structure. Says: the pass keeps one style a node. -/
-theorem percentEdgesLoop_size (dom : Dom) (fuel : Nat) (pending : List (Nat × Option Float)) (out : Array Computed) :
-    (percentEdgesLoop dom fuel pending out).size = out.size := by
+theorem percentEdgesLoop_size (dom : Dom) (contentSizes : Bool) (fuel : Nat)
+    (pending : List (Nat × Option Float)) (out : Array Computed) :
+    (percentEdgesLoop dom contentSizes fuel pending out).size = out.size := by
   induction fuel generalizing pending out with
   | zero => rfl
   | succ fuel ih =>
@@ -636,7 +667,7 @@ theorem percentEdgesLoop_size (dom : Dom) (fuel : Nat) (pending : List (Nat × O
       unfold percentEdgesLoop
       simp only []
       rw [ih]
-      simp
+      split <;> simp
 
 theorem percentEdges_size (dom : Dom) (styles : Array Computed) (width : Float) :
     (percentEdges dom styles width).size = styles.size := by
