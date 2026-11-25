@@ -131,6 +131,16 @@ def displaySize (d : Dom) (sel : NodeId) : Nat :=
   | some n => if n == 0 then (if (attr? d sel "multiple").isSome then 4 else 1) else n
   | none => if (attr? d sel "multiple").isSome then 4 else 1
 
+/-- After the option.selected setter clears an option, a one-row select
+with no selected option selects its first enabled option. The select's own
+value and selectedIndex setters can deliberately leave the selection empty. -/
+def optionFallbackAfterClear (d : Dom) (id : NodeId) : Option NodeId := do
+  let sel ← optionSelect d id
+  if (attr? d sel "multiple").isSome || displaySize d sel != 1 then none
+  else
+    let opts := optionList d sel
+    if opts.any (selectedness d) then none else opts.find? (fun o => !optionDisabled d o)
+
 /-- The selected options of a `select`, in tree order. With `multiple`: every option whose
 selectedness is true. Without: the last such option; or, when there is none, the display
 size is 1 and no option's selectedness was ever set by a script, the first option that is
@@ -158,7 +168,7 @@ def wire (ks : Array NodeId) : String := " ".intercalate (ks.toList.map toString
 
 /-- `node_query` op 186: "f" the form owner of `k` ("" for none); "e" the elements of form
 `k`; "o" the options of select `k`; "s" its selected options; "p" the select that owns
-option `k`; "l" the labels of `k`; "c" the
+option `k`; "r" the fallback after clearing option `k`; "l" the labels of `k`; "c" the
 labeled control of label `k` ("" for none); "x" the selectedness of option `k` ("1" or "0"). -/
 def answer (d : Dom) (k : NodeId) (q : String) : String :=
   match q with
@@ -167,6 +177,7 @@ def answer (d : Dom) (k : NodeId) (q : String) : String :=
   | "o" => wire (optionList d k)
   | "s" => wire (selectedOptions d k)
   | "p" => (optionSelect d k).map toString |>.getD ""
+  | "r" => (optionFallbackAfterClear d k).map toString |>.getD ""
   | "l" => wire (labelsOf d k)
   | "c" => match labeledControl d k with | some c => toString c | none => ""
   | "x" => if selectedness d k then "1" else "0"
@@ -351,5 +362,7 @@ private def wrappedOptions : Dom :=
 #guard [4, 6, 7, 9, 10, 13].map (optionSelect wrappedOptions) ==
   [some 0, none, none, some 11, some 0, none]
 #guard optionDisabled wrappedOptions 4 && !optionDisabled wrappedOptions 7
+#guard optionFallbackAfterClear (wrappedOptions.setNode 10 fun n => {n with checkedness := some false}) 10 == some 10
+#guard optionFallbackAfterClear wrappedOptions 13 == none
 
 end L4Factoidal.DOM.FormControls

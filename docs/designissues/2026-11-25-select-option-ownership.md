@@ -15,7 +15,11 @@ Two Lean statements state the scan step at an excluded subtree and at an
 already nested optgroup. Executable fixtures cover the excluded descendants,
 valid wrappers, fallback selectedness, and disabled groups. Check the
 published WPT nesting fixture and adjacent selection, validation and form
-submission before merging. Check the displayed label and posted value on an
+submission before merging. Clearing an option through its selected setter
+asks Lean whether the dropdown must select a fallback. Explicitly clearing
+the select through selectedIndex or value still leaves an empty selection.
+The arena retains its existing combined selectedness and dirtiness
+representation. Check the displayed label and posted value on an
 actual native browser page.
 
 [HTML select list of options](https://html.spec.whatwg.org/multipage/form-elements.html#concept-select-option-list)

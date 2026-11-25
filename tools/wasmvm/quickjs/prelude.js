@@ -17820,7 +17820,12 @@
     prop(O, 'selected', function () { const sel = selectOf(this); return sel ? selectedIds(sel).includes(nodeId(this)) : fq(this, 'x') === '1'; }, function (v) {
       const id = nodeId(this), sel = selectOf(this);
       setSelected(id, !!v);
-      if (v && sel && !sel.hasAttribute('multiple')) for (const k of optionIds(sel)) if (k !== id) setSelected(k, false);
+      if (v && sel && !sel.hasAttribute('multiple')) {
+        for (const k of optionIds(sel)) if (k !== id) setSelected(k, false);
+      } else if (!v && sel) {
+        const fallback = fq(this, 'r');
+        if (fallback !== '') setSelected(Number(fallback), true);
+      }
     });
     prop(O, 'index', function () { const sel = selectOf(this); return sel ? Math.max(0, optionIds(sel).indexOf(nodeId(this))) : 0; });
     prop(O, 'form', function () { const sel = selectOf(this); return sel ? formOf(sel) : null; });
