@@ -172,22 +172,27 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
    * host's loop take input there). The scene shader's pixel does not read the target, so the
    * bands give the bytes of one draw. */
   type Bands={count:number;between:(units:number)=>Promise<void>};
-  async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
-    const planStart=performance.now();
+  function ensureLayerTexture(slot:Slot,p:RenderPlan,frame:HTMLArtifact,steps:Record<string,number>):void {
+    const size=`${frame.width}x${frame.height}`;
+    if(slot.texture&&slot.size===size)return;
+    const textureStart=performance.now();
+    slot.texture?.destroy();stats.layerTextures++;
+    slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});
+    steps.allocateTexture=Math.round((performance.now()-textureStart)*10)/10;
+    slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
+  }
+  type PlannedLayer={plan:RenderPlan;steps:Record<string,number>};
+  async function planLayer(frame:HTMLArtifact):Promise<PlannedLayer> {
+    const started=performance.now();
     const p=await plan(frame.width,frame.height,frame.data);
-    const steps:Record<string,number>={resolvePlan:Math.round((performance.now()-planStart)*10)/10};
+    return {plan:p,steps:{resolvePlan:Math.round((performance.now()-started)*10)/10}};
+  }
+  async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands,
+      prepared?:PlannedLayer):Promise<PassResult> {
+    const {plan:p,steps}=prepared??await planLayer(frame);
     const pipeline=await pipelineFor(p,frame.wgsl,steps);
     const resourceStart=performance.now();
-    if(!target){
-      const size=`${frame.width}x${frame.height}`;
-      if(!slot.texture||slot.size!==size){
-        const textureStart=performance.now();
-        slot.texture?.destroy();stats.layerTextures++;
-        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});
-        steps.allocateTexture=Math.round((performance.now()-textureStart)*10)/10;
-        slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
-      }
-    }
+    if(!target&&!prepared)ensureLayerTexture(slot,p,frame,steps);
     const damage=(frame as unknown as {damage?:Damage}).damage;
     // The same answer already in the slot's texture: nothing to do.
     if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps,hash:"",units:0};}
@@ -261,8 +266,15 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     plan,
     /** Draw both layers of one Lean render into their textures. */
     async drawLayers(layers:HTMLLayers,check:boolean,bands?:Bands):Promise<{chrome:PassResult;page:PassResult;units:number}> {
+      // A new page texture can be allocated before submitting the chrome pass.
+      // Validate its size against the plan before calling WebGPU, as in drawScene.
+      let prepared:PlannedLayer|undefined;
+      if(!page.texture){
+        prepared=await planLayer(layers.page);
+        ensureLayerTexture(page,prepared.plan,layers.page,prepared.steps);
+      }
       const c=await drawScene(chrome,layers.chrome,check);
-      const g=await drawScene(page,layers.page,check,undefined,bands);
+      const g=await drawScene(page,layers.page,check,undefined,bands,prepared);
       shown=layers;
       blitCanvases();
       return {chrome:c,page:g,units:(c.units??0)+(g.units??0)};
