@@ -38,9 +38,19 @@ export function draftQuery(g, k, opts = {}) {
   const on = g.steps[k]?.v;
   const vars = [...new Set(frags.flatMap(visibleVars))];
   const pre = g.prefixes ? g.prefixes + '\n' : '';
+  // Earlier sets the rows still carry (alum, beside nationality): counted too, in the same request.
+  const carried = (g.steps[k]?.carries || []).filter(v => v !== on && vars.includes(v)).slice(-3);
   if (opts.count) {
     const target = on && vars.includes(on) ? `(COUNT(DISTINCT ?${on}) AS ?items) ` : '';
-    return `${pre}SELECT ${target}(COUNT(*) AS ?rows) WHERE {\n${body}\n}`;
+    const also = carried.map(v => `(COUNT(DISTINCT ?${v}) AS ?n_${v}) `).join('');
+    return `${pre}SELECT ${target}${also}(COUNT(*) AS ?rows) WHERE {\n${body}\n}`;
+  }
+  // The landing set as a bag: each item with the number of rows that reach it.
+  if (opts.top && on && vars.includes(on)) {
+    const has = vars.includes(`${on}Label`);
+    const label = has ? '' : `\n  OPTIONAL { ?${on} rdfs:label ?${on}Label . FILTER(LANG(?${on}Label) = "en") }`;
+    const rdfs = !has && !/PREFIX rdfs:/.test(pre) ? 'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' : '';
+    return `${pre}${rdfs}SELECT ?${on} (SAMPLE(?${on}Label) AS ?label) (COUNT(*) AS ?rows)${carried.length ? ` (COUNT(DISTINCT ?${carried[carried.length - 1]}) AS ?${carried[carried.length - 1]}s)` : ''} WHERE {\n${body}${label}\n}\nGROUP BY ?${on}\nORDER BY DESC(?rows)\nLIMIT 20`;
   }
   const labelled = (opts.labels ?? true) ? g.steps.slice(0, k + 1).map(s => s.v).filter((v, i, a) => v && vars.includes(v) && !vars.includes(`${v}Label`) && a.indexOf(v) === i).slice(-3) : [];
   const labels = labelled.map(v => `  OPTIONAL { ?${v} rdfs:label ?${v}Label . FILTER(LANG(?${v}Label) = "en") }`);

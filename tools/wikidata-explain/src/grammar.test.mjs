@@ -40,3 +40,19 @@ test('operations beyond browsing are combine nodes holding programs', () => {
   assert.deepEqual(except.on, ['author', 'date']);
   assert.match(except.sparql, /^MINUS \{/);
 });
+
+test('after a pivot the rows are pairs: steps say what they carry, the answer says its shape', () => {
+  const g = grammarOf(astOf('mlp-048'), nameOf);
+  assert.deepEqual(g.steps.map(s => s.carries), [['alum'], ['alum', 'nationality'], ['alum', 'nationality']]);
+  assert.deepEqual(g.answer.vars, ['nationality', 'alum']);
+  assert.equal(g.answer.shape, 'rows');
+  const nationality = g.program.parts[0].rows[0][2];
+  assert.equal(nationality.shape, 'rows');
+  assert.deepEqual(nationality.with, ['alum']);
+  // One set, DISTINCT: a set. Grouped and counted: counted, with the aggregate.
+  assert.equal(grammarOf(astOf('mlp-059'), nameOf).answer.shape, 'set');
+  const counted = grammarOf(astOf('mlp-342'), nameOf).answer;
+  assert.equal(counted.shape, 'counted');
+  assert.deepEqual(counted.counted, ['q']);
+  assert.match(counted.aggregates[0].sparql, /^COUNT\(/);
+});

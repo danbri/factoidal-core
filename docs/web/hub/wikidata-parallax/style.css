@@ -319,3 +319,14 @@ body.has-drawer { padding-bottom: 64vh; }
 @media (min-width: 40rem) {
   .px-detail .q-head { width: calc((100vw + 100%) / 2 - 2rem); max-width: 110rem; }
 }
+
+/* What the rows carry. A set whose rows still hold the sets before it says
+   so; a bag (repeats kept) gets a stacked edge, like cards in a pile. */
+.pz-with { font-size: .78rem; padding: .1rem .5rem; border-radius: 999px; border: 1px dashed rgb(255 255 255 / .7); }
+.pz-with a.v { color: #fff; }
+.pz-bag, .pz-counted { box-shadow: inset 0 -2px 0 rgb(0 0 0 / .18), 3px 3px 0 -1px var(--hole), 4px 4px 0 -1px var(--pc), 7px 7px 0 -2px var(--hole), 8px 8px 0 -2px var(--pc); }
+.answer { margin: 1rem 0 0; max-width: 60rem; font-size: .92rem; color: var(--muted); }
+.answer-k { font-weight: 700; color: var(--ink); margin-right: .35rem; }
+.answer-k::after { content: ":"; }
+.answer a.v { color: var(--ink); }
+.answer code { font-size: .9em; }

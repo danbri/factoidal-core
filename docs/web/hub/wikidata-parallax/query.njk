@@ -51,8 +51,9 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
       <span class="st-status" role="status"></span>
     </div>
     {{ b.program(q.grammar.program, ctx) | safe }}
+    {{ b.answer(q.grammar.answer, ctx) | safe }}
   </section>
-  <script type="application/json" id="grammar">{{ {steps: q.grammar.steps, prefixes: q.grammar.prefixes, full: q.grammar.full, id: q.id} | dump | replace("</", "<\\/") | safe }}</script>
+  <script type="application/json" id="grammar">{{ {steps: q.grammar.steps, prefixes: q.grammar.prefixes, full: q.grammar.full, answer: q.grammar.answer, id: q.id} | dump | replace("</", "<\\/") | safe }}</script>
   <aside class="drawer" hidden aria-label="Draft query">
     <div class="dr-bar">
       <button type="button" class="dr-prev" aria-label="Previous step">‹</button>
@@ -68,6 +69,7 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
       <div class="dr-actions">
         <button type="button" class="dr-count">Count</button>
         <button type="button" class="dr-run">Run (first 50 rows)</button>
+        <button type="button" class="dr-top" hidden>Top values</button>
         <button type="button" class="dr-edit" aria-pressed="false">Edit</button>
         <label>on <select class="dr-endpoint">
           <option value="https://query-next.wikidata.org/sparql">Wikidata QLever (query-next)</option>

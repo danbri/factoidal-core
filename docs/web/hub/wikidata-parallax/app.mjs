@@ -98,6 +98,7 @@ function start(g) {
     if (!el) return g.steps[k].kind;
     const c = (el.matches('details') ? $('summary', el) : el).cloneNode(true);
     c.querySelectorAll('.pz-count, .cb-why, .pz-desc').forEach(x => x.remove());
+    c.querySelectorAll('span, a, b').forEach(x => x.append(' '));
     return c.textContent.replace(/\s+/g, ' ').trim().slice(0, 90);
   };
 
@@ -119,6 +120,8 @@ function start(g) {
     ui.title.textContent = `Step ${cur + 1} of ${last + 1}: ${labelOf(cur)}`;
     ui.text.value = queryFor(cur);
     renderDiff();
+    const st = g.steps[cur];
+    $('.dr-top', drawer).hidden = !(cur < last && st?.v && (st.carries || []).some(v => v !== st.v));
     ui.prev.disabled = cur === 0;
     ui.next.disabled = cur === last;
     ui.result.replaceChildren();
@@ -199,10 +202,25 @@ function start(g) {
     const el = stepEl(k);
     const b = el && $(':scope > .pz-count, :scope > summary > .pz-count, :scope > .cb-bar > .pz-count', el);
     if (!b) return;
-    const v = g.steps[k]?.v;
-    b.textContent = c.items != null ? `${fmt.format(c.items)}` : `${fmt.format(c.rows)} rows`;
-    b.title = c.items != null ? `${fmt.format(c.items)} distinct ?${v}, in ${fmt.format(c.rows)} rows (draft up to this step)` : `${fmt.format(c.rows)} rows (draft up to this step)`;
+    const from = Object.entries(c.per || {});
+    const near = from[from.length - 1];
+    // "96 · from 285 ?alum · 317 rows": the landing set, the set it was reached from, the rows (pairs).
+    // A pivot shows just how many it reaches; the set it lands on tells the rest.
+    b.textContent = c.items == null ? `${fmt.format(c.rows)} rows` : g.steps[k].kind === 'pivot' ? fmt.format(c.items)
+      : [fmt.format(c.items), near ? `from ${fmt.format(near[1])} ?${near[0]}` : null, c.rows !== c.items ? `${fmt.format(c.rows)} rows` : null].filter(Boolean).join(' · ');
+    b.title = describe(k, c) + ' (the draft up to this step)';
     b.classList.toggle('zero', !(c.items ?? c.rows));
+  }
+
+  // A count in words: the set, what it was reached from, and whether rows repeat it.
+  function describe(k, c) {
+    const v = g.steps[k]?.v;
+    if (c.items == null) return `${fmt.format(c.rows)} rows`;
+    const from = Object.entries(c.per || {}).map(([x, n]) => `${fmt.format(n)} ?${x}`);
+    let t = `${fmt.format(c.items)} distinct ?${v}`;
+    if (from.length) t += `, reached from ${from.join(' and ')}`;
+    if (c.rows !== c.items) t += `, in ${fmt.format(c.rows)} rows${from.length ? ` (one per ?${Object.keys(c.per).pop()}–?${v} pair, so some ?${v} repeat)` : ''}`;
+    return t;
   }
 
   async function count(k, signal) {
@@ -212,7 +230,8 @@ function start(g) {
     if (!c) {
       const j = await sparql(query, signal);
       const b = j.results.bindings[0] || {};
-      c = { items: b.items ? +b.items.value : null, rows: b.rows ? +b.rows.value : 0, endpoint: j.endpoint };
+      const per = Object.fromEntries(Object.entries(b).filter(([x]) => x.startsWith('n_')).map(([x, y]) => [x.slice(2), +y.value]));
+      c = { items: b.items ? +b.items.value : null, rows: b.rows ? +b.rows.value : 0, per, endpoint: j.endpoint };
       counts.set(query, c);
     }
     if (k < last) badge(k, c);
@@ -232,7 +251,11 @@ function start(g) {
         ui.status.textContent = 'Nothing to count yet: this set is defined by the steps that follow.';
       } else if (kind === 'count') {
         const c = await count(cur, t.signal);
-        ui.status.textContent = (c.items != null ? `${fmt.format(c.items)} distinct ?${g.steps[cur].v} in ${fmt.format(c.rows)} rows` : `${fmt.format(c.rows)} rows`) + (c.endpoint ? ` (answered by ${c.endpoint})` : '');
+        ui.status.textContent = describe(cur, c) + (c.endpoint ? ` (answered by ${c.endpoint})` : '');
+      } else if (kind === 'top') {
+        const j = await sparql(queryFor(cur, { top: true }), t.signal);
+        ui.status.textContent = `The ${fmt.format(j.results.bindings.length)} ?${g.steps[cur].v} reached most often${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
+        ui.result.append(table(j));
       } else {
         const t0 = performance.now();
         const j = await sparql(limited(ui.text.value), t.signal);
@@ -305,6 +328,7 @@ function start(g) {
   });
   $('.dr-count', drawer).addEventListener('click', () => act('count'));
   $('.dr-run', drawer).addEventListener('click', () => act('run'));
+  $('.dr-top', drawer).addEventListener('click', () => act('top'));
   ui.text.addEventListener('input', () => { updateOpen(); });
   ui.edit.addEventListener('click', () => {
     editing = !editing;

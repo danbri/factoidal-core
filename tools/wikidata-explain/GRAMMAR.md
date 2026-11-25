@@ -95,6 +95,32 @@ Every draft of all 536 queries parses with sparqljs. All 536 whole queries
 round-trip through `sparql.mjs`. The page's last step is the whole query, as
 rewritten for QLever.
 
+## What the rows carry, and the answer's shape
+
+After a pivot, the rows are pairs, not a set. "Alumni, then their nationality" gives one row per
+(alum, nationality): 317 rows over 96 nationalities, reached from 285 alumni. Three
+readings of the same step:
+
+| reading | what | in SPARQL |
+|---|---|---|
+| set | each nationality once (Parallax's view) | `SELECT DISTINCT ?nationality` |
+| bag | a nationality once per alum who has it | `SELECT ?nationality` |
+| rows | (alum, nationality) pairs: each keeps its trail back | `SELECT ?alum ?nationality` |
+
+The grammar records:
+
+- `steps[k].carries`: the sets the rows hold after step k (`["alum", "nationality"]`).
+- `answer = { shape, vars, counted, aggregates, distinct, order }`: what the query makes
+  of the rows. `shape` is `rows` (it returns two or more of the sets), `set` (one, `DISTINCT`),
+  `bag` (one, with repeats) or `counted` (it groups and counts).
+- On a Set reached from earlier sets, `shape` and `with`: which earlier sets the answer keeps
+  beside it ("with their ?alum"), or which it is repeated or counted per.
+
+A step's count asks, in one request, for the distinct items of the set it lands on, the distinct
+items of each earlier set it carries, and the rows. "Top values" groups the landing set to show it
+as a bag: each item with the number of rows that reach it. That number is daisychain's
+`originCount`.
+
 ## How it maps onto the kgx demos
 
 | grammar | daisychain | pivcab |

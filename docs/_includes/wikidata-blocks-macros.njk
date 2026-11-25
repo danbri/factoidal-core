@@ -26,7 +26,7 @@
 {%- if p.t == "set" -%}
 {%- set typeId = p.type | replace("wd:", "") if p.type else null -%}
 {%- set name = ctx.lex["?" + p.v] or ("?" + p.v) -%}
-<li class="pz pz-set{% if hat %} pz-hat{% endif %}" data-v="{{ p.v }}"{{ stepAttr(p) | safe }}>
+<li class="pz pz-set{% if hat %} pz-hat{% endif %}{% if p.shape %} pz-{{ p.shape }}{% endif %}" data-v="{{ p.v }}"{{ stepAttr(p) | safe }}>
   <a class="pz-title" href="#hl-{{ p.v }}" title="The set ?{{ p.v }}{% if typeId %}: every {{ name }}{% endif %}">
     {%- if typeId %}{{ m.thumb(typeId, ctx.entities, ctx.thumb, 44 if hat else 22, "hat-img" if hat else "mini") | safe }}<span>every {{ m.bare(name) }}{% if hat and ctx.entities[typeId].description %}<span class="pz-desc">{{ ctx.entities[typeId].description }}</span>{% endif %}</span>{% else %}{{ m.bare(name) }}{% endif -%}
   </a>{% if not typeId and name != p.v %} <a class="v pz-vtag" data-v="{{ p.v }}" href="#hl-{{ p.v }}">?{{ p.v }}</a>{% endif %}
@@ -34,6 +34,7 @@
   {%- for f in p.narrow %}<span class="pz-in{% if f.opt %} pz-in-opt{% endif %}{% if f.any %} pz-in-wild{% endif %}" title="{{ f.sparql | join('\n') }}">{% if f.inv %}is {{ prop(f.p, ctx) }} of{% else %}{{ prop(f.p, ctx) }}{% endif %} <span class="eq">=</span> {% for t in f.o %}{{ val(t, ctx) | safe }}{% if not loop.last %} <span class="or">or</span> {% endif %}{% endfor %}{% if f.opt %} <span class="pz-note">where present</span>{% endif %}</span>{% endfor %}
   {%- for k in p.keep %}<span class="pz-in pz-in-{{ k.mode }}" title="{{ k.sparql }}">{% if k.mode == "anyOf" %}any of: {{ m.bare(ctx.lex[k.key]) | replace(" | ", " · ") }}{% else %}{{ "leave out" if k.mode == "exclude" else "keep" }} if {{ m.bare(ctx.lex[k.key]) }}{% endif %}</span>{% endfor %}
   {%- if p.show | length %}<span class="pz-cols">shows {% for c in p.show | batch(3) | first %}<span class="pz-col{% if c.any %} pz-wildtext{% endif %}" title="{{ c.sparql | join('\n') }}">{% if c.inv %}things with them as {% endif %}{{ prop(c.p, ctx) }} <a class="v" data-v="{{ c.v }}" href="#hl-{{ c.v }}">?{{ c.v }}</a></span>{% if c.opt %} <span class="pz-note">if any</span>{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if p.show | length > 3 %} <span class="pz-note" title="{% for c in p.show %}{{ ctx.lex[c.p] or c.p }}{% if not loop.last %}; {% endif %}{% endfor %}">and {{ p.show | length - 3 }} more</span>{% endif %}</span>{% endif %}
+  {%- if p.with | length %}<span class="pz-with" title="{{ withTitle(p, ctx) }}">{% if p.shape == "counted" %}with a count of their{% elif p.shape == "rows" %}with their{% else %}once per{% endif %} {% for v in p.with %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}
   <span class="pz-count" aria-live="polite"></span>
 </li>
 {%- elif p.t == "pivot" -%}
@@ -48,6 +49,28 @@
 {%- else -%}
 <li class="pz pz-from" data-v="{{ p.v }}"><a class="pz-title" href="#hl-{{ p.v }}">also from {{ m.bare(ctx.lex["?" + p.v] or p.v) }}</a></li>
 {%- endif -%}
+{%- endmacro -%}
+
+{#- Hover text for a set that still carries the sets before it. -#}
+{%- macro withTitle(p, ctx) -%}
+{%- set them = ctx.lex["?" + p.with | last] or p.with | last -%}{%- set me = ctx.lex["?" + p.v] or p.v -%}
+{%- if p.shape == "rows" -%}Each {{ me }} comes paired with the {{ them }} that led to it: the query keeps both, one row per pair.
+{%- elif p.shape == "counted" -%}Each {{ me }} is counted by how many {{ them }} lead to it.
+{%- elif p.shape == "bag" -%}Each {{ me }} appears once for every {{ them }} that leads to it (a bag, with repeats).
+{%- else -%}Each {{ me }} appears once, however many {{ them }} lead to it.{%- endif -%}
+{%- endmacro -%}
+
+{%- macro cols(list) -%}{% for v in list %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% if loop.revindex == 2 %} and {% elif not loop.last %}, {% endif %}{% endfor %}{%- endmacro -%}
+
+{#- What the query returns, from the grammar's `answer`. -#}
+{%- macro answer(a, ctx) -%}
+<p class="answer"><span class="answer-k">The answer</span>
+{%- if a.shape == "rows" %} one row per {% if a.vars | length == 2 %}pair{% else %}combination{% endif %} of {% for v in a.vars %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% if loop.revindex == 2 %} and {% elif not loop.last %}, {% endif %}{% endfor %}{% if a.columns | length %}, with {{ cols(a.columns) }}{% endif %}: an item appears once for each partner it has.
+{%- elif a.shape == "set" %} each {% for v in a.vars %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% endfor %}{% if a.columns | length %}, with {{ cols(a.columns) }} beside it (an item with several values has a row for each){% elif a.distinct %}, each once{% endif %}.
+{%- elif a.shape == "bag" %} {% for v in a.vars %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% endfor %}, once for every {% for v in a.via %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% if not loop.last %} and {% endif %}{% endfor %} it is reached from: a bag, with repeats{% if a.columns | length %}; {{ cols(a.columns) }} beside it{% endif %}.
+{%- else %} {% if a.vars | length %}each {% for v in a.vars %}<a class="v" data-v="{{ v }}" href="#hl-{{ v }}">?{{ v }}</a>{% if loop.revindex == 2 %} and {% elif not loop.last %}, {% endif %}{% endfor %}, {% endif %}with {% for x in a.aggregates %}<code title="{{ x.sparql }}">?{{ x.v }}</code> = {{ vt(x.sparql) }}{% if not loop.last %}; {% endif %}{% endfor %}.
+{%- endif %}
+{%- if a.order | length %} Sorted by {% for o in a.order %}{{ vt(o.by) }}{% if o.dir == "desc" %} (largest first){% endif %}{% if not loop.last %}, then {% endif %}{% endfor %}.{% endif %}</p>
 {%- endmacro -%}
 
 {%- macro hexes(list, ctx) -%}

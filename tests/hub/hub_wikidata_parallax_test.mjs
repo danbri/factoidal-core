@@ -118,3 +118,19 @@ test('the whole query (the last step) declares every prefix it uses, as QLever r
     for (const m of body.matchAll(/(?:^|[^\w:.?$-])([A-Za-z][\w-]*):[A-Za-z_\d]/g)) assert.ok(declared.has(m[1]), `${q.id}: ${m[1]}: is not declared`);
   }
 });
+
+test('every step says what its rows carry, and every query what shape its answer has', () => {
+  const shapes = {};
+  for (const q of queries) {
+    const { steps, answer } = q.grammar;
+    assert.match(answer.shape, /^(rows|set|bag|counted)$/, q.id);
+    shapes[answer.shape] = (shapes[answer.shape] || 0) + 1;
+    let prev = [];
+    for (const s of steps) {
+      assert.ok(Array.isArray(s.carries), q.id);
+      assert.ok(prev.every(v => s.carries.includes(v)), `${q.id}: rows only gain sets as steps go on`);
+      prev = s.carries;
+    }
+  }
+  for (const k of ['rows', 'set', 'counted']) assert.ok(shapes[k] > 10, `few "${k}" answers: ${JSON.stringify(shapes)}`);
+});
