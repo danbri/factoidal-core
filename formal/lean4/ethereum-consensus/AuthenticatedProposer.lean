@@ -97,7 +97,7 @@ theorem authenticate_success (e out : ProposerEvidence) (a b : ByteArray)
         | false => simp [authenticate, ha, hb] at h
         | true =>
           have he : e = out := by simpa [authenticate, ha, hb] using h
-          exact ⟨he.symm, ha, hb⟩
+          exact ⟨he.symm, by simp [ha], by simp [hb]⟩
 
 /-- Kind: linkage. Says: success of the raw state path requires actual
 preparation and both concrete verifications on the returned evidence.
