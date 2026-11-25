@@ -63,7 +63,6 @@ inductive NativeX where
   | atomics (op : Nat)
   /-- `String.prototype.isWellFormed` and `toWellFormed` (§22.1.3.10, §22.1.3.32). -/
   | stringIsWellFormed | stringToWellFormed
-  | stringNormalize
   /-- Date.prototype methods (§21.4.4, `dateMethodNames`), `Date.UTC`, `Date.parse`. -/
   | dateMethod (k : Nat) | dateUTC | dateParse
   /-- Iterator (§27.1.3): the constructor, `Iterator.from`, the lazy methods that make an
@@ -141,6 +140,8 @@ inductive NativeX where
   §24.1.2.1; `true` for Map), `String.prototype.localeCompare` (§22.1.3.12, code unit order:
   there is no Intl here). -/
   | objectHasOwn | groupBy (map : Bool) | stringLocaleCompare
+  /-- `String.prototype.normalize` (§22.1.3.15): NFC, NFD, NFKC or NFKD (`Unicode.Normalization`). -/
+  | stringNormalize
   /-- AggregateError (§20.5.7), `Promise.any` (§27.2.4.3) and the function that records one
   rejected element of it. -/
   | aggregateErrorCtor | promiseAny | promiseAnyReject

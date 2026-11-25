@@ -10,6 +10,7 @@ import L4Factoidal.JS.JsonText
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.Temporal.Parse
 import L4Factoidal.Prim.Float16
+import L4Factoidal.Unicode.Normalization
 
 /-!
 # L4Factoidal.JS.Interp — the evaluator
@@ -4357,6 +4358,29 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       let a := Str.units s
       let b := Str.units t
       pure (.num (if a == b then 0 else if decide (a < b) then -1 else 1))
+    | (.x .stringNormalize) =>
+      -- §22.1.3.15: RequireObjectCoercible(this), ToString, the form (NFC when undefined),
+      -- a RangeError for any other form. A lone surrogate is held as a character of plane 16
+      -- (`Str.loneChar`), which has class 0 and no decomposition, so it is left as it is, as a
+      -- lone surrogate is by the normalization of other engines.
+      match thisV with
+      | .undef | .null => throwErr .type "String.prototype.normalize called on null or undefined"
+      | _ => pure ()
+      let s ← core.toStr thisV
+      let form ← match a0 with
+        | .undef => pure "NFC"
+        | v => core.toStr v
+      let normalize ← match form with
+        | "NFC" => pure Unicode.Normalization.nfc
+        | "NFD" => pure Unicode.Normalization.nfd
+        | "NFKC" => pure Unicode.Normalization.nfkc
+        | "NFKD" => pure Unicode.Normalization.nfkd
+        | _ => throwErr .range "The normalization form should be one of NFC, NFD, NFKC, NFKD."
+      if Str.isAscii s then return .str s
+      charge s.utf8ByteSize
+      let result := normalize s
+      checkStrLen result.utf8ByteSize
+      pure (.str result)
     | (.x .symbolFor) | (.x .symbolKeyFor) =>
       -- the GlobalSymbolRegistry is one for all realms (§20.4.2.2): it hangs on realm 0's global
       let h ← get
@@ -4396,22 +4420,6 @@ def moreNativeString (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         if i + 1 < count && i + 1 < args.size then
           out := Str.jsAppend out (← core.toStr (argD args (i + 1)))
       pure (.str out)
-    | (.x .stringNormalize) =>
-      -- RequireObjectCoercible, ToString on the receiver, then the optional form.
-      match thisV with
-      | .undef | .null => throwErr .type "String.prototype.normalize called on null or undefined"
-      | _ => pure ()
-      let s ← core.toStr thisV
-      let form ← match a0 with
-        | .undef => pure "NFC"
-        | v => core.toStr v
-      let some normalize := Str.normalizer? form |
-        throwErr .range "The normalization form must be NFC, NFD, NFKC, or NFKD"
-      if Str.isAscii s then return .str s
-      charge s.utf8ByteSize
-      let result := normalize s
-      checkStrLen result.utf8ByteSize
-      pure (.str result)
     | (.x .stringIsWellFormed) | (.x .stringToWellFormed) =>
       let tp ← thisPrim thisV
       match tp with
@@ -5286,6 +5294,7 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     | (.x .objectHasOwn) => moreNativeObject core r id thisV args newTarget
     | (.x (.groupBy _)) => moreNativeWeak core r id thisV args newTarget
     | (.x .stringLocaleCompare) => moreNativeString core r id thisV args newTarget
+    | (.x .stringNormalize) => moreNativeString core r id thisV args newTarget
     | (.x (.errorStack false)) => moreNativeObject core r id thisV args newTarget
     | (.x (.errorStack true)) => moreNativeObject core r id thisV args newTarget
     | (.x .aggregateErrorCtor) => moreNativeObject core r id thisV args newTarget
@@ -5320,8 +5329,7 @@ def moreNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     | (.x (.asyncFromSync _)) => moreNativeAsyncIter core r id thisV args newTarget
     | (.x .arrayFromAsync) => moreNativeFromAsync core r id thisV args newTarget
     | (.x (.fromAsyncStep _)) => moreNativeFromAsync core r id thisV args newTarget
-    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) | (.x .stringNormalize) =>
-      moreNativeString core r id thisV args newTarget
+    | (.x .stringIsWellFormed) | (.x .stringToWellFormed) => moreNativeString core r id thisV args newTarget
     | _ => throwErr .type "not a function"
 
 /-- RegExp, the String methods with a RegExp, Proxy, JSON.parse, ArrayBuffer, the typed
@@ -13211,6 +13219,7 @@ def initRealm : M Unit := do
     method sc "fromCodePoint" .stringFromCodePoint 1
     method sc "raw" (.x .stringRaw) 1
   method stringProto "localeCompare" (.x .stringLocaleCompare) 1
+  method stringProto "normalize" (.x .stringNormalize) 0
   -- Annex B.2.2.15, B.2.2.16: trimLeft and trimRight are trimStart and trimEnd
   for (alias, nm) in [("trimLeft", "trimStart"), ("trimRight", "trimEnd"), ("toLocaleUpperCase", "toUpperCase"),
       ("toLocaleLowerCase", "toLowerCase")] do
@@ -13496,7 +13505,6 @@ def initRealm : M Unit := do
   let sp := (← realm).stringProto
   method sp "isWellFormed" (.x .stringIsWellFormed) 0
   method sp "toWellFormed" (.x .stringToWellFormed) 0
-  method sp "normalize" (.x .stringNormalize) 0
   initSpecies
   initBuiltinsMore
 

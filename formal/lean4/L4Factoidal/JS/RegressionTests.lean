@@ -810,23 +810,17 @@ slot is still the name's (`PropMap.liveAt`). -/
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } var s = 0; for (var j = 0; j < 50; j++) s += f(); delete globalThis.zz; var r; try { r = f(); } catch (e) { r = e.constructor.name; } print(s, r)" == ["50 ReferenceError"]
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } function g(v) { zz = v; } for (var j = 0; j < 50; j++) { g(j); f(); } delete globalThis.zz; g(7); print('zz' in globalThis, f(), Object.keys(globalThis).indexOf('zz') > 0)" == ["true 7 true"]
 
+/-! `String.prototype.normalize` (§22.1.3.15): the four forms of UAX #15, NFC when the form is
+undefined, a RangeError for any other form, a TypeError on null or undefined, and a lone
+surrogate left as it is. Missing until 2026-11-25: the scripts of the real page wp-us (English
+Wikipedia, "United States") threw "normalize is not a function". -/
+#guard out "print('\\u0041\\u030A'.normalize() === '\\u00C5', '\\u00C5'.normalize('NFD').length, '\\uFB01'.normalize('NFKC'), '\\uFB01'.normalize('NFC') === '\\uFB01', '\\u1E9B\\u0323'.normalize('NFKD').length, String.prototype.normalize.length)" == ["true 2 fi true 3 0"]
+#guard out "try { 'a'.normalize('nfc'); } catch (e) { print(e instanceof RangeError); } try { String.prototype.normalize.call(null); } catch (e) { print(e instanceof TypeError); } print('a\\uD800b'.normalize().length, '\\uD800\\u0301'.normalize('NFD').length, 'abc'.normalize(undefined))" == ["true", "true", "3 2 abc"]
 
-/-! ## String normalization -/
-
-#guard out r#"print(('e\u0301').normalize() === '\u00E9');
-  print(('e\u0301').normalize(undefined) === '\u00E9');
-  print(('\u00E9').normalize('NFD') === 'e\u0301');
-  print(('\uFB01\u00E9').normalize('NFKC') === 'fi\u00E9');
-  print(('\uFB01\u00E9').normalize('NFKD') === 'fie\u0301');"# ==
-  ["true", "true", "true", "true", "true"]
-
-#guard out r#"var f = String.prototype.normalize;
-  print(f.name + ':' + f.length + ':' + String.prototype.propertyIsEnumerable('normalize'));
-  try { new f(); } catch (e) { print(e.name); }
-  var boxed = new String('x');
+#guard out r#"var f = String.prototype.normalize, boxed = new String('x');
   boxed.toString = function () { return 'e\u0301'; };
   print(f.call(boxed) === '\u00E9');
-  print(f.call(1234) === '1234');"# == ["normalize:0:false", "TypeError", "true", "true"]
+  print(f.call(1234) === '1234');"# == ["true", "true"]
 
 #guard out r#"var f = String.prototype.normalize, calls = '';
   var recv = {toString: function () { calls += 'r'; return 'e\u0301'; }};

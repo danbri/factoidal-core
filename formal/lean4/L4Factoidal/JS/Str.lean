@@ -1,5 +1,4 @@
 import L4Factoidal.Prim.StringFront
-import L4Factoidal.Unicode.Normalization
 
 /-!
 # L4Factoidal.JS.Str — JavaScript strings as UTF-16 code units (§6.1.4)
@@ -345,17 +344,6 @@ def toWellFormed (s : String) : String := ofHost (toHost s)
 
 /-- §22.1.3.10 isWellFormed: no lone surrogate. -/
 def isWellFormed (s : String) : Bool := isAscii s || toWellFormed s == s
-
-/-- The four ECMAScript normalization forms. Normalize the internal representation:
-lone UTF-16 units use private-use characters with combining class zero, and those
-characters are unchanged by all four forms, including when two units encode a
-supplementary private-use character reserved by the representation. -/
-def normalizer? : String → Option (String → String)
-  | "NFC" => some Unicode.Normalization.nfc
-  | "NFD" => some Unicode.Normalization.nfd
-  | "NFKC" => some Unicode.Normalization.nfkc
-  | "NFKD" => some Unicode.Normalization.nfkd
-  | _ => none
 
 /-! Checks of the fast paths against the definitions. -/
 
