@@ -135,10 +135,10 @@ def suite_dir(cache, commit, prefix):
     return cache / "suites" / commit / prefix.strip("/").replace("/", "_")
 
 
-def suites(cache, ref, manifest, wpt, first=None, jobs=2):
+def suites(cache, ref, manifest, wpt, first=None, jobs=2, use_release=True):
     commit = sha(ref)
     lib = lib_path(cache, commit)
-    if not lib.exists():
+    if not lib.exists() and not (use_release and fetch_release(commit, lib)):
         sys.exit(f"no library for {commit[:12]}; run: build {ref}")
     order = ([first] if first in SUITES else []) + [p for p in SUITES if p != first]
     for p in order:
@@ -283,7 +283,7 @@ def main():
         build(a.cache, a.ref, use_release=not a.no_release)
     elif a.cmd == "suites":
         need("manifest", "wpt")
-        suites(a.cache, a.ref, a.manifest, a.wpt, a.first, a.jobs)
+        suites(a.cache, a.ref, a.manifest, a.wpt, a.first, a.jobs, not a.no_release)
     elif a.cmd == "compare":
         sys.exit(compare(a.cache, a.base, a.branch, accepted))
     elif a.cmd == "pages":
