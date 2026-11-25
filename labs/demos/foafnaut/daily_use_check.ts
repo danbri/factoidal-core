@@ -28,8 +28,8 @@ const cases:Case[]=[
   {name:"a server's 404 page is shown",start:"/links.html",steps:[at(75,298),"url:/missing","title=Not here"]},
   {name:"a start address that does not answer shows an error page",start:"http://127.0.0.1:9/",steps:["hold","title=Page refused"]},
   {name:"a redirect is followed",start:"/redirect",steps:["title=Results: moved"]},
-  {name:"type in a search box with no script, press Enter",start:"/search.html",steps:["hold",field,"hold","type:hello",[5,36,0],"title=Results: hello"]},
-  {name:"type in a search box, press its button",start:"/search-scripted.html",steps:["hold",field,"hold","type:two words",go,"title=Results: two words"]},
+  {name:"type in a search box with no script, press Enter",start:"/search.html",steps:["hold",field,"hold","type:hello",[5,36,0],"title=Results: hello","addr=@url"]},
+  {name:"type in a search box, press its button",start:"/search-scripted.html",steps:["hold",field,"hold","type:two words",go,"title=Results: two words","addr=@url"]},
   {name:"post a form",start:"/post.html",steps:["hold",field,"hold","type:hi",[5,36,0],"title=Results: posted hi"]},
   {name:"sign in: the cookie is kept",start:"/login.html",steps:["hold",field,"hold","type:me",[5,36,0],"title=Signed in"]},
   // the same cookie file as the case before: the program was quit and started again

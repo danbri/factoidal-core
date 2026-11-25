@@ -864,7 +864,8 @@ async function main() {
     if(!icons.has(page))try{icons.set(page,engine.iconPrepare(bytes,2));}catch(error){icons.set(page,null);console.error("Native HTML icon refused:",String(error));}
     return icons.get(page)??undefined;
   };
-  const shell=()=>({tabs:tabs.map((tab,index)=>{const page=index===active?document:tab.document;return {title:page.title??"",icon:iconOf(page)};}),active,...field,focused,
+  const shell=(page=document)=>({tabs:tabs.map((tab,index)=>{const tabPage=index===active?page:tab.document;return {title:tabPage.title??"",icon:iconOf(tabPage)};}),active,
+    ...(page!==document&&!focused?showURL(page.url):field),focused,
     canBack:history.canBack,canForward:history.canForward,loading,scale,theme,pages,scroll,pressed:pressed?.control??"",...(swipeHint?{swipe:swipeHint}:{}),
     script:[scriptMarker(),gpuGuard.slowed?gpuSlowedNote:""].filter(Boolean).join("  "),
     ...(find.open?{findOpen:true,find:find.query,findFocused:find.focused,findCount:find.count,findCurrent:find.count?find.current+1:0}:{})});
@@ -876,7 +877,7 @@ async function main() {
   }
   // The URLs of the session history of every tab: Lean matches `:visited` against them.
   const visited=()=>[...new Set([...tabs.flatMap((tab,index)=>(index===active?history:tab.history).history.entries)])].slice(-100);
-  const shown=()=>({...view,shell:shell(),visited:visited(),...(find.open&&find.query?{find:{query:find.query,current:find.current}}:{}),
+  const shown=(page=document)=>({...view,shell:shell(page),visited:visited(),...(find.open&&find.query?{find:{query:find.query,current:find.current}}:{}),
     ...(pressed?.active!==undefined?{active:pressed.active}:{}),...(hoverNode!==undefined?{hover:hoverNode}:{})});
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
@@ -1152,7 +1153,7 @@ async function main() {
   const animationOf=(page:object)=>{let a=animation.get(page);if(!a){a={epoch:performance.now(),time:0,running:false,has:false,clicks:[]};animation.set(page,a);}return a;};
   // The request that a frame of `page` at this scroll sends to Lean, and its state with no scroll.
   const requestAt=(page:typeof document,at:number)=>{
-    const view0=shown();view0.shell={...view0.shell,scroll:at};
+    const view0=shown(page);view0.shell={...view0.shell,scroll:at};
     // SVG animation (WebPaint): the page clock and clicks, only for a page with animations,
     // so that other pages keep one state key whatever the time.
     const clock=animation.get(page);
@@ -2376,13 +2377,14 @@ async function main() {
         else if(typeof step==="string"&&/^(focus:all|unfocused|addr=|sel=|clip=)/.test(step)){
           const url=step.endsWith("@url")?document.url:undefined,value=step.slice(step.indexOf("=")+1);
           const selected=field.address.slice(Math.min(field.anchor,field.cursor),Math.max(field.anchor,field.cursor));
+          const presentedAddress=(lastRequest?.request.options.shell as {address?:string}|undefined)?.address;
           const ok=step==="focus:all"?focused&&field.anchor===0&&field.cursor===field.address.length&&field.address===document.url
             :step==="unfocused"?!focused
-            :step.startsWith("addr=")?field.address===(url??value)
+            :step.startsWith("addr=")?field.address===(url??value)&&presentedAddress===field.address
             :step.startsWith("sel=")?selected===value
             :native.readClipboard()===value;
-          trace("native-html-test-edit",{step,ok,address:field.address,anchor:field.anchor,cursor:field.cursor,focused});
-          if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
+          trace("native-html-test-edit",{step,ok,address:field.address,presentedAddress,anchor:field.anchor,cursor:field.cursor,focused});
+          if(!ok){console.error(`Native HTML edit sweep: ${step} failed; address ${JSON.stringify(field.address)}, shown ${JSON.stringify(presentedAddress)}, selection ${JSON.stringify(selected)}, focused ${focused}`);Deno.exitCode=1;}
         }
         else if(typeof step==="string"&&step.startsWith("find=")){
           // The answer of find comes from the worker: wait up to 10 s for it.
