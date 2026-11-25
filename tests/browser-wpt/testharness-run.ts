@@ -633,13 +633,13 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }catch{/* an engine without the op, or a page it refuses */}
     }
     let imageFields:Record<string,unknown>={};
-    const wanted=facts.images??[];
-    if(layoutImageHost&&wanted.length){
+    const layoutImageRequests=facts.images??[];
+    if(layoutImageHost&&layoutImageRequests.length){
       const limit=await layoutImageHost.pageImageLimit(engine);
       const fetched:{key:string;bytes:Uint8Array}[]=[];
       const seen=new Set<string>();
       let total=0;
-      for(const {key,url:src} of wanted){
+      for(const {key,url:src} of layoutImageRequests){
         if(seen.has(key)||!isWptHost(src))continue;
         seen.add(key);
         const remaining=Math.min(layoutImageHost.MAX_IMAGE_BYTES,limit-total);
@@ -650,7 +650,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         fetched.push({key,bytes});
       }
       imageFields=await layoutImageHost.imageOptions(engine,fetched);
-      console.log(JSON.stringify({type:"diagnostic-layout-images",file,listed:wanted.length,held:fetched.length,bytes:total}));
+      console.log(JSON.stringify({type:"diagnostic-layout-images",file,listed:layoutImageRequests.length,held:fetched.length,bytes:total}));
     }
     const layout=sheetResources.length||sheetFailures.length||webFonts.length||imported.length||Object.keys(imageFields).length
       ?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,...imageFields,
