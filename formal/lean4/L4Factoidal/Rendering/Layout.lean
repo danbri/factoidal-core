@@ -329,6 +329,36 @@ def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float)
 
 #guard (backgroundTiles 1 1 ⟨69,69,ByteArray.empty⟩ {} 0 0 1280 19182).size == 1
 
+private def radiusUnits (size : Float) : Nat :=
+  (max 0 (size*64)).floor.toUInt64.toNat
+
+/-- Resolve percentages against the outer box, normalize once and subtract the
+edges of the paint box. The resulting arc may extend past that rectangle. -/
+private def roundedOutline (s : Computed) (outerW outerH : Float) (insets : Edges)
+    (x y w h : Float) : Option Contour := do
+  let lengths ← s.cornerLengths
+  let resolve := fun (pair : Length × Length) =>
+    Corners.Radius.mk (radiusUnits ((CSS.resolve outerW pair.1).getD 0))
+      (radiusUnits ((CSS.resolve outerH pair.2).getD 0))
+  let radii : Corners.Radii := ⟨resolve lengths.topLeft,resolve lengths.topRight,
+    resolve lengths.bottomRight,resolve lengths.bottomLeft⟩
+  let radii := radii.normalize (radiusUnits outerW) (radiusUnits outerH)
+  let edges : Corners.Insets := ⟨radiusUnits insets.top,radiusUnits insets.right,
+    radiusUnits insets.bottom,radiusUnits insets.left⟩
+  (radii.inset edges).outline x y w h
+
+/-- A rounded outline carries the same paint mapping as the original rectangle.
+The rectangular clip retains the extent of a fitted picture or a single tile and
+cuts off the parts of inset arcs that extend past the opposite edge. -/
+private def roundedPaint (outline : Contour) (node : Node) : Node :=
+  match node with
+  | .paint item => match item.primitive.geometry with
+    | .rect x y w h =>
+      .clipped none identity ⟨x,y,w,h,identity⟩
+        [.paint {item with primitive := {item.primitive with geometry := .path [outline]}}]
+    | _ => node
+  | _ => node
+
 private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
   match s.background with
@@ -356,10 +386,21 @@ private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node 
   let withGradient := match s.backgroundGradient with
     | none => colour
     | some g => colour.push (.paint ⟨some id,{geometry := .rect cx cy cw ch,style := {fill := gradientPaint g cx cy cw ch}}⟩)
+  let outline := if s.cornerLengths.isNone then none else
+    let b : Edges := if s.colorClip == 0 then {} else s.borderEdges
+    let p := if s.colorClip == 2 then s.padding else {}
+    let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
+    roundedOutline s w h edges cx cy cw ch
+  let withGradient := match outline with
+    | some shape => withGradient.map (roundedPaint shape)
+    | none => withGradient
   match s.backgroundBitmap with
   | none => withGradient
   | some (pic,b) =>
     let tiles := backgroundTiles id pic b s x y w h
+    let tiles := match outline with
+      | some shape => tiles.map (roundedPaint shape)
+      | none => tiles
     if s.colorClip == 0 then withGradient ++ tiles
     else withGradient.push (.clipped none identity ⟨cx,cy,cw,ch,identity⟩ tiles.toList)
 
@@ -705,7 +746,14 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
     | none => (1,1)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
   let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
-  [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
+  let image := Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩
+  if s.cornerLengths.isNone then [image] else
+    let b := s.borderEdges
+    let p := s.padding
+    let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
+    match roundedOutline s (w+edges.left+edges.right) (h+edges.top+edges.bottom) edges x y w h with
+    | some outline => [roundedPaint outline image]
+    | none => [image]
 
 /-- A replaced element's margin box at the origin, for content `w` by `h`: its outer
 width and height, and its background, border and content. `content` paints the
@@ -3539,6 +3587,7 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
             width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            cornerLengths := s.cornerLengths.map (CornerLengths.atViewport vw vh),
             backgroundSize := s.backgroundSize.atViewport vw vh,
             backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
             backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
