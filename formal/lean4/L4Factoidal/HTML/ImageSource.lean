@@ -292,11 +292,56 @@ def selected (d : Dom) (img : NodeId) (e : Env) : Option (String × Rat) :=
 /-- A decimal number of the page ("1", "1.5", "0.75"); zero when it is not one. -/
 def ratOf (s : String) : Rat := (float? s.toList).getD 0
 
+/-- A CSS-pixel dimension exposed by `naturalWidth` and `naturalHeight` after
+applying a selected density. Like Chromium's layout units, it saturates at
+`2^25 - 1` whole pixels rather than wrapping an extreme subpixel density. -/
+def naturalDimension (pixels num den : Nat) : Nat :=
+  if pixels == 0 then 0
+  else if num == 0 then 33554431
+  else min 33554431 (pixels * den / num)
+
+theorem naturalDimension_bounded (pixels num den : Nat) :
+    naturalDimension pixels num den ≤ 33554431 := by
+  unfold naturalDimension
+  split
+  · decide
+  · split
+    · exact Nat.le_refl _
+    · exact Nat.min_le_left _ _
+
+theorem naturalDimension_unit (pixels : Nat) :
+    naturalDimension pixels 1 1 = min 33554431 pixels := by
+  by_cases h : pixels = 0 <;> simp [naturalDimension, h]
+
+private def naturalAnswer (size density : String) : String :=
+  let parse : Option ((Nat × Nat) × (Nat × Nat)) := do
+    let [w, h] := size.splitOn " " | none
+    let [num, den] := density.splitOn " " | none
+    return ((← w.toNat?, ← h.toNat?), (← num.toNat?, ← den.toNat?))
+  match parse with
+  | some ((w, h), (num, den)) => s!"{naturalDimension w num den} {naturalDimension h num den}"
+  | none => ""
+
+#guard naturalAnswer "101 51" "2 1" == "50 25"
+#guard naturalAnswer "101 51" "1 2" == "202 102"
+#guard naturalAnswer "101 51" "1000 1" == "0 0"
+#guard naturalAnswer "101 51" "0 1" == "33554431 33554431"
+#guard naturalAnswer "101 51" "1 1000000000000" == "33554431 33554431"
+#guard naturalAnswer "0 50" "0 1" == "0 33554431"
+#guard naturalAnswer "101 51" "-1 1" == ""
+
 /-- node_query 195 on an `img`: `q` is the device pixel ratio, U+0000, the viewport's width,
 U+0000, its height (decimals). Answers "" when the element asks for no image, else "1" and
-the URL as written. -/
+the URL as written. The `request` suffix additionally returns the selected density as
+`num den`, one LF and the URL. The `natural` command takes the resource dimensions and
+that density and returns two corrected whole CSS-pixel dimensions. -/
 def answer (d : Dom) (img : NodeId) (q : String) : String :=
   match q.splitOn "\x00" with
+  | ["natural", size, density] => naturalAnswer size density
+  | [dpr, w, h, "request"] =>
+    match selected d img { dpr := ratOf dpr, viewportW := ratOf w, viewportH := ratOf h } with
+    | some (url, density) => s!"{density.num} {density.den}\n{url}"
+    | none => ""
   | [dpr, w, h] =>
     match selected d img { dpr := ratOf dpr, viewportW := ratOf w, viewportH := ratOf h } with
     | some (url, _) => "1" ++ url
@@ -429,5 +474,9 @@ private def pictureDoc : Dom := { nodes := #[
 #guard (selected pictureDoc 4 { viewportW := 2400 }).map (·.1) == some "wide.png"
 #guard (selected pictureDoc 5 {}).map (·.1) == some "plain.png" && selected pictureDoc 6 {} == none
 #guard answer pictureDoc 4 "2\x00800\x00600" == "1two.png" && answer pictureDoc 6 "1\x00800\x00600" == ""
+
+#guard answer pictureDoc 4 "2\x00800\x00600\x00request" == "2 1\ntwo.png"
+#guard answer pictureDoc 6 "1\x00800\x00600\x00request" == ""
+#guard answer pictureDoc 4 "natural\x00101 51\x002 1" == "50 25"
 
 end L4Factoidal.HTML.ImageSource
