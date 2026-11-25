@@ -222,6 +222,18 @@ private def ratioCss := "#k{display:block;width:auto;height:auto;aspect-ratio:2;
 #guard box drawing (ratioCss ++ "min-width:20px;max-height:5px}") "k" == some (0,0,20,5)
 #guard box drawing (ratioCss ++ "max-width:10px;min-height:10px}") "k" == some (0,0,10,10)
 
+-- Canvas dimension attributes size the bitmap. CSS preferred dimensions are set by author rules.
+private def borderedCanvas := "<div><canvas id=k width=20 height=50></canvas></div>"
+private def borderedCanvasCss := "#k{display:block;box-sizing:border-box;border:15px solid blue;padding:5px;"
+
+#guard box borderedCanvas (borderedCanvasCss ++ "aspect-ratio:2/1;width:50%;max-width:90px}") "k" == some (0,0,90,45)
+#guard box borderedCanvas (borderedCanvasCss ++ "aspect-ratio:2/1;width:50%;max-width:45%}") "k" == some (0,0,90,45)
+#guard box borderedCanvas (borderedCanvasCss ++ "aspect-ratio:2/1;width:40%;min-width:60%}") "k" == some (0,0,120,60)
+#guard box borderedCanvas (borderedCanvasCss ++ "aspect-ratio:2/1;width:50%;max-width:90px;height:50px}") "k" == some (0,0,90,50)
+#guard box borderedCanvas (borderedCanvasCss ++ "}") "k" == some (0,0,60,90)
+#guard box "<canvas id=k width=000020 height=000050></canvas>" (borderedCanvasCss ++ "}") "k" == some (0,0,60,90)
+#guard box "<iframe id=k width=90 height=50></iframe>" (borderedCanvasCss ++ "}") "k" == some (0,0,90,50)
+
 -- Sizing keywords (CSS Sizing 3 §3.2): widths taken from the contents ("AA BBB": the
 -- longest word is 18 wide, the whole line 36), or the width that fills the containing block.
 private def words := "<div id=w>AA BBB</div><div id=z>Z</div>"
