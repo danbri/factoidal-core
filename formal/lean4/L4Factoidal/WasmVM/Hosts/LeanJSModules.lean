@@ -292,16 +292,11 @@ structure Loaded where
   used : Nat := 0
   deriving Inhabited
 
-/-- Load the module scripts of a document: `.error w` asks the host for request `w` (the
-start is made again with its answer), `.ok` has every graph. With the modules that earlier
-attempts of the same start fetched and parsed (`memo`, `Fetched`), and those of this attempt
-after them, for the next. A document with no module
-script makes no request and reads nothing but its tree. -/
-def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer)
+/-- Load already collected module scripts. A missing answer asks the host for the next
+request. Retain fetched and parsed modules for a subsequent call with more answers. -/
+def loadScripts (scripts : Array Script) (base : String) (page : Page) (answers : Array Answer)
     (memo : Array Fetched := #[]) : Except Wire Loaded × Array Fetched := Id.run do
-  let scripts := scriptsOf dom
   if scripts.isEmpty then return (.ok {}, memo)
-  let base := baseOf dom docUrl
   let mut l : Loader := { page, answers, memo }
   let mut out : Array (Nat × Outcome) := #[]
   for sc in scripts do
@@ -330,6 +325,13 @@ where
   /-- The `src` of a script element: any URL, relative to the document's base URL. -/
   resolveSpecifier' (src base : String) : Option String :=
     if src.isEmpty then none else (WHATWG.URL.parseUrl src (some base)).map (·.serialize)
+
+/-- Collect a document's module scripts and load their graphs. -/
+def load (dom : DOM.Dom) (docUrl : String) (page : Page) (answers : Array Answer)
+    (memo : Array Fetched := #[]) : Except Wire Loaded × Array Fetched :=
+  let scripts := scriptsOf dom
+  if scripts.isEmpty then (.ok {}, memo)
+  else loadScripts scripts (baseOf dom docUrl) page answers memo
 
 /-! ## Theorems -/
 

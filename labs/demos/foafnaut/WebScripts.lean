@@ -230,6 +230,16 @@ structure StartPoint where
 
 instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := default, todo := [], mods := {}, missing := #[] }⟩
 
+/-- Document metadata that can be reused when a start waits for module responses. -/
+structure StartDocument where
+  dom : DOM.Dom
+  scripts : Array (Nat × String)
+  missing : Array String
+  hasModule : Bool
+  moduleScripts : Array LeanJSModules.Script
+  base : String
+  cspMeta : String
+
 /-- What the engine holds between calls: the prepared module and one session. -/
 structure Held where
   module : Option Page.Module' := none
@@ -274,11 +284,9 @@ structure Held where
   did not load. The session's next `advance`, `turn` or `settle` goes on from it; while it is
   held the turn's `nextWake` is the clock (the rest is due at once) and `startMore` is true. -/
   startTodo : Option (LeanJS.StartRest × Array String) := none
-  /-- The parse of the page of a `start` that waits for sync answers (its tree, scripts, the
-  scripts that did not load, whether it has module scripts), by page, URL and syntax: each
-  attempt of the same start parses the same text the same way, so the attempts after the first
-  take it (a news page waited for 130 module answers: 1.4 s of parsing). -/
-  startParsed : Option (String × String × String × (Array (Nat × String) × Array String × Bool × DOM.Dom)) := none
+  /-- The parsed document and its script metadata, by page, URL and syntax, for the
+  next attempt of a start waiting for sync answers. -/
+  startParsed : Option (String × String × String × StartDocument) := none
   /-- The dedicated workers of that session's page (`Hosts.LeanJSWorkers`). -/
   leanWorkers : LeanJSWorkers.Workers := {}
   /-- The `layout` request of the session's `start`: its layout reads (`Page.Reads.measure`)
@@ -1375,21 +1383,25 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let kept := match held.startParsed with
     | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syn then some p else none
     | none => none
-  let made := show Except String (Array (Nat × String) × Array String × Bool × DOM.Dom) from do
+  let made := show Except String StartDocument from do
     if let some p := kept then return p
     let dom ← parse html url syn
     let (scripts, missing, hasModule) ← scriptSources dom request (modules := true)
-    return (scripts, missing, hasModule, dom)
+    let moduleScripts := if hasModule then LeanJSModules.scriptsOf dom else #[]
+    return { dom, scripts, missing, hasModule, moduleScripts,
+             base := LeanJSModules.baseOf dom url, cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0 }
   match made with
   | .error e => return (held, .error s!"scriptSession: {e}")
-  | .ok (scripts, missing, hasModule, dom) =>
+  | .ok doc =>
+    let dom := doc.dom
+    let missing := doc.missing
+    let hasModule := doc.hasModule
     -- Content Security Policy: the page's policy (its response's fields from the embedder, its
     -- `meta` elements) decides which of its classic scripts run; the others are violations
-    let cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0
-    let scripts0 := scripts
     let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
-      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom (LeanJSModules.baseOf dom url) scripts
-    let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta, cspViolations }
+      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom doc.base doc.scripts
+    let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly",
+                         cspMeta := doc.cspMeta, cspViolations }
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
       | none => LeanJS.prepare
@@ -1402,10 +1414,10 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
       -- the modules of the attempts before, while this start's answers are held (a first
       -- attempt, with no answers, takes none)
       let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
-      let (loaded, memo) := if hasModule then LeanJSModules.load dom url page held.syncCache memo else (.ok {}, #[])
+      let (loaded, memo) := if hasModule then LeanJSModules.loadScripts doc.moduleScripts doc.base page held.syncCache memo else (.ok {}, #[])
       if let .error w := loaded then
         -- no script ran: the parse is kept for the next attempt (`startParsed`)
-        let parsed := some (html, url, syn, (scripts0, missing, hasModule, dom))
+        let parsed := some (html, url, syn, doc)
         return ({ held with leanBase := some base, pendingSync := some ("start", html, request), startEntropy := some ent, moduleMemo := memo, startParsed := parsed }, netSyncAnswer id w)
       let mods := match loaded with | .ok m => m | .error _ => {}
       let lim := { lim with syncAnswers := held.syncCache.extract mods.used held.syncCache.size }
