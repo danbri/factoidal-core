@@ -273,14 +273,13 @@ def computedRole (d : Dom) (k : NodeId) : String :=
 
 /-! ## The accessible name (Accessible Name and Description Computation 1.2 §4.3, simplified)
 
-The steps taken: hidden nodes that are not referenced give nothing (`hidden`,
-`aria-hidden="true"`); `aria-labelledby` (one level: not followed while computing a
+The steps taken: hidden nodes give nothing unless a reference targets a hidden subtree; `aria-labelledby` (one level: not followed while computing a
 referenced node); an embedded control's value while computing a name from content;
 `aria-label`; the host language's label (HTML-AAM: button values, `alt`, the `label`
 elements of a labelable control, `legend`, `figcaption`, `caption`, an SVG `title`); the
 name from content for the roles that allow it and inside a name being computed from
 content; the `title` and then the `placeholder`. Block elements are separated by spaces;
-white space is collapsed. Not taken: CSS generated content and `display`. -/
+white space is collapsed. CSS visibility comes from the caller. CSS generated content is omitted. -/
 
 /-- Roles whose name may come from their content (WAI-ARIA 1.2 §5.2.8.6). -/
 def nameFromContentRoles : List String :=
@@ -302,10 +301,36 @@ def blockTags : List String :=
    "header", "hgroup", "hr", "li", "main", "nav", "ol", "p", "pre", "section", "table", "td", "th",
    "tr", "ul", "caption", "summary", "legend", "option", "optgroup"]
 
+private def nonNameElement (d : Dom) (k : NodeId) : Bool :=
+  isHtml d k ["script", "style", "template", "noscript", "head", "title"]
+
 def hiddenEl (d : Dom) (k : NodeId) : Bool :=
   let x := d.get k
   x.type == .element && ((attr? d k "hidden").isSome || (attr? d k "aria-hidden").map asciiLower == some "true" ||
-    (x.ns == some htmlNS && ["script", "style", "template", "noscript", "head", "title"].contains x.lname))
+    nonNameElement d k)
+
+/-- The CSS facts used for a name. `displayed` is false for `display: none`.
+`visible` is false for computed `visibility: hidden` or `collapse`. -/
+structure NameStyle where
+  displayed : NodeId → Bool := fun _ => true
+  visible : NodeId → Bool := fun _ => true
+
+/-- A hidden element at the current step of the name computation. -/
+def hiddenAt (d : Dom) (style : NameStyle) (k : NodeId) : Bool :=
+  hiddenEl d k || !style.displayed k || !style.visible k
+
+/-- Whether the root of an IDREF traversal is hidden. Display and ARIA hiding on an ancestor
+hide the reference too. Computed CSS visibility is taken at the reference itself, since a
+descendant can override its ancestor's visibility. -/
+def hiddenReference (d : Dom) (style : NameStyle) (k : NodeId) : Bool :=
+  !style.visible k || Id.run do
+    let mut cur := k
+    for _ in [0:d.size + 1] do
+      if hiddenEl d cur || !style.displayed cur then return true
+      match (d.get cur).parent with
+      | none => return false
+      | some p => cur := p
+    return false
 
 def collapse (s : String) : String :=
   " ".intercalate (((s.split isAsciiWs).toList.map (·.toString)).filter (· != ""))
@@ -363,20 +388,22 @@ def embeddedValue (d : Dom) (k : NodeId) : Option String :=
 
 mutual
 /-- The text alternative of node `k` (§4.3.2): `labelled` while computing a node that an
-`aria-labelledby` names, `content` while computing a name from the content of an ancestor.
-`fuel` bounds the depth (the tree's nesting). -/
-def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool) : String :=
+`aria-labelledby` or `aria-describedby` names, `content` while computing a name from the
+content of an ancestor. `includeHidden` carries the exception for a hidden IDREF target
+through its descendants. `fuel` bounds the depth (the tree's nesting). -/
+def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool)
+    (style : NameStyle := {}) (includeHidden : Bool := false) : String :=
   match fuel with
   | 0 => ""
   | fuel + 1 =>
     let x := d.get k
     if x.type == .text then x.data
     else if x.type != .element then ""
-    else if hiddenEl d k && !labelled then ""
+    else if hiddenAt d style k && !labelled && (!includeHidden || nonNameElement d k) then ""
     else
       let byLabelledBy := if labelled then "" else match attr? d k "aria-labelledby" with
         | some ids => collapse (" ".intercalate ((tokens' ids).filterMap fun id =>
-            (byIdIn d k id).map fun j => textAlternative d fuel j true true))
+            (byIdIn d k id).map fun j => textAlternative d fuel j true true style (hiddenReference d style j)))
         | none => ""
       if !byLabelledBy.isEmpty then byLabelledBy else
       let embedded := if content then embeddedValue d k else none
@@ -385,12 +412,12 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       | none =>
       let label := (attr? d k "aria-label").map (·.trimAscii.toString) |>.getD ""
       if !label.isEmpty then label else
-      let native := hostLabel d fuel k
+      let native := hostLabel d fuel k style
       if !native.isEmpty then native else
       let role := computedRole d k
       let fromContent := if content || labelled || (nameFromContentRoles.contains role && !noContentName d k) ||
             isHtml d k ["summary"] then
-          childrenText d fuel x.kids.toList else ""
+          childrenText d fuel x.kids.toList style includeHidden else ""
       if !fromContent.isEmpty then fromContent else
       let title := (attr? d k "title").getD ""
       if !title.trimAscii.toString.isEmpty then title else
@@ -398,16 +425,17 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       if !ph.trimAscii.toString.isEmpty then ph else (attr? d k "aria-placeholder").getD ""
 
 /-- The names of children in order, block elements set apart by spaces. -/
-def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
+def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId)
+    (style : NameStyle := {}) (includeHidden : Bool := false) : String :=
   match kids with
   | [] => ""
   | c :: rest =>
-    let t := textAlternative d fuel c false true
+    let t := textAlternative d fuel c false true style includeHidden
     let t := if isHtml d c blockTags then " " ++ t ++ " " else t
-    t ++ childrenText d fuel rest
+    t ++ childrenText d fuel rest style includeHidden
 
 /-- The host language's label (HTML-AAM §5, accessible name computations by element). -/
-def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
+def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) (style : NameStyle := {}) : String :=
   let x := d.get k
   -- SVG-AAM §8.1: the `title` child, else a link's `xlink:title`
   if x.ns == some svgNS then
@@ -417,7 +445,7 @@ def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   else if x.ns != some htmlNS then "" else
   -- the control itself is left out of its label's text
   let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l =>
-    childrenText d fuel ((d.get l).kids.toList.filter (· != k))))
+    childrenText d fuel ((d.get l).kids.toList.filter (· != k)) style))
   match x.lname with
   | "input" =>
     let t := asciiLower ((attr? d k "type").getD "text")
@@ -435,21 +463,21 @@ def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   | "textarea" | "select" | "meter" | "progress" | "output" | "button" => labels (labelsOf d k)
   | "img" | "area" => (attr? d k "alt").getD ""
   | "fieldset" => match firstChildTag d k ["legend"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList style)
     | none => ""
   | "figure" => match firstChildTag d k ["figcaption"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList style)
     | none => ""
   | "table" => match firstChildTag d k ["caption"] with
-    | some l => collapse (childrenText d fuel (d.get l).kids.toList)
+    | some l => collapse (childrenText d fuel (d.get l).kids.toList style)
     | none => ""
   | "optgroup" => (attr? d k "label").getD ""
   | _ => ""
 end
 
 /-- The accessible name of element `k`, white space collapsed. -/
-def accessibleName (d : Dom) (k : NodeId) : String :=
-  collapse (textAlternative d (d.size + 1) k false false)
+def accessibleName (d : Dom) (k : NodeId) (style : NameStyle := {}) : String :=
+  collapse (textAlternative d (d.size + 1) k false false style)
 
 /-! ## What is proved -/
 
@@ -505,7 +533,7 @@ theorem invalid_tokens_implicit (d : Dom) (k : NodeId) (v : String) (hv : attr? 
 theorem hidden_no_name (d : Dom) (k : NodeId) (fuel : Nat) (content : Bool)
     (he : (d.get k).type = .element) (hh : hiddenEl d k = true) :
     textAlternative d (fuel + 1) k false content = "" := by
-  simp [textAlternative, he, hh]
+  simp [textAlternative, hiddenAt, he, hh]
   intro h
   exact absurd h (by decide)
 
@@ -541,6 +569,19 @@ private def nameOf (html tag : String) : String :=
 
 #guard nameOf "<div role=button aria-label=' label '>x</div>" "div" == "label"
 #guard nameOf "<button>Save <b>all</b></button>" "button" == "Save all"
+
+-- CSS facts distinguish a hidden reference root from hidden descendants of a visible root.
+private def nameWithHiddenSpans (referenceHidden : Bool) : String :=
+  let d := DOM.parseHtmlDocument
+    "<button aria-labelledby=ref></button><span id=ref>Open <span id=child>details</span></span>"
+  let style : NameStyle :=
+    { displayed := fun k => attr? d k "id" != some "child"
+      visible := fun k => !referenceHidden || attr? d k "id" != some "ref" }
+  let k := (d.treeOrder 0).find? (isHtml d · ["button"])
+  (k.map fun i => accessibleName d i style).getD "?"
+
+#guard nameWithHiddenSpans false == "Open"
+#guard nameWithHiddenSpans true == "Open details"
 #guard nameOf "<span id=a>first</span><span id=b>second</span><div role=link aria-labelledby='a b'>x</div>" "div" == "first second"
 #guard nameOf "<label for=i>Name</label><input id=i>" "input" == "Name" && nameOf "<label>Mail <input></label>" "input" == "Mail"
 #guard nameOf "<img alt='a cat'>" "img" == "a cat" && nameOf "<input type=submit>" "input" == "Submit"
