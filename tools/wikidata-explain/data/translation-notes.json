@@ -1,0 +1,130 @@
+{
+  "meta": {
+    "version": "0.1",
+    "date": "2026-11-24",
+    "purpose": "Fixed texts for SPEC §6 translation notes. Keyed by Factoidal rewrite rule_id/variant_id (lean_rewrites), input_preparation step, and lean_rewrite_status. Placeholders in {braces} are filled from the parsed lean_replacement_query, never assumed.",
+    "derived_from": "mlp-all-queries.json lean_* fields; before/after comparison of examples; Lean sources in factoidal-core PR 917 (L4Factoidal/Wikidata/*.lean)",
+    "corpus_counts": "rule_id/variant_id counts over 580 queries are given per entry; 127 queries have no rewrite, 405 have one, 48 have two"
+  },
+  "rules": {
+    "rewrite-wikibase-label-service/automatic": {
+      "count": 376,
+      "example": "mlp-001",
+      "what_changed": "The WDQS label service (SERVICE wikibase:label) was replaced by explicit label lookups. Each ?xLabel / ?xDescription column the query selects is now computed in the query itself.",
+      "precise": "{var}Label is {var}'s label in the first of these languages that has one: {label_languages}. If none has a label, it is {var}'s entity ID (e.g. Q42), or for a value that is not a Wikidata entity, its text form. If {var} is blank, {var}Label is blank.",
+      "precise_description": "{var}Description is {var}'s description in the first of these languages that has one: {description_languages}. If none has one, it is blank (there is no fallback).",
+      "plain": "Names are shown in {first_language} where available, otherwise in another listed language, otherwise as the item's ID.",
+      "derive": {
+        "label_languages": "the FILTER(lang(?{var}__label_value) = \"..\") values in order of appearance",
+        "description_languages": "the FILTER(lang(?{var}__description_value) = \"..\") values in order of appearance"
+      },
+      "observed": "Language order is the author's list in order, duplicates removed, with 'mul' (the multilingual label) where the author listed it, otherwise appended last. Descriptions use the listed languages only; 'mul' is never added for descriptions.",
+      "scaffolding_vars": [
+        "?{var}__label_value",
+        "?{var}__description_value",
+        "?{var}__label_subject"
+      ],
+      "severity": "display"
+    },
+    "rewrite-wikibase-label-service/manual": {
+      "count": 70,
+      "example": "mlp-013",
+      "what_changed": "The label service was used with explicit assignments (e.g. ?place rdfs:label ?birthplace inside the SERVICE). These became explicit lookups bound to the author's chosen column names.",
+      "precise": "{target} is {var}'s label in the first of these languages that has one: {label_languages}. Otherwise it is {var}'s entity ID, or its text form for a non-entity. It is blank if {var} is blank.",
+      "plain": "{target} shows the name of {var}, in {first_language} where available.",
+      "severity": "display"
+    },
+    "rewrite-named-subquery/default": {
+      "count": 23,
+      "example": "mlp-129",
+      "what_changed": "Blazegraph named subqueries (WITH { ... } AS %name, then INCLUDE %name) were restructured. Each INCLUDE is wrapped as a subquery that selects the named subquery's variables explicitly.",
+      "precise": "The named subquery %{name} is computed once and its results are joined in at each place it is included ({include_count} times).",
+      "plain": "Part of the query is worked out separately and reused.",
+      "caution": "The rewritten text still has a `WITH %name AS { ... }` prologue and `INCLUDE`, which are not standard SPARQL 1.1; the Wikimedia Java rewriter produces the same form. PR 917 documents a 'shared named-subquery alias issue'. mlp-192 (an alias inside a named subquery, `SELECT (?item1 AS ?item2) WHERE { INCLUDE %item1 }`) returned 20 rows on Blazegraph and 20456 on QLever in endpoint_audit. Do not claim equivalence for this rule; attach the audit result when one exists.",
+      "severity": "scope"
+    },
+    "rewrite-legacy-select-alias/rename-input": {
+      "count": 18,
+      "example": "mlp-026",
+      "what_changed": "The original reused a variable name as the name of its own aggregate, e.g. (SUM(?stars) AS ?stars). Standard SPARQL forbids that, so the input variable was renamed (?stars → ?stars__wdqs_input).",
+      "precise": "In the original, ?{alias} named both the input values and their {fn}; here the input is ?{alias}__wdqs_input and ?{alias} is the {fn} only. Anything that sorts or filters on ?{alias} outside the aggregate uses the {fn}.",
+      "plain": "A technical renaming; results are unchanged.",
+      "explain_as": "the authored name ?{alias} for the aggregate; ?{alias}__wdqs_input is scaffolding",
+      "severity": "display"
+    },
+    "rewrite-query-hint/default": {
+      "count": 8,
+      "example": "mlp-102",
+      "what_changed": "A Blazegraph query hint (e.g. hint:Query hint:optimizer \"None\") was removed.",
+      "precise": "The original contained a Blazegraph performance hint ({hint}); it was removed. Hints affect speed, not results.",
+      "plain": null,
+      "severity": "display"
+    },
+    "rewrite-wikibase-isSomeValue/default": {
+      "count": 4,
+      "example": "mlp-089",
+      "what_changed": "The Blazegraph function wikibase:isSomeValue(?x) was replaced by a test on the form of the value: contains(str(?x), \"wikidata.org/.well-known/genid\").",
+      "precise": "{negated?not }an 'unknown value' {var}. 'Unknown value' is recognised by the form Wikidata gives such values (a generated identifier under wikidata.org/.well-known/genid).",
+      "plain": "{negated?Ignores|Only} cases where {var} is recorded as 'unknown value'.",
+      "severity": "scope"
+    },
+    "rewrite-geof-distance/default": {
+      "count": 2,
+      "example": "mlp-144",
+      "what_changed": "Calls to the legacy distance function <http://www.opengis.net/def/geosparql/function/distance>, which WDQS's default geof: prefix pointed to, were changed to geof:distance in the standard GeoSPARQL namespace <http://www.opengis.net/def/function/geosparql/>, and any third (units) argument, which Blazegraph ignored, was dropped. A PREFIX geof: declaration was added.",
+      "precise": "?{var} is the distance between {a} and {b} computed by geof:distance, in kilometres (F-GEODIST-UNIT).",
+      "plain": "?{var} is the distance between {a} and {b}.",
+      "unit": "kilometres: WDQS manual states kilometres; QLever's default is kilometres per its GeoSPARQL docs (see F-GEODIST-UNIT for verification status).",
+      "severity": "scope"
+    }
+  },
+  "input_preparation": {
+    "auto-language": {
+      "count": 438,
+      "precise": "The original asked for the reader's interface language ([AUTO_LANGUAGE]); this version uses {language} (fixed when the query was prepared).",
+      "plain": "Names are shown in {language_name}."
+    },
+    "mediawiki-pipe-escape": {
+      "count": 5,
+      "precise": "The query was stored on a wiki page with '|' written as {{!}}; this was converted back to '|' before translation.",
+      "plain": null
+    }
+  },
+  "status": {
+    "rewritten": {
+      "count": 453,
+      "note": "Explain lean_replacement_query. List the rule notes above."
+    },
+    "unchanged": {
+      "count": 106,
+      "note": "No translation was needed: the original is already standard SPARQL 1.1 as far as the rewriter is concerned."
+    },
+    "skipped_unsupported": {
+      "count": 20,
+      "note": "Not translated: the query uses a feature the target endpoint does not support. Stub record only.",
+      "by_code": {
+        "unsupported_proprietary_service": {
+          "count": 19,
+          "precise": "It calls a Blazegraph/WDQS-only service ({service}), e.g. the MediaWiki API (wikibase:mwapi)."
+        },
+        "unsupported_proprietary_feature": {
+          "count": 1,
+          "precise": "It uses a Blazegraph/WDQS-only feature: {message}."
+        }
+      }
+    },
+    "parse_error": {
+      "count": 1,
+      "note": "The original could not be parsed (original_query_parse_error). Stub record with the diagnostic."
+    }
+  },
+  "endpoint_audit": {
+    "note": "Four queries carry endpoint_audit, comparing live Blazegraph and QLever results. When present and results_match is false, add: 'When tested on {date}, this version returned {q_rows} rows against {b_rows} for the original, and the rows did not match.' This reports what was measured and makes no claim about why.",
+    "queries": [
+      "mlp-007",
+      "mlp-011",
+      "mlp-027",
+      "mlp-192"
+    ]
+  }
+}

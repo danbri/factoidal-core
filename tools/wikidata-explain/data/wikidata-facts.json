@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "version": "0.1",
+    "date": "2026-11-24",
+    "purpose": "Facts about Wikidata's RDF and the endpoints that the explanation rules (SPEC §4) rely on. Each fact has a source and a verification status.",
+    "status_values": {
+      "verbatim": "checked against the source's own text (raw wikitext or page text)",
+      "partial": "part checked verbatim, part from a secondary summary or inference; see note",
+      "corpus": "observed in this corpus / rewriter output, not in documentation"
+    },
+    "sources": {
+      "RDF": "https://www.mediawiki.org/wiki/Wikibase/Indexing/RDF_Dump_Format (raw wikitext read 2026-11-24)",
+      "DM": "https://www.mediawiki.org/wiki/Wikibase/DataModel (raw wikitext read 2026-11-24)",
+      "WDQS": "https://www.mediawiki.org/wiki/Wikidata_Query_Service/User_Manual",
+      "DATES": "https://www.wikidata.org/wiki/Help:Dates",
+      "MUL": "https://www.wikidata.org/wiki/Help:Default_values_for_labels_and_aliases",
+      "QLEVER-GEO": "https://docs.qlever.dev/geosparql/"
+    }
+  },
+  "facts": {
+    "F-RANK": {
+      "fact": "wdt: (truthy) triples exist only for statements with the best non-deprecated rank for that property: preferred statements if any exist, otherwise all normal-rank statements. Deprecated statements never produce wdt: triples. Qualifiers are ignored.",
+      "quote": "Truthy statements represent statements that have the best non-deprecated rank for a given property. ... if there is a preferred statement for property P2, then only preferred statements for P2 will be considered truthy. Otherwise, all normal-rank statements for P2 are considered truthy.",
+      "source": "RDF §Truthy statements",
+      "status": "verbatim",
+      "used_by": ["R-TRUTHY"]
+    },
+    "F-RANK-VALUES": {
+      "fact": "Every statement node has wikibase:rank, one of wikibase:NormalRank, wikibase:PreferredRank, wikibase:DeprecatedRank. Best-rank statements also have type wikibase:BestRank.",
+      "quote": "The statement rank is represented by the predicate wikibase:rank and the object being one of: wikibase:NormalRank, wikibase:PreferredRank, wikibase:DeprecatedRank.",
+      "source": "RDF §Statement representation",
+      "status": "verbatim",
+      "used_by": ["R-FULLSTMT"]
+    },
+    "F-PS-UNIQUE": {
+      "fact": "A statement node has exactly one main value (ps:) — or, for novalue, none.",
+      "source": "RDF §Statement representation; DM (a Statement has one main Snak)",
+      "status": "partial",
+      "note": "Follows from the data model (one main snak per statement); not quoted verbatim yet.",
+      "used_by": ["R-MULT-VALUE"]
+    },
+    "F-SOMEVALUE": {
+      "fact": "'Unknown value' appears as a value in both the truthy (wdt:) and full (ps:) forms. In the dump it is a blank node; WDQS uses Skolem IRIs instead. So `?x wdt:P []` and `?x wdt:P ?v` match unknown values.",
+      "quote": "Unknown value is represented as RDF blank node in both simplified and full statements: wd:Q3 a wikibase:Item, wdt:P2 _:genid1 . | WDQS now uses local IRIs (Skolem IRIs) instead of blank nodes to represent somevalue.",
+      "source": "RDF §Somevalue; RDF §WDQS data differences",
+      "status": "verbatim",
+      "corpus_note": "The Factoidal (and Wikimedia) rewriter recognises them by the text 'wikidata.org/.well-known/genid' (rule rewrite-wikibase-isSomeValue). That the target QLever endpoint uses the same form is assumed from the rewriter, not documented here.",
+      "used_by": ["R-SOMEVALUE", "rewrite-wikibase-isSomeValue"]
+    },
+    "F-NOVALUE": {
+      "fact": "'No value' is not a value: it is a class (wdno:P) on the item or statement. It produces no wdt: or ps: value, so `?x wdt:P []` does not match it.",
+      "quote": "Novalue is represented not by a regular value but as a class of the entity or statement or reference, with prefix wdno: and the name of the property. ... Note that wdno:P22 mentioned above is not a predicate, unlike others, but a class.",
+      "source": "RDF §Novalue; RDF §Properties",
+      "status": "verbatim",
+      "used_by": ["R-SOMEVALUE"]
+    },
+    "F-LABEL-UNIQUE": {
+      "fact": "For any language, an entity has at most one label and at most one description, but any number of aliases.",
+      "quote": "for any given language, an EntityDescription may have at most one label and at most one description, but any number of aliases.",
+      "source": "DM §Lexical information",
+      "status": "verbatim",
+      "used_by": ["R-MULT-VALUE", "R-LABEL-EXACT", "R-LABELS"]
+    },
+    "F-LABEL-PREDICATE": {
+      "fact": "In WDQS, labels are stored only as rdfs:label (the dump also has schema:name and skos:prefLabel). Aliases are skos:altLabel; descriptions are schema:description; all are language-tagged literals.",
+      "quote": "For labels, only rdfs:label is stored but not schema:name or skos:prefLabel.",
+      "source": "RDF §WDQS data differences; RDF §Entity representation",
+      "status": "verbatim",
+      "note": "QLever's Wikidata index is assumed to follow WDQS here; not checked.",
+      "used_by": ["R-LABEL-EXACT"]
+    },
+    "F-MUL": {
+      "fact": "'mul' is a language code for default labels and aliases that apply across languages. It is used for labels and aliases; descriptions are not covered (a separate solution is planned).",
+      "quote": "These default values can be accessed via API using the language code mul (\"multiple languages\"). | a different solution is in the works for descriptions (see T303677)",
+      "source": "MUL",
+      "status": "partial",
+      "note": "Read via fetch tool, not raw wikitext. Consistent with the corpus: the Factoidal rewrite adds 'mul' for labels, never descriptions.",
+      "used_by": ["R-LABELS", "R-LABEL-EXACT"]
+    },
+    "F-SITELINK-UNIQUE": {
+      "fact": "An item has at most one sitelink per wiki.",
+      "quote": "Note that while an Item can have multiple sitelinks to different wikis, it cannot have multiple sitelinks to the same wiki.",
+      "source": "DM §Sitelinks",
+      "status": "verbatim",
+      "used_by": ["R-SITELINK", "R-MULT-VALUE"]
+    },
+    "F-SITELINK-RDF": {
+      "fact": "A sitelink is a node of type schema:Article (its IRI is the article URL), linked to the entity by schema:about, with schema:isPartOf <wiki root URL>, schema:inLanguage \"code\", schema:name (the title), and wikibase:badge for each badge.",
+      "quote": "The type of the node is schema:Article and it linked with the entity via schema:about predicate. Badges are described with wikibase:badge predicates. schema:name predicate holds the plain-text name of the article, in the language of the linked wiki.",
+      "source": "RDF §Sitelinks (prose and example)",
+      "status": "verbatim",
+      "note": "schema:isPartOf and schema:inLanguage are shown in the example, not described in prose.",
+      "used_by": ["R-SITELINK"]
+    },
+    "F-REDIRECT": {
+      "fact": "A redirected entity is recorded as `old owl:sameAs target`. WDQS gives this no further meaning: data is stored on the target, so a query naming the old ID matches only the owl:sameAs triple.",
+      "quote": "Redirected entities are implemented as owl:sameAs predicates ... wd:Q6 owl:sameAs wd:Q1 . | Redirects are recorded but currently have no additional semantics implemented.",
+      "source": "RDF §Redirects; RDF §WDQS data differences",
+      "status": "verbatim",
+      "used_by": ["R-REDIRECT-ID"]
+    },
+    "F-DATE-PRECISION": {
+      "fact": "Every date has a precision: 11 day, 10 month, 9 year, 8 decade, 7 century, 6 millennium. The truthy (wdt:) value is a plain xsd:dateTime with no precision, so a date known only to the year still looks like a full date; its precision is only on the full value (wikibase:timePrecision).",
+      "quote": "Precision table: 11 day, 10 month, 9 year, 8 decade, 7 century, 6 millennium. | Precisions higher than 11 (day) are not supported as of 2021.",
+      "source": "DATES §Precision; RDF §Time",
+      "status": "partial",
+      "note": "How a year-precision date's month and day appear in RDF (01-01 vs 00-00) was seen only in a summary. The JSON form uses 00-00. Before rendering any claim about month or day placeholders, check RDF output directly.",
+      "used_by": ["R-YEAR"]
+    },
+    "F-DATE-BCE": {
+      "fact": "RDF dates use XSD 1.1 year numbering (1 BCE is year 0), so BCE years in RDF are offset by one from the conventional year.",
+      "source": "DATES §Years BC",
+      "status": "partial",
+      "note": "Seen only in a summary; verify before use.",
+      "used_by": ["R-YEAR"]
+    },
+    "F-LABEL-FALLBACK": {
+      "fact": "In WDQS, the label service gives the entity ID (e.g. Q123) when no label exists in any requested language. The Factoidal rewrite reproduces this explicitly (strafter(str(?x), \"entity/\")).",
+      "quote": "If no label is available in any of the specified languages, the Q-id of the entity (without any prefix) is its label.",
+      "source": "WDQS §Label service; corpus (lean_replacement_query)",
+      "status": "partial",
+      "note": "Read via fetch tool, not raw wikitext.",
+      "used_by": ["R-LABELS"]
+    },
+    "F-GEODIST-UNIT": {
+      "fact": "geof:distance returns kilometres: on WDQS always, and on QLever by default (QLever accepts an optional third unit argument, which the Factoidal rewrite drops).",
+      "quote": "The function geof:distance returns distance between two points on Earth, in kilometers. (WDQS) | If no unit is given, the distance is returned in kilometers. (QLever docs, per search result summary)",
+      "source": "WDQS §Distance function; QLEVER-GEO",
+      "status": "partial",
+      "note": "The QLever wording comes from a search summary; read docs.qlever.dev/geosparql/ before treating it as verbatim.",
+      "used_by": ["rewrite-geof-distance"]
+    },
+    "F-HIERARCHY-PROPS": {
+      "fact": "Properties usually read transitively, where a direct match omits things linked through intermediate values: P131 (located in the administrative territorial entity), P361 (part of), P279 (subclass of), P171 (parent taxon), P276 (location).",
+      "source": "editorial: project convention, not a Wikidata rule",
+      "status": "corpus",
+      "note": "Policy list for R-DIRECT-ONLY. Review and extend by hand; this is a judgment, not a fact about the data.",
+      "used_by": ["R-DIRECT-ONLY"]
+    }
+  }
+}
