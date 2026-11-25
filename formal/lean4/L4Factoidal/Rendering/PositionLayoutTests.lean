@@ -270,6 +270,14 @@ private def listed := "<ul id=u><li id=i>AA</li><li id=j>BB</li></ul>"
 private def xOf (html extra text : String) : Option Float := (at? html extra text).map (·.1)
 #guard xOf listed "" "AA" == some 40
 #guard xOf listed "" "*" == some 30.5
+-- A float changes the line band and outside marker together. An equal margin
+-- provides the reference placement without a float, including for an empty item.
+private def besideMarker := "<div id=f></div><div id=m></div>"
+#guard xOf besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" == some 86.5
+#guard at? besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" ==
+  at? "<div id=m>&nbsp;</div>" "#m{margin-left:96px;display:list-item;list-style:square}" "*"
+#guard xOf besideMarker "#f{float:right;width:96px;height:96px} #m{margin-left:40px;display:list-item}" "*" == some 30.5
+
 #guard box listed "" "i" == (box listed "ul{list-style:none}" "i")
 -- `list-style-type: none` (also through `list-style`, and inherited) draws no marker.
 #guard xOf listed "ul{list-style-type:none}" "*" == none
@@ -294,6 +302,8 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+#guard markers "<ol><span><li>A</li></span><span><li>A</li></span></ol>"
+  "span{display:contents}" == some ["1.","2."]
 -- The first summary gets the disclosure marker. Authors can remove it through
 -- its display or list style, and an ordinary element can opt in to a list item.
 #guard markers "<details><summary>A</summary><summary>A</summary></details>" "" == some [">"]
@@ -512,6 +522,17 @@ private def beforeTexts (page sheet : String) : Option (List String) := do
 #guard beforeTexts "<p>a</p><p style='display:none'>b</p><p>c</p>"
   "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
 #guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
+-- Boxless wrappers leave their children in the parent counter scope, and the
+-- wrapper's own reset or increment has no effect.
+private def throughContents := "<section><div><p>a</p></div><div><p>b</p></div></section>"
+#guard beforeTexts throughContents
+  "div{display:contents} p{counter-increment:n} p::before{content:counter(n)}" == some ["1","2"]
+#guard beforeTexts throughContents
+  "div{display:contents;counter-reset:n 50;counter-increment:n 10} p{counter-increment:n} p::before{content:counter(n)}" ==
+  some ["1","2"]
+#guard beforeTexts throughContents
+  "p{counter-increment:n} p::before{content:counter(n)}" == some ["1","1"]
+
 #guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
   "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["3", "2", "1"]
 -- the start of a reversed counter: the last element that increments shows minus its increment

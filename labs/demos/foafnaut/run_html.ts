@@ -7,7 +7,7 @@ import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFon
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
-import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
+import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
 import {loadNativeWindow,type NativeEvent as UIEvent} from "./native_window.ts";
 import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
@@ -345,14 +345,18 @@ async function main() {
   // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
   // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
   const syncAnswers=async(t:unknown)=>{
+    if(!(t as ScriptTurn|undefined)?.netSync)return t;
     let i=0,fetchMs=0,engineMs=0;
-    for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
-      const t0=performance.now();
-      const a=await netFetch((t as ScriptTurn).netSync!);
-      const t1=performance.now();
-      t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
-      fetchMs+=t1-t0;engineMs+=performance.now()-t1;
-    }
+    const transport=pinnedHTTPSBatch();
+    try{
+      for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+        const t0=performance.now();
+        const a=await netFetch((t as ScriptTurn).netSync!,transport);
+        const t1=performance.now();
+        t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+        fetchMs+=t1-t0;engineMs+=performance.now()-t1;
+      }
+    }finally{transport.close();}
     // The requests a turn waited for (module graphs, sync XMLHttpRequest): each answer makes
     // the action again, so their count and the engine's time show a graph fetched one by one.
     if(i>0)console.log(JSON.stringify({type:"native-html-sync",t:Math.round(performance.now()),requests:i,fetchMs:Math.round(fetchMs),engineMs:Math.round(engineMs)}));
@@ -422,7 +426,10 @@ async function main() {
   // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
   // Counted, so an idle window does not wait in the window library while an answer is coming.
   let netInFlight=0;
-  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{netInFlight++;return Promise.resolve(netAnswer(w)).finally(()=>{netInFlight--;});};
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number],transport?:ReturnType<typeof pinnedHTTPSBatch>)=>{
+    netInFlight++;
+    return netAnswer(w,undefined,transport).finally(()=>{netInFlight--;});
+  };
   // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
   // each read goes back as an answer of action `net` (status 1 with the bytes, 0 at the end).
   const sockets=new Map<string,NetSocket>();

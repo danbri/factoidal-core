@@ -119,6 +119,25 @@ def read (value : String) : Option Value :=
   | _ =>
     if main.length > maxPieces then none else (main.mapM piece).map .parts
 
+/-- The number of parts a `content` value asks for: the terms before a `/`. A value with more than
+`maxPieces` is not a value (`read` is `none`), so the declaration is dropped; the host reports
+the hit with this number (issue 865). -/
+def piecesWanted (value : String) : Nat :=
+  ((CssValues.stripWs (CssValues.CV.parse value)).takeWhile (!isSlash ·)).length
+
+/-- Kind: bound. Says: a value that asks for more than `maxPieces` parts is not read. Does not say:
+anything about a value with fewer parts (it may be invalid for another reason). -/
+theorem read_none_of_wanted (value : String) (h : maxPieces < piecesWanted value) : read value = none := by
+  unfold piecesWanted at h
+  unfold read
+  simp only []
+  split
+  · rename_i e; rw [e] at h
+  · rename_i e; rw [e] at h; simp [maxPieces] at h
+  · split
+    · rfl
+    · rename_i fits; exact absurd h fits
+
 /-- The characters of the parts after `acc`, cut at `maxChars`. `attr` reads an attribute
 of the originating element. -/
 def chars (attr : String → String) : List Piece → List Char → List Char

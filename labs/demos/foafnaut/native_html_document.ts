@@ -2,7 +2,7 @@ import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
-import {netAnswer,type NetWire} from "./native_net.ts";
+import {netAnswer,pinnedHTTPSBatch,type NetWire} from "./native_net.ts";
 import {loadSubresource,newlyListed,takeAnimated,takeTurn,loadImports} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
@@ -196,7 +196,8 @@ A `file:` URL is read here, for a `file:` page only. Every other URL is the engi
 is told to (native_net.ts: redirect "manual", the address the engine chose). An engine from
 before the op gets the rule of before: the page's own origin, by a plain fetch. */
 export async function readSubresource(engine:SubresourceEngine|undefined,kind:"image"|"style"|"font",url:string,documentURL:string,
-  limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
+  limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>,
+  transport?:ReturnType<typeof pinnedHTTPSBatch>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
   const local=new URL(url).protocol==="file:";
   if(!local&&engine&&typeof engine.subresource==="function"&&!noSubresourceOp.has(engine)) {
     const step=async(request:Record<string,unknown>)=>{
@@ -208,7 +209,7 @@ export async function readSubresource(engine:SubresourceEngine|undefined,kind:"i
     };
     // Is the op there? One call that starts nothing: `cancel` of no transfer.
     if(await step({action:"cancel",id:0})!==undefined) {
-      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000}),{url:documentURL},kind,url,signal) as
+      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000},transport),{url:documentURL},kind,url,signal) as
         {url:string;contentType:string;base64:string};
       const text=atob(got.base64);
       if(text.length>limit)throw new Error(`${kind} too large`);
@@ -248,25 +249,28 @@ export async function loadWebFonts(engine:WebFontEngine,url:string,source:string
   let answer;
   try{answer=await engine.fontFaces(source,{url,resources,...(imported.length?{imported}:{})});}catch{return webFonts;}
   const loaded=new Map<string,string>();let total=0;
-  for(const face of answer?.faces??[]) {
-    for(const src of face.sources) {
-      signal?.throwIfAborted();
-      const known=loaded.get(src);
-      if(known!==undefined){if(known)break;continue;}
-      try {
-        const {bytes}=await readSubresource(engine as SubresourceEngine,"font",src,url,MAX_FONT_BYTES,signal);
-        if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
-        const sha256=await sha256Hex(bytes);
-        await engine.webFontLoad(bytes,sha256);
-        total+=bytes.length;loaded.set(src,sha256);webFonts.push({url:src,sha256});
-        break;
-      } catch(error) {
-        if(signal?.aborted)throw error;
-        loaded.set(src,"");
-        console.error(`Native HTML web font refused: ${src}: ${String(error instanceof Error?error.message:error)}`);
+  const transport=pinnedHTTPSBatch({timeoutMs:10000});
+  try{
+    for(const face of answer?.faces??[]) {
+      for(const src of face.sources) {
+        signal?.throwIfAborted();
+        const known=loaded.get(src);
+        if(known!==undefined){if(known)break;continue;}
+        try {
+          const {bytes}=await readSubresource(engine as SubresourceEngine,"font",src,url,MAX_FONT_BYTES,signal,undefined,transport);
+          if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
+          const sha256=await sha256Hex(bytes);
+          await engine.webFontLoad(bytes,sha256);
+          total+=bytes.length;loaded.set(src,sha256);webFonts.push({url:src,sha256});
+          break;
+        } catch(error) {
+          if(signal?.aborted)throw error;
+          loaded.set(src,"");
+          console.error(`Native HTML web font refused: ${src}: ${String(error instanceof Error?error.message:error)}`);
+        }
       }
     }
-  }
+  }finally{transport.close();}
   return webFonts;
 }
 /** `work(item, index)` for each of `items`, at most `limit` at a time; the answers in the
@@ -542,6 +546,9 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     (imageURL,reason)=>fetchFailed("background image",imageURL,`image not read: ${reason}`,"background colour shown"),engine as SubresourceEngine)])
     .then(([a,b])=>[...a,...b]):imageBytes;
   pageImageBytes.catch(()=>{});
+  // Stylesheet discovery is complete. Start fonts while images and the tab icon arrive.
+  const webFontsReading=loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
+  webFontsReading.catch(()=>{});
   const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
@@ -551,7 +558,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
-  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
+  const webFonts=await webFontsReading;
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
   options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};

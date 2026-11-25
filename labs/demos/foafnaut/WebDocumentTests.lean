@@ -14,6 +14,21 @@ private def size (html : String) (sources : List String) : Option Float := do
   let styles ← (Rendering.CSS.computeAll dom rules).toOption
   let id ← dom.getElementById 0 "target"
   return (← styles[id]?).fontSize
+private def editedInput := "<form><input id=field name=q value=original placeholder=hint></form>"
+
+/-- Exercise the same command-to-render path the desktop uses after keyboard input. -/
+private def editedInputText (value : JSON.Json) : Option (List String) := do
+  let dom := DOM.parseHtmlDocument editedInput
+  let id ← dom.getElementById 0 "field"
+  let command := json [("op",.string "setValue"),("nodeId",.number (toString id)),("value",value)]
+  let request := WebDocument.layoutRequest (json [("commands",.array [command])])
+  let laid ← (WebDocument.layOut {} ⟨editedInput,request,320,180,0,[],[],(none,none)⟩).toOption
+  return laid.scene.glyphRuns.toList.map (·.text)
+
+#guard editedInputText (.string "typed") == some ["typed"]
+#guard editedInputText (.string "") == some ["hint"]
+#guard editedInputText .null == some ["original"]
+
 private def sheetSource := "<style>p{font-size:10px}</style><link rel=stylesheet href=one.css><style>p{font-size:30px}</style><p id=target>A</p>"
 -- Embedded/external sheets share document source order, rather than grouping
 -- fetched sheets at the beginning or end of the cascade.
@@ -574,10 +589,10 @@ private def sizeOfRoot (attrs : List (String × String)) : Nat × Nat :=
 #guard NativeSVGForgiving.imageRaster 18 18 == (36,36)
 #guard NativeSVGForgiving.imageRaster 128 128 == (256,256)
 #guard NativeSVGForgiving.imageRaster 200 200 == (200,200)
-#guard NativeSVGForgiving.imageRaster 486 169 == (243,85)
--- 2000 by 1000 is past the budget whole and at a fifth; a sixth (rounded up) fits
-#guard NativeSVGForgiving.imageRaster 2000 1000 == (334,167)
-#guard 334*167 ≤ NativeSVGForgiving.maxImagePixels && 400*200 > NativeSVGForgiving.maxImagePixels
+#guard NativeSVGForgiving.imageRaster 486 169 == (432,151)
+-- A divisor of 45/8 fits; the preceding divisor, 44/8, exceeds the pixel cap.
+#guard NativeSVGForgiving.imageRaster 2000 1000 == (356,178)
+#guard 356*178 ≤ NativeSVGForgiving.maxImagePixels && 364*182 > NativeSVGForgiving.maxImagePixels
 
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
@@ -824,6 +839,41 @@ private def tilesPage : String := "<!doctype html><title>T</title><div style='wi
   "background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGP4z8DAwMDwHwAIAAH/B2G9UwAAAABJRU5ErkJggg==);background-size:1px 2px'></div>"
 #guard renderText tilesPage [asks] != ""
 #guard mentions (renderText tilesPage [asks]) "\"diagnostics\"" == 0
+
+-- `content` with 65 parts, past `Content.maxPieces` (64): one hit with the count; 64 report nothing (issue 865)
+private def piecesPage (n : Nat) : String := "<!doctype html><title>C</title><style>p::before{content:" ++
+  String.join (List.replicate n "'a' ") ++ "}</style><p>A</p>"
+#guard mentions (renderText (piecesPage 65) [asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 65) [asks]) "\"wanted\":65" == 1
+#guard mentions (renderText (piecesPage 65) [liberal,asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 64) [asks]) "\"limit\":\"maxPieces\"" == 0
+-- custom properties that double at each reference, so one passes `CssVars.maxValueBytes` (1 MiB):
+-- 1000 bytes, doubled 11 times, is 2,048,000. 10 doublings stay under it.
+private def doublingPage (n : Nat) : String := "<!doctype html><title>V</title><style>:root{--b0:" ++ "".pushn 'x' 1000 ++ ";" ++
+  String.join ((List.range n).map fun i => s!"--b{i+1}:var(--b{i}) var(--b{i});") ++ "}p{margin:0}</style><p>A</p>"
+#guard mentions (renderText (doublingPage 11) [asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 11) [liberal,asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 8) [asks]) "\"limit\":\"maxValueBytes\"" == 0
+-- one custom property longer than the limit, declared as it is
+#guard mentions (renderText ("<!doctype html><title>V</title><style>:root{--big:" ++ "".pushn 'x' 1048577 ++ "}</style><p>A</p>") [asks]) "\"limit\":\"maxValueBytes\"" == 1
+-- `var()` fallbacks nested 32 deep end the fuel (`CssVars.maxFallbacks`); 31 deep do not
+private def nestedPage (n : Nat) : String := "<!doctype html><title>N</title><style>p{width:" ++
+  String.join (List.replicate n "var(--a, ") ++ "1px" ++ "".pushn ')' n ++ "}</style><p>A</p>"
+#guard mentions (renderText (nestedPage 32) [asks]) "\"limit\":\"maxFallbacks\"" == 1
+#guard mentions (renderText (nestedPage 31) [asks]) "\"limit\":\"maxFallbacks\"" == 0
+-- a document sheet past `Style.maxSheetBytes` (8 MiB) is left out whole and reported as `stylesheetBytes` (issue 865)
+private def bigSheetSkips (n : Nat) : Option Nat := do
+  let dom := DOM.parseHtmlDocument ("<style>" ++ "".pushn ' ' n ++ "p{margin:0}</style><p>A</p>")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal dom (importRequest []) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+  return (ds.filter (·.skip == .stylesheetBytes)).length
+#guard bigSheetSkips 8388700 == some 1
+#guard bigSheetSkips 1000 == some 0
+-- grid axes with more fixed tracks than `Grid.maxTracks` (100000): one hit with the most asked
+private def gridStyleOf (cols : String) : Array Rendering.CSS.Computed :=
+  #[{grid := (Rendering.CSS.GridStyle.set 16 {} "grid-template-columns" cols).getD {}}]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(200000, 10px)")).map (fun h => (h.name,h.limit,h.wanted)) == [("maxTracks",100000,200000)]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(100000, 10px)")).isEmpty
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(auto-fill, 10px)")).isEmpty
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.

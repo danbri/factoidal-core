@@ -69,9 +69,11 @@ finds for the name, else by the fallback, itself substituted. `missing`: a refer
 neither, or its name is not a custom property name; the declaration is then invalid at
 computed-value time. `pending`: a reference is to a property not resolved yet. `fuel`
 bounds the nesting of fallbacks. A `var(` that never closes ends with the value, as CSS
-Syntax closes an open function. -/
-def substitute (get : String → Found) : Nat → String → Found
-  | 0, _ => .missing
+Syntax closes an open function. The second part of the answer is the byte size of the value
+when it passed `maxValueBytes` (the first part is then `missing`), else 0: the host reports that
+hit (issue 865). -/
+def substituteR (get : String → Found) : Nat → String → Found × Nat
+  | 0, _ => (.missing, 0)
   | fuel + 1, value => Id.run do
     let mut out := ""
     let mut rest := value.toList
@@ -101,32 +103,77 @@ def substitute (get : String → Found) : Nat → String → Found
             match found with
             | .value v =>
               out := out ++ v
-              if out.utf8ByteSize > maxValueBytes then return .missing
-            | .pending => return .pending
+              if out.utf8ByteSize > maxValueBytes then return (.missing, out.utf8ByteSize)
+            | .pending => return (.pending, 0)
             | .missing =>
               match fallback with
-              | none => return .missing
+              | none => return (.missing, 0)
               | some fb =>
-                match substitute get fuel (String.ofList fb) with
-                | .value v =>
+                match substituteR get fuel (String.ofList fb) with
+                | (.value v, _) =>
                   out := out ++ trim v
-                  if out.utf8ByteSize > maxValueBytes then return .missing
-                | other => return other
+                  if out.utf8ByteSize > maxValueBytes then return (.missing, out.utf8ByteSize)
+                | (other, wanted) => return (other, wanted)
             rest := rest'
             afterName := false
           else
             out := out.push c
             rest := r
             afterName := isNameChar c
-    return .value out
+    return (.value out, 0)
+
+/-- `substituteR` without the size. -/
+def substitute (get : String → Found) (fuel : Nat) (value : String) : Found := (substituteR get fuel value).1
 
 /-- Kind: bound. Says: a reference nested past the fuel of fallbacks is missing (the
 declaration is invalid at computed-value time). -/
 theorem substitute_zero (get : String → Found) (value : String) : substitute get 0 value = .missing := by
-  simp [substitute]
+  simp [substitute, substituteR]
 
 /-- The most nested fallbacks that are followed. -/
 def maxFallbacks : Nat := 32
+
+/-- The levels of substitution a value can need: 0 when it has no `var(`, else one more than the
+deepest nesting of `var(` inside `var(` (each fallback is one level more). A value that needs more
+than `maxFallbacks` levels can reach the end of the fuel, and is then invalid at computed-value
+time. It counts the nesting in the text, so it is above what a value needs when the nested
+references are found: the host reports it as the number the page asked for (issue 865). One pass
+over the text, with a stack of the open brackets. -/
+def fallbackLevels (value : String) : Nat := Id.run do
+  let mut open_ : List Bool := []
+  let mut depth := 0
+  let mut best := 0
+  let mut rest := value.toList
+  let mut quote : Option Char := none
+  let mut afterName := false
+  for _ in [0:value.length + 1] do
+    match rest with
+    | [] => break
+    | c :: r =>
+      rest := r
+      match quote with
+      | some q => if c == q then quote := none
+      | none =>
+        if c == '"' || c == '\'' then
+          quote := some c
+          afterName := false
+        else if !afterName && (c == 'v' || c == 'V') && (String.ofList (r.take 3)).toLower == "ar(" then
+          rest := r.drop 3
+          open_ := true :: open_
+          depth := depth + 1
+          best := max best depth
+          afterName := false
+        else if c == '(' then
+          open_ := false :: open_
+          afterName := false
+        else if c == ')' then
+          match open_ with
+          | true :: more => open_ := more; depth := depth - 1
+          | false :: more => open_ := more
+          | [] => pure ()
+          afterName := false
+        else afterName := isNameChar c
+  return if best == 0 then 0 else best + 1
 
 /-- The value of a declaration with its `var()` references replaced. A value that does not
 mention `var(` is itself. -/

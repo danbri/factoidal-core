@@ -26,8 +26,8 @@ TS_DIRS = ["labs/demos/foafnaut", "tests/browser-wpt"]
 REPORTERS = re.compile(r"WebAccept\.skip|LimitHit|limitHit|Limit\.hit")
 # a limit that refuses the work with a message is not silent
 REFUSERS = re.compile(r"\bthrow\b|\.error\b|new Error\(")
-# Silent limits (neither report nor refuse), measured 2026-11-24. Lower it as reports land; never raise it.
-BASELINE_UNREPORTED = 46
+# Silent limits (neither report nor refuse), measured 2026-11-24 (41 after maxPieces of Content, maxValueBytes, maxFallbacks, maxTracks and maxSheetBytes reported; the audit also counts WebPaint maxPieces as reported because the name is the same, so 40 is shown). Lower it as reports land; never raise it.
+BASELINE_UNREPORTED = 41
 
 LEAN_DEF = re.compile(r"^\s*(?:private\s+)?def\s+(max[A-Z]\w*)\s*:\s*(Nat|Float|UInt\d+)\s*:=\s*(.*)$")
 TS_DEF = re.compile(r"\b(MAX_[A-Z_]+)\s*=\s*([^,;]+)")
