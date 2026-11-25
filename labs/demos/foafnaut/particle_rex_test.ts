@@ -98,3 +98,24 @@ Deno.test({name:"issue 1077: a page that commits takes the keyboard focus from t
   assert.equal(focus("file:///pages/newtab.html",true,false),"address");
   assert.equal(focus("about:blank",false,false),"address");
 }});
+
+Deno.test({name:"issue 1075: Canvas 2D text draws with the page's @font-face face of its family",ignore:!library,fn:async()=>{
+  const engine=await loadHTML(library);
+  const fonts=new URL("../../../third_party/fonts/",import.meta.url).pathname;
+  await loadFontFile(engine,fonts+"noto-sans/NotoSans-Regular.ttf","Noto Sans");
+  // The page's face (as Particle Rex holds Liberation Mono as "Particle Rex Mono"), fetched and held by the host.
+  const bytes=await Deno.readFile(fonts+"liberation-mono/LiberationMono-Regular.ttf");
+  const sha256=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
+  (engine as unknown as {webFontLoad:(b:Uint8Array,s:string)=>unknown}).webFontLoad(bytes,sha256);
+  const page=`<!doctype html><html><head><style>@font-face{font-family:"Rex Mono";src:url("rex.ttf") format("truetype")}</style></head>
+    <body><canvas id=c width=800 height=500></canvas><script>const x=document.getElementById('c').getContext('2d');
+    const w=(f,s)=>{x.font='20px '+f;return x.measureText(s).width;};
+    console.log('w '+w('Silkscreen, "Rex Mono", sans-serif','iiii')+' '+w('Silkscreen, "Rex Mono", sans-serif','WWWW')+' '+w('sans-serif','iiii'));</script></body></html>`;
+  const t=engine.scriptSession(page,{action:"start",url,resources:[],width:800,height:500,
+    layout:{url,webFonts:[{url:new URL("rex.ttf",url).href,sha256}]},engine:"bubblepop",instructionsPerMs:1e12}) as ScriptTurn;
+  assert.deepEqual(t.errors,[]);
+  const [i,w,sans]=(t.logs.find(l=>l.startsWith("w "))??"").slice(2).split(" ").map(Number);
+  assert.ok(Math.abs(i-48)<0.5&&Math.abs(w-48)<0.5,`@font-face face: ${i} ${w}`);
+  assert.ok(sans<i,`sans-serif is not the page face: ${sans}`);
+  engine.scriptSession("",{action:"close"});
+}});
