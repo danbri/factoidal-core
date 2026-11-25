@@ -1902,6 +1902,17 @@ def fontSizeKeyword : String → Option Float
 def percentOf (text : String) : Option Float :=
   if text.endsWith "%" then (number (text.dropEnd 1).toString).toOption.map (· / 100) else none
 
+private def tableFontSize (fontSize : Float) (specified : String) : String :=
+  let t := (CssValues.computed { num := { fontSize := ratOfFloat fontSize } } "font-size" specified).toLower
+  let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
+  match fontSizeKeyword t, percentOf t with
+  | some size, _ => px size
+  | _, some fraction => px (fraction * fontSize)
+  | _, _ =>
+    if t == "larger" then px (fontSize * 1.2)
+    else if t == "smaller" then px (fontSize / 1.2)
+    else t
+
 /-- A declaration this profile's parsers refused, written as they read it, when the
 property table reads it: lengths in px, colours as hex, `display` as the nearest box this
 profile lays out, border styles it does not draw as `solid`. `s` is the style so far (its
@@ -1928,17 +1939,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
             (CssValues.specified "background-color" d.value).isNone && (CssValues.specified "background" d.value).isSome then
           value "transparent"
         else none
-  | "font-size" =>
-    match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
-    | none => none
-    | some t =>
-      match fontSizeKeyword t, percentOf t with
-      | some size, _ => value (px size)
-      | _, some fraction => value (px (fraction * s.fontSize))
-      | _, _ =>
-        if t == "larger" then value (px (s.fontSize * 1.2))
-        else if t == "smaller" then value (px (s.fontSize / 1.2))
-        else value t
+  | "font-size" => (CssValues.specified "font-size" d.value).map (tableFontSize s.fontSize)
   | "line-height" =>
     match tableComputed s.fontSize "line-height" d.value with
     | none => none
@@ -2217,6 +2218,61 @@ private def applyWinner (parent start s : Computed) (d : Declaration) : Computed
   match wideSource parent start d with
   | some source => (copyProperty d.property source s).getD s
   | none => applyOrKeep s d
+
+/-- The inherited size is the base for relative font sizes. An unreadable
+declaration leaves the user agent's starting size. -/
+private def fontSizeBase (parent start s : Computed) (d : Declaration) : Computed :=
+  match wideSource parent start d with
+  | some _ => s
+  | none => if (CssValues.specified "font-size" d.value).isSome || (apply s d).toOption.isSome
+    then {s with fontSize := parent.fontSize} else s
+
+/-- Replacing the old size cannot change the direct parse of a font size in pixels. -/
+private theorem apply_fontSize_base (s : Computed) (base : Float) (value : String) (important : Bool) :
+    apply {s with fontSize := base} ⟨"font-size",value,important⟩ =
+      apply s ⟨"font-size",value,important⟩ := rfl
+
+/-- Try the direct size once. The fallback consumes the specified value that
+establishes the inherited size as its base. -/
+private def applyFontSizeWinner (parent start s : Computed) (d : Declaration) : Computed :=
+  if d.property == "font-size" then
+    match wideSource parent start d with
+    | some source => (copyProperty d.property source s).getD s
+    | none =>
+      match apply s d with
+      | .ok result => result
+      | .error _ =>
+        match CssValues.specified "font-size" d.value with
+        | none => s
+        | some specified =>
+          let base := {s with fontSize := parent.fontSize}
+          let normalized := {d with value := tableFontSize base.fontSize specified}
+          (apply base normalized).toOption.getD base
+  else
+    applyWinner parent start (fontSizeBase parent start s d) d
+
+private theorem applyFontSizeWinner_eq (parent start s : Computed) (d : Declaration) :
+    applyFontSizeWinner parent start s d = applyWinner parent start (fontSizeBase parent start s d) d := by
+  obtain ⟨property,value,important⟩ := d
+  by_cases prop : property = "font-size"
+  · subst property
+    have supported : appliedName "font-size" = true := by simp [appliedName, ownProperties]
+    cases wide : wideSource parent start ⟨"font-size",value,important⟩ with
+    | some src => simp [applyFontSizeWinner, fontSizeBase, applyWinner, wide]
+    | none =>
+      cases direct : apply s ⟨"font-size",value,important⟩ with
+      | ok result =>
+        have fromParent := apply_fontSize_base s parent.fontSize value important
+        simp [applyFontSizeWinner, fontSizeBase, applyWinner, wide, direct, Except.toOption,
+          applyOrKeep, supported, applyOrKeepSlow, fromParent]
+      | error msg =>
+        have fromParent := apply_fontSize_base s parent.fontSize value important
+        cases spec : CssValues.specified "font-size" value <;>
+          simp [applyFontSizeWinner, fontSizeBase, applyWinner, wide, direct, Except.toOption,
+            applyOrKeep, supported, applyOrKeepSlow, fromParent, tableDeclaration, tableValue, spec]
+  · simp [applyFontSizeWinner, beq_iff_eq, prop]
+
+#print axioms applyFontSizeWinner_eq
 
 /-- The ordinary winning-declaration path sets a zero pixel line height and
 clears the inherited unitless factor, preserving the remaining style fields. -/
@@ -3595,11 +3651,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     -- in a 16 px body is 64 px, not 4 × 32 px. A value that does not read keeps the user
     -- agent's size. (Until 2026-11-23 the base was the element's start, so every heading
     -- with an `em` or `%` size was twice as large, or as the user agent scales it.)
-    let base := match wideSource parent initial d with
-      | some _ => result
-      | none => if (CssValues.specified "font-size" d.value).isSome || (apply result d).toOption.isSome
-          then {result with fontSize := parent.fontSize} else result
-    result := applyWinner parent initial base d
+    result := applyFontSizeWinner parent initial result d
     -- the user agent's margins are in em of the element's own font size (`startMargin`); an
     -- author `margin` below still wins
     -- (only when the margins are still the user agent's: no presentational hint set them)
