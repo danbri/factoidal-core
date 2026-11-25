@@ -13,6 +13,7 @@ import L4Factoidal.DOM.Selectors
 import L4Factoidal.HTML.Dimension
 import Std.Data.TreeMap
 import Std.Data.HashMap
+import Std.Data.HashSet.Lemmas
 
 /-! Computed styles for an explicitly bounded CSS block/inline profile.
 Selectors: universal, type, id and class compound selectors, selector lists and
@@ -2035,6 +2036,22 @@ def appliedName (p : String) : Bool :=
     p == "counter-reset" || p == "counter-increment" || p == "counter-set" ||
     ownProperties.contains p || flexProperties.contains p || alignProperties.contains p ||
     positionProperties.contains p || gridProperties.contains p
+
+/-- Share the exact property lists between the cascade and its compiled membership lookup. -/
+private def appliedNames : Std.HashSet String :=
+  Std.HashSet.ofList (["content", "counter-reset", "counter-increment", "counter-set"] ++
+    ownProperties ++ flexProperties ++ alignProperties ++ positionProperties ++ gridProperties)
+
+private def appliedNameFast (p : String) : Bool :=
+  appliedNames.contains p || p.startsWith "-webkit-" || p.startsWith "-moz-" || p.startsWith "grid-"
+
+@[csimp] private theorem appliedName_eq_fast : @appliedName = @appliedNameFast := by
+  funext p
+  simp only [appliedName, appliedNameFast, appliedNames, Std.HashSet.contains_ofList,
+    List.contains_append, List.contains_cons, List.contains_nil, Bool.or_false]
+  ac_rfl
+
+#print axioms appliedName_eq_fast
 
 /-- Kind: equivalence (the guard of a fast path). Says: `apply` refuses a declaration of a
 property that `appliedName` does not name, whatever its value and the style. -/
