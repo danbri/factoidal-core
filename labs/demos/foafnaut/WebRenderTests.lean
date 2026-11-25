@@ -49,4 +49,11 @@ private def embedStyle :=
     (some "https://example.test/docs/")).map (·.2) ==
   ["https://example.test/icon.svg#view", "https://example.test/docs/still"]
 
+private def inlineSvg :=
+  "data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%2720%27%20height=%2720%27%3E" ++
+  "%3Crect%20width=%2720%27%20height=%2720%27%20fill=%27%2300ff00%27/%3E%3C/svg%3E"
+private def inlineSvgPage := "<style>body{margin:0}img{display:block;width:20px;height:20px}</style>"
+#guard (pixel (inlineSvgPage ++ "<img src='" ++ inlineSvg ++ "'>") 10 10).toOption == some (0,1,0)
+#guard (pixel (inlineSvgPage ++ "<img src='" ++ inlineSvg ++ "'>") 25 10).toOption == some (1,1,1)
+
 end WebRenderTests
