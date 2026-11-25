@@ -33,9 +33,9 @@ def severityClass (severity : String) : String :=
   if severity == "error" then "error" else if severity == "warning" || severity == "warn" then "warning"
   else if severity == "info" then "info" else if severity == "debug" then "debug" else "log"
 
-/-- The levels in the order the page counts them, with the word it shows for each. -/
-def levels : List (String × String) :=
-  [("error","errors"),("warning","warnings"),("info","info"),("log","logs"),("debug","debug")]
+/-- The levels in the order the page counts them, with the word it shows for one and for more. -/
+def levels : List (String × String × String) :=
+  [("error","error","errors"),("warning","warning","warnings"),("info","info","info"),("log","log","logs"),("debug","debug","debug")]
 
 /-- A script line of another level than log starts with the level between two U+0001 marks
 (the prelude's `console.warn`, `error`, `info`, `debug`): the level and the text. -/
@@ -53,7 +53,8 @@ def entryClass (e : JSON.Json) : String :=
   severityClass (((level (str e "message")).map (·.1)).getD (str e "severity" "log"))
 
 /-- One entry as a block of the page: a coloured bar and tag for its level, the source and
-level as text ("page warn", "System warning"), the message in a fixed-width font, and the
+level as text ("page warn", "System warning"), the message in a fixed-width font (its line
+breaks kept; a long line wraps), and the
 feature, place and action of a System entry. -/
 def entryHTML (e : JSON.Json) : String :=
   let source := str e "source" "page"
@@ -64,7 +65,7 @@ def entryHTML (e : JSON.Json) : String :=
   let shown := named.getD severity
   let detail := [("feature",str e "feature"),("where",str e "where"),("action",str e "action")].filter (!·.2.isEmpty)
   "<div class=\"entry " ++ severity ++ "\"><p><span class=\"tag t-" ++ severity ++ "\">" ++ escape source ++ " " ++ escape shown ++
-    "</span></p><p class=\"msg\">" ++ escape message ++ "</p>" ++
+    "</span></p><p class=\"msg\">" ++ (escape message).replace "\n" "<br>" ++ "</p>" ++
     (if detail.isEmpty then "" else
       "<p class=\"dim\">" ++ "; ".intercalate (detail.map fun (k,v) => k ++ ": " ++ escape v) ++ "</p>") ++ "</div>"
 
@@ -88,7 +89,7 @@ def style : String :=
   ".tag{display:inline-block;padding:0 8px;border-radius:4px;font-size:12px;line-height:18px;font-weight:bold}" ++
   ".t-error{background:#c62828;color:#ffffff}.t-warning{background:#d39e00;color:#1f1600}.t-info{background:#2f6fd0;color:#ffffff}" ++
   ".t-log{background:#5d6773;color:#ffffff}.t-debug{background:#7b4fc9;color:#ffffff}" ++
-  ".msg{padding-top:4px;font-family:monospace;font-size:13px;line-height:19px;white-space:pre-wrap;overflow-wrap:anywhere}" ++
+  ".msg{padding-top:4px;font-family:monospace;font-size:13px;line-height:19px;overflow-wrap:anywhere}" ++
   ".dim{color:#5a6270;font-size:13px}.empty{margin:6px 0 0;padding:12px;background:#ffffff;border:1px dashed #b8c0cc;color:#5a6270}" ++
   ".foot{padding:8px 16px 16px}.tabs{padding:0 16px 4px}</style>"
 
@@ -106,9 +107,9 @@ def page (request : JSON.Json) : String × String := Id.run do
   let head := "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>" ++
     title ++ "</title>" ++ style ++ "</head><body><main>"
   -- One chip for each level that has entries, then System; "no entries" when there are none.
-  let chips := levels.filterMap fun (cls,word) =>
+  let chips := levels.filterMap fun (cls,one,more) =>
     let n := count entries fun e => entryClass e == cls
-    if n == 0 then none else some s!"<span class=\"chip c-{cls}\">{n} {word}</span>"
+    if n == 0 then none else some s!"<span class=\"chip c-{cls}\">{n} {if n == 1 then one else more}</span>"
   let chips := chips ++ (if system == 0 then [] else [s!"<span class=\"chip c-system\">{system} System</span>"])
   let counts := "<p class=\"counts\">" ++
     (if chips.isEmpty then "<span class=\"chip c-none\">no entries</span>" else " ".intercalate chips) ++ "</p>"
@@ -147,9 +148,10 @@ def answer (request : JSON.Json) : String :=
   .object [("source",.string "page"),("message",.string "\u0001info\u0001note")],
   .object [("source",.string "System"),("severity",.string "warning"),("message",.string "skipped")]])])).1
   (src.splitOn "chip c-error\">2 errors").length == 2 && (src.splitOn "chip c-info\">1 info").length == 2 &&
-  (src.splitOn "chip c-warning\">1 warnings").length == 2 && (src.splitOn "chip c-system\">1 System").length == 2 &&
+  (src.splitOn "chip c-warning\">1 warning<").length == 2 && (src.splitOn "chip c-system\">1 System").length == 2 &&
   (src.splitOn "c-log").length == 2 && (src.splitOn "entry info").length == 2
 #guard ((page (.object [])).1.splitOn "no entries").length == 2
+#guard ((page (.object [("entries",.array [.object [("message",.string "a\nb<c")]])])).1.splitOn "a<br>b&lt;c").length == 2
 #guard severityClass "info" == "info" && severityClass "debug" == "debug" && severityClass "trace" == "log"
 
 end WebConsole
