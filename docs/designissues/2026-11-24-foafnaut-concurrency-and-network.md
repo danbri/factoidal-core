@@ -1,6 +1,6 @@
 # Foafnaut: threads, tabs, processes, DNS and HTTP connections (2026-11-24)
 
-Status: proposal. Owner question, 2026-11-24, verbatim: "how can we improve our app thru being
+Status: proposal. Tracking: https://github.com/danbri/factoidal-core/issues/1031 (umbrella). Owner question, 2026-11-24, verbatim: "how can we improve our app thru being
 more than single threaded? GPU aside, how can we have multiple tabs, windows, proxesses? How can
 we have s helper process speculatively do basic dns lookups in advance just in case? Make use of
 advanced http pipelining protocol options etc.?"
@@ -37,6 +37,32 @@ Network (`labs/demos/foafnaut/native_net.ts`, `Net/PageFetch.lean`):
 - The Veil model `formal/veil/FoafnautModels/HttpConnections.lean` already states the contract a
   connection pool must keep (pool key, stream limit, response to its owner, close fails pending
   requests, HTTP/2 flow control window). No pool implements it yet.
+
+## 0. Priority: desktop gestures, answered at once (owner, 2026-11-25)
+
+Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
+Chrome, Firefox, Safari et al." "I keep trying to command-click or CTRL-click to get a contextual
+menu on a link, or open that link in a new tab, so i can do two things at once." "I keep trying
+to highlight code or text or URLs from a page to copy or otherwise act on via buffer". "We should
+ensure all of these gut-powered interaction attempts are honoured INSTANTLY thanks to having a UX
+thread that isn't trying to run 100 JS jobs in finely sliced parallel. Make this a priority."
+
+Found in the code (`origin/main` `34c12a74`):
+
+- `native_window.m` `sendPointer` queues kind, x and y only. Pointer events carry no modifier keys
+  and no click count (key events do carry modifiers).
+- Command-click therefore follows the link in the same tab, and Control-click is a plain click.
+- A right click (kind 13) opens only the address-bar menu. There is no menu for a link, image,
+  selection or page.
+- No word selection on double click, no line or paragraph selection on triple click.
+- Copy asks the engine worker (`document.selectedText`), which has one queue for all slow Lean
+  calls, page script turns included.
+
+Rule: a gesture that a desktop browser answers at once (link click with modifiers, context menu,
+selection, copy) is answered from the frame already on screen, on the main thread or in an input
+lane that comes before script turns. It never waits for page scripts. The meaning of each gesture
+is decided in Lean (the key table and `WebShell` already do this for keys and the address bar).
+Work list: https://github.com/danbri/factoidal-core/issues/1031.
 
 ## 1a. Related work already in the tree (added 2026-11-25)
 
@@ -190,6 +216,7 @@ method; say so where a claim needs it.
 
 ## 8. Order proposed
 
+0. Section 0 (owner priority).
 1. Connection pool and HTTP/2 (section 5), with the realpages measurement.
 2. DNS cache, then speculative resolution (section 6), with its privacy rules.
 3. One engine worker per tab (section 3).

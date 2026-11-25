@@ -1050,6 +1050,21 @@ languages like Lean and Rocq."
 - Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
   tonight." This was for that night; "Work goes on main" above is the standing rule.
 
+### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
+
+Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
+Chrome, Firefox, Safari et al." and "We should ensure all of these gut-powered interaction
+attempts are honoured INSTANTLY thanks to having a UX thread that isn't trying to run 100 JS jobs
+in finely sliced parallel. Make this a priority."
+
+- Priority: Command-click and middle click open a new tab; Control-click and right click open a
+  context menu for the link, image, selection or page; double and triple click select; Command-C
+  copies at once. The decision of each gesture is in Lean.
+- Input never waits for page scripts: these gestures use the frame already shown, on the main
+  thread or in an input lane before script turns.
+- Record: `docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md` section 0; tracking
+  https://github.com/danbri/factoidal-core/issues/1031 (also threads, tabs, processes, DNS, HTTP).
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
