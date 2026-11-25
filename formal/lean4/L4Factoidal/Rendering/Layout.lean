@@ -1675,8 +1675,9 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       outlines := outlines ++ outline
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
-  let out := if under.isEmpty then out else {out with nodes := under ++ out.nodes}
-  return if outlines.isEmpty then out else {out with nodes := out.nodes ++ outlines}
+  if !under.isEmpty then out := {out with nodes := under ++ out.nodes}
+  if !outlines.isEmpty then out := {out with nodes := out.nodes ++ outlines}
+  return out
 
 /-- An entirely out-of-flow row retains its static positions and contributes no
     height, baseline or paint, even when the enclosing block supplies a strut. -/
