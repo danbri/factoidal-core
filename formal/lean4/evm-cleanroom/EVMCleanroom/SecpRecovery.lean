@@ -93,9 +93,13 @@ def mul (k : Nat) (q : Point) : Option Point := mulLoop 256 k q .infinity
 def signatureBounds (z parity r s : Nat) : Bool :=
   z < 2^256 && parity < 2 && 0 < r && r < n && 0 < s && s ≤ n/2
 
+private def requireArithmetic {α : Type} : Option α → Except Failure α
+  | none => .error .arithmeticRefusal
+  | some value => .ok value
+
 def recoveryPoint (r parity : Nat) : Except Failure Point := do
   let a := (r*r*r+7) % p
-  let y ← (powLoop p 256 ((p+1)/4) a 1).toExcept .arithmeticRefusal
+  let y ← requireArithmetic (powLoop p 256 ((p+1)/4) a 1)
   if y*y % p != a then throw .invalidSignature
   let q := Point.affine r (if y % 2 == parity then y else (p-y) % p)
   if !onCurve q then throw .invalidSignature
@@ -108,8 +112,8 @@ def combine (u v : Nat) (q : Point) : Option Point := do
 
 def candidate (z parity r s : Nat) : Except Failure Point := do
   let q ← recoveryPoint r parity
-  let inv ← (checkedInverse n r).toExcept .arithmeticRefusal
-  (combine ((n-z%n)*inv%n) (s*inv%n) q).toExcept .arithmeticRefusal
+  let inv ← requireArithmetic (checkedInverse n r)
+  requireArithmetic (combine ((n-z%n)*inv%n) (s*inv%n) q)
 
 /-- Re-evaluate the actual ECDSA verification equation for the recovered point. -/
 def verifyEquation (z r s : Nat) (q : Point) : Option Bool := do
@@ -172,7 +176,7 @@ theorem checked_point (z r s : Nat) (q out : Point)
       cases b with
       | false => simp [curve, verdict] at h
       | true =>
-        simp only [curve, Bool.not_true, Bool.false_eq_true, ↓reduceIte, verdict] at h
+        simp [curve, verdict] at h
         cases h
         exact ⟨rfl, curve, verdict⟩
 
