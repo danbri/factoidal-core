@@ -1,7 +1,7 @@
 // Independent test oracle only. RFC 9380 J.10.1 Q0/Q1, Tonelli-Shanks, direct polynomial evaluation.
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
-function rowsForMap(rootFields) {
+function rowsForMap(rootFields,genericFields) {
   const P=0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaabn, Q=P*P;
   const mod=n=>((n%P)+P)%P, F=(a,b=0n)=>[mod(a),mod(b)], zero=F(0n), one=F(1n), eq=(a,b)=>a[0]===b[0]&&a[1]===b[1];
   const add=(a,b)=>F(a[0]+b[0],a[1]+b[1]), neg=a=>F(-a[0],-a[1]), mul=(a,b)=>F(a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]);
@@ -53,15 +53,60 @@ function rowsForMap(rootFields) {
   for(const [root,fields] of rootFields){const a=fields.map(BigInt);rows.push(["maproot "+root,"ok "+map(a.slice(0,2))+" ; "+map(a.slice(2))]);}
   rows.push([`map ${P} 0`,"error noncanonical"],[`map 0 ${P}`,"error noncanonical"],["map -1 0","error invalid_decimal"],["map 0 x","error invalid_decimal"],["map "+ "9".repeat(117)+" 0","error resource_limit"],["maproot -","error signing_root_width"],["maproot 00","error signing_root_width"],["maproot zz","error invalid_hex"]);
   if(first===0||second===0||exception===0)throw Error("coverage");
-  return {rows, first,second,exception};
+
+  // Independent affine group oracle, with Euclidean inversion in Fp.
+  // Right-to-left scalar accumulation differs from the Lean mixed-Jacobian loop.
+  const HE=0xbc69f08f2ee75b3584c6a0ea91b352888e2a8e9145ad7689986ff031508ffe1329c2f178731db956d82bf015d1212b02ec0ec69d7477c1ae954cbc06689f6a359894c0adebbf6b4e8020005aaa95551n;
+  const R=0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001n;
+  function invFp(x){let a=P,b=mod(x),u=0n,v=1n;while(b){const q=a/b;[a,b]=[b,a%b];[u,v]=[v,u-q*v];}if(a!==1n)throw Error("zero inverse");return mod(u);}
+  const invAffine=a=>{const d=invFp(a[0]*a[0]+a[1]*a[1]);return F(a[0]*d,-a[1]*d);};
+  const sub=(a,b)=>add(a,neg(b));
+  function pointAdd(a,b){if(a===null)return b;if(b===null)return a;
+    const [x,y]=a,[u,v]=b;
+    if(eq(x,u)&&eq(add(y,v),zero))return null;
+    const slope=eq(x,u)?mul(mul(F(3n),mul(x,x)),invAffine(mul(F(2n),y))):mul(sub(v,y),invAffine(sub(u,x)));
+    const X=sub(sub(mul(slope,slope),x),u);
+    return [X,sub(mul(slope,sub(x,X)),y)];
+  }
+  function scalar(k,q){let acc=null;while(k){if(k&1n)acc=pointAdd(acc,q);q=pointAdd(q,q);k>>=1n;}return acc;}
+  function parsePoint(s){if(s==="infinity")return null;const v=s.split(" ").map(BigInt);if(v.length!==4)throw Error("point");return [v.slice(0,2),v.slice(2)];}
+  const fmt=q=>q===null?"infinity":q.flat().join(" ");
+  const arg=q=>q===null?"-":q.flat().join(",");
+  const negPoint=q=>q===null?null:[q[0],neg(q[1])];
+  function finish(a,b){const q=scalar(HE,pointAdd(a,b));if(q!==null){
+    if(!eq(mul(q[1],q[1]),add(pow(q[0],3n),F(4n,4n))))throw Error("cleared off curve");
+    if(scalar(R,q)!==null)throw Error("cleared outside subgroup");
+  }return fmt(q);}
+  const mapCount=rows.length;
+  const qa=parsePoint(rows[0][1].slice(3)),qb=parsePoint(rows[1][1].slice(3));
+  for(const [a,b] of [[qa,qb],[qb,qa],[qa,qa],[qa,null],[null,qa],[null,null],[qa,negPoint(qa)]])
+    rows.push(["clear "+arg(a)+" "+arg(b),"ok "+finish(a,b)]);
+  for(const [root,fields] of rootFields){const a=fields.map(BigInt);rows.push(["curveroot "+root,"ok "+finish(parsePoint(map(a.slice(0,2))),parsePoint(map(a.slice(2))))]);}
+  for(const [msg,dst,fields,kat] of genericFields){const a=fields.map(BigInt),out=finish(parsePoint(map(a.slice(0,2))),parsePoint(map(a.slice(2))));
+    if(out!==kat.map(x=>BigInt("0x"+x)).join(" "))throw Error("RFC full point mismatch");
+    rows.push(["curve "+msg+" "+dst,"ok "+out]);
+  }
+  rows.push(["clear 0,0,0,0 -","error internal_invariant"],
+    ["clear "+P+",0,0,0 -","error internal_invariant"],
+    ["clear 0,0,0 -","error operation"],
+    ["curveroot -","error signing_root_width"],
+    ["curveroot zz","error invalid_hex"],
+    ["curve - -","error dst_width"]);
+  return {rows, first,second,exception,mapCount};
 }
 const P=0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaabn;
 const h=b=>createHash('sha256').update(b).digest();
-function rootField(root){const dst=Buffer.from('BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_'),dp=Buffer.concat([dst,Buffer.from([dst.length])]);const b0=h(Buffer.concat([Buffer.alloc(64),root,Buffer.from([1,0,0]),dp]));let prev=h(Buffer.concat([b0,Buffer.from([1]),dp]));const blocks=[prev];for(let i=2;i<=8;i++){const x=Buffer.from(b0.map((v,j)=>v^prev[j]));prev=h(Buffer.concat([x,Buffer.from([i]),dp]));blocks.push(prev);}const data=Buffer.concat(blocks);return [0,64,128,192].map(i=>(BigInt('0x'+data.subarray(i,i+64).toString('hex'))%P).toString());}
+function rootField(root,dst=Buffer.from('BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_')){const dp=Buffer.concat([dst,Buffer.from([dst.length])]);const b0=h(Buffer.concat([Buffer.alloc(64),root,Buffer.from([1,0,0]),dp]));let prev=h(Buffer.concat([b0,Buffer.from([1]),dp]));const blocks=[prev];for(let i=2;i<=8;i++){const x=Buffer.from(b0.map((v,j)=>v^prev[j]));prev=h(Buffer.concat([x,Buffer.from([i]),dp]));blocks.push(prev);}const data=Buffer.concat(blocks);return [0,64,128,192].map(i=>(BigInt('0x'+data.subarray(i,i+64).toString('hex'))%P).toString());}
 const roots=[Buffer.alloc(32),Buffer.alloc(32,255),Buffer.from(Array.from({length:32},(_,i)=>i)),...Array.from({length:16},(_,i)=>h(Buffer.from('map root '+i)))];
-const {rows,first,second,exception}=rowsForMap(roots.map(root=>[root.toString('hex'),rootField(root)]));
+
+const testDST=Buffer.from("QUUX-V01-CS02-with-BLS12381G2_XMD:SHA-256_SSWU_RO_");
+const genericKAT=[
+["",["0141ebfbdca40eb85b87142e130ab689c673cf60f1a3e98d69335266f30d9b8d4ac44c1038e9dcdd5393faf5c41fb78a","05cb8437535e20ecffaef7752baddf98034139c38452458baeefab379ba13dff5bf5dd71b72418717047f5b0f37da03d","0503921d7f6a12805e72940b963c0cf3471c7b2a524950ca195d11062ee75ec076daf2d4bc358c4b190c0c98064fdd92","12424ac32561493f3fe3c260708a12b7c620e7be00099a974e259ddc7d1f6395c3c811cdd19f1e8dbf3e9ecfdcbab8d6"]],
+["abc",["02c2d18e033b960562aae3cab37a27ce00d80ccd5ba4b7fe0e7a210245129dbec7780ccc7954725f4168aff2787776e6","139cddbccdc5e91b9623efd38c49f81a6f83f175e80b06fc374de9eb4b41dfe4ca3a230ed250fbe3a2acf73a41177fd8","1787327b68159716a37440985269cf584bcb1e621d3a7202be6ea05c4cfe244aeb197642555a0645fb87bf7466b2ba48","00aa65dae3c8d732d10ecd2c50f8a1baf3001578f71c694e03866e9f3d49ac1e1ce70dd94a733534f106d4cec0eddd16"]]];
+const genericFields=genericKAT.map(([s,k])=>{const msg=Buffer.from(s);return [msg.toString("hex")||"-",testDST.toString("hex"),rootField(msg,testDST),k];});
+const {rows,first,second,exception,mapCount}=rowsForMap(roots.map(root=>[root.toString('hex'),rootField(root)]),genericFields);
 const expected=rows.map(x=>x[1]);
 function compare(actual){if(actual.length!==expected.length)throw Error('count');for(let i=0;i<expected.length;i++)if(actual[i]!==expected[i])throw Error('row '+i+': '+actual[i]+' != '+expected[i]);}
-compare(expected);const bad=[expected.slice(1),[...expected,'ok'],['ok 0 0 0 0',...expected.slice(1)],[...expected.slice(0,-1),'error noncanonical'],expected.map((x,i)=>i===1?expected[0]:x)];for(const a of bad){let caught=false;try{compare(a);}catch{caught=true;}if(!caught)throw Error('mutation escaped');}
-console.log('RFC Q0/Q1 matched; '+rows.length+' rows; '+first+' first / '+second+' second / '+exception+' exceptional; '+bad.length+' controls');
+compare(expected);const bad=[expected.slice(1),[...expected,'ok'],['ok 0 0 0 0',...expected.slice(1)],[...expected.slice(0,-1),'error noncanonical'],expected.map((x,i)=>i===1?expected[0]:x),expected.map((x,i)=>i===mapCount?'ok infinity':x)];for(const a of bad){let caught=false;try{compare(a);}catch{caught=true;}if(!caught)throw Error('mutation escaped');}
+console.log('RFC Q0/Q1 and two full points matched; '+mapCount+' retained map rows, '+(rows.length-mapCount)+' curve rows; '+first+' first / '+second+' second / '+exception+' exceptional; '+bad.length+' controls');
 if(process.argv[2]!=='--self-test'){const start=performance.now();const p=spawnSync(process.argv[2],[],{input:rows.map(x=>x[0]).join('\n')+'\n',encoding:'utf8',timeout:120000,maxBuffer:4*1024*1024});if(p.error||p.status!==0)throw Error(String(p.error||p.stderr));compare(p.stdout.trimEnd().split('\n'));console.log('PASS '+rows.length+'/'+rows.length+' native Lean G2 map rows; batch '+(performance.now()-start).toFixed(3)+' ms');}

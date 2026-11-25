@@ -111,7 +111,7 @@ jobs:
           ulimit -v 8388608
           ulimit -c 0
           python3 scripts/check-hash-to-field.py "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-results.log"
-      - name: Audit actual map theorem reports and native G2 map
+      - name: Audit actual map and cofactor theorem reports and native G2 hash-to-curve
         run: |
           set -euo pipefail
           ulimit -v 8388608
@@ -121,7 +121,8 @@ jobs:
           log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"hash-field-axioms.log").read_text()
           prefix = "EthereumConsensus.BLS.G2Map."
           expected = {prefix+n for n in ("mapField_noncanonical","mapField_delegates","checkedTarget_ok",
-              "checkedTarget_infinity","mapField_ok","mapSigningRoot_hash_error","mapSigningRoot_delegates")}
+              "checkedTarget_infinity","mapField_ok","mapSigningRoot_hash_error","mapSigningRoot_delegates",
+              "clearCheck_ok","clearMapped_ok","hashSigningRoot_error","hashSigningRoot_delegates","hashToCurve_error","hashToCurve_delegates")}
           def audit(t):
               reports = re.findall(r"'(EthereumConsensus\.BLS\.G2Map\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
               if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
@@ -137,7 +138,7 @@ jobs:
               except ValueError:
                   continue
               raise ValueError("map audit mutation escaped")
-          print("Seven actual map theorem reports and four audit controls passed")
+          print("Thirteen actual map/curve theorem reports and four audit controls passed")
           PY
           node scripts/check-g2-map.mjs "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/g2-map-results.log"
       - uses: actions/upload-artifact@v4

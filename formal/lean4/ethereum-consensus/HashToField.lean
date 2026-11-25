@@ -364,6 +364,176 @@ theorem mapSigningRoot_delegates (root : ByteArray) (a : Array Nat)
 #print axioms EthereumConsensus.BLS.G2Map.mapSigningRoot_hash_error
 #print axioms EthereumConsensus.BLS.G2Map.mapSigningRoot_delegates
 
+
+-- Reuse the repository-owned G2Signature Jacobian tangent and mixed chord.
+private structure Projective where
+  x : Fp2
+  y : Fp2
+  z : Fp2
+
+private def infinity : Projective := ⟨zero,one,zero⟩
+
+-- Jacobian tangent and chord with cleared denominators.
+private def double (p : Projective) : Projective :=
+  if p.z = zero ∨ p.y = zero then infinity
+  else
+    let b := square p.y
+    let d := scale 4 (times p.x b)
+    let e := scale 3 (square p.x)
+    let x := minus (square e) (scale 2 d)
+    let y := minus (times e (minus d x)) (scale 8 (square b))
+    ⟨x,y,scale 2 (times p.y p.z)⟩
+
+private def addMixed (p : Projective) (q : Point) : Projective :=
+  if p.z = zero then ⟨q.x,q.y,one⟩
+  else
+    let zz := square p.z
+    let h := minus (times q.x zz) p.x
+    let r := minus (times q.y (times zz p.z)) p.y
+    if h = zero then
+      if r = zero then double p else infinity
+    else
+      let hh := square h
+      let hhh := times h hh
+      let v := times p.x hh
+      let x := minus (minus (square r) hhh) (scale 2 v)
+      let y := minus (times r (minus v x)) (times p.y hhh)
+      ⟨x,y,times p.z h⟩
+
+
+private def groupOrder : Nat :=
+  0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001
+
+def effectiveCofactor : Nat :=
+  0xbc69f08f2ee75b3584c6a0ea91b352888e2a8e9145ad7689986ff031508ffe1329c2f178731db956d82bf015d1212b02ec0ec69d7477c1ae954cbc06689f6a359894c0adebbf6b4e8020005aaa95551
+
+private def scalarLoop (k : Nat) (q : Point) : Nat → Projective → Projective
+  | 0, acc => acc
+  | n+1, acc =>
+    let d := double acc
+    scalarLoop k q n (if (k / 2^n)%2 = 1 then addMixed d q else d)
+
+private def normalise (p : Projective) : Option Point :=
+  if p.z = zero then none
+  else
+    let iz := inverse p.z
+    let iz2 := square iz
+    some ⟨times p.x iz2, times p.y (times iz2 iz)⟩
+
+private def liftPoint : Option Point → Projective
+  | none => infinity
+  | some q => ⟨q.x,q.y,one⟩
+
+private def addPoints (a b : Option Point) : Option Point :=
+  match b with
+  | none => a
+  | some q => normalise (addMixed (liftPoint a) q)
+
+def subgroupCheck (q : Point) : Bool :=
+  decide ((scalarLoop groupOrder q 255 infinity).z = zero)
+
+private def clearCheck (q : Option Point) : Except MapError (Option Point) :=
+  match q with
+  | none => .ok none
+  | some p =>
+    if onTarget p && subgroupCheck p then .ok (some p)
+    else .error .internalInvariant
+
+private def pointAdmitted : Option Point → Bool
+  | none => true
+  | some p => onTarget p
+
+private def clearSum (a b : Option Point) : Option Point :=
+  match addPoints a b with
+  | none => none
+  | some q => normalise (scalarLoop effectiveCofactor q 636 infinity)
+
+def clearMapped (a b : Option Point) : Except MapError (Option Point) :=
+  if pointAdmitted a && pointAdmitted b then clearCheck (clearSum a b)
+  else .error .internalInvariant
+
+private def complete (m : Except MapError (Option Point × Option Point)) :
+    Except MapError (Option Point) :=
+  match m with
+  | .error e => .error e
+  | .ok (a,b) => clearMapped a b
+
+def hashSigningRoot (root : ByteArray) : Except MapError (Option Point) :=
+  complete (mapSigningRoot root)
+
+def hashToCurve (msg dst : ByteArray) : Except MapError (Option Point) :=
+  complete (match HashField.hashToField msg dst with
+    | .error e => .error (.hashError e)
+    | .ok a => mapCoefficients a)
+
+/-- Kind: checked output.
+Says: finite output of the concrete final checker passes both predicates.
+Does not say: group-law correctness or completeness. -/
+theorem clearCheck_ok (q out : Point) (h : clearCheck (some q) = .ok (some out)) :
+    q = out ∧ (onTarget out && subgroupCheck out) = true := by
+  by_cases hc : (onTarget q && subgroupCheck q) = true
+  · simp only [clearCheck,if_pos hc,Except.ok.injEq,Option.some.injEq] at h
+    subst out
+    exact ⟨rfl,hc⟩
+  · simp only [clearCheck,if_neg hc] at h
+    cases h
+
+private theorem clearCheck_finite (q : Option Point) (out : Point)
+    (h : clearCheck q = .ok (some out)) : (onTarget out && subgroupCheck out) = true := by
+  cases q with
+  | none =>
+    simp only [clearCheck,Except.ok.injEq] at h
+    cases h
+  | some p => exact (clearCheck_ok p out h).2
+
+/-- Kind: public output invariant.
+Says: a successful finite clearing result passes both executable predicates.
+Does not say: the predicates are universally equivalent to the mathematical group. -/
+theorem clearMapped_ok (a b : Option Point) (out : Point)
+    (h : clearMapped a b = .ok (some out)) : (onTarget out && subgroupCheck out) = true := by
+  by_cases hc : (pointAdmitted a && pointAdmitted b) = true
+  · simp only [clearMapped,if_pos hc] at h
+    exact clearCheck_finite (clearSum a b) out h
+  · simp only [clearMapped,if_neg hc] at h
+    cases h
+
+/-- Kind: linkage.
+Says: map failures propagate into the public hash-to-curve.
+Does not say: the root is authenticated. -/
+theorem hashSigningRoot_error (root : ByteArray) (e : MapError)
+    (h : mapSigningRoot root = .error e) : hashSigningRoot root = .error e := by
+  simp only [hashSigningRoot,h,complete]
+
+/-- Kind: linkage.
+Says: a mapped root uses the actual clearing function.
+Does not say: universal RFC refinement. -/
+theorem hashSigningRoot_delegates (root : ByteArray) (a b : Option Point)
+    (h : mapSigningRoot root = .ok (a,b)) : hashSigningRoot root = clearMapped a b := by
+  simp only [hashSigningRoot,h,complete]
+
+/-- Kind: linkage.
+Says: generic hash-to-field errors propagate.
+Does not say: all admitted messages map successfully. -/
+theorem hashToCurve_error (msg dst : ByteArray) (e : HashField.HashError)
+    (h : HashField.hashToField msg dst = .error e) :
+    hashToCurve msg dst = .error (.hashError e) := by
+  simp only [hashToCurve,h,complete]
+
+/-- Kind: linkage.
+Says: generic hash-to-field success enters the same concrete completion path.
+Does not say: signature verification. -/
+theorem hashToCurve_delegates (msg dst : ByteArray) (a : Array Nat)
+    (h : HashField.hashToField msg dst = .ok a) :
+    hashToCurve msg dst = complete (mapCoefficients a) := by
+  simp only [hashToCurve,h]
+
+#print axioms EthereumConsensus.BLS.G2Map.clearCheck_ok
+#print axioms EthereumConsensus.BLS.G2Map.clearMapped_ok
+#print axioms EthereumConsensus.BLS.G2Map.hashSigningRoot_error
+#print axioms EthereumConsensus.BLS.G2Map.hashSigningRoot_delegates
+#print axioms EthereumConsensus.BLS.G2Map.hashToCurve_error
+#print axioms EthereumConsensus.BLS.G2Map.hashToCurve_delegates
+
 end EthereumConsensus.BLS.G2Map
 
 -- Test-only byte transport. No host hash or field answer.
@@ -429,8 +599,40 @@ private def dispatchHash (s : String) : Except String String := do
     | _ => throw "operation"
   return "ok " ++ String.intercalate " " (result.toList.map toString)
 
+
+private def readClearPoint (s : String) : Except String (Option EthereumConsensus.BLS.G2Map.Point) := do
+  if s = "-" then return none
+  match s.splitOn "," with
+  | [a,b,c,d] =>
+    let x ← readMapNat a
+    let y ← readMapNat b
+    let z ← readMapNat c
+    let w ← readMapNat d
+    return some ⟨⟨x,y⟩,⟨z,w⟩⟩
+  | _ => throw "operation"
+
+private def clearDispatch (a b : String) : Except String String := do
+  let p ← readClearPoint a
+  let q ← readClearPoint b
+  let out ← (EthereumConsensus.BLS.G2Map.clearMapped p q).mapError mapErrorName
+  return "ok " ++ printMapPoint out
+
+private def curveDispatch (msg dst : String) : Except String String := do
+  let m ← readHex msg
+  let d ← readHex dst
+  let out ← (EthereumConsensus.BLS.G2Map.hashToCurve m d).mapError mapErrorName
+  return "ok " ++ printMapPoint out
+
+private def curveRootDispatch (root : String) : Except String String := do
+  let bytes ← readHex root
+  let out ← (EthereumConsensus.BLS.G2Map.hashSigningRoot bytes).mapError mapErrorName
+  return "ok " ++ printMapPoint out
+
 private def dispatch (s : String) : Except String String :=
   match s.splitOn " " with
+  | ["clear",a,b] => clearDispatch a b
+  | ["curve",msg,dst] => curveDispatch msg dst
+  | ["curveroot",root] => curveRootDispatch root
   | ["map",a,b] => mapDispatch a b
   | ["maproot",root] => mapRootDispatch root
   | _ => dispatchHash s
