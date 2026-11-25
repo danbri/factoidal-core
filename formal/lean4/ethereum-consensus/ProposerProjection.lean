@@ -162,6 +162,18 @@ theorem authentication_verdicts (q : ProjectionRequest) (e : ProposerEvidence)
     q.slotSiblings q.forkSiblings q.genesisSiblings q.stateRoot q.sigA q.sigB e h
   exact hs.2
 
+/-- Kind: linkage. Says: successful checked sequencing witnesses both stages.
+Does not say: anything about the computations supplying those stages. -/
+private theorem checkedSequence_success {E A B : Type}
+    (input : Except E A) (next : A → Except E B) (out : B)
+    (h : (match input with
+          | .error e => .error e
+          | .ok a => next a) = .ok out) :
+    ∃ a : A, input = .ok a ∧ next a = .ok out := by
+  cases input with
+  | error e => cases h
+  | ok a => exact ⟨a, rfl, h⟩
+
 /-- Kind: security linkage. Says: success of the exported raw-input path
 requires both concrete BLS verdicts and both concrete replacement membership
 verdicts on the returned roots. Does not say: a complete consensus post-state,
@@ -181,17 +193,16 @@ theorem successful_projection (q : ProjectionRequest) (out : PartialCommitment)
   | ok e =>
     have hs := h
     rw [authentication_success q e ha] at hs
-    cases hp : buildProjection q with
-    | error reason =>
-      simp only [projectChecked, hp] at hs
-      cases hs
-    | ok p =>
-      have hc : acceptProjection q p = .ok out := by
-        simpa only [projectChecked, hp] using hs
-      obtain ⟨he, r, t, hr, hb, ht, hd⟩ := accepted_projection q p out hc
-      obtain ⟨h1, h2⟩ := authentication_verdicts q e ha
-      subst out
-      exact ⟨e, r, t, by simp [ha], h1, h2, hr, hb, ht, hd⟩
+    have hseq : (match buildProjection q with
+      | .error reason => .error reason
+      | .ok p => acceptProjection q p) = .ok out := hs
+    obtain ⟨p, _, hc⟩ :=
+      @checkedSequence_success ProjectionError PartialCommitment PartialCommitment
+        (buildProjection q) (acceptProjection q) out hseq
+    obtain ⟨he, r, t, hr, hb, ht, hd⟩ := accepted_projection q p out hc
+    obtain ⟨h1, h2⟩ := authentication_verdicts q e ha
+    subst out
+    exact ⟨e, r, t, by simp only [ha], h1, h2, hr, hb, ht, hd⟩
 
 #print axioms EthereumConsensus.SSZ.ProposerProjection.accepted_projection
 #print axioms EthereumConsensus.SSZ.ProposerProjection.authentication_verdicts
