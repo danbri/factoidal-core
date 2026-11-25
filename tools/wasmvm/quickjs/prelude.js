@@ -2930,9 +2930,15 @@
     const flush = () => {
       queued = false;
       if (q.length === 0) return;
-      // Numbers as text (op 203) unless the batch carries bytes (op 200): filling a typed
-      // array costs more than joining in BubblePopJS, and Lean reads both exactly.
-      const text = tailLen === 0, payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
+      // Numbers as text (op 203) when every number is an integer and the batch carries no
+      // bytes, else binary (op 200). Lean reads both exactly. In BubblePopJS joining integers
+      // costs less than filling a typed array, but a fraction costs about 20 microseconds
+      // to print (shortest digits by exact arithmetic) against about 1 to pack: a game frame
+      // of 2,000 fillRect calls with fractional coordinates spent most of its time in the
+      // join (issue 1031, Particle Rex).
+      let text = tailLen === 0;
+      if (text) for (let i = 0; i < q.length; i++) { const v = q[i]; if (v !== Math.trunc(v)) { text = false; break; } }
+      const payload = text ? q.join(',') : pack(q, tails, tailLen), header = JSON.stringify(strs);
       q = []; strs = []; strIx = new Map(); tails = []; tailLen = 0; selected = -1;
       const r = n.gpu(text ? 203 : 200, header, payload);
       if (typeof r === 'number') console.warn('Canvas 2D: import error ' + r);
