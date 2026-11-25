@@ -1154,10 +1154,104 @@ element and rule was 95% of a Wikipedia layout). -/
 structure ElemKey where
   classes : List String := []
   id : String := ""
+  /-- The ancestor filter of the element (`ancOf`): empty when none was made, which stands
+  for every key (`ancAdmits`). The matcher of compounds reads only `classes` and `id`. -/
+  anc : Array Nat := #[]
   deriving Inhabited
-def ElemKey.read (n : DOM.Node) : ElemKey := ⟨words (attrValue n "class"), attrValue n "id"⟩
+def ElemKey.read (n : DOM.Node) : ElemKey := { classes := words (attrValue n "class"), id := attrValue n "id" }
 /-- The keys of each node, read from the arena when asked: the reference. -/
 def readKeys (dom : Dom) : Nat → ElemKey := fun i => ElemKey.read (dom.get i)
+
+/-! ### The ancestor filter
+
+A selector with a descendant or child combinator names keys (type, `id`, classes) that an
+ancestor of the element must have. Most elements of a real page lack the ancestor that a
+rule names (Wikipedia's `.ns-100 .mw-parser-output :not(.notheme)` is tried on every
+element), and the matcher then walks to the root before it fails. As browsers do (an
+ancestor Bloom filter), each element has a bit set of the keys of its ancestors
+(`ancOf`, held in `ElemKey.anc`), and a selector is tried only when each key that it
+requires of an ancestor (`Selector.need`) is in the set. A key that is not in the set is
+not on any ancestor, so the selector does not match; a key that is in it by a hash
+collision costs one matcher call, as before (`ancAdmits`). The filter is a necessary
+condition only: `RuleIndex.matched_eq_plain` is its equivalence with the plain matcher. -/
+
+/-- The bit slots of a filter: 9 words of 60 bits. -/
+def ancSlots : Nat := 540
+/-- The bit of a key. -/
+def ancBit (s : String) : Nat := (String.hash s).toNat
+/-- Whether the filter has the bit of a key. -/
+def ancTest (anc : Array Nat) (b : Nat) : Bool :=
+  (anc.getD ((b % ancSlots) / 60) 0).testBit ((b % ancSlots) % 60)
+/-- The filter with the bit of a key set. -/
+def ancSet (anc : Array Nat) (b : Nat) : Array Nat :=
+  anc.set! ((b % ancSlots) / 60) (anc.getD ((b % ancSlots) / 60) 0 ||| (1 <<< ((b % ancSlots) % 60)))
+/-- A selector is tried on an element when the element's filter has each key `need`, or when
+the element has no filter. -/
+def ancAdmits (anc : Array Nat) (need : List Nat) : Bool := anc.isEmpty || need.all (ancTest anc)
+
+/-- The keys that a node gives to the filters of its descendants: its type (`lname`), its `id`
+and its classes as the compound matcher reads them, and the classes and `id` values that
+`DOM.Selectors` reads (white space as in HTML, and every `id` attribute). -/
+def ownOf (n : DOM.Node) : List Nat :=
+  let k := ElemKey.read n
+  ancBit n.lname :: ancBit k.id :: k.classes.map ancBit ++
+    (DOM.Selectors.wsSplit (attrValue n "class")).map ancBit ++
+    n.attrs.toList.filterMap fun a => if a.ns.isNone && a.lname == "id" then some (ancBit a.value) else none
+
+/-- The filter of an element whose parent chain starts at `start`: the keys of every ancestor
+(`own`). When the chain is longer than the fuel (a cycle), the empty filter, which admits all. -/
+def ancWalk (dom : Dom) (own : Nat → List Nat) : Nat → Option Nat → Array Nat → Array Nat
+  | 0, some _, _ => #[]
+  | _, none, acc => acc
+  | f+1, some p, acc => ancWalk dom own f (dom.get p).parent ((own p).foldl ancSet acc)
+
+/-- The filter of element `i`; none for a node that is no element. -/
+def ancOf (dom : Dom) (own : Nat → List Nat) (i : Nat) : Array Nat :=
+  if (dom.get i).type == .element then
+    ancWalk dom own (dom.size + 1) (dom.get i).parent (Array.replicate 9 0)
+  else #[]
+
+/-- The keys that each node of an arena gives to its descendants, made once. -/
+def ownTable (dom : Dom) : Array (List Nat) := dom.nodes.map ownOf
+/-- The keys of node `p`: from the table, or made (a node outside the table). -/
+def ownGet (t : Array (List Nat)) (dom : Dom) (p : Nat) : List Nat :=
+  match t[p]? with
+  | some l => l
+  | none => ownOf (dom.get p)
+
+/-- The keys that a selector's compounds require of the ancestors of the element: each
+compound after the rightmost. -/
+def needOfCompound (c : Compound) : List Nat :=
+  (c.tag.toList ++ c.id.toList ++ c.classes).map ancBit
+
+/-- The id, classes and lower-case type of a compound of `DOM.Selectors`, outside `:not()`,
+`:is()` and the other functional pseudo-classes. -/
+def needSimples : List DOM.Selectors.Simple → List Nat
+  | [] => []
+  | .cls v :: r => ancBit v :: needSimples r
+  | .id v :: r => ancBit v :: needSimples r
+  | .type _ (some n) :: r =>
+    if DOM.Selectors.lowerAscii n == n then ancBit n :: needSimples r else needSimples r
+  | _ :: r => needSimples r
+
+/-- The keys that the compounds of a complex selector require of ancestors. `parts` is the
+subject first, each with the combinator between it and the part on its left
+(`DOM.Selectors.matchFrom`); a part is an ancestor of the subject while the combinators
+before it are descendant or child combinators. -/
+def needChain : List (Char × List DOM.Selectors.Simple) → List Nat
+  | [] => []
+  | (comb, _) :: rest =>
+    if comb == ' ' || comb == '>' then
+      (match rest with
+       | [] => []
+       | (_, c) :: _ => needSimples c ++ needChain rest)
+    else []
+
+/-- The keys that a selector requires of the ancestors of the element it matches. -/
+def Selector.need (sel : Selector) : List Nat :=
+  match sel.complex with
+  | none => (sel.parts.drop 1).flatMap needOfCompound
+  | some (.mk parts) => needChain parts.reverse
 
 /-- The fields of a compound on element `id`, the test of `:host` apart. -/
 private def compoundFieldsK (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat) (s : Compound) : Bool :=
@@ -1202,28 +1296,76 @@ def selectorMatches (dom : Dom) (id : Nat) (sel : Selector) (state : ElementStat
 
 /-- The keys of every node of an arena, read once. -/
 def ElemKeys := Array ElemKey
-def ElemKeys.of (dom : Dom) : ElemKeys := dom.nodes.map ElemKey.read
+def ElemKeys.of (dom : Dom) : ElemKeys :=
+  let ownT := ownTable dom
+  (dom.nodes.map ElemKey.read).mapIdx fun i k => { k with anc := ancOf dom (ownGet ownT dom) i }
 /-- The keys of node `i`: from the table, or read (a node outside the table). -/
 def ElemKeys.get (ks : ElemKeys) (dom : Dom) (i : Nat) : ElemKey :=
   match (show Array ElemKey from ks)[i]? with
   | some k => k
   | none => ElemKey.read (dom.get i)
 
-/-- The table gives the keys that the arena gives. -/
-theorem ElemKeys.get_of (dom : Dom) : (ElemKeys.of dom).get dom = readKeys dom := by
-  funext i
+/-- Two key functions that give the same classes and `id` (the matcher reads no more of
+them: not the ancestor filter). -/
+def SameKeys (k1 k2 : Nat → ElemKey) : Prop :=
+  ∀ i, (k1 i).classes = (k2 i).classes ∧ (k1 i).id = (k2 i).id
+
+/-- The table gives the classes and `id` that the arena gives. -/
+theorem ElemKeys.get_of (dom : Dom) : SameKeys ((ElemKeys.of dom).get dom) (readKeys dom) := by
+  intro i
   unfold ElemKeys.get ElemKeys.of readKeys Dom.get
-  rw [Array.getElem?_map]
+  rw [Array.getElem?_mapIdx, Array.getElem?_map]
   cases h : dom.nodes[i]? with
   | none => simp [Array.getD]
   | some n =>
     have hi := (Array.getElem?_eq_some_iff.mp h)
     simp [Array.getD, hi.1, hi.2]
 
+private theorem compoundFieldsK_congr {k1 k2 : Nat → ElemKey} (h : SameKeys k1 k2) (dom : Dom)
+    (state : ElementState) (id : Nat) (s : Compound) :
+    compoundFieldsK k1 dom state id s = compoundFieldsK k2 dom state id s := by
+  unfold compoundFieldsK; rw [(h id).1, (h id).2]
+
+private theorem compoundMatchesK_congr {k1 k2 : Nat → ElemKey} (h : SameKeys k1 k2) (dom : Dom)
+    (state : ElementState) (id : Nat) (s : Compound) :
+    compoundMatchesK k1 dom state id s = compoundMatchesK k2 dom state id s := by
+  unfold compoundMatchesK; rw [compoundFieldsK_congr h]
+
+private theorem matchAncestorsK_congr {k1 k2 : Nat → ElemKey} (h : SameKeys k1 k2) (dom : Dom)
+    (state : ElementState) (sel : Compound) :
+    ∀ (f : Nat) (anc : Option Nat), matchAncestorsK k1 dom state f anc sel = matchAncestorsK k2 dom state f anc sel
+  | 0, _ => rfl
+  | _+1, none => rfl
+  | f+1, some id => by
+    simp only [matchAncestorsK]
+    rw [compoundMatchesK_congr h, matchAncestorsK_congr h dom state sel f]
+
+private theorem partsMatchK_congr {k1 k2 : Nat → ElemKey} (h : SameKeys k1 k2) (dom : Dom)
+    (state : ElementState) :
+    ∀ (parts : List Compound) (anc : Option Nat), partsMatchK k1 dom state parts anc = partsMatchK k2 dom state parts anc
+  | [], _ => rfl
+  | sel::rest, anc => by
+    simp only [partsMatchK]
+    rw [matchAncestorsK_congr h dom state sel]
+    cases matchAncestorsK k2 dom state (dom.size+1) anc sel with
+    | none => rfl
+    | some id => exact partsMatchK_congr h dom state rest _
+
+/-- The matcher of compounds reads the classes and `id` of the keys, and no more. -/
+theorem selectorMatchesK_congr {k1 k2 : Nat → ElemKey} (h : SameKeys k1 k2) (dom : Dom) (id : Nat)
+    (sel : Selector) (state : ElementState) :
+    selectorMatchesK k1 dom id sel state = selectorMatchesK k2 dom id sel state := by
+  unfold selectorMatchesK selectorPartsMatchK
+  cases sel.parts with
+  | nil => rfl
+  | cons head rest =>
+    simp only []
+    rw [compoundMatchesK_congr h, partsMatchK_congr h]
+
 /-- The matcher over a key table is the matcher of the arena. -/
 theorem selectorMatchesK_of (dom : Dom) (id : Nat) (sel : Selector) (state : ElementState) :
-    selectorMatchesK ((ElemKeys.of dom).get dom) dom id sel state = selectorMatches dom id sel state := by
-  rw [ElemKeys.get_of]; rfl
+    selectorMatchesK ((ElemKeys.of dom).get dom) dom id sel state = selectorMatches dom id sel state :=
+  selectorMatchesK_congr (ElemKeys.get_of dom) dom id sel state
 
 /-! ### Selectors of shadow trees (CSS Scoping 1 §3)
 
@@ -3582,6 +3724,9 @@ structure RuleIndex where
   byClass : Std.HashMap String (Array Nat) := {}
   byTag : Std.HashMap String (Array Nat) := {}
   universal : Array Nat := #[]
+  /-- For each entry, the keys that each of its selectors requires of the ancestors of an
+  element it matches (`Selector.need`): `RuleIndexB.finish` makes it. -/
+  needs : Array (List (List Nat)) := #[]
 
 private def bucketAdd (m : Std.HashMap String (List Nat)) (k : String) (i : Nat) : Std.HashMap String (List Nat) :=
   match m.get? k with
@@ -3607,16 +3752,21 @@ def RuleIndexB.add (b : RuleIndexB) (bk : Bucket) (i : Nat) : RuleIndexB :=
   | .never => b
 
 def RuleIndexB.finish (b : RuleIndexB) (entries : Array (Nat × Rule)) : RuleIndex :=
-  ⟨entries, bucketArrays b.byId, bucketArrays b.byClass, bucketArrays b.byTag, b.universal.reverse.toArray⟩
+  ⟨entries, bucketArrays b.byId, bucketArrays b.byClass, bucketArrays b.byTag, b.universal.reverse.toArray,
+    entries.map fun e => e.2.selectors.map Selector.need⟩
 
-/-- The buckets of `rules` (and the user agent's): one pass over the selectors. -/
-def RuleIndex.build (rules : List Rule) : RuleIndex := Id.run do
-  let entries := (ruleEntries rules).toArray
+/-- The buckets of the selectors of `entries`: one pass. -/
+def RuleIndexB.ofEntries (entries : Array (Nat × Rule)) : RuleIndexB := Id.run do
   let mut b : RuleIndexB := {}
   for h : i in [:entries.size] do
     for sel in entries[i].2.selectors do
       b := b.add sel.bucket i
-  return b.finish entries
+  return b
+
+/-- The buckets of `rules` (and the user agent's): one pass over the selectors. -/
+def RuleIndex.build (rules : List Rule) : RuleIndex :=
+  let entries := (ruleEntries rules).toArray
+  (RuleIndexB.ofEntries entries).finish entries
 
 /-- The union of two ascending arrays, ascending, each value once: one pass, no recursion. -/
 def RuleIndex.mergeAsc (a b : Array Nat) : Array Nat := Id.run do
@@ -3676,12 +3826,364 @@ def RuleIndex.candidates (ix : RuleIndex) (k : ElemKey) (lname : String) : Array
     if let some a := ix.byClass[cl]? then runs := runs.push a
   return RuleIndex.mergeRuns runs
 
-/-- The rules that match element `id`, from its buckets. -/
-def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
+/-- The rules that match element `id`, from its buckets: the reference (`matched` adds the
+ancestor filter). -/
+def RuleIndex.matchedPlain (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
   (ix.candidates (keys id) (dom.get id).lname).toList.filterMap fun i =>
     match ix.entries[i]? with
     | some e => matchEntry keys dom id state e
     | none => none
+
+/-- The selectors of a list that match element `id`, each tried only when the ancestor
+filter `anc` admits the keys that it requires (`needs`, one list for each selector). -/
+def matchSelsA (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (anc : Array Nat) :
+    List Selector → List (List Nat) → List Selector
+  | s :: ss, n :: ns =>
+    if ancAdmits anc n && selectorMatchesK keys dom id s state then s :: matchSelsA keys dom id state anc ss ns
+    else matchSelsA keys dom id state anc ss ns
+  | _, _ => []
+
+/-- `matchEntry` with the ancestor filter: `needs` are the `Selector.need` of its selectors. -/
+def matchEntryA (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule)
+    (needs : List (List Nat)) : Option Match :=
+  let m := matchSelsA keys dom id state (keys id).anc e.2.selectors needs
+  if m.isEmpty then none else some (e.1,e.2,m)
+
+/-- The rules that match element `id`, from its buckets and the ancestor filter of its keys. -/
+def RuleIndex.matched (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState := {}) : List Match :=
+  (ix.candidates (keys id) (dom.get id).lname).toList.filterMap fun i =>
+    match ix.entries[i]?, ix.needs[i]? with
+    | some e, some ns => matchEntryA keys dom id state e ns
+    | some e, none => matchEntry keys dom id state e
+    | none, _ => none
+
+/-! ### The ancestor filter is a necessary condition
+
+The facts about the bit sets, then: a selector of compounds that matches an element needs
+only keys that the ancestors have (`selectorPartsMatchK_need`), the table of `ElemKeys.of`
+has each ancestor's keys in each element's filter (`ElemKeys.get_covers`), and so the
+filtered matches are the plain ones (`RuleIndex.matched_eq_plain`). For a selector with
+`complex` the necessary condition is the premise `NeedSound` of that theorem, which
+`CascadeTests` checks on many pages; it is not proved here (the matcher of
+`DOM.Selectors` walks ancestors in `for` loops). -/
+
+theorem ancSet_size (a : Array Nat) (b : Nat) : (ancSet a b).size = a.size := by simp [ancSet]
+
+theorem foldl_ancSet_size (l : List Nat) : ∀ (a : Array Nat), (l.foldl ancSet a).size = a.size := by
+  induction l with
+  | nil => intro a; rfl
+  | cons x xs ih => intro a; simp only [List.foldl_cons]; rw [ih, ancSet_size]
+
+private theorem getD_set_self (a : Array Nat) (i : Nat) (hi : i < a.size) (v : Nat) :
+    (a.set! i v).getD i 0 = v := by
+  simp [Array.set!, Array.getD, hi]
+
+private theorem getD_set_ne (a : Array Nat) (i j : Nat) (hij : i ≠ j) (v : Nat) :
+    (a.set! i v).getD j 0 = a.getD j 0 := by
+  simp only [Array.set!, Array.getD, Array.size_setIfInBounds]
+  by_cases h : j < a.size
+  · simp [h, hij]
+  · simp [h]
+
+theorem ancTest_ancSet_self (a : Array Nat) (b : Nat) (hs : a.size = 9) : ancTest (ancSet a b) b = true := by
+  unfold ancTest ancSet ancSlots
+  rw [getD_set_self a _ (by omega)]
+  simp [Nat.testBit_or, Nat.testBit_shiftLeft]
+
+theorem ancTest_ancSet_mono (a : Array Nat) (b b' : Nat) (hs : a.size = 9) (h : ancTest a b = true) :
+    ancTest (ancSet a b') b = true := by
+  unfold ancTest ancSet ancSlots at *
+  by_cases hw : (b' % 540) / 60 = (b % 540) / 60
+  · rw [hw, getD_set_self a _ (by omega), Nat.testBit_or, h, Bool.true_or]
+  · rw [getD_set_ne a _ _ hw]
+    exact h
+
+theorem ancTest_foldl_mono (l : List Nat) : ∀ (a : Array Nat) (b : Nat), a.size = 9 → ancTest a b = true →
+    ancTest (l.foldl ancSet a) b = true := by
+  induction l with
+  | nil => intro a b _ h; exact h
+  | cons x xs ih =>
+    intro a b hs h
+    simp only [List.foldl_cons]
+    exact ih _ _ (by rw [ancSet_size]; exact hs) (ancTest_ancSet_mono a b x hs h)
+
+theorem ancTest_foldl_mem (l : List Nat) : ∀ (a : Array Nat) (b : Nat), a.size = 9 → b ∈ l →
+    ancTest (l.foldl ancSet a) b = true := by
+  induction l with
+  | nil => intro a b _ h; simp at h
+  | cons x xs ih =>
+    intro a b hs hb
+    simp only [List.foldl_cons]
+    have hs' : (ancSet a x).size = 9 := by rw [ancSet_size]; exact hs
+    rcases List.mem_cons.mp hb with rfl | hb
+    · exact ancTest_foldl_mono xs _ _ hs' (ancTest_ancSet_self a _ hs)
+    · exact ih _ _ hs' hb
+
+/-- Node `a` is `start`, or an ancestor of it on the parent chain. -/
+inductive Reach (dom : Dom) : Option Nat → Nat → Prop
+  | here (a : Nat) : Reach dom (some a) a
+  | up (x a : Nat) : Reach dom (dom.get x).parent a → Reach dom (some x) a
+
+theorem Reach.trans {dom : Dom} {s : Option Nat} {x a : Nat} (hx : Reach dom s x)
+    (h : Reach dom (dom.get x).parent a) : Reach dom s a := by
+  induction hx with
+  | here _ => exact Reach.up _ _ h
+  | up y x' _ ih => exact Reach.up y a (ih h)
+
+/-- The filter `r` has the keys (type, `id`, classes) of every node from `start` up. -/
+def Cov (keys : Nat → ElemKey) (dom : Dom) (r : Array Nat) (start : Option Nat) : Prop :=
+  ∀ a, Reach dom start a → ancTest r (ancBit (dom.get a).lname) = true ∧
+    (∀ c ∈ (keys a).classes, ancTest r (ancBit c) = true) ∧ ancTest r (ancBit (keys a).id) = true
+
+/-- The filter of `keys id` is empty (admits all) or has the keys of the ancestors of `id`. -/
+def AncCovers (keys : Nat → ElemKey) (dom : Dom) (id : Nat) : Prop :=
+  (keys id).anc.isEmpty = true ∨ Cov keys dom (keys id).anc (dom.get id).parent
+
+private theorem matchAncestorsK_reach (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (sel : Compound) :
+    ∀ (f : Nat) (anc : Option Nat) (id' : Nat), matchAncestorsK keys dom state f anc sel = some id' →
+      Reach dom anc id' ∧ compoundMatchesK keys dom state id' sel = true
+  | 0, _, _, h => by simp [matchAncestorsK] at h
+  | _+1, none, _, h => by simp [matchAncestorsK] at h
+  | f+1, some id, id', h => by
+    by_cases hc : compoundMatchesK keys dom state id sel = true
+    · simp only [matchAncestorsK, hc, if_true, Option.some.injEq] at h
+      subst h
+      exact ⟨Reach.here _, hc⟩
+    · simp only [matchAncestorsK, hc, if_false] at h
+      obtain ⟨hr, hm⟩ := matchAncestorsK_reach keys dom state sel f _ id' h
+      exact ⟨Reach.up _ _ hr, hm⟩
+
+private theorem compoundMatchesK_need (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (id : Nat)
+    (c : Compound) (h : compoundMatchesK keys dom state id c = true) :
+    ∀ b ∈ needOfCompound c, b = ancBit (dom.get id).lname ∨ b = ancBit (keys id).id ∨
+      ∃ cl ∈ (keys id).classes, b = ancBit cl := by
+  unfold compoundMatchesK compoundFieldsK at h
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨_, ⟨⟨⟨⟨_, htag⟩, hid⟩, hcls⟩, _⟩⟩ := h
+  intro b hb
+  unfold needOfCompound at hb
+  obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hb
+  rcases List.mem_append.mp hx with hx | hx
+  · rcases List.mem_append.mp hx with hx | hx
+    · cases ht : c.tag with
+      | none => simp [ht] at hx
+      | some t =>
+        simp only [ht, Option.toList_some, List.mem_singleton] at hx
+        subst hx
+        simp only [ht, Option.map_some, Option.getD_some, beq_iff_eq] at htag
+        exact Or.inl (by rw [htag])
+    · cases hi : c.id with
+      | none => simp [hi] at hx
+      | some i =>
+        simp only [hi, Option.toList_some, List.mem_singleton] at hx
+        subst hx
+        simp only [hi, Option.map_some, Option.getD_some, beq_iff_eq] at hid
+        exact Or.inr (Or.inl (by rw [hid]))
+  · have := List.all_eq_true.mp hcls x hx
+    exact Or.inr (Or.inr ⟨x, List.contains_iff_mem.mp this, rfl⟩)
+
+private theorem partsMatchK_need (keys : Nat → ElemKey) (dom : Dom) (state : ElementState) (r : Array Nat) :
+    ∀ (parts : List Compound) (anc : Option Nat), Cov keys dom r anc →
+      partsMatchK keys dom state parts anc = true → ∀ b ∈ parts.flatMap needOfCompound, ancTest r b = true
+  | [], _, _, _, b, hb => by simp at hb
+  | c :: rest, anc, hcov, h, b, hb => by
+    simp only [partsMatchK] at h
+    cases hm : matchAncestorsK keys dom state (dom.size+1) anc c with
+    | none => rw [hm] at h; simp at h
+    | some id' =>
+      rw [hm] at h
+      obtain ⟨hr, hcm⟩ := matchAncestorsK_reach keys dom state c _ anc id' hm
+      have ih := partsMatchK_need keys dom state r rest (dom.get id').parent
+        (fun a ha => hcov a (hr.trans ha)) h
+      rcases List.mem_append.mp (by simpa only [List.flatMap_cons] using hb) with hb | hb
+      · obtain ⟨h1, h2, h3⟩ := hcov id' hr
+        rcases compoundMatchesK_need keys dom state id' c hcm b hb with e | e | ⟨cl, hcl, e⟩
+        · rw [e]; exact h1
+        · rw [e]; exact h3
+        · rw [e]; exact h2 cl hcl
+      · exact ih b hb
+
+/-- **Kind: implication.** Says: a selector of compounds (no `complex`) that matches an
+element has, in the element's ancestor filter, every key that it requires of ancestors, when the
+filter covers the element's ancestors. Does not say: anything about a selector with `complex`,
+nor that a page's rules should avoid ancestor combinators. -/
+theorem selectorPartsMatchK_need (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (sel : Selector)
+    (state : ElementState) (hn : sel.complex = none) (hc : AncCovers keys dom id)
+    (h : selectorPartsMatchK keys dom id sel state = true) :
+    ancAdmits (keys id).anc (Selector.need sel) = true := by
+  unfold ancAdmits
+  rcases hc with he | hcov
+  · simp [he]
+  · simp only [Bool.or_eq_true, List.all_eq_true]
+    right
+    intro b hb
+    unfold selectorPartsMatchK at h
+    cases hp : sel.parts with
+    | nil => rw [hp] at h; simp at h
+    | cons head rest =>
+      rw [hp] at h
+      simp only [Bool.and_eq_true] at h
+      simp only [Selector.need, hn, hp, List.drop_succ_cons, List.drop_zero] at hb
+      exact partsMatchK_need keys dom state _ rest _ hcov h.2 b hb
+
+theorem ancWalk_spec (dom : Dom) (own : Nat → List Nat) :
+    ∀ (f : Nat) (start : Option Nat) (acc : Array Nat), acc.size = 9 →
+      (ancWalk dom own f start acc).isEmpty = true ∨
+      ((ancWalk dom own f start acc).size = 9 ∧
+        (∀ b, ancTest acc b = true → ancTest (ancWalk dom own f start acc) b = true) ∧
+        ∀ a, Reach dom start a → ∀ b ∈ own a, ancTest (ancWalk dom own f start acc) b = true)
+  | 0, none, acc, hs => by
+    right
+    refine ⟨hs, fun b h => h, fun a ha => ?_⟩
+    cases ha
+  | 0, some _, acc, _ => by left; simp [ancWalk]
+  | f+1, none, acc, hs => by
+    right
+    refine ⟨hs, fun b h => h, fun a ha => ?_⟩
+    cases ha
+  | f+1, some p, acc, hs => by
+    have hs' : ((own p).foldl ancSet acc).size = 9 := by rw [foldl_ancSet_size]; exact hs
+    have ih := ancWalk_spec dom own f (dom.get p).parent ((own p).foldl ancSet acc) hs'
+    simp only [ancWalk]
+    rcases ih with he | ⟨hsz, hmono, hcov⟩
+    · left; exact he
+    · right
+      refine ⟨hsz, fun b h => hmono b (ancTest_foldl_mono _ acc b hs h), fun a ha b hb => ?_⟩
+      cases ha with
+      | here =>
+        exact hmono b (ancTest_foldl_mem _ acc b hs hb)
+      | up _ _ hr => exact hcov a hr b hb
+
+theorem ownGet_eq (dom : Dom) (p : Nat) : ownGet (ownTable dom) dom p = ownOf (dom.get p) := by
+  unfold ownGet ownTable Dom.get
+  rw [Array.getElem?_map]
+  cases h : dom.nodes[p]? with
+  | none => simp [Array.getD]
+  | some n =>
+    have hi := (Array.getElem?_eq_some_iff.mp h)
+    simp [Array.getD, hi.1, hi.2]
+
+/-- The filter of a key of the table is empty or `ancOf`. -/
+theorem ElemKeys.get_anc (dom : Dom) (id : Nat) :
+    ((ElemKeys.of dom).get dom id).anc = #[] ∨
+    ((ElemKeys.of dom).get dom id).anc = ancOf dom (ownGet (ownTable dom) dom) id := by
+  unfold ElemKeys.get ElemKeys.of
+  rw [Array.getElem?_mapIdx]
+  cases h : (dom.nodes.map ElemKey.read)[id]? with
+  | none => left; rfl
+  | some k => right; rfl
+
+/-- **Kind: implication.** Says: the table of `ElemKeys.of` gives each element a filter that
+has the type, `id` and classes of each of its ancestors. Does not say: that the filter has no
+other key. -/
+theorem ElemKeys.get_covers (dom : Dom) (id : Nat) : AncCovers ((ElemKeys.of dom).get dom) dom id := by
+  unfold AncCovers
+  rcases ElemKeys.get_anc dom id with h | h
+  · left; rw [h]; rfl
+  · rw [h]
+    unfold ancOf
+    by_cases he : (dom.get id).type == .element
+    · simp only [he, if_true]
+      rcases ancWalk_spec dom (ownGet (ownTable dom) dom) (dom.size + 1) (dom.get id).parent
+        (Array.replicate 9 0) (by simp) with hE | ⟨_, _, hcov⟩
+      · left; exact hE
+      · right
+        intro a ha
+        have hm : ∀ b ∈ ownOf (dom.get a), ancTest (ancWalk dom (ownGet (ownTable dom) dom) (dom.size + 1)
+            (dom.get id).parent (Array.replicate 9 0)) b = true :=
+          fun b hb => hcov a ha b (by rw [ownGet_eq]; exact hb)
+        have hk := ElemKeys.get_of dom a
+        refine ⟨hm _ ?_, fun c hc => hm _ ?_, ?_⟩
+        · simp [ownOf]
+        · rw [hk.1] at hc
+          simp only [ownOf, List.mem_append, List.mem_cons, List.mem_map]
+          exact Or.inl (Or.inl (Or.inr (Or.inr ⟨c, hc, rfl⟩)))
+        · rw [hk.2]
+          apply hm
+          simp [ownOf, readKeys, ElemKey.read]
+    · simp [he]
+
+/-- The filter's necessary condition holds for the selector on this element: if it matches,
+the filter admits it. -/
+def NeedSound (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (sel : Selector) : Prop :=
+  selectorMatchesK keys dom id sel state = true → ancAdmits (keys id).anc (Selector.need sel) = true
+
+/-- **Kind: implication.** Says: a selector of compounds satisfies the necessary condition on an
+element whose filter covers its ancestors. -/
+theorem needSound_plain (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState)
+    (sel : Selector) (hn : sel.complex = none) (hc : AncCovers keys dom id) : NeedSound keys dom id state sel := by
+  intro h
+  unfold selectorMatchesK at h
+  simp only [Bool.and_eq_true] at h
+  exact selectorPartsMatchK_need keys dom id sel state hn hc h.1
+
+/-- **Kind: equivalence.** Says: the selectors of a list that the filter admits and the matcher
+accepts are those that the matcher accepts, in order, when the filter's necessary condition
+holds for each. Does not say: anything about the cost of either. -/
+theorem matchSelsA_eq (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (anc : Array Nat) :
+    ∀ (sels : List Selector),
+      (∀ s ∈ sels, selectorMatchesK keys dom id s state = true → ancAdmits anc (Selector.need s) = true) →
+      matchSelsA keys dom id state anc sels (sels.map Selector.need) =
+        sels.filter (selectorMatchesK keys dom id · state)
+  | [], _ => rfl
+  | s :: ss, h => by
+    have ih := matchSelsA_eq keys dom id state anc ss (fun t ht => h t (List.mem_cons_of_mem _ ht))
+    simp only [List.map_cons, matchSelsA, List.filter_cons]
+    by_cases hm : selectorMatchesK keys dom id s state = true
+    · have hadm := h s (List.mem_cons_self) hm
+      simp [hm, hadm, ih]
+    · have hm' : selectorMatchesK keys dom id s state = false := by simpa using hm
+      simp [hm', ih]
+
+/-- **Kind: equivalence.** Says: `matchEntryA` is `matchEntry` when the necessary condition
+holds for each selector of the rule. -/
+theorem matchEntryA_eq (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule)
+    (hs : ∀ s ∈ e.2.selectors, NeedSound keys dom id state s) :
+    matchEntryA keys dom id state e (e.2.selectors.map Selector.need) = matchEntry keys dom id state e := by
+  unfold matchEntryA matchEntry
+  rw [matchSelsA_eq keys dom id state _ _ hs]
+
+/-- **Kind: equivalence.** Says: `RuleIndex.matched` (with the ancestor filter) gives the matches
+of `RuleIndex.matchedPlain` when the index's `needs` are those of its selectors and the
+necessary condition holds for each selector of each entry. By `needSound_plain` and
+`ElemKeys.get_covers` that holds for each selector of compounds on the key table; for a
+selector with `complex` it is checked (`CascadeTests`), not proved. Does not say: that the
+filter admits no selector that fails. -/
+theorem RuleIndex.matched_eq_plain (ix : RuleIndex) (keys : Nat → ElemKey) (dom : Dom) (id : Nat)
+    (state : ElementState)
+    (hwf : ix.needs = ix.entries.map fun e => e.2.selectors.map Selector.need)
+    (hs : ∀ e ∈ ix.entries, ∀ s ∈ e.2.selectors, NeedSound keys dom id state s) :
+    ix.matched keys dom id state = ix.matchedPlain keys dom id state := by
+  unfold RuleIndex.matched RuleIndex.matchedPlain
+  congr 1
+  funext i
+  cases he : ix.entries[i]? with
+  | none => simp [he]
+  | some e =>
+    have hn : ix.needs[i]? = some (e.2.selectors.map Selector.need) := by
+      rw [hwf, Array.getElem?_map, he]; rfl
+    have hmem : e ∈ ix.entries := by
+      obtain ⟨hi, rfl⟩ := Array.getElem?_eq_some_iff.mp he
+      exact Array.getElem_mem hi
+    simp only [he, hn]
+    exact matchEntryA_eq keys dom id state e (hs e hmem)
+
+/-- The index made by `RuleIndex.build` has the needs of its selectors. -/
+theorem RuleIndex.build_needs (rules : List Rule) :
+    (RuleIndex.build rules).needs = (RuleIndex.build rules).entries.map fun e => e.2.selectors.map Selector.need := rfl
+
+/-- **Kind: equivalence.** Says: on the key table of a page, the filtered matches of the buckets
+of `rules` are the plain ones when every selector of the rules that has `complex` satisfies the
+necessary condition on that element. -/
+theorem RuleIndex.build_matched_eq_plain (rules : List Rule) (dom : Dom) (id : Nat) (state : ElementState)
+    (hx : ∀ e ∈ (RuleIndex.build rules).entries, ∀ s ∈ e.2.selectors, s.complex ≠ none →
+      NeedSound ((ElemKeys.of dom).get dom) dom id state s) :
+    (RuleIndex.build rules).matched ((ElemKeys.of dom).get dom) dom id state =
+      (RuleIndex.build rules).matchedPlain ((ElemKeys.of dom).get dom) dom id state :=
+  RuleIndex.matched_eq_plain _ _ dom id state (RuleIndex.build_needs rules) fun e he s hse => by
+    cases hc : s.complex with
+    | none => exact needSound_plain _ dom id state s hc (ElemKeys.get_covers dom id)
+    | some c => exact hx e he s hse (by rw [hc]; simp)
 
 /-! ### Rule buckets on a page with shadow trees
 

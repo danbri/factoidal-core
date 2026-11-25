@@ -3393,15 +3393,6 @@ theorem RuleMatcher.make_matched (rules : List Rendering.CSS.Rule) (flat : DOM.D
       | .some ts => (Rendering.CSS.ScopedIndex.build rules).matched ((Rendering.CSS.ElemKeys.of ts.tree).get ts.tree) ts id state := by
   cases treeScope <;> rfl
 
-/-- Kind: equivalence. With no shadow tree the tables give the matches of every rule tried
-against the arena's own keys (`ElemKeys.get_of`): the keys table is the arena. -/
-theorem RuleMatcher.make_matched_keys (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
-    (state : Rendering.CSS.ElementState) (id : Nat) :
-    (RuleMatcher.make rules flat Option.none state).matched id =
-      (Rendering.CSS.RuleIndex.build rules).matched (Rendering.CSS.readKeys flat) flat id state := by
-  show (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state = _
-  rw [Rendering.CSS.ElemKeys.get_of]
-
 /-- The matches of every element of a tree of `size` nodes, each made when first asked for (one
 thunk a node), with the animated values after them (`CSS.withAnimated`). The matcher is an
 argument, made before the call: its tables are made once, whatever the number of elements. -/
