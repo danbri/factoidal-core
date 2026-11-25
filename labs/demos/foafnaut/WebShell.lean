@@ -77,6 +77,15 @@ structure Shell where
   (`menuControls`). `edit "menu"` opens it on a focused bar (`opensMenu` says when); an
   edit, a key, typed text or the bar losing the focus closes it. -/
   menu : Bool := false
+  /-- The context menu of a press on the page (issue 1031; `openContext`): "" closed, "link"
+  for a press on a link, "page" for a press elsewhere on the page. Its items are in the
+  navigation row, where the address menu's are (`contextItems`). Any edit, key or typed text
+  closes it, as it closes the address menu. -/
+  context : String := ""
+  /-- The address of the link the context menu is for ("" for the page menu). -/
+  contextLink : String := ""
+  /-- The page had a selection when the context menu opened: the menu has "Copy". -/
+  contextSelection : Bool := false
   /-- Find in page (Command-F): the find field is shown in the navigation row. -/
   findOpen : Bool := false
   /-- The text looked for. -/
@@ -212,10 +221,64 @@ def menuControls : List String := ["copyAddress","pasteGo"]
 def menuLabel : String → String
   | "copyAddress" => "Copy address"
   | "pasteGo" => "Paste and go"
+  | "openLinkTab" => "Open link in new tab"
+  | "copyLink" => "Copy link address"
+  | "menuBack" => "Back"
+  | "menuForward" => "Forward"
+  | "menuReload" => "Reload"
+  | "menuSource" => "View source"
+  | "menuCopy" => "Copy"
   | _ => ""
 
+/-! ### The context menu (issue 1031)
+
+A right click, or Control-click on macOS (`linkGesture` answers "menu"), on the page opens a
+context menu, as in Chrome, Firefox and Safari. Its items are drawn and pressed as the address
+menu's buttons are, in the navigation row. On a link: "Open link in new tab" and "Copy link
+address". Elsewhere on the page: Back, Forward, Reload and View source. Both have "Copy" when
+the page has a selection. The host sends the link under the press, from the frame on screen,
+and whether there is a selection; it decides nothing. -/
+
+/-- The items of an open context menu, left to right; empty when it is closed. -/
+def contextItems (s : Shell) : List String :=
+  let copy := if s.contextSelection then ["menuCopy"] else []
+  match s.context with
+  | "link" => ["openLinkTab","copyLink"] ++ copy
+  | "page" => ["menuBack","menuForward","menuReload","menuSource"] ++ copy
+  | _ => []
+
+/-- Every name a menu button can have. -/
+def menuItemNames : List String :=
+  menuControls ++ ["openLinkTab","copyLink","menuBack","menuForward","menuReload","menuSource","menuCopy"]
+
+/-- The buttons of the open menu, left to right: the context menu's, else the address menu's. -/
+def menuItems (s : Shell) : List String :=
+  if s.context != "" then contextItems s else if s.menu then menuControls else []
+
 /-- The menu is drawn: open, and the chrome full. -/
-def menuShown (s : Shell) : Bool := s.menu && s.collapse == 0
+def menuShown (s : Shell) : Bool := (s.menu || s.context != "") && s.collapse == 0
+
+/-- Open the context menu for a press on the page: on `link` when the press is on one, else
+the page menu. It closes the address menu and leaves the focus as it is. -/
+def Shell.openContext (s : Shell) (link : Option String) (selection : Bool) : Shell :=
+  {s with menu := false, context := if link.isSome then "link" else "page",
+          contextLink := link.getD "", contextSelection := selection}
+
+/-- A press on a link opens the link menu, and a press elsewhere the page menu. -/
+theorem openContext_link (s : Shell) (href : String) (selection : Bool) :
+    contextItems (s.openContext (some href) selection) =
+      ["openLinkTab","copyLink"] ++ (if selection then ["menuCopy"] else []) := by
+  simp [Shell.openContext, contextItems]
+
+theorem openContext_page (s : Shell) (selection : Bool) :
+    contextItems (s.openContext none selection) =
+      ["menuBack","menuForward","menuReload","menuSource"] ++ (if selection then ["menuCopy"] else []) := by
+  simp [Shell.openContext, contextItems]
+
+/-- "Copy" is in the context menu exactly when the page had a selection. -/
+theorem openContext_copy (s : Shell) (link : Option String) (selection : Bool) :
+    (contextItems (s.openContext link selection)).contains "menuCopy" = selection := by
+  cases link <;> cases selection <;> simp [Shell.openContext, contextItems]
 
 /-- Whether a press opens the address menu. `how` is "tap" (a press), "hold" (a long press,
 `WebGesture.hold`) or "context" (a right click); `touch` says a finger made it. A long press
@@ -234,6 +297,45 @@ theorem opensMenu_address {control : Option String} {how : String} {touch : Bool
 theorem click_never_opens (control : Option String) : opensMenu control "tap" false = false := by
   simp [opensMenu]
 
+/-- What a press on the page does, from the button (0 primary, 1 secondary, 2 middle), the
+modifier bits of `native_window.m` and `native_window_linux.c` (1 Shift, 2 Command, 4 Option,
+8 Control) and the platform ("mac" or "other"). Issue 1031; the rules are those Chrome, Firefox
+and Safari share:
+
+- secondary button: the context menu;
+- macOS, Control with the primary button: the context menu;
+- middle button: a new tab in the background, in front with Shift;
+- primary button with Command (macOS) or Control (other systems): a new tab in the background,
+  in front with Shift;
+- else the press is a normal one ("follow").
+
+The answer is one of "follow", "backgroundTab", "foregroundTab", "menu". -/
+def linkGesture (platform : String) (button modifiers : Nat) : String :=
+  let shift := modifiers.testBit 0
+  let command := modifiers.testBit 1
+  let control := modifiers.testBit 3
+  let mac := platform == "mac"
+  let tab := if shift then "foregroundTab" else "backgroundTab"
+  if button == 1 then "menu"
+  else if button == 2 then tab
+  else if mac && control then "menu"
+  else if (if mac then command else control) then tab
+  else "follow"
+
+/-- A press with no modifier and the primary button is a normal press, on every platform. -/
+theorem linkGesture_plain (platform : String) : linkGesture platform 0 0 = "follow" := by
+  simp [linkGesture]
+
+/-- Command-click on macOS opens a background tab; Shift-Command-click a tab in front. -/
+example : linkGesture "mac" 0 2 = "backgroundTab" := by decide
+example : linkGesture "mac" 0 3 = "foregroundTab" := by decide
+/-- Control-click on macOS is the context menu; on other systems it opens a background tab. -/
+example : linkGesture "mac" 0 8 = "menu" := by decide
+example : linkGesture "other" 0 8 = "backgroundTab" := by decide
+/-- The middle button opens a background tab; the secondary button the menu. -/
+example : linkGesture "other" 2 0 = "backgroundTab" := by decide
+example : linkGesture "mac" 1 0 = "menu" := by decide
+
 private def tabWidth (s : Shell) (width : Nat) : Nat :=
   let room := width-(90*unit s)
   min (180*unit s) (room/max 1 s.tabs.size)
@@ -243,10 +345,11 @@ private def menuButtonWidth (s : Shell) (size : Nat) (name : String) : Nat :=
   (menuLabel name).length*6*size+12*unit s
 
 /-- The lettering size of the menu: the bar's, or the folded strip's smaller one when the
-two buttons would leave the address bar less than 80 logical pixels. -/
+buttons would leave the address bar less than 80 logical pixels. -/
 private def menuSize (s : Shell) (width : Nat) : Nat :=
   let u := unit s
-  let need := menuButtonWidth s (dot s) "copyAddress"+menuButtonWidth s (dot s) "pasteGo"+(2+4+4+4)*u+80*u
+  let items := menuItems s
+  let need := (items.map (menuButtonWidth s (dot s))).sum+(2*(items.length-1)+4+4+4)*u+80*u
   if width ≥ need then dot s else smallDot s
 
 /-- Every control and where it is. Drawing and hit testing both read this. -/
@@ -280,14 +383,18 @@ private def boxes (s : Shell) (width : Nat) : List Box := Id.run do
     -- The menu's buttons take the right of the row; on a narrow window the bar starts at
     -- the left edge, so it keeps room for the end of the address.
     let size := menuSize s width
-    let paste := menuButtonWidth s size "pasteGo"
-    let copy := menuButtonWidth s size "copyAddress"
-    let pasteX := width-min width (pad+paste)
-    let copyX := pasteX-min pasteX (2*u+copy)
+    -- Right to left from the row's right edge, 2 logical pixels apart.
+    let mut right := width-min width pad
+    let mut items : List Box := []
+    for name in (menuItems s).reverse do
+      let w := menuButtonWidth s size name
+      let at_ := right-min right w
+      items := ⟨name,at_,by_,w,button⟩ :: items
+      right := at_-min at_ (2*u)
+    let firstX := (items.head?.map (·.x)).getD right
     let left := if narrow s width then pad else x
     let kept := if narrow s width then out.filter (fun b => b.name != "back" && b.name != "reload") else out
-    return kept ++ [⟨"address",left,by_,copyX-min copyX (left+4*u),button⟩,
-      ⟨"copyAddress",copyX,by_,copy,button⟩,⟨"pasteGo",pasteX,by_,paste,button⟩]
+    return kept ++ [⟨"address",left,by_,firstX-min firstX (left+4*u),button⟩] ++ items
   let tail := if narrow s width then 2*button+8*u+pad else 2*button+8*u+pad
   -- The find field takes up to 240 logical pixels of the bar's right, at most half of it.
   let room := width-min width (x+tail)
@@ -307,7 +414,10 @@ def pressable (s : Shell) (name : String) : Bool :=
   | ["back"] => s.canBack
   | ["forward"] => s.canForward
   | ["reload"] | ["home"] | ["source"] | ["settings"] | ["newTab"] | ["tabs"] | ["close",_] => true
-  | ["copyAddress"] | ["pasteGo"] => s.menu
+  | ["copyAddress"] | ["pasteGo"] => s.menu && s.context == ""
+  | ["menuBack"] => (contextItems s).contains "menuBack" && s.canBack
+  | ["menuForward"] => (contextItems s).contains "menuForward" && s.canForward
+  | [name] => (contextItems s).contains name
   | _ => false
 
 /-- The box of a pressable control: `(x,y,w,h)` in window pixels. -/
@@ -801,21 +911,23 @@ private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) (font : Addre
     | ["newTab"] => out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "newTab" box (14*u)
     | ["address"] => out := out ++ flatAddress font s t box
     | ["find"] => out := out ++ flatFind s t box
-    | ["copyAddress"] | ["pasteGo"] =>
-      let size := menuSize s width
-      let label := menuLabel box.name
-      out := out ++ rounded (if down box.name then t.light else t.well) box.x box.y box.w box.h (box.h/2) ++
-        text t.ink label (box.x+(box.w-min box.w (label.length*6*size-size))/2) (box.y+(box.h-7*size)/2) size
-    | ["tabs"] =>
-      out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "tabs" box iconSide ++
-        text t.ink (toString s.tabs.size) (box.x+(box.w-5*dot s)/2) (box.y+(box.h-7*dot s)/2) (dot s)
-    | ["settings"] =>
-      out := out ++ [circle (if down box.name then t.light else t.well) box] ++ lineIconAt t.ink "settings" box iconSide 1.6
     | [name] =>
-      let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
-      let shape := if name == "reload" && s.loading then "stop" else name
-      out := out ++ (if down box.name then [circle t.light box] else []) ++
-        lineIconAt (if enabled then t.ink else t.muted) shape box iconSide
+      if menuItemNames.contains name then
+        let size := menuSize s width
+        let label := menuLabel box.name
+        out := out ++ rounded (if down box.name then t.light else t.well) box.x box.y box.w box.h (box.h/2) ++
+          text (if pressable s name then t.ink else t.muted) label (box.x+(box.w-min box.w (label.length*6*size-size))/2) (box.y+(box.h-7*size)/2) size
+      else match name with
+      | "tabs" =>
+        out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "tabs" box iconSide ++
+          text t.ink (toString s.tabs.size) (box.x+(box.w-5*dot s)/2) (box.y+(box.h-7*dot s)/2) (dot s)
+      | "settings" =>
+        out := out ++ [circle (if down box.name then t.light else t.well) box] ++ lineIconAt t.ink "settings" box iconSide 1.6
+      | _ =>
+        let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
+        let shape := if name == "reload" && s.loading then "stop" else name
+        out := out ++ (if down box.name then [circle t.light box] else []) ++
+          lineIconAt (if enabled then t.ink else t.muted) shape box iconSide
     | _ => pure ()
   if !narrow s width then
     let label := toString s.pages
@@ -886,22 +998,23 @@ private def controlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.
     | ["newTab"] => out := out ++ face box ++ iconAt s t.ink "newTab" (sink box.name box)
     | ["address"] => out := out ++ addressNodes s t box
     | ["find"] => out := out ++ findNodes s t box
-    | ["copyAddress"] | ["pasteGo"] =>
-      let size := menuSize s width
-      let label := menuLabel box.name
-      let at_ := sink box.name box
-      -- Raised, with the accent line along its top, as the active tab.
-      out := out ++ face box ++ [paint t.accent (at_.x+2*u) (at_.y+2*u) (at_.w-4*u) u] ++
-        text t.ink label (at_.x+(at_.w-min at_.w (label.length*6*size-size))/2) (at_.y+(at_.h-7*size)/2+u) size
-    | ["tabs"] =>
-      let at_ := sink box.name box
-      out := out ++ face box ++
-        text t.ink (toString s.tabs.size) (at_.x+(at_.w-5*dot s)/2) (at_.y+(at_.h-7*dot s)/2) (dot s)
     | [name] =>
-      let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
-      let shape := if name == "reload" && s.loading then "stop" else name
-      out := out ++ face box ++
-        iconAt s (if enabled then t.ink else t.dark) shape (sink box.name box)
+      if menuItemNames.contains name then
+        let size := menuSize s width
+        let label := menuLabel box.name
+        let at_ := sink box.name box
+        -- Raised, with the accent line along its top, as the active tab.
+        out := out ++ face box ++ [paint t.accent (at_.x+2*u) (at_.y+2*u) (at_.w-4*u) u] ++
+          text (if pressable s name then t.ink else t.dark) label (at_.x+(at_.w-min at_.w (label.length*6*size-size))/2) (at_.y+(at_.h-7*size)/2+u) size
+      else if name == "tabs" then
+        let at_ := sink box.name box
+        out := out ++ face box ++
+          text t.ink (toString s.tabs.size) (at_.x+(at_.w-5*dot s)/2) (at_.y+(at_.h-7*dot s)/2) (dot s)
+      else
+        let enabled := (name != "back" || s.canBack) && (name != "forward" || s.canForward)
+        let shape := if name == "reload" && s.loading then "stop" else name
+        out := out ++ face box ++
+          iconAt s (if enabled then t.ink else t.dark) shape (sink box.name box)
     | _ => pure ()
   if !narrow s width then
     let label := toString s.pages
@@ -1110,7 +1223,7 @@ def clean (value : String) : String :=
 /-- Typed text replaces the selection, as in any text field. -/
 def Shell.typed (s : Shell) (value : String) : Shell :=
   let text := clean value
-  if text.isEmpty then s else {replaceRange s s.lo s.hi text true with menu := false}
+  if text.isEmpty then s else {replaceRange s s.lo s.hi text true with menu := false, context := ""}
 
 private def wordChar (c : Char) : Bool := c.isAlphanum || c.toNat > 127
 /-- Option-Left: past the separators before `i`, then past the word. -/
@@ -1152,7 +1265,7 @@ the end of the line. With a selection, delete removes it, and left or right with
 Shift goes to its start or end. -/
 def Shell.key (s : Shell) (code : Nat) (modifiers : Nat := 0) : Shell :=
   -- A key closes the address menu, as typing does.
-  let s := {s with menu := false}
+  let s := {s with menu := false, context := ""}
   let extend := has modifiers shiftBit
   let word := has modifiers optionBit
   let line := has modifiers commandBit
@@ -1203,9 +1316,9 @@ edit but `menu` closes the address menu. `menu` opens it on a focused bar; `clos
 closes it. `pasteGo` puts the clipboard `text` in the bar, cleaned as a paste is, and
 answers the address to go to (`none` for a clipboard with no text). -/
 def Shell.edit (s : Shell) (action : String) (text : String := "") : Shell × Option String :=
-  if action == "menu" then ({s with menu := s.focused},none) else
+  if action == "menu" then ({s with menu := s.focused, context := ""},none) else
   let step := s.editStep action text
-  ({step.1 with menu := false},step.2)
+  ({step.1 with menu := false, context := ""},step.2)
 
 /-- The address menu opens only on a focused bar, and any other edit closes it. -/
 theorem edit_menu (s : Shell) : (s.edit "menu").1.menu = s.focused := by
@@ -1214,6 +1327,11 @@ theorem edit_menu (s : Shell) : (s.edit "menu").1.menu = s.focused := by
 theorem edit_closes (s : Shell) (action text : String) (h : action ≠ "menu") :
     (s.edit action text).1.menu = false := by
   simp [Shell.edit, h]
+
+/-- Every edit closes the context menu, `menu` (the address menu) included. -/
+theorem edit_closes_context (s : Shell) (action text : String) :
+    (s.edit action text).1.context = "" := by
+  unfold Shell.edit; split <;> rfl
 
 /-- What the host does for one button of the address menu: `action` is "copy" or "paste",
 `rect` the button in window CSS pixels `(x,y,w,h)` (backing pixels over `scale`, rounded
@@ -1229,6 +1347,24 @@ structure MenuAction where
 /-- The address the menu copies: the whole text of the bar, as Lean cleans a paste. -/
 def copyText (s : Shell) : String := clean s.address
 
+/-- What a button of a menu asks the host to do: "copy" (write `text`), "paste", and for the
+context menu "openTab" (open `text` in a new tab), "back", "forward", "reload", "viewSource"
+and "copySelection" (copy the page's selection). A button that is not pressable (Back with no
+page before) asks nothing. -/
+def menuItemAction (s : Shell) (name : String) : Option (String × Option String) :=
+  if !pressable s name then none else
+  match name with
+  | "copyAddress" => some ("copy",some (copyText s))
+  | "pasteGo" => some ("paste",none)
+  | "openLinkTab" => some ("openTab",some s.contextLink)
+  | "copyLink" => some ("copy",some s.contextLink)
+  | "menuBack" => some ("back",none)
+  | "menuForward" => some ("forward",none)
+  | "menuReload" => some ("reload",none)
+  | "menuSource" => some ("viewSource",none)
+  | "menuCopy" => some ("copySelection",none)
+  | _ => none
+
 /-- The action table of the shown menu, for `width` backing pixels; empty with the menu
 closed or the chrome folded. -/
 def menuActions (s : Shell) (width : Nat) : List MenuAction :=
@@ -1236,13 +1372,12 @@ def menuActions (s : Shell) (width : Nat) : List MenuAction :=
   let u := unit s
   let css := fun (b : Box) => (b.x/u,b.y/u,(b.x+b.w+u-1)/u-b.x/u,(b.y+b.h+u-1)/u-b.y/u)
   (boxes s width).filterMap fun b =>
-    if b.name == "copyAddress" then some {action := "copy",control := b.name,rect := css b,text := some (copyText s)}
-    else if b.name == "pasteGo" then some {action := "paste",control := b.name,rect := css b}
-    else none
+    (menuItemAction s b.name).map fun (action,text) => {action,control := b.name,rect := css b,text}
 
 /-- A closed menu gives the host no actions: a tap can not copy or paste. -/
-theorem menuActions_closed (s : Shell) (width : Nat) (h : s.menu = false) : menuActions s width = [] := by
-  simp [menuActions, menuShown, h]
+theorem menuActions_closed (s : Shell) (width : Nat) (h : s.menu = false) (hc : s.context = "") :
+    menuActions s width = [] := by
+  simp [menuActions, menuShown, h, hc]
 
 def MenuAction.json (a : MenuAction) : JSON.Json :=
   let n := fun (v : Nat) => JSON.Json.number (toString v)
@@ -1622,6 +1757,8 @@ def Shell.ofJson (j : JSON.Json) : Shell :=
     swipe := match j.field? "swipe" with
       | some (.number value) => max (-100) (min 100 (value.toInt?.getD 0)) | _ => 0,
     menu := flag j "menu",
+    context := (match str j "context" with | "link" => "link" | "page" => "page" | _ => ""),
+    contextLink := str j "contextLink", contextSelection := flag j "contextSelection",
     findOpen := flag j "findOpen",find := String.ofList ((str j "find").toList.take maxFind),findFocused := flag j "findFocused",
     findCount := nat j "findCount",findCurrent := nat j "findCurrent" }
 
@@ -1632,7 +1769,8 @@ private def Snapshot.json (v : Snapshot) : JSON.Json :=
 def Shell.editJson (s : Shell) : JSON.Json :=
   .object [("address",.string s.address),("cursor",.number (toString s.cursor)),("anchor",.number (toString s.anchor)),
     ("undo",(s.undo.map Snapshot.json).getD .null),("redo",(s.redo.map Snapshot.json).getD .null),("typing",.bool s.typing),
-    ("menu",.bool s.menu)]
+    ("menu",.bool s.menu),("context",.string s.context),("contextLink",.string s.contextLink),
+    ("contextSelection",.bool s.contextSelection)]
 
 #guard submit "http://example.org/" == .page "http://example.org/"
 #guard submit "example.org" == .page "https://example.org"
@@ -1770,6 +1908,19 @@ private def phone : Shell := {menuOpen with scale := 3}
 #guard !(menuOpen.typed "x").menu && !(menuOpen.key 123).menu && !(menuOpen.edit "selectAll").1.menu
 #guard (menuOpen.edit "pasteGo" "  example.org/b\n").2 == some "example.org/b" && (menuOpen.edit "pasteGo" "\n").2 == none
 #guard (Shell.ofJson menuOpen.editJson).menu && pressable menuOpen "pasteGo" && !pressable opened "pasteGo"
+-- The context menu (issue 1031): a link menu, a page menu; any edit closes it; JSON keeps it.
+private def linkMenu : Shell := ({} : Shell).openContext (some "https://x.org/l") false
+private def pageMenu : Shell := ({canForward := true} : Shell).openContext none true
+#guard (menuActions linkMenu 1000).map (·.action) == ["openTab","copy"]
+#guard (menuActions linkMenu 1000).all (·.text == some "https://x.org/l")
+-- Back is shown but asks nothing with no page before; Forward, Reload, View source and Copy act.
+#guard (menuActions pageMenu 1000).map (·.action) == ["forward","reload","viewSource","copySelection"]
+#guard ((boxes pageMenu 1000).filter (fun b => menuItemNames.contains b.name)).length == 5
+#guard (menuActions linkMenu 1000).all fun a => a.rect.1+a.rect.2.2.1 ≤ 1000
+#guard (Shell.ofJson linkMenu.editJson).context == "link" && (Shell.ofJson pageMenu.editJson).contextSelection
+#guard (linkMenu.edit "closeMenu").1.context == "" && (linkMenu.typed "x").context == "" && (linkMenu.key 123).context == ""
+#guard menuActions (menuOpen.openContext none false) 1000 |>.all (·.control != "copyAddress")
+#guard reprStr (nodes linkMenu 1000) != reprStr (nodes {} 1000)
 
 -- The flat look (2026-11-16) is the default; "classic" keeps the NeXT bevels. The system's dark
 -- mode turns the default dark; an explicit "light" or "dark" setting wins over it.

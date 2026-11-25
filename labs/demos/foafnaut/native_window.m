@@ -11,7 +11,10 @@
 #include <string.h>
 #include "native_coordinates.h"
 
-struct NGEvent { uint32_t type; int32_t a; int32_t b; uint32_t reserved; };
+// `flags` (issue 1031), for pointer kinds 2, 4 and 13: bits 0-3 the modifiers (1 Shift,
+// 2 Command, 4 Option, 8 Control), bits 8-15 the click count, bits 16-17 the button (0 primary,
+// 1 secondary, 2 middle). 0 for every other kind. `ng_event_size` tells the host the size.
+struct NGEvent { uint32_t type; int32_t a; int32_t b; uint32_t reserved; uint32_t flags; };
 // A growing FIFO. Clicks, keys and other discrete events are never dropped.
 static struct NGEvent *events;
 static uint32_t eventHead, eventCount, eventCapacity, eventsDropped;
@@ -83,14 +86,14 @@ static void wakeIdleWait(void) {
     timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0];
   [NSApp postEvent:wake atStart:NO];
 }
-static void enqueue(uint32_t type, int32_t a, int32_t b) {
+static void enqueueFlags(uint32_t type, int32_t a, int32_t b, uint32_t flags) {
   wakeIdleWait();
   uint32_t time = eventTime();
   if (eventCount) {
     struct NGEvent *last = &events[eventHead + eventCount - 1];
     // Adjacent moves and resizes keep only the newest position; adjacent scrolls add up.
     // The time stays that of the first event, so latency counts from it.
-    if ((type == 1 || type == 3) && last->type == type) { last->a = a; last->b = b; return; }
+    if ((type == 1 || type == 3) && last->type == type) { last->a = a; last->b = b; last->flags = flags; return; }
     if (type == 11 && last->type == 11) { last->a += a; return; }
     if (type == 12 && last->type == 12 && last->b == b) { last->a += a; return; }
   }
@@ -105,7 +108,13 @@ static void enqueue(uint32_t type, int32_t a, int32_t b) {
       events = grown; eventCapacity = capacity;
     }
   }
-  events[eventHead + eventCount++] = (struct NGEvent){type, a, b, time};
+  events[eventHead + eventCount++] = (struct NGEvent){type, a, b, time, flags};
+}
+static void enqueue(uint32_t type, int32_t a, int32_t b) { enqueueFlags(type, a, b, 0); }
+uint32_t ng_event_size(void) { return (uint32_t)sizeof(struct NGEvent); }
+static uint32_t pointerModifiers(NSEventModifierFlags flags) {
+  return ((flags&NSEventModifierFlagShift)?1:0) | ((flags&NSEventModifierFlagCommand)?2:0) |
+    ((flags&NSEventModifierFlagOption)?4:0) | ((flags&NSEventModifierFlagControl)?8:0);
 }
 uint32_t ng_events_dropped(void) { return eventsDropped; }
 uint32_t ng_event_clock(void) { return eventTime(); }
@@ -216,12 +225,23 @@ static NSString *axString(id value) { return [value isKindOfClass:NSString.class
 }
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { (void)event; return YES; }
 - (void)sendPointer:(NSEvent *)event type:(uint32_t)type {
+  [self sendPointer:event type:type button:type==13?1:0];
+}
+- (void)sendPointer:(NSEvent *)event type:(uint32_t)type button:(uint32_t)button {
   tracePointer("view",event,type,&viewMoveTraced);
   NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
   point = framebufferPoint(self,point);
-  enqueue(type, (int32_t)floor(point.x), (int32_t)floor(point.y));
+  // Modifiers, click count and button with each pointer event (issue 1031): the host and Lean
+  // decide Command-click, Control-click, middle click and double and triple click from them.
+  uint32_t clicks = (type==2||type==4||type==13) ? (uint32_t)MIN(MAX(event.clickCount,0),255) : 0;
+  enqueueFlags(type, (int32_t)floor(point.x), (int32_t)floor(point.y),
+    pointerModifiers(event.modifierFlags) | (clicks<<8) | (button<<16));
 }
 - (void)mouseDown:(NSEvent *)event { [self sendPointer:event type:2]; }
+// The middle button (issue 1031): kinds 2 and 4 with button 2 in the flags. An older host reads
+// no flags; it sees a primary press, as before this change it saw nothing.
+- (void)otherMouseDown:(NSEvent *)event { if (event.buttonNumber==2) [self sendPointer:event type:2 button:2]; }
+- (void)otherMouseUp:(NSEvent *)event { if (event.buttonNumber==2) [self sendPointer:event type:4 button:2]; }
 - (void)mouseMoved:(NSEvent *)event {
   // AppKit sets its own pointer at a window edge; back in the view, show Lean's again.
   // Over a resize zone the pump shows the zone's pointer (hoverEdgeCursor).
@@ -553,6 +573,7 @@ void ng_test_raise(void) {
   window.level=NSFloatingWindowLevel;[window orderFrontRegardless];
 }
 void ng_test_event(uint32_t kind,int32_t a,int32_t b) { enqueue(kind,a,b); }
+void ng_test_event_flags(uint32_t kind,int32_t a,int32_t b,uint32_t flags) { enqueueFlags(kind,a,b,flags); }
 // The app as macOS sees it: a regular app, in the Dock and in Command-Tab, with its
 // menu. The host calls this first, before it loads the engine, so the Dock icon
 // stops bouncing at once; ng_create calls it too. It runs once.

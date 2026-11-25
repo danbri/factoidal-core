@@ -940,7 +940,9 @@ private def selection (request : JSON.Json) : Except String (Option WebSelection
   | some (.string "all") => pure (some .all)
   | some value => do
     let (ax,ay,fx,fy) ← points value
-    pure (some (.span ax ay fx fy))
+    -- `selectionClicks`: the click count of the press (issue 1031): 2 whole words, 3 lines.
+    let clicks := match request.field? "selectionClicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    pure (some (WebSelection.Selection.ofClicks clicks ax ay fx fy))
 
 private def scalePercent (request : JSON.Json) : Except String Nat := do
   let percent ← match request.field? "textScalePercent" with
@@ -1281,11 +1283,22 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
     -- Paste and go answers the address to go to in `go`, not for the clipboard.
     let key := if str request "action" == "pasteGo" then "go" else "clipboard"
     return some (JSON.Json.object (fields ++ [(key,match copied with | some t => .string t | none => .null)])).toString
+  -- The context menu of a press on the page (issue 1031; WebShell.openContext): `link` is the
+  -- address of the link under the press in the frame on screen (null: none), `selection`
+  -- whether the page has a selection. The answer is the edit state with the menu open.
+  if op == "shellContext" then
+    let link := match request.field? "link" with | some (.string h) => if h.isEmpty then none else some h | _ => none
+    let shell := WebShell.Shell.ofJson ((request.field? "shell").getD .null)
+    return some (shell.openContext link (request.field? "selection" == some (.bool true))).editJson.toString
   -- The key table for a host with no menu, which must decide at once which keys it keeps.
   if op == "keyTable" then
     let platform := str request "platform" "other"
     return some (JSON.Json.array ((WebHistory.keyTable.filter (·.1 == platform)).map fun (_,m,k,c) =>
       .object [("modifier",.string m),("key",.string k),("command",.number (toString c))])).toString
+  -- What a press does by its button and modifiers (issue 1031): follow, a tab, or the menu.
+  if op == "linkGesture" then
+    let num (k : String) : Nat := match request.field? k with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    return some (JSON.Json.object [("gesture",.string (WebShell.linkGesture (str request "platform" "other") (num "button") (num "modifiers")))]).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
   if let some answer ← WebGraph.op op request then return some answer
   if let some answer ← WebEventLoop.op op request then return some answer
@@ -1338,7 +1351,10 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   if let some answer ← WebSparql.op op request then return some answer
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
-    return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
+    -- A double or triple click (`clicks`, issue 1031) selects: it is not a click on a link.
+    let clicks := match request.field? "clicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    let click := WebSelection.isClick ax ay fx fy && WebSelection.granularity clicks == .character
+    return some (JSON.Json.object [("action",.string (if click then "click" else "select"))]).toString
   return none
 
 /-- A long page must not fill the GPU buffer with text nobody can see. Glyphs carry

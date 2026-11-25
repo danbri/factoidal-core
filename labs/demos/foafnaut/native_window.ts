@@ -1,7 +1,13 @@
 import type { UIEvent } from "./ui_engine.ts";
 import { linuxKey } from "./linux_keys.ts";
 
-export type NativeEvent = UIEvent & {key?:string};
+// `flags` (issue 1031), pointer kinds 2, 4 and 13 only: bits 0-3 the modifiers (1 Shift,
+// 2 Command, 4 Option, 8 Control), bits 8-15 the click count, bits 16-17 the button (0 primary,
+// 1 secondary, 2 middle). Absent with an older window library.
+export type NativeEvent = UIEvent & {key?:string;flags?:number};
+export const pointerModifiers=(flags:number)=>flags&15;
+export const pointerClicks=(flags:number)=>(flags>>>8)&255;
+export const pointerButton=(flags:number)=>(flags>>>16)&3;
 export type WindowSystem = "cocoa" | "x11" | "wayland";
 
 export function libraryPath(): string {
@@ -37,6 +43,8 @@ export function loadNativeWindow() {
     ng_set_history: { parameters: ["i32","i32"], result: "void", optional: true },
     ng_test_key: { parameters: ["buffer","i32"], result: "i32" },
     ng_test_event: { parameters: ["u32","i32","i32"], result: "void" },
+    ng_test_event_flags: { parameters: ["u32","i32","i32","u32"], result: "void", optional: true },
+    ng_event_size: { parameters: [], result: "u32", optional: true },
     ng_clipboard_copy: { parameters: [], result: "pointer" },
     ng_free: { parameters: ["pointer"], result: "void" },
     ng_clipboard_write: { parameters: ["buffer"], result: "i32" },
@@ -62,7 +70,9 @@ export function loadNativeWindow() {
     library.close();
     throw new Error("The native window and WebGPU surface must run on the OS main thread");
   }
-  const buffer = new Uint8Array(16);
+  // 16 bytes from an older library; 20 with `flags` (ng_event_size). The buffer has room for both.
+  const eventSize = symbols.ng_event_size ? symbols.ng_event_size() : 16;
+  const buffer = new Uint8Array(24);
   const view = new DataView(buffer.buffer);
   return {
     isMainThread,
@@ -128,6 +138,8 @@ export function loadNativeWindow() {
     testRaise:()=>symbols.ng_test_raise(),
     testKey:(key:string,shift=false)=>symbols.ng_test_key(new TextEncoder().encode(key+"\0"),shift?1:0)===1,
     testEvent:(kind:number,a:number,b:number)=>symbols.ng_test_event(kind,a,b),
+    // A test event with flags (issue 1031); false with an older library, which has none.
+    testEventFlags:(kind:number,a:number,b:number,flags:number)=>{if(!symbols.ng_test_event_flags)return false;symbols.ng_test_event_flags(kind,a,b,flags);return true;},
     setInputTrace:(enabled:boolean)=>symbols.ng_set_input_trace(enabled?1:0),
     setContentSize:(width:number,height:number)=>symbols.ng_set_content_size(width,height),
     create(width: number, height: number, title?:string) {
@@ -177,7 +189,7 @@ export function loadNativeWindow() {
         const {key,code} = linuxKey(a);
         return {kind:5, a:code, b, time, key};
       }
-      return {kind,a,b,time};
+      return eventSize>=20 ? {kind,a,b,time,flags:view.getUint32(16,true)} : {kind,a,b,time};
     },
     // Milliseconds on the clock of event.time; null with an older window library.
     eventClock(): number | null { return symbols.ng_event_clock ? symbols.ng_event_clock() : null; },
