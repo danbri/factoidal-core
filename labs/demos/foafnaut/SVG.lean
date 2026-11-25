@@ -4001,11 +4001,15 @@ def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) 
   match p.dashParts with
   | none => p.prepareCoverage data base
   | some pieces =>
+    -- The edge and point counts are found once here, not at each sample.
     let fill : Prepared Bool := match p.geometry with
-      | .polygon points => ((boundsCondition base).prepare data).and
-          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
+      | .polygon points =>
+        let count := points.length
+        ((boundsCondition base).prepare data).and
+          (.dynamic (fun env => windingHitFast env.data base count p.style.rule env.position))
       | .path contours =>
-        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
+        let count := (NativeSVGPath.edges contours).length
+        .dynamic (fun env => pathHitFast env.data base count p.style.rule env.position)
       | g => (fillCondition g base).prepare data
     let start := base+20+geometryTailSize p.geometry
     let culled := (pieces.zipIdx.map fun (piece,i) =>
@@ -4221,6 +4225,21 @@ private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha
 private theorem Primitive.preparePaint_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
     (position : Float × Float) : p.preparePaint paint alpha position = p.paintAt paint alpha position := by
   cases paint <;> rfl
+
+/-- The row of a paint that is the same at every point (the `constantPaint` case of
+    `preparePaint`); none for a gradient or an image, whose colour depends on the point.
+    The CPU raster reads the row once per record and not through a closure at each sample. -/
+def Primitive.constantPaintRow? (p : BackendPrimitive) (paint : Paint) (alpha : Float) : Option (List Float) :=
+  match paint with
+  | .gradientRecord .. | .imageRecord .. => none
+  | _ => some (resolved paint p.style alpha)
+
+/-- Says: when `constantPaintRow?` gives a row, `preparePaint` gives that row at every point.
+    Does not say: anything about a paint that gives none; its colour is read at the point. -/
+private theorem Primitive.constantPaintRow?_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
+    (row : List Float) (h : p.constantPaintRow? paint alpha = some row) (position : Float × Float) :
+    p.preparePaint paint alpha position = row := by
+  cases paint <;> simp_all [Primitive.constantPaintRow?,Primitive.preparePaint,constantPaint]
 
 def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=
