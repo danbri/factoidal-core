@@ -56,4 +56,24 @@ private def inlineSvgPage := "<style>body{margin:0}img{display:block;width:20px;
 #guard (pixel (inlineSvgPage ++ "<img src='" ++ inlineSvg ++ "'>") 10 10).toOption == some (0,1,0)
 #guard (pixel (inlineSvgPage ++ "<img src='" ++ inlineSvg ++ "'>") 25 10).toOption == some (1,1,1)
 
+-- Both elements share the striped 8×4 bitmap. At 2x the complete red/blue
+-- stripe is painted across four CSS pixels and the next pixel is outside the image.
+private def stripeURL := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAECAIAAAA8r+mnAAAAFElEQVR4nGP4z8AAR0jM/wzUkwAAOn4f4QhCQp4AAAAASUVORK5CYII="
+private def densityPage :=
+  "<style>body{margin:0}img{display:block}</style><img src='" ++ stripeURL ++
+  "'><img srcset='" ++ stripeURL ++ " 2x'>"
+#guard (pixel densityPage 6 1).toOption == some (0,0,1)
+#guard (pixel densityPage 0 4).toOption == some (1,0,0)
+#guard (pixel densityPage 3 4).toOption == some (0,0,1)
+#guard (pixel densityPage 4 4).toOption == some (1,1,1)
+
+private def intrinsicAt (srcset sizes : String) : Option (Float × Float) := do
+  let dom := DOM.parseHtmlDocument ("<img srcset='" ++ stripeURL ++ " " ++ srcset ++ "' sizes='" ++ sizes ++ "'>")
+  let [(id,_,_)] := WebRender.htmlImageRequests dom none | none
+  let (_,pictures) ← (WebRender.makeReplaced dom).toOption
+  return (← pictures id).size
+
+#guard intrinsicAt "16w" "8px" == some (4,2)
+#guard intrinsicAt "10000x" "" == some (0,0)
+
 end WebRenderTests
