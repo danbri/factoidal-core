@@ -46,7 +46,7 @@ Deno.test("a page fetches only the fonts its characters need", async()=>{
 
 // Emoji (issue 1276): Noto Color Emoji in slices, and Noto Emoji (monochrome outlines) last,
 // for text presentation. A page with an emoji fetches the slices of its emoji; a page with
-// none fetches no emoji font, and no other demo page has one.
+// none fetches no emoji font, and no other demo page has one but the new tab page (one slice).
 const emojiFonts=fallbackFonts.filter((f:{family:string})=>/Emoji/.test(f.family));
 const emojiFamilies=async(text:string)=>(await fontsFor(text,coverage)).map((f:{family:string})=>f.family).filter((f:string)=>/Emoji/.test(f));
 Deno.test("only a page with emoji fetches an emoji font, and only the slices it needs", async()=>{
@@ -60,6 +60,10 @@ Deno.test("only a page with emoji fetches an emoji font, and only the slices it 
     assert((await emojiFamilies(await Deno.readTextFile(new URL(name,pages)))).length===0,`${name} fetches an emoji font`);
   for await(const entry of Deno.readDir(pages)){
     if(!/\.(html|xml)$/.test(entry.name)||entry.name==="showcase-emoji.html")continue;
+    // The new tab page has one emoji, the dinosaur that links the game (owner, 2026-11-25): one slice.
+    if(entry.name==="newtab.html"){
+      const got=await emojiFamilies(await Deno.readTextFile(new URL(entry.name,pages)));
+      assert(JSON.stringify(got)==='["Noto Color Emoji Animals"]',`newtab.html fetches ${got}`);continue;}
     const got=await emojiFamilies(await Deno.readTextFile(new URL(entry.name,pages)));
     assert(got.length===0,`${entry.name} fetches ${got}`);
   }
