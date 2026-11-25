@@ -1064,6 +1064,9 @@ in finely sliced parallel. Make this a priority."
   thread or in an input lane before script turns.
 - Record: `docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md` section 0; tracking
   https://github.com/danbri/factoidal-core/issues/1031 (also threads, tabs, processes, DNS, HTTP).
+- Owner, 2026-11-25, verbatim: "For all of this do seek to be metrics driven." Each step of
+  issue 1031 names its measurement (for gestures: `native-html-gesture` `queuedToActionMs` and the
+  `gestures` block of `--perf-summary`) and reports it before and after.
 
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
