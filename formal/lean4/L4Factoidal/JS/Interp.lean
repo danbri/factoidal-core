@@ -2777,7 +2777,7 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
 /-- The shared index and get steps of Array and TypedArray `at`. The caller reads
 the length before coercing the index. The one indexed read observes any update
 made during coercion, including a typed buffer resize or detachment. -/
-private def arrayAtWithLength (core : CoreFn H) (receiver : Value) (len : Nat) (index : Value) : M Value := do
+def arrayAtWithLength (core : CoreFn H) (receiver : Value) (len : Nat) (index : Value) : M Value := do
   let k := toIntegerOrInf (← core.toNum index)
   let i := if k < 0 then Float.ofNat len + k else k
   if i < 0 || i ≥ Float.ofNat len then pure .undef
