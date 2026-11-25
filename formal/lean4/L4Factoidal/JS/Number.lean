@@ -1,4 +1,5 @@
 import L4Factoidal.JS.Lexer
+import L4Factoidal.JS.Ryu
 
 /-!
 # L4Factoidal.JS.Number — the Number type's operations (§6.1.6.1, §7.1)
@@ -8,8 +9,10 @@ hardware operations, which IEEE 754 rounds correctly, as §6.1.6.1 requires.
 What C does not give with the JavaScript meaning is written here:
 
 - `Number::toString` (§6.1.6.1.20): the shortest digits that read back as the
-  value, from `XPath4.shortestDigits` (exact rational arithmetic), then the
-  JavaScript layout. Safe integers take a direct path.
+  value, by Ryū on 64-bit words (`JS/Ryu.lean`), then the JavaScript layout. Safe
+  integers take a direct path. `numToStringRef` keeps the exact algorithm
+  (`XPath4.shortestDigits`, rational arithmetic) as the reference of the
+  differential test (`leanjs numfmt-diff`; issue 1076).
 - `StringToNumber` (§7.1.4.1.1): the `StringNumericLiteral` grammar checked
   here, the rounding done by `XPath4.floatOfParsed`.
 - `Number::remainder` (§6.1.6.1.6), the C `fmod`: exact, on the dyadic rationals
@@ -151,8 +154,10 @@ def natToRadix (b n : Nat) : String := Id.run do
       k := k / b
   return String.ofList out
 
-/-- Number::toString with radix 10 (§6.1.6.1.20). -/
-def numToString (x : Float) : String :=
+/-- Number::toString with radix 10 (§6.1.6.1.20): the reference, with exact rational arithmetic
+(`XPath4.shortestDigits`, about 20 µs for a fraction). `numToString` gives the same text by Ryū;
+`leanjs numfmt-diff` compares the two. -/
+def numToStringRef (x : Float) : String :=
   if x.isNaN then "NaN"
   else if x == 0 then "0"
   else if x.isInf then (if x < 0 then "-Infinity" else "Infinity")
@@ -182,6 +187,18 @@ def numToString (x : Float) : String :=
         if k == 1 then ds ++ "e" ++ es
         else String.ofList (ds.toList.take 1) ++ "." ++ String.ofList (ds.toList.drop 1) ++ "e" ++ es
     if neg then "-" ++ body else body
+
+/-- Number::toString with radix 10 (§6.1.6.1.20). The non-integral and large values take Ryū
+(`Ryu.finiteToString`, 64-bit words, no big numbers). Equal to `numToStringRef` on every double
+tested (`leanjs numfmt-diff`, issue 1076); not proved. -/
+def numToString (x : Float) : String :=
+  if x.isNaN then "NaN"
+  else if x == 0 then "0"
+  else if x.isInf then (if x < 0 then "-Infinity" else "Infinity")
+  else if isIntegral x && x.abs < tenPow21 then
+    let i := truncInt x
+    toString i
+  else Ryu.finiteToString x
 
 /-- StrWhiteSpaceChar (§7.1.4.1): WhiteSpace and LineTerminator. -/
 def isStrWs (c : Char) : Bool := isWs c || isLineTerm c

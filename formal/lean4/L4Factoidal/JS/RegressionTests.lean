@@ -817,4 +817,25 @@ Wikipedia, "United States") threw "normalize is not a function". -/
 #guard out "print('\\u0041\\u030A'.normalize() === '\\u00C5', '\\u00C5'.normalize('NFD').length, '\\uFB01'.normalize('NFKC'), '\\uFB01'.normalize('NFC') === '\\uFB01', '\\u1E9B\\u0323'.normalize('NFKD').length, String.prototype.normalize.length)" == ["true 2 fi true 3 0"]
 #guard out "try { 'a'.normalize('nfc'); } catch (e) { print(e instanceof RangeError); } try { String.prototype.normalize.call(null); } catch (e) { print(e instanceof TypeError); } print('a\\uD800b'.normalize().length, '\\uD800\\u0301'.normalize('NFD').length, 'abc'.normalize(undefined))" == ["true", "true", "3 2 abc"]
 
+/-! ## Number::toString of fractions and the Number.prototype formats (issue 1076)
+
+Number::toString (§6.1.6.1.20) of a value that is not a safe integer takes Ryū on 64-bit words
+(`JS/Ryu.lean`) since 2026-11-25, in place of exact rational arithmetic (about 20 µs a
+conversion); toFixed, toPrecision and toExponential take a 128-bit fast path
+(`NumFmt.fixedOf`, `precisionOf`, `expoOf`). These scripts cover shortest digits, the four
+layouts, subnormals, the largest double, powers of two, the rounding of toFixed on values whose
+exact decimal is below the half (`1.005`), ties (`0.5`, `2.5`, `-1.5`), and the fallbacks to the
+exact path (`toFixed(20)`, `toExponential(18)` of the largest double). -/
+
+#guard out "print(String(1/7), String(-1/3), 0.1 + 0.2, 1e21, 1e-7, 123e-20, 5e-324, 1.7976931348623157e308, 2 ** -1074 * 3, 4.35, 0.000001, 1.5e-6)" ==
+  ["0.14285714285714285 -0.3333333333333333 0.30000000000000004 1e+21 1e-7 1.23e-18 5e-324 1.7976931348623157e+308 1.5e-323 4.35 0.000001 0.0000015"]
+#guard out "print(`${1 / 7}|${2 / 3}`, 'x' + 0.1, 2 ** -1022, 2 ** 1023, 2 ** 70, 1e23, 9.007199254740993e15 * 1000)" ==
+  ["0.14285714285714285|0.6666666666666666 x0.1 2.2250738585072014e-308 8.98846567431158e+307 1.1805916207174113e+21 1e+23 9007199254740992000"]
+#guard out "print((1/7).toFixed(2), (1.005).toFixed(2), (-0.001).toFixed(2), (25).toFixed(1), (1.45).toFixed(1), (1e20).toFixed(2), (0.5).toFixed(0), (2.5).toFixed(0), (-1.5).toFixed(0), (1e-10).toFixed(19), (123.456).toFixed(20))" ==
+  ["0.14 1.00 -0.00 25.0 1.4 100000000000000000000.00 1 3 -2 0.0000000001000000000 123.45600000000000306954"]
+#guard out "print((123.456).toPrecision(4), (0.000123).toPrecision(2), (2.5).toPrecision(1), (9.995).toPrecision(3), (99.99).toPrecision(2), (1/3).toPrecision(17), (1e21).toPrecision(3), (-0.00001).toPrecision(1))" ==
+  ["123.5 0.00012 3 9.99 1.0e+2 0.33333333333333331 1.00e+21 -0.00001"]
+#guard out "print((1/3).toExponential(), (1e-7).toExponential(3), (123456).toExponential(2), (-9.99).toExponential(1), (5e-324).toExponential(), (0).toExponential(2), (1.7976931348623157e308).toExponential(18))" ==
+  ["3.333333333333333e-1 1.000e-7 1.23e+5 -1.0e+1 5e-324 0.00e+0 1.797693134862315708e+308"]
+
 end L4Factoidal.JS.Tests
