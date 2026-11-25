@@ -4,7 +4,9 @@ and the real-page snapshots on both, and one report of what each commit gains an
 
 Subcommands (each REF is any git commit-ish of this repository):
 
-  build REF                 native engine library of REF, kept under the cache by commit
+  build REF                 native engine library of REF, kept under the cache by commit: the
+                            factoidal-builds release of REF when it has one (checked by sha256),
+                            else a local build
   suites REF [--first P]    the WPT reftest suites on REF's library, kept by commit
   compare BASE BRANCH       tests gained and lost; exit 1 when a test is lost and not accepted
   pages BASE BRANCH         the real-page snapshots on both: status, picture hash, time
@@ -50,13 +52,64 @@ def lib_path(cache, commit):
     return cache / "lib" / f"{commit}.so"
 
 
-def build(cache, ref, side="a"):
-    """Native build of `ref` in the worktree of `side` (a or b), kept between runs so Lake
-    builds incrementally. Returns the library path; a kept library is not built again."""
+RELEASES = "https://github.com/danbri/factoidal-builds/releases/download"
+
+
+def fetch_release(commit, out):
+    """The library of factoidal-builds release build-<sha12>-foafnaut-linux-x86_64, made by
+    the same build-web-render.sh --native (foafnaut-linux.yml), when that commit has one.
+    Kept only when build-info.json names this commit and the sha256 of the tarball and of
+    the library match it. Returns False when there is no such release or a check fails."""
+    import hashlib, platform, tarfile, tempfile, urllib.request
+    if platform.system() != "Linux" or platform.machine() != "x86_64":
+        return False
+    tag = f"build-{commit[:12]}-foafnaut-linux-x86_64"
+    def get(name):
+        with urllib.request.urlopen(f"{RELEASES}/{tag}/{name}", timeout=120) as r:
+            return r.read()
+    try:
+        info = json.loads(get("build-info.json"))
+    except Exception:
+        return False
+    art = info.get("artifacts", {}).get("foafnaut-linux-x86_64.tar.gz", {})
+    want_lib = art.get("files", {}).get("foafnaut/libweb-render.so", {}).get("sha256")
+    if info.get("source_commit") != commit or not art.get("sha256") or not want_lib:
+        print(f"release {tag}: build-info.json does not name this commit and its files; not used")
+        return False
+    data = get("foafnaut-linux-x86_64.tar.gz")
+    if hashlib.sha256(data).hexdigest() != art["sha256"]:
+        print(f"release {tag}: tarball sha256 differs from build-info.json; not used")
+        return False
+    with tempfile.TemporaryDirectory() as d:
+        tgz = Path(d) / "t.tar.gz"
+        tgz.write_bytes(data)
+        with tarfile.open(tgz) as t:
+            member = next((m for m in t.getnames() if m.lstrip("./") == "foafnaut/libweb-render.so"), None)
+            if member is None:
+                print(f"release {tag}: no foafnaut/libweb-render.so in the tarball; not used")
+                return False
+            lib = t.extractfile(member).read()
+    if hashlib.sha256(lib).hexdigest() != want_lib:
+        print(f"release {tag}: library sha256 differs from build-info.json; not used")
+        return False
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp")
+    tmp.write_bytes(lib)
+    tmp.rename(out)
+    print(f"build {commit[:12]}: release {tag} ({info.get('run_url')})")
+    return True
+
+
+def build(cache, ref, side="a", use_release=True):
+    """Native library of `ref`: kept from an earlier run, else the factoidal-builds release of
+    that commit, else a build in the worktree of `side` (a or b), kept between runs so Lake
+    builds incrementally."""
     commit = sha(ref)
     out = lib_path(cache, commit)
     if out.exists():
         print(f"build {commit[:12]}: kept {out}")
+        return out
+    if use_release and fetch_release(commit, out):
         return out
     wt = cache / f"wt-{side}"
     if not wt.exists():
@@ -207,6 +260,8 @@ def main():
     ap.add_argument("--wpt", default=os.environ.get("FOAFNAUT_AB_WPT"))
     ap.add_argument("--realpages", default=os.environ.get("FOAFNAUT_AB_REALPAGES"))
     ap.add_argument("--jobs", type=int, default=2)
+    ap.add_argument("--no-release", action="store_true",
+                    help="build locally even when factoidal-builds has a release of the commit")
     ap.add_argument("--accept", action="append", default=[], metavar="TEST=ISSUE",
                     help="a lost test the owner accepted, with the issue that records it")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -225,7 +280,7 @@ def main():
     accepted = dict(x.split("=", 1) for x in a.accept)
     need = lambda *ks: [sys.exit(f"--{k} (or FOAFNAUT_AB_{k.upper()}) is required") for k in ks if not getattr(a, k)]
     if a.cmd == "build":
-        build(a.cache, a.ref)
+        build(a.cache, a.ref, use_release=not a.no_release)
     elif a.cmd == "suites":
         need("manifest", "wpt")
         suites(a.cache, a.ref, a.manifest, a.wpt, a.first, a.jobs)
@@ -239,7 +294,8 @@ def main():
     elif a.cmd == "gate":
         need("manifest", "wpt")
         with cf.ThreadPoolExecutor(2) as ex:
-            for f in [ex.submit(build, a.cache, a.base, "a"), ex.submit(build, a.cache, a.branch, "b")]:
+            for f in [ex.submit(build, a.cache, a.base, "a", not a.no_release),
+                      ex.submit(build, a.cache, a.branch, "b", not a.no_release)]:
                 f.result()
         with cf.ThreadPoolExecutor(2) as ex:
             for f in [ex.submit(suites, a.cache, r, a.manifest, a.wpt, a.first, a.jobs) for r in (a.base, a.branch)]:
