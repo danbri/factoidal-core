@@ -96,6 +96,20 @@ for(let i=0;i<6;i++){
  rows.push({input:"tate "+a.join(" "),expected:"error noncanonical"});
 }
 rows.push({input:"tate 1 2",expected:"error width"},{input:"tate 1 2 3 4 5 x",expected:"error invalid_decimal"});
+// Admission boundaries and transport precedence, independent of the pairing arithmetic.
+for (let i=0;i<6;i++) {
+ const a=[...g,...q.flat()];a[i]=p+1n;
+ rows.push({input:"tate "+a.join(" "),expected:"error noncanonical"});
+}
+rows.push(
+ {input:"tate "+[...g,...q.flat(),p].join(" "),expected:"error width"},
+ {input:"tate "+[p,...q.flat()].join(" "),expected:"error width"},
+ {input:"tate "+[p,2n,0n,0n,0n,0n].join(" "),expected:"error noncanonical"},
+ {input:"tate "+[1n<<1024n,...[...g,...q.flat()].slice(1)].join(" "),expected:"error noncanonical"},
+ {input:"tate "+[p,2n,0n,0n,0n,"x"].join(" "),expected:"error invalid_decimal"},
+ {input:"tate x",expected:"error width"},
+ {input:"tate -1 2 3 4 5 6",expected:"error invalid_decimal"},
+ {input:"tate",expected:"error width"});
 function compare(lines){
  if(lines.length!==rows.length)throw Error("count");
  for(let i=0;i<rows.length;i++)if(lines[i]!==rows[i].expected)throw Error("row "+i);
