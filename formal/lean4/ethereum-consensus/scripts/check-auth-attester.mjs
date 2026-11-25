@@ -108,7 +108,7 @@ const roots=fixtures.flatMap(x=>x.evidence.slice(0,2));
 const {rows:hashRows,scalar,parsePoint}=rowsForMap(roots.map(x=>[x,rootField(Buffer.from(x,'hex'))]),[]);
 const hashes=new Map(hashRows.filter(([a,b])=>a.startsWith('curveroot ')&&b.startsWith('ok ')).map(([a,b])=>[a.slice(10),b.slice(3).split(' ').map(BigInt)]));
 const check=(condition,message)=>{if(!condition)throw Error(message);};
-check(hashes.size===4,'four distinct signing roots');
+check(hashes.size===6,'six distinct signing roots');
 function signature(root,k,negate=false){
   const q=hashes.get(root);check(q?.length===4,'hash point');
   let [xr,xi,yr,yi]=scalar(k,parsePoint(q.join(' '))).flat();
@@ -118,9 +118,46 @@ function signature(root,k,negate=false){
   return hex(xi|((sign?5n:4n)<<381n))+hex(xr);
 }
 const rows=[];
-function put(a,b,line,expected){rows.push([[a,b,...line].join(' '),expected]);}
+// Fixture lines are strings, not iterables of tokens. Verify the transport
+// independently of the result comparator, including exact prefix and suffix.
+function auditWire(wire,a,b,line){
+  check(typeof line==='string' && line.length>0,'fixture line type');
+  check(!/[\r\n]/.test(line) && !line.startsWith(' ') && !line.endsWith(' '),'fixture line boundaries');
+  const fields=wire.split(' ');
+  const source=line.split(' ');
+  check(fields.length===source.length+2,'wire token count');
+  check(fields[0]===a && fields[1]===b,'wire signature tokens');
+  check(fields.slice(2).every((v,i)=>v===source[i]),'wire exact source tokens');
+}
+function put(a,b,line,expected){
+  const wire=[a,b,line].join(' ');
+  auditWire(wire,a,b,line);
+  rows.push([wire,expected]);
+}
+// Reproduce the exact failure and two other token corruptions.
+const firstLine=fixtures[0].line;
+for(const bad of [
+  ['00','01',...firstLine].join(' '),
+  ['01','00',firstLine].join(' '),
+  ['00','01',firstLine.slice(1)].join(' ')
+]){
+  let caught=false;
+  try{auditWire(bad,'00','01',firstLine);}catch{caught=true;}
+  check(caught,'wire mutation escaped');
+}
 for(const fixture of fixtures){
   const {line,evidence,rejections}=fixture,[a,b]=evidence;
+  if(fixture.emptyEligible){
+    const sa=signature(a,4n),sb=signature(b,7n);
+    put(sa,sb,line,'error no_eligible');
+    put(signature(a,5n),sb,line,'error first_mismatch');
+    put(sa,signature(b,8n),line,'error second_mismatch');
+    put('00',sb,line,'error first_signature_width');
+    put(sa,'00',line,'error second_signature_width');
+    put('zz',sb,line,'error invalid_hex');
+    put(sa,'zz',line,'error invalid_hex');
+    continue;
+  }
   const sa=signature(a,6n),sb=signature(b,9n);
   put(sa,sb,line,'authenticated_relative_to_commitment '+evidence.join(' '));
   put(sb,sa,line,'error first_mismatch');
@@ -134,12 +171,13 @@ for(const fixture of fixtures){
   for(const [bad,expected] of rejections)put(sa,sb,bad,expected);
 }
 rows.push(['x'.repeat(263169),'error resource_limit']);
+check(rows.length===90,'exact retained and new row count');
 const expected=rows.map(r=>r[1]);
 function compare(actual){check(actual.length===expected.length,'row count');for(let i=0;i<actual.length;i++)check(actual[i]===expected[i],'row '+i+': '+actual[i]+' != '+expected[i]);}
 compare(expected);
 const controls=[expected.slice(1),[...expected,'extra'],expected.map((x,i)=>i===0?'error first_mismatch':x),expected.map((x,i)=>i===1?expected[0]:x),expected.map((x,i)=>i===2?expected[0]:x)];
 for(const c of controls){let caught=false;try{compare(c);}catch{caught=true;}check(caught,'mutation escaped');}
-console.log(JSON.stringify({rows:rows.length,authenticated:expected.filter(x=>x.startsWith('authenticated_')).length,controls:controls.length}));
+console.log(JSON.stringify({rows:rows.length,authenticated:expected.filter(x=>x.startsWith('authenticated_')).length,controls:controls.length,wireControls:3}));
 if(process.argv[2]!=='--self-test'){
   const start=performance.now();
   const proc=spawnSync(process.argv[2],[],{encoding:'utf8',input:rows.map(r=>r[0]).join('\n')+'\n',timeout:360000,maxBuffer:4*1024*1024});
