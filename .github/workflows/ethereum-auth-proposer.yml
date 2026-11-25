@@ -152,6 +152,11 @@ jobs:
           ulimit -v 8388608
           ulimit -c 0
           node scripts/check-auth-proposer.mjs "$RUNNER_TEMP/auth-proposer-build/authenticated-proposer" | tee "$RUNNER_TEMP/auth-proposer-native.log"
+      - name: Check static proof-engine linkage after native comparisons
+        run: |
+          set -euo pipefail
+          python3 scripts/test-native-runtime.py
+          python3 scripts/check-native-runtime.py "$RUNNER_TEMP/auth-proposer-build/authenticated-proposer" --report "$RUNNER_TEMP/auth-proposer-runtime.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -159,3 +164,4 @@ jobs:
           path: |
             ${{ runner.temp }}/auth-proposer-*.log
             ${{ runner.temp }}/auth-proposer-pins.json
+            ${{ runner.temp }}/auth-proposer-runtime.json

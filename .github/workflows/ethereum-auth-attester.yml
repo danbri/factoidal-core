@@ -131,6 +131,11 @@ jobs:
           ulimit -v 8388608
           ulimit -c 0
           node scripts/check-auth-attester.mjs "$RUNNER_TEMP/auth-attester-build/authenticated-attester" | tee "$RUNNER_TEMP/auth-attester-native.log"
+      - name: Check static proof-engine linkage after native comparisons
+        run: |
+          set -euo pipefail
+          python3 scripts/test-native-runtime.py
+          python3 scripts/check-native-runtime.py "$RUNNER_TEMP/auth-attester-build/authenticated-attester" --report "$RUNNER_TEMP/auth-attester-runtime.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -138,3 +143,4 @@ jobs:
           path: |
             ${{ runner.temp }}/auth-attester-*.log
             ${{ runner.temp }}/auth-attester-pins.json
+            ${{ runner.temp }}/auth-attester-runtime.json
