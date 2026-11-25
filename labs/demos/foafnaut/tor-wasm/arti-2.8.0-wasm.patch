@@ -1,0 +1,338 @@
+diff --git a/crates/arti-client/src/client.rs b/crates/arti-client/src/client.rs
+index b493250..f36ae51 100644
+--- a/crates/arti-client/src/client.rs
++++ b/crates/arti-client/src/client.rs
+@@ -1115,7 +1115,10 @@ impl<R: Runtime> TorClient<R> {
+         }
+         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+         {
+-            unimplemented!()
++            // Foafnaut wasm build: Arti has no persistent state manager on wasm yet.
++            // State (guards, circuit timeouts) is kept in memory and lost when the page closes.
++            let _ = config;
++            Ok(TestingStateMgr::new())
+         }
+     }
+ 
+diff --git a/crates/saturating-time/src/internal.rs b/crates/saturating-time/src/internal.rs
+index 0a99396..08661d0 100644
+--- a/crates/saturating-time/src/internal.rs
++++ b/crates/saturating-time/src/internal.rs
+@@ -6,10 +6,11 @@
+ //!
+ //! Normal users should not be using this.
+ 
++use web_time_compat::Instant;
+ use std::{
+     cmp,
+     sync::LazyLock,
+-    time::{Duration, Instant, SystemTime},
++    time::{Duration, SystemTime},
+ };
+ 
+ /// The maximum value of [`SystemTime`] for this platform.
+diff --git a/crates/saturating-time/src/lib.rs b/crates/saturating-time/src/lib.rs
+index ad87240..840bd04 100644
+--- a/crates/saturating-time/src/lib.rs
++++ b/crates/saturating-time/src/lib.rs
+@@ -54,7 +54,8 @@
+     feature(time_systemtime_limits, time_saturating_systemtime)
+ )]
+ 
+-use std::time::{Duration, Instant, SystemTime};
++use std::time::{Duration, SystemTime};
++use web_time_compat::Instant;
+ 
+ mod internal;
+ 
+diff --git a/crates/tor-dirmgr/src/config.rs b/crates/tor-dirmgr/src/config.rs
+index 80de753..f192d8f 100644
+--- a/crates/tor-dirmgr/src/config.rs
++++ b/crates/tor-dirmgr/src/config.rs
+@@ -93,6 +93,13 @@ impl DirMgrConfig {
+     /// Note that each time this is called, a new store object will be
+     /// created: you probably only want to call this once.
+     pub(crate) fn open_store(&self, readonly: bool) -> Result<DynStore> {
++        // Foafnaut wasm build: no file system, so the directory cache is kept in memory.
++        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
++        {
++            let _ = readonly;
++            return Ok(Box::new(crate::storage::memory::MemoryStore::default()));
++        }
++        #[allow(unreachable_code)]
+         Ok(Box::new(
+             crate::storage::SqliteStore::from_path_and_mistrust(
+                 &self.cache_dir,
+diff --git a/crates/tor-dirmgr/src/storage.rs b/crates/tor-dirmgr/src/storage.rs
+index 17fb4ac..d850582 100644
+--- a/crates/tor-dirmgr/src/storage.rs
++++ b/crates/tor-dirmgr/src/storage.rs
+@@ -27,6 +27,8 @@ use std::time::SystemTime;
+ use time::Duration;
+ 
+ pub(crate) mod sqlite;
++#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
++pub(crate) mod memory;
+ 
+ pub(crate) use sqlite::SqliteStore;
+ 
+diff --git a/crates/tor-dirmgr/src/storage/memory.rs b/crates/tor-dirmgr/src/storage/memory.rs
+new file mode 100644
+index 0000000..223cf70
+--- /dev/null
++++ b/crates/tor-dirmgr/src/storage/memory.rs
+@@ -0,0 +1,254 @@
++//! An in-memory directory store, for targets with no file system (wasm32-unknown-unknown).
++//!
++//! Added by the Foafnaut wasm build (factoidal-core,
++//! labs/demos/foafnaut/tor-wasm/arti-2.8.0-wasm.patch). It keeps the same rows as
++//! `SqliteStore` and follows its queries (named on each method), but in maps. Nothing is
++//! written anywhere, so a new page starts with an empty cache and fetches the directory again.
++
++use std::collections::HashMap;
++use std::time::SystemTime;
++
++#[cfg(feature = "routerdesc")]
++use tor_netdoc::doc::routerdesc::RdDigest;
++use tor_netdoc::doc::authcert::AuthCertKeyIds;
++use tor_netdoc::doc::microdesc::MdDigest;
++use tor_netdoc::doc::netstatus::{ConsensusFlavor, ProtoStatuses};
++use web_time_compat::SystemTimeExt;
++
++use super::{ExpirationConfig, InputString, Store};
++#[cfg(feature = "bridge-client")]
++use super::{BridgeConfig, CachedBridgeDescriptor};
++use crate::Result;
++use crate::docmeta::{AuthCertMeta, ConsensusMeta};
++
++/// One stored consensus.
++struct ConsensusRow {
++    /// Its metadata.
++    meta: ConsensusMeta,
++    /// Its flavor.
++    flavor: ConsensusFlavor,
++    /// True until `mark_consensus_usable`.
++    pending: bool,
++    /// The document.
++    text: String,
++}
++
++/// The store.
++#[derive(Default)]
++pub(crate) struct MemoryStore {
++    /// Consensuses, by sha3-256 of the whole document.
++    consensuses: HashMap<[u8; 32], ConsensusRow>,
++    /// Authority certificates: (published, expires, text).
++    authcerts: HashMap<AuthCertKeyIds, (SystemTime, SystemTime, String)>,
++    /// Microdescriptors: (last listed, text).
++    microdescs: HashMap<MdDigest, (SystemTime, String)>,
++    /// Router descriptors: (published, text).
++    #[cfg(feature = "routerdesc")]
++    routerdescs: HashMap<RdDigest, (SystemTime, String)>,
++    /// Bridge descriptors by bridge line: (descriptor, until).
++    #[cfg(feature = "bridge-client")]
++    bridgedescs: HashMap<String, (CachedBridgeDescriptor, SystemTime)>,
++    /// The latest protocol recommendations.
++    protocols: Option<(SystemTime, ProtoStatuses)>,
++}
++
++/// `t - d`, or the epoch when that is before it.
++fn minus(t: SystemTime, d: time::Duration) -> SystemTime {
++    let d: std::time::Duration = d.try_into().unwrap_or_default();
++    t.checked_sub(d).unwrap_or(SystemTime::UNIX_EPOCH)
++}
++
++impl MemoryStore {
++    /// The newest consensus of `flavor` (by valid-until) whose pending flag matches, if given.
++    fn latest(&self, flavor: ConsensusFlavor, pending: Option<bool>) -> Option<&ConsensusRow> {
++        self.consensuses
++            .values()
++            .filter(|r| r.flavor == flavor && pending.is_none_or(|p| r.pending == p))
++            .max_by_key(|r| r.meta.lifetime().valid_until())
++    }
++}
++
++impl Store for MemoryStore {
++    fn is_readonly(&self) -> bool {
++        false
++    }
++    fn upgrade_to_readwrite(&mut self) -> Result<bool> {
++        Ok(true)
++    }
++
++    /// As `SqliteStore::expire_all` (DROP_OLD_* queries).
++    fn expire_all(&mut self, expiration: &ExpirationConfig) -> Result<()> {
++        let now = SystemTime::get();
++        self.consensuses
++            .retain(|_, r| r.meta.lifetime().valid_until() >= minus(now, expiration.consensuses));
++        self.authcerts.retain(|_, (_, expires, _)| *expires >= minus(now, expiration.authcerts));
++        self.microdescs
++            .retain(|_, (listed, _)| *listed >= minus(now, expiration.microdescs));
++        #[cfg(feature = "routerdesc")]
++        self.routerdescs
++            .retain(|_, (published, _)| *published >= minus(now, expiration.router_descs));
++        #[cfg(feature = "bridge-client")]
++        self.bridgedescs
++            .retain(|_, (d, until)| !(now > *until || d.fetched > now));
++        Ok(())
++    }
++
++    /// FIND_CONSENSUS_P / FIND_CONSENSUS.
++    fn latest_consensus(
++        &self,
++        flavor: ConsensusFlavor,
++        pending: Option<bool>,
++    ) -> Result<Option<InputString>> {
++        Ok(self.latest(flavor, pending).map(|r| r.text.clone().into()))
++    }
++
++    /// FIND_LATEST_CONSENSUS_META (pending = 0).
++    fn latest_consensus_meta(&self, flavor: ConsensusFlavor) -> Result<Option<ConsensusMeta>> {
++        Ok(self.latest(flavor, Some(false)).map(|r| r.meta.clone()))
++    }
++
++    #[cfg(test)]
++    fn consensus_by_meta(&self, cmeta: &ConsensusMeta) -> Result<InputString> {
++        self.consensuses
++            .get(cmeta.sha3_256_of_whole())
++            .map(|r| r.text.clone().into())
++            .ok_or_else(|| crate::Error::CacheCorruption("consensus not found"))
++    }
++
++    /// FIND_CONSENSUS_AND_META_BY_DIGEST_OF_SIGNED.
++    fn consensus_by_sha3_digest_of_signed_part(
++        &self,
++        d: &[u8; 32],
++    ) -> Result<Option<(InputString, ConsensusMeta)>> {
++        Ok(self
++            .consensuses
++            .values()
++            .find(|r| r.meta.sha3_256_of_signed() == d)
++            .map(|r| (r.text.clone().into(), r.meta.clone())))
++    }
++
++    /// INSERT_CONSENSUS (insert or replace, keyed by the whole-document digest).
++    fn store_consensus(
++        &mut self,
++        cmeta: &ConsensusMeta,
++        flavor: ConsensusFlavor,
++        pending: bool,
++        contents: &str,
++    ) -> Result<()> {
++        self.consensuses.insert(
++            *cmeta.sha3_256_of_whole(),
++            ConsensusRow { meta: cmeta.clone(), flavor, pending, text: contents.to_string() },
++        );
++        Ok(())
++    }
++
++    /// MARK_CONSENSUS_NON_PENDING.
++    fn mark_consensus_usable(&mut self, cmeta: &ConsensusMeta) -> Result<()> {
++        if let Some(r) = self.consensuses.get_mut(cmeta.sha3_256_of_whole()) {
++            r.pending = false;
++        }
++        Ok(())
++    }
++
++    /// REMOVE_CONSENSUS.
++    fn delete_consensus(&mut self, cmeta: &ConsensusMeta) -> Result<()> {
++        self.consensuses.remove(cmeta.sha3_256_of_whole());
++        Ok(())
++    }
++
++    /// FIND_AUTHCERT, one key pair at a time.
++    fn authcerts(&self, certs: &[AuthCertKeyIds]) -> Result<HashMap<AuthCertKeyIds, String>> {
++        Ok(certs
++            .iter()
++            .filter_map(|ids| self.authcerts.get(ids).map(|(_, _, t)| (*ids, t.clone())))
++            .collect())
++    }
++
++    /// INSERT_AUTHCERT.
++    fn store_authcerts(&mut self, certs: &[(AuthCertMeta, &str)]) -> Result<()> {
++        for (meta, text) in certs {
++            self.authcerts
++                .insert(*meta.key_ids(), (meta.published(), meta.expires(), text.to_string()));
++        }
++        Ok(())
++    }
++
++    /// FIND_MD.
++    fn microdescs(&self, digests: &[MdDigest]) -> Result<HashMap<MdDigest, String>> {
++        Ok(digests
++            .iter()
++            .filter_map(|d| self.microdescs.get(d).map(|(_, t)| (*d, t.clone())))
++            .collect())
++    }
++
++    /// INSERT_MD.
++    fn store_microdescs(&mut self, digests: &[(&str, &MdDigest)], when: SystemTime) -> Result<()> {
++        for (text, d) in digests {
++            self.microdescs.insert(**d, (when, text.to_string()));
++        }
++        Ok(())
++    }
++
++    /// UPDATE_MD_LISTED (last_listed = max(last_listed, when)).
++    fn update_microdescs_listed(&mut self, digests: &[MdDigest], when: SystemTime) -> Result<()> {
++        for d in digests {
++            if let Some((listed, _)) = self.microdescs.get_mut(d) {
++                *listed = (*listed).max(when);
++            }
++        }
++        Ok(())
++    }
++
++    #[cfg(feature = "routerdesc")]
++    fn routerdescs(&self, digests: &[RdDigest]) -> Result<HashMap<RdDigest, String>> {
++        Ok(digests
++            .iter()
++            .filter_map(|d| self.routerdescs.get(d).map(|(_, t)| (*d, t.clone())))
++            .collect())
++    }
++
++    #[cfg(feature = "routerdesc")]
++    fn store_routerdescs(&mut self, digests: &[(&str, SystemTime, &RdDigest)]) -> Result<()> {
++        for (text, published, d) in digests {
++            self.routerdescs.insert(**d, (*published, text.to_string()));
++        }
++        Ok(())
++    }
++
++    #[cfg(feature = "bridge-client")]
++    fn lookup_bridgedesc(&self, bridge: &BridgeConfig) -> Result<Option<CachedBridgeDescriptor>> {
++        Ok(self.bridgedescs.get(&bridge.to_string()).map(|(d, _)| d.clone()))
++    }
++
++    #[cfg(feature = "bridge-client")]
++    fn store_bridgedesc(
++        &mut self,
++        bridge: &BridgeConfig,
++        entry: CachedBridgeDescriptor,
++        until: SystemTime,
++    ) -> Result<()> {
++        self.bridgedescs.insert(bridge.to_string(), (entry, until));
++        Ok(())
++    }
++
++    #[cfg(feature = "bridge-client")]
++    fn delete_bridgedesc(&mut self, bridge: &BridgeConfig) -> Result<()> {
++        self.bridgedescs.remove(&bridge.to_string());
++        Ok(())
++    }
++
++    /// UPDATE_PROTOCOL_STATUS (one row).
++    fn update_protocol_recommendations(
++        &mut self,
++        valid_after: SystemTime,
++        protocols: &ProtoStatuses,
++    ) -> Result<()> {
++        self.protocols = Some((valid_after, protocols.clone()));
++        Ok(())
++    }
++
++    /// FIND_LATEST_PROTOCOL_STATUS.
++    fn cached_protocol_recommendations(&self) -> Result<Option<(SystemTime, ProtoStatuses)>> {
++        Ok(self.protocols.clone())
++    }
++}

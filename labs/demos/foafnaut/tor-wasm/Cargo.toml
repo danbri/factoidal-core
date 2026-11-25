@@ -1,0 +1,44 @@
+[package]
+name = "foafnaut-tor-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Arti (Tor) client built for wasm32-unknown-unknown with a minimal runtime, for Foafnaut experiments."
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[dependencies]
+# Arti 2.8.0 (tag arti-v2.8.0, commit 7c038125baef924a4bf287429c192c5af606f79c), checked out by build.sh.
+arti-client = { path = ".work/arti/crates/arti-client", default-features = false, features = [
+    # The arti program's default security set, less pt-client (it starts processes):
+    "onion-service-client", "vanguards", "compression", "bridge-client",
+    # Memory limits against denial of service; keys in memory only.
+    "memquota", "keymgr", "ephemeral-keystore",
+] }
+tor-keymgr = { path = ".work/arti/crates/tor-keymgr", default-features = false }
+tor-config = { path = ".work/arti/crates/tor-config", default-features = false }
+tor-rtcompat = { path = ".work/arti/crates/tor-rtcompat", default-features = false }
+tor-general-addr = { path = ".work/arti/crates/tor-general-addr" }
+futures = "0.3"
+void = "1"
+async-trait = "0.1"
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+gloo-timers = { version = "0.3", features = ["futures"] }
+send_wrapper = "0.6"
+web-time = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
+
+[patch.crates-io]
+# Arti's own crates resolve to the checkout, so the saturating-time patch (build.sh) applies.
+saturating-time = { path = ".work/arti/crates/saturating-time" }

@@ -612,7 +612,8 @@ https://github.com/danbri/factoidal-core/issues/1038).
   pool and HTTP/2, the DNS cache and speculative resolution, the Veil models to add first.
 - [Tor and onion services, 2026-11-25](../../docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md):
   three routes (local SOCKS port, embedded Arti, a Lean client), the conflict with Egress DNS
-  pinning, what the pool key and any substrate must allow, and the fingerprint limit.
+  pinning, what the pool key and any substrate must allow, and the fingerprint limit; section 10:
+  Arti 2.8.0 built for wasm and run in a page (`labs/demos/foafnaut/tor-wasm`), with its security review.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).

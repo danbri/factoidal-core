@@ -185,3 +185,105 @@ Read from the pages on 2026-11-25; nothing here was run.
 For Foafnaut: the runtime of item 4 and a host transport (Snowflake or WebTunnel on the Hub; raw
 TCP on desktop) are the missing parts; the tor-js runtime is the nearest existing design. Its
 clock reads `Date.now`, which in a Foafnaut page is the virtual clock (section 8, item 6).
+
+## 10. Arti 2.8.0 built for wasm and run in Foafnaut (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "ok looks like you should build from the main source into wasm, and
+whatever minimal accomodations we need to make for that. Document everything." Then: "1 make it
+as secure and privacy respecting as we can. 2. (B) but do it clean using the latest stable TOR
+code and build it for wasm here." Then: "Check for Tor security oopsies too", with
+https://app.opencve.io/cve/?product=tor&vendor=torproject. Route (B) is section 3: Arti embedded,
+here as wasm.
+
+Code: `labs/demos/foafnaut/tor-wasm/` (README there). Result: Arti starts in a Foafnaut page and
+runs its bootstrap until it needs the network; there is no transport, so it stops there.
+
+### 10.1 Source
+
+Arti 2.8.0 (3 November 2026), tag `arti-v2.8.0`, commit
+`7c038125baef924a4bf287429c192c5af606f79c`, the latest release on 2026-11-25 (`main` has newer
+commits but no newer tag). `build.sh` clones the tag and stops if the commit differs. Its
+changelog lists fixes for TROVE-2026-069 and TROVE-2026-070 and for 16 RustSec advisories in
+dependencies, so the build includes them.
+
+### 10.2 Changes to Arti (`arti-2.8.0-wasm.patch`, all wasm-only)
+
+1. `saturating-time` (an Arti crate): `use std::time::Instant` where `web_time_compat` gives
+   `web_time::Instant` on `wasm32-unknown-unknown`. Two imports changed. Same defect on `main`.
+2. `arti-client` `statemgr_from_config`: `unimplemented!()` on wasm (also on `main`). Now
+   `TestingStateMgr::new()`, Arti's in-memory state manager, which `client.rs` already imports on
+   wasm.
+3. `tor-dirmgr`: the directory store is SQLite plus files, with no wasm option (also on `main`).
+   New `storage/memory.rs` (254 lines): the same rows in maps, one method per SQL query, named on
+   each method. `open_store` uses it on wasm.
+
+For the owner (CLAUDE.md, "I am the upstream route"): items 1 to 3 are defects or gaps in Arti
+2.8.0 and `main` for `wasm32-unknown-unknown`. Item 4 of 10.4 (vanguards off when default
+features are off) is an Arti packaging trap.
+
+### 10.3 Runtime and configuration (`src/lib.rs`)
+
+- Tasks: `wasm_bindgen_futures::spawn_local`. Timers: `setTimeout` (gloo-timers). Blocking work:
+  run at once; `reenter_block_on` panics (there are no threads), and `panic = "abort"` ends the
+  module: it fails closed.
+- Network: TCP, Unix sockets, UDP and listening all return the error "no transport"; each refusal
+  is counted (`refusedConnections`). TLS: a connector that refuses. No other path exists.
+- Wall clock: Arti reads `SystemTime` directly in places (`tor-dirmgr/src/bootstrap.rs:830`,
+  `tor-dirmgr/src/lib.rs:195`, `arti-client/src/status.rs`), so the runtime cannot correct it.
+  A Foafnaut page clock is virtual and reads 0 ms at load (measured). `pages.py` sets
+  `Date.now()` to the real time at page generation plus the page's monotonic time since load.
+  `bootstrap` refuses to start when the clock reads earlier than 2024.
+- Configuration: placeholder state and cache paths (never opened; the defaults need a home
+  directory); keystore kind `Ephemeral` (keys in memory only).
+- Features: the `arti` program's default security set (`onion-service-client`, `vanguards`,
+  `compression`, `bridge-client`) less `pt-client` (it starts processes), plus `memquota`,
+  `keymgr`, `ephemeral-keystore`.
+
+### 10.4 Security review
+
+Method: Arti 2.8.0 source and changelog, read locally; the OpenCVE list for C tor (page 1 of 3);
+RustSec pages for tor-circmgr. The GitLab changelog page refused the web fetch (HTTP 403); the
+clone has the same file.
+
+1. Fixed here: with `default-features = false`, Arti builds without `vanguards` and replaces the
+   vanguard configuration with a disabled one (`arti-client/src/config.rs:72-82`). Onion service
+   circuits are then open to guard discovery. The build enables `vanguards`.
+2. Fixed here: no fallback path. Every connection attempt reaches the refusing provider (Node: 46
+   and 56 refusals in 15 s; Foafnaut: 16 to 30). Names are never resolved locally.
+3. Checked: page randomness. `crypto.getRandomValues` in a Foafnaut page is HMAC_DRBG-SHA-256
+   seeded with 32 bytes from `IO.getRandomBytes` (the operating system) per session, refused
+   after 2^48 calls (`WasmVM/Hosts/WebApi.lean:207-225`, `labs/demos/foafnaut/WebScripts.lean:297-304`).
+   It is never reseeded, so a read of the generator state gives later outputs.
+4. Open: page clock (https://github.com/danbri/factoidal-core/issues/1061, page clock is virtual).
+   The shim drifts with the virtual clock; a wrong date breaks consensus and onion service
+   time-period checks.
+5. Open: state in memory (https://github.com/danbri/factoidal-core/issues/1058, guard churn). Each
+   page load picks new guards and fetches the whole directory again.
+6. Open: shared script context (https://github.com/danbri/factoidal-core/issues/1059). Another
+   script in the page can read Arti's memory, keys included.
+7. Open: no transport (https://github.com/danbri/factoidal-core/issues/1060). A future transport
+   must keep Arti's own link authentication (CERTS cells), never add Web PKI checks, and never
+   fall back to a direct connection. rustls on wasm also needs `rustls-pki-types` with its `web`
+   feature (a build of `arti-client` with `rustls` failed on `UnixTime::now`).
+8. Note: `memquota` cannot read the memory size on wasm and uses a constant 1 GiB.
+9. Note: `hs-pow-full` is off, as in the `arti` program: onion services that require
+   proof-of-work under attack may be unreachable.
+10. Note: Arti's log lines go to the page console with Arti's safe logging (addresses redacted).
+    A host that stores console lines must not store these.
+11. Advisories: none found that affects Arti 2.8.0. RUSTSEC-2024-0339 and RUSTSEC-2024-0340
+    (tor-circmgr, vanguard path lengths) were fixed in tor-circmgr 0.18.1, long before 0.48.0.
+    The C tor CVEs of 2026 on OpenCVE (for example CVE-2026-77587, conflux use-after-free that a
+    hostile exit can use to crash a client; CVE-2026-77638, rendezvous point impersonating an
+    onion service) are for C tor. Arti's changelog is the record for Arti; the conflux and
+    rendezvous code paths are the ones to watch.
+12. Fingerprint: https://github.com/danbri/factoidal/issues/1306.
+
+### 10.5 Measurements (2026-11-25, cloud container, Linux rig)
+
+- Build from a clean clone: 2 min 11 s. Module: 5,103,695 bytes of wasm.
+- Node 22: client created, bootstrap at 0% "fetching a consensus" until the 15 s limit.
+- Foafnaut (released engine `build-e4445d14752c`): the same steps and messages. The page task
+  that loads and starts Arti: 11.3 to 11.4 million counted instructions, 1987 to 2226 ms of real
+  engine time (three runs).
+- Tests: `node --test xfail.test.cjs`: 4 pass, 0 fail (out of 4: three expected failures and the
+  refused-connection check). `run.sh`: page clock expected failure holds (raw clock 0 ms).
