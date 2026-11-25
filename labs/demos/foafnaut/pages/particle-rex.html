@@ -851,7 +851,47 @@ canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--focus)}
   }
 
   /* ---------- drawing. ds = live cells (ink pass fades out as colour fades in), di = cached texture */
+  // Foafnaut copy (issue 1031): a still sprite (loose 0) is drawn from two cached bitmaps, one for
+  // the colour pass and one for the ink pass, made at the device scale with the same cells, sizes
+  // and alphas as the cell loop below; the two passes then cost one drawImage each, not one
+  // fillRect and one globalAlpha per cell (about 1,760 calls a frame in play).
+  function cellTexture(sp, u, pass) {
+    const us = M.round(u * dpr * unit * 4) / 4,
+      key = (pass ? "i" + inkCss : "c") + us,
+      m = sp.ct || (sp.ct = new Map());
+    let t = m.get(key);
+    if (t) return t;
+    if (m.size > 24) m.clear();
+    const d = us * 0.88,
+      h = d / 2,
+      W = M.ceil(sp.w * us + 2),
+      H = M.ceil(sp.h * us + 2),
+      c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const x = c.getContext("2d");
+    if (pass) x.fillStyle = inkCss;
+    let lc = "";
+    for (const e of sp.cells) {
+      if (!pass && e.c !== lc) x.fillStyle = lc = e.c;
+      x.globalAlpha = e.a * (pass ? 1 - 0.45 * e.l : 1);
+      x.fillRect(W / 2 + e.x * us - h, H / 2 + e.y * us - h, d, d);
+    }
+    m.set(key, (t = { c, w: (W * u) / us, h: (H * u) / us }));
+    return t;
+  }
   function drawCells(sp, cx, cy, size, al, loose) {
+    if (!loose) {
+      const u = size / max(sp.w, sp.h);
+      for (let pass = 0; pass < 2; pass++) {
+        const k = pass ? 1 - chroma : chroma;
+        if (k < 0.01 || al * k <= 0) continue;
+        const t = cellTexture(sp, u, pass);
+        ctx.globalAlpha = al * k;
+        ctx.drawImage(t.c, cx - t.w / 2, cy - t.h / 2, t.w, t.h);
+      }
+      return;
+    }
     const u = size / max(sp.w, sp.h),
       d = u * 0.88,
       h = d / 2,
