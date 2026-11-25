@@ -583,13 +583,15 @@ private def urlArg (p : String) : Option (String × String) :=
       if inner.length == cs.length then none else
       some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
 
-/-- Whether the declaration that the text after `t` is in names a background property: the
+/-- Whether the declaration that the text after `t` is in names a background property or
+`content` (a `url()` there is an image too, CSS Content 3 §2.1): the
 text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
 declaration before it did (`prev`). -/
 private def inBackground (prev : Bool) (t : String) : Bool :=
   let cs := t.toLower.toList
   let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
-  let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1
+  let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1 ||
+    ((String.ofList l).splitOn "content").length > 1
   if tail.length < cs.length then mentions tail else prev || mentions cs
 
 private def resolveBackgroundUrl (base u : String) : String :=
@@ -629,7 +631,11 @@ def backgroundUrlsOf (base text : String) : List String := Id.run do
   return out.reverse
 
 #guard backgroundUrlsAbsolute "https://a.test/css/s.css" "p{background:url(i.png) no-repeat} q{content:url(x.png)}" ==
-  "p{background:url(\"https://a.test/css/i.png\") no-repeat} q{content:url(x.png)}"
+  "p{background:url(\"https://a.test/css/i.png\") no-repeat} q{content:url(\"https://a.test/css/x.png\")}"
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "li+li:before{content:url(\"/stylesheets/star.svg\")}" ==
+  "li+li:before{content:url(\"https://a.test/stylesheets/star.svg\")}"
+#guard backgroundUrlsOf "https://a.test/css/s.css" "a::after{content:\" \" url('../i/x.png') \"!\"}" == ["https://a.test/i/x.png"]
+#guard backgroundUrlsAbsolute "https://a.test/s.css" "a{content:url(#frag)}" == "a{content:url(#frag)}"
 #guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
   ["https://a.test/a b.png","https://a.test/c.png"]
 #guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
@@ -2447,19 +2453,40 @@ theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Na
 
 #print axioms attachBackgroundPictures_eq
 
+/-- Generated images take paint-table ids from here up (`backgroundPictureBase` and the
+ids of redrawn pictures are below). -/
+def generatedPictureBase : Nat := 4*backgroundPictureBase
+
+/-- The images of the generated tree `d` (an image of a `content` value, CSS 2.1 §12.2): the
+nodes that `Generated.fill` added, in node order, with their URLs. Only ids from `base` up
+(the page's own nodes are not generated). -/
+def generatedImages (base : Nat) (d : DOM.Dom) : List (Nat × String) := Id.run do
+  let mut out : Array (Nat × String) := #[]
+  for id in [base:d.size] do
+    let n := d.get id
+    if n.type == .element && n.lname == Rendering.Generated.imageName then
+      let src := Rendering.CSS.attrValue n "src"
+      if !src.isEmpty then out := out.push (id,src)
+  return out.toList
+
 /-- The cascade with each element's background image decoded from the supplied images (a
 `data:` URL from itself), and the store made for them, for the engine to keep. A page with no
-background image gives its cascade back as it is. -/
+background image gives its cascade back as it is. The pictures of the images of `content`
+values (`generatedImages`) are decoded in the same store and given by node: the layout lays
+each out as a replaced box; an image the host did not give or that did not decode has no
+picture and draws nothing (CSS 2.1 §12.2). -/
 def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × ByteArray))
-    (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
-    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry × List WebAccept.LimitHit :=
+    (base : Nat) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
+    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry × List WebAccept.LimitHit ×
+      Std.TreeMap Nat Rendering.Layout.Picture :=
   match made with
-  | .error e => (.error e,none,[])
+  | .error e => (.error e,none,[],{})
   | .ok (d,styles) =>
-    let all := (styles.toList.filterMap (·.backgroundImage)).eraseDups
+    let generated := generatedImages base d
+    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ generated.map (·.2)).eraseDups
     let keys := all.take maxBackgroundImages
     let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
-    if keys.isEmpty then (.ok (d,styles),none,[]) else
+    if keys.isEmpty then (.ok (d,styles),none,[],{}) else
     let (store,entry) := WebRender.storeIn stores keys images
     let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
     -- the natural size of each SVG background, read once for each URL (a page can name one
@@ -2468,7 +2495,9 @@ def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × 
       if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
     let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
     let (styles,wanted) := redrawVectorBackgrounds images styles
-    (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures")
+    let pictures := (WebRender.picturesMap store (generated.filter (keys.contains ·.2))).map fun _ p =>
+      {p with id := generatedPictureBase+p.id}
+    (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures",pictures)
 
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
@@ -2538,8 +2567,11 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     pure (withPointer dom (← elementState dom url request) pointer)
   let made := if d0.isEmpty then made else Rendering.Generated.styled treeScope dom rules textScale state
   -- background images decoded into the cascade (issue 704); none on most pages
-  let (made,bgStore,bgLimits) := attachBackgrounds kept.stores images made
+  let (made,bgStore,bgLimits,generated) := attachBackgrounds kept.stores images dom.size made
   modify (·.merge {store := bgStore})
+  -- the images of `content` values lay out as replaced boxes (the pictures of nodes the
+  -- cascade added, so none of the document's own)
+  let pictures := withPictures generated pictures
   -- With the serif face held, the family lookup goes in only for a page that has serif text;
   -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
   -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
