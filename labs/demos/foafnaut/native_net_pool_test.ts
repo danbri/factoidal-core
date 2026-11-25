@@ -24,9 +24,9 @@ async function certificate(dir:string,name:string):Promise<{ca:string;cert:strin
 
 type Srv={port:number;connections:()=>number;peers:()=>string[];stop:()=>Promise<void>};
 /** A server that counts the connections it accepted (distinct remote address and port). */
-function serve(tls:{cert:string;key:string}|undefined,delayMs=5,hostname="127.0.0.1"):Srv{
+function serve(tls:{cert:string;key:string}|undefined,delayMs=5,hostname="127.0.0.1",port=0):Srv{
   const peers=new Set<string>();
-  const server=Deno.serve({hostname,port:0,onListen(){},...(tls??{})},async(req,info)=>{
+  const server=Deno.serve({hostname,port,onListen(){},...(tls??{})},async(req,info)=>{
     const a=info.remoteAddr as Deno.NetAddr;peers.add(`${a.hostname}:${a.port}`);
     const u=new URL(req.url);
     const d=Number(u.searchParams.get("delay")??delayMs);
@@ -90,7 +90,8 @@ Deno.test("measurement: connections and time per request, without and with the p
 const wire=(id:number,srv:Srv,over:Partial<NetWire>={}):NetWire=>({id,method:"GET",url:`http://a.test:${srv.port}/x${id}`,headers:[],address:"127.0.0.1",port:srv.port,...over});
 
 Deno.test("two origins, two partitions or two pinned addresses never share a connection",async()=>{
-  const a=serve(undefined,0),b=serve(undefined,0),both=serve(undefined,0,"0.0.0.0");
+  const a=serve(undefined,0),b=serve(undefined,0),ipv4=serve(undefined,0);
+  let ipv6:Srv|undefined;
   const pool=new NetPool({timeoutMs:10000});
   try{
     // different origins (different ports): two servers, one connection each
@@ -98,17 +99,22 @@ Deno.test("two origins, two partitions or two pinned addresses never share a con
     assert(a.connections()===1&&b.connections()===1,`origins: ${a.connections()} and ${b.connections()}`);
     // same origin, two partitions: two connections to the one server
     for(const [i,p] of ["site1","site2","site1","site2",undefined,""].entries())
-      assert((await netAnswer(wire(10+i,both,{partition:p}),{timeoutMs:10000},pool)).status===200,"request failed");
+      assert((await netAnswer(wire(10+i,ipv4,{partition:p}),{timeoutMs:10000},pool)).status===200,"request failed");
     // partition undefined and "" are the same partition
-    assert(both.connections()===3,`partitions: expected 3 connections (site1, site2, none), got ${both.connections()}`);
-    // same origin and partition, two pinned addresses: no reuse
-    const before=both.connections();
-    for(const [i,addr] of ["127.0.0.1","127.0.0.2","127.0.0.1","127.0.0.2"].entries())
-      assert((await netAnswer(wire(20+i,both,{address:addr,partition:"p"}),{timeoutMs:10000},pool)).status===200,"request failed");
-    assert(both.connections()-before===2,`addresses: ${both.connections()-before} new connections, expected 2`);
+    assert(ipv4.connections()===3,`partitions: expected 3 connections (site1, site2, none), got ${ipv4.connections()}`);
+    // Use the two standard loopback addresses on the same port. macOS does
+    // not route an unconfigured 127.0.0.2 address to a wildcard listener.
+    ipv6=serve(undefined,0,"::1",ipv4.port);
+    const before=ipv4.connections();
+    for(const [i,address] of ["127.0.0.1","::1","127.0.0.1","::1"].entries()){
+      const answer=await netAnswer(wire(20+i,ipv4,{address,partition:"p"}),{timeoutMs:10000},pool);
+      assert(answer.status===200,`request to ${address} failed: ${answer.status} ${answer.statusText??""}`);
+    }
+    assert(ipv4.connections()-before===1&&ipv6.connections()===1,
+      `addresses: expected one new connection to each address, got ${ipv4.connections()-before} and ${ipv6.connections()}`);
     // 2 origins + 3 partitions of one origin + 2 pinned addresses
     assert(pool.entries.size===7,`clients: ${pool.entries.size}`);
-  }finally{pool.close();await a.stop();await b.stop();await both.stop();}
+  }finally{pool.close();await a.stop();await b.stop();await ipv4.stop();await ipv6?.stop();}
 });
 
 Deno.test("every answer goes to the id that owns it, in any completion order",async()=>{
@@ -164,3 +170,4 @@ Deno.test("bounds: at most maxClients clients; an idle client closes after idleM
     assert((await netAnswer(wire(30,servers[0]),{timeoutMs:10000},pool)).status===200&&servers[0].connections()===n+1,"no new connection after the idle close");
   }finally{pool.close();for(const s of servers)await s.stop();}
 });
+
