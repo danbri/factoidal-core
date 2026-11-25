@@ -34,7 +34,7 @@ jobs:
           node scripts/check-g1-public-key.mjs --self-test | tee "$RUNNER_TEMP/g1-oracle.log"
           python3 - <<'PY' | tee "$RUNNER_TEMP/g1-source-pins.json"
           import json, pathlib, re, subprocess
-          paths = ["G1PublicKey.lean", "scripts/check-g1-public-key.mjs",
+          paths = ["G1PublicKey.lean", "G1PublicKeyMain.lean", "scripts/check-g1-public-key.mjs",
                    "lean-toolchain", "lake-manifest.json", "lakefile.toml",
                    "../../../.github/workflows/ethereum-bls-g1-admission.yml"]
           root = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
@@ -62,7 +62,9 @@ jobs:
           lean --version | tee "$RUNNER_TEMP/g1-toolchain.log"
           lean --deps G1PublicKey.lean | tee "$RUNNER_TEMP/g1-imports.log"
           lean -o "$RUNNER_TEMP/G1PublicKey.olean" -c "$RUNNER_TEMP/g1.c" G1PublicKey.lean 2>&1 | tee "$RUNNER_TEMP/g1-axioms.log"
-          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/g1-public-key" "$RUNNER_TEMP/g1.c" 2>&1 | tee "$RUNNER_TEMP/g1-native-build.log"
+          export LEAN_PATH="$RUNNER_TEMP/"
+          lean -c "$RUNNER_TEMP/G1PublicKeyMain.c" G1PublicKeyMain.lean
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/g1-public-key" "$RUNNER_TEMP/g1.c" "$RUNNER_TEMP/G1PublicKeyMain.c" 2>&1 | tee "$RUNNER_TEMP/g1-native-build.log"
           ldd "$RUNNER_TEMP/g1-public-key" | tee "$RUNNER_TEMP/g1-link.log"
           nm -u "$RUNNER_TEMP/g1-public-key" | tee "$RUNNER_TEMP/g1-symbols.log"
           if grep -E ' (EVP_|EC_|BN_|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/g1-symbols.log"; then exit 1; fi
