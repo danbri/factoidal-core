@@ -3995,7 +3995,7 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
 
 /-- Preparing a dashed path counts its edges once, before the rasterizer runs
 the coverage function for each sample. -/
-private def preparedDashedFill (geometry : Geometry) (rule : FillRule)
+private def preparedDashedFill (geometry : BackendGeometry) (rule : FillRule)
     (data : Array Float) (base : Nat) : Prepared Bool :=
   match geometry with
   | .polygon points =>
@@ -4007,7 +4007,7 @@ private def preparedDashedFill (geometry : Geometry) (rule : FillRule)
     .dynamic (fun env => pathHitFast env.data base count rule env.position)
   | g => (fillCondition g base).prepare data
 
-private theorem preparedDashedFill_eq (geometry : Geometry) (rule : FillRule)
+private theorem preparedDashedFill_eq (geometry : BackendGeometry) (rule : FillRule)
     (data : Array Float) (base : Nat) :
     preparedDashedFill geometry rule data base =
       (match geometry with
