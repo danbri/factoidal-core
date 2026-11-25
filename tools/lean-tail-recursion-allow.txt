@@ -2444,6 +2444,7 @@ L4Factoidal_GpuKernel_P_*  # (c) GPU kernel conditions (GpuKernel/Expr.lean): co
 L4Factoidal_GpuKernel_lastWrite  # (s) GpuKernel/Race.lean: the meaning of a write list for applyWrites_apply and the race theorems; the executed path is applyWrites (List.foldl)
 L4Factoidal_GpuKernel_Resident_fit  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 one frame's resident entries; to become an accumulator form proved equal before the host calls it
 L4Factoidal_GpuKernel_Resident_total  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 List.sum (foldr) over one frame's entries, as fit above
+L4Factoidal_JS_Tier1_pureNum  # (c) the number of a nested `+ - * /` operand (tier 1 of BubblePopJS): depth is the fuel it is called with, Tier1.depth = 8, whatever the expression
 # --- OWL 2 profiles and the RDF-to-structure reader (2026-11-16) ---
 L4Factoidal_OWL_Profiles_drOk  # (b) nesting of one data range; the loop over operands (drsOk) is a tail call
 L4Factoidal_OWL_Profiles_drsOk  # (b) nesting of one data range; the loop over operands is a tail call

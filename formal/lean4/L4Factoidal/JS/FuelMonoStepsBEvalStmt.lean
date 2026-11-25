@@ -8,9 +8,13 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem evalStmt_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Ctx) (a1 : List String) (a2 : Stmt) :
-    Le (evalStmt (H := H) (n + 1) a0 a1 a2) (evalStmt (m + 1) a0 a1 a2) := by
-  refine Le.unfold (evalStmt.eq_def _ _ _ _) (evalStmt.eq_def _ _ _ _) ?_
+theorem evalStmt_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : Stmt) :
+    Le (evalStmt (H := H) (md := t1) (n + 1) a0 a1 a2) (evalStmt (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (evalStmt.eq_def (md := t1) _ _ _ _) (evalStmt.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
+  all_goals first
+    | exact hb
+    | exact Tier1Proofs.block_site _ _ _ _ _ _ (fun j hj => (ihs j hj).h_evalStmts _ _)
 
 end L4Factoidal.JS.FuelMono

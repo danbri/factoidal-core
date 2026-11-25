@@ -240,6 +240,7 @@ theorem resolveExport_default (g : ModGraph) (fuel m : Nat) (node : ModNode)
 /-! ## The heap part -/
 
 variable {H : Type}
+variable [md : Mode]
 set_option hygiene false in
 local notation "M" => JSM H
 

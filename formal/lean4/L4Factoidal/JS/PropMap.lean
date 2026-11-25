@@ -56,6 +56,14 @@ decreasing_by simp_wf; omega
     let i := scan m.ks k 0
     if i == m.ks.size then none else m.vs[i]?
 
+/-- Whether slot `i` is the live slot of key `k`. In a big map an erased key stays in `ks` as a
+tombstone (`erase`), so finding `k` at `ks[i]` is not enough: the hash map must still send `k`
+to `i`. A small map has no tombstones. For a cache that remembers a slot (`vmGlobalHit`). -/
+@[inline] def liveAt (m : PropMap V) (i : Nat) (k : String) : Bool :=
+  match m.big with
+  | some b => b.getD k m.ks.size == i
+  | none => true
+
 def contains (m : PropMap V) (k : String) : Bool :=
   match m.big with
   | some b => b.contains k
@@ -193,6 +201,79 @@ def insertFast (m : PropMap V) (k : String) (v : V) : PropMap V :=
 #print axioms get?_eq_fast
 #print axioms slot?_eq_fast
 #print axioms insert_eq_fast
+
+/-! ## A remembered slot
+
+A cache that remembers the slot of a key (the register machine's global name cache,
+`vmGlobalHit`; an inline cache for property reads) reads `vs[i]` where `get?` would look the key
+up. These say when that is the same answer. -/
+
+/-- `scan` from `s` stops at `i` when `ks[i]` is `k` and no slot from `s` to `i` before it is. -/
+theorem scan_eq_first (ks : Array String) (k : String) (i : Nat) (hi : i < ks.size)
+    (hk : ks[i] = k) (hfirst : ∀ j (hj : j < i), ks[j]'(by omega) ≠ k) :
+    ∀ d s, i - s = d → s ≤ i → scan ks k s = i := by
+  intro d
+  induction d with
+  | zero =>
+    intro s hd hs
+    have he : s = i := by omega
+    subst he
+    rw [scan]
+    simp [hi, hk]
+  | succ d ih =>
+    intro s hd hs
+    have hs' : s < ks.size := by omega
+    have hne : ks[s] ≠ k := hfirst s (by omega)
+    rw [scan]
+    simp only [hs', dite_true, beq_iff_eq, hne, ite_false]
+    exact ih (s + 1) (by omega) (by omega)
+
+/-- **Kind: lemma for a cache guard.**
+
+Says: if slot `i` holds key `k`, `liveAt i k` holds, and (in a small map) no slot before `i`
+holds `k`, then `get? k` is the value in slot `i`. For a big map no further assumption is needed:
+an erased key left in `ks` as a tombstone fails `liveAt`.
+
+Does not say: that a cache which remembers `i` stays right after the map changes; the guard is
+checked at each use for that reason. -/
+theorem get?_of_slot (m : PropMap V) (i : Nat) (k : String)
+    (hk : m.ks[i]? = some k) (hl : m.liveAt i k = true)
+    (hfirst : m.big = none → ∀ j, j < i → m.ks[j]? ≠ some k) :
+    m.get? k = m.vs[i]? := by
+  have hi : i < m.ks.size := by
+    rcases Nat.lt_or_ge i m.ks.size with h | h
+    · exact h
+    · simp [Array.getElem?_eq_none h] at hk
+  have hk' : m.ks[i] = k := by
+    rw [Array.getElem?_eq_getElem hi] at hk
+    exact Option.some.inj hk
+  unfold get?
+  unfold liveAt at hl
+  cases hb : m.big with
+  | some b =>
+    simp only [hb] at hl ⊢
+    rw [getD_eq_get?_getD] at hl
+    cases hg : b.get? k with
+    | none =>
+      simp only [hg, Option.getD_none, beq_iff_eq] at hl
+      omega
+    | some j =>
+      simp only [hg, Option.getD_some, beq_iff_eq] at hl
+      subst hl
+      rfl
+  | none =>
+    simp only
+    have hf := hfirst hb
+    have hsc : scan m.ks k 0 = i :=
+      scan_eq_first m.ks k i hi hk' (fun j hj h => hf j hj (by
+        rw [Array.getElem?_eq_getElem (by omega)]; exact congrArg some h)) (i - 0) 0 rfl (Nat.zero_le _)
+    rw [hsc]
+    have hne : (i == m.ks.size) = false := by
+      simp only [beq_eq_false_iff_ne, ne_eq]; omega
+    rw [hne]
+    rfl
+
+#print axioms get?_of_slot
 
 /-- The pairs, in no particular order. -/
 def toList (m : PropMap V) : List (String × V) :=

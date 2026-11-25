@@ -7903,6 +7903,282 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
 
 end Natives
 
+/-- The value of a leaf expression that reads no outside state beyond the heap and has no
+effects: a literal, a resolved name that holds, `this`. `Value.hole` for anything else (the
+caller evaluates the expression the full way, which also reports an uninitialised binding). -/
+@[inline] def leafV (h : HeapOf H) (ctx : Ctx) (e : Expr) : Value :=
+  match e with
+  | .lit v => v
+  | .local x hops idx =>
+    if verifyLocals then .hole else  -- every read goes through `lookupLocal`, which checks it
+    let env := h.envs.getD (h.envUp hops ctx.env) default
+    match env.names[idx]?, env.vals[idx]? with
+    | some y, some v => if y == x then v else .hole
+    | _, _ => .hole
+  | .this => ctx.thisV
+  | _ => .hole
+
+/-! ## Tier 1: guarded fast paths
+
+The evaluator's arms for `x++` on a resolved name, `x = v` on a resolved name, `a op b` for
+`+ - * /` and a block that declares nothing lexical first try a fast path (`Tier1.withFast`)
+when the run's `Mode` has tier 1 on. A fast path reads the heap, and either answers at once or
+answers `none` and the arm's own code runs. With tier 1 off (`Mode.ref`) only the arm's own code
+runs: that is the reference. `JS/Tier1Proofs.lean` proves each fast path against its arm's code;
+`JS/FuelMonoAll.lean` (`tier_refines`) composes them over the whole block: a run with tier 1 on
+ends as the reference run does, in the same heap, whenever the reference does not run out of
+fuel. -/
+namespace Tier1
+
+/-- Try `fast`; on `some b` continue with `c b`, on `none` run `g`. -/
+@[inline] def attempt {α β : Type} (fast : M (Option β)) (c : β → M α) (g : M α) : M α := do
+  match ← fast with
+  | some b => c b
+  | none => g
+
+/-- A site of tier 1: with the tier on, `attempt fast c g`; off, `g`, the arm's own code. -/
+@[inline] def withFast {α β : Type} (on : Bool) (fast : M (Option β)) (c : β → M α) (g : M α) : M α :=
+  bif on then attempt fast c g else g
+
+/-- The statement declares a name in its block's lexical environment (`let`, `const`, a
+function or a class): `enterBlock` makes an environment for a block that has one. -/
+def isLexical (s : Stmt) : Bool :=
+  match s with
+  | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
+  | _ => false
+
+/-- The environment and the number in slot `idx`, `hops` up, when that slot has the name `x`,
+holds a number and may be written. -/
+@[inline] def slotNum? (h : HeapOf H) (ctx : Ctx) (x : String) (hops idx : Nat) : Option (Nat × Float) :=
+  let e := h.envUp hops ctx.env
+  let env := h.envs.getD e default
+  match env.names[idx]?, env.vals[idx]? with
+  | some y, some (.num old) => if y == x && env.mutableAt idx then some (e, old) else none
+  | _, _ => none
+
+/-- The environment of slot `idx`, `hops` up, when that slot has the name `x`, is initialised
+and may be written. -/
+@[inline] def slotSet? (h : HeapOf H) (ctx : Ctx) (x : String) (hops idx : Nat) : Option Nat :=
+  let e := h.envUp hops ctx.env
+  let env := h.envs.getD e default
+  match env.names[idx]?, env.vals[idx]? with
+  | some _, some .hole => none
+  | some y, some _ => if y == x && env.mutableAt idx then some e else none
+  | _, _ => none
+
+/-- `x++`, `x--`, `++x`, `--x` on a resolved name whose slot holds a number and may be written:
+the slot is written in place, with no call of `lookupLocal` and `assignLocal`. -/
+@[inline] def incLocal? (pre inc : Bool) (x : String) (hops idx : Nat) (ctx : Ctx) : M (Option Value) := do
+  match slotNum? (← get) ctx x hops idx with
+  | some (e, old) =>
+    let nv := if inc then old + 1 else old - 1
+    setSlot e idx (.num nv)
+    pure (some (.num (if pre then nv else old)))
+  | none => pure none
+
+/-- The write of `v` to a resolved name whose slot is initialised and may be written, in
+place, with no call of `putTarget` and `assignLocal`. -/
+@[inline] def setLocal? (target : Expr) (v : Value) (ctx : Ctx) : M (Option Unit) := do
+  match target with
+  | .local x hops idx =>
+    match slotSet? (← get) ctx x hops idx with
+    | some e => setSlot e idx v; pure (some ())
+    | none => pure none
+  | _ => pure none
+
+/-- The operations of the arithmetic fast path. -/
+def isArith : BinOp → Bool
+  | .add | .sub | .mul | .div => true
+  | _ => false
+
+/-- An operation of `isArith` on two numbers. -/
+@[inline] def arithOp (op : BinOp) (p q : Float) : Float :=
+  match op with
+  | .add => p + q
+  | .sub => p - q
+  | .mul => p * q
+  | _ => p / q
+
+/-- The number an operand has, when it is a leaf that holds a number or a nested `+ - * /` of
+such operands, down to depth `k`: computed with no step of the monad and no change to the heap. -/
+def pureNum (h : HeapOf H) (ctx : Ctx) : Nat → Expr → Option Float
+  | n, c =>
+    match leafV h ctx c with
+    | .num p => some p
+    | .hole =>
+      match n, c with
+      | k + 1, .binary op a b =>
+        if isArith op then
+          match pureNum h ctx k a, pureNum h ctx k b with
+          | some p, some q => some (arithOp op p q)
+          | _, _ => none
+        else none
+      | _, _ => none
+    | _ => none
+
+/-- The nesting the arithmetic fast path follows. -/
+def depth : Nat := 8
+
+/-- `a op b` for `+ - * /` when both operands are numbers known by `pureNum`. -/
+@[inline] def arith? (ctx : Ctx) (op : BinOp) (a b : Expr) : M (Option Value) := do
+  if isArith op then
+    let h ← get
+    match pureNum h ctx depth a, pureNum h ctx depth b with
+    | some p, some q => pure (some (.num (arithOp op p q)))
+    | _, _ => pure none
+  else pure none
+
+/-- The evaluator's own code for `a op b` (the arm of `Expr.binary`), over the evaluator's
+`evalExpr` and `binop` at the arm's fuel: operands that are leaves are read from the heap, and
+number operands of the common operations are combined with no call. -/
+@[inline] def binaryGen (ev : Expr → M Value) (bo : BinOp → Value → Value → M Value) (ctx : Ctx)
+    (op : BinOp) (a b : Expr) : M Value := do
+  let x ← (match leafV (← get) ctx a with | .hole => ev a | v => pure v)
+  let y ← (match leafV (← get) ctx b with | .hole => ev b | v => pure v)
+  -- the constant values `.bool true`, `.bool false` are not allocated (`if`, not `.bool (p < q)`)
+  match op, x, y with
+  | .add, .num p, .num q => pure (.num (p + q))
+  | .sub, .num p, .num q => pure (.num (p - q))
+  | .mul, .num p, .num q => pure (.num (p * q))
+  | .div, .num p, .num q => pure (.num (p / q))
+  | .lt, .num p, .num q => if p < q then pure (.bool true) else pure (.bool false)
+  | .gt, .num p, .num q => if p > q then pure (.bool true) else pure (.bool false)
+  | .le, .num p, .num q => if p ≤ q then pure (.bool true) else pure (.bool false)
+  | .ge, .num p, .num q => if p ≥ q then pure (.bool true) else pure (.bool false)
+  | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
+  | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
+  | _, _, _ => bo op x y
+
+/-- The evaluator's own code for `x++`, `x--`, `++x`, `--x` on a resolved name (the arm of
+`Expr.update` on `Expr.local`), over the evaluator's `lookupLocal`, `assignLocal`, `toPrim` and
+`toNum` at the arm's fuel. -/
+@[inline] def updateGen (look : M Value) (asg : Value → M Unit) (prim : Value → M Value)
+    (num : Value → M Float) (pre inc : Bool) : M Value := do
+  match ← look with
+  | .num old =>
+    let nv := if inc then old + 1 else old - 1
+    asg (.num nv)
+    pure (.num (if pre then nv else old))
+  | p =>
+    match ← prim p with
+    | .big big =>
+      let nv := if inc then big + 1 else big - 1
+      asg (.big nv)
+      pure (.big (if pre then nv else big))
+    | p =>
+      let old ← num p
+      let nv := if inc then old + 1 else old - 1
+      asg (.num nv)
+      pure (.num (if pre then nv else old))
+
+/-- A block that declares nothing lexical: `evalBlock` would make no environment. -/
+@[inline] def plainBlock? (ss : List Stmt) : M (Option Unit) :=
+  pure (if ss.any isLexical then none else some ())
+
+end Tier1
+
+-- Helpers of the block that call none of its functions: defined before it, so that they do not
+-- take the run's `Mode` (a section variable of the block would be added to each).
+/-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
+`makeClosure`): one binding, whose value is the closure that has `e` as its environment. That
+binding is immutable and not strict (CreateImmutableBinding(name, false)): an assignment to it
+from code that is not strict does nothing, and from strict code it throws a TypeError
+(§9.1.1.1.5 SetMutableBinding). A `const` binding throws for both. -/
+def fnNameScope (h : HeapOf H) (e : Nat) (x : String) : Bool :=
+  let env := h.envs.getD e default
+  if env.names.size != 1 || env.names[0]! != x then false else
+  match env.vals.getD 0 .undef with
+  | .obj id =>
+    match (h.obj id).kind with
+    | .closure f fenv .. => fenv == e && f.name == some x
+    | _ => false
+  | _ => false
+
+/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
+other reference is the caller's, so an append works in place (`s += x` is linear). -/
+def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
+  let h ← get
+  let e := h.envUp hops ctx.env
+  match (h.envs.getD e default).vals[idx]? with
+  | some (.str y) => if y == p then setSlot e idx .undef
+  | _ => pure ()
+
+/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
+resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
+def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
+  let h ← get
+  match h.findEnv x 100000 ctx.env with
+  | some e =>
+    let env := h.envs.getD e default
+    if env.withObj.isSome then pure () else
+    let i := env.slotN x
+    match env.vals[i]? with
+    | some (.str y) => if y == p then setSlot e i .undef
+    | _ => pure ()
+  | none =>
+    let g := h.realm.globalObj
+    match (h.obj g).props.get? x with
+    | some (.data (.str y) true _ _) =>
+      if y == p then let _ ← setOwnData g x .undef
+    | _ => pure ()
+
+/-- What a loop does with the completion of its body (LoopContinues, §14.7.1.2). -/
+def loopNext (labels : List String) : Compl → Option Compl
+  | .normal => none
+  | .cont none => none
+  | .cont (some l) => if labels.contains l then none else some (.cont (some l))
+  | .brk none => some .normal
+  | .brk (some l) => if labels.contains l then some .normal else some (.brk (some l))
+  | .ret v => some (.ret v)
+
+/-- A global name read through the cache: the value, or `Value.hole` when the general path
+must look (not a plain writable data property, or a lexical binding may shadow it). -/
+def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
+  match h.findEnv x 100000 env with
+  | some _ => .hole
+  | none =>
+    let g := h.obj h.realm.globalObj
+    let slot := h.globalCache[site]!
+    -- after `delete` the name may still be in a big map's keys as a tombstone (`PropMap.liveAt`)
+    match g.props.ks[slot]?, g.props.vs[slot]? with
+    | some k, some (.data v ..) => if k == x && g.props.liveAt slot x then v else .hole
+    | _, _ => .hole
+
+/-- Assign a global name through the cache: only when no lexical binding shadows it and the
+cached slot holds this name as a plain writable data property; `false` otherwise. -/
+def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
+  let h ← get
+  if (h.findEnv x 100000 env).isSome then return false
+  let gid := h.realm.globalObj
+  let slot := h.globalCache[site]!
+  let g := h.obj gid
+  match g.props.ks[slot]?, g.props.vs[slot]? with
+  | some k, some (.data _ true e c) =>
+    if k == x && g.props.liveAt slot x then
+      updateObj gid fun o =>
+        (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
+    else pure false
+  | _, _ => pure false
+
+/-- Assign a variable `hops` above the closure environment, when the slot holds that name
+and the binding is initialised and mutable; `false` otherwise. -/
+def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
+  let h ← get
+  let e := h.envUp hops env
+  let en := h.envs.getD e default
+  match en.names[idx]?, en.vals[idx]? with
+  | some y, some old =>
+    if y == x && en.mutableAt idx then
+      match old with
+      | .hole => pure false
+      | _ => setSlot e idx v; pure true
+    else pure false
+  | _, _ => pure false
+
+-- The evaluator's functions take the run's `Mode` (which tiers are on).
+section Block
+variable [md : Mode]
+
 set_option hygiene false in
 /-- `toNumQ n v`: ToNumber of `v` with fuel `n`, written so that a value that is a Number already
 costs no call: `toNum` is a function of the block, so its answer is a result cell holding a boxed
@@ -8768,9 +9044,7 @@ declares `let`, `const` or functions; functions are created here (hoisting). -/
 def enterBlock : Nat → Ctx → List Stmt → M Ctx
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, ss => do
-    let needs := ss.any fun s => match s with
-      | .decl .letK _ | .decl .constK _ | .funDecl .. | .classDecl .. => true
-      | _ => false
+    let needs := ss.any Tier1.isLexical
     if !needs then return ctx
     let env ← newEnv ctx.env
     let ctx' := { ctx with env }
@@ -8811,21 +9085,6 @@ def evalBlock : Nat → Ctx → List Stmt → M Compl
     let ctx ← enterBlock n ctx ss
     evalStmts n ctx ss
 termination_by structural n _ _ => n
-
-/-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
-`makeClosure`): one binding, whose value is the closure that has `e` as its environment. That
-binding is immutable and not strict (CreateImmutableBinding(name, false)): an assignment to it
-from code that is not strict does nothing, and from strict code it throws a TypeError
-(§9.1.1.1.5 SetMutableBinding). A `const` binding throws for both. -/
-def fnNameScope (h : HeapOf H) (e : Nat) (x : String) : Bool :=
-  let env := h.envs.getD e default
-  if env.names.size != 1 || env.names[0]! != x then false else
-  match env.vals.getD 0 .undef with
-  | .obj id =>
-    match (h.obj id).kind with
-    | .closure f fenv .. => fenv == e && f.name == some x
-    | _ => false
-  | _ => false
 
 /-- InitializeReferencedBinding / PutValue for a name (§9.1.1.1.5, §6.2.5.6). -/
 def assignName : Nat → Ctx → String → Value → M Unit
@@ -8872,34 +9131,6 @@ def lookupLocal : Nat → Ctx → String → Nat → Nat → M Value
     | _, _ => lookup n ctx x
 termination_by structural n _ _ _ _ => n
 
-/-- Slot `idx` (`hops` up) lets go of the string `p`, if it holds that string: the only
-other reference is the caller's, so an append works in place (`s += x` is linear). -/
-def dropSlotStr (ctx : Ctx) (hops idx : Nat) (p : String) : M Unit := do
-  let h ← get
-  let e := h.envUp hops ctx.env
-  match (h.envs.getD e default).vals[idx]? with
-  | some (.str y) => if y == p then setSlot e idx .undef
-  | _ => pure ()
-
-/-- The binding of the name `x` lets go of the string `p`, if it holds it (a name not
-resolved to a slot: top-level code, a `with`): as `dropSlotStr`. -/
-def dropNameStr (ctx : Ctx) (x : String) (p : String) : M Unit := do
-  let h ← get
-  match h.findEnv x 100000 ctx.env with
-  | some e =>
-    let env := h.envs.getD e default
-    if env.withObj.isSome then pure () else
-    let i := env.slotN x
-    match env.vals[i]? with
-    | some (.str y) => if y == p then setSlot e i .undef
-    | _ => pure ()
-  | none =>
-    let g := h.realm.globalObj
-    match (h.obj g).props.get? x with
-    | some (.data (.str y) true _ _) =>
-      if y == p then let _ ← setOwnData g x .undef
-    | _ => pure ()
-
 /-- Assign a resolved name; the plain assignment when the hint does not hold. -/
 def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
   | 0, _, _, _, _, _ => throw (.halt "fuel")
@@ -8921,21 +9152,6 @@ def assignLocal : Nat → Ctx → String → Nat → Nat → Value → M Unit
       else assignName n ctx x v
     | _, _ => assignName n ctx x v
 termination_by structural n _ _ _ _ _ => n
-
-/-- The value of a leaf expression that reads no outside state beyond the heap and has no
-effects: a literal, a resolved name that holds, `this`. `Value.hole` for anything else (the
-caller evaluates the expression the full way, which also reports an uninitialised binding). -/
-@[inline] def leafV (h : HeapOf H) (ctx : Ctx) (e : Expr) : Value :=
-  match e with
-  | .lit v => v
-  | .local x hops idx =>
-    if verifyLocals then .hole else  -- every read goes through `lookupLocal`, which checks it
-    let env := h.envs.getD (h.envUp hops ctx.env) default
-    match env.names[idx]?, env.vals[idx]? with
-    | some y, some v => if y == x then v else .hole
-    | _, _ => .hole
-  | .this => ctx.thisV
-  | _ => .hole
 
 /-- The value of a name that has no binding and that the global object and its prototype
 chain do not have, from the host: the global object's internal slot `namedGetterKey` holds a
@@ -9254,21 +9470,9 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .obj id => pure (.bool ((← getObj id).getOwn (← privRk ctx.env k)).isSome)
       | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
     | .binary op a b =>
-      let x ← (match leafV (← get) ctx a with | .hole => evalExpr n ctx a | v => pure v)
-      let y ← (match leafV (← get) ctx b with | .hole => evalExpr n ctx b | v => pure v)
-      -- the constant values `.bool true`, `.bool false` are not allocated (`if`, not `.bool (p < q)`)
-      match op, x, y with
-      | .add, .num p, .num q => pure (.num (p + q))
-      | .sub, .num p, .num q => pure (.num (p - q))
-      | .mul, .num p, .num q => pure (.num (p * q))
-      | .div, .num p, .num q => pure (.num (p / q))
-      | .lt, .num p, .num q => if p < q then pure (.bool true) else pure (.bool false)
-      | .gt, .num p, .num q => if p > q then pure (.bool true) else pure (.bool false)
-      | .le, .num p, .num q => if p ≤ q then pure (.bool true) else pure (.bool false)
-      | .ge, .num p, .num q => if p ≥ q then pure (.bool true) else pure (.bool false)
-      | .seq, _, _ => if strictEq x y then pure (.bool true) else pure (.bool false)
-      | .sne, _, _ => if strictEq x y then pure (.bool false) else pure (.bool true)
-      | _, _, _ => binop n op x y
+      -- tier 1: both operands numbers known without a step (`Tier1.arith?`)
+      Tier1.withFast md.tier1 (Tier1.arith? ctx op a b) pure
+        (Tier1.binaryGen (fun e => evalExpr n ctx e) (fun o x y => binop n o x y) ctx op a b)
     | .logical op a b =>
       let x ← evalExpr n ctx a
       match op with
@@ -9340,7 +9544,8 @@ def evalExpr : Nat → Ctx → Expr → M Value
         | .ident x, .func f | .local x _ _, .func f =>
           if f.name.isNone then makeClosure ctx f x else evalExpr n ctx rhs
         | _, _ => evalExpr n ctx rhs
-      putTarget n ctx target b k v
+      -- tier 1: a resolved name's slot written in place (`Tier1.setLocal?`)
+      Tier1.withFast md.tier1 (Tier1.setLocal? target v ctx) pure (putTarget n ctx target b k v)
       pure v
     | .assign (some op) target rhs =>
       let (b, k) ← evalRef n ctx target
@@ -9361,22 +9566,10 @@ def evalExpr : Nat → Ctx → Expr → M Value
       putTarget n ctx target b k v
       pure v
     | .update pre inc (.local x h i) =>
-      match ← lookupLocal n ctx x h i with
-      | .num old =>
-        let nv := if inc then old + 1 else old - 1
-        assignLocal n ctx x h i (.num nv)
-        pure (.num (if pre then nv else old))
-      | p =>
-        match ← toPrim n p "number" with
-        | .big big =>
-          let nv := if inc then big + 1 else big - 1
-          assignLocal n ctx x h i (.big nv)
-          pure (.big (if pre then nv else big))
-        | p =>
-          let old ← toNum n p
-          let nv := if inc then old + 1 else old - 1
-          assignLocal n ctx x h i (.num nv)
-          pure (.num (if pre then nv else old))
+      -- tier 1: a number in a writable slot, read and written in place (`Tier1.incLocal?`)
+      Tier1.withFast md.tier1 (Tier1.incLocal? pre inc x h i ctx) pure
+        (Tier1.updateGen (lookupLocal n ctx x h i) (fun v => assignLocal n ctx x h i v)
+          (fun p => toPrim n p "number") (fun p => toNum n p) pre inc)
     | .update pre inc target =>
       let (b, k) ← evalRef n ctx target
       match ← toPrim n (← getRef n ctx target b k) "number" with
@@ -9476,15 +9669,6 @@ def evalExpr : Nat → Ctx → Expr → M Value
       | .null, _ => throwErr .type "Cannot read properties of null"
       | _, _ => getV n b (← toKey n kv)
 
-/-- What a loop does with the completion of its body (LoopContinues, §14.7.1.2). -/
-def loopNext (labels : List String) : Compl → Option Compl
-  | .normal => none
-  | .cont none => none
-  | .cont (some l) => if labels.contains l then none else some (.cont (some l))
-  | .brk none => some .normal
-  | .brk (some l) => if labels.contains l then some .normal else some (.brk (some l))
-  | .ret v => some (.ret v)
-termination_by structural n _ _ => n
 
 def whileLoop : Nat → Ctx → List String → Expr → Stmt → M Compl
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -9696,7 +9880,9 @@ def evalStmt : Nat → Ctx → List String → Stmt → M Compl
         let _ ← vmEnter n c ctx.env ctx.thisV ctx.thisV #[]
         pure .normal
       else evalStmt n ctx labels s
-    | .block ss => evalBlock n ctx ss
+    -- tier 1: a block that declares nothing lexical needs no `evalBlock` and `enterBlock`
+    | .block ss =>
+      Tier1.withFast md.tier1 (Tier1.plainBlock? ss) (fun _ => evalStmts n ctx ss) (evalBlock n ctx ss)
     | .blockF ss =>
       -- no closure holds this block's environment: its slot is reused on a normal end
       -- (after a throw it stays allocated, which is only memory)
@@ -10888,49 +11074,6 @@ def callNative : Nat → Native → Value → Array Value → Option Value → M
   | n + 1, a0, a1, a2, a3 => Natives.callNative (coreRun n) a0 a1 a2 a3
 termination_by structural n _ _ _ _ => n
 
-
-/-- A global name read through the cache: the value, or `Value.hole` when the general path
-must look (not a plain writable data property, or a lexical binding may shadow it). -/
-def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
-  match h.findEnv x 100000 env with
-  | some _ => .hole
-  | none =>
-    let g := h.obj h.realm.globalObj
-    let slot := h.globalCache[site]!
-    match g.props.ks[slot]?, g.props.vs[slot]? with
-    | some k, some (.data v ..) => if k == x then v else .hole
-    | _, _ => .hole
-
-/-- Assign a global name through the cache: only when no lexical binding shadows it and the
-cached slot holds this name as a plain writable data property; `false` otherwise. -/
-def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
-  let h ← get
-  if (h.findEnv x 100000 env).isSome then return false
-  let gid := h.realm.globalObj
-  let slot := h.globalCache[site]!
-  let g := h.obj gid
-  match g.props.ks[slot]?, g.props.vs[slot]? with
-  | some k, some (.data _ true e c) =>
-    if k == x then
-      updateObj gid fun o =>
-        (true, { o with props := { o.props with vs := o.props.vs.set! slot (.data v true e c) } })
-    else pure false
-  | _, _ => pure false
-
-/-- Assign a variable `hops` above the closure environment, when the slot holds that name
-and the binding is initialised and mutable; `false` otherwise. -/
-def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
-  let h ← get
-  let e := h.envUp hops env
-  let en := h.envs.getD e default
-  match en.names[idx]?, en.vals[idx]? with
-  | some y, some old =>
-    if y == x && en.mutableAt idx then
-      match old with
-      | .hole => pure false
-      | _ => setSlot e idx v; pure true
-    else pure false
-  | _, _ => pure false
 
 /-- The slow path of a global name: the lookup, and the cache learns the slot. -/
 def vmGlobalMiss : Nat → Nat → String → Nat → Bool → M Value
@@ -12682,6 +12825,8 @@ termination_by structural n _ _ _ _ => n
 
 end
 
+end Block
+
 /-! ## The realm: global object and intrinsics (§9.3, §19) -/
 
 def ctorWith (name : String) (id : Native) (len : Nat) (proto : Nat) : M Value := do
@@ -13380,7 +13525,7 @@ this). -/
 def defaultFuel : Nat := 2147483647
 
 /-- GlobalDeclarationInstantiation (§16.1.7), then the statements. -/
-def runScriptM (s : Script) (checkpoint : Bool := true) : M Unit := do
+def runScriptM [Mode] (s : Script) (checkpoint : Bool := true) : M Unit := do
   let h ← get
   let g := h.realm.globalObj
   let ctx : Ctx := { env := 0, thisV := .obj g, strict := s.strict }
@@ -13420,7 +13565,7 @@ def describeThrown (h : HeapOf H) (v : Value) : String :=
   | .ok s _ => s
   | .error _ _ => "(an exception whose string conversion threw)"
 
-def runScript (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
+def runScript [Mode] (h : HeapOf H) (src : String) (strict : Bool := false) : Outcome × HeapOf H :=
   match (parseScript src strict).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
@@ -13436,7 +13581,7 @@ them (`evalScript`), calls functions of the page (`callFunction`), and runs the
 checkpoint when its event loop says (`checkpoint`). -/
 
 /-- Run a classic script, with no microtask checkpoint after it. -/
-def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
+def evalScript [Mode] (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
   match (parseScript src false).map Resolve.script with
   | .error e => (.syntaxError e, h)
   | .ok s =>
@@ -13446,21 +13591,21 @@ def evalScript (h : HeapOf H) (src : String) : Outcome × HeapOf H :=
     | .error (.halt w) h' => (.halted w, h')
 
 /-- Call a function value; the outcome and the value it returned. -/
-def callFunction (h : HeapOf H) (f thisV : Value) (args : Array Value) : (Outcome × Value) × HeapOf H :=
+def callFunction [Mode] (h : HeapOf H) (f thisV : Value) (args : Array Value) : (Outcome × Value) × HeapOf H :=
   match (callV defaultFuel f thisV args : M Value).run h with
   | .ok v h' => ((.ok, v), h')
   | .error (.throw v) h' => ((.threw v (describeThrown h' v), .undef), h')
   | .error (.halt w) h' => ((.halted w, .undef), h')
 
 /-- `o[name](...args)`. -/
-def callMethod (h : HeapOf H) (o : Value) (name : String) (args : Array Value) : (Outcome × Value) × HeapOf H :=
+def callMethod [Mode] (h : HeapOf H) (o : Value) (name : String) (args : Array Value) : (Outcome × Value) × HeapOf H :=
   match (do let f ← getV defaultFuel o name; callV defaultFuel f o args : M Value).run h with
   | .ok v h' => ((.ok, v), h')
   | .error (.throw v) h' => ((.threw v (describeThrown h' v), .undef), h')
   | .error (.halt w) h' => ((.halted w, .undef), h')
 
 /-- The completion value of a script (an indirect `eval`, §19.2.1.1). -/
-def evalValue (h : HeapOf H) (src : String) : (Outcome × Value) × HeapOf H :=
+def evalValue [Mode] (h : HeapOf H) (src : String) : (Outcome × Value) × HeapOf H :=
   callFunction h (.obj h.realm.evalFn) .undef #[.str src]
 
 /-- An object whose methods are the host's natives: `names[k]` (name and length) is
@@ -13490,7 +13635,7 @@ def addNatives (h : HeapOf H) (o : Value) (names : Array (String × Native × Na
 
 /-- The microtask checkpoint: the jobs run until none is left (§9.5; HTML "perform a
 microtask checkpoint"). A job that throws is dropped. The answer counts the jobs run. -/
-def checkpoint (h : HeapOf H) : (Outcome × Nat) × HeapOf H :=
+def checkpoint [Mode] (h : HeapOf H) : (Outcome × Nat) × HeapOf H :=
   let before := h.jobsRun
   match (runJobs defaultFuel : M Unit).run h with
   | .ok _ h' => ((.ok, h'.jobsRun - before), h')

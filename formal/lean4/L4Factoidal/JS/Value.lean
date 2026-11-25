@@ -850,6 +850,20 @@ inductive Abrupt where
 
 abbrev JSM (H : Type) := EStateM Abrupt (HeapOf H)
 
+/-- How a run executes, not what it computes: which fast tiers of the evaluator are on. It is a
+parameter of the evaluator's functions and not a field of the heap, so that a run with a tier on
+and the reference run start from the same heap and can end in the same heap
+(`JS/FuelMonoAll.lean`, `tier_refines`). -/
+class Mode where
+  /-- Tier 1 (`Tier1` in `JS/Interp.lean`): guarded fast paths inside the evaluator's arms. -/
+  tier1 : Bool
+
+/-- The engine: every tier on. The instance a caller gets when it names none. -/
+instance (priority := low) Mode.engine : Mode := ⟨true⟩
+
+/-- The reference: the evaluator with no tier on. -/
+@[reducible] def Mode.ref : Mode := ⟨false⟩
+
 /-- Statement completions (§6.2.4) other than throw. -/
 inductive Compl where
   | normal

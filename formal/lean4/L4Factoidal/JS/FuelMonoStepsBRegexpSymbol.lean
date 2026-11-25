@@ -8,9 +8,10 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem regexpSymbol_step {H : Type} (n m : Nat) (ih : IH H n m) (a0 : Nat) (a1 : Value) (a2 : Array Value) :
-    Le (regexpSymbol (H := H) (n + 1) a0 a1 a2) (regexpSymbol (m + 1) a0 a1 a2) := by
-  refine Le.unfold (regexpSymbol.eq_def _ _ _ _) (regexpSymbol.eq_def _ _ _ _) ?_
+theorem regexpSymbol_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : Value) (a2 : Array Value) :
+    Le (regexpSymbol (H := H) (md := t1) (n + 1) a0 a1 a2) (regexpSymbol (md := t2) (m + 1) a0 a1 a2) := by
+  refine Le.unfold (regexpSymbol.eq_def (md := t1) _ _ _ _) (regexpSymbol.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
 end L4Factoidal.JS.FuelMono
