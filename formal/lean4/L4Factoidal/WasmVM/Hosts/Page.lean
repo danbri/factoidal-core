@@ -595,6 +595,20 @@ def readOnlyImports : List String :=
 after any write, with the styles it had. -/
 def styleNeutralImports : List String := ["add_event_listener", "set_timer", "clear_timer"]
 
+/-- The operations of `tree_op` (`Hosts.Dom.treeOp`, third argument) that write nothing a
+style reads: 1 `isEqualNode`, 7 the checkedness of an input, 8 the checked radio button of a
+group and 31 the element states are reads; 4 and 5 `importNode` make a copy that is in no
+document's tree, as `clone_node` does. The other operations (normalize, adopt, set
+checkedness, reset a form, set element states, shadow roots and slots) change the tree or a
+state that selectors read. Until 2026-11-25 every `tree_op` call styled the whole document at
+the next read (zh.wikipedia: 66 times; issue 871). -/
+def treeOpNeutral (nm : String) (which : Nat) : Bool :=
+  nm == "tree_op" && [1, 4, 5, 7, 8, 31].contains which
+
+#guard treeOpNeutral "tree_op" 1 && treeOpNeutral "tree_op" 5 && treeOpNeutral "tree_op" 31
+#guard !treeOpNeutral "tree_op" 2 && !treeOpNeutral "tree_op" 3 && !treeOpNeutral "tree_op" 6 &&
+  !treeOpNeutral "tree_op" 30 && !treeOpNeutral "append_child" 1
+
 /-- A write of `foafnaut_dom` that changes nothing in a document's tree: a new node, a
 clone, or a change of a node that is in no document's tree and stays in none (an
 insertion there of a node that is itself in none). The styles and the layout of every
@@ -1548,7 +1562,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       else match childWrite d nm a with
         | some (parent, _) => if sheetParent d parent then none else (d.get parent).parent.map fun p => (p, true)
         | none => none
-    let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
+    let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a || treeOpNeutral nm (a 2)
     -- with `:has()` in the kept rules: whether this write changes nothing their arguments
     -- read (`Carry.hasReads`); a child or text write always may
     let hasOk : Bool :=
@@ -1590,6 +1604,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then
           nm ++ ":" ++ childWriteWhy d (a 0) [a 1]
         else if nm == "replace_child" then nm ++ ":" ++ childWriteWhy d (a 0) [a 1, a 2]
+        else if nm == "tree_op" then nm ++ ":" ++ toString (a 2)
         else nm }
     -- a listener through the first build's import (page scripts use `listen`, above)
     let listens := nm == "add_event_listener" &&
