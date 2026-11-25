@@ -31,7 +31,8 @@ export function buildFlow(q, px, nameOf) {
   // A variable shown through its label (?xLabel) counts as shown.
   const projected = (q.select === 'all' ? [] : q.select.map(it => it.var)).flatMap(v => [v, v.replace(/(Label|Description)$/, '')]);
   // Variables an "any of" OR narrows are sets, never leaf columns.
-  const anchors = new Set((px.extensions || []).filter(e => e.anchor).map(e => e.anchor.slice(1)));
+  // So are variables an exclusion applies to: the chip needs a set to sit on.
+  const anchors = new Set([...(px.extensions || []).filter(e => e.anchor), ...(px.negations || []).filter(n => !n.stage)].map(e => e.anchor.slice(1)));
   const valuesOf = (v) => elems.find(x => x.kind === 'values' && x.vars.length === 1 && x.vars[0] === v)?.rows.map(r => r[0]).filter(Boolean);
 
   // Edges: {s, o, prop, optional, text}
@@ -128,7 +129,7 @@ export function buildFlow(q, px, nameOf) {
     set.typeId = type?.values[0].id || null;
   }
   for (const n of px.negations || []) {
-    const s = sets.find(x => `?${x.var}` === n.anchor);
+    const s = sets.find(x => `?${x.var}` === n.anchor && !x.stage);
     (s ? s.chips : (sets[0]?.chips || [])).push({ kind: 'exclude', label: n.label.replace(/^(exclude|require): /, '') + (n.stage ? ' (inside the grouped stage)' : ''), verb: n.label.split(':')[0] });
   }
   // An "any of" OR sits on the set it narrows; with nothing else to draw, that set starts the flow.
@@ -147,6 +148,7 @@ export function buildFlow(q, px, nameOf) {
   const edgeText = new Set(edges.map(e => e.prop));
   const extensions = (px.extensions || []).filter(e => !e.anchor && !(e.kind === 'path' && edgeText.has(e.label)) && !(e.kind === 'or' && edgeText.has(e.label.replace(/^via /, ''))));
   const beyond = [...(px.blockers || [])];
+  const looseEdges = edges.filter((e, i) => !used.has(i)).map(e => ({ s: key(e.s), o: key(e.o), prop: e.prop, optional: e.optional }));
   const loose = edges.filter((e, i) => !used.has(i)).map(e => `${key(e.s) ? '?' + key(e.s) : nm(e.s.iri || '')} ${e.prop} ${key(e.o) ? '?' + key(e.o) : facetValue(e.o).map(x => x.text).join(', ')}`);
 
   const entities = new Set();
@@ -156,7 +158,7 @@ export function buildFlow(q, px, nameOf) {
 
   return {
     sets: sets.map(({ var: v, title, typeId, via, depth, facets, columns, chips, stage }) => ({ var: v, title, typeId, via, depth, stage, facets: facets.filter(f => !(f.prop === nm(P31) && f.values.length === 1 && f.values[0].id === typeId)), columns, chips })),
-    conditions, extensions, beyond, loose, entities: [...entities],
+    conditions, extensions, beyond, loose, looseEdges, entities: [...entities],
     aggregate: (q.select === 'all' ? [] : q.select).some(it => it.expr?.e === 'aggregate'),
   };
 }

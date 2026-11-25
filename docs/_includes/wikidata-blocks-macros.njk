@@ -1,0 +1,60 @@
+{#- Block view for queries beyond set browsing: chains of interlocking pieces,
+    held by Scratch-like operator blocks. ctx = {entities, thumb}. -#}
+{%- import "wikidata-parallax-macros.njk" as m -%}
+
+{%- macro val(v, ctx) -%}
+{%- if v.id and ctx.entities[v.id] -%}<a class="pz-val" href="https://www.wikidata.org/wiki/{{ v.id }}">{{ m.thumb(v.id, ctx.entities, ctx.thumb, 18, "mini") | safe }}{{ m.bare(v.text) }}</a>
+{%- else -%}<span class="pz-val">{{ m.bare(v.text) }}</span>{%- endif -%}
+{%- endmacro -%}
+
+{%- macro piece(p, ctx) -%}
+{%- if p.kind == "set" -%}
+<li class="pz pz-set">
+  <span class="pz-title">{%- if p.typeId %}{{ m.thumb(p.typeId, ctx.entities, ctx.thumb, 22, "mini") | safe }}every {{ m.bare(p.title) }}{% elif p.title.startsWith("?") %}<span class="var">{{ p.title }}</span>{% else %}{{ m.bare(p.title) }}{% endif -%}</span>
+  {%- for f in p.facets %}<span class="pz-in{% if f.optional %} pz-in-opt{% endif %}{% if f.wild %} pz-in-wild{% endif %}">{% if f.reverse %}is {{ m.bare(f.prop) }} of{% else %}{{ m.bare(f.prop) }}{% endif %} = {% for v in f.values %}{{ val(v, ctx) | safe }}{% if not loop.last %} or {% endif %}{% endfor %}</span>{% endfor %}
+  {%- for c in p.chips %}<span class="pz-in pz-in-{{ c.verb }}">{% if c.kind == "or" %}any of: {{ m.bare(c.label) | replace(" | ", " · ") }}{% else %}{{ c.verb }} if {{ m.bare(c.label) }}{% endif %}</span>{% endfor %}
+  {%- if p.columns | length %}<span class="pz-cols">shows {% for c in p.columns | batch(3) | first %}{% if c.wild %}<span class="pz-wildtext">{% endif %}{% if c.prop.startsWith("reverse of ") %}things whose {{ m.bare(c.prop | replace("reverse of ", "")) }} is this{% else %}{{ m.bare(c.prop) }}{% endif %} <span class="var pz-var">?{{ c.var }}</span>{% if c.wild %}</span>{% endif %}{% if c.optional %} (if any){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}{% if p.columns | length > 3 %} and {{ p.columns | length - 3 }} more{% endif %}</span>{% endif %}
+</li>
+{%- elif p.kind == "pivot" -%}
+<li class="pz pz-pivot{% if p.wild %} pz-wild{% endif %}{% if p.optional %} pz-opt{% endif %}">
+  {%- if p.prop.startsWith("reverse of ") %}to things whose <b>{{ m.bare(p.prop | replace("reverse of ", "")) }}</b> is this{% else %}along <b>{{ m.bare(p.prop) }}</b>{% endif %}
+  {%- if p.optional %} <span class="pz-note">where present</span>{% endif %}
+</li>
+{%- else -%}
+<li class="pz pz-from">from {% if p.title.startsWith("?") %}<span class="var">{{ p.title }}</span>{% else %}{{ m.bare(p.title) }}{% endif %}</li>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro hexes(list) -%}
+{%- for c in list %}<span class="hex">{{ m.bare(c) }}</span>{% endfor -%}
+{%- endmacro -%}
+
+{%- macro program(prog, ctx) -%}
+<div class="prog">
+{%- for it in prog.items %}
+  {%- if it.chain %}
+  <div class="chain">
+    {%- for row in it.chain.rows %}
+    <ol class="pz-row{% if not loop.first %} pz-branch{% endif %}">{% for p in row %}{{ piece(p, ctx) | safe }}{% endfor %}</ol>
+    {%- endfor %}
+  </div>
+  {%- else %}{% set op = it.op %}
+  <div class="cb cb-{{ op.op }}">
+    <div class="cb-bar"><span class="cb-label">{{ op.label }}</span>
+      {%- if op.op == "join" or op.op == "loop" %} {{ hexes(op.extras) | safe }}{% endif -%}
+      {%- if op.op == "except" %}{% for e in op.extras %} <span class="cb-match">{{ e }}</span>{% endfor %}{% endif -%}
+      {%- if op.why %} <span class="cb-why">({{ op.why }})</span>{% endif -%}
+    </div>
+    {%- for s in op.slots %}
+    {%- if not loop.first %}<div class="cb-bar cb-mid">{{ "or" if op.op == "either" else "and" }}</div>{% endif %}
+    <div class="cb-mouth">{{ program(s, ctx) | safe }}</div>
+    {%- endfor %}
+    {%- if op.slots | length %}<div class="cb-bar cb-foot">{% if op.op == "stage" %}{% for e in op.extras %}<span class="cb-label">{{ e }}</span>{% endfor %}{% endif %}</div>{% endif %}
+  </div>
+  {%- endif %}
+{%- endfor %}
+{%- if prog.conditions | length %}
+  <div class="cb cb-where"><div class="cb-bar"><span class="cb-label">keep only where</span> {{ hexes(prog.conditions) | safe }}</div></div>
+{%- endif %}
+</div>
+{%- endmacro -%}

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { astOf, nameOf, parallaxId } from './run.mjs';
 import { buildFlow } from './flow.mjs';
+import { blocksOf } from './blocks.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = process.argv[2];
@@ -30,6 +31,14 @@ function startOf(set) {
   if (f) return { start: `items with ${bare(f.prop)} = ${f.values.map(v => bare(v.text)).join(' or ')}`, startId: f.values.find(v => v.id)?.id ?? null };
   return { start: `?${set.var}`, startId: null };
 }
+function collectBlockEntities(prog, ids) {
+  for (const it of prog.items) {
+    if (it.chain) for (const row of it.chain.rows) for (const p of row) {
+      if (p.typeId) ids.add(p.typeId);
+      for (const f of p.facets || []) for (const v of f.values) if (v.id) ids.add(v.id);
+    } else for (const s of it.op.slots) collectBlockEntities(s, ids);
+  }
+}
 const queries = [], entityIds = new Set();
 for (const q of corpusDoc.queries) {
   const ast = astOf(q.id);
@@ -37,11 +46,14 @@ for (const q of corpusDoc.queries) {
   const px = parallaxId(q.id);
   const flow = buildFlow(ast, px, nameOf);
   flow.entities.forEach(e => entityIds.add(e));
+  // Beyond set browsing: the same chains as interlocking pieces, held by operator blocks.
+  const blocks = px.tier === 'N' ? blocksOf(ast, nameOf) : undefined;
+  if (blocks) collectBlockEntities(blocks, entityIds);
   const kinds = [...new Set([...(px.negations.length ? ['exclude'] : []), ...px.extensions.map(e => e.kind)])];
   queries.push({
     id: q.id, title: q.title, tier: px.tier, tierName: TIER[px.tier], kinds,
     ...startOf(flow.sets[0]),
-    sets: flow.sets.length, flow,
+    sets: flow.sets.length, flow, blocks,
     wdqs: `https://query.wikidata.org/#${encodeURIComponent(q.classic_query)}`,
   });
 }

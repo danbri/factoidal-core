@@ -36,3 +36,28 @@ test('exclusion chips are worded as removing a facet value', () => {
     assert.doesNotMatch(c.label, / is not /, q.id);
   }
 });
+
+test('a query beyond set browsing is drawn as blocks: chains, plus an operation or an any-property piece', () => {
+  const OPS = new Set(['join', 'either', 'except', 'optional', 'stage', 'loop']);
+  const walk = (prog, out) => {
+    for (const it of prog.items) {
+      if (it.chain) {
+        for (const row of it.chain.rows) {
+          assert.ok(row.length && row.every((p, i) => (p.kind === 'pivot') === (i % 2 === 1)), 'pieces alternate set, pivot, set');
+          for (const p of row) if (p.wild) out.wild++;
+        }
+      } else {
+        assert.ok(OPS.has(it.op.op), it.op.op);
+        assert.ok(it.op.slots.length || it.op.extras.length, `${it.op.op} block is empty`);
+        out.ops++;
+        it.op.slots.forEach(s => walk(s, out));
+      }
+    }
+    return out;
+  };
+  for (const q of queries) {
+    if (q.tier !== 'N') { assert.equal(q.blocks, undefined, q.id); continue; }
+    const r = walk(q.blocks, { ops: 0, wild: 0 });
+    assert.ok(r.ops + r.wild > 0, `${q.id}: nothing marks what goes beyond browsing`);
+  }
+});

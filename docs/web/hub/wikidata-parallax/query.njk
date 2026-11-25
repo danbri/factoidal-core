@@ -15,12 +15,13 @@ eleventyComputed:
 permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
 ---
 {%- import "wikidata-parallax-macros.njk" as m -%}
+{%- import "wikidata-blocks-macros.njk" as b -%}
 {%- set tierNote = {
   "A": "It can be built entirely by browsing: a set, facets and pivots.",
   "B": "It can be built by browsing, with a filter on values or a computed column.",
   "C": "It can be built by browsing through statements, including their qualifiers.",
   "D": "It can be built by browsing, choosing a type together with its subclasses.",
-  "N": "Part of it can be drawn as sets. The rest needs operations that browsing does not have."
+  "N": "It needs operations that browsing does not have. Each run of browsing is drawn as a chain of pieces; the orange blocks hold chains together with those operations, and pink marks a step along any property."
 } -%}
 {%- macro value(v) -%}
 {%- if v.id and entities[v.id] -%}<a class="val" href="https://www.wikidata.org/wiki/{{ v.id }}">{{ m.thumb(v.id, entities, thumb, 20, "mini") | safe }}{{ m.bare(v.text) }}</a>
@@ -33,6 +34,12 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
     <p class="q-tier">{{ m.tierBadge(q.tier) }} {{ tierNote[q.tier] }}</p>
   </header>
 
+  {%- if q.blocks %}
+  <section class="blocks" aria-label="The query as blocks">
+    <p class="blocks-key"><span class="key key-set">set</span> <span class="key key-pivot">pivot</span> <span class="key key-wild">any property</span> <span class="key key-op">operation beyond browsing</span> <span class="key key-hex">condition</span></p>
+    {{ b.program(q.blocks, {entities: entities, thumb: thumb}) | safe }}
+  </section>
+  {%- else %}
   <ol class="flow" aria-label="Sets in this query">
   {%- for s in q.flow.sets %}
     <li class="set depth-{{ s.depth if s.depth < 4 else 4 }}">
@@ -75,15 +82,16 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
     </li>
   {%- endfor %}
   </ol>
+  {%- endif %}
 
-  {%- if q.flow.extensions | length or q.flow.conditions | length or q.flow.aggregate %}
+  {%- if q.flow.extensions | length or (q.flow.conditions | length and not q.blocks) or q.flow.aggregate %}
   <section class="panel">
     <h2>Also</h2>
     <ul class="steps">
       {%- for e in q.flow.extensions %}
       <li><span class="kind kind-{{ e.kind }}">{{ {"or": "OR", "path": "path", "derived": "grouping"}[e.kind] }}</span> {{ m.bare(e.label) }}</li>
       {%- endfor %}
-      {%- for c in q.flow.conditions %}
+      {%- for c in ([] if q.blocks else q.flow.conditions) %}
       <li><span class="kind kind-filter">filter</span> {{ m.bare(c) }}</li>
       {%- endfor %}
       {%- if q.flow.aggregate %}<li><span class="kind kind-derived">count</span> the result is a count or summary of the sets above</li>{% endif %}
@@ -94,7 +102,7 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
   {%- if q.flow.beyond | length %}
   <section class="panel panel-beyond">
     <h2>Beyond set browsing</h2>
-    <ul>{% for b in q.flow.beyond %}<li>{{ b }}</li>{% endfor %}{% for l in q.flow.loose %}<li class="loose"><code>{{ m.bare(l) }}</code></li>{% endfor %}</ul>
+    <ul>{% for b in q.flow.beyond %}<li>{{ b }}</li>{% endfor %}{% for l in ([] if q.blocks else q.flow.loose) %}<li class="loose"><code>{{ m.bare(l) }}</code></li>{% endfor %}</ul>
   </section>
   {%- endif %}
 
