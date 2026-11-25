@@ -122,6 +122,7 @@ def ops : List OpSpec :=
     ⟨"cookies", .query, []⟩,
     -- the browser's own controls (WebShell): answers from the request
     ⟨"shellText", .query, []⟩, ⟨"shellKey", .query, [.keyboard]⟩, ⟨"shellEdit", .query, [.keyboard]⟩,
+    ⟨"shellContext", .query, [.pointer]⟩, ⟨"linkGesture", .query, [.pointer]⟩,
     ⟨"shellHit", .query, [.pointer]⟩, ⟨"shellActions", .query, []⟩, ⟨"shellSubmit", .query, []⟩,
     ⟨"shellLink", .query, []⟩, ⟨"shellRoute", .query, []⟩, ⟨"shellInfo", .query, []⟩,
     ⟨"keyTable", .query, [.keyboard]⟩, ⟨"findEdit", .query, [.keyboard]⟩,
@@ -139,7 +140,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 72
+#guard opNames.length == 74
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

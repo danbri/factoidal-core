@@ -694,7 +694,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     // What a press does by its button and modifiers (issue 1031; WebShell.linkGesture): "follow",
-    // "backgroundTab", "foregroundTab" or "menu". An engine from before the op: "follow".
+    // "backgroundTab", "foregroundTab" or "menu". Older engines fall back to following the link.
     linkGesture:(platform:string,button:number,modifiers:number)=>{
       try{return (documentCall("",{op:"linkGesture",platform,button,modifiers}) as {gesture:string}).gesture;}catch{return "follow";}
     },
