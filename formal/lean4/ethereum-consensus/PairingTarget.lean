@@ -230,7 +230,11 @@ Does not say: the coordinates are in the mathematical subgroups. -/
 theorem tate_noncanonical (a : Array Nat) (h : a.size = 6)
     (hc : a.all (fun x => decide (x < modulus)) = false) :
     tate a = .error "noncanonical" := by
-  simp [tate,h,hc]
+  have hw : ¬ a.size ≠ 6 := fun hne => hne h
+  have hb : (!(a.all (fun x => decide (x < modulus)))) = true := by
+    rw [hc]
+    rfl
+  simp only [tate,if_neg hw,if_pos hb]
 
 /-- Kind: admission. Says: the curve predicates gate the actual recurrence.
 Does not say: the twist and curve arithmetic refine the group law. -/
