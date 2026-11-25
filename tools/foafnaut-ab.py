@@ -12,14 +12,14 @@ Subcommands (each REF is any git commit-ish of this repository):
   pages BASE BRANCH         the real-page snapshots on both: status, picture hash, time
   overlap BASE NEW BRANCH   files that both BASE..NEW (main moved) and BASE..BRANCH change;
                             exit 0 when there are none (the gate result still holds), 1 otherwise
-  gate BASE BRANCH          build, suites (BRANCH's touched suite first), compare, pages
+  gate BASE BRANCH          build, suites (the one given by --first first), compare, pages
 
 Results of a commit are kept, so main is built and measured once per commit, whatever branch
 is compared with it. Inputs, by option or environment variable:
 
   --cache   FOAFNAUT_AB_CACHE      default ~/.cache/foafnaut-ab
   --manifest FOAFNAUT_AB_MANIFEST  WPT MANIFEST.json (see skills/wpt-runs, "Locally")
-  --wpt     FOAFNAUT_AB_WPT        WPT checkout with css/, fonts/, common/, resources/, images/
+  --wpt     FOAFNAUT_AB_WPT        WPT checkout with css/, svg/, html/, fonts/, common/, resources/, images/
   --realpages FOAFNAUT_AB_REALPAGES  factoidal-builds third_party/realpages (one zip per page)
 
 Why this exists (2026-11-25): the gate was a set of scripts in a session's /tmp. Main was built
@@ -31,7 +31,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 SUITES = ["/css/CSS2/", "/css/css-lists/", "/css/css-backgrounds/", "/css/css-transitions/",
-          "/css/css-animations/", "/css/cssom/", "/css/selectors/"]
+          "/css/css-animations/", "/css/cssom/", "/css/selectors/", "/svg/", "/html/"]
 LIB_IN_TREE = "labs/demos/foafnaut/.build/web-render/engines/libweb-render.so"
 
 
