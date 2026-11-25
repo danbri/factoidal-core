@@ -1078,6 +1078,15 @@ in finely sliced parallel. Make this a priority."
   issue 1031 names its measurement (for gestures: `native-html-gesture` `queuedToActionMs` and the
   `gestures` block of `--perf-summary`) and reports it before and after.
 
+### Foafnaut: one engine worker per tab; a new tab page (owner, 2026-11-25)
+
+Owner, verbatim: "one engine per tab seems good" and "It was always fairly snappy opening up a new
+tab." So one engine worker per tab (839dc27f0, https://github.com/danbri/factoidal-core/issues/1031)
+stays the default. A new tab must stay as fast as before: report `tabFirstFrame` before and after a
+change to it. New tab page, owner, same day: links to Settings and the Console, small search forms
+(SPARQL demos), and a dinosaur emoji link to the owner's game Particle Rex
+(`pages/particle-rex.html`, keys WASD and arrows), which is also a real-world test of the engine.
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
