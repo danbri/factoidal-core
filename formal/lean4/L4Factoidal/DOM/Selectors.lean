@@ -28,6 +28,7 @@ node of the document. The parser and the matcher are total: each takes fuel (`pa
 -/
 import L4Factoidal.DOM.Arena
 import L4Factoidal.DOM.CustomElements
+import L4Factoidal.DOM.FormValidity
 import L4Factoidal.HTML.Dimension
 import L4Factoidal.Unicode.Bidi
 
@@ -1278,6 +1279,8 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
            | some s => (CustomElements.reach d s).any fun j => (d.get j).states / 8 % 2 == 1
            | none => false)
       | "focus-within" => (CustomElements.reach d k).any fun j => (d.get j).states / 8 % 2 == 1
+      | "valid" => FormValidity.selectorValidity d k == some true
+      | "invalid" => FormValidity.selectorValidity d k == some false
       | "required" => isHtml d k ["input", "select", "textarea"] && (attrVal? d k "required").isSome
       | "optional" => isHtml d k ["input", "select", "textarea"] && (attrVal? d k "required").isNone
       | "read-write" => readWrite d k
