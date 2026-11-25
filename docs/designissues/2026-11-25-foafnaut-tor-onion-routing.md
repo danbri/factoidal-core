@@ -116,7 +116,9 @@ Method. A probe crate on Arti 0.48.0 (`tor-hscrypto`, `tor-netdoc`, `tor-llcrypt
 page `WebAssembly` (BubblePopWASM), and called it from BubblePopJS. Host: the Linux rig
 (`tools/foafnaut-linux-rig`, released engine `build-e4445d14752c`, Xvfb, software Vulkan) on a
 cloud container. Real time is the host's `leanMs` for the page task that made the call. Reference:
-the same module in Node 22. The probe source was not committed.
+the same module in Node 22. Source, build and run scripts: `labs/demos/foafnaut/tor-probe/`
+(`build.sh`, then `run.sh tor-split.html`). A rerun from those scripts gave 62, 803 and 6989 ms for
+the three rows below.
 
 Results, Foafnaut against Node:
 

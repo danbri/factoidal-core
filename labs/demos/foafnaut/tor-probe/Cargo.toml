@@ -1,0 +1,27 @@
+[package]
+name = "torprobe"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[dependencies]
+cipher = "0.5"
+digest = "0.11"
+getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3"
+tor-checkable = "0.48.0"
+tor-hscrypto = "0.48.0"
+tor-llcrypto = "0.48.0"
+tor-netdoc = "0.48.0"
+wasm-bindgen = "=0.2.130"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+
+[patch.crates-io]
+saturating-time = { path = ".work/saturating-time-0.6.0" }
