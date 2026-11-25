@@ -100,7 +100,7 @@ def minimalBytes (x : Nat) : Array UInt8 :=
     if i == j && (bytes[j]?).getD 1 == 0 then i+1 else i) 0
   bytes.extract start bytes.size
 
-def prefix (shortBase longBase len : Nat) : Array UInt8 :=
+def rlpLengthPrefix (shortBase longBase len : Nat) : Array UInt8 :=
   if len ≤ 55 then #[UInt8.ofNat (shortBase + len)]
   else
     let size := minimalBytes len
@@ -109,7 +109,7 @@ def prefix (shortBase longBase len : Nat) : Array UInt8 :=
 def encodeScalar (x : Nat) : Array UInt8 :=
   let bytes := minimalBytes x
   if bytes.size == 1 && (bytes[0]?).getD 0 < 128 then bytes
-  else prefix 128 183 bytes.size ++ bytes
+  else rlpLengthPrefix 128 183 bytes.size ++ bytes
 
 /-- Original canonical unsigned fields are kept verbatim, including nested
 access lists and leading zero address bytes. Only the outer list prefix
@@ -122,7 +122,7 @@ def signingBytes (kind : Nat) (fields : Array Item) (unsignedCount : Nat)
       | none => payload
       | some id => payload ++ encodeScalar id ++ #[0x80, 0x80]
     else payload
-  let encoded := prefix 192 247 payload.size ++ payload
+  let encoded := rlpLengthPrefix 192 247 payload.size ++ payload
   if kind == 0 then encoded else #[UInt8.ofNat kind] ++ encoded
 
 def legacyDomain (v : Nat) : Except Failure (Option Nat × Nat) :=
@@ -147,45 +147,46 @@ structure Decoded where
   r : Nat
   s : Nat
 
-def decode (raw : Array UInt8) : Except Failure Decoded := do
-  if raw.size > maxRawBytes then throw .resourceLimit
-  if raw.isEmpty then throw (.malformed "empty envelope")
-  let tag := (raw[0]?).getD 0
-  let kind := if tag ≥ 192 then 0 else tag.toNat
-  if tag < 192 && (kind < 1 || kind > 3) then
-    if tag < 128 then throw (.unsupported "unknown-typed-envelope")
-    else throw (.malformed "legacy-envelope-not-list")
-  let root ← decodeRoot (if kind == 0 then raw else raw.extract 1 raw.size)
-  let fs ← members root 15
-  let expected := if kind == 0 then 9 else if kind == 1 then 11 else if kind == 2 then 12 else 14
-  if fs.size != expected then throw (.malformed "signed-field-count")
-  let last := expected-3
-  let v ← scalarAt fs last 33
-  let domain ← if kind == 0 then legacyDomain v else do
-    if v > 1 then throw .invalidSignature
-    let chain ← scalarAt fs 0
-    pure (some chain, v)
-  let gasIndex := if kind == 0 then 2 else if kind == 1 then 3 else 4
-  let dest ← destination (← get fs (gasIndex+1))
-  if kind == 3 && dest.isNone then throw (.malformed "blob-creation")
-  let access ← if kind == 0 then pure [] else readAccessList (← get fs (gasIndex+4))
-  let blob ← if kind == 3 then do
-      let cap ← scalarAt fs 9
-      let hashes ← members (← get fs 10) 128
-      let hashes ← hashes.mapM fun hash => fixedBytes hash 32
-      pure (some ({ hashes, maxFeePerBlobGas := cap } : TransactionList.BlobFields))
-    else pure none
-  return {
-    kind, chain := domain.1, parity := domain.2, to := dest,
-    nonce := ← scalarAt fs (if kind == 0 then 0 else 1),
-    gasLimit := ← scalarAt fs gasIndex,
-    gasPriceCap := ← scalarAt fs (gasIndex-1),
-    priorityFeeCap := ← (if kind ≥ 2 then scalarAt fs 2 else pure 0),
-    value := ← scalarAt fs (gasIndex+2),
-    data := ← byteString (← get fs (gasIndex+3)),
-    accessList := access, blob,
-    signing := signingBytes kind fs last domain.1,
-    r := ← scalarAt fs (last+1), s := ← scalarAt fs (last+2) }
+def decode (raw : Array UInt8) : Except Failure Decoded :=
+  if raw.size > maxRawBytes then .error .resourceLimit
+  else do
+    if raw.isEmpty then throw (.malformed "empty envelope")
+    let tag := (raw[0]?).getD 0
+    let kind := if tag ≥ 192 then 0 else tag.toNat
+    if tag < 192 && (kind < 1 || kind > 3) then
+      if tag < 128 then throw (.unsupported "unknown-typed-envelope")
+      else throw (.malformed "legacy-envelope-not-list")
+    let root ← decodeRoot (if kind == 0 then raw else raw.extract 1 raw.size)
+    let fs ← members root 15
+    let expected := if kind == 0 then 9 else if kind == 1 then 11 else if kind == 2 then 12 else 14
+    if fs.size != expected then throw (.malformed "signed-field-count")
+    let last := expected-3
+    let v ← scalarAt fs last 33
+    let domain ← if kind == 0 then legacyDomain v else do
+      if v > 1 then throw .invalidSignature
+      let chain ← scalarAt fs 0
+      pure (some chain, v)
+    let gasIndex := if kind == 0 then 2 else if kind == 1 then 3 else 4
+    let dest ← destination (← get fs (gasIndex+1))
+    if kind == 3 && dest.isNone then throw (.malformed "blob-creation")
+    let access ← if kind == 0 then pure [] else readAccessList (← get fs (gasIndex+4))
+    let blob ← if kind == 3 then do
+        let cap ← scalarAt fs 9
+        let hashes ← members (← get fs 10) 128
+        let hashes ← hashes.mapM fun hash => fixedBytes hash 32
+        pure (some ({ hashes, maxFeePerBlobGas := cap } : TransactionList.BlobFields))
+      else pure none
+    return {
+      kind, chain := domain.1, parity := domain.2, to := dest,
+      nonce := ← scalarAt fs (if kind == 0 then 0 else 1),
+      gasLimit := ← scalarAt fs gasIndex,
+      gasPriceCap := ← scalarAt fs (gasIndex-1),
+      priorityFeeCap := ← (if kind ≥ 2 then scalarAt fs 2 else pure 0),
+      value := ← scalarAt fs (gasIndex+2),
+      data := ← byteString (← get fs (gasIndex+3)),
+      accessList := access, blob,
+      signing := signingBytes kind fs last domain.1,
+      r := ← scalarAt fs (last+1), s := ← scalarAt fs (last+2) }
 
 def recover (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance) (d : Decoded) :
     Except Failure Nat :=
@@ -302,7 +303,7 @@ theorem call_entry_source (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     | some value =>
       simp only [dest] at h
       cases h
-      exact ⟨sender, value, rfl, dest, rfl⟩
+      exact ⟨sender, value, rfl, rfl, rfl⟩
 
 /-- Kind: execution refusal.
 Says: the actual raw step propagates admission failure without calling the EVM.
@@ -318,7 +319,7 @@ Says: a raw envelope exceeding the local cap refuses before RLP processing.
 Does not say: the envelope is Ethereum-invalid. -/
 theorem over_limit (raw : Array UInt8) (h : raw.size > maxRawBytes) :
     decode raw = .error .resourceLimit := by
-  simp [decode, h]
+  simp only [decode, if_pos h]
 
 #print axioms call_entry_source
 #print axioms refused_entry
