@@ -167,8 +167,8 @@ Does not say: anything about the computations supplying those stages. -/
 private theorem checkedSequence_success {E A B : Type}
     (input : Except E A) (next : A → Except E B) (out : B)
     (h : (match input with
-          | .error e => .error e
-          | .ok a => next a) = .ok out) :
+          | .error e => (Except.error e : Except E B)
+          | .ok a => next a) = Except.ok out) :
     ∃ a : A, input = .ok a ∧ next a = .ok out := by
   cases input with
   | error e => cases h
@@ -194,8 +194,10 @@ theorem successful_projection (q : ProjectionRequest) (out : PartialCommitment)
     have hs := h
     rw [authentication_success q e ha] at hs
     have hseq : (match buildProjection q with
-      | .error reason => .error reason
-      | .ok p => acceptProjection q p) = .ok out := hs
+      | .error reason => (Except.error reason : Except ProjectionError PartialCommitment)
+      | .ok p => acceptProjection q p) = Except.ok out := by
+        delta projectChecked at hs
+        exact hs
     obtain ⟨p, _, hc⟩ :=
       @checkedSequence_success ProjectionError PartialCommitment PartialCommitment
         (buildProjection q) (acceptProjection q) out hseq
