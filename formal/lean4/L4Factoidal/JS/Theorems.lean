@@ -304,7 +304,7 @@ theorem setOwnData_typed {H : Type} (h : HeapOf H) (id ty b off len : Nat) (key 
     (hk : (h.obj id).kind = .typed ty b off len) (hb : h.undoObjs.base ≤ id) :
     setOwnData id key v h = .ok false h := by
   unfold setOwnData
-  exact updateObj_keep id _ h false hb (obj_lt_of_typed h id ty b off len hk) (by simp only [hk])
+  exact updateObj_keep id _ h false hb (obj_lt_of_typed h id ty b off len hk) (by simp only [hk, ite_self])
 #print axioms setOwnData_typed
 
 theorem bind_pure_unit {H : Type} (m : JSM H Unit) : (EStateM.bind m fun _ => EStateM.pure ()) = m := by
