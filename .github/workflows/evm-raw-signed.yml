@@ -63,9 +63,8 @@ jobs:
       - name: Independent retained signed list comparisons
         run: |
           set -euo pipefail
-          cd scripts/witness
-          npm ci
-          node raw-signed-lists.mjs ../../.lake/build/bin/evm-raw-signed ../../.lake/build/bin/evm-transaction-list
+          npm ci --prefix scripts/differential
+          node scripts/witness/raw-signed-lists.mjs .lake/build/bin/evm-raw-signed .lake/build/bin/evm-transaction-list | tee .lake/signed-evidence/differential.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
