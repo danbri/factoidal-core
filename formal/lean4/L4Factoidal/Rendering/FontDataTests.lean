@@ -42,6 +42,11 @@ private def bad (j : Json) : Bool := (decodeValue j).toOption.isNone
 #guard byteOffsetToChar? "λ🙂A" 7 == some 3
 #guard byteOffsetToChar? "λ🙂A" 1 == none
 #guard byteOffsetToChar? "λ🙂A" 3 == none
+-- The array form agrees with the map form at every byte offset, past the end included.
+def charAtByte?_agrees (t : String) : Bool :=
+  let m := byteToCharMap t; let a := byteToCharArray t
+  (List.range (t.utf8ByteSize+3)).all fun b => m.get? b == charAtByte? a b
+#guard ["", "a", "abc", "λ🙂A", "é\u0301x", "中文 text", "🙂🙂", "\u0000z"].all charAtByte?_agrees
 #guard (decode base.toString).toOption.isSome
 #guard bad (set base "unitsPerEm" (n 0))
 #guard bad (set base "bitmapPixelSize" (n 0))
