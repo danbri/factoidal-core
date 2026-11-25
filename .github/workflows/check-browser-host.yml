@@ -17,7 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 4
+          ref: 6241a681148e9cd245fe83e1c20fea6516470d1e
+          fetch-depth: 5
           sparse-checkout: |
             labs/demos/foafnaut/native_net.ts
             labs/demos/foafnaut/native_net_pool_test.ts
@@ -26,21 +27,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4
-      - name: Probe IPv6 transport
-        run: |
-          deno eval '
-          const server = Deno.serve({hostname:"::1",port:0,onListen(){}}, () => new Response("ok"));
-          const port = server.addr.port;
-          for (const hostname of ["::1","[::1]"]) {
-            const client = Deno.createHttpClient({proxy:{transport:"tcp",hostname,port}});
-            try { const r = await fetch("http://a.test:"+port+"/",{client,signal:AbortSignal.timeout(3000)}); console.log(hostname, r.status, await r.text()); }
-            catch (e) { console.log(hostname, e.message, e.cause?.message); }
-            finally { client.close(); }
-          }
-          const r = await fetch("http://[::1]:"+port+"/",{signal:AbortSignal.timeout(3000)});
-          console.log("direct",r.status,await r.text());
-          await server.shutdown();
-          '
       - name: Reproduce old fixture
         continue-on-error: true
         working-directory: labs/demos/foafnaut
