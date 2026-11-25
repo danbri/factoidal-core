@@ -57,6 +57,7 @@ jobs:
               code = re.sub(r"--[^\n]*", "", code)
               assert re.findall(r"^import\s+(\S+)\s*$",code,re.M) == expected
               assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",code,re.M)
+          assert pins["formal/lean4/ethereum-consensus/G2Signature.lean"] == "9a135cce63739f5e62017e98bd76a888b0d89306"
           assert pins["formal/lean4/L4Factoidal/Crypto/SHA2.lean"] == "92737f4d83035745dba29ef2c3867b01b8dfa50f"
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
           assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
@@ -120,7 +121,7 @@ jobs:
           log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"hash-field-axioms.log").read_text()
           prefix = "EthereumConsensus.BLS.G2Map."
           expected = {prefix+n for n in ("mapField_noncanonical","mapField_delegates","checkedTarget_ok",
-              "checkedTarget_infinity","mapSigningRoot_hash_error","mapSigningRoot_delegates")}
+              "checkedTarget_infinity","mapField_ok","mapSigningRoot_hash_error","mapSigningRoot_delegates")}
           def audit(t):
               reports = re.findall(r"'(EthereumConsensus\.BLS\.G2Map\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
               if len(reports)!=len(expected) or {n for n,_ in reports}!=expected:
@@ -136,7 +137,7 @@ jobs:
               except ValueError:
                   continue
               raise ValueError("map audit mutation escaped")
-          print("Six actual map theorem reports and four audit controls passed")
+          print("Seven actual map theorem reports and four audit controls passed")
           PY
           node scripts/check-g2-map.mjs "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/g2-map-results.log"
       - uses: actions/upload-artifact@v4
