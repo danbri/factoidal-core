@@ -127,6 +127,50 @@ A document is a Lean value, so it can live in its own worker.
 - Measure: input latency in tab B while tab A loads a heavy page (`native-html-input-latency`),
   before and after.
 
+### 3a. Landed on branch `wip/1031-worker-per-tab` (2026-11-25): what was built and measured
+
+Built (`labs/demos/foafnaut/native_html_tabs.ts`, wired in `run_html.ts`):
+
+- One engine worker per tab. A navigation's calls go to the worker of its tab, also after
+  another tab is shown (`AsyncLocalStorage`); a script session's calls go to the worker that
+  holds the session (session numbers are mapped per worker); other calls go to the shown tab's
+  worker. Closing a tab ends its worker. Each worker keeps the queue rules of
+  `native_html_queue.ts`.
+- Each worker loads its own engine. The native library holds one engine state (`web_render_shim.c`,
+  static `engine`), so a second `dlopen` of the same file would share it between threads. Each
+  worker after the first loads its own copy of the library file (removed after load).
+- Cap: 8 live workers (`--engine-workers N`). A tab opened at the cap shares the worker of the
+  tab shown least recently. Sharing keeps that tab's script sessions and held images; stopping
+  the worker would lose them and cost a start when the tab is shown again. At the cap the Veil
+  model's `worker_one_page` (`FramePipeline.lean`) does not hold for the shared worker.
+- Spare: after the first frame, one worker starts with no tab and lays out the start page; the
+  next new tab takes it, and another starts 2 s later. Reason: a new engine's first layout of the
+  start page took about 0.9 s, against 0.04 s on a warm engine. `--no-spare-engine-worker`.
+- `--one-engine-worker` keeps the old mode through the same code.
+- Trace: `native-html-engine-worker` (start time, library copy time, warm-up time, resident
+  memory before and after, shared, ended), `native-html-tab-first-frame`; perf summary:
+  `engineWorkers`, `tabFirstFrame`, `processRssMB`.
+
+Measured on the Linux rig (Xvfb, software Vulkan, released native engine, 4 vCPU), 5 runs per
+mode, medians of the per-run values. Software Vulkan draws each frame in 300 to 600 ms, so input
+latency includes that draw.
+
+- (a) Tab A loads a 2.4 MB page (20,000 table rows); 300 ms later tab B opens and gets 21 key
+  presses 300 ms apart. Input latency in tab B, p50: one worker 407 ms, per tab 413 ms, per tab
+  without spare 414 ms. p95: one worker 2,037 ms, per tab 691 ms, without spare 1,331 ms. Tab B
+  first frame: one worker 1,875 ms, per tab 664 ms, without spare 1,317 ms.
+- (b) Seven new tabs in a row (8 tabs): process resident memory at exit, one worker 689 MB, per tab
+  1,596 MB, so about 130 MB for each extra worker. A worker start (library copy and engine load)
+  236 ms median; the spare's warm-up layout 476 ms. New tab first frame: one worker 397 ms
+  (p95 724), per tab 926 ms (p95 1,166): tabs opened 1 s apart outrun the spare, and each new tab
+  waits for a cold engine.
+- (c) One tab, resize sweep (7 sizes): frame total p50 one worker 568 ms, per tab 586 ms; layout
+  p50 245 and 253 ms. The difference is inside the run-to-run spread (526 to 684 ms).
+
+Not done: a worker that dies still sends every tab to the main thread (as before), not only its
+own tabs; a background tab gets no lower step budget; the Hub has one engine instance; the
+Veil model has no shared worker at the cap.
+
 Dedicated workers of a page can move to their own threads in the same way, because each is
 already a separate session value. The deterministic interleaving then becomes one possible order.
 The structured clone in `JS/Clone.lean` is already the only thing that crosses.

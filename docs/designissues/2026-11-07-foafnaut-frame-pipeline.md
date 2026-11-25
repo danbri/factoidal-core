@@ -13,6 +13,13 @@ Owner, 2026-11-07, verbatim: "Goal set: much faster perf, responsive, never miss
   every slow Lean call (`render` compile, graph start, event and page, selected text, XSLT,
   inspect, font load, font requests). All Lean calls for a document run on this one thread,
   because the Lean runtime state (the held font) is not shared between threads.
+- **One engine worker per tab** (2026-11-25, `native_html_tabs.ts`, issue
+  https://github.com/danbri/factoidal-core/issues/1031): each tab has its own engine worker, at
+  most 8 live; each worker loads its own engine (its own copy of the native library, because
+  the library holds one engine state) and its own fonts. A navigation's calls go to its tab's
+  worker, a script session's calls to the worker that holds the session, and the other calls to
+  the shown tab's worker. `--one-engine-worker` keeps the old single worker. Measurements:
+  section 3 of `2026-11-24-foafnaut-concurrency-and-network.md`.
 
 ## Engine backends
 
