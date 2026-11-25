@@ -48,6 +48,7 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
       <button type="button" class="st-start">Step through the query</button>
       <button type="button" class="st-counts">Count every step on Wikidata</button>
       <button type="button" class="st-fold">Fold all blocks</button>
+      <span class="st-status" role="status"></span>
     </div>
     {{ b.program(q.grammar.program, ctx) | safe }}
   </section>
@@ -61,16 +62,18 @@ permalink: "/web/hub/wikidata-parallax/{{ q.id }}/index.html"
       <button type="button" class="dr-close" aria-label="Stop stepping">×</button>
     </div>
     <div class="dr-body">
-      <textarea class="dr-sparql" spellcheck="false" aria-label="Draft SPARQL for this step"></textarea>
+      <p class="dr-legend" aria-hidden="true"><span class="dl-new">new in this step</span> <span class="dl-chg">changed</span> <span class="dl-del">gone</span> <span class="dl-same">unchanged</span></p>
+      <pre class="dr-diff" tabindex="0" aria-label="Draft SPARQL for this step, with the lines this step adds marked"></pre>
+      <textarea class="dr-sparql" spellcheck="false" aria-label="Draft SPARQL for this step" hidden></textarea>
       <div class="dr-actions">
         <button type="button" class="dr-count">Count</button>
         <button type="button" class="dr-run">Run (first 50 rows)</button>
+        <button type="button" class="dr-edit" aria-pressed="false">Edit</button>
         <label>on <select class="dr-endpoint">
-          <option value="https://qlever.dev/api/wikidata">QLever (qlever.dev)</option>
-          <option value="https://query.wikidata.org/sparql">Wikidata Query Service</option>
           <option value="https://query-next.wikidata.org/sparql">Wikidata QLever (query-next)</option>
+          <option value="https://qlever.dev/api/wikidata">QLever at qlever.dev</option>
         </select></label>
-        <a class="dr-open" href="#" target="_blank" rel="noopener">Open in a new tab</a>
+        <a class="dr-open" href="#" target="_blank" rel="noopener">Open in QLever</a>
         <span class="dr-status" role="status"></span>
       </div>
       <div class="dr-result"></div>

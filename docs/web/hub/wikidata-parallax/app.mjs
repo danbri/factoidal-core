@@ -24,11 +24,19 @@ function start(g) {
     title: $('.dr-title', drawer), text: $('.dr-sparql', drawer), status: $('.dr-status', drawer),
     result: $('.dr-result', drawer), endpoint: $('.dr-endpoint', drawer), open: $('.dr-open', drawer),
     toggle: $('.dr-toggle', drawer), prev: $('.dr-prev', drawer), next: $('.dr-next', drawer),
+    diff: $('.dr-diff', drawer), edit: $('.dr-edit', drawer), legend: $('.dr-legend', drawer),
   };
   const fmt = new Intl.NumberFormat('en');
-  const counts = new Map();          // `${endpoint}\n${query}` -> {items, rows}
-  let cur = -1, running = null, countingAll = false;
+  // Counts are kept for the browser session, so revisiting a page asks the endpoint nothing.
+  const counts = {
+    get(q) { try { const v = sessionStorage.getItem(`wdp-count\n${q}`); return v ? JSON.parse(v) : null; } catch { return null; } },
+    set(q, v) { try { sessionStorage.setItem(`wdp-count\n${q}`, JSON.stringify(v)); } catch {} },
+  };
+  const ENDPOINTS = [...ui.endpoint.options].map(o => ({ url: o.value, name: o.textContent }));
+  const busyUntil = new Map();       // endpoint -> time before which we leave it alone
+  let cur = -1, running = null, countingAll = false, editing = false;
 
+  const stStatus = $('.st-status', tools);
   tools.hidden = false;
   if (!n) $('.st-counts', tools).hidden = true;
   try { const ep = localStorage.getItem('wdp-endpoint'); if (ep && [...ui.endpoint.options].some(o => o.value === ep)) ui.endpoint.value = ep; } catch {}
@@ -60,11 +68,32 @@ function start(g) {
     }
     ui.title.textContent = `Step ${cur + 1} of ${last + 1}: ${labelOf(cur)}`;
     ui.text.value = queryFor(cur);
+    renderDiff();
     ui.prev.disabled = cur === 0;
     ui.next.disabled = cur === last;
     ui.result.replaceChildren();
     ui.status.textContent = '';
     updateOpen();
+  }
+
+  // The draft for this step against the draft for the step before, line by line:
+  // lines this step's own SPARQL adds are "new", other added lines (the SELECT
+  // list, labels) "changed", lines that went "gone"; the rest unchanged.
+  function renderDiff() {
+    const now = ui.text.value.split('\n');
+    const whole = cur >= last;
+    ui.legend.hidden = whole || editing;
+    const before = whole || cur === 0 ? (whole ? now : []) : queryFor(cur - 1).split('\n');
+    const own = new Set(whole ? [] : g.steps[cur].sparql.flatMap(f => f.s.split('\n').map(l => l.trim())));
+    const ops = diffLines(before, now).map(([t, line]) => [t === 'add' ? (own.has(line.trim()) ? 'new' : 'chg') : t, line]);
+    ui.diff.replaceChildren(...ops.map(([t, line]) => {
+      const span = document.createElement('span');
+      span.className = `dl dl-${t}`;
+      span.textContent = line + '\n';
+      return span;
+    }));
+    const first = ui.diff.querySelector('.dl-new, .dl-chg');
+    if (first) ui.diff.scrollTop = Math.max(0, first.offsetTop - ui.diff.offsetTop - 24);
   }
 
   function stop() {
@@ -77,32 +106,42 @@ function start(g) {
   }
 
   function updateOpen() {
-    const ep = ui.endpoint.value, q = ui.text.value;
-    ui.open.href = ep.includes('query.wikidata.org') ? `https://query.wikidata.org/#${encodeURIComponent(q)}`
-      : ep.includes('qlever.dev') ? `https://qlever.dev/wikidata/?query=${encodeURIComponent(q)}`
-        : `https://query-next.wikidata.org/?query=${encodeURIComponent(q)}`;
+    const ep = ui.endpoint.value, q = encodeURIComponent(ui.text.value);
+    ui.open.href = ep.includes('qlever.dev') ? `https://qlever.dev/wikidata/?query=${q}` : `https://query-next.wikidata.org/?query=${q}`;
   }
 
+  // Ask the chosen QLever endpoint; if it is busy (429) or failing (5xx, network),
+  // ask the other one once. A busy endpoint is left alone for as long as it asks
+  // (Retry-After), or a minute. No retry loops: that is how rate limits get worse.
   async function sparql(query, signal) {
-    const ep = ui.endpoint.value;
     const body = new URLSearchParams({ query });
     const get = body.toString().length < 6000;
-    // A busy endpoint answers 429 (or 503): wait as it asks, a few times, then give up.
-    for (let attempt = 0; ; attempt++) {
-      const r = await fetch(get ? `${ep}?${body}` : ep, {
-        method: get ? 'GET' : 'POST', body: get ? undefined : body, signal,
-        headers: { Accept: 'application/sparql-results+json' },
-      });
-      if (r.ok) return r.json();
-      if ((r.status === 429 || r.status === 503) && attempt < 3) {
-        const wait = Math.min(20, +r.headers.get('retry-after') || 2 * 3 ** attempt);
-        ui.status.textContent = `The endpoint is busy; trying again in ${wait} s…`;
-        await new Promise((ok, no) => { const t = setTimeout(ok, wait * 1000); signal?.addEventListener('abort', () => { clearTimeout(t); no(signal.reason); }, { once: true }); });
-        continue;
+    const chosen = ui.endpoint.value;
+    const order = [chosen, ...ENDPOINTS.map(e => e.url).filter(u => u !== chosen)];
+    const nameOf = (u) => ENDPOINTS.find(e => e.url === u)?.name || u;
+    let problem = null;
+    for (const ep of order) {
+      if ((busyUntil.get(ep) || 0) > Date.now()) { problem ||= `${nameOf(ep)} asked us to wait`; continue; }
+      let r;
+      try {
+        r = await fetch(get ? `${ep}?${body}` : ep, { method: get ? 'GET' : 'POST', body: get ? undefined : body, signal, headers: { Accept: 'application/sparql-results+json' } });
+      } catch (e) {
+        if (signal?.aborted) throw e;
+        problem = `${nameOf(ep)} could not be reached`; continue;
       }
-      if (r.status === 429) throw new Error('the endpoint is busy (too many requests); try again in a minute, or pick another endpoint');
-      throw new Error(`HTTP ${r.status}: ${(await r.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200)}`);
+      if (r.ok) { const j = await r.json(); j.endpoint = ep === chosen ? null : nameOf(ep); return j; }
+      if (r.status === 429) {
+        busyUntil.set(ep, Date.now() + 1000 * Math.min(300, +r.headers.get('retry-after') || 60));
+        problem = `${nameOf(ep)} is busy (too many requests)`; continue;
+      }
+      if (r.status >= 500) { problem = `${nameOf(ep)} failed (HTTP ${r.status})`; continue; }
+      // A 4xx other than 429 is about the query itself: another endpoint would say the same.
+      throw new Error(`HTTP ${r.status}: ${(await r.text()).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)}`);
     }
+    const wait = Math.max(0, ...[...busyUntil.values()].map(t => Math.ceil((t - Date.now()) / 1000)));
+    const e = new Error(`${problem}; no QLever endpoint answered.${wait ? ` Try again in about ${wait} s.` : ''}`);
+    e.busy = true;
+    throw e;
   }
   const withTimeout = (ms) => { running?.abort(); const c = new AbortController(); running = c; const t = setTimeout(() => c.abort(new Error(`no answer after ${ms / 1000} s`)), ms); return { signal: c.signal, done: () => clearTimeout(t) }; };
 
@@ -119,13 +158,13 @@ function start(g) {
   async function count(k, signal) {
     const q = k >= last ? `SELECT (COUNT(*) AS ?rows) WHERE { ${stripPrefixes(g.full)} }` : queryFor(k, { count: true });
     const query = k >= last ? `${g.prefixes}\n${q}` : q;
-    const key = `${ui.endpoint.value}\n${query}`;
-    if (!counts.has(key)) {
+    let c = counts.get(query);
+    if (!c) {
       const j = await sparql(query, signal);
       const b = j.results.bindings[0] || {};
-      counts.set(key, { items: b.items ? +b.items.value : null, rows: b.rows ? +b.rows.value : 0 });
+      c = { items: b.items ? +b.items.value : null, rows: b.rows ? +b.rows.value : 0, endpoint: j.endpoint };
+      counts.set(query, c);
     }
-    const c = counts.get(key);
     if (k < last) badge(k, c);
     return c;
   }
@@ -143,11 +182,11 @@ function start(g) {
         ui.status.textContent = 'Nothing to count yet: this set is defined by the steps that follow.';
       } else if (kind === 'count') {
         const c = await count(cur, t.signal);
-        ui.status.textContent = c.items != null ? `${fmt.format(c.items)} distinct ?${g.steps[cur].v} in ${fmt.format(c.rows)} rows` : `${fmt.format(c.rows)} rows`;
+        ui.status.textContent = (c.items != null ? `${fmt.format(c.items)} distinct ?${g.steps[cur].v} in ${fmt.format(c.rows)} rows` : `${fmt.format(c.rows)} rows`) + (c.endpoint ? ` (answered by ${c.endpoint})` : '');
       } else {
         const t0 = performance.now();
         const j = await sparql(limited(ui.text.value), t.signal);
-        ui.status.textContent = `${fmt.format(j.results.bindings.length)} rows in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+        ui.status.textContent = `${fmt.format(j.results.bindings.length)} rows in ${((performance.now() - t0) / 1000).toFixed(1)} s${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
         ui.result.append(table(j));
       }
     } catch (e) {
@@ -165,10 +204,15 @@ function start(g) {
       const el = stepEl(k);
       const b = el && $('.pz-count', el);
       if (b) { b.textContent = '…'; b.classList.add('busy'); }
+      const cached = !!counts.get(queryFor(k, { count: true }));
       const t = withTimeout(90000);
-      try { await count(k, t.signal); } catch (e) { if (b) { b.textContent = '?'; b.title = e.message; } }
-      finally { t.done(); b?.classList.remove('busy'); }
-      await new Promise(r => setTimeout(r, 600));
+      try { await count(k, t.signal); } catch (e) {
+        if (b) { b.textContent = '?'; b.title = e.message; }
+        // Both endpoints busy: stop here rather than keep asking.
+        if (e.busy) { stStatus.textContent = e.message; countingAll = false; }
+      } finally { t.done(); b?.classList.remove('busy'); }
+      // One request at a time, with a pause, so a page never floods the endpoint.
+      if (!cached && countingAll) await new Promise(r => setTimeout(r, 1500));
     }
     countingAll = false;
     button.textContent = 'Count every step on Wikidata';
@@ -211,7 +255,16 @@ function start(g) {
   });
   $('.dr-count', drawer).addEventListener('click', () => act('count'));
   $('.dr-run', drawer).addEventListener('click', () => act('run'));
-  ui.text.addEventListener('input', updateOpen);
+  ui.text.addEventListener('input', () => { updateOpen(); });
+  ui.edit.addEventListener('click', () => {
+    editing = !editing;
+    ui.edit.setAttribute('aria-pressed', String(editing));
+    ui.edit.textContent = editing ? 'Show changes' : 'Edit';
+    ui.text.hidden = !editing;
+    ui.diff.hidden = editing;
+    ui.legend.hidden = editing || cur >= last;
+    if (editing) ui.text.focus(); else renderDiff();
+  });
   ui.endpoint.addEventListener('change', () => { try { localStorage.setItem('wdp-endpoint', ui.endpoint.value); } catch {} updateOpen(); });
   // Selecting a step's block while stepping jumps there.
   blocks.addEventListener('click', (e) => {
@@ -225,4 +278,21 @@ function start(g) {
     else if (e.key === 'ArrowLeft' || e.key === 'k') { show(cur - 1); e.preventDefault(); }
     else if (e.key === 'Escape') stop();
   });
+}
+
+/** Line diff (longest common subsequence): [['same'|'add'|'del', line], …]. */
+export function diffLines(a, b) {
+  const n = a.length, m = b.length;
+  const L = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push(['same', b[j]]); i++; j++; }
+    else if (L[i + 1][j] >= L[i][j + 1]) out.push(['del', a[i++]]);
+    else out.push(['add', b[j++]]);
+  }
+  while (i < n) out.push(['del', a[i++]]);
+  while (j < m) out.push(['add', b[j++]]);
+  return out;
 }

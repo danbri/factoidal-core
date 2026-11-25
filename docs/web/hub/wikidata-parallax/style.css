@@ -277,3 +277,27 @@ body.has-drawer { padding-bottom: 64vh; }
 @media (max-width: 40rem) { .dr-bar { padding: .45rem .6rem; } .dr-body { padding: .5rem .6rem .8rem; } .dr-sparql { height: 10rem; } .drawer { max-height: 75vh; } body.has-drawer { padding-bottom: 76vh; } }
 .blocks.stepping [data-step] { scroll-margin: 5rem 1rem 66vh; }
 @media (max-width: 40rem) { .blocks.stepping [data-step] { scroll-margin-bottom: 78vh; } }
+
+/* The draft query as a diff against the step before */
+.dr-diff { margin: 0; max-height: 16rem; overflow: auto; font: .8rem/1.5 ui-monospace, monospace; padding: .5rem 0;
+  border: 1px solid var(--line); border-radius: .5rem; background: var(--back); color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.dr-diff[hidden], .dr-sparql[hidden], .dr-legend[hidden] { display: none; }
+.dl { display: block; padding: 0 .7rem 0 1.8rem; position: relative; }
+.dl::before { position: absolute; left: .6rem; font-weight: 700; }
+.dl-same { color: var(--muted); }
+.dl-new { background: #dcf5e3; color: #0b3d1c; } .dl-new::before { content: "+"; color: #1f8a46; }
+.dl-chg { background: #fdf0c8; color: #4a3500; } .dl-chg::before { content: "~"; color: #9a6b00; }
+.dl-del { background: #fbe3df; color: #7a2416; text-decoration: line-through; text-decoration-color: rgb(122 36 22 / .5); } .dl-del::before { content: "−"; color: #b3341f; }
+.dr-legend { margin: 0; display: flex; flex-wrap: wrap; gap: .4rem; font-size: .75rem; }
+.dr-legend span { padding: .1rem .5rem; border-radius: 999px; }
+.dr-legend .dl-new { background: #dcf5e3; color: #0b3d1c; }
+.dr-legend .dl-chg { background: #fdf0c8; color: #4a3500; }
+.dr-legend .dl-del { background: #fbe3df; color: #7a2416; text-decoration: line-through; }
+.dr-legend .dl-same { background: var(--back); color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  .dl-new, .dr-legend .dl-new { background: #12371f; color: #b9f0c9; }
+  .dl-chg, .dr-legend .dl-chg { background: #3d3108; color: #f6df9a; }
+  .dl-del, .dr-legend .dl-del { background: #431912; color: #f4b9ad; }
+}
+.st-status { font-size: .8rem; color: var(--exclude); align-self: center; }
+.st-status:empty { display: none; }
