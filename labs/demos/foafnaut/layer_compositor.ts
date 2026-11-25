@@ -98,29 +98,35 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     }
     return p;
   }
-  async function pipelineFor(p:RenderPlan,code:string):Promise<GPURenderPipeline> {
+  async function pipelineFor(p:RenderPlan,code:string,steps:Record<string,number>):Promise<GPURenderPipeline> {
     const key=JSON.stringify([code,p.pipeline,p.format]);
     const kept=pipelines.get(key);if(kept)return kept;
+    const started=performance.now();
     const shader=device.createShaderModule({code});
+    const moduleCreated=performance.now();
     const info=await shader.getCompilationInfo();
+    const diagnosticReady=performance.now();
     if(info.messages.some(m=>m.type==="error"))throw new Error("WGSL compilation failed: "+info.messages.filter(m=>m.type==="error").map(m=>`${m.lineNum}:${m.linePos} ${m.message}`).join("; "));
     const pipeline=await device.createRenderPipelineAsync({layout:p.pipeline.layout,
       vertex:{module:shader,entryPoint:p.pipeline.vertexEntry},
       fragment:{module:shader,entryPoint:p.pipeline.fragmentEntry,targets:[{format:p.format}]},
       primitive:{topology:p.pipeline.topology}});
+    const pipelineReady=performance.now();
+    steps.createShaderModule=Math.round((moduleCreated-started)*10)/10;
+    steps.getCompilationInfo=Math.round((diagnosticReady-moduleCreated)*10)/10;
+    steps.createRenderPipeline=Math.round((pipelineReady-diagnosticReady)*10)/10;
     stats.pipelineBuilds++;pipelines.set(key,pipeline);if(pipelines.size>8)pipelines.delete(pipelines.keys().next().value!);
     return pipeline;
   }
   let readback:Growing|undefined;
   // Run a Lean plan on one target texture; with check, read it back and hash it.
   async function run(p:RenderPlan,resources:{pipeline:GPURenderPipeline;bindGroup:GPUBindGroup},target:GPUTexture,check:boolean,
-    write:()=>void):Promise<PassResult> {
+    write:()=>void,steps:Record<string,number>):Promise<PassResult> {
     if(check)readback=grow(readback,p.readback!.bytes,bufferUsage(p.readback!.usage));
     device.pushErrorScope("validation");let scoped=true;
     try{
       write();
       const interpreter=commandInterpreter(device,p,resources,target.createView(),{texture:target,readback:readback?.buffer});
-      const steps:Record<string,number>={};
       for(const command of p.commands){
         if(!check&&READBACK_COMMANDS.has(command))continue;
         const s=performance.now();await readbackStep(interpreter,command,onReadback);steps[command]=Math.round((performance.now()-s)*10)/10;
@@ -132,7 +138,9 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
         if(p.format==="bgra8unorm")for(let i=0;i<pixels.length;i+=4){const b=pixels[i];pixels[i]=pixels[i+2];pixels[i+2]=b;}
         hash=pixelHash(pixels);
       }
+      const validationStart=performance.now();
       const error=await device.popErrorScope();scoped=false;if(error)throw new Error(error.message);
+      steps.validation=Math.round((performance.now()-validationStart)*10)/10;
       return {steps,pixels,hash};
     }catch(error){
       if(scoped)try{await device.popErrorScope();}catch{/* original failure */}
@@ -141,7 +149,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
   }
   // Lean's rectangles only, over the pixels already in the texture (the scene shader's pixel
   // does not read what is there). No readback: an interactive frame.
-  async function drawDamage(p:RenderPlan,resources:{pipeline:GPURenderPipeline;bindGroup:GPUBindGroup},target:GPUTexture,rects:number[][],write:()=>void):Promise<PassResult> {
+  async function drawDamage(p:RenderPlan,resources:{pipeline:GPURenderPipeline;bindGroup:GPUBindGroup},target:GPUTexture,rects:number[][],write:()=>void,steps:Record<string,number>):Promise<PassResult> {
     device.pushErrorScope("validation");let scoped=true;
     try{
       write();
@@ -152,7 +160,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       pass.end();
       device.queue.submit([encoder.finish()]);
       const error=await device.popErrorScope();scoped=false;if(error)throw new Error(error.message);
-      return {steps:{},hash:""};
+      return {steps,hash:""};
     }catch(error){
       if(scoped)try{await device.popErrorScope();}catch{/* original failure */}
       throw error;
@@ -165,35 +173,52 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
    * bands give the bytes of one draw. */
   type Bands={count:number;between:(units:number)=>Promise<void>};
   async function drawScene(slot:Slot,frame:HTMLArtifact,check:boolean,target?:GPUTexture,bands?:Bands):Promise<PassResult> {
+    const planStart=performance.now();
     const p=await plan(frame.width,frame.height,frame.data);
-    const pipeline=await pipelineFor(p,frame.wgsl);
+    const steps:Record<string,number>={resolvePlan:Math.round((performance.now()-planStart)*10)/10};
+    const pipeline=await pipelineFor(p,frame.wgsl,steps);
+    const resourceStart=performance.now();
     if(!target){
       const size=`${frame.width}x${frame.height}`;
       if(!slot.texture||slot.size!==size){
+        const textureStart=performance.now();
         slot.texture?.destroy();stats.layerTextures++;
-        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
+        slot.texture=device.createTexture({size:[frame.width,frame.height],format:p.format,usage:LAYER_USAGE()});
+        steps.allocateTexture=Math.round((performance.now()-textureStart)*10)/10;
+        slot.size=size;slot.drawn=undefined;slot.drawnFrame=undefined;
       }
     }
     const damage=(frame as unknown as {damage?:Damage}).damage;
     // The same answer already in the slot's texture: nothing to do.
-    if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps:{},hash:"",units:0};}
+    if(!target&&!check&&damage&&slot.drawn===damage.id){stats.scenesKept++;return {steps,hash:"",units:0};}
     // An answer with no damage (the chrome layer) whose words are those the texture was drawn
     // from: the scene shader's pixels are a function of those words. Exact comparison, no hash.
-    if(!target&&!check&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame++;return {steps:{},hash:"",units:0};}
+    if(!target&&!check&&!damage&&slot.drawnFrame&&sameScene(slot.drawnFrame,frame)){stats.scenesSame++;return {steps,hash:"",units:0};}
     const tileWords=frame.tiles;
     const uniformBytes=p.uniform.bytes,tileBytes=tileWords?Math.max(16,tileWords.length*4):0;
     const before=[slot.uniform?.buffer,slot.tiles?.buffer];
+    const bufferStart=performance.now();
     slot.uniform=grow(slot.uniform,uniformBytes,bufferUsage(p.uniform.usage));
     if(tileWords)slot.tiles=grow(slot.tiles,tileBytes,GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST);
+    steps.prepareBuffers=Math.round((performance.now()-bufferStart)*10)/10;
     const want=`${uniformBytes}|${tileBytes}|${JSON.stringify(p.pipeline)}`;
     if(!slot.bind||slot.bindKey!==want||slot.uniform.buffer!==before[0]||slot.tiles?.buffer!==before[1]){
       const entries:GPUBindGroupEntry[]=[{binding:p.bindGroup.binding,resource:{buffer:slot.uniform.buffer,offset:0,size:uniformBytes}}];
       if(tileWords)entries.push({binding:p.bindGroup.binding+1,resource:{buffer:slot.tiles!.buffer,offset:0,size:tileBytes}});
-      slot.bind=device.createBindGroup({layout:pipeline.getBindGroupLayout(p.bindGroup.layoutIndex),entries});slot.bindKey=want;stats.bindGroups++;
+      const layoutStart=performance.now();
+      const layout=pipeline.getBindGroupLayout(p.bindGroup.layoutIndex);
+      const bindStart=performance.now();
+      slot.bind=device.createBindGroup({layout,entries});
+      steps.resolveBindingLayout=Math.round((bindStart-layoutStart)*10)/10;
+      steps.createBindGroup=Math.round((performance.now()-bindStart)*10)/10;
+      slot.bindKey=want;stats.bindGroups++;
     }
+    steps.prepareResources=Math.round((performance.now()-resourceStart)*10)/10;
     const write=()=>{
+      const uploadStart=performance.now();
       device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset,(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>);
       if(tileWords)device.queue.writeBuffer(slot.tiles!.buffer,0,new Uint32Array(tileWords));
+      steps.uploadBuffers=Math.round((performance.now()-uploadStart)*10)/10;
     };
     // The texture holds answer `damage.base` (scene shader pixels do not read the target): draw
     // only what changed. Off the frame path (`check`, or another target), the whole scene.
@@ -203,18 +228,18 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     let result:PassResult,units=0;
     if(rects){
       stats.scenesPartial++;units=rects.length?sceneCostIn(frame as never,rects):0;
-      result=rects.length?await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture!,rects,write):(write(),{steps:{},hash:""});
+      result=rects.length?await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture!,rects,write,steps):(write(),{steps,hash:""});
     }else if(!target&&!check&&bands&&bands.count>1&&slot.texture){
       stats.scenesFull++;stats.bandedScenes=(stats.bandedScenes??0)+1;
       const rows=Math.ceil(frame.height/bands.count);
-      result={steps:{},hash:""};
+      result={steps,hash:""};
       for(let i=0;i*rows<frame.height;i++){
         const y=i*rows,h=Math.min(rows,frame.height-y);
-        result=await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture,[[0,y,frame.width,h]],i===0?write:()=>{});
+        result=await drawDamage(p,{pipeline,bindGroup:slot.bind},slot.texture,[[0,y,frame.width,h]],i===0?write:()=>{},steps);
         units=sceneCostIn(frame as never,[[0,y,frame.width,h]]);
         if(y+h<frame.height)await bands.between(units);
       }
-    }else{stats.scenesFull++;units=sceneCost(frame as never);result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write);}
+    }else{stats.scenesFull++;units=sceneCost(frame as never);result=await run(p,{pipeline,bindGroup:slot.bind},target??slot.texture!,check,write,steps);}
     if(!target){slot.drawn=damage?.id;slot.drawnFrame=damage?undefined:frame;}
     if(check&&result.pixels)checkPixels(frame as unknown as Parameters<typeof checkPixels>[0],result.pixels);
     return {...result,units};
@@ -253,7 +278,8 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
     async composite(target:GPUTexture,width:number,height:number,offset:number,check:boolean):Promise<PassResult> {
       if(!shown)throw new Error("composite before any layers were drawn");
       const p=await plan(width,height,[0,0,0,0]);
-      const pipeline=await pipelineFor(p,shown.layers.composite);
+      const steps:Record<string,number>={};
+      const pipeline=await pipelineFor(p,shown.layers.composite,steps);
       place??=device.createBuffer({size:PLACE_WORDS*4,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST});
       const key=`${idOf(chrome.texture!)}|${idOf(page.texture!)}|${JSON.stringify(p.pipeline)}`;
       if(!compositeBind||compositeKey!==key){
@@ -264,7 +290,7 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       const words=new Uint32Array(PLACE_WORDS);
       words.set([shown.layers.top,offset,shown.layers.bandHeight,pressRects.length]);
       pressRects.forEach((rect,i)=>words.set(rect,4*(i+1)));
-      return run(p,{pipeline,bindGroup:compositeBind},target,check,()=>device.queue.writeBuffer(place!,0,words));
+      return run(p,{pipeline,bindGroup:compositeBind},target,check,()=>device.queue.writeBuffer(place!,0,words),steps);
     },
     /** The rectangles the next composites darken (Lean's `press` answer); none clears them. */
     setPress(rects:number[][]|undefined){
