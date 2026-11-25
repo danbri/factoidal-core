@@ -1,13 +1,13 @@
-// The undo of a sync request is bounded (WebScripts.keepsUndo, undoHeapLimit; theorems
-// keepsUndo_bounded, keepsUndo_small, keepsUndo_discrete, keepsUndo_unwanted).
-// A page whose scripts name XMLHttpRequest may make a sync request in a later action; the engine
-// undoes that action and does it again with the host's answer, so it keeps the session from
-// before the action. Keeping it makes the action's first write copy the heap's object array, and
-// its end free the old one: work in proportion to the heap at every timer turn (a news page with
-// a timer every 70 ms paid 33 ms a turn for six script steps, and never went idle). Past
-// undoHeapLimit heap entries a periodic action (timers, network, advance) keeps no undo: its turn
-// costs what the turn does, and a sync request in it is refused (NotSupportedError). A click, a
-// key or an `actions` request keeps the undo at any size.
+// The undo of a sync request costs what the action writes, not the heap (JS.UndoLog; theorems
+// UndoLog.restore_of_inv, inv_write, inv_push; WebScripts.undoBack_arrays, keepsUndo_wanted).
+// A page whose scripts name XMLHttpRequest may make a sync request in any later action; the engine
+// undoes that action and does it again with the host's answer. It used to keep the whole session
+// from before the action, so the action's first write copied the heap's object array and its end
+// freed the old one: work in proportion to the heap at every timer turn (a news page with a timer
+// every 70 ms paid 33 ms a turn for six script steps, and never went idle). Then a periodic action
+// past 250,000 heap entries kept no undo and its sync request was refused. Now the undo is the
+// session without the heap's arrays and a log of the cells the action writes: a sync request is
+// answered from a timer at any heap size, and a turn costs what it does.
 // Needs the native library (build-web-render.sh --native).
 // Run: deno test --allow-read --allow-ffi --allow-env undo_snapshot_test.ts
 import {strict as assert} from "node:assert";
@@ -53,18 +53,35 @@ Deno.test({name:"a small page: a timer's sync request is undone and answered, as
   assert.deepEqual(logs.filter(l=>l.startsWith("timer")),["timer got 200 hello"]);
 }});
 
-Deno.test({name:"a page with a large heap: a timer's sync request is refused, a click's is answered",ignore:!exists(library),fn:async()=>{
+Deno.test({name:"a page with a large heap: a timer's sync request is undone and answered, and a click's",ignore:!exists(library),fn:async()=>{
   const engine=await loadHTML(library);
   const source=page(300000,true),first=startOf(engine,source),logs=[...first.logs];
   const timer=act(engine,{action:"advance",session:first.session,ms:250},logs);
-  assert.equal(timer.syncs,0,"no undo for a periodic action past the limit");
-  assert.deepEqual(logs.filter(l=>l.startsWith("timer")),["timer refused NotSupportedError"]);
+  assert.equal(timer.syncs,1,"a periodic action keeps the undo at any heap size");
+  assert.deepEqual(logs.filter(l=>l.startsWith("timer")),["timer got 200 hello"]);
   const node=engine.nodeAt(source,800,600,{url:`${origin}/p.html`,commands:first.commands??[],x:40,y:30});
   assert.equal(typeof node,"number","a node to click");
   const click=act(engine,{action:"click",session:first.session,node},logs);
   engine.scriptSession("",{action:"close"});
-  assert.equal(click.syncs,1,"a click keeps the undo at any heap size");
+  assert.equal(click.syncs,1,"a click keeps the undo");
   assert.deepEqual(logs.filter(l=>l.startsWith("click")),["click got 200 hello"]);
+}});
+
+Deno.test({name:"undo puts back what the action changed before its sync request",ignore:!exists(library),fn:async()=>{
+  // the timer changes old objects, makes new ones and changes a binding before it asks; after
+  // the undo and the run again with the answer, each change is made once
+  const engine=await loadHTML(library);
+  const source=`<!doctype html><html><body><script>
+var keep=[];for(var i=0;i<50000;i++)keep.push({a:i});var n=0;
+setTimeout(function(){keep[7].a+=1;keep[49999].a+=1;keep.push({a:-1});n++;
+  var x=new XMLHttpRequest();x.open('GET','/data.txt',false);x.send();
+  console.log('after '+x.responseText+' '+keep[7].a+' '+keep[49999].a+' '+keep.length+' '+n);},20);
+</script></body></html>`;
+  const first=startOf(engine,source),logs=[...first.logs];
+  const {syncs}=act(engine,{action:"advance",session:first.session,ms:50},logs);
+  engine.scriptSession("",{action:"close"});
+  assert.equal(syncs,1);
+  assert.deepEqual(logs.filter(l=>l.startsWith("after")),["after hello 8 50000 50001 1"]);
 }});
 
 Deno.test({name:"cost: a timer turn of a large page that names XMLHttpRequest costs what it does, not the heap",ignore:!exists(library),fn:async()=>{
@@ -79,6 +96,6 @@ Deno.test({name:"cost: a timer turn of a large page that names XMLHttpRequest co
   };
   const plain=turnsOf(false),named=turnsOf(true);
   console.log(`timer turn, 300,000 objects: ${plain.toFixed(0)} us (no XMLHttpRequest), ${named.toFixed(0)} us (names it)`);
-  // Before the bound the second was about 2,700 us against 100 us (a copy and a free of the object array each turn).
+  // With a copy of the session the second was about 2,700 us against 100 us (a copy and a free of the object array each turn).
   assert.ok(named<=plain*4+400,`a turn of the page that names XMLHttpRequest took ${named.toFixed(0)} us against ${plain.toFixed(0)} us`);
 }});

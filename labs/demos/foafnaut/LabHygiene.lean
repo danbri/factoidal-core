@@ -173,8 +173,12 @@ Each takes its precondition as a proof and is realised by one HACL* call in
 `ffi/hacl_webcrypto.c` (record `docs/designissues/2026-11-14-webcrypto.md`). A new verified
 primitive cannot be bound without an `@[extern]`, so this number can only stay at 22 by not
 having RSA or SHA-3. -/
+-- formal extern 27 → 32 (2026-11-24): the WOFF2 reader (`Rendering.Woff2`) decodes Brotli with
+-- `Codec.Zstd.bitsAt`, which reads words through the C primitives of `Prim.Bytes`; each has a
+-- Lean reference body and the differential test `tests/prim/run.sh` (CLAUDE.md, "Support library").
+-- The primitives are not new: the lab's import closure now reaches five more `extern` declarations.
 def baseline : Counts :=
-  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 27, 1⟩⟩
+  ⟨⟨50, 3, 3, 1, 0, 5⟩, ⟨369, 0, 0, 153, 32, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/

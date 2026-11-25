@@ -184,6 +184,9 @@ private def evaluatorTable : List (String × SettingRole) :=
     ("baseIRI", .parameter "the base IRI of the query; part of the parsed query"),
     ("sparql12", .parameter "selects the SPARQL 1.2 grammar; EvalContract is stated for the parsed query"),
     ("version", .parameter "selects the SPARQL grammar; EvalContract is stated for the parsed query"),
+    ("execution", .parameter "CPU, automatic mixed planning, or a required observed GPU join"),
+    ("gpuMinRows", .parameter "minimum actual input cardinality for GPU admission"),
+    ("gpuMaxPairs", .parameter "candidate output capacity checked before GPU allocation"),
     ("entail", .narrows (some (.string "none"))
       "a regime other than none adds an entailment step that EvalContract does not state"),
     ("output", .narrows none "the results document rendering has no stage"),
@@ -194,7 +197,7 @@ named here has the empty table. -/
 def settingTable (stage : String) : List (String × SettingRole) :=
   if readerStages.contains stage then readerTable
   else if writerStages.contains stage then writerTable
-  else if stage == "shippedEvaluator" then evaluatorTable
+  else if stage == "shippedEvaluator" || stage == "gpuSparqlStage" then evaluatorTable
   else if reasonerStages.contains stage then [("format", textInput), ("baseIRI", textInput)]
   else if stage == "shaclValidator" then
     [ ("shapes", .parameter "CoreConformance is stated for every shapes graph"),
@@ -354,7 +357,7 @@ def nodeSettings (e : Entry) (given : List (String × Json)) : Except String Nod
     throw "a setting is given twice"
   validateQt4Settings e.nodeName given
   let table := settingTable e.nodeName
-  let (outW, derived) ← if e.nodeName == "shippedEvaluator" then evaluatorWire given
+  let (outW, derived) ← if e.nodeName == "shippedEvaluator" || e.nodeName == "gpuSparqlStage" then evaluatorWire given
     else pure (e.wireOut, [])
   let defaults := table.filterMap fun (k, r) =>
     match r with

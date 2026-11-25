@@ -26,6 +26,7 @@
 #     dataflow inventory directory line: the directories under formal/lean4/L4Factoidal
 #       against docs/dataflow-inventory.md (the part of the drift test that needs no Lean)
 #     Std in the Wasm engine: build-web-render.sh's import walk, without the build
+#     Lean compiler imports in shipped binaries: tools/binary-budget.py imports (issue 551)
 # --with-lean: in this checkout (working tree, not HEAD), under leanlock.sh:
 #     lake build (every target, as the CI lean job), the tail-recursion gate,
 #     tests/dataflow/run.sh (the full inventory drift test and the gates)
@@ -191,10 +192,11 @@ PY
 # build-web-render.sh's import walk of the Wasm engine's modules, which refuses Std modules
 # the Wasm runtime does not link; run on the sources, without the build.
 std_in_wasm() {
-  local walk script
+  local walk script roots_text root
+  local roots=()
   # The commit's own walk; an older commit without one is checked with this checkout's walk.
   for script in "$LAB/build-web-render.sh" "$ROOT/labs/demos/foafnaut/build-web-render.sh"; do
-    walk=$(awk '/python3 - "\$PROJECT" "\$BUILD\/core-c-files.txt" <<.PY./{p=1; next} p&&/^PY$/{exit} p{print}' "$script")
+    walk=$(awk '/^python3 - "\$PROJECT" "\$BUILD\/core-c-files.txt"/ && /<<.PY./{p=1; next} p&&/^PY$/{exit} p{print}' "$script")
     if printf '%s\n' "$walk" | grep -q STD_IN_WASM; then break; fi
   done
   # Generated modules (formal/lean4/.gitignore, written by the engine build) import nothing;
@@ -204,7 +206,28 @@ std_in_wasm() {
     [ -e "$TREE/formal/lean4/$g" ] || : > "$TREE/formal/lean4/$g"
   done
   printf '%s\n' "$walk" | grep -q STD_IN_WASM || { echo "premerge: build-web-render.sh has no Std import walk"; return 1; }
-  python3 -I - "$TREE/formal/lean4" /dev/null <<<"$walk" && echo "no Std import outside the Wasm runtime's Std in the engine's modules"
+  # The current builder passes its shared CORE array to the walk. Older walks
+  # used a literal list and ignore these extra arguments. Never accept an empty
+  # or unrecognised root list: that would make the current walk check nothing.
+  roots_text=$(sed -n 's/^CORE=(\(.*\))$/\1/p' "$script")
+  [ -n "$roots_text" ] || { echo "premerge: build-web-render.sh has no CORE root list"; return 1; }
+  read -r -a roots <<<"$roots_text"
+  [ -n "${roots[0]:-}" ] || { echo "premerge: build-web-render.sh has an empty CORE root list"; return 1; }
+  for root in "${roots[@]}"; do
+    [[ "$root" =~ ^L4Factoidal\.[A-Za-z_][A-Za-z0-9_.]*$ ]] || {
+      echo "premerge: unrecognised CORE root in build-web-render.sh: $root"; return 1;
+    }
+  done
+  python3 -I - "$TREE/formal/lean4" /dev/null "${roots[@]}" <<<"$walk" && echo "no Std import outside the Wasm runtime's Std in the engine's modules"
+}
+
+# tools/binary-budget.py imports: no Lean module outside Lean.Data (tactics: Lean.Elab, Lean.Meta)
+# in the import closure of a shipped binary (leanjs, bubblepop-test262, the web-render engines);
+# issue 551, where a proof module's `import Lean.Elab.Tactic` made leanjs ten times larger.
+lean_in_binaries() {
+  local tool="$TREE/tools/binary-budget.py"
+  [ -f "$tool" ] || tool="$ROOT/tools/binary-budget.py"
+  python3 -I "$tool" imports "$TREE/formal/lean4"
 }
 
 T0=$(now)
@@ -222,6 +245,9 @@ else skip "dataflow inventory directory line"; fi
 if touches '^(formal/lean4/|labs/demos/foafnaut/build-web-render.sh)'; then
   check "Std imports in the Wasm engine's modules" std_in_wasm
 else skip "Std imports in the Wasm engine"; fi
+if touches '^(formal/lean4/|labs/demos/foafnaut/|tools/binary-budget)'; then
+  check "Lean compiler imports in shipped binaries" lean_in_binaries
+else skip "Lean compiler imports in shipped binaries"; fi
 
 if [ "$WITH_LEAN" = 1 ]; then
   LEANLOCK=${LEANLOCK:-$HOME/working/foafnaut-tools/leanlock.sh}

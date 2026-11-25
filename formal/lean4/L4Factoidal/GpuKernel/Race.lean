@@ -5,10 +5,11 @@ dispatch can not change the result (core issue 398, GPU compute managed by Lean)
 The model. One dispatch has `n` invocations. Each invocation reads only buffers that no
 invocation of the dispatch writes (the kernel IR has no way to read its output, see
 `Expr.lean`), and its effect is a list of writes `(index, value)` into one output memory.
-A GPU runs the invocations in some order and may interleave their instructions; because no
-invocation reads what another writes, an interleaving has the effect of applying each
-invocation's writes, in program order, in some order of the invocations. So the question
-is: when do all orders give the same memory?
+A GPU may interleave the individual writes of different invocations. Without a
+race-freedom condition, that need not equal either whole-invocation order. The theorem
+below permutes completed invocations; it does not itself quantify over individual-write
+shuffles. The companion TraceInterleavingTheorems covers individual-event permutations
+and their prefixes under the stronger unique-address profile used by stable packing.
 
 - `runOrder_perm`: if the writes of two different invocations never name the same index
   (`RaceFree`), every order of the invocations (any permutation of `0 .. n-1`) gives the

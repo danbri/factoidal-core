@@ -75,8 +75,28 @@ def byteToCharMap (text : String) : Std.TreeMap Nat Nat := Id.run do
     out := out.insert byte char
   return out
 
+/-- The same boundaries as `byteToCharMap`, as an array indexed by byte offset: entry `k+1` at a
+character boundary that starts character `k`, entry 0 inside a character. One allocation and no
+tree inserts; `charAtByte?_agrees` guards in `FontDataTests` compare it with the map. -/
+def byteToCharArray (text : String) : Array Nat := Id.run do
+  let mut out : Array Nat := Array.replicate (text.utf8ByteSize+1) 0
+  out := out.set! 0 1
+  let mut byte := 0
+  let mut char := 0
+  for c in text.toRawSubstring do
+    byte := byte+c.utf8Size
+    char := char+1
+    out := out.set! byte (char+1)
+  return out
+
+/-- The character index that starts at byte `offset`, read from `byteToCharArray`. -/
+@[inline] def charAtByte? (a : Array Nat) (offset : Nat) : Option Nat :=
+  match a[offset]? with
+  | some (k+1) => some k
+  | _ => none
+
 def byteOffsetToChar? (text : String) (offset : Nat) : Option Nat :=
-  (byteToCharMap text).get? offset
+  charAtByte? (byteToCharArray text) offset
 
 private def object (j : Json) : Except String Unit := do
   let .object fields := j | throw "font data: expected object"
@@ -157,12 +177,12 @@ private def bitmap (j : Json) (px : Nat) : Except String Bitmap := do
   for value in values do alpha := alpha.push (← natural value 255)
   return ⟨id,size,width,height,← integer (← field j "left"),← integer (← field j "top"),alpha⟩
 
-private def glyph (j : Json) (textBytes : Nat) (boundaries : Std.TreeMap Nat Nat) : Except String ShapedGlyph := do
+private def glyph (j : Json) (textBytes : Nat) (boundaries : Array Nat) : Except String ShapedGlyph := do
   object j
   let id ← natField j "id"
   let cluster ← natField j "cluster" 65536
   if cluster >= textBytes then throw "font data: glyph cluster outside text"
-  let some char := boundaries.get? cluster | throw "font data: cluster splits a UTF-8 scalar"
+  let some char := charAtByte? boundaries cluster | throw "font data: cluster splits a UTF-8 scalar"
   return ⟨id,cluster,char,char,← floatField j "xAdvance",← floatField j "yAdvance",
     ← floatField j "xOffset",← floatField j "yOffset"⟩
 
@@ -192,7 +212,7 @@ def decodeValue (j : Json) (rejectMissing : Bool := true) : Except String Shaped
   let direction ← str j "direction"
   if !["ltr","rtl","ttb","btt","invalid"].contains direction then throw "font data: unknown direction"
   let input ← arrayField j "glyphs" 65536
-  let boundaries := byteToCharMap text
+  let boundaries := byteToCharArray text
   let mut glyphs := #[]
   let mut advance : Float := 0
   let mut glyphIDs : Std.TreeMap Nat Unit := {}

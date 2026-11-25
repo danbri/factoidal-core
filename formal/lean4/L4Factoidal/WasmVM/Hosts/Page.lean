@@ -175,9 +175,10 @@ structure PointerState where
   /-- The last press, for the click count (`WebDriver.Input.clickCount`). -/
   last : Option L4Factoidal.WebDriver.Input.LastPress := none
   /-- The default action of the last `keydown` for the host, until the host reads it:
-  `true` when no listener canceled it and the key did not go to a text control or an
-  editing host (`Dom.keyEdits`), so the host may scroll the page for it. -/
+  `true` when the page leaves the key available for host scrolling. -/
   keyDefault : Option Bool := none
+  /-- A focused disclosure summary that will activate when its Space press is released. -/
+  spaceSummary : Option Nat := none
   /-- The touch points on the surface (`WebDriver.Touch`), from the touch pointers. -/
   touches : L4Factoidal.WebDriver.Touch.Surface := {}
   /-- Pointer capture (`WebDriver.Capture`), and the pointers other than the mouse that are
@@ -191,8 +192,9 @@ abbrev Answers := Nat → Nat → String → Option String
 
 /-- What the cascade of one measure leaves for the next measure of the page: the rules
 in their buckets, the element state (with no animated value) and the style of every
-node. Only a page with no shadow tree, at text scale 1, whose rules do not read the
-`style` attribute has one (`CSS.restyleWith`). -/
+node. Only a page with no shadow tree, at text scale 1 has one (`CSS.restyleWith`; until
+2026-11-24 also only one whose rules do not read the `style` attribute, which left every
+Wikipedia page with none, issue 871). -/
 structure Carry where
   index : L4Factoidal.Rendering.CSS.RuleIndex
   rules : List L4Factoidal.Rendering.CSS.Rule
@@ -201,6 +203,14 @@ structure Carry where
   /-- No rule has `:has()` (`CSS.attributesReachParentOnly`): a write of an element's
   `class` then changes styles in the subtree of its parent alone. -/
   parentOnly : Bool := false
+  /-- A rule reads the `style` attribute (`CSS.readsStyleAttribute`; MediaWiki's night-mode
+  rules have `[style]`): a write of an element's `style` then changes which rules match in
+  the subtree of its parent, as a write of its `class` does (`Host.measureNow`). -/
+  readsStyle : Bool := false
+  /-- With `:has()` in the rules: what their arguments read (`CSS.hasArgumentReads`). An
+  attribute write that changes none of it (`CSS.HasReads.unaffected`) changes styles in the
+  subtree of the element's parent alone, as with `parentOnly` (`Reads.hasSafe`). -/
+  hasReads : Option L4Factoidal.Rendering.CSS.HasReads := none
 
 /-- The layout reads of scripts: the engine's layout of an arena at a viewport (CSS
 pixels) with the values of the page's animations, as answers. The engine gives the
@@ -230,6 +240,20 @@ structure StyleKept where
   now : Int
   epoch : Nat
 
+/-- The `style` and `link` elements of a document in tree order: for each, its parent, its
+local name, its attributes, and for a `style` element its text. Two documents with equal
+signatures have the same style sheets in the same order (a `link` with the same attributes
+names the same resource), so the rules of one are the rules of the other (`Carry.rules`). -/
+abbrev SheetSignature := Array (Option Nat × String × Array L4Factoidal.DOM.Attr × String)
+
+def sheetSignature (dom : L4Factoidal.DOM.Dom) : SheetSignature :=
+  if dom.size == 0 then #[] else
+  (dom.treeOrder 0).filterMap fun n =>
+    let x := dom.get n
+    if x.type == .element && (x.lname == "style" || x.lname == "link") then
+      some (x.parent, x.lname, x.attrs, if x.lname == "style" then dom.descendantTextContent n else "")
+    else none
+
 structure Reads where
   measure : Option Measure := none
   width : Nat := 800
@@ -243,12 +267,24 @@ structure Reads where
   keptNow : Int := 0
   /-- Layouts made for reads. -/
   layouts : Nat := 0
+  /-- Of those, the measures that styled the whole document, and those that styled again only
+the subtrees written since the last (`Host.measureNow`): the cost of script reads after
+writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
+  wholeStyles : Nat := 0
+  partStyles : Nat := 0
+  /-- Why each of `wholeStyles` styled the whole document, counted by reason (`Host.measureNow`):
+  `first`, `viewport`, `version`, `has`, `big`, or `write:<import>` with the last write that
+  forgot the noted elements (`forgetBy`). A diagnostic of issue 871; at most 64 reasons. -/
+  wholeWhy : Array (String × Nat) := #[]
+  /-- The import of the last write that was neither of a `style` or `class` attribute nor
+  neutral (with `set_attribute`: the attribute's name). -/
+  forgetBy : String := ""
   /-- Layout and style reads served (`pageQuery`), and how many of each op (op, count): the
   profile of a script turn at the boundary of scripts and the document (`WebScripts` reports
   each turn's part). A list: a page asks a few kinds of read. -/
   queries : Nat := 0
   queryOps : Array (Nat × Nat) := #[]
-  /-- Of a page with animations: its last measure (`Host.measureNow`). -/
+  /-- The last measure of the page (`Host.measureNow`): with no animation since 2026-11-24 too. -/
   styleKept : Option StyleKept := none
   /-- The elements to style again: those whose `style` attribute was written since the
   last measure and the parents of those whose `class` was, when nothing else of the
@@ -257,6 +293,14 @@ structure Reads where
   /-- One of `styleWrites` is there for a `class` written under it: the rules that match
   in its subtree may differ, not only the declarations of the element itself. -/
   styleSubtrees : Bool := false
+  /-- Every write noted since the last measure was of an attribute that the `:has()`
+  arguments of the kept rules do not read (`Carry.hasReads`, `CSS.HasReads.unaffected`):
+  with `:has()` in the rules, the subtrees of the noted elements may then be styled alone. -/
+  hasSafe : Bool := true
+  /-- The style sheets of the document before the first write since the last measure that
+  added, removed or moved a `style` or `link` element (`sheetSignature`): the next measure
+  keeps the rules of the last one only when the sheets are again these (issue 871). -/
+  sheetsBefore : Option SheetSignature := none
   /-- The version that the last write which may change a style made (`Reads.wrote`, not
   neutral): a layout of that version or a later one has the styles of the document as it
   is (`Host.frameStyles`). -/
@@ -551,6 +595,20 @@ def readOnlyImports : List String :=
 after any write, with the styles it had. -/
 def styleNeutralImports : List String := ["add_event_listener", "set_timer", "clear_timer"]
 
+/-- The operations of `tree_op` (`Hosts.Dom.treeOp`, third argument) that write nothing a
+style reads: 1 `isEqualNode`, 7 the checkedness of an input, 8 the checked radio button of a
+group and 31 the element states are reads; 4 and 5 `importNode` make a copy that is in no
+document's tree, as `clone_node` does. The other operations (normalize, adopt, set
+checkedness, reset a form, set element states, shadow roots and slots) change the tree or a
+state that selectors read. Until 2026-11-25 every `tree_op` call styled the whole document at
+the next read (zh.wikipedia: 66 times; issue 871). -/
+def treeOpNeutral (nm : String) (which : Nat) : Bool :=
+  nm == "tree_op" && [1, 4, 5, 7, 8, 31].contains which
+
+#guard treeOpNeutral "tree_op" 1 && treeOpNeutral "tree_op" 5 && treeOpNeutral "tree_op" 31
+#guard !treeOpNeutral "tree_op" 2 && !treeOpNeutral "tree_op" 3 && !treeOpNeutral "tree_op" 6 &&
+  !treeOpNeutral "tree_op" 30 && !treeOpNeutral "append_child" 1
+
 /-- A write of `foafnaut_dom` that changes nothing in a document's tree: a new node, a
 clone, or a change of a node that is in no document's tree and stays in none (an
 insertion there of a node that is itself in none). The styles and the layout of every
@@ -692,12 +750,113 @@ def underAny (dom : Arena) (roots : List Nat) (n : Nat) : Bool := Id.run do
     | some c => if roots.contains c then return true else cur := (dom.get c).parent
   return false
 
+/-- A node that can carry rules: a `style` element, or a `link` element whose `rel` has the
+keyword `stylesheet` (HTML §4.6.7; the engine reads no other `link` as a sheet,
+`WebDocument.stylesheet`). A `link` of another type (`preload`, `icon`, MediaWiki's
+`mw-deduplicated-inline-style`) carries none. -/
+def carriesRules (x : L4Factoidal.DOM.Node) : Bool :=
+  x.lname == "style" ||
+  (x.lname == "link" &&
+    match x.attrs.find? (fun a => a.ns.isNone && a.lname == "rel") with
+    | none => false
+    | some a => (a.value.toLower.split (fun c => c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\x0c')).any
+        (fun t => t.toString == "stylesheet"))
+
+/-- A node of the subtrees of `roots` carries rules (`carriesRules`): a write that adds or
+removes one changes the page's rules, and a partial restyle keeps the rules of the last
+measure (`Carry.rules`), so such a write styles the whole document. Past `subtreeLimit`
+nodes the answer is yes. Until 2026-11-24 every `link` element counted: zh.wikipedia
+inserts 59 `<link rel="mw-deduplicated-inline-style">`, and each insert styled the whole
+document (issue 871). -/
+def touchesSheets (dom : Arena) (roots : List Nat) : Bool :=
+  match subtreesWithin dom (roots.filter (· < dom.size)) with
+  | none => true
+  | some ns => ns.any fun n => carriesRules (dom.get n)
+
+/-- Whether `n` is a `style` or `link` element (or not a node): a child written under it may change the rules. -/
+def sheetParent (dom : Arena) (n : Nat) : Bool :=
+  n >= dom.size || (let x := dom.get n; x.lname == "style" || x.lname == "link")
+
+/-- Why a child write (parent `parent`, nodes added or removed `nodes`) is not one that a
+partial restyle can take, for `Reads.wholeWhy` (issue 871): `sheet-parent` (the parent is a
+`style` or `link` element), `large` (a subtree past `subtreeLimit`), `sheet` (a `style` or
+`link` element is added or removed), `root` (the parent has no parent), else `other`. -/
+def childWriteWhy (dom : Arena) (parent : Nat) (nodes : List Nat) : String :=
+  if sheetParent dom parent then "sheet-parent" else
+  match subtreesWithin dom (nodes.filter (· < dom.size)) with
+  | none => "large"
+  | some ns =>
+    if ns.any (fun n => carriesRules (dom.get n)) then "sheet"
+    else if (dom.get parent).parent.isNone then "root" else "other"
+
+/-- A child write `nm` with arguments `a` (DOM host imports): the parent, and the nodes of the
+subtrees added or removed (`subtreesWithin`; for `text_content_set` the element and its
+children). None for another import, a node outside the arena, or past `subtreeLimit`. -/
+def childWrite (dom : Arena) (nm : String) (a : Nat → Nat) : Option (Nat × List Nat) :=
+  let roots :=
+    if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then some (a 0, [a 1])
+    else if nm == "replace_child" then some (a 0, [a 1, a 2])
+    else if nm == "text_content_set" then some (a 0, [a 0])
+    else none
+  match roots with
+  | none => none
+  | some (parent, ns) =>
+    if parent >= dom.size || ns.any (· >= dom.size) then none
+    else (subtreesWithin dom ns).map fun under => (parent, under)
+
+/-- The attribute that op 167 of `node_query` (a reflected attribute's setter,
+`Hosts.Dom.domOp`) writes on element `n` with argument `q`: its name, and its value before and
+after (`none`: absent). None when the op would refuse. -/
+def reflectedWrite (dom : Arena) (n : Nat) (q : String) : Option (String × Option String × Option String) :=
+  if n >= dom.size || (dom.get n).type != .element then none else
+  match q.splitOn "\x00" with
+  | row :: rest =>
+    match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
+    | some r => match L4Factoidal.DOM.Reflect.set r ("\x00".intercalate rest) with
+      | .ok v =>
+        let old := L4Factoidal.DOM.Reflect.attr dom n r.content
+        some (r.content, old, if v == "r" then none else if v == "" then old else some (v.drop 1).toString)
+      | .error _ => none
+    | none => none
+  | [] => none
+
+/-- The reads after a write by `node_query` op `op` on node `n` (`Hosts.Dom.treeOps`, or an
+input's value). A reflected attribute's setter (167) is noted as `set_attribute` is: nothing
+when the value does not change or the element is in no document's tree, else the subtree of
+its parent (its own for `style`; the whole document for a `style` or `link` element), with
+`:has()` rules only when their arguments do not read the attribute. Any other op styles the
+whole document at the next read, with `node_query:<op>` in `forgetBy`. Until 2026-11-25 a
+reflected attribute's setter (`el.className = ...`) styled the whole document (issue 871). -/
+def nodeQueryWrote (r : Reads) (dom : Arena) (n op : Nat) (q : String) : Reads :=
+  match (if op == 167 then reflectedWrite dom n q else none) with
+  | some (name, old, new) =>
+    if old == new || !dom.connected n then r.wrote none true
+    else
+      let x := dom.get n
+      let styleOf : Option (Nat × Bool) :=
+        if name.toLower == "style" then some (n, false)
+        else if x.lname == "style" || x.lname == "link" then none
+        else x.parent.map fun p => (p, true)
+      let r' := r.wrote (styleOf.map (·.1)) false (styleOf.any (·.2))
+      let hasOk := match ((r.styleKept.bind (·.base)).bind (·.hasReads)) with
+        | some hr => hr.unaffected name (old.getD "") (new.getD "")
+        | none => false
+      { r' with hasSafe := r'.hasSafe && hasOk,
+                forgetBy := if styleOf.isNone then s!"node_query:167={name}" else r'.forgetBy }
+  | none => { r.wrote with forgetBy := s!"node_query:{op}" }
+
+/-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
+def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
+  match ws.findIdx? (·.1 == why) with
+  | some i => ws.modify i fun (k, n) => (k, n + 1)
+  | none => if ws.size < 64 then ws.push (why, 1) else ws
+
 /-- A layout of the current arena and viewport for reads, counted. A page with an
 animation, or with an animation or transition declaration (measure op 28), has a style
 change first (`Animation.styleChange`), and its layout takes the animated values
 (`Animation.overrides`); any other page takes neither step.
 
-Such a page keeps its styles (`StyleKept`). When only `style` attributes and `class`
+Every page keeps its styles (`StyleKept`; until 2026-11-24 only a page with animations did, and every read after a write of any other page styled the whole document, issue 871). When only `style` attributes and `class`
 attributes were written since its last measure (`Reads.styleWrites`), the cascade is of
 the subtrees of those elements, and of the parents of the elements whose `class` was
 written when no rule has `:has()` and those subtrees are small (`subtreesWithin`;
@@ -722,17 +881,42 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     let last : Option (StyleKept × List Nat × List Nat) :=
       match h.reads.styleKept, h.reads.styleWrites with
       | some k, some nodes =>
-        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version then
-          if !h.reads.styleSubtrees then some (k, nodes, nodes)
-          else if (k.base.map (·.parentOnly)) == some true then (subtreesWithin dom nodes).map fun under => (k, nodes, under)
+        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version &&
+            h.reads.sheetsBefore.all (· == sheetSignature dom) then
+          -- with rules that read `style`, a written element's later siblings may match others:
+          -- the subtrees of the parents (a parent noted for a `class` write goes one up, more
+          -- than it needs)
+          let readsStyle := (k.base.map (·.readsStyle)) == some true
+          if !h.reads.styleSubtrees && !readsStyle then some (k, nodes, nodes)
+          else if (k.base.map (·.parentOnly)) == some true ||
+              (h.reads.hasSafe && ((k.base.bind (·.hasReads)).isSome)) then
+            let roots := if readsStyle then (nodes.map fun n => (dom.get n).parent.getD n).eraseDups else nodes
+            (subtreesWithin dom roots).map fun under => (k, roots, under)
           else none
         else none
       | _, _ => none
+    let why : String :=
+      match h.reads.styleKept, h.reads.styleWrites with
+      | none, _ => "first"
+      | some _, none => "write:" ++ h.reads.forgetBy
+      | some k, some nodes =>
+        if !(k.width == w && k.height == ht) then "viewport"
+        else if k.base.isNone then "nobase"
+        else if h.reads.styleVersion != h.reads.version then "version"
+        else if !h.reads.sheetsBefore.all (· == sheetSignature dom) then "sheets"
+        else if (k.base.map (·.parentOnly)) != some true &&
+            !(h.reads.hasSafe && ((k.base.bind (·.hasReads)).isSome)) then "has"
+        else if (subtreesWithin dom (if (k.base.map (·.readsStyle)) == some true
+            then (nodes.map fun n => (dom.get n).parent.getD n).eraseDups else nodes)).isNone then "big" else "other"
+    let reads := h.reads
+    let reads := if last.isNone then { reads with wholeStyles := reads.wholeStyles + 1, wholeWhy := countWhy reads.wholeWhy why }
+      else { reads with partStyles := reads.partStyles + 1 }
+    let h := { h with reads := reads }
     let (base, baseLeft) := m dom w ht [] (last.bind fun (k, nodes, _) => k.base.map fun c => (c, nodes))
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
           kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1,
-          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false,
+          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false, hasSafe := true, sheetsBefore := none,
           styleVersion := h.reads.version } }, some f)
     -- with the style change made and the animated values known: the layout with them
     let finish := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State)
@@ -752,7 +936,11 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     match last with
     | none =>
       let candidates := (((base 0 28 "").getD "").splitOn " ").filterMap String.toNat?
-      if h.anim.idle && candidates.isEmpty then keep h base none
+      -- a page with no animation keeps its styles too, so the reads after `style` and
+      -- `class` writes style only what was written (issue 871)
+      if h.anim.idle && candidates.isEmpty then
+        keep h base (some { width := w, height := ht, base := baseLeft.get, final := baseLeft.get, overrides := [],
+                            candidates := [], now := h.anim.now, epoch := h.reads.animEpoch })
       else
         let ac := animationAccess dom base (h.reads.kept.map (·.2)) (some candidates)
         -- nothing a style reads was written since the last measure of this viewport: no
@@ -782,10 +970,11 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
         -- the page's last animation ended in this style change: the state with it cancelled is
         -- the page's state (it was dropped here, and the animation went on as if still declared:
         -- no cancel event, no rejected promise), its acts and events wait for a frame, and
-        -- the page keeps no styles
+        -- the page keeps its styles for the next measure
         let h : Host := { h with anim := L4Factoidal.Rendering.Animation.noteAnimated anim [] }
         let h := if L4Factoidal.Rendering.Animation.needsFrame anim then h.askAnimationFrame else h
-        keep h base none
+        keep h base (some { width := w, height := ht, base := baseLeft.get, final := baseLeft.get, overrides := [],
+                            candidates := [], now := h.anim.now, epoch := h.reads.animEpoch })
       else if k.now == h.anim.now && k.epoch == h.reads.animEpoch then
         -- the same time and the same animations: the effect stacks of the written elements
         let ovs := k.overrides.filter (fun o => !dirty o.node) ++
@@ -1291,7 +1480,9 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let ds := h.dom
         let h := { h with dom := emptyDomHost }
         let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q
-        let reads := if Hosts.Dom.treeOps.contains (a 1) then h.reads.wrote else h.reads
+        -- 169 writes an input's value or `value` attribute, except when it reads ("v")
+        let writes := Hosts.Dom.treeOps.contains (a 1) || (a 1 == Hosts.Dom.valueOp && !q.startsWith "v")
+        let reads := if writes then nodeQueryWrote h.reads ds.dom (a 0) (a 1) q else h.reads
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else
@@ -1375,18 +1566,87 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
     -- a write of an element's `style` attribute is noted as that (`Reads.styleWrites`), and
     -- a write of its `class` as one under its parent; a write that changes nothing in a
     -- document's tree (`detachedWrite`) changes no style
+    let d := h.dom.dom
     let styleOf : Option (Nat × Bool) :=
       if nm == "set_attribute" || nm == "remove_attribute" then
-        match Hosts.Dom.readStr mem st (a 1) (a 2) 8 with
+        match Hosts.Dom.readStr mem st (a 1) (a 2) 64 with
         | .ok name =>
           if name == "style" then some (a 0, false)
-          else if name == "class" then (h.dom.dom.get (a 0)).parent.map fun p => (p, true)
-          else none
+          -- any other attribute (`class`, `aria-*`, `data-*`, `hidden`, ...) is seen by
+          -- attribute selectors of the element, of its descendants and of its later siblings:
+          -- as for `class`, the subtree of its parent; but an attribute of a `style` or
+          -- `link` element (`media`, `href`, `disabled`) may change the rules. Before
+          -- 2026-11-24 only `class` was noted, and Wikipedia's `aria-haspopup` writes styled
+          -- the whole document (issue 871).
+          -- Only the written element itself: an attribute of an element that holds a `style`
+          -- or `link` element changes no rules. Until 2026-11-24 its whole subtree was
+          -- checked, and a class write on a large container styled the whole document.
+          else if a 0 >= d.size || (let x := d.get (a 0); x.lname == "style" || x.lname == "link") then none
+          else (d.get (a 0)).parent.map fun p => (p, true)
         | .error _ => none
-      else none
-    let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
+      -- a child added, removed or replaced, or the text of an element set: the selectors that
+      -- can see it (`:empty`, `:nth-child`, sibling combinators, the element's own later
+      -- siblings) are of its parent `a 0` and of that parent's siblings, so the subtree under
+      -- the parent's parent is styled again, as for a `class` write (with `:has()` in the
+      -- rules, or a large subtree, the whole document is; `Host.measureNow`). Before
+      -- 2026-11-24 such a write made the next read style the whole document (issue 871).
+      -- A `style` or `link` element added, removed or replaced, or the text of a `style`
+      -- element set, changes the rules: the whole document (`touchesSheets`).
+      -- Only the nodes added or removed (`a 1`; for a replace also `a 2`) and the parent itself
+      -- can carry rules; the parent's other descendants and an insert's reference child cannot.
+      -- Until 2026-11-24 the parent's whole subtree was checked, and an insert into a large
+      -- container styled the whole document (zh.wikipedia: 66 times; issue 871).
+      -- From 2026-11-24 a write that adds, removes or moves a `style` or `link` element is
+      -- noted too, with the sheets before it (`Reads.sheetsBefore`): the next measure styles
+      -- the whole document only when the sheets changed (zh.wikipedia moves subtrees with
+      -- TemplateStyles `<style>` elements 66 times and adds no sheet).
+      else match childWrite d nm a with
+        | some (parent, _) => if sheetParent d parent then none else (d.get parent).parent.map fun p => (p, true)
+        | none => none
+    let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a || treeOpNeutral nm (a 2)
+    -- with `:has()` in the kept rules: whether this write changes nothing their arguments
+    -- read (`Carry.hasReads`); a child or text write always may
+    let hasOk : Bool :=
+      match (h.reads.styleKept.bind (·.base)).bind (·.hasReads) with
+      | none => false
+      | some hr =>
+        if nm == "set_attribute" || nm == "remove_attribute" then
+          match Hosts.Dom.readStr mem st (a 1) (a 2) 64 with
+          | .ok name =>
+            if name.toLower == "class" then
+              let old := (((d.get (a 0)).attrs.find? fun x => x.ns.isNone && x.lname == "class").map (·.value)).getD ""
+              let new? : Option String := if nm == "remove_attribute" then some ""
+                else match Hosts.Dom.readStr mem st (a 3) (a 4) 4096 with
+                  | .ok v => some v
+                  | .error _ => none
+              match new? with
+              | some new => hr.unaffected name old new
+              | none => false
+            else hr.unaffected name "" ""
+          | .error _ => false
+        else match childWrite d nm a with
+          | some (_, nodes) => nodes.all fun n => hr.childWriteOk ((d.get n).attrs.map fun x => (x.lname, x.value))
+          | none => false
     let reads := if readOnlyImports.contains nm then h.reads
       else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
+    let reads := if readOnlyImports.contains nm || neutral then reads
+      else { reads with hasSafe := reads.hasSafe && hasOk }
+    let reads := if readOnlyImports.contains nm || neutral || reads.sheetsBefore.isSome then reads
+      else match childWrite d nm a with
+        | some (_, nodes) => if nodes.any fun n => carriesRules (d.get n) then { reads with sheetsBefore := some (sheetSignature d) } else reads
+        | none => reads
+    -- the write that forgot the noted elements, for `Reads.wholeWhy`
+    let reads := if readOnlyImports.contains nm || neutral || styleOf.isSome then reads
+      else { reads with forgetBy :=
+        if nm == "set_attribute" || nm == "remove_attribute" then
+          match Hosts.Dom.readStr mem st (a 1) (a 2) 32 with
+          | .ok name => nm ++ "=" ++ name
+          | .error _ => nm
+        else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then
+          nm ++ ":" ++ childWriteWhy d (a 0) [a 1]
+        else if nm == "replace_child" then nm ++ ":" ++ childWriteWhy d (a 0) [a 1, a 2]
+        else if nm == "tree_op" then nm ++ ":" ++ toString (a 2)
+        else nm }
     -- a listener through the first build's import (page scripts use `listen`, above)
     let listens := nm == "add_event_listener" &&
       (match Hosts.Dom.readStr mem st (a 1) (a 2) 24 with
@@ -2063,6 +2323,43 @@ def aboutBlank : Arena := Id.run do
   let (d, body) := el d "body"
   return d.linkChild html body none
 
+-- `touchesSheets`: in about:blank (html 1, head 2, body 3) with a `style` element (4) in the
+-- head and a `div` (5, with a child 6) in the body, a write under the head or of the style
+-- element changes the rules; one of the div does not; a detached `link rel=stylesheet` (7)
+-- appended does, and a detached `link rel=preload` (8) does not.
+private def sheetsArena : Arena :=
+  let el := fun (d : Arena) (name : String) => d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := name }
+  let link := fun (d : Arena) (rel : String) =>
+    d.create { type := .element, doc := 0, ns := some L4Factoidal.DOM.htmlNS, lname := "link", attrs := #[{ lname := "rel", value := rel }] }
+  let (d, st) := el aboutBlank "style"
+  let d := d.linkChild 2 st none
+  let (d, dv) := el d "div"
+  let d := d.linkChild 3 dv none
+  let (d, sp) := el d "span"
+  let d := d.linkChild dv sp none
+  let (d, _) := link d "stylesheet"
+  (link d "preload").1
+#guard touchesSheets sheetsArena [4] && touchesSheets sheetsArena [2] && touchesSheets sheetsArena [0]
+#guard !touchesSheets sheetsArena [5] && !touchesSheets sheetsArena [3, 6] && touchesSheets sheetsArena [3, 7]
+#guard !touchesSheets sheetsArena [8] && !touchesSheets sheetsArena [3, 8]
+-- `sheetSignature`: the one connected `style` (4, under `head` 2); the detached `link`s do
+-- not count. A `style` moved to another parent changes it; a `span` moved does not, nor
+-- does a `link` of another type made connected.
+#guard (sheetSignature sheetsArena).map (fun (p, n, _, _) => (p, n)) == #[(some 2, "style")]
+#guard sheetSignature ((sheetsArena.linkChild 3 4 none)) != sheetSignature sheetsArena
+#guard sheetSignature ((sheetsArena.linkChild 3 6 none)) == sheetSignature sheetsArena
+#guard (sheetSignature ((sheetsArena.linkChild 3 7 none))).size == 2
+-- `childWrite`: the parent and the nodes added; a node outside the arena gives none
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).all fun (p, ns) => p == 3 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).isSome
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).all fun (p, ns) => p == 5 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).isSome
+#guard childWrite sheetsArena "append_child" (fun i => [3, 99][i]!) == none
+#guard childWrite sheetsArena "set_attribute" (fun i => [3, 5][i]!) == none
+-- `reflectedWrite`: a node outside the arena, a text node or an unknown row gives none
+#guard reflectedWrite sheetsArena 99 "0\x00x" == none && reflectedWrite sheetsArena 1000000 "" == none
+#guard reflectedWrite sheetsArena 5 "999999\x00x" == none
+
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
 def Session.frameLoads (s : Session) : Array (Nat × String) :=
@@ -2218,5 +2515,13 @@ def Session.changes (s : Session) : Nat := s.host.dom.changes
 so a host lays the page out again only then (`changed`). A write of the value an
 attribute or data already has records nothing. -/
 def changed (before after : Session) : Bool := after.changes != before.changes
+
+-- `carriesRules` (issue 871): a style element, and a link whose rel has `stylesheet`
+#guard carriesRules ({ lname := "style" } : L4Factoidal.DOM.Node)
+#guard carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "Alternate  StyleSheet" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "mw-deduplicated-inline-style" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link", attrs := #[{ lname := "rel", value := "preload" }] } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "link" } : L4Factoidal.DOM.Node)
+#guard !carriesRules ({ lname := "div", attrs := #[{ lname := "rel", value := "stylesheet" }] } : L4Factoidal.DOM.Node)
 
 end L4Factoidal.WasmVM.Hosts.Page

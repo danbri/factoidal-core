@@ -30,11 +30,21 @@ def ariaRoles : List String :=
    "rowgroup", "rowheader", "scrollbar", "search", "searchbox", "sectionfooter", "sectionheader", "separator", "slider",
    "spinbutton", "status", "strong", "subscript", "suggestion", "superscript", "switch", "tab",
    "table", "tablist", "tabpanel", "term", "textbox", "time", "timer", "toolbar", "tooltip",
-   "tree", "treegrid", "treeitem"]
+   "tree", "treegrid", "treeitem",
+   -- Digital Publishing WAI-ARIA 1.1 (DPUB-AAM: each answers itself)
+   "doc-abstract", "doc-acknowledgments", "doc-afterword", "doc-appendix", "doc-backlink", "doc-biblioentry",
+   "doc-bibliography", "doc-biblioref", "doc-chapter", "doc-colophon", "doc-conclusion", "doc-cover",
+   "doc-credit", "doc-credits", "doc-dedication", "doc-endnote", "doc-endnotes", "doc-epigraph",
+   "doc-epilogue", "doc-errata", "doc-example", "doc-footnote", "doc-foreword", "doc-glossary",
+   "doc-glossref", "doc-index", "doc-introduction", "doc-noteref", "doc-notice", "doc-pagebreak",
+   "doc-pagefooter", "doc-pageheader", "doc-pagelist", "doc-part", "doc-preface", "doc-prologue",
+   "doc-pullquote", "doc-qna", "doc-subtitle", "doc-tip", "doc-toc",
+   -- WAI-ARIA Graphics Module 1.0
+   "graphics-document", "graphics-object", "graphics-symbol"]
 
 /-- The roles a computation answers besides "": the author roles after `normalize`, and the
 implicit roles. -/
-def answerRoles : List String := ariaRoles ++ ["graphics-document"]
+def answerRoles : List String := ariaRoles
 
 def lowerChar (c : Char) : Char := if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c
 def asciiLower (s : String) : String := s.map lowerChar
@@ -66,7 +76,14 @@ def nonEmpty (o : Option String) : Bool := match o with
 /-- Whether the author gave the element a name (`aria-label`, `aria-labelledby`, `title`):
 the landmarks `region` and `form` are only those with one. -/
 def named (d : Dom) (k : NodeId) : Bool :=
-  nonEmpty (attr? d k "aria-label") || nonEmpty (attr? d k "aria-labelledby") || nonEmpty (attr? d k "title")
+  nonEmpty (attr? d k "aria-label") || nonEmpty (attr? d k "title") ||
+  (match attr? d k "aria-labelledby" with
+   | some ids =>
+     -- an ID reference names the element only when an element with that ID is in its tree
+     let wanted := ((ids.split isAsciiWs).toList.map (·.toString)).filter (· != "")
+     !wanted.isEmpty && (d.treeOrder (d.root k)).any fun j =>
+       (d.get j).type == .element && (match attr? d j "id" with | some id => wanted.contains id | none => false)
+   | none => false)
 
 /-- The global ARIA attributes (WAI-ARIA 1.2 §6.4): one of them on an element keeps it from
 being presentational. -/
@@ -109,6 +126,45 @@ def hasAncestor (d : Dom) (k : NodeId) (names : List String) : Bool := Id.run do
       cur := (d.get p).parent
   return false
 
+/-- Whether an `li` is an item of a list: its nearest ancestor that is not a plain `div` or
+`span` is a `ul`, `ol` or `menu` that keeps its list role, or an element the author gave
+the role `list`. -/
+def inList (d : Dom) (k : NodeId) : Bool := Id.run do
+  let mut cur := (d.get k).parent
+  for _ in [0:d.size + 1] do
+    match cur with
+    | none => return false
+    | some p =>
+      match attr? d p "role" with
+      | some v =>
+        -- the author's role of the ancestor decides
+        return (tokens v).head? == some "list" || (tokens v).head? == some "directory"
+      | none =>
+        if isHtml d p ["ul", "ol", "menu"] then return true
+        if !isHtml d p ["div", "span"] then return false
+        cur := (d.get p).parent
+  return false
+
+/-- An SVG element's `href`: in no namespace or in XLink's. -/
+def svgHref (d : Dom) (k : NodeId) : Bool :=
+  (d.get k).attrs.any fun a => a.lname == "href"
+
+/-- The first `title` child of an SVG element (SVG-AAM §8.1). -/
+def svgTitle (d : Dom) (k : NodeId) : Option NodeId :=
+  (d.get k).kids.toList.find? fun c => (d.get c).type == .element && (d.get c).ns == some svgNS && (d.get c).lname == "title"
+
+/-- The implicit role of an SVG element (SVG-AAM §6.2, the elements with a mapping here):
+the `svg` root, a link, a group or an image that has a name. -/
+def svgRole (d : Dom) (k : NodeId) : String :=
+  let x := d.get k
+  let labelled := named d k || (svgTitle d k).isSome
+  match x.lname with
+  | "svg" => "graphics-document"
+  | "a" => if svgHref d k then "link" else ""
+  | "g" => if labelled then "group" else ""
+  | "image" => if labelled then "image" else ""
+  | _ => ""
+
 /-- The role of an `input` by its type (HTML-AAM §4 "input"). -/
 def inputRole (d : Dom) (k : NodeId) : String :=
   let list := (attr? d k "list").isSome
@@ -139,11 +195,14 @@ def thRole (d : Dom) (k : NodeId) : String :=
     | none => "columnheader"
 
 /-- An `img` (HTML-AAM `img`): `none` for an empty `alt` with no author name, and for an
-image with no source and no name at all; else `image`. -/
+image with no source and no name at all; an image with a source and no `alt` attribute is an
+`image`; else `image`. -/
 def imgRole (d : Dom) (k : NodeId) : String :=
   let blank := fun (o : Option String) => match o with | some v => v.trimAscii.toString.isEmpty | none => true
   let authorNamed := nonEmpty (attr? d k "aria-label") || nonEmpty (attr? d k "aria-labelledby")
+  let sourced := nonEmpty (attr? d k "src") || nonEmpty (attr? d k "srcset")
   if attr? d k "alt" == some "" then (if authorNamed then "image" else "none")
+  else if (attr? d k "alt").isNone && sourced then "image"
   else if blank (attr? d k "alt") && blank (attr? d k "title") && !authorNamed then "none"
   else "image"
 
@@ -151,7 +210,7 @@ def imgRole (d : Dom) (k : NodeId) : String :=
 def implicitRole (d : Dom) (k : NodeId) : String :=
   let x := d.get k
   if x.type != .element then "" else
-  if x.ns == some svgNS then (if x.lname == "svg" then "graphics-document" else "") else
+  if x.ns == some svgNS then svgRole d k else
   if x.ns != some htmlNS then "" else
   match x.lname with
   | "a" | "area" => if (attr? d k "href").isSome then "link" else "generic"
@@ -180,13 +239,11 @@ def implicitRole (d : Dom) (k : NodeId) : String :=
   | "img" => imgRole d k
   | "input" => inputRole d k
   | "ins" => "insertion"
-  | "li" => match (d.get k).parent with
-    | some p => if isHtml d p ["ul", "ol", "menu"] then "listitem" else "generic"
-    | none => "generic"
+  | "li" => if inList d k then "listitem" else "generic"
   | "main" => "main"
   | "mark" => "mark"
   | "math" => "math"
-  | "menu" | "ol" | "ul" => "list"
+  | "dir" | "menu" | "ol" | "ul" => "list"
   | "meter" => "meter"
   | "nav" => "navigation"
   | "option" => "option"
@@ -232,6 +289,13 @@ def nameFromContentRoles : List String :=
    "switch", "tab", "tooltip", "treeitem", "caption", "code", "deletion", "emphasis",
    "insertion", "paragraph", "strong", "subscript", "superscript", "term", "definition", "time", "mark"]
 
+/-- HTML elements whose role allows a name from content in WAI-ARIA, and that browsers give
+no name from their content (html-aam/accname-computation-by-element): their text is read as
+content. -/
+def noContentName (d : Dom) (k : NodeId) : Bool :=
+  (attr? d k "role").isNone &&
+    isHtml d k ["dfn", "code", "em", "mark", "s", "strong", "sub", "sup", "time", "td", "th", "tr"]
+
 def blockTags : List String :=
   ["address", "article", "aside", "blockquote", "br", "dd", "details", "dialog", "div", "dl", "dt",
    "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -266,23 +330,36 @@ def labelsOf (d : Dom) (k : NodeId) : List NodeId :=
         if isHtml d p ["label"] then return (if (attr? d p "for").isNone then some p else none)
         cur := (d.get p).parent
     return none
-  byFor ++ (match ancestor with | some a => if byFor.contains a then [] else [a] | none => [])
+  -- a hidden `label` names nothing
+  (byFor ++ (match ancestor with | some a => if byFor.contains a then [] else [a] | none => [])).filter fun l =>
+    (attr? d l "hidden").isNone
 
+/-- The first child with one of the tags that is not hidden (html-aam/hidden-names: a hidden
+`caption` or `legend` names nothing). -/
 def firstChildTag (d : Dom) (k : NodeId) (tags : List String) : Option NodeId :=
-  (d.get k).kids.toList.find? (isHtml d · tags)
+  (d.get k).kids.toList.find? fun c => isHtml d c tags && (attr? d c "hidden").isNone
 
 /-- The value an embedded control gives a name computed from content (§4.3.2 step 2C). -/
 def embeddedValue (d : Dom) (k : NodeId) : Option String :=
   if isHtml d k ["input"] then
     let t := asciiLower ((attr? d k "type").getD "text")
-    if ["text", "search", "email", "tel", "url", "number", "range", ""].contains t then some ((attr? d k "value").getD "")
+    if ["text", "search", "email", "tel", "url", "number", "range", ""].contains t then some (inputValue d k)
     else none
   else if isHtml d k ["select"] then
     let opts := (d.treeOrder k).filter (isHtml d · ["option"])
     let sel := (opts.toList.find? fun o => (attr? d o "selected").isSome) <|> opts.toList.head?
     some ((sel.bind fun o => d.textContent o).getD "")
   else if isHtml d k ["textarea"] then some ((d.textContent k).getD "")
-  else none
+  else match explicitRole d k with
+    -- ARIA widgets: a text field's or combo box's text, a list box's selected options, a range's value
+    | some "combobox" | some "textbox" | some "searchbox" => some ((d.textContent k).getD "")
+    | some "listbox" =>
+      let chosen := (d.treeOrder k false).toList.filter fun o =>
+        explicitRole d o == some "option" && (attr? d o "aria-selected").map asciiLower == some "true"
+      some (" ".intercalate (chosen.map fun o => (d.textContent o).getD ""))
+    | some "slider" | some "spinbutton" | some "scrollbar" =>
+      some ((attr? d k "aria-valuetext").getD ((attr? d k "aria-valuenow").getD ""))
+    | _ => none
 
 mutual
 /-- The text alternative of node `k` (§4.3.2): `labelled` while computing a node that an
@@ -311,7 +388,8 @@ def textAlternative (d : Dom) (fuel : Nat) (k : NodeId) (labelled content : Bool
       let native := hostLabel d fuel k
       if !native.isEmpty then native else
       let role := computedRole d k
-      let fromContent := if content || labelled || nameFromContentRoles.contains role then
+      let fromContent := if content || labelled || (nameFromContentRoles.contains role && !noContentName d k) ||
+            isHtml d k ["summary"] then
           childrenText d fuel x.kids.toList else ""
       if !fromContent.isEmpty then fromContent else
       let title := (attr? d k "title").getD ""
@@ -331,7 +409,12 @@ def childrenText (d : Dom) (fuel : Nat) (kids : List NodeId) : String :=
 /-- The host language's label (HTML-AAM §5, accessible name computations by element). -/
 def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
   let x := d.get k
-  if x.ns != some htmlNS && !(x.ns == some svgNS) then "" else
+  -- SVG-AAM §8.1: the `title` child, else a link's `xlink:title`
+  if x.ns == some svgNS then
+    (match svgTitle d k with
+     | some t => (d.textContent t).getD ""
+     | none => (((d.get k).attrs.find? fun a => a.lname == "title" && a.ns.isSome).map (·.value)).getD "")
+  else if x.ns != some htmlNS then "" else
   -- the control itself is left out of its label's text
   let labels := fun (ls : List NodeId) => collapse (" ".intercalate (ls.map fun l =>
     childrenText d fuel ((d.get l).kids.toList.filter (· != k))))
@@ -361,10 +444,6 @@ def hostLabel (d : Dom) (fuel : Nat) (k : NodeId) : String :=
     | some l => collapse (childrenText d fuel (d.get l).kids.toList)
     | none => ""
   | "optgroup" => (attr? d k "label").getD ""
-  | "svg" =>
-    match x.kids.toList.find? (fun c => (d.get c).ns == some svgNS && (d.get c).lname == "title") with
-    | some t => (d.textContent t).getD ""
-    | none => ""
   | _ => ""
 end
 
@@ -383,7 +462,7 @@ theorem normalize_mem (t : String) (h : t ∈ ariaRoles) : normalize t ∈ answe
     · by_cases h3 : (t == "directory") = true
       · simp only [h1, h2, h3, if_true, Bool.false_eq_true, if_false]; simp [ariaRoles]
       · simp only [h1, h2, h3, Bool.false_eq_true, if_false]
-        exact List.mem_append_left _ h
+        exact h
 
 /-- Says: an author's role that is answered is a role of WAI-ARIA (an invalid token, an
 abstract role or a misspelling is never answered). -/
@@ -471,6 +550,20 @@ private def nameOf (html tag : String) : String :=
 #guard nameOf "<fieldset><legend>Group</legend></fieldset>" "fieldset" == "Group"
 #guard roleOf "<img>" "img" == "none" && roleOf "<img alt='' aria-label=x>" "img" == "image" && roleOf "<img src=a.png alt=' '>" "img" == "none"
 #guard roleOf "<input type=checkbox switch>" "input" == "switch" && roleOf "<div><li>x</li></div>" "li" == "generic"
+#guard roleOf "<ul><div><li>x</li></div></ul>" "li" == "listitem" && roleOf "<div role=list><li>x</li></div>" "li" == "listitem"
+#guard roleOf "<ul role=none><li>x</li></ul>" "li" == "generic" && roleOf "<ul><li>x</li></ul>" "li" == "listitem"
+#guard roleOf "<div role=doc-chapter>x</div>" "div" == "doc-chapter" && roleOf "<div role=graphics-symbol>x</div>" "div" == "graphics-symbol"
+#guard roleOf "<img src=a.png>" "img" == "image" && roleOf "<img srcset=a.png>" "img" == "image" && roleOf "<dir></dir>" "dir" == "list"
+#guard roleOf "<section aria-labelledby=nowhere>x</section>" "section" == "generic" && roleOf "<p id=t>t</p><section aria-labelledby=t>x</section>" "section" == "region"
+#guard roleOf "<svg><a href='#'>x</a></svg>" "a" == "link" && roleOf "<svg><g aria-label=l></g></svg>" "g" == "group" && roleOf "<svg><g></g></svg>" "g" == ""
+#guard nameOf "<svg><circle><title>dot</title></circle></svg>" "circle" == "dot" && nameOf "<svg><title>pic</title></svg>" "svg" == "pic"
+#guard nameOf "<em title=t>x</em>" "em" == "t" && nameOf "<code>x</code>" "code" == "" && nameOf "<table><tr><td>x</td></tr></table>" "td" == ""
+#guard nameOf "<details><summary title=t>sum</summary></details>" "summary" == "sum"
+#guard nameOf "<label><input type=checkbox> Flash <span role=slider aria-valuenow=3 aria-label=n></span> times</label>" "input" == "Flash 3 times"
+#guard nameOf "<label><input type=checkbox> Pick <ul role=listbox aria-label=n><li role=option>1</li><li role=option aria-selected=true>2</li></ul> now</label>" "input" == "Pick 2 now"
+#guard nameOf "<label><input type=checkbox> Do <span role=combobox aria-label=n>3</span> times</label>" "input" == "Do 3 times"
+#guard nameOf "<label for=i hidden>H</label><input id=i>" "input" == "" && nameOf "<fieldset><legend hidden>H</legend><legend>V</legend></fieldset>" "fieldset" == "V"
+#guard nameOf "<a href=x><em>very</em> good</a>" "a" == "very good" && nameOf "<div role=cell>x</div>" "div" == "x"
 #guard roleOf "<article><aside>x</aside></article>" "aside" == "generic" && roleOf "<aside>x</aside>" "aside" == "complementary"
 #guard nameOf "<label for=b>Go</label><input id=b type=submit value=v>" "input" == "Go" && nameOf "<input type=submit value=v>" "input" == "v"
 #guard nameOf "<input aria-placeholder=ap value=v>" "input" == "ap"

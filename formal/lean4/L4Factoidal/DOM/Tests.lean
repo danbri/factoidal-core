@@ -215,6 +215,23 @@ def byId (d : Dom) (id : String) : NodeId := (d.getElementById 0 id).getD 0
 #guard (let f := ((formDoc.treeOrder 0).find? (Forms.isHtml formDoc · ["form"])).getD 0
   let d := Forms.resetForm (Forms.setChecked formDoc (byId formDoc "r2") true) f
   Forms.checkedness d (byId d "r1")) == true
+-- value modes (2026-11-17): the dirty value of a text input is its value, the attribute stays;
+-- a checkbox reads its attribute or "on"; reset clears the dirty value flag
+def valueDoc : Dom := parseHtmlDocument
+  "<form><input id=t value=a><input id=h type=hidden value=b><input id=c type=checkbox><input id=f type=file value=x></form>"
+#guard (let d := valueDoc.setNode (byId valueDoc "t") fun x => { x with dirtyValue := some "z" }
+  (Forms.inputValue d (byId d "t"), Forms.attr? d (byId d "t") "value")) == ("z", some "a")
+#guard (Forms.inputValue valueDoc (byId valueDoc "t"), Forms.inputValue valueDoc (byId valueDoc "h"),
+  Forms.inputValue valueDoc (byId valueDoc "c"), Forms.inputValue valueDoc (byId valueDoc "f")) == ("a", "b", "on", "")
+#guard (let d := valueDoc.setNode (byId valueDoc "h") fun x => { x with dirtyValue := some "z" }
+  Forms.inputValue d (byId d "h")) == "b"
+#guard (let f := ((valueDoc.treeOrder 0).find? (Forms.isHtml valueDoc · ["form"])).getD 0
+  let d := valueDoc.setNode (byId valueDoc "t") fun x => { x with dirtyValue := some "z" }
+  Forms.inputValue (Forms.resetForm d f) (byId d "t")) == "a"
+-- a clone keeps the dirty value (HTML §4.10.5.4 cloning steps)
+#guard (let d := valueDoc.setNode (byId valueDoc "t") fun x => { x with dirtyValue := some "z" }
+  let (d, c) := d.cloneSingle (byId d "t") none
+  (d.get c).dirtyValue) == some "z"
 -- the activation target: the target itself, else the nearest ancestor when it bubbles
 #guard Forms.activationTarget formDoc (byId formDoc "s") true == some (byId formDoc "l")
 #guard Forms.activationTarget formDoc (byId formDoc "s") false == none
@@ -230,7 +247,11 @@ def dsd : Dom := parseHtmlDocument "<div id='h'><template shadowrootmode='open'>
 #guard (match (dsd.get (byId dsd "h")).shadow with
   | some sr => (dsd.get sr).kids.size == 2 && dsd.isShadowRoot sr && (dsd.get (byId dsd "h")).kids.size == 1
   | none => false)
-#guard (dsd.flatChildren (byId dsd "h")).map (fun k => (dsd.get k).lname) == #["p", "b"]
+#guard (dsd.flatChildren (byId dsd "h")).map (fun k => (dsd.get k).lname) == #["p", "slot"]
+#guard (let flat := dsd.flat
+  let slot := ((flat.get (byId dsd "h")).kids)[1]!
+  (flat.get slot).kids.map (fun k => (flat.get k).lname) == #["b"] &&
+    ((flat.get ((flat.get slot).kids[0]!)).parent == some slot))
 #guard ((dsd.get (byId dsd "h")).shadow.bind fun sr => (dsd.get sr).shadowInit.map (·.declarative)) == some true
 #guard ((parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)).get
   (byId (parseHtmlDocument "<div id='h'><template shadowrootmode='open'><p>s</p></template></div>" (shadow := false)) "h")).shadow.isNone

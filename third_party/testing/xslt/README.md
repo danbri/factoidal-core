@@ -56,6 +56,14 @@ value comparisons in `boolean-*`) will simply fail against our XPath
   (verbatim upstream, or the environment's inline `<content>`).
 - `files/<category>__<name>.expected.xml` — the upstream `assert-xml`
   expected output.
+- `source_uri` (optional, added 2026-11-16) — the upstream file name of
+  the source document, for a case whose stylesheet names its own source in
+  `document()`. `select-5901` calls `document('select-59.xml')`, and
+  upstream `tests/attr/select/select-59.xml` is byte for byte the vendored
+  `files/select__select-5901.src.xml` (the environment `select-59`). XSLT
+  1.0 section 12.1 makes that the same document as the source, so the
+  runner passes the name to the engine and the engine returns the source
+  document's own nodes.
 
 Originally 64 tests across 18 categories (apply-templates, avt, axes,
 boolean, bug, construct-node, copy, expression, function-available, id,

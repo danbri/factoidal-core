@@ -1,0 +1,111 @@
+name: GSSL low-level GPU resource diagnostic
+
+on:
+  pull_request:
+    paths:
+      - 'docs/specs/gdsl-0.2.md'
+      - 'docs/web/hub/gssl/**'
+      - 'docs/web/hub/index.md'
+      - 'docs/.eleventy.js'
+      - 'tests/gssl_hub_core.test.mjs'
+      - 'tools/gssl-hub-device-smoke.mjs'
+      - '.github/workflows/check-gssl-hub.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gssl-hub:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - name: Verify exact source commit and syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          node --check docs/web/hub/gssl/lab-core.mjs
+          node --check docs/web/hub/gssl/app.mjs
+          node --check tools/gssl-hub-device-smoke.mjs
+          node --check npm/factoidal/lib/gpu-resident.mjs
+          mkdir -p "$RUNNER_TEMP/gssl-hub"
+          git rev-parse HEAD > "$RUNNER_TEMP/gssl-hub/commit.txt"
+          sha256sum docs/specs/gdsl-0.2.md \
+            docs/web/hub/gssl/index.njk \
+            docs/web/hub/gssl/lab-core.mjs \
+            docs/web/hub/gssl/app.mjs \
+            docs/web/hub/gssl/style.css \
+            npm/factoidal/lib/gpu-resident.mjs \
+            tests/gssl_hub_core.test.mjs \
+            tools/gssl-hub-device-smoke.mjs \
+            | tee "$RUNNER_TEMP/gssl-hub/source.sha256"
+      - name: Check independent arithmetic oracle and disclosure boundaries
+        run: node --test tests/gssl_hub_core.test.mjs
+      - name: Install vendored Eleventy offline
+        run: bash third_party/eleventy/install.sh docs
+      - name: Build actual Hub output and verify no missing client modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          ( cd docs && node_modules/.bin/eleventy --quiet --output=_site ) \
+            > "$RUNNER_TEMP/gssl-hub/site-build.log" 2>&1 || {
+              tail -n 90 "$RUNNER_TEMP/gssl-hub/site-build.log"
+              exit 1
+            }
+          for file in \
+            docs/_site/web/hub/gssl/index.html \
+            docs/_site/web/hub/gssl/app.mjs \
+            docs/_site/web/hub/gssl/lab-core.mjs \
+            docs/_site/web/hub/gssl/style.css \
+            docs/_site/npm/factoidal/lib/gpu-resident.mjs \
+            docs/_site/web/hub/index.html
+          do
+            test -s "$file" || { echo "missing output: $file"; exit 1; }
+          done
+          grep -q '/factoidal/web/hub/gssl/app.mjs' docs/_site/web/hub/gssl/index.html
+          grep -q '/factoidal/web/hub/gssl/style.css' docs/_site/web/hub/gssl/index.html
+          grep -q 'gssl/' docs/_site/web/hub/index.html
+          grep -qi 'exploratory' docs/_site/web/hub/gssl/index.html
+          if grep -i 'GPU outputs are formally verified' docs/_site/web/hub/gssl/index.html; then
+            echo "Misleading assurance claim in experimental page"
+            exit 1
+          fi
+          tail -n 8 "$RUNNER_TEMP/gssl-hub/site-build.log"
+      - name: Install Mesa software Vulkan
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          dpkg-query -W libvulkan1 mesa-vulkan-drivers
+      - name: Execute the exact Hub WGSL kernel on real WebGPU
+        shell: bash
+        run: |
+          set -euo pipefail
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/gssl-hub-xdg.XXXXXX")"
+          timeout --kill-after=10s 240s deno run --no-config --no-npm --unstable-webgpu \
+            tools/gssl-hub-device-smoke.mjs "$SOURCE_COMMIT" \
+            | tee "$RUNNER_TEMP/gssl-hub/device.json"
+      - name: Preserve exact source, tests and rendered site evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gssl-device-hub-evidence
+          path: ${{ runner.temp }}/gssl-hub/
+          if-no-files-found: warn
+          retention-days: 30

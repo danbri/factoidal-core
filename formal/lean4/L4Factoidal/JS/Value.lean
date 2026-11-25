@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import Std.Data.HashSet
+import L4Factoidal.JS.UndoLog
 import L4Factoidal.JS.Syntax
 import L4Factoidal.JS.Number
 import L4Factoidal.JS.Regex
@@ -491,6 +492,23 @@ def Env.slotN (e : Env) (x : String) : Nat :=
   | some m => (m.get? x).getD e.names.size
   | none => Env.scan e.names x 0
 
+/-- `slotN` with no `Option` from the index (`Std.HashMap.getD`): the global record is indexed, and
+each read of a global name was a `some`. -/
+def Env.slotNFast (e : Env) (x : String) : Nat :=
+  match e.index with
+  | some m => m.getD x e.names.size
+  | none => Env.scan e.names x 0
+
+/-- **Kind: refinement.** `slotNFast` answers as `slotN` for every record and name. -/
+@[csimp] theorem Env.slotN_eq_fast : @Env.slotN = @Env.slotNFast := by
+  funext e x
+  unfold Env.slotN Env.slotNFast
+  cases e.index with
+  | none => rfl
+  | some m => simp only [PropMap.getD_eq_get?_getD]
+
+#print axioms Env.slotN_eq_fast
+
 def Env.slot? (e : Env) (x : String) : Option Nat :=
   let i := e.slotN x
   if i == e.names.size then none else some i
@@ -710,6 +728,12 @@ structure ColdHeap (H : Type) where
   compiled. Off, every function runs in the evaluator: the reference for theorems about the
   machine, and the other half of the on-and-off differential test. A parameter of the run. -/
   useVm : Bool := true
+  /-- The undo logs of the object and environment arrays (`UndoLog`), kept while an action of a
+  page that may make a sync request runs, so that the action can be undone (`undoTo`) without a
+  copy of the heap: each write of a cell that was there when the action began logs its old value
+  once (`noteObj`, `noteEnv`). Off (`base` 0) otherwise, where a write pays one comparison. -/
+  undoObjs : UndoLog Obj := {}
+  undoEnvs : UndoLog Env := {}
 
 /-- The heap, with the state `H` of the host that embeds the engine. A page host keeps
 its DOM arena and event loop here (`WasmVM.Hosts.LeanJS`), so a native of the page
@@ -737,6 +761,81 @@ structure HeapOf (H : Type) extends ColdHeap H where
   maxDepth : UInt32 := 400
 
 instance : Inhabited (HeapOf H) := ⟨{}⟩
+
+/-- The logging branch of `noteObj`: the write of object `id` is logged. Not inlined: `noteObj`
+is expanded at every write of the heap (144 sites in the evaluator), and this branch takes the
+cold record apart and builds it again; as a call it is in the program once. The log is taken out
+of the heap while it grows, so it is changed in place. -/
+@[noinline] def HeapOf.noteObjOn (h : HeapOf H) (objs : Array Obj) (id : Nat) : HeapOf H × Array Obj :=
+  let L := h.undoObjs
+  let h := { h with undoObjs := {} }
+  let (L, objs) := L.noteAt objs id
+  ({ h with undoObjs := L }, objs)
+
+/-- The logging branch of `noteEnv`, as `noteObjOn`. -/
+@[noinline] def HeapOf.noteEnvOn (h : HeapOf H) (envs : Array Env) (e : Nat) : HeapOf H × Array Env :=
+  let L := h.undoEnvs
+  let h := { h with undoEnvs := {} }
+  let (L, envs) := L.noteAt envs e
+  ({ h with undoEnvs := L }, envs)
+
+/-- Before a write of object `id` of `objs` (the object array, taken out of `h`): log its old
+value when an undo log is kept (`ColdHeap.undoObjs`). With no log (`base` 0) this is one
+comparison; with one, the call of `noteObjOn`. -/
+@[inline] def HeapOf.noteObj (h : HeapOf H) (objs : Array Obj) (id : Nat) : HeapOf H × Array Obj :=
+  if id < h.undoObjs.base then h.noteObjOn objs id else (h, objs)
+
+/-- **Kind: refinement.** `noteObj` is the definition it had before its logging branch became
+the function `noteObjOn`: the same heap and array for every heap, array and index. Does not say
+anything about speed or code size. -/
+theorem HeapOf.noteObj_eq (h : HeapOf H) (objs : Array Obj) (id : Nat) :
+    h.noteObj objs id =
+      if id < h.undoObjs.base then
+        let L := h.undoObjs
+        let h := { h with undoObjs := {} }
+        let (L, objs) := L.noteAt objs id
+        ({ h with undoObjs := L }, objs)
+      else (h, objs) := rfl
+
+/-- Before a write of environment `e` of `envs` (taken out of `h`): as `noteObj`. -/
+@[inline] def HeapOf.noteEnv (h : HeapOf H) (envs : Array Env) (e : Nat) : HeapOf H × Array Env :=
+  if e < h.undoEnvs.base then h.noteEnvOn envs e else (h, envs)
+
+/-- **Kind: refinement.** `noteEnv` is the definition it had before its logging branch became
+the function `noteEnvOn`. Does not say anything about speed or code size. -/
+theorem HeapOf.noteEnv_eq (h : HeapOf H) (envs : Array Env) (e : Nat) :
+    h.noteEnv envs e =
+      if e < h.undoEnvs.base then
+        let L := h.undoEnvs
+        let h := { h with undoEnvs := {} }
+        let (L, envs) := L.noteAt envs e
+        ({ h with undoEnvs := L }, envs)
+      else (h, envs) := rfl
+
+/-- Begin an action that may be undone: from here each write of an object or environment that
+exists now logs its old value once. -/
+def HeapOf.undoBegin (h : HeapOf H) : HeapOf H :=
+  { h with undoObjs := UndoLog.start h.objs.size, undoEnvs := UndoLog.start h.envs.size }
+
+/-- End the action: the logs are dropped (what they held, the old values of the cells the
+action wrote, is freed). Nothing to do when no log is kept. -/
+def HeapOf.undoEnd (h : HeapOf H) : HeapOf H :=
+  if h.undoObjs.base == 0 && h.undoEnvs.base == 0 then h else { h with undoObjs := {}, undoEnvs := {} }
+
+/-- The heap from before an action, without its object and environment arrays: with the logs of
+the action (`undoTo`) it is the whole heap from before. The arrays stay with the running heap
+only, so its writes change them in place. -/
+def HeapOf.undoShell (h : HeapOf H) : HeapOf H := { h with objs := #[], envs := #[] }
+
+/-- Undo an action: `shell` (`undoShell` of the heap from before it) with the arrays of `now`
+(the heap at the end of the action, with the logs from `undoBegin`) put back as they were
+(`UndoLog.restore_of_inv`). Costs the cells the action wrote and added. -/
+def HeapOf.undoTo (shell now : HeapOf H) : HeapOf H :=
+  let objs := now.objs
+  let envs := now.envs
+  let lo := now.undoObjs
+  let le := now.undoEnvs
+  { shell with objs := lo.restore objs, envs := le.restore envs, undoObjs := {}, undoEnvs := {} }
 
 /-- The heap is over its size: more objects, or more environment records, than `maxObjs`. -/
 @[inline] def HeapOf.full (h : HeapOf H) : Bool := h.objs.size > h.maxObjs || h.envs.size > h.maxObjs
@@ -1060,7 +1159,10 @@ def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
     match o.props.get? key with
     | some (.data v ..) => v
     | some _ => .hole
-    | none => match o.proto with
+    | none =>
+      -- a private name is never inherited (PrivateGet, §7.3.32): the general path refuses it
+      if isPrivKey key then .hole else
+      match o.proto with
       | .obj p => h.fastGet p key fuel
       | _ => .hole
 

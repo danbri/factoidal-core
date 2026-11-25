@@ -9,14 +9,15 @@ Specification: URL Standard, WHATWG Living Standard, Last Updated 19 October
 2026 (commit snapshot whatwg/url `845bafca22fb0c5a42c4bf384a9bdea525a2f10d`). Tests: web-platform-tests `url/`
 (third_party/testing/wpt-url), run by tests/whatwg-url/run.sh.
 
-The parser is the standard's state machine, transcribed: one mutable record
-for url, buffer, the three flags and pointer, and a loop that runs one state
-per round. "Decrease pointer by 1" and "start over" are pointer arithmetic, as
-in the standard. The loop has fuel `8 × (input length + 2)`: the scheme state
-starts over at most once, the authority state rewinds at most once, and every
-other rewind is one code point. If the fuel ends the result is failure; the
-self-test `l4whatwg-url selftest` parses inputs of 1,000,000 code points of
-each shape that rewinds.
+The parser is the standard's state machine, transcribed: the record `Machine`
+holds url, state, buffer, the three flags and pointer; each state is one
+function whose doc comment gives the standard's steps for it; `step` switches
+on state and `run` is the loop. "Decrease pointer by 1" and "start over" are
+pointer arithmetic, as in the standard. The loop has fuel `8 × (input length +
+2)`; `Cost.basicParse_rounds_le` (URL/Cost.lean) proves that at most
+`3 × (input length) + 16` rounds run, so the fuel never ends. The self-test
+`l4whatwg-url selftest` parses inputs of 1,000,000 code points of each shape
+that rewinds.
 
 Validation errors are not reported; they do not change the result.
 
@@ -170,340 +171,609 @@ def encodeQuery (enc : Encoding) (buffer : String) (set : PercentEncodeSet) : St
   if enc == .utf_8 then utf8PercentEncodeString set buffer
   else percentEncodeAfterEncoding enc ((buffer.toList.map (fun c => c.val)).toArray) set
 
+/-! ### The state machine
+
+The standard's algorithm keeps *url*, *state*, *buffer*, the flags *atSignSeen*,
+*insideBrackets* and *passwordTokenSeen*, and *pointer*, and runs one state per
+round of "keep running the following state machine by switching on state".
+Here those variables are the record `Machine`, each state of the standard is
+one function (`stSchemeStart` … `stFragment`) whose doc comment gives the
+steps of the standard it transcribes, `step` switches on state, and `run` is
+the loop: after a state's steps, "if after a run pointer points to the EOF
+code point, go to the next step; otherwise, increase pointer by 1 and
+continue". "Decrease pointer by 1" and "start over (from the first code point
+in input)" are pointer arithmetic, as in the standard: the increment that
+follows makes the next round read the same code point again, or the first.
+
+Validation errors are not reported; they do not change the result. -/
+
+/-- What a run of the basic URL parser is given and does not change: the code
+points of *input* (after the removal of leading and trailing C0 control or
+space and of ASCII tab or newline), *base*, and *state override*. -/
+structure ParseCfg where
+  cs : Array Char
+  base : Option Url
+  override : Option State
+
+/-- The variables of the basic URL parser. `enc` is *encoding*; `p` is
+*pointer*, an index into the code points of *input*; it is −1 only between
+"start over" and the increment that follows it. -/
+structure Machine where
+  url : Url
+  state : State
+  enc : Encoding
+  buffer : String := ""
+  atSignSeen : Bool := false
+  insideBrackets : Bool := false
+  passwordTokenSeen : Bool := false
+  p : Int := 0
+
+/-- What one state's steps give: the variables for the next round, or the
+return value of the parser. -/
+inductive Step where
+  | next (m : Machine)
+  | done (r : ParseResult)
+
+/-- *c*: the code point *pointer* points to, `none` for the EOF code point. -/
+@[inline] def ParseCfg.charAt (cfg : ParseCfg) (p : Int) : Option Char :=
+  if p ≥ 0 then cfg.cs[p.toNat]? else none
+
+/-- The first code point of *remaining* (the code point after *c*). -/
+@[inline] def ParseCfg.next (cfg : ParseCfg) (p : Int) : Option Char := cfg.cs[p.toNat + 1]?
+
+@[inline] def ParseCfg.overridden (cfg : ParseCfg) : Bool := cfg.override.isSome
+
+/-- "Decrease pointer by 1." -/
+@[inline] def Machine.back (m : Machine) : Machine := { m with p := m.p - 1 }
+
+/-- The standard's test "c is the EOF code point, U+002F (/), U+003F (?), or
+U+0023 (#), or url is special and c is U+005C (\)", used by the authority,
+host and port states. -/
+@[inline] def endsAuthority (special : Bool) (c : Option Char) : Bool :=
+  c.isNone || c == some '/' || c == some '?' || c == some '#' || (special && c == some '\\')
+
+/-- **Scheme start state.**
+1. If c is an ASCII alpha, append c, lowercased, to buffer, and set state to
+   scheme state.
+2. Otherwise, if state override is not given, set state to no scheme state
+   and decrease pointer by 1.
+3. Otherwise, return failure. -/
+def stSchemeStart (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  match c with
+  | some ch =>
+    if isAsciiAlpha ch then .next { m with buffer := m.buffer.push (asciiLower ch), state := .scheme }
+    else if !cfg.overridden then .next { m with state := .noScheme, p := m.p - 1 }
+    else .done (.failure m.url)
+  | none =>
+    if !cfg.overridden then .next { m with state := .noScheme, p := m.p - 1 }
+    else .done (.failure m.url)
+
+/-- Scheme state, step 2 (c is U+003A (:)), after the checks of step 2.1.
+2.2. Set url's scheme to buffer.
+2.3. If state override is given: if url's port is url's scheme's default
+     port, set url's port to null; return.
+2.4. Set buffer to the empty string.
+2.5. If url's scheme is "file", set state to file state.
+2.6. Otherwise, if url is special, base is non-null, and base's scheme is
+     url's scheme, set state to special relative or authority state.
+2.7. Otherwise, if url is special, set state to special authority slashes
+     state.
+2.8. Otherwise, if remaining starts with U+002F (/), set state to path or
+     authority state and increase pointer by 1.
+2.9. Otherwise, set url's path to the empty string and set state to opaque
+     path state. -/
+def stSchemeColon (cfg : ParseCfg) (m : Machine) : Step :=
+  let url := { m.url with scheme := m.buffer }
+  if cfg.overridden then
+    .done (.ok (if url.port.isSome && url.port == defaultPort url.scheme then { url with port := none } else url))
+  else if url.scheme == "file" then .next { m with url := url, buffer := "", state := .file }
+  else if url.isSpecial && cfg.base.isSome && (cfg.base.map (·.scheme)) == some url.scheme then
+    .next { m with url := url, buffer := "", state := .specialRelativeOrAuthority }
+  else if url.isSpecial then .next { m with url := url, buffer := "", state := .specialAuthoritySlashes }
+  else if cfg.next m.p == some '/' then
+    .next { m with url := url, buffer := "", state := .pathOrAuthority, p := m.p + 1 }
+  else .next { m with url := { url with path := .opaque "" }, buffer := "", state := .opaquePath }
+
+/-- **Scheme state.**
+1. If c is an ASCII alphanumeric, U+002B (+), U+002D (-), or U+002E (.),
+   append c, lowercased, to buffer.
+2. Otherwise, if c is U+003A (:):
+   2.1. If state override is given, return (url unchanged) when: url's scheme
+        is a special scheme and buffer is not; or url's scheme is not a
+        special scheme and buffer is; or url includes credentials or has a
+        non-null port, and buffer is "file"; or url's scheme is "file" and
+        its host is an empty host.
+   then steps 2.2 to 2.9 (`stSchemeColon`).
+3. Otherwise, if state override is not given, set buffer to the empty
+   string, state to no scheme state, and start over (from the first code
+   point in input).
+4. Otherwise, return failure. -/
+def stScheme (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  match c with
+  | some ch =>
+    if isAsciiAlpha ch || isAsciiDigit ch || ch == '+' || ch == '-' || ch == '.' then
+      .next { m with buffer := m.buffer.push (asciiLower ch) }
+    else if ch == ':' then
+      if cfg.overridden &&
+          ((m.url.isSpecial && !isSpecialScheme m.buffer)
+            || (!m.url.isSpecial && isSpecialScheme m.buffer)
+            || ((m.url.includesCredentials || m.url.port.isSome) && m.buffer == "file")
+            || (m.url.scheme == "file" && m.url.host == some .empty)) then
+        .done (.ok m.url)
+      else stSchemeColon cfg m
+    else if !cfg.overridden then .next { m with buffer := "", state := .noScheme, p := -1 }
+    else .done (.failure m.url)
+  | none =>
+    if !cfg.overridden then .next { m with buffer := "", state := .noScheme, p := -1 }
+    else .done (.failure m.url)
+
+/-- **No scheme state.**
+1. If base is null, or base has an opaque path and c is not U+0023 (#),
+   return failure.
+2. Otherwise, if base has an opaque path and c is U+0023 (#), set url's
+   scheme to base's scheme, url's path to base's path, url's query to base's
+   query, url's fragment to the empty string, and set state to fragment
+   state.
+3. Otherwise, if base's scheme is not "file", set state to relative state
+   and decrease pointer by 1.
+4. Otherwise, set state to file state and decrease pointer by 1. -/
+def stNoScheme (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  match cfg.base with
+  | none => .done (.failure m.url)
+  | some b =>
+    if b.hasOpaquePath && c != some '#' then .done (.failure m.url)
+    else if b.hasOpaquePath && c == some '#' then
+      .next { m with url := { m.url with scheme := b.scheme, path := b.path, query := b.query,
+                                         fragment := some "" },
+                     state := .fragment }
+    else if b.scheme != "file" then .next { m with state := .relative, p := m.p - 1 }
+    else .next { m with state := .file, p := m.p - 1 }
+
+/-- **Special relative or authority state.**
+1. If c is U+002F (/) and remaining starts with U+002F (/), set state to
+   special authority ignore slashes state and increase pointer by 1.
+2. Otherwise, set state to relative state and decrease pointer by 1. -/
+def stSpecialRelativeOrAuthority (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c == some '/' && cfg.next m.p == some '/' then
+    .next { m with state := .specialAuthorityIgnoreSlashes, p := m.p + 1 }
+  else .next { m with state := .relative, p := m.p - 1 }
+
+/-- **Path or authority state.**
+1. If c is U+002F (/), set state to authority state.
+2. Otherwise, set state to path state and decrease pointer by 1. -/
+def stPathOrAuthority (m : Machine) (c : Option Char) : Step :=
+  if c == some '/' then .next { m with state := .authority }
+  else .next { m with state := .path, p := m.p - 1 }
+
+/-- **Relative state.** (base is non-null and its scheme is not "file".)
+1. Set url's scheme to base's scheme.
+2. If c is U+002F (/), set state to relative slash state.
+3. Otherwise, if url is special and c is U+005C (\), set state to relative
+   slash state.
+4. Otherwise: set url's username, password, host, port, path and query to
+   base's; then
+   - if c is U+003F (?), set url's query to the empty string and state to
+     query state;
+   - otherwise, if c is U+0023 (#), set url's fragment to the empty string
+     and state to fragment state;
+   - otherwise, if c is not the EOF code point: set url's query to null,
+     shorten url's path, set state to path state and decrease pointer by 1. -/
+def stRelative (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  let b := cfg.base.getD {}
+  let url := { m.url with scheme := b.scheme }
+  if c == some '/' then .next { m with url := url, state := .relativeSlash }
+  else if url.isSpecial && c == some '\\' then .next { m with url := url, state := .relativeSlash }
+  else
+    let url := { url with username := b.username, password := b.password, host := b.host,
+                          port := b.port, path := b.path, query := b.query }
+    if c == some '?' then .next { m with url := { url with query := some "" }, state := .query }
+    else if c == some '#' then .next { m with url := { url with fragment := some "" }, state := .fragment }
+    else if c.isSome then
+      .next { m with url := ({ url with query := none } : Url).shortenPath, state := .path, p := m.p - 1 }
+    else .next { m with url := url }
+
+/-- **Relative slash state.**
+1. If url is special and c is U+002F (/) or U+005C (\), set state to special
+   authority ignore slashes state.
+2. Otherwise, if c is U+002F (/), set state to authority state.
+3. Otherwise, set url's username, password, host and port to base's, set
+   state to path state, and decrease pointer by 1. -/
+def stRelativeSlash (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if m.url.isSpecial && (c == some '/' || c == some '\\') then
+    .next { m with state := .specialAuthorityIgnoreSlashes }
+  else if c == some '/' then .next { m with state := .authority }
+  else
+    let b := cfg.base.getD {}
+    .next { m with url := { m.url with username := b.username, password := b.password, host := b.host,
+                                       port := b.port },
+                   state := .path, p := m.p - 1 }
+
+/-- **Special authority slashes state.**
+1. If c is U+002F (/) and remaining starts with U+002F (/), set state to
+   special authority ignore slashes state and increase pointer by 1.
+2. Otherwise, set state to special authority ignore slashes state and
+   decrease pointer by 1. -/
+def stSpecialAuthoritySlashes (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c == some '/' && cfg.next m.p == some '/' then
+    .next { m with state := .specialAuthorityIgnoreSlashes, p := m.p + 1 }
+  else .next { m with state := .specialAuthorityIgnoreSlashes, p := m.p - 1 }
+
+/-- **Special authority ignore slashes state.**
+1. If c is neither U+002F (/) nor U+005C (\), set state to authority state
+   and decrease pointer by 1.
+2. Otherwise (a validation error only), go on. -/
+def stSpecialAuthorityIgnoreSlashes (m : Machine) (c : Option Char) : Step :=
+  if c != some '/' && c != some '\\' then .next { m with state := .authority, p := m.p - 1 }
+  else .next m
+
+/-- Authority state, step 1.4, for one code point of buffer: the first
+U+003A (:) sets passwordTokenSeen; every other code point is UTF-8
+percent-encoded with the userinfo percent-encode set and appended to url's
+password if passwordTokenSeen is true, to url's username otherwise. The pair
+is (url, passwordTokenSeen). -/
+def addCredential (acc : Url × Bool) (cp : Char) : Url × Bool :=
+  if cp == ':' && !acc.2 then (acc.1, true)
+  else
+    let pe := utf8PercentEncodeChar .userinfo cp
+    if acc.2 then ({ acc.1 with password := acc.1.password ++ pe }, acc.2)
+    else ({ acc.1 with username := acc.1.username ++ pe }, acc.2)
+
+/-- **Authority state.**
+1. If c is U+0040 (@):
+   1.2. If atSignSeen is true, prepend "%40" to buffer.
+   1.3. Set atSignSeen to true.
+   1.4. For each code point in buffer: `addCredential`.
+   1.5. Set buffer to the empty string.
+2. Otherwise, if c is the EOF code point, U+002F (/), U+003F (?), or
+   U+0023 (#), or url is special and c is U+005C (\):
+   2.1. If atSignSeen is true and buffer is the empty string, return failure.
+   2.2. Decrease pointer by buffer's code point length + 1, set buffer to
+        the empty string, and set state to host state.
+3. Otherwise, append c to buffer. -/
+def stAuthority (m : Machine) (c : Option Char) : Step :=
+  match c with
+  | some '@' =>
+    let buffer := if m.atSignSeen then "%40" ++ m.buffer else m.buffer
+    let (url, seen) := buffer.toList.foldl addCredential (m.url, m.passwordTokenSeen)
+    .next { m with url := url, passwordTokenSeen := seen, atSignSeen := true, buffer := "" }
+  | _ =>
+    if endsAuthority m.url.isSpecial c then
+      if m.atSignSeen && m.buffer.isEmpty then .done (.failure m.url)
+      else .next { m with p := m.p - (m.buffer.length + 1 : Nat), buffer := "", state := .host }
+    else .next { m with buffer := m.buffer.push c.get! }
+
+/-- **Host state** and **hostname state.**
+1. If state override is given and url's scheme is "file", decrease pointer
+   by 1 and set state to file host state.
+2. Otherwise, if c is U+003A (:) and insideBrackets is false:
+   2.1. If buffer is the empty string, return failure.
+   2.2. If state override is given and state override is hostname state,
+        return failure.
+   2.3. Let host be the result of host parsing buffer with url is not
+        special. 2.4. If host is failure, return failure.
+   2.5. Set url's host to host, buffer to the empty string, and state to
+        port state.
+3. Otherwise, if c is the EOF code point, U+002F (/), U+003F (?), or
+   U+0023 (#), or url is special and c is U+005C (\), decrease pointer by 1,
+   and then:
+   3.1. If url is special and buffer is the empty string, return failure.
+   3.2. Otherwise, if state override is given, buffer is the empty string,
+        and either url includes credentials or url's port is non-null,
+        return failure.
+   3.3. Let host be the result of host parsing buffer with url is not
+        special. 3.4. If host is failure, return failure.
+   3.5. Set url's host to host, buffer to the empty string, and state to
+        path start state.
+   3.6. If state override is given, return.
+4. Otherwise: if c is U+005B ([), set insideBrackets to true; if c is
+   U+005D (]), set insideBrackets to false; append c to buffer. -/
+def stHost (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  let special := m.url.isSpecial
+  if cfg.overridden && m.url.scheme == "file" then .next { m with p := m.p - 1, state := .fileHost }
+  else if c == some ':' && !m.insideBrackets then
+    if m.buffer.isEmpty then .done (.failure m.url)
+    else if cfg.override == some .hostname then .done (.failure m.url)
+    else
+      match parseHost m.buffer (!special) with
+      | none => .done (.failure m.url)
+      | some h => .next { m with url := { m.url with host := some h }, buffer := "", state := .port }
+  else if endsAuthority special c then
+    if special && m.buffer.isEmpty then .done (.failure m.url)
+    else if cfg.overridden && m.buffer.isEmpty && (m.url.includesCredentials || m.url.port.isSome) then
+      .done (.failure m.url)
+    else
+      match parseHost m.buffer (!special) with
+      | none => .done (.failure m.url)
+      | some h =>
+        let url := { m.url with host := some h }
+        if cfg.overridden then .done (.ok url)
+        else .next { m with url := url, buffer := "", state := .pathStart, p := m.p - 1 }
+  else
+    let ib := if c == some ']' then false else if c == some '[' then true else m.insideBrackets
+    .next { m with insideBrackets := ib, buffer := m.buffer.push c.get! }
+
+/-- **Port state.**
+1. If c is an ASCII digit, append c to buffer.
+2. Otherwise, if c is the EOF code point, U+002F (/), U+003F (?), or
+   U+0023 (#); or url is special and c is U+005C (\); or state override is
+   given:
+   2.1. If buffer is not the empty string: let port be the mathematical
+        integer value that buffer represents in radix 10; if port is not a
+        16-bit unsigned integer, return failure; set url's port to null if
+        port is url's scheme's default port, otherwise to port; set buffer
+        to the empty string; if state override is given, return.
+   2.2. If state override is given, return failure.
+   2.3. Set state to path start state and decrease pointer by 1.
+3. Otherwise, return failure. -/
+def stPort (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c.any isAsciiDigit then .next { m with buffer := m.buffer.push c.get! }
+  else if endsAuthority m.url.isSpecial c || cfg.overridden then
+    if !m.buffer.isEmpty then
+      let port := m.buffer.foldl (fun n d => n * 10 + (d.toNat - 48)) 0
+      if port > 65535 then .done (.failure m.url)
+      else
+        let url := { m.url with port := if defaultPort m.url.scheme == some port then none else some port }
+        if cfg.overridden then .done (.ok url)
+        else .next { m with url := url, buffer := "", state := .pathStart, p := m.p - 1 }
+    else if cfg.overridden then .done (.failure m.url)
+    else .next { m with state := .pathStart, p := m.p - 1 }
+  else .done (.failure m.url)
+
+/-- **File state.**
+1. Set url's scheme to "file". 2. Set url's host to the empty string.
+3. If c is U+002F (/) or U+005C (\), set state to file slash state.
+4. Otherwise, if base is non-null and base's scheme is "file":
+   4.1. Set url's host, path and query to base's.
+   4.2. If c is U+003F (?), set url's query to the empty string and state to
+        query state.
+   4.3. Otherwise, if c is U+0023 (#), set url's fragment to the empty
+        string and state to fragment state.
+   4.4. Otherwise, if c is not the EOF code point: set url's query to null;
+        if the code point substring from pointer to the end of input does
+        not start with a Windows drive letter, shorten url's path;
+        otherwise set url's path to « »; set state to path state and
+        decrease pointer by 1.
+5. Otherwise, set state to path state, and decrease pointer by 1. -/
+def stFile (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  let url := { m.url with scheme := "file", host := some .empty }
+  if c == some '/' || c == some '\\' then .next { m with url := url, state := .fileSlash }
+  else
+    match cfg.base with
+    | some b =>
+      if b.scheme == "file" then
+        let url := { url with host := b.host, path := b.path, query := b.query }
+        if c == some '?' then .next { m with url := { url with query := some "" }, state := .query }
+        else if c == some '#' then .next { m with url := { url with fragment := some "" }, state := .fragment }
+        else if c.isSome then
+          let url := { url with query := none }
+          let url :=
+            if !startsWithWindowsDriveLetter (cfg.cs.toList.drop m.p.toNat) then url.shortenPath
+            else { url with path := .segments #[] }
+          .next { m with url := url, state := .path, p := m.p - 1 }
+        else .next { m with url := url }
+      else .next { m with url := url, state := .path, p := m.p - 1 }
+    | none => .next { m with url := url, state := .path, p := m.p - 1 }
+
+/-- **File slash state.**
+1. If c is U+002F (/) or U+005C (\), set state to file host state.
+2. Otherwise:
+   2.1. If base is non-null and base's scheme is "file": set url's host to
+        base's host; if the code point substring from pointer to the end of
+        input does not start with a Windows drive letter and base's path[0]
+        is a normalized Windows drive letter, append base's path[0] to
+        url's path.
+   2.2. Set state to path state, and decrease pointer by 1. -/
+def stFileSlash (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c == some '/' || c == some '\\' then .next { m with state := .fileHost }
+  else
+    let url :=
+      match cfg.base with
+      | some b =>
+        if b.scheme == "file" then
+          let url := { m.url with host := b.host }
+          if !startsWithWindowsDriveLetter (cfg.cs.toList.drop m.p.toNat) then
+            match b.path with
+            | .segments xs =>
+              match xs[0]? with
+              | some s0 => if isNormalizedWindowsDriveLetter s0 then url.appendSegment s0 else url
+              | none => url
+            | .opaque _ => url
+          else url
+        else m.url
+      | none => m.url
+    .next { m with url := url, state := .path, p := m.p - 1 }
+
+/-- **File host state.**
+1. If c is the EOF code point, U+002F (/), U+005C (\), U+003F (?), or
+   U+0023 (#), decrease pointer by 1 and then:
+   1.1. If state override is not given and buffer is a Windows drive letter,
+        set state to path state (buffer is kept for the path state).
+   1.2. Otherwise, if buffer is the empty string: set url's host to the
+        empty string; if state override is given, return; set state to path
+        start state.
+   1.3. Otherwise: let host be the result of host parsing buffer with url is
+        not special; if host is failure, return failure; if host is
+        "localhost", set host to the empty string; set url's host to host;
+        if state override is given, return; set buffer to the empty string
+        and state to path start state.
+2. Otherwise, append c to buffer. -/
+def stFileHost (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c.isNone || c == some '/' || c == some '\\' || c == some '?' || c == some '#' then
+    if !cfg.overridden && isWindowsDriveLetter m.buffer.toList then
+      .next { m with state := .path, p := m.p - 1 }
+    else if m.buffer.isEmpty then
+      let url := { m.url with host := some .empty }
+      if cfg.overridden then .done (.ok url)
+      else .next { m with url := url, state := .pathStart, p := m.p - 1 }
+    else
+      match parseHost m.buffer (!m.url.isSpecial) with
+      | none => .done (.failure m.url)
+      | some h =>
+        let url := { m.url with host := some (if h == .domain "localhost" then Host.empty else h) }
+        if cfg.overridden then .done (.ok url)
+        else .next { m with url := url, buffer := "", state := .pathStart, p := m.p - 1 }
+  else .next { m with buffer := m.buffer.push c.get! }
+
+/-- **Path start state.**
+1. If url is special, set state to path state; if c is neither U+002F (/)
+   nor U+005C (\), decrease pointer by 1.
+2. Otherwise, if state override is not given and c is U+003F (?), set url's
+   query to the empty string and state to query state.
+3. Otherwise, if state override is not given and c is U+0023 (#), set url's
+   fragment to the empty string and state to fragment state.
+4. Otherwise, if c is not the EOF code point, set state to path state; if c
+   is not U+002F (/), decrease pointer by 1.
+5. Otherwise, if state override is given and url's host is null, append the
+   empty string to url's path. -/
+def stPathStart (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if m.url.isSpecial then
+    if c != some '/' && c != some '\\' then .next { m with state := .path, p := m.p - 1 }
+    else .next { m with state := .path }
+  else if !cfg.overridden && c == some '?' then
+    .next { m with url := { m.url with query := some "" }, state := .query }
+  else if !cfg.overridden && c == some '#' then
+    .next { m with url := { m.url with fragment := some "" }, state := .fragment }
+  else if c.isSome then
+    if c != some '/' then .next { m with state := .path, p := m.p - 1 }
+    else .next { m with state := .path }
+  else if cfg.overridden && m.url.host.isNone then .next { m with url := m.url.appendSegment "" }
+  else .next m
+
+/-- **Path state.**
+1. If c is the EOF code point or U+002F (/); or url is special and c is
+   U+005C (\); or state override is not given and c is U+003F (?) or
+   U+0023 (#): the rule for the segment in buffer (`Url.pathSegment`); set
+   buffer to the empty string; if c is U+003F (?), set url's query to the
+   empty string and state to query state; if c is U+0023 (#), set url's
+   fragment to the empty string and state to fragment state.
+2. Otherwise, UTF-8 percent-encode c using the path percent-encode set and
+   append the result to buffer. -/
+def stPath (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  let special := m.url.isSpecial
+  if c.isNone || c == some '/' || (special && c == some '\\')
+      || (!cfg.overridden && (c == some '?' || c == some '#')) then
+    let url := m.url.pathSegment m.buffer (c == some '/' || (special && c == some '\\'))
+    if c == some '?' then .next { m with url := { url with query := some "" }, buffer := "", state := .query }
+    else if c == some '#' then
+      .next { m with url := { url with fragment := some "" }, buffer := "", state := .fragment }
+    else .next { m with url := url, buffer := "" }
+  else .next { m with buffer := m.buffer ++ utf8PercentEncodeChar .path c.get! }
+
+/-- **Opaque path state.**
+1. If c is U+003F (?), set url's query to the empty string and state to
+   query state.
+2. Otherwise, if c is U+0023 (#), set url's fragment to the empty string and
+   state to fragment state.
+3. Otherwise, if c is U+0020 SPACE: if remaining starts with U+003F (?) or
+   U+0023 (#), append "%20" to url's path; otherwise append U+0020 SPACE.
+4. Otherwise, if c is not the EOF code point, UTF-8 percent-encode c using
+   the C0 control percent-encode set and append the result to url's path. -/
+def stOpaquePath (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  if c == some '?' then .next { m with url := { m.url with query := some "" }, state := .query }
+  else if c == some '#' then .next { m with url := { m.url with fragment := some "" }, state := .fragment }
+  else if c == some ' ' then
+    let r := cfg.next m.p
+    if r == some '?' || r == some '#' then .next { m with url := m.url.appendSegment "%20" }
+    else .next { m with url := m.url.appendSegment " " }
+  else if c.isSome then
+    .next { m with url := m.url.appendSegment (utf8PercentEncodeChar .c0control c.get!) }
+  else .next m
+
+/-- **Query state.**
+1. If encoding is not UTF-8 and url is not special, or url's scheme is "ws"
+   or "wss", set encoding to UTF-8.
+2. If state override is not given and c is U+0023 (#), or c is the EOF code
+   point: percent-encode after encoding, with encoding, buffer, and the
+   special-query percent-encode set if url is special, the query
+   percent-encode set otherwise; append the result to url's query; set
+   buffer to the empty string; if c is U+0023 (#), set url's fragment to
+   the empty string and state to fragment state.
+3. Otherwise, if c is not the EOF code point, append c to buffer. -/
+def stQuery (cfg : ParseCfg) (m : Machine) (c : Option Char) : Step :=
+  let special := m.url.isSpecial
+  let enc :=
+    if m.enc != .utf_8 && (!special || m.url.scheme == "ws" || m.url.scheme == "wss") then Encoding.utf_8
+    else m.enc
+  if (!cfg.overridden && c == some '#') || c.isNone then
+    let set := if special then PercentEncodeSet.specialQuery else .query
+    let url := { m.url with query := some (m.url.query.getD "" ++ encodeQuery enc m.buffer set) }
+    if c == some '#' then
+      .next { m with enc := enc, url := { url with fragment := some "" }, buffer := "", state := .fragment }
+    else .next { m with enc := enc, url := url, buffer := "" }
+  else .next { m with enc := enc, buffer := m.buffer.push c.get! }
+
+/-- **Fragment state.** If c is not the EOF code point, UTF-8 percent-encode
+c using the fragment percent-encode set and append the result to url's
+fragment. -/
+def stFragment (m : Machine) (c : Option Char) : Step :=
+  match c with
+  | some ch =>
+    let f := m.url.fragment.getD "" ++ utf8PercentEncodeChar .fragment ch
+    .next { m with url := { m.url with fragment := some f } }
+  | none => .next m
+
+/-- One round of the state machine: the steps of the current state, with c
+the code point at pointer. -/
+def step (cfg : ParseCfg) (m : Machine) : Step :=
+  let c := cfg.charAt m.p
+  match m.state with
+  | .schemeStart => stSchemeStart cfg m c
+  | .scheme => stScheme cfg m c
+  | .noScheme => stNoScheme cfg m c
+  | .specialRelativeOrAuthority => stSpecialRelativeOrAuthority cfg m c
+  | .pathOrAuthority => stPathOrAuthority m c
+  | .relative => stRelative cfg m c
+  | .relativeSlash => stRelativeSlash cfg m c
+  | .specialAuthoritySlashes => stSpecialAuthoritySlashes cfg m c
+  | .specialAuthorityIgnoreSlashes => stSpecialAuthorityIgnoreSlashes m c
+  | .authority => stAuthority m c
+  | .host | .hostname => stHost cfg m c
+  | .port => stPort cfg m c
+  | .file => stFile cfg m c
+  | .fileSlash => stFileSlash cfg m c
+  | .fileHost => stFileHost cfg m c
+  | .pathStart => stPathStart cfg m c
+  | .path => stPath cfg m c
+  | .opaquePath => stOpaquePath cfg m c
+  | .query => stQuery cfg m c
+  | .fragment => stFragment m c
+
+/-- The loop of the state machine, at most `fuel` rounds: run the current
+state; "if after a run pointer points to the EOF code point, go to the next
+step" (return url); "otherwise, increase pointer by 1 and continue". When
+the fuel ends the result is failure; `Cost.run_fuel_irrelevant` (URL/Cost.lean) shows
+that the fuel `basicParse` gives is never used up.
+
+Irreducible: the fuel `8 × (n + 2)` reduces to a successor even for an unknown input, so
+without it `whnf` of `parseUrl x` (a `match` on it, in a proof about a caller) would
+unfold round after round of the machine until it ran out of heartbeats. Proofs about
+`run` use its equations (`rw [run]`, `unfold run`). -/
+@[irreducible] def run (cfg : ParseCfg) : Nat → Machine → ParseResult
+  | 0, m => .failure m.url
+  | fuel + 1, m =>
+    match step cfg m with
+    | .done r => r
+    | .next m' => if m'.p ≥ cfg.cs.size then .ok m'.url else run cfg fuel { m' with p := m'.p + 1 }
+
+/-- The fixed part of a run: *input* with leading and trailing C0 control or
+space removed (when no url is given) and ASCII tab or newline removed. -/
+def parseCfg (input0 : String) (base urlIn : Option Url) (override : Option State) : ParseCfg :=
+  let input := removeTabNewline (if urlIn.isNone then trimC0Space input0 else input0)
+  { cs := input.toList.toArray, base := base, override := override }
+
+/-- The variables at the start: url (a new URL if none is given), state
+override or scheme start state, an empty buffer, the flags false, pointer at
+the first code point. -/
+def initMachine (urlIn : Option Url) (override : Option State) (encoding : Encoding) : Machine :=
+  { url := urlIn.getD {}, state := override.getD .schemeStart, enc := encoding }
+
 /-- The basic URL parser: input, an optional base, an optional url and state
 override, and an encoding (UTF-8 by default). -/
 def basicParse (input0 : String) (base : Option Url := none) (urlIn : Option Url := none)
-    (override : Option State := none) (encoding : Encoding := .utf_8) : ParseResult := Id.run do
-  let mut url := urlIn.getD {}
-  let input := removeTabNewline (if urlIn.isNone then trimC0Space input0 else input0)
-  let cs := input.toList.toArray
-  let n := cs.size
-  let mut state := override.getD .schemeStart
-  let mut enc := encoding
-  let mut buffer : String := ""
-  let mut atSignSeen := false
-  let mut insideBrackets := false
-  let mut passwordTokenSeen := false
-  -- pointer; -1 only between "start over" and the increment that follows it.
-  let mut p : Int := 0
-  let overridden := override.isSome
-  for _ in [0:8 * (n + 2)] do
-    let i := p.toNat
-    let c : Option Char := if p ≥ 0 then cs[i]? else none
-    let rem0 : Option Char := cs[i + 1]?
-    let isEof := c.isNone
-    let special := url.isSpecial
-    match state with
-    | .schemeStart =>
-      match c with
-      | some ch =>
-        if isAsciiAlpha ch then
-          buffer := buffer.push (asciiLower ch)
-          state := .scheme
-        else if !overridden then
-          state := .noScheme
-          p := p - 1
-        else return .failure url
-      | none =>
-        if !overridden then
-          state := .noScheme
-          p := p - 1
-        else return .failure url
-    | .scheme =>
-      match c with
-      | some ch =>
-        if isAsciiAlpha ch || isAsciiDigit ch || ch == '+' || ch == '-' || ch == '.' then
-          buffer := buffer.push (asciiLower ch)
-        else if ch == ':' then
-          if overridden then
-            if url.isSpecial && !isSpecialScheme buffer then return .ok url
-            if !url.isSpecial && isSpecialScheme buffer then return .ok url
-            if (url.includesCredentials || url.port.isSome) && buffer == "file" then return .ok url
-            if url.scheme == "file" && url.host == some .empty then return .ok url
-          url := { url with scheme := buffer }
-          if overridden then
-            if url.port.isSome && url.port == defaultPort url.scheme then
-              url := { url with port := none }
-            return .ok url
-          buffer := ""
-          if url.scheme == "file" then
-            state := .file
-          else if url.isSpecial && base.isSome && (base.map (·.scheme)) == some url.scheme then
-            state := .specialRelativeOrAuthority
-          else if url.isSpecial then
-            state := .specialAuthoritySlashes
-          else if rem0 == some '/' then
-            state := .pathOrAuthority
-            p := p + 1
-          else
-            url := { url with path := .opaque "" }
-            state := .opaquePath
-        else if !overridden then
-          buffer := ""
-          state := .noScheme
-          p := -1
-        else return .failure url
-      | none =>
-        if !overridden then
-          buffer := ""
-          state := .noScheme
-          p := -1
-        else return .failure url
-    | .noScheme =>
-      match base with
-      | none => return .failure url
-      | some b =>
-        if b.hasOpaquePath && c != some '#' then return .failure url
-        else if b.hasOpaquePath && c == some '#' then
-          url := { url with scheme := b.scheme, path := b.path, query := b.query, fragment := some "" }
-          state := .fragment
-        else if b.scheme != "file" then
-          state := .relative
-          p := p - 1
-        else
-          state := .file
-          p := p - 1
-    | .specialRelativeOrAuthority =>
-      if c == some '/' && rem0 == some '/' then
-        state := .specialAuthorityIgnoreSlashes
-        p := p + 1
-      else
-        state := .relative
-        p := p - 1
-    | .pathOrAuthority =>
-      if c == some '/' then state := .authority
-      else
-        state := .path
-        p := p - 1
-    | .relative =>
-      let b := base.getD {}
-      url := { url with scheme := b.scheme }
-      if c == some '/' then state := .relativeSlash
-      else if url.isSpecial && c == some '\\' then state := .relativeSlash
-      else
-        url := { url with username := b.username, password := b.password, host := b.host,
-                          port := b.port, path := b.path, query := b.query }
-        if c == some '?' then
-          url := { url with query := some "" }
-          state := .query
-        else if c == some '#' then
-          url := { url with fragment := some "" }
-          state := .fragment
-        else if !isEof then
-          url := { url with query := none }
-          url := url.shortenPath
-          state := .path
-          p := p - 1
-    | .relativeSlash =>
-      if url.isSpecial && (c == some '/' || c == some '\\') then
-        state := .specialAuthorityIgnoreSlashes
-      else if c == some '/' then state := .authority
-      else
-        let b := base.getD {}
-        url := { url with username := b.username, password := b.password, host := b.host,
-                          port := b.port }
-        state := .path
-        p := p - 1
-    | .specialAuthoritySlashes =>
-      if c == some '/' && rem0 == some '/' then
-        state := .specialAuthorityIgnoreSlashes
-        p := p + 1
-      else
-        state := .specialAuthorityIgnoreSlashes
-        p := p - 1
-    | .specialAuthorityIgnoreSlashes =>
-      if c != some '/' && c != some '\\' then
-        state := .authority
-        p := p - 1
-    | .authority =>
-      if c == some '@' then
-        if atSignSeen then buffer := "%40" ++ buffer
-        atSignSeen := true
-        for cp in buffer.toList do
-          if cp == ':' && !passwordTokenSeen then
-            passwordTokenSeen := true
-          else
-            let pe := utf8PercentEncodeChar .userinfo cp
-            if passwordTokenSeen then url := { url with password := url.password ++ pe }
-            else url := { url with username := url.username ++ pe }
-        buffer := ""
-      else if isEof || c == some '/' || c == some '?' || c == some '#'
-          || (special && c == some '\\') then
-        if atSignSeen && buffer.isEmpty then return .failure url
-        p := p - (buffer.length + 1 : Nat)
-        buffer := ""
-        state := .host
-      else
-        buffer := buffer.push c.get!
-    | .host | .hostname =>
-      if overridden && url.scheme == "file" then
-        p := p - 1
-        state := .fileHost
-      else if c == some ':' && !insideBrackets then
-        if buffer.isEmpty then return .failure url
-        if override == some .hostname then return .failure url
-        match parseHost buffer (!special) with
-        | none => return .failure url
-        | some h =>
-          url := { url with host := some h }
-          buffer := ""
-          state := .port
-      else if isEof || c == some '/' || c == some '?' || c == some '#'
-          || (special && c == some '\\') then
-        p := p - 1
-        if special && buffer.isEmpty then return .failure url
-        else if overridden && buffer.isEmpty && (url.includesCredentials || url.port.isSome) then
-          return .failure url
-        match parseHost buffer (!special) with
-        | none => return .failure url
-        | some h =>
-          url := { url with host := some h }
-          buffer := ""
-          state := .pathStart
-          if overridden then return .ok url
-      else
-        if c == some '[' then insideBrackets := true
-        if c == some ']' then insideBrackets := false
-        buffer := buffer.push c.get!
-    | .port =>
-      if c.any isAsciiDigit then
-        buffer := buffer.push c.get!
-      else if isEof || c == some '/' || c == some '?' || c == some '#'
-          || (special && c == some '\\') || overridden then
-        if !buffer.isEmpty then
-          let port := buffer.foldl (fun n d => n * 10 + (d.toNat - 48)) 0
-          if port > 65535 then return .failure url
-          url := { url with port := if defaultPort url.scheme == some port then none else some port }
-          buffer := ""
-          if overridden then return .ok url
-        if overridden then return .failure url
-        state := .pathStart
-        p := p - 1
-      else return .failure url
-    | .file =>
-      url := { url with scheme := "file", host := some .empty }
-      if c == some '/' || c == some '\\' then
-        state := .fileSlash
-      else
-        match base with
-        | some b =>
-          if b.scheme == "file" then
-            url := { url with host := b.host, path := b.path, query := b.query }
-            if c == some '?' then
-              url := { url with query := some "" }
-              state := .query
-            else if c == some '#' then
-              url := { url with fragment := some "" }
-              state := .fragment
-            else if !isEof then
-              url := { url with query := none }
-              if !startsWithWindowsDriveLetter (cs.toList.drop i) then url := url.shortenPath
-              else url := { url with path := .segments #[] }
-              state := .path
-              p := p - 1
-          else
-            state := .path
-            p := p - 1
-        | none =>
-          state := .path
-          p := p - 1
-    | .fileSlash =>
-      if c == some '/' || c == some '\\' then
-        state := .fileHost
-      else
-        match base with
-        | some b =>
-          if b.scheme == "file" then
-            url := { url with host := b.host }
-            if !startsWithWindowsDriveLetter (cs.toList.drop i) then
-              match b.path with
-              | .segments xs =>
-                match xs[0]? with
-                | some s0 => if isNormalizedWindowsDriveLetter s0 then url := url.appendSegment s0
-                | none => pure ()
-              | .opaque _ => pure ()
-        | none => pure ()
-        state := .path
-        p := p - 1
-    | .fileHost =>
-      if isEof || c == some '/' || c == some '\\' || c == some '?' || c == some '#' then
-        p := p - 1
-        if !overridden && isWindowsDriveLetter buffer.toList then
-          state := .path
-        else if buffer.isEmpty then
-          url := { url with host := some .empty }
-          if overridden then return .ok url
-          state := .pathStart
-        else
-          match parseHost buffer (!special) with
-          | none => return .failure url
-          | some h =>
-            let h := if h == .domain "localhost" then Host.empty else h
-            url := { url with host := some h }
-            if overridden then return .ok url
-            buffer := ""
-            state := .pathStart
-      else
-        buffer := buffer.push c.get!
-    | .pathStart =>
-      if special then
-        state := .path
-        if c != some '/' && c != some '\\' then p := p - 1
-      else if !overridden && c == some '?' then
-        url := { url with query := some "" }
-        state := .query
-      else if !overridden && c == some '#' then
-        url := { url with fragment := some "" }
-        state := .fragment
-      else if !isEof then
-        state := .path
-        if c != some '/' then p := p - 1
-      else if overridden && url.host.isNone then
-        url := url.appendSegment ""
-    | .path =>
-      if isEof || c == some '/' || (special && c == some '\\')
-          || (!overridden && (c == some '?' || c == some '#')) then
-        let slashLike := c == some '/' || (special && c == some '\\')
-        url := url.pathSegment buffer slashLike
-        buffer := ""
-        if c == some '?' then
-          url := { url with query := some "" }
-          state := .query
-        if c == some '#' then
-          url := { url with fragment := some "" }
-          state := .fragment
-      else
-        buffer := buffer ++ utf8PercentEncodeChar .path c.get!
-    | .opaquePath =>
-      if c == some '?' then
-        url := { url with query := some "" }
-        state := .query
-      else if c == some '#' then
-        url := { url with fragment := some "" }
-        state := .fragment
-      else if c == some ' ' then
-        if rem0 == some '?' || rem0 == some '#' then url := url.appendSegment "%20"
-        else url := url.appendSegment " "
-      else if !isEof then
-        url := url.appendSegment (utf8PercentEncodeChar .c0control c.get!)
-    | .query =>
-      if enc != .utf_8 && (!special || url.scheme == "ws" || url.scheme == "wss") then
-        enc := .utf_8
-      if (!overridden && c == some '#') || isEof then
-        let set := if special then PercentEncodeSet.specialQuery else .query
-        url := { url with query := some (url.query.getD "" ++ encodeQuery enc buffer set) }
-        buffer := ""
-        if c == some '#' then
-          url := { url with fragment := some "" }
-          state := .fragment
-      else if !isEof then
-        buffer := buffer.push c.get!
-    | .fragment =>
-      if !isEof then
-        url := { url with fragment := some (url.fragment.getD "" ++ utf8PercentEncodeChar .fragment c.get!) }
-    if p ≥ n then return .ok url
-    p := p + 1
-  return .failure url
+    (override : Option State := none) (encoding : Encoding := .utf_8) : ParseResult :=
+  let cfg := parseCfg input0 base urlIn override
+  run cfg (8 * (cfg.cs.size + 2)) (initMachine urlIn override encoding)
+
 
 /-! ## The URL serializer (section 4.5) -/
 

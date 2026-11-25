@@ -1,0 +1,203 @@
+name: XML RSA-OAEP Lean check
+
+on:
+  push:
+    branches: [claude/spec-b-xmlenc]
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Crypto/**'
+      - 'formal/lean4/L4Factoidal/XML/**'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-xmlenc-oaep.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  oaep:
+    # The project branch already runs on push. Same-named fork branches need the PR check.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || github.head_ref != 'claude/spec-b-xmlenc'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LEAN_STACK_SIZE_KB: '16384'
+      REQUIRED_THEOREMS: |-
+        L4Factoidal.Crypto.RsaOaep.checked_none_of_no_sized_digest
+        L4Factoidal.Crypto.RsaOaep.mgf1Checked_length
+        L4Factoidal.Crypto.RsaOaep.mgf1Checked_none_of_block
+        L4Factoidal.Crypto.RsaOaep.mgf1Checked_agrees
+        L4Factoidal.Crypto.RsaOaep.emeEncodeChecked_agrees
+        L4Factoidal.Crypto.RsaOaep.emeDecodeChecked_agrees
+        L4Factoidal.Crypto.WebHacl.sha224ForXml?_size
+        L4Factoidal.Crypto.RsaOaep.emeEncode_length
+        L4Factoidal.Crypto.RsaOaep.emeDecode_emeEncode
+        L4Factoidal.Crypto.RsaOaep.oaepDecrypt_oaepEncrypt
+        L4Factoidal.XML.Enc.xmlenc11_pbkdf2_native_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_kdfOf_concatKdf
+        L4Factoidal.XML.Enc.xmlenc11_derive_concat
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_size
+        L4Factoidal.XML.Enc.xmlenc11_derive_pbkdf2_eq_webcrypto
+        L4Factoidal.XML.Enc.xmlenc11_deriveFromMaster_size
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_concat
+        L4Factoidal.XML.Enc.xmlenc11_derivedKey_pbkdf2_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_prfOf_prfUri
+        L4Factoidal.XML.Enc.xmlenc11_write_concat
+        L4Factoidal.XML.Enc.xmlenc11_write_pbkdf2_eq_rfc8018
+        L4Factoidal.XML.Enc.xmlenc11_write_derived_size
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+
+      - name: Check the XML OAEP proofs and guards from fresh source
+        id: compile
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          export EVIDENCE="$RUNNER_TEMP/xmlenc-oaep-evidence"
+          export LEAN_PATH="$RUNNER_TEMP/xmlenc-oaep-oleans"
+          export LEAN_SRC_PATH="$PWD"
+          mkdir "$EVIDENCE" "$LEAN_PATH" "$EVIDENCE/timings"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            uname -sm
+            printf 'Virtual memory limit (KiB): %s\n' "$(ulimit -v)"
+          } | tee "$EVIDENCE/source.txt"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python3 -u - <<'PY' 2>&1 | tee "$EVIDENCE/lean.log"
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import shlex
+          import subprocess
+
+          project = Path.cwd().resolve()
+          evidence = Path(os.environ['EVIDENCE'])
+          modules = Path(os.environ['LEAN_PATH'])
+          roots = [
+              'L4Factoidal.Crypto.RsaOaepChecked',
+              'L4Factoidal.XML.EncTests',
+              'L4Factoidal.Crypto.RsaOaep',
+              'L4Factoidal.Crypto.WebHacl',
+          ]
+          required = os.environ['REQUIRED_THEOREMS'].split()
+
+          def run_lean(label, arguments, stdin=None):
+              command = [
+                  '/usr/bin/time', '-v', '-o', str(evidence / 'timings' / (label + '.txt')),
+                  'timeout', '--kill-after=10s', '180s', 'lean', '-j1', '-s16384', '-M2048',
+                  *arguments,
+              ]
+              with (evidence / 'commands.txt').open('a') as log:
+                  print(label, shlex.join(command), file=log)
+              result = subprocess.run(command, input=stdin, text=True, capture_output=True)
+              print(f'\n[{label}]', flush=True)
+              print(result.stdout, end='')
+              print(result.stderr, end='')
+              with (evidence / 'exits.txt').open('a') as log:
+                  print(label, result.returncode, file=log)
+              if result.returncode:
+                  raise SystemExit(f'{label} failed with exit {result.returncode}')
+              return result
+
+          run_lean('version', ['--version'])
+          prefix = Path(run_lean('prefix', ['--print-prefix']).stdout.strip())
+          toolchain_src = (prefix / 'src' / 'lean').resolve(strict=True)
+          order = []
+          seen = set()
+          visiting = set()
+
+          def visit(source):
+              if source in seen:
+                  return
+              if source in visiting:
+                  raise SystemExit(f'Cyclic import at {source}')
+              visiting.add(source)
+              module = '.'.join(source.with_suffix('').parts)
+              # Lean resolves imports against this checkout and its own installed source tree.
+              deps = run_lean('imports-' + module, ['--src-deps', str(source)]).stdout
+              for line in deps.splitlines():
+                  dep = Path(line).resolve(strict=True)
+                  if dep.is_relative_to(project):
+                      visit(dep.relative_to(project))
+                  elif not dep.is_relative_to(toolchain_src):
+                      raise SystemExit(f'Unexpected dependency source: {dep}')
+              visiting.remove(source)
+              seen.add(source)
+              order.append(source)
+
+          for name in roots:
+              visit(Path(*name.split('.')).with_suffix('.lean'))
+
+          with (evidence / 'source.txt').open('a') as manifest:
+              for source in order:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=manifest)
+
+          for source in order:
+              name = '.'.join(source.with_suffix('').parts)
+              target = modules / source.with_suffix('.olean')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              strict = ['-DwarningAsError=true'] if name == 'L4Factoidal.Crypto.RsaOaepChecked' else []
+              arguments = [*strict, '-o', str(target)]
+              outputs = [target]
+              if name in ('L4Factoidal.NatBounds', 'L4Factoidal.Crypto.WebHacl',
+                          'L4Factoidal.Crypto.RsaOaepChecked'):
+                  generated = evidence / 'generated' / source.with_suffix('.c')
+                  generated.parent.mkdir(parents=True, exist_ok=True)
+                  arguments.extend(['-c', str(generated)])
+                  outputs.append(generated)
+              run_lean('compile-' + name, [*arguments, str(source)])
+              for output in outputs:
+                  if not output.is_file() or output.stat().st_size == 0:
+                      raise SystemExit(f'Missing compiler output: {output}')
+
+          probe = '\n'.join([*(f'import {m}' for m in roots), '',
+                             *(f'#print axioms {n}' for n in required), ''])
+          (evidence / 'RequiredAxioms.lean').write_text(probe)
+          result = run_lean('required-axioms', ['--stdin'], stdin=probe)
+          reports = result.stdout + '\n' + result.stderr
+          (evidence / 'axioms.log').write_text(reports)
+          printed = re.findall(r"'([^']+)' (?:depends on axioms: \[[^\]]*\]|does not depend on any axioms)", reports)
+          missing = set(required) - set(printed)
+          if missing:
+              raise SystemExit('Missing axiom reports: ' + ', '.join(sorted(missing)))
+          (evidence / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
+          PY
+
+      - name: Audit Lean source and reported axioms
+        if: ${{ !cancelled() && steps.compile.outcome != 'skipped' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/xmlenc-oaep-evidence"
+          python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
+            2>&1 | tee "$proof_dir/hygiene.log"
+
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xmlenc-oaep-lean-evidence
+          path: ${{ runner.temp }}/xmlenc-oaep-evidence/
+          if-no-files-found: warn
+          retention-days: 30

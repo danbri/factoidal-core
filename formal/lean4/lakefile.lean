@@ -295,6 +295,20 @@ extern_lib libl4hostread pkg := do
 
 @[default_target] lean_lib L4Factoidal
 
+-- Checked local ASK attestation, including the exhaustion/resource proofs.
+-- The native and zkVM edges call the same exported Lean computation (#745).
+lean_lib AskAttestation where
+  roots := #[`L4Factoidal.RDFS.CheckedTheorems, `L4Factoidal.RDFS.CheckedTests,
+    `L4Factoidal.SPARQLRL.CheckedTheorems, `L4Factoidal.SPARQLRL.CheckedSemanticTheorems,
+    `L4Factoidal.SPARQLRL.CheckedTests,
+    `L4Factoidal.Attestation.Tests, `Harness.AskAttestationExports]
+
+lean_exe «l4-ask-attest» where root := `Harness.AskAttestation
+
+-- Persistence proofs stay outside the browser's runtime import closure.
+lean_lib CookieWireProofs where
+  roots := #[`L4Factoidal.Net.CookieWireTheorems]
+
 -- The WebAssembly engine (issue 1244): spec relations generated from SpecTec, the
 -- executable engine, and the theorems between them. Its own library, so the main
 -- library and the l4wasm closure do not grow until something imports it.
@@ -327,8 +341,11 @@ lean_lib LeanJSHost where
 -- The JavaScript engine written in Lean (docs/designissues/2026-11-08-lean-js-engine.md):
 -- parser, evaluator and built-ins. Its own library; only Lean core, Std and the XSD/XPath
 -- number code. `lake exe leanjs` runs a script, Test262 files, or the benchmarks.
+-- `L4Factoidal.JS.FuelMono` holds the proof tactics (it imports Lean.Elab.Tactic): a root of its
+-- own, built by default, never imported by `L4Factoidal.JS`, so no executable links Lean's
+-- elaborator (leanjs was 110.9 MB with it, 11 MB without; issue 551, tools/binary-budget.py).
 @[default_target] lean_lib JS where
-  roots := #[`L4Factoidal.JS]
+  roots := #[`L4Factoidal.JS, `L4Factoidal.JS.FuelMono]
 lean_exe leanjs where root := `L4Factoidal.JS.Main
 -- Fuel monotonicity of the evaluator's mutual block (`IH_all`, JS/FuelMonoAll.lean): a chain of
 -- generated proof modules, checked one at a time (about a quarter of an hour, under 2 GB each).
@@ -352,6 +369,39 @@ lean_lib BubblePopRealm where
   roots := #[`L4Factoidal.FrameCost]
 -- The event sequences that labs/demos/foafnaut/frame_cost_test.ts replays.
 lean_exe «frame-cost-cases» where root := `Harness.FrameCostCases
+
+-- Paralliverse's stable word-packing specification, staged model and proofs (issue #604).
+@[default_target] lean_lib Paralliverse where
+  roots := #[`L4Factoidal.Paralliverse]
+
+-- Opt-in ordered collection and its CPU pack and SBM11 scan refinements (issue 641).
+lean_lib ParalliverseOrderedProofs where
+  roots := #[`L4Factoidal.Paralliverse.Ordered, `L4Factoidal.Paralliverse.OrderedPackTheorems,
+    `L4Factoidal.Storage.Sbm11.OrderedScanTheorems, `Harness.ParalliverseOrderedGuards,
+    `Harness.ParalliverseOrderedScanGuards]
+
+-- Typed, backend-neutral static programs and the task-based CPU refinement (issue 644).
+lean_lib ParalliverseProgramProofs where
+  roots := #[`L4Factoidal.Paralliverse.Program, `L4Factoidal.Paralliverse.ProgramCPU,
+    `L4Factoidal.Paralliverse.ProgramWords, `Harness.ParalliverseProgramGuards]
+
+-- Optional bridge to the existing Dataflow contracts, without a generic-core dependency.
+lean_lib ParalliverseProgramDataflowProofs where
+  roots := #[`L4Factoidal.Paralliverse.ProgramDataflow]
+
+-- Typed partial GPU lowering and the bounded developer Studio (issues 646, 647).
+lean_lib ParalliverseStudioProofs where
+  roots := #[`L4Factoidal.Paralliverse.WordMapGPUChain, `L4Factoidal.Paralliverse.Studio,
+    `L4Factoidal.Paralliverse.StudioReportTheorems,
+    `Wasm.ParalliverseHub, `Harness.ParalliverseWordMapGPUModel,
+    `Harness.ParalliverseStudioFixtures]
+
+-- The opt-in CPU fixture runner emits JSON Lines.
+lean_exe «paralliverse-cpu» where root := `Harness.ParalliverseCpu
+
+-- The browser's narrow byte ABI and its opt-in native fixture runner.
+lean_lib ParalliverseHub where roots := #[`Wasm.ParalliverseHub]
+lean_exe «paralliverse-hub-fixtures» where root := `Harness.ParalliverseHubFixtures
 
 -- The GPU API of page scripts: the WGSL subset, the commands Lean validates, and their
 -- theorems (docs/designissues/2026-11-08-page-gpu.md). Only Lean core.
@@ -413,7 +463,7 @@ lean_lib ClosureChecks where
     `Harness.Sbm11Gen, `Harness.RunHeap, `Harness.Sbm11Query, `Harness.Sbm11Delta, `Harness.Sbm11Update, `Harness.Sbm11PackLib, `Harness.Sbm11Compact, `Harness.Sbm11PermCheck,
     `Harness.Sbm11Export, `Harness.Sbm11MemGenCheck, `Harness.Sbm11PackSpecCheck,
     `Harness.PlannerCheck, `Harness.PlannerKinds, `Harness.PlannerSbm11IO,
-    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump] : Array Lean.Name).map Glob.one
+    `Harness.ProofObligations, `Harness.WorkerPool, `Harness.DomDump, `Harness.ShaclProbe] : Array Lean.Name).map Glob.one
   ++ #[Glob.submodules `Harness.Unicode]
 
 -- The WebAssembly export surface: the JSON string-in / string-out ABI
@@ -424,6 +474,7 @@ lean_lib ClosureChecks where
   srcDir := "."
   roots := #[`Wasm.Abi, `Wasm.Exports, `Wasm.Dispatch,
              `Wasm.ExtHost, `Wasm.Ops.ExtFns, `Wasm.Ops.Clock,
+             `Wasm.Ops.GpuSparql,
              `Wasm.Ops.ErrorModel, `Wasm.ErrorModelTests,
              `Wasm.Ops.Support, `Wasm.Ops.Jwe, `Wasm.Ops.FromDataset, `Wasm.Ops.Parse, `Wasm.Ops.Query,
              `Wasm.Ops.Reason, `Wasm.Ops.Canon, `Wasm.Ops.CL,
@@ -436,7 +487,7 @@ lean_lib ClosureChecks where
              `Wasm.Ops.Explain,
              `Wasm.Ops.StageList,
              `Wasm.Ops.PipelineNodes,
-             `Wasm.Ops.GraphNodes, `Wasm.GraphNodesTests,
+             `Wasm.Ops.GraphNodes, `Wasm.Ops.PVGraph, `L4Factoidal.GpuDomainSpecificLanguage.GpuPlan, `Wasm.GraphNodesTests,
              `Wasm.Ops.Handles,
              `Wasm.Ops.DatasetFull,
              `Wasm.Ops.Pack,
@@ -456,7 +507,7 @@ lean_lib ClosureChecks where
              `Wasm.Ops.Maths,
              `Wasm.Ops.Vc, `Wasm.Ops.Cid, `Wasm.Ops.Qt4,
              `Wasm.Ops.Lenient, `Wasm.Ops.Validate,
-             `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue,
+             `Wasm.Ops.DeltaLog, `Wasm.Ops.LiteralValue, `Wasm.Ops.Wikidata, `Wasm.Ops.QuerySyntax,
              `Wasm.Ops.Terms, `Wasm.Ops.Collections, `Wasm.Ops.ContainerPath,
              -- The core wasm (issue 713 stage 4): its dispatch, its C symbols,
              -- the op modules the split moved out of the core closure, and the
@@ -845,6 +896,9 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- See L4Factoidal/SPARQL/Parser.lean and Harness/SparqlSyntaxProbe.lean.
 @[default_target] lean_exe «l4sparql-probe» where root := `Harness.SparqlSyntaxProbe
 
+-- Wikimedia rewriter JSONL v1 transport backed by the Factoidal Lean rules.
+lean_exe «l4wikidata-rewriter» where root := `Wikidata.RewriteServer
+
 -- Verifiable Credentials Data Integrity (eddsa-rdfc-2022) + did:key
 -- probe (Harness/VcProbe.lean): the RFC 8032 Ed25519 vectors through
 -- the HACL* extern (which `#guard` cannot evaluate), the did:key
@@ -882,8 +936,9 @@ lean_exe «l4xforms» where root := `Harness.XFormsRun
 -- tests/xmlenc/fixtures.json (Harness/XmlEncProbe.lean, issues 1084, 1073).
 @[default_target] lean_exe «l4xmlenc-probe» where root := `Harness.XmlEncProbe
 
--- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean).
-@[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbe
+-- SHACL Core probe over the W3C shacl test suite (Harness/ShaclProbe.lean; the entry point
+-- is Harness/ShaclProbeMain.lean, so other runners can import the probe).
+@[default_target] lean_exe «l4shacl» where root := `Harness.ShaclProbeMain
 
 -- SHACL 1.2 rules suite (Harness/ShaclRulesRun.lean, L4Factoidal/SHACL/Rules.lean).
 @[default_target] lean_exe «l4shacl-rules» where root := `Harness.ShaclRulesRun

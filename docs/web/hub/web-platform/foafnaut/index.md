@@ -10,11 +10,14 @@ layout: hub.njk
 
 Foafnaut is a web browser built on foafnaut2525, a web rendering engine written in
 Lean. The engine parses HTML, computes CSS, lays out text and boxes, and draws with
-WebGPU. It runs in a web page, in its own macOS window, and as a sandboxed guest. Real
+WebGPU. It runs in a web page, in its own window on macOS and Linux, and as a sandboxed guest. Real
 sites mostly do not load yet.
 
 - [Open Foafnaut]({{ '/web/hub/foafnaut/' | url }}): the browser in this site, with
   tabs and an address bar. It works at phone width.
+- [Download Foafnaut for Linux x86_64](https://github.com/danbri/factoidal-builds/releases/download/build-1ba2ef92803c-foafnaut-browser-linux-x86_64/foafnaut-browser-linux-x86_64.tar.gz).
+  The window smoke test passed on Ubuntu 24.04 with X11/Xvfb and Mesa software Vulkan.
+  [Launch instructions and runtime dependencies](https://github.com/danbri/factoidal-core/blob/main/labs/demos/foafnaut/LINUX.md)
 - [The demo pages]({{ '/web/hub/foafnaut/?page=index.html' | url }}), and
   [JavaScript in Foafnaut]({{ '/web/hub/foafnaut/?page=js-status.html' | url }}), the
   status of page scripts.

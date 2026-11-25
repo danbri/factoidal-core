@@ -114,6 +114,46 @@ def answer (d : Dom) (k : NodeId) (q : String) : String :=
   | "x" => if selectedness d k then "1" else "0"
   | _ => ""
 
+/-! ## Implicit submission (HTML §4.10.21.2) -/
+
+/-- A submit button (HTML §4.10.6): a `button` whose type is submit, an `input` of type
+submit or image. -/
+def submitButton (d : Dom) (k : NodeId) : Bool :=
+  isHtml d k ["button"] && buttonType d k == "submit" ||
+    isHtml d k ["input"] && (inputType d k == "submit" || inputType d k == "image")
+
+/-- The form's default button: its first submit button in tree order (an image button
+included). -/
+def defaultButton (d : Dom) (f : NodeId) : Option NodeId :=
+  (d.treeOrder (d.root f) false).find? fun k => submitButton d k && formOwner d k == some f
+
+/-- The fields that block implicit submission: `input` elements of these types. -/
+def blocksImplicit (d : Dom) (k : NodeId) : Bool :=
+  isHtml d k ["input"] && ["text", "search", "url", "tel", "email", "password", "date", "month", "week",
+    "time", "datetime-local", "number"].contains (inputType d k)
+
+/-- What Enter in a field does. -/
+inductive Implicit where
+  /-- a click at the form's default button (its activation behaviour submits the form) -/
+  | click (button : NodeId)
+  /-- the form is submitted from itself (it has no submit button) -/
+  | submit (form : NodeId)
+  deriving Repr, BEq, Inhabited
+
+/-- Implicit submission (HTML §4.10.21.2) of Enter in `field`: a field that blocks implicit
+submission and has a form owner. When the form has a default button: a click at it, unless it
+is disabled (then nothing). When it has none: the form is submitted, unless more than one of
+its fields block implicit submission. `none` for anything else (a `textarea`, a checkbox, a
+field with no form). -/
+def implicitSubmission (d : Dom) (field : NodeId) : Option Implicit :=
+  if !blocksImplicit d field then none else
+  match formOwner d field with
+  | none => none
+  | some f =>
+    match defaultButton d f with
+    | some b => if disabledControl d b then none else some (.click b)
+    | none => if ((formElements d f).filter (blocksImplicit d)).size ≤ 1 then some (.submit f) else none
+
 /-! ## What is proved -/
 
 /-- Says: a `select` without `multiple` never has more than one selected option, whatever
@@ -137,6 +177,45 @@ theorem formElements_owned (d : Dom) (f k : NodeId) (h : k ∈ formElements d f)
   have h2 := (Array.mem_filter.mp h).2
   simp only [Bool.and_eq_true, beq_iff_eq] at h2
   exact ⟨h2.1.1, h2.2⟩
+
+/-- Kind: property of `implicitSubmission`. Says: Enter in a field only ever clicks a submit
+button that is not disabled and belongs to the field's own form, or submits that form; so a
+key in a field can not press another form's button, a plain button, or a disabled one. Does
+not say: what the submission then sends (`HTML.FormSubmission.plan`), or that the page did
+not cancel the key. -/
+theorem implicitSubmission_sound (d : Dom) (field : NodeId) :
+    (∀ b, implicitSubmission d field = some (.click b) →
+      submitButton d b = true ∧ disabledControl d b = false ∧ ∃ f, formOwner d field = some f ∧ formOwner d b = some f) ∧
+    (∀ f, implicitSubmission d field = some (.submit f) → formOwner d field = some f) := by
+  unfold implicitSubmission
+  constructor
+  · intro b h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i f hf
+        split at h
+        · rename_i b' hb
+          split at h
+          · cases h
+          · rename_i hdis
+            cases h
+            have hp := Array.find?_some hb
+            simp only [Bool.and_eq_true, beq_iff_eq] at hp
+            exact ⟨hp.1, by simpa using hdis, f, hf, hp.2⟩
+        · split at h <;> cases h
+  · intro f h
+    split at h
+    · cases h
+    · split at h
+      · cases h
+      · rename_i f' hf
+        split at h
+        · split at h <;> cases h
+        · split at h
+          · cases h; exact hf
+          · cases h
 
 /-- Says: each label of a control is a `label` element whose labeled control is that control
 (so `label.control` and `control.labels` agree). -/

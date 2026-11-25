@@ -166,7 +166,7 @@ private def pageT := "<div class=a><p id=t class=b>x</p></div>"
 #guard marginOf pageT ":root { --m: 1px } p { margin-top: 9px; margin: var(--m) }" == some [1, 1, 1, 1]
 -- invalid at computed-value time: as if not declared (this profile starts a `p` with the
 -- user agent's margins, which are not declarations, so they stand where CSS says 0)
-#guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [8, 0, 8, 0]
+#guard marginOf pageT "p { margin: 3px } #t { margin: var(--none) }" == some [16, 0, 16, 0]
 #guard marginOf pageT "p { margin: calc(1px + 2px) 0 }" == some [3, 0, 3, 0]
 -- flow-relative properties (CSS Logical 1): one cascade with the physical ones, by direction
 private def paddingOf (html css : String) : Option (List Float) :=
@@ -195,11 +195,24 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: unset }" == some (-1)
 #guard widthOf pageT ".a { width: 50px } p { width: 20px } #t { width: initial }" == some (-1)
 #guard marginOf pageT "p { margin: 3px } #t { margin: initial }" == some [0, 0, 0, 0]
-#guard marginOf pageT "p { margin: 3px } #t { margin: revert }" == some [8, 0, 8, 0]
+#guard marginOf pageT "p { margin: 3px } #t { margin: revert }" == some [16, 0, 16, 0]
 #guard marginOf pageT ".a { margin: 3px } p { margin: inherit }" == some [3, 3, 3, 3]
 #guard (styleAt pageT ".a { font-size: 30px; font-family: Foo } p { font-size: 10px; font-family: Bar } #t { font: inherit }").map
   (fun s => (s.fontSize, s.fontFamily)) == some (30, "Foo")
+-- HTML's legacy size is a presentational hint, including for a nested font element.
+#guard (styleAt "<font color='#008000'><span id=t>x</span></font>" "").map (·.color.g) == some (128/255)
+#guard redOf "<font color=blue id=t>x</font>" "#t{color:red}" == some 1
+#guard redOf "<div style='color:red'><font color=transparent id=t>x</font></div>" "" == some 1
+#guard (styleAt "<h1><font size=7><font id=t>x</font></font></h1>" "").map (·.fontSize) == some 48
+#guard (styleAt "<h1><font size='+0' id=t>x</font></h1>" "").map (·.fontSize) == some 16
+#guard (styleAt "<h1><font size='- 1' id=t>x</font></h1>" "").map (·.fontSize) == some 32
+#guard (styleAt "<h1><font size=7 id=t>x</font></h1>" "#t { font-size: 50% }").map (·.fontSize) == some 16
 #guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: inherit }").map (·.fontSize) == some 16
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 4em }").map (·.fontSize) == some 64
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 150% }").map (·.fontSize) == some 24
+#guard (styleAt "<div><small id=t>x</small></div>" "small { font-size: 1em }").map (·.fontSize) == some 16
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: 20px }").map (·.fontSize) == some 20
+#guard (styleAt "<div><h1 id=t>x</h1></div>" "h1 { font-size: bogus }").map (·.fontSize) == some 32
 -- white-space keeps or collapses white space
 #guard (styleAt pageT "#t { white-space: pre-wrap }").map (·.preformatted) == some true
 #guard (styleAt "<pre><span id=t>x</span></pre>" "span { white-space: normal }").map (·.preformatted) == some false
@@ -215,6 +228,12 @@ private def paddingOf (html css : String) : Option (List Float) :=
 #guard (styleAt pageT "#t { background: url(a.png) no-repeat #00f }").map (fun s => (s.background.map (·.b)).getD 0) == some 1
 -- the `font` shorthand sets the size, the family and the line height
 #guard (styleAt pageT "#t { font: xx-small serif }").map (fun s => (s.fontSize, s.fontFamily)) == some (9, "serif")
+
+-- A zero length, factor or percentage is valid. A negative value is discarded.
+#guard (styleAt pageT "#t { line-height: -0px }").map (·.lineHeight) == some 0
+#guard (styleAt pageT "#t { line-height: 0 }").map (·.lineHeightFactor) == some (some 0)
+#guard (styleAt pageT "#t { line-height: 0% }").map (·.lineHeight) == some 0
+#guard (styleAt pageT "body { line-height: 31px } #t { line-height: -2px }").map (·.lineHeight) == some 31
 #guard (styleAt pageT "#t { font: italic bold 12px/30px Georgia, serif }").map (fun s => (s.fontSize, s.lineHeight)) ==
   some (12, 30)
 #guard (styleAt pageT ".a { font: 20px/2 Foo } #t { font-size: 10px }").map (fun s => (s.fontSize, s.lineHeight)) == some (10, 20)
@@ -276,6 +295,52 @@ private def shadowInnerCss :=
 #guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss
 #guard stylesAgreeIn shadowPage shadowDocCss shadowInnerCss {hover := some 8}
 
+-- A shadow stylesheet can hide a named slot until its host has loaded or has focus.
+private def dropdownRule := ":host(:not([loaded], :focus-within)) slot[name=dropdown]{display:none}"
+
+private def dropdownPage (loaded : Bool) :=
+  "<div id='h'" ++ (if loaded then " loaded" else "") ++
+  "><template shadowrootmode='open'><button>Toggle</button><slot id='inside' name='dropdown'></slot>" ++
+  "</template><p id='menu' slot='dropdown'>Menu</p></div><slot id='outside' name='dropdown'></slot>"
+
+private def dropdownHidden (loaded focused : Bool) : Option (Bool × Bool) := do
+  let original := DOM.parseHtmlDocument (dropdownPage loaded)
+  let button ← (List.range original.size).find? (fun i => (original.get i).lname == "button")
+  let dom := if focused then original.setNode button (fun n => {n with states := 8}) else original
+  let rules ← (scopedRules dom "" dropdownRule).toOption
+  let styles ← (computeAllIn (TreeScope.of dom) dom.flat rules 1 {}).toOption
+  let inside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "inside")
+  let outside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "outside")
+  return ((← styles[inside]?).display == .none, (← styles[outside]?).display == .none)
+
+#guard dropdownHidden false false == some (true, false)
+#guard dropdownHidden true false == some (false, false)
+#guard dropdownHidden false true == some (false, false)
+#guard agreesIn (dropdownPage false) "" dropdownRule
+
+private def slotStyles : Option (Bool × Float) := do
+  let dom := DOM.parseHtmlDocument (dropdownPage true)
+  let rules ← (scopedRules dom "" "slot[name=dropdown]{color:#ff0000}").toOption
+  let styles ← (computeAllIn (TreeScope.of dom) dom.flat rules 1 {}).toOption
+  let inside ← (List.range dom.size).find? (fun i => attrValue (dom.get i) "id" == "inside")
+  let menu ← dom.getElementById 0 "menu"
+  return ((← styles[inside]?).pos.contents, (← styles[menu]?).color.r)
+
+#guard slotStyles == some (true, 1)
+
+private def namespaceSlotContents (css : String) : Option (Bool × Bool) := do
+  let dom := DOM.parseHtmlDocument "<slot id='html-slot'></slot><svg><slot id='svg-slot'></slot></svg>"
+  let html ← dom.getElementById 0 "html-slot"
+  let svg ← dom.getElementById 0 "svg-slot"
+  let rules ← (CSS.parse css).toOption
+  let styles ← (computeAll dom rules 1).toOption
+  return ((← styles[html]?).pos.contents, (← styles[svg]?).pos.contents)
+
+#guard namespaceSlotContents "" == some (true, false)
+#guard namespaceSlotContents "#html-slot{display:initial}" == some (false, false)
+#guard namespaceSlotContents "#html-slot{display:revert}" == some (true, false)
+
+
 -- A page with no shadow tree never takes the scoped path: `:host` and `::slotted()` rules
 -- go in no bucket, and match nothing.
 #guard ((CSS.parse ":host{color:red}::slotted(b){color:red}").toOption.map fun rs =>
@@ -320,11 +385,24 @@ private def isPx (v : Float) : CSS.Length → Bool
   | .px x => x == v
   | _ => false
 
+-- HTML §15.3.10 gives buttons a border-box default that author rules can override.
+#guard hinted "<button type=button>Search</button>" "" "button" fun s => s.pos.borderBox
+#guard hinted "<button>Search</button>" "button{box-sizing:content-box}" "button" fun s => !s.pos.borderBox
+#guard hinted "<div>Search</div>" "" "div" fun s => !s.pos.borderBox
+
 #guard hinted "<img width='200.25' height='20.25e2'>" "" "img" fun s => isPx 200.25 s.width && isPx 20.25 s.height
 #guard hinted "<hr width='50%'>" "" "hr" fun s => match s.width with | .percent p => p == 0.5 | _ => false
 #guard hinted "<iframe width=300 height=100></iframe>" "" "iframe" fun s => isPx 300 s.width && isPx 100 s.height
 #guard hinted "<embed hspace=7 vspace='3.5'>" "" "embed" fun s => s.margin.left == 7 && s.margin.right == 7 && s.margin.top == 3.5
 #guard hinted "<img border=4>" "" "img" fun s => s.borderStyle == .solid && s.borderWidth.top == 4
+-- `hspace` and `vspace` map to the dimension properties: a percentage is of the containing
+-- block's width (HTML §15.4.3; WPT html/rendering/dimension-attributes)
+#guard hinted "<img hspace='10%' vspace=3>" "" "img" fun s => s.margin.left == 0 && s.margin.top == 3 && s.pos.marginOf == (0,0.1,0,0.1)
+#guard hinted "<input type=image hspace='50%'>" "" "input" fun s => s.pos.marginOf == (0,0.5,0,0.5)
+#guard hinted "<input type=image border=7>" "" "input" fun s => s.borderStyle == .solid && s.borderWidth.left == 7
+-- the border hint is above the user agent's rules (the `input` border), as the width hints are
+#guard (hintedProperties {} {borderStyles := .all .solid, borderWidth := ⟨0,0,0,0⟩}).contains "border"
+#guard !(hintedProperties {} {}).contains "border"
 #guard hinted "<img border=4 width=+5>" "img{border-width:1px;width:9px}" "img" fun s => s.borderWidth.left == 1 && isPx 9 s.width
 #guard hinted "<table><tr><td width=0 height='0%'>x</table>" "" "td" fun s => match s.width, s.height with | .auto, .auto => true | _, _ => false
 #guard hinted "<table width=0 height=0><tr><td>x</table>" "" "table" fun s => (match s.width with | .auto => true | _ => false) && isPx 0 s.height
@@ -381,5 +459,45 @@ private def gradientAt (html css : String) : Option Bool := do
 #guard gradientAt "<div></div>" "div{background-image:linear-gradient(red,blue)}" == some true
 #guard gradientAt "<div></div>" "div{background:linear-gradient(#fed,#fff)} div{background:#eee}" == some false
 #guard gradientAt "<div></div>" "div{background-color:red}" == some false
+
+-- CSS-wide keywords on the shorthand also set background-image.
+private def imageParent := "<div><span>text</span></div>"
+#guard hinted imageParent "div{background:url(flag.svg) no-repeat}span{background:inherit}" "span"
+  (fun s => s.backgroundImage == some "flag.svg" && s.backgroundRepeat == (false,false))
+#guard hinted imageParent "div{background:linear-gradient(red,blue)}span{background:inherit}" "span"
+  (fun s => s.backgroundGradient.isSome)
+#guard hinted imageParent "div{background:url(flag.svg)}span{background:url(other.svg);background:unset}" "span"
+  (fun s => s.backgroundImage.isNone)
+
+
+-- HTML §15.3.3 and §15.3.8: the user agent's block margins are 1em of the element's own font
+-- size, and 0 for a list in a list (`Style.startMargin`, `Style.insideList`).
+#guard marginOf pageT "" == some [16, 0, 16, 0]
+#guard marginOf pageT "p { font-size: 20px }" == some [20, 0, 20, 0]
+#guard marginOf pageT "p { font-size: 20px; margin-top: 3px }" == some [3, 0, 20, 0]
+#guard hinted "<ul><li><ul><li>x</ul></ul>" "" "ul" fun s => s.margin.top == 16 && s.margin.left == 40
+#guard hinted "<h1>x</h1>" "" "h1" fun s => (s.margin.top - 0.67*32).abs < 0.001
+
+-- Limits that the host reports (issue 865). The fallback levels a value needs, and the fuel: a value
+-- of 32 nested fallbacks is invalid (every name missing), one of 31 is not.
+private def nestedFallbacks (n : Nat) : String := String.join (List.replicate n "var(--a, ") ++ "1px" ++ "".pushn ')' n
+#guard CssVars.fallbackLevels "10px" == 0
+#guard CssVars.fallbackLevels "var(--a)" == 2
+#guard CssVars.fallbackLevels "var(--a, var(--b, 1px)) var(--c)" == 3
+#guard CssVars.fallbackLevels "calc(var(--a) + (1px))" == 2
+#guard CssVars.fallbackLevels (nestedFallbacks 31) == CssVars.maxFallbacks
+#guard CssVars.fallbackLevels (nestedFallbacks 32) == CssVars.maxFallbacks + 1
+#guard CssVars.value (fun _ => .missing) (nestedFallbacks 31) == .value "1px"
+#guard CssVars.value (fun _ => .missing) (nestedFallbacks 32) == .missing
+-- the size at which a substitution stopped: 0 when it did not, else more than the limit
+private def big : String := "".pushn 'x' 600000
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a)").2 == 0
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a) var(--a)").1 == .missing
+#guard (CssVars.substituteR (fun _ => .value big) 32 "var(--a) var(--a)").2 > CssVars.maxValueBytes
+-- a `content` value of more parts than `maxPieces` is not a value, and says how many it asked for
+#guard Content.piecesWanted (String.join (List.replicate 65 "'a' ")) == 65
+#guard (Content.read (String.join (List.replicate 65 "'a' "))).isNone
+#guard (Content.read (String.join (List.replicate 64 "'a' "))).isSome
+#guard Content.piecesWanted "'a' / 'b' 'c'" == 1
 
 end L4Factoidal.Rendering.CascadeTests

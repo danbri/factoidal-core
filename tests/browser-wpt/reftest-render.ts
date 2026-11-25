@@ -10,8 +10,9 @@
 // lists them), its scripts run on BubblePopJS (a script session as run_html.ts starts it, time
 // moved 16 ms a step), and drawn once by the engine's CPU raster (op render with cpu:true,
 // SVGRaster) at the job's size, CSS pixels = device pixels. The default face is Noto Sans
-// (third_party/fonts) with the Hub's fallback fonts, as in the window; --bitmap-font draws with
-// the engine's bitmap face instead (a diagnostic, never a score).
+// (third_party/fonts) with the Hub's fallback fonts, and serif and monospace text draw with
+// Liberation Serif and Liberation Mono (serif_font.ts), as in the window; --bitmap-font draws
+// with the engine's bitmap face instead (a diagnostic, never a score).
 //
 // When the page is drawn: WPT's rule (wptrunner reftest-wait.js): after the load, and while the
 // root element's class has `reftest-wait`, when a script removes it. Here: after the first
@@ -26,6 +27,7 @@
 import {loadHTML,nativeBackends,unpackAnswer} from "../../labs/demos/foafnaut/native_html_engine.ts";
 import {inputURL,loadFontFile,prepareHTML,readSource,setFontHost,setScriptHost,setImagesAfterFirstFrame} from "../../labs/demos/foafnaut/native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts} from "../../labs/demos/foafnaut/native_html_fonts.ts";
+import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontPath} from "../../labs/demos/foafnaut/serif_font.ts";
 import {netAnswer} from "../../labs/demos/foafnaut/native_net.ts";
 import {pngOf} from "../../labs/demos/foafnaut/png_write.ts";
 // @ts-ignore plain JavaScript module of the Hub
@@ -56,6 +58,8 @@ if(!bitmap){
 }
 // Images go with the first frame: there is one frame.
 setImagesAfterFirstFrame(false);
+/** The generic faces given to the engine so far (each once a run). */
+const faces={serif:false,mono:false};
 let size={width:800,height:600};
 const call=(source:string,request:Record<string,unknown>)=>engine.scriptSession(source,request) as unknown as Turn;
 const synced=async(turn:Turn):Promise<Turn>=>{
@@ -104,8 +108,16 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   let waited=0,timedOut=false;
   const script=page.script;
   const scriptErrors:string[]=[];
+  // What the page's script reads cost the engine (issue 871): measures made, and of them the
+  // ones that styled the whole document and the ones that styled only what was written.
+  const reads={layouts:0,wholeStyles:0,partStyles:0,reads:0,instructions:0};
+  let wholeWhy="";
   if(script){
     const take=async(next:Turn)=>{
+      const t=next as unknown as Record<string,unknown>;
+      for(const k of Object.keys(reads) as (keyof typeof reads)[])if(typeof t[k]==="number")reads[k]+=t[k] as number;
+      // why the whole document was styled, counted by reason since the page started (the last turn's)
+      if(typeof t.wholeWhy==="string")wholeWhy=t.wholeWhy;
       // the turn's errors, and the console lines of uncaught exceptions
       for(const e of [...(next.errors??[]),...(next.logs??[]).filter(l=>/^Uncaught /.test(String(l)))])if(scriptErrors.length<4)scriptErrors.push(String(e).slice(0,200));
       if(Deno.env.get("REFTEST_DEBUG"))console.error(JSON.stringify({logs:next.logs,errors:next.errors,changed:(next as {changed?:boolean}).changed,clock:(next as {clock?:number}).clock}).slice(0,600));
@@ -134,8 +146,34 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
     }
   }
   const {source,options}=page.request(job.width,job.height,{textScalePercent:100,zoomUnit:100});
-  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true});
-  const buffer=bytesBackend(source,request,job.width,job.height);
+  // REFTEST_DUMP_DIR: the document as it is drawn (after the scripts), for debugging a page.
+  const dumpDir=Deno.env.get("REFTEST_DUMP_DIR");
+  if(dumpDir){await Deno.writeTextFile(`${dumpDir}/${job.file}.html`,source);
+    await Deno.writeTextFile(`${dumpDir}/${job.file}.options.json`,JSON.stringify(options));}
+  // partialNote:false: no "Partial page" note in the picture (WebDocument.layOutDOMIn); it is the
+  // browser's, not the page's. An older engine ignores the field and draws the note.
+  // REFTEST_TIME: one render as the window asks for it (no CPU pixels), timed, with the phase
+  // timings the engine gives, on standard error (a measurement, not part of the score).
+  if(Deno.env.get("REFTEST_TIME")){
+    const t0=performance.now();
+    const gpu=bytesBackend(source,JSON.stringify({...options,op:"render",checks:false,partialNote:false}),job.width,job.height);
+    const ms=performance.now()-t0;
+    const head=unpackAnswer(gpu).head as Record<string,unknown>;
+    const timing=Object.fromEntries(Object.entries((head.page??head) as Record<string,unknown>).filter(([k,v])=>/ms|Ms|time|Time|cost/.test(k)&&typeof v!=="object"));
+    console.error(JSON.stringify({type:"reftest-time",file:job.file,ms:Math.round(ms),sourceChars:source.length,timing}));
+  }
+  const request=JSON.stringify({...options,op:"render",checks:false,cpu:true,partialNote:false});
+  let buffer=bytesBackend(source,request,job.width,job.height);
+  // The serif and monospace faces, as the window holds them (serif_font.ts): given the first time
+  // a render says its text wants one, then the page is drawn again. Only an engine that holds
+  // such a face says so, so an older engine never gets a font load mode it does not know.
+  if(!bitmap){
+    const wants=unpackAnswer(buffer).head as {wantsSerif?:unknown;wantsMono?:unknown};
+    let again=false;
+    if(wants.wantsSerif===true&&!faces.serif){faces.serif=true;again=true;await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif");}
+    if(wants.wantsMono===true&&!faces.mono){faces.mono=true;again=true;await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono");}
+    if(again)buffer=bytesBackend(source,request,job.width,job.height);
+  }
   if(script)try{engine.scriptSession("",{action:"close"});}catch{/* closed */}
   const {head,sections}=unpackAnswer(buffer);
   if((head as {error?:string}).error)throw new Error(String((head as {error?:string}).error));
@@ -167,7 +205,7 @@ async function draw(job:{url:string;width:number;height:number;file:string}) {
   // What the engine skipped on the page (liberal mode: WebAccept diagnostics), for finding causes.
   const diags=((scene.diagnostics??head.diagnostics) as {feature?:string;message?:string}[]|undefined)??[];
   const skipped=[...new Set(diags.map(d=>`${d.feature??""}: ${d.message??""}`.slice(0,160)))].slice(0,12);
-  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script,...(skipped.length?{skipped}:{}),...(scriptErrors.length?{scriptErrors}:{})};
+  return {status:timedOut?"timeout":"ok",sha,waited,scripted:!!script,...(script?{scriptCost:{...reads,wholeWhy}}:{}),...(skipped.length?{skipped}:{}),...(scriptErrors.length?{scriptErrors}:{})};
 }
 
 const jobs=(await Deno.readTextFile(opt("--list"))).split("\n").filter(Boolean).map(l=>JSON.parse(l));

@@ -1,29 +1,31 @@
 import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
-import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
-import {inputURL,loadFontFile,prepareHTML,readSource,refusalHTML,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
+import {prefetchTarget,trackMotion,stateKey,sameState,canSwap,keepReach,holdForPrefetch,PREFETCH_MARGIN_ROWS,FRAME_MS,type Motion,type StateKey} from "./scroll_prefetch.ts";
+import {Downloaded,inputURL,loadFontFile,prepareHTML as prepareDocument,readSource,refusalHTML,type DocumentCookies,type DocumentRequest,setFontHost,setImagesAfterFirstFrame,setPageDecoding,setScriptHost,type PageView} from "./native_html_document.ts";
 import {fallbackFontHost,loadFallbackFonts,mayNeedFallbackFonts,type FallbackFont,type PageFonts} from "./native_html_fonts.ts";
 import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
-import {netAnswer,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
-import {loadNativeWindow} from "./native_window.ts";
+import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
+import {loadNativeWindow,type NativeEvent as UIEvent} from "./native_window.ts";
+import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
-import {cocoaSurfaceOptions} from "./cocoa_surface.ts";
+import {nativeSurfaceOptions} from "./cocoa_surface.ts";
 import {createHTMLWindowSession,type PresentTarget} from "./native_html_session.ts";
-import {hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {defaultStateDir,hostState,STATE_PAGES,STATE_COMMANDS} from "./native_state.ts";
+import {cookieSaveQueue} from "./native_cookie_save.ts";
 import {cleanupUI} from "./ui_cleanup.ts";
 import {createRouter} from "../../../docs/web/hub/foafnaut/link-route.mjs";
-import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,turnSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
+import {fetchedAnswer,scriptFailure,scrollLimitOf,inputFirst,scrollFirst,scriptsFirst,turnSliceSteps,startSliceSteps} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 import {gateConsole} from "../../../docs/web/hub/foafnaut/log-gate.mjs";
 import type {LinkRoute} from "./native_html_engine.ts";
+import type {AccessibilityAnswer} from "./native_html_engine.ts";
 import {requestRenderPlan} from "./render_plan.ts";
 import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
-import {SERIF_FAMILY,serifFontHost,serifFontPath,wantsSerif} from "./serif_font.ts";
-import type {UIEvent} from "./ui_engine.ts";
+import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -31,14 +33,18 @@ async function buildInfo():Promise<BuildInfo> {
   try{return JSON.parse(await Deno.readTextFile(new URL("./.build/native-html/build-info.json",import.meta.url)));}
   catch{return {};} // run from source with no app build
 }
+function siblingEngine():string|undefined {
+  const name=Deno.build.os==="linux"?"libweb-render.so":"libweb-render.dylib";
+  const path=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+name;
+  try { if(Deno.statSync(path).isFile)return path; } catch { /* no native worker installed */ }
+}
 async function main() {
   const args=[...Deno.args];
   // --version: the engine's own answer (its build facts are compiled into it), then this
   // program's build record, and the engine's line when the two disagree.
   if(args.includes("--version")){
     const info=await buildInfo();
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    let library:string|undefined;try{if(Deno.statSync(beside).isFile)library=beside;}catch{/* Wasm */}
+    const library=args.includes("--wasm-engine")?undefined:siblingEngine();
     const answer=(await loadHTML(library)).engineBuild(info.commit?{version:info.version,commit:info.commit}:{});
     console.log(answer.line);
     console.log(info.commit?`program build record: release ${info.version??"unknown"}, commit ${info.commit}${info.dirty?" (with uncommitted changes)":""}, built ${info.builtAt}`:"program build record: none (run from source)");
@@ -46,12 +52,14 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
-  let pollIdle=false,scrollFirstOn=true,inputFirstOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
+  let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
-  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=200;
-  let url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
+  let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
+  let windowSize:[number,number]|undefined;
+  let accessibilityOn=false;
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false;
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -70,7 +78,10 @@ async function main() {
     else if(arg==="--poll-idle")pollIdle=true;
     // For comparison: page changes are not held while the user scrolls, timer turns not held for input.
     else if(arg==="--no-scroll-first")scrollFirstOn=false;
+    else if(arg==="--no-prefetch-hold")prefetchHoldOn=false;
     else if(arg==="--no-input-first")inputFirstOn=false;
+    // For comparison: a page's start is one turn (every script and task due at once before the first frame).
+    else if(arg==="--no-start-slices")startSlicesOn=false;
     // Off screen: a PNG of the window after the 120th present of page canvases, a picture of
     // what the native engine drew (the page's layers, its canvases and the chrome).
     else if(arg==="--shot"){shotFile=args.shift();if(!shotFile)throw new Error("--shot needs a file path");}
@@ -85,11 +96,21 @@ async function main() {
     // size of the window in percent of a usual browser's (with none, the default of a new window, 200).
     else if(arg==="--offscreen-size"){const m=/^(\d+)x(\d+)(?:@(\d))?$/.exec(args.shift()??"");
       if(!m)throw new Error("--offscreen-size needs WIDTHxHEIGHT[@SCALE]");shotSize=[Number(m[1]),Number(m[2]),Number(m[3]??2)];}
+    else if(arg==="--window-size"){
+      const m=/^(\d{1,4})x(\d{1,4})$/.exec(args.shift()??"");
+      if(!m)throw new Error("--window-size needs WIDTHxHEIGHT in window points");
+      const w=Number(m[1]),h=Number(m[2]);
+      if(w<1||w>4096||h<1||h>4096)throw new Error("--window-size dimensions must be between 1 and 4096");
+      windowSize=[w,h];
+    }
     else if(arg==="--text-size"){textSize=Number(args.shift());if(!(textSize>=50&&textSize<=1000))throw new Error("--text-size needs a percentage from 50 to 1000");}
     // No visible window (issue 1268): frames are drawn into a GPU texture of the window size, and
     // events go through the window library's queue as before, from a window that is never shown.
     // Sweeps then run with the screen locked, the display asleep, or on a machine with no display.
     else if(arg==="--offscreen")offscreen=true;
+    // Accessibility trees from the first frame, as with a screen reader attached (a check with no
+    // assistive technology): each tree is a native-html-accessibility line of the trace.
+    else if(arg==="--accessibility")accessibilityOn=true;
     // Browser state in a local LWS server (native_state.ts): on in an interactive window, off in sweeps and checks.
     else if(arg==="--no-state")stateOff=true;
     // The splash at start (WebShell.splashNodes): on in an interactive window; off with
@@ -98,6 +119,11 @@ async function main() {
     else if(arg==="--no-splash")splashArg="off";
     else if(arg==="--splash")splashArg="on";
     else if(arg==="--state-dir"){stateDir=args.shift();if(!stateDir)throw new Error("--state-dir needs a folder");}
+    // Where downloads are saved (default ~/Downloads).
+    else if(arg==="--downloads"){downloadsArg=args.shift();if(!downloadsArg)throw new Error("--downloads needs a folder");}
+    // The file the browser's lasting cookies are kept in (default: cookies.txt in the data
+    // folder, when browser state is on; a sweep or check keeps cookies in memory only).
+    else if(arg==="--cookie-file"){cookieFileArg=args.shift();if(!cookieFileArg)throw new Error("--cookie-file needs a file");}
     else if(arg==="--restore-session")restoreSession=true;
     // Sweeps read back every frame. This flag gives them the interactive rule (check when idle), to measure input latency without the check cost.
     else if(arg==="--idle-checks-only")idleChecksOnly=true;
@@ -136,6 +162,14 @@ async function main() {
     // item's command): "find=N:C" checks N matches with match C current, "find=closed" a closed field.
     else if(arg==="--find-sweep")commands=["f",[9,113,0],[9,117,0],[9,105,0],[9,99,0],[9,107,0],"find=3:1","g","find=3:2","G","find=3:1","G","find=3:3",
       [5,51,0],[5,51,0],[5,51,0],[5,51,0],[5,51,0],"find=0:0",[9,76,0],[9,65,0],[9,90,0],[9,89,0],"find=1:1",[5,53,0],"find=closed",[10,41,0],"url:foafnaut:about","tabs=2:1"];
+    // Steps from a JSON file (an array in the language of the sweeps above), for host tests of
+    // everyday use (daily_use_check.ts). Two more forms: "type:TEXT" types each character as a
+    // key of the window; "tap:X,Y" presses and releases at X,Y in page rows (layout units, as a
+    // link's rectangle); "title=X" checks the shown page's title, waiting for it up to 10 s (20 s
+    // while a page loads).
+    else if(arg==="--steps"){const file=args.shift();if(!file)throw new Error("--steps needs a JSON file");
+      commands=(JSON.parse(Deno.readTextFileSync(file)) as (string|number[])[]).flatMap(step=>typeof step==="string"&&step.startsWith("type:")
+        ?[...step.slice(5)].map(c=>[9,c.codePointAt(0)!,0]):[step]);}
     else if(arg==="--graph-sweep")commands=["graph",[2,800,565],[3,900,640],[3,1000,720],[4,1000,720]];
     // Twenty scroll steps of 120 backing pixels down the page: per-step frame time and input latency.
     // Watch a page that moves by itself (an SVG animation, page script timers) for N seconds
@@ -175,16 +209,14 @@ async function main() {
     say.log(JSON.stringify({type:"native-html-log-flood",t:Math.round(performance.now()),lines,top}));
     if(failOnFlood){say.error(`Native HTML: FAILED: the log gate tripped (--fail-on-flood): ${top.map(t=>t.message).join(" | ")}`);Deno.exitCode=1;}
   }});
-  // Lean engine for compile: --native-engine PATH, else libweb-render.dylib beside the program, else Wasm.
+  // The worker uses the requested library, the native engine beside the program, or Wasm.
   // The app goes into the Dock and Command-Tab, with its menu, before the engine loads (issue 1268).
   const early=check||offscreen||Deno.build.os!=="darwin"?undefined:await nativePreflight(()=>loadNativeWindow());
   early?.appStart();
+  if(windowSize&&offscreen)throw new Error("Use --offscreen-size for an off-screen window");
   if(nativeEngine&&wasmEngine)throw new Error("Use one of --native-engine and --wasm-engine");
   if(wasmEngine)nativeEngine=undefined;
-  else if(!nativeEngine){
-    const beside=Deno.execPath().slice(0,Deno.execPath().lastIndexOf("/")+1)+"libweb-render.dylib";
-    try{if(Deno.statSync(beside).isFile)nativeEngine=beside;}catch{/* none beside the program: Wasm */}
-  }
+  else nativeEngine??=siblingEngine();
   const engineInfo:Promise<{backend:string;path:string|null;sha256:string|null}>=nativeEngine
     ?Deno.readFile(nativeEngine).then(async bytes=>({backend:"native",path:nativeEngine!,
       sha256:[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("")}))
@@ -205,6 +237,10 @@ async function main() {
       return result;
     }])) as T;
   const engine=timed(await loadHTML());
+  const linuxKeys=Deno.build.os==="linux"
+    ?new Map(engine.keyTable("other").map(row=>[row.modifier+"/"+row.key,row.command])):undefined;
+  // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
+  const downloads=downloadsArg??(()=>{try{const home=Deno.env.get("HOME");return home?`${home}/Downloads`:undefined;}catch{return undefined;}})();
   const browserState=stateOff||check||sweep||commands||printPDF?undefined:
     hostState({engineState:engine.state,dir:stateDir,log:record=>console.log(JSON.stringify({t:Math.round(performance.now()),...record}))});
   // Noto Sans is the default face; the bitmap face is the safe mode, and the fallback.
@@ -216,6 +252,8 @@ async function main() {
   let worker:CompileClient|undefined,mainFont=false;
   type Lean=Pick<typeof engine,"xmlStylesheet"|"xslt"|"inspect"|"compile"|"selectedText"|"findInPage"|"aboutPage"|"graphStart"|"graphEvent"|"graphPage"|"sourcePage"|"wasmPage"|"sparqlPage"|"printLayout"|"encodingSetting"|"encodingChoices">;
   let lean:Lean=engine;
+  const prepareHTML:typeof prepareDocument=(reader,url,signal,inline,accept)=>
+    prepareDocument(reader,url,signal,inline,{...accept,epubReader:engine.epubReader});
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
   // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
   let engineRan="wasm";
@@ -245,14 +283,21 @@ async function main() {
     if(answer.loaded.length||answer.failed.length)console.log(JSON.stringify({type:"native-html-fonts",t:Math.round(performance.now()),where,
       ms:Math.round((performance.now()-start)*10)/10,fonts:answer.loaded,...(answer.failed.length?{failed:answer.failed}:{}),held:answer.held.length}));
   };
-  // The serif face (serif_font.ts): read and given to the engine that lays pages out the
-  // first time a render answers wantsSerif, then the page is drawn again; never before.
+  // The serif face (serif_font.ts): read and given, once a session, to the engine that lays
+  // pages out, before the first page (below).
   const serif=serifFontHost(async()=>{
     const start=performance.now(),path=serifFontPath(),where=worker?.alive?"worker":"main";
     if(worker?.alive)await worker.serifFont(path,SERIF_FAMILY);
     else await loadFontFile(engine,path,SERIF_FAMILY,"bytes","serif");
     console.log(JSON.stringify({type:"native-html-serif",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
   });
+  // The monospace face (serif_font.ts), the same way: pre, code, kbd and samp text.
+  const mono=serifFontHost(async()=>{
+    const start=performance.now(),path=monoFontPath(),where=worker?.alive?"worker":"main";
+    if(worker?.alive)await worker.monoFont(path,MONO_FAMILY);
+    else await loadFontFile(engine,path,MONO_FAMILY,"bytes","mono");
+    console.log(JSON.stringify({type:"native-html-mono",t:Math.round(performance.now()),where,ms:Math.round((performance.now()-start)*10)/10}));
+  },"monospace");
   const useMainEngine=async(reason:string)=>{
     console.error("Native HTML: ENGINE WORKER UNAVAILABLE, so Lean runs on the main thread and the window can miss input:",reason);
     console.log(JSON.stringify({type:"native-html-worker",state:"main-thread-fallback",reason}));
@@ -263,6 +308,7 @@ async function main() {
       if(mainFallbacks&&workerFonts?.length)await mainFonts.add(workerFonts);
       // The serif face the worker held, so serif pages stay serif.
       if(serif.started)await loadFontFile(engine,serifFontPath(),SERIF_FAMILY,"bytes","serif").catch(()=>{});
+      if(mono.started)await loadFontFile(engine,monoFontPath(),MONO_FAMILY,"bytes","mono").catch(()=>{});
     }catch(error){if(fontFile)throw error;workerFont=undefined;}}
   };
   if(check){
@@ -282,6 +328,14 @@ async function main() {
   }
   // With the bitmap face (safe mode) a page gets no fallback fonts.
   if(workerFont)setFontHost(pageFonts);
+  // The serif face goes in now, ahead of the first page. The worker takes calls in order, so
+  // the first layout of a serif page already has the face and is final (no second layout).
+  // Cost: one 394 KB file read and the engine's policy read of it (under 1 ms warm), once a
+  // session; a page whose text never resolves to serif draws as before. A render that still
+  // answers wantsSerif (a failed load) does not start another (serifFontHost).
+  if(workerFont){const loading=serif.want();if(!worker?.alive)await loading;}
+  // The monospace face too (320 KB, read once a session), so a page of code is laid out once.
+  if(workerFont){const loading=mono.want();if(!worker?.alive)await loading;}
   // Page scripts (WebScripts.lean): the QuickJS guest module goes into the engine that runs
   // the renders (the worker), once. The engine must answer scriptSession info first: an older
   // engine has no such op, and then a page with scripts is refused as before (issue 1274).
@@ -291,14 +345,18 @@ async function main() {
   // A sync XMLHttpRequest of a turn (netSync): the run was undone; the host answers and the
   // same action runs again (Net.Xhr), so no call here ever blocks the worker on the network.
   const syncAnswers=async(t:unknown)=>{
+    if(!(t as ScriptTurn|undefined)?.netSync)return t;
     let i=0,fetchMs=0,engineMs=0;
-    for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
-      const t0=performance.now();
-      const a=await netFetch((t as ScriptTurn).netSync!);
-      const t1=performance.now();
-      t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
-      fetchMs+=t1-t0;engineMs+=performance.now()-t1;
-    }
+    const transport=pinnedHTTPSBatch();
+    try{
+      for(;(t as ScriptTurn|undefined)?.netSync&&i<4096;i++){
+        const t0=performance.now();
+        const a=await netFetch((t as ScriptTurn).netSync!,transport);
+        const t1=performance.now();
+        t=await scriptCallRaw("scriptSession","",{action:"syncAnswer",session:(t as ScriptTurn).session,answer:a});
+        fetchMs+=t1-t0;engineMs+=performance.now()-t1;
+      }
+    }finally{transport.close();}
     // The requests a turn waited for (module graphs, sync XMLHttpRequest): each answer makes
     // the action again, so their count and the engine's time show a graph fetched one by one.
     if(i>0)console.log(JSON.stringify({type:"native-html-sync",t:Math.round(performance.now()),requests:i,fetchMs:Math.round(fetchMs),engineMs:Math.round(engineMs)}));
@@ -338,6 +396,9 @@ async function main() {
   // language is Deno's navigator.language (from LANG / LC_ALL); Lean maps it by HTML
   // §13.2.3.2's table of suggested defaults (WHATWG.Encoding.Sniff.localeEncoding).
   let encodingSetting="";const systemLocale=navigator.language??"";
+  // The search engine chosen in Settings (WebRoute.searchSetting): "" until the person picks
+  // one, and then words typed in the address bar open the browser's own search page.
+  let searchSetting="";
   setPageDecoding({fallback:encodingSetting,locale:systemLocale});
   // A window shows a page that runs no script before its images are in and draws it again with
   // them. Runs that compare frames or replay input (checks, sweeps, commands, printing) wait.
@@ -365,7 +426,10 @@ async function main() {
   // engine chose them (origin, CORS, redirects, the address of a name: Net.PageFetch).
   // Counted, so an idle window does not wait in the window library while an answer is coming.
   let netInFlight=0;
-  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number])=>{netInFlight++;return Promise.resolve(netAnswer(w)).finally(()=>{netInFlight--;});};
+  const netFetch=(w:NonNullable<ScriptTurn["netRequests"]>[number],transport?:ReturnType<typeof pinnedHTTPSBatch>)=>{
+    netInFlight++;
+    return netAnswer(w,undefined,transport).finally(()=>{netInFlight--;});
+  };
   // WebSocket connections (Net.WebSocket): the engine writes the handshake and the frames;
   // each read goes back as an answer of action `net` (status 1 with the bytes, 0 at the end).
   const sockets=new Map<string,NetSocket>();
@@ -418,21 +482,25 @@ async function main() {
         if(!plan.run){if(plan.notice)throw new Error(plan.notice);return undefined;}
         // The viewport (innerWidth, innerHeight) and the render request that lays the page out
         // for its scripts' layout reads; an engine without them ignores the fields.
-        // (The first page starts before the window's size and chrome are set: then 1280 by 800.)
+        // Before the native window exists, use its requested size or the legacy startup viewport.
         const at=(()=>{try{return {width,height,shell:shell(),textScalePercent:view.textScalePercent??100,zoomUnit:view.zoomUnit??100};}
-          catch{return {width:1280,height:800,textScalePercent:150,zoomUnit:100};}})();
+          catch{return {width:windowSize?.[0]??1280,height:windowSize?.[1]??800,textScalePercent:100,zoomUnit:100};}})();
         const turn=await scriptCall("scriptSession",source,{action:"start",url:pageURL,resources,width:at.width,height:at.height,zoomUnit:at.zoomUnit,
           ...(at.shell?{shell:at.shell}:{}),layout:{url:pageURL,textScalePercent:at.textScalePercent,zoomUnit:at.zoomUnit,...mode},
           ...(plan.engine==="bubblepop"?{engine:"bubblepop"}:{}),...(encoding?{encoding}:{}),
+          // The start in slices (page-load.mjs startSliceSteps): the page is shown after its classic
+          // scripts and the first slice of the rest; the timer turns go on with the start.
+          ...(startSlicesOn?{sliceSteps:startSliceSteps}:{}),
           ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})}) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
         // The start turn makes the page's GPU objects (canvas, buffers, pipelines); the later turns use them.
         if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();}
-        for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
+        for(const line of turn.logs)console.log(`page: ${line.replace(/^^A(\w+)^A/,"$1: ")}`);
         for(const line of turn.errors)console.error(`page error: ${line}`);
         console.log(JSON.stringify({type:"native-html-script",cause:"start",engine:plan.engine,t:Math.round(performance.now()),session:turn.session,
-          commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake}));
+          commands:turn.commandCount,instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,
+          leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,...(turn.startMore?{startMore:true}:{})}));
         return turn;
       }});
       console.log(JSON.stringify({type:"native-html-scripts",state:"on",engines:scriptEngines,default:(await keepPlans(),planFor("")?.engine),module:quickjsLoaded?quickjsPath:null,loaded,ms:Math.round(performance.now()-t0)}));
@@ -448,35 +516,63 @@ async function main() {
   let liberal=!cliStrict;
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
-  let document=await prepareHTML(lean,url,undefined,undefined,{liberal}).catch(error=>{
-    if(!startDefault)throw error;
+  // The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the engine
+  // decides each hop's Cookie field and what a response sets; the jar is text kept here. Only
+  // the engine's `keep` answer (cookies with an expiry, not passed: persistent_no_session) is
+  // written, to cookieFile, mode 0600; session cookies end with the program. An engine without
+  // the op: no cookies, as before.
+  let jarText="";
+  const cookieFile=cookieFileArg??(browserState?`${stateDir??defaultStateDir()}/cookies.txt`:undefined);
+  if(cookieFile)try{jarText=await Deno.readTextFile(cookieFile);}catch{/* none yet */}
+  type CookieOp=(request:Record<string,string>)=>Promise<{cookie?:string;jar?:string}|undefined>|{cookie?:string;jar?:string}|undefined;
+  const cookieOp=():CookieOp|undefined=>(lean as unknown as {cookies?:CookieOp}).cookies;
+  const seconds=()=>String(Math.floor(Date.now()/1000));
+  const jarSave=cookieFile?cookieSaveQueue(async()=>{
+    const kept=await cookieOp()?.({action:"keep",jar:jarText,now:seconds()});
+    if(typeof kept?.jar!=="string")return;
+    const dir=cookieFile.slice(0,cookieFile.lastIndexOf("/"));if(dir)await Deno.mkdir(dir,{recursive:true,mode:0o700});
+    await Deno.writeTextFile(cookieFile+".new",kept.jar,{mode:0o600});await Deno.rename(cookieFile+".new",cookieFile);
+  },error=>console.error("Native HTML: cookies not saved:",String(error))):undefined;
+  const cookiesFor=(initiator:string):DocumentCookies|undefined=>cookieOp()?{
+    request:async(url,method)=>(await cookieOp()!({action:"request",jar:jarText,now:seconds(),url,initiator,method}))?.cookie??"",
+    response:async(url,setCookie)=>{
+      const answer=await cookieOp()!({action:"response",jar:jarText,now:seconds(),url,setCookie:setCookie.join("\n")});
+      if(typeof answer?.jar==="string"&&answer.jar!==jarText){jarText=answer.jar;jarSave?.schedule();}
+    }}:undefined;
+  // A start page that can not be read (no network, a name that does not resolve, a refused
+  // connection) opens the window on the refusal page for it, as a later navigation would: the
+  // browser does not stop. A check run (--check-engine) still fails.
+  let document=await prepareHTML(lean,url,undefined,undefined,{liberal,...(url?{cookies:cookiesFor("")}:{})}).catch(error=>{
+    if(!startDefault&&check)throw error;
+    if(!startDefault){
+      console.error("Native HTML refused:",url,String(error));
+      return prepareHTML(lean,url!,undefined,refusalHTML(url!,String(error)));
+    }
     console.log(JSON.stringify({type:"native-html-start-fallback",url,to:indexURL,reason:String(error instanceof Error?error.message:error)}));
     return prepareHTML(lean,indexURL,undefined,undefined,{liberal});
-  }),width=1280,height=800;
-  // The first compile runs in the worker too: it warms the worker, and no frame is compiled on the main thread.
-  // It is not shown (the window's size is not known yet), so it asks for no CPU probe, as an
-  // interactive frame asks for none: the probe draws the page's SVG on the CPU, 9 s of the 14 s
-  // to the first frame of a page with a dozen inline icons. Runs that check every frame keep it.
-  const firstView:PageView&{checks?:boolean}=check||checkAll||(!idleChecksOnly&&(!!sweep||!!commands))?{}:{checks:false};
-  const firstFrame=Promise.resolve(document.compile(width,height,firstView));
-  // The first call of the main-thread engine costs 0.4 to 0.6 s (the engine's own start on this
-  // thread). It was the history entry made after this compile, between the page and its first
-  // frame; it is made here, while the worker compiles, when this thread only waits. (While
-  // the page is fetched it would hold up the loader, which works through this thread.)
-  if(worker)try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
-  let frame:HTMLArtifact=await firstFrame;
-  console.log(JSON.stringify({type:"native-html-loaded",url:document.url,primitives:frame.primitiveCount,links:frame.webRender.links.length,width,height}));
+  }),width=windowSize?.[0]??1280,height=windowSize?.[1]??800;
+  // Geometry is taken from the last presented frame. In a window, the first compile
+  // belongs to renderFrame, when the real backing size and chrome are known.
+  let frame:HTMLArtifact|undefined;
+  const noteLoaded=(page:typeof document,artifact:HTMLArtifact,width:number,height:number)=>
+    console.log(JSON.stringify({type:"native-html-loaded",t:Math.round(performance.now()),url:page.url,
+      primitives:artifact.primitiveCount,links:artifact.webRender.links.length,width,height}));
   if(check){
+    const firstFrame=Promise.resolve(document.compile(width,height));
+    // Warm the main-thread engine while the worker runs the CPU check.
+    if(worker)try{engine.historyPush({entries:[],index:0},"about:blank");}catch{/* the first real call says why */}
+    const frame=await firstFrame;
+    noteLoaded(document,frame,width,height);
     // Synthetic limits exercise only the published planner ABI. Window rendering
     // always passes the real device limits in createHTMLWindowSession.
     const plan=await requestRenderPlan("svg-offscreen","rgba8unorm",frame as unknown as {width:number;height:number;data:number[]},{
       maxUniformBufferBindingSize:65536,maxStorageBufferBindingSize:134217728,
       maxTextureDimension2D:4096,maxBufferSize:268435456});
     console.log(`Native HTML CPU plan: ${plan.abi}; ${plan.uniform.bindingType}; ${plan.uniform.bytes} bytes`);
-    console.log("Native HTML CPU engine check complete; GPU/window not requested");return;
+    console.log("Native HTML CPU engine check complete; GPU/window not requested");await jarSave?.flush();return;
   }
   const adapter=await navigator.gpu?.requestAdapter();
-  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");Deno.exitCode=2;return;}
+  if(!adapter){console.error("GPU BLOCKED: native HTML adapter unavailable in this launch context");await jarSave?.flush();Deno.exitCode=2;return;}
   console.log("Native HTML GPU adapter:",adapter.info);
   let device:GPUDevice|undefined,native:ReturnType<typeof loadNativeWindow>|undefined;
   let running=true,dirty=true,controller:AbortController|undefined;
@@ -512,6 +608,7 @@ async function main() {
   // the page as it is on screen (its kept layout), as a browser's compositor scrolls what it has;
   // the change is drawn when the scroll pauses, or after SCROLL_HOLD_MAX_MS.
   let scrollAt=-Infinity,pageChanged:number|undefined;
+  let awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[];
   // When each page was first shown: a reader often scrolls at once, and the changes that its
   // scripts and late resources make then wait for the first scroll to pause too.
   const firstShown=new WeakMap<object,number>();
@@ -520,13 +617,22 @@ async function main() {
   const scrollHolds=(now:number)=>{
     if(!scrollFirstOn)return false;
     const shownAt=firstShown.get(document);
-    return scrollFirst({now,scrollAt,changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
+    const waitingForBand=(awaitingShift.length>0||awaitingBand.length>0)&&canShift();
+    // A queued scroll has not gone quiet until it reaches the screen. The existing
+    // changedAt deadline still bounds the wait for script updates.
+    return scrollFirst({now,scrollAt:waitingForBand?now:scrollAt,
+      changedAt:pageChanged===undefined?undefined:Math.max(pageChanged,shownAt??-Infinity),shownAt});
   };
+  // Scripts first (page-load.mjs scriptsFirst): while the page's start has not finished (the
+  // last turn said startMore), a change by its scripts waits for the start to end, or for a few
+  // times the last layout's time: the slices of a start are not each followed by a layout.
+  let lastLayoutMs=0;
+  const scriptsHold=(now:number)=>scriptsFirst({now,more:document.script?.turn.startMore===true,changedAt:pageChanged,layoutMs:lastLayoutMs});
   // A change before the page's first frame is shown waits for it (that frame has the page as
   // it was asked for; the next one, after the hold, has the change).
   const pageChangedNow=()=>{
     const now=performance.now();
-    if((scrollFirstOn&&!firstShown.has(document)&&!!rendering)||scrollHolds(now))pageChanged??=now;else dirty=true;
+    if((scrollFirstOn&&!firstShown.has(document)&&!!rendering)||scrollHolds(now)||scriptsHold(now))pageChanged??=now;else dirty=true;
   };
   // A failed action of a page's script session (page-load.mjs scriptFailure, the rule of every
   // host): a session the engine no longer holds ends the page's scripts with one line; a failed
@@ -538,14 +644,31 @@ async function main() {
   // most one move in a frame. A move waits while one is on its way. An engine without the
   // action gets a click on release.
   const queuePointer=pressPointers();
-  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>)=>{
+  // A page with no script session gets one on its first press (startScripts): the press and
+  // the keys after it then reach Lean's events, focus and editing. Once per page.
+  const lazyStarts=new WeakMap<object,Promise<unknown>>();
+  const ensureScripts=(page:typeof document):Promise<unknown>|undefined=>{
+    const start=(page as {startScripts?:()=>Promise<unknown>}).startScripts;
+    if(!scriptsOn||page.script||!start||(page as {graph?:unknown}).graph)return undefined;
+    let started=lazyStarts.get(page);
+    if(!started){started=start().then(s=>{if(s)trace("native-html-script-lazy",{url:page.url});}).catch(error=>scriptFailed(page,error,"start"));lazyStarts.set(page,started);}
+    return started;
+  };
+  // (a press on a link starts none: the link is followed by the window, and a page that only
+  // follows links pays nothing; the release of a press that started one waits for it)
+  const scriptPointer=(kind:PointerKind,x:number,y:number,held:NativePress<typeof document>,mayStart=false)=>{
     const page=held.page;
-    if(!scriptsOn||!page.script||!scriptOps.includes("pointer"))return;
+    if(!scriptsOn||!scriptOps.includes("pointer"))return;
+    const starting=page.script?undefined:kind==="down"&&mayStart?ensureScripts(page):lazyStarts.get(page);
+    if(!page.script&&!starting)return;
     // WebHit returns this event's coordinates; the engine keeps the down target
     // separately. Use what is shown for each event, not a frame frozen at press.
     // Capture before queueing so a later present cannot change this event's request.
-    const session=page.script.session,hit=scriptHitRequest(page),options={...hit.options,x,y};
+    const hit=scriptHitRequest(page),options={...hit.options,x,y};
     queuePointer(kind,async()=>{
+      if(starting)await starting;
+      if(!page.script)return;
+      const session=page.script.session;
       const at=await scriptInput("pointerAt",page.source,hit.width,hit.height,options) as {node:number|null};
       const node=pointerNode(held,kind,at.node);
       if(node===undefined)return;
@@ -560,10 +683,14 @@ async function main() {
   // time, in order. The window's own command for a key (scrolling) runs only when Lean says
   // the page left the key alone (keyDefault); Space is sent as a key, so its text is not.
   let keyChain:Promise<void>=Promise.resolve(),spaceSent=false;
-  const pageTakesKeys=()=>scriptsOn&&!!document.script&&scriptOps.includes("key");
-  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;modifiers?:number},after?:()=>void)=>{
-    const session=page.script!.session;
+  // (a page whose session is starting after its first press takes keys too: they wait for it)
+  const pageTakesKeys=()=>scriptsOn&&(!!document.script||lazyStarts.has(document))&&scriptOps.includes("key");
+  const scriptKey=(page:typeof document,request:{text?:string;mac?:number;key?:string;modifiers?:number},after?:()=>void)=>{
+    const starting=lazyStarts.get(page);
     keyChain=keyChain.then(async()=>{
+      if(starting)await starting;
+      if(!page.script){if(page===document)after?.();return;}
+      const session=page.script.session;
       const turn=await scriptCall("scriptSession","",{action:"key",session,...request}) as ScriptTurn;
       scriptTurn(page,turn,"key");
       if(after&&turn.keyDefault!==false&&page===document)after();
@@ -592,11 +719,25 @@ async function main() {
     if(!first||revision>0){pageChangedNow();tellSession(document);}
   };
   const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+    // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3):
+    // GET loads the URL; POST sends the body Lean serialized; `_blank` opens a new tab.
+    if(turn.navigate&&page===document){
+      const nav=turn.navigate;
+      // (a new tab only for a person's press or key, never a timer's or the start's: no pop-ups)
+      const blocked=nav.target==="_blank"&&!/^(pointer|key)/.test(cause);
+      trace("native-html-form-navigate",{url:nav.url,method:nav.method,target:nav.target??"",cause,blocked});
+      if(blocked)addEntries(page,[{source:"System",severity:"warning",feature:"form submission",where:nav.url,message:"a new tab that no press or key asked for",action:"not opened"}]);
+      else{
+        if(nav.target==="_blank"){newTab();leaveAddress();}
+        navigate(nav.url,true,nav.method==="post"?{method:"POST",body:nav.body??"",bodyType:nav.contentType}:undefined,page.url);
+      }
+    }
     netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
-    for(const line of turn.logs)console.log(`page: ${line.replace(/^\u0001(\w+)\u0001/,"$1: ")}`);
+    for(const line of turn.logs)console.log(`page: ${line.replace(/^^A(\w+)^A/,"$1: ")}`);
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
-      instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake});
+      instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,
+      ...(turn.startMore?{startMore:true}:{})});
     // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
@@ -623,9 +764,9 @@ async function main() {
   };
   // View state is held here and applied by Lean. Pointer positions are in the
   // coordinates of the presented frame, as link picking is.
-  // Text zoom 200 (WebSelection.defaultPercent; it was 150) until the window's backing scale is
-  // known; then zoom unit 100*scale and zoom 200*scale, which the settings page shows as 200%.
-  const view:PageView={textScalePercent:200};
+  // Text zoom 100 (WebSelection.defaultPercent) until the window's backing scale is
+  // known; the zoom unit and the normal text size then both use 100*scale.
+  const view:PageView={textScalePercent:100};
   let press:NativePress<typeof document>|undefined,lastCopied:string|undefined,loading=false;
   // The press on screen (issue 1268): Lean's `press` answer (a chrome control, or the link's
   // node for `:active`, and the rectangles that the composite darkens), the time its event was
@@ -821,24 +962,52 @@ async function main() {
     consoleSources.set(page,source);
     return page;
   };
+  // foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar, with no search
+  // engine chosen. Lean writes it from the open tabs and the stored bookmarks and history,
+  // which are read from the local store; nothing is fetched from anywhere to show it.
+  const searchURL="foafnaut:search";
+  const searchPage=async(target:string)=>{
+    const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+    const open=tabs.map((_,i)=>tabPage(i)!).map(page=>({url:page.url,title:page.title??""}));
+    const answer=engine.searchPage({argument:target.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});
+    return await prepareHTML(lean,target,undefined,answer.source);
+  };
+  // The Outside page (WebShell.outsidePage) of a mail, phone or messages address: one button,
+  // and only a press of it (Lean's route "system" for that page) opens the other program.
+  const outsideDocs=new WeakMap<object,string>();
+  const isOtherProgram=(target:string)=>/^(mailto|tel|sms):/i.test(target);
+  const outsidePage=async(target:string)=>{
+    const answer=engine.outsidePage(target);
+    if(!answer)throw new Error("this engine has no Outside page, so the address was not opened");
+    const page=await prepareHTML(lean,target,undefined,answer.source);
+    outsideDocs.set(page,target);
+    return page;
+  };
+  // foafnaut:accessibility: the accessibility tree of the page shown, as a page the engine
+  // writes (HTML/AccessibleTree.lean viewPage), for a person who checks what a screen reader gets.
+  const accessibilityURL="foafnaut:accessibility";
+  const accessibilityPage=async(target:string)=>{
+    const source=document,hit=scriptHitRequest(source),options={...hit.options,view:true,url:source.url};
+    const answer=(worker?.alive?await worker.engine.accessibilityTree(source.source,hit.width,hit.height,options)
+      :engine.accessibilityTree(source.source,hit.width,hit.height,options)) as unknown as {source:string};
+    return prepareHTML(lean,target,undefined,answer.source);
+  };
   // Option-Command-J and View > Console: the console of the page shown, in a new tab.
   const openConsole=()=>{const source=document;newTab();leaveAddress();consoleFrom=source;navigate(consoleURL);};
   // The system pointer for a window point: Lean answers from the chrome, the graph model or the
   // link regions of the frame on screen. One small main-thread call for each coalesced move; the
   // window library is told only when the answer changes (issue 1268).
   let pointerShown="arrow",lastPointer:number[]|undefined;
-  const linkText=new WeakMap<object,string>();
   const pointAt=(x:number,y:number)=>{
     lastPointer=[x,y];
     if(!session?.frames||!native)return;
     const page=document as Page,request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number}={shell:shell(),x,y,width};
     if(page.graph)request.model=page.graph.model;
-    else if(!candidate&&frame.webRender.links.length){
-      let links=linkText.get(frame);
-      if(links===undefined){links=JSON.stringify(frame.webRender.links);linkText.set(frame,links);}
-      request.links=links;request.pageY=Math.round(pageRow(y));
+    let links:unknown[]|undefined;
+    if(!page.graph&&!candidate&&frame?.webRender.links.length){
+      links=frame.webRender.links;request.pageY=Math.round(pageRow(y));
     }
-    const kind=engine.pointerCursor(request);
+    const kind=engine.pointerCursor(request,links);
     if(kind!==pointerShown){pointerShown=kind;native.setCursor(kind);}
   };
   // Lean selects the whole address when the bar takes the focus; typing then replaces it.
@@ -882,7 +1051,7 @@ async function main() {
   };
   const leaveAddress=()=>{focused=false;field=showURL(document.url);dirty=true;};
   // The engine's limit for the layers on screen (page-load.mjs scrollLimitOf, shared with the Hub).
-  const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame.webRender.boxes as number[][]|undefined,height,scale);
+  const scrollLimit=()=>scrollLimitOf(current?.layers.layers,frame?.webRender.boxes as number[][]|undefined,height,scale);
   const scrollBy=(amount:number)=>{
     const next=Math.max(0,Math.min(scrollLimit(),scroll+Math.round(amount)));
     if(next===scroll)return;
@@ -899,7 +1068,8 @@ async function main() {
   type RequestRecord={request:ReturnType<typeof document.request>;width:number;height:number;document:typeof document};
   let prefetched:{key:StateKey;layers:HTMLLayers;target:number;record:RequestRecord}|undefined;
   let prefetching:{key:StateKey;target:number;reach:number}|undefined;
-  const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0};
+  const prefetchStats={sent:0,ready:0,swaps:0,dropped:0,stale:0,missed:0,held:0};
+  let holdTraced=false;
   // Frame cost ratchet (L4Factoidal/FrameCost, section Ratchet): Lean frames and rows
   // scrolled after the first frame. --scroll-sweep fails when the frames pass the bound.
   const frameCost={leanFrames:0,scrollEvents:0,scrollRows:0,reach:0};
@@ -924,10 +1094,40 @@ async function main() {
   const recordPresented=(record:RequestRecord,at:number)=>{
     if(record.document===document){
       presented={document:record.document,width:record.width,height:record.height,scroll:at,options:record.request.options};
+      if(axOn)axDue=true;
       if(!firstShown.has(record.document))firstShown.set(record.document,performance.now());
     }
   };
   const scriptHitRequest=(page:typeof document)=>pointerRequest(page,presented,()=>({width,height,options:requestAt(page,page===document?scroll:0).options}));
+  // Accessibility (HTML/AccessibleTree.lean, native_window.m). Nothing here runs until an
+  // accessibility client asks the window for its elements (event 15) or VoiceOver is on at the
+  // start. Then, after a frame is shown, the engine's tree of the page on screen goes to the
+  // window library as the engine wrote it. For the layout of its last tree the engine answers
+  // `unchanged` and makes none: a scroll only moves the elements.
+  let axOn=false,axDue=false,axBusy=false,axSerial=0,axPage:typeof document|undefined;
+  const axUpdate=async()=>{
+    const page=document;
+    if(!axOn||axBusy||!native||!presented||presented.document!==page)return;
+    axBusy=true;axDue=false;
+    const hit=scriptHitRequest(page),started=performance.now();
+    try{
+      const options={...hit.options,mac:true,since:axPage===page?axSerial:0};
+      const answer=(worker?.alive?await worker.engine.accessibilityTree(page.source,hit.width,hit.height,options)
+        :engine.accessibilityTree(page.source,hit.width,hit.height,options)) as AccessibilityAnswer;
+      if(page!==document){axDue=true;return;}
+      let elements=-1;
+      if(answer.unchanged)native.axSetView(answer.top,answer.scroll);
+      else{
+        elements=native.axSetTree(JSON.stringify(answer));axSerial=answer.serial;axPage=page;
+        for(const say of answer.announce??[])native.axAnnounce(say.text,say.live==="assertive");
+      }
+      trace("native-html-accessibility",{serial:answer.serial,unchanged:!!answer.unchanged,elements,
+        announced:answer.announce?.length??0,ms:Math.round((performance.now()-started)*10)/10});
+    }catch(error){
+      // An engine with no such op: said once, and no more trees are asked for.
+      axOn=false;console.error(`accessibility tree: ${error instanceof Error?error.message:String(error)}`);
+    }finally{axBusy=false;}
+  };
   // The request of the page at scroll `at`: as it is on screen while a change waits for the
   // scroll to pause (pageChanged), else as it is now.
   const requestFor=(at:number)=>{
@@ -961,7 +1161,7 @@ async function main() {
   let zoomOps:boolean|undefined;
   const textZoom=(argument="")=>{
     if(zoomOps===false)return undefined;
-    try{const answer=engine.textZoom(argument,view.textScalePercent??200,view.zoomUnit??100);zoomOps=true;return answer;}
+    try{const answer=engine.textZoom(argument,view.textScalePercent??100,view.zoomUnit??100);zoomOps=true;return answer;}
     catch{zoomOps=false;return undefined;}
   };
   const zoomTo=(next:number)=>{
@@ -988,6 +1188,10 @@ async function main() {
     const eOpen="<!--foafnaut:encoding-->",eClose="<!--/foafnaut:encoding-->",ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
     const choices=ei>=0&&ej>ei?await lean.encodingChoices(encodingSetting,systemLocale):undefined;
     if(choices)source=source.slice(0,ei+eOpen.length)+choices+source.slice(ej);
+    // The search engine section, as Lean makes it for the setting (none chosen by default).
+    const sOpen="<!--foafnaut:search-->",sClose="<!--/foafnaut:search-->",si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+    const searchChoices=si>=0&&sj>si?engine.searchChoices(searchSetting):undefined;
+    if(searchChoices)source=source.slice(0,si+sOpen.length)+searchChoices+source.slice(sj);
     const size=textZoom();
     // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
     const box=`<span class="box${liberal?" boxon":""}"></span>`;
@@ -1031,6 +1235,15 @@ async function main() {
         if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
       }).catch(error=>refuse(`foafnaut:encoding/${argument}`,error));
     }
+    else if(name==="search-engine"){
+      // Lean reads the choice (an engine of its list, an address with %s, or none); a link
+      // gives this command only on the Settings page (WebRoute.settingsOnly).
+      const chosen=engine.searchSetting(argument);
+      if(!chosen){refuse(`foafnaut:search-engine/${argument}`,"this engine has no search engine setting");return;}
+      searchSetting=chosen.setting;browserState?.settings({search:searchSetting});
+      trace("native-html-search-setting",{setting:searchSetting===""?"none":searchSetting});
+      if(document.url===settingsURL)navigate(settingsURL,false);else dirty=true;
+    }
     else if(STATE_COMMANDS.includes(name)){
       if(!browserState){refuse(`foafnaut:${name}`,"Browser state is off (--no-state, a sweep or a check)");return;}
       browserState.command(name,argument,{url:document.url,title:document.title??""}).then(page=>{if(page)navigate(page);}).catch(error=>refuse(`foafnaut:${name}`,error));
@@ -1052,7 +1265,10 @@ async function main() {
   // no touch-screen touches. An engine without the op has no swipes.
   const gestures=(()=>{try{return engine.gesture({action:"info"});}catch{return undefined;}})();
   // The swipe sweep needs the op; with an older engine it is not run, with exit code 4 (sweeps.sh says NOT RUN).
-  if(swipeSweep&&!gestures){console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");worker?.terminate();Deno.exitCode=4;return;}
+  if(swipeSweep&&!gestures){
+    console.error("Native HTML: NOT RUN: --swipe-sweep needs the engine op gesture, which this engine does not have");
+    await jarSave?.flush();worker?.terminate();Deno.exitCode=4;return;
+  }
   let wheelSum:{dx:number;dy:number}|undefined;
   const gestureWheel=(a:number,b:number)=>{
     const phase=b&0xff,momentum=(b>>8)&0xff,enabled=(b&65536)!==0;
@@ -1068,8 +1284,9 @@ async function main() {
     if(ended)wheelSum=undefined;
     if(answer.navigate)windowCommand(answer.direction==="back"?6:7);
   };
-  // Lean chose to hand this URL to the system browser. Off screen it is traced and not opened,
-  // so a sweep never opens a browser window on the person's screen.
+  // Lean chose to hand this URL to the system: the press of the Outside page's button, or
+  // `:open URL` typed. Off screen it is traced and not opened, so a sweep never opens a
+  // browser window on the person's screen.
   const openSystem=(target:string)=>{
     if(offscreen){trace("native-html-system-url",{url:target,opened:false,why:"offscreen"});return;}
     try{native!.openURL(target);}catch(error){refuse(target,error);}
@@ -1079,12 +1296,15 @@ async function main() {
     if(route.route==="command")shellCommand(route.name,route.argument);
     else if(route.route==="system")openSystem(route.url);
     else if(route.route==="refuse")refuse(route.url,route.reason);
+    // The Outside page (mail, phone, messages): shown in the tab, nothing opened.
+    else if(route.route==="outside")navigate(route.url);
     // A page link loads only with --follow-links; the browser's own pages always do.
-    else if(route.route!=="navigate"||follow)navigate(route.url);
+    else if(route.route!=="navigate"||follow)navigate(route.url,true,undefined,route.route==="navigate"?document.url:"");
   };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
-    if(answer.go==="system")openSystem(answer.url);
+    // An engine from before the route op: nothing leaves the browser on its word alone.
+    if(answer.go==="system")refuse(answer.url,"an older engine asked to open this address outside the browser; it was not opened");
     else if(answer.go==="page")navigate(answer.url);
     else shellCommand(answer.name,answer.argument);
   };
@@ -1126,7 +1346,7 @@ async function main() {
   // An address from the bar (Return, or Paste and go): Lean routes it as typed.
   const goTo=(target:string)=>{
     leaveAddress();
-    const route=router.address({...site,address:target,base:document.baseURL||document.url}) as LinkRoute|undefined;
+    const route=router.address({...site,address:target,base:document.baseURL||document.url,search:searchSetting}) as LinkRoute|undefined;
     if(route)followRoute(route);else go(engine.shellSubmit(target));
   };
   // A long press of the mouse (WebGesture hold): asked once when Lean's time has passed with
@@ -1238,14 +1458,16 @@ async function main() {
   const saveSession=()=>browserState?.session(tabs.map((tab,index)=>{const page=index===active?document:tab.document;
     return {url:page.url,title:page.title??"",scroll:index===active?scroll:tab.scroll};}),active);
   // The settings page with the page script rows that Lean makes for the current setting.
-  const navigate=(target:string,push=true)=>{
+  // `initiator`: the page that started the navigation (a link, a form), "" for an address a
+  // person typed or chose: the engine's same-site rule for cookies reads it.
+  const navigate=(target:string,push=true,request?:DocumentRequest,initiator="")=>{
     const from=document.url;
     controller?.abort();candidate=undefined;controller=new AbortController();const current=controller;loading=true;
     // The loading state is drawn now (a chrome-only frame: the page layer is kept), so a click
     // is answered on screen before the new page is prepared and laid out.
     dirty=true;
     console.log(JSON.stringify({type:"native-html-loading",url:target}));
-    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):prepareHTML(lean,target,current.signal,undefined,{liberal})).then(next=>{
+    (target===aboutURL?aboutPage().then(source=>prepareHTML(lean,target,undefined,source)):STATE_PAGES.includes(target)?(browserState?browserState.page(target):Promise.reject(new Error("Browser state is off"))).then(source=>prepareHTML(lean,target,undefined,source)):target===settingsURL?settingsSource().then(source=>prepareHTML(lean,target,current.signal,source)):target.startsWith(searchURL+"/")?searchPage(target):isOtherProgram(target)?outsidePage(target):target===graphURL?graphPage():target===wasmURL||target.startsWith(wasmURL+"/")?wasmPage(target):isSparql(target)?sparqlPage(target):isConsole(target)?consolePage(target):target===accessibilityURL?accessibilityPage(target):prepareHTML(lean,target,current.signal,undefined,{liberal,downloads,cookies:cookiesFor(initiator),...(request?{request}:{})})).then(next=>{
       if(current===controller&&!current.signal.aborted&&running){
         candidate=next;dirty=true;loading=false;
         if(push)remember(engine.historyPush(history.history,next.url),"push");
@@ -1254,13 +1476,21 @@ async function main() {
       }
     }).catch(error=>{
       if(current.signal.aborted)return;
+      // A download: the file is saved and the page the person was on stays (no history entry).
+      if(error instanceof Downloaded){
+        loading=false;dirty=true;
+        console.log(`Native HTML: saved ${error.url} as ${error.path} (${error.bytes} bytes)`);
+        trace("native-html-download",{url:error.url,path:error.path,bytes:error.bytes});
+        addEntries(document,[{source:"System",severity:"info",feature:"download",where:error.url,message:`saved as ${error.path} (${error.bytes} bytes)`,action:"saved"}]);
+        return;
+      }
       loading=false;if(push)remember(engine.historyPush(history.history,target),"push");
       refuse(target,error);
     });
   };
   let lastStep=0,stepAt=0,pressAt=[0,0];
   let lastActivity=performance.now(),queueMax=0,fatal:unknown,rendering:Promise<void>|undefined;
-  let awaiting:{kind:number;at:number}[]=[],awaitingShift:{kind:number;at:number}[]=[],awaitingBand:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
+  let awaiting:{kind:number;at:number}[]=[],checkedFrames=0,workerFrames=0,mainFrames=0;
   let shifting:Promise<void>|undefined;const shifts:number[]=[];
   // The idle loop (issue 450): pumps, waits in the window library and turns with nothing to do.
   const idleStats={pumps:0,waits:0,waitedMs:0,quietPumps:0,eventsAfterWait:0,idleTurns:0,idleMs:0};
@@ -1309,11 +1539,8 @@ async function main() {
   try {
     device=await adapter.requestDevice();native=early??await nativePreflight(()=>loadNativeWindow());
     native.setInputTrace(traceInput);native.setHistory(history.canBack,history.canForward);
-    // The command sweep copies text. It gives the clipboard back unless the person
-    // copied something else meanwhile.
-    const savedClipboard=commands||pasted?native.readClipboard():"";
-    // Paste a URL into the address bar through the real menu key, then press Return.
-    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
+    // VoiceOver already on (or a client already asked): accessibility trees from the first frame.
+    axOn=accessibilityOn||native.axWanted();
     // The window title is the page title, as in Safari.
     const windowTitle=(page:typeof document)=>page.title||"foafnaut";
     // Off screen the backing scale is 2, as on a Retina display, so the sweeps' backing-pixel
@@ -1321,10 +1548,14 @@ async function main() {
     let target:PresentTarget={offscreen:true};
     if(offscreen)native.createOffscreen(shotSize[0],shotSize[1],shotSize[2],windowTitle(document));
     else{
-      const handles=native.create(800,500,windowTitle(document));
-      target=new Deno.UnsafeWindowSurface(cocoaSurfaceOptions(handles,width,height));
+      const [windowWidth,windowHeight]=windowSize??[800,500];
+      const handles=native.create(windowWidth,windowHeight,windowTitle(document));
+      target=new Deno.UnsafeWindowSurface(nativeSurfaceOptions(handles,width,height));
       native.showAfterSurface();
     }
+    // A visible window uses the desktop clipboard; off-screen sweeps use their private one.
+    const savedClipboard=commands||pasted?native.readClipboard():"";
+    if(pasted){native.writeClipboard(pasted);lastCopied=pasted;commands=["v",[5,36,0],"settle"];}
     // A new window starts in the address bar with the address selected (issue 1268).
     focusAddress();
     // The splash: drawn by the engine over the first page while it loads, with the engine's own
@@ -1339,13 +1570,14 @@ async function main() {
         if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
         if(!cliLiberal&&!cliStrict&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
           liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}
-        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}}
+        if(typeof saved.settings.encoding==="string"){encodingSetting=saved.settings.encoding;setPageDecoding({fallback:encodingSetting});}
+        if(typeof saved.settings.search==="string")searchSetting=engine.searchSetting(saved.settings.search)?.setting??"";}
       if(restoreSession)(saved.session?.tabs??[]).forEach((tab:{url:string},index:number)=>{if(index>0)newTab();navigate(tab.url);});
     }).catch(()=>{/* state off: said once in the log */});
     scale=Math.max(1,Math.round(native.surfaceState().contentsScale||1));
     // Layout in points, drawn at the backing scale (WebDocument, Device pixels): Lean lays the page
-    // out width/scale CSS px wide. The starting text zoom is 200% of a usual browser's text at this
-    // scale (WebSelection.unitPercent), as on the Hub; a saved zoom (read above, applied later) wins.
+    // out width/scale CSS px wide. Start at the usual CSS text size at this backing scale
+    // (WebSelection.unitPercent); a saved zoom (read above, applied later) wins.
     view.zoomUnit=scale*100;view.textScalePercent=Math.max(50,Math.round(textSize*scale/5)*5);
     if(commands)native.testRaise();
     device.addEventListener("uncapturederror",event=>{console.error("Native HTML GPU error:",(event as GPUUncapturedErrorEvent).error.message);running=false;Deno.exitCode=1;});
@@ -1433,6 +1665,7 @@ async function main() {
       noteDiagnostics(nextDocument,nextLayers??next);
       // Text that resolves to serif while the engine holds no serif face: give it, draw again.
       if(wantsSerif(nextLayers??next))serif.want()?.then(ok=>{if(ok)dirty=true;});
+      if(wantsMono(nextLayers??next))mono.want()?.then(ok=>{if(ok)dirty=true;});
       const engineFact=frameNumber===0?{engine:await engineInfo}:{};
       const compiled=performance.now();
       // A newer page was chosen while this one compiled: drop this scene.
@@ -1461,12 +1694,13 @@ async function main() {
       if(result.presented)lastRequest={request,width:sentWidth,height:sentHeight,document:nextDocument};
       const finished=performance.now();
       const stats=session!.stats;
+      if(result.presented&&!frame)noteLoaded(nextDocument,next,sentWidth,sentHeight);
       trace("native-html-frame",{frame:++frameNumber,width:sentWidth,height:sentHeight,primitives:next.primitiveCount,wgslBytes:next.wgsl.length,dataFloats:next.data.length,
         layoutMs:ms(frameStart,compiled),sessionMs:Math.round(result.prepareMs*10)/10,drawMs:Math.round(result.drawMs*10)/10,totalMs:ms(frameStart,finished),
         resizeToFrameMs:resizeAt===undefined?null:ms(resizeAt,finished),presented:result.presented,compiledIn:where,workerMs:workerMs===undefined?null:Math.round(workerMs*10)/10,
         why,checked:result.checked,steps:result.steps,pixelHash:result.checked?result.pixelHash:null,pipelineBuilds:stats.pipelineBuilds,configures:stats.configures,
         ...(nextLayers?{layers:{top:nextLayers.layers.top,bandTop:nextLayers.layers.bandTop,bandHeight:nextLayers.layers.bandHeight,offset:place!.offset,chromeFloats:nextLayers.chrome.data.length}}:{}),...engineFact});
-      resizeAt=undefined;
+      resizeAt=undefined;lastLayoutMs=compiled-frameStart;
       if(!result.presented){awaiting=[...stamps,...awaiting];dirty=true;return;}
       firstFrameAt??=finished;totals.push(finished-frameStart);if(where==="worker")workerFrames++;else mainFrames++;
       if(result.checked)checkedFrames++;
@@ -1576,6 +1810,11 @@ async function main() {
         }
         if(event.kind===8&&event.a)dirty=true;
         if(event.kind===3)pointAt(event.a,event.b);
+        // SDL reports a key from the active keyboard layout. Linux has no AppKit menu to
+        // take shortcuts before the field, so use the engine's platform key table here.
+        const linuxCommand=event.key===undefined?undefined:linuxKeys?.get(
+          linuxModifier(event.b)+"/"+(event.key===" "?"Space":event.key.length===1?event.key.toLowerCase():event.key));
+        if(linuxCommand!==undefined&&((event.b&12)||event.key==="F5")){windowCommand(linuxCommand);return;}
         // The find field has the focus: keys without Command and typed text edit it (Lean).
         if(event.kind===5&&find.focused&&!(event.b&2)){findInput({key:event.a,modifiers:event.b});return;}
         if(event.kind===9&&find.focused){findInput({text:String.fromCodePoint(event.a)});return;}
@@ -1607,11 +1846,13 @@ async function main() {
         // Control-Tab. Lean's key table gives the command (issue 1268); the page sees the key
         // first, except a Command shortcut of the window.
         if(event.kind===5){
-          const id=engine.pageKey(event.a,event.b);
+          const id=event.key===undefined?engine.pageKey(event.a,event.b):linuxCommand??null;
           const command=()=>{if(id!==null)windowCommand(id);};
           if(pageTakesKeys()&&!((event.b&2)&&id!==null)){
             spaceSent=event.a===49&&!(event.b&10);
-            scriptKey(document,{mac:event.a,modifiers:event.b},command);
+            // SDL supplies committed printable text separately; a Control chord has no text.
+            const key=event.key!==undefined&&(event.b&10)?{key:event.key}:{mac:event.a};
+            scriptKey(document,{...key,modifiers:event.b},command);
           }else command();
         }
         if(event.kind===11){closeMenu();if(wheelSum)wheelSum.dy-=event.a/scale;scrollBy(-event.a);}
@@ -1623,10 +1864,12 @@ async function main() {
         // R alone reloads, except where the page takes keys (its text goes to the page).
         if(event.kind===5&&event.a===15&&!pageTakesKeys())windowCommand(8);
         if(event.kind===10)windowCommand(event.a);
+        // An accessibility client asked the window for its elements: trees from now on.
+        if(event.kind===15&&!axOn){axOn=true;axDue=true;}
         if(event.kind===2){
           // Hit coordinates and boxes belong to the successfully presented frame.
           // One small Lean call: the control or the link pressed, and what the composite darkens.
-          const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current?frame.webRender.links as unknown[]:[]);
+          const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current&&frame?frame.webRender.links as unknown[]:[]);
           const control=answer.control;
           if(control){
             if(answer.rects.length)startPress({control,rects:answer.rects});
@@ -1639,13 +1882,13 @@ async function main() {
           if(find.focused){find.focused=false;dirty=true;}
           press=beginPress(document,event.a,event.b);
           if((document as Page).graph){graphInput(2,event.a,event.b);return;}
-          scriptPointer("down",event.a,event.b,press);
+          scriptPointer("down",event.a,event.b,press,typeof answer.sourceNode!=="number");
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;}
         }
         // `:hover` (links only): a new frame when the link under the pointer changes, and only
         // when an author rule names `:hover`.
-        if(event.kind===3&&!press&&layered&&current?.layers.layers.hoverRules){
+        if(event.kind===3&&!press&&layered&&current?.layers.layers.hoverRules&&frame){
           const node=engine.hit(frame,event.a,pageRow(event.b))?.sourceNode;
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
@@ -1667,9 +1910,9 @@ async function main() {
               .then(turn=>{if(turn)scriptTurn(page,turn,"click");})
               .catch(error=>scriptFailed(page,error,"click"));
           }
-          const target=engine.hit(frame,released[0],pageRow(released[1]));
+          const target=frame&&engine.hit(frame,released[0],pageRow(released[1]));
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
-            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url}) as LinkRoute);}
+            followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute);}
         }
     };
     // Idle (issue 450): with nothing to draw, nothing in flight and no deadline near, the loop
@@ -1684,7 +1927,7 @@ async function main() {
       if(firstFrameAt===undefined&&canPresent())return 0;
       const busy=(dirty&&canPresent())||animationDue||!!rendering||!!shifting||shiftPending||pressPresent||!!pressed||!!holding||scriptBusy
         ||loading||!!candidate||refusing>0||!!prefetching||graphBusy()||!!(document as Page).graph?.clock||netQueue.length>0||netInFlight>0
-        ||sockets.size>0||(worker?.inFlight??0)>0||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
+        ||sockets.size>0||(worker?.inFlight??0)>0||axBusy||!!sweep||(!!commands&&(commands.length>0&&now+2>=stepAt));
       if(busy){busyAt=now;idleEndAt=undefined;return 0;}
       // GPU work not yet answered for: the gate asks only from a turn and its answer is a timer,
       // and the window's wait blocks the thread, so the loop does not wait past the ask's due time
@@ -1801,8 +2044,9 @@ async function main() {
       }
       // Scroll prefetch: when the scroll nears the edge of the keep range, or its speed says it
       // will pass the edge within two frames and the time of a band, the worker makes the next
-      // band at low priority. Only when the worker has nothing else to do and no frame is due.
-      if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()&&worker.pending===0){
+      // band at low priority when no frame is due. It can be queued behind script work:
+      // the worker serves input and ordinary requests first, and stale bands are discarded.
+      if(layered&&worker?.alive&&!prefetching&&motion&&current&&canShift()&&!dirty&&!rendering&&!loading&&!graphBusy()){
         const band=current.layers.layers;
         const target=prefetchTarget(band,scroll,motion,{marginRows:PREFETCH_MARGIN_ROWS,horizonMs:2*FRAME_MS+bandMs,limit:scrollLimit()});
         const request=target===undefined?undefined:requestFor(target);
@@ -1830,8 +2074,15 @@ async function main() {
       }
       if(animationDue&&!rendering&&performance.now()>=gpuHoldUntil){animationDue=false;dirty=true;}
       // The scroll paused (or held the change long enough): the page's change is drawn now.
-      if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())){pageChanged=undefined;dirty=true;}
-      if(dirty&&canPresent()&&!rendering){
+      if(pageChanged!==undefined&&(firstShown.has(document)||!rendering)&&!scrollHolds(performance.now())&&!scriptsHold(performance.now())){pageChanged=undefined;dirty=true;}
+      if(axDue&&!axBusy&&!rendering)axUpdate();
+      // A frame for a scroll past the band waits for the band being prefetched for the same
+      // state (holdForPrefetch): when it comes, the frame is not needed, or is asked for at the
+      // scroll of then. Without --no-prefetch-hold.
+      const bandHeld=prefetchHoldOn&&dirty&&layered&&canShift()&&holdForPrefetch(prefetching,stateNow());
+      if(bandHeld&&!holdTraced){holdTraced=true;prefetchStats.held++;}
+      if(!bandHeld)holdTraced=false;
+      if(dirty&&canPresent()&&!rendering&&!bandHeld){
         waiting=false;
         rendering=renderFrame().catch(error=>{fatal=error;}).finally(()=>{rendering=undefined;});
       } else if(!everyFrame&&!dirty&&!animationDue&&!rendering&&!shifting&&!shiftPending&&!pressed&&!pressPresent&&session?.frames&&!session.lastChecked&&canPresent()&&performance.now()-lastActivity>=(scriptAnimating()?IDLE_CHECK_ANIMATING_MS:IDLE_CHECK_MS)){
@@ -1849,7 +2100,7 @@ async function main() {
       // a Lean frame for a new band runs meanwhile, as when a person scrolls.
       const scrollStep=layered&&Array.isArray(commands?.[0])&&(commands![0] as number[])[0]===11;
       const settled=!dirty&&!rendering&&!graphBusy()&&!loading&&!shiftPending&&!shifting;
-      if(commands&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
+      if(commands&&frame&&session?.frames&&performance.now()>=stepAt&&(settled||(scrollStep&&!loading&&!shiftPending&&!shifting&&performance.now()-lastStep>=16))){
         lastStep=performance.now();
         const step=commands.shift();
         if(step==="graph")shellCommand("graph","");
@@ -1887,6 +2138,21 @@ async function main() {
           urlWaitSince=undefined;
           const ok=document.url.endsWith(step.slice(4));trace("native-html-test-url",{expected:step.slice(4),url:document.url,ok});
           if(!ok){console.error(`Native HTML sweep: expected a page ending ${step.slice(4)}, shown ${document.url}`);Deno.exitCode=1;}
+        }
+        // (a title not yet shown is asked again for up to 10 s: a form's navigation starts when
+        // the page's turn for the key or press has run)
+        else if(typeof step==="string"&&step.startsWith("title=")&&((loading||candidate||rendering||refusing>0)||(document.title??"")!==step.slice(6))
+          &&(urlWaitSince??=performance.now())>performance.now()-((loading||candidate||rendering||refusing>0)?20000:10000)){
+          commands.unshift(step);stepAt=performance.now()+50;
+        }
+        else if(typeof step==="string"&&step.startsWith("title=")){
+          urlWaitSince=undefined;
+          const ok=(document.title??"")===step.slice(6);trace("native-html-test-title",{expected:step.slice(6),title:document.title,url:document.url,ok});
+          if(!ok){console.error(`Native HTML steps: expected the title ${JSON.stringify(step.slice(6))}, shown ${JSON.stringify(document.title)} at ${document.url}`);Deno.exitCode=1;}
+        }
+        else if(typeof step==="string"&&step.startsWith("tap:")){
+          const [x,y]=step.slice(4).split(",").map(Number),row=Math.round(windowRow(y));
+          trace("native-html-test-tap",{x,y,row});native.testEvent(2,x,row);native.testEvent(4,x,row);
         }
         else if(typeof step==="string"&&step.startsWith("pointer:")){
           const ok=pointerShown===step.slice(8);trace("native-html-test-pointer",{expected:step.slice(8),pointer:pointerShown,ok});
@@ -1980,7 +2246,14 @@ async function main() {
       // engine for the bands the scroll needs)
       const held=inputFirstOn&&inputFirst({now,inputAt,heldSince:timerHeldSince,
         waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0||(pageChanged!==undefined&&scrollHolds(now))});
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil){
+      // (the rest of a start in slices waits for the page's first frame: a slice can be one long
+      // script, and run before that frame it would hold the engine the frame needs)
+      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil
+        &&(script.turn.startMore!==true||firstShown.has(document))){
+        // While its start is not finished the page's clock moves only by its own steps, as in a
+        // start made in one turn: the time the host took to show the page between two slices is
+        // not time the page's timers saw pass.
+        if(script.turn.startMore===true)scriptEpochs.set(script.session,now-script.turn.clock);
         const elapsed=now-(scriptEpochs.get(script.session)??now);
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
         else if(elapsed>=script.turn.nextWake){
@@ -2031,6 +2304,8 @@ async function main() {
     const gpuIdle=session?.halt();
     // A frame in progress ends before its session is disposed.
     try{await rendering;await shifting;}catch(error){console.error("Native HTML frame ended with an error:",String(error));}
+    // Finish any timer-fired write and the last queued save before stopping the engine.
+    await jarSave?.flush();
     worker?.terminate();
     await browserState?.close().catch(error=>console.error("Native HTML: browser state did not close:",String(error)));
     try{summary();}catch(error){console.error("Native HTML summary failed:",String(error));}

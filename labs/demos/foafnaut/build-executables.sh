@@ -71,7 +71,7 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   if [ "$BUILD_DIRTY" = false ] && [ -n "$BUILD_VERSION" ] && git -C "$LAB" tag --points-at HEAD 2>/dev/null | grep -qx "v$BUILD_VERSION"; then BUILD_RELEASE=true; fi
   printf '{"commit":"%s","commitFull":"%s","dirty":%s,"builtAt":"%s","version":"%s","release":%s}\n' "$BUILD_COMMIT" "$BUILD_COMMIT_FULL" "$BUILD_DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BUILD_VERSION" "$BUILD_RELEASE" > "$LAB/.build/native-html/build-info.json"
   deno compile --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
-    --allow-read --allow-net --allow-ffi --allow-env=HOME,FOAFNAUT_LOG \
+    --allow-read --allow-write --allow-net --allow-ffi --allow-env=HOME,FOAFNAUT_LOG \
     --include "$LAB/.build/native-html/build-info.json" \
     --include "$LAB/.build/native-html/runtime/web-render.wasm" \
     --include "$LAB/../../../third_party/fonts" \

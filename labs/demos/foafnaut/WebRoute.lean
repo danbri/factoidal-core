@@ -13,9 +13,14 @@ on this site, so hand it to the host browser"), and the click bounced back (issu
 The theorems at the end hold for every href, page address and site:
 * `foafnaut_never_system`, `foafnaut_scheme_never_system`: a `foafnaut:` link is never
   handed to the system;
-* `system_only_external`: the system gets only a host on the external list, a web
-  address of another site that this browser does not load itself, or a scheme such as
-  `mailto:` that belongs to another app;
+* `system_only_pressed`, `no_system_unpressed`: a link hands an address to the system (the
+  host's default browser, or the mail, phone or messages app) only when the tab shows the
+  browser's own Outside page for that address and the person pressed its button; no host
+  and no scheme goes there by itself (owner, 2026-11-16: no host list sends links out);
+* `native_web_navigates`: the native browser, which loads every web site itself, opens
+  every web address in the tab;
+* `settings_only_from_settings`: a link on a page other than Settings can not choose the
+  search engine (a page could otherwise send the words typed later to a site of its own);
 * `builtin_resolves`, `graph_resolves`: every built-in page name routes to its page;
 * `same_site_navigates`: an http(s) address of the site's own origin navigates in the tab;
 * `relative_resolves_against_base`: a relative href is the page address and the href,
@@ -34,17 +39,18 @@ against the URL parser of the JavaScript host on a few thousand links. -/
 namespace WebRoute
 open L4Factoidal.Syntax
 
-/-- Pages this engine can not draw yet go to the host's default browser. -/
-def externalHosts : List String := ["github.com","www.github.com","duckduckgo.com"]
-
-/-- Schemes of other apps: the system opens them (mail, phone, messages). -/
+/-- Schemes of other apps (mail, phone, messages). A link with one shows the browser's
+Outside page; only its button hands the address to the system. There is no list of web
+hosts that go to the system: an earlier list (github.com, duckduckgo.com) sent those links
+out of the browser without asking, and is gone (owner, 2026-11-16). -/
 def systemSchemes : List String := ["mailto","tel","sms"]
 
 /-- The pages of the browser itself, `foafnaut:NAME`, and whether a page takes an
 argument after a slash (`foafnaut:sparql/q=...`, `foafnaut:wasm/NAME.wasm#export`).
 The graph page is `graphURL`: the graph app draws it. -/
 def builtinPages : List (String × Bool) :=
-  [("bookmarks",false),("history",false),("settings",false),("wasm",true),("sparql",true),("console",true),("about",false)]
+  [("bookmarks",false),("history",false),("settings",false),("wasm",true),("sparql",true),("console",true),("about",false),
+   ("search",true),("accessibility",false)]
 
 /-- The FOAF graph is a page of the browser, drawn by the graph app (issue 1268). -/
 def graphURL : String := "foafnaut:graph"
@@ -53,7 +59,11 @@ def graphURL : String := "foafnaut:graph"
 (`foafnaut:theme/arcade`, `foafnaut:zoom/150`). -/
 def commands : List String :=
   ["back","forward","reload","new","close","home","source","theme","zoom",
-   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal","encoding"]
+   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal","encoding","search-engine"]
+
+/-- Commands a link may give only on the Settings page; the address bar may type them
+(`:search-engine ...`). A page of any site could otherwise choose the search engine. -/
+def settingsOnly : List String := ["search-engine"]
 
 /-- What the browser loads itself. -/
 structure Site where
@@ -64,6 +74,10 @@ structure Site where
   pages : String := ""
   /-- The browser reads local files: a link on a local file may open another one. -/
   files : Bool := false
+  /-- The address whose Outside page (`Route.outside`) the tab shows now, "" when it shows
+  any other page. The host sets it only for the page the browser itself wrote, so a link
+  to this address is the press of that page's button. -/
+  outside : String := ""
   deriving Repr, BEq
 
 /-- The final action for a link. -/
@@ -74,7 +88,13 @@ inductive Route where
   | graph
   /-- Load `url` in the tab. -/
   | navigate (url : String)
-  /-- Hand `url` to the system: the host's default browser or another app. -/
+  /-- Show the browser's Outside page for `url`: what the address is, and one button that
+  opens it in the host's default browser or another app. The Hub first reads a web address
+  in the tab when the site allows it. Nothing leaves the browser by this route. -/
+  | outside (url : String)
+  /-- Hand `url` to the system: the host's default browser or another app. Only the press
+  of the Outside page's button gives it (`system_only_pressed`), or `:open URL` typed in
+  the address bar. -/
   | system (url : String)
   /-- A browser command (`back`, `theme`, `zoom`, ...). -/
   | command (name argument : String)
@@ -92,6 +112,137 @@ def Route.url? : Route → Option String
 def Route.isSystem : Route → Bool
   | .system _ => true
   | _ => false
+
+/-! ### Search engines
+
+None is chosen until the person picks one in Settings (owner, 2026-11-16): words typed in
+the address bar then go to no one. The list is in alphabetical order and none is first by
+choice; a custom engine is an address with `%s` where the words go. -/
+
+/-- A search engine of the Settings list: `%s` in `template` is where the words go. -/
+structure SearchEngine where
+  id : String
+  name : String
+  template : String
+  deriving Repr, BEq
+
+def searchEngines : List SearchEngine :=
+  [⟨"bing","Bing","https://www.bing.com/search?q=%s"⟩,
+   ⟨"brave","Brave Search","https://search.brave.com/search?q=%s"⟩,
+   ⟨"duckduckgo","DuckDuckGo","https://duckduckgo.com/?q=%s"⟩,
+   ⟨"ecosia","Ecosia","https://www.ecosia.org/search?q=%s"⟩,
+   ⟨"google","Google","https://www.google.com/search?q=%s"⟩,
+   ⟨"kagi","Kagi","https://kagi.com/search?q=%s"⟩,
+   ⟨"mojeek","Mojeek","https://www.mojeek.com/search?q=%s"⟩,
+   ⟨"qwant","Qwant","https://www.qwant.com/?q=%s"⟩,
+   ⟨"startpage","Startpage","https://www.startpage.com/do/search?query=%s"⟩,
+   ⟨"wikipedia","Wikipedia (English)","https://en.wikipedia.org/w/index.php?search=%s"⟩]
+
+/-- The longest custom template kept. -/
+def maxTemplate : Nat := 512
+
+/-- A custom template: an http or https address with `%s`, no space or control, at most
+`maxTemplate` characters. -/
+def validTemplate (t : String) : Bool :=
+  (t.startsWith "https://" || t.startsWith "http://") && (t.splitOn "%s").length ≥ 2 &&
+    t.length ≤ maxTemplate && t.toList.all (fun c => c.toNat > 32 && c.toNat < 127)
+
+/-- The setting as it is kept: an engine's id, a valid custom template, or "" (none, also
+for "none" and anything else). -/
+def searchSetting (v : String) : String :=
+  if (searchEngines.find? (·.id == v)).isSome then v
+  else if validTemplate v then v
+  else ""
+
+/-- The template of a setting, if a search engine is chosen. -/
+def searchTemplate (setting : String) : Option String :=
+  if setting.isEmpty then none else
+  match searchEngines.find? (·.id == setting) with
+  | some e => some e.template
+  | none => if validTemplate setting then some setting else none
+
+/-- The name of a setting, for Settings and the search page. -/
+def searchName (setting : String) : String :=
+  match searchEngines.find? (·.id == setting) with
+  | some e => e.name
+  | none => if validTemplate setting then "Your own: " ++ setting else "None"
+
+/-- Words for a query: UTF-8, letters, digits and `-_.` as they are, a space as `+`, the
+rest percent-encoded. -/
+def encodeQuery (value : String) : String :=
+  String.join (value.toUTF8.toList.map fun b =>
+    let c := Char.ofNat b.toNat
+    if c.isAlphanum || c == '-' || c == '_' || c == '.' then c.toString
+    else if c == ' ' then "+"
+    else
+      let digit := fun (n : Nat) => "0123456789ABCDEF".toList[n]!
+      String.ofList ['%',digit (b.toNat/16),digit (b.toNat%16)])
+
+private def hexValue (c : Char) : Option Nat :=
+  if c.isDigit then some (c.toNat - 48)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 87)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 55)
+  else none
+
+/-- Where `decodeBytes` is: no `%` pending, a `%` seen, or a `%` and one hex digit seen. -/
+inductive Pending where
+  | none
+  | percent
+  | digit (a : Char) (x : Nat)
+
+/-- One character of a query, with no `%` pending: `+` a space, `%` starts a byte. -/
+private def plainStep (acc : List UInt8) (c : Char) : Pending × List UInt8 :=
+  if c == '%' then (.percent, acc)
+  else if c == '+' then (.none, 32 :: acc)
+  else (.none, (String.singleton c).toUTF8.toList.reverse ++ acc)
+
+private def decodeStep : Pending × List UInt8 → Char → Pending × List UInt8
+  | (.none, acc), c => plainStep acc c
+  | (.percent, acc), c =>
+    match hexValue c with
+    | some x => (.digit c x, acc)
+    | none => plainStep (37 :: acc) c
+  | (.digit a x, acc), c =>
+    match hexValue c with
+    | some y => (.none, (x*16+y).toUInt8 :: acc)
+    | none => plainStep ((String.singleton a).toUTF8.toList.reverse ++ 37 :: acc) c
+
+/-- The bytes of a query, `+` a space and `%XX` a byte; a `%` without two hex digits is
+itself. A left fold, so a long typed line needs no stack. -/
+def decodeBytes (cs : List Char) : List UInt8 :=
+  match cs.foldl decodeStep (.none, []) with
+  | (.none, acc) => acc.reverse
+  | (.percent, acc) => (37 :: acc).reverse
+  | (.digit a _, acc) => ((String.singleton a).toUTF8.toList.reverse ++ 37 :: acc).reverse
+
+/-- The words of `encodeQuery`, read back; bytes that are not UTF-8 leave the text as it is. -/
+def decodeQuery (s : String) : String :=
+  (String.fromUTF8? (ByteArray.mk (decodeBytes s.toList).toArray)).getD s
+
+/-- A Wikipedia article title for the words: spaces are `_`, and anything but letters,
+digits and `-_.` is percent-encoded. -/
+def encodeTitle (words : String) : String :=
+  encodeQuery (String.ofList ((words.trimAscii.toString).toList.map fun c => if c == ' ' then '_' else c))
+
+/-- The address a template makes for the words: every `%s` is the encoded words. -/
+def expandSearch (template words : String) : String :=
+  (encodeQuery words).intercalate (template.splitOn "%s")
+
+/-- The browser's own page for words typed in the address bar, made by the browser from
+its own data: nothing is sent anywhere to show it. -/
+def searchPageURL (words : String) : String := "foafnaut:search/" ++ encodeQuery words
+
+#guard searchSetting "" == "" && searchSetting "none" == "" && searchSetting "mojeek" == "mojeek"
+#guard searchSetting "https://example.org/?q=%s" == "https://example.org/?q=%s"
+#guard searchSetting "https://example.org/?q=" == "" && searchSetting "javascript:%s" == ""
+#guard searchSetting "https://exa mple.org/?q=%s" == ""
+#guard searchTemplate "" == none && searchTemplate "none" == none
+#guard expandSearch "https://example.org/?q=%s&x=%s" "a b&c" == "https://example.org/?q=a+b%26c&x=a+b%26c"
+#guard searchPageURL "lean browser" == "foafnaut:search/lean+browser"
+#guard decodeQuery (encodeQuery "lean browser é&%") == "lean browser é&%" && decodeQuery "a%zz+b%" == "a%zz b%" && decodeQuery "%%41%4" == "%A%4"
+#guard encodeTitle " Lean (prover) " == "Lean_%28prover%29"
+-- No engine is chosen by default: an empty setting has no template.
+theorem no_default_search : searchTemplate "" = none := by decide
 
 /-! ### Reading an href -/
 
@@ -301,22 +452,35 @@ def foafnautRoute (site : Site) (rest : List Char) : Route :=
 /-- Same origin as the site. -/
 def sameSite (site : Site) (w : Web) : Bool := !site.origin.isEmpty && w.origin == site.origin
 
-/-- Another site that this browser does not load itself: its host browser opens it. -/
+/-- Another site that this browser does not load itself (the Hub): its Outside page. -/
 def otherSite (site : Site) (w : Web) : Bool := !site.origin.isEmpty && !sameSite site w
+
+/-- An address that leaves the browser only by a press: the system when the tab shows the
+browser's own Outside page for it (the link is that page's button), else that page. -/
+def outsideOrPress (site : Site) (url : String) : Route :=
+  if !site.outside.isEmpty && site.outside == url then .system url else .outside url
+
+/-- A settings-only command from a link on any page but Settings is refused. -/
+def fromPage (site : Site) (base : String) : Route → Route
+  | .command name argument =>
+    if settingsOnly.contains name && base != pageURL site "settings" then
+      .refuse ("foafnaut:" ++ name ++ (if argument.isEmpty then "" else "/" ++ argument))
+        "only the Settings page, or the address bar, chooses a search engine"
+    else .command name argument
+  | r => r
 
 /-- The route for a target. -/
 def decide (site : Site) (base : String) : Target → Route
-  | .foafnaut rest => foafnautRoute site rest
+  | .foafnaut rest => fromPage site base (foafnautRoute site rest)
   | .web w =>
     if sameSite site w then .navigate w.url
-    else if externalHosts.contains w.host then .system w.url
     else if site.origin.isEmpty then .navigate w.url
-    else .system w.url
+    else outsideOrPress site w.url
   | .file url =>
     if site.files && baseScheme base == some "file" then .navigate url
     else .refuse url "a web page can not open local files"
   | .other scheme url =>
-    if systemSchemes.contains scheme then .system url
+    if systemSchemes.contains scheme then outsideOrPress site url
     else if scheme == "javascript" then .refuse url "a link that runs a script is not followed"
     else if scheme == "data" then .refuse url "data URLs are not opened as pages"
     else .refuse url s!"this browser does not open {scheme}: links"
@@ -350,6 +514,7 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:sparql/q=ASK+%7B%7D" == .page "sparql" "foafnaut:sparql/q=ASK+%7B%7D"
 #guard route hub here "foafnaut:wasm" == .page "wasm" "foafnaut:wasm"
 #guard route hub here "foafnaut:console" == .page "console" "foafnaut:console"
+#guard route hub here "foafnaut:accessibility" == .page "accessibility" "foafnaut:accessibility"
 #guard route hub here "foafnaut:console/2" == .page "console" "foafnaut:console/2"
 #guard route hub here "foafnaut:liberal/on" == .command "liberal" "on"
 #guard route hub here "foafnaut:theme/arcade" == .command "theme" "arcade"
@@ -358,9 +523,21 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "status.html" == .navigate "https://danbri.github.io/factoidal-core/web/hub/foafnaut/pages/status.html"
 #guard route hub here "../x/./y.html?a b#c d" == .navigate "https://danbri.github.io/factoidal-core/web/hub/foafnaut/x/y.html?a%20b#c%20d"
 #guard route hub here "HTTPS://DANBRI.github.io:443" == .navigate "https://danbri.github.io/"
-#guard route hub here "https://example.org/a" == .system "https://example.org/a"
-#guard route hub here "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
-#guard route hub here "mailto:someone@example.org" == .system "mailto:someone@example.org"
+-- Another site, mail: the Outside page, and the system only for a press of its button.
+#guard route hub here "https://example.org/a" == .outside "https://example.org/a"
+#guard route hub here "https://github.com/danbri/factoidal-core" == .outside "https://github.com/danbri/factoidal-core"
+#guard route hub here "https://duckduckgo.com/?q=x" == .outside "https://duckduckgo.com/?q=x"
+#guard route hub here "mailto:someone@example.org" == .outside "mailto:someone@example.org"
+#guard route {hub with outside := "https://example.org/a"} "https://example.org/a" "https://example.org/a" == .system "https://example.org/a"
+#guard route {hub with outside := "https://example.org/a"} "https://example.org/a" "https://example.org/b" == .outside "https://example.org/b"
+#guard route {native with outside := "mailto:a@example.org"} "mailto:a@example.org" "mailto:a@example.org" == .system "mailto:a@example.org"
+#guard route native "https://example.org/" "tel:+44" == .outside "tel:+44"
+-- The search engine is chosen on Settings, or typed; a link elsewhere can not choose it.
+#guard route hub here "foafnaut:search-engine/mojeek" == .refuse "foafnaut:search-engine/mojeek" "only the Settings page, or the address bar, chooses a search engine"
+#guard route hub (pageURL hub "settings") "foafnaut:search-engine/mojeek" == .command "search-engine" "mojeek"
+#guard route native (pageURL native "settings") "foafnaut:search-engine/none" == .command "search-engine" "none"
+#guard commandRoute hub "search-engine" "mojeek" == .command "search-engine" "mojeek"
+#guard route hub here "foafnaut:search/lean+browser" == .page "search" "foafnaut:search/lean+browser"
 #guard (route hub here "javascript:alert(1)").isSystem == false
 #guard route hub here "file:///etc/passwd" == .refuse "file:///etc/passwd" "a web page can not open local files"
 #guard route hub here "https://user@danbri.github.io/" == .refuse "https://user@danbri.github.io/" "addresses with a user name are not followed"
@@ -369,7 +546,8 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route native "file:///lab/pages/index.html" "showcase.html" == .navigate "file:///lab/pages/showcase.html"
 #guard route native "https://example.org/" "https://example.org/b" == .navigate "https://example.org/b"
 #guard route native "https://example.org/" "file:///etc/hosts" == .refuse "file:///etc/hosts" "a web page can not open local files"
-#guard route native "https://example.org/" "https://www.github.com/x" == .system "https://www.github.com/x"
+#guard route native "https://example.org/" "https://www.github.com/x" == .navigate "https://www.github.com/x"
+#guard route native "https://example.org/" "https://duckduckgo.com/" == .navigate "https://duckduckgo.com/"
 #guard route native "https://example.org/" "http://127.0.0.1:8080/x" == .navigate "http://127.0.0.1:8080/x"
 #guard route native "https://example.org/" "http://0x7f.1/" == .refuse "http://0x7f.1/" "numeric hosts other than a dotted quad are not opened"
 #guard commandRoute hub "zoom" "150" == .command "zoom" "150" && commandRoute hub "help" "" == route hub here "foafnaut:settings"
@@ -389,6 +567,20 @@ theorem foafnautRoute_not_navigate (site : Site) (rest : List Char) (u : String)
   cases builtin rest with
   | page name argument => cases argument <;> simp [Builtin.route]
   | _ => simp [Builtin.route]
+
+/-- `fromPage` only ever refuses a command: it makes no system route. -/
+theorem fromPage_system (site : Site) (base : String) (r : Route) (u : String)
+    (h : fromPage site base r = .system u) : r = .system u := by
+  cases r with
+  | command name argument =>
+    simp only [fromPage] at h
+    split at h <;> simp at h
+  | _ => simpa [fromPage] using h
+
+theorem foafnaut_decide_not_system (site : Site) (base : String) (rest : List Char) (u : String) :
+    decide site base (.foafnaut rest) ≠ .system u := by
+  intro h
+  exact foafnautRoute_not_system site rest u (fromPage_system _ _ _ _ h)
 
 private theorem trimEnd_append (pre rest : List Char) (h : pre.all (!isSpaceOrControl ·) = true) :
     trimEnd (pre ++ rest) = pre ++ trimEnd rest := by
@@ -436,8 +628,8 @@ theorem analyze_foafnaut (base rest : String) :
 /-- No `foafnaut:` href is ever handed to the system. -/
 theorem foafnaut_never_system (site : Site) (base rest u : String) :
     route site base ("foafnaut:" ++ rest) ≠ .system u := by
-  simp only [route, analyze_foafnaut, decide]
-  exact foafnautRoute_not_system _ _ _
+  simp only [route, analyze_foafnaut]
+  exact foafnaut_decide_not_system _ _ _ _
 
 /-- Nor any href whose scheme, as a browser reads it (any case, spaces at the ends), is
 `foafnaut`. -/
@@ -445,53 +637,121 @@ theorem foafnaut_scheme_never_system (site : Site) (base href u : String)
     (h : schemeOf (clean href.toList) = some "foafnaut") : route site base href ≠ .system u := by
   simp only [route, analyze]
   by_cases hp : foafnautPrefix.isPrefixOf (clean href.toList) = true
-  · simp only [hp, if_true, decide]; exact foafnautRoute_not_system _ _ _
-  · simp only [hp, h, Bool.false_eq_true, if_false, beq_self_eq_true, if_true, decide]
-    exact foafnautRoute_not_system _ _ _
+  · simp only [hp, if_true]; exact foafnaut_decide_not_system _ _ _ _
+  · simp only [hp, h, Bool.false_eq_true, if_false, beq_self_eq_true, if_true]
+    exact foafnaut_decide_not_system _ _ _ _
 
-/-- The system gets an address only when it is a web address whose host is on the
-external list, or a web address of another site when the browser loads only its own
-site (the Hub: its host browser opens other sites), or an address of another app's
-scheme (`mailto:`, `tel:`, `sms:`). The web address is http or https, never the site's
-own origin. -/
-theorem system_only_external (site : Site) (base href u : String) (h : route site base href = .system u) :
-    (∃ w : Web, analyze base href = .ok (.web w) ∧ u = w.url ∧ (w.scheme = "http" ∨ w.scheme = "https") ∧
-      sameSite site w = false ∧ (externalHosts.contains w.host = true ∨ otherSite site w = true)) ∨
-    (∃ scheme, analyze base href = .ok (.other scheme u) ∧ systemSchemes.contains scheme = true) := by
+theorem outsideOrPress_system (site : Site) (url u : String) (h : outsideOrPress site url = .system u) :
+    u = url ∧ site.outside = url ∧ site.outside ≠ "" := by
+  unfold outsideOrPress at h
+  by_cases hc : (!site.outside.isEmpty && site.outside == url) = true
+  · rw [if_pos hc] at h
+    injection h with h
+    rw [Bool.and_eq_true] at hc
+    obtain ⟨h1, h2⟩ := hc
+    have heq : site.outside = url := by simpa using h2
+    refine ⟨h.symm, heq, ?_⟩
+    intro h0
+    rw [h0] at h1
+    exact absurd h1 (by decide)
+  · rw [if_neg hc] at h
+    cases h
+
+/-- A link hands an address to the system only when the tab shows the browser's own
+Outside page for that very address (`site.outside`), so the link is that page's button;
+and the address is then a web address of another site when the browser loads only its own
+site (the Hub), or an address of another app's scheme (`mailto:`, `tel:`, `sms:`). No web
+host is on any list that goes to the system. -/
+theorem system_only_pressed (site : Site) (base href u : String) (h : route site base href = .system u) :
+    site.outside = u ∧ u ≠ "" ∧
+    ((∃ w : Web, analyze base href = .ok (.web w) ∧ u = w.url ∧ sameSite site w = false ∧ otherSite site w = true) ∨
+     (∃ scheme, analyze base href = .ok (.other scheme u) ∧ systemSchemes.contains scheme = true)) := by
   unfold route at h
   split at h
   · rename_i target ht
     cases target with
-    | foafnaut rest => exact absurd h (foafnautRoute_not_system _ _ _)
+    | foafnaut rest => exact absurd h (foafnaut_decide_not_system _ _ _ _)
     | web w =>
-      left
-      refine ⟨w, ht, ?_⟩
-      have hscheme : w.scheme = "http" ∨ w.scheme = "https" := by
-        unfold Web.scheme; split <;> simp
       simp only [decide] at h
       by_cases hs : sameSite site w = true
       · simp [hs] at h
       · simp only [hs, Bool.false_eq_true, if_false] at h
-        by_cases he : externalHosts.contains w.host = true
-        · simp only [he, if_true, Route.system.injEq] at h
-          exact ⟨h.symm, hscheme, by simpa using hs, Or.inl he⟩
-        · simp only [he, Bool.false_eq_true, if_false] at h
-          by_cases ho : site.origin.isEmpty = true
-          · simp [ho] at h
-          · simp only [ho, Bool.false_eq_true, if_false, Route.system.injEq] at h
-            refine ⟨h.symm, hscheme, by simpa using hs, Or.inr ?_⟩
-            simp only [otherSite, hs, ho]; rfl
+        by_cases ho : site.origin.isEmpty = true
+        · simp [ho] at h
+        · simp only [ho, Bool.false_eq_true, if_false] at h
+          obtain ⟨hu, hout, hne⟩ := outsideOrPress_system _ _ _ h
+          subst hu
+          refine ⟨hout, by rw [← hout]; exact hne, Or.inl ⟨w, ht, rfl, by simpa using hs, ?_⟩⟩
+          simp only [otherSite, hs, ho]; rfl
     | file url =>
       simp only [decide] at h
       split at h <;> simp at h
     | other scheme url =>
-      right
       simp only [decide] at h
       by_cases hs : systemSchemes.contains scheme = true
-      · simp only [hs, if_true, Route.system.injEq] at h
-        exact ⟨scheme, by rw [ht, h], hs⟩
+      · simp only [hs, if_true] at h
+        obtain ⟨hu, hout, hne⟩ := outsideOrPress_system _ _ _ h
+        subst hu
+        exact ⟨hout, by rw [← hout]; exact hne, Or.inr ⟨scheme, ht, hs⟩⟩
       · simp only [hs, Bool.false_eq_true, if_false] at h
         split at h
+        · simp at h
+        · split at h <;> simp at h
+  · simp at h
+
+/-- With no Outside page shown, no link goes to the system: every way out of the browser
+is a page first, and a press on that page's button. -/
+theorem no_system_unpressed (site : Site) (base href u : String) (h : site.outside = "") :
+    route site base href ≠ .system u := by
+  intro hr
+  have hout := (system_only_pressed site base href u hr).1
+  have hne := (system_only_pressed site base href u hr).2.1
+  exact hne (by rw [← hout]; exact h)
+
+/-- The native browser loads every web site itself: a web address of any host loads in the
+tab, and is never handed to the system. -/
+theorem native_web_navigates (site : Site) (base href : String) (w : Web)
+    (h : analyze base href = .ok (.web w)) (ho : site.origin = "") :
+    route site base href = .navigate w.url := by
+  have he : site.origin.isEmpty = true := by rw [ho]; decide
+  have hs : sameSite site w = false := by simp [sameSite, he]
+  simp [route, h, decide, hs, he]
+
+/-- A link on a page other than Settings never chooses the search engine. -/
+theorem settings_only_from_settings (site : Site) (base href argument : String)
+    (hb : base ≠ pageURL site "settings") : route site base href ≠ .command "search-engine" argument := by
+  intro h
+  unfold route at h
+  split at h
+  · rename_i target _
+    cases target with
+    | foafnaut rest =>
+      simp only [decide] at h
+      generalize foafnautRoute site rest = r at h
+      cases r with
+      | command name arg =>
+        simp only [fromPage] at h
+        split at h
+        · simp at h
+        · rename_i hc
+          simp only [Route.command.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          apply hc
+          simp [settingsOnly, hb]
+      | _ => simp [fromPage] at h
+    | web w =>
+      simp only [decide] at h
+      split at h
+      · simp at h
+      · split at h
+        · simp at h
+        · unfold outsideOrPress at h; split at h <;> simp at h
+    | file url => simp only [decide] at h; split at h <;> simp at h
+    | other scheme url =>
+      simp only [decide] at h
+      split at h
+      · unfold outsideOrPress at h; split at h <;> simp at h
+      · split at h
         · simp at h
         · split at h <;> simp at h
   · simp at h
@@ -519,7 +779,7 @@ theorem builtin_resolves (site : Site) (base : String) :
     ∀ p ∈ builtinPages, route site base ("foafnaut:" ++ p.1) = .page p.1 (pageURL site p.1) := by
   intro p hp
   simp only [builtinPages, List.mem_cons, List.not_mem_nil, or_false] at hp
-  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hp with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     simp only [route, analyze_foafnaut, decide, foafnautRoute]
   · rw [show builtin ((trimEnd "bookmarks".toList).filter (!isTabOrNewline ·)) = .page "bookmarks" none by decide]; rfl
   · rw [show builtin ((trimEnd "history".toList).filter (!isTabOrNewline ·)) = .page "history" none by decide]; rfl
@@ -528,6 +788,8 @@ theorem builtin_resolves (site : Site) (base : String) :
   · rw [show builtin ((trimEnd "sparql".toList).filter (!isTabOrNewline ·)) = .page "sparql" none by decide]; rfl
   · rw [show builtin ((trimEnd "console".toList).filter (!isTabOrNewline ·)) = .page "console" none by decide]; rfl
   · rw [show builtin ((trimEnd "about".toList).filter (!isTabOrNewline ·)) = .page "about" none by decide]; rfl
+  · rw [show builtin ((trimEnd "search".toList).filter (!isTabOrNewline ·)) = .page "search" none by decide]; rfl
+  · rw [show builtin ((trimEnd "accessibility".toList).filter (!isTabOrNewline ·)) = .page "accessibility" none by decide]; rfl
 
 /-- `foafnaut:graph` runs the graph app. -/
 theorem graph_resolves (site : Site) (base : String) : route site base graphURL = .graph := by

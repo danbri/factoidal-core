@@ -1050,6 +1050,34 @@ languages like Lean and Rocq."
 - Owner, 2026-11-09, verbatim: "To avoid clashing with daily work, commit only in branches for
   tonight." This was for that night; "Work goes on main" above is the standing rule.
 
+### BubblePopJS JIT: mode parameter accepted; LTO default and tier 2 started (owner, 2026-11-25)
+
+Owner, 2026-11-25, verbatim: "yes start on 1 and 2 now too" and "ok launch a subagent to begin
+progressing JIT", to the questions: accept the mode parameter of
+https://github.com/danbri/factoidal-core/pull/557 (tier 1, proved) as the way tiers are switched
+and proved; (1) make the link-time optimised build the default for the native engine; (2) start
+tier 2, inline caches for property reads (target: at least 3 times faster on sites that see one
+shape). Tracking: https://github.com/danbri/factoidal-core/issues/471. Each step reports its
+measurement before and after.
+
+### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
+
+Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
+Chrome, Firefox, Safari et al." and "We should ensure all of these gut-powered interaction
+attempts are honoured INSTANTLY thanks to having a UX thread that isn't trying to run 100 JS jobs
+in finely sliced parallel. Make this a priority."
+
+- Priority: Command-click and middle click open a new tab; Control-click and right click open a
+  context menu for the link, image, selection or page; double and triple click select; Command-C
+  copies at once. The decision of each gesture is in Lean.
+- Input never waits for page scripts: these gestures use the frame already shown, on the main
+  thread or in an input lane before script turns.
+- Record: `docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md` section 0; tracking
+  https://github.com/danbri/factoidal-core/issues/1031 (also threads, tabs, processes, DNS, HTTP).
+- Owner, 2026-11-25, verbatim: "For all of this do seek to be metrics driven." Each step of
+  issue 1031 names its measurement (for gestures: `native-html-gesture` `queuedToActionMs` and the
+  `gestures` block of `--perf-summary`) and reports it before and after.
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
@@ -1068,6 +1096,43 @@ was evidence of invalid content, rather than embracing RDF's open world web etho
   theorem and the doc comment form ("Says:", "Does not say:") are in
   `docs/designissues/2026-11-10-theorems-as-contributions.md`. Those rules are a session's
   proposal: add each real misreading to that record's section 5 with its date and cost.
+
+### XML Signature: DSA and P-384/P-521 deferred; 1024-bit RSA behind an opt-in (owner, 2026-11-17)
+
+Owner, verbatim: "1223 1224 1227 - do not implement currently. Investigate usage, libraries. Are
+they obsolete? Widely used? Both?" and "1227 - off by default and make user pass in a
+"dangerously_and_regrettsbly_.... " symbol as we have done elsewhere somehow."
+
+- https://github.com/danbri/factoidal/issues/1223 (ECDSA P-384 and P-521) and
+  https://github.com/danbri/factoidal/issues/1224 (DSA): not implemented now. The issues stay open,
+  and the expected failures that name them stay.
+- https://github.com/danbri/factoidal/issues/1227 (1024-bit RSA keys): verification is refused by
+  default. The opt-in is `Risk.rsa1024Verify` in Lean, and the `xmlVerify` option
+  `dangerouslyAndRegrettablyAcceptRsa1024: true` (with a warning in the result). Signing keeps the
+  2048-bit minimum.
+- Answer to "obsolete, widely used, or both?", with sources:
+  `docs/designissues/2026-11-17-xmldsig-dsa-p384-p521-status.md`. DSA is obsolete, although XML
+  Signature 1.1 still requires its verification. P-384 is current and widely used. P-521 is
+  current but rare.
+- Coordinator's reading, not the owner's words: track B item 4 is no longer blocked by 1223 and
+  1224, so item 5 (XML Encryption 1.1) can start.
+
+### XML Encryption 1.1: deferrals; AES on emulators (owner, 2026-11-23)
+
+Owner, verbatim: "I am concerned re cryptography. Wary of rolling our own. Unhappy about partial
+implementation of standards. Recall some issue with aes being vulnerable when no hardware support
+for some op (eg outside of x86); but this sounds risky given existence of emulators, wasm etc. We
+can defer for now and add more if concrete usecases arise."
+
+- Deferred, with expected failures: AES-192 in XML Encryption
+  (https://github.com/danbri/factoidal/issues/1304, W3C WRAP.2 and AGRMNT.2) and ECDH-ES on P-384
+  and P-521 (https://github.com/danbri/factoidal/issues/1223, W3C AGRMNT.3). Add an algorithm only
+  for a concrete use case and only from a verified source.
+- AES on an emulated CPU (CPUID reports AES-NI, the emulator runs it in software):
+  https://github.com/danbri/factoidal/issues/1305, for expert review. No code change yet.
+- Coordinator's reading, not the owner's words: this answer does not decide
+  https://github.com/danbri/factoidal-core/pull/766 (finite-field Diffie-Hellman, dh-es, with
+  1024-bit primes behind an opt-in). It stays unmerged until the owner answers on it.
 
 ### One owner per release (owner, 2026-10-28)
 

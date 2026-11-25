@@ -76,9 +76,10 @@ Accepted, by allowlist; everything else is refused, never skipped:
   `xmlenc#aes128-cbc` and `xmlenc#aes256-cbc` only when the caller opts in,
   because CBC without a MAC is malleable (Jager and Somorovsky, "How to Break
   XML Encryption", CCS 2011);
-* key transport: `xmlenc#rsa-oaep-mgf1p` (SHA-1 digest and MGF1),
-  `xmlenc11#rsa-oaep` with SHA-256; refused: `xmlenc#rsa-1_5`
-  (Bleichenbacher);
+* key transport uses `xmlenc#rsa-oaep-mgf1p` or `xmlenc11#rsa-oaep`. The
+  reader accepts the digest and MGF combinations described below. The writer
+  produces the SHA-1 or SHA-256 equal-hash configurations. The profile
+  refuses `xmlenc#rsa-1_5` (Bleichenbacher).
 * key wrap: `xmlenc#kw-aes128`, `xmlenc#kw-aes256`;
 * key agreement: `xmlenc11#ECDH-ES` on P-256 and X25519, with
   `xmlenc11#ConcatKDF` over SHA-256 (OtherInfo not a whole number of octets:
@@ -131,8 +132,15 @@ rulings):
   block appended; Lean removes the §5.2 padding. Checked against Santuario's
   `aes128-cbc` in `tests/xmlenc/wasm.mjs`.
 * RSA-OAEP with the same hash for the digest and MGF1 only (SHA-1 or
-  SHA-256): `rsa-oaep-mgf1p` with a SHA-256 digest and the W3C cases
-  WRAP.3 and WRAP.4 (SHA-384 or SHA-512 with MGF1-SHA-1) are refused.
+  SHA-256) until 2026-11-17. Since then (track B item 5, part 1, of
+  https://github.com/danbri/factoidal/issues/1165): every digest of §5.5.2
+  and §5.7 (SHA-1, SHA-224, SHA-256, SHA-384, SHA-512) with either
+  algorithm, and for `xmlenc11#rsa-oaep` any `mgf1sha*` MGF, independent of
+  the digest. `Enc.oaepHashOf` describes the pure specification. The XML
+  runtime supplies HACL* through `Enc.Prims.oaepProvider` for both digests.
+  It refuses a missing or wrong-sized digest before applying that mask.
+  W3C WRAP.3 and WRAP.4 exercise mixed digests. WRAP.2 also needs AES-192.
+  [Checked hash provider and fixture provenance](../20261119-xmlenc-oaep-hacl.md).
 * X25519 key agreement: `xmlenc11#ECDH-ES` with an X25519 originator key,
   and `http://www.w3.org/2021/04/xmldsig-more#x25519` (RFC 9231), which
   Santuario 4 writes; the originator key is a `dsig11:DEREncodedKeyValue`
@@ -145,8 +153,52 @@ rulings):
   read: the key is the caller's key named by `ds:KeyName`, or the caller's
   only key of that kind. W3C WRAP.1 and AGRMNT.1 name their keys only by
   certificate.
-* `EncryptedData` without `Type` is refused (W3C SYM.1, DRV.1): the profile
-  decrypts XML only.
+* `EncryptedData` without `Type` is refused by `decrypt`, which replaces
+  elements in a document. Since 2026-11-22 (track B item 5, part 3):
+  `decryptOctets`, the `xmlDecrypt` member `octets: true`, gives the
+  plaintext octets of a document element `EncryptedData` with any or no
+  `Type` (§4.4 step 3). W3C SYM.1 passes this way.
+* PBKDF2 key derivation (§5.4.2), since 2026-11-22 (track B item 5, part
+  2, of https://github.com/danbri/factoidal/issues/1165): `kdfOf` reads
+  `xmlenc11#ConcatKDF` (§5.4.1, unchanged: theorem
+  `xmlenc11_kdfOf_concatKdf`) or `xmlenc11#pbkdf2` in an
+  `xenc:AgreementMethod`. The password is the shared secret Z. Accepted:
+  `PBKDF2-params` with its four children in schema order, a `Specified`
+  salt (`OtherSource` defines no algorithm and is refused), an
+  `IterationCount` of at most `Opts.maxPbkdf2Iterations` (1,000,000, so a
+  document cannot ask for unbounded work), a `KeyLength` equal to the length
+  of the key it makes (a structure refusal, before any key is used), and the
+  PRF HMAC-SHA-1 or HMAC-SHA-256/384/512 (no HACL* HMAC-SHA-224 here).
+  `Prims.pbkdf2` is `WebCrypto.pbkdf2` over `WebHacl.haclHash`; theorem
+  `xmlenc11_pbkdf2_native_eq_rfc8018` makes it the pure RFC 8018 function
+  given `HashAgrees` and `HmacAgrees`, and
+  `xmlenc11_derive_pbkdf2_eq_webcrypto` states the derived key for a
+  document. Tests: `tests/xmlenc/pbkdf2.json`, made by Node's crypto
+  (`tests/xmlenc/make-pbkdf2.mjs`): 5 documents that decrypt (P-256 and
+  X25519; key wrap and direct agreement; each PRF) and 6 refusals; the
+  native probe compares the key encryption key Lean derives with Node's.
+  The writer still uses Concat KDF only.
+* The published PBKDF2 vectors do not decrypt as written. W3C AGRMNT.9
+  (Oracle, ECDH-ES with PBKDF2): no derivation tried gives a key that
+  unwraps its key; an expected failure,
+  https://github.com/danbri/factoidal/issues/1303. IBM and Microsoft DRV.2
+  and DRV.4 (PBKDF2 in `xenc11:DerivedKey`): the derived key decrypts them,
+  but their AES-256-CBC ciphertexts have no padding block, which §5.2
+  requires. Microsoft DRV.1 (Concat KDF) has the same defect.
+* `xenc11:DerivedKey` (§5.4.3), since 2026-11-22 (track B item 5, part
+  3): in `ds:KeyInfo` of `EncryptedData` (the content key) or of
+  `EncryptedKey` (the key encryption key of AES Key Wrap; RSA-OAEP with a
+  derived key is refused). One `KeyDerivationMethod` (Concat KDF or PBKDF2,
+  through the same `kdfSized` as key agreement), optional
+  `xenc:ReferenceList` and `DerivedKeyName` (read as labels only), and
+  `MasterKeyName`, which names the caller's symmetric master key (else the
+  caller's only symmetric key). The master key takes the place of Z.
+  Theorems: `xmlenc11_deriveFromMaster_size`, `xmlenc11_derivedKey_concat`
+  (§5.4.1 over the master key), `xmlenc11_derivedKey_pbkdf2_eq_rfc8018`.
+  The npm `oct` key may have 1 to 1024 octets, for a master key or a
+  password. W3C DRV.1 and DRV.2 are vendored and counted apart as defective
+  test data (no padding block); the harnesses check that the key Lean
+  derives equals the key Node derives.
 
 ## JWE profile
 

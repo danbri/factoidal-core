@@ -4,6 +4,7 @@ import L4Factoidal.Rendering.Grid.Align
 import L4Factoidal.Rendering.Grid.Abspos
 import L4Factoidal.Rendering.Grid.Baseline
 import L4Factoidal.Rendering.LogicalAxes
+import L4Factoidal.Rendering.AspectRatio
 
 /-! Grid layout (CSS Grid Layout 2) of a container's items: this module reads the
 computed values (`Computed.grid`, `Computed.align`), asks the pure modules under
@@ -189,8 +190,8 @@ def gridTrackFns (axis : Grid.Axis) (auto : List Grid.TrackSize) (lead count : N
 its margin box, within its `min-width` and `max-width`; a px `width` is all three. The
 minimum contribution is the min-content width (the automatic minimum size, §6.6), the
 `min-width` when one is given, or the edges alone for an item that clips. -/
-def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (start span : Nat) :
-    Except String Grid.Contribution := do
+def gridInlineSizes (kids : Children) (item : Item) (is : Computed) :
+    Except String (Nat × Nat × Nat) := do
   let m := is.margin
   let b := is.borderEdges
   let p := is.padding
@@ -200,7 +201,7 @@ def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (star
   match is.width with
   | .px w =>
     let outer := gridUnits (clampOpt lo hi w+edges)
-    return {start, span, minimum := outer, minContent := outer, maxContent := outer}
+    return (outer, outer, outer)
   | _ =>
     let (a,c) ← kids.intrinsic item
     let minC := clampOpt lo hi (max 0 (a-edges))+edges
@@ -208,7 +209,47 @@ def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (star
     let minimum := match is.minWidth with
       | .px v => v+edges
       | _ => if is.clipOverflow then edges else minC
-    return {start, span, minimum := gridUnits minimum, minContent := gridUnits minC, maxContent := gridUnits maxC}
+    return (gridUnits minimum, gridUnits minC, gridUnits maxC)
+
+/-- `gridInlineSizes` as the contribution of an item that starts at column `start` and
+spans `span` columns. -/
+def gridInlineContribution (kids : Children) (item : Item) (is : Computed) (start span : Nat) :
+    Except String Grid.Contribution :=
+  (fun (m : Nat × Nat × Nat) => ({start, span, minimum := m.1, minContent := m.2.1, maxContent := m.2.2} : Grid.Contribution)) <$>
+    gridInlineSizes kids item is
+
+/-- The contribution a grid container lays its columns out with, in its definite width:
+`gridInlineContribution`, or, for an item that spans only columns whose sizing functions
+read no item (`Grid.Contribution.inert`: a fixed minimum and a fixed or `fr` maximum, as
+`minmax(0, 1fr)`) when no column is collapsed, the item with its contributions 0 and no
+measure of its content (`gridInlineContributionIn_ok`, `gridSizes_map_blankInert`: the
+column sizes are the same). An unmeasured item that `gridInlineContribution` refuses is
+laid out, not refused. -/
+def gridInlineContributionIn (fns : Array Grid.TrackFn) (collapsed : Array Bool) (kids : Children) (item : Item)
+    (is : Computed) (start span : Nat) : Except String Grid.Contribution :=
+  if !collapsed.any id && ({start, span} : Grid.Contribution).inert fns then .ok {start, span}
+  else gridInlineContribution kids item is start span
+
+/-- Kind: equality. Says: where `gridInlineContribution` answers a contribution `c`,
+`gridInlineContributionIn` answers `c` with its contributions made 0 when it is inert and
+no column is collapsed (`Grid.Contribution.blankInert`), else `c`. Does not say: that the
+loop of `gridLayoutH` builds the whole array this way (it does, item by item). -/
+theorem gridInlineContributionIn_ok (fns : Array Grid.TrackFn) (collapsed : Array Bool) (kids : Children) (item : Item)
+    (is : Computed) (start span : Nat) (c : Grid.Contribution) (h : gridInlineContribution kids item is start span = .ok c) :
+    gridInlineContributionIn fns collapsed kids item is start span =
+      .ok (if !collapsed.any id then c.blankInert fns else c) := by
+  unfold gridInlineContribution at h
+  cases hs : gridInlineSizes kids item is with
+  | error e => simp [hs, Functor.map, Except.map] at h
+  | ok t =>
+    simp only [hs, Functor.map, Except.map, Except.ok.injEq] at h
+    subst h
+    have hi' : ({start, span, minimum := t.1, minContent := t.2.1, maxContent := t.2.2} : Grid.Contribution).inert fns =
+        ({start, span} : Grid.Contribution).inert fns := rfl
+    unfold gridInlineContributionIn Grid.Contribution.blankInert
+    rw [hi']
+    cases hc : collapsed.any id <;> cases hi : ({start, span} : Grid.Contribution).inert fns <;>
+      simp [gridInlineContribution, hs, Functor.map, Except.map]
 
 /-- The used border-box width of an item in an area `areaW` wide (§6.2): its `width`
 (a percentage is of the area); else, stretched, the area less its margins; else its
@@ -228,6 +269,45 @@ def gridItemWidth (kids : Children) (item : Item) (is : Computed) (areaW : Float
         let e := m.left+m.right+padH
         pure (min (c-e) (max (a-e) (areaW-e)))
   return max 0 (clampOpt ((CSS.resolve areaW is.minWidth).getD 0) (CSS.resolve areaW is.maxWidth) content)+padH
+
+/-- Transfer a definite preferred height through an authored ratio when alignment
+uses a fit-content width (CSS Grid 2 §6.2 and CSS Sizing 4 §5.1). Layout styles
+store content-box lengths, but a border-box ratio relates the outer box edges. -/
+private def gridRatioWidth (s : Computed) (areaW : Float) (areaH : Option Float)
+    (stretch : Bool) : Option Float := do
+  let (num, den) ← s.pos.ratio
+  let autoWidth := match s.width with | .auto => true | _ => false
+  if stretch || !autoWidth || s.pos.ratioAuto || s.display.isTable || num == 0 || den == 0 then none else
+  let h ← resolveOpt areaH s.height
+  let b := s.borderEdges
+  let padH := b.left+b.right+s.padding.left+s.padding.right
+  let padV := b.top+b.bottom+s.padding.top+s.padding.bottom
+  let h := clampOpt ((resolveOpt areaH s.minHeight).getD 0) (resolveOpt areaH s.maxHeight) h
+  let input := if s.pos.borderBox then h+padV else h
+  let w := LU.toPx (Ratio.widthFor num den (LU.ofPx (max 0 input)))
+  let content := if s.pos.borderBox then max 0 (w-padH) else w
+  return max 0 (clampOpt ((CSS.resolve areaW s.minWidth).getD 0) (CSS.resolve areaW s.maxWidth) content)+padH
+
+#guard gridRatioWidth {height := .percent 1, pos := {ratio := some (1, 2)}} 24 (some 32) false == some 16
+#guard gridRatioWidth {height := .percent 1, pos := {ratio := some (1, 2)}} 24 none false == none
+#guard gridRatioWidth {height := .px 30, pos := {ratio := some (2, 1)}, maxWidth := .px 40}
+    100 none false == some 40
+
+private def gridJustifyItem (item container : Computed) (rtl : Bool) : Grid.SelfAlign :=
+  if item.grid.templateColumns.subgrid && item.display.isGrid then .stretch
+  else gridSelfAlign item.align.justifySelf container.align.justifyItems rtl
+    ((selfStartSides (gridFrame item)).1 != rtl)
+
+private def gridItemX (item container : Computed) (rtl : Bool) (align : Grid.SelfAlign)
+    (areaX areaW width : Float) : Float :=
+  let outer := width+item.margin.left+item.margin.right
+  let offset := match autoCrossOffset item.autoMarginLeft item.autoMarginRight (areaW-outer) with
+    | some d => d
+    | none =>
+      let safe := gridSafe item.align.justifySelf item.align.justifySelfSafe container.align.justifyItemsSafe
+      let d := LU.toPx (gridSelfOffset align safe (gridUnits areaW) (gridUnits outer))
+      if rtl then areaW-outer-d else d
+  areaX+offset
 
 /-- The tracks of an axis that are collapsed (§7.2.3.2): the tracks of a
 `repeat(auto-fit, …)` that no item spans. `spans` are the start track and the span of
@@ -257,6 +337,17 @@ def gridSizes (fns : Array Grid.TrackFn) (collapsed : Array Bool) (gap : Nat) (i
       {c with start := before.getD c.start 0, span := before.getD (c.start + c.span) 0 - before.getD c.start 0}
     let sizes := Grid.sizeTracks live.toArray gap moved space stretch
     Array.ofFn (n := fns.size) fun i => if collapsed.getD i.val false then 0 else sizes.getD (before.getD i.val 0) 0
+
+/-- Kind: equality (a cost contract). Says: with no collapsed track, in a definite space,
+the used sizes of the tracks are the same when the inert items' contributions are made 0
+(`Grid.sizeTracks_map_blankInert`). Does not say: anything with a collapsed track. -/
+theorem gridSizes_map_blankInert (fns : Array Grid.TrackFn) (collapsed : Array Bool) (gap : Nat)
+    (items : Array Grid.Contribution) (u : Nat) (stretch : Bool) (h : collapsed.any id = false) :
+    gridSizes fns collapsed gap (items.map (Grid.Contribution.blankInert fns)) (.definite u) stretch =
+      gridSizes fns collapsed gap items (.definite u) stretch := by
+  unfold gridSizes
+  rw [h]
+  exact Grid.sizeTracks_map_blankInert fns gap items u stretch
 
 /-- The sizes of the tracks of an axis with the gaps between those not collapsed, in units. -/
 def gridExtent (sizes : Array Nat) (collapsed : Array Bool) (gap : Nat) : Nat :=
@@ -291,6 +382,30 @@ group whose id is this name, the resolved columns and the resolved rows, separat
 tabs. -/
 def gridRecordName (source : Nat) : String := s!"grid-tracks {source}"
 
+private structure GridBaselineChoice where
+  row : Nat
+  column : Nat
+  priority : Nat
+  y : Float
+
+/-- Choose an item from the first or last occupied row. Shared alignment baselines
+precede fallback items in the same row (CSS Grid 2 §11.6). Equal coordinates and
+priority use the respective edge of the order-modified document order. -/
+private def chooseGridBaseline (last : Bool) (previous : Option GridBaselineChoice)
+    (item : GridBaselineChoice) : GridBaselineChoice :=
+  match previous with
+  | none => item
+  | some old =>
+    if item.row != old.row then
+      if (if last then item.row > old.row else item.row < old.row) then item else old
+    else if item.priority != old.priority then
+      if item.priority > old.priority then item else old
+    else if (if last then item.column >= old.column else item.column < old.column) then item else old
+
+#guard (chooseGridBaseline false (some ⟨1,0,0,25⟩) ⟨1,1,2,39⟩).y == 39
+#guard (chooseGridBaseline false (some ⟨1,0,0,25⟩) ⟨2,0,2,80⟩).y == 25
+#guard (chooseGridBaseline true (some ⟨4,1,0,90⟩) ⟨4,2,0,100⟩).y == 100
+
 /-- The contents of a grid container in its content box `box`: the grid formatting
 context. The result's `height` is the height of the content box. -/
 def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : ContentBox)
@@ -311,7 +426,7 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut colItems : Array Grid.Contribution := #[]
   for i in [0:n] do
     let a := plan.areas.getD i default
-    colItems := colItems.push (← gridInlineContribution kids items[i]! styles[i]! a.col a.colSpan)
+    colItems := colItems.push (← gridInlineContributionIn colFns colCollapsed kids items[i]! styles[i]! a.col a.colSpan)
   let colSizes := gridSizes colFns colCollapsed colGap colItems (.definite availW) (gridStretches s.align.justifyContent)
   let colFree : Int := Int.ofNat availW - Int.ofNat (gridExtent colSizes colCollapsed colGap)
   let colSpread := Grid.contentOffsetsInt (gridDistribution s.align.justifyContent rtl) colFree (gridLive colSizes colCollapsed)
@@ -323,10 +438,8 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
   let mut baselined : Array (Nat × Nat × Nat) := #[]
   -- the last-baseline-aligned items: index, row, last baseline up from the margin box's bottom
   let mut lastBaselined : Array (Nat × Nat × Nat) := #[]
-  -- baselines are horizontal ones: in a vertical writing mode (container or item) the item
-  -- keeps its start alignment
-  let horizontal := fun (is : Computed) =>
-    s.pos.writingMode == .horizontalTb && is.pos.writingMode == .horizontalTb
+  -- The fragment carries page-y baselines for horizontal grids.
+  let horizontal := s.pos.writingMode == .horizontalTb
   let mut rowItems : Array Grid.Contribution := #[]
   let rowFns := gridTrackFns plan.rowAxis g.autoRows plan.rowLead plan.rows availH
   for i in [0:n] do
@@ -337,18 +450,13 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let extent := Grid.spanExtent colStarts colSizes a.col a.colSpan
     let areaW := gridPx extent.2
     let areaX := if rtl then box.width-LU.toPx extent.1-areaW else LU.toPx extent.1
-    -- a subgrid always stretches in its subgridded axes (§9 of CSS Grid 2, subgrid box alignment)
-    let justify : Grid.SelfAlign := if is.grid.templateColumns.subgrid && is.display.isGrid then .stretch
-      else gridSelfAlign is.align.justifySelf s.align.justifyItems rtl ((selfStartSides (gridFrame is)).1 != rtl)
-    let width ← gridItemWidth kids item is areaW (justify == .stretch)
-    let outerW := width+m.left+m.right
-    let dx := match autoCrossOffset is.autoMarginLeft is.autoMarginRight (areaW-outerW) with
-      | some d => d
-      | none =>
-        let d := LU.toPx (gridSelfOffset justify (gridSafe is.align.justifySelf is.align.justifySelfSafe s.align.justifyItemsSafe)
-          (gridUnits areaW) (gridUnits outerW))
-        if rtl then areaW-outerW-d else d
-    let x := box.x+areaX+dx
+    let justify := gridJustifyItem is s rtl
+    let stretch := justify == .stretch
+    let fixedRowHeight := (gridFixedSpan rowFns rowGap a.row a.rowSpan).map gridPx
+    let width ← match gridRatioWidth is areaW fixedRowHeight stretch with
+      | some width => pure width
+      | none => gridItemWidth kids item is areaW stretch
+    let x := gridItemX is s rtl justify (box.x+areaX) areaW width
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let minH := match is.minHeight with | .px v => v | _ => 0
     let maxH := match is.maxHeight with | .px v => some v | _ => none
@@ -359,10 +467,10 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     -- flex or grid container is then laid out once, not measured and laid out again.
     let rowStretch := (is.grid.templateRows.subgrid && is.display.isGrid) ||
       gridSelfAlign is.align.alignSelf s.align.alignItems false == .stretch
-    let fixed := match fixed, gridFixedSpan rowFns rowGap a.row a.rowSpan with
-      | none, some areaU =>
+    let fixed := match fixed, fixedRowHeight with
+      | none, some areaH =>
         if kids.heightSensitive item && rowStretch && !is.autoMarginTop && !is.autoMarginBottom then
-          some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (gridPx areaU-m.top-m.bottom)))
+          some (max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (areaH-m.top-m.bottom)))
         else none
       | f, _ => f
     -- An item whose height the rows may still change is only measured here
@@ -377,18 +485,23 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     let outerH := gridUnits (natural+m.top+m.bottom)
     rowItems := rowItems.push {start := a.row, span := a.rowSpan, minimum := outerH, minContent := outerH, maxContent := outerH}
     laid := laid.push (r,x,width,natural,areaW)
-    if a.rowSpan == 1 && horizontal is && gridBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
-      -- no line box: the baseline is synthesized from the border box's bottom edge
-      baselined := baselined.push (i, a.row, gridUnits ((r.baseline.map (·-box.y)).getD (m.top+natural)))
-    if a.rowSpan == 1 && horizontal is && gridLastBaselineSelf is.align.alignSelf s.align.alignItems && !(is.grid.templateRows.subgrid && is.display.isGrid) then
-      let bottom := m.top+natural+m.bottom
-      lastBaselined := lastBaselined.push (i, a.row, gridUnits (max 0 (bottom-((r.lastBaseline.map (·-box.y)).getD (m.top+natural)))))
+    if horizontal && a.rowSpan == 1 && !is.autoMarginTop && !is.autoMarginBottom &&
+        !(is.grid.templateRows.subgrid && is.display.isGrid) then
+      -- An orthogonal item and a box with no line box use the border box's bottom.
+      let parallel := is.pos.writingMode == .horizontalTb
+      if gridBaselineSelf is.align.alignSelf s.align.alignItems then
+        let baseline := if parallel then r.baseline.map (·-box.y) else none
+        baselined := baselined.push (i, a.row, gridUnits (baseline.getD (m.top+natural)))
+      if gridLastBaselineSelf is.align.alignSelf s.align.alignItems then
+        let bottom := m.top+natural+m.bottom
+        let baseline := if parallel then r.lastBaseline.map (·-box.y) else none
+        lastBaselined := lastBaselined.push (i, a.row, gridUnits (max 0 (bottom-baseline.getD (m.top+natural))))
   -- §11.6: a baseline-aligned item asks of its row its height and its shift.
   let aligned := baselined.toList.map fun (_,row,b) => (row,b)
-  let mut shifts : Array Nat := Array.replicate n 0
+  let mut shifts : Array (Option Nat) := Array.replicate n none
   for (i,row,b) in baselined do
     let shift := Grid.baselineShift aligned row b
-    shifts := shifts.modify i fun _ => shift
+    shifts := shifts.modify i fun _ => some shift
     rowItems := rowItems.modify i fun c => {c with minimum := c.minimum+shift, minContent := c.minContent+shift,
                                                    maxContent := c.maxContent+shift}
   let lastAligned := lastBaselined.toList.map fun (_,row,b) => (row,b)
@@ -424,7 +537,7 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
     else firstRows
   let rowGap := usedRowGap
   let rowFree : Int := Int.ofNat (gridUnits contentH) - Int.ofNat (gridExtent rowSizes rowCollapsed rowGap)
-  let rowSpread := Grid.contentOffsetsInt (gridDistribution s.align.alignContent false) rowFree (gridLive rowSizes rowCollapsed)
+  let rowSpread := Grid.contentOffsetsInt (gridDistribution s.align.alignContent flipY) rowFree (gridLive rowSizes rowCollapsed)
   let rowStarts := gridStarts rowSizes rowCollapsed rowGap rowSpread.1 rowSpread.2
   -- §7.2.6: the used tracks, kept in the fragment for `getComputedStyle` (an empty group).
   let mut out : Result := match box.source with
@@ -436,18 +549,30 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
         ⟨1,0,0,1,0,0⟩ []]}
     | none => {}
   -- §11: each item in its area.
+  let mut firstBaseline : Option GridBaselineChoice := none
+  let mut lastBaseline : Option GridBaselineChoice := none
   for i in [0:n] do
     let item := items[i]!
     let is := styles[i]!
     let a := plan.areas.getD i default
     let m := is.margin
-    let (r,x,width,natural,areaW) := laid[i]!
+    let (r,measuredX,measuredWidth,natural,areaW) := laid[i]!
     let extent := Grid.spanExtent rowStarts rowSizes a.row a.rowSpan
     let areaH := gridPx extent.2
+    let ratioWidth := is.pos.ratio.bind fun _ =>
+      gridRatioWidth is areaW (some areaH) (gridJustifyItem is s rtl == .stretch)
+    let width := ratioWidth.getD measuredWidth
+    let changedWidth := width != measuredWidth
+    let x := if !changedWidth then measuredX else
+      let cols := Grid.spanExtent colStarts colSizes a.col a.colSpan
+      let areaX := if rtl then box.width-LU.toPx cols.1-areaW else LU.toPx cols.1
+      gridItemX is s rtl (gridJustifyItem is s rtl) (box.x+areaX) areaW width
     let padV := is.borderEdges.top+is.borderEdges.bottom+is.padding.top+is.padding.bottom
     let rowSubgrid := is.grid.templateRows.subgrid && is.display.isGrid
+    -- In a vertical RTL grid, row offsets run bottom-to-top before conversion to y.
+    let flipSelfY := (selfStartSides (gridFrame is)).2 != flipY
     let align : Grid.SelfAlign := if rowSubgrid then .stretch
-      else gridSelfAlign is.align.alignSelf s.align.alignItems false (selfStartSides (gridFrame is)).2
+      else gridSelfAlign is.align.alignSelf s.align.alignItems flipY flipSelfY
     let minH := (CSS.resolve areaH is.minHeight).getD 0
     let maxH := CSS.resolve areaH is.maxHeight
     let height := match CSS.resolve areaH is.height with
@@ -457,17 +582,24 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
           max padV (clampOpt (minH+padV) (maxH.map (·+padV)) (areaH-m.top-m.bottom))
         else natural
     let outerH := height+m.top+m.bottom
-    let shift := shifts.getD i 0
-    let dy := if shift > 0 || (a.rowSpan == 1 && horizontal is && !rowSubgrid && gridBaselineSelf is.align.alignSelf s.align.alignItems) then gridPx shift
-      else if let some up := lastShifts.getD i none then areaH-outerH-gridPx up
-      else match autoCrossOffset is.autoMarginTop is.autoMarginBottom (areaH-outerH) with
-      | some d => d
-      | none => LU.toPx (gridSelfOffset align (gridSafe is.align.alignSelf is.align.alignSelfSafe s.align.alignItemsSafe)
-          (gridUnits areaH) (gridUnits outerH))
+    let firstShift := shifts.getD i none
+    let lastShift := lastShifts.getD i none
+    let dy := if let some shift := firstShift then gridPx shift
+      else if let some up := lastShift then areaH-outerH-gridPx up
+      else
+        let (autoStart, autoEnd) := if flipY then (is.autoMarginBottom, is.autoMarginTop)
+          else (is.autoMarginTop, is.autoMarginBottom)
+        match autoCrossOffset autoStart autoEnd (areaH-outerH) with
+        | some d => d
+        | none => LU.toPx (gridSelfOffset align (gridSafe is.align.alignSelf is.align.alignSelfSafe s.align.alignItemsSafe)
+            (gridUnits areaH) (gridUnits outerH))
     let y := box.y+LU.toPx extent.1+dy
     -- the inline axis of a right-to-left vertical grid runs bottom to top
     let y := if flipY then box.y+contentH-(y-box.y)-(height+m.top+m.bottom) else y
-    let done ← if kids.heightSensitive item then
+    let done ← if changedWidth && !box.measure then do
+        let again ← kids.layout item x y {available := areaW, width := some width, height := some height}
+        pure {again with work := again.work+r.work}
+      else if kids.heightSensitive item then
         -- a container that is itself only measured keeps the measured item: its size is right
         if box.measure then pure (r.shift 0 (y-box.y))
         else if (height-natural).abs < 0.01 && !r.rough then pure (r.shift 0 (y-box.y))
@@ -476,8 +608,21 @@ def gridLayoutH (kids : Children) (s : Computed) (items0 : Array Item) (box : Co
           -- the measuring pass is work done too
           pure {again with work := again.work+r.work}
       else pure (kids.frame item x y width height (r.shift 0 (y-box.y)))
+    if horizontal then
+      let bottom := y+m.top+height
+      let parallel := is.pos.writingMode == .horizontalTb
+      let firstY := if parallel then done.baseline.getD bottom else bottom
+      let lastY := if parallel then done.lastBaseline.getD bottom else bottom
+      let firstPriority := if firstShift.isSome then 2 else if lastShift.isSome then 1 else 0
+      let lastPriority := if lastShift.isSome then 2 else if firstShift.isSome then 1 else 0
+      firstBaseline := some (chooseGridBaseline false firstBaseline
+        ⟨a.row, a.col, firstPriority, if firstPriority == 1 then lastY else firstY⟩)
+      lastBaseline := some (chooseGridBaseline true lastBaseline
+        ⟨a.row+a.rowSpan-1, a.col+a.colSpan-1, lastPriority, if lastPriority == 1 then firstY else lastY⟩)
     out := out.over done
   return {out with height := contentH, rough := out.rough || box.measure,
+                   baseline := if horizontal then firstBaseline.map (·.y) else out.baseline,
+                   lastBaseline := if horizontal then lastBaseline.map (·.y) else out.lastBaseline,
                    grid := some {x := box.x, y := box.y, width := box.width, height := contentH, rtl,
                                  colNames := plan.colNames, rowNames := plan.rowNames,
                                  colLead := plan.colLead, rowLead := plan.rowLead,

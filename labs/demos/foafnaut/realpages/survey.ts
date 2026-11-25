@@ -140,7 +140,7 @@ async function macPage(p:Page,row:Row,zip:string|null){
   const o=offline(zip);
   const [w,h]=(p.viewport??spec.defaults.viewport).split("x").map(Number);
   const url=urlOf(p),shot=`${out}/shots/${p.id}-foafnaut.png`;
-  const base=[...DENO_RUN,...o.flags,host+"run_html.ts","--native-engine",engine,"--offscreen","--offscreen-size",`${w}x${h}@1`,"--text-size","100","--no-state",
+  const base=[...DENO_RUN,...o.flags,host+"run_html.ts","--native-engine",engine,"--offscreen","--offscreen-size",`${w}x${h}@1`,"--no-state",
     "--be-liberal-in-what-we-accept","--perf-summary",...(p.scripts===false?["--no-scripts"]:[]),"--url",url];
   let watch:Run|undefined;
   for(let attempt=1;attempt<=retries+1;attempt++){

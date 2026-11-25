@@ -1,5 +1,6 @@
 import ImageJPEG
 import ImageGIF
+import L4Factoidal.Codec.VP8Alpha
 import Std.Data.HashMap
 
 /- Raster image sources of a document.
@@ -11,19 +12,32 @@ namespace NativeImage
 
 open L4Factoidal.Rendering (Bitmap)
 
-/-- Limit on the decoded pixels of one document: the paint table has one word for
-    each pixel, and `NativeSVG.maxPaintTableWords` is the same number. -/
+/-- Limit on the decoded pixels of one image store: the paint table has one word for
+    each pixel. `NativeSVG.maxPaintTableWords` is four times this number, for a page's two
+    stores (images and backgrounds) and the SVG pictures drawn again. -/
 def maxDocumentPixels : Nat := 1048576
 
 /-- A decoded image, or the refusal that names why it is not one. -/
 abbrev Entry := Except String (Nat × Bitmap)
 abbrev Store := Std.HashMap String Entry
 
+private def isWebP (bytes : ByteArray) : Bool :=
+  bytes.size ≥ 12 && bytes.extract 0 4 == "RIFF".toUTF8 && bytes.extract 8 12 == "WEBP".toUTF8
+
 /-- The format comes from the bytes, as for a browser; the media type does not change it. -/
 def decode (bytes : ByteArray) : Except String Bitmap :=
   if bytes.size >= 2 && bytes.get! 0 == 0xFF && bytes.get! 1 == 0xD8 then decodeJPEG bytes
   else if bytes.size >= 8 && bytes.get! 0 == 137 && bytes.get! 1 == 80 then decodePNG bytes
   else if bytes.size >= 6 && bytes.get! 0 == 71 && bytes.get! 1 == 73 && bytes.get! 2 == 70 then decodeGIF bytes
+  else if isWebP bytes then do
+    let image ← L4Factoidal.Codec.WebP.inspect bytes maxImageBytes maxImagePixels
+    match image.encoding with
+    | .vp8l =>
+      let b ← L4Factoidal.Codec.VP8L.decodeInspected bytes image maxImagePixels
+      return {width := b.width, height := b.height, rgba := b.rgba}
+    | .vp8 =>
+      let b ← L4Factoidal.Codec.VP8.decodeInspected bytes image maxImagePixels
+      return {width := b.width, height := b.height, rgba := b.pixels}
   else .error "image is not PNG, JPEG or GIF"
 
 private def base64Value (c : UInt8) : Option Nat :=
@@ -189,8 +203,8 @@ def Store.natural (store : Store) (href : String) : Option (Nat × Nat) :=
   | _ => none
 
 /-- The size of an image from the start of its file, with no decoding: the IHDR chunk of a
-PNG, the logical screen of a GIF, the first frame header (SOF) of a JPEG. None when the
-bytes are none of these or stop early. -/
+PNG, the logical screen of a GIF, the first frame header (SOF) of a JPEG, or the
+dimensions in a static WebP file. None when the bytes are unsupported or stop early. -/
 def naturalSize (bytes : ByteArray) : Option (Nat × Nat) :=
   let be16 := fun (i : Nat) => (bytes.get! i).toNat*256 + (bytes.get! (i+1)).toNat
   if bytes.size >= 24 && bytes.get! 0 == 137 && bytes.get! 1 == 80 then
@@ -210,6 +224,9 @@ def naturalSize (bytes : ByteArray) : Option (Nat × Nat) :=
       else if code == 0xD8 || code == 0x01 || (code >= 0xD0 && code <= 0xD7) then i := i+2
       else i := i+2+be16 (i+2)
     return none
+  else if isWebP bytes then do
+    let image ← (L4Factoidal.Codec.WebP.inspect bytes maxImageBytes maxImagePixels).toOption
+    some (image.width,image.height)
   else none
 
 /-- A reader for bytes that are none of the raster formats: none when the bytes are not its
@@ -235,11 +252,14 @@ theorem decodeWith_none (bytes : ByteArray) :
   unfold decodeWith
   cases decode bytes <;> rfl
 
-/-- Add one image to the store under `href`, held at factor `k` (`reduce`). The document
-    budget is checked from the pixels already held, so no later image can pass it. -/
-def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat := 1)
-    (vector : VectorReader := fun _ => none) : Store × Nat :=
-  match decodeWith vector bytes with
+/-- What `decodeWith` answers for one file: the picture and the image's own size when it
+is not the picture's, or the refusal. -/
+abbrev Decoded := Except String (Bitmap × Option (Nat × Nat))
+
+/-- Add one decoded image to the store under `href`, held at factor `k` (`reduce`). The
+    document budget is checked from the pixels already held, so no later image can pass it. -/
+def Store.addDecoded (store : Store) (used : Nat) (href : String) (decoded : Decoded) (k : Nat := 1) : Store × Nat :=
+  match decoded with
   | .error message => (store.insert href (.error message),used)
   | .ok (whole,own) =>
     let bitmap := reduce whole k
@@ -258,19 +278,32 @@ def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArr
         | some (w,h) => store.insert (naturalKey href) (.ok (store.size,{width := w, height := h, rgba := ByteArray.empty}))
       (store,used+size)
 
-/-- The pixels a store holds stay within the document's budget: adding an image never takes
-them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
-decoded image above the budget, this is what bounds the pictures a page holds. -/
-theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
-    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
-    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels := by
-  unfold Store.addBytes
+/-- Add one image to the store under `href`, held at factor `k` (`reduce`): `addDecoded` of
+    what `decodeWith` reads from the bytes. -/
+def Store.addBytes (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat := 1)
+    (vector : VectorReader := fun _ => none) : Store × Nat :=
+  store.addDecoded used href (decodeWith vector bytes) k
+
+/-- The pixels a store holds stay within the document's budget: adding a decoded image never
+takes them past `maxDocumentPixels`, whatever the image and the factor. -/
+theorem Store.addDecoded_within (store : Store) (used : Nat) (href : String) (decoded : Decoded) (k : Nat)
+    (h : used ≤ maxDocumentPixels) :
+    (store.addDecoded used href decoded k).2 ≤ maxDocumentPixels := by
+  unfold Store.addDecoded
   split
   · exact h
   · dsimp only
     split
     · exact h
     · rename_i hle; exact Nat.le_of_not_lt hle
+
+/-- The pixels a store holds stay within the document's budget: adding an image never takes
+them past `maxDocumentPixels`, whatever the image and the factor. With the limit of one
+decoded image above the budget, this is what bounds the pictures a page holds. -/
+theorem Store.addBytes_within (store : Store) (used : Nat) (href : String) (bytes : ByteArray) (k : Nat)
+    (vector : VectorReader) (h : used ≤ maxDocumentPixels) :
+    (store.addBytes used href bytes k vector).2 ≤ maxDocumentPixels :=
+  Store.addDecoded_within store used href _ k h
 
 /-- Add one `data:` reference, held at factor `k`. -/
 def Store.addData (store : Store) (used : Nat) (href : String) (k : Nat := 1)

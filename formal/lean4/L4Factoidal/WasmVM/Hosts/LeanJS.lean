@@ -993,6 +993,150 @@ theorem start_eq_from (base : Session) (dom : Arena) (url : String) (scripts : A
   unfold start
   rw [h1, startScripts_split, ← h2]
 
+/-! ### A start in slices
+
+The start of a page ran its classic scripts, its module scripts, `DOMContentLoaded` and
+every task due at time 0 in one call, and a host showed the page only after it: on a news
+article whose scripts hydrate the page in two `setTimeout(0)` tasks after forty module
+scripts (9.6 M steps), the first frame waited 15 s for scripts that change little of what
+the server sent. A browser shows the parsed page between such scripts and tasks.
+
+`startSome` is the rest of a start after its classic scripts, with a `stop` that a host's
+step budget sets: it is asked before each module script and before the events, and the
+tasks due at 0 run in slices (`PageEvents.Engine.advanceUntil`). When it holds, the start
+ends there: the session, and what is left (`StartRest`; the tasks still queued are in the
+session's own loop, due at once). The host shows the page and goes on from the rest.
+What is proved: with a `stop` that never holds it is the unsliced finish
+(`startSome_never`, `startFinish_eq`), and going on from any stop without stopping gives
+what the unsliced finish gives from the start (`startSome_resume`). Not proved: that a
+page cannot tell a sliced start from an unsliced one when the host runs other actions
+(input, network answers) between the slices; it can, as it can in a browser. -/
+
+/-- The module scripts `scripts` of a start, in order (`Session.runModule`), with the
+modules that live so far. -/
+def startModules (g : JS.ModGraph) (s : Session) (lives : JS.ModLives) :
+    List (Nat × LeanJSModules.Outcome) → Session × JS.ModLives
+  | [] => (s, lives)
+  | (node, oc) :: rest =>
+    let r := s.runModule g lives node oc
+    startModules g r.1 r.2 rest
+
+/-- After the module scripts of a start: `DOMContentLoaded`, and the window's `load` event
+queued as a task (or waiting for the page's frames). -/
+def startEvents (s : Session) : Session :=
+  let s := (engine.dispatch s 0 "DOMContentLoaded").1
+  if Hosts.Dom.framesLoading s.host.dom then
+    s.setHost { s.host with dom := { s.host.dom with loadWaits := true } }
+  else
+    engine.setLoop s ((engine.loop s).queueTask .domManipulation 0 (some { type := "load", target := Page.windowId }))
+
+/-- What is left of a start that stopped (`startSome`): the module scripts not yet run, with
+their graph and the modules that live, and then the events. -/
+structure StartRest where
+  graph : JS.ModGraph
+  lives : JS.ModLives
+  scripts : List (Nat × LeanJSModules.Outcome)
+
+/-- The rest of a start from `scripts`, in slices: `stop` is asked before each module script
+and before the events; the tasks due at 0 run until `stop` holds between two of them. The
+session, and the rest when it stopped before the events (after them nothing is left here:
+the tasks still due are in the session's loop). -/
+def startSome (stop : Session → Bool) (g : JS.ModGraph) :
+    Session → JS.ModLives → List (Nat × LeanJSModules.Outcome) → Session × Option StartRest
+  | s, lives, [] =>
+    if stop s then (s, some ⟨g, lives, []⟩)
+    else ((engine.advanceUntil (startEvents s) 0 stop).1, none)
+  | s, lives, (node, oc) :: rest =>
+    if stop s then (s, some ⟨g, lives, (node, oc) :: rest⟩)
+    else
+      let r := s.runModule g lives node oc
+      startSome stop g r.1 r.2 rest
+
+/-- Kind: equivalence. Says: the loop of `startFinish` over the module scripts is
+`startModules`. -/
+theorem startModules_forIn (g : JS.ModGraph) :
+    ∀ (xs : List (Nat × LeanJSModules.Outcome)) (s : Session) (lives : JS.ModLives),
+      (forIn (m := Id) xs (s, lives) fun x st =>
+        pure (ForInStep.yield ((st.fst.runModule g st.snd x.fst x.snd).fst, (st.fst.runModule g st.snd x.fst x.snd).snd))) =
+      pure (startModules g s lives xs) := by
+  intro xs
+  induction xs with
+  | nil => intro s lives; rfl
+  | cons x rest ih =>
+    intro s lives
+    simp only [List.forIn_cons, pure_bind, startModules]
+    exact ih _ _
+
+/-- Kind: equivalence. Says: the finish of a start is its module scripts in order, the
+events, and the tasks due at 0: the parts that `startSome` runs. -/
+theorem startFinish_eq (s : Session) (mods : LeanJSModules.Loaded) :
+    startFinish s mods =
+      (engine.advance (startEvents (startModules mods.graph (s.api? "script" #[.num (-1)]).1 #[] mods.scripts.toList).1) 0).1 := by
+  unfold startFinish startEvents
+  simp only [← Array.forIn_toList]
+  rw [startModules_forIn]
+  simp only [pure_bind]
+  split <;> rfl
+
+/-- Kind: equivalence (a host that does not slice sees no change). Says: with a `stop` that
+never holds, `startSome` runs every module script, the events and the tasks due at 0, and
+nothing is left. -/
+theorem startSome_never (g : JS.ModGraph) :
+    ∀ (scripts : List (Nat × LeanJSModules.Outcome)) (s : Session) (lives : JS.ModLives),
+      startSome (fun _ => false) g s lives scripts =
+        ((engine.advance (startEvents (startModules g s lives scripts).1) 0).1, none) := by
+  intro scripts
+  induction scripts with
+  | nil =>
+    intro s lives
+    simp only [startSome, startModules, Bool.false_eq_true, if_false]
+    rw [PageEvents.Engine.advanceUntil_never]
+  | cons x rest ih =>
+    intro s lives
+    obtain ⟨node, oc⟩ := x
+    simp only [startSome, startModules, Bool.false_eq_true, if_false]
+    exact ih _ _
+
+/-- Kind: equivalence. Says: when `startSome` stops with a rest, going on from that session
+and that rest without stopping gives what the whole rest of the start gives without
+stopping: the slices before the events lose and add nothing. Does not say: anything about
+actions a host runs between the slices. -/
+theorem startSome_resume (stop : Session → Bool) (g : JS.ModGraph) :
+    ∀ (scripts : List (Nat × LeanJSModules.Outcome)) (s : Session) (lives : JS.ModLives)
+      (s' : Session) (r : StartRest),
+      startSome stop g s lives scripts = (s', some r) →
+        r.graph = g ∧
+        startSome (fun _ => false) g s' r.lives r.scripts = startSome (fun _ => false) g s lives scripts := by
+  intro scripts
+  induction scripts with
+  | nil =>
+    intro s lives s' r h
+    simp only [startSome] at h
+    split at h
+    · simp only [Prod.mk.injEq, Option.some.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact ⟨rfl, rfl⟩
+    · simp at h
+  | cons x rest ih =>
+    intro s lives s' r h
+    obtain ⟨node, oc⟩ := x
+    simp only [startSome] at h
+    split at h
+    · simp only [Prod.mk.injEq, Option.some.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact ⟨rfl, rfl⟩
+    · obtain ⟨hg, hr⟩ := ih _ _ _ _ h
+      refine ⟨hg, ?_⟩
+      rw [hr]
+      simp only [startSome, Bool.false_eq_true, if_false]
+
+/-- Kind: equivalence. Says: a start whose finish is `startSome` with a `stop` that never
+holds is the start. -/
+theorem startFinish_eq_startSome (s : Session) (mods : LeanJSModules.Loaded) :
+    startFinish s mods =
+      (startSome (fun _ => false) mods.graph (s.api? "script" #[.num (-1)]).1 #[] mods.scripts.toList).1 := by
+  rw [startFinish_eq, startSome_never]
+
 /-- A frame's navigation ends with document `source` (as `Page.Session.loadFrameP`): it
 joins the arena, its classic scripts run in the page's realm with the current script set
 (none for a frame of another origin or a sandbox without scripts), its `load` event at the

@@ -3,7 +3,12 @@
 //   {route:'page',name,url}      a page of the browser itself (foafnaut:bookmarks, settings, ...)
 //   {route:'graph',url}          the graph app, at foafnaut:graph
 //   {route:'navigate',url}       load url in the tab
-//   {route:'system',url}         hand url to the system (the host browser, mail, phone)
+//   {route:'outside',url}        the browser's Outside page for url: one button opens it in the
+//                                host browser or another app (the Hub first reads a web address
+//                                in the tab when the site allows it); nothing leaves by itself
+//   {route:'system',url}         hand url to the system: only when the tab shows the Outside page
+//                                for url (request.outside) and the link is its button, or for
+//                                `:open URL` typed in the address bar
 //   {route:'command',name,argument}  a browser command (theme, zoom, back, ...)
 //   {route:'refuse',url,reason}  do nothing, and say why
 // The hosts do what it says and test no URL themselves. An engine from before the op
@@ -11,10 +16,12 @@
 // answers in JavaScript. link_route_test.ts runs a few thousand links through both and
 // they must agree on every one, so this file follows WebRoute.lean rule for rule.
 
-const externalHosts=['github.com','www.github.com','duckduckgo.com'];
+// No host list: no web host goes to the system by itself (owner, 2026-11-16).
 const systemSchemes=['mailto','tel','sms'];
-const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true],['console',true]]);
-const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding','liberal'];
+const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true],['console',true],['about',false],['search',true],['accessibility',false]]);
+const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding','liberal','search-engine'];
+// Commands a link may give only on the Settings page (WebRoute.settingsOnly).
+const settingsOnly=['search-engine'];
 const special=scheme=>scheme==='http'||scheme==='https'||scheme==='file';
 const noHost='a relative link needs a web page or a local file around it';
 
@@ -86,19 +93,25 @@ function parts(ref){
   const m=/^(?:([^:/?#]+):)?(?:\/\/([^/?#]*))?([^?#]*)/.exec(ref);
   return {scheme:m[1],authority:m[2],path:m[3]};
 }
+// WebRoute.outsideOrPress: the system only for the button of the Outside page shown.
+const outsideOrPress=(site,url)=>site.outside&&site.outside===url?{route:'system',url}:{route:'outside',url};
+// WebRoute.fromPage: a settings-only command from a link on any page but Settings is refused.
+function fromPage(site,base,route){
+  if(route.route!=='command'||!settingsOnly.includes(route.name)||base===pageURL(site,'settings'))return route;
+  return {route:'refuse',url:'foafnaut:'+route.name+(route.argument?'/'+route.argument:''),reason:'only the Settings page, or the address bar, chooses a search engine'};
+}
 function decide(site,base,kind,url,scheme){
   if(kind==='web'){
-    const origin=new URL(url).origin,host=new URL(url).hostname;
+    const origin=new URL(url).origin;
     if(site.origin&&origin===site.origin)return {route:'navigate',url};
-    if(externalHosts.includes(host))return {route:'system',url};
     if(!site.origin)return {route:'navigate',url};
-    return {route:'system',url};
+    return outsideOrPress(site,url);
   }
   if(kind==='file'){
     if(site.files&&schemeOf(clean(base))==='file')return {route:'navigate',url};
     return {route:'refuse',url,reason:'a web page can not open local files'};
   }
-  if(systemSchemes.includes(scheme))return {route:'system',url};
+  if(systemSchemes.includes(scheme))return outsideOrPress(site,url);
   if(scheme==='javascript')return {route:'refuse',url,reason:'a link that runs a script is not followed'};
   if(scheme==='data')return {route:'refuse',url,reason:'data URLs are not opened as pages'};
   return {route:'refuse',url,reason:`this browser does not open ${scheme}: links`};
@@ -124,12 +137,13 @@ function special_(site,base,prepared,scheme,cleaned){
 }
 
 /** The route of WebRoute.route, for an engine that does not have the op. `site` is
-{origin,pages,files}: origin is '' when the browser loads every web site itself. */
-export function fallbackRoute({href,base='',origin='',pages='',files=false}){
-  const site={origin,pages,files},cs=clean(href);
-  if(cs.startsWith('foafnaut:'))return builtin(site,cs.slice(9));
+{origin,pages,files,outside}: origin is '' when the browser loads every web site itself;
+outside is the address whose Outside page the tab shows, '' for any other page. */
+export function fallbackRoute({href,base='',origin='',pages='',files=false,outside=''}){
+  const site={origin,pages,files,outside},cs=clean(href);
+  if(cs.startsWith('foafnaut:'))return fromPage(site,base,builtin(site,cs.slice(9)));
   const scheme=schemeOf(cs);
-  if(scheme==='foafnaut')return builtin(site,cs.slice(cs.indexOf(':')+1));
+  if(scheme==='foafnaut')return fromPage(site,base,builtin(site,cs.slice(cs.indexOf(':')+1)));
   if(scheme!==undefined&&special(scheme)){
     const prepared=slashes(cs);
     if(prepared.slice(prepared.indexOf(':'),prepared.indexOf(':')+3)!=='://')return {route:'refuse',url:cs,reason:'a web address needs // and a host'};

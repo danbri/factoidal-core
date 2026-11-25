@@ -231,26 +231,26 @@ def treeChildren (d : Dom) (n : NodeId) : Array NodeId :=
   | some sr => (d.get sr).kids
   | none => (d.get n).kids
 
-/-- The flat-tree children of `n`, with each slot of a shadow tree replaced by what it
-shows: its flattened slottables, or its children (as `display: contents`; the slot is not a
-box of this layout). -/
+/-- Flat-tree children (CSS Shadow 1 §4.1). The slot itself remains in the
+tree, so its style applies to what it shows. -/
 def flatChildren (d : Dom) (n : NodeId) : Array NodeId :=
-  (d.treeChildren n).flatMap fun k =>
-    if d.isSlotInShadow k then
-      let shown := d.findFlattenedSlottables k
-      if shown.isEmpty then
-        -- fallback content: the slot's own children, with nested slots shown in turn
-        (d.get k).kids.flatMap fun c => if d.isSlotInShadow c then d.findFlattenedSlottables c else #[c]
-      else shown
-    else #[k]
+  if d.isSlotInShadow n then
+    let assigned := d.findSlottables n
+    if assigned.isEmpty then (d.get n).kids else assigned
+  else d.treeChildren n
+
+theorem flatChildren_assigned (d : Dom) (slot : NodeId)
+    (hSlot : d.isSlotInShadow slot = true) (hNonempty : (d.findSlottables slot).isEmpty = false) :
+    d.flatChildren slot = d.findSlottables slot := by
+  simp [flatChildren, hSlot, hNonempty]
 
 /-- Some node of the arena is a shadow host. -/
 def hasShadow (d : Dom) : Bool := d.nodes.any (·.shadow.isSome)
 
 /-- The flat tree of the document (CSS Scoping 1 §2.2), as an arena with the same node
 numbers: from node 0 down, each node's children are its `flatChildren`, and their parent
-is that node. A node outside the flat tree (a host's unassigned child, a shadow root, a
-slot of a shadow tree) is not reached from node 0. An arena with no shadow host is
+is that node. A node outside the flat tree (such as a host's unassigned child or a
+shadow root) is not reached from node 0. An arena with no shadow host is
 answered unchanged (`flat_eq_of_noShadow`), so a page with no shadow tree pays one scan. -/
 def flat (d : Dom) : Dom := Id.run do
   if !d.hasShadow then return d
@@ -415,8 +415,10 @@ private def sample : Dom := Id.run do
 
 -- node 1 host, 2 and 3 light children, 4 the shadow root, 5 the named slot
 #guard sample.findSlottables 5 == #[2]
-#guard sample.flatChildren 1 == #[2]
-#guard (sample.flat.get 1).kids == #[2] && (sample.flat.get 2).parent == some 1
+#guard sample.flatChildren 1 == #[5] && sample.flatChildren 5 == #[2]
+#guard (let flat := sample.flat
+  (flat.get 1).kids == #[5] && (flat.get 5).kids == #[2] &&
+  (flat.get 5).parent == some 1 && (flat.get 2).parent == some 5)
 #guard sample.eventPath 2 false == [2, 5, 4, 1, 0]
 #guard sample.eventPath 5 false == [5, 4] && sample.eventPath 5 true == [5, 4, 1, 0]
 #guard sample.retarget 5 0 == some 1 && sample.retarget 5 4 == some 5

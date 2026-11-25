@@ -95,6 +95,13 @@ private def runXs (html : String) (extra : String := "") : Option (List Float) :
 #guard ((computedAt "<div style='text-align:center'><p><b id='x'>A</b></p></div>" "" "x").toOption.map
   (·.textAlign == .center)) == some true
 #guard ((computedAt "<div id='x' style='text-align:justify'></div>" "" "x").toOption.map (·.textAlign == .start)) == some true
+-- `align` attributes (HTML §15.3.3, 2026-11-17): a hint below author CSS; a `th` is centred
+#guard ((computedAt "<table><tr><td id='x' align=Middle>A</td></tr></table>" "" "x").toOption.map (·.textAlign == .center)) == some true
+#guard ((computedAt "<table><tr align=right><td><b id='x'>A</b></td></tr></table>" "" "x").toOption.map (·.textAlign == .right)) == some true
+#guard ((computedAt "<table><tr><th id='x'>A</th></tr></table>" "" "x").toOption.map (·.textAlign == .center)) == some true
+#guard ((computedAt "<table><tr><th id='x' align=left>A</th></tr></table>" "" "x").toOption.map (·.textAlign == .left)) == some true
+#guard ((computedAt "<div id='x' align=center style='text-align:left'>A</div>" "" "x").toOption.map (·.textAlign == .left)) == some true
+#guard ((computedAt "<p id='x' align=middle>A</p>" "" "x").toOption.map (·.textAlign == .start)) == some true
 -- Auto margins centre a block with a width or a max-width; one auto margin takes all the room.
 #guard runXs "<main style='width:60px;margin:0 auto'>A</main>" == some [30]
 #guard runXs "<main style='max-width:60px;margin:0 auto'>A</main>" == some [30]
@@ -272,9 +279,14 @@ private def rulesAt (width : Float) (source : String) : Nat :=
 #guard rules "p{color:blue" == 1
 #guard rules "p{color:blue} /* never closed" == 1
 #guard rules "} p{content:'}'}" == 1
--- `background` is kept and also given as its colour (`background-color`) and its image
--- (`background-image`: `none` unless it is a `linear-gradient()`)
-#guard ((CSS.declarations "background:url(http://x.org/a.png);color:;nonsense;width:1px").toOption.map List.length) == some 5
+-- The raster shorthand keeps its URL and a malformed adjacent declaration does not
+-- consume the following width declaration.
+#guard match CSS.declarations "background:url(http://x.org/a.png);color:;nonsense;width:1px" with
+  | .ok ds =>
+    ds.any (fun d => d.property == "background-image" &&
+      CSS.firstUrl? d.value == some "http://x.org/a.png") &&
+    ds.any (fun d => d.property == "width" && d.value == "1px")
+  | .error _ => false
 -- Old pages: lists, definition lists, images, blocks inside links, and CSS we do not lay out.
 #guard (run "<ul><li>A<li>B</ul><ol><li>C</ol>" css) matches .ok _
 #guard (run "<dl><dt>A<dd><p>B</dl><a href=x><h3>C</h3></a>" css) matches .ok _
@@ -298,7 +310,7 @@ private def stateAt (html css id : String) (hover active : Option String := none
 private def rgb255 (c : Color) : Nat × Nat × Nat :=
   ((c.r*255).round.toUInt32.toNat,(c.g*255).round.toUInt32.toNat,(c.b*255).round.toUInt32.toNat)
 private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>B</a> <button id='k'>OK</button></p>"
-#guard userAgentRules.length == 13
+#guard userAgentRules.length == 22
 -- the form controls have boxes: a text field and a checkbox are inline-blocks of a fixed size; a hidden input none
 #guard ((stateAt "<p><input id='i'><input id='h' type=hidden><input id='c' type=checkbox></p>" "" "i").toOption.map (·.display)) == some .inlineBlock
 #guard ((stateAt "<p><input id='i'><input id='h' type=hidden><input id='c' type=checkbox></p>" "" "h").toOption.map (·.display)) == some .none
@@ -343,8 +355,32 @@ private def page := "<p><a id='a' href='u'><span id='s'>AA</span></a> <a id='b'>
 #guard ((stateAt page "" "k").toOption.map fun s => (s.display == .inlineBlock,s.borderStyle == .outset,s.borderEdges.top,s.background.map rgb255)) == some (true,true,2,some (239,239,239))
 #guard ((stateAt page "" "k" (active := some "k")).toOption.map fun s => (s.borderStyle == .inset,s.background.map rgb255)) == some (true,some (200,200,200))
 #guard ((stateAt page "" "k" (hover := some "k")).toOption.map fun s => s.background.map rgb255) == some (some (229,229,229))
-#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,s.borderColor.map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:1px solid red'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.left,(s.borderColors.left.resolve s.color).map rgb255)) == some (1,some (255,0,0))
+#guard ((stateAt "<p id='x' style='border:8px solid transparent'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.left,(s.borderColors.left.resolve s.color).isNone)) == some (8,true)
+#guard ((stateAt "<p id='x' style='border:8px solid red; border-color:transparent'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.left,(s.borderColors.left.resolve s.color).isNone)) == some (8,true)
 #guard ((stateAt "<p id='x' style='border-width:4px'>A</p>" "" "x").toOption.map (·.borderEdges.left)) == some 0
+-- CSS Backgrounds 3 §4: each side has its own style and colour; a side with style none is
+-- 0 wide; `rgb()` with spaces is one value of a shorthand; the styles dotted ... ridge are read.
+#guard ((stateAt "<p id='x' style='border:2px solid; border-top-color:red; border-left-style:none'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderEdges.top,s.borderEdges.left,(s.borderColors.top.resolve s.color).map rgb255,(s.borderColors.right.resolve s.color).map rgb255)) ==
+  some (2,0,some (255,0,0),some (0,0,0))
+#guard ((stateAt "<p id='x' style='border-top-style:solid'>A</p>" "" "x").toOption.map fun s => (s.borderEdges.top,s.borderEdges.right)) == some (3,0)
+-- CSS Backgrounds 3 §3.7: background-clip, alone and in the background shorthand
+#guard ((stateAt "<p id='x' style='background-clip:content-box'>A</p>" "" "x").toOption.map (·.colorClip)) == some 2
+#guard ((stateAt "<p id='x' style='background:red padding-box'>A</p>" "" "x").toOption.map (·.colorClip)) == some 1
+-- the colour uses the final layer's clip; the clip list repeats to the number of image layers
+#guard ((stateAt "<p id='x' style='background-clip:border-box, content-box, border-box; background-image:none, none'>A</p>" "" "x").toOption.map (·.colorClip)) == some 2
+#guard ((stateAt "<p id='x' style='background-clip:padding-box, content-box'>A</p>" "" "x").toOption.map (·.colorClip)) == some 1
+-- border widths snap to whole pixels (CSS Values 4): down above 1 px, up to 1 px below it
+#guard ((stateAt "<p id='x' style='border:49.75px solid'>A</p>" "" "x").toOption.map (·.borderWidth.top)) == some 49
+#guard ((stateAt "<p id='x' style='border-top:0.25px solid'>A</p>" "" "x").toOption.map (·.borderWidth.top)) == some 1
+#guard ((stateAt "<p id='x' style='border:1px dashed rgb(0, 0, 255)'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderStyles.left == .dashed,(s.borderColors.left.resolve s.color).map rgb255)) == some (true,some (0,0,255))
+#guard ((stateAt "<p id='x' style='border-style:dotted double groove ridge;border-color:red blue'>A</p>" "" "x").toOption.map fun s =>
+  (s.borderStyles.toList == [.dotted,.double,.groove,.ridge],(s.borderColors.bottom.resolve s.color).map rgb255,(s.borderColors.left.resolve s.color).map rgb255)) ==
+  some (true,some (255,0,0),some (0,0,255))
 
 private def runState (html css : String) (active : Option String := none) : Except String (Scene × Array Box) := do
   let dom := DOM.parseHtmlDocument html
@@ -366,8 +402,9 @@ private def fills (r : Except String (Scene × Array Box)) : List (Nat × Nat ×
           | _ => []
       | _ => []
   | .error _ => []
--- The button's border box: 2+6 + two glyphs of 6 + 6+2 wide; 2+1 + 7 + 1+2 high.
-#guard boxOf "<button id='k'>OK</button>" css "k" == some (28,13)
+-- The button's border box: 2+6 + two glyphs + 6+2 wide; 2+1 + 7 + 1+2 high. Its glyphs are
+-- of the user agent's control font size (13.333px, as other engines), not the page's.
+#guard (boxOf "<button id='k'>OK</button>" css "k").map (fun (w,h) => ((w*1000).round,h)) == some (38857,13)
 #guard ((runState "<button>OK</button>" css).toOption.map fun r => r.1.glyphRuns.size) == some 1
 -- A block border adds to the border box.
 #guard boxOf "<div id='d' style='border:1px solid red'>A</div>" css "d" == some (26,9)

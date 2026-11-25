@@ -78,6 +78,9 @@ nearest positioned ancestor (or the root) still has to lay out. -/
 structure Result where
   nodes : Array Node := #[]
   boxes : Array Box := #[]
+  /-- Right edge of an inline layout before its inline-block transforms, when
+  it differs from the edge reported by the painted boxes. -/
+  inlineFlowRight : Option Float := none
   runs : Array GlyphRun := #[]
   height : Float := 0
   pending : Array Pending := #[]
@@ -461,15 +464,25 @@ theorem shrinkWidth_minContent (lo hi room : Float) : shrinkWidth .minContent lo
 theorem shrinkWidth_maxContent (lo hi room : Float) : shrinkWidth .maxContent lo hi room = hi := rfl
 theorem shrinkWidth_auto (lo hi room : Float) : shrinkWidth .auto lo hi room = min hi (max lo room) := rfl
 
-/-- An inline-block whose contents are not all inline (CSS 2.1 §9.2.2, §10.1): it has a
-child that is a block-level box or a float, or it is positioned and has element children
-(it is then the containing block of its absolutely positioned descendants). Such a box is
-laid out as a block container; one with inline content only stays a line of its own. -/
-def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
-  (dom.get id).kids.any fun k =>
-    (dom.get k).type == .element &&
-      ((styles[id]!).pos.containsAbsolutes ||
-        ((styles[k]!).display != .none && ((styles[k]!).display.isBlockLevel || (styles[k]!).pos.float != .none)))
+/-- An inline-block needs the block layout path if it has a block-level or
+floated child, establishes an absolute containing block with element children,
+or contains another inline-block that needs the block layout path. The last
+case keeps those nested block formatting contexts from being flattened by the
+line-only path. The traversal walks only through inline-block children. -/
+def blockInside (dom : Dom) (styles : Array Computed) (id : Nat) : Bool := Id.run do
+  let mut pending := [id]
+  for _ in [:dom.size] do
+    let current :: rest := pending | return false
+    pending := rest
+    let absolute := (styles[current]!).pos.containsAbsolutes
+    for child in (dom.get current).kids do
+      if (dom.get child).type != .element then continue
+      if absolute then return true
+      let style := styles[child]!
+      if style.display == .none then continue
+      if style.display.isBlockLevel || style.pos.float != .none then return true
+      if style.display == .inlineBlock then pending := child :: pending
+  return false
 
 /-- The room beside `floats` for a line or box `h` high at `y`, in a content box from `x`,
 `width` wide: how far its left edge is from `x`, and its width. With no floats: all of it. -/
@@ -499,6 +512,46 @@ def contentBoxed (s : Computed) : Computed :=
     | other => other
   {s with width := less h s.width, minWidth := less h s.minWidth, maxWidth := less h s.maxWidth,
           height := less v s.height, minHeight := less v s.minHeight, maxHeight := less v s.maxHeight}
+
+private def viewportEdgePixels (edges : Edges) (width height : Float)
+    (values : List (Nat × ViewportEdge)) : Edges :=
+  values.foldl (fun out (side, value) =>
+    let pixels := value.pixels width height
+    match side with
+    | 0 => {out with top := pixels}
+    | 1 => {out with right := pixels}
+    | 2 => {out with bottom := pixels}
+    | _ => {out with left := pixels}) edges
+
+/-- Resolve viewport-relative margins and padding before percentage edges, intrinsic
+sizing and box-sizing conversion. -/
+def withViewportEdges (s : Computed) (width height : Float) : Computed :=
+  match s.pos.viewportMargins, s.pos.viewportPadding with
+  | [], [] => s
+  | margins, padding =>
+    let margin := viewportEdgePixels s.margin width height margins
+    let padding := viewportEdgePixels s.padding width height padding
+    let pos := {s.pos with viewportMargins := [], viewportPadding := []}
+    {s with margin, padding, pos}
+
+theorem withViewportEdges_unused (s : Computed) (width height : Float)
+    (hm : s.pos.viewportMargins = []) (hp : s.pos.viewportPadding = []) :
+    withViewportEdges s width height = s := by
+  simp [withViewportEdges, hm, hp]
+
+/-- A full-width breakout's two viewport margins and a vertical inset are equivalent
+to setting the corresponding pixel edges. Other style fields are preserved. -/
+theorem withViewportEdges_breakout (s : Computed) (width height margin padding : Float) :
+    withViewportEdges
+      {s with pos := {s.pos with viewportMargins := [(1, .width margin), (3, .width margin)],
+                                 viewportPadding := [(0, .height padding)]}}
+      width height =
+    {s with margin := {s.margin with right := margin * width, left := margin * width},
+            padding := {s.padding with top := padding * height},
+            pos := {s.pos with viewportMargins := [], viewportPadding := []}} := rfl
+
+#print axioms withViewportEdges_unused
+#print axioms withViewportEdges_breakout
 
 /-- The style with the percentage parts of its margins and padding resolved against a
 containing block `width` wide (CSS 2.1 §8.3, §8.4: all four sides are of the width). -/

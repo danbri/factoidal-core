@@ -545,6 +545,12 @@ import { Inspector } from "{{ '/vendor/observable/inspector.esm.js' | url }}";
 // copy of npm/factoidal/.
 import * as Factoidal from "{% if factoidalEngine == 'release' %}{{ factoidalRelease.browserUrl }}{% else %}{{ '/npm/factoidal/browser.js' | url }}{% endif %}";
 import * as demoMaths from "{{ '/web/hub/assets/demo-maths.mjs' | url }}";
+{% if evmWasmSparqlDemo %}
+// Load the same audited, browser-safe EVM→WASM compiler modules used by the
+// Node differential suite. Only this Hub page pays the extra module cost.
+import * as EvmCompiler from "{{ '/web/hub/ethereum-wasm-sparql/evm-to-wasm.mjs' | url }}";
+import * as EvmPolicy from "{{ '/web/hub/ethereum-wasm-sparql/evm-policy.mjs' | url }}";
+{% endif %}
 import * as d3 from "{{ '/vendor/observable/d3.esm.js' | url }}";
 import * as Plot from "{{ '/vendor/observable/plot.esm.js' | url }}";
 import * as stdlib from "{{ '/vendor/observable/stdlib.esm.js' | url }}";
@@ -1124,7 +1130,7 @@ function pretty(value, { language = "text" } = {}) {
 // list (and the mirrored `new Function(...)` parameter list below)
 // deliberately; it's the interface post-authoring (wave B) writes
 // against. See docs/web/hub/README.md for the full contract.
-const CELL_BINDINGS = ["Factoidal", "fn", "d3", "Plot", "html", "md", "pretty", "L"];
+const CELL_BINDINGS = ["Factoidal", "fn", "d3", "Plot", "html", "md", "pretty", "L"{% if evmWasmSparqlDemo %}, "EvmCompiler", "EvmPolicy"{% endif %}];
 main.variable().define("Factoidal", [], () => Factoidal);
 main.variable().define("fn", [], () => fn);
 main.variable().define("d3", [], () => d3);
@@ -1142,6 +1148,10 @@ main.variable().define("pretty", [], () => pretty);
 // classic <script> that sets window.L; exposed as the `L` cell binding
 // so a cell can build a map without touching `window` directly.
 main.variable().define("L", [], () => window.L);
+{% if evmWasmSparqlDemo %}
+main.variable().define("EvmCompiler", [], () => EvmCompiler);
+main.variable().define("EvmPolicy", [], () => EvmPolicy);
+{% endif %}
 
 // ---------------------------------------------------------------------
 // Reactive dataflow (ObservableHQ-style).

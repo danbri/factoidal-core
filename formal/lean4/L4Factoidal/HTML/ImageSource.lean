@@ -172,6 +172,21 @@ def sizeValue (e : Env) (cv : CssValues.CV) : Option Rat :=
   | some (.tok (.dim v _ _)) => some v
   | _ => none
 
+/-- The text of a `<media-condition>` (Media Queries 4 §3): it opens with a bracket, or with
+`not` and a bracket. A media query with a media type (`all`, `not print`, `all and (...)`)
+is not one, and its entry of `sizes` is invalid (HTML §4.8.4.3.7 step 3.3). -/
+def isMediaCondition (text : String) : Bool :=
+  let cs := text.toList.dropWhile isWs
+  match cs with
+  | '(' :: _ => true
+  | n :: o :: t :: rest =>
+    n.toLower == 'n' && o.toLower == 'o' && t.toLower == 't' &&
+      (rest.takeWhile isWs).length > 0 && (rest.dropWhile isWs).head? == some '('
+  | _ => false
+
+#guard isMediaCondition "(min-width: 0)" && isMediaCondition "NOT (min-width: 0)"
+#guard !isMediaCondition "all" && !isMediaCondition "not print" && !isMediaCondition "all and (min-width:0)"
+
 /-- The size of one entry of `sizes`, when its media condition (if any) holds. -/
 def entrySize (e : Env) (entry : List CssValues.CV) : Option Rat :=
   match (dropEndWs entry).reverse with
@@ -182,8 +197,9 @@ def entrySize (e : Env) (entry : List CssValues.CV) : Option Rat :=
     | some v =>
       let condition := dropEndWs before.reverse
       if condition.all CssValues.CV.isWs then some v
-      else if MediaQuery.applies e.media (CssValues.serialize (CssValues.trimWs condition)) then some v
-      else none
+      else
+        let text := CssValues.serialize (CssValues.trimWs condition)
+        if isMediaCondition text && MediaQuery.applies e.media text then some v else none
 
 /-- "Parse a sizes attribute": the source size in CSS pixels; 100vw when no entry gives one. -/
 def sourceSize (e : Env) (sizes : String) : Rat :=
@@ -385,6 +401,9 @@ private def size (sizes : String) : Rat := sourceSize { viewportW := 1000, viewp
 #guard size "calc(1px)" == 1 && size "calc(1px + 1px)" == 2 && size "calc(-5px)" == 0
 #guard size "(min-width:0) 1px" == 1 && size "(min-width:2000px) 1px, 2px" == 2 && size "(min-width:2000px) 1px" == 1000
 #guard size "not (min-width:2000px) 1px" == 1 && size "1px, 2px" == 1 && size "-1px, 2px" == 2
+-- a media type is not a media condition: the entry is invalid (WPT parse-a-sizes-attribute)
+#guard size "all 1px" == 1000 && size "all 100vw, 1px" == 1 && size "not print 100vw, 1px" == 1
+#guard size "all and (min-width:0) 1px" == 1000 && size "(min-width:calc(0)) 1px" == 1
 -- widths: 300w and 301w at 100vw of 1000 are both below 1: the larger; at 1px both are above: the smaller
 #guard (selectFrom 1 1000 (parseSrcset "a 300w, b 301w")).map (·.1.url) == some "b"
 #guard (selectFrom 1 1 (parseSrcset "a 50w, b 51w")).map (·.1.url) == some "a"

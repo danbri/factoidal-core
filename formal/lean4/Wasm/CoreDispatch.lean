@@ -44,6 +44,7 @@ import Wasm.Ops.Query
 import Wasm.Ops.Reason
 import Wasm.Ops.Canon
 import Wasm.Ops.Handles
+import Wasm.Ops.GpuSparql
 import Wasm.Ops.ExtFns
 import Wasm.Ops.ServiceReg
 import Wasm.Ops.QueryExtras
@@ -54,6 +55,8 @@ import Wasm.Ops.Terms
 import Wasm.Ops.ContainerPath
 import Wasm.Ops.Collections
 import Wasm.Ops.LiteralValue
+import Wasm.Ops.Wikidata
+import Wasm.Ops.QuerySyntax
 
 namespace L4Wasm.Core
 
@@ -84,6 +87,8 @@ def coreOpNames : List String :=
   , "rhoDfFragmentCheck"
   , "rdfsPlusClosure"
   , "queryRaw"
+  , "wikidataRewrite"
+  , "parseSparqlStructure"
   , "shaclValidate" ] ++ parityOpNames ++ lenientOpNames ++ deltaLogOpNames ++ termsOpNames ++ containerPathOpNames
     ++ literalOpNames
 
@@ -95,6 +100,7 @@ def coreIOOpNames : List String :=
   , "datasetQuery"
   , "datasetQuery12"
   , "datasetQuery12Entail"
+  , "datasetQueryGpuBegin", "datasetQueryGpuStep", "datasetQueryGpuRestart", "datasetQueryGpuClose"
   , "datasetUpdate"
   , "datasetSerialize"
   , "datasetSerializeWith"
@@ -143,7 +149,7 @@ def fullOnlyOpNames : List String :=
   , "owlIsConsistent", "owlEntails"
   , "clParse", "clSerialize", "clAlphaNorm", "clNormalize", "clFiniteSat"
   , "proofCheck", "proofInspect", "explainGraph", "stageList", "pipelineCheck", "pipelineCheckNodes"
-  , "graphCheckNodes", "datasetMerge"
+  , "graphCheckNodes", "datasetMerge", "pvgraphBuild", "pvgraphAdmit", "pvgraphEvaluate", "pvgraphGpuPlan"
   , "toanSummation", "toanProduct", "toanSimplify", "toanDiff", "toanSubst"
   , "xmppJidParse", "xmppJidRender", "xmppStreamHeaderParse"
   , "xmppStreamHeaderRender", "xmppFeaturesFor", "xmppStanzaParse"
@@ -303,6 +309,8 @@ def callArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "rhoDfFragmentCheck"   => some (arity1 op rhoDfFragmentCheck args)
   | "rdfsPlusClosure"      => some (arity1 op rdfsPlusClosure args)
   | "queryRaw"             => some (arity3Now op (fun a b c n => queryRawBy extra a b c n) args)
+  | "wikidataRewrite"      => some (arity2 op Ops.wikidataRewrite args)
+  | "parseSparqlStructure" => some (arity3 op Ops.parseSparqlStructure args)
   | "shaclValidate"        => some (arity2 op shaclValidate args)
   -- The durable update log of a browser host (`Wasm/Ops/DeltaLog.lean`,
   -- https://github.com/danbri/factoidal/issues/728).
@@ -352,6 +360,10 @@ def callIOArgsBy (extra : ExtraReader) (op : String) (args : List String) :
   | "datasetOpen"      => some (arityIO3 op (Ops.datasetOpenBy extra) args)
   | "datasetQuery"     => some (arityIO2Base op (fun a b c => Ops.datasetQuery a b c) args)
   | "datasetQuery12"   => some (arityIO2Base op (fun a b c => Ops.datasetQuery12 a b c) args)
+  | "datasetQueryGpuBegin" => some (arityIO3 op Ops.datasetQueryGpuBegin args)
+  | "datasetQueryGpuStep" => some (arityIO2 op Ops.datasetQueryGpuStep args)
+  | "datasetQueryGpuRestart" => some (arityIO1 op Ops.datasetQueryGpuRestart args)
+  | "datasetQueryGpuClose" => some (arityIO1 op Ops.datasetQueryGpuClose args)
   | "datasetUpdate"    => some (arityIO2Base op (fun a b c => Ops.datasetUpdate a b c) args)
   | "datasetSerialize" => some (arityIO2 op Ops.datasetSerialize args)
   | "datasetSerializeWith" => some (arityIO3 op Ops.datasetSerializeWith args)

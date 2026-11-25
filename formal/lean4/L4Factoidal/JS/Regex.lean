@@ -1341,4 +1341,182 @@ def exec (re : Compiled) (cs : Array Char) (from_ : Nat) : Option (Array (Option
     | none => return none
   return none
 
+/-! ### The search as a recursion
+
+`exec` is the reference: a `for` over the start positions with the start in a mutable variable.
+Compiled, each position made the loop's state pair, its step, and the matcher's state record with
+the captures array built again (61% of the allocations of the marked workload were in that loop).
+`execFast` is the same search as a recursion on the count of positions left, with the empty
+captures made once (`exec_eq_fast`); the compiled program runs `execFastA` below, which also stops
+an anchored search at once. -/
+
+/-- The search of `exec` from `start`, for `k` more start positions. -/
+def execLoop (re : Compiled) (cs : Array Char) (fuel : Nat) (caps0 : Array (Option (Nat × Nat))) :
+    Nat → Nat → Option (Array (Option (Nat × Nat)))
+  | 0, _ => none
+  | k + 1, start =>
+    match matchNode cs fuel re.flags false re.node { pos := start, caps := caps0 } some with
+    | some st => some (#[some (start, st.pos)] ++ st.caps)
+    | none =>
+      if re.flags.sticky then none else
+      match readAt cs re.flags.unicode false start with
+      | some (_, w) => execLoop re cs fuel caps0 k (start + w)
+      | none => none
+
+/-- `exec`, by `execLoop`. -/
+def execFast (re : Compiled) (cs : Array Char) (from_ : Nat) : Option (Array (Option (Nat × Nat))) :=
+  if from_ > cs.size then none
+  else execLoop re cs (matchFuel cs.size) (Array.replicate re.groups none) (cs.size - from_ + 1) from_
+
+/-- **Kind: refinement.** `execFast` gives the match `exec` gives (or none), for every compiled
+expression, subject and start. Does not say anything about speed. -/
+theorem exec_eq_fast : @exec = @execFast := by
+  funext re cs from_
+  unfold exec execFast
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range']
+  split
+  · rfl
+  · rename_i hfrom
+    have hsz : [:cs.size - from_ + 1].size = cs.size - from_ + 1 := by simp [Std.Legacy.Range.size]
+    rw [hsz]
+    clear hfrom hsz
+    generalize cs.size - from_ + 1 = m
+    generalize hl : List.range' 0 m = l
+    have hlen : m = l.length := by rw [← hl, List.length_range']
+    rw [hlen]
+    clear hlen hl
+    generalize from_ = start
+    induction l generalizing start with
+    | nil => rfl
+    | cons a as ih =>
+      simp only [List.forIn_cons, List.length_cons, execLoop]
+      cases hm : matchNode cs (matchFuel cs.size) re.flags false re.node
+          { pos := start, caps := Array.replicate re.groups none } some with
+      | some st => rfl
+      | none =>
+        by_cases hs : re.flags.sticky = true
+        · rw [if_pos hs, if_pos hs]; rfl
+        · rw [if_neg hs, if_neg hs]
+          cases hr : readAt cs re.flags.unicode false start with
+          | none => rfl
+          | some p =>
+            obtain ⟨c, w⟩ := p
+            exact ih (start + w)
+
+#print axioms exec_eq_fast
+
+/-! ### A pattern anchored with `^`
+
+A pattern that starts with `^`, with `m` not set, can match only at position 0. The search tried
+every later start position all the same: each made the matcher's state record and failed at the
+assertion (the whole length of the subject for each failed test of an anchored pattern, which is
+how a tokeniser uses them: the marked workload made 3.0 M state records this way).
+`execLoopA` stops at the first start position past 0 when the pattern is anchored. -/
+
+/-- The pattern can match only at position 0: it starts with `^` and `m` is not set. -/
+def anchoredStart (fl : Flags) (node : Node) : Bool :=
+  !fl.multiline && match node with
+    | .bol => true
+    | .seq (.bol :: _) => true
+    | _ => false
+
+/-- An anchored pattern does not match at a position past 0, whatever the continuation. -/
+theorem matchNode_anchored (cs : Array Char) (fl : Flags) (node : Node) (h : anchoredStart fl node = true)
+    (fuel pos : Nat) (caps : Array (Option (Nat × Nat))) (k : St → Option St) (hpos : pos ≠ 0) :
+    matchNode cs (fuel + 1) fl false node { pos := pos, caps := caps } k = none := by
+  unfold anchoredStart at h
+  simp only [Bool.and_eq_true, Bool.not_eq_true'] at h
+  obtain ⟨hm, hn⟩ := h
+  rw [matchNode.eq_def]
+  cases node with
+  | bol => simp [hpos, hm]
+  | seq rs =>
+    cases rs with
+    | nil => simp at hn
+    | cons r rs =>
+      cases r with
+      | bol => simp [hpos, hm]
+      | _ => simp at hn
+  | _ => simp at hn
+
+/-- A search that starts past position 0 finds nothing when the pattern is anchored. -/
+theorem execLoop_anchored (re : Compiled) (cs : Array Char) (fuel : Nat) (caps0 : Array (Option (Nat × Nat)))
+    (h : anchoredStart re.flags re.node = true) :
+    ∀ (k start : Nat), start ≠ 0 → execLoop re cs (fuel + 1) caps0 k start = none := by
+  intro k
+  induction k with
+  | zero => intro start _; rfl
+  | succ k ih =>
+    intro start hs
+    rw [execLoop, matchNode_anchored cs re.flags re.node h fuel start caps0 some hs]
+    by_cases hst : re.flags.sticky = true
+    · simp only [hst, if_true]
+    · simp only [hst, if_false]
+      cases hr : readAt cs re.flags.unicode false start with
+      | none => rfl
+      | some p =>
+        obtain ⟨c, w⟩ := p
+        exact ih (start + w) (by omega)
+
+/-- The search of `execLoop`, stopped at the first start position past 0 when the pattern is
+anchored (`anch`): one test for each position. -/
+def execLoopA (re : Compiled) (cs : Array Char) (fuel : Nat) (caps0 : Array (Option (Nat × Nat))) (anch : Bool) :
+    Nat → Nat → Option (Array (Option (Nat × Nat)))
+  | 0, _ => none
+  | k + 1, start =>
+    if anch && start != 0 then none else
+    match matchNode cs fuel re.flags false re.node { pos := start, caps := caps0 } some with
+    | some st => some (#[some (start, st.pos)] ++ st.caps)
+    | none =>
+      if re.flags.sticky then none else
+      match readAt cs re.flags.unicode false start with
+      | some (_, w) => execLoopA re cs fuel caps0 anch k (start + w)
+      | none => none
+
+/-- `execLoopA` with the pattern's own `anchoredStart` is `execLoop`, for every count and start. -/
+theorem execLoopA_eq (re : Compiled) (cs : Array Char) (fuel : Nat) (caps0 : Array (Option (Nat × Nat))) :
+    ∀ (k start : Nat), execLoopA re cs (fuel + 1) caps0 (anchoredStart re.flags re.node) k start
+      = execLoop re cs (fuel + 1) caps0 k start := by
+  intro k
+  induction k with
+  | zero => intro start; rfl
+  | succ k ih =>
+    intro start
+    rw [execLoopA]
+    by_cases hc : (anchoredStart re.flags re.node && start != 0) = true
+    · simp only [hc, if_true]
+      simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hc
+      exact (execLoop_anchored re cs fuel caps0 hc.1 (k + 1) start hc.2).symm
+    · simp only [hc]
+      rw [execLoop]
+      cases hm : matchNode cs (fuel + 1) re.flags false re.node { pos := start, caps := caps0 } some with
+      | some st => rfl
+      | none =>
+        by_cases hst : re.flags.sticky = true
+        · simp [hst]
+        · simp only [hst, if_false]
+          cases hr : readAt cs re.flags.unicode false start with
+          | none => rfl
+          | some p =>
+            obtain ⟨c, w⟩ := p
+            exact ih (start + w)
+
+/-- `exec`, by `execLoopA`. -/
+def execFastA (re : Compiled) (cs : Array Char) (from_ : Nat) : Option (Array (Option (Nat × Nat))) :=
+  if from_ > cs.size then none
+  else execLoopA re cs (matchFuel cs.size) (Array.replicate re.groups none) (anchoredStart re.flags re.node)
+    (cs.size - from_ + 1) from_
+
+/-- **Kind: refinement.** `execFastA` gives the match `exec` gives (or none), for every compiled
+expression, subject and start. Does not say anything about speed. -/
+@[csimp] theorem exec_eq_fastA : @exec = @execFastA := by
+  rw [exec_eq_fast]
+  funext re cs from_
+  unfold execFast execFastA
+  have hf : matchFuel cs.size = (64 * cs.size + 4095) + 1 := rfl
+  rw [hf, execLoopA_eq]
+
+#print axioms matchNode_anchored
+#print axioms exec_eq_fastA
+
 end L4Factoidal.JS.Re

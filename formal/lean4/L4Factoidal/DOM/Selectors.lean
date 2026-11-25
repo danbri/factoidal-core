@@ -281,6 +281,9 @@ def lowerAscii (s : String) : String := s.map fun c => if 'A' ≤ c && c ≤ 'Z'
 
 /-- `An+B` (CSS Syntax §6), up to `of` or `)`. -/
 def anPlusB (src : String) : Option (Int × Int) :=
+  -- a `+` before `n` is part of it (CSS Syntax §6.2, the † of `'+'?† n`): `+ n` is no An+B
+  let lead := src.toList.dropWhile isWs
+  if (match lead with | '+' :: c :: _ => isWs c | _ => false) then none else
   let s := lowerAscii (String.ofList (src.toList.filter (!isWs ·)))
   if s == "odd" then some (2, 1) else if s == "even" then some (2, 0) else
   let intOf := fun (t : String) => if t.isEmpty then none else
@@ -297,6 +300,17 @@ def anPlusB (src : String) : Option (Int × Int) :=
     | some x, some y => some (x, y)
     | _, _ => none
   | _ => none
+
+#guard anPlusB "+ n" == none && anPlusB "+ n-5" == none && anPlusB "+n" == some (1, 0) && anPlusB " +n" == some (1, 0)
+#guard anPlusB "5n- 5" == some (5, -5) && anPlusB "n + 5" == some (1, 5) && anPlusB "-n- 5" == some (-1, -5)
+
+/-- Kind: property. Says: a `+` followed by white space at the start is no An+B (the sign of
+`n` is joined to it, CSS Syntax §6.2). Does not say: anything of other text. -/
+theorem anPlusB_plus_ws (c : Char) (rest : List Char) (hc : isWs c = true) :
+    anPlusB (String.ofList ('+' :: c :: rest)) = none := by
+  simp [anPlusB, hc, show isWs '+' = false from rfl]
+
+#print axioms anPlusB_plus_ws
 
 /-- The raw text up to the `)` that closes this level (strings and nesting respected). -/
 def argText : PM String := do
@@ -1270,7 +1284,7 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | "read-only" => !readWrite d k
       | "placeholder-shown" =>
         isHtml d k ["input", "textarea"] && (attrVal? d k "placeholder").isSome &&
-          ((attrVal? d k "value").getD "").isEmpty && x.kids.isEmpty
+          (match x.dirtyValue with | some v => v | none => (attrVal? d k "value").getD "").isEmpty && x.kids.isEmpty
       | "default" =>
         (isHtml d k ["input"] && (attrVal? d k "checked").isSome &&
           ["checkbox", "radio"].contains (lowerAscii ((attrVal? d k "type").getD ""))) ||

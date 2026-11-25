@@ -7,8 +7,9 @@
 //   (`{id, addresses}`). Nothing is sent to the server.
 // - `address` and `port`: connect to that address only. The name is not resolved again, so
 //   a second DNS answer cannot move the request (DNS rebinding). `http`: Deno's client with a
-//   TCP transport to the address. `https`: Deno's client through a one-connection tunnel to
-//   the address; TLS still checks the certificate against the URL's name.
+//   TCP transport to the address. `https`: Deno's client uses an authenticated local tunnel.
+//   TLS still verifies the URL's name. A synchronous answer sequence may reuse a tunnel
+//   to the same authority and address.
 // - otherwise (an IP literal, a page loaded from a local address): a plain fetch.
 //
 // Every fetch: redirect "manual" (each hop goes back to the engine), no cookies (Deno's fetch
@@ -23,40 +24,102 @@ const MAX_BODY=67108864;
 /** Extra trust roots (tests only: a local TLS server's certificate). */
 export type NetOptions={caCerts?:string[];timeoutMs?:number};
 
-/** A tunnel for one connection: accepts one CONNECT for `target` (`name:port`) with the
- *  random credential it gave the client, and joins it to `address:port`. It listens on the
- *  loopback interface only, for one connection, and stops when the client is closed. */
-async function tunnelClient(target:string,address:string,port:number,opts:NetOptions):Promise<{client:Deno.HttpClient;done:()=>void}>{
+type Tunnel = {client:Deno.HttpClient; close:()=>void};
+
+/** Keep transport pinned to one authority and one Lean-approved address.
+ * The inner TLS session still verifies the URL hostname. */
+function tunnelClient(target:string,address:string,port:number,opts:NetOptions,reusable=false):Tunnel{
   const secret=crypto.randomUUID();
   const expected="Basic "+btoa("p:"+secret);
   const listener=Deno.listen({hostname:"127.0.0.1",port:0});
-  let open=true;
-  const close=()=>{if(open){open=false;try{listener.close();}catch{/* closed */}}};
-  const timer=setTimeout(close,opts.timeoutMs??300000);
-  (async()=>{
-    let conn:Deno.Conn|undefined,up:Deno.Conn|undefined;
+  let listening=true,closed=false;
+  const connections=new Set<Deno.Conn>();
+  const closeConnection=(conn:Deno.Conn)=>{
+    connections.delete(conn);
+    try{conn.close();}catch{/* closed */}
+  };
+  const stopListening=()=>{if(listening){listening=false;listener.close();}};
+  const bridge=async(conn:Deno.Conn)=>{
+    let upstream:Deno.Conn|undefined;
+    connections.add(conn);
+    const timer=setTimeout(()=>closeConnection(conn),opts.timeoutMs??300000);
     try{
-      conn=await listener.accept();close();
       const buf=new Uint8Array(4096);let head="";
       while(!head.includes("\r\n\r\n")){
         const n=await conn.read(buf);if(n===null||head.length>8192)throw new Error("tunnel: no request");
         head+=new TextDecoder("latin1").decode(buf.subarray(0,n));
       }
       const lines=head.slice(0,head.indexOf("\r\n\r\n")).split("\r\n");
-      const auth=lines.slice(1).find(l=>/^proxy-authorization:/i.test(l))?.replace(/^[^:]*:\s*/,"");
+      const auth=lines.slice(1).find(line=>/^proxy-authorization:/i.test(line))?.replace(/^[^:]*:\s*/,"");
       if(lines[0]!==`CONNECT ${target} HTTP/1.1`||auth!==expected)throw new Error("tunnel: refused");
-      up=await Deno.connect({hostname:address,port});
+      const connected=await Deno.connect({hostname:address,port});
+      upstream=connected;
+      if(closed)return;
+      connections.add(upstream);
       await conn.write(new TextEncoder().encode("HTTP/1.1 200 Connection established\r\n\r\n"));
-      await Promise.allSettled([conn.readable.pipeTo(up.writable),up.readable.pipeTo(conn.writable)]);
-    }catch{
-      try{conn?.close();}catch{/* closed */}
-      try{up?.close();}catch{/* closed */}
-    }finally{close();clearTimeout(timer);}
+      clearTimeout(timer);
+      await Promise.allSettled([conn.readable.pipeTo(upstream.writable),upstream.readable.pipeTo(conn.writable)]);
+    }catch{/* the client sees a closed tunnel */}
+    finally{
+      clearTimeout(timer);
+      closeConnection(conn);
+      if(upstream)closeConnection(upstream);
+    }
+  };
+  // A reusable listener may need to reconnect even after an earlier request
+  // timed out. Its batch owns it. Each request and handshake have their own deadline.
+  const timer=reusable?undefined:setTimeout(stopListening,opts.timeoutMs??300000);
+  let client:Deno.HttpClient;
+  try{
+    client=Deno.createHttpClient({proxy:{transport:"http",url:`http://127.0.0.1:${listener.addr.port}`,
+      basicAuth:{username:"p",password:secret}},...(opts.caCerts?{caCerts:opts.caCerts}:{}),
+      ...(reusable?{poolMaxIdlePerHost:1,poolIdleTimeout:10000}:{})});
+  }catch(error){clearTimeout(timer);stopListening();throw error;}
+  void (async()=>{
+    while(listening){
+      let conn:Deno.Conn;
+      try{conn=await listener.accept();}catch{break;}
+      if(!reusable){stopListening();clearTimeout(timer);}
+      if(closed||connections.size>=8)closeConnection(conn);
+      else void bridge(conn);
+    }
   })();
-  const port0=(listener.addr as Deno.NetAddr).port;
-  const client=Deno.createHttpClient({proxy:{transport:"http",url:`http://127.0.0.1:${port0}`,basicAuth:{username:"p",password:secret}},
-    ...(opts.caCerts?{caCerts:opts.caCerts}:{})});
-  return {client,done:()=>{close();clearTimeout(timer);}};
+  return {client,close:()=>{
+    if(closed)return;
+    closed=true;
+    clearTimeout(timer);
+    stopListening();
+    try{client.close();}catch{/* already closed */}
+    for(const conn of connections)closeConnection(conn);
+  }};
+}
+
+type PinnedHTTPSBatch = {get:(host:string,address:string,port:number)=>Deno.HttpClient; close:()=>void};
+
+/** Reuse connections only within the caller's synchronous answer sequence. */
+export function pinnedHTTPSBatch(opts:NetOptions={}):PinnedHTTPSBatch{
+  const tunnels=new Map<string,Tunnel>();
+  return {
+    get(host,address,port){
+      const key=JSON.stringify([host,address,port]);
+      let tunnel=tunnels.get(key);
+      if(tunnel)tunnels.delete(key);
+      else{
+        if(tunnels.size>=4){
+          const oldest=tunnels.keys().next().value!;
+          tunnels.get(oldest)!.close();
+          tunnels.delete(oldest);
+        }
+        tunnel=tunnelClient(`${host}:${port}`,address,port,opts,true);
+      }
+      tunnels.set(key,tunnel);
+      return tunnel.client;
+    },
+    close(){
+      for(const tunnel of tunnels.values())tunnel.close();
+      tunnels.clear();
+    },
+  };
 }
 
 function b64(bytes:Uint8Array):string{
@@ -65,7 +128,7 @@ function b64(bytes:Uint8Array):string{
 }
 
 /** The host's answer to one wire of a turn (`netRequests` or `netSync`). */
-export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>{
+export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:PinnedHTTPSBatch):Promise<NetAnswer>{
   const failed={id:w.id,status:0};
   // a WebSocket connection's wires go to socketOpen / socketWrite / socketClose
   if(w.method.startsWith("WEBSOCKET"))return failed;
@@ -76,12 +139,18 @@ export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>
       return {id:w.id,addresses:found.flatMap(r=>r.status==="fulfilled"?r.value:[])};
     }catch{return {id:w.id,addresses:[]};}
   }
-  let client:Deno.HttpClient|undefined,done=()=>{};
+  let client:Deno.HttpClient|undefined,pooled=false,done:(()=>void)|undefined;
   try{
     if(w.address){
       const u=new URL(w.url);
       if(u.protocol==="https:"){
-        ({client,done}=await tunnelClient(`${u.hostname}:${w.port}`,w.address,w.port??443,opts));
+        const port=w.port??443;
+        if(batch&&w.method==="GET"&&w.bodyBase64===undefined){
+          client=batch.get(u.hostname,w.address,port);
+          pooled=true;
+        }else{
+          ({client,close:done}=tunnelClient(`${u.hostname}:${port}`,w.address,port,opts));
+        }
       }else{
         client=Deno.createHttpClient({proxy:{transport:"tcp",hostname:w.address,port:w.port??80}});
       }
@@ -96,7 +165,10 @@ export async function netAnswer(w:NetWire,opts:NetOptions={}):Promise<NetAnswer>
     const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
     return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)};
   }catch{return failed;}
-  finally{try{client?.close();}catch{/* closed */}done();}
+  finally{
+    if(done)done();
+    else if(!pooled)try{client?.close();}catch{/* closed */}
+  }
 }
 
 // ---- WebSocket connections (formal/lean4/L4Factoidal/Net/WebSocket.lean) ----------------

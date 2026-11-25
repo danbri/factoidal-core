@@ -32,6 +32,8 @@ import { FactoidalError, errorFromEnvelope, envelopeResult } from './errors.mjs'
 import { buildNodes } from './nodes.mjs';
 import { runWithCipher } from './cipher-host.mjs';
 import { cidFunctions } from './cid.mjs';
+import { executePVGraphGpuPlan } from './gdsl-gpu.mjs';
+import { createGsslResidentSession } from './gpu-resident.mjs';
 
 // The format names, regimes and query outputs are the engine's tables (op
 // engineTables, formal/lean4/Wasm/Ops/Handles.lean), read once per engine:
@@ -335,6 +337,11 @@ function buildApi(driver) {
   const extInstalled = new Set();    // iris registered into the ABI
   let extCache = new Map();          // key -> normalized result (or null)
   let extPending = [];               // [{key, promise}] for this pass
+  let activeExtFunctions = null;
+  let activeEvaluations = 0;
+  let gpuSession = null;
+  let gpuTail = Promise.resolve();
+  let automaticGpuAllowed = true;
 
   function extBridge(iriJs, argsJsonJs) {
     // Called SYNCHRONOUSLY from inside the engine.
@@ -342,7 +349,7 @@ function buildApi(driver) {
     const argsJson = String(argsJsonJs);
     const key = iri + '\u0000' + argsJson;
     if (extCache.has(key)) return extCache.get(key);
-    const fn = extFunctions.get(iri);
+    const fn = (activeExtFunctions || extFunctions).get(iri);
     if (!fn) return null;
     let out;
     try {
@@ -396,6 +403,7 @@ function buildApi(driver) {
   /** Remove one registered extension function. */
   async function unregisterExtensionFunction(iri) {
     extFunctions.delete(iri);
+    if (activeEvaluations) return;
     const e = await entry();
     if (e && typeof e.unregisterExtensionFunction === 'function'
         && extInstalled.has(iri)) {
@@ -408,6 +416,7 @@ function buildApi(driver) {
   /** Remove every registered extension function. */
   async function clearExtensionFunctions() {
     extFunctions.clear();
+    if (activeEvaluations) return;
     const e = await entry();
     if (e && typeof e.clearExtensionFunctions === 'function') {
       entryResult(e.clearExtensionFunctions(), 'clearExtensionFunctions');
@@ -446,30 +455,132 @@ function buildApi(driver) {
     }
   }
 
-  // Run one synchronous engine pass, re-running until no NEW async
-  // extension results are pending. With no registered functions this
-  // is exactly one pass with zero overhead beyond the length check.
+  // Each evaluation owns the extension memo and function snapshot, including
+  // across asynchronous GPU dispatches. Replay uses the same Lean session,
+  // so its dataset, service snapshots and NOW() are unchanged.
   async function withExtensionRounds(runOnce) {
-    extCache = new Map(); // per-evaluation memo (purity contract)
-    for (let round = 0; ; round++) {
-      extPending = [];
-      const result = runOnce();
-      if (extPending.length === 0) return result;
-      if (round >= EXT_MAX_ROUNDS) {
-        throw new FactoidalError(
-          'extension functions: async resolution did not converge ' +
-          `within ${EXT_MAX_ROUNDS} evaluation rounds`, { code: 'capacity.exceeded' });
+    const context = { functions: new Map(extFunctions), cache: new Map(), pending: [] };
+    activeEvaluations++;
+    // Install a context only for a synchronous engine call. GPU waits can
+    // overlap, and an extension can itself issue another query, without
+    // sharing memos or holding a lock across user code.
+    const call = fn => {
+      const previous = { functions: activeExtFunctions, cache: extCache, pending: extPending };
+      activeExtFunctions = context.functions;
+      extCache = context.cache;
+      extPending = context.pending;
+      try { return fn(); }
+      finally {
+        activeExtFunctions = previous.functions;
+        extCache = previous.cache;
+        extPending = previous.pending;
       }
-      const pend = extPending;
-      extPending = [];
-      await Promise.all(pend.map(async ({ key, promise }) => {
-        try {
-          const v = await promise;
-          extCache.set(key, v === undefined ? null : v);
-        } catch (_e) {
-          extCache.set(key, null);
+    };
+    try {
+      for (let round = 0; ; round++) {
+        context.pending = [];
+        const result = await call(() => runOnce(round, call));
+        if (context.pending.length === 0) return result;
+        if (round >= EXT_MAX_ROUNDS) {
+          throw new FactoidalError(
+            'extension functions: async resolution did not converge ' +
+            `within ${EXT_MAX_ROUNDS} evaluation rounds`, { code: 'capacity.exceeded' });
         }
-      }));
+        const pend = context.pending;
+        context.pending = [];
+        await Promise.all(pend.map(async ({ key, promise }) => {
+          try {
+            const v = await promise;
+            context.cache.set(key, v === undefined ? null : v);
+          } catch (_e) {
+            context.cache.set(key, null);
+          }
+        }));
+      }
+    } finally {
+      activeEvaluations--;
+      if (activeEvaluations === 0) {
+        const e = await entry();
+        for (const iri of activeEvaluations === 0 ? extInstalled : []) {
+          if (!extFunctions.has(iri)) {
+            entryResult(e.unregisterExtensionFunction(iri), 'unregisterExtensionFunction');
+            extInstalled.delete(iri);
+          }
+        }
+      }
+    }
+  }
+
+  // Reuse compiled pipelines across queries, releasing all per-plan buffers.
+  // The queue protects the resident device; no SPARQL decisions live here.
+  async function useQueryGpu(run, expectedSession) {
+    const work = gpuTail.then(async () => {
+      // Device facts belong to this exact resident resource. Check inside the
+      // queue, before allocation and outside the failure cleanup: a stale
+      // query must neither use nor destroy another query's replacement.
+      if (expectedSession !== undefined && gpuSession !== expectedSession)
+        throw new Error('GPU query resident session changed after device admission');
+      try {
+        if (!gpuSession) gpuSession = await createGsslResidentSession({ byteBudget: 512 * 1024 * 1024 });
+        return await run(gpuSession);
+      } catch (error) {
+        gpuSession?.close();
+        gpuSession = null;
+        throw error;
+      }
+    });
+    gpuTail = work.then(() => undefined, () => undefined);
+    return work;
+  }
+
+  function executeQueryGpu(request, admittedSession) {
+    if (admittedSession === undefined)
+      throw new Error('GPU query has no admitted resident session');
+    return useQueryGpu(session => executePVGraphGpuPlan({ plan: request.plan, bindings: request.bindings, session }), admittedSession);
+  }
+
+  async function mixedQueryEnvelope(e, handle, sparql, opts) {
+    for (const op of ['datasetQueryGpuBegin', 'datasetQueryGpuStep', 'datasetQueryGpuRestart', 'datasetQueryGpuClose'])
+      requireEntryFn(e, op, 'query GPU execution');
+    let session, admittedGpuSession;
+    const observed = [];
+    try {
+      const result = await withExtensionRounds(async (round, call) => {
+        let state = entryResult(round === 0
+          ? e.datasetQueryGpuBegin(handle, sparql, JSON.stringify({
+            ...opts, available: Boolean(globalThis.navigator?.gpu),
+            version: opts.sparql12 === true ? '1.2' : String(opts.version || '1.1')
+          }))
+          : e.datasetQueryGpuRestart(session), 'query', sparql);
+        if (state.state === 'cpu') return { fallbackCpu: true, reason: state.reason };
+        session = state.session;
+        // Lean limits query jobs and emits the only admissible next phase.
+        for (let step = 0; state.state === 'gpu' || state.state === 'device'; step++) {
+          if (step >= 514) throw new FactoidalError('query GPU session exceeded its phase limit', { code: 'capacity.exceeded' });
+          let reply;
+          try {
+            if (state.state === 'device') {
+              const admitted = await useQueryGpu(resident => ({ resident, device: resident.status().adapterInfo }));
+              admittedGpuSession = admitted.resident;
+              reply = { requestId: state.requestId, device: admitted.device };
+            } else {
+              const gpu = await executeQueryGpu(state, admittedGpuSession);
+              observed.push({ round, phase: state.phase, dispatches: gpu.dispatches, timing: gpu.timing, device: gpu.device });
+              reply = { requestId: state.requestId, outputs: gpu.outputs };
+            }
+          } catch (error) {
+            reply = { requestId: state.requestId, error: String(error?.message || error) };
+          }
+          state = call(() => entryResult(e.datasetQueryGpuStep(session, JSON.stringify(reply)), 'query', sparql));
+        }
+        if (state.state !== 'done') throw new Error('query: invalid Lean GPU session state');
+        if (state.execution?.automaticGpuAllowed === false) automaticGpuAllowed = false;
+        const answer = envelopeResult(state.answer, sparql);
+        return { ...answer, execution: { ...state.execution, rounds: round + 1, observed } };
+      });
+      return result;
+    } finally {
+      if (session !== undefined) entryResult(e.datasetQueryGpuClose(session), 'close GPU query');
     }
   }
 
@@ -656,11 +767,30 @@ function buildApi(driver) {
 
   async function queryDatasetHandle(c, ds, sparql, opts) {
     if (typeof sparql !== 'string') throw new TypeError('query: sparql must be a string');
+    opts = Object.fromEntries(Object.entries(opts).filter(([, value]) => value != null));
     // The options were checked by the engine (op apiCheck, as 'query' or
     // 'Dataset.query'): regime, version, output and their combination.
     const entail = opts.entail || 'none';
     const sparql12 = opts.sparql12 === true || String(opts.version || '') === '1.2';
     const e = c.e;
+    const execution = String(opts.execution || 'auto').toLowerCase();
+    if (execution === 'gpu' || (execution !== 'cpu' && automaticGpuAllowed &&
+        globalThis.navigator?.gpu && typeof e.datasetQueryGpuBegin === 'function')) {
+      const r = await mixedQueryEnvelope(e, ds.handle, sparql, { ...opts, execution });
+      if (r.fallbackCpu) return queryDatasetHandle(c, ds, sparql, { ...opts, execution: 'cpu' });
+      if (opts.output !== undefined) {
+        const form = queryFormOf(e, sparql);
+        return (opts.output === 'json' || opts.output === 'xml-report') &&
+          form !== 'construct' && form !== 'describe' ? JSON.parse(r.text) : r.text;
+      }
+      if (r.kind === 'ask') return r.boolean;
+      const answer = r.kind === 'construct' || r.kind === 'describe'
+        ? c.fromNQuads(r.nquads, ds.prefixes) : bindingsFromSrj(r.srj);
+      Object.defineProperty(answer, 'execution', { value: r.execution, enumerable: false });
+      if (Array.isArray(r.warnings) && r.warnings.length)
+        Object.defineProperty(answer, 'warnings', { value: r.warnings, enumerable: false });
+      return answer;
+    }
     if (sparql12 && entail !== 'none' && opts.output === undefined) {
       // SPARQL 1.2 under an entailment regime: the engine closes the stored
       // dataset and runs the SPARQL 1.2 evaluator (op datasetQuery12Entail,
@@ -822,6 +952,7 @@ function buildApi(driver) {
    * @param {{format?: string, baseIRI?: string,
    *   entail?: 'none'|'RDFS'|'OWL-RL'|'x-rdfscore'|'x-rdfsplus',
    *   sparql12?: boolean, version?: '1.1'|'1.2',
+   *   execution?: 'auto'|'cpu'|'gpu', gpuMinRows?: number, gpuMaxPairs?: number,
    *   output?: 'json'|'xml'|'csv'|'tsv'|'table'|'ntriples'}} [options]
    * @returns {Promise<Array<Map<string, object>>|boolean|Dataset|string|object>}
    *   SELECT -> Bindings[], ASK -> boolean, CONSTRUCT/DESCRIBE -> Dataset;
@@ -1027,6 +1158,20 @@ function buildApi(driver) {
     const arr = [];
     for (const q of quads) arr.push(quadToJson(q));
     return c.wrap(entryResult(c.e.datasetFromQuadsJson(JSON.stringify(arr)), 'fromQuads'), {});
+  }
+
+  /** Inspect the parsed query without evaluating it. */
+  async function parseSparqlStructure(query, { wdqs = false, version = '1.1' } = {}) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'parseSparqlStructure', 'parseSparqlStructure');
+    return entryResult(c.e.parseSparqlStructure(String(query), String(wdqs), version), 'parseSparqlStructure').result;
+  }
+
+  /** Rewrite a legacy WDQS query using the Lean Wikidata rules. */
+  async function wikidataRewrite(query, { language = '' } = {}) {
+    const c = await ctx();
+    requireEntryFn(c.e, 'wikidataRewrite', 'wikidataRewrite');
+    return entryResult(c.e.wikidataRewrite(String(query), String(language)), 'wikidataRewrite').result;
   }
 
   /** Load the engine; afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
@@ -1783,16 +1928,20 @@ function buildApi(driver) {
    * Decrypt every xenc:EncryptedData of an XML document (XML Encryption 1.1).
    * Allowlist and key forms: API.md "XML Encryption and JWE".
    * @param {string} document the XML document
-   * @param {{keys: object[], allowCbc?: boolean}} options private JWKs
-   *   (`kid` is the ds:KeyName); `allowCbc` admits aes128-cbc and aes256-cbc
-   * @returns {Promise<{document: string, canonical: string}>}
+   * @param {{keys: object[], allowCbc?: boolean, octets?: boolean}} options private JWKs
+   *   (`kid` is the ds:KeyName or xenc11:MasterKeyName); `allowCbc` admits
+   *   aes128-cbc and aes256-cbc; `octets`: the document element is an
+   *   xenc:EncryptedData of any or no Type, and its plaintext octets are returned
+   * @returns {Promise<{document: string, canonical: string} | {octets: Uint8Array}>}
    */
   async function xmlDecrypt(document, options) {
     if (typeof document !== 'string') throw new TypeError('xmlDecrypt: document must be a string');
     const o = options || {};
     checkKeys('xmlDecrypt', o.keys);
+    const octets = o.octets === true;
     const r = await cipherOp('xmlDecrypt', 'XML decryption',
-      { document, keys: o.keys, allowCbc: o.allowCbc === true });
+      { document, keys: o.keys, allowCbc: o.allowCbc === true, octets });
+    if (octets) return { octets: base64ToBytes(r.octets) };
     return { document: r.document, canonical: r.canonical };
   }
 
@@ -1802,9 +1951,13 @@ function buildApi(driver) {
    * @param {string} document the XML document
    * @param {{recipient: object, algorithm?: 'aes128-gcm'|'aes256-gcm',
    *   keyTransport?: 'rsa-oaep-mgf1p'|'rsa-oaep-sha256', keyWrap?: 'kw-aes128'|'kw-aes256',
-   *   content?: boolean, saml?: boolean}} options `recipient` is a public JWK
+   *   content?: boolean, saml?: boolean, derivedKey?: boolean,
+   *   keyDerivation?: 'ConcatKDF' | {algorithm: 'pbkdf2', prf?: string, iterations: number,
+   *   saltLength?: number}}} options `recipient` is a public JWK
    *   (RSA, EC P-256, OKP X25519) or an `oct` key; `saml` wraps the result in
-   *   saml:EncryptedAssertion
+   *   saml:EncryptedAssertion; `derivedKey` with an `oct` recipient writes an
+   *   xenc11:DerivedKey (§5.4.3) from that master key; `keyDerivation` is the
+   *   §5.4 method of a key agreement or a derived key (Concat KDF by default)
    * @returns {Promise<{document: string, canonical: string}>}
    */
   async function xmlEncrypt(document, options) {
@@ -1813,10 +1966,12 @@ function buildApi(driver) {
     if (o.recipient === null || typeof o.recipient !== 'object') {
       throw new TypeError('xmlEncrypt: options.recipient must be a JWK object');
     }
-    const args = { document, recipient: o.recipient, random: randomBase64(CIPHER_RANDOM_BYTES) };
-    for (const k of ['algorithm', 'keyTransport', 'keyWrap']) if (o[k] !== undefined) args[k] = o[k];
+    // 64 more octets than other cipher ops: the largest PBKDF2 salt (§5.4.2).
+    const args = { document, recipient: o.recipient, random: randomBase64(CIPHER_RANDOM_BYTES + 64) };
+    for (const k of ['algorithm', 'keyTransport', 'keyWrap', 'keyDerivation']) if (o[k] !== undefined) args[k] = o[k];
     if (o.content === true) args.content = true;
     if (o.saml === true) args.saml = true;
+    if (o.derivedKey === true) args.derivedKey = true;
     const r = await cipherOp('xmlEncrypt', 'XML encryption', args);
     return { document: r.document, canonical: r.canonical };
   }
@@ -1867,9 +2022,15 @@ function buildApi(driver) {
    * decides whether to trust them. The engine fetches nothing: `documents`
    * gives the octets of each URI that is not a same-document reference.
    *
+   * A 1024-bit RSA key is refused unless
+   * `dangerouslyAndRegrettablyAcceptRsa1024` is `true` (XML Signature 1.1
+   * §6.4.2 permits such keys; NIST SP 800-131A Rev. 2 allows them only to
+   * verify legacy signatures). With it, the result has a `warnings` array.
+   *
    * @param {string} document the XML document
    * @param {{key?: object, hmacKey?: Uint8Array, keyFromKeyInfo?: boolean,
-   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>}} [options]
+   *   certificates?: Uint8Array[], documents?: Object<string, Uint8Array|string>,
+   *   dangerouslyAndRegrettablyAcceptRsa1024?: boolean}} [options]
    *   `key` is a public JWK (RSA, or EC on P-256, P-384, P-521); `hmacKey`
    *   the HMAC key octets; `certificates` DER certificates to select from
    * @returns {Promise<{valid: true, signedInfo: string,
@@ -1888,6 +2049,9 @@ function buildApi(driver) {
     }
     if (o.hmacKey !== undefined) args.hmacKey = octetsToBase64('xmlVerify', 'options.hmacKey', o.hmacKey);
     if (o.keyFromKeyInfo !== undefined) args.keyFromKeyInfo = o.keyFromKeyInfo === true;
+    // 1024-bit RSA keys: off by default; only the literal true turns them on
+    // (https://github.com/danbri/factoidal/issues/1227). The engine decides.
+    if (o.dangerouslyAndRegrettablyAcceptRsa1024 === true) args.dangerouslyAndRegrettablyAcceptRsa1024 = true;
     if (o.certificates !== undefined) {
       if (!Array.isArray(o.certificates)) {
         throw new TypeError('xmlVerify: options.certificates must be an array of Uint8Array');
@@ -1905,8 +2069,10 @@ function buildApi(driver) {
       }
     }
     const r = await dsigOp('xmlVerify', 'XML Signature verification', args);
-    if (r.valid !== true) return { valid: false, reason: String(r.reason) };
+    const warnings = Array.isArray(r.warnings) ? { warnings: r.warnings.map(String) } : {};
+    if (r.valid !== true) return { valid: false, reason: String(r.reason), ...warnings };
     return {
+      ...warnings,
       valid: true,
       signedInfo: r.signedInfo,
       references: (r.references || []).map((x) => ({ uri: x.uri, octets: base64ToBytes(x.octets) })),
@@ -2685,6 +2851,8 @@ function buildApi(driver) {
       shacl: has('shaclValidate'),
       shex: has('shexValidate'),
       sparqlRl: has('datasetSparqlRlInfer'),
+      gpuSparql: ['datasetQueryGpuBegin', 'datasetQueryGpuStep',
+        'datasetQueryGpuRestart', 'datasetQueryGpuClose'].every(has),
       owlClosure: has('owlClosure'),
       explain: has('explainGraph'),
       stages: has('stageList'),
@@ -2936,6 +3104,8 @@ function buildApi(driver) {
     canonicalLiteral,
     literalFromValue,
     ready,
+    wikidataRewrite,
+    parseSparqlStructure,
     engineTables,
     sameValue,
     syntaxFor,

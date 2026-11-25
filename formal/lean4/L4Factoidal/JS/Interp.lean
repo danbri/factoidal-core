@@ -47,6 +47,7 @@ local notation "M" => JSM H
   modify fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
+    let (h, objs) := h.noteObj objs id
     { h with objs := objs.modify id f }
 
 /-- Object `id` and the array with a placeholder in its place. Not inlined: the compiler
@@ -57,11 +58,16 @@ would still be shared with the array while it changes (and its elements copied).
 
 /-- Change object `id` with `f`, which also answers a value. The object is moved out of the
 heap while `f` runs, so `f` holds the only reference and a change to its elements does not
-copy them (an Array push is amortised constant time, not a copy of the array). -/
-def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
+copy them (an Array push is amortised constant time, not a copy of the array).
+
+Specialised for `f` (`@[specialize]`): each caller passes a function written in place, and without
+this every write of an element or a property made a closure for it, called it through a pointer
+and took its answer from a pair. -/
+@[specialize] def updateObj {α} [Inhabited α] (id : Nat) (f : Obj → α × Obj) : M α :=
   modifyGet fun h =>
     let objs := h.objs
     let h := { h with objs := #[] }
+    let (h, objs) := h.noteObj objs id
     if id < objs.size then
       let (o, objs) := takeAt objs id
       let (a, o) := f o
@@ -124,7 +130,10 @@ def switchRealm (k : Nat) : M Unit := modify fun h =>
   let realms := h.realms.set! h.curRealm saved
   let next := realms[k]!
   let realms := realms.set! k { next with env0 := {} }
-  { h with realms, realm := next.realm, envs := h.envs.set! 0 next.env0, curRealm := k }
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnv envs 0
+  { h with realms, realm := next.realm, envs := envs.set! 0 next.env0, curRealm := k }
 
 /-- Run `act` in realm `k`, then go back to the realm that ran before, on a throw too. -/
 @[inline] def inRealm {α} (k : Nat) (act : M α) : M α := do
@@ -149,7 +158,9 @@ made it. -/
     let envs := h.envs
     let h := { h with envs := #[] }
     match h.envFree.back? with
-    | some e => (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
+    | some e =>
+      let (h, envs) := h.noteEnv envs e
+      (e, { h with envFree := h.envFree.pop, envs := envs.set! e en })
     | none => (envs.size, { h with envs := envs.push en })
 
 @[inline] def newEnv (parent : Nat) : M Nat := pushEnv { parent }
@@ -159,6 +170,7 @@ made it. -/
   modify fun h =>
     let envs := h.envs
     let h := { h with envs := #[] }
+    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.set! e default, envFree := h.envFree.push e }
 
 /-- Change an environment in place: the array and the record are taken out while `f` runs. -/
@@ -166,6 +178,7 @@ made it. -/
   modify fun h =>
     let envs := h.envs
     let h := { h with envs := #[] }
+    let (h, envs) := h.noteEnv envs e
     { h with envs := envs.modify e f }
 
 @[inline] def declare (env : Nat) (name : String) (b : Binding) : M Unit :=
@@ -263,6 +276,12 @@ def cachedChars (s : String) : M (Array Char) := do
   modify fun h => { h with reCache := some (s, cs) }
   return cs
 
+/-- The [[ArrayLength]] of a length-tracking typed array (§10.4.5: `auto`, a view made on a
+resizable buffer with no length): its length follows the buffer's (`typedLenOf`). No typed
+array has this many elements (a buffer holds at most `maxBufferBytes`), so a fixed length is
+never it. -/
+def autoLen : Nat := 2 ^ 53
+
 /-- The steps a value's size is worth to a built-in that walks it: a step for every 64
 bytes of a string, 64 elements of an array, or 4096 bytes of an ArrayBuffer or typed
 array (copied or compared at memory speed). -/
@@ -272,7 +291,7 @@ def sizeCost (v : Value) : M Nat := do
   | .obj id => match (← getObj id).kind with
     | .array es => pure (es.size / 64)
     | .buffer b => pure (b.size / 4096)
-    | .typed _ _ _ len => pure (len / 4096)
+    | .typed _ _ _ len => pure ((if len == autoLen then 0 else len) / 4096)
     | _ => pure 0
   | _ => pure 0
 
@@ -622,28 +641,102 @@ def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   | 11 => le (L4Factoidal.Prim.Float16.ofFloat x).toNat 2
   | _ => le x.toBits.toNat 8
 
-/-- Direct reads for Uint8Array and Uint8ClampedArray. -/
+/-! ### Direct element access for the one-, two- and four-byte integer types
+
+`typedRead` and `typedBytes` are the reference: little-endian sums and digits over `List.range w`
+with powers of two. The compiled program runs `typedReadByteFast` and `typedBytesByteFast`
+(`@[csimp]`, proved equal below): byte reads and constant multipliers, no list and no power.
+
+A note for whoever extends the proofs: nothing here may ask Lean whether two terms with a product
+by a large literal are equal by computation (`rfl`, `show`, `decide` on the whole sum, or a `simp`
+that closes the goal by reflexivity before the two sides are the same text). `n * 16777216` with
+`n` not a literal unfolds `Nat.mul` one successor at a time: a first draft of these theorems did
+not finish in five minutes and passed 6 GB. The lemmas below only rewrite. -/
+
+/-- The little-endian sum of two bytes, as the reference writes it and as two terms. -/
+theorem leSum2 (b : Nat → Nat) :
+    (List.range 2).foldl (fun a k => a + b k * 2 ^ (8 * k)) 0 = b 0 + b 1 * 256 := by
+  have r : List.range 2 = [0, 1] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  rw [r, List.foldl_cons, List.foldl_cons, List.foldl_nil, p0, p1, Nat.mul_one, Nat.zero_add]
+
+/-- The little-endian sum of four bytes. -/
+theorem leSum4 (b : Nat → Nat) :
+    (List.range 4).foldl (fun a k => a + b k * 2 ^ (8 * k)) 0
+      = b 0 + b 1 * 256 + b 2 * 65536 + b 3 * 16777216 := by
+  have r : List.range 4 = [0, 1, 2, 3] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  have p2 : (2:Nat) ^ (8 * 2) = 65536 := by decide
+  have p3 : (2:Nat) ^ (8 * 3) = 16777216 := by decide
+  rw [r, List.foldl_cons, List.foldl_cons, List.foldl_cons, List.foldl_cons, List.foldl_nil,
+    p0, p1, p2, p3, Nat.mul_one, Nat.zero_add]
+
+/-- The two little-endian bytes of a number, as the reference writes them and as two terms. -/
+theorem leBytes2 (v : Nat) :
+    ByteArray.mk ((List.range 2).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
+      = ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8] := by
+  have r : List.range 2 = [0, 1] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  rw [r, List.map_toArray, List.map_cons, List.map_cons, List.map_nil, p0, p1, Nat.div_one]
+
+/-- The four little-endian bytes of a number. -/
+theorem leBytes4 (v : Nat) :
+    ByteArray.mk ((List.range 4).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
+      = ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
+          (v / 16777216 % 256).toUInt8] := by
+  have r : List.range 4 = [0, 1, 2, 3] := rfl
+  have p0 : (2:Nat) ^ (8 * 0) = 1 := by decide
+  have p1 : (2:Nat) ^ (8 * 1) = 256 := by decide
+  have p2 : (2:Nat) ^ (8 * 2) = 65536 := by decide
+  have p3 : (2:Nat) ^ (8 * 3) = 16777216 := by decide
+  rw [r, List.map_toArray, List.map_cons, List.map_cons, List.map_cons, List.map_cons, List.map_nil,
+    p0, p1, p2, p3, Nat.div_one]
+
+/-- Direct reads for the unsigned one-byte types and the integer types of two and four bytes
+(Int8 keeps the reference path). -/
 def typedReadByteFast (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
   match ty with
   | 1 | 2 => .num (Float.ofNat (bytes.get! at_).toNat)
+  | 3 =>
+    let x := (bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+    .num (Float.ofInt (if x ≥ 32768 then (x : Int) - 65536 else x))
+  | 4 => .num (Float.ofNat ((bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256))
+  | 5 =>
+    let x := (bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+      + (bytes.get! (at_ + 2)).toNat * 65536 + (bytes.get! (at_ + 3)).toNat * 16777216
+    .num (Float.ofInt (if x ≥ 2147483648 then (x : Int) - 4294967296 else x))
+  | 6 => .num (Float.ofNat ((bytes.get! at_).toNat + (bytes.get! (at_ + 1)).toNat * 256
+      + (bytes.get! (at_ + 2)).toNat * 65536 + (bytes.get! (at_ + 3)).toNat * 16777216))
   | _ => typedRead ty bytes at_
 
-/-- **Kind: refinement.** Says the direct byte read preserves every result of
+/-- **Kind: refinement.** Says the direct read preserves every result of
 `typedRead`, for all type tags, buffers and offsets. Does not say the reference
 implements all of ECMA-262 or that this is faster. -/
 @[csimp] theorem typedRead_eq_byteFast : typedRead = typedReadByteFast := by
   funext ty bytes at_
   match ty with
-  | 0 | _ + 3 => rfl
+  | 0 | _ + 7 => rfl
   | 1 | 2 =>
     simp only [typedRead, typedReadByteFast, List.range_one, List.foldl_cons,
       List.foldl_nil, Nat.mul_zero, Nat.pow_zero, Nat.mul_one, Nat.zero_add, Nat.add_zero]
+  | 3 | 4 => simp only [typedRead, typedReadByteFast, leSum2, Nat.add_zero]
+  | 5 | 6 => simp only [typedRead, typedReadByteFast, leSum4, Nat.add_zero]
 
-/-- Direct singleton buffers for the three byte-sized numeric element types. -/
+/-- Direct buffers for the integer element types of one, two and four bytes. -/
 def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
   match ty with
   | 0 | 1 => ByteArray.mk #[(Int.toNat (toInt32Wide x % 256) % 256).toUInt8]
   | 2 => ByteArray.mk #[(clampByte x % 256).toUInt8]
+  | 3 | 4 =>
+    let v := Int.toNat (toInt32Wide x % 65536)
+    ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8]
+  | 5 | 6 =>
+    let v := Int.toNat (toInt32Wide x % 4294967296)
+    ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
+      (v / 16777216 % 256).toUInt8]
   | _ => typedBytes ty x
 
 /-- **Kind: refinement.** Says direct byte writes produce exactly the reference
@@ -651,13 +744,21 @@ bytes for every type tag and Float. Does not say anything about speed. -/
 @[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
   funext ty x
   match ty with
-  | _ + 3 => rfl
+  | _ + 7 => rfl
   | 0 | 1 | 2 =>
     simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
       show (2 : Int) ^ (8 * 1) = 256 from by decide]
-
+  | 3 | 4 =>
+    simp only [typedBytes, typedBytesByteFast, leBytes2, show (2 : Int) ^ (8 * 2) = 65536 from by decide]
+  | 5 | 6 =>
+    simp only [typedBytes, typedBytesByteFast, leBytes4, show (2 : Int) ^ (8 * 4) = 4294967296 from by decide]
 #print axioms typedRead_eq_byteFast
 #print axioms typedBytes_eq_byteFast
+
+/-- The source text of a private name from its key: `#x` for `privKey "x"` and for the key of
+one class evaluation (`privRk`: the name, `#` and a number; an identifier has no `#`). -/
+def privDisplay (key : String) : String :=
+  "#" ++ ((key.drop 1).toString.takeWhile (· != '#'))
 
 /-- The `name` of a function stored under a property key (§10.2.9 SetFunctionName). -/
 def nameOfKey (key : String) : M String := do
@@ -665,7 +766,7 @@ def nameOfKey (key : String) : M String := do
   | some id =>
     let d := (← get).syms.getD id ""
     pure (if d.isEmpty && id ≥ wellKnown.size then "" else "[" ++ d ++ "]")
-  | none => pure (if isPrivKey key then "#" ++ (key.drop 1).toString else keyStr key)
+  | none => pure (if isPrivKey key then privDisplay key else keyStr key)
 
 
 
@@ -818,6 +919,26 @@ def splitOn (s sep : String) : Array String :=
         | some p => go f (p + n) (acc.push (substr s last p))
         | none => acc.push (substr s last (Str.jsLength s))
     go (Str.jsLength s + 1) 0 #[]
+
+/-- The substrings of the ordinary string split, after both arguments are converted.
+A zero limit needs no separator search, including when the separator is undefined. -/
+def splitPlain (s : String) (separator : Option String) (limit : Nat) : Array String :=
+  if limit = 0 then #[] else
+  match separator with
+  | none => #[s]
+  | some sep => (splitOn s sep).extract 0 limit
+
+/-- Every ordinary split result contains at most the requested number of substrings. -/
+theorem splitPlain_size_le (s : String) (separator : Option String) (limit : Nat) :
+    (splitPlain s separator limit).size ≤ limit := by
+  cases limit with
+  | zero => simp [splitPlain]
+  | succ n =>
+    cases separator with
+    | none => simp [splitPlain]
+    | some sep => simpa [splitPlain] using Nat.min_le_left (n + 1) (splitOn s sep).size
+
+#print axioms splitPlain_size_le
 
 /-- `parseInt` (§19.2.5). -/
 def parseIntStr (s : String) (radix : Int) : Float :=
@@ -1312,6 +1433,26 @@ def bufferBytes (o : Obj) : ByteArray :=
 
 def elemSize (ty : Nat) : Nat := (typedNames[ty]?.map (·.2)).getD 1
 
+/-- `elemSize` by a match: no read of the table and no `Option` for each element access. -/
+def elemSizeFast (ty : Nat) : Nat :=
+  match ty with
+  | 3 | 4 | 11 => 2
+  | 5 | 6 | 7 => 4
+  | 8 | 9 | 10 => 8
+  | _ => 1
+
+/-- **Kind: refinement.** `elemSizeFast` is `elemSize` for every type tag (those past the table
+included). -/
+@[csimp] theorem elemSize_eq_fast : elemSize = elemSizeFast := by
+  funext ty
+  match ty with
+  | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 => rfl
+  | n + 12 =>
+    have h : typedNames[n + 12]? = none := Array.getElem?_eq_none (by show 12 ≤ n + 12; omega)
+    unfold elemSize; rw [h]; rfl
+
+#print axioms elemSize_eq_fast
+
 /-- A new ArrayBuffer with these bytes. -/
 def newBuffer (bytes : ByteArray) : M Value := do
   -- `byteLength` is an accessor of ArrayBuffer.prototype (§25.1.6.2)
@@ -1421,19 +1562,98 @@ def isDetached (o : Obj) : Bool := hiddenFlag o bufDetachedKey
 /-- IsTypedArrayOutOfBounds (§10.4.5.11) of a view with a fixed length: the buffer is
 detached, or the view's bytes run past its end. -/
 def typedOob (detached : Bool) (off len elem size : Nat) : Bool :=
-  detached || off + len * elem > size
+  detached || (if len == autoLen then off > size else off + len * elem > size)
+
+/-- TypedArrayLength (§10.4.5.12) of a view at byte offset `off` with [[ArrayLength]] `len`
+(`autoLen`: length-tracking) over a buffer of `size` bytes: 0 when it is out of bounds, else
+the fixed length, or as many whole elements as fit after the offset. -/
+def typedLenOf (detached : Bool) (off len elem size : Nat) : Nat :=
+  if typedOob detached off len elem size then 0
+  else if len == autoLen then (size - off) / elem else len
 
 /-- The element count of a typed array as its buffer now is (§10.4.5.12
-TypedArrayLength): 0 when the buffer is detached or too small for the view. -/
-def liveLen (ty buf off len : Nat) : M Nat := do
+TypedArrayLength): 0 when the buffer is detached or too small for the view; for a
+length-tracking view (`autoLen`), the elements that fit in the buffer now. -/
+@[inline] def liveLen (ty buf off len : Nat) : M Nat := do
   let bo ← getObj buf
-  pure (if typedOob (isDetached bo) off len (elemSize ty) (bufferBytes bo).size then 0 else len)
+  pure (typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size)
+
+/-- Element `i` of the typed array `id` as its buffer now is (§10.4.5.15 TypedArrayGetElement:
+`undefined` past the live length); `Value.hole` when `id` is not a typed array. A pure function
+of the heap: no result cell, no key. -/
+def typedElemAt (h : HeapOf H) (id i : Nat) : Value :=
+  match (h.obj id).kind with
+  | .typed ty b off len =>
+    let bo := h.obj b
+    let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
+    if i < live then typedRead ty (bufferBytes bo) (off + i * elemSize ty) else .undef
+  | _ => .hole
+
+/-- `o[x]` for a Number `x` when `o` is a typed array and `x` an array index: the element, with
+no key string (`getV` would make the string of `x`, parse it back into the index and read the
+same element: `getV_typedElemNum` in `JS/Theorems.lean`). `Value.hole` otherwise: the caller
+takes the general path. -/
+@[inline] def typedElemNum (h : HeapOf H) (id : Nat) (x : Float) : Value :=
+  let i := numIndex x
+  if i < noIndex then typedElemAt h id i else .hole
+
+/-- `o[x] = v` for a Number `x` and a Number `v`, when `o` is a typed array of a Number element
+type, `x` is an array index and no undo log covers `o`: the element is written (or the write is
+dropped past the live length, §10.4.5.16 TypedArraySetElement) with no key string, and the answer
+is `true`. `false` otherwise, with nothing done: the caller takes the general path. `putV` on the
+key of `x` does the same write (`typedSetNum_refines` in `JS/Theorems.lean`). The undo log is
+part of the test because `putV` notes the object in it before it finds no plain property to
+overwrite. Called after the Array path (`setElem`) has declined, so an Array write pays nothing. -/
+@[inline] def typedSetNum (id : Nat) (x : Float) (v : Value) : M Bool := do
+  let h ← get
+  match (h.obj id).kind, v with
+  | .typed ty b off len, .num _ =>
+    let i := numIndex x
+    if i < noIndex && !typedIsBig ty && h.undoObjs.base ≤ id then
+      let bo := h.obj b
+      let live := typedLenOf (isDetached bo) off len (elemSize ty) (bufferBytes bo).size
+      if i < live then typedWriteV ty b off i v
+      pure true
+    else pure false
+  | _, _ => pure false
 
 /-- The %TypedArray%.prototype methods that validate the typed array and then take the steps
 of the Array.prototype method of the same name (`NativeX.typedGeneric`): name, length. -/
 def typedGenericNames : Array (String × Nat) :=
   #[("forEach", 1), ("join", 1), ("indexOf", 1), ("includes", 1), ("every", 1), ("some", 1), ("reduce", 1),
     ("find", 1), ("findIndex", 1), ("values", 0), ("keys", 0), ("entries", 0)]
+
+/-- The key of the private name `k` where the scope `env` sees it (§9.2.1.2
+ResolvePrivateIdentifier): each evaluation of a class binds its private names to keys of their
+own in the class scope (`evalClass`), so two classes, or two evaluations of one class, never
+share a private element. Any other key is itself. -/
+def privRk (env : Nat) (k : String) : M String := do
+  if !isPrivKey k then return k
+  let h ← get
+  match h.findEnv k 100000 env with
+  | some e => match (h.envs.getD e default).get? k with
+    | some b => match b.v with
+      | .str s => pure s
+      | _ => pure k
+    | none => pure k
+  | none => pure k
+
+/-- The first character of a private name's key (`privKey`). -/
+def privMark : Char := Char.ofNat 0x10FFFE
+
+/-- An entry of a class constructor's `fields` that is a private method (`m`), getter (`g`) or
+setter (`s`) of its instances, keyed by the private name's key `k`: two private marks and the
+tag, which no field's key starts with (a private name is an identifier, a String key never
+starts with the mark: `strKey`). -/
+def privElemKey (tag : Char) (k : String) : String :=
+  String.singleton privMark ++ String.singleton privMark ++ String.singleton tag ++ k
+
+/-- The tag and private name of a `privElemKey` entry. -/
+def privElemOf (ek : String) : Option (Char × String) :=
+  if ek.front != privMark then none else
+  let r := (ek.drop 1).toString
+  if r.front != privMark then none else
+  some ((r.drop 1).toString.front, (r.drop 2).toString)
 
 /-- Where %TypedArray%.prototype keeps the Array.prototype function a generic method uses. -/
 def typedGenericKey (nm : String) : String := privKey ("%Array." ++ nm)
@@ -1591,7 +1811,7 @@ def callHost (k : Nat) (args : Array Value) : M Value := do
     match a with
     | .obj id => match (← getObj id).kind with
       | .buffer b => pure (HostArg.bytes b)
-      | .typed ty b off len => pure (.bytes ((bufferBytes (← getObj b)).extract off (off + len * elemSize ty)))
+      | .typed ty b off len => pure (.bytes ((bufferBytes (← getObj b)).extract off (off + (← liveLen ty b off len) * elemSize ty)))
       | _ => pure (.val a)
     | _ => pure (.val a)
   match st with
@@ -1858,6 +2078,12 @@ def vmMaxDepth : Nat := 20000
 /-- Take the registers back out of the heap, for the caller to own. -/
 @[inline] def vmTake : M (Array Value × FloatArray) :=
   modifyGet fun h => ((h.vmRegs, h.vmF), { h with vmRegs := #[], vmF := .empty })
+
+/-- What `vmStash regs fregs top` followed by `vmTake` leaves in the heap, when the caller keeps
+the registers: one update of the record, with no array moved in and out
+(`vmStash_pure_vmTake` in `JS/Theorems.lean`). -/
+@[inline] def vmSettle (top : Nat) : M Unit :=
+  modify fun h => { h with vmRegs := #[], vmF := .empty, vmTop := top }
 
 /-- A register as a language value (boxing a number). -/
 @[inline] def vmRd (regs : Array Value) (fregs : FloatArray) (i : Nat) : Value :=
@@ -2266,9 +2492,11 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
       let okTy := if op == 10 then ty == 5 || ty == 9 else [0, 1, 3, 4, 5, 6, 9, 10].contains ty
       if !okTy then throwErr .type "Atomics operation on a typed array of the wrong element type"
       if isDetached (← getObj b) then throwErr .type "Atomics operation on a detached ArrayBuffer"
+      -- ValidateAtomicAccess (§25.4.3.2): the length is taken before the index is converted
+      let live ← liveLen ty b off len
       let idx := toIntegerOrInf (← core.toNum a1)
       if idx < 0 || idx > 9007199254740991 then throwErr .range "Invalid atomic access index"
-      if idx ≥ Float.ofNat (← liveLen ty b off len) then throwErr .range "Invalid atomic access index"
+      if idx ≥ Float.ofNat live then throwErr .range "Invalid atomic access index"
       let i := idx.toUInt64.toNat
       let at_ := off + i * elemSize ty
       let read : M Value := do pure (typedRead ty (bufferBytes (← getObj b)) at_)
@@ -2323,7 +2551,8 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       let (ty, b, off, len) ← thisTyped what
       if !(← typedInBounds ty b off len) then
         throwErr .type s!"{what}: the typed array is detached or out of bounds"
-      pure (ty, b, off, len)
+      -- the TypedArrayLength of the record (§23.2.4.4 step 4): a length-tracking view's too
+      pure (ty, b, off, ← liveLen ty b off len)
     match id with
     | (.x .typedArrayCtor) => throwErr .type "Abstract class TypedArray not directly constructable"
     | (.x .typedOf) | (.x .typedFrom) =>
@@ -2365,7 +2594,7 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       let some (ty, b, off, len) := info
         | if which == 4 then pure .undef else throwErr .type "TypedArray accessor called on incompatible receiver"
       let live ← liveLen ty b off len
-      let gone := live == 0 && len > 0 || isDetached (← getObj b)
+      let gone := !(← typedInBounds ty b off len)
       match which with
       | 0 => pure (.obj b)
       | 1 => pure (.num (Float.ofNat (live * elemSize ty)))
@@ -2376,7 +2605,63 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       -- the %TypedArray%.prototype methods whose steps are Array.prototype's after
       -- ValidateTypedArray: that function, kept hidden on %TypedArray%.prototype
       let nm := typedGenericNames.getD k ("", 0)
-      let _ ← validTyped s!"%TypedArray%.prototype.{nm.1}"
+      let (_, _, _, len) ← validTyped s!"%TypedArray%.prototype.{nm.1}"
+      -- the steps of §23.2.3: the length is the TypedArrayLength taken here (never a `length`
+      -- property), and each element is a [[Get]] when it is reached (undefined once a resize or
+      -- a detach in a callback has taken it); only indexOf asks HasProperty first
+      let at_ (i : Nat) : M Value := core.getV thisV (toString i)
+      let cbOf : M Value := do
+        if !(← isCallable a0) then throwErr .type s!"%TypedArray%.prototype.{nm.1}: the callback is not a function"
+        pure a0
+      let call (f : Value) (i : Nat) : M (Value × Value) := do
+        let v ← at_ i
+        pure (v, ← core.callV f a1 #[v, .num (Float.ofNat i), thisV])
+      if k == 0 || k == 4 || k == 5 || k == 7 || k == 8 then
+        -- forEach, every, some, find, findIndex
+        let f ← cbOf
+        for i in [0:len] do
+          let (v, res) ← call f i
+          let t := toBool res
+          if k == 4 && !t then return .bool false
+          if k == 5 && t then return .bool true
+          if k == 7 && t then return v
+          if k == 8 && t then return .num (Float.ofNat i)
+        return (if k == 4 then .bool true else if k == 5 then .bool false
+          else if k == 8 then .num (-1) else .undef)
+      if k == 6 then
+        -- reduce
+        let f ← cbOf
+        if len == 0 && args.size < 2 then throwErr .type "Reduce of empty array with no initial value"
+        let mut acc := a1
+        let mut start := 0
+        if args.size < 2 then
+          acc ← at_ 0
+          start := 1
+        for i in [start:len] do
+          let v ← at_ i
+          acc ← core.callV f .undef #[acc, v, .num (Float.ofNat i), thisV]
+        return acc
+      if k == 2 || k == 3 then
+        -- indexOf, includes
+        if len == 0 then return (if k == 2 then .num (-1) else .bool false)
+        let start := relIndex (← core.toNum a1) len
+        for i in [start:len] do
+          if k == 2 then
+            if let .obj oid := thisV then
+              if (← core.hasProp oid (toString i)) then
+                if strictEq (← at_ i) a0 then return .num (Float.ofNat i)
+          else if sameValueZero (← at_ i) a0 then return .bool true
+        return (if k == 2 then .num (-1) else .bool false)
+      if k == 1 then
+        -- join
+        let sep ← match a0 with | .undef => pure "," | v => core.toStr v
+        let mut parts : Array String := Array.emptyWithCapacity len
+        for i in [0:len] do
+          match ← at_ i with
+          | .undef | .null => parts := parts.push ""
+          | v => parts := parts.push (← core.toStr v)
+        checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize + sep.utf8ByteSize) 0)
+        return .str (Str.canonical (sep.intercalate parts.toList))
       let tp ← match (← getObj r.typedArrayCtor).getOwn "prototype" with
         | some (.data (.obj p) ..) => pure p
         | _ => throwErr .type "no %TypedArray%.prototype"
@@ -2489,6 +2774,15 @@ def moreNativeTyped (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
       pure (.str (Str.canonical out))
     | _ => throwErr .type "not a function"
 
+/-- The shared index and get steps of Array and TypedArray `at`. The caller reads
+the length before coercing the index. The one indexed read observes any update
+made during coercion, including a typed buffer resize or detachment. -/
+def arrayAtWithLength (core : CoreFn H) (receiver : Value) (len : Nat) (index : Value) : M Value := do
+  let k := toIntegerOrInf (← core.toNum index)
+  let i := if k < 0 then Float.ofNat len + k else k
+  if i < 0 || i ≥ Float.ofNat len then pure .undef
+  else core.getV receiver (toString i.toUInt64.toNat)
+
 /-- Built-ins of `moreNative`: the %TypedArray%.prototype methods that answer a typed array or work on its bytes. `r` is the realm `moreNative` read. -/
 def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
@@ -2504,7 +2798,8 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
       let (ty, b, off, len) ← thisTyped what
       if !(← typedInBounds ty b off len) then
         throwErr .type s!"{what}: the typed array is detached or out of bounds"
-      pure (ty, b, off, len)
+      -- the TypedArrayLength of the record (§23.2.4.4 step 4): a length-tracking view's too
+      pure (ty, b, off, ← liveLen ty b off len)
     -- a new typed array of type `ty` holding these (already converted) values
     let fresh (ty : Nat) (xs : Array Value) : M Value := do
       let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
@@ -2518,6 +2813,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
     match id with
     | (.x (.typedMethod which)) =>
       let (ty, b, off, len) ← validTyped "TypedArray method"
+      if which == 4 then return ← arrayAtWithLength core thisV len a0
       let xs ← valuesOf ty b off len
       let size := xs.size
       let writeAll (vs : Array Value) : M Unit := do
@@ -2552,7 +2848,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
         let .typed ty2 b2 off2 len2 := (← getObj aid).kind
           | throwErr .type "The species constructor did not make a typed array"
         let live2 ← liveLen ty2 b2 off2 len2
-        if live2 == 0 && len2 > 0 then throwErr .type "The species constructor made a detached typed array"
+        if !(← typedInBounds ty2 b2 off2 len2) then throwErr .type "The species constructor made a detached typed array"
         if live2 < count then throwErr .type "The species constructor made a typed array that is too short"
         if typedIsBig ty2 != typedIsBig ty then throwErr .type "The species constructor made a typed array of the other content type"
         pure (some a)
@@ -2589,10 +2885,6 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
         | none => fresh ty part
         | some a => fill a part
       | 3 => writeAll (← sorted a0); pure thisV
-      | 4 =>
-        let k := toIntegerOrInf (← core.toNum a0)
-        let i := if k < 0 then Float.ofNat size + k else k
-        if i < 0 || i ≥ Float.ofNat size then pure .undef else pure xs[i.toUInt64.toNat]!
       | 5 =>
         -- lastIndexOf (§23.2.3.20): strict equality, from the end
         let start ← if args.size > 1 then do
@@ -4172,6 +4464,36 @@ def moreNativeSet (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (a
       setMethodRun core r k sid es a0 has keys otherSize
     | _ => throwErr .type "not a function"
 
+/-- Is the Symbol `sid` a value of the GlobalSymbolRegistry `reg` (a symbol `Symbol.for` made)? -/
+def symRegistered (reg : Obj) (sid : Nat) : Bool :=
+  reg.keys.any fun k => match reg.props.get? k with
+    | some (.data (.sym j) ..) => j == sid
+    | _ => false
+
+/-- CanBeHeldWeakly (§9.13), given the GlobalSymbolRegistry `reg` if there is one: an object,
+or a Symbol that `Symbol.for` did not make. -/
+def holdableIn (reg : Option Obj) : Value → Bool
+  | .obj _ => true
+  | .sym sid => match reg with
+    | some o => !symRegistered o sid
+    | none => true
+  | _ => false
+
+/-- CanBeHeldWeakly (§9.13): a key of a WeakMap or WeakSet, the target of a WeakRef, the target
+or unregister token of a FinalizationRegistry. An object asks nothing of the heap; a Symbol looks
+in the registry, which hangs on realm 0's global object (as `Symbol.for` puts it there). -/
+def canBeHeldWeakly (v : Value) : M Bool := do
+  match v with
+  | .obj _ => pure true
+  | .sym _ =>
+    let h ← get
+    let g := if h.curRealm == 0 then h.realm.globalObj else (h.realms.getD 0 {}).realm.globalObj
+    let reg ← match (← getObj g).props.get? symbolRegistryKey with
+      | some (.data (.obj id) ..) => pure (some (← getObj id))
+      | _ => pure none
+    pure (holdableIn reg v)
+  | _ => pure false
+
 /-- Built-ins of `moreNative`: WeakRef, FinalizationRegistry, `groupBy` and the Map upsert methods. `r` is the realm `moreNative` read. -/
 def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
@@ -4207,7 +4529,7 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       let nt ← match newTarget with
         | some nt => pure nt
         | none => throwErr .type "Constructor WeakRef requires 'new'"
-      if !a0.isObj then throwErr .type "WeakRef: the target must be an object"
+      if !(← canBeHeldWeakly a0) then throwErr .type "WeakRef: the target cannot be held weakly"
       let pp ← core.getV nt "prototype"
       let proto ← if pp.isObj then pure pp else core.getV (← core.getV (.obj (← funRealm nt).globalObj) "WeakRef") "prototype"
       let o ← alloc { proto }
@@ -4242,17 +4564,19 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       let held ← match (← getObj tokens).kind with | .array es => pure es | _ => pure #[]
       if k == 0 then
         -- register(target, heldValue, unregisterToken)
-        if !a0.isObj then throwErr .type "FinalizationRegistry.register: the target must be an object"
+        if !(← canBeHeldWeakly a0) then throwErr .type "FinalizationRegistry.register: the target cannot be held weakly"
         if sameValue a0 a1 then throwErr .type "FinalizationRegistry.register: the target and the held value are the same"
         let tok := argD args 2
         match tok with
         | .undef => pure ()
-        | .obj _ => modifyObj tokens fun o => { o with kind := .array (held.push tok) }
-        | _ => throwErr .type "FinalizationRegistry.register: the unregister token must be an object"
+        | _ =>
+          if !(← canBeHeldWeakly tok) then
+            throwErr .type "FinalizationRegistry.register: the unregister token cannot be held weakly"
+          modifyObj tokens fun o => { o with kind := .array (held.push tok) }
         pure .undef
       else
         -- unregister(unregisterToken): were there cells with the token
-        if !a0.isObj then throwErr .type "FinalizationRegistry.unregister: the token must be an object"
+        if !(← canBeHeldWeakly a0) then throwErr .type "FinalizationRegistry.unregister: the token cannot be held weakly"
         let rest := held.filter fun v => !sameValue v a0
         modifyObj tokens fun o => { o with kind := .array rest }
         pure (.bool (rest.size < held.size))
@@ -4265,7 +4589,7 @@ def moreNativeWeak (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (
       -- Map's method needs a Map (kind 0), WeakMap's a WeakMap (kind 2)
       if ck != (if weak then 2 else 0) then throwErr .type "method called on incompatible receiver"
       if computed && !(← isCallable a1) then throwErr .type "getOrInsertComputed: the callback is not a function"
-      if weak && !a0.isObj then throwErr .type "Invalid value used as weak collection key"
+      if weak && !(← canBeHeldWeakly a0) then throwErr .type "Invalid value used as weak collection key"
       if toBool (← core.callNative .mapHas thisV #[a0] none) then core.callNative .mapGet thisV #[a0] none
       else
         let key := match a0 with | .num x => if x == 0 then Value.num 0 else a0 | _ => a0
@@ -4280,6 +4604,9 @@ def moreNativeArray (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
     let a1 := argD args 1
     match id with
     | (.x (.arrayMethod k)) =>
+      -- toSorted checks the comparator before ToObject and LengthOfArrayLike.
+      if k == 3 && !(a0 matches .undef) && !(← isCallable a0) then
+        throwErr .type "The comparison function must be either a function or undefined"
       -- generic over array-likes: ToObject(this), LengthOfArrayLike (§23.1.3)
       let oid ← core.toObj thisV
       let o := Value.obj oid
@@ -4328,9 +4655,6 @@ def moreNativeArray (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) 
         if len > 4294967295 then throwErr .range "Invalid array length"
         newArray (← valuesUpTo len).reverse
       | 3 =>
-        match a0 with
-        | .undef => pure ()
-        | f => if !(← isCallable f) then throwErr .type "The comparison function must be either a function or undefined"
         if len > 4294967295 then throwErr .range "Invalid array length"
         newArray (← core.mergeSort a0 (← valuesUpTo len).toList).toArray
       | 4 =>
@@ -5202,12 +5526,18 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
           if isDetached (← getObj oid) then throwErr .type "Cannot construct a typed array on a detached ArrayBuffer"
           let off := (toIntegerOrInf (← core.toNum a1)).toUInt64.toNat
           if off % es != 0 then throwErr .range s!"start offset of {(typedNames[ty]?.map (·.1)).getD ""} should be a multiple of {es}"
+          let resizable := (hiddenNum (← getObj oid) bufMaxKey).isSome
           let len ← match argD args 2 with
             | .undef =>
+              -- §23.2.5.1.3 step 8: on a resizable buffer, a length-tracking view
+              if resizable then
+                if off > bytes.size then throwErr .range "Start offset is outside the bounds of the buffer"
+                pure autoLen
+              else
               if bytes.size < off || (bytes.size - off) % es != 0 then throwErr .range "byte length should be a multiple of the element size"
               pure ((bytes.size - off) / es)
             | v => do pure (toIntegerOrInf (← core.toNum v)).toUInt64.toNat
-          if off + len * es > bytes.size then throwErr .range "Invalid typed array length"
+          if len != autoLen && off + len * es > bytes.size then throwErr .range "Invalid typed array length"
           newTyped ty oid off len
         | .typed sty sb soff slen =>
           let bytes := bufferBytes (← getObj sb)
@@ -5323,7 +5653,9 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         pure .undef
       | .typedSubarray =>
         -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,
-        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own
+        -- beginByteOffset, newLength ») (§23.2.4.1): the species constructor, or the type's own.
+        -- A length-tracking view with no `end` makes one too (step 13: « buffer, beginByteOffset »).
+        let tracks := len == autoLen && a1 matches .undef
         let len ← liveLen ty b off len
         let a := relIndex (toIntegerOrInf (← core.toNum a0)) len
         let e ← match a1 with
@@ -5335,10 +5667,15 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         let c ← core.speciesCtor thisV dflt
         if strictEq c dflt then
           if isDetached (← getObj b) then throwErr .type "subarray: the buffer is detached"
+          if tracks then
+            if begin > (bufferBytes (← getObj b)).size then
+              throwErr .range "subarray: the view is out of the buffer's bounds"
+            return ← newTyped ty b begin autoLen
           if begin + newLen * elemSize ty > (bufferBytes (← getObj b)).size then
             throwErr .range "subarray: the view is out of the buffer's bounds"
           return ← newTyped ty b begin newLen
-        let res ← core.construct c #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)] c
+        let res ← core.construct c (if tracks then #[.obj b, .num (Float.ofNat begin)]
+          else #[.obj b, .num (Float.ofNat begin), .num (Float.ofNat newLen)]) c
         -- TypedArrayCreateFromConstructor: a valid typed array of the same content type
         let .obj rid := res | throwErr .type "subarray: the species constructor did not make a typed array"
         let .typed rty rb roff rlen := (← getObj rid).kind
@@ -5488,6 +5825,24 @@ def callNativeGlobal (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       | v => pure v
     | .dateNow => pure (.num ((← hostNowNs) / 1000000).floor)
     | _ => throwErr .type "not a function"
+
+/-- Add one entry to the ordinary object made by `Object.fromEntries`.
+Get both entry components before coercing the key. -/
+def addObjectEntry (core : CoreFn H) (target : Nat) (entry : Value) : M Value := do
+  if !entry.isObj then return ← throwErr .type "Iterator value is not an entry object"
+  let rawKey ← core.getV entry "0"
+  let value ← core.getV entry "1"
+  let key ← core.toKey rawKey
+  defineOwn target key (.data value true true true)
+  pure .undef
+
+/-- A primitive yields the TypeError completion before a property access or definition. -/
+private theorem addObjectEntry_primitive (core : CoreFn H) (target : Nat)
+    (entry : Value) (primitive : entry.isObj = false) :
+    addObjectEntry core target entry = throwErr .type "Iterator value is not an entry object" := by
+  simp [addObjectEntry, primitive]
+
+#print axioms addObjectEntry_primitive
 
 /-- Built-ins of `callNative`: the Object constructor and its static methods. `r` is the realm `callNative` read. -/
 def callNativeObjectStatic (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
@@ -5709,10 +6064,9 @@ def callNativeObjectStatic (core : CoreFn H) (r : Realm) (id : Native) (thisV : 
       pure (.obj res)
     | .objectFromEntries =>
       let res ← newObject
-      let items ← core.iterToArray (← core.getIterator a0) #[]
-      for item in items do
-        let k ← core.toKey (← core.getV item "0")
-        defineOwn res k (.data (← core.getV item "1") true true true)
+      iterEach core (← core.getIterator a0) fun entry => do
+        let _ ← addObjectEntry core res entry
+        pure ()
       pure (.obj res)
     | _ => throwErr .type "not a function"
 
@@ -6207,10 +6561,9 @@ def callNativeArrayRead (core : CoreFn H) (r : Realm) (id : Native) (thisV : Val
       | none => newArray flat
       | some a => core.speciesFill a flat none
     | .arrayAt =>
-      let es ← core.elemsOf thisV
-      let k := toIntegerOrInf (← core.toNum a0)
-      let i := if k < 0 then Float.ofNat es.size + k else k
-      if i < 0 || i ≥ Float.ofNat es.size then pure .undef else pure es[i.toUInt64.toNat]!
+      let receiver := Value.obj (← core.toObj thisV)
+      let len ← core.arrayLikeLength receiver
+      arrayAtWithLength core receiver len a0
     | .arrayFindLast | .arrayFindLastIndex =>
       if !(← isCallable a0) then throwErr .type "callback is not a function"
       let es ← core.elemsOf thisV
@@ -6438,11 +6791,7 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
       | .numberToString =>
         let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
         if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        if radix == 10 || !isIntegral x then pure (.str (numToString x))
-        else
-          let i := truncInt x
-          let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-          pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+        pure (.str (toStringRadix x radix.toUInt64.toNat))
       | _ =>
         let d := toIntegerOrInf (← core.toNum a0)
         if d < 0 || d > 100 then throwErr .range "toFixed() digits argument must be between 0 and 100"
@@ -6469,7 +6818,8 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         | 0 => Float.cbrt x | 1 => Float.log2 x | 2 => Float.log10 x | 3 => Float.sinh x
         | 4 => Float.cosh x | 5 => Float.tanh x | 6 => Float.asin x | 7 => Float.acos x
         | 8 => Float.asinh x | 9 => Float.acosh x | 10 => Float.atanh x
-        | 11 => Float.exp x - 1 | 12 => Float.log (1 + x)
+        | 11 => mathExpMinusOne x
+        | 12 => mathLogOnePlus x
         | 14 => L4Factoidal.Prim.Float16.round x
         | _ => x.toFloat32.toFloat))
     | .mathHypot =>
@@ -6518,8 +6868,7 @@ def callNativeNumber (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
         if id_ == .bigintValueOf then pure (.big i) else
         let radix ← match a0 with | .undef => pure 10 | v => do pure (toIntegerOrInf (← core.toNum v))
         if radix < 2 || radix > 36 then throwErr .range "toString() radix must be between 2 and 36"
-        let ds := Nat.toDigits radix.toUInt64.toNat i.natAbs
-        pure (.str ((if i < 0 then "-" else "") ++ String.ofList ds))
+        pure (.str ((if i < 0 then "-" else "") ++ natToRadix radix.toUInt64.toNat i.natAbs))
       | _ => throwErr .type "BigInt.prototype method requires that 'this' be a BigInt"
     | _ => throwErr .type "not a function"
 
@@ -7173,7 +7522,7 @@ def callNativeMap (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (a
         | .coll _ _ idx => pure (.bool (collFind idx key).isSome)
         | _ => pure (.bool false)
       | .mapSet | .setAdd =>
-        if weak && !key.isObj then throwErr .type "Invalid value used as weak collection key"
+        if weak && !(← canBeHeldWeakly key) then throwErr .type "Invalid value used as weak collection key"
         let v := if id_ == .setAdd then key else a1
         modifyObj cid (collPut key v)
         pure thisV
@@ -7776,6 +8125,16 @@ def vmSetUp (env hops idx : Nat) (x : String) (v : Value) : M Bool := do
 section Block
 variable [md : Mode]
 
+set_option hygiene false in
+/-- `toNumQ n v`: ToNumber of `v` with fuel `n`, written so that a value that is a Number already
+costs no call: `toNum` is a function of the block, so its answer is a result cell holding a boxed
+number, and the operands of the numeric and bit operators are Numbers nearly always. The value of
+the expression is `toNum n v` at every fuel but 0, where `toNum 0 v` is out of fuel and this
+answers the Number (`toNumQ_succ`, `toNum_zero` in `JS/Theorems.lean`). Not hygienic: `toNum` is
+defined after this point, in the block. -/
+local macro "toNumQ " n:term:max v:term:max : term =>
+  `((match $v:term with | Value.num toNumQ_x => pure toNumQ_x | toNumQ_w => toNum $n toNumQ_w : M Float))
+
 mutual
 
 /-- `[[Get]]` on any value (§7.3.2 GetV). -/
@@ -7784,9 +8143,19 @@ def getV : Nat → Value → String → M Value
   | n + 1, v, key => do
     match v with
     | .obj id =>
+      let c0 := key.front
+      -- PrivateGet (§7.3.32): a private name is the object's own element, never a prototype's,
+      -- and no Proxy trap sees it
+      if c0 == privMark then
+        match (← getObj id).getOwn key with
+        | some (.data x ..) => return x
+        | some (.acc g _ _ _) =>
+          if g.isObj then return ← callV n g v #[]
+          throwErr .type s!"'{privDisplay key}' was defined without a getter"
+        | none => throwErr .type s!"Cannot read private member {privDisplay key} from an object whose class did not declare it"
       -- a typed array's integer index is its element, never a prototype's property
       -- (§10.4.5.4 TypedArrayGetElement)
-      if key.front.isDigit then
+      if c0.isDigit then
         if let .typed ty b off len := (← getObj id).kind then
           if let some i := arrayIndex? key then
             let live ← liveLen ty b off len
@@ -7804,7 +8173,7 @@ def getV : Nat → Value → String → M Value
           | some i => if i < (← liveLen ty b off len) then pure (typedRead ty (bufferBytes (← getObj b)) (off + i * elemSize ty)) else pure .undef
           | none => pure .undef
         | _ =>
-          if isPrivKey key then throwErr .type s!"Cannot read private member #{(key.drop 1).toString} from an object whose class did not declare it"
+          if isPrivKey key then throwErr .type s!"Cannot read private member {privDisplay key} from an object whose class did not declare it"
           -- a property the global object and its prototype chain do not have: the host's
           -- named properties (`namedGlobal`), asked for on this miss only
           if id == (← get).realm.globalObj && !isSymKey key then
@@ -7926,6 +8295,18 @@ def putV : Nat → Value → String → Value → Bool → M Unit
       -- an own writable data property of a non-exotic object is overwritten in place
       if ← setOwnData id key val then return
       let o ← getObj id
+      -- PrivateSet (§7.3.33): the object's own element; a method is not writable, an accessor
+      -- needs a setter
+      if isPrivKey key then
+        match o.getOwn key with
+        | some (.data _ w e c) =>
+          if w then defineOwn id key (.data val true e c)
+          else throwErr .type s!"Private method {privDisplay key} is not writable"
+        | some (.acc _ st _ _) =>
+          if st.isObj then let _ ← callV n st target #[val]
+          else throwErr .type s!"'{privDisplay key}' was defined without a setter"
+        | none => throwErr .type s!"Cannot write private member {privDisplay key} to an object whose class did not declare it"
+        return
       match o.kind with
       | .proxy t hnd =>
         match ← proxyTrap n hnd "set" with
@@ -7954,7 +8335,7 @@ def putV : Nat → Value → String → Value → Bool → M Unit
         return
       | _, _ => pure ()
       if isPrivKey key && ((← get).findProp id key 1000).isNone then
-        throwErr .type s!"Cannot write private member #{(key.drop 1).toString} to an object whose class did not declare it"
+        throwErr .type s!"Cannot write private member {privDisplay key} to an object whose class did not declare it"
       match o.getOwn key with
       | some (.data _ w e c) =>
         -- (a String object's indices and length are reported read-only by `getOwn`; its other
@@ -8046,7 +8427,11 @@ else ToNumber (§10.4.5.16). -/
 def typedConv : Nat → Nat → Value → M Value
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ty, v => do
-    if typedIsBig ty then pure (.big (← toBigInt n v)) else pure (.num (← toNum n v))
+    -- a Number is stored as it is: no ToNumber call and no new box (`typedConv_num`)
+    if typedIsBig ty then pure (.big (← toBigInt n v)) else
+      match v with
+      | .num _ => pure v
+      | w => pure (.num (← toNum n w))
 termination_by structural n _ _ => n
 
 /-- ToString (§7.1.17). -/
@@ -8221,23 +8606,23 @@ def binop : Nat → BinOp → Value → Value → M Value
         | .big x, .big y => pure (.big (x + y))
         | .big _, _ | _, .big _ => throwErr .type "Cannot mix BigInt and other types, use explicit conversions"
         | _, _ => pure (.num ((← toNum n pa) + (← toNum n pb)))
-    | .sub => pure (.num ((← toNum n a) - (← toNum n b)))
-    | .mul => pure (.num ((← toNum n a) * (← toNum n b)))
-    | .div => pure (.num ((← toNum n a) / (← toNum n b)))
-    | .mod => pure (.num (jsMod (← toNum n a) (← toNum n b)))
-    | .exp => pure (.num (jsPow (← toNum n a) (← toNum n b)))
+    | .sub => pure (.num ((← toNumQ n a) - (← toNumQ n b)))
+    | .mul => pure (.num ((← toNumQ n a) * (← toNumQ n b)))
+    | .div => pure (.num ((← toNumQ n a) / (← toNumQ n b)))
+    | .mod => pure (.num (jsMod (← toNumQ n a) (← toNumQ n b)))
+    | .exp => pure (.num (jsPow (← toNumQ n a) (← toNumQ n b)))
     | .shl =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (toInt32 (Float.ofInt (x * 2 ^ s))))
     | .sar =>
-      let x := toInt32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toInt32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (intV (x / 2 ^ s))
     | .shr =>
-      let x := toUint32 (← toNum n a); let s := toUint32 (← toNum n b) % 32
+      let x := toUint32 (← toNumQ n a); let s := toUint32 (← toNumQ n b) % 32
       pure (.num (floatOfNat (x / 2 ^ s)))
     | .band | .bor | .bxor =>
-      let x := toUint32 (← toNum n a)
-      let y := toUint32 (← toNum n b)
+      let x := toUint32 (← toNumQ n a)
+      let y := toUint32 (← toNumQ n b)
       let r := match op with
         | .band => x &&& y | .bor => x ||| y | _ => x ^^^ y
       pure (intV (toInt32 (floatOfNat r)))
@@ -8467,14 +8852,37 @@ def initFields : Nat → Ctx → Value → Value → M Unit
     | .obj fid =>
       match (← getObj fid).kind with
       | .closure _ _ _ _ _ fields =>
+        -- the private methods and accessors first (PrivateMethodOrAccessorAdd, §7.3.30): a
+        -- second add to the same object is a TypeError, a getter and setter make one accessor
+        if let .obj tid := thisV then
+          let mut added : Array String := #[]
+          for (ek, fn) in fields do
+            if let some (tag, k) := privElemOf ek then
+              let own := (← getObj tid).getOwn k
+              if tag == 'm' then
+                if own.isSome then throwErr .type s!"Cannot initialize private method {privDisplay k} twice on the same object"
+                defineOwn tid k (.data fn false false false)
+              else
+                let (g, st) ← match own with
+                  | none => pure (Value.undef, Value.undef)
+                  | some (.acc g st _ _) =>
+                    if added.contains k then pure (g, st)
+                    else throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
+                  | some _ => throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
+                defineOwn tid k (if tag == 'g' then .acc fn st false false else .acc g fn false false)
+              added := added.push k
         for (k, init) in fields do
+          if (privElemOf k).isSome then continue
           let v ← callV n init thisV #[]
           match thisV with
           | .obj tid =>
             match (← getObj tid).getOwn k with
-            | some p => if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
+            | some p =>
+              -- PrivateFieldAdd (§7.3.31): never twice on one object
+              if isPrivKey k then throwErr .type s!"Cannot initialize {privDisplay k} twice on the same object"
+              if !p.configurable then throwErr .type s!"Cannot redefine property: {k}"
             | none => pure ()
-            defineOwn tid k (.data v true true true)
+            defineOwn tid k (.data v true (!isPrivKey k) true)
           | _ => pure ()
       | _ => pure ()
     | _ => pure ()
@@ -8747,7 +9155,7 @@ def evalRef : Nat → Ctx → Expr → M (Option Value × Option String)
   | 0, _, _ => throw (.halt "fuel")
   | n + 1, ctx, e => do
     match e with
-    | .member o k => pure (some (← evalExpr n ctx o), some k)
+    | .member o k => pure (some (← evalExpr n ctx o), some (← privRk ctx.env k))
     -- a super reference as a target (§13.3.7, §6.2.5.6 PutValue): the base is `this`, the
     -- receiver of the [[Set]]. A setter of the parent is found from `this` too, unless the
     -- object or its class overrides it (then that one runs: a known difference).
@@ -8887,7 +9295,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure (.str out)
     | .tagged tag cooked raw subs =>
       let (f, thisV) ← match tag with
-        | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b k, b)
+        | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b (← privRk ctx.env k), b)
         | _ => do pure (← evalExpr n ctx tag, Value.undef)
       let strs ← newArray (cooked.toArray.map .str)
       let raws ← newArray (raw.toArray.map .str)
@@ -8987,19 +9395,19 @@ def evalExpr : Nat → Ctx → Expr → M Value
         match op with
         | .neg => match ← toPrim n v "number" with
           | .big i => pure (.big (-i))
-          | p => pure (.num (-(← toNum n p)))
+          | p => pure (.num (-(← toNumQ n p)))
         | .plus => pure (.num (← toNum n v))
         | .not => pure (.bool !(toBool v))
         | .bnot => match ← toPrim n v "number" with
           | .big i => pure (.big (-i - 1))
-          | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+          | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
         | .typeof => pure (.str (← typeOf v))
         | .void => pure .undef
         | .delete => pure (.bool true)
     | .binary .inOp (.member (.ident "") k) b =>
       -- `#x in o` (§13.10.1, `privIn`): the private name's key itself
       match ← evalExpr n ctx b with
-      | .obj id => pure (.bool (← hasProp n id k))
+      | .obj id => pure (.bool ((← getObj id).getOwn (← privRk ctx.env k)).isSome)
       | _ => throwErr .type "Cannot use 'in' operator to search for a key in a non-object"
     | .binary op a b =>
       -- tier 1: both operands numbers known without a step (`Tier1.arith?`)
@@ -9024,7 +9432,10 @@ def evalExpr : Nat → Ctx → Expr → M Value
         let v ← evalExpr n ctx rhs
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v ctx.strict
+        if !done then
+          -- not an Array's element: a typed array's element by its number (`typedSetNum`), else `putV`
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v ctx.strict
         pure v
       | _, _ =>
         let key ← toKey n kv
@@ -9034,6 +9445,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .assign none (.member o k) rhs =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
       let v ← (match leafV (← get) ctx rhs with | .hole => evalExpr n ctx rhs | v => pure v)
+      let k ← if isPrivKey k then privRk ctx.env k else pure k
       putV n b k v ctx.strict
       pure v
     | .assign (some .add) (.local x h i) rhs =>
@@ -9118,7 +9530,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let (f, thisV) ← match callee with
         | .optCallee inner =>
           let (f, t) ← match inner with
-            | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b k, b)
+            | .member o k => do let b ← evalExpr n ctx o; pure (← getV n b (← privRk ctx.env k), b)
             | .index o k => do
               let b ← evalExpr n ctx o
               let key ← toKey n (← evalExpr n ctx k)
@@ -9129,7 +9541,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
           | _ => pure (f, t)
         | .member o k =>
           let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
-          let f ← (match (← get).fastGetV b k with | .hole => getV n b k | v => pure v)
+          -- (a private name's static key is never a property: `fastGetV` misses it, and the
+          -- general path resolves it first, so the hit path pays nothing for private names)
+          let f ← (match (← get).fastGetV b k with
+            | .hole => do getV n b (← if isPrivKey k then privRk ctx.env k else pure k)
+            | v => pure v)
           pure (f, b)
         | .index o k =>
           let b ← evalExpr n ctx o
@@ -9170,7 +9586,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
     | .member o k =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
       match (← get).fastGetV b k with
-      | .hole => getV n b k
+      | .hole => getV n b (← if isPrivKey k then privRk ctx.env k else pure k)
       | v => pure v
     | .index o k =>
       let b ← (match leafV (← get) ctx o with | .hole => evalExpr n ctx o | v => pure v)
@@ -9184,7 +9600,11 @@ def evalExpr : Nat → Ctx → Expr → M Value
             | .hole => getV n b (← toKey n kv)
             | v => pure v
           else getV n b (← toKey n kv)
-        | _ => getV n b (← toKey n kv)
+        | _ =>
+          -- an element of a typed array by its number (`typedElemNum`), else the general path
+          match typedElemNum (← get) id x with
+          | .hole => getV n b (← toKey n kv)
+          | w => pure w
       | .undef, _ => throwErr .type "Cannot read properties of undefined"
       | .null, _ => throwErr .type "Cannot read properties of null"
       | _, _ => getV n b (← toKey n kv)
@@ -9730,6 +10150,11 @@ def evalClass : Nat → Ctx → ClassDef → String → M Value
     defineOwn fid "name" (.data (.str cname) false false true)
     defineOwn fid "prototype" (.data (.obj proto) false false false)
     setHidden proto "constructor" (.obj fid)
+    -- the private names of this evaluation (§15.7.14 steps 5-6: a new Private Name each)
+    for m in members do
+      if let .mk _ _ (.lit k) _ := m then
+        if isPrivKey k && !((← get).envs.getD cenv default).has k then
+          declare cenv k { v := .str (k ++ "#" ++ toString fid), mutable := false }
     -- the class binding is initialised before static fields and blocks run (§15.7.14)
     let statics := members.filter fun m => match m with
       | .mk true .field .. | .mk true .staticBlock .. => true
@@ -9753,15 +10178,21 @@ def defineMembers : Nat → Ctx → Nat → Nat → List Member → Array (Strin
   | n + 1, ctx, fid, proto, (.mk static kind k f) :: ms, acc => do
     let target := if static then fid else proto
     let key ← match k with
-      | .lit s => pure s
+      | .lit s => privRk ctx.env s
       | .computed e => do toKey n (← evalExpr n { ctx with thisV := .obj fid } e)
     if static && key == "prototype" && kind != .field then
       throwErr .type "Classes may not have a static property named 'prototype'"
     let nm ← nameOfKey key
+    -- a private method or accessor of the instances (§15.7.14 step 36: [[PrivateMethods]]) is
+    -- added to each instance before its fields (InitializeInstanceElements), not to the prototype
+    if !static && isPrivKey key && (kind == .method || kind == .getter || kind == .setter) then
+      let tag := if kind == .method then 'm' else if kind == .getter then 'g' else 's'
+      let fn ← makeClosure ctx f (if kind == .method then nm else if kind == .getter then "get " ++ nm else "set " ++ nm) (.obj proto)
+      return ← defineMembers n ctx fid proto ms (acc.push (privElemKey tag key, fn))
     match kind with
     | .method =>
       let m ← makeClosure ctx f nm (.obj target)
-      setHidden target key m
+      if isPrivKey key then defineOwn target key (.data m false false false) else setHidden target key m
       defineMembers n ctx fid proto ms acc
     | .getter =>
       let g ← makeClosure ctx f ("get " ++ nm) (.obj target)
@@ -9792,7 +10223,7 @@ def directEval : Nat → Ctx → Value → M Value
   | n + 1, ctx, src => do
     match src with
     | .str code =>
-      match (parseScript code ctx.strict (evalCode := true)).map Resolve.script with
+      match (parseScript code ctx.strict (evalCode := true) (inFunction := ctx.env != 0)).map Resolve.script with
       | .error e => throwErr .syntax ((e.drop 13).toString)
       | .ok sc =>
         -- EvalDeclarationInstantiation: sloppy eval code in a function's parameters may not
@@ -10604,12 +11035,12 @@ def vmUnary : Nat → UnOp → Value → M Value
     match op with
     | .neg => match ← toPrim n v "number" with
       | .big i => pure (.big (-i))
-      | p => pure (.num (-(← toNum n p)))
+      | p => pure (.num (-(← toNumQ n p)))
     | .plus => pure (.num (← toNum n v))
     | .not => pure (.bool !(toBool v))
     | .bnot => match ← toPrim n v "number" with
       | .big i => pure (.big (-i - 1))
-      | p => pure (intV (-(toInt32 (← toNum n p)) - 1))
+      | p => pure (intV (-(toInt32 (← toNumQ n p)) - 1))
     | .typeof => pure (.str (← typeOf v))
     | .void => pure .undef
     | .delete => pure (.bool true)
@@ -10628,7 +11059,10 @@ def vmGetIndex : Nat → Value → Value → M Value
           | .hole => getV n b (← toKey n kv)
           | v => pure v
         else getV n b (← toKey n kv)
-      | _ => getV n b (← toKey n kv)
+      | _ =>
+        match typedElemNum (← get) id x with
+        | .hole => getV n b (← toKey n kv)
+        | w => pure w
     | _, _ =>
       if let .undef := b then throwErr .type "Cannot read properties of undefined"
       if let .null := b then throwErr .type "Cannot read properties of null"
@@ -11094,12 +11528,23 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
           | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
           | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
         | _ =>
-          vmStash regs fregs (bp + code.nregs)
-          let v ← getV n b (keyOfNum x)
-          let (regs, fregs) ← vmTake
-          match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          -- a typed array's element by its number is read from the heap before the registers are
+          -- stashed: with the stash and the take around it the compiled loop took the heap record
+          -- apart and built it again for each read. `vmSettle` leaves the heap as they would.
+          match typedElemNum (← get) id x with
+          | .hole =>
+            vmStash regs fregs (bp + code.nregs)
+            let v ← getV n b (keyOfNum x)
+            let (regs, fregs) ← vmTake
+            match (v) with
+            | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+            | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+          | .num x =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
+          | wv =>
+            vmSettle (bp + code.nregs)
+            vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
       | _, _ =>
         let kv := vmRd regs fregs (bp + i)
         vmStash regs fregs (bp + code.nregs)
@@ -11119,7 +11564,9 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       | .obj id, .num x =>
         let isIdx := x ≥ 0 && x < maxIndexF && x.floor == x
         let done ← if isIdx then setElem id x.toUInt64.toNat v else pure false
-        if !done then putV n b (keyOfNum x) v code.strict
+        if !done then
+          let done ← typedSetNum id x v
+          if !done then putV n b (keyOfNum x) v code.strict
       | _, _ =>
         let key ← toKey n kv
         putV n b key v code.strict
@@ -12181,10 +12628,7 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
     | .mathExp => num1 Float.exp
     | .mathTrunc => num1 fun x => if x.isFinite then (if x < 0 then -((-x).floor) else x.floor) else x
     | .mathSign => num1 fun x => if x.isNaN then x else if x > 0 then 1 else if x < 0 then -1 else x
-    | .mathRound => num1 fun x =>
-        if !x.isFinite || x == 0 then x
-        else if x < 0 && x ≥ -0.5 then -0.0
-        else (x + 0.5).floor
+    | .mathRound => num1 mathRoundNumber
     | .mathAtan2 => pure (.num (Float.atan2 (← toNum n a0) (← toNum n a1)))
     | .mathPow => pure (.num (jsPow (← toNum n a0) (← toNum n a1)))
     | .mathMax | .mathMin =>
@@ -12303,15 +12747,14 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
           checkStrLen (parts.foldl (fun acc t => acc + t.utf8ByteSize) s.utf8ByteSize)
           pure (.str (Str.canonical (s ++ String.join parts)))
         | .stringSplit =>
-          match a0 with
-          | .undef => newArray #[.str s]
-          | v =>
-            let sep ← toStr n v
-            let parts := splitOn s sep
-            let lim ← match a1 with
-              | .undef => pure parts.size
-              | l => do pure (toUint32 (← toNum n l))
-            newArray ((parts.extract 0 lim).map .str)
+          -- The limit conversion precedes separator conversion, which can throw even
+          -- for a zero limit. The @@split dispatch has already run for objects.
+          let limit ← match a1 with
+            | .undef => pure 4294967295
+            | l => do pure (toUint32 (← toNum n l))
+          let sep ← toStr n a0
+          let separator := match a0 with | .undef => none | _ => some sep
+          newArray ((splitPlain s separator limit).map .str)
         | _ => throwErr .type "not a function"
 termination_by structural n _ _ _ => n
 
@@ -12626,6 +13069,9 @@ def initRealm : M Unit := do
   defineOwn math "E" (.data (.num 2.718281828459045) false false false)
   defineOwn math "LN2" (.data (.num 0.6931471805599453) false false false)
   defineOwn math "LN10" (.data (.num 2.302585092994046) false false false)
+  defineOwn math "LOG2E" (.data (.num 1.4426950408889634) false false false)
+  defineOwn math "LOG10E" (.data (.num 0.4342944819032518) false false false)
+  defineOwn math "SQRT1_2" (.data (.num 0.7071067811865476) false false false)
   defineOwn math "SQRT2" (.data (.num 1.4142135623730951) false false false)
   -- Map, Set, WeakMap, WeakSet
   for (k, nm) in [(0, "Map"), (1, "Set"), (2, "WeakMap"), (3, "WeakSet")] do
@@ -12992,8 +13438,11 @@ def addRealm (h : HeapOf H) : Nat × HeapOf H :=
   let back := h.curRealm
   let k := h.realms.size
   let saved : SavedRealm := { (h.realms.getD back {}) with realm := h.realm, env0 := h.envs[0]! }
+  let envs := h.envs
+  let h := { h with envs := #[] }
+  let (h, envs) := h.noteEnv envs 0
   let h := { h with realms := (h.realms.set! back saved).push {}, realm := {},
-                    envs := h.envs.set! 0 {}, curRealm := k }
+                    envs := envs.set! 0 {}, curRealm := k }
   let h := match (initRealm : M Unit).run h with | .ok _ h => h | .error _ h => h
   match (switchRealm back : M Unit).run h with
   | .ok _ h => (k, h)

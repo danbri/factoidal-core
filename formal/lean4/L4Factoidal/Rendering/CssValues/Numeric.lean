@@ -76,6 +76,7 @@ structure Ctx where
   rootLineHeight : Rat := (96 : Rat) / 5
   viewportW : Rat := 800
   viewportH : Rat := 600
+  percentageBasis : Option Rat := none
   deriving Repr, Inhabited
 
 def ratMin (a b : Rat) : Rat := if a ≤ b then a else b
@@ -221,8 +222,9 @@ def splitCommas (cvs : List CV) : List (List CV) :=
 
 mutual
   /-- One calc value: a number, a dimension, a percentage, a keyword, a parenthesised sum
-  or a math function. The recursion is on the nesting of the value. -/
-  def calcOperand : Nat → CV → Option Calc
+  or a math function. `sz`: the keyword `size` of `calc-size()` may stand here (CSS Values 5
+  §7.1). The recursion is on the nesting of the value. -/
+  def calcOperand (sz : Bool) : Nat → CV → Option Calc
     | 0, _ => none
     | fuel + 1, cv =>
       match cv with
@@ -231,11 +233,11 @@ mutual
       | .tok (.dim v _ u) => if (unitKind (lower u)).isSome then some (.val v (lower u)) else none
       | .tok (.ident s) =>
         let k := lower s
-        if ["e", "pi", "infinity", "-infinity", "nan"].contains k then some (.kw k) else none
-      | .block '(' body => calcExpr fuel body
+        if ["e", "pi", "infinity", "-infinity", "nan"].contains k || (sz && k == "size") then some (.kw k) else none
+      | .block '(' body => calcExpr sz fuel body
       | .fn name args =>
         let n := lower name
-        if n == "calc" then calcExpr fuel args
+        if n == "calc" then calcExpr sz fuel args
         else if mathFunctions.contains n then
           -- the comma-separated arguments: a rounding strategy is the first argument of
           -- `round()`, and `none` may stand for the ends of `clamp()`
@@ -254,16 +256,16 @@ mutual
             match word with
             | some w =>
               if (n == "round" && i == 0 && roundingStrategies.contains w) || (n == "clamp" && w == "none") then some (Calc.kw w)
-              else calcExpr fuel g
-            | none => calcExpr fuel g
+              else calcExpr sz fuel g
+            | none => calcExpr sz fuel g
           parsed.map fun xs => .fn n (if noClamp then .kw "no-clamp" :: xs else xs)
         else none
       | _ => none
   /-- A calc sum over component values (white space included). -/
-  def calcExpr : Nat → List CV → Option Calc
+  def calcExpr (sz : Bool) : Nat → List CV → Option Calc
     | 0, _ => none
     | fuel + 1, cvs =>
-      match calcItems (calcOperand fuel) cvs true [] with
+      match calcItems (calcOperand sz fuel) cvs true [] with
       | some items => if items.isEmpty then none else calcSum (items.length + 2) items []
       | none => none
 end
@@ -271,7 +273,7 @@ end
 /-- The calculation of a math function component value. -/
 def Calc.parse (cv : CV) : Option Calc :=
   match cv with
-  | .fn name args => if mathFunctions.contains (lower name) then calcOperand (cvSize 64 args + 8) cv else none
+  | .fn name args => if mathFunctions.contains (lower name) then calcOperand false (cvSize 64 args + 8) cv else none
   | _ => none
 
 /-! ### Types -/
@@ -289,6 +291,7 @@ def Calc.type (pctAs : Kind) : Nat → Calc → Option Ty
     | .val _ "" => some {}
     | .val _ "%" => some (Ty.ofKind pctAs)
     | .val _ u => (unitKind u).map Ty.ofKind
+    | .kw "size" => some (Ty.ofKind .length)
     | .kw _ => some {}
     | .neg x => Calc.type pctAs fuel x
     | .inv x => (Calc.type pctAs fuel x).map Ty.inv
@@ -342,7 +345,11 @@ def addUnit (acc : List (String × Rat)) (u : String) (v : Rat) : List (String �
 /-- Bring a value to the canonical unit of its kind when the ratio is fixed, or when the
 context gives it. -/
 def canonVal (ctx : Option Ctx) (v : Rat) (u : String) : Calc :=
-  match absFactor u with
+  if u == "%" then
+    match ctx.bind (·.percentageBasis) with
+    | some basis => .val (v * basis / 100) "px"
+    | none => .val v u
+  else match absFactor u with
   | some (f, cu) => .val (v * f) cu
   | none =>
     match ctx.bind (·.pxPer u) with
@@ -370,7 +377,9 @@ def roundTo (strategy : String) (a b : Rat) : Rat :=
   | "to-zero" => if a < 0 then upper else lower
   | _ => if a - lower < upper - a then lower else upper
 
-/-- A math function over values that are all of one unit, when its answer is rational. -/
+/-- A math function over values that are all of one unit, when its answer is rational, or the
+infinite or NaN answer of IEEE 754 arithmetic (§10.7.1: `round(A, 0)`, `mod(A, 0)`,
+`tan(90deg)`, `sqrt(-1)`, `log(0)`, `pow(0, -1)`, `asin(2)`). -/
 def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) : Option Calc :=
   match name, vs with
   | "min", v :: rest => some (.val (rest.foldl ratMin v) unit)
@@ -378,11 +387,11 @@ def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) :
   | "clamp", [lo, v, hi] => some (.val (ratMax lo (ratMin v hi)) unit)
   | "abs", [v] => some (.val (ratAbs v) unit)
   | "sign", [v] => some (.val (if v < 0 then -1 else if v == 0 then 0 else 1) "")
-  | "round", [a, b] => if b == 0 then none else some (.val (roundTo strategy a b) unit)
+  | "round", [a, b] => if b == 0 then some (ext "nan" unit) else some (.val (roundTo strategy a b) unit)
   | "round", [a] => some (.val (roundTo strategy a 1) unit)
-  | "mod", [a, b] => if b == 0 then none else some (.val (a - b * ((a / b).floor : Rat)) unit)
+  | "mod", [a, b] => if b == 0 then some (ext "nan" unit) else some (.val (a - b * ((a / b).floor : Rat)) unit)
   | "rem", [a, b] =>
-    if b == 0 then none
+    if b == 0 then some (ext "nan" unit)
     else
       let q := a / b
       let t : Rat := if q < 0 then (q.ceil : Rat) else (q.floor : Rat)
@@ -391,29 +400,31 @@ def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) :
   | "cos", [a] => some (.val (approx (Color.sinCosDeg (degrees a unit)).2) "")
   | "tan", [a] =>
     let (s, c) := Color.sinCosDeg (degrees a unit)
-    if c == 0 then none else some (.val (approx (s / c)) "")
+    if c == 0 then some (.kw (if s < 0 then "-infinity" else "infinity")) else some (.val (approx (s / c)) "")
   | "atan", [a] => some (.val (approx (signedAngle (Color.atan2Deg a 1))) "deg")
   | "asin", [a] =>
-    if a < -1 || 1 < a then none
+    if a < -1 || 1 < a then some (ext "nan" "deg")
     else some (.val (approx (signedAngle (Color.atan2Deg a (Color.powApprox (1 - a * a) ((1 : Rat) / 2))))) "deg")
   | "acos", [a] =>
-    if a < -1 || 1 < a then none
+    if a < -1 || 1 < a then some (ext "nan" "deg")
     else some (.val (approx (Color.atan2Deg (Color.powApprox (1 - a * a) ((1 : Rat) / 2)) a)) "deg")
   | "atan2", [y, x] => some (.val (approx (signedAngle (Color.atan2Deg y x))) "deg")
   | "pow", [a, b] =>
     if unit != "" then none
     else if b.den == 1 && b.num.natAbs ≤ 64 then
       let p := a ^ b.num.natAbs
-      if b.num ≥ 0 then some (.val p "") else if p == 0 then none else some (.val (1 / p) "")
-    else if a ≤ 0 then none
+      if b.num ≥ 0 then some (.val p "") else if p == 0 then some (.kw "infinity") else some (.val (1 / p) "")
+    else if a < 0 then some (.kw "nan")
+    else if a == 0 then some (if b < 0 then .kw "infinity" else .val 0 "")
     else some (.val (approx (Color.powApprox a b)) "")
-  | "sqrt", [a] => if a < 0 then none else some (.val (approx (Color.powApprox a ((1 : Rat) / 2))) "")
+  | "sqrt", [a] => if a < 0 then some (.kw "nan") else some (.val (approx (Color.powApprox a ((1 : Rat) / 2))) "")
   | "hypot", vs =>
     let sum := vs.foldl (fun acc v => acc + v * v) 0
     if vs.isEmpty then none else some (.val (approx (Color.powApprox sum ((1 : Rat) / 2))) unit)
-  | "log", [a] => if a ≤ 0 then none else some (.val (approx (Color.lnApprox a)) "")
+  | "log", [a] => if a < 0 then some (.kw "nan") else if a == 0 then some (.kw "-infinity") else some (.val (approx (Color.lnApprox a)) "")
   | "log", [a, b] =>
-    if a ≤ 0 || b ≤ 0 || b == 1 then none
+    if a < 0 || b ≤ 0 || b == 1 then some (.kw "nan")
+    else if a == 0 then some (.kw (if b < 1 then "infinity" else "-infinity"))
     else some (.val (approx (Color.lnApprox a / Color.lnApprox b)) "")
   | "exp", [a] => some (.val (approx (Color.expApprox a)) "")
   | "progress", [v, start, finish] =>
@@ -425,10 +436,162 @@ def evalFn (name : String) (strategy : String) (vs : List Rat) (unit : String) :
 where
   /-- An approximate result, to 10 decimal places. -/
   approx (x : Rat) : Rat := Color.roundTo 10 x
+  /-- An infinite or NaN value of a unit (as `ofExt` makes it, below). -/
+  ext (k : String) (unit : String) : Calc := if unit == "" then .kw k else .prod [.kw k, .val 1 unit]
   /-- The argument of a trigonometric function in degrees: a number is radians. -/
   degrees (a : Rat) (unit : String) : Rat := if unit == "" then a * 180 / piRat else a
   /-- An angle of `[0, 360)` in `(-180, 180]`. -/
   signedAngle (d : Rat) : Rat := if 180 < d then d - 360 else d
+
+/-! ### Infinity and NaN (§10.7.1, §10.9.1)
+
+A calculation may produce an infinite or NaN value: `infinity`, `-infinity` and `NaN` are
+numbers, and a value of a unit is written `infinity * 1px`. After simplification such a value
+is `.kw k` for a number and `.prod [.kw k, .val 1 u]` for unit `u`. The arithmetic is that of
+IEEE 754 doubles on the extended reals: `0 * infinity`, `infinity - infinity` and anything
+with NaN are NaN, and `1 / 0` is infinity (a zero here has no sign). -/
+
+/-- A number of the extended reals. -/
+inductive XNum where
+  | fin (v : Rat) | pinf | ninf | nan
+  deriving DecidableEq, Inhabited
+
+namespace XNum
+
+def ofKw : String → Option XNum
+  | "infinity" => some .pinf
+  | "-infinity" => some .ninf
+  | "nan" => some .nan
+  | _ => none
+
+def kw : XNum → String
+  | .pinf => "infinity"
+  | .ninf => "-infinity"
+  | _ => "nan"
+
+def neg : XNum → XNum
+  | .fin v => .fin (-v)
+  | .pinf => .ninf
+  | .ninf => .pinf
+  | .nan => .nan
+
+def add : XNum → XNum → XNum
+  | .nan, _ | _, .nan => .nan
+  | .pinf, .ninf | .ninf, .pinf => .nan
+  | .pinf, _ | _, .pinf => .pinf
+  | .ninf, _ | _, .ninf => .ninf
+  | .fin a, .fin b => .fin (a + b)
+
+/-- The sign of a non-NaN value: -1, 0 or 1. -/
+def sign : XNum → Int
+  | .fin v => if v < 0 then -1 else if v == 0 then 0 else 1
+  | .pinf => 1
+  | .ninf => -1
+  | .nan => 0
+
+def mul : XNum → XNum → XNum
+  | .nan, _ | _, .nan => .nan
+  | .fin a, .fin b => .fin (a * b)
+  | a, b =>
+    -- at least one is infinite
+    let s := a.sign * b.sign
+    if s == 0 then .nan else if s > 0 then .pinf else .ninf
+
+def inv : XNum → XNum
+  | .fin v => if v == 0 then .pinf else .fin (1 / v)
+  | .pinf | .ninf => .fin 0
+  | .nan => .nan
+
+/-- `a < b`, for values that are not NaN. -/
+def lt : XNum → XNum → Bool
+  | .fin a, .fin b => decide (a < b)
+  | .ninf, .ninf | .pinf, .pinf => false
+  | .ninf, _ => true
+  | _, .pinf => true
+  | _, _ => false
+
+def min (a b : XNum) : XNum := if a == .nan || b == .nan then .nan else if lt b a then b else a
+def max (a b : XNum) : XNum := if a == .nan || b == .nan then .nan else if lt a b then b else a
+
+/-- Kind: algebra. Says: the sum of extended values does not depend on the order of the
+two terms (so a sum's infinite terms may be added in any order). -/
+theorem add_comm (a b : XNum) : a.add b = b.add a := by
+  cases a <;> cases b <;> simp [add, Rat.add_comm]
+
+/-- Kind: algebra. Says: NaN absorbs every product and sum (§10.9.1: "If the result contains a
+NaN, the result is NaN"). -/
+theorem nan_absorbs (a : XNum) : XNum.nan.mul a = .nan ∧ a.mul .nan = .nan ∧
+    XNum.nan.add a = .nan ∧ a.add .nan = .nan := by
+  cases a <;> simp [mul, add]
+
+/-- Kind: algebra. Says: `min` and `max` with a NaN argument are NaN, as CSS asks of `min()`,
+`max()` and `clamp()`. -/
+theorem min_max_nan (a : XNum) : XNum.min .nan a = .nan ∧ XNum.max a .nan = .nan := by
+  simp [XNum.min, XNum.max]
+
+end XNum
+
+/-- A simplified calculation that is one value, as an extended number and its unit. -/
+def extOf : Calc → Option (XNum × String)
+  | .val v u => some (.fin v, u)
+  | .kw k => (XNum.ofKw k).map (·, "")
+  | .prod [.kw k, .val w u] => if w == 1 then (XNum.ofKw k).map (·, u) else none
+  | _ => none
+
+/-- The calculation of an extended number of unit `u`. -/
+def ofExt : XNum → String → Calc
+  | .fin v, u => .val v u
+  | x, u => if u == "" then .kw x.kw else .prod [.kw x.kw, .val 1 u]
+
+/-- Whether a simplified calculation is NaN, of any unit. -/
+def isNaNCalc (c : Calc) : Bool := (extOf c).any (·.1 == .nan)
+
+/-- Whether a simplified calculation is an infinite or NaN value. -/
+def isExtCalc (c : Calc) : Bool := (extOf c).any fun (x, _) => match x with | .fin _ => false | _ => true
+
+/-- `min`, `max` and `clamp` over extended values of one unit (§10.9.1: NaN wins). -/
+def evalExtFn (name : String) (vs : List XNum) (unit : String) : Option Calc :=
+  match name, vs with
+  | "min", v :: rest => some (ofExt (rest.foldl XNum.min v) unit)
+  | "max", v :: rest => some (ofExt (rest.foldl XNum.max v) unit)
+  | "clamp", [lo, v, hi] => some (ofExt (XNum.max lo (XNum.min v hi)) unit)
+  | "abs", [v] => some (ofExt (match v with | .ninf => .pinf | .fin x => .fin (ratAbs x) | x => x) unit)
+  | "sign", [v] => some (match v with | .nan => .kw "nan" | x => .val (x.sign : Rat) "")
+  -- round(A, B) with A infinite and B finite is A; with both infinite NaN; mod and rem of an
+  -- infinite A NaN, of a finite A by an infinite B A (mod: NaN when the signs differ)
+  | "round", [a, b] => some (match a, b with
+      | .nan, _ | _, .nan => ofExt .nan unit
+      | .fin _, .fin _ => ofExt .nan unit
+      | .fin _, _ => .val 0 unit
+      | _, .fin v => if v == 0 then ofExt .nan unit else ofExt a unit
+      | _, _ => ofExt .nan unit)
+  | "round", [a] => some (ofExt a unit)
+  | "mod", [a, b] => some (match a, b with
+      | .fin x, .pinf => if x < 0 then ofExt .nan unit else .val x unit
+      | .fin x, .ninf => if x > 0 then ofExt .nan unit else .val x unit
+      | _, _ => ofExt .nan unit)
+  | "rem", [a, b] => some (match a, b with
+      | .fin x, .pinf | .fin x, .ninf => .val x unit
+      | _, _ => ofExt .nan unit)
+  | "sin", [_] | "cos", [_] | "tan", [_] => some (.kw "nan")
+  | "asin", [_] | "acos", [_] => some (ofExt .nan "deg")
+  | "atan", [a] => some (match a with | .pinf => .val 90 "deg" | .ninf => .val (-90) "deg" | _ => ofExt .nan "deg")
+  | "sqrt", [a] => some (match a with | .pinf => .kw "infinity" | _ => .kw "nan")
+  | "exp", [a] => some (match a with | .pinf => .kw "infinity" | .ninf => .val 0 "" | _ => .kw "nan")
+  | "log", [a] => some (match a with | .pinf => .kw "infinity" | _ => .kw "nan")
+  | "hypot", vs => some (if vs.any (· == .nan) then ofExt .nan unit else ofExt .pinf unit)
+  | _, _ => none
+
+/-- The extended values of calculations that are all values of one unit, with at least one
+infinite or NaN. -/
+def sameUnitExt (xs : List Calc) : Option (List XNum × String) := do
+  let ps ← xs.mapM extOf
+  match ps with
+  | [] => none
+  | (_, u) :: _ =>
+    if ps.all (·.2 == u) && ps.any (fun (x, _) => match x with | .fin _ => false | _ => true) then
+      some (ps.map (·.1), u)
+    else none
 
 /-- The values of calculations that are all plain values of one unit. -/
 def sameUnitValues (xs : List Calc) : Option (List Rat × String) :=
@@ -442,7 +605,7 @@ def sameUnitValues (xs : List Calc) : Option (List Rat × String) :=
 /-- Simplify a calculation (§10.10.1): units made canonical, numbers folded, sums and
 products flattened, like terms added, and functions over like values computed. The
 recursion is on the nesting of the calculation. -/
-def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
+def Calc.simpWith (ctx : Option Ctx) (deferPctMath : Bool) : Nat → Calc → Calc
   | 0, c => c
   | fuel + 1, c =>
     match c with
@@ -451,15 +614,31 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       if k == "pi" then .val piRat ""
       else if k == "e" then .val ((2718281828459045235360287471352 : Rat) / 1000000000000000000000000000000) ""
       else .kw k
-    | .neg x => negate (Calc.simp ctx fuel x)
+    | .neg x =>
+      let y := Calc.simpWith ctx deferPctMath fuel x
+      match extOf y with
+      | some (e, u) => ofExt e.neg u
+      | none => negate y
     | .inv x =>
-      match Calc.simp ctx fuel x with
-      | .val v "" => if v == 0 then .inv (.val v "") else .val (1 / v) ""
+      match Calc.simpWith ctx deferPctMath fuel x with
+      | .val v "" => ofExt (XNum.inv (.fin v)) ""
+      | .kw k => match XNum.ofKw k with
+        | some e => ofExt e.inv ""
+        | none => .inv (.kw k)
       | y => .inv y
     | .sum xs =>
-      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+      let ys := (xs.map (Calc.simpWith ctx deferPctMath fuel)).flatMap fun y => match y with
         | .sum zs => zs
         | z => [z]
+      if ys.any isExtCalc then
+        -- an infinite or NaN term (§10.9.1): NaN, or infinities of both signs, make NaN; else
+        -- the infinity wins over every finite term, of whatever unit
+        let exts := ys.filterMap extOf
+        let unit := ((exts.find? fun (x, _) => match x with | .fin _ => false | _ => true).map (·.2)).getD ""
+        let total := (exts.filter fun (x, _) => match x with | .fin _ => false | _ => true).foldl (fun acc (x, _) => XNum.add acc x) (.fin 0)
+        let total := if ys.any isNaNCalc then XNum.nan else total
+        ofExt total unit
+      else
       let units := ys.foldl (fun acc y => match y with
         | .val v u => addUnit acc u v
         | _ => acc) []
@@ -472,7 +651,7 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | [t] => t
       | ts => .sum ts
     | .prod xs =>
-      let ys := (xs.map (Calc.simp ctx fuel)).flatMap fun y => match y with
+      let ys := (xs.map (Calc.simpWith ctx deferPctMath fuel)).flatMap fun y => match y with
         | .prod zs => zs
         | z => [z]
       let n := ys.foldl (fun acc y => match y with
@@ -481,6 +660,20 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       let rest : List Calc := ys.filter fun y => match y with
         | .val _ "" => false
         | _ => true
+      -- infinite and NaN numbers among the factors (§10.9.1)
+      let exts := rest.filterMap fun y => match y with
+        | .kw k => XNum.ofKw k
+        | _ => none
+      let rest := if exts.isEmpty then rest else rest.filter fun y => match y with
+        | .kw k => (XNum.ofKw k).isNone
+        | _ => true
+      if !exts.isEmpty then
+        let x := exts.foldl XNum.mul (.fin n)
+        match rest with
+        | [] => ofExt x ""
+        | [.val v u] => ofExt (XNum.mul x (.fin v)) u
+        | rest => .prod ((exts.map fun e => Calc.kw e.kw) ++ (if n == 1 then [] else [.val n ""]) ++ rest)
+      else
       match rest with
       | [] => .val n ""
       | [.val v u] => .val (n * v) u
@@ -490,23 +683,38 @@ def Calc.simp (ctx : Option Ctx) : Nat → Calc → Calc
       | [.val v u, .inv (.val w u')] =>
         if u == u' && w != 0 then .val (n * v / w) "" else .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
       | rest => .prod ((if n == 1 then [] else [.val n ""]) ++ rest)
-    | .fn "clamp" [.kw "none", x, .kw "none"] => Calc.simp ctx fuel x
-    | .fn "clamp" [.kw "none", x, hi] => Calc.simp ctx fuel (.fn "min" [x, hi])
-    | .fn "clamp" [lo, x, .kw "none"] => Calc.simp ctx fuel (.fn "max" [lo, x])
+    | .fn "clamp" [.kw "none", x, .kw "none"] => Calc.simpWith ctx deferPctMath fuel x
+    | .fn "clamp" [.kw "none", x, hi] => Calc.simpWith ctx deferPctMath fuel (.fn "min" [x, hi])
+    | .fn "clamp" [lo, x, .kw "none"] => Calc.simpWith ctx deferPctMath fuel (.fn "max" [lo, x])
     | .fn name args =>
-      let ys := args.map (Calc.simp ctx fuel)
+      let ys := args.map (Calc.simpWith ctx deferPctMath fuel)
       let strategy := match ys with
         | .kw k :: _ => if roundingStrategies.contains k || k == "no-clamp" then k else "nearest"
         | _ => "nearest"
       let operands := ys.filter fun y => match y with
         | .kw k => !(roundingStrategies.contains k || k == "no-clamp")
         | _ => true
+      -- NaN in min(), max() or clamp() is the answer, whatever the units of the others
+      match (if ["min", "max", "clamp"].contains name then operands.find? isNaNCalc else none) with
+      | some nanArg => ofExt .nan ((extOf nanArg).map (·.2) |>.getD "")
+      | none =>
       match sameUnitValues operands with
       | some (vs, u) =>
+        if deferPctMath && u == "%" then .fn name ys else
         match evalFn name strategy vs u with
         | some r => r
         | none => .fn name ys
-      | none => .fn name ys
+      | none =>
+        match sameUnitExt operands with
+        | some (vs, u) =>
+          if deferPctMath && u == "%" then .fn name ys else
+          match evalExtFn name vs u with
+          | some r => r
+          | none => .fn name ys
+        | none => .fn name ys
+
+def Calc.simp (ctx : Option Ctx) (fuel : Nat) (c : Calc) : Calc :=
+  Calc.simpWith ctx false fuel c
 
 /-! ### Serialisation -/
 
@@ -519,7 +727,7 @@ def Calc.css : Nat → Bool → Calc → String
     match c with
     | .val v "" => fmtRat v
     | .val v u => fmtRat v ++ u
-    | .kw k => k
+    | .kw k => if k == "nan" then "NaN" else k
     | .neg x => "-1 * " ++ Calc.css fuel true x
     | .inv x => "1 / " ++ Calc.css fuel true x
     | .sum xs =>
@@ -565,6 +773,54 @@ def Calc.text (c : Calc) : String :=
   | .fn _ _ => Calc.css fuel false c
   | _ => "calc(" ++ Calc.css fuel false c ++ ")"
 
+/-! ### `calc-size()` (CSS Values 5 §7.1) -/
+
+/-- The sizing keywords a `calc-size()` basis may be; `auto` only where the property takes it
+(not the `max-*` sizes). -/
+def calcSizeKeywords (allowAuto : Bool) : List String :=
+  (if allowAuto then ["auto"] else []) ++ ["min-content", "max-content", "fit-content", "stretch"]
+
+/-- A length-percentage calc sum (white space and all), simplified, as the text inside a math
+function; `sz`: the keyword `size` may stand in it. `none` when it is not of that type. -/
+def calcSizeSum (ctx : Option Ctx) (sz : Bool) (cvs : List CV) : Option String := do
+  let c ← calcExpr sz (cvSize 64 cvs + 8) cvs
+  let fuel := Calc.depth 64 c + 4
+  if Calc.type .length fuel c != some (Ty.ofKind .length) then none
+  let s := Calc.simp ctx fuel c
+  some (Calc.css (Calc.depth 64 s + 4) false s)
+
+/-- `calc-size( <calc-size-basis>, <calc-sum> )`: the basis is a sizing keyword, `any`, a
+nested `calc-size()` or a length-percentage sum; the second argument a length-percentage sum
+in which `size` (the basis's size) may stand unless the basis is `any`. The canonical text,
+the sums simplified as in `calc()` (`size * 2` is `2 * size`, `2in` is `192px`). The recursion
+is on the nesting of the basis. -/
+def calcSizeOf (ctx : Option Ctx) (allowAuto : Bool) (fuel : Nat) (cv : CV) : Option String :=
+  -- down the nested bases (a tail call each), the calculations innermost first
+  let rec chain : Nat → CV → List (List CV) → Option (List CV × List (List CV))
+    | fuel + 1, .fn name args, es =>
+      if lower name != "calc-size" then none else
+      match splitCommas args with
+      | [b, e] =>
+        match stripWs b with
+        | [.fn n inner] => if lower n == "calc-size" then chain fuel (.fn n inner) (e :: es) else some (b, e :: es)
+        | _ => some (b, e :: es)
+      | _ => none
+    | _, _, _ => none
+  match chain fuel cv [] with
+  | none => none
+  | some (b, es) =>
+    let basis : Option (String × Bool) :=
+      match stripWs b with
+      | [.tok (.ident k)] =>
+        if lower k == "any" then some ("any", false)
+        else if (calcSizeKeywords allowAuto).contains (lower k) then some (lower k, true)
+        else none
+      | _ => (calcSizeSum ctx false b).map (·, true)
+    -- then out again: each calculation in the basis below it
+    es.foldl (fun acc e => acc.bind fun (bt, sz) =>
+      (calcSizeSum ctx sz e).map fun et => ("calc-size(" ++ bt ++ ", " ++ et ++ ")", true)) basis
+      |>.map (·.1)
+
 /-! ### Reading a numeric component value -/
 
 /-- What a grammar asks of a numeric value: the kind, whether a percentage may stand for
@@ -588,12 +844,21 @@ def NumReq.clamp (r : NumReq) (v : Rat) : Rat :=
   | some hi => ratMin hi v
   | none => v
 
+/-- The finite value an infinite computed value becomes (CSS Values 4 §10.12: "the largest
+or smallest value the UA supports"): 2^25 - 32, which layout keeps exactly. -/
+def hugeValue : Rat := 33554400
+
+/-- The canonical unit of a kind for computed values. -/
+def canonicalUnit : Kind → String
+  | .number => "" | .length => "px" | .percent => "%" | .angle => "deg" | .time => "s"
+  | .frequency => "hz" | .resolution => "dppx" | .flex => "fr"
+
 /-- Round to the nearest integer, halves towards +∞ (CSS Values 4 §10.11). -/
 def roundInt (v : Rat) : Rat := ((v + (1 : Rat) / 2).floor : Rat)
 
 /-- A numeric component value read against `req`. With `ctx = none` the canonical specified
 value; with a context the computed value. `none`: not a value of that type. -/
-def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
+def numericWith (ctx : Option Ctx) (deferPctMath : Bool) (req : NumReq) (cv : CV) : Option CV :=
   match cv with
   | .tok (.num v int) =>
     if req.kind == .number then
@@ -620,13 +885,30 @@ def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
       let fuel := Calc.depth 64 c + 4
       if Calc.type pctAs fuel c != some (Ty.ofKind req.kind) then none
       else
-        match Calc.simp ctx fuel c, ctx with
+        match Calc.simpWith ctx deferPctMath fuel c, ctx with
         | .val v u, some _ =>
           -- a computed value that is one value: in range, and an integer where one is wanted
           let v := req.clamp (if req.integer then roundInt v else v)
           some (.tok (if u == "" then .num v req.integer else if u == "%" then .pct v else .dim v false u))
-        | s, _ => some (.raw (Calc.text s))
+        | s, some _ =>
+          match extOf s with
+          | some (x, u) =>
+            -- an infinite or NaN computed value (§10.12): NaN is 0, an infinity the largest
+            -- or smallest value the engine keeps; an angle of either is 0
+            let v : Rat := match x with
+              | .fin v => v
+              | .nan => 0
+              | .pinf => if req.kind == .angle then 0 else hugeValue
+              | .ninf => if req.kind == .angle then 0 else -hugeValue
+            let u := if u == "%" && req.kind != .percent then canonicalUnit req.kind else u
+            let v := req.clamp (if req.integer then roundInt v else v)
+            some (.tok (if u == "" then .num v req.integer else if u == "%" then .pct v else .dim v false u))
+          | none => some (.raw (Calc.text s))
+        | s, none => some (.raw (Calc.text s))
   | _ => none
+
+def numeric (ctx : Option Ctx) (req : NumReq) (cv : CV) : Option CV :=
+  numericWith ctx false req cv
 
 /-! ### Tests and theorems -/
 
@@ -699,7 +981,10 @@ private def num : NumReq := { kind := .number }
 #guard spec { kind := .number } "sin(30deg)" == some "calc(0.5)"
 #guard spec { kind := .number } "cos(0)" == some "calc(1)"
 #guard spec { kind := .number } "tan(45deg)" == some "calc(1)"
-#guard spec { kind := .number } "tan(90deg)" == some "tan(90deg)"
+#guard spec { kind := .number } "tan(90deg)" == some "calc(infinity)"
+#guard spec { kind := .number } "sqrt(-1)" == some "calc(NaN)" && spec { kind := .number } "log(0)" == some "calc(-infinity)"
+#guard spec { kind := .number } "pow(0, -1)" == some "calc(infinity)" && spec { kind := .number } "round(4, 0)" == some "calc(NaN)"
+#guard spec { kind := .angle } "asin(2)" == some "calc(NaN * 1deg)"
 #guard spec { kind := .angle } "asin(1)" == some "calc(90deg)"
 #guard spec { kind := .angle } "acos(0.5)" == some "calc(60deg)"
 #guard spec { kind := .angle } "atan(1)" == some "calc(45deg)"
@@ -712,6 +997,57 @@ private def num : NumReq := { kind := .number }
 #guard spec { kind := .number } "exp(0)" == some "calc(1)"
 #guard spec { kind := .number } "calc(pi)" == some "calc(3.14159)"
 #guard spec len "clamp(none, 2px, 3em)" == some "min(2px, 3em)"
+-- calc-size() (calc-size-parsing.html)
+private def csz (allowAuto : Bool) (s : String) : Option String :=
+  match stripWs (CV.parse s) with
+  | [cv] => calcSizeOf none allowAuto 8 cv
+  | _ => none
+#guard csz true "calc-size(auto, size)" == some "calc-size(auto, size)"
+#guard csz false "calc-size(auto, size)" == none && csz true "calc-size(none, size)" == none
+#guard csz true "calc-size(min-content, size * 2)" == some "calc-size(min-content, 2 * size)"
+#guard csz false "calc-size(max-content, size / 2)" == some "calc-size(max-content, 0.5 * size)"
+#guard csz false "calc-size(fit-content, 30px + size / 2)" == some "calc-size(fit-content, 30px + (0.5 * size))"
+#guard csz true "calc-size(fit-content, 50% + size / 2)" == some "calc-size(fit-content, 50% + (0.5 * size))"
+#guard csz true "calc-size(any, 25em)" == some "calc-size(any, 25em)"
+#guard csz true "calc-size(any, 50px + 30%)" == some "calc-size(any, 30% + 50px)"
+#guard csz true "calc-size(calc-size(any, 30px), size)" == some "calc-size(calc-size(any, 30px), size)"
+#guard csz true "calc-size(any, size)" == none && csz true "calc-size(any, fit-content)" == none
+#guard csz true "calc-size(10px, sign(size) * size)" == some "calc-size(10px, sign(size) * size)"
+#guard csz true "calc-size(any, calc-size(10px, sign(size) * size))" == none
+#guard csz true "calc-size(calc-size(2in, 30px), 25em)" == some "calc-size(calc-size(192px, 30px), 25em)"
+#guard csz true "calc-size(calc-size(min-content, size), size)" == some "calc-size(calc-size(min-content, size), size)"
+#guard csz true "calc-size(30px)" == none && csz true "calc-size(any)" == none && csz true "calc-size(size)" == none
+#guard csz true "calc-size(calc-size(fit-content, size * 2))" == none
+#guard spec len "calc(size)" == none
+-- infinity and NaN (calc-infinity-nan-serialize-*.html, calc-infinity-nan-computed.html)
+#guard spec len "calc(1px * NaN)" == some "calc(NaN * 1px)"
+#guard spec len "calc(1in * NaN)" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * infinity / infinity)" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * 0 * infinity)" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * (infinity - infinity))" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * (-infinity + infinity))" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * infinity)" == some "calc(infinity * 1px)"
+#guard spec len "calc(1px * -infinity)" == some "calc(-infinity * 1px)"
+#guard spec lenPct "calc(1% * infinity)" == some "calc(infinity * 1%)"
+#guard spec len "calc(1px * iNFinIty)" == some "calc(infinity * 1px)"
+#guard spec len "calc(1px * (-infinity + -infinity))" == some "calc(-infinity * 1px)"
+#guard spec len "calc(1px * 1/infinity)" == some "calc(0px)"
+#guard spec len "calc(1px * -infinity * -infinity)" == some "calc(infinity * 1px)"
+#guard spec len "calc(1 * max(INFinity*3px, 0px))" == some "calc(infinity * 1px)"
+#guard spec len "calc(1 * min(inFInity*4px, 0px))" == some "calc(0px)"
+#guard spec len "calc(1 * max(nAn*2px, 0px))" == some "calc(NaN * 1px)"
+#guard spec len "calc(1 * clamp(-INFINITY*20px, 0px, infiniTY*10px))" == some "calc(0px)"
+#guard spec len "calc(1px * max(NaN, min(0,10)))" == some "calc(NaN * 1px)"
+#guard spec len "calc(1px * clamp(-inFinity, infinity, 10))" == some "calc(10px)"
+#guard spec { kind := .number } "calc(1 / 0)" == some "calc(infinity)"
+#guard spec { kind := .number } "calc(NaN)" == some "calc(NaN)"
+#guard comp len "calc(NaN * 1px)" == some "0px"
+#guard comp lenPct "calc(NaN * 1%)" == some "0px"
+#guard comp lenPct "min(50%, NaN * 1px)" == some "0px"
+#guard comp len "calc(infinity * 1px)" == some "33554400px"
+#guard comp len "calc(-infinity * 1px)" == some "-33554400px"
+#guard comp { kind := .time } "calc(1 / 0 * 1s)" == some "33554400s"
+#guard comp { kind := .angle } "calc(infinity * 1deg)" == some "0deg"
 #guard spec len "clamp(none, 33px, 30px)" == some "calc(30px)"
 #guard spec len "clamp(33px, 30px, none)" == some "calc(33px)"
 #guard spec len "calc(100px + (50px * sign(2em - 10px)))" == some "calc(100px + (50px * sign(2em - 10px)))"

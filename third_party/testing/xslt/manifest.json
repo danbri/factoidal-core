@@ -492,6 +492,7 @@
     "category": "select",
     "stylesheet": "files/select__select-5901.xsl",
     "source": "files/select__select-5901.src.xml",
+    "source_uri": "select-59.xml",
     "expected": "files/select__select-5901.expected.xml",
     "description": "Purpose: Test union operator using overlapping node-sets. Results should always be output in doc order regardless of order of select attribute."
   },

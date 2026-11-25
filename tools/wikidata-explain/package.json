@@ -1,0 +1,11 @@
+{
+  "name": "mlp-query-explainer",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic explanations of the MLP Wikidata queries (see SPEC.md)",
+  "scripts": {
+    "test": "node --test src/*.test.mjs",
+    "extract-comments": "node src/extract-comments.mjs ../mlp-all-queries.json data/comments.json"
+  }
+}

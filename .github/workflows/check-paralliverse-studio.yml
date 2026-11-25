@@ -1,0 +1,125 @@
+name: Paralliverse Studio proofs
+
+on:
+  push:
+    branches: [main, wip/paralliverse-studio]
+    paths:
+      - 'formal/lean4/**'
+      - 'docs/web/hub/paralliverse/worker.mjs'
+      - 'docs/web/hub/paralliverse/word-gpu.mjs'
+      - 'tests/hub/paralliverse-studio-device-loss.test.mjs'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-studio.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/**'
+      - 'docs/web/hub/paralliverse/worker.mjs'
+      - 'docs/web/hub/paralliverse/word-gpu.mjs'
+      - 'tests/hub/paralliverse-studio-device-loss.test.mjs'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-studio.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  transport:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test tests/hub/paralliverse-studio-device-loss.test.mjs
+  selector:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-selector
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPU
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.selectUnary?_eq_some_iff
+        L4Factoidal.Paralliverse.WordMapGPU.select?_eq_some_iff
+        L4Factoidal.Paralliverse.WordMapGPU.select_affine
+        L4Factoidal.Paralliverse.WordMapGPU.select_fused_affine
+  shader:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-shader
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPUSurface
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.parse_shader
+        L4Factoidal.Paralliverse.WordMapGPU.packet_layout
+        L4Factoidal.Paralliverse.WordMapGPU.eval_pass
+        L4Factoidal.Paralliverse.WordMapGPU.run_module_lane
+  frame:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-frame
+      timeout_minutes: 10
+      modules: L4Factoidal.Paralliverse.WordMapGPUFrame
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.lane_size
+        L4Factoidal.Paralliverse.WordMapGPU.foldLanes_frame
+  grid:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-grid
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.WordMapGPUGrid
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.word_grid_bounds
+        L4Factoidal.Paralliverse.WordMapGPU.word_canonical_valid
+        L4Factoidal.Paralliverse.WordMapGPU.selected_grid
+  chain:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-word-chain
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.WordMapGPUChain Harness.ParalliverseWordMapGPUModel
+      theorems: >-
+        L4Factoidal.Paralliverse.WordMapGPU.selected_two_grid
+        L4Factoidal.Paralliverse.WordMapGPU.affine_grid_eq_cpu
+  studio:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-studio'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: studio-frontend-lean
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.StudioProgram L4Factoidal.Paralliverse.Studio
+        L4Factoidal.Paralliverse.StudioReportTheorems
+        Wasm.ParalliverseHub Harness.ParalliverseStudioFixtures Harness.ParalliverseHubFixtures
+      runtime_fixture: Harness.ParalliverseStudioFixtures
+      generated_example: true
+      example_markdown: docs/20261119-paralliverse-studio-guide.md
+      theorems: >-
+        L4Factoidal.Paralliverse.Studio.runCPU_eq_source
+        L4Factoidal.Paralliverse.Studio.pipeline_affine
+        L4Factoidal.Paralliverse.Studio.three_maps_refused
+        L4Factoidal.Paralliverse.Studio.Script.command_count
+        L4Factoidal.Paralliverse.Studio.parseProgram_over_limit
+        L4Factoidal.Paralliverse.Studio.parseRequest_over_limit
+        L4Factoidal.Paralliverse.Studio.evaluate_correct
+        L4Factoidal.Paralliverse.Studio.report_source_fields
+        L4Factoidal.Paralliverse.Studio.report_selected_plan
+        L4Factoidal.Paralliverse.Studio.report_refused_plan
+        L4Factoidal.Paralliverse.Hub.studio_exports
+        L4Factoidal.Paralliverse.Hub.capability_exports
+        L4Factoidal.Paralliverse.Hub.shader_source_exports

@@ -24,6 +24,16 @@ theorem breaks_not_zero (cs : Array Char) (h : 0 < cs.size) : 0 ∉ breaks cs :=
     simp at this
   · omega
 
+/-- Kind: conservativity. Says: strict line breaking is the untailored algorithm: a character
+is resolved by LB1 alone. -/
+theorem resolveIn_strict (c : UInt32) (raw gc : UInt8) : resolveIn .strict c raw gc = resolve raw gc := by
+  simp [resolveIn]
+
+/-- Kind: tailoring. Says: under `normal` or `loose` a CJ character is ID (CSS Text 3 §5.3). -/
+theorem resolveIn_cj (mode : Mode) (h : mode ≠ .strict) (c : UInt32) (gc : UInt8) :
+    resolveIn mode c LineBreakData.cCJ gc = LineBreakData.cID := by
+  simp [resolveIn, h]
+
 #print axioms breaks_contains_end
 #print axioms breaks_not_zero
 

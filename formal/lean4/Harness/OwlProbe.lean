@@ -186,6 +186,8 @@ import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.OwlXml
 import L4Factoidal.OWL.RdfBased.Clash
+import L4Factoidal.OWL.Profiles
+import L4Factoidal.OWL.StructureFromRdf
 import L4Factoidal.OWL.RdfBased.Balanced
 import L4Factoidal.RDF.Isomorphism
 import L4Factoidal.Syntax.RdfXml
@@ -2737,6 +2739,158 @@ tests/local-overrides/ and close {issue}"
     IO.println s!"  FAIL-GROUP {name} species: {r.fails.length} - {String.intercalate ", " r.fails}"
   return r
 
+/-! ## Profile identification (`--profile-id`)
+
+OWL 2 Conformance section 3.2.5 (Profile Identification Tests) and the
+`test:profile` annotation: a case typed `ProfileIdentificationTest` is in
+OWL 2 EL, QL or RL exactly when it carries `test:profile` for that
+profile. The verdict of the built-in engine for one profile:
+
+1. the case's documents are an OWL 2 DL ontology (`SyntaxDL`, the
+   verdict `--species` scores), because every profile is a subset of
+   OWL 2 DL; and
+2. the axioms of the premise with its imports and of the conclusion
+   (`Struct.FromRdf.ontologyOfGraph`, the reverse mapping of OWL 2
+   Mapping to RDF Graphs section 3) are in the profile's grammar
+   (`OWL.Profiles.inEL`, `inQL`, `inRL`; `Profiles.inRL_iff` proves the RL
+   checker accepts exactly the RL grammar).
+
+A graph the reverse mapping cannot read is judged from the case's
+functional-style documents when it has them (`New-Feature-Rational-002`
+and `-003`: the RDF/XML premise ends a list with the RDF namespace IRI
+where `rdf:nil` is meant) and is otherwise `undecided`, never a verdict.
+For a case with a functional-style premise the same three checkers are
+also run on the functional-style documents as parsed (no RDF graph in
+between), and a difference between the two readings is printed as
+`PROFILE-SYNTAX-DISAGREE`: that is the test of the reverse mapping. -/
+
+def profileNames : List String := ["EL", "QL", "RL"]
+
+/-- The three verdicts over an ontology, in the order of
+`profileNames`, each with the axiom kinds its checker rejects. -/
+def profileVerdictsOf (o : L4Factoidal.OWL.Struct.Ontology) : List (Bool × List String) :=
+  open L4Factoidal.OWL.Profiles in
+  [(inEL o, rejectedAxioms elAxiom o ++
+      (if elRangeRestrictionOk o.axioms then [] else ["range restriction with a property chain (2.2.6)"])),
+   (inQL o, rejectedAxioms qlAxiom o),
+   (inRL o, rejectedAxioms rlAxiom o)]
+
+/-- `.ok` = the three verdicts with reasons; `.error` = undecided. -/
+def judgeProfiles (cat : Catalog) (c : Case) : Except String (List (Bool × List String)) :=
+  match speciesDocs cat c with
+  | .error e => .error e
+  | .ok d =>
+      let viols :=
+        if d.functional then
+          L4Factoidal.OWL.SyntaxDL.speciesViolationsFunctional d.pDoc d.hasConclusion d.uMerged
+        else
+          L4Factoidal.OWL.SyntaxDL.speciesViolations d.pDoc d.pMerged d.hasConclusion d.cDoc
+            d.uMerged (some d.available)
+      if !viols.isEmpty then
+        .ok (profileNames.map fun _ => (false, ["not an OWL 2 DL ontology: " ++ viols.headD ""]))
+      else
+        match L4Factoidal.OWL.Struct.FromRdf.ontologyOfGraph d.uMerged with
+        | .ok o => .ok (profileVerdictsOf o)
+        | .error e =>
+            -- The RDF graph cannot be read as axioms. A case that also has
+            -- functional-style documents is judged from those (they are a
+            -- normative syntax of the same ontology); otherwise undecided.
+            match c.fsPremiseText.bind L4Factoidal.OWL.FS.parseOntology with
+            | none => .error s!"reverse mapping: {e}"
+            | some p =>
+                match (c.fsConclusionText <|> c.fsNonConclusionText) with
+                | none => .ok (profileVerdictsOf p)
+                | some t =>
+                    match L4Factoidal.OWL.FS.parseOntology t with
+                    | none => .error s!"reverse mapping: {e}"
+                    | some q => .ok (profileVerdictsOf { p with axioms := p.axioms ++ q.axioms })
+
+/-- The verdicts from the functional-style documents as parsed. `none`
+when the case has no functional-style premise or it is outside the
+reader's grammar. -/
+def judgeProfilesFs (c : Case) : Option (List Bool) :=
+  match c.fsPremiseText.bind L4Factoidal.OWL.FS.parseOntology with
+  | none => none
+  | some p =>
+      let cTxt := c.fsConclusionText <|> c.fsNonConclusionText
+      match cTxt with
+      | none => some ((profileVerdictsOf p).map (·.1))
+      | some t =>
+          match L4Factoidal.OWL.FS.parseOntology t with
+          | none => none
+          | some q => some ((profileVerdictsOf { p with axioms := p.axioms ++ q.axioms }).map (·.1))
+
+structure ProfScore where
+  pass : Nat := 0
+  fail : Nat := 0
+  undecided : Nat := 0
+
+def ProfScore.line (label : String) (s : ProfScore) : String :=
+  s!"{label}: {s.pass} pass, {s.fail} fail, {s.undecided} undecided \
+(out of {s.pass + s.fail + s.undecided})"
+
+def runProfileId (name : String) (cat : Catalog) (verbose : Bool) : IO Nat := do
+  let mut scores : List ProfScore := profileNames.map fun _ => {}
+  let mut scoresIn : List ProfScore := profileNames.map fun _ => {}
+  let mut scoresOut : List ProfScore := profileNames.map fun _ => {}
+  let mut fsSame := 0
+  let mut fsDiff := 0
+  let mut bad := 0
+  for c in cat.cases do
+    if c.types.contains "ProfileIdentificationTest" then
+      let r := judgeProfiles cat c
+      let mut k := 0
+      for pn in profileNames do
+        let expect := c.profiles.contains pn
+        let label := s!"{c.id} [profile {pn}]"
+        let bump (l : List ProfScore) (f : ProfScore → ProfScore) (i : Nat) : List ProfScore :=
+          l.mapIdx fun j s => if j == i then f s else s
+        let split (f : ProfScore → ProfScore) (i : Nat) (sIn sOut : List ProfScore) :=
+          if expect then (bump sIn f i, sOut) else (sIn, bump sOut f i)
+        match r with
+        | .error e =>
+            IO.println s!"UNDECIDED {label}: {e}"
+            let f := fun (s : ProfScore) => { s with undecided := s.undecided + 1 }
+            scores := bump scores f k
+            (scoresIn, scoresOut) := split f k scoresIn scoresOut
+            bad := bad + 1
+        | .ok vs =>
+            let (v, why) := vs.getD k (false, [])
+            let say := fun (b : Bool) => if b then "in" else "out"
+            if v == expect then
+              if verbose then IO.println s!"PASS {label}: {say v}"
+              let f := fun (s : ProfScore) => { s with pass := s.pass + 1 }
+              scores := bump scores f k
+              (scoresIn, scoresOut) := split f k scoresIn scoresOut
+            else
+              IO.println s!"FAIL {label}: verdict {say v}, annotation {say expect}\
+{if why.isEmpty then "" else "; rejected: " ++ String.intercalate ", " why}"
+              let f := fun (s : ProfScore) => { s with fail := s.fail + 1 }
+              scores := bump scores f k
+              (scoresIn, scoresOut) := split f k scoresIn scoresOut
+              bad := bad + 1
+        k := k + 1
+      match r, judgeProfilesFs c with
+      | .ok vs, some fs =>
+          if vs.map (·.1) == fs then fsSame := fsSame + 1
+          else
+            -- A case that is not OWL 2 DL has no profile whatever its axioms.
+            if vs.all (fun v => v.2.any (·.startsWith "not an OWL 2 DL")) then fsSame := fsSame + 1
+            else
+              fsDiff := fsDiff + 1
+              IO.println s!"PROFILE-SYNTAX-DISAGREE {c.id}: RDF graph {vs.map (·.1)}, \
+functional-style documents {fs} (EL, QL, RL)"
+      | _, _ => pure ()
+  let mut k := 0
+  for pn in profileNames do
+    IO.println (ProfScore.line s!"{name} ProfileIdentificationTest {pn} [annotated in]" (scoresIn.getD k {}))
+    IO.println (ProfScore.line s!"{name} ProfileIdentificationTest {pn} [annotated out]" (scoresOut.getD k {}))
+    IO.println (ProfScore.line s!"{name} ProfileIdentificationTest {pn}" (scores.getD k {}))
+    k := k + 1
+  IO.println s!"{name} profile verdicts, RDF graph against functional-style documents: \
+{fsSame} same, {fsDiff} different"
+  return bad + fsDiff
+
 /-! ## Census (kept from the first version) -/
 
 def countTrue (f : Case → Bool) (cs : List Case) : Nat := (cs.filter f).length
@@ -2823,6 +2977,9 @@ structure Opts where
   /-- `--species`: score the `test:species` facet (OWL 2 DL against
   FULL) instead of entailment and consistency. -/
   species : Bool := false
+  /-- `--profile-id`: score ProfileIdentificationTest for OWL 2 EL, QL
+  and RL (`OWL.Profiles`). -/
+  profileId : Bool := false
   /-- `--fs-input`: judge the cases that have a functional-style premise
   from their functional-style documents, and again from their RDF/XML
   documents, and report both. -/
@@ -2843,6 +3000,7 @@ def parseArgs : List String → Opts → Opts
   | "--profile" :: rest, o => parseArgs rest { o with profile := true }
   | "--trace" :: rest, o => parseArgs rest { o with trace := true }
   | "--species" :: rest, o => parseArgs rest { o with species := true }
+  | "--profile-id" :: rest, o => parseArgs rest { o with profileId := true }
   | "--syntax" :: rest, o => parseArgs rest { o with species := true }
   | "--fs-input" :: rest, o => parseArgs rest { o with fsInput := true }
   | "--rdf-based" :: rest, o => parseArgs rest { o with rdfBased := true }
@@ -3421,6 +3579,24 @@ def rdfBasedMain (o : Opts) : IO UInt32 := do
 /-- `--species`: read each catalog, score the species facet of every
 case that carries one. The default catalog is `all.rdf`, the union of
 the others. -/
+def profileIdMain (o : Opts) : IO UInt32 := do
+  let dir : System.FilePath := o.dir
+  let names := if o.only.isEmpty then ["all.rdf"] else o.only
+  let mut bad := 0
+  for name in names do
+    let p := dir / name
+    if !(← p.pathExists) then
+      IO.println s!"  MISSING {name}"
+      bad := bad + 1
+    else
+      match ← readCatalog p with
+      | none => bad := bad + 1
+      | some cat0 =>
+        let cat := if o.cases.isEmpty then cat0
+          else { cat0 with cases := cat0.cases.filter (fun c => o.cases.contains c.id) }
+        bad := bad + (← runProfileId name cat o.verbose)
+  return (if bad == 0 then 0 else 1)
+
 def speciesMain (o : Opts) : IO UInt32 := do
   let dir : System.FilePath := o.dir
   let names := if o.only.isEmpty then ["all.rdf"] else o.only
@@ -3578,6 +3754,7 @@ unrelated triple absent = {!unrelatedAbsent}"
   if o.tboxCensus then return (← censusMain o)
   if o.profile then return (← profileMain o)
   if o.trace then return (← traceMain o)
+  if o.profileId then return (← profileIdMain o)
   if o.species then return (← speciesMain o)
   if o.fsInput then return (← fsInputMain o)
   if o.rdfBased then return (← rdfBasedMain o)

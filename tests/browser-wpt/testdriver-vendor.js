@@ -71,6 +71,14 @@
   window.test_driver_internal.get_computed_label = function (element) {
     return attempt(() => request({ computed: 'label', element: refOf(element)[ELEMENT] }));
   };
+  // The accessibility properties of an element's node in the engine's accessibility tree, and of
+  // a node by its accessibility ID (tentative WebDriver commands): the engine answers JSON text.
+  window.test_driver_internal.get_accessibility_properties_for_element = function (element) {
+    return attempt(() => request({ computed: 'properties', element: refOf(element)[ELEMENT] })).then(JSON.parse);
+  };
+  window.test_driver_internal.get_accessibility_properties_for_accessibility_node = function (accId) {
+    return attempt(() => request({ computed: 'nodeProperties', element: String(accId) })).then(JSON.parse);
+  };
   // "Perform Actions" (WebDriver §15.7): an element origin is named by its path.
   window.test_driver_internal.action_sequence = function (actions) {
     return attempt(() => request({ actions: actions.map(source => Object.assign({}, source, {

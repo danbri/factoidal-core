@@ -11,6 +11,16 @@ Everything builds with `lake build` on the pinned toolchain
 `L4Factoidal/Tests.lean` run at build time, so a green build is also
 a green test run.
 
+## XML RSA-OAEP assumption report, 2026-11-19
+
+`XML.Enc.nativePrims` supplies HACL* for the OAEP label hash and MGF1 on
+both native and Wasm. Internal code 5 of the existing `WebHacl.hashRaw`
+extern calls the vendored `Hacl_Hash_SHA2_hash_224`. The Lean wrapper checks
+the input bound and 28-byte result. Digest values depend on HACL*, the C
+shim and its ABI. The EME agreement theorems take digest agreement as a
+hypothesis. The compiled timing of the OAEP construction is unproved.
+[Source, proof statements and test commands](../../docs/20261119-xmlenc-oaep-hacl.md).
+
 ## Module correspondence
 
 | Lean 4 | Ports (F\*) | Notes |

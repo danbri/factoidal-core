@@ -1,0 +1,48 @@
+name: Paralliverse integer BGP algebra
+
+on:
+  push:
+    branches: [main, feat/674-gpu-bgp-core]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/SelectCompact.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/IntegerBgp.lean'
+      - '.github/workflows/check-paralliverse-integer-bgp.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/SelectCompact.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/IntegerBgp.lean'
+      - '.github/workflows/check-paralliverse-integer-bgp.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  integer-bgp:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile typed integer BGP and actual CPU task evaluator
+        working-directory: formal/lean4
+        run: timeout --kill-after=10s 300s lake build L4Factoidal.Paralliverse.IntegerBgp
+      - name: Strict source and axiom audit
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          timeout --kill-after=10s 180s lake env lean -j1 -s16384 -M2048 -DwarningAsError=true L4Factoidal/Paralliverse/SelectCompact.lean 2>&1 | tee /tmp/paralliverse-select-compact.log
+          timeout --kill-after=10s 180s lake env lean -j1 -s16384 -M2048 -DwarningAsError=true \
+            L4Factoidal/Paralliverse/IntegerBgp.lean 2>&1 | tee /tmp/paralliverse-integer-bgp.log
+          ! grep -E 'sorryAx|declaration uses sorry|error:' /tmp/paralliverse-select-compact.log /tmp/paralliverse-integer-bgp.log

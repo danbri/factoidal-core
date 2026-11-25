@@ -1,0 +1,137 @@
+name: Paralliverse WebGPU execution check
+
+on:
+  push:
+    branches: [main, wip/604-static-pack-spec]
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseDeviceFixtures.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'docs/web/hub/paralliverse/gpu.mjs'
+      - 'tools/paralliverse-device-smoke.mjs'
+      - '.github/workflows/check-paralliverse-device.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseDeviceFixtures.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'docs/web/hub/paralliverse/gpu.mjs'
+      - 'tools/paralliverse-device-smoke.mjs'
+      - '.github/workflows/check-paralliverse-device.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  webgpu:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.head_ref != 'wip/604-static-pack-spec' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+
+      - name: Record the exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/paralliverse-device-evidence"
+          mkdir -p "$evidence"
+          git rev-parse HEAD | tee "$evidence/commit.txt"
+          test "$(cat "$evidence/commit.txt")" = "$SOURCE_COMMIT"
+          uname -sm | tee "$evidence/platform.txt"
+          sha256sum formal/lean4/lean-toolchain \
+            formal/lean4/L4Factoidal/Paralliverse/{StaticPack,PackWire,WGSL/ShaderText}.lean \
+            formal/lean4/Harness/ParalliverseDeviceFixtures.lean \
+            docs/web/hub/paralliverse/gpu.mjs tools/paralliverse-device-smoke.mjs \
+            .github/workflows/check-paralliverse-device.yml | tee "$evidence/source.sha256"
+
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+
+      - name: Emit fixtures from fresh Lean modules
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          export EVIDENCE="$RUNNER_TEMP/paralliverse-device-evidence"
+          export LEAN_PATH
+          LEAN_PATH="$(mktemp -d "$RUNNER_TEMP/paralliverse-oleans.XXXXXX")"
+          (
+            ulimit -v 4194304
+            timeout --kill-after=10s 180s bash -euo pipefail <<'BASH'
+          lean --version | tee "$EVIDENCE/lean-version.txt"
+          lean_args=(-j1 -s16384 -M2048 -DwarningAsError=true)
+          modules=(L4Factoidal/Paralliverse/StaticPack.lean
+                   L4Factoidal/Paralliverse/PackWire.lean
+                   L4Factoidal/Paralliverse/WGSL/ShaderText.lean)
+          for module in "${modules[@]}"; do
+            olean="$LEAN_PATH/${module%.lean}.olean"
+            mkdir -p "$(dirname "$olean")"
+            echo "Compiling $module"
+            lean "${lean_args[@]}" -o "$olean" "$module"
+            test -s "$olean"
+          done
+          if ! lean "${lean_args[@]}" --run Harness/ParalliverseDeviceFixtures.lean > "$EVIDENCE/cpu.jsonl"; then
+            tail -c 4000 "$EVIDENCE/cpu.jsonl"
+            exit 1
+          fi
+          BASH
+          ) 2>&1 | tee "$EVIDENCE/lean.log"
+
+      - name: Install Mesa software Vulkan
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/paralliverse-device-evidence"
+          deno --version | tee "$evidence/deno-version.txt"
+          {
+            sudo apt-get update && sudo apt-get install -y libvulkan1 mesa-vulkan-drivers
+          } 2>&1 | tee "$evidence/vulkan-install.log"
+          dpkg-query -W libvulkan1 mesa-vulkan-drivers | tee "$evidence/vulkan-versions.txt"
+
+      - name: Execute Hub WebGPU passes and compare native Lean bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/paralliverse-device-evidence"
+          driver="$(find /usr/share/vulkan/icd.d -name 'lvp_icd*.json' -print -quit)"
+          test -n "$driver"
+          cp "$driver" "$evidence/vulkan-icd.json"
+          export DENO_WEBGPU_BACKEND=vulkan VK_DRIVER_FILES="$driver"
+          export XDG_RUNTIME_DIR
+          XDG_RUNTIME_DIR="$(mktemp -d "$RUNNER_TEMP/paralliverse-xdg.XXXXXX")"
+          trap 'cat "$evidence/device.log"' EXIT
+          timeout --kill-after=10s 120s deno run --no-config --no-npm --unstable-webgpu \
+            --allow-read="$evidence/cpu.jsonl" tools/paralliverse-device-smoke.mjs \
+            "$evidence/cpu.jsonl" "$SOURCE_COMMIT" 2>"$evidence/device.log" | tee "$evidence/device.json"
+
+      - name: Preserve source, fixture and device records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paralliverse-device-evidence
+          path: ${{ runner.temp }}/paralliverse-device-evidence/
+          if-no-files-found: warn
+          retention-days: 30

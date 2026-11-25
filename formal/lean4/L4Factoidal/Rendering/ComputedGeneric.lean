@@ -986,9 +986,24 @@ def insetBase (v : View) (id : Nat) : Option (Float × Float) :=
     | none => some viewport
   else none
 
-/-- An inset (`top`, `right`, `bottom`, `left`) of a positioned box that is a percentage, in
-pixels of its containing block (CSSOM §9: the resolved value of an inset is the used value
-when the box is positioned); any other value as it is. -/
+/-- The arguments of a computed `calc()` of a percentage and a length in px, as the fraction
+and the px: `P% + Lpx`, `P% - Lpx`, and the same with the length first (the computed form of
+a mixed length-percentage, CSS Values 4 §10.10.1); `none` for anything else. -/
+def calcPctPx (args : List CssValues.CV) : Option (Float × Float) :=
+  let f := fun (x : Rat) => Float.ofInt x.num / Float.ofNat x.den
+  let sign := fun (c : Char) (x : Float) => if c == '-' then -x else x
+  let op := fun (c : Char) => c == '+' || c == '-'
+  match CssValues.stripWs args with
+  | [.tok (.pct p), .tok (.delim c), .tok (.dim l _ u)] =>
+    if op c && CssValues.lower u == "px" then some (f p / 100, sign c (f l)) else none
+  | [.tok (.dim l _ u), .tok (.delim c), .tok (.pct p)] =>
+    if op c && CssValues.lower u == "px" then some (sign c (f p) / 100, f l) else none
+  | _ => none
+
+/-- An inset (`top`, `right`, `bottom`, `left`) of a positioned box that is a percentage, or a
+`calc()` of a percentage and a length, in pixels of its containing block (CSSOM §9: the
+resolved value of an inset is the used value when the box is positioned); any other value
+as it is. -/
 def insetPx (v : View) (id : Nat) (name value : String) : String :=
   match CssValues.stripWs (CssValues.CV.parse value) with
   | [.tok (.pct x)] =>
@@ -997,19 +1012,60 @@ def insetPx (v : View) (id : Nat) (name value : String) : String :=
       let base := if name == "top" || name == "bottom" then h else w
       ComputedValues.px (Float.ofInt x.num / Float.ofNat x.den / 100 * base)
     | none => value
+  | [.fn n args] =>
+    match (if CssValues.lower n == "calc" then calcPctPx args else none), insetBase v id with
+    | some (p, l), some (w, h) =>
+      let base := if name == "top" || name == "bottom" then h else w
+      ComputedValues.px (p * base + l)
+    | _, _ => value
   | _ => value
 
 /-- A value that is no percentage is left as it is. -/
 theorem insetPx_auto (v : View) (id : Nat) (name : String) : insetPx v id name "auto" = "auto" := by
   rfl
 
+/-- Kind: frame. Says: an inset of a box with no containing block to resolve against (not
+positioned, or no boxes from the host) is its computed value, percentage or `calc()` alike. -/
+theorem insetPx_noBase (v : View) (id : Nat) (name value : String) (h : insetBase v id = none) :
+    insetPx v id name value = value := by
+  unfold insetPx
+  split <;> simp [h]
+
+/-- The styled viewport edge, in CSS pixels of the same viewport that layout uses. A
+deferred edge is the cascade's winner even when it came from a logical shorthand or
+a custom property. -/
+def viewportEdgeValue (c : CSS.Computed) (width height : Float) (name : String) : Option String :=
+  if c.pos.viewportMargins.isEmpty && c.pos.viewportPadding.isEmpty then none
+  else do
+    let (edges, side) ← match name with
+      | "margin-top" => some (c.pos.viewportMargins, 0)
+      | "margin-right" => some (c.pos.viewportMargins, 1)
+      | "margin-bottom" => some (c.pos.viewportMargins, 2)
+      | "margin-left" => some (c.pos.viewportMargins, 3)
+      | "padding-top" => some (c.pos.viewportPadding, 0)
+      | "padding-right" => some (c.pos.viewportPadding, 1)
+      | "padding-bottom" => some (c.pos.viewportPadding, 2)
+      | "padding-left" => some (c.pos.viewportPadding, 3)
+      | _ => none
+    let (_, edge) ← edges.find? (fun (i, _) => i == side)
+    return ComputedValues.px (edge.pixels width height)
+
+theorem viewportEdgeValue_paddingTop (c : CSS.Computed) (w h fraction : Float) :
+    viewportEdgeValue {c with pos := {c.pos with viewportPadding := [(0, .height fraction)]}}
+      w h "padding-top" = some (ComputedValues.px (fraction * h)) := by
+  simp [viewportEdgeValue, CSS.ViewportEdge.pixels]
+
+#print axioms viewportEdgeValue_paddingTop
+
 /-- The resolved value of a longhand (CSSOM §9.1): for a property of the layout profile, the
 profile's answer, or the declaration's computed value where that is the answer
 (`declaredWins`, `absoluteWins`); for any other, the computed value by the property table. -/
 def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
   let name := physicalNameOf v id name
+  let c := v.styles[id]?.getD {}
   let also := alsoOf v id name
-  if name == "line-height" then
+  if let some edge := viewportEdgeValue c (Float.ofNat v.viewportW) (Float.ofNat v.viewportH) name then edge
+  else if name == "line-height" then
     -- CSSOM §9: the resolved line height is the used one, `normal` or a length; the
     -- profile keeps a number as a factor it shows as `normal`, so the table answers
     let c := computedOf v id name
@@ -1017,7 +1073,7 @@ def resolvedLonghand (v : View) (id : Nat) (name : String) : String :=
     | [.tok (.num x _)] => CssValues.fmtRat (x * (numCtx v id).fontSize) ++ "px"
     | _ => c
   else
-  match (ComputedValues.values (v.styles[id]?.getD {})).lookup name with
+  match (ComputedValues.values c).lookup name with
   | some value =>
     -- with flow-relative declarations in play, a border side (the profile has one border
     -- for all sides) and any side or size in a vertical writing mode (the profile lays out
@@ -1223,6 +1279,13 @@ private def resolvedBoxed (html css prop : String) : String :=
 #guard resolvedBoxed "<div style='position: relative'><div><div id=t></div></div></div>" "#t { position: absolute; top: 100% }" "top" == "100px"
 #guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: fixed; left: 10% }" "left" == "80px"
 #guard resolvedBoxed "<div><div id=t></div></div>" "#t { top: 10% }" "top" == "10%"
+-- a calc() of a percentage and a length (getComputedStyle-insets-*.html)
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: relative; top: calc(10% - 1px) }" "top" == "9px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: relative; top: calc(10% - 1px) }" "bottom" == "-9px"
+#guard resolvedBoxed "<div style='position: relative'><div id=t></div></div>" "#t { position: absolute; left: calc(1px + 50%) }" "left" == "101px"
+-- the opposite inset of an absolutely positioned box: 100 - 12 - 100 (every box 200 × 100 here)
+#guard resolvedBoxed "<div style='position: relative'><div id=t></div></div>" "#t { position: absolute; top: calc(10% + 2px) }" "bottom" == "-12px"
+#guard resolvedBoxed "<div><div id=t></div></div>" "#t { top: calc(10% - 1px) }" "top" == "calc(10% - 1px)"
 -- the box itself is 200 × 100 here too: bottom = 100 - 1 - 100; left = 800 - 4 - (200 + 1 + 1)
 #guard resolvedBoxed "<div style='position: relative'><div id=t></div></div>" "#t { position: absolute; top: 1px }" "bottom" == "-1px"
 #guard resolvedBoxed "<div><div id=t></div></div>" "#t { position: absolute; right: 4px; margin: 1px }" "left" == "594px"

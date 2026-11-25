@@ -76,6 +76,8 @@ structure ImageRecord where
   map : Transform
   id : Nat
   bitmap : Bitmap
+  repeatX : Bool := false
+  repeatY : Bool := false
   deriving Repr
 inductive Paint where
   | none | solid (color : Color) | current
@@ -180,11 +182,13 @@ def Gradient.lower (g : Gradient) (bounds : Float × Float × Float × Float) : 
 
 def imageRecordHeaderWords : Nat := 9
 /-- Wire form: the map's x row and the width, its y row and the height, then the
-word offset of the pixels from the start of the paint table. Each pixel is one
-word, red in the low byte. The shader reads this layout. -/
+word offset of the pixels from the start of the paint table. A negative dimension
+marks a repeating axis. Each pixel is one word, red in the low byte. -/
 def ImageRecord.words (g : ImageRecord) (pixels : Nat) : List Float :=
-  [g.map.a,g.map.c,g.map.e,Float.ofNat g.bitmap.width,
-   g.map.b,g.map.d,g.map.f,Float.ofNat g.bitmap.height,Float.ofNat pixels]
+  let width := Float.ofNat g.bitmap.width
+  let height := Float.ofNat g.bitmap.height
+  [g.map.a,g.map.c,g.map.e,if g.repeatX then -width else width,
+   g.map.b,g.map.d,g.map.f,if g.repeatY then -height else height,Float.ofNat pixels]
 theorem ImageRecord.words_length (g : ImageRecord) (pixels : Nat) :
     (g.words pixels).length = imageRecordHeaderWords := rfl
 
@@ -204,11 +208,35 @@ private def Bitmap.texel (b : Bitmap) (x y : Nat) : Float × Float × Float × F
    Float.ofNat (b.rgba.get! (i+2)).toNat/255*a,a)
 private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Float × Float × Float × Float :=
   (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
+/-- Select the position within one tile before sampling texels. Subtracting a
+floored multiple also handles points before the origin. -/
+private def tileCoordinate (repeats : Bool) (size : Nat) (p : Float) : Float :=
+  if repeats then
+    let period := Float.ofNat size
+    p - (p/period).floor*period
+  else p
+
+#guard tileCoordinate true 69 (-0.5) == 68.5
+#guard tileCoordinate true 69 69.5 == 0.5
+#guard tileCoordinate false 69 69.5 == 69.5
+
 /-- Colour and opacity at a point of the primitive's local frame, as `[r,g,b,a]`:
-bilinear on premultiplied pixels, and beyond the edge the edge pixels. The shader
+bilinear on premultiplied pixels with edge sampling within each tile. The shader
 states the same steps in `imageSample`. -/
 def ImageRecord.colorAt (g : ImageRecord) (x y : Float) : List Float :=
   let (u,v) := Math.Affine2.applyPoint .float g.map x y
+  let u := tileCoordinate g.repeatX g.bitmap.width u
+  let v := tileCoordinate g.repeatY g.bitmap.height v
+  -- An image drawn at its own size on whole pixels (unit scale, no rotation, a whole-pixel
+  -- offset) shows its pixels as they are, as browsers draw it: each sample takes the pixel it
+  -- falls in. Before 2026-11-22 bilinear sampling at the raster's sub-pixel samples mixed each
+  -- pixel with its neighbours (a 2 by 2 checker drew 78% of each colour).
+  if g.map.a == 1 && g.map.b == 0 && g.map.c == 0 && g.map.d == 1 &&
+      g.map.e == g.map.e.round && g.map.f == g.map.f.round then
+    let b := g.bitmap
+    let (r,gr,bl,a) := b.texel (edgeIndex u.floor b.width) (edgeIndex v.floor b.height)
+    if a <= 0 then [0,0,0,0] else [r/a,gr/a,bl/a,a]
+  else
   let fx := u-0.5
   let fy := v-0.5
   let x0 := fx.floor
@@ -511,3 +539,255 @@ theorem Node.lowerList_append (parent : Transform) (groups : List (Option String
   | cons n ns ih => simp [Node.lowerList, ih, List.append_assoc]
 
 end L4Factoidal.Rendering
+
+namespace L4Factoidal.Rendering.Corners
+
+/-- Quantities in nonnegative layout units. -/
+structure Radius where
+  x : Nat := 0
+  y : Nat := 0
+  deriving Inhabited, Repr, BEq
+
+structure Radii where
+  topLeft : Radius := {}
+  topRight : Radius := {}
+  bottomRight : Radius := {}
+  bottomLeft : Radius := {}
+  deriving Inhabited, Repr, BEq
+
+structure Scale where
+  num : Nat
+  den : Nat
+  positive : 0 < den
+
+def Scale.atMost (a b : Scale) : Prop :=
+  a.num * b.den ≤ b.num * a.den
+
+def Scale.min (a b : Scale) : Scale :=
+  if a.num * b.den ≤ b.num * a.den then a else b
+
+theorem Scale.refl (s : Scale) : s.atMost s := Nat.le_refl _
+
+theorem Scale.min_le_left (a b : Scale) : (a.min b).atMost a := by
+  unfold Scale.min
+  split
+  · exact a.refl
+  · rename_i h
+    exact Nat.le_of_lt (Nat.lt_of_not_ge h)
+
+theorem Scale.min_le_right (a b : Scale) : (a.min b).atMost b := by
+  unfold Scale.min
+  split
+  · assumption
+  · exact b.refl
+
+theorem Scale.trans {a b c : Scale} (ab : a.atMost b) (bc : b.atMost c) :
+    a.atMost c := by
+  unfold Scale.atMost at *
+  apply Nat.le_of_mul_le_mul_right (c := b.den) _ b.positive
+  calc
+    a.num * c.den * b.den = (a.num * b.den) * c.den := by ac_rfl
+    _ ≤ (b.num * a.den) * c.den := Nat.mul_le_mul_right _ ab
+    _ = (b.num * c.den) * a.den := by ac_rfl
+    _ ≤ (c.num * b.den) * a.den := Nat.mul_le_mul_right _ bc
+    _ = c.num * a.den * b.den := by ac_rfl
+
+def Scale.fitSide (limit total : Nat) : Scale :=
+  if h : total ≤ limit then ⟨1,1,by decide⟩ else ⟨limit,total,by omega⟩
+
+def Scale.fits (s : Scale) (limit total : Nat) : Prop :=
+  s.num * total ≤ s.den * limit
+
+theorem Scale.fitSide_fits (limit total : Nat) : (fitSide limit total).fits limit total := by
+  unfold fitSide fits
+  split
+  · rename_i h
+    simpa using h
+  · exact Nat.le_of_eq (Nat.mul_comm _ _)
+
+theorem Scale.fits_of_atMost {a b : Scale} {limit total : Nat}
+    (h : a.atMost b) (fits : b.fits limit total) : a.fits limit total := by
+  unfold Scale.atMost Scale.fits at *
+  apply Nat.le_of_mul_le_mul_right (c := b.den) _ b.positive
+  calc
+    a.num * total * b.den = (a.num * b.den) * total := by ac_rfl
+    _ ≤ (b.num * a.den) * total := Nat.mul_le_mul_right _ h
+    _ = (b.num * total) * a.den := by ac_rfl
+    _ ≤ (b.den * limit) * a.den := Nat.mul_le_mul_right _ fits
+    _ = a.den * limit * b.den := by ac_rfl
+
+def Scale.component (s : Scale) (n : Nat) : Nat :=
+  s.num * n / s.den
+
+theorem Scale.pair_fits {s : Scale} {limit a b : Nat} (fit : s.fits limit (a+b)) :
+    s.component a + s.component b ≤ limit := by
+  unfold Scale.fits at fit
+  unfold Scale.component
+  apply Nat.le_of_mul_le_mul_right (c := s.den) _ s.positive
+  calc
+    (s.num*a/s.den + s.num*b/s.den)*s.den =
+        s.num*a/s.den*s.den + s.num*b/s.den*s.den := Nat.add_mul _ _ _
+    _ ≤ s.num*a+s.num*b := Nat.add_le_add (Nat.div_mul_le_self _ _) (Nat.div_mul_le_self _ _)
+    _ = s.num*(a+b) := (Nat.mul_add _ _ _).symm
+    _ ≤ s.den*limit := fit
+    _ = limit*s.den := Nat.mul_comm _ _
+
+/-- CSS Backgrounds 3 §4.5. Take the least usable scale of the four sides.
+Each component is rounded down to a layout unit after choosing the common scale. -/
+def Radii.scaleFor (r : Radii) (w h : Nat) : Scale :=
+  let top := Scale.fitSide w (r.topLeft.x+r.topRight.x)
+  let right := Scale.fitSide h (r.topRight.y+r.bottomRight.y)
+  let bottom := Scale.fitSide w (r.bottomLeft.x+r.bottomRight.x)
+  let left := Scale.fitSide h (r.topLeft.y+r.bottomLeft.y)
+  (top.min right).min (bottom.min left)
+
+def Radius.scaled (p : Radius) (s : Scale) : Radius :=
+  ⟨s.component p.x,s.component p.y⟩
+
+def Radii.normalize (r : Radii) (w h : Nat) : Radii :=
+  let s := r.scaleFor w h
+  ⟨r.topLeft.scaled s,r.topRight.scaled s,r.bottomRight.scaled s,r.bottomLeft.scaled s⟩
+
+def Radii.fits (r : Radii) (w h : Nat) : Prop :=
+  r.topLeft.x+r.topRight.x ≤ w ∧ r.topRight.y+r.bottomRight.y ≤ h ∧
+    r.bottomLeft.x+r.bottomRight.x ≤ w ∧ r.topLeft.y+r.bottomLeft.y ≤ h
+
+/-- The four used corner curves do not overlap on any side. -/
+theorem Radii.normalize_fits (r : Radii) (w h : Nat) :
+    (r.normalize w h).fits w h := by
+  let top := Scale.fitSide w (r.topLeft.x+r.topRight.x)
+  let right := Scale.fitSide h (r.topRight.y+r.bottomRight.y)
+  let bottom := Scale.fitSide w (r.bottomLeft.x+r.bottomRight.x)
+  let left := Scale.fitSide h (r.topLeft.y+r.bottomLeft.y)
+  let k := (top.min right).min (bottom.min left)
+  have toTopRight : k.atMost (top.min right) := Scale.min_le_left _ _
+  have toBottomLeft : k.atMost (bottom.min left) := Scale.min_le_right _ _
+  have topFits : k.fits w (r.topLeft.x+r.topRight.x) :=
+    Scale.fits_of_atMost (Scale.trans toTopRight (Scale.min_le_left _ _)) (Scale.fitSide_fits _ _)
+  have rightFits : k.fits h (r.topRight.y+r.bottomRight.y) :=
+    Scale.fits_of_atMost (Scale.trans toTopRight (Scale.min_le_right _ _)) (Scale.fitSide_fits _ _)
+  have bottomFits : k.fits w (r.bottomLeft.x+r.bottomRight.x) :=
+    Scale.fits_of_atMost (Scale.trans toBottomLeft (Scale.min_le_left _ _)) (Scale.fitSide_fits _ _)
+  have leftFits : k.fits h (r.topLeft.y+r.bottomLeft.y) :=
+    Scale.fits_of_atMost (Scale.trans toBottomLeft (Scale.min_le_right _ _)) (Scale.fitSide_fits _ _)
+  exact ⟨Scale.pair_fits topFits,Scale.pair_fits rightFits,
+    Scale.pair_fits bottomFits,Scale.pair_fits leftFits⟩
+
+/-- Outer radii that already fit keep every authored layout unit. -/
+theorem Radii.normalize_of_fits (r : Radii) (w h : Nat) (fit : r.fits w h) :
+    r.normalize w h = r := by
+  obtain ⟨top,right,bottom,left⟩ := fit
+  rcases r with ⟨a,b,c,d⟩
+  rcases a with ⟨ax,ay⟩
+  rcases b with ⟨bx,by_⟩
+  rcases c with ⟨cx,cy⟩
+  rcases d with ⟨dx,dy⟩
+  simp only at top right bottom left
+  simp [Radii.normalize,Radii.scaleFor,Scale.fitSide,Scale.min,Radius.scaled,Scale.component,
+    top,right,bottom,left]
+
+#print axioms Radii.normalize_of_fits
+
+#print axioms Radii.normalize_fits
+
+#guard (Radii.normalize ⟨⟨600,400⟩,⟨200,100⟩,⟨500,600⟩,⟨0,0⟩⟩ 500 500) ==
+  ⟨⟨375,250⟩,⟨125,62⟩,⟨312,375⟩,⟨0,0⟩⟩
+
+end L4Factoidal.Rendering.Corners
+namespace L4Factoidal.Rendering.Corners
+
+structure Insets where
+  top : Nat := 0
+  right : Nat := 0
+  bottom : Nat := 0
+  left : Nat := 0
+
+/-- CSS Backgrounds 3 §4.2. Radii for a rectangular inset of the border box. -/
+def Radii.inset (r : Radii) (i : Insets) : Radii :=
+  ⟨⟨r.topLeft.x-i.left,r.topLeft.y-i.top⟩,
+   ⟨r.topRight.x-i.right,r.topRight.y-i.top⟩,
+   ⟨r.bottomRight.x-i.right,r.bottomRight.y-i.bottom⟩,
+   ⟨r.bottomLeft.x-i.left,r.bottomLeft.y-i.bottom⟩⟩
+
+theorem Radii.inset_zero (r : Radii) : r.inset {} = r := by
+  rcases r with ⟨⟨a,b⟩,⟨c,d⟩,⟨e,f⟩,⟨g,h⟩⟩
+  simp [Radii.inset]
+
+def Radius.isSquare (r : Radius) : Bool := r.x == 0 || r.y == 0
+
+def Radii.isSquare (r : Radii) : Bool :=
+  r.topLeft.isSquare && r.topRight.isSquare && r.bottomRight.isSquare && r.bottomLeft.isSquare
+
+private def Radius.effective (r : Radius) : Radius :=
+  if r.isSquare then {} else r
+
+private def toPx (n : Nat) : Float := Float.ofNat n / 64
+
+private def corner (r : Radius) (endPoint : Point) : PathSegment :=
+  if r.isSquare then .line endPoint
+  else .arc (toPx r.x) (toPx r.y) 0 false true endPoint
+
+/-- An arc that reaches across the inset box leaves a square corner on the
+other side. This follows from the two outer radii fitting their common edge. -/
+theorem inset_overrun_opposite_square (span near far a b : Nat)
+    (outer : a + b ≤ span) (overrun : a - near > span - near - far) :
+    b - far = 0 := by omega
+
+/-- A rounded outline, before clipping to the rectangle. An inset arc can
+extend beyond the opposite edge. Move the adjacent square vertex outward in
+that case to connect the arc outside the rectangle. The caller clips the
+outline to the rectangle, leaving the required shorter arc on that edge. -/
+def Radii.outline (r : Radii) (left top width height : Float) : Option Contour :=
+  if r.isSquare then none else
+  let a := r.topLeft.effective
+  let b := r.topRight.effective
+  let c := r.bottomRight.effective
+  let d := r.bottomLeft.effective
+  let right := left+width
+  let bottom := top+height
+  let beyond := fun n span => max 0 (toPx n-span)
+  let tl := ⟨left-beyond b.x width,top-beyond d.y height⟩
+  let tr := ⟨right+beyond a.x width,top-beyond c.y height⟩
+  let br := ⟨right+beyond d.x width,bottom+beyond b.y height⟩
+  let bl := ⟨left-beyond c.x width,bottom+beyond a.y height⟩
+  let aStart : Point := if a.isSquare then tl else ⟨left,top+toPx a.y⟩
+  let aEnd : Point := if a.isSquare then tl else ⟨left+toPx a.x,top⟩
+  let bStart : Point := if b.isSquare then tr else ⟨right-toPx b.x,top⟩
+  let bEnd : Point := if b.isSquare then tr else ⟨right,top+toPx b.y⟩
+  let cStart : Point := if c.isSquare then br else ⟨right,bottom-toPx c.y⟩
+  let cEnd : Point := if c.isSquare then br else ⟨right-toPx c.x,bottom⟩
+  let dStart : Point := if d.isSquare then bl else ⟨left+toPx d.x,bottom⟩
+  let dEnd : Point := if d.isSquare then bl else ⟨left,bottom-toPx d.y⟩
+  some (.path aEnd [.line bStart,corner b bEnd,.line cStart,corner c cEnd,
+    .line dStart,corner d dEnd,.line aStart,corner a aEnd] true)
+
+#print axioms inset_overrun_opposite_square
+
+/-- The square fast path needs no ellipse or path flattening. -/
+theorem Radii.outline_square (r : Radii) (x y w h : Float) (hSquare : r.isSquare = true) :
+    r.outline x y w h = none := by
+  simp [Radii.outline,hSquare]
+
+#print axioms Radii.inset_zero
+#print axioms Radii.outline_square
+
+#guard ((Radii.normalize ⟨⟨4480,4480⟩,⟨4480,4480⟩,⟨4480,4480⟩,⟨4480,4480⟩⟩
+    (140*64) (140*64)).inset ⟨640,640,640,640⟩).topLeft == ⟨3840,3840⟩
+#guard (Radii.outline {} 0 0 120 120).isNone
+#guard match Radii.outline ⟨⟨640,1280⟩,{}, {}, {}⟩ 0 0 120 120 with
+  | some (.path _ segments true) =>
+    segments.toArray[7]?.any fun
+      | .arc rx ry _ false true p => rx == 10 && ry == 20 && p.x == 10 && p.y == 0
+      | _ => false
+  | _ => false
+
+-- For a 125px corner inside a 100px padding box the quarter ellipse
+-- starts 25px outside two opposite edges. The crop leaves shorter arcs.
+#guard match Radii.outline ⟨⟨8000,8000⟩,{},{},{}⟩ 0 0 100 100 with
+  | some (.path start segments true) =>
+    start.x == 125 && segments.head?.any (fun
+      | .line p => p.x == 125 && p.y == 0
+      | _ => false)
+  | _ => false
+
+end L4Factoidal.Rendering.Corners

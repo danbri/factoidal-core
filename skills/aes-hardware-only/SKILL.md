@@ -76,6 +76,9 @@ Three layers. Each covers what the others cannot.
 - A determined author could hide an AES from the gate. The gate stops the naive and the copied; review
   and the crypto policy cover the rest.
 - Nothing here inspects the instructions the linked code runs. That rests on HACL\*.
+- The CPUID check tells what the CPU reports, not how it runs the instruction. Under an emulator or
+  binary translator (QEMU TCG, Intel SDE, Valgrind, possibly Rosetta 2) `AESENC` can run as
+  software, which may use tables. Open, for expert review: https://github.com/danbri/factoidal/issues/1305.
 - The host's WebCrypto on JavaScript hosts is not ours: its vendor chooses hardware or constant-time
   software AES, and we measure it by differential tests only.
 - Open: the binary check is not yet a step of the engine and Wasm builds; run it on release candidates

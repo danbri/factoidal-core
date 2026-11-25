@@ -228,7 +228,7 @@ private def tagAt (b : ByteArray) (i : Nat) : String :=
 
 /-- Read the table directory of an sfnt file, or of face `faceIndex` of a
 TrueType Collection. WOFF and WOFF2 are refused: they must be decoded to sfnt
-first. Every record must lie inside the file and every tag must be distinct. -/
+first (`Woff2.sfntOf` decodes both). Every record must lie inside the file and every tag must be distinct. -/
 def readDirectory (bytes : ByteArray) (faceIndex : Nat := 0) (limits : Limits := {}) :
     Except String (Array TableRecord) := do
   if bytes.size > limits.fontBytes then

@@ -36,6 +36,34 @@ theorem dsig11_native_ecdsa_other_curves (c : Curve) (hc : c ≠ .p256) (h : Dig
     (xy msg sig : ByteArray) : nativeBackend.ecdsaVerify c h xy msg sig = none := by
   simp [nativeBackend, hc]
 
+/-! ## 1024-bit RSA keys, after an explicit opt-in
+
+Owner, 2026-11-17, on https://github.com/danbri/factoidal/issues/1227: "off
+by default and make user pass in a \"dangerously_and_regrettsbly_.... \"
+symbol". `nativeBackend` refuses a 1024-bit modulus. `nativeBackendRsa1024`
+takes a `Risk.Accepted .rsa1024Verify` (made only by
+`Risk.dangerouslyAccept`: at the `dangerouslyAndRegrettablyAcceptRsa1024`
+member of the `xmlVerify` argument, and in the test runner `l4xmldsig`) and sends a 1024-bit modulus to
+`Crypto.Rsa.rsaPublicOp1024`. Signing keys keep the 2048-bit floor
+(`rsaSigner`). -/
+
+/-- `nativeBackend` with 1024-bit RSA keys accepted for verification. -/
+def nativeBackendRsa1024 (tok : Risk.Accepted .rsa1024Verify) : Backend :=
+  { nativeBackend with
+    rsaPublicOp := fun n e s =>
+      if n.size == 128 then Crypto.Rsa.rsaPublicOp1024 tok n e s else Crypto.Rsa.rsaPublicOp n e s }
+
+/-- Says: the opt-in changes nothing for a modulus that is not 1024 bits.
+Does not say: anything about the strength of a 1024-bit key. -/
+theorem dsig11_2013_rsa1024_other_sizes (tok : Risk.Accepted .rsa1024Verify) (n e s : ByteArray)
+    (h : n.size ≠ 128) :
+    (nativeBackendRsa1024 tok).rsaPublicOp n e s = nativeBackend.rsaPublicOp n e s := by
+  simp [nativeBackendRsa1024, nativeBackend, h]
+
+/-- Says: the opt-in changes nothing for ECDSA. -/
+theorem dsig11_2013_rsa1024_ecdsa (tok : Risk.Accepted .rsa1024Verify) :
+    (nativeBackendRsa1024 tok).ecdsaVerify = nativeBackend.ecdsaVerify := rfl
+
 /-! ## Signers (the custodians of `XML/DSig11Sign.lean`)
 
 The one place in the XML Signature code where a private key becomes a

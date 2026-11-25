@@ -184,6 +184,8 @@ export function hostState({engineState,dir,log}:{engineState:Call;dir?:string;lo
       sessionTimer=setTimeout(()=>{later("session",s=>s.session(tabs,active));},1000) as unknown as number;
     },
     async read(){const s=await need();return await s.read();},
+    /** The stored resources, for the browser's search page (op searchPage). */
+    async resources(){const s=await need();return await s.resources();},
     /** Lean's HTML of foafnaut:bookmarks or foafnaut:history. */
     async page(url:string){const s=await need();return (await s.page(url.slice("foafnaut:".length))).source as string;},
     /**

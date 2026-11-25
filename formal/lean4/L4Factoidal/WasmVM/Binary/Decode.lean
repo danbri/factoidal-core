@@ -137,11 +137,19 @@ def blockType (b : ByteArray) (p : Nat) : Except DecodeError (BlockType × Nat) 
 def limits (b : ByteArray) (p : Nat) : Except DecodeError (Limits × Nat) := do
   let (f, p1) ← byte b p
   match f with
-  | 0x00 => let (n, q) ← u64 b p1; .ok (⟨n, none⟩, q)
-  | 0x01 => let (n, q) ← u64 b p1; let (m, q) ← u64 b q; .ok (⟨n, some m⟩, q)
+  | 0x00 => let (n, q) ← u64 b p1; .ok (⟨n, none, false⟩, q)
+  | 0x01 => let (n, q) ← u64 b p1; let (m, q) ← u64 b q; .ok (⟨n, some m, false⟩, q)
   | 0x02 | 0x03 => unsup "shared memory (threads)" p
-  | 0x04 | 0x05 | 0x06 | 0x07 => unsup "64-bit address type (memory64)" p
+  -- Address type i64 (memory64, table64).
+  | 0x04 => let (n, q) ← u64 b p1; .ok (⟨n, none, true⟩, q)
+  | 0x05 => let (n, q) ← u64 b p1; let (m, q) ← u64 b q; .ok (⟨n, some m, true⟩, q)
+  | 0x06 | 0x07 => unsup "shared memory (threads)" p
   | _ => bad "integer too large" p
+
+#guard match limits (ByteArray.mk #[0x04, 0x02]) 0 with | .ok (l, 2) => l.addr64 && l.min == 2 && l.max == none | _ => false
+#guard match limits (ByteArray.mk #[0x05, 0x01, 0x03]) 0 with | .ok (l, 3) => l.addr64 && l.min == 1 && l.max == some 3 | _ => false
+#guard match limits (ByteArray.mk #[0x01, 0x01, 0x03]) 0 with | .ok (l, 3) => !l.addr64 && l.max == some 3 | _ => false
+#guard match limits (ByteArray.mk #[0x06, 0x01]) 0 with | .error _ => true | _ => false
 
 def tableType (b : ByteArray) (p : Nat) : Except DecodeError (TableType × Nat) := do
   let (r, p) ← refType b p

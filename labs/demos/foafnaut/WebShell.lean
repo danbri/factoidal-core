@@ -3,12 +3,13 @@ import WebRender
 import WebRoute
 import WebSelection
 import L4Factoidal.Rendering.Smil
+import L4Factoidal.HTML.AccessibleTree
 
 /-! The browser's own face: tabs, the address bar and its buttons, drawn into the
 same scene as the page, so one WebGPU pass draws the window. The default look is flat
 (owner, 2026-11-16: the old toolbar looked "like 1993"): light or dark faces, a rounded
 address field with a focus ring, and line icons drawn as vector strokes. The older looks stay
-as themes: "classic" (NeXT bevels) and "arcade". Lettering is the engine's bitmap font.
+as themes: "classic" (NeXT bevels) and "arcade". The default address field uses the host's held monospace face when available.
 
 The host keeps the `Shell` value between calls and sends it back. It makes no
 decision here: Lean says what a click, a key or an address means. -/
@@ -323,6 +324,62 @@ def hit (s : Shell) (width x y : Nat) : Option String :=
   | some box => some box.name
   | none => some "chrome"
 
+/-! ### The chrome for assistive technology
+
+The controls are drawn, and most are icons, so a screen reader is given them in words: a
+toolbar, and below it each control of `boxes` with a role, a name, its state and its box in
+window pixels (`HTML.AccessibleTree.Entry`, as the page's own tree). A press on one is a
+press at its box, which `hit` answers as for a pointer. -/
+
+/-- The name of a control in words. -/
+def controlLabel (s : Shell) (name : String) : String :=
+  let title := fun (i : String) => match i.toNat? with
+    | some n => match s.tabs[n]? with
+      | some tab => if tab.title.isEmpty then s!"Tab {n + 1}" else tab.title
+      | none => s!"Tab {n + 1}"
+    | none => "Tab"
+  match name.splitOn ":" with
+  | ["back"] => "Back"
+  | ["forward"] => "Forward"
+  | ["reload"] => "Reload"
+  | ["home"] => "Home"
+  | ["address"] => "Address"
+  | ["find"] => "Find in page"
+  | ["source"] => "View source"
+  | ["tabs"] => "Tabs"
+  | ["settings"] => "Settings"
+  | ["newTab"] => "New tab"
+  | ["expand"] => "Show toolbar"
+  | ["tab", i] => title i
+  | ["close", i] => "Close " ++ title i
+  | _ => menuLabel name
+
+/-- The chrome's accessibility entries, numbered from `base`: the toolbar, then its controls
+left to right, top to bottom. A folded chrome is one button that unfolds it. -/
+def accessible (s : Shell) (width base : Nat) : List HTML.AccessibleTree.Entry :=
+  let rect := fun (x y w h : Nat) => some (⟨Int.ofNat x, Int.ofNat y, w, h⟩ : HTML.AccessibleTree.Rect)
+  let bar : HTML.AccessibleTree.Entry :=
+    { depth := 0, id := base, role := "toolbar", name := "Browser toolbar", box := rect 0 0 width (height s width) }
+  if s.collapse > 0 then
+    [bar, { depth := 1, id := base + 1, role := "button", name := controlLabel s "expand", focusable := true,
+            box := rect 0 0 width (height s width) }]
+  else
+    bar :: (boxes s width).zipIdx.map fun (b, i) =>
+      let kind := (b.name.splitOn ":").headD ""
+      let label := controlLabel s b.name
+      let box := rect b.x b.y b.w b.h
+      if kind == "address" || kind == "find" then
+        let focused := if kind == "address" then s.focused else s.findFocused
+        { depth := 1, id := base + 1 + i, role := "textbox", name := label, focusable := true, box,
+          props := [("value", if kind == "address" then s.address else s.find)] ++
+            (if focused then [("focused", "true")] else []) }
+      else if kind == "tab" then
+        { depth := 1, id := base + 1 + i, role := "tab", name := label, focusable := true, box,
+          props := [("selected", if b.name == s!"tab:{s.active}" then "true" else "false")] }
+      else
+        { depth := 1, id := base + 1 + i, role := "button", name := label, focusable := pressable s b.name, box,
+          props := if pressable s b.name then [] else [("disabled", "true")] }
+
 /-! ### The pointer -/
 
 /-- The system pointer the window shows (issue 1268). -/
@@ -385,6 +442,33 @@ private def text (c : Rendering.Color) (value : String) (x y size : Nat) : List 
   value.toList.zipIdx.flatMap fun (ch,i) =>
     if ch == ' ' then [] else bitmapNodes c (glyphRows ch) 5 (x+i*6*size) y size
 
+/-- Glyph outlines for printable ASCII, indexed from U+0020. Prepared once
+when the host supplies its bundled monospace face. -/
+structure AddressFont where
+  advance : Nat := 1
+  glyphs : Array (Option (List Rendering.Geometry)) := #[]
+
+private def addressText (font : AddressFont) (c : Rendering.Color)
+    (value : String) (x y size : Nat) : List Rendering.Node :=
+  if font.glyphs.isEmpty then text c value x y size else
+  let scale := Float.ofNat (6*size) / Float.ofNat (max 1 font.advance)
+  let baseline := Float.ofNat (y+7*size)
+  value.toList.zipIdx.flatMap fun (ch,i) =>
+    if ch == ' ' then [] else
+    let left := x+i*6*size
+    let paths := if ch.toNat < 32 then none else font.glyphs[ch.toNat-32]?.join
+    match paths with
+    | none => bitmapNodes c (glyphRows ch) 5 left y size
+    | some shapes =>
+      [.group none ⟨scale,0,0,scale,Float.ofNat left,baseline⟩
+        (shapes.map fun geometry => .paint {primitive := {geometry, style := {fill := .solid c}}})]
+
+/-- With no held face, address text is drawn by the existing bitmap path. -/
+theorem addressText_empty (c : Rendering.Color) (value : String) (x y size : Nat) :
+    addressText {} c value x y size = text c value x y size := rfl
+
+#print axioms addressText_empty
+
 private def charWidth (s : Shell) : Nat := 6*dot s
 private def fit (s : Shell) (value : String) (room : Nat) : String :=
   let limit := room/charWidth s
@@ -440,7 +524,7 @@ def iconNodes (icon : TabIcon) (index x y side : Nat) : List Rendering.Node :=
       let map : Rendering.Transform := ⟨Float.ofNat icon.width/w,0,0,Float.ofNat icon.height/h,0,0⟩
       let bitmap : Rendering.Bitmap := {width := icon.width,height := icon.height,rgba}
       [.group none ⟨1,0,0,1,Float.ofNat x+left,Float.ofNat y+top⟩
-        [.paint ⟨none,{geometry := .rect 0 0 w h,style := {fill := .image ⟨map,iconPaintId index,bitmap⟩}}⟩]]
+        [.paint ⟨none,{geometry := .rect 0 0 w h,style := {fill := .image {map,id := iconPaintId index,bitmap}}}⟩]]
     | .error _ => []
 
 private def tabNodes (s : Shell) (t : Theme) (width : Nat) (box : Box) (index : Nat) : List Rendering.Node :=
@@ -652,7 +736,7 @@ private def flatTab (s : Shell) (t : Theme) (box : Box) (index : Nat) : List Ren
 /-- The address field of the flat look: a pill in the field colour, ringed in the accent while
 it has the focus; a search mark, then the text, the selection and a thin caret. The text
 columns are those of the classic field (`addressNodes`), so a press lands on the same letter. -/
-private def flatAddress (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
+private def flatAddress (font : AddressFont) (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :=
   let u := unit s
   let size := dot s
   let textX := box.x+22*u
@@ -664,11 +748,11 @@ private def flatAddress (s : Shell) (t : Theme) (box : Box) : List Rendering.Nod
   let hi := column (max s.anchor s.cursor)
   let selecting := s.focused && hi > lo
   let piece := fun (c : Rendering.Color) (a b : Nat) =>
-    text c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
+    addressText font c (String.ofList ((shown.toList.drop a).take (b-a))) (textX+a*charWidth s) textY size
   let body := if s.address.isEmpty && !s.focused
-    then text t.muted (fit s "Search or type a URL" room) textX textY size
+    then addressText font t.muted (fit s "Search or type a URL" room) textX textY size
     else if selecting then piece t.wellInk 0 lo ++ piece t.selectedInk lo hi ++ piece t.wellInk hi shown.length
-    else text t.wellInk shown textX textY size
+    else addressText font t.wellInk shown textX textY size
   let marked := if selecting
     then [paint t.selected (textX+lo*charWidth s-u) (textY-u) ((hi-lo)*charWidth s) (7*size+2*u)] else []
   let cursor := if s.focused && hi == lo then [paint t.accent (textX+column s.cursor*charWidth s) (textY-2*u) (max 1 (3*u/2)) (7*size+4*u)] else []
@@ -702,7 +786,7 @@ private def flatFind (s : Shell) (t : Theme) (box : Box) : List Rendering.Node :
 /-- The controls of the full chrome in a flat theme: the tab strip, the toolbar, round
 buttons that show a circle while pressed, and the settings button always in a circle of the
 field colour, so it is easy to find. -/
-private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Rendering.Node := Id.run do
+private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) (font : AddressFont) : List Rendering.Node := Id.run do
   let u := unit s
   let row := tabRow s width
   let mut out := [paint t.back 0 0 width row,paint t.base 0 row width (navRow s)]
@@ -715,7 +799,7 @@ private def flatControlNodes (s : Shell) (t : Theme) (width : Nat) : List Render
     | ["close",_] =>
       out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.muted "close" box (12*u) 1.8
     | ["newTab"] => out := out ++ (if down box.name then [circle t.light box] else []) ++ lineIconAt t.ink "newTab" box (14*u)
-    | ["address"] => out := out ++ flatAddress s t box
+    | ["address"] => out := out ++ flatAddress font s t box
     | ["find"] => out := out ++ flatFind s t box
     | ["copyAddress"] | ["pasteGo"] =>
       let size := menuSize s width
@@ -929,10 +1013,10 @@ def splashNodes (label : String) (ms width top rows : Nat) (reduce : Bool) : Lis
 folding: the controls slide up and fade into the chrome's face over the first half of the
 fold, the chrome is shorter (`height`), and the domain shrinks to the middle of the strip
 and fades in over the second half. -/
-def nodes (s : Shell) (width : Nat) : List Rendering.Node :=
+def nodes (s : Shell) (width : Nat) (font : AddressFont := {}) : List Rendering.Node :=
   let t := themeOf s
   let controlNodes := fun (s : Shell) (t : Theme) (width : Nat) =>
-    if t.flat then flatControlNodes s t width else controlNodes s t width
+    if t.flat then flatControlNodes s t width font else controlNodes s t width
   if s.collapse == 0 then controlNodes s t width ++ edgeNodes s t width ++ swipeNodes s t width else
   let p := min 100 s.collapse
   let lift := fullHeight s width-height s width
@@ -948,20 +1032,20 @@ def pageClip (s : Shell) (width height' : Nat) : Rendering.ClipRect :=
 
 /-- Put a page rendered below the chrome and the chrome into one scene. The page is clipped to its part of the window
 (`pageClip`), so no page ink reaches the chrome (`compose_page_clipped`). -/
-def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) : Rendering.Scene :=
+def compose (s : Shell) (page : Rendering.Scene) (width height' : Nat) (font : AddressFont := {}) : Rendering.Scene :=
   let top := Float.ofNat (height s width)-Float.ofNat s.scroll
   let shift : Rendering.Transform := ⟨1,0,0,1,0,top⟩
   {page with
     height := height'
     mapping := {page.mapping with viewportHeight := Float.ofNat height'}
-    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width
+    tree := [.clipped none Rendering.identity (pageClip s width height') [.group none shift page.tree]] ++ nodes s width font
     links := Rendering.moveLinks (· + top) page.links}
 
 /-- Security: every primitive of the page in a composed frame carries the page's part
 of the window as a clip, so its ink can not paint the chrome. -/
-theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+theorem composeWithFont_page_clipped (font : AddressFont) (s : Shell) (page : Rendering.Scene) (width height' : Nat)
     (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
-    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (node : Rendering.Node) (head : (compose s page width height' font).tree.head? = some node)
     (h : item ∈ node.lower parent groups) :
     (pageClip s width height').lowerUnder parent ∈ item.primitive.clips := by
   have e : node = .clipped none Rendering.identity (pageClip s width height')
@@ -970,6 +1054,15 @@ theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height'
     exact head.symm
   subst e
   exact Rendering.lower_clipped _ _ _ _ _ _ _ h
+
+theorem compose_page_clipped (s : Shell) (page : Rendering.Scene) (width height' : Nat)
+    (parent : Rendering.Transform) (groups : List (Option String)) (item : Rendering.PaintItem)
+    (node : Rendering.Node) (head : (compose s page width height').tree.head? = some node)
+    (h : item ∈ node.lower parent groups) :
+    (pageClip s width height').lowerUnder parent ∈ item.primitive.clips :=
+  composeWithFont_page_clipped {} s page width height' parent groups item node head h
+
+#print axioms composeWithFont_page_clipped
 
 /-- The page under the chrome keeps every link of the page, moved down by the chrome less
 the scroll and nothing else (`LinkTheorems.moveLinks_getElem`; issue 1268). -/
@@ -1162,18 +1255,14 @@ def addressCommands : List String := ["copy","selectAll","cut","paste","undo","r
 
 /-! ### What an address and a link mean -/
 
-/-- Pages this engine can not draw yet go to the host's default browser (WebRoute). -/
-def externalHosts := WebRoute.externalHosts
-
-private def hostOf (url : String) : String :=
-  match url.splitOn "://" with
-  | [_,rest] => ((rest.splitOn "/").headD "").toLower
-  | _ => ""
-
 inductive Go where
   | page (url : String)
+  /-- `:open URL`, typed: the person asks for the system to open the address. -/
   | system (url : String)
   | command (name : String) (argument : String)
+  /-- Words that are not an address. They go to no one: the browser's own search page
+  shows them, unless a search engine was chosen in Settings (`routeAddress`). -/
+  | search (words : String)
   deriving Repr, BEq
 
 /-- The FOAF graph is a page of the browser, so it goes into the session history of the
@@ -1184,25 +1273,19 @@ def graphURL : String := "foafnaut:graph"
 def command (name argument : String) : Go :=
   if name == "graph" && argument.isEmpty then .page graphURL else .command name argument
 
+/-- An href: a `foafnaut:` command, or a page. No host goes to the system (WebRoute). -/
 def link (href : String) : Go :=
   if href.startsWith "foafnaut:" then
     match ((href.drop 9).toString.splitOn "/") with
     | [name,argument] => command name argument
     | [name] => command name ""
     | _ => .command "help" ""
-  else if externalHosts.contains (hostOf href) then .system href
   else .page href
 
-private def encodeQuery (value : String) : String :=
-  String.join (value.toUTF8.toList.map fun b =>
-    let c := Char.ofNat b.toNat
-    if c.isAlphanum || c == '-' || c == '_' || c == '.' then c.toString
-    else if c == ' ' then "+"
-    else
-      let digit := fun (n : Nat) => "0123456789ABCDEF".toList[n]!
-      String.ofList ['%',digit (b.toNat/16),digit (b.toNat%16)])
+private def encodeQuery := WebRoute.encodeQuery
 
-/-- The bar reads a `:command`, a URL, or a search. -/
+/-- The bar reads a `:command`, a URL, or words. There is no default search engine (owner,
+2026-11-16): words are `.search`, which sends nothing anywhere by itself. -/
 def submit (input : String) : Go :=
   let value := input.trimAscii.toString
   if value.startsWith ":" then
@@ -1216,18 +1299,37 @@ def submit (input : String) : Go :=
     | [] => .command "help" ""
   else if (value.splitOn "://").length > 1 || value.startsWith "file:" || value.startsWith "about:" then link value
   else if !value.contains ' ' && value.contains '.' then link ("https://" ++ value)
-  else .system ("https://duckduckgo.com/?q=" ++ encodeQuery value)
+  else .search value
+
+/-- An address typed in the bar is not the press of a button on a page: a route to the
+system becomes the Outside page. -/
+def typedRoute : WebRoute.Route → WebRoute.Route
+  | .system u => .outside u
+  | r => r
+
+/-- Words typed in the bar. With no search engine chosen, the browser's own search page
+(`WebRoute.searchPageURL`), which nothing outside the browser sees. With one chosen in
+Settings, its address for the words, routed as any typed address: in the tab when the
+browser can read it, else the Outside page; never the system by itself. -/
+def searchRoute (site : WebRoute.Site) (base search words : String) : WebRoute.Route :=
+  match WebRoute.searchTemplate search with
+  | some template => typedRoute (WebRoute.route site base (WebRoute.expandSearch template words))
+  | none => .page "search" (WebRoute.searchPageURL words)
 
 /-- Where an address typed in the bar goes (WebRoute): a URL as a link would, a
-`:command` as `foafnaut:command/argument`, and a search or `:open URL` to the system. -/
-def routeAddress (site : WebRoute.Site) (base input : String) : WebRoute.Route :=
+`:command` as `foafnaut:command/argument`, words by `searchRoute` with the search engine
+`search` chosen in Settings ("" for none), and `:open URL` to the system: the one typed
+command that asks for it. -/
+def routeAddress (site : WebRoute.Site) (base input : String) (search : String := "") : WebRoute.Route :=
   let value := input.trimAscii.toString
-  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then WebRoute.routeAddress site base value else
+  if (value.toList.take 9).map Char.toLower == WebRoute.foafnautPrefix || value.toList.map Char.toLower == "about:foafnaut".toList then typedRoute (WebRoute.routeAddress site base value) else
   match submit value with
-  | .page url => WebRoute.route site base url
-  | .command name argument => WebRoute.commandRoute site name argument
+  | .page url => typedRoute (WebRoute.route site base url)
+  | .command name argument => typedRoute (WebRoute.commandRoute site name argument)
+  | .search words => searchRoute site base search words
   | .system url => match WebRoute.route site base url with
     | .navigate address => .system address
+    | .outside address => .system address
     | other => other
 
 /-- The answer of the op `shellRoute` (docs/web/hub/foafnaut/link-route.mjs). -/
@@ -1235,14 +1337,87 @@ def routeJson : WebRoute.Route → JSON.Json
   | .page name url => .object [("route",.string "page"),("name",.string name),("url",.string url)]
   | .graph => .object [("route",.string "graph"),("url",.string WebRoute.graphURL)]
   | .navigate url => .object [("route",.string "navigate"),("url",.string url)]
+  | .outside url => .object [("route",.string "outside"),("url",.string url)]
   | .system url => .object [("route",.string "system"),("url",.string url)]
   | .command name argument => .object [("route",.string "command"),("name",.string name),("argument",.string argument)]
   | .refuse url reason => .object [("route",.string "refuse"),("url",.string url),("reason",.string reason)]
 
+/-- The answer of the older op `shellSubmit`: words are the browser's search page. -/
 def Go.json : Go → JSON.Json
   | .page url => .object [("go",.string "page"),("url",.string url)]
   | .system url => .object [("go",.string "system"),("url",.string url)]
   | .command name argument => .object [("go",.string "command"),("name",.string name),("argument",.string argument)]
+  | .search words => .object [("go",.string "page"),("url",.string (WebRoute.searchPageURL words))]
+
+/-! ### Theorems: words typed in the bar go to no one -/
+
+theorem link_not_system (href u : String) : link href ≠ .system u := by
+  intro h
+  unfold link at h
+  split at h
+  · split at h
+    all_goals (try simp only [command] at h)
+    all_goals (try split at h)
+    all_goals simp at h
+  · simp at h
+
+/-- Text in the bar that is not a `:command` never goes to the system. -/
+theorem submit_not_system (input u : String) (h : (input.trimAscii.toString).startsWith ":" = false) :
+    submit input ≠ .system u := by
+  intro hs
+  unfold submit at hs
+  simp only [h, Bool.false_eq_true, if_false] at hs
+  split at hs
+  · exact link_not_system _ _ hs
+  · split at hs
+    · exact link_not_system _ _ hs
+    · simp at hs
+
+/-- A typed address reaches the system only by `:open URL`. -/
+theorem routeAddress_system_only_open (site : WebRoute.Site) (base input search u : String)
+    (h : routeAddress site base input search = .system u) :
+    ∃ url, submit (input.trimAscii.toString) = .system url := by
+  have typed : ∀ r, typedRoute r ≠ .system u := by
+    intro r; cases r <;> simp [typedRoute]
+  unfold routeAddress at h
+  dsimp only at h
+  split at h
+  · exact absurd h (typed _)
+  · split at h
+    · exact absurd h (typed _)
+    · exact absurd h (typed _)
+    · rename_i words _
+      unfold searchRoute at h
+      split at h
+      · exact absurd h (typed _)
+      · simp at h
+    · rename_i url hs
+      exact ⟨url, hs⟩
+
+/-- With no search engine chosen, words typed in the bar open the browser's own search
+page: a `foafnaut:` address, so no request carries them anywhere. -/
+theorem words_stay_local (site : WebRoute.Site) (base input search words : String)
+    (hs : WebRoute.searchTemplate search = none)
+    (hw : submit (input.trimAscii.toString) = .search words)
+    (hp : ((((input.trimAscii.toString).toList.take 9).map Char.toLower == WebRoute.foafnautPrefix) ||
+      ((input.trimAscii.toString).toList.map Char.toLower == "about:foafnaut".toList)) = false) :
+    routeAddress site base input search = .page "search" (WebRoute.searchPageURL words) := by
+  simp only [routeAddress, hp, Bool.false_eq_true, if_false, hw, searchRoute, hs]
+
+/-- No setting means no search engine: words never go into an outbound address. -/
+theorem no_engine_by_default (site : WebRoute.Site) (base words : String) :
+    searchRoute site base "" words = .page "search" (WebRoute.searchPageURL words) := by
+  simp [searchRoute, WebRoute.no_default_search]
+
+/-- The words reach a web address only through the template of the engine chosen. -/
+theorem words_only_to_chosen (site : WebRoute.Site) (base search words : String) (r : WebRoute.Route)
+    (h : searchRoute site base search words = r) (hl : ∀ n u, r ≠ .page n u) :
+    ∃ template, WebRoute.searchTemplate search = some template ∧
+      r = typedRoute (WebRoute.route site base (WebRoute.expandSearch template words)) := by
+  unfold searchRoute at h
+  split at h
+  · rename_i template ht; exact ⟨template, ht, h.symm⟩
+  · exact absurd h.symm (hl _ _)
 
 /-! ### View source -/
 
@@ -1273,6 +1448,104 @@ def sourcePage (kind url source : String) : String :=
   "h1{margin:0;padding-bottom:8px;font-size:14px;line-height:20px;color:#a0186a}h2{margin:0;padding-bottom:8px;font-size:12px;color:#a0186a}p{margin:0}</style></head><body><h1>" ++
   escapeText (kind ++ " of " ++ url) ++ "</h1>" ++ cut ++
   String.join ((shown.splitOn "\n").map sourceLine) ++ "</body></html>"
+
+/-! ### The browser's own pages for words and for other programs
+
+Written here, by the browser (AGENT-BRIEF: the browser's own words are Lean). -/
+
+/-- Text for HTML: `&`, `<`, `>` and `"` escaped; controls dropped; other characters kept. -/
+def htmlText (value : String) : String :=
+  String.join (value.toList.map fun c =>
+    if c == '&' then "&amp;" else if c == '<' then "&lt;" else if c == '>' then "&gt;" else if c == '"' then "&quot;"
+    else if c.toNat < 32 || c.toNat == 127 then "" else c.toString)
+
+def ownPageStyle : String :=
+  "<style>body{margin:24px;font-family:system-ui,sans-serif;font-size:16px;line-height:24px;color:#1f2328;background:#f7f8fb}" ++
+  "h1{margin:0 0 12px;font-size:22px;line-height:30px;color:#184078}h2{margin:20px 0 8px;font-size:18px;line-height:26px;color:#184078}" ++
+  "p{margin:0 0 12px;max-width:640px}.url{font-family:monospace;overflow-wrap:anywhere;color:#3b4652}.dim{color:#5d666c}" ++
+  ".go{display:inline-block;margin-top:8px;padding:10px 18px;border-radius:20px;background:#0b57d0;color:#ffffff;font-weight:bold;text-decoration:none}</style>"
+
+/-- The English Wikipedia article address for the words (the Hub reads it in the tab
+through the Wikimedia REST API, which allows it; the native browser reads it directly). -/
+def wikipediaURL (words : String) : String := "https://en.wikipedia.org/wiki/" ++ WebRoute.encodeTitle words
+
+/-- The page `foafnaut:search/WORDS`: what was typed, and the choices. `found` is (kind,
+url, title) from the browser's own data (`WebState.searchFound` and the open tabs);
+`stateOn` says whether history and bookmarks are kept in this window; `search` is the
+search engine chosen in Settings. Nothing on this page is fetched to show it; each link
+is a choice the person makes. -/
+def searchPage (words : String) (found : List (String × String × String)) (stateOn : Bool) (search : String) : String :=
+  let shown := htmlText words
+  let item := fun (e : String × String × String) =>
+    let (kind, url, title) := e
+    s!"<p><a href=\"{htmlText url}\">{htmlText (if title.isEmpty then url else title)}</a> <span class=\"dim\">{kind}</span><br><span class=\"url\">{htmlText url}</span></p>"
+  let local_ :=
+    if !found.isEmpty then String.join (found.map item)
+    else if stateOn then "<p>Nothing in your open tabs, bookmarks or history matches.</p>"
+    else "<p>Nothing in your open tabs matches. History and bookmarks are not kept in this window.</p>"
+  let engine := match WebRoute.searchTemplate search with
+    | some template =>
+      s!"<p><a class=\"go\" href=\"{htmlText (WebRoute.expandSearch template words)}\">Search with {htmlText (WebRoute.searchName search)}</a></p>" ++
+      "<p>The search engine you chose in <a href=\"foafnaut:settings\">Settings</a> gets the words when you press the button.</p>"
+    | none =>
+      "<p>No search engine is chosen, so the words were sent to no one. " ++
+      "<a href=\"foafnaut:settings\">Choose a search engine in Settings</a>; until you do, words typed in the address bar open this page.</p>"
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>" ++ shown ++ " (search)</title>" ++ ownPageStyle ++ "</head><body>" ++
+  s!"<h1>You typed: {shown}</h1>" ++
+  "<p>This page was made inside Foafnaut. The words have not left this browser.</p>" ++
+  "<h2>In this browser</h2>" ++ local_ ++
+  "<h2>Look it up</h2>" ++
+  s!"<p><a class=\"go\" href=\"{htmlText (wikipediaURL words)}\">Look it up on Wikipedia</a></p>" ++
+  "<p>Opens the English Wikipedia article with this title, read inside Foafnaut. Wikipedia gets the words when you press the button.</p>" ++
+  "<h2>Search the web</h2>" ++ engine ++ "</body></html>"
+
+/-- The Settings section (`<!--foafnaut:search-->`): the choice now, a button for each
+engine and for none, and how to give an engine of one's own. None is chosen by default and
+the list is in alphabetical order. -/
+def searchChoicesHTML (setting : String) : String :=
+  let chosen := WebRoute.searchSetting setting
+  let button := fun (id label : String) =>
+    let cls := if id == chosen || (id == "none" && chosen.isEmpty) then " class=\"chosen\"" else ""
+    s!"<a{cls} href=\"foafnaut:search-engine/{id}\">{htmlText label}</a>"
+  s!"<h2 class=\"size\">Search engine: {htmlText (WebRoute.searchName chosen)}</h2>" ++
+  "<p>Words typed in the address bar that are not an address go to no one until you choose a search engine here. " ++
+  "Until then they open a page of this browser that looks in your open tabs, bookmarks and history, and offers Wikipedia. " ++
+  "Once you choose one, the words you type go to it and to no one else.</p>" ++
+  "<p class=\"presets\">" ++ button "none" "None" ++ " " ++
+  " ".intercalate (WebRoute.searchEngines.map fun e => button e.id e.name) ++ "</p>" ++
+  "<p>Your own: type :search-engine and an address with %s where the words go, for example " ++
+  "<span class=\"url\">:search-engine https://example.org/search?q=%s</span></p>"
+
+/-- The Outside page for an address that leaves the browser only by a press: a web
+address the tab can not read (the Hub: the site does not allow it), Textnaut's own Hub
+page, or another program's address (`mailto:`, `tel:`, `sms:`). Its one button is a link to
+the same address; while this page is shown, that link is the press (`WebRoute.Site.outside`)
+and the host hands the address to the system. -/
+def outsidePage (url : String) (hub textnaut : Bool) : String :=
+  let web := url.startsWith "http://" || url.startsWith "https://"
+  let (heading, why, button) :=
+    if textnaut then ("Textnaut opens in its own page",
+      "<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>", "Open in a new browser tab")
+    else if web && hub then ("This site can not be read from inside the Hub page",
+      "<p>The browser this page runs in lets a page read another site only when that site allows it (cross-origin rules, CORS), and this one does not. " ++
+      "The Hub keeps copies of some openly licensed pages, but not of this one. The Foafnaut app on a computer, and Textnaut in a terminal, read it directly.</p>",
+      "Open in a new browser tab")
+    else if web then ("This address opens in your default browser",
+      "<p>Foafnaut opens it in your default browser only if you press the button.</p>", "Open in your browser")
+    else ("This link opens another program",
+      "<p>This address belongs to another program (mail, phone or messages). Foafnaut opens it only if you press the button.</p>",
+      if url.startsWith "mailto:" then "Open in your mail app" else if url.startsWith "tel:" then "Open in your phone app" else "Open in your messages app")
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Another site</title>" ++ ownPageStyle ++ "</head><body>" ++
+  s!"<h1>{heading}</h1><p class=\"url\">{htmlText url}</p>{why}" ++
+  s!"<p><a class=\"go\" href=\"{htmlText url}\">{button}</a></p>" ++
+  "<p>Back (the arrow, or Command-Left) returns to the page before.</p></body></html>"
+
+#guard ((searchPage "a <b>" [] true "").splitOn "&lt;b&gt;").length == 3
+#guard ((searchPage "lean browser" [] true "").splitOn "duckduckgo").length == 1
+#guard ((searchPage "lean browser" [] true "").splitOn "https://en.wikipedia.org/wiki/lean_browser").length == 2
+#guard ((searchChoicesHTML "").splitOn "class=\"chosen\" href=\"foafnaut:search-engine/none\"").length == 2
+#guard ((searchChoicesHTML "mojeek").splitOn "class=\"chosen\"").length == 2
+#guard ((outsidePage "mailto:a@example.org" false false).splitOn "Open in your mail app").length == 2
 
 /-! ### Editing the find text -/
 
@@ -1363,8 +1636,9 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 
 #guard submit "http://example.org/" == .page "http://example.org/"
 #guard submit "example.org" == .page "https://example.org"
-#guard submit "github.com/danbri" == .system "https://github.com/danbri"
-#guard submit "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
+#guard submit "github.com/danbri" == .page "https://github.com/danbri"
+#guard submit "lean browser" == .search "lean browser"
+#guard (submit "lean browser").json.toString == "{\"go\":\"page\",\"url\":\"foafnaut:search/lean+browser\"}"
 #guard submit ":zoom 150" == .command "zoom" "150"
 #guard submit ":source" == .command "source" ""
 #guard submit ":sparql SELECT ?s WHERE { ?s a <x:y> }" == .command "sparql" "q=SELECT+%3Fs+WHERE+%7B+%3Fs+a+%3Cx%3Ay%3E+%7D"
@@ -1372,7 +1646,7 @@ def Shell.editJson (s : Shell) : JSON.Json :=
 #guard (sourcePage "Source" "file:///a.html" "<p>\n  x</p>").contains '&'
 #guard ((sourcePage "Source" "a" (String.ofList (List.replicate 8001 'x'))).splitOn "first 8000").length == 2
 #guard submit ":open https://x.org" == .system "https://x.org"
-#guard link "https://github.com/danbri/factoidal-core" == .system "https://github.com/danbri/factoidal-core"
+#guard link "https://github.com/danbri/factoidal-core" == .page "https://github.com/danbri/factoidal-core"
 #guard link "foafnaut:theme/arcade" == .command "theme" "arcade"
 #guard link "status.html" == .page "status.html"
 -- The graph is a page: a link or `:graph` loads it in the tab and pushes it on the history.
@@ -1385,7 +1659,17 @@ private def hubSite : WebRoute.Site := {origin := "https://x.org",pages := "http
 #guard routeAddress hubSite "https://x.org/p/index.html" ":settings" == .page "settings" "https://x.org/p/settings.html"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":zoom 150" == .command "zoom" "150"
 #guard routeAddress hubSite "https://x.org/p/index.html" "x.org/p/a.html" == .navigate "https://x.org/p/a.html"
-#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" == .system "https://duckduckgo.com/?q=lean+browser"
+-- Words: the browser's own search page, with no search engine chosen; the chosen one's address otherwise.
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" == .page "search" "foafnaut:search/lean+browser"
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" "none" == .page "search" "foafnaut:search/lean+browser"
+#guard routeAddress hubSite "https://x.org/p/index.html" "lean browser" "mojeek" == .outside "https://www.mojeek.com/search?q=lean+browser"
+#guard routeAddress {} "file:///p/index.html" "lean browser" "mojeek" == .navigate "https://www.mojeek.com/search?q=lean+browser"
+#guard routeAddress {} "file:///p/index.html" "lean browser" "https://example.org/s?q=%s" == .navigate "https://example.org/s?q=lean+browser"
+#guard routeAddress {hubSite with outside := "https://www.mojeek.com/search?q=a"} "https://www.mojeek.com/search?q=a" "a" "mojeek" == .outside "https://www.mojeek.com/search?q=a"
+-- Hosts the old list sent out: the tab (native) or the Outside page (Hub).
+#guard routeAddress {} "file:///p/index.html" "github.com/danbri" == .navigate "https://github.com/danbri"
+#guard routeAddress hubSite "https://x.org/p/index.html" "github.com/danbri" == .outside "https://github.com/danbri"
+#guard routeAddress hubSite "https://x.org/p/index.html" ":search-engine mojeek" == .command "search-engine" "mojeek"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":open https://x.org/a" == .system "https://x.org/a"
 #guard routeAddress hubSite "https://x.org/p/index.html" ":open foafnaut:graph" == .graph
 -- A struct literal sets the anchor too: `anchor := 0` would select from the start.

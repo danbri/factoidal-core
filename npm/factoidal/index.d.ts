@@ -337,6 +337,12 @@ export class Dataset implements Iterable<Quad> {
 export type ClosureRegime = 'rdfs' | 'owl-rl' | 'rho-df' | 'rdfs-plus';
 
 export interface DatasetQueryOptions {
+  /** Automatic mixed CPU/WebGPU planning by default. 'gpu' requires an observed GPU join. */
+  execution?: 'auto' | 'cpu' | 'gpu';
+  /** Minimum rows per join input (default 1024 in auto mode; 1 in required GPU mode). */
+  gpuMinRows?: number;
+  /** Maximum candidate pairs, checked before output allocation (default 1000000). */
+  gpuMaxPairs?: number;
   sparql12?: boolean;
   version?: '1.1' | '1.2';
   /** Close the default graph under a regime before the query. */
@@ -640,6 +646,45 @@ export function fromQuads(quads: Iterable<Quad>): Promise<Dataset>;
 
 /** Load the engine. Afterwards the N-Quads text functions of `@factoidal/core/rdfjs` work. */
 export function ready(): Promise<void>;
+
+export interface WikidataRewriteDiagnostic {
+  code: string;
+  phase: string;
+  message: string;
+  offset: number | null;
+}
+
+export interface WikidataRewriteResult {
+  schema_version: 1;
+  rewrite_status: 'rewritten' | 'unchanged' | 'parse_error' | 'blazegraph_error' |
+    'skipped_unsupported' | 'validation_failed';
+  rewritten_query: string | null;
+  rewrites: { rule_id: string; variant_id: string }[];
+  warnings: WikidataRewriteDiagnostic[];
+  errors: WikidataRewriteDiagnostic[];
+}
+
+export interface SparqlQueryStructure {
+  form: 'select' | 'ask' | 'construct' | 'describe';
+  variables: string[];
+  sse: string;
+}
+
+/** Parse a query without evaluating it. The S-expression preserves property paths.
+ * Set wdqs to use Wikidata's implicit prefixes.
+ */
+export function parseSparqlStructure(
+  query: string,
+  options?: { wdqs?: boolean; version?: '1.1' | '1.2' }
+): Promise<SparqlQueryStructure>;
+
+/** Rewrite legacy WDQS syntax in a Lean engine with the wikidataRewrite op.
+ * AUTO_LANGUAGE defaults to en; the caller may supply an explicit language.
+ */
+export function wikidataRewrite(
+  query: string,
+  options?: { language?: string }
+): Promise<WikidataRewriteResult>;
 
 // ---------------------------------------------------------------------
 // Literal values (https://github.com/danbri/factoidal/issues/1051 items 1-3).
@@ -1966,8 +2011,16 @@ export function vcEd25519Verify(
  */
 export function xmlDecrypt(
   document: string,
-  options: { keys: object[]; allowCbc?: boolean }
+  options: { keys: object[]; allowCbc?: boolean; octets?: false }
 ): Promise<{ document: string; canonical: string }>;
+/**
+ * The plaintext octets of a document element xenc:EncryptedData with any or
+ * no Type (XML Encryption 1.1 §4.4 step 3).
+ */
+export function xmlDecrypt(
+  document: string,
+  options: { keys: object[]; allowCbc?: boolean; octets: true }
+): Promise<{ octets: Uint8Array }>;
 
 /** Encrypt an XML document element, or its content, for one recipient. */
 export function xmlEncrypt(
@@ -1979,6 +2032,19 @@ export function xmlEncrypt(
     keyWrap?: 'kw-aes128' | 'kw-aes256';
     content?: boolean;
     saml?: boolean;
+    /** With an `oct` recipient: wrap under a key derived from it (xenc11:DerivedKey, §5.4.3). */
+    derivedKey?: boolean;
+    /** The §5.4 key derivation of a key agreement or a derived key; Concat KDF by default. */
+    keyDerivation?:
+      | 'ConcatKDF'
+      | {
+          algorithm: 'pbkdf2';
+          prf?: 'hmac-sha1' | 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512';
+          /** 1 to 1,000,000. */
+          iterations: number;
+          /** Salt octets, 8 to 64; 16 by default. */
+          saltLength?: number;
+        };
   }
 ): Promise<{ document: string; canonical: string }>;
 
@@ -1996,16 +2062,19 @@ export function xmlVerify(
     keyFromKeyInfo?: boolean;
     certificates?: Uint8Array[];
     documents?: Record<string, Uint8Array | string>;
+    /** Accept 1024-bit RSA keys (refused by default). https://github.com/danbri/factoidal/issues/1227 */
+    dangerouslyAndRegrettablyAcceptRsa1024?: boolean;
   }
 ): Promise<
   | {
+      warnings?: string[];
       valid: true;
       signedInfo: string;
       references: { uri: string; octets: Uint8Array }[];
       key: object | null;
       certificate: Uint8Array | null;
     }
-  | { valid: false; reason: string }
+  | { valid: false; reason: string; warnings?: string[] }
 >;
 
 /**
@@ -2226,6 +2295,8 @@ export function capabilities(): Promise<{
   hdt: boolean;
   /** query()'s `sparql12` and Dataset.query's (queryDataset12, datasetQuery12). */
   sparql12: boolean;
+  /** The resumable mixed CPU/WebGPU query ops are present; device availability is separate. */
+  gpuSparql: boolean;
   /** openStore() and the Store methods (storeOpen, storeHandleQuery). */
   store: boolean;
   /** The deltaLog* functions (deltaLogEncode, deltaLogDecode, deltaLogMerge). */
@@ -2331,6 +2402,8 @@ declare const _default: {
   isomorphic: typeof isomorphic;
   fromQuads: typeof fromQuads;
   ready: typeof ready;
+  wikidataRewrite: typeof wikidataRewrite;
+  parseSparqlStructure: typeof parseSparqlStructure;
   engineTables: typeof engineTables;
   sameValue: typeof sameValue;
   syntaxFor: typeof syntaxFor;

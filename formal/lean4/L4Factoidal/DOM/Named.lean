@@ -29,13 +29,15 @@ first bullet of "named objects"): an `iframe` or `frame` with that `name` attrib
 def namesFrame (x : Node) (name : String) : Bool :=
   (Dom.isHtmlElement x "iframe" || Dom.isHtmlElement x "frame") && attrOf x "name" == some name
 
-/-- An element that is a named object for `name` (second and third bullets): an `embed`,
-`form`, `img` or `object` whose `name` attribute is `name`, or an HTML element whose `id` is
-`name`. -/
+/-- An element that is a named object for `name` (second and third bullets): an HTML `embed`,
+`form`, `img` or `object` whose `name` attribute is `name`, or an element of any namespace
+whose ID (DOM §4.9: the `id` attribute in no namespace) is `name`: an SVG or MathML element
+is named by its `id` as an HTML one is (as `id-non-html-elements.html` of WPT tests). -/
 def namesElement (x : Node) (name : String) : Bool :=
-  x.type == .element && x.ns == some htmlNS &&
+  x.type == .element &&
     (attrOf x "id" == some name ||
-      ((x.lname == "embed" || x.lname == "form" || x.lname == "img" || x.lname == "object") &&
+      (x.ns == some htmlNS &&
+        (x.lname == "embed" || x.lname == "form" || x.lname == "img" || x.lname == "object") &&
         attrOf x "name" == some name))
 
 /-- The named objects of the Window of document `doc` with the name `name`, in tree order:
@@ -108,6 +110,13 @@ supported property name". Does not say: that other values have non-empty wire fo
 do, by the leading letter; see the `#guard`s). -/
 theorem wire_absent : Value.absent.wire = "" := rfl
 
+/-- Kind: conformance. Says: the `name` attribute names only HTML elements: an element of
+another namespace is a named object only by its `id`. -/
+theorem namesElement_nonHtml (x : Node) (name : String) (h : x.ns ≠ some htmlNS) :
+    namesElement x name = (x.type == .element && attrOf x "id" == some name) := by
+  have hb : (x.ns == some htmlNS) = false := by simpa using h
+  simp [namesElement, hb]
+
 /-! ## Tests -/
 
 private def el (lname : String) (attrs : List (String × String)) (parent : NodeId) : Node :=
@@ -130,9 +139,9 @@ private def sample : Dom :=
 #guard answer sample 0 "b" == "c4 5"
 #guard answer sample 0 "fr" == "w6"
 #guard answer sample 0 "x" == "e6"
--- `name` counts only on embed, form, img and object; `id` only on HTML elements
+-- `name` counts only on HTML embed, form, img and object; `id` on an element of any namespace
 #guard answer sample 0 "g" == ""
-#guard answer sample 0 "s" == ""
+#guard answer sample 0 "s" == "e8"
 #guard answer sample 0 "" == ""
 #guard answer sample 0 "nothing" == ""
 

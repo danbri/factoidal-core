@@ -242,6 +242,7 @@ structure Env where
   propG : String → Option G
   color : CV → Option String
   ctx : Option Ctx := none
+  deferPctMath : Bool := false
 
 /-- The matches of a grammar at the start of some component values: for each, the
 canonical values it gives and the values left. -/
@@ -361,7 +362,7 @@ inductive PosPart where
   | lp (cv : CV)
   deriving Inhabited
 
-def posPart (ctx : Option Ctx) (cv : CV) : Option PosPart :=
+def posPart (ctx : Option Ctx) (deferPctMath : Bool) (cv : CV) : Option PosPart :=
   match cv with
   | .tok (.ident s) =>
     let k := lower s
@@ -369,7 +370,7 @@ def posPart (ctx : Option Ctx) (cv : CV) : Option PosPart :=
     else if k == "top" || k == "bottom" then some (.v k)
     else if k == "center" then some .center
     else none
-  | cv => (numeric ctx { kind := .length, allowPct := true } cv).map PosPart.lp
+  | cv => (numericWith ctx deferPctMath { kind := .length, allowPct := true } cv).map PosPart.lp
 
 /-- An axis of a position: a keyword with an optional offset, or a length-percentage. -/
 inductive PosAxis where
@@ -430,14 +431,14 @@ def positionLeaf (ctx : Option Ctx) (allow3 : Bool) (ts : List CV) : Res :=
   [4, 3, 2, 1].filterMap fun n =>
     if ts.length < n then none
     else
-      match (ts.take n).mapM (posPart ctx) with
+      match (ts.take n).mapM (posPart ctx allow3) with
       | none => none
       | some parts =>
         (posAxes allow3 parts).map fun (x, y) => (x.out ctx.isSome ++ y.out ctx.isSome, ts.drop n)
 
 /-- A basic type, or a non-terminal expanded through `m`. -/
 def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option Rat) (ts : List CV) : Res :=
-  let num := fun (req : NumReq) => oneCV (numeric env.ctx { req with lo := lo, hi := hi }) ts
+  let num := fun (req : NumReq) => oneCV (numericWith env.ctx env.deferPctMath { req with lo := lo, hi := hi }) ts
   match name with
   | "number" => num { kind := .number }
   | "integer" => num { kind := .number, integer := true }
@@ -499,6 +500,9 @@ def leaf (env : Env) (m : G → List CV → Res) (name : String) (lo hi : Option
       | [.tok (.ident n)] =>
         if cssWide.contains (lower n) || lower n == "default" then [] else [(idents, ts.drop 1)]
       | _ => [(idents, ts.drop idents.length)]
+  -- `calc-size()` (CSS Values 5 §7.1): a basis of `auto` only where the property takes `auto`
+  | "calc-size()" => oneCV (fun cv => (calcSizeOf env.ctx true 8 cv).map CV.raw) ts
+  | "calc-size-noauto()" => oneCV (fun cv => (calcSizeOf env.ctx false 8 cv).map CV.raw) ts
   | "position" => positionLeaf env.ctx false ts
   | "bg-position" => positionLeaf env.ctx true ts
   | _ =>

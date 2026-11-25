@@ -2333,7 +2333,7 @@ L4Factoidal_Rendering_CssValues_parseCVs  # (c) one call per level of nested fun
 L4Factoidal_Rendering_CssValues_calcOperand  # (c) the nesting of one calc() value, at most maxNesting = 64 (parseCVs)
 L4Factoidal_Rendering_CssValues_calcExpr  # (c) mutual with calcOperand: the nesting of one calc() value, at most 64
 L4Factoidal_Rendering_CssValues_Calc_type  # (c) the nesting of a calculation tree made by calcOperand, at most 64
-L4Factoidal_Rendering_CssValues_Calc_simp  # (c) the nesting of a calculation tree, at most 64
+L4Factoidal_Rendering_CssValues_Calc_simpWith  # (b) nested calculation syntax; the worker split out of Calc.simp; siblings use list maps
 L4Factoidal_Rendering_CssValues_Calc_css  # (c) the nesting of a calculation tree, at most 64; terms, factors and arguments are folds
 L4Factoidal_Rendering_CssValues_Calc_depth  # (c) the nesting of a calculation tree, at most 64
 L4Factoidal_Rendering_CssValues_vdsLevel  # (c) the nesting of a grammar text of the property table (Data.lean, generated; no page input)
@@ -2372,6 +2372,7 @@ L4Factoidal_Rendering_CssValues_hasFn  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_badSubstitution  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_hasBadToken  # (c) the nesting of one value, fuel 32
 L4Factoidal_Rendering_CssValues_Color_substF  # (c) the nesting of the channel expressions of a relative colour, fuel 16
+L4Factoidal_Rendering_ImportTree_walkPath  # (c) CSS @import production entry points sheetsOf and lackingOf use maxDepth = 8; sibling edges are a loop and at most maxSheets = 64 occurrences are followed.
 L4Factoidal_Rendering_CssSheet_preludeText_go  # (c) the nesting of an at-rule prelude, at most cvSize 64 + 2
 # --- MathML strict content, OpenMath, Core vocabulary (2026-11-14; https://github.com/danbri/factoidal-core/pull/433)
 L4Factoidal_MathML_exprEq*  # (b) nesting of a Content expression (exprEq, exprEqList, exprEqRows): a list continues by a tail call through &&, inside the mutual block
@@ -2420,7 +2421,7 @@ L4Factoidal_Rendering_MediaQuery_Cond_eval  # (c) a condition tree: at most maxO
 L4Factoidal_Rendering_CssValues_dropZeroLengths  # (c) the nesting of one value, fuel 8
 L4Factoidal_Rendering_MediaQuery_calcValue  # (c) the nesting of parentheses in one calc() of a media query, fuel 8
 L4Factoidal_DOM_Selectors_relativeList  # (c) DOM.Selectors parser: the argument of :has(); recursion only into the arguments of :not()/:is()/:has()/:nth-child(of), at most maxNesting (32) levels
-L4Factoidal_Rendering_CssVars_substitute  # (c) the nesting of var() fallbacks, at most maxFallbacks = 32; the loop over the value is a for loop
+L4Factoidal_Rendering_CssVars_substituteR  # (c) the nesting of var() fallbacks, at most maxFallbacks = 32; the loop over the value is a for loop
 # --- WebDriver endpoint (WebDriver/Gate.lean, Page.lean, Protocol.lean): 2026-11-14. What recurses is a template of the fixed endpoint table, the fixed-size session secret, or the nesting of one script argument/result under a fuel.
 L4Factoidal_WebDriver_Protocol_matchPath  # (c) one template of the fixed endpoint table: at most 6 segments, and the request path is compared only up to the template's length
 L4Factoidal_WebDriver_Gate_mismatches  # (c) sameText calls it only when both texts have the length of the secret (2 * secretBytes = 32 characters)
@@ -2444,3 +2445,48 @@ L4Factoidal_GpuKernel_lastWrite  # (s) GpuKernel/Race.lean: the meaning of a wri
 L4Factoidal_GpuKernel_Resident_fit  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 one frame's resident entries; to become an accumulator form proved equal before the host calls it
 L4Factoidal_GpuKernel_Resident_total  # (a) PENDING https://github.com/danbri/factoidal-core/issues/398 List.sum (foldr) over one frame's entries, as fit above
 L4Factoidal_JS_Tier1_pureNum  # (c) the number of a nested `+ - * /` operand (tier 1 of BubblePopJS): depth is the fuel it is called with, Tier1.depth = 8, whatever the expression
+# --- OWL 2 profiles and the RDF-to-structure reader (2026-11-16) ---
+L4Factoidal_OWL_Profiles_drOk  # (b) nesting of one data range; the loop over operands (drsOk) is a tail call
+L4Factoidal_OWL_Profiles_drsOk  # (b) nesting of one data range; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_elCE  # (b) nesting of one class expression; the loop over operands (elCEs) is a tail call
+L4Factoidal_OWL_Profiles_elCEs  # (b) nesting of one class expression; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_qlSuper  # (b) nesting of one class expression; the loop over operands (qlSupers) is a tail call
+L4Factoidal_OWL_Profiles_qlSupers  # (b) nesting of one class expression; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_rlSub  # (b) nesting of one class expression; the loop over operands (rlSubs) is a tail call
+L4Factoidal_OWL_Profiles_rlSubs  # (b) nesting of one class expression; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_rlSuper  # (b) nesting of one class expression; the loop over operands (rlSupers) is a tail call
+L4Factoidal_OWL_Profiles_rlSupers  # (b) nesting of one class expression; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_rlEquiv  # (b) nesting of one class expression; the loop over operands (rlEquivs) is a tail call
+L4Factoidal_OWL_Profiles_rlEquivs  # (b) nesting of one class expression; the loop over operands is a tail call
+L4Factoidal_OWL_Profiles_drKey  # (b) nesting of one data range; the loop over operands (drsKey) is an accumulator tail call
+L4Factoidal_OWL_Profiles_drsKey  # (b) nesting of one data range; the loop over operands is an accumulator tail call
+L4Factoidal_OWL_Profiles_ceKey  # (b) nesting of one class expression; the loop over operands (cesKey) is an accumulator tail call
+L4Factoidal_OWL_Profiles_cesKey  # (b) nesting of one class expression; the loop over operands is an accumulator tail call
+L4Factoidal_OWL_Profiles_oceKey  # (b) nesting of one class expression (the optional class of a cardinality)
+L4Factoidal_OWL_Struct_FromRdf_Ctx_dr  # (c) fuel starts at maxNesting = 512 and decreases at each nested data range; operands visited by List.mapM
+L4Factoidal_OWL_Struct_FromRdf_Ctx_ceMarkers  # (c) fuel starts at maxNesting = 512 and decreases at each nested class expression; operands visited by List.mapM
+# --- Added 2026-11-17, the accessibility tree (HTML/AccessibleTree.lean) ---
+L4Factoidal_HTML_AccessibleTree_walk*  # (c) one call per child of a node with less fuel; the fuel is maxDepth (512), so the depth is at most 512 (proved: tree_depth)
+# --- Added 2026-11-17, processing instruction attributes (DOM/PiAttributes.lean) ---
+L4Factoidal_DOM_PiAttributes_escapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop escapeGo (fast_eq)
+L4Factoidal_DOM_PiAttributes_unescapeList  # (s) DOM/PiAttributes.lean: the specification of unescape_escape; the executed path is the loop unescapeGo (fast_eq)
+# --- 2026-11-22, common GPU scan and mixed SPARQL continuations; generated C reviewed individually ---
+L4Factoidal_GpuDomainSpecificLanguage_GpuPlan_emitScan  # (c) private planner helper; its only entry supplies fuel 8, which decreases at every call; each level reduces words to ceil(words / 64)
+L4Factoidal_SPARQL_GpuQuery_Plan_bind  # (b) nesting of query-algebra continuations; a dispatch wraps its resume without evaluating later jobs; no recursion over solution rows; named-graph continuation chains are bounded at 256 by pattern
+L4Factoidal_SPARQL_GpuQuery_Plan_collect  # (c) only production caller is pattern's variable GRAPH branch, guarded by ds.named.length <= 256; larger datasets use the complete CPU evalIn operation (pattern_graphVar_large)
+L4Factoidal_SPARQL_GpuQuery_bgpRows  # (b) one continuation per triple pattern in a query BGP; recursion follows query syntax, never the number of matching rows or triples in the dataset
+L4Factoidal_SPARQL_GpuQuery_estimatePattern  # (b) query AST nesting; the variable GRAPH branch walks named graphs with emitted List.mapTR and foldl loops, not a dataset-length recursive stack
+L4Factoidal_SPARQL_GpuQuery_pattern  # (b) lowered query-algebra nesting; the only dataset-length continuation collection is variable GRAPH and is guarded at 256 named graphs before Plan.collect
+# --- 2026-11-24, viewport calculation syntax and fixed first-letter tables ---
+L4Factoidal_Rendering_CSS_usesViewport  # (b) nested calculation syntax; List.any walks siblings without adding one recursive call per sibling
+L4Factoidal_Rendering_Generated_categoryRanges  # (c) first-letter categories are three fixed lists over the checked-in Unicode general category data; no document strings reach the sort
+
+# WDQS ARQ formatting (issue 928). The private renderers share the 128 units
+# passed by formatParsedRewrite, with one unit consumed per recursive descent.
+L4Factoidal_Wikidata_renderElements # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderExpr # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderGroupSyntax # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderPath # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderQuerySyntax # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_renderUnion # (c) shared ARQ formatter fuel starts at 128
+L4Factoidal_Wikidata_tripleSpans # (c) shared ARQ formatter fuel starts at 128

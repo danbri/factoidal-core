@@ -184,12 +184,24 @@ Deno.test("expected failure, issue 1282: an ICO icon link gives no icon",()=>{
   assert.equal(facts.icon,null,stillGap("1282"));
 });
 
-Deno.test("expected failure, issue 1283: WebP and AVIF are refused",()=>{
-  // A 1 by 1 lossless WebP, and a 64 by 64 AVIF from SVT-AV1 through FFmpeg.
-  const webp="UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==";
+Deno.test("issue 1283: lossless WebP draws an image and decodes as a tab icon",()=>{
+  const webp="UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAELira0Ga0L4AAA==";
+  const icon=engine.iconPrepare(webp,1);
+  assert.equal(icon.kind,"bitmap");
+  if(icon.kind==="bitmap"){
+    assert.equal(icon.width,1);
+    assert.equal(icon.height,1);
+    assert.deepEqual(Array.from(atob(icon.rgba),c=>c.charCodeAt(0)),[32,174,9,125]);
+  }
+  const image=frame(`<img src="data:image/webp;base64,${webp}" width="32" height="32" alt="WEBPALT">`);
+  assert.ok(image.primitiveCount>0);
+  assert.ok(!image.webRender.glyphRuns.some(run=>run.text==="WEBPALT"),"lossless image fell back to its alt text");
+});
+
+Deno.test("expected failure, issue 1283: AVIF is refused",()=>{
+  // A 64 by 64 AVIF from SVT-AV1 through FFmpeg.
   const avif="AAAAIGZ0eXBhdmlmAAAAAGF2aWZtaWYxbWlhZk1BMUIAAAD5bWV0YQAAAAAAAAAvaGRscgAAAAAAAAAAcGljdAAAAAAAAAAAAAAAAFBpY3R1cmVIYW5kbGVyAAAAAA5waXRtAAAAAAABAAAAHmlsb2MAAAAARAAAAQABAAAAAQAAASEAAAAlAAAAKGlpbmYAAAAAAAEAAAAaaW5mZQIAAAAAAQAAYXYwMUNvbG9yAAAAAGppcHJwAAAAS2lwY28AAAAUaXNwZQAAAAAAAABAAAAAQAAAABBwaXhpAAAAAAMICAgAAAAMYXYxQ4EADAAAAAATY29scm5jbHgAAgACAAIAAAAAF2lwbWEAAAAAAAAAAQABBAECgwQAAAAtbWRhdAoLAgAABVV//Gr5gEAyFhAAugIIIEEBAAAIAJXR4n6sTwStpHA=";
-  for(const bytes of [webp,avif])
-    assert.throws(()=>engine.iconPrepare(bytes,1),/not PNG, JPEG or GIF/,stillGap("1283"));
+  assert.throws(()=>engine.iconPrepare(avif,1),/not PNG, JPEG or GIF/,stillGap("1283"));
 });
 
 Deno.test("expected failure, issue 1284: an animated GIF shows its first frame only",()=>{

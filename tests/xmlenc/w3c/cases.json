@@ -2,16 +2,102 @@
  "source": "https://www.w3.org/TR/xmlenc-core1-testcases/ (editor's draft https://www.w3.org/2008/xmlsec/Drafts/xmlenc-core-11/test-cases/), fetched 2026-10-27",
  "keys": "keys.json",
  "cases": [
-  {"id": "WRAP.1", "file": "cipherText__RSA-2048__aes128-gcm__rsa-oaep-mgf1p.xml", "outcome": "ok", "native": true, "expected": "plaintext.xml"},
-  {"id": "AGRMNT.1", "file": "cipherText__EC-P256__aes128-gcm__kw-aes128__ECDH-ES__ConcatKDF.xml", "outcome": "ok", "native": false, "expected": "plaintext.xml"},
-  {"id": "WRAP.2", "file": "cipherText__RSA-3072__aes192-gcm__rsa-oaep-mgf1p__Sha256.xml", "outcome": "refused", "reason": "AES-192"},
-  {"id": "WRAP.3", "file": "cipherText__RSA-3072__aes256-gcm__rsa-oaep__Sha384-MGF_Sha1.xml", "outcome": "refused", "reason": "xmlenc11#rsa-oaep is supported with"},
-  {"id": "WRAP.4", "file": "cipherText__RSA-4096__aes256-gcm__rsa-oaep__Sha512-MGF_Sha1_PSource.xml", "outcome": "refused", "reason": "xmlenc11#rsa-oaep is supported with"},
-  {"id": "AGRMNT.2", "file": "cipherText__EC-P384__aes192-gcm__kw-aes192__ECDH-ES__ConcatKDF.xml", "outcome": "refused", "reason": "AES-192"},
-  {"id": "AGRMNT.3", "file": "cipherText__EC-P521__aes256-gcm__kw-aes256__ECDH-ES__ConcatKDF.xml", "outcome": "refused", "reason": "not on P-256"},
-  {"id": "AGRMNT.7", "file": "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml", "outcome": "refused", "reason": "key agreement algorithm"},
-  {"id": "AGRMNT (PBKDF2)", "file": "cipherText__EC-P256__aes128-gcm__kw-aes256__ECDH-ES__pbkdf2.xml", "outcome": "refused", "reason": "must be ConcatKDF"},
-  {"id": "SYM.1", "file": "microsoft-xenc11-example-AES128-GCM.xml", "outcome": "refused", "reason": "no Type"},
-  {"id": "DRV.1", "file": "microsoft-dkey-example-ConcatKDF-crypto.xml", "outcome": "refused", "reason": "no Type"}
- ]
+  {
+   "id": "WRAP.1",
+   "file": "cipherText__RSA-2048__aes128-gcm__rsa-oaep-mgf1p.xml",
+   "outcome": "ok",
+   "native": true,
+   "expected": "plaintext.xml",
+   "key": "oracle-RSA-2048"
+  },
+  {
+   "id": "AGRMNT.1",
+   "file": "cipherText__EC-P256__aes128-gcm__kw-aes128__ECDH-ES__ConcatKDF.xml",
+   "outcome": "ok",
+   "native": false,
+   "expected": "plaintext.xml",
+   "key": "oracle-EC-P256"
+  },
+  {
+   "id": "WRAP.2",
+   "file": "cipherText__RSA-3072__aes192-gcm__rsa-oaep-mgf1p__Sha256.xml",
+   "outcome": "refused",
+   "reason": "AES-192",
+   "key": "oracle-RSA-3072",
+   "issue": "https://github.com/danbri/factoidal/issues/1304"
+  },
+  {
+   "id": "WRAP.3",
+   "file": "cipherText__RSA-3072__aes256-gcm__rsa-oaep__Sha384-MGF_Sha1.xml",
+   "outcome": "ok",
+   "key": "oracle-RSA-3072",
+   "native": true,
+   "expected": "plaintext.xml"
+  },
+  {
+   "id": "WRAP.4",
+   "file": "cipherText__RSA-4096__aes256-gcm__rsa-oaep__Sha512-MGF_Sha1_PSource.xml",
+   "outcome": "ok",
+   "key": "oracle-RSA-4096",
+   "native": true,
+   "expected": "plaintext.xml"
+  },
+  {
+   "id": "AGRMNT.2",
+   "file": "cipherText__EC-P384__aes192-gcm__kw-aes192__ECDH-ES__ConcatKDF.xml",
+   "outcome": "refused",
+   "reason": "AES-192",
+   "issue": "https://github.com/danbri/factoidal/issues/1304"
+  },
+  {
+   "id": "AGRMNT.3",
+   "file": "cipherText__EC-P521__aes256-gcm__kw-aes256__ECDH-ES__ConcatKDF.xml",
+   "outcome": "refused",
+   "reason": "not on P-256",
+   "issue": "https://github.com/danbri/factoidal/issues/1223"
+  },
+  {
+   "id": "AGRMNT.7",
+   "file": "cipherText__DH-1024__aes128-gcm__kw-aes128__dh-es__ConcatKDF.xml",
+   "outcome": "refused",
+   "reason": "key agreement algorithm"
+  },
+  {
+   "id": "AGRMNT.9",
+   "file": "cipherText__EC-P256__aes128-gcm__kw-aes256__ECDH-ES__pbkdf2.xml",
+   "outcome": "xfail",
+   "issue": "https://github.com/danbri/factoidal/issues/1303",
+   "key": "oracle-EC-P256"
+  },
+  {
+   "id": "SYM.1",
+   "file": "microsoft-xenc11-example-AES128-GCM.xml",
+   "outcome": "octets",
+   "native": true,
+   "key": "Test Key 1",
+   "expectedHex": "d9313225f88406e5a55909c5aff5269a"
+  },
+  {
+   "id": "DRV.1",
+   "file": "microsoft-dkey-example-ConcatKDF-crypto.xml",
+   "outcome": "defective",
+   "native": false,
+   "key": "Secret1",
+   "issue": "https://github.com/danbri/factoidal/issues/1303",
+   "derivedKeyHex": "01b16fcd1202ea602ebee1bf3d0cd93952ae769cf8ff72d76cc46a3a28f9ea95",
+   "expectedHex": "0408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708"
+  },
+  {
+   "id": "DRV.2",
+   "file": "microsoft-dkey-example-PBKDF2-crypto.xml",
+   "outcome": "defective",
+   "native": false,
+   "key": "Our shared secret",
+   "issue": "https://github.com/danbri/factoidal/issues/1303",
+   "derivedKeyHex": "fbf0989c2b7adf40300e838e48b04708ae6707a315e590fb79b181d10e8c169e",
+   "expectedHex": "0408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708040801020304050607080408010203040506070804080102030405060708"
+  }
+ ],
+ "keyNote": "'key' names the one key of keys.json given for a case; a case without it gets every key",
+ "defectiveNote": "'defective': the CipherValue is the IV and exactly the 320-octet plaintext, with no XML Encryption 1.1 section 5.2 padding block (padding always adds at least one octet). The harnesses check the key that Lean derives against derivedKeyHex (Node's crypto) and that the octets are not the expected plaintext; the run fails if they ever are (then the data or the reader changed). Excluded from pass and fail."
 }

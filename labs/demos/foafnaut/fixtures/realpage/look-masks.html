@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Icons drawn with a mask</title>
+<style>body{font:16px sans-serif;margin:16px}
+.icon{display:inline-block;width:20px;height:20px;background-color:#202122;vertical-align:middle;
+  -webkit-mask-image:url(logo.svg);mask-image:url(logo.svg);mask-size:20px;mask-repeat:no-repeat}
+.fade{mask-image:linear-gradient(to bottom,black,transparent);background:#cde;padding:8px}</style></head>
+<body>
+<h1>Icons drawn with a mask</h1>
+<p><span class="icon"></span> Search <span class="icon"></span> Menu <span class="icon"></span> Settings</p>
+<p>Pages draw icons as a box filled with the text colour and cut to shape by a mask image.
+Until the browser draws mask images, it leaves those boxes out: no dark squares before the words above.</p>
+<div class="fade">A box with a gradient mask is still drawn.</div>
+</body></html>

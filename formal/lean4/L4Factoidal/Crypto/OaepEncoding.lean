@@ -27,18 +27,23 @@ open L4Factoidal.Crypto
 
 /-! ## Hash parameter -/
 
-/-- The hash of an OAEP instance: the function and its output length
-`hLen` in octets. One hash serves as the label hash and as the MGF1 hash in
-every instance this tree uses. -/
+/-- The hashes of an OAEP instance (RFC 8017 §7.1, "Options: Hash, MGF"): the
+label hash `hash` with its output length `hLen` in octets, and the hash of
+MGF1, `mgfHash` with its output length `mgfLen`. By default MGF1 uses the label
+hash, as JWE `RSA-OAEP` and `RSA-OAEP-256` do. XML Encryption 1.1 §5.5.2
+names the two separately (`ds:DigestMethod` and `xenc11:MGF`): W3C case WRAP.3
+is a SHA-384 label hash with MGF1 over SHA-1. -/
 structure OaepHash where
   hash : ByteArray → ByteArray
   hLen : Nat
+  mgfHash : ByteArray → ByteArray := hash
+  mgfLen : Nat := hLen
 
 /-- SHA-1, for XML Encryption `rsa-oaep-mgf1p` and JWE `RSA-OAEP`. -/
-def oaepSha1 : OaepHash := ⟨sha1, 20⟩
+def oaepSha1 : OaepHash := { hash := sha1, hLen := 20 }
 
 /-- SHA-256, for JWE `RSA-OAEP-256`. -/
-def oaepSha256 : OaepHash := ⟨sha256, 32⟩
+def oaepSha256 : OaepHash := { hash := sha256, hLen := 32 }
 
 /-! ## Octet-list helpers -/
 
@@ -63,8 +68,8 @@ def i2osp4 (c : Nat) : List UInt8 :=
 the first `maskLen` octets. The RFC's "mask too long" error
 (`maskLen > 2^32 hLen`) cannot occur for a modulus of at most 4096 bits. -/
 def mgf1 (H : OaepHash) (seed : List UInt8) (maskLen : Nat) : List UInt8 :=
-  let blocks := (maskLen + H.hLen - 1) / H.hLen
-  ((List.range blocks).flatMap fun c => ofBA (H.hash (toBA (seed ++ i2osp4 c)))).take maskLen
+  let blocks := (maskLen + H.mgfLen - 1) / H.mgfLen
+  ((List.range blocks).flatMap fun c => ofBA (H.mgfHash (toBA (seed ++ i2osp4 c)))).take maskLen
 
 /-- `a XOR m`, octet by octet, over the length of `a`. When `m` is shorter
 than `a` the missing mask octets are zero. With that convention the
@@ -100,6 +105,25 @@ theorem xorMask_xorMask (a m : List UInt8) : xorMask (xorMask a m) m = a := by
 
 /-! ## EME-OAEP encoding (RFC 8017 §7.1.1 step 2) -/
 
+/-- A mask provider may refuse an input. Encoding and decoding apply the two
+RFC masks in opposite order, passing the first masked value into the second
+request. The continuation runs only after both requests succeed. -/
+abbrev MaskProvider := List UInt8 → Nat → Option (List UInt8)
+
+def withMasks (mask : MaskProvider) (a b : List UInt8) (aLen bLen : Nat)
+    (finish : List UInt8 → List UInt8 → Option α) : Option α :=
+  (mask b aLen).bind fun ma =>
+    let a' := xorMask a ma
+    (mask a' bLen).bind fun mb => finish a' (xorMask b mb)
+
+def emeEncodeWith (hLen k : Nat) (lHash msg seed : List UInt8) (mask : MaskProvider) :
+    Option (List UInt8) :=
+  if lHash.length = hLen ∧ seed.length = hLen ∧ msg.length + 2 * hLen + 2 ≤ k then
+    let db := lHash ++ (List.replicate (k - msg.length - 2 * hLen - 2) 0 ++ (0x01 :: msg))
+    withMasks mask db seed (k - hLen - 1) hLen fun maskedDB maskedSeed =>
+      some (0x00 :: (maskedSeed ++ maskedDB))
+  else none
+
 /-- EME-OAEP encoding of `msg` under `label` for a `k`-octet modulus, with
 the seed given by the caller:
 
@@ -115,22 +139,15 @@ EM         = 0x00 || maskedSeed || maskedDB
 `hLen` octets. The seed must be random; that is the caller's obligation. -/
 def emeEncode (H : OaepHash) (k : Nat) (label msg seed : List UInt8) :
     Option (List UInt8) :=
-  let hLen := H.hLen
-  let lHash := ofBA (H.hash (toBA label))
-  if lHash.length = hLen ∧ seed.length = hLen ∧ msg.length + 2 * hLen + 2 ≤ k then
-    let db := lHash ++ (List.replicate (k - msg.length - 2 * hLen - 2) 0 ++ (0x01 :: msg))
-    let maskedDB := xorMask db (mgf1 H seed (k - hLen - 1))
-    let maskedSeed := xorMask seed (mgf1 H maskedDB hLen)
-    some (0x00 :: (maskedSeed ++ maskedDB))
-  else none
+  emeEncodeWith H.hLen k (ofBA (H.hash (toBA label))) msg seed (fun s n => some (mgf1 H s n))
 
 /-- An encoded message is exactly `k` octets and starts with `0x00`. The
 leading zero is what keeps `EM` numerically below the modulus. -/
 theorem emeEncode_length {H : OaepHash} {k : Nat} {label msg seed em : List UInt8}
     (h : emeEncode H k label msg seed = some em) :
     em.length = k ∧ em.head? = some 0x00 := by
-  unfold emeEncode at h
-  dsimp only at h
+  unfold emeEncode emeEncodeWith at h
+  dsimp only [withMasks, Option.bind_some] at h
   split at h
   · next hc =>
       obtain ⟨hl, hs, hm⟩ := hc
@@ -185,6 +202,18 @@ def scan (l : List UInt8) : ScanState := l.foldl scanStep scanInit
 
 /-! ## EME-OAEP decoding (RFC 8017 §7.1.2 step 3) -/
 
+def emeDecodeWith (hLen k : Nat) (lHash em : List UInt8) (mask : MaskProvider) :
+    Option (List UInt8) :=
+  if em.length = k ∧ 2 * hLen + 2 ≤ k ∧ lHash.length = hLen then
+    let maskedSeed := (em.drop 1).take hLen
+    let maskedDB := em.drop (hLen + 1)
+    withMasks mask maskedSeed maskedDB hLen (k - hLen - 1) fun _ db =>
+      let rest := db.drop hLen
+      let st := scan rest
+      let flags := em.headD 0 ||| ctDiff (db.take hLen) lHash ||| st.bad ||| st.looking
+      if flags = 0 then some (rest.drop st.start) else none
+  else none
+
 /-- EME-OAEP decoding of a `k`-octet encoded message. `some M` exactly when
 `Y = 0x00`, the recovered label hash equals `Hash(label)`, and the octets
 between the label hash and the first `0x01` are all `0x00`. Every failure
@@ -193,19 +222,7 @@ every input before the one `if` that combines them. See the module header
 for the public checks that come first. -/
 def emeDecode (H : OaepHash) (k : Nat) (label em : List UInt8) :
     Option (List UInt8) :=
-  let hLen := H.hLen
-  let lHash := ofBA (H.hash (toBA label))
-  if em.length = k ∧ 2 * hLen + 2 ≤ k ∧ lHash.length = hLen then
-    let y := em.headD 0
-    let maskedSeed := (em.drop 1).take hLen
-    let maskedDB := em.drop (hLen + 1)
-    let seed := xorMask maskedSeed (mgf1 H maskedDB hLen)
-    let db := xorMask maskedDB (mgf1 H seed (k - hLen - 1))
-    let rest := db.drop hLen
-    let st := scan rest
-    let flags := y ||| ctDiff (db.take hLen) lHash ||| st.bad ||| st.looking
-    if flags = 0 then some (rest.drop st.start) else none
-  else none
+  emeDecodeWith H.hLen k (ofBA (H.hash (toBA label))) em (fun s n => some (mgf1 H s n))
 
 /-! ## Theorems about the scan and the round trip -/
 
@@ -256,8 +273,8 @@ theorem emeDecode_emeEncode {H : OaepHash} {k : Nat} {label msg seed em : List U
     (h : emeEncode H k label msg seed = some em) :
     emeDecode H k label em = some msg := by
   have hlen := (emeEncode_length h).1
-  unfold emeEncode at h
-  dsimp only at h
+  unfold emeEncode emeEncodeWith at h
+  dsimp only [withMasks, Option.bind_some] at h
   split at h
   · next hc =>
       obtain ⟨hl, hs, hm⟩ := hc
@@ -268,10 +285,10 @@ theorem emeDecode_emeEncode {H : OaepHash} {k : Nat} {label msg seed em : List U
       generalize hmdb : xorMask db (mgf1 H seed (k - H.hLen - 1)) = maskedDB at hlen ⊢
       have hms : (xorMask seed (mgf1 H maskedDB H.hLen)).length = H.hLen := by
         rw [xorMask_length, hs]
-      unfold emeDecode
+      unfold emeDecode emeDecodeWith
       have hk : 2 * H.hLen + 2 ≤ k := by omega
       rw [if_pos ⟨hlen, hk, hl⟩]
-      simp only [List.headD_cons, List.drop_succ_cons, List.drop_zero]
+      simp only [withMasks, Option.bind_some, List.headD_cons, List.drop_succ_cons, List.drop_zero]
       rw [List.take_left' hms, List.drop_left' hms, xorMask_xorMask, ← hmdb, xorMask_xorMask, ← hdb]
       have htake : (ofBA (H.hash (toBA label)) ++
           (List.replicate (k - msg.length - 2 * H.hLen - 2) 0 ++ (0x01 :: msg))).take H.hLen

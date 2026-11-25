@@ -46,16 +46,23 @@ cannot answer, `sha3?` answers `none` and the API refuses. Trusted: HACL*'s proo
 `Hacl_Hash_SHA3` against FIPS 202. Not checked in Lean: any value it computes (the FIPS 202
 vectors are run at the C level, `tests/crypto/run-kat.sh`, and through WPT).
 
+XML Encryption also uses SHA-224 through `sha224ForXml?`. Internal code 5 of
+`hashRaw` selects the already vendored `Hacl_Hash_SHA2_hash_224` on native
+and Wasm. The Lean wrapper checks the input bound and the 28-byte output.
+It trusts HACL* and the C shim for the digest bytes. The VC and XML probes
+check a published SHA-224 vector. The page-facing hash registry keeps its four names.
+
 No `sorry`, no `axiom`, no `partial`.
 -/
 import L4Factoidal.Crypto.WebCrypto
+import L4Factoidal.NatBounds
 
 namespace L4Factoidal.Crypto.WebHacl
 
 open L4Factoidal.Crypto
 
-/-- 2^32: HACL*'s C API takes every length as a `uint32_t`. -/
-def u32Bound : Nat := 4294967296
+/-- Exclusive length bound for HACL*'s C API, shared by the wasm32 guards. -/
+@[noinline] def u32Bound : Nat := L4Factoidal.two32
 
 /-! ## The hash family at the boundary -/
 
@@ -239,6 +246,20 @@ def hash? (a : HashAlg) (msg : ByteArray) : Option ByteArray :=
   if h : HashPre msg then
     checkSize (hashRaw a.code msg h) a.size
   else none
+
+/-- Internal XML digest. Code 5 is specific to the hash extern. -/
+def sha224ForXml? (msg : ByteArray) : Option ByteArray :=
+  if h : HashPre msg then checkSize (hashRaw 5 msg h) 28 else none
+
+/-- Kind: invariant.
+Says: a successful SHA-224 call through the XML wrapper returns 28 octets.
+Does not say: that the returned octets are the FIPS 180-4 digest. -/
+theorem sha224ForXml?_size {msg out : ByteArray} (h : sha224ForXml? msg = some out) :
+    out.size = 28 := by
+  unfold sha224ForXml? at h
+  split at h
+  · exact checkSize_size h
+  · cases h
 
 def hmac? (a : HashAlg) (key msg : ByteArray) : Option ByteArray :=
   if h : HmacPre a.code key msg then
@@ -584,3 +605,5 @@ theorem ctEq_eq (hc : CtEqAgrees) (a b : ByteArray) : ctEq a b = decide (a = b) 
 #guard HashAlg.ofName? "MD5" == none
 
 end L4Factoidal.Crypto.WebHacl
+
+#print axioms L4Factoidal.Crypto.WebHacl.sha224ForXml?_size

@@ -330,7 +330,9 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
   for el in m.elems do
     match el.mode with
     | .active x off =>
-      let d := (evalConst st inst off).toUInt32.toNat
+      -- An i64 table (table64) takes the whole 64-bit offset; an i32 one its low half.
+      let d := if vm.ctx.tableAddr x == .i64 then (evalConst st inst off).toNat
+        else (evalConst st inst off).toUInt32.toNat
       match initTable st inst.tables[x]! d (st.elems[inst.elems[ei]!]!) with
       | .error t => return (st, .error (.trap t))
       | .ok st' => st := st'
@@ -342,7 +344,9 @@ def instantiate (st : StoreOf M) (vm : ValidModule) (imports : Array ExternVal) 
   for d in m.datas do
     match d.mode with
     | .active x off =>
-      let o := (evalConst st inst off).toUInt32.toNat
+      -- An i64 memory (memory64) takes the whole 64-bit offset; an i32 one its low half.
+      let o := if vm.ctx.memAddr x == .i64 then (evalConst st inst off).toNat
+        else (evalConst st inst off).toUInt32.toNat
       match initMem st inst.mems[x]! o d.init with
       | .error t => return (st, .error (.trap t))
       | .ok st' => st := st'

@@ -1,0 +1,61 @@
+name: Paralliverse typed program proofs
+
+on:
+  push:
+    branches: [main, wip/paralliverse-typed-programs]
+    paths:
+      # The optional Dataflow bridge has transitive dependencies outside this directory.
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-programs.yml'
+  pull_request:
+    paths:
+      # The optional Dataflow bridge has transitive dependencies outside this directory.
+      - 'formal/lean4/**'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+      - '.github/workflows/check-paralliverse-programs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-core
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.Program L4Factoidal.Paralliverse.ProgramCPU
+        L4Factoidal.GpuDomainSpecificLanguage
+      theorems: >-
+        L4Factoidal.Paralliverse.Program.eval_fuseMaps
+        L4Factoidal.Paralliverse.Program.runCPU_eq_eval
+        L4Factoidal.Paralliverse.Program.runCPU_fuseMaps_eq_eval
+        L4Factoidal.Paralliverse.Program.collect_mapCPU_eq_eval
+        L4Factoidal.GpuDomainSpecificLanguage.eval_eq_of_primitive_agreement
+  words:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-words
+      timeout_minutes: 10
+      modules: >-
+        L4Factoidal.Paralliverse.ProgramWords Harness.ParalliverseProgramGuards
+      theorems: >-
+        L4Factoidal.Paralliverse.WordProgram.fuseMaps_packedAffine
+        L4Factoidal.Paralliverse.WordProgram.runCPU_affine
+        L4Factoidal.Paralliverse.WordProgram.runCPU_packedAffine
+  dataflow:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/paralliverse-typed-programs'
+    uses: ./.github/workflows/check-dataflow-stage.yml
+    with:
+      group: typed-program-dataflow
+      timeout_minutes: 15
+      modules: L4Factoidal.Paralliverse.ProgramDataflow
+      theorems: L4Factoidal.Paralliverse.Program.asStage_run_iff

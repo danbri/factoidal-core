@@ -7,6 +7,7 @@ encoding that has an encoder, on encodable and unencodable code points; and the 
 GET form as the WPT `encoding/*-encode-form*` pages make it.
 -/
 import L4Factoidal.HTML.FormSubmission
+import L4Factoidal.DOM.FormControls
 import L4Factoidal.DOM.OfHtml
 
 namespace L4Factoidal.HTML.FormSubmissionTests
@@ -54,11 +55,39 @@ def planOf (src url : String) : Option Plan :=
   some { target := "frame-0",
          url := "http://web-platform.test/common/blank.html?input-0=%B0%EC%2C%C6%F3%26%2344032%3B" }
 
--- POST does not navigate here; a missing action is the document's URL.
-#guard planOf "<form method=post><input name=a value=b></form>" "http://x.test/p" == none
+-- POST (urlencoded, to http or https) is the action URL with the entries as its body; a
+-- missing action is the document's URL. POST as multipart or to a file: URL is not planned.
+#guard planOf "<form method=post><input name=a value='b c'></form>" "http://x.test/p" ==
+  some { target := "", url := "http://x.test/p", method := "post", body := "a=b+c",
+         contentType := "application/x-www-form-urlencoded" }
+#guard planOf "<form method=post enctype=multipart/form-data><input name=a value=b></form>" "http://x.test/p" == none
+#guard planOf "<form method=post><input name=a value=b></form>" "file:///p.html" == none
+#guard (planOf "<form method=get><button formmethod=post name=s value=v></button></form>" "http://x.test/p").map (·.method) == some "get"
 #guard (planOf "<form><input name=a value='b c'><input type=checkbox name=k>\
   <input type=checkbox name=c checked><input name=d disabled value=x><button name=s value=v></button></form>"
   "http://x.test/p?q#f").map (·.url) == some "http://x.test/p?a=b+c&c=on#f"
 #guard (planOf "<form action='javascript:x'><input name=a></form>" "http://x.test/") == none
+
+-- Implicit submission (Enter in a field, HTML §4.10.21.2): the default button is clicked; a
+-- form with no submit button is submitted when at most one field blocks it; a disabled default
+-- button, two blocking fields with no button, a textarea or a field with no form do nothing.
+def implicitIn (src : String) (nth : Nat) : Option L4Factoidal.DOM.FormControls.Implicit :=
+  let d := L4Factoidal.DOM.parseHtmlDocument src
+  let fields := (d.treeOrder 0).filter fun k => L4Factoidal.DOM.Forms.isHtml d k ["input", "textarea"]
+  L4Factoidal.DOM.FormControls.implicitSubmission d (fields[nth]?.getD 0)
+def isClick : Option L4Factoidal.DOM.FormControls.Implicit → Bool
+  | some (.click _) => true
+  | _ => false
+def isSubmit : Option L4Factoidal.DOM.FormControls.Implicit → Bool
+  | some (.submit _) => true
+  | _ => false
+#guard isClick (implicitIn "<form><input name=q><button>Go</button></form>" 0)
+#guard isClick (implicitIn "<form><input name=q><input name=r><input type=submit></form>" 1)
+#guard isSubmit (implicitIn "<form><input name=q><input type=checkbox name=c></form>" 0)
+#guard implicitIn "<form><input name=q><input name=r></form>" 0 == none
+#guard implicitIn "<form><input name=q><button disabled>Go</button></form>" 0 == none
+#guard implicitIn "<form><input name=q><button type=button>B</button></form>" 0 |> isSubmit
+#guard implicitIn "<form><textarea name=t></textarea><button>Go</button></form>" 0 == none
+#guard implicitIn "<input name=q><button>Go</button>" 0 == none
 
 end L4Factoidal.HTML.FormSubmissionTests

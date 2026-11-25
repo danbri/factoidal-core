@@ -127,6 +127,8 @@ def entryList (d : Dom) (form : NodeId) (submitter : Option NodeId) (charsetName
       out := out.push (name, charsetName)
     else if isHtml d k ["textarea"] then
       out := out.push (name, (d.textContent k).getD "")
+    else if isInput then
+      out := out.push (name, inputValue d k)
     else
       out := out.push (name, (attr? d k "value").getD "")
   return out
@@ -179,6 +181,11 @@ the host: "" and `_self` the form's own, `_blank`, `_parent`, `_top`, or a frame
 structure Plan where
   target : String
   url : String
+  /-- `get`, or `post` with `body` (the serialized entry list) of type `contentType`
+  ("submit as entity body", §4.10.21.3). -/
+  method : String := "get"
+  body : String := ""
+  contentType : String := ""
   deriving Repr, BEq, Inhabited
 
 /-- A submit button's override of a form attribute (`formaction`, `formmethod`,
@@ -197,6 +204,16 @@ def method (d : Dom) (form : NodeId) (submitter : Option NodeId) : String :=
   let m := Dom.asciiLower ((submitterAttr d submitter "formmethod" <|> attr? d form "method").getD "get")
   if m == "post" || m == "dialog" then m else "get"
 
+/-- The encoding type keyword (§4.10.19.6): the submitter's `formenctype`, else the form's
+`enctype`; `application/x-www-form-urlencoded` when missing or invalid. -/
+def enctype (d : Dom) (form : NodeId) (submitter : Option NodeId) : String :=
+  let e := Dom.asciiLower ((submitterAttr d submitter "formenctype" <|> attr? d form "enctype").getD "")
+  if e == "multipart/form-data" || e == "text/plain" then e else "application/x-www-form-urlencoded"
+
+/-- The schemes a form may post to: a POST goes to a server, never to a `file:`, `data:`,
+`javascript:` or `mailto:` URL. -/
+def postScheme (scheme : String) : Bool := scheme == "http" || scheme == "https"
+
 /-- The target of the submission (§4.10.21.3 step 18, "get an element's target"): the
 submitter's `formtarget`, else the form's `target`, else `baseTarget` (the first `base`
 element's `target` in the document). -/
@@ -204,20 +221,70 @@ def target (d : Dom) (form : NodeId) (submitter : Option NodeId) (baseTarget : S
   (submitterAttr d submitter "formtarget" <|> attr? d form "target").getD baseTarget
 
 /-- The form submission algorithm for `form` with `submitter`, in a document with URL
-`docURL` (its base URL) and encoding `docEncoding`: for a GET form whose action is an
-http(s) or data URL, the navigation it makes ("mutate action URL": the query becomes the
-serialized entry list in the form's encoding). `none` when it navigates nowhere here: the
-action does not parse, POST and `dialog` (not done), `javascript:` and `mailto:` URLs. -/
+`docURL` (its base URL) and encoding `docEncoding`. GET, when the action is an http(s),
+`data:` or `file:` URL: the navigation it makes ("mutate action URL": the query becomes the
+serialized entry list in the form's encoding). POST with the urlencoded type, when the action
+is http(s) (`postScheme`): the action URL and the serialized entry list as the body ("submit
+as entity body"). `none` when it navigates nowhere here: the action does not parse, `dialog`,
+POST as `multipart/form-data` or `text/plain` (not done), `javascript:` and `mailto:` URLs. -/
 def plan (d : Dom) (form : NodeId) (submitter : Option NodeId) (docURL : String) (docEncoding : Encoding)
-    (baseTarget : String := "") : Option Plan := do
+    (baseTarget : String := "") : Option Plan :=
   let action := (submitterAttr d submitter "formaction" <|> attr? d form "action").getD ""
   let action := if action.isEmpty then docURL else action
-  let parsed ← URL.parseUrl action (if docURL.isEmpty then none else some docURL)
-  if method d form submitter != "get" then none
-  if !["http", "https", "data", "file"].contains parsed.scheme then none
-  let enc := pickEncoding (attr? d form "accept-charset") docEncoding
-  let query := serialize enc (pairs (entryList d form submitter enc.name))
-  some { target := target d form submitter baseTarget, url := { parsed with query := some query }.href }
+  match URL.parseUrl action (if docURL.isEmpty then none else some docURL) with
+  | none => none
+  | some parsed =>
+    let enc := pickEncoding (attr? d form "accept-charset") docEncoding
+    let entries := serialize enc (pairs (entryList d form submitter enc.name))
+    if method d form submitter == "get" then
+      if ["http", "https", "data", "file"].contains parsed.scheme then
+        some { target := target d form submitter baseTarget, url := { parsed with query := some entries }.href }
+      else none
+    else if method d form submitter == "post" && enctype d form submitter == "application/x-www-form-urlencoded" &&
+        postScheme parsed.scheme then
+      some { target := target d form submitter baseTarget, url := parsed.href, method := "post", body := entries,
+             contentType := "application/x-www-form-urlencoded" }
+    else none
+
+/-- Kind: property of `plan`. Says: a submission Lean plans is a GET or a POST, nothing else.
+Does not say: that the host makes the request, or anything of its URL. -/
+theorem plan_method {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
+    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget = some p) : p.method = "get" ∨ p.method = "post" := by
+  simp only [plan] at h
+  split at h
+  · cases h
+  · split at h
+    · split at h
+      · cases h; exact Or.inl rfl
+      · cases h
+    · split at h
+      · cases h; exact Or.inr rfl
+      · cases h
+
+/-- Kind: security property of `plan`. Says: a POST goes only to an http or https URL that the
+action parsed to (`postScheme`), so a form never sends its fields in a body to a `file:`,
+`data:`, `javascript:` or `mailto:` URL; and a GET has no body. Does not say: which origin the
+URL has (a form may post to another site, as on the web), or that the URL is reachable. -/
+theorem plan_post_http {d : Dom} {form : NodeId} {submitter : Option NodeId} {docURL : String}
+    {docEncoding : Encoding} {baseTarget : String} {p : Plan}
+    (h : plan d form submitter docURL docEncoding baseTarget = some p) :
+    (p.method = "post" → ∃ u : URL.Url, postScheme u.scheme = true ∧ p.url = u.href) ∧ (p.method = "get" → p.body = "") := by
+  simp only [plan] at h
+  split at h
+  · cases h
+  · rename_i parsed _
+    split at h
+    · split at h
+      · cases h; exact ⟨fun hm => by simp at hm, fun _ => rfl⟩
+      · cases h
+    · split at h
+      · rename_i hc
+        cases h
+        refine ⟨fun _ => ⟨parsed, ?_, rfl⟩, fun hm => by simp at hm⟩
+        simp only [Bool.and_eq_true] at hc
+        exact hc.2
+      · cases h
 
 /-! ## The byte layer, at the level of the specification
 

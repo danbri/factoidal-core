@@ -84,7 +84,7 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/about_page_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/native_html_key_test.ts"|"$LAB/network_gaps_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts"|"$LAB/showoff_test.ts"|"$LAB/emoji_pixels_test.ts"|"$LAB/bubblepop_cost_test.ts"|"$LAB/shader_gallery_test.ts"|"$LAB/partial_frame_test.ts"|"$LAB/workers_test.ts"|"$LAB/many_images_test.ts"|"$LAB/script_reads_holds_test.ts"|"$LAB/script_turn_cost_test.ts"|"$LAB/turn_slice_test.ts"|"$LAB/start_resume_test.ts"|"$LAB/undo_snapshot_test.ts"|"$LAB/svg_depth_test.ts"|"$LAB/host_parity_test.ts"|"$LAB/native_net_test.ts"|"$LAB/origin_isolation_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/about_page_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/serif_face_test.ts"|"$LAB/mono_face_test.ts"|"$LAB/background_image_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/native_html_key_test.ts"|"$LAB/network_gaps_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts"|"$LAB/showoff_test.ts"|"$LAB/emoji_pixels_test.ts"|"$LAB/bubblepop_cost_test.ts"|"$LAB/shader_gallery_test.ts"|"$LAB/partial_frame_test.ts"|"$LAB/workers_test.ts"|"$LAB/many_images_test.ts"|"$LAB/script_reads_holds_test.ts"|"$LAB/script_turn_cost_test.ts"|"$LAB/cssom_insert_cost_test.ts"|"$LAB/live_list_cost_test.ts"|"$LAB/turn_slice_test.ts"|"$LAB/start_slice_test.ts"|"$LAB/start_resume_test.ts"|"$LAB/undo_snapshot_test.ts"|"$LAB/svg_depth_test.ts"|"$LAB/host_parity_test.ts"|"$LAB/native_net_test.ts"|"$LAB/origin_isolation_test.ts"|"$LAB/native_window_ax_test.ts"|"$LAB/accessibility_tree_test.ts") ;; *) TESTS+=("$test");; esac; done
 check "deno check (hosts and pure tests)" deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 check "deno test (pure tests)" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
@@ -132,6 +132,9 @@ fi
 if [ "$(uname -s)" = Darwin ] && [ -f "$LAB/.build/native/libnative-window.dylib" ]; then
   check "native_window_queue_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
     --allow-read --allow-ffi --allow-run "$LAB/native_window_queue_test.ts"
+  # The accessibility elements of the window library, from a tree in the engine's format.
+  check "native_window_ax_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-ffi \
+    --allow-read --allow-ffi --allow-run "$LAB/native_window_ax_test.ts"
   # Print with no panel to a PDF: three pages of the paper size (issue 1268).
   PRINT_PDF=$(mktemp -t foafnaut-print).pdf
   check "native_print_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --allow-ffi --allow-read --allow-write \
@@ -157,6 +160,17 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # Fallback fonts: Armenian through Noto Sans Armenian after Noto Sans, Wasm and native.
   check "native_html_fonts_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_fonts_test.ts"
+  # The serif face given before the first page: one layout for serif pages, the same frames
+  # for pages with no serif text, Wasm and native.
+  check "serif_face_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/serif_face_test.ts"
+  # The monospace face: pre and code in Liberation Mono, the same frames for pages with no
+  # monospace text, one layout once the face is held, 0.6 em advances; Wasm and native.
+  check "mono_face_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/mono_face_test.ts"
+  # Background images: url() tiled from the padding box, clipped to the border box (native).
+  check "background_image_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/background_image_test.ts"
   # WebAssembly run by WasmVM, Lean's engine, in this engine (issue 1244), Wasm and native.
   check "native_html_wasm_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/native_html_wasm_test.ts"
@@ -172,14 +186,27 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # the element keys, WebDocument.RuleMatcher).
   check "script_turn_cost_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/script_turn_cost_test.ts"
+  # Rules inserted into a style sheet one at a time: Lean reads the new rule, not the sheet
+  # again (CssSheet.insertAt, insertRule_eq_insertAt), and the result is as before.
+  check "cssom_insert_cost_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-ffi --allow-env "$LAB/cssom_insert_cost_test.ts"
+  # A loop over a live collection costs in proportion to its nodes, and the collection follows
+  # the tree (the prelude keeps a list's nodes while Dom.stamp stays; addCommand_changes).
+  check "live_list_cost_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-ffi --allow-env "$LAB/live_list_cost_test.ts"
   # Sliced timer turns give the result of one turn (EventLoop.Driver.advanceGoStop_resume), and
   # the script clock runs at BubblePopJS's own rate (LeanJS.stepsPerMs).
   check "turn_slice_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/turn_slice_test.ts"
+  # A start in slices gives the logs and the DOM of a whole start (LeanJS.startSome_resume,
+  # startFinish_eq_startSome), and an action without a budget finishes it.
+  check "start_slice_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --allow-read --allow-ffi --allow-env "$LAB/start_slice_test.ts"
   # A start that waits for sync answers goes on from the script that waited (LeanJS.start_eq_from).
   check "start_resume_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/start_resume_test.ts"
-  # the undo of a sync request is bounded by the heap (WebScripts.keepsUndo): a timer turn of a large page costs what it does
+  # the undo of a sync request costs what the action writes, not the heap (WebScripts.undoShell, JS.UndoLog):
+  # a timer turn of a large page costs what it does, and its sync request is answered
   check "undo_snapshot_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none \
     --allow-read --allow-ffi --allow-env "$LAB/undo_snapshot_test.ts"
   # Inline SVG deep in the HTML is drawn or dropped, never a refusal of the page
@@ -190,6 +217,11 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
   # geometry hover once; render request bytes do not grow with image size. Wasm and native.
   check "frame_work_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
     --allow-read --allow-ffi "$LAB/frame_work_test.ts"
+  # The accessibility tree through the engine's op: what the styles hide is not in it, boxes
+  # from the layout, `unchanged` for the same layout, the hosts' forms, the chrome's controls,
+  # and its cost grows with the page, not its square. Wasm and native.
+  check "accessibility_tree_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
+    --allow-read --allow-ffi "$LAB/accessibility_tree_test.ts"
   # Long words (issue 1268): script and style text is not shaped; a 10,000-character word
   # shapes in linear time. Wasm and native.
   check "long_words_test.ts" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
@@ -329,6 +361,12 @@ if [ -f "$LAB/.build/web-render/engines/web-render.wasm" ]; then
       # XMLHttpRequest, fetch, a data: URL and a CORS refusal (native_net_window_check.ts).
       check "native_net_window_check.ts (quickjs)" env QUICKJS_WASM="$QJS_GUEST" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
         "$LAB/native_net_window_check.ts" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"}
+      # Everyday use in the window against a local site (docs/foafnaut-daily-use.md): links,
+      # back, reload, a 404 page, a start address that does not answer, typing in a search box
+      # and Enter, a form's button, a POST; the open gaps (cookies, new-tab links, downloads)
+      # must still fail (XFAIL) until they are closed.
+      check "daily_use_check.ts" deno run --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi -A \
+        "$LAB/daily_use_check.ts" ${GPU_ENGINE[@]+"${GPU_ENGINE[@]}"}
     fi
   else
     echo 'NOT RUN: native_html_scripts_test.ts needs the QuickJS guest module (tools/wasmvm/build-quickjs.sh)'

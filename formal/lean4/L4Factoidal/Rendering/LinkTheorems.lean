@@ -149,12 +149,13 @@ theorem render_links {dom : Dom} {rules : List CSS.Rule} {font : FontProfile} {e
   refine ⟨Generated.flattenContents made.1 made.2, styles, result, laid, ?_, same ▸ links⟩
   intro box mem
   rw [← same]
-  exact (Array.mem_filter.mp mem).1
+  exact (mem_pageBoxes.mp mem).1
 
-/-- A box that link regions are cut from is a box of the layout, and not the box of an
-inline box. -/
+/-- A box that link regions are cut from belongs to a node and is a box of the layout
+other than a box of an inline element. -/
 theorem mem_linkSources {dom : Dom} {styles : Array Computed} {boxes : Array Box} {box : Box} :
-    box ∈ linkSources dom styles boxes ↔ box ∈ boxes ∧ isInlineBox dom styles box.source = false := by
+    box ∈ linkSources dom styles boxes ↔
+      box ∈ boxes ∧ box.source < dom.size ∧ isInlineBox dom styles box.source = false := by
   simp [linkSources, Array.mem_filter]
 
 /-- **`render` with every link of the document.** For a scene that `render` answers, a box

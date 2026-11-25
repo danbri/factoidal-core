@@ -25,6 +25,11 @@ L4Factoidal.PageCanvas.Theorems: what Lean proves about Canvas 2D
      of a marked canvas (`getImageData`, `toDataURL`, `toBlob`, `convertToBlob`) answers the
      refusal; `readback_noninterference`, `callWords_noninterference`: so two stores that
      differ in anything but the mark (pixels above all) answer it the same.
+   - `Run.frame_marks`, `run_frame_marks`, `Wire.frame_readback_refused`,
+     `Wire.frame_readback_noninterference` (origin isolation C2e): a batch that gives a canvas its
+     dimensions (`init`) and draws on it a source that is not origin-clean, as the prelude does to
+     read a `VideoFrame`'s pixels from a canvas image source (WebCodecs §9.4.2), leaves that canvas
+     marked, so op 202 on it is refused whatever any canvas holds.
    Not proved here: that the commands read pixels only of the sources they name (by reading of
    `Run.step` and `Run.source`), and that the prelude turns the refusal into a `SecurityError`
    (a page that changes that can only lose the answer, never get pixels).
@@ -254,6 +259,140 @@ theorem callWords_noninterference (s s' : Store) (bytes : ByteArray) (p : Parts)
 
 end Wire
 
+/-! ### A frame of a source that is not origin-clean (origin isolation C2e)
+
+The prelude reads the pixels of a canvas image source for a `VideoFrame` (WebCodecs §9.4.2,
+"Initialize Frame From Other Frame", the image case; `pixelsOf`) by one batch that gives a
+scratch canvas its dimensions (`init`) and draws the source on it (`drawImage`), then op 202 on
+the scratch canvas. These theorems say that for a source that is not origin-clean, that read is
+refused, whatever any canvas holds. -/
+
+theorem Run.put_cur (r : Run) : r.put.cur = none := by
+  unfold Run.put
+  split <;> simp_all
+
+theorem Run.put_env (r : Run) : r.put.env = r.env := by
+  unfold Run.put
+  split <;> rfl
+
+theorem Run.put_of_none (r : Run) (h : r.cur = none) : r.put = r := by
+  unfold Run.put
+  split <;> simp_all
+
+theorem Run.take_env (r : Run) (id : Nat) : (r.take id).env = r.env := by
+  unfold Run.take
+  dsimp only
+  split <;> exact Run.put_env r
+
+/-- `init` gives the canvas its dimensions and makes it the current one; the run's other
+fields stay. -/
+theorem Run.step_init_cur (r : Run) (id w h : Nat) (e : Bool) :
+    (r.step (.init id w h e)).cur.map (·.1) = some id := by
+  simp only [Run.step, Run.take]
+  rw [Run.put_of_none _ (by simp [Run.put_cur])]
+  simp
+
+theorem Run.step_init_env (r : Run) (id w h : Nat) (e : Bool) : (r.step (.init id w h e)).env = r.env := by
+  simp only [Run.step]
+  rw [Run.take_env]
+  exact Run.put_env r
+
+/-- `init` clears the mark of its own canvas and of no other; bitmap flags stay. -/
+theorem Run.stepT_init_taint (r : Run) (id w h : Nat) (e : Bool) :
+    (r.stepT (.init id w h e)).taint.canvases = r.taint.canvases.erase id ∧
+    (r.stepT (.init id w h e)).taint.bitmaps = r.taint.bitmaps := by
+  refine ⟨?_, ?_⟩
+  · rw [Run.stepT_taint, Taint.step_canvases]
+    simp [Taint.cleared, Taint.marks, clearIn, markIn]
+  · rw [Run.stepT_taint, Taint.step_bitmaps]
+    simp [Taint.objects]
+
+/-- A source that is not origin-clean before `init` of another canvas is not after it. -/
+theorem Run.stepT_init_unclean (r : Run) (id w h : Nat) (e : Bool) (kind src : Nat) (key : String)
+    (hu : r.taint.unclean r.env kind src key = true) (hne : kind = 1 → src ≠ id) :
+    (r.stepT (.init id w h e)).taint.unclean (r.stepT (.init id w h e)).env kind src key = true := by
+  have ⟨hc, hb⟩ := Run.stepT_init_taint r id w h e
+  have he : (r.stepT (.init id w h e)).env = r.env := Run.step_init_env r id w h e
+  rw [he]
+  unfold Taint.unclean at hu ⊢
+  rw [hc, hb]
+  split at hu
+  · have hs : src ≠ id := hne rfl
+    have hb' : (id == src) = false := beq_false_of_ne (Ne.symm hs)
+    simp [Std.HashSet.contains_erase, hu, hb']
+  · simpa using hu
+  · simpa using hu
+  · simp at hu
+
+/-- Kind: security theorem (origin isolation C2e). Says: in any batch, `init` of a canvas and
+then `drawImage` on it of a source that is not origin-clean (another canvas, an `ImageBitmap`
+or an image) leaves that canvas current and marked. -/
+theorem Run.frame_marks (r : Run) (id w h : Nat) (e : Bool) (kind src : Nat) (key : String)
+    (sx sy sw sh dx dy dw dh : Float) (hu : r.taint.unclean r.env kind src key = true)
+    (hne : kind = 1 → src ≠ id) :
+    (((r.stepT (.init id w h e)).stepT (.drawImage kind src key sx sy sw sh dx dy dw dh)).taint.canvases.contains id = true) ∧
+    ((r.stepT (.init id w h e)).stepT (.drawImage kind src key sx sy sw sh dx dy dw dh)).cur.map (·.1) = some id := by
+  have hcur : (r.stepT (.init id w h e)).cur.map (·.1) = some id := Run.step_init_cur r id w h e
+  rcases hk : (r.stepT (.init id w h e)).cur with _ | ⟨j, c⟩
+  · rw [hk] at hcur; simp at hcur
+  · rw [hk] at hcur
+    simp only [Option.map_some, Option.some.injEq] at hcur
+    subst hcur
+    exact Run.stepT_drawImage _ j c hk kind src key sx sy sw sh dx dy dw dh
+      (Run.stepT_init_unclean r j w h e kind src key hu hne)
+
+/-- Kind: security theorem (origin isolation C2e). Says: after a batch that ends with `init` of
+canvas `id` and `drawImage` on it of a source that is not origin-clean when the batch reaches
+them, `id` is not origin-clean. -/
+theorem run_frame_marks (s : Store) (env : Env) (pre : Array Cmd) (id w h : Nat) (e : Bool) (kind src : Nat)
+    (key : String) (sx sy sw sh dx dy dw dh : Float)
+    (hu : (pre.foldl Run.stepT { store := s, env, taint := s.taint }).taint.unclean
+      (pre.foldl Run.stepT { store := s, env, taint := s.taint }).env kind src key = true)
+    (hne : kind = 1 → src ≠ id) :
+    (s.run env (pre ++ #[.init id w h e, .drawImage kind src key sx sy sw sh dx dy dw dh])).taint.canvases.contains id = true := by
+  rw [run_taint, Array.foldl_append]
+  exact (Run.frame_marks _ id w h e kind src key sx sy sw sh dx dy dw dh hu hne).1
+
+/-- The batch of `pixelsOf` alone: a source that is not origin-clean in the store. -/
+theorem run_frame_marks_alone (s : Store) (env : Env) (id w h : Nat) (e : Bool) (kind src : Nat)
+    (key : String) (sx sy sw sh dx dy dw dh : Float) (hu : s.taint.unclean env kind src key = true)
+    (hne : kind = 1 → src ≠ id) :
+    (s.run env #[.init id w h e, .drawImage kind src key sx sy sw sh dx dy dw dh]).taint.canvases.contains id = true :=
+  run_frame_marks s env #[] id w h e kind src key sx sy sw sh dx dy dw dh hu hne
+
+namespace Wire
+
+/-- Kind: security theorem (origin isolation C2e). Says: op 202 on the scratch canvas of a
+`VideoFrame` read (a batch ending with its `init` and a `drawImage` of a source that is not
+origin-clean) is refused with "SecurityError", whatever the canvases hold. -/
+theorem frame_readback_refused (s : Store) (env : Env) (pre : Array Cmd) (id w h : Nat) (e : Bool) (kind src : Nat)
+    (key : String) (sx sy sw sh dx dy dw dh : Float)
+    (hu : (pre.foldl Run.stepT { store := s, env, taint := s.taint }).taint.unclean
+      (pre.foldl Run.stepT { store := s, env, taint := s.taint }).env kind src key = true)
+    (hne : kind = 1 → src ≠ id) (bytes : ByteArray) (p : Parts) (x y : Int) (qw qh : Nat)
+    (hp : parts bytes = .ok p) (hq : query p = .ok (.imageData id x y qw qh)) :
+    callWords (s.run env (pre ++ #[.init id w h e, .drawImage kind src key sx sy sw sh dx dy dw dh])) wordsOp bytes =
+      .error "SecurityError" :=
+  callWords_refused _ bytes p id x y qw qh hp hq (run_frame_marks s env pre id w h e kind src key sx sy sw sh dx dy dw dh hu hne)
+
+/-- Kind: security theorem (origin isolation C2e, noninterference). Says: two pages whose
+`VideoFrame` read draws a source that is not origin-clean get the same answer to it, whatever
+their pixels (so no pixel of the source reaches the frame). -/
+theorem frame_readback_noninterference (s s' : Store) (env env' : Env) (pre pre' : Array Cmd) (id w h : Nat) (e : Bool)
+    (kind src : Nat) (key : String) (sx sy sw sh dx dy dw dh : Float)
+    (hu : (pre.foldl Run.stepT { store := s, env, taint := s.taint }).taint.unclean
+      (pre.foldl Run.stepT { store := s, env, taint := s.taint }).env kind src key = true)
+    (hu' : (pre'.foldl Run.stepT { store := s', env := env', taint := s'.taint }).taint.unclean
+      (pre'.foldl Run.stepT { store := s', env := env', taint := s'.taint }).env kind src key = true)
+    (hne : kind = 1 → src ≠ id) (bytes : ByteArray) (p : Parts) (x y : Int) (qw qh : Nat)
+    (hp : parts bytes = .ok p) (hq : query p = .ok (.imageData id x y qw qh)) :
+    callWords (s.run env (pre ++ #[.init id w h e, .drawImage kind src key sx sy sw sh dx dy dw dh])) wordsOp bytes =
+      callWords (s'.run env' (pre' ++ #[.init id w h e, .drawImage kind src key sx sy sw sh dx dy dw dh])) wordsOp bytes := by
+  rw [frame_readback_refused s env pre id w h e kind src key sx sy sw sh dx dy dw dh hu hne bytes p x y qw qh hp hq,
+    frame_readback_refused s' env' pre' id w h e kind src key sx sy sw sh dx dy dw dh hu' hne bytes p x y qw qh hp hq]
+
+end Wire
+
 #print axioms Taint.step_marks
 #print axioms Taint.step_drawImage
 #print axioms Taint.step_setPattern
@@ -268,6 +407,11 @@ end Wire
 #print axioms Wire.call_refused
 #print axioms Wire.callWords_refused
 #print axioms Wire.callWords_noninterference
+#print axioms Run.frame_marks
+#print axioms run_frame_marks
+#print axioms run_frame_marks_alone
+#print axioms Wire.frame_readback_refused
+#print axioms Wire.frame_readback_noninterference
 
 #print axioms coverage_within
 #print axioms rectCoverage_within

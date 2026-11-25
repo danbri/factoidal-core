@@ -21,14 +21,18 @@
 <p class="steps"><a href="foafnaut:zoom/down">&nbsp;A&#x2212;&nbsp;</a> <a href="foafnaut:zoom/up">&nbsp;A+&nbsp;</a></p>
 <p class="sample">This line is at the size chosen.</p>
 <p class="presets"><a href="foafnaut:zoom/100">100%</a> <a href="foafnaut:zoom/150">150%</a> <a href="foafnaut:zoom/200">200%</a> <a href="foafnaut:zoom/300">300%</a> <a href="foafnaut:zoom/400">400%</a></p>
-<p>200% is the default. A+ and A&#x2212; step by 25%. A pinch, or Control and the mouse wheel, sets any size.</p>
+<p>100% is the default. A+ and A&#x2212; step by 25%. A pinch, or Control and the mouse wheel, sets any size.</p>
 <h2>Pages without a declared encoding</h2>
 <p>How to read a page that names no encoding (in its HTTP header or a meta tag). Pages opened after a change use it.</p>
 <!--foafnaut:encoding-->
 <p class="presets"><a href="foafnaut:encoding/detect">Detect (UTF-8 when valid)</a> <a href="foafnaut:encoding/locale">From system language</a> <a href="foafnaut:encoding/windows-1252">windows-1252</a> <a href="foafnaut:encoding/UTF-8">UTF-8</a></p>
 <!--/foafnaut:encoding-->
+<h2>Search</h2>
+<!--foafnaut:search-->
+<p>Words typed in the address bar that are not an address go to no one: they open a page of this browser. This engine is older and has no search engine setting.</p>
+<!--/foafnaut:search-->
 <h2>The address bar</h2>
-<p>Type a URL, or words to search, or a command.</p>
+<p>Type a URL, words, or a command. Words open a page of this browser, or go to the search engine you chose above.</p>
 <p>- :settings opens this page</p>
 <p>- :back and :forward</p>
 <p>- :reload</p>
@@ -39,9 +43,7 @@
 <p>- :zoom 150, :zoom up and :zoom down</p>
 <p>- :theme dark, :theme light</p>
 <p>- :console shows what the page logged and what this browser skipped</p>
-<p>- :open https://example.org opens your system browser</p>
-<p>The browser keeps these settings: a reload or a new window starts with them.</p>
- skipped</p>
+<p>- :search-engine and a name from the Search list, none, or an address with %s where the words go</p>
 <p>- :open https://example.org opens your system browser</p>
 <p>The browser keeps these settings: a reload or a new window starts with them.</p>
 </main></body></html>

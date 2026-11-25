@@ -432,9 +432,9 @@ def rangeValue (k : Kind) (nodes : List Node) : Option (Float × Float) :=
   match k with
   | .length =>
     match qty nodes, nodes with
-    | some q, [.tok _] =>
-      if q.dim == .length || (q.dim == .number && q.value == 0) then some (q.value, 1) else none
-    | some q, _ => if q.dim == .length then some (q.value, 1) else none
+    -- a zero number is a length, as a literal and as `calc(0)` (as browsers read it; WPT
+    -- the-img-element/sizes/parse-a-sizes-attribute, `(min-width:calc(0))`)
+    | some q, _ => if q.dim == .length || (q.dim == .number && q.value == 0) then some (q.value, 1) else none
     | none, _ => none
   | .ratio =>
     match nodes with

@@ -309,7 +309,24 @@ structure Token where
   of an `if`, `while`, `for` or `with`; the `}` ends a block (`regexAllowed`). The opening
   bracket of the pair has the same value (`openBefore`). -/
   reAfter : Bool := false
+  /-- A numeric literal that starts with `0` and a digit (LegacyOctalIntegerLiteral or
+  NonOctalDecimalIntegerLiteral, Annex B.1.1), or a string literal with a legacy octal escape or
+  `\8`/`\9` (Annex B.1.2, §12.9.4.1): an early error in strict mode code (the parser checks). -/
+  legacy : Bool := false
   deriving Inhabited
+
+/-- Does the raw string literal `cs[i..j)` hold a LegacyOctalEscapeSequence or a
+NonOctalDecimalEscapeSequence (§12.9.4.1: `\0` before a digit, `\1` to `\9`)? A backslash
+takes the character after it, so `\\1` holds none. -/
+def legacyEscapeIn (cs : Array Char) (j : Nat) : Nat → Nat → Bool
+  | 0, _ => false
+  | fuel + 1, i =>
+    if i + 1 ≥ j then false
+    else if cs[i]! != '\\' then legacyEscapeIn cs j fuel (i + 1)
+    else
+      let d := charAt cs (i + 1)
+      if d.isDigit && !(d == '0' && !(charAt cs (i + 2)).isDigit) then true
+      else legacyEscapeIn cs j fuel (i + 2)
 
 /-- An identifier with `\\u` escapes (§12.7.1): its value and the index after it. -/
 def scanIdent (cs : Array Char) : Nat → Nat → String → Bool → Except String (String × Nat × Bool)
@@ -654,7 +671,7 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → List Bool
     else if (c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit)) && (scanSepNum cs i).isSome then
       match scanSepNum cs i with
       | some (.ok (.inl v, j)) => lexGo cs fuel j false (acc.push { kind := .big, text := toString v, nl, pos := i }) open_
-      | some (.ok (.inr f, j)) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i }) open_
+      | some (.ok (.inr f, j)) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i, legacy := c == '0' && (charAt cs (i + 1)).isDigit }) open_
       | some (.error e) => .error e
       | none => .error "SyntaxError: invalid numeric literal"
     else if c.isDigit && (scanBig cs i).isSome then
@@ -664,11 +681,11 @@ def lexGo (cs : Array Char) : Nat → Nat → Bool → Array Token → List Bool
     else if c.isDigit || (c == '.' && (charAt cs (i + 1)).isDigit) then
       match scanNum cs i with
       | .error e => .error e
-      | .ok (f, j) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i }) open_
+      | .ok (f, j) => lexGo cs fuel j false (acc.push { kind := .num, num := f, nl, pos := i, legacy := c == '0' && (charAt cs (i + 1)).isDigit }) open_
     else if c == '"' || c == '\'' then
       match scanStr cs c cs.size (i + 1) "" with
       | .error e => .error e
-      | .ok (s, j) => lexGo cs fuel j false (acc.push { kind := .str, text := s, nl, pos := i }) open_
+      | .ok (s, j) => lexGo cs fuel j false (acc.push { kind := .str, text := s, nl, pos := i, legacy := legacyEscapeIn cs j (j - i) (i + 1) }) open_
     else if c == '`' then
       match scanTmpl cs cs.size (i + 1) "" "" {} with
       | .error e => .error e

@@ -2,7 +2,7 @@ import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
-import {netAnswer,type NetWire} from "./native_net.ts";
+import {netAnswer,pinnedHTTPSBatch,type NetWire} from "./native_net.ts";
 import {loadSubresource,newlyListed,takeAnimated,takeTurn,loadImports} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
@@ -33,19 +33,92 @@ export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,lo
 system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
 let pageDecoding={fallback:"",locale:""};
 export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
-export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array;contentType:string;contentTypeOptions:string}> {
+/** How a document is asked for: a form's POST (method, body, its type), and whether the
+server's page for an HTTP error status (404, 500, ...) is the answer, as browsers show it. Only
+a top-level document asks for that; a script or a sheet with an error status stays an error. */
+export type DocumentRequest={method?:"GET"|"POST";body?:string;bodyType?:string;errorPages?:boolean;
+  /** Ask the engine whether the response is shown or saved (a download); `downloads` is the
+  folder a saved file goes to. Only a navigation asks. */
+  decide?:(response:{contentType:string;disposition:string;url:string})=>Promise<{action:string;name?:string}|undefined>|{action:string;name?:string}|undefined;
+  downloads?:string;
+  /** The browser's cookies (the engine decides each hop's field and what a response sets);
+  with them, redirects are followed here hop by hop so each hop's cookies are seen. */
+  cookies?:DocumentCookies};
+/** What a navigation asks of the browser's cookie jar, at each hop. */
+export type DocumentCookies={request(url:string,method:string):Promise<string>;response(url:string,setCookie:string[]):Promise<void>};
+/** The most redirects a navigation follows (Fetch §4.4 step 13). */
+const MAX_REDIRECTS=20;
+/** A navigation whose response was saved as a file (a download): the page stays. */
+export class Downloaded extends Error{constructor(readonly url:string,readonly path:string,readonly bytes:number){super(`saved ${url} as ${path}`);}}
+/** A free name in `dir` for `name` (Lean made it safe: no separator, no leading dot): the name,
+else "name (1).ext", "name (2).ext", ... */
+async function freePath(dir:string,name:string):Promise<string>{
+  const dot=name.lastIndexOf("."),stem=dot>0?name.slice(0,dot):name,ext=dot>0?name.slice(dot):"";
+  for(let i=0;i<1000;i++){
+    const path=`${dir}/${i?`${stem} (${i})${ext}`:name}`;
+    try{await Deno.lstat(path);}catch{return path;}
+  }
+  throw new Error(`no free name for ${name} in ${dir}`);
+}
+export async function readSource(url:string,signal?:AbortSignal,decode?:PageDecoder,request:DocumentRequest={}):Promise<{url:string;source:string;bytes:number;encoding?:string;raw:Uint8Array;contentType:string;contentTypeOptions:string;status?:number}> {
   const parsed=new URL(inputURL(url));
   const abort=()=>signal?.throwIfAborted();abort();
-  let bytes:Uint8Array,finalURL=url,contentType="",contentTypeOptions="";
+  let bytes:Uint8Array,finalURL=url,contentType="",contentTypeOptions="",status:number|undefined;
+  if(request.method==="POST"&&parsed.protocol!=="http:"&&parsed.protocol!=="https:")throw new Error(`A form is posted only to http or https: ${url}`);
   if(parsed.protocol==="file:") {
     if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
     bytes=await Deno.readFile(parsed);abort();
   } else {
-    const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
-    finalURL=inputURL(response.url);contentType=response.headers.get("content-type")??"";
+    // A form's POST (HTML §4.10.21.3, the body Lean serialized); a 303 (or a 301/302 after a
+    // POST) is then followed with GET, as fetch's redirect steps say.
+    const post=request.method==="POST"?{method:"POST",body:request.body??"",headers:{"content-type":request.bodyType??"application/x-www-form-urlencoded"}}:{};
+    const timeout=AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])]);
+    let response:Response,hopURL:string|undefined;
+    if(!request.cookies)response=await fetch(parsed,{...post,signal:timeout});
+    else {
+      // Hop by hop (redirect "manual"), so each hop carries its cookies and each response's
+      // Set-Cookie reaches the jar: a sign-in sets its cookie on the redirect after the POST.
+      // A 303, and a 301 or 302 after a POST, go on as GET with no body (Fetch §4.4 step 12).
+      let hop=parsed.href,method:"GET"|"POST"=request.method==="POST"?"POST":"GET";
+      for(let redirects=0;;redirects++){
+        const cookie=await request.cookies.request(hop,method);
+        const init:RequestInit={redirect:"manual",signal:timeout,...(method==="POST"?{method:"POST",body:request.body??""}:{}),
+          headers:{...(method==="POST"?{"content-type":request.bodyType??"application/x-www-form-urlencoded"}:{}),...(cookie?{cookie}:{})}};
+        response=await fetch(hop,init);
+        const set=response.headers.getSetCookie();
+        if(set.length)await request.cookies.response(hop,set);
+        const location=response.headers.get("location");
+        if(![301,302,303,307,308].includes(response.status)||!location)break;
+        await response.body?.cancel();
+        if(redirects>=MAX_REDIRECTS)throw new Error(`more than ${MAX_REDIRECTS} redirects: ${url}`);
+        const next=new URL(location,hop);
+        if(next.protocol!=="http:"&&next.protocol!=="https:")throw new Error(`a redirect to ${next.protocol} is not followed: ${url}`);
+        if(response.status===303||(method==="POST"&&(response.status===301||response.status===302)))method="GET";
+        hop=next.href;
+      }
+      hopURL=hop;
+    }
+    finalURL=inputURL(hopURL??response.url);contentType=response.headers.get("content-type")??"";
     // For a script fetch, Lean decides with this header whether the answer is a script (nosniff).
     contentTypeOptions=response.headers.get("x-content-type-options")??"";
-    if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
+    // A page's error status with a body is shown (the server's "not found" page); with none, or
+    // for anything but a top-level document, it is an error.
+    if(!response.ok&&!(request.errorPages&&response.body&&response.status>=400)){await response.body?.cancel();throw new Error(`HTTP ${response.status}: ${url}`);}
+    if(!response.ok)status=response.status;
+    // A download (Lean decides from the type and Content-Disposition): the body goes to a new
+    // file in the downloads folder, written as it arrives (no size limit: it is not a page), and
+    // the navigation ends with Downloaded.
+    const decided=request.decide&&response.ok?await request.decide({contentType,disposition:response.headers.get("content-disposition")??"",url:finalURL}):undefined;
+    if(decided?.action==="save"&&decided.name&&request.downloads){
+      await Deno.mkdir(request.downloads,{recursive:true});
+      const path=await freePath(request.downloads,decided.name);
+      const file=await Deno.open(path,{write:true,createNew:true});
+      let written=0;
+      try{for await(const chunk of response.body!){abort();for(let at=0;at<chunk.length;)at+=await file.write(chunk.subarray(at));written+=chunk.length;}}
+      catch(error){file.close();await Deno.remove(path).catch(()=>{});throw error;}
+      file.close();
+      throw new Downloaded(finalURL,path,written);
+    }
     const reader=response.body?.getReader();
     if(!reader)throw new Error("Native HTML resource has no response body");
     const chunks:Uint8Array[]=[];let length=0;
@@ -65,7 +138,7 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   const decoded=decode?await decode(bytes,contentType):undefined;
   const source=decoded?decoded.source:new TextDecoder("utf-8").decode(bytes);
   sourceBound(source);
-  return {url:finalURL,source,bytes:bytes.length,raw:bytes,contentType,contentTypeOptions,...(decoded?{encoding:decoded.encoding}:{})};
+  return {url:finalURL,source,bytes:bytes.length,raw:bytes,contentType,contentTypeOptions,...(decoded?{encoding:decoded.encoding}:{}),...(status?{status}:{})};
 }
 /** Limits on image bytes: each image, and all images of a page sent as Base64 (Lean takes
 at most 8 MiB of Base64 text for a page, which is 6 MiB of bytes). */
@@ -123,7 +196,8 @@ A `file:` URL is read here, for a `file:` page only. Every other URL is the engi
 is told to (native_net.ts: redirect "manual", the address the engine chose). An engine from
 before the op gets the rule of before: the page's own origin, by a plain fetch. */
 export async function readSubresource(engine:SubresourceEngine|undefined,kind:"image"|"style"|"font",url:string,documentURL:string,
-  limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
+  limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>,
+  transport?:ReturnType<typeof pinnedHTTPSBatch>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
   const local=new URL(url).protocol==="file:";
   if(!local&&engine&&typeof engine.subresource==="function"&&!noSubresourceOp.has(engine)) {
     const step=async(request:Record<string,unknown>)=>{
@@ -135,7 +209,7 @@ export async function readSubresource(engine:SubresourceEngine|undefined,kind:"i
     };
     // Is the op there? One call that starts nothing: `cancel` of no transfer.
     if(await step({action:"cancel",id:0})!==undefined) {
-      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000}),{url:documentURL},kind,url,signal) as
+      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000},transport),{url:documentURL},kind,url,signal) as
         {url:string;contentType:string;base64:string};
       const text=atob(got.base64);
       if(text.length>limit)throw new Error(`${kind} too large`);
@@ -162,34 +236,41 @@ each face that it can, from the page's own origin and within the size caps, and 
 to Lean (webFontLoad), which checks the font with the font policy and holds it. A face that
 fails or is refused is left out: its text falls back to the next family, as CSS says. A page
 whose sheets have no @font-face makes no call. The answer is the request field `webFonts`. */
-export async function loadWebFonts(engine:WebFontEngine,url:string,source:string,resources:HTMLResource[],signal?:AbortSignal) {
+export async function loadWebFonts(engine:WebFontEngine,url:string,source:string,resources:HTMLResource[],signal?:AbortSignal,
+    imported:{url:string;source:string}[]=[]) {
   const webFonts:{url:string;sha256:string}[]=[];
   if(typeof engine.fontFaces!=="function"||typeof engine.webFontLoad!=="function")return webFonts;
   const hasRule=(text:string)=>/@font-face/i.test(text);
-  if(!hasRule(source)&&!resources.some(r=>hasRule(r.source)))return webFonts;
+  // The sheets that @import brought count as the page's: their @font-face rules name faces too
+  // (WPT css/WOFF2 declares its reference fonts in an imported sheet; until 2026-11-24 such a
+  // face was never loaded, and its text fell back).
+  if(!hasRule(source)&&!resources.some(r=>hasRule(r.source))&&!imported.some(r=>hasRule(r.source)))return webFonts;
   // An engine from before @font-face answers "unknown document operation": no web fonts.
   let answer;
-  try{answer=await engine.fontFaces(source,{url,resources});}catch{return webFonts;}
+  try{answer=await engine.fontFaces(source,{url,resources,...(imported.length?{imported}:{})});}catch{return webFonts;}
   const loaded=new Map<string,string>();let total=0;
-  for(const face of answer?.faces??[]) {
-    for(const src of face.sources) {
-      signal?.throwIfAborted();
-      const known=loaded.get(src);
-      if(known!==undefined){if(known)break;continue;}
-      try {
-        const {bytes}=await readSubresource(engine as SubresourceEngine,"font",src,url,MAX_FONT_BYTES,signal);
-        if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
-        const sha256=await sha256Hex(bytes);
-        await engine.webFontLoad(bytes,sha256);
-        total+=bytes.length;loaded.set(src,sha256);webFonts.push({url:src,sha256});
-        break;
-      } catch(error) {
-        if(signal?.aborted)throw error;
-        loaded.set(src,"");
-        console.error(`Native HTML web font refused: ${src}: ${String(error instanceof Error?error.message:error)}`);
+  const transport=pinnedHTTPSBatch({timeoutMs:10000});
+  try{
+    for(const face of answer?.faces??[]) {
+      for(const src of face.sources) {
+        signal?.throwIfAborted();
+        const known=loaded.get(src);
+        if(known!==undefined){if(known)break;continue;}
+        try {
+          const {bytes}=await readSubresource(engine as SubresourceEngine,"font",src,url,MAX_FONT_BYTES,signal,undefined,transport);
+          if(total+bytes.length>MAX_PAGE_FONT_BYTES)throw new Error("the page's fonts exceed 16 MiB");
+          const sha256=await sha256Hex(bytes);
+          await engine.webFontLoad(bytes,sha256);
+          total+=bytes.length;loaded.set(src,sha256);webFonts.push({url:src,sha256});
+          break;
+        } catch(error) {
+          if(signal?.aborted)throw error;
+          loaded.set(src,"");
+          console.error(`Native HTML web font refused: ${src}: ${String(error instanceof Error?error.message:error)}`);
+        }
       }
     }
-  }
+  }finally{transport.close();}
   return webFonts;
 }
 /** `work(item, index)` for each of `items`, at most `limit` at a time; the answers in the
@@ -221,15 +302,18 @@ export async function fetchImageBytes(wanted:{key:string;url:string}[],documentU
   const read:({bytes:Uint8Array}|{reason:string})[]=new Array(wanted.length);
   let next=0;
   const worker=async()=>{
-    for(;;){
-      const index=next++;if(index>=wanted.length)return;
-      signal?.throwIfAborted();
-      try{read[index]={bytes:(await readSubresource(engine,"image",wanted[index].url,documentURL,MAX_IMAGE_BYTES,signal)).bytes};}
-      catch(error){
-        if(signal?.aborted)throw error;
-        read[index]={reason:String(error instanceof Error?error.message:error)};
+    const transport=pinnedHTTPSBatch({timeoutMs:10000});
+    try{
+      for(;;){
+        const index=next++;if(index>=wanted.length)return;
+        signal?.throwIfAborted();
+        try{read[index]={bytes:(await readSubresource(engine,"image",wanted[index].url,documentURL,MAX_IMAGE_BYTES,signal,undefined,transport)).bytes};}
+        catch(error){
+          if(signal?.aborted)throw error;
+          read[index]={reason:String(error instanceof Error?error.message:error)};
+        }
       }
-    }
+    }finally{transport.close();}
   };
   await Promise.all(Array.from({length:Math.min(6,wanted.length)},worker));
   const images:{key:string;bytes:Uint8Array}[]=[];let total=0;const limit=await pageImageLimit(engine);
@@ -304,16 +388,35 @@ export type PageEngine=((Pick<HTMLEngine,"xmlStylesheet"|"xslt"|"inspect"|"compi
   compile(...a:Parameters<HTMLEngine["compile"]>):Promise<ReturnType<HTMLEngine["compile"]>>;
   selectedText(...a:Parameters<HTMLEngine["selectedText"]>):Promise<ReturnType<HTMLEngine["selectedText"]>>;
   findInPage(...a:Parameters<HTMLEngine["findInPage"]>):Promise<ReturnType<HTMLEngine["findInPage"]>>;
-})&{decodeDocument?:PageDecoder};
+})&{decodeDocument?:PageDecoder;download?:(request:{contentType:string;disposition:string;url:string})=>unknown;cookies?:unknown};
 /** How a page is accepted. `liberal`: liberal mode (WebAccept.lean, --be-liberal-in-what-we-accept
 and the Settings checkbox): Lean skips what it may skip and says so, and this host passes on
 the fetches that failed instead of refusing the page. */
-export type AcceptOptions={liberal?:boolean};
+export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies;
+  epubReader?:(bytes:Uint8Array,chapter:number)=>{source:string}};
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
-  const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array}=inline===undefined?await readSource(url,signal,decode):{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  const isLocalEpub=inline===undefined&&url.startsWith("file:")&&new URL(url).pathname.toLowerCase().endsWith(".epub");
+  if(isLocalEpub){
+    if(!accept.epubReader)throw new Error("This engine has no EPUB reader");
+    const file=new URL(url),limit=8*1024*1024;
+    const chapter=Number(file.searchParams.get("epubChapter")??"1");
+    if(!Number.isSafeInteger(chapter)||chapter<1||chapter>512)throw new Error("Invalid EPUB chapter number");
+    file.search="";file.hash="";
+    if((await Deno.stat(file)).size>limit)throw new Error("EPUB archive size limit exceeded");
+    signal?.throwIfAborted();
+    const bytes=await Deno.readFile(file);
+    signal?.throwIfAborted();
+    if(bytes.length>limit)throw new Error("EPUB archive size limit exceeded");
+    inline=accept.epubReader(bytes,chapter-1).source;
+  }
+  const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
+    ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
+      ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})
+    :{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
+  if(document.status)addEntries(page,[{source:"System",severity:"warning",feature:"page",where:document.url,message:`HTTP ${document.status}`,action:"the server's page is shown"}]);
   const fetchFailed=(feature:string,where:string,message:string,action:string)=>
     addEntries(page,[{source:"System",severity:"error",feature,where,message,action}]);
   // Liberal mode is a field of every request; scripting:false tells Lean that no page script runs here.
@@ -336,9 +439,12 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const fonts=fontHost?.(document.source).catch(error=>console.error("Native HTML: fallback fonts:",String(error)));
   const inspection=await engine.inspect(document.source,{url:document.url,...mode});
   noteDiagnostics(page,inspection,false);
-  const scripted=inspection.scripts.some(script=>script.kind!=="data");
-  if(scripted&&!scriptHost)
+  const scriptElements=inspection.scripts.some(script=>script.kind!=="data");
+  if(scriptElements&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
+  // A page whose only script is an event handler content attribute (`<body onload>`, Lean's
+  // `handlers`) runs it when this host has a script engine; without one it is drawn as is.
+  const scripted=scriptElements||((inspection as {handlers?:boolean}).handlers===true&&!!scriptHost);
   if(inspection.stylesheets.length>MAX_RESOURCES&&!accept.liberal)throw new Error(`Native HTML exceeds ${MAX_RESOURCES} external stylesheets`);
   // The bytes of the page's scripts and of its tab icon are read while its sheets and images
   // are: they wait for nothing of those, and they stood one after the other before the
@@ -401,12 +507,18 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
   // whose sheets import nothing costs one inspect more only if it has a sheet at all.
   const imported:{url:string;source:string}[]=[];
+  // The last inspect made with the sheets in hand: it lists the background images of the sheets.
+  let sheetsInspection:{backgroundImages?:{key:string;url:string}[]}|undefined;
   const importsNow=async()=>{
     const hasSheet=resources.length>0||/<style/i.test(document.source);
     if(!hasSheet&&!options?.commands)return;
     const before=imported.length;
-    await loadImports((list:{url:string;source:string}[])=>engine.inspect(document.source,{url:document.url,...mode,resources,
-        ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})}),
+    await loadImports(async(list:{url:string;source:string}[])=>{
+        const answer=await engine.inspect(document.source,{url:document.url,...mode,resources,
+          ...(list.length?{imported:list}:{}),...(options?.commands?{commands:options.commands}:{})});
+        sheetsInspection=answer as {backgroundImages?:{key:string;url:string}[]};
+        return answer;
+      },
       async(sheetURL:string)=>{navigationURL(sheetURL,document.url,document.url);return readSheet(sheetURL);},imported,
       (sheetURL:string,reason:string)=>fetchFailed("style sheet",sheetURL,`imported style sheet not read: ${reason}`,"page drawn without it"));
     if(imported.length&&options)options.imported=imported;
@@ -426,16 +538,30 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // Only a page whose scripts do not run: a script session starts with the page's images (its
   // layout reads and the load event are of the page with them, in every host alike), so a
   // page with scripts waits for them as before.
-  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&(inspection.images??[]).length>0;
+  // Background images (CSS `url()` in background declarations, WebDocument.backgroundImageRequests):
+  // listed by the first inspect for style elements and attributes, and by the inspect made with
+  // the sheets for the sheets; fetched with the rules of images and given with them. An engine
+  // that does not list them gets none.
+  const listedImages=new Set((inspection.images??[]).map(image=>image.key));
+  const backgroundWanted=[...((inspection as {backgroundImages?:{key:string;url:string}[]}).backgroundImages??[]),...(sheetsInspection?.backgroundImages??[])]
+    .filter(image=>!listedImages.has(image.key)&&(listedImages.add(image.key),true));
+  const pageImageBytes=backgroundWanted.length?Promise.all([imageBytes,fetchImageBytes(backgroundWanted,document.url,signal,
+    (imageURL,reason)=>fetchFailed("background image",imageURL,`image not read: ${reason}`,"background colour shown"),engine as SubresourceEngine)])
+    .then(([a,b])=>[...a,...b]):imageBytes;
+  pageImageBytes.catch(()=>{});
+  // Stylesheet discovery is complete. Start fonts while images and the tab icon arrive.
+  const webFontsReading=loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal,imported);
+  webFontsReading.catch(()=>{});
+  const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
-  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await imageBytes);
+  const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon&&iconReading)try{
     iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
-  const webFonts=await loadWebFonts(engine as WebFontEngine,document.url,document.source,resources,signal);
+  const webFonts=await webFontsReading;
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
   options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};
@@ -520,15 +646,18 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const startImages=()=>{
     if(imagesStarted)return;
     imagesStarted=true;
-    imageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
+    pageImageBytes.then(bytes=>imageOptions(engine,bytes)).then(more=>{
       for(const key of ["images","heldImages"] as const)
         if(Array.isArray(more[key])&&options)options[key]=[...((options[key] as unknown[]|undefined)??[]),...(more[key] as unknown[])];
       lateChange=true;
     },error=>{if(!signal?.aborted)console.error(`Native HTML: images: ${String(error instanceof Error?error.message:error)}`);})
       .finally(()=>{imagesPending=false;revision++;});
   };
-  // The first frame has what the scripts' first turn asked for.
-  if(script&&options.commands)try{await fetchListedAgain();}catch(error){
+  // The first frame has what the scripts' first turn asked for. A start in slices (the turn
+  // says startMore) is shown as it is after its first slice: what its scripts' elements ask
+  // for is fetched after that frame (fetchAdded below), as for every later turn.
+  const startMore=script?.turn.startMore===true;
+  if(script&&options.commands&&!startMore)try{await fetchListedAgain();}catch(error){
     if(signal?.aborted)throw error;
     console.error(`Native HTML: resources of script-made elements: ${String(error instanceof Error?error.message:error)}`);
   }
@@ -554,6 +683,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       }
     },Math.max(0,againAt-performance.now()));
   };
+  // (what arrives changes the page's revision, which the host's loop sees)
+  if(startMore)fetchAdded(()=>{});
   // Pages show in the font of loadFontFile, or else in the Lean bitmap face.
   signal?.throwIfAborted();
   return Object.assign(page,{
@@ -589,6 +720,21 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       const {url:_url,commands:_commands,diagnostics:_diagnostics,animated:_animated,...fields}=options!;
       return fields;
     },
+    /** A page with no classic script has no script session, so a press or a key had nowhere to
+    go: a form field took no focus and no text. The host starts one for it on the first press or
+    key (a page nobody presses pays nothing): no scripts run, but Lean's events, focus, editing
+    and form submission do. Undefined when the page has one already, scripts are off, or the
+    setting runs none. */
+    startScripts:async()=>{
+      if(script||!scriptHost||!options||signal?.aborted)return undefined;
+      const {url:_url,commands:_commands,diagnostics:_diagnostics,animated:_animated,...fields}=options;
+      const turn=await Promise.resolve(scriptHost.start(document.source,document.url,[],document.encoding,fields)).catch(()=>undefined);
+      if(!turn||script)return undefined;
+      noteTurn(page,turn);
+      script={session:turn.session,turn};(page as {script?:unknown}).script=script;
+      if(turn.commands?.length)options.commands=turn.commands;
+      return script;
+    },
     /** A later turn of the page's script session: its commands, when the DOM changed. */
     // The values of the page's running animations go with the commands into every request
     // (page-load.mjs takeTurn, the rule of every host): the frame is drawn again when either changed.
@@ -608,13 +754,13 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
 /** Give the engine a font file. Lean reads it, shapes words and takes outlines; this only moves bytes.
 `via:"bytes"` (the default) copies the file into engine memory; `"text"` sends it as Base64
 in the JSON request, the reference path that tests compare with. */
-export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+export async function loadFontFile(engine:HTMLEngine,path:string,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   return loadFontData(engine,await Deno.readFile(path),family,via,fallback);
 }
 /** As loadFontFile, for a file already in memory. */
 /** `fallback:true` adds the font after the fonts the engine holds, for characters they lack;
-`"serif"` holds it as the serif face (serif_font.ts). */
-export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"=false) {
+`"serif"` holds it as the serif face, `"mono"` as the monospace face (serif_font.ts). */
+export async function loadFontData(engine:HTMLEngine,bytes:Uint8Array<ArrayBuffer>,family="font",via:"bytes"|"text"="bytes",fallback:boolean|"serif"|"mono"=false) {
   const sha=[...new Uint8Array(await crypto.subtle.digest("SHA-256",bytes))].map(b=>b.toString(16).padStart(2,"0")).join("");
   if(via==="bytes")return engine.fontLoadBytes(bytes,family,sha,fallback);
   let text="";

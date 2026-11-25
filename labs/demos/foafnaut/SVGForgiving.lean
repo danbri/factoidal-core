@@ -1244,6 +1244,18 @@ def imageSize (attrs : List NamespaceAttribute) : Nat × Nat :=
   let side := fun (v : Float) => max 1 (min 4096 v.round.toUInt32.toNat)
   (side fw,side fh)
 
+/-- The natural width, height and ratio (width over height) of an SVG image (CSS Images 3
+§5.1, SVG 2 §8.2): `width` and `height` when they are lengths (a percentage is none); the
+ratio of the `viewBox`, else of `width` and `height` when both are lengths. -/
+def naturalSize (attrs : List NamespaceAttribute) : Option Float × Option Float × Option Float :=
+  let w := rootPixels (plainAttr attrs "width")
+  let h := rootPixels (plainAttr attrs "height")
+  let ratio := match w, h, rootViewBox (plainAttr attrs "viewBox") with
+    | some w, some h, _ => some (w/h)
+    | _, _, some (bw,bh) => some (bw/bh)
+    | _, _, none => none
+  (w,h,ratio)
+
 /-- Most pixels of the picture drawn for one SVG image. The picture is drawn on the CPU,
 twice (on white and on black, for its alpha), at about 20 µs a pixel for a drawing of 80
 paths (2026-11-14, M1): at 262144 pixels an illustration of 500 by 285 took 5.7 s of a
@@ -1252,16 +1264,25 @@ by 128 CSS pixels are still drawn at twice their size; a larger drawing is held 
 than it is shown until SVG images are drawn as vectors with the page. -/
 def maxImagePixels : Nat := 65536
 
-/-- The pixels of the picture of an image of `w` by `h` CSS pixels: twice the size on each
-side while that is within `maxImagePixels` (a screen of two device pixels to the CSS pixel
-then shows it sharp); else the size; else the size divided by the smallest whole number
-(2 to 64) that fits. -/
+/-- Round a downsampled side up. Divisors are eighths, so a large image can
+use more of the pixel budget than a whole-number downsample allows. -/
+private def rasterSide (size divisor : Nat) : Nat := (8*size+divisor-1)/divisor
+
+/-- The pixels of the picture of an image of `w` by `h` CSS pixels: twice the size
+on each side when that fits, then its natural size when that fits. For a larger
+image, use the smallest downsampling divisor in eighth steps that fits. -/
 def imageRaster (w h : Nat) : Nat × Nat :=
   if (2*w)*(2*h) ≤ maxImagePixels then (2*w,2*h)
   else if w*h ≤ maxImagePixels then (w,h)
   else
-    let k := (((List.range 63).map (· + 2)).find? fun k => ((w+k-1)/k)*((h+k-1)/k) ≤ maxImagePixels).getD 64
-    ((w+k-1)/k,(h+k-1)/k)
+    let divisor := (((List.range 503).map (· + 9)).find? fun k =>
+      rasterSide w k * rasterSide h k ≤ maxImagePixels).getD 512
+    (rasterSide w divisor,rasterSide h divisor)
+
+/-- Scale changes only when both the double-size and natural-size images exceed the cap. -/
+theorem imageRaster_preservesUnscaled (w h : Nat) (fits : w*h ≤ maxImagePixels) :
+    imageRaster w h = if (2*w)*(2*h) ≤ maxImagePixels then (2*w,2*h) else (w,h) := by
+  simp [imageRaster, fits]
 
 /-- The picture of an image of at most 4096 pixels a side (`imageSize`) has at most
 `maxImagePixels` pixels. -/
@@ -1272,16 +1293,24 @@ theorem imageRaster_fits (w h : Nat) (hw : w ≤ 4096) (hh : h ≤ 4096) :
   · by_cases whole : w*h ≤ maxImagePixels
     · simp only [imageRaster, double, whole, if_true, if_false]
     · simp only [imageRaster, double, whole, if_false]
-      cases found : ((List.range 63).map (· + 2)).find? fun k => ((w+k-1)/k)*((h+k-1)/k) ≤ maxImagePixels with
+      cases found : ((List.range 503).map (· + 9)).find? fun k =>
+          rasterSide w k * rasterSide h k ≤ maxImagePixels with
       | some k =>
         have := List.find?_some found
         simpa using this
       | none =>
         simp only [Option.getD_none]
-        have a : (w+64-1)/64 ≤ 64 := by omega
-        have b : (h+64-1)/64 ≤ 64 := by omega
-        calc (w+64-1)/64*((h+64-1)/64) ≤ 64*64 := Nat.mul_le_mul a b
+        have a : rasterSide w 512 ≤ 64 := by unfold rasterSide; omega
+        have b : rasterSide h 512 ≤ 64 := by unfold rasterSide; omega
+        calc rasterSide w 512 * rasterSide h 512 ≤ 64*64 := Nat.mul_le_mul a b
           _ ≤ maxImagePixels := by unfold maxImagePixels; omega
+
+#guard imageRaster 128 128 == (256,256)
+#guard imageRaster 250 143 == (250,143)
+#guard imageRaster 500 285 == (334,190)
+#guard imageRaster 4096 4096 == (256,256)
+#print axioms imageRaster_preservesUnscaled
+#print axioms imageRaster_fits
 
 /-- The root of an image of `w` by `h` as its picture is drawn: without `width` and
 `height` (the picture's size is given to the reader); with a `viewBox` of the image's size

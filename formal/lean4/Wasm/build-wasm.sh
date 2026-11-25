@@ -249,6 +249,11 @@ done
   [ -n "$STD_DIRS" ] && find $STD_DIRS -name '*.lean'; \
   printf '%s\n' $STD_TIME_FILES; true; } \
   | xargs -P 8 -I{} bash -c 'gen_one "$@"' _ {}
+# GPU admission/plans and suspended query envelopes use Lean.Data.Json at
+# runtime. Init/Std alone cannot satisfy its symbols. Follow emitted runtime
+# initializer edges so meta-only elaborator imports stay out of the artifact.
+python3 "$REPO_ROOT/tools/lean-wasm-runtime-closure.py" \
+  --toolchain "$TOOLCHAIN" --c-dir "$CORE_C" Lean.Data.Json
 echo "  core C files: $(ls "$CORE_C"/*.c | wc -l | tr -d ' ')"
 
 # ---------------------------------------------------------------------
@@ -302,8 +307,8 @@ RT_SRCS="debug thread mpz utf8 object apply exception interrupt memory stackinfo
 # line makes glibc headers shadow the wasm sysroot's
 # (bits/wordsize.h fatal error in step 5).
 UVINC=""
-for d in /opt/homebrew/include /usr/local/include /usr/include; do
-  if [ -f "$d/uv.h" ]; then
+for d in "${L4_WASM_UV_INCLUDE:-}" /opt/homebrew/include /usr/local/include /usr/include; do
+  if [ -n "$d" ] && [ -f "$d/uv.h" ]; then
     mkdir -p "$WORK/uv-include"
     cp "$d/uv.h" "$WORK/uv-include/"
     [ -d "$d/uv" ] && cp -r "$d/uv" "$WORK/uv-include/"
@@ -311,7 +316,7 @@ for d in /opt/homebrew/include /usr/local/include /usr/include; do
     break
   fi
 done
-[ -n "$UVINC" ] || { echo "uv.h not found (apt-get install libuv1-dev / brew install libuv) — needed for declarations only"; exit 1; }
+[ -n "$UVINC" ] || { echo "uv.h not found (set L4_WASM_UV_INCLUDE or install libuv headers) — needed for declarations only"; exit 1; }
 # A restored cache can contain the old unpatched object despite matching Lean
 # headers. Require a witness written only after this script compiled the patched
 # source; a missing/mismatched witness invalidates object.o only, not Init/Std.
@@ -571,6 +576,8 @@ grep -q "from './l4factoidal-core.mjs';" "$ASSETS/l4factoidal-core.js" \
 ls -l "$ASSETS"
 echo
 echo "wasm bytes: $(wc -c < "$ASSETS/l4factoidal.wasm") (full), $(wc -c < "$ASSETS/l4factoidal-core.wasm") (core)"
+# The opt-in Hub example has its own narrow CPU module and ABI smoke gate.
+bash "$LEAN_DIR/Wasm/build-paralliverse.sh" "$WORK" "$ASSETS/paralliverse"
 # ---------------------------------------------------------------------
 say "step 9 — companion npm package + Pages mirror + provenance"
 NPMLEAN="$LEAN_DIR/../../npm/factoidal-lean"

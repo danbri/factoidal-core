@@ -9,7 +9,7 @@ import { POINTER_CANCEL } from "./native_press.ts";
 import { createWindowSession } from "./ui_session.ts";
 import { cleanupUI } from "./ui_cleanup.ts";
 import { applyCommands, startLoop } from "./ui_commands.ts";
-import { cocoaSurfaceOptions } from "./cocoa_surface.ts";
+import { nativeSurfaceOptions } from "./cocoa_surface.ts";
 import { PresentationGate } from "./presentation_gate.ts";
 import { nativePreflight } from "./native_preflight.ts";
 import { InputTrace } from "./input_trace.ts";
@@ -101,7 +101,7 @@ async function main() {
     native.setInputTrace(traceInput);
     if (!native.isMainThread()) throw new Error("Window creation requires OS main thread");
     const handles=native.create(768,512,`Lean ${demo} — ${controls}`);
-    const options=cocoaSurfaceOptions(handles,frame.width,frame.height);
+    const options=nativeSurfaceOptions(handles,frame.width,frame.height);
     console.log("Native surface: NSWindow + NSView (Deno 2.9.4)");
     const surface=new Deno.UnsafeWindowSurface(options);
     native.showAfterSurface();

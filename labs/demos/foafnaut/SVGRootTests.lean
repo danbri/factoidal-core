@@ -28,6 +28,11 @@ def run : IO Unit := do
   let xml := "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' color='red'><rect width='8' height='8' fill='currentColor'/></svg>"
   let standalone ← unwrap (parse xml)
   let redArtifact ← unwrap red.artifact
+  let categorised := element "svg"
+    [xmlAttr "width" "64", xmlAttr "category" "logo", xmlAttr "icon" "example", xmlAttr "height" "64"] [shape]
+  let withMetadata ← unwrap (parseRoot categorised 0 0 {currentColor:={r:=1,g:=0,b:=0}})
+  let metadataArtifact ← unwrap withMetadata.artifact
+  check (metadataArtifact == redArtifact) "root SVG application metadata changed the drawing"
   let standaloneArtifact ← unwrap standalone.artifact
   check (redArtifact == standaloneArtifact) "DOM and XML complete artifact equality"
   let coordinates := [(2,2),(8,2),(63,63),(64,64)]

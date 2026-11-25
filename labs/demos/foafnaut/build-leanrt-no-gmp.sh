@@ -23,6 +23,12 @@
 # mimalloc and everything else stay exactly as Lean shipped them. libInit/libStd do not
 # reference GMP; libleancpp's objects that mention mpz (name, name_generator, expr, num,
 # print) are not linked into the render library (ld -why_load, 2026-11-10).
+#
+# LEANRT_LTO=1 (macOS only; build-web-render.sh sets it for FOAFNAUT_NATIVE_LTO=1): the units an
+# allocation and a free pass through (object.cpp, alloc.cpp and mimalloc's static.c) are also
+# compiled as ThinLTO bitcode, into libleanrt-no-gmp-lto.a, so that the link of the engine can
+# inline them into the engine's code (docs/designissues/2026-11-16-lean-memory-overhead.md,
+# section D: 10 to 20% of script time). mimalloc is the version Lean pins, with Lean's flags.
 set -euo pipefail
 TOOLCHAIN=$1
 CACHE=$2
@@ -60,6 +66,18 @@ fi
 # Lean's own C++ flags for libleanrt on this platform (src/CMakeLists.txt, runtime/CMakeLists.txt);
 # LEAN_USE_GMP is the one difference. LEAN_MIMALLOC comes from the toolchain's lean/config.h,
 # so allocation matches the rest of the toolchain's objects.
+LTO=0
+[ "${LEANRT_LTO:-0}" = 1 ] && [ "$OS" = Darwin ] && LTO=1
+LTO_UNITS=()
+if [ "$LTO" = 1 ]; then
+  UNITS+=(alloc)
+  LTO_UNITS=(object alloc)
+  MIMALLOC_TAG=v2.2.3   # CMakeLists.txt of the Lean release, FetchContent mimalloc GIT_TAG
+  [ -f "$HERE/mimalloc-$MIMALLOC_TAG/include/mimalloc.h" ] || {
+    rm -rf "$HERE/mimalloc-$MIMALLOC_TAG"; mkdir -p "$HERE"
+    git clone --quiet --depth 1 --branch "$MIMALLOC_TAG" https://github.com/microsoft/mimalloc "$HERE/mimalloc-$MIMALLOC_TAG"
+  }
+fi
 FLAGS=(-std=c++20 -O3 -DNDEBUG -DLEAN_MULTI_THREAD -DLEAN_EXPORTING '-DLEAN_BUILD_TYPE="Release"'
   -ffp-contract=off -fvisibility=hidden -fvisibility-inlines-hidden)
 if [ "$OS" = Linux ]; then
@@ -72,11 +90,13 @@ else
   CXX=${CXX:-c++}
 fi
 OUT="$HERE/libleanrt-no-gmp.a"
+[ "$LTO" = 1 ] && OUT="$HERE/libleanrt-no-gmp-lto.a"
 STAMP="$OUT.stamp"
 want(){
   shasum -a 256 "$RUNTIME" | cut -d' ' -f1
   for unit in "${UNITS[@]}"; do shasum -a 256 "$SRC/runtime/$unit.cpp" | cut -d' ' -f1; done
   if [ "$OS" = Linux ]; then echo "mimalloc $MIMALLOC_TAG libuv $LIBUV_TAG"; fi
+  if [ "$LTO" = 1 ]; then echo "lto ${LTO_UNITS[*]} mimalloc $MIMALLOC_TAG"; fi
   printf '%s\n' "$CXX" "${FLAGS[@]}"
   "$CXX" --version | head -1
 }
@@ -84,15 +104,25 @@ if [ -s "$OUT" ] && [ -f "$STAMP" ] && [ "$(want)" = "$(cat "$STAMP")" ]; then
   echo "$OUT"; exit 0
 fi
 OBJ="$HERE/obj"
+[ "$LTO" = 1 ] && OBJ="$HERE/obj-lto"
 rm -rf "$OBJ"; mkdir -p "$OBJ"
 pids=()
 for unit in "${UNITS[@]}"; do
-  ( cd "$OBJ" && "$CXX" "${FLAGS[@]}" -I "$TOOLCHAIN/include" -I "$SRC" -w \
+  UNIT_LTO=()
+  for lto_unit in ${LTO_UNITS[@]+"${LTO_UNITS[@]}"}; do [ "$lto_unit" = "$unit" ] && UNIT_LTO=(-flto=thin); done
+  ( cd "$OBJ" && "$CXX" "${FLAGS[@]}" ${UNIT_LTO[@]+"${UNIT_LTO[@]}"} -I "$TOOLCHAIN/include" -I "$SRC" -w \
       -c "$SRC/runtime/$unit.cpp" -o "$OBJ/$unit.cpp.o" ) &
   pids+=($!)
 done
 MEMBERS=()
 for unit in "${UNITS[@]}"; do MEMBERS+=("$unit.cpp.o"); done
+if [ "$LTO" = 1 ]; then
+  # Lean's MIMALLOC_FLAGS (src/runtime/CMakeLists.txt), compiled as C++ like Lean does, as bitcode.
+  ( cd "$OBJ" && "$CXX" "${FLAGS[@]}" -flto=thin -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_WIN_NOREDIRECT -DMI_SECURE=0 \
+      -I "$HERE/mimalloc-$MIMALLOC_TAG/include" -w -x c++ -c "$HERE/mimalloc-$MIMALLOC_TAG/src/static.c" -o "$OBJ/static.c.o" ) &
+  pids+=($!)
+  MEMBERS+=(static.c.o)
+fi
 if [ "$OS" = Linux ]; then
   # Lean's MIMALLOC_FLAGS (src/runtime/CMakeLists.txt), compiled as C++ like Lean does.
   ( cd "$OBJ" && "$CXX" "${FLAGS[@]}" -DMI_SHARED_LIB -DMI_SHARED_LIB_EXPORT -DMI_WIN_NOREDIRECT -DMI_SECURE=0 \

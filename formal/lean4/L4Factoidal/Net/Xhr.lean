@@ -453,6 +453,12 @@ def sizeText : Option (Nat × Nat) → String
 def typeFields (hs : List (String × String)) : List (String × String) :=
   hs.filter fun f => f.1.toLower == "content-type"
 
+/-- The MIME type an image answer is read as: its first `Content-Type` field (`""` with none). -/
+def imageType (hs : List (String × String)) : String :=
+  match typeFields hs with
+  | f :: _ => f.2
+  | [] => ""
+
 /-- An image element's response as the prelude gets it: the status, the `Content-Type` and,
 in place of the bytes, the image's natural size (`HTML.ImageSize`: "width height", empty when
 the bytes are not an image), all the element's load needs. The bytes of an image stay in the
@@ -460,7 +466,7 @@ engine (the canvas draws them by key): the prelude runs in the page's realm, so 
 are bytes a page can read, and an opaque answer's must never be (origin isolation, C2 of
 issue 518: a page that replaced `Uint8Array` read another origin's image). -/
 def imageRaw (r : Response) : Response :=
-  let size := (sizeText (HTML.ImageSize.size? r.body)).toUTF8
+  let size := (sizeText (HTML.ImageSize.natural (imageType r.headers) r.body)).toUTF8
   { r with statusText := "", headers := typeFields r.headers, body := size }
 
 /-- Kind: security theorem (origin isolation, C2). Says: what an image element's request gives
@@ -470,7 +476,8 @@ and other fields) give the same response. -/
 theorem imageRaw_noninterference (r r' : Response) (hs : r.status = r'.status) (hu : r.url = r'.url)
     (ht : r.tainting = r'.tainting)
     (hh : typeFields r.headers = typeFields r'.headers)
-    (hz : HTML.ImageSize.size? r.body = HTML.ImageSize.size? r'.body) : imageRaw r = imageRaw r' := by
+    (hz : HTML.ImageSize.natural (imageType r.headers) r.body = HTML.ImageSize.natural (imageType r'.headers) r'.body) :
+    imageRaw r = imageRaw r' := by
   simp only [imageRaw, hs, hu, ht, hh, hz]
 
 #guard (imageRaw { status := 200, statusText := "OK", url := "", headers := [("Content-Type", "image/png"), ("x-a", "1")], body := HTML.ImageSize.pngHeader 3 5 }).body.data == "3 5".toUTF8.data

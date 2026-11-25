@@ -98,6 +98,15 @@ def colorReader : Color.Reader := fun cv =>
   | none =>
     match cv with
     | .fn _ _ =>
+      -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and `calc(NaN)` its
+      -- lower bound (CSS Values 4 §10.12): a number larger than any channel's range, and a
+      -- multiple of 360 so that a hue of either is 0. Asked first: `numeric` would give the
+      -- computed stand-in of an infinite number, which is not a channel's bound.
+      let ext := ((Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c).bind extOf
+      match ext with
+      | some (.pinf, u) => if u == "" || u == "%" || u == "deg" then some (.num infiniteChannel) else none
+      | some (.ninf, u) | some (.nan, u) => if u == "" || u == "%" || u == "deg" then some (.num (-infiniteChannel)) else none
+      | _ =>
       match numeric (some {}) { kind := .number } cv with
       | some (.tok (.num v _)) => some (.num v)
       | _ =>
@@ -106,14 +115,7 @@ def colorReader : Color.Reader := fun cv =>
         | _ =>
           match numeric (some {}) { kind := .angle } cv with
           | some (.tok (.dim v _ _)) => some (.angle v)
-          | _ =>
-            -- `calc(infinity)` is the channel's upper bound, `calc(-infinity)` and
-            -- `calc(NaN)` its lower bound (CSS Values 4 §10.12): a number larger than any
-            -- channel's range, and a multiple of 360 so that a hue of either is 0
-            match (Calc.parse cv).map fun c => Calc.simp none (Calc.depth 64 c + 4) c with
-            | some (.kw "infinity") => some (.num infiniteChannel)
-            | some (.kw "-infinity") | some (.kw "nan") => some (.num (-infiniteChannel))
-            | _ => none
+          | _ => none
     | _ => none
 
 /-- The matcher's environment: specified values with `none`, computed values with a
@@ -126,7 +128,8 @@ def env (ctx : Option ComputeCtx) : Env :=
 
 /-- The canonical text of `cvs` as a value of property `p` (a name of the table). -/
 def matchText (ctx : Option ComputeCtx) (p : String) (cvs : List CV) : Option String :=
-  (propG p).bind fun g => (matchAll (env ctx) g cvs).map fun o => serialize (untag 16 o)
+  let matcher := {env ctx with deferPctMath := ["background-position-x", "background-position-y"].contains p}
+  (propG p).bind fun g => (matchAll matcher g cvs).map fun o => serialize (untag 16 o)
 
 /-- The single CSS-wide keyword that the values are, if they are one. -/
 def wideKeyword (top : List CV) : Option String :=
@@ -239,13 +242,261 @@ def gradientCanon (v : String) : String :=
       | cv => cv
     serialize out
 
+/-- A percentage as the number it stands for (`50%` is `0.5`). -/
+def pctToNum : CV → CV
+  | .tok (.pct x) => .tok (.num (x / 100) false)
+  | cv => cv
+
+/-- The arguments of a function, comma groups kept, each group with its white space. -/
+def joinGroups (groups : List (List CV)) : List CV :=
+  (groups.map stripWs).foldl (fun acc g => if acc.isEmpty then g else acc ++ [.tok .comma, .tok .ws] ++ g) []
+
+/-- `transform` (CSS Transforms 1 §11, 2 §12): a percentage of a scaling function as a number,
+a unitless zero angle of a skewing function as `0deg`. Function names keep their case: what
+`commitStyles()` writes reads back as written. -/
+def transformCanon (v : String) : String :=
+  if v == "none" then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      if n.startsWith "scale" then .fn name (args.map pctToNum)
+      else if n.startsWith "skew" then .fn name (args.map fun a => match a with
+        | .tok (.num x _) => if x == 0 then .tok (.dim 0 true "deg") else a
+        | a => a)
+      else cv
+    | cv => cv)
+
+/-- An `<opacity-value>` (CSS Color 4 §11.2) is serialised as a number. -/
+def opacityCanon (v : String) : String :=
+  match stripWs (CV.parse v) with
+  | [cv] => serialize [pctToNum cv]
+  | _ => v
+
+/-- `counter()` and `counters()` without their default style, `decimal` (CSS Lists 3 §6). -/
+def counterCanon (v : String) : String :=
+  if (v.splitOn "counter").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      let groups := splitCommas args
+      let isDecimal := fun (g : List CV) => match stripWs g with
+        | [.tok (.ident k)] => lower k == "decimal"
+        | _ => false
+      if (n == "counter" && groups.length == 2 || n == "counters" && groups.length == 3) &&
+          (groups.getLast?.map isDecimal).getD false then
+        .fn name (joinGroups groups.dropLast)
+      else cv
+    | cv => cv)
+
+/-- Easing functions (CSS Easing 1 §2.2): `step-start` is `steps(1, start)`, `step-end`
+is `steps(1)`, and `steps(n, end)` or `steps(n, jump-end)` is `steps(n)`. -/
+def easingCanon (v : String) : String :=
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .tok (.ident k) =>
+      if lower k == "step-start" then .raw "steps(1, start)"
+      else if lower k == "step-end" then .raw "steps(1)" else cv
+    | .fn name args =>
+      if lower name != "steps" then cv else
+      match splitCommas args with
+      | [n, pos] =>
+        match stripWs pos with
+        | [.tok (.ident k)] => if lower k == "end" || lower k == "jump-end" then .fn name (stripWs n) else cv
+        | _ => cv
+      | _ => cv
+    | cv => cv)
+
+/-- Filter functions whose amount is at most 1 (`grayscale()`, `invert()`, `opacity()`,
+`sepia()`, Filter Effects 1 §13.1): a larger amount is serialised as 100% or 1. -/
+def filterCanon (v : String) : String :=
+  if v == "none" then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      if !["grayscale", "invert", "opacity", "sepia"].contains (lower name) then cv else
+      .fn name (args.map fun a => match a with
+        | .tok (.pct x) => if x > 100 then .tok (.pct 100) else a
+        | .tok (.num x i) => if x > 1 then .tok (.num 1 true) else .tok (.num x i)
+        | a => a)
+    | cv => cv)
+
+/-- `translate` (CSS Transforms 2 §5): a zero z is left out, and then a zero y. -/
+def translateCanon (v : String) : String :=
+  let zero := fun (cv : CV) => match cv with
+    | .tok (.dim x _ _) => x == 0
+    | .tok (.num x _) => x == 0
+    | _ => false
+  let ts := stripWs (CV.parse v)
+  let ts := match ts with
+    | [x, y, z] => if zero z then [x, y] else ts
+    | _ => ts
+  let ts := match ts with
+    | [x, y] => if zero y then [x] else ts
+    | _ => ts
+  " ".intercalate (ts.map fun cv => serialize [cv])
+
+/-- A radial gradient without its default ending shape and size (`ellipse`,
+`farthest-corner`, CSS Images 3 §3.2). -/
+def radialCanon (v : String) : String :=
+  if (v.splitOn "radial-gradient(").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      if !(lower name).endsWith "radial-gradient" then cv else
+      match splitCommas args with
+      | first :: rest =>
+        let ws := stripWs first
+        let atIx := ws.findIdx? fun c => match c with | .tok (.ident k) => lower k == "at" | _ => false
+        let (shape, pos) := match atIx with | some i => (ws.take i, ws.drop i) | none => (ws, [])
+        let shape' := shape.filter fun c => match c with
+          | .tok (.ident k) => !(lower k == "ellipse" || lower k == "farthest-corner")
+          | _ => true
+        if shape'.length == shape.length then cv else
+        let first' := (shape' ++ pos).foldl (fun acc c => if acc.isEmpty then [c] else acc ++ [.tok .ws, c]) []
+        .fn name (joinGroups (if first'.isEmpty then rest else first' :: rest))
+      | [] => cv
+    | cv => cv)
+
+/-- Items separated by single spaces. -/
+def spaced (cvs : List CV) : List CV :=
+  cvs.foldl (fun acc c => if acc.isEmpty then [c] else acc ++ [.tok .ws, c]) []
+
+/-- A grid template without its empty line name lists `[]` (CSS Grid 2 §7.2: they name no
+line), at the top level and in `repeat()`. -/
+def gridCanon (v : String) : String :=
+  if (v.splitOn "[]").length ≤ 1 then v else
+  -- a subgrid's line name lists are kept, empty ones too: each is one line (CSS Grid 2 §9)
+  if (lower (String.ofList (v.toList.dropWhile (· == ' ')))).startsWith "subgrid" then v else
+  let keep := fun (c : CV) => match c with
+    | .block '[' body => !(stripWs body).isEmpty
+    | _ => true
+  serialize (spaced ((stripWs (CV.parse v)).filter keep |>.map fun c => match c with
+    | .fn name args =>
+      if lower name == "repeat" then .fn name (joinGroups ((splitCommas args).map fun g => spaced ((stripWs g).filter keep)))
+      else c
+    | c => c))
+
+#guard gridCanon "subgrid [] [a]" == "subgrid [] [a]" && gridCanon " subgrid repeat(1, [])" == " subgrid repeat(1, [])"
+
+/-- `image-set()` (CSS Images 4 §2.2): `-webkit-image-set()` is `image-set()`, a string is
+the `url()` of that string, and an image with no resolution has `1x`. -/
+def imageSetCanon (v : String) : String :=
+  if (v.splitOn "image-set(").length ≤ 1 then v else
+  serialize ((CV.parse v).map fun cv => match cv with
+    | .fn name args =>
+      let n := lower name
+      if n != "image-set" && n != "-webkit-image-set" then cv else
+      .fn "image-set" (joinGroups ((splitCommas args).map fun g =>
+        let ws := (stripWs g).map fun c => match c with
+          | .tok (.str s) => .raw ("url(" ++ serializeString s ++ ")")
+          | c => c
+        let isRes := fun (c : CV) => match c with
+          | .tok (.dim _ _ u) => ["x", "dppx", "dpi", "dpcm"].contains (lower u)
+          | .fn f _ => mathFunctions.contains (lower f)
+          | _ => false
+        spaced (if ws.any isRes then ws else ws ++ [.tok (.dim 1 true "x")])))
+    | cv => cv)
+
+/-- `counter-reset`, `counter-set` and `counter-increment` (CSS Lists 3 §4): a counter name
+with no number has the default, `dflt` (0, or 1 for `counter-increment`); a `reversed()`
+counter of `counter-reset` keeps none. -/
+def counterListCanon (dflt : Nat) (v : String) : String :=
+  if v == "none" then v else
+  let ts := (stripWs (CV.parse v)).toArray
+  let isNum := fun (c : CV) => match c with
+    | .tok (.num _ _) => true
+    | .fn f _ => mathFunctions.contains (lower f)
+    | _ => false
+  let out := Id.run do
+    let mut out : Array CV := #[]
+    for i in [0:ts.size] do
+      let c := ts[i]!
+      out := out.push c
+      match c with
+      | .tok (.ident _) => if !((ts[i+1]?).map isNum).getD false then out := out.push (.tok (.num dflt true))
+      | _ => pure ()
+    return out
+  serialize (spaced out.toList)
+
+/-- `font-feature-settings` (CSS Fonts 4 §6.12): a value of 1 or `on` is left out, `off` is 0. -/
+def featureCanon (v : String) : String :=
+  if v == "normal" then v else
+  serialize (joinGroups ((splitCommas (CV.parse v)).map fun g =>
+    match stripWs g with
+    | [t, .tok (.num x _)] => if x == 1 then [t] else [t, .tok (.num x true)]
+    | [t, .tok (.ident k)] => if lower k == "on" then [t] else if lower k == "off" then [t, .tok (.num 0 true)] else [t, .tok (.ident k)]
+    | g' => spaced g'))
+
+/-- `color-scheme` (CSS Color Adjust 1 §2): `only` after the schemes. -/
+def colorSchemeCanon (v : String) : String :=
+  let ws := v.splitOn " "
+  if ws.head? == some "only" && ws.length > 1 then " ".intercalate (ws.drop 1 ++ ["only"]) else v
+
+/-- `place-content` (CSS Box Alignment 3 §5.3): a lone baseline value is its `align-content`,
+with `justify-content` at its default for baselines, `start`. -/
+def placeContentCanon (v : String) : String :=
+  if v == "baseline" || v == "first baseline" then "baseline start"
+  else if v == "last baseline" then "last baseline start" else v
+
+/-- `animation-range` (Scroll-driven Animations 1 §4.2): per item, an end that is the default
+for its start is left out (`normal normal` is `normal`, `entry 0% entry 100%` is `entry`,
+`0% 100%` is `0%`, `10% normal` is `10%`). -/
+def animationRangeCanon (v : String) : String :=
+  ", ".intercalate ((v.splitOn ", ").map fun item =>
+    let isIdent := fun (w : String) => w.toList.headD '0' |>.isAlpha
+    match (item.splitOn " ").filter (· != "") with
+    | [a, "0%", b, "100%"] => if a == b && isIdent a then a else item
+    | ["0%", "100%"] => "0%"
+    | ["normal", "normal"] => "normal"
+    | [a, "normal"] => if isIdent a then item else a
+    | _ => item)
+
+/-- The items of a comma-separated list value, each without white space at its ends. -/
+def commaItems (v : String) : List (List CV) := (splitCommas (CV.parse v)).map stripWs
+
+/-- A range start or end (Scroll-driven Animations 1 §4.2, `animation-range-start` and the
+trigger ranges): per item, a range name at its default offset is the name alone (`entry 0%`
+is `entry` for a start, `exit 100%` is `exit` for an end). -/
+def rangeLonghandCanon (isEnd : Bool) (v : String) : String :=
+  ", ".intercalate ((commaItems v).map fun item =>
+    match item with
+    | [.tok (.ident a), .tok (.pct q)] =>
+      if !["normal", "auto"].contains (lower a) && q == (if isEnd then 100 else 0) then a else serialize item
+    | _ => serialize item)
+
+/-- `view-timeline-inset` (Scroll-driven Animations 1 §3.3.3): per item, two equal insets are
+one. -/
+def insetPairCanon (v : String) : String :=
+  ", ".intercalate ((commaItems v).map fun item =>
+    match item with
+    | [a, b] => if serialize [a] == serialize [b] then serialize [a] else serialize item
+    | _ => serialize item)
+
+#guard rangeLonghandCanon false "entry 0%, exit 10%" == "entry, exit 10%" && rangeLonghandCanon true "cover 100%" == "cover"
+#guard rangeLonghandCanon true "calc(10% + 10px)" == "calc(10% + 10px)" && insetPairCanon "auto auto, 1px 2px" == "auto, 1px 2px"
+
 /-- The canonical forms that the order of the grammar alone does not give, by property. -/
 def canonical (p v : String) : String :=
   match p with
   | "display" => displayCanon v
   | "scale" => if v == "none" then v else scaleCanon v
   | "rotate" => rotateCanon v
-  | _ => gradientCanon v
+  | "transform" => transformCanon v
+  | "opacity" | "flood-opacity" | "fill-opacity" | "stroke-opacity" | "stop-opacity" => opacityCanon v
+  | "content" => imageSetCanon (counterCanon (gradientCanon v))
+  | "counter-reset" | "counter-set" => counterListCanon 0 v
+  | "counter-increment" => counterListCanon 1 v
+  | "font-feature-settings" => featureCanon v
+  | "color-scheme" => colorSchemeCanon v
+  | "place-content" => placeContentCanon v
+  | "animation-range" => animationRangeCanon v
+  | "animation-range-start" | "timeline-trigger-activation-range-start" | "timeline-trigger-active-range-start" =>
+    rangeLonghandCanon false v
+  | "animation-range-end" | "timeline-trigger-activation-range-end" | "timeline-trigger-active-range-end" =>
+    rangeLonghandCanon true v
+  | "view-timeline-inset" => insetPairCanon v
+  | "animation-timing-function" | "transition-timing-function" => easingCanon v
+  | "filter" | "backdrop-filter" => filterCanon v
+  | "translate" => translateCanon v
+  | "grid" | "grid-template" | "grid-template-rows" | "grid-template-columns" => gridCanon v
+  | _ => imageSetCanon (radialCanon (gradientCanon v))
 
 /-- `canonical`, and for a shape property the shape's canonical form (`shapeValue`):
 `none` when a `path()` in it is not path data, so the value is not one of the property's. -/
@@ -485,6 +736,30 @@ def partsGrammar (row : Property) : Option G :=
           | none => false)
     if ok then some g else none
 
+/-- The shorthands that are comma-separated lists read item by item (Scroll-driven Animations 1
+§3.2.4 `scroll-timeline`, §3.3.5 `view-timeline`, §4.2 `animation-range`; CSS Animations 2
+`timeline-trigger` and its ranges): each item is read by the grammar inside the `#`, and each
+longhand is the list of its parts of the items. -/
+def listShorthands : List String := ["animation-range", "scroll-timeline", "view-timeline",
+  "timeline-trigger", "timeline-trigger-activation-range", "timeline-trigger-active-range"]
+
+/-- The grammar of one item of a list shorthand. -/
+def listItemG (row : Property) : Option G :=
+  if !listShorthands.contains row.name then none else
+  let item := fun (g : G) => match g with
+    | .rep inner 1 none true => some inner
+    | _ => none
+  match propG row.name with
+  | some (.oneOf alts) => alts.findSome? item
+  | some g => item g
+  | none => none
+
+/-- The start and end longhands of a range shorthand (`animation-range`, the trigger ranges). -/
+def rangeEnds (row : Property) : Option (String × String) :=
+  match row.longhands with
+  | [s, e] => if s.endsWith "-range-start" && e.endsWith "-range-end" then some (s, e) else none
+  | _ => none
+
 /-- The shape of a shorthand that has a generic one. -/
 def shapeOf (row : Property) : Option Shape :=
   let n := row.longhands.length
@@ -496,6 +771,17 @@ def shapeOf (row : Property) : Option Shape :=
   else if (row.name == "border" || row.name == "border-block" || row.name == "border-inline") && n % 3 == 0 && n ≥ 3 then
     some (.anyOrder (thirds (n / 3) row.longhands))
   else (partsGrammar row).map Shape.byGrammar
+
+/-- The end of a range item that does not write one (Scroll-driven Animations 1 §4.2): the
+start's range name (at 100%), else the end's initial value. -/
+def rangeEndDefault (endProp start : String) (initial : String → String) : String :=
+  match stripWs (CV.parse start) with
+  | .tok (.ident k) :: _ => if ["normal", "auto"].contains (lower k) then initial endProp else k
+  | _ => initial endProp
+
+/-- A range item as written: the end left out when it is the one the start implies. -/
+def rangeItemText (e sv ev : String) (initial : String → String) : String :=
+  if ev == rangeEndDefault e sv initial then sv else sv ++ " " ++ ev
 
 /-- The values of the tagged matches, in order: property name and canonical text. -/
 def tagged (out : List CV) : List (String × String) :=
@@ -763,6 +1049,24 @@ def expandF : Nat → String → String → Option (List (String × String))
               | some xys => some [("background-position-x", ", ".intercalate (xys.map (·.1))),
                   ("background-position-y", ", ".intercalate (xys.map (·.2)))]
               | none => some [(p, canonical)]
+            else if let some inner := listItemG row then
+              -- a list shorthand: each item alone, then each longhand the list of its parts
+              let one := fun (item : List CV) => do
+                let found ← (matchAll (env none) inner item).map tagged
+                let parts ← found.mapM fun (n, t) =>
+                  if row.longhands.contains n then some [(n, t)] else expandF fuel n t
+                let direct := parts.flatten
+                if direct.any (fun (n, _) => !row.longhands.contains n) then none else
+                some (row.longhands.map fun l => match direct.lookup l with
+                  | some v => v
+                  | none =>
+                    match rangeEnds row with
+                    | some (s, e) => if l == e then rangeEndDefault e ((direct.lookup s).getD "") initialSpecified else initialSpecified l
+                    | none => initialSpecified l)
+              match ((splitCommas top).map stripWs).mapM one with
+              | none => some [(p, canonical)]
+              | some rows => some (row.longhands.zipIdx.map fun (l, k) =>
+                  (l, L4Factoidal.Rendering.CssValues.canonical l (", ".intercalate (rows.map fun r => r.getD k ""))))
             else if gapRuleShorthands.contains p && isRuleList top then
               -- a list of rules (CSS Gaps 1 §4.3): each rule read alone, each longhand the
               -- list of its part, `repeat()` kept around the parts it repeats
@@ -901,6 +1205,36 @@ def recombineF : Nat → Property → (String → String) → String
       let xs := listItems (get "background-position-x")
       let ys := listItems (get "background-position-y")
       if xs.length != ys.length then "" else ", ".intercalate ((xs.zip ys).map fun (x, y) => positionText x y)
+    else if (listItemG row).isSome then
+      let lists := vs.map listItems
+      let n := (lists.headD []).length
+      if !lists.all (·.length == n) || vs.any cssWide.contains then ""
+      else
+        let items := (List.range n).map fun i =>
+          let get1 := fun (l : String) => match row.longhands.idxOf? l with
+            | some k => (lists.getD k []).getD i ""
+            | none => ""
+          match rangeEnds row with
+          | some (s, e) => rangeItemText e (get1 s) (get1 e) initialSpecified
+          | none =>
+            if row.name == "timeline-trigger" then
+              let act := rangeItemText "timeline-trigger-activation-range-end" (get1 "timeline-trigger-activation-range-start")
+                (get1 "timeline-trigger-activation-range-end") initialSpecified
+              let active := rangeItemText "timeline-trigger-active-range-end" (get1 "timeline-trigger-active-range-start")
+                (get1 "timeline-trigger-active-range-end") initialSpecified
+              let src := get1 "timeline-trigger-source"
+              let name := get1 "timeline-trigger-name"
+              let head := " ".intercalate ((if name == "none" then [] else [name]) ++ (if src == "auto" then [] else [src]) ++
+                (if act == "normal" then [] else [act]))
+              let text := head ++ (if active == "auto" then "" else (if head == "" then "/ " else " / ") ++ active)
+              if text == "" then "none" else text
+            else
+              match row.longhands with
+              | first :: rest => " ".intercalate (get1 first :: rest.filterMap fun l =>
+                  let v := get1 l
+                  if v == initialSpecified l then none else some v)
+              | [] => ""
+        if items.any (· == "") then "" else ", ".intercalate items
     else if gapRuleShorthands.contains row.name && vs.any (fun v => isRuleList (stripWs (CV.parse v))) then
       -- a list of rules: each item put together from the same item of each longhand
       let lists := vs.map fun v => (splitCommas (stripWs (CV.parse v))).map stripWs
@@ -1009,7 +1343,7 @@ def recombineF : Nat → Property → (String → String) → String
 /-- A shorthand that `recombine` writes from its longhands: one of a generic shape, or
 `background` and `background-position` (written by layers). -/
 def recombinable (row : Property) : Bool :=
-  (shapeOf row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
+  (shapeOf row).isSome || (listItemG row).isSome || row.name == "background" || row.name == "background-position" || row.name == "mask"
 
 /-- The value of a shorthand of a generic shape from the values of its longhands (`get`
 answers "" for one that is not set): "" when it can not be written as one value. -/
@@ -1120,6 +1454,7 @@ def edgeOffset (k : String) (off : CV) : Option String :=
     | .tok (.dim x _ u) =>
       if x < 0 then some ("calc(100% + " ++ fmtRat (-x) ++ u ++ ")")
       else some ("calc(100% - " ++ fmtRat x ++ u ++ ")")
+    | .fn name args => some ("calc(100% - " ++ serialize [.fn name args] ++ ")")
     | _ => none
 
 #guard edgeOffset "right" (.tok (.pct 7)) == some "93%" && edgeOffset "left" (.tok (.pct (-20))) == some "-20%"
@@ -1227,6 +1562,48 @@ def initialComputed (ctx : ComputeCtx) (row : Property) : String :=
   | "column-rule-width" => "5px, repeat(4, 6px, 5px)" | "column-rule-style" => "double, repeat(4, none, solid)"
   | _ => "salmon, repeat(4, currentcolor, red)") == some "5px double salmon, repeat(4, 6px, 5px solid red)"
 #guard specified "will-change" "auto, transform" == none && specified "will-change" "transform, none" == none
+-- `first baseline` is serialised as `baseline` (CSS Box Alignment 3 §4.1, the shortest form)
+#guard specified "align-items" "first baseline" == some "baseline" && specified "align-self" "last baseline" == some "last baseline"
+#guard specified "justify-self" "baseline" == some "baseline" && specified "align-content" "first baseline" == some "baseline"
+-- calc-size() in the sizing properties (calc-size-parsing.html)
+#guard specified "width" "calc-size(auto, size)" == some "calc-size(auto, size)" && specified "max-width" "calc-size(auto, size)" == none
+#guard specified "max-height" "calc-size(fit-content, 30px + size / 2)" == some "calc-size(fit-content, 30px + (0.5 * size))"
+#guard specified "flex-basis" "calc-size(any, 50px)" == some "calc-size(any, 50px)" && specified "height" "calc(calc-size(auto, size))" == none
+-- canonical forms (transform-valid.html, opacity-valid.html, content-valid.html,
+-- *-timing-function-valid.html, filter-parsing-valid.html, translate-parsing-valid.html,
+-- gradient-*-valid.html)
+#guard specified "transform" "scale(250%)" == some "scale(2.5)" && specified "transform" "scaleX(720%)" == some "scaleX(7.2)"
+#guard specified "transform" "skewX(0)" == some "skewX(0deg)" && specified "transform" "translateX(-4px)" == some "translateX(-4px)"
+#guard specified "transform" "scale3d(50%, 250%, 300%)" == some "scale3d(0.5, 2.5, 3)"
+#guard specified "opacity" "50%" == some "0.5" && specified "opacity" "2.5e1%" == some "0.25" && specified "opacity" "-100%" == some "-1"
+#guard specified "content" "counter(counter-name, dECiMaL)" == some "counter(counter-name)"
+#guard specified "content" "counters(counter-name, \".\", DECIMAL)" == some "counters(counter-name, \".\")"
+#guard specified "transition-timing-function" "step-start" == some "steps(1, start)" && specified "transition-timing-function" "step-end" == some "steps(1)"
+#guard specified "animation-timing-function" "steps( 2, end )" == some "steps(2)" && specified "animation-timing-function" "steps(2, start)" == some "steps(2, start)"
+#guard specified "filter" "grayscale(300%)" == some "grayscale(100%)" && specified "filter" "opacity(2)" == some "opacity(1)"
+#guard specified "translate" "100px 0px" == some "100px" && specified "translate" "100px 200px 0px" == some "100px 200px" && specified "translate" "1px 2px 0" == some "1px 2px"
+#guard specified "background-image" "radial-gradient(ellipse farthest-corner, red, blue)" == some "radial-gradient(red, blue)"
+#guard specified "background-image" "radial-gradient(circle farthest-corner, red, blue)" == some "radial-gradient(circle, red, blue)"
+#guard specified "background-image" "image-set('example.jpg' 1x)" == some "image-set(url(\"example.jpg\") 1x)"
+#guard specified "background-image" "-webkit-image-set(url(foo), url(bar) 1x)" == some "image-set(url(\"foo\") 1x, url(\"bar\") 1x)"
+#guard specified "background-image" "-webkit-image-set(url(\"example.png\") calc(2x * 3))" == some "image-set(url(\"example.png\") calc(6dppx))"
+#guard specified "counter-reset" "chapter reversed(chapter)" == some "chapter 0 reversed(chapter)" && specified "counter-reset" "reversed(chapter) 9 chapter" == some "reversed(chapter) 9 chapter 0"
+#guard specified "counter-increment" "first -1 second third 99" == some "first -1 second 1 third 99" && specified "counter-set" "chapter" == some "chapter 0"
+#guard specified "font-feature-settings" "\"dlig\" 1, \"smcp\" on, \"dlig\" 0" == some "\"dlig\", \"smcp\", \"dlig\" 0" && specified "font-feature-settings" "\"liga\" off" == some "\"liga\" 0"
+#guard specified "color-scheme" "only light dark" == some "light dark only" && specified "color-scheme" "light only" == some "light only"
+#guard specified "place-content" "baseline" == some "baseline start"
+#guard specified "animation-range" "normal normal" == some "normal" && specified "animation-range" "entry 0% entry 100%" == some "entry"
+#guard specified "animation-range" "100px normal" == some "100px" && specified "animation-range" "entry normal" == some "entry normal"
+#guard specified "animation-range" "0% 100%" == some "0%" && specified "animation-range" "entry 50% exit 50%" == some "entry 50% exit 50%"
+#guard expand "animation-range" "entry 0%, exit" == some [("animation-range-start", "entry, exit"), ("animation-range-end", "entry, exit")]
+#guard expand "animation-range" "100px" == some [("animation-range-start", "100px"), ("animation-range-end", "normal")]
+#guard expand "view-timeline" "--abcd block auto auto" == some [("view-timeline-name", "--abcd"), ("view-timeline-axis", "block"), ("view-timeline-inset", "auto")]
+#guard expand "scroll-timeline" "--a y, --b" == some [("scroll-timeline-name", "--a, --b"), ("scroll-timeline-axis", "y, block")]
+#guard recombine ((lookup "animation-range").get!) (fun l => if l == "animation-range-start" then "entry, 10%" else "entry, normal") == "entry, 10%"
+#guard recombine ((lookup "view-timeline").get!) (fun l => if l == "view-timeline-name" then "--abcd" else if l == "view-timeline-axis" then "block" else "1px 2px") == "--abcd 1px 2px"
+#guard specified "grid-template" "none / [] 0px" == some "none / 0px" && specified "grid-template" "[] 10px [] / [] auto []" == some "10px / auto"
+#guard specified "grid-template" "\"a\" 10px [] [b] \"b\" 20px / 30px" == some "\"a\" 10px [b] \"b\" 20px / 30px"
+#guard specified "grid-template-rows" "repeat(1, [] 10px [])" == some "repeat(1, 10px)" && specified "grid" "[a] \"a\" 10px []" == some "[a] \"a\" 10px"
 #guard specified "will-change" "transform, opacity" == some "transform, opacity" && specified "will-change" "auto" == some "auto"
 -- a math function of a non-legacy colour function stays in the specified value (CSS Color 4)
 #guard specified "color" "color(srgb calc(0.5 + 1) calc(0.5 - 1) calc(0.5) / calc(-0.5 + 1))" ==

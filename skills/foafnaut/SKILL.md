@@ -290,9 +290,15 @@ Use `--wasm-engine` for the Wasm engine. `--be-liberal-in-what-we-accept` draws 
 what was skipped; `WebAccept.Skip` is the list. Strict is the default at `6f08a9824`.
 
 The launcher `npm/factoidal/bin/foafnaut.mjs` (installed at `~/.local/bin/foafnaut`):
-plain `foafnaut` starts the newer of the installed release and the bleeding-edge build;
-`--bleeding-edge` also prints the build commit and age; `--latest` and `--install-latest`
-install from `danbri/factoidal-builds`. `~/.foafnaut/config.json` key `bleedingEdge` gives the app path.
+plain `foafnaut` starts the installed build (`~/.foafnaut/current`, no network use);
+`--update` (old name `--install-latest`) installs the newest macOS build of main and says what it
+replaced; `--latest` updates, then starts; `--bleeding-edge` starts the local build and prints its
+commit and age; `--which` shows what runs, the newest build of main and how far behind, and the local
+build. `~/.foafnaut/config.json` key `bleedingEdge` gives the local app path. The lookup
+(`bin/foafnaut-releases.mjs`, copied as Textnaut's `lib/releases.mjs`) reads every page of the
+release list, then asks `danbri/factoidal-core`'s compare API which candidates are on main and picks
+the one nearest main's head; branch builds are skipped. The lane pointer
+`latest/darwin-status.json` (`mac_release`) is only a fallback: it can lag the newest release.
 
 Measuring:
 
@@ -342,7 +348,9 @@ GPU or the Deno host. Record of the first such session, with every number and co
 
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
-apt-get install -y --no-install-recommends time linux-tools-generic valgrind
+apt-get install -y --no-install-recommends time linux-tools-generic valgrind libc++-dev libc++abi-dev
+# (libc++: the native link needs it; without it the build stops at the link, after about 22
+# minutes on 4 vCPUs, with "clang++ can not compile against libc++". Seen 2026-11-22.)
 # BubblePopJS command line: about 3 minutes on 4 vCPUs. From formal/lean4:
 lake build leanjs && .lake/build/bin/leanjs bench
 # BubblePopKit, native: 16 to 20 minutes on 4 vCPUs, 1.1 GB of build output. From the repository root:
@@ -426,6 +434,20 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- While `build-web-render.sh --native` runs, do not run `lake build` and do not edit a Lean file
+  that the build has not compiled yet, in `formal/lean4` or in `labs/demos/foafnaut`. The build
+  reads `.lake` oleans and the lab sources as it goes, so the library it makes can mix old and
+  new code. A Lean file is safe to edit only after `WEB_RENDER_BUILD_RC=` is in its log. Check
+  the log before you edit. 2026-11-24, in one session: an edit of `Layout.lean` and then a
+  `lake build` of `WasmVM.Hosts` were each made during the Lean stage. Each time, the session
+  stopped the build and started it again: about 25 minutes lost each time. No mixed library
+  was used for a measurement.
+- A proof module that imports `Lean.Elab.*` or `Lean.Meta.*` (tactics, `elab`, `MetaM`) must not be in the
+  import closure of an executable or engine. 2026-11-16: `L4Factoidal.JS` imported `JS/FuelMono` (tactics),
+  so `leanjs` linked Lean's elaborator and grew from 11 MB to 111 MB unnoticed (issue 551). Make such a
+  module a lib root of its own; `tools/binary-budget.py` (premerge, build-web-render.sh, the CI lean job)
+  fails on the import, on Lean-library symbols in the binary, and on growth over 2 % of
+  `tools/binary-budget.json`.
 - A compiled host needs every permission its source uses. 2026-11-08: `deno compile`
   had no `--allow-env`, `run_html.ts` read `HOME`, and the app died at start while all
   source tests passed. Fixed by `--allow-env=HOME` and the start check of
@@ -542,6 +564,9 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
   environment. Run `python3 tools/safety-scan/safety-scan.py --self-test`, then the scan,
   before and after a change that adds an `@[extern]`, `unsafe`, `@[implemented_by]`,
   `initialize` or `dbgTrace`. Tracking: https://github.com/danbri/factoidal-core/issues/427.
+- [Threads, tabs, processes, DNS and HTTP connections, 2026-11-24](../../docs/designissues/2026-11-24-foafnaut-concurrency-and-network.md):
+  what runs on which thread today, one engine worker per tab, processes per site, the connection
+  pool and HTTP/2, the DNS cache and speculative resolution, the Veil models to add first.
 - Records dated before 2026-11-08 describe earlier stages. Most carry a dated note that says what changed.
 - Status for readers: `docs/web/hub/foafnaut2525-status.md`, dated. Notes:
   `docs/web/hub/web-platform/foafnaut/notes/posts/` (do not rewrite old notes).

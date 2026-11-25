@@ -24,7 +24,53 @@ private def at? (html extra text : String) (width : Nat := 200) : Option (Float 
   let g ← run.glyphs[0]?
   return (g.x,g.y)
 
+-- A heading with four words on its first ordinary line keeps two lines with balance.
+private def sixWords := "<div id=parent><div id=heading>AAAA <span>BBBB</span> CCCC DDDD EEEE FFFF</div></div>"
+private def breaksSix (extra : String) : Option (Bool × Bool) := do
+  let style := "#heading{width:120px} " ++ extra
+  let (_, a) ← at? sixWords style "AAAA"
+  let (_, d) ← at? sixWords style "DDDD"
+  let (_, f) ← at? sixWords style "FFFF"
+  return (a == d, d == f)
+
+#guard breaksSix "" == some (true,false)
+#guard breaksSix "#heading{text-wrap:balance}" == some (false,true)
+#guard breaksSix "#parent{text-wrap-style:balance}" == some (false,true)
+#guard breaksSix "#heading{--wr:balance;text-wrap:var(--wr)}" == some (false,true)
+#guard breaksSix "#heading{text-wrap:balance;text-wrap-style:auto}" == some (true,false)
+#guard breaksSix "#parent{text-wrap:balance} #heading{text-wrap-style:initial}" == some (true,false)
+#guard box sixWords "#heading{width:120px;text-wrap:balance}" "heading" ==
+  box sixWords "#heading{width:120px}" "heading"
+
+-- A float that ends above a heading leaves the full line width available to balance.
+-- A float that remains alongside the heading continues to constrain its lines.
+private def headingAfterFloat := "<div id=float>F</div><div id=spacer></div><div id=heading>AAAA BBBB CCCC DDDD EEEE FFFF</div>"
+private def floatHeadingRows (extra : String) : Option (Bool × Bool) := do
+  let style := "#float{float:left;width:60px} #spacer{height:14px} #heading{width:120px} " ++ extra
+  let (_, a) ← at? headingAfterFloat style "AAAA"
+  let (_, d) ← at? headingAfterFloat style "DDDD"
+  let (_, f) ← at? headingAfterFloat style "FFFF"
+  return (a == d, d == f)
+
+#guard floatHeadingRows "#float{height:14px} #heading{text-wrap:balance}" == some (false,true)
+#guard floatHeadingRows "#float{height:14px}" == some (true,false)
+#guard floatHeadingRows "#float{height:21px} #heading{text-wrap:balance}" ==
+  floatHeadingRows "#float{height:21px}"
+
 private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</div></div><div id=z>ZZ</div>"
+
+-- A sized or painted block inside an inline keeps its box (CSS 2.1 §9.2.1.1).
+private def reds (html : String) : Nat :=
+  match render html "" with
+  | .ok (scene, _) => (Node.lowerListTR ⟨1,0,0,1,0,0⟩ [] scene.tree).foldl (fun n p =>
+      if ((reprStr p.primitive.style.fill).splitOn "r := 1.000000, g := 0.000000").length > 1 then n+1 else n) 0
+  | .error _ => 999
+#guard reds "<p>A<a href=x><div style='width:10px;height:10px;background:red'></div></a>B</p>" == 1
+#guard reds "<a href=x><div style='width:10px;height:10px;background:red'></div></a>" == 1
+#guard reds "<div style='width:10px;height:10px;background:red'></div>" == 1
+-- A flex container inside an inline element keeps its flex layout: its items side by side.
+private def flexInSpan := "<span><div style='display:flex'><div id=a>AA</div><div id=b>BB</div></div></span>"
+#guard (do let (_,ya) ← at? flexInSpan "" "AA"; let (xb,yb) ← at? flexInSpan "" "BB"; pure (xb > 0 && ya == yb)) == some true
 
 -- Relative: the box moves, the flow after it does not.
 #guard box page "#a{position:relative;left:10px;top:3px}" "a" == some (10,3,200,7)
@@ -55,6 +101,19 @@ private def rel := "#c{position:relative;margin-left:20px;padding:5px;border:2px
 #guard box page (rel ++ "#p{position:absolute;left:0;right:0;top:0;height:10px}") "p" == some (22,9,110,10)
 #guard box page (rel ++ "#p{position:absolute;width:50%;height:50%;top:0;left:0}") "p" == some (22,9,55,25)
 #guard at? page (rel ++ "#p{position:absolute;right:0;bottom:0}") "PP" == some (120,52)
+-- Anchor positioning (CSS Anchor Positioning 1 §3.2): an `anchor()` inset is the distance from
+-- the containing block's edge to the anchor's side; with no anchor, its fallback.
+private def anc := "<div id=k><div id=a1></div><div id=a2></div><div id=t></div></div>"
+private def ancCss := "#k{position:relative;width:180px;height:120px} #a1{anchor-name:--a1;margin-left:30px;margin-top:30px;width:30px;height:30px} #a2{anchor-name:--a2;margin-left:150px;margin-top:30px;width:30px;height:30px} "
+#guard box anc (ancCss ++ "#t{position:absolute;left:anchor(--a1 right);top:anchor(--a1 bottom);right:anchor(--a2 left);bottom:anchor(--a2 top)}") "t" == some (60,60,90,30)
+#guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a2;left:anchor(left);top:anchor(top);width:5px;height:5px}") "t" == some (150,90,5,5)
+#guard box anc (ancCss ++ "#t{position:absolute;left:anchor(--none right, 7px);top:anchor(--a1 center);width:5px;height:5px}") "t" == some (7,45,5,5)
+#guard box anc (ancCss ++ "#t{position:absolute;right:anchor(--a1 outside);bottom:anchor(--a1 inside);width:5px;height:5px}") "t" == some (25,55,5,5)
+-- position-area: the area of the grid that the default anchor cuts from the containing block
+#guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a1;position-area:top left;justify-self:stretch;align-self:stretch}") "t" == some (0,30,30,0)
+#guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a1;position-area:bottom span-right;justify-self:stretch;align-self:stretch}") "t" == some (30,60,150,90)
+-- with normal alignment the box sits toward the anchor: at the end of an area before it
+#guard box anc (ancCss ++ "#t{position:absolute;position-anchor:--a2;position-area:top left;width:10px;height:10px}") "t" == some (140,80,10,10)
 -- Insets with a width and auto margins: centred.
 #guard box page (rel ++ "#p{position:absolute;left:0;right:0;width:30px;margin-left:auto;margin-right:auto}") "p" == some (62,14,30,7)
 #guard box page (rel ++ "#p{position:absolute;top:0;bottom:0;left:0;height:10px;margin-top:auto;margin-bottom:auto}") "p" == some (22,29,12,10)
@@ -143,6 +202,15 @@ private def drawing := "<div id=o><canvas id=k width=15 height=15>no canvas</can
 #guard box drawing "" "k" == some (0,0,15,15)
 #guard box drawing "" "z" == some (0,15,200,7)
 #guard box "<canvas id=k></canvas>" "#k{display:block}" "k" == some (0,0,300,150)
+-- An iframe, and a video with nothing drawn, are replaced boxes with no natural size: the
+-- default object size, 300 by 150; a width alone keeps the default height (HTML §15.4.1,
+-- CSS Images 3 §4.1). The iframe has the user agent's 2px inset border.
+#guard box "<iframe id=k></iframe>" "#k{display:block;border:0}" "k" == some (0,0,300,150)
+#guard box "<iframe id=k width=100></iframe>" "#k{display:block;border:0}" "k" == some (0,0,100,150)
+#guard box "<iframe id=k></iframe>" "#k{display:block}" "k" == some (0,0,304,154)
+#guard (box "<p><iframe id=k height=20></iframe></p>" "#k{border:0}" "k").map (fun (_,_,w,h) => (w,h)) == some (300,20)
+#guard box "<video id=k></video>" "#k{display:block}" "k" == some (0,0,300,150)
+#guard box "<video id=k height=100></video>" "#k{display:block}" "k" == some (0,0,300,100)
 -- With `aspect-ratio` and auto sizes: the natural width, the height by the ratio, within
 -- the limits of both axes (the cases of WPT css-sizing/aspect-ratio/replaced-element-043).
 private def ratioCss := "#k{display:block;width:auto;height:auto;aspect-ratio:2;"
@@ -179,15 +247,19 @@ private def words := "<div id=w>AA BBB</div><div id=z>Z</div>"
 #guard box page "#c{height:40px} #p{height:min-content}" "p" == some (0,7,200,7)
 
 -- scrollWidth and scrollHeight (CSSOM View §6.1): the padding box extended to the boxes inside.
-private def scroll (html extra id : String) : Option (Float × Float) := do
+private def scroll (html extra id : String) (fromEnd : Bool × Bool := (false,false)) : Option (Float × Float) := do
   let dom := DOM.parseHtmlDocument html
   let n ← dom.getElementById 0 id
   let (_,boxes) ← (render html extra).toOption
-  Layout.scrollSize dom boxes {} 200 200 n
+  Layout.scrollSize dom boxes {} 200 200 n fromEnd
 #guard scroll page "" "c" == some (200,14)
 #guard scroll page "#c{height:10px;width:50px}" "c" == some (50,14)
 #guard scroll page "#c{height:10px;width:50px} #q{width:80px}" "c" == some (80,14)
 #guard scroll page "#c{height:10px} #p{position:relative;top:-100px}" "c" == some (200,14)
+private def overflowPage := "<div id=c><div id=p></div></div>"
+private def overflowCss := "#c{width:100px;height:80px} #p{position:relative;left:-30px;top:-20px;width:60px;height:50px}"
+#guard scroll overflowPage overflowCss "c" == some (100,80)
+#guard scroll overflowPage overflowCss "c" (true,true) == some (130,100)
 -- The root element scrolls the viewport (200 by 200 here) over the whole page.
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "" "h" == some (200,200)
 #guard scroll "<html id=h><body><div id=a>AA</div></body></html>" "#a{height:500px}" "h" == some (200,500)
@@ -198,6 +270,14 @@ private def listed := "<ul id=u><li id=i>AA</li><li id=j>BB</li></ul>"
 private def xOf (html extra text : String) : Option Float := (at? html extra text).map (·.1)
 #guard xOf listed "" "AA" == some 40
 #guard xOf listed "" "*" == some 30.5
+-- A float changes the line band and outside marker together. An equal margin
+-- provides the reference placement without a float, including for an empty item.
+private def besideMarker := "<div id=f></div><div id=m></div>"
+#guard xOf besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" == some 86.5
+#guard at? besideMarker "#f{float:left;width:96px;height:96px} #m{display:list-item;list-style:square}" "*" ==
+  at? "<div id=m>&nbsp;</div>" "#m{margin-left:96px;display:list-item;list-style:square}" "*"
+#guard xOf besideMarker "#f{float:right;width:96px;height:96px} #m{margin-left:40px;display:list-item}" "*" == some 30.5
+
 #guard box listed "" "i" == (box listed "ul{list-style:none}" "i")
 -- `list-style-type: none` (also through `list-style`, and inherited) draws no marker.
 #guard xOf listed "ul{list-style-type:none}" "*" == none
@@ -222,6 +302,16 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+#guard markers "<ol><span><li>A</li></span><span><li>A</li></span></ol>"
+  "span{display:contents}" == some ["1.","2."]
+-- The first summary gets the disclosure marker. Authors can remove it through
+-- its display or list style, and an ordinary element can opt in to a list item.
+#guard markers "<details><summary>A</summary><summary>A</summary></details>" "" == some [">"]
+#guard markers "<details open><summary>A</summary><summary>A</summary></details>" "" == some ["v"]
+#guard markers "<details><summary>A</summary></details>" "summary{list-style-type:none}" == some []
+#guard markers "<details><summary>A</summary></details>" "summary{display:block}" == some []
+#guard markers "<div>A</div>" "div{display:list-item;list-style:disc inside}" == some ["•"]
+
 -- A shaped font (a real face, `shapedWord`) draws the bullet itself, or a fallback face does:
 -- no star, though the profile's own `admits` is for fixed fonts only and says no.
 private def shapedTest (t : String) (size : Nat) : Except String FontProvider.Word :=
@@ -316,6 +406,23 @@ private def inlineBlock := "<div id=o><span id=w><div id=d>AB</div></span></div>
 #guard box inlineBlock "#w{display:inline-block;width:50px} #d{width:20px;height:10px}" "w" == some (0,0,50,10)
 -- ...as wide as its content when it has no width.
 #guard box inlineBlock "#w{display:inline-block} #d{width:20px;height:10px}" "w" == some (0,0,20,10)
+
+-- Nested inline-blocks must retain block descendants and use their padded widths.
+private def nestedBlockChildren :=
+  "<div><div id=nav><div id=item1><div><a id=link1>AB</a></div></div>" ++
+  "<div id=item2><div><a id=link2>CD</a></div></div></div></div>"
+private def nestedBlockCss :=
+  "#nav,#item1,#item2{display:inline-block;vertical-align:top} a{display:block} "
+private def nestedBlockPadded := nestedBlockCss ++ "a{padding:8px} "
+private def widthOf (r : Option (Float × Float × Float × Float)) : Option Float := r.map (·.2.2.1)
+#guard widthOf (box nestedBlockChildren nestedBlockCss "nav") == some 24
+#guard widthOf (box nestedBlockChildren nestedBlockPadded "nav") == some 56
+#guard box nestedBlockChildren nestedBlockPadded "link1" == some (0,0,28,23)
+#guard box nestedBlockChildren nestedBlockPadded "link2" == some (28,0,28,23)
+-- Min-content allows a line break between the two items, not through either item.
+#guard widthOf (box nestedBlockChildren nestedBlockPadded "nav" 28) == some 28
+#guard box nestedBlockChildren nestedBlockPadded "link2" 28 == some (0,23,28,23)
+
 -- vertical-align of an atomic box in its line (CSS 2.1 §10.8.1): the 30px box makes the
 -- line 30 high; the 10px box is at its top, its bottom, its middle (the baseline plus a
 -- quarter em, here 1.75), or with its bottom edge on the baseline.
@@ -398,6 +505,67 @@ private def clearfix := "<div id=a><div id=f style='float:left;height:30px;width
   let (tree,_) ← (Generated.styled none dom (← (CSS.parse "*::before{box-sizing:border-box} #a{color:red}").toOption)).toOption
   pure (tree.size == dom.size)) == some true
 
+-- Counters (CSS 2.1 §12.4): the texts of the `::before` boxes, in tree order.
+private def beforeTexts (page sheet : String) : Option (List String) := do
+  let dom := DOM.parseHtmlDocument page
+  let (tree,styles) ← (Generated.styled none dom (← (CSS.parse sheet).toOption)).toOption
+  pure ((List.range tree.size).filterMap fun i =>
+    let shown := fun (k : Nat) => ((styles[k]?).map (·.display != .none)).getD false
+    if (tree.get i).lname == "::before" && shown i && ((tree.get i).parent.map shown).getD false then
+      ((tree.get i).kids[0]?).map fun t => (tree.get t).data else none)
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
+  "ol{counter-reset:item} li{counter-increment:item} li::before{content:counter(item) '. '}" == some ["1. ", "2. ", "3. "]
+#guard beforeTexts "<ol><li>a<ol><li>b</li><li>c</li></ol></li><li>d</li></ol>"
+  "ol{counter-reset:item} li{counter-increment:item} li::before{content:counters(item, '.')}" == some ["1", "1.1", "1.2", "2"]
+#guard beforeTexts "<p>a</p><p>b</p>"
+  "body{counter-reset:n 4} p{counter-increment:n -2} p::before{content:counter(n, upper-roman)}" == some ["II", "0"]
+#guard beforeTexts "<p>a</p><p style='display:none'>b</p><p>c</p>"
+  "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
+#guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
+-- Boxless wrappers leave their children in the parent counter scope, and the
+-- wrapper's own reset or increment has no effect.
+private def throughContents := "<section><div><p>a</p></div><div><p>b</p></div></section>"
+#guard beforeTexts throughContents
+  "div{display:contents} p{counter-increment:n} p::before{content:counter(n)}" == some ["1","2"]
+#guard beforeTexts throughContents
+  "div{display:contents;counter-reset:n 50;counter-increment:n 10} p{counter-increment:n} p::before{content:counter(n)}" ==
+  some ["1","2"]
+#guard beforeTexts throughContents
+  "p{counter-increment:n} p::before{content:counter(n)}" == some ["1","1"]
+
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
+  "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["3", "2", "1"]
+-- the start of a reversed counter: the last element that increments shows minus its increment
+#guard beforeTexts "<div><p>a</p><p>b</p><p>c</p></div>"
+  "div{counter-reset:reversed(n)} p{counter-increment:n -2} p::before{content:counter(n)}" == some ["6", "4", "2"]
+-- the `list-item` counter of HTML lists
+#guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["1", "2", "3"]
+#guard beforeTexts "<ol start=9><li>a</li><li value=20>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["9", "20", "21"]
+#guard beforeTexts "<ol reversed><li>a</li><li>b</li><li>c</li></ol>" "li::before{content:counter(list-item)}" == some ["3", "2", "1"]
+#guard beforeTexts "<ol reversed start=5><li>a</li><li>b</li></ol>" "li::before{content:counter(list-item)}" == some ["5", "4"]
+#guard beforeTexts "<ol><li>a<ol><li>b</li></ol></li></ol>" "li::before{content:counters(list-item, '.')}" == some ["1", "1.1"]
+
+-- `::first-letter` (CSS Pseudo-Elements 4 §2.3): the letter and its punctuation in an element
+-- of their own, with the rule's style; the rest stays in the page's text node.
+private def letterOf (page sheet : String) : Option (String × String × Float) := do
+  let dom := DOM.parseHtmlDocument page
+  let (tree,styles) ← (Generated.styled none dom (← (CSS.parse sheet).toOption)).toOption
+  let fl ← (List.range tree.size).find? fun i => (tree.get i).lname == "::first-letter"
+  let t ← (tree.get fl).kids[0]?
+  let rest ← (List.range tree.size).find? fun i => (tree.get i).type == .text && (tree.get i).parent == (tree.get fl).parent &&
+    (tree.get (tree.get fl).parent.get!).kids.toList.idxOf i == (tree.get (tree.get fl).parent.get!).kids.toList.idxOf fl + 1
+  pure ((tree.get t).data, (tree.get rest).data, (styles[fl]?).map (·.fontSize) |>.getD 0)
+#guard letterOf "<div>)T)est</div>" "div::first-letter{font-size:36px}" == some (")T)", "est", 36)
+#guard letterOf "<p>  <b>Hello</b></p>" "p:first-letter{font-size:20px}" == some ("H", "ello", 20)
+#guard letterOf "<p id=a>x</p>" "#a::before{content:'Q'} p::first-letter{font-size:20px}" == some ("Q", "", 20)
+-- none in an inline block, nor for an inline originating element
+#guard letterOf "<p><span style='display:inline-block'>A</span>b</p>" "p::first-letter{font-size:20px}" == none
+#guard letterOf "<span>Ab</span>" "span::first-letter{font-size:20px}" == none
+#guard letterOf "<div><div></div>X</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div style='white-space:pre'>\n  The</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div>عا</div>" "div::first-letter{font-size:20px}" == none
+#guard letterOf "<div>،T،est</div>" "div::first-letter{font-size:20px}" == some ("،T،", "est", 20)
+#guard letterOf "<div><div>Ab</div></div>" "div div::first-letter{font-size:20px}" == some ("A", "b", 20)
 
 -- Intrinsic contributions are within `min-width` and `max-width` (CSS Sizing 3 §5.1):
 -- four empty items of min-width 20 and margins 10 make a 160 px inline-flex container
@@ -527,6 +695,36 @@ private def wraps := "<div id=d>ab cd <span id=s>ef gh ij</span> kl</div>"
 -- and its min-content width is the whole line
 #guard box "<div id=f>ab cd ef</div>" "#f{float:left;white-space:nowrap} body{width:20px}" "f" == some (0,0,48,7)
 #guard box wraps "#d{width:60px;white-space:nowrap} #s{white-space:normal}" "d" == some (0,0,60,14)
+
+-- The opening quote fits after the preceding word but the nonbreaking span doesn't.
+-- Measure the quote and word before placing either, then keep them on the same line.
+private def quotedNowrap := "<div id=row>aaaaaa <span id=key>bbbbbb</span></div>"
+private def quoteStyle := "#key{white-space:nowrap} #key::before{content:'X'} "
+private def quotePositions (width : Nat) : Option (Float × Float × Bool × Bool) := do
+  let style := quoteStyle ++ "#row{width:" ++ toString width ++ "px}"
+  let (_, firstY) ← at? quotedNowrap style "aaaaaa"
+  let (x, y) ← at? quotedNowrap style "X"
+  let (bx, by_) ← at? quotedNowrap style "bbbbbb"
+  return (x,bx,y == by_,y > firstY)
+
+#guard quotePositions 50 == some (0,6,true,true)
+#guard quotePositions 100 == some (42,48,true,false)
+
+-- CSS Text 3 §1.5. Empty inline boxes and an out-of-flow element do not
+-- turn adjacent text fragments into independently wrappable words.
+private def splitWord := "<div id=p>un<span></span>bro<b></b>ken</div>"
+private def splitWordWithPosition := "<div id=p>un<i id=abs></i>broken</div>"
+#guard box splitWord "#p{width:0}" "p" == some (0,0,0,7)
+#guard at? splitWord "#p{width:0}" "ken" == some (30,0)
+#guard at? splitWordWithPosition "#p{width:0;position:relative} #abs{position:absolute}" "broken" == some (12,0)
+#guard at? "<div id=p>un<br>broken</div>" "#p{width:200px}" "broken" == some (0,7)
+
+-- Move the link and its comma as one run when the link alone would fit.
+private def linkComma := "<div id=p>aa <a>hello</a>, next</div>"
+#guard at? linkComma "#p{width:50px}" "hello" == some (0,7)
+#guard at? linkComma "#p{width:50px}" "," == some (30,7)
+#guard at? linkComma "#p{width:54px}" "hello" == some (18,0)
+
 -- `text-transform` (CSS Text 3 §2.1): the text of the runs, one character for one
 private def texts (html extra : String) : Option (List String) :=
   (render html extra).toOption.map fun (scene,_) => scene.glyphRuns.toList.map (·.text)
@@ -561,6 +759,27 @@ private def moved := "<div id=a>AA</div><div id=b>BB</div>"
 -- `none` and an unknown function: no transform
 #guard box moved "#a{transform:translate(10px,3px)} #a{transform:none}" "a" == some (0,0,200,7)
 #guard box moved "#a{transform:bogus(10px)}" "a" == some (0,0,200,7)
+-- Inline-blocks transform their border box without moving the following inline item.
+private def atomicTransformFixture := "<div><span id=a>AB</span><span id=b>CD</span></div>"
+private def atomicPlain := "#a{display:inline-block;width:20px;height:10px}"
+private def atomicShifted := atomicPlain ++ "#a{transform:translate(50%,3px)}"
+#guard (box atomicTransformFixture atomicPlain "a").isSome &&
+  box atomicTransformFixture atomicShifted "a" ==
+    (box atomicTransformFixture atomicPlain "a").map (fun (x,y,w,h) => (x+10,y+3,w,h))
+#guard (at? atomicTransformFixture atomicPlain "CD").isSome &&
+  at? atomicTransformFixture atomicShifted "CD" == at? atomicTransformFixture atomicPlain "CD"
+private def atomicScaled := atomicPlain ++ "#a{transform:scale(2);transform-origin:0 0}"
+#guard box atomicTransformFixture atomicScaled "a" ==
+  (box atomicTransformFixture atomicPlain "a").map (fun (x,y,w,h) => (x,y,2*w,2*h))
+-- A nested transform can overflow its auto-sized parent's painted edge without
+-- changing the parent's width or the position of the following text.
+private def nestedAtomicFixture := "<div><span id=p><span id=a>AB</span>EF</span><span id=b>CD</span></div>"
+private def nestedAtomicPlain := "#p{display:inline-block}" ++ atomicPlain
+private def nestedAtomicShifted := nestedAtomicPlain ++ "#a{transform:translateX(80px)}"
+#guard (box nestedAtomicFixture nestedAtomicPlain "p").isSome &&
+  box nestedAtomicFixture nestedAtomicShifted "p" == box nestedAtomicFixture nestedAtomicPlain "p"
+#guard (at? nestedAtomicFixture nestedAtomicPlain "CD").isSome &&
+  at? nestedAtomicFixture nestedAtomicShifted "CD" == at? nestedAtomicFixture nestedAtomicPlain "CD"
 -- an inline box is not transformed
 #guard at? "<div>ab <span id=s>cd</span></div>" "#s{transform:translate(10px,3px)}" "cd" == some (18,0)
 
@@ -606,6 +825,18 @@ private def holds := "<div id=c><div id=f>F</div>T</div><div id=n>N</div>"
 -- its content is not clipped: what overflows is still there
 #guard at? "<div id=c><div id=k>KK</div></div>" "#c{overflow:auto;height:5px;width:6px} #k{margin-top:20px}" "KK" == some (0,20)
 
+
+-- The search input is an inline-block inside its flex item's normal flow.
+private def searchHeight (rule : String) : Option Float := do
+  let page := "<form><div><input id=search type=search></div><button>Search</button></form>"
+  let style := "form{display:flex} #search{display:inline-block;box-sizing:border-box;" ++
+    "padding:5px;border:2px solid;width:100px;position:relative} " ++ rule
+  let (_,_,_,height) ← box page style "search"
+  return height
+
+#guard searchHeight "#search{min-block-size:47px}" == some 47
+#guard searchHeight "#search{height:60px;max-height:42px}" == some 42
+#guard searchHeight "#search{height:25px;min-height:47px;max-height:42px}" == some 47
 
 -- The baseline of an inline-block (CSS 2.1 §10.8.1): that of its last line box, so its
 -- text is on the line's baseline with the text around it; its bottom margin edge when it

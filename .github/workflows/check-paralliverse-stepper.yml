@@ -1,0 +1,37 @@
+name: Paralliverse execution navigator
+
+on:
+  push:
+    branches: [main, feat/604-execution-stepper]
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'docs/.eleventy.js'
+      - 'tests/hub/paralliverse_stepper_test.mjs'
+      - '.github/workflows/check-paralliverse-stepper.yml'
+  pull_request:
+    paths:
+      - 'docs/web/hub/paralliverse/**'
+      - 'docs/.eleventy.js'
+      - 'tests/hub/paralliverse_stepper_test.mjs'
+      - '.github/workflows/check-paralliverse-stepper.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  stepper:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check standalone frontend modules
+        run: |
+          node --check docs/web/hub/paralliverse/app.mjs
+          node --check docs/web/hub/paralliverse/execution-stepper.mjs
+          node --check docs/.eleventy.js
+      - name: Test evidence replay, refusal, and output differences
+        run: node --test tests/hub/paralliverse_stepper_test.mjs

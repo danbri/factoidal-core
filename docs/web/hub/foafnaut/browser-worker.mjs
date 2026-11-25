@@ -12,7 +12,7 @@ import {createBrowserState,indexedDbStore,memoryStore,stateAvailable} from './br
 import {createRouter} from './link-route.mjs';
 // The steps every host takes for a page (the sheets to fetch, the layout fields of each request,
 // the answer to a script fetch): one module for the Hub, the window, Textnaut and the WPT runner.
-import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps} from './page-load.mjs';
+import {loadStyleSheets,pageLayoutFields,fetchedAnswer,rawOverFetch,takeTurn,loadImports,scriptSessionGone,scrollLimitOf,turnSliceSteps,startSliceSteps,scriptsFirst} from './page-load.mjs';
 import {gateConsole} from './log-gate.mjs';
 import {fetchOutside} from './copies.mjs';
 // The worker's console lines go through the log gate (log-gate.mjs): a flood is summarised and named.
@@ -218,7 +218,8 @@ const push=(state,url)=>call('',{op:'historyPush',history:state,url});
 const refusal=(url,message)=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;');
   message=String(message).replace(/^(Error: )?Lean HTML: /,'');
-  const page={url,title:'Page refused',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
+  // syntax html: the refusal of an .xml address is still this HTML page.
+  const page={url,title:'Page refused',syntax:'html',source:`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Page refused</title></head><body><h1>This page can not be shown</h1><p>${text(url)}</p><p>${text(message)}</p></body></html>`};
   addEntries(page,[{source:'System',severity:'error',feature:'page',where:url,message:String(message),action:'page refused'}]);
   return page;
 };
@@ -275,13 +276,13 @@ function fontLoad(bytes,family,sha,fallback=false){
   if(!fontBytesTakeFallback||typeof module._web_document_font_call_bin!=='function'||typeof module._malloc!=='function'){
     let text='';
     for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
+    return call('',{op:'fontLoad',fontBase64:btoa(text),fontFamily:family,fontSha256:sha,...(fallback==='serif'?{serif:true}:fallback==='mono'?{mono:true}:fallback==='web'?{webFont:true}:fallback?{fallback:true}:{})});
   }
   const input=module._malloc(Math.max(1,bytes.length));
   if(!input)throw Error('Lean engine allocation failed');
   try{
     module.HEAPU8.set(bytes,input);
-    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
+    const pointer=module.ccall('web_document_font_call_bin','number',['number','number','string','string','number'],[input,bytes.length,family,sha,fallback==='mono'?4:fallback==='serif'?3:fallback==='web'?2:fallback?1:0]);
     if(!pointer)throw Error('Lean engine allocation failed');
     try{const result=JSON.parse(module.UTF8ToString(pointer));if(result?.error)throw Error(result.error);return result;}
     finally{module.ccall('web_render_free',null,['number'],[pointer]);}
@@ -307,19 +308,37 @@ async function loadFont(){
 }
 // The serif face (labs/demos/foafnaut/serif_font.ts): `serif` and the initial font-family
 // draw with Liberation Serif, as browsers draw them with a Times-like face. Lean decides which
-// text is serif; the first render whose text wants the face while the engine holds none
-// answers wantsSerif, and the face is fetched then, given to Lean (fontLoad mode 3) and the page
-// drawn again. A session whose pages never resolve to serif fetches no serif byte.
+// text is serif. The file is fetched at boot beside the engine (fetchEarly, below) and goes into
+// Lean (fontLoad mode 3) as soon as the engine holds Noto Sans, so the first layout of a serif
+// page already has it and is final. A render that answered wantsSerif before the face was in
+// (a slow fetch) is drawn again when it is.
 const serifFont='./fonts/liberation-serif/LiberationSerif-Regular.ttf';
-let serifLoading;
-function wantSerif(){
+fetchEarly(new URL(serifFont,import.meta.url).href,'bytes');
+let serifLoading,serifWanted=false;
+function wantSerif(){serifWanted=true;giveSerif();}
+function giveSerif(){
   if(serifLoading)return;
   const start=performance.now();
   serifLoading=fontFile(serifFont).then(({bytes,sha})=>{
     fontLoad(bytes,'Liberation Serif',sha,'serif');
     console.info(`foafnaut: serif face in ${Math.round(performance.now()-start)} ms`);
-    request();
+    if(serifWanted)request();
   }).catch(error=>console.warn('foafnaut: no serif face, serif text stays in Noto Sans:',String(error?.message??error)));
+}
+// The monospace face (serif_font.ts): `monospace` text (pre, code, kbd, samp) draws with
+// Liberation Mono. It is fetched only when a render answers wantsMono, which only an engine that
+// holds the face in mode 4 says, so an older published engine never gets mode 4. The page is
+// then drawn again with the face.
+const monoFont='./fonts/liberation-mono/LiberationMono-Regular.ttf';
+let monoLoading;
+function wantMono(){
+  if(monoLoading)return;
+  const start=performance.now();
+  monoLoading=fontFile(monoFont).then(({bytes,sha})=>{
+    fontLoad(bytes,'Liberation Mono',sha,'mono');
+    console.info(`foafnaut: monospace face in ${Math.round(performance.now()-start)} ms`);
+    request();
+  }).catch(error=>console.warn('foafnaut: no monospace face, monospace text stays in Noto Sans:',String(error?.message??error)));
 }
 // The fallback fonts a page needs, into the engine. Those that come within `wait` ms go in
 // before the page is laid out; the rest go in together when they have all come, and the
@@ -354,6 +373,9 @@ async function loadFallbackFonts(source,wait){
 // Pages that declare no encoding: the setting ('' detect) and the browser's language
 // (navigator.language), which Lean maps by HTML §13.2.3.2's table of suggested defaults.
 let encodingSetting='';const systemLocale=self.navigator?.language??'';
+// The search engine chosen in Settings (WebRoute.searchSetting): '' until the person picks one;
+// until then words typed in the address bar open the browser's own search page.
+let searchSetting='';
 function decodePage(bytes,contentType){
   if(module&&typeof module._web_document_decode_call_bin==='function'&&typeof module._malloc==='function'){
     const two=typeof module._web_document_decode2_call_bin==='function';
@@ -410,6 +432,9 @@ function settingsSource(source){
   // an engine from before the op keeps the static links.
   const eOpen='<!--foafnaut:encoding-->',eClose='<!--/foafnaut:encoding-->',ei=source.indexOf(eOpen),ej=source.indexOf(eClose);
   if(ei>=0&&ej>ei)try{source=source.slice(0,ei+eOpen.length)+call('',{op:'encodingChoices',setting:encodingSetting,locale:systemLocale}).html+source.slice(ej);}catch{/* the static links */}
+  // The search engine section (none chosen by default); an engine from before the op keeps the static text.
+  const sOpen='<!--foafnaut:search-->',sClose='<!--/foafnaut:search-->',si=source.indexOf(sOpen),sj=source.indexOf(sClose);
+  if(si>=0&&sj>si)try{source=source.slice(0,si+sOpen.length)+call('',{op:'searchChoices',setting:searchSetting}).html+source.slice(sj);}catch{/* the static text */}
   return source;
 }
 // A text resource of this site (a linked style sheet): another origin is read only from the
@@ -447,12 +472,25 @@ async function prepare(url){
   for(const r of sheets.resources)sources.push({kind:'Style sheet',url:r.url,source:r.source});
   // The sheets those sheets import (page-load.mjs loadImports): named by Lean, read from this
   // site as the linked ones are.
-  const imported=await loadImports(list=>call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{}),
-      ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})}),siteText,[],
+  let sheetsFacts;
+  const imported=await loadImports(list=>(sheetsFacts=call(page.source,{op:'inspect',url:page.url,...(page.syntax?{syntax:page.syntax}:{}),...(liberal?{liberal:true}:{}),
+      ...(sheets.resources.length?{resources:sheets.resources}:{}),...(list.length?{imported:list}:{})})),siteText,[],
     (sheetURL,reason)=>console.warn('foafnaut: imported style sheet not read:',sheetURL,reason));
   for(const r of imported)sources.push({kind:'Style sheet',url:r.url,source:r.source});
+  // Background images (CSS url() in background declarations, WebDocument.backgroundImageRequests):
+  // listed by the first inspect for style elements and attributes, by the inspect with the sheets
+  // for the sheets; read as the page's images are. An engine that lists none gets none.
+  const knownImages=new Set((facts.images??[]).map(image=>image.key));
+  const backgroundWanted=[...(facts.backgroundImages??[]),...(sheetsFacts?.backgroundImages??[])]
+    .filter(image=>!knownImages.has(image.key)&&(knownImages.add(image.key),true));
+  if(backgroundWanted.length){
+    const more=await pageImages(backgroundWanted);
+    for(const key of ['images','heldImages'])if(Array.isArray(more[key]))images[key]=[...(images[key]??[]),...more[key]];
+  }
   const webFonts=await pageWebFonts(page,sheets.resources);
-  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
+  // The XSLT result's syntax (html for the output methods html and text) goes with the page to every
+  // request (pageLayoutFields): an .xml address must not make the result parse as XML.
+  const next={url:page.url,...(page.copy?{copy:page.copy}:{}),...(page.syntax?{syntax:page.syntax}:{}),title:facts.title,baseURL:facts.baseURL,source:page.source,sources,...images,liberal,...(webFonts.length?{webFonts}:{}),
     ...(sheets.resources.length?{resources:sheets.resources}:{}),...(sheets.resourceFailures.length?{resourceFailures:sheets.resourceFailures}:{}),
     ...(imported.length?{imported}:{})};
   if(Array.isArray(facts.diagnostics))addEntries(next,facts.diagnostics);
@@ -834,19 +872,30 @@ async function startScripts(page,scripts){
   const turn=scriptCall(page.source,{op:'scriptSession',action:'start',url:page.url,resources,width,height,zoomUnit:zoomUnit(),...(history?{shell:shell()}:{}),layout,
     ...(plan.engine==='bubblepop'?{engine:'bubblepop'}:{}),...(page.encoding?{encoding:page.encoding}:{}),...(page.syntax?{syntax:page.syntax}:{}),
     ...(scriptOps.includes('net')?{network:true,hostCors:true}:{}),
+    // the start in slices (page-load.mjs startSliceSteps): the page is drawn after its classic
+    // scripts and the first slice of the rest; the timer turns go on with the start
+    sliceSteps:startSliceSteps,
     // the layer surface replays page GPU commands on WebGPU (not in CPU mode)
     ...(!cpuMode&&self.navigator?.gpu?{gpuReplay:true}:{})});
   scriptStats.startMs=scriptStats.lastMs;scriptStats.engine=plan.engine;
   page.script={session:turn.session,turn,epoch:performance.now()-turn.clock,engine:plan.engine};
-  scriptTurn(page,turn);
+  scriptTurn(page,turn,true);
 }
 // A turn's logs, and a new frame only when the DOM changed: no DOM change, no layout (the
 // commands are part of the render request and so of the layout key).
-function scriptTurn(page,turn){
+function scriptTurn(page,turn,first=false){
   for(const line of turn.logs)console.log('page:',line.replace(/^\u0001(\w+)\u0001/,'$1: '));
   for(const line of turn.errors)console.warn('page error:',line);
   addEntries(page,[...turn.logs.map(message=>({source:'page',severity:'log',message})),...turn.errors.map(message=>({source:'page',severity:'error',message}))]);
   if(page.script)page.script.turn=turn;
+  // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3): a GET
+  // in this tab loads its URL, as the window does. POST and a new tab are the window's for now:
+  // said in the console (a page request here can carry no body yet).
+  if(turn.navigate&&page===doc){
+    if(turn.navigate.method==='get'&&!turn.navigate.target)navigate(turn.navigate.url);
+    else addEntries(page,[{source:'System',severity:'warning',feature:'form submission',where:turn.navigate.url,
+      message:`${turn.navigate.method.toUpperCase()}${turn.navigate.target?' to a new tab':''} is not made on the Hub yet`,action:'not sent'}]);
+  }
   netRequests(page,turn);
   // The start turn comes before the page is shown: its commands make the objects.
   if(turn.gpu?.length)gpuTake(turn.gpuPage,turn.gpu);
@@ -856,9 +905,18 @@ function scriptTurn(page,turn){
   // frame of the whole page without layers costs a full redraw and a new render plan each time:
   // at the rate of the Spinal Tap page's requestAnimationFrame turns its frames took 0.4 to 3.3 s
   // (issue 450).
-  if(takeTurn(page,turn)&&page===doc){bandWanted=layered!==false&&!!L;request();}
+  // Scripts first (page-load.mjs scriptsFirst): while the page's start has not finished, a change
+  // waits for the start to end or for a few times the last layout's time (scriptTimers draws it).
+  if(takeTurn(page,turn)&&page===doc){
+    bandWanted=layered!==false&&!!L;
+    // (the start turn's own change is in the page's first frame: only later turns wait)
+    if(!first&&scriptsFirst({now:performance.now(),more:turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))changeHeld??=performance.now();
+    else{changeHeld=undefined;request();}
+  }
   if(turn.fetches?.length&&page.script)workerFetches(page,turn.fetches);
 }
+// A change of the page that waits for its start (scriptsFirst), since when; and the last layout's time.
+let changeHeld,lastLayoutMs=0;
 // Dedicated workers (BubblePopJS; docs/designissues/2026-11-09-dedicated-workers.md): the
 // scripts a page's workers wait for, read as the page's own scripts are (Lean checked the
 // worker's URL is of the page's origin), then the turn goes on.
@@ -919,7 +977,7 @@ async function gpuShow(){
       const pixels=await layerSurface.composite(width,height,offset);
       shownOffset=offset;
       const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
-      post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
+      axFrame();post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,
         stats:{path:surfaceCanvas?'page-gpu':'page-gpu-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),
           primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,
           pageGpu:layerSurface.pageGpuStats,scripts:{...scriptStats},bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
@@ -934,7 +992,12 @@ async function gpuShow(){
 // against 16 ms animation frames and missed some of them.
 function scriptTimers(){
   const script=doc?.script;
+  // a change that waited for the page's start is drawn when the start ended or waited long enough
+  if(changeHeld!==undefined&&(!script||!scriptsFirst({now:performance.now(),more:script.turn.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs}))){changeHeld=undefined;request();}
   if(!script||drawing||dirty||script.turn.nextWake===null||script.turn.nextWake===undefined)return 16;
+  // While its start is not finished the page's clock moves only by its own steps, as in a start
+  // made in one turn: the time a draw took between two slices is not time its timers saw pass.
+  if(script.turn.startMore===true)script.epoch=performance.now()-script.turn.clock;
   let elapsed=performance.now()-script.epoch;
   if(elapsed<script.turn.nextWake)return script.turn.nextWake-elapsed;
   // A page whose callbacks take longer than real time would fall further behind at each
@@ -1013,6 +1076,18 @@ async function wasmPage(url){
   const answer=call('',{op:'wasmPage',...(argument?await wasmModule(argument):{})});
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
 }
+// foafnaut:search/WORDS (WebShell.searchPage): words typed in the address bar with no search
+// engine chosen. Lean writes it from the open tabs and the stored bookmarks and history (the
+// page's own IndexedDB or memory store); nothing is fetched to show it.
+const searchURL='foafnaut:search';
+async function searchPage(url){
+  const resources=browserState?await browserState.resources().catch(()=>undefined):undefined;
+  const open=tabs.map((tab,i)=>i===active?doc:tab.doc).filter(Boolean).map(page=>({url:page.url,title:page.title??''}));
+  let answer;
+  try{answer=call('',{op:'searchPage',argument:url.slice(searchURL.length+1),tabs:open,resources:resources??[],state:resources!==undefined,search:searchSetting});}
+  catch{answer={title:'Needs a newer engine',source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The search page needs a newer engine</h1><p>The words were sent to no one.</p></body></html>'};}
+  return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 async function statePage(url){
   if(!browserState)throw Error(`Browser state is off: ${stateReason}`);
   const answer=await browserState.page(url.slice(9));
@@ -1055,7 +1130,7 @@ function visit(address){
   // their fallback on an engine from before the route op.
   const route=router.route({...site,href:address,base:homeURL});
   if(!route)return;
-  if(route.route==='system')outsideGo(route.url,false);
+  if(route.route==='system'||route.route==='outside')outsideGo(route.url,false);
   else if(route.route==='command')shellCommand(route.name,route.argument);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url,false);
@@ -1075,8 +1150,15 @@ function consolePage(url){
   catch{return {...sparqlNeedsEngine(url),source:'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Needs a newer engine</title></head><body><h1>The console needs a newer engine</h1><p>The engine this page loaded does not have the console op.</p></body></html>'};}
   return {url,title:answer.title,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}],consoleSource:source};
 }
+// foafnaut:accessibility: the accessibility tree of the page shown, as a page the engine writes
+// (HTML/AccessibleTree.lean viewPage), for a person who checks what a screen reader gets.
+const accessibilityURL='foafnaut:accessibility';
+function accessibilityPage(url){
+  const answer=call(doc.source,{...renderOptions(scroll),op:'accessibilityTree',view:true,url:doc.url},width,height);
+  return {url,title:'Accessibility tree',source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+}
 function openConsole(){const source=doc;newTab();setFocus(false);consoleFrom=source;navigate(consoleURL);}
-const pageFor=url=>url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
+const pageFor=url=>url===accessibilityURL?accessibilityPage(url):url===consoleURL||url.startsWith(consoleURL+'/')?consolePage(url):url.startsWith(searchURL+'/')?searchPage(url):url===graphURL?graphPage():statePages.includes(url)?statePage(url):url===wasmURL||url.startsWith(wasmURL+'/')?wasmPage(url):isSparql(url)?sparqlPage(url):prepare(url);
 // The Hub's own browser pages as link targets (the start page offers "open in Foafnaut on the
 // Hub" and "in Textnaut on the Hub" for a reader in an ordinary browser): in this tab, a link to
 // this Foafnaut page with an address after # opens that address here, not a second Foafnaut in
@@ -1137,8 +1219,12 @@ function menuDone(data){
 // An address from the bar (Enter, or Paste and go): Lean routes it as typed.
 function goTo(target){
   leaveAddress();
-  const route=router.address({...site,address:target,base:doc.baseURL||doc.url});
-  if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
+  const route=router.address({...site,address:target,base:doc.baseURL||doc.url,search:searchSetting});
+  // A typed address reaches the system only as `:open URL`; here it is the Outside page, read
+  // from nowhere, so its button is a second, explicit press (and an older engine's answer for
+  // typed words, a search engine's address, is never fetched).
+  if(route?.route==='system')show(outsidePage(route.url));
+  else if(route)follow(route);else legacyGo(call('',{op:'shellSubmit',address:target}));
 }
 function menuPress(data,how){
   if(!menuOps)return;
@@ -1351,6 +1437,13 @@ function shellCommand(name,argument){
       if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
     catch(error){doc=refusal('foafnaut:encoding/'+argument,String(error.message??error));request();}
   }
+  else if(name==='search-engine'){
+    // Lean reads the choice (an engine of its list, an address with %s, or none). A link gives
+    // this command only on the Settings page (WebRoute.settingsOnly); the bar may type it.
+    try{searchSetting=call('',{op:'searchSetting',setting:argument}).setting;browserState?.settings({search:searchSetting}).catch(()=>{});
+      if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
+    catch(error){doc=refusal('foafnaut:search-engine/'+argument,String(error.message??error));request();}
+  }
   else if(['bookmarks','history'].includes(name))navigate('foafnaut:'+name);
   else if(['bookmark','unbookmark','pod','sync'].includes(name))stateCommand(name,argument);
   else if(name==='wasm')navigate(wasmURL+(argument?'/'+argument:''));
@@ -1383,17 +1476,20 @@ async function openState(){
     if(typeof saved.settings.scripts==='string')scriptSetting=saved.settings.scripts;
     if(typeof saved.settings.liberal==='boolean'&&!strictParam)liberal=saved.settings.liberal;
     if(typeof saved.settings.encoding==='string')encodingSetting=saved.settings.encoding;
+    if(typeof saved.settings.search==='string')try{searchSetting=call('',{op:'searchSetting',setting:saved.settings.search}).setting;}catch{searchSetting='';}
     if(doc?.url===settingsURL)navigate(settingsURL,false);else request();}
 }
 // Lean's route for a link or an address (link-route.mjs), done as it says. This host tests
 // no URL: a refused link shows Lean's reason and stays out of the history.
 function follow(route){
   if(route.route==='command')shellCommand(route.name,route.argument);
-  else if(route.route==='system')offSiteGo(route.url);
+  else if(route.route==='system'||route.route==='outside')offSiteGo(route.url);
   else if(route.route==='refuse')show(refusal(route.url,route.reason),false);
   else navigate(route.url);
 }
-// A link or an address of another site (Lean's route "system"). It never leaves Foafnaut by
+// A link or an address of another site (Lean's route "outside", and "system" for the press of
+// the Outside page's button, which Lean answers only when the request's `outside` is that
+// page's address). It never leaves Foafnaut by
 // itself (owner, 2026-11-16): the page opens in the tab from the Hub's copy or from a direct
 // read the site allows (copies.mjs fetchOutside); else the tab shows outsidePage, whose one
 // button is a link to the same address. Only a press on that button, while that page is
@@ -1405,7 +1501,15 @@ function outsideGo(url,press){
   if(/^https?:/i.test(url))navigate(url,press);
   else show(outsidePage(url),press);
 }
+// The Outside page, as Lean writes it (WebShell.outsidePage); an engine from before the op
+// gets the page this file wrote before it (legacyOutsidePage).
 const outsidePage=url=>{
+  try{
+    const answer=call('',{op:'outsidePage',url,hub:true,textnaut:url.startsWith(hubTextnaut)});
+    return {url,title:answer.title,outside:url,source:answer.source,sources:[{kind:'Generated page',url,source:answer.source}]};
+  }catch{return legacyOutsidePage(url);}
+};
+const legacyOutsidePage=url=>{
   const text=value=>String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   const web=/^https?:/i.test(url),hub=url.startsWith(hubTextnaut);
   const why=hub?'<p>Textnaut has its own page on the Hub; it does not open inside this one.</p>'
@@ -1425,7 +1529,10 @@ const outsidePage=url=>{
 function legacyGo(answer){
   if(answer.go==='command')shellCommand(answer.name,answer.argument);
   else if(answer.url?.startsWith('foafnaut:'))navigate(answer.url);
-  else if(answer.go==='system'||!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
+  // The system only by a press: an older engine's "system" (a search engine's address for
+  // typed words) is the Outside page, never fetched.
+  else if(answer.go==='system')show(outsidePage(answer.url));
+  else if(!answer.url.startsWith(siteOrigin))offSiteGo(answer.url);
   else navigate(answer.url);
 }
 function chrome(control){
@@ -1466,6 +1573,7 @@ async function draw(){
         next=render(doc.source,wantLayers?{...options,layers:true}:options,width,height);
         noteDiagnostics(doc,next);
         if(next?.wantsSerif===true)wantSerif();
+        if(next?.wantsMono===true)wantMono();
         // An engine with no layers answers one frame: this page then draws frames as before.
         if(wantLayers){layers=L.layersOf(next);layered=!!layers;}
       }
@@ -1513,8 +1621,8 @@ async function draw(){
       }
       const done=performance.now();incoming=undefined;
       phase('firstFrame');
-      post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
-        stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
+      axFrame();post({type:'frame',width,height,title:shown.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
+        stats:{path,...(cpuMode?{cpu:true}:{}),layoutMs:Math.round(lastLayoutMs=laid-start),drawMs:Math.round(done-laid),gpuMs,totalMs:Math.round(done-start),
           pixelHash,primitives:frame.primitiveCount,url:shown.url,address:field.address,scroll,tabs:tabs.length,theme,percent,
           leanRenders:leanRenders-calls,leanCalls,chromeRenders,collapse:foldNow(),...(statsMode&&layerSurface?.lastDraw?{draws:layerSurface.lastDraw,surface:layerSurface.stats}:{}),rows:Math.round(frame.data.length/4),scripts:{...scriptStats},...(current?{bandTop:current.answer.layers.bandTop,offset:shownOffset}:{}),
           // For hub_links_check.mjs: the links of a one-frame view, and who routes them.
@@ -1552,7 +1660,7 @@ async function shift(){
     const pixels=await layerSurface.composite(width,height,offset);
     shownOffset=offset;
     const done=performance.now(),rgba=surfaceCanvas?undefined:pixels;
-    post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
+    axFrame();post({type:'frame',width,height,title:doc.title,rgba:rgba?.buffer,presented:!rgba,inputAt,actions:menuTable(),
       stats:{path:surfaceCanvas?'shift':'shift-readback',layoutMs:0,drawMs:Math.round(done-start),totalMs:Math.round(done-start),pixelHash:pixels?L.hashPixels(pixels):undefined,
         primitives:0,url:doc.url,address:field.address,scroll,tabs:tabs.length,theme,percent,leanRenders:0,leanCalls,chromeRenders,collapse:fold,chromeMs,scripts:{...scriptStats},top:current.answer.layers.top,rows:Math.round(current.answer.page.data.length/4),bandTop:current.answer.layers.bandTop,offset}},rgba?[rgba.buffer]:[]);
   }catch(error){
@@ -1616,6 +1724,7 @@ async function start(data){
   createSession=transport.createOffscreenSession;renderOffscreen=transport.render;hashPixels=transport.hashPixels;
   if(data.canvas&&typeof transport.createSurfaceSession==='function'){surfaceCanvas=data.canvas;createSurface=transport.createSurfaceSession;}
   await loadFont();phase('fontReady');
+  giveSerif();
   home=await prepare(homeURL);
   // A page asked for in the address is the first frame: the demo index is not drawn first.
   let first=home;
@@ -1623,7 +1732,7 @@ async function start(data){
   // (a command, a refusal, another site) is handled by visit() once the tab is ready.
   let fromAddress;
   if(data.address){try{const route=router.route({...site,href:data.address,base:homeURL});
-    if(route&&!['system','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
+    if(route&&!['system','outside','command','refuse'].includes(route.route))fromAddress=route.url;}catch{}}
   const opening=fromAddress??wanted;
   if(opening){try{first=await pageFor(opening);}catch(error){first=refusal(opening,String(error.message??error));}}
   phase('pageReady');
@@ -1812,8 +1921,30 @@ function handle(data){
   currentStamp=data.t;
   try{apply(data);}finally{currentStamp=undefined;}
 }
+// Accessibility (HTML/AccessibleTree.lean; accessibility-mirror.mjs on the page thread). A web
+// page can not see whether a screen reader runs, so a person turns this on (message
+// `accessibility`); until then no tree is asked for. Then, after each frame, the engine's tree
+// of the page on screen goes to the page thread as the engine wrote it. For the layout of its
+// last tree the engine answers `unchanged` and makes none: a scroll only moves the elements.
+let axOn=false,axSerial=0,axDoc,axTimer=0,axShown=false;
+function axTell(){if(axOn&&axShown&&!axTimer)axTimer=setTimeout(()=>{axTimer=0;axSend();},0);}
+// A frame is about to be posted: its page is the one a tree is asked for.
+function axFrame(){axShown=true;axTell();}
+function axSend(){
+  if(!axOn||!doc||typeof doc.source!=='string')return;
+  try{
+    const started=performance.now();
+    const answer=call(doc.source,{...renderOptions(scroll),op:'accessibilityTree',web:true,since:axDoc===doc?axSerial:0},width,height);
+    if(!answer.unchanged){axSerial=answer.serial;axDoc=doc;}
+    post({type:'accessibility',answer,ms:Math.round((performance.now()-started)*10)/10});
+  }catch(error){
+    // An engine with no such op: said once, and no more trees are asked for.
+    axOn=false;post({type:'accessibility',error:String(error?.message??error)});
+  }
+}
 function apply(data){
   if(data.type==='dark'){systemDark=data.dark===true;request();return;}
+  if(data.type==='accessibility'){axOn=data.on===true;axSerial=0;axDoc=undefined;if(axOn)axTell();return;}
   if(data.type==='visit'){visit(data.address);return;}
   if(data.type==='resize'){({width,height,scale}=data);folded=Math.min(folded,foldRows());if(doc.graph)graphInput(1,width,height);scriptResize();request();}
   if(data.type==='scroll'){closeMenu();scrollBy(data.amount);}
@@ -1865,7 +1996,7 @@ function apply(data){
     // A click begins the SVG animations whose `begin` is a click on what it hits.
     if(doc.animation?.has&&current){const a=doc.animation;a.clicks=[...a.clicks,[Math.round(performance.now()-a.epoch),data.x,data.y-current.answer.layers.top+scroll]].slice(-16);a.running=true;request();}
     const target=hit(data.x,data.y);
-    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url}));
+    if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url,outside:doc?.outside??''}));
   }
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){

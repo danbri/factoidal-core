@@ -389,6 +389,32 @@ theorem sound_of_components (p : Pipeline S A) (h : ∀ c ∈ p, ∀ n ∈ c.sig
     (x y : Packed S) (hr : p.run x = .ok y) : p.contract x y :=
   guarantee_sound p ((assumptions_iff p).mpr h) x y hr
 
+/-- The stage whose executable field runs the pipeline directly. -/
+def toStageDirect (p : Pipeline S A) (h : ∀ c ∈ p, ∀ n ∈ c.sig.assumptions, A n) :
+    Stage PipelineError (Packed S) (Packed S) where
+  run := p.run
+  contract := p.contract
+  sound := sound_of_components p h
+
+/-- Kind: function equality.
+Says: composing the component stages and using the pipeline's run and contract
+directly give equal stages for every pipeline and every proof of its assumptions.
+Does not say: how a component executes or how much stack its own run uses. -/
+@[csimp] theorem toStage_eq_direct : @toStage = @toStageDirect := by
+  have eq_of_fields {ε α β : Type} {s t : Stage ε α β}
+      (hrun : s.run = t.run) (hcontract : s.contract = t.contract) : s = t := by
+    rcases s with ⟨runS, contractS, _⟩
+    rcases t with ⟨runT, contractT, _⟩
+    change runS = runT at hrun
+    change contractS = contractT at hcontract
+    subst runT
+    subst contractT
+    rfl
+  funext
+  apply eq_of_fields
+  · exact funext (toStage_run _ _)
+  · exact toStage_contract _ _
+
 /-- The guarantee's assumptions are those of the report of the signatures
 (what the wasm op `pipelineCheck` returns). -/
 theorem guarantee_assumptions (conv : W → W → Bool) (p : Pipeline S A) :
@@ -475,6 +501,7 @@ end Pipelines
 #print axioms mem_assumptionUnion
 #print axioms Pipeline.guarantee_sound
 #print axioms Pipeline.sound_of_components
+#print axioms Pipeline.toStage_eq_direct
 #print axioms Pipeline.assumptions_iff
 #print axioms Pipeline.run_wire
 #print axioms Pipeline.run_no_wire_error

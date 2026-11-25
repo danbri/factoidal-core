@@ -1,5 +1,5 @@
 import L4Factoidal.Rendering.Layout
-import L4Factoidal.Rendering.Woff
+import L4Factoidal.Rendering.Woff2
 import L4Factoidal.Rendering.SfntShape
 import L4Factoidal.Rendering.SfntOutline
 import L4Factoidal.Rendering.InkBound
@@ -89,8 +89,9 @@ that the policy allows and that passes its checks (`SfntColr.read`) gives the fo
 colour glyphs; one that fails them leaves the font without colour, and its outlines
 still draw. A font with no COLR table pays nothing for this. -/
 def Font.read (bytes : ByteArray) (family sha256 : String) (faceIndex : Nat := 0) : Except String Font := do
-  -- A WOFF 1.0 file is read as the sfnt it holds (`Woff.toSfnt`); other bytes as they are.
-  let bytes ← Woff.sfntOf bytes
+  -- A WOFF2 or WOFF 1.0 file is read as the sfnt it holds (`Woff2.toSfnt`, `Woff.toSfnt`);
+  -- other bytes as they are.
+  let bytes ← Woff2.sfntOf bytes
   let dir ← FontPolicy.readDirectory bytes faceIndex
   let decision := FontPolicy.decide FontPolicy.Policy.standard ⟨family,"",sha256⟩ dir
   unless decision.fontUsed do
@@ -112,10 +113,10 @@ def Font.colourOf (f : Font) (g : Nat) : Option FontProvider.Colour := do
 private def shaped (f : Font) (text : String) (rtl : Option Bool) :
     Except String (String × Bool × Array Placed) := do
   let s ← SfntShape.shape f.bytes f.dir f.face text (direction := rtl)
-  let chars := FontData.byteToCharMap text
+  let chars := FontData.byteToCharArray text
   let mut out := #[]
   for (g,byte) in s.glyphs.zip s.clusterBytes do
-    let some cluster := chars.get? byte | throw "font profile: cluster inside a character"
+    let some cluster := FontData.charAtByte? chars byte | throw "font profile: cluster inside a character"
     out := out.push ⟨g.id,g.advance.toNat,g.xOffset,g.yOffset,cluster,g.attachedTo.isSome,
       SfntFallback.recategorize g.codepoint (SfntFallback.modifiedCcc g.codepoint)⟩
   return (s.script,s.rtl,out)
@@ -757,6 +758,13 @@ def profile (fonts : Array Font) (memo : Memo)
       let web := webFonts family
       if web.isEmpty then none else some (match familyShape with
         | some shape => shape web
-        | none => shapeFreshWith f (web ++ fonts))}
+        | none => shapeFreshWith f (web ++ fonts)),
+    -- The first web font (or the serif or monospace face) of a family gives that text's line
+    -- metrics (`Layout.FontProfile.metricsOf`), in the primary font's units.
+    familyMetrics := fun family =>
+      (webFonts family)[0]?.bind fun w =>
+        if w.face.unitsPerEm == 0 then none else
+        let k := space.unitsPerEm/Float.ofNat w.face.unitsPerEm
+        some (Float.ofInt w.face.ascender*k,-Float.ofInt w.face.descender*k)}
 
 end L4Factoidal.Rendering.SfntProfile

@@ -59,12 +59,48 @@ structure FontProfile where
   when it is not the script's. `none`: the family list names no web font, and
   `shapedWord` serves. -/
   familyWord : String → Option (String → Nat → Option Bool → Except String FontProvider.Word) := fun _ => none
+  /-- The ascent and descent, in this profile's units, of the first font of a `font-family`
+  value (`Computed.fontFamily`) when that font is not this profile's own (a web font, the
+  serif or the monospace face): CSS 2.1 §10.8.1, the inline box of text is the content area
+  of its font, with the half-leading of that font. `none`: the profile's own metrics. -/
+  familyMetrics : String → Option (Float × Float) := fun _ => none
 
 def FontProfile.ofFace (face : FontProvider.Face) : FontProfile :=
   {family := face.family,unitsPerEm := face.unitsPerEm,advance := 0,
    ascent := face.ascent,descent := face.descent,outline := fun _ => [],admits := fun _ => false,
    cssFamilies := [face.family],fontSha256 := some face.fontSha256,faceIndex := face.faceIndex,
    shapedWord := some face.lookup}
+
+/-- CSS Text 3 §8.2: `extra` font units after each typographic character unit of `word` (its
+letter spacing), here each cluster of the shaped word, so that a base and its combining marks
+are one unit. A glyph moves by the extra of the clusters before it on the line, and the word's
+advance grows by the extra of all its clusters. Before 2026-11-23 `letter-spacing` was not
+read. -/
+def letterSpaced (word : FontProvider.Word) (extra : Float) : FontProvider.Word := Id.run do
+  if extra == 0 || !extra.isFinite then return word
+  let mut glyphs : Array FontProvider.Glyph := #[]
+  let mut shift := 0.0
+  let mut cluster : Option Nat := none
+  let mut clusters := 0
+  -- Zero-width format and bidi controls take no spacing, and neither do the cursive scripts,
+  -- whose letters join (CSS Text 3 §8.1): Arabic, Syriac, NKo, Mandaic, Mongolian, Adlam.
+  let chars := word.text.toList.toArray
+  let within (c lo hi : Nat) : Bool := lo <= c && c <= hi
+  let ignorable (i : Nat) : Bool :=
+    let c := (chars.getD i ' ').toNat
+    c == 0xAD || c == 0xFEFF || within c 0x200B 0x200F || within c 0x202A 0x202E ||
+    within c 0x2060 0x2064 || within c 0x2066 0x206F ||
+    within c 0x0600 0x077F || within c 0x07C0 0x07FF || within c 0x0840 0x08FF || within c 0xFB50 0xFDFF || within c 0xFE70 0xFEFE ||
+    within c 0x1800 0x18AF || within c 0x1E900 0x1E95F
+  let mut spaced := false
+  for g in word.glyphs do
+    if cluster != some g.clusterStart then
+      if spaced then shift := shift+extra
+      cluster := some g.clusterStart
+      spaced := !ignorable g.clusterStart
+      if spaced then clusters := clusters+1
+    glyphs := glyphs.push {g with x := g.x+shift}
+  return {word with glyphs, advance := word.advance+extra*Float.ofNat clusters}
 
 /-- A word shaped by the font. `rtl`: the direction of its bidi level, when that is
 not the direction of its script (see `shapedWordDir`). -/
@@ -90,20 +126,31 @@ private def FontProfile.word (font : FontProfile) (style : Computed) (text : Str
         word.faceIndex != font.faceIndex || word.family != font.family ||
         word.unitsPerEm != font.unitsPerEm || word.ascent != font.ascent || word.descent != font.descent then
       throw "font profile: shaped word identity, size or metrics mismatch"
-    return some word
+    return some (letterSpaced word (style.letterSpacingPx*word.unitsPerEm/style.fontSize))
+
 
 private def spaceWidth (font : FontProfile) (style : Computed) : Except String Float := do
+  -- CSS Text 3 §8.1: `word-spacing` is added to each word separator (its letter spacing is
+  -- in the shaped space's advance)
   match ← font.word style " " with
-  | none => return font.advance*style.fontSize/font.unitsPerEm
+  | none => return (font.advance*style.fontSize/font.unitsPerEm+style.letterSpacingPx+style.wordSpacingPx)
   | some word =>
     if word.glyphs.any (fun glyph => !glyph.geometry.isEmpty) then
       throw "unsupported painted whitespace glyph in collapsed space profile"
-    return word.advance*style.fontSize/font.unitsPerEm
+    return word.advance*style.fontSize/font.unitsPerEm+style.wordSpacingPx
+
+/-- The ascent and descent, in the profile's units, of the font of `style`'s text: its family's
+first font (`familyMetrics`), else the profile's. Before 2026-11-22 every line box used the
+profile's (Noto Sans: 1.069 and 0.293 em), so a line of `font: 20px/1 Ahem` put its baseline
+0.088 em too low and failed the CSS2 reftests drawn with Ahem by 2 px. -/
+def FontProfile.metricsOf (font : FontProfile) (style : Computed) : Float × Float :=
+  (font.familyMetrics style.fontFamily).getD (font.ascent,font.descent)
 
 /-- CSS leading surrounds the actual ascent+descent metric box, which need
 not equal one em (ordinary real fonts often differ). -/
 private def lineLeading (font : FontProfile) (style : Computed) : Float :=
-  (style.lineHeight-(font.ascent+font.descent)*style.fontSize/font.unitsPerEm)/2
+  let (a,d) := font.metricsOf style
+  (style.lineHeight-(a+d)*style.fontSize/font.unitsPerEm)/2
 
 /-- CSS Overflow 3 §3.1: `overflow: hidden` and `overflow: clip` clip the content of a
 box to its padding box (`paddingBox`); the box's own background and border are drawn
@@ -203,40 +250,355 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+/-- The size of a background tile (CSS Backgrounds 3 §3.9, by the default sizing algorithm of
+CSS Images 3 §5.3) from `background-size`, the image's natural width, height and ratio
+(`nw`, `nh`, `ratio`: width over height; any may be missing) and the positioning area `w`
+by `h`. A missing size with no ratio takes the area's. -/
+def backgroundTileSize (size : BackgroundSize) (nw nh ratio : Option Float) (w h : Float) : Float × Float :=
+  let r := ratio.bind fun r => if r > 0 && r.isFinite then some r else none
+  let fit := fun (cover : Bool) => match r with
+    | some r => if (w/r <= h) != cover then (w,w/r) else (h*r,h)
+    | none => (w,h)
+  match size with
+  | .cover => fit true
+  | .contain => fit false
+  | .dimensions width height =>
+    match CSS.resolve w width, CSS.resolve h height with
+    | some tw, some th => (tw,th)
+    | some tw, none => (tw, match r with | some r => tw/r | none => nh.getD h)
+    | none, some th => ((match r with | some r => th*r | none => nw.getD w), th)
+    | none, none => match nw, nh, r with
+      | some a, some b, _ => (a,b)
+      | some a, none, some r => (a,a/r)
+      | none, some b, some r => (b*r,b)
+      | some a, none, none => (a,h)
+      | none, some b, none => (w,b)
+      | none, none, some _ => fit false
+      | none, none, none => (w,h)
+
+#guard backgroundTileSize (.dimensions .auto .auto) (some 10) (some 20) (some 0.5) 100 100 == (10,20)
+#guard backgroundTileSize (.dimensions .auto .auto) none none none 256 768 == (256,768)
+#guard backgroundTileSize (.dimensions .auto .auto) none none (some 2) 256 768 == (256,128)
+#guard backgroundTileSize (.dimensions .auto (.px 32)) none none none 256 768 == (256,32)
+#guard backgroundTileSize (.dimensions .auto (.px 32)) (some 8) none (some 0.125) 256 768 == (4,32)
+#guard backgroundTileSize .cover none none (some 2) 100 100 == (200,100)
+#guard backgroundTileSize .contain none none (some 2) 100 100 == (100,50)
+
+/-- Placement of the first tile of a background image, or its solid colour
+when an opaque single pixel repeats in both directions. -/
+inductive BackgroundTile where
+  | none
+  | solid (c : Color)
+  | placed (originX originY width height : Float)
+
+def backgroundTile (b : Bitmap) (s : Computed) (x y w h : Float) : BackgroundTile := Id.run do
+  if b.width == 0 || b.height == 0 then return .none
+  let iw := Float.ofNat b.width
+  let ih := Float.ofNat b.height
+  let e := s.borderEdges
+  let areaW := max 0 (w-e.left-e.right)
+  let areaH := max 0 (h-e.top-e.bottom)
+  let (nw,nh,ratio) := s.backgroundNatural.getD (some iw,some ih,some (iw/ih))
+  let (tw,th) := backgroundTileSize s.backgroundSize nw nh ratio areaW areaH
+  if tw <= 0 || th <= 0 then return .none
+  let (repeatX,repeatY) := s.backgroundRepeat
+  if repeatX && repeatY && b.width == 1 && b.height == 1 && b.rgba.size >= 4 && b.rgba.get! 3 == 255 then
+    return .solid ⟨Float.ofNat (b.rgba.get! 0).toNat/255,Float.ofNat (b.rgba.get! 1).toNat/255,Float.ofNat (b.rgba.get! 2).toNat/255⟩
+  -- CSS Backgrounds 3 §2.6 resolves each axis against the area minus the sized image.
+  let ox := x+e.left+(s.backgroundPositionX.resolve (areaW-tw)).getD 0
+  let oy := y+e.top+(s.backgroundPositionY.resolve (areaH-th)).getD 0
+  return .placed ox oy tw th
+
+/-- A background has one paint rectangle. The paint sampler repeats the bitmap
+on the requested axes, and this rectangle clips each non-repeating axis to one tile. -/
+def backgroundTiles (id pic : Nat) (b : Bitmap) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  let (ox,oy,tw,th) ← match backgroundTile b s x y w h with
+    | .none => return #[]
+    | .solid c => return #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+    | .placed ox oy tw th => pure (ox,oy,tw,th)
+  let (repeatX,repeatY) := s.backgroundRepeat
+  let l := if repeatX then x else max x ox
+  let t := if repeatY then y else max y oy
+  let r := if repeatX then x+w else min (x+w) (ox+tw)
+  let bottom := if repeatY then y+h else min (y+h) (oy+th)
+  if r <= l || bottom <= t then return #[]
+  let sx := Float.ofNat b.width/tw
+  let sy := Float.ofNat b.height/th
+  let image : ImageRecord := {map := ⟨sx,0,0,sy,-ox*sx,-oy*sy⟩, id := pic, bitmap := b, repeatX, repeatY}
+  return #[.paint ⟨some id,{geometry := .rect l t (r-l) (bottom-t),style := {fill := .image image}}⟩]
+
+#guard (backgroundTiles 1 1 ⟨69,69,ByteArray.empty⟩ {} 0 0 1280 19182).size == 1
+
+private def radiusUnits (size : Float) : Nat :=
+  (max 0 (size*64)).floor.toUInt64.toNat
+
+/-- Resolve percentages against the outer box before applying any paint inset. -/
+private def resolvedRadii (s : Computed) (w h : Float) : Option Corners.Radii := do
+  let lengths ← s.cornerLengths
+  let resolve := fun (pair : CSS.Length × CSS.Length) =>
+    Corners.Radius.mk (radiusUnits ((CSS.resolve w pair.1).getD 0))
+      (radiusUnits ((CSS.resolve h pair.2).getD 0))
+  let radii : Corners.Radii := ⟨resolve lengths.topLeft,resolve lengths.topRight,
+    resolve lengths.bottomRight,resolve lengths.bottomLeft⟩
+  return radii.normalize (radiusUnits w) (radiusUnits h)
+
+private def cornerInsets (edges : Edges) : Corners.Insets :=
+  ⟨radiusUnits edges.top,radiusUnits edges.right,radiusUnits edges.bottom,radiusUnits edges.left⟩
+
+/-- The resulting arc may extend past the inset rectangle. -/
+private def roundedOutline (s : Computed) (outerW outerH : Float) (insets : Edges)
+    (x y w h : Float) : Option Contour := do
+  let radii ← resolvedRadii s outerW outerH
+  (radii.inset (cornerInsets insets)).outline x y w h
+
+/-- A rounded outline carries the same paint mapping as the original rectangle.
+The rectangular clip retains the extent of a fitted picture or a single tile and
+cuts off the parts of inset arcs that extend past the opposite edge. -/
+private def roundedPaint (outline : Contour) (node : Node) : Node :=
+  match node with
+  | .paint item => match item.primitive.geometry with
+    | .rect x y w h =>
+      .clipped none identity ⟨x,y,w,h,identity⟩
+        [.paint {item with primitive := {item.primitive with geometry := .path [outline]}}]
+    | _ => node
+  | _ => node
+
+private def backgroundColour (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  if !s.visible || w <= 0 || h <= 0 then #[] else
+  match s.background with
+  | none => #[]
+  | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+
+
+/-- The box `background-clip` paints in (CSS Backgrounds 3 §3.7), for a border box at
+`(x,y)`, `w` by `h`: the border box, or that less the border (padding box), or less the
+border and the padding (content box). -/
+def backgroundArea (s : Computed) (x y w h : Float) : Float × Float × Float × Float :=
+  if s.colorClip == 0 then (x,y,w,h) else
+  let b := s.borderEdges
+  let p := if s.colorClip == 2 then s.padding else {}
+  let l := b.left+p.left
+  let t := b.top+p.top
+  (x+l,y+t,w-l-b.right-p.right,h-t-b.bottom-p.bottom)
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
-  let colour := match s.background with
-    | none => #[]
-    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  -- CSS Backgrounds 3 §3.2: the image over the colour
-  match s.backgroundGradient with
-  | none => colour
-  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  let (cx,cy,cw,ch) := backgroundArea s x y w h
+  if cw <= 0 || ch <= 0 then #[] else
+  let colour := backgroundColour id s cx cy cw ch
+  -- CSS Backgrounds 3 §3.2: the image over the colour (a gradient fills the clip box)
+  let withGradient := match s.backgroundGradient with
+    | none => colour
+    | some g => colour.push (.paint ⟨some id,{geometry := .rect cx cy cw ch,style := {fill := gradientPaint g cx cy cw ch}}⟩)
+  let outline := if s.cornerLengths.isNone then none else
+    let b : Edges := if s.colorClip == 0 then {} else s.borderEdges
+    let p := if s.colorClip == 2 then s.padding else {}
+    let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
+    roundedOutline s w h edges cx cy cw ch
+  let withGradient := match outline with
+    | some shape => withGradient.map (roundedPaint shape)
+    | none => withGradient
+  match s.backgroundBitmap with
+  | none => withGradient
+  | some (pic,b) =>
+    let tiles := backgroundTiles id pic b s x y w h
+    let tiles := match outline with
+      | some shape => tiles.map (roundedPaint shape)
+      | none => tiles
+    if s.colorClip == 0 then withGradient ++ tiles
+    else withGradient.push (.clipped none identity ⟨cx,cy,cw,ch,identity⟩ tiles.toList)
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
 def lighter (c : Color) : Color := ⟨c.r+(1-c.r)*0.6,c.g+(1-c.g)*0.6,c.b+(1-c.b)*0.6⟩
 def darker (c : Color) : Color := ⟨c.r*0.6,c.g*0.6,c.b*0.6⟩
 
-/-- The border of a border box at `(x,y)`, size `w` by `h`: top and bottom across the
-whole width, left and right between them. `outset` is light at the top and left and
-dark at the bottom and right; `inset` is the reverse. -/
+/-- The bands of one side of a border across its width, from the outer edge (0) to the inner
+edge (1), each with its colour (CSS Backgrounds 3 §4.2). `start` is the top or the left side.
+`outset` and `ridge` are light at the top and left, `inset` and `groove` dark; `groove` and
+`ridge` are two halves; `double` is two lines of a third each, solid below 3 px. -/
+def borderBands (st : BorderStyle) (c : Color) (start : Bool) (width : Float) : List (Float × Float × Color) :=
+  let (near,far) := if start then (lighter c,darker c) else (darker c,lighter c)
+  match st with
+  | .none => []
+  | .outset => [(0,1,near)]
+  | .inset => [(0,1,far)]
+  | .ridge => [(0,0.5,near),(0.5,1,far)]
+  | .groove => [(0,0.5,far),(0.5,1,near)]
+  | .double => if width < 3 then [(0,1,c)] else
+      let line := (width/3).round/width
+      [(0,line,c),(1-line,1,c)]
+  | _ => [(0,1,c)]
+
+private def sameBands (a b : List (Float × Float × Color)) : Bool :=
+  a.length == b.length && (a.zip b).all fun ((a0,a1,ca),(b0,b1,cb)) =>
+    a0 == b0 && a1 == b1 && ca.r == cb.r && ca.g == cb.g && ca.b == cb.b
+
+/-- Dashes or dots along one side, `length` long and `thick` wide (CSS Backgrounds 3 §4.2:
+the spacing is the user agent's): dots `thick` long with gaps of `thick`, dashes 3 x `thick`
+with equal gaps, the gaps stretched so that the side starts and ends with a mark. Each is
+`(offset, length)` along the side. -/
+def dashMarks (dotted : Bool) (length thick : Float) : Array (Float × Float) := Id.run do
+  if length <= 0 || thick <= 0 then return #[]
+  let mark := if dotted then thick else 3*thick
+  if length <= mark then return #[(0,length)]
+  let n := (((length+mark)/(2*mark)).round).toUInt64.toNat |> max 2 |> min 4096
+  let gap := (length-n.toFloat*mark)/(n.toFloat-1)
+  let mut out := #[]
+  for i in [0:n] do out := out.push (i.toFloat*(mark+gap), mark)
+  return out
+
+private def rectangularContour (x y w h : Float) : Contour :=
+  .path ⟨x,y⟩ [.line ⟨x+w,y⟩,.line ⟨x+w,y+h⟩,.line ⟨x,y+h⟩] true
+
+/-- Paint a continuous solid border with one colour. Keep the inner curve
+identical to the curve used for backgrounds clipped to the padding box. -/
+private def roundedSolidBorder (id : Nat) (s : Computed) (b : Edges)
+    (x y w h : Float) : Option (Array Node) := do
+  let radii ← resolvedRadii s w h
+  let outer ← radii.outline x y w h
+  let st := s.borderStyles
+  let pc := s.borderColors
+  let sides := [(b.top,st.top,pc.top),(b.right,st.right,pc.right),
+    (b.bottom,st.bottom,pc.bottom),(b.left,st.left,pc.left)].filter (fun (width,_,_) => width > 0)
+  let (_,_,paint) ← sides.head?
+  let color ← paint.resolve s.color
+  let sameSolid := fun (_,style,paint) =>
+    style == BorderStyle.solid && match paint.resolve s.color with
+      | some c => c.r == color.r && c.g == color.g && c.b == color.b
+      | none => false
+  if !sides.all sameSolid then none else
+  let fill := fun (contours : List Contour) =>
+    Node.paint ⟨some id,{geometry := .path contours,style := {fill := .solid color,rule := .evenodd}}⟩
+  let ix := x+b.left
+  let iy := y+b.top
+  let iw := w-b.left-b.right
+  let ih := h-b.top-b.bottom
+  if iw <= 0 || ih <= 0 then some #[fill [outer]] else
+  let r := radii.inset (cornerInsets b)
+  let inner := (r.outline ix iy iw ih).getD (rectangularContour ix iy iw ih)
+  let ring := fill [outer,inner]
+  let corners := [r.topLeft,r.topRight,r.bottomRight,r.bottomLeft]
+  if corners.all (fun corner =>
+      corner.isSquare || (corner.x <= radiusUnits iw && corner.y <= radiusUnits ih)) then
+    some #[ring]
+  else
+    -- An inset arc can reach through the opposite side. Restrict the hole to
+    -- the inner rectangle and paint the outer curve in the four disjoint strips.
+    let clip := fun (node : Node) (cx cy cw ch : Float) =>
+      Node.clipped none identity ⟨cx,cy,cw,ch,identity⟩ [node]
+    let outerPaint := fill [outer]
+    let strips := [(x,y,w,b.top),(x,iy+ih,w,b.bottom),(x,iy,b.left,ih),(ix+iw,iy,b.right,ih)]
+    let strips := strips.filterMap fun (cx,cy,cw,ch) =>
+      if cw <= 0 || ch <= 0 then none else some (clip outerPaint cx cy cw ch)
+    some ((clip ring ix iy iw ih :: strips).toArray)
+
+/-- The border of a border box at `(x,y)`, size `w` by `h`. Each side has its own style and
+colour. Where two sides meet with the same bands, the top and bottom sides take the corner,
+as rectangles; where they differ, the corner is split on its diagonal (CSS Backgrounds 3
+§4.5 leaves the join to the user agent; browsers split it), with polygons. Dotted and dashed
+sides are marks along the side, without the diagonal. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
-  if !s.visible || w <= 0 || h <= 0 || s.borderStyle == .none then return #[]
-  let c := s.borderColor.getD s.color
-  let (near,far) := match s.borderStyle with
-    | .outset => (lighter c,darker c)
-    | .inset => (darker c,lighter c)
-    | _ => (c,c)
-  let rect := fun (c : Color) (x y w h : Float) =>
-    if w <= 0 || h <= 0 then #[] else #[Node.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
-  return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
-    rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+  if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
+  if let some rounded := roundedSolidBorder id s b x y w h then return rounded
+  let st := s.borderStyles
+  let pc := s.borderColors
+  let bands := fun (style : BorderStyle) (paint : BorderColor) (start : Bool) (thick : Float) =>
+    if thick <= 0 then [] else match paint.resolve s.color with
+      | some c => borderBands style c start thick
+      | none => []
+  let top := bands st.top pc.top true b.top
+  let right := bands st.right pc.right false b.right
+  let bottom := bands st.bottom pc.bottom false b.bottom
+  let left := bands st.left pc.left true b.left
+  -- a corner is split when the two sides' bands differ and both are drawn
+  let split := fun (p q : List (Float × Float × Color)) => !p.isEmpty && !q.isEmpty && !sameBands p q
+  let tl := split top left
+  let tr := split top right
+  let bl := split bottom left
+  let br := split bottom right
+  let paint := fun (c : Color) (g : Geometry) => Node.paint ⟨some id,{geometry := g,style := {fill := .solid c}}⟩
+  let quad := fun (c : Color) (p : List Point) =>
+    -- an axis-aligned quadrilateral is drawn as a rectangle (exact edges)
+    match p with
+    | [a,b',c',d] =>
+      if a.y == b'.y && c'.y == d.y && a.x == d.x && b'.x == c'.x then
+        (if b'.x > a.x && d.y > a.y then #[paint c (.rect a.x a.y (b'.x-a.x) (d.y-a.y))] else #[])
+      else #[paint c (.polygon p)]
+    | _ => #[]
+  let mut out : Array Node := #[]
+  let marks := fun (style : BorderStyle) => style == .dotted || style == .dashed
+  -- top: x runs from the left corner to the right corner
+  for (f0,f1,c) in top do
+    if marks st.top then
+      for (o,l) in dashMarks (st.top == .dotted) w b.top do
+        out := out.push (paint c (.rect (x+o) y l b.top))
+    else
+      let ol := if tl then x+f0*b.left else x
+      let il := if tl then x+f1*b.left else x
+      let or' := if tr then x+w-f0*b.right else x+w
+      let ir := if tr then x+w-f1*b.right else x+w
+      out := out ++ quad c [⟨ol,y+f0*b.top⟩,⟨or',y+f0*b.top⟩,⟨ir,y+f1*b.top⟩,⟨il,y+f1*b.top⟩]
+  for (f0,f1,c) in bottom do
+    if marks st.bottom then
+      for (o,l) in dashMarks (st.bottom == .dotted) w b.bottom do
+        out := out.push (paint c (.rect (x+o) (y+h-b.bottom) l b.bottom))
+    else
+      let ol := if bl then x+f0*b.left else x
+      let il := if bl then x+f1*b.left else x
+      let or' := if br then x+w-f0*b.right else x+w
+      let ir := if br then x+w-f1*b.right else x+w
+      out := out ++ quad c [⟨il,y+h-f1*b.bottom⟩,⟨ir,y+h-f1*b.bottom⟩,⟨or',y+h-f0*b.bottom⟩,⟨ol,y+h-f0*b.bottom⟩]
+  -- left and right: between the top and the bottom sides, or to the diagonal of a split corner
+  for (f0,f1,c) in left do
+    if marks st.left then
+      for (o,l) in dashMarks (st.left == .dotted) (h-b.top-b.bottom) b.left do
+        out := out.push (paint c (.rect x (y+b.top+o) b.left l))
+    else
+      let ot := if tl then y+f0*b.top else y+b.top
+      let it := if tl then y+f1*b.top else y+b.top
+      let ob := if bl then y+h-f0*b.bottom else y+h-b.bottom
+      let ib := if bl then y+h-f1*b.bottom else y+h-b.bottom
+      out := out ++ quad c [⟨x+f0*b.left,ot⟩,⟨x+f1*b.left,it⟩,⟨x+f1*b.left,ib⟩,⟨x+f0*b.left,ob⟩]
+  for (f0,f1,c) in right do
+    if marks st.right then
+      for (o,l) in dashMarks (st.right == .dotted) (h-b.top-b.bottom) b.right do
+        out := out.push (paint c (.rect (x+w-b.right) (y+b.top+o) b.right l))
+    else
+      let ot := if tr then y+f0*b.top else y+b.top
+      let it := if tr then y+f1*b.top else y+b.top
+      let ob := if br then y+h-f0*b.bottom else y+h-b.bottom
+      let ib := if br then y+h-f1*b.bottom else y+h-b.bottom
+      out := out ++ quad c [⟨x+w-f1*b.right,it⟩,⟨x+w-f0*b.right,ot⟩,⟨x+w-f0*b.right,ob⟩,⟨x+w-f1*b.right,ib⟩]
+  return out
 
-/-- Background, then border, of a border box. -/
+-- Dots and dashes start and end the side: 100 px of 2 px dots is 26 dots 3.92 px apart.
+#guard (dashMarks true 100 2).size == 26
+#guard (dashMarks true 100 2).back?.map (fun (o,l) => o+l) == some 100
+#guard (dashMarks false 10 5) == #[(0,10)]
+-- double: two lines of a third each; groove: dark outside at the top, light outside at the bottom
+#guard (borderBands .double ⟨1,0,0⟩ true 9).map (fun (a,b,_) => ((a*9).round,(b*9).round)) == [(0,3),(6,9)]
+#guard (borderBands .groove ⟨1,1,1⟩ true 4).map (fun (_,_,c) => c.r) == [0.6,1]
+#guard (borderBands .groove ⟨1,1,1⟩ false 4).map (fun (_,_,c) => c.r) == [1,0.6]
+
+/-- Background, then border, of a border box. None for a box whose mask image is not drawn
+(`Computed.masked`): unmasked, the background of an icon would be a filled box. -/
 private def decorations (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
-  background id s x y w h ++ borderNodes id s x y w h
+  if s.masked then #[] else background id s x y w h ++ borderNodes id s x y w h
+
+/-- Kind: safety of the paint (no undrawn mask shows as a filled box). Says: a box whose
+mask image is not drawn paints no background and no border. Does not say: anything about
+its content or its layout, which are as before. -/
+theorem decorations_masked (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = true) :
+    decorations id s x y w h = #[] := by
+  simp [decorations, hm]
+
+/-- Kind: property (pages with no such mask pay nothing). Says: with no undrawn mask the
+decorations are the background and the border, as before. -/
+theorem decorations_plain (id : Nat) (s : Computed) (x y w h : Float) (hm : s.masked = false) :
+    decorations id s x y w h = background id s x y w h ++ borderNodes id s x y w h := by
+  simp [decorations, hm]
 
 /-- The content of a replaced element that Lean decoded or drew: the image of an
 `img`, and in time the poster or frame of a `video` or the bitmap of a `canvas`.
@@ -274,6 +636,27 @@ def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
   else if h < minH then (min (minH*w/h) maxW,minH)
   else (w,h)
 
+/-- Resolve a replaced element's horizontal length. A calculation can come from
+`contentBoxed`, where a percentage size of a border box loses its horizontal edges.
+The intrinsic width pass supplies zero as its indefinite containing width. -/
+private def replacedHorizontal (s : Computed) (available : Float) : CSS.Length → Option Float
+  | .px n => some n
+  | .percent p => if available <= 0 then none else some (available*p)
+  | .calc p offset => if available <= 0 then none else some (max 0 (available*p+offset))
+  | .stretch => if available <= 0 then none else
+    some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
+  | _ => none
+
+/-- A calculated replaced width uses its containing width and the content-box adjustment. -/
+theorem replacedHorizontal_calc (s : Computed) (available p offset : Float) (h : ¬ available ≤ 0) :
+    replacedHorizontal s available (.calc p offset) = some (max 0 (available*p+offset)) := by
+  simp [replacedHorizontal, h]
+
+#print axioms replacedHorizontal_calc
+
+#guard replacedHorizontal {} 120 (.calc 1 (-8)) == some 112
+#guard (replacedHorizontal {} 0 (.calc 1 (-8))).isNone
+
 /-- CSS 2.1 §10.3.2 and §10.6.2, with the limits of §10.4 and §10.7: the used content
 width and height of a replaced element. `intrinsic` is the size of its content when it
 has one, which gives the ratio too; with none, 300 by 150. `available` is the width of
@@ -281,13 +664,7 @@ the containing block. It is 0 while widths are measured, and then a percentage c
 as auto (CSS Sizing 3 §5.2.1). A percentage height counts as auto: this profile has
 no definite containing block height. -/
 def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (available : Float) : Float × Float :=
-  let horizontal := fun (l : CSS.Length) => match l with
-    | .px n => some n
-    | .percent p => if available <= 0 then none else some (available*p)
-    -- `stretch` (CSS Sizing 4 §6.1): the margin box fills the containing block
-    | .stretch => if available <= 0 then none else
-      some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-    | _ => none
+  let horizontal := replacedHorizontal s available
   let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
   let minW := (horizontal s.minWidth).getD 0
   let maxW := (horizontal s.maxWidth).getD unbounded
@@ -320,12 +697,7 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
   | some (rn,rd) =>
     let natural := intrinsic.any fun (w,h) => w > 0 && h > 0
     if rn == 0 || rd == 0 || (s.pos.ratioAuto && natural) then replacedNatural s intrinsic available else
-    let horizontal := fun (l : CSS.Length) => match l with
-      | .px n => some n
-      | .percent p => if available <= 0 then none else some (available*p)
-      | .stretch => if available <= 0 then none else
-        some (max 0 (available-s.margin.left-s.margin.right-s.borderEdges.left-s.borderEdges.right-s.padding.left-s.padding.right))
-      | _ => none
+    let horizontal := replacedHorizontal s available
     let vertical := fun (l : CSS.Length) => match l with | .px n => some n | _ => none
     let minW := LU.ofPx (max 0 ((horizontal s.minWidth).getD 0))
     let maxW := (horizontal s.maxWidth).map fun m => LU.ofPx (max 0 m)
@@ -338,16 +710,36 @@ def replacedSize (s : Computed) (intrinsic : Option (Float × Float)) (available
       | none,none => Ratio.autoSize rn rd (LU.ofPx (max 0 ((intrinsic.map Prod.fst).getD 300))) minW maxW minH maxH)
     (LU.toPx size.1,LU.toPx size.2)
 
-/-- A replaced element with no decoded content here: a `canvas`, whose natural size is
-its `width` and `height` attributes, 300 by 150 without them (HTML §4.12.5.1). Its box is
-laid out as a picture's is, and is empty. -/
-def blankReplaced (n : DOM.Node) : Option (Float × Float) :=
+/-- A replaced element with no decoded content here, and its natural size when it has one.
+A `canvas` has the natural size of its `width` and `height` attributes, 300 by 150 without
+them (HTML §4.12.5.1). An `iframe`, and a `video` with no frame or poster drawn, are
+replaced elements (HTML §15.4.1) with no natural size and no natural ratio: `some none`,
+so `replacedSize` gives them the default object size, 300 by 150 (CSS Images 3 §4.1), and
+a `width` without a `height` keeps the default height (as `video-intrinsic-width-height`
+of WPT says). Their boxes are laid out as a picture's are, and are empty: the engine does
+not draw a child document or a video frame in its container yet. -/
+def blankReplaced (n : DOM.Node) : Option (Option (Float × Float)) :=
   if DOM.Dom.isHtmlElement n "canvas" then
     let whole := fun (name : String) (fallback : Nat) =>
       let digits := ((CSS.attrValue n name).toList.dropWhile fun c => c == ' ' || c == '\t' || c == '\n').takeWhile Char.isDigit
       if digits.isEmpty || digits.length > 5 then fallback else digits.foldl (fun k c => k*10+(c.toNat-48)) 0
-    some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150))
+    some (some (Float.ofNat (whole "width" 300),Float.ofNat (whole "height" 150)))
+  else if DOM.Dom.isHtmlElement n "iframe" || DOM.Dom.isHtmlElement n "video" then some none
   else none
+
+/-- Kind: property. Says: an `iframe` is a replaced box with no natural size. -/
+theorem blankReplaced_iframe (n : DOM.Node) (h : DOM.Dom.isHtmlElement n "iframe" = true) :
+    blankReplaced n = some none := by
+  have hl : n.lname = "iframe" := by simp [DOM.Dom.isHtmlElement] at h; exact h.2
+  have hc : DOM.Dom.isHtmlElement n "canvas" = false := by simp [DOM.Dom.isHtmlElement, hl]
+  simp [blankReplaced, hc, h]
+
+/-- Kind: value. Says: a replaced box with no natural size, no `width` or `height` and no
+limits is 300 by 150, the default object size (CSS Images 3 §4.1). -/
+theorem replacedNatural_default (s : Computed) (a : Float) (hw : s.width = .auto) (hh : s.height = .auto)
+    (hmw : s.minWidth = .auto) (hxw : s.maxWidth = .auto) (hmh : s.minHeight = .auto) (hxh : s.maxHeight = .auto) :
+    replacedNatural s none a = (max 0 (max 0 (min unbounded 300)), max 0 (max 0 (min unbounded 150))) := by
+  simp [replacedNatural, replacedHorizontal, hw, hh, hmw, hxw, hmh, hxh]
 
 /-- The intrinsic size of a picture: its pixels, one CSS pixel each; for a picture held
 reduced, the size of the image it was made from (`natural`). -/
@@ -370,15 +762,28 @@ def fitScale (fit : ObjectFit) (iw ih w h : Float) : Float × Float :=
   | .none => (1,1)
   | .scaleDown => let k := min 1 (min (w/iw) (h/ih)); (k,k)
 
-/-- The paint of a picture in the content box `x`, `y`, `w`, `h`: one rectangle filled
-with the image, centred (`object-position: 50% 50%`) and cut to the box by its own
-geometry, as the SVG `image` with `slice` is. -/
+/-- CSS Images 3 §5.6 resolves position percentages against the space left by the
+fitted object. That space can be negative when the object exceeds the box. -/
+def pictureOffset (position : Option (CSS.Length × CSS.Length)) (roomX roomY : Float) : Float × Float :=
+  match position with
+  | none => (roomX/2,roomY/2)
+  | some (x,y) => ((CSS.resolve roomX x).getD (roomX/2), (CSS.resolve roomY y).getD (roomY/2))
+
+theorem pictureOffset_default (roomX roomY : Float) :
+    pictureOffset none roomX roomY = (roomX/2,roomY/2) := rfl
+
+theorem pictureOffset_percent (roomX roomY x y : Float) :
+    pictureOffset (some (.percent x,.percent y)) roomX roomY = (roomX*x,roomY*y) := rfl
+
+/-- Paint the fitted image at its object position, clipped to its content box. -/
 def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float) : List Node :=
   let (iw,ih) := picture.size
   if !s.visible || w <= 0 || h <= 0 || iw <= 0 || ih <= 0 then [] else
   let (sx,sy) := fitScale s.objectFit iw ih w h
-  let dx := x+(w-iw*sx)/2
-  let dy := y+(h-ih*sy)/2
+  let (offsetX,offsetY) := pictureOffset s.objectPosition (w-iw*sx) (h-ih*sy)
+  let dx := x+offsetX
+  let dy := y+offsetY
+
   let left := max x dx
   let top := max y dy
   let right := min (x+w) (dx+iw*sx)
@@ -390,8 +795,15 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
     | some _ => (Float.ofNat picture.bitmap.width/iw,Float.ofNat picture.bitmap.height/ih)
     | none => (1,1)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
-  let paint : Paint := .image ⟨map,picture.id,picture.bitmap⟩
-  [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
+  let paint : Paint := .image {map, id := picture.id, bitmap := picture.bitmap}
+  let image := Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩
+  if s.cornerLengths.isNone then [image] else
+    let b := s.borderEdges
+    let p := s.padding
+    let edges : Edges := ⟨b.top+p.top,b.right+p.right,b.bottom+p.bottom,b.left+p.left⟩
+    match roundedOutline s (w+edges.left+edges.right) (h+edges.top+edges.bottom) edges x y w h with
+    | some outline => [roundedPaint outline image]
+    | none => [image]
 
 /-- A replaced element's margin box at the origin, for content `w` by `h`: its outer
 width and height, and its background, border and content. `content` paints the
@@ -414,14 +826,44 @@ def autoMarginShift (s : Computed) (available outer : Float) : Float :=
   if free <= 0 || !s.autoMarginLeft then 0
   else if s.autoMarginRight then free/2 else free
 
+/-- Resolve the used left margin of a horizontal block in normal flow.
+With specified margins the containing block's direction selects the side that
+absorbs the remaining space. On overflow, auto margins first become zero
+(CSS 2.2 §10.3.3). -/
+def blockMarginShift (s : Computed) (rtl : Bool) (available outer : Float) : Float :=
+  let free := available-outer
+  if rtl && (free < 0 || (!s.autoMarginLeft && !s.autoMarginRight)) then free
+  else autoMarginShift s available outer
+
+#guard blockMarginShift {} true 100 52 == 48
+#guard blockMarginShift {} false 100 52 == 0
+#guard blockMarginShift {autoMarginLeft := true, autoMarginRight := true} true 100 40 == 30
+#guard blockMarginShift {autoMarginRight := true} true 100 120 == -20
+
 /-- The width that margins, borders and padding add to a box. -/
 private def horizontalEdges (s : Computed) : Float :=
   s.margin.left+s.margin.right+s.borderEdges.left+s.borderEdges.right+s.padding.left+s.padding.right
 
+/-- The owner of a text item, for paint and for layout fragments. A control's
+anonymous label is painted for the control, with no node of its own in the arena.
+Its fragments use the first index outside the layout arena. They still take space,
+for example when sizing an auto-width button. -/
+structure TextSource where
+  paint : Nat
+  geometry : Nat
+  deriving Repr
+
+def TextSource.node (id : Nat) : TextSource := ⟨id,id⟩
+
+def TextSource.control (dom : Dom) (id : Nat) : TextSource := ⟨id,dom.size⟩
+
 inductive Inline where
-  | word (source : Nat) (style : Computed) (text : String) (start : Nat)
-  | space (source : Nat) (style : Computed)
+  | word (source : TextSource) (style : Computed) (text : String) (start : Nat)
+  | space (source : TextSource) (style : Computed)
   | lineBreak (style : Computed)
+  /-- The edge of a block box inside an inline box (CSS 2.1 §9.2.1.1): it ends the line
+  when the line has content, and is nothing on an empty line. -/
+  | blockBreak (style : Computed)
   /-- A replaced element (`img`, inline `svg`): its margin box and paint at the origin. -/
   | replaced (source : Nat) (style : Computed) (width height : Float) (nodes : List Node)
   /-- An `inline-block` from `openAtomic` to `closeAtomic`, laid out (`atomize`): its
@@ -451,40 +893,68 @@ def inlineLead (s : Computed) : Float := s.margin.left+s.borderEdges.left+s.padd
 /-- What the end of an inline box adds to its line: the right padding, border and margin. -/
 def inlineTrail (s : Computed) : Float := s.padding.right+s.borderEdges.right+s.margin.right
 
-/-- A character of the scripts that break between letters with no space between words
-(UAX 14 classes ID, CJ, H2 and H3, and their punctuation): Han, kana, Hangul, CJK
-punctuation, fullwidth forms. -/
-def wideChar (c : Nat) : Bool :=
-  (0x2E80 ≤ c && c ≤ 0x9FFF) || (0xAC00 ≤ c && c ≤ 0xD7AF) || (0xF900 ≤ c && c ≤ 0xFAFF) ||
-  (0xFE30 ≤ c && c ≤ 0xFE4F) || (0xFF00 ≤ c && c ≤ 0xFFEF) || (0x20000 ≤ c && c ≤ 0x3FFFF)
-
-/-- A word cut where UAX 14 lets a line break inside it next to a `wideChar`, so that
-Chinese, Japanese and Korean text wraps between its characters as in a browser (CSS Text 3
-§5.1, `word-break: normal`), and a table cell's narrowest width is a character, not the
-sentence. Each piece with its offset in code points. A word with no `wideChar` is one
-piece, with no UAX 14 pass. -/
-def wordPieces (word : String) : List (Nat × String) :=
-  let cs := word.toList.toArray
-  if !cs.any (fun c => wideChar c.toNat) then [(0, word)] else Id.run do
-    let cuts := (Unicode.LineBreak.breaks cs).filter fun i =>
-      i < cs.size && (wideChar cs[i-1]!.toNat || wideChar cs[i]!.toNat)
+/-- Split one CSS text token at its internal UAX 14 break opportunities, retaining
+code-point offsets for selection. CSS spaces and explicit line breaks are handled
+by the caller. Plain ASCII letters and digits have no internal break. -/
+def wordPieces (word : String) (mode : Unicode.LineBreak.Mode := .strict) : List (Nat × String) :=
+  let chars := word.toList
+  if chars.all (fun c => c.isAlpha || c.isDigit) then [(0, word)] else Id.run do
+    let cs := chars.toArray
     let mut out : List (Nat × String) := []
     let mut from_ := 0
-    for i in cuts do
-      out := (from_, String.ofList (cs.extract from_ i).toList) :: out
-      from_ := i
+    for i in Unicode.LineBreak.breaks cs mode do
+      if i < cs.size then
+        out := (from_, String.ofList (cs.extract from_ i).toList) :: out
+        from_ := i
     out := (from_, String.ofList (cs.extract from_ cs.size).toList) :: out
     return out.reverse
 
-#guard wordPieces "word-break" == [(0, "word-break")]
+/-- Plain alphanumeric text keeps its original token and offset in every line-break mode. -/
+theorem wordPieces_alnum (word : String) (mode : Unicode.LineBreak.Mode)
+    (alnum : word.toList.all (fun c => c.isAlpha || c.isDigit) = true) :
+    wordPieces word mode = [(0, word)] := by
+  simp [wordPieces, alnum]
+
+#print axioms wordPieces_alnum
+
+#guard wordPieces "word-break" == [(0, "word-"), (5, "break")]
+#guard wordPieces "alpha\u200Bbeta" == [(0, "alpha\u200B"), (6, "beta")]
+#guard wordPieces "alpha\u2003beta" == [(0, "alpha\u2003"), (6, "beta")]
+#guard wordPieces "alpha\u2060beta" == [(0, "alpha\u2060beta")]
+#guard wordPieces "alpha\u00A0beta" == [(0, "alpha\u00A0beta")]
 #guard wordPieces "مرحبا" == [(0, "مرحبا")]
 #guard (wordPieces "你好，世界").map (·.2) == ["你", "好，", "世", "界"]
 -- Small kana and the middle dot do not start a line (UAX 14 NS, CJ as NS).
 #guard (wordPieces "こんにちは世界・カタカナ・漢字").map (·.2) ==
   ["こ", "ん", "に", "ち", "は", "世", "界・", "カ", "タ", "カ", "ナ・", "漢", "字"]
 #guard (wordPieces "Unicode漢字").map (·.1) == [0, 7, 8]
+-- `line-break: normal` lets a small kana start a line (CSS Text 3 §5.3)
+#guard (wordPieces "文文ぁ字" .normal).map (·.2) == ["文", "文", "ぁ", "字"]
+#guard (wordPieces "文文ぁ字").map (·.2) == ["文", "文ぁ", "字"]
 
-private def textItems (id : Nat) (style : Computed) (text : String) : List Inline := Id.run do
+/-- The UAX 14 tailoring of a box's `line-break`. -/
+def lineBreakMode (s : Computed) : Unicode.LineBreak.Mode :=
+  match s.pos.lineBreak with
+  | .auto | .strict => .strict
+  | .normal => .normal
+  | .loose => .loose
+
+/-- The visible fallback for controls that reach the text shaper (CSS Text 3 §4).
+Use the replacement glyph so a font without Control Pictures still draws them.
+The one-code-point substitution retains text offsets. -/
+private def visibleControl (c : Char) : Char :=
+  let n := c.toNat
+  if (0x7F ≤ n && n ≤ 0x9F) || (n < 0x20 && n != 0x09 && n != 0x0A && n != 0x0D) then
+    Char.ofNat 0xFFFD
+  else c
+
+#guard (visibleControl (Char.ofNat 0x01)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x7F)).toNat == 0xFFFD
+#guard (visibleControl (Char.ofNat 0x85)).toNat == 0xFFFD
+#guard visibleControl '\t' == '\t' && visibleControl '\n' == '\n' &&
+  visibleControl '\r' == '\r' && visibleControl (Char.ofNat 0x200D) == Char.ofNat 0x200D
+
+private def textItems (id : TextSource) (style : Computed) (text : String) : List Inline := Id.run do
   let mut result : List Inline := []
   let mut word := ""
   let mut start := 0
@@ -495,19 +965,18 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
   for c in text.toList do
     if [' ','\n','\r','\t'].contains c || c.toNat == 12 then
       if !word.isEmpty then
-        for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+        for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
         word := ""
-      if style.preformatted then
-        -- CSS Text 3 §4.1.1 `white-space: pre`: each space and tab stays, and each newline breaks.
-        if c == '\n' then
-          result := .lineBreak style :: result
-          column := 0
-        else if c != '\r' then
+      if c == '\n' && (style.preformatted || style.preserveSegmentBreaks) then
+        result := .lineBreak style :: result
+        column := 0
+      else if style.preformatted then
+        if c != '\r' then
           let count := if c == '\t' then 8-column%8 else 1
           for _ in [0:count] do result := .space id style :: result
           column := column+count
-      else
-        if !spaced then result := .space id style :: result
+      else if !spaced then
+        result := .space id style :: result
       spaced := true
     else
       if word.isEmpty then start := index
@@ -517,21 +986,56 @@ private def textItems (id : Nat) (style : Computed) (text : String) : List Inlin
         | .uppercase => TextCase.upper c
         | .lowercase => TextCase.lower c
         | .capitalize => if word.isEmpty then TextCase.upper c else c
-      word := word.push shown
+      word := word.push (visibleControl shown)
       spaced := false
       column := column+1
     index := index+1
   if !word.isEmpty then
-    for (off, piece) in wordPieces word do result := .word id style piece (start+off) :: result
+    for (off, piece) in wordPieces word (lineBreakMode style) do result := .word id style piece (start+off) :: result
   return result.reverse
+
+/-- Collapsing intervening spaces does not remove a preserved blank line. -/
+theorem textItems_preLine_blankLine (id : TextSource) (style : Computed)
+    (keep : style.preserveSegmentBreaks = true) (collapse : style.preformatted = false) :
+    textItems id style "\n \n" = [.lineBreak style, .lineBreak style] := by
+  simp [textItems, keep, collapse]
+
+#print axioms textItems_preLine_blankLine
+
+-- Compare tokens and source offsets, keeping geometry and the inline breaker out of this check.
+#guard (textItems (.node 1) {preserveSegmentBreaks := true} "a  b\n \n  c").map
+    (fun
+      | .word _ _ word start => (word, start)
+      | .lineBreak _ | .blockBreak _ => ("\n", 0)
+      | .space .. => (" ", 0)
+      | _ => ("?", 0)) == [("a", 0), (" ", 0), ("b", 3), ("\n", 0), ("\n", 0), ("c", 9)]
 
 /-- What an `img` with no picture shows: its `alt` text in brackets, nothing for
 `alt=""` (an image that adds nothing), and `[image]` with no `alt`. -/
 private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
-  if !CSS.hasAttribute n "alt" then (textItems id s "[image]").toArray
+  if !CSS.hasAttribute n "alt" then (textItems (.node id) s "[image]").toArray
   else
     let alt := CSS.attrValue n "alt"
-    if alt.isEmpty then #[] else (textItems id s s!"[{alt}]").toArray
+    if alt.isEmpty then #[] else (textItems (.node id) s s!"[{alt}]").toArray
+
+/-- What a form control shows in its box (`CSS.controlText`): its value or label on one
+line in its own colour, a placeholder in the grey of other engines (`#757575`). Nothing for
+any other element. -/
+private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
+  match CSS.controlText dom id with
+  | none => #[]
+  | some (text, placeholder) =>
+    let grey : Color := ⟨0.459,0.459,0.459⟩
+    let pos := {s.pos with nowrap := true}
+    let t : Computed := { s with
+      background := none
+      underline := false
+      preformatted := false
+      preserveSegmentBreaks := false
+      color := if placeholder then grey else s.color
+      pos
+    }
+    (textItems (.control dom id) t text).toArray
 
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
 background of its own, so its words and spaces take the element's. -/
@@ -575,7 +1079,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     let n := dom.get id
     let s := styles[id]!
     if s.display == .none then return #[]
-    if n.type == .text then return (textItems id s n.data).toArray
+    if n.type == .text then return (textItems (.node id) s n.data).toArray
     if n.type != .element then return #[]
     if s.pos.isAbsolute then return #[.outOfFlow id]
     -- A replaced element with a picture: an `img`, and later a `video` or `canvas`.
@@ -585,7 +1089,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       return #[.replaced id s ow oh nodes]
     -- A `canvas`: a replaced box of its natural size, with nothing drawn in it here.
     if let some size := blankReplaced n then
-      let (w,h) := replacedSize s (some size) available
+      let (w,h) := replacedSize s size available
       let (ow,oh,nodes) := replacedBox id s w h (fun _ _ => [])
       return #[.replaced id s ow oh nodes]
     -- An image that is missing, broken or refused stands as its description, and stays a link.
@@ -603,12 +1107,27 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
     -- An inline box with `unicode-bidi` is wrapped in its bidi control characters.
     -- An inline box is between its bounds, which give it its boxes and its edges on the lines.
-    let mut out : Array Inline := if s.display.isBlockLevel then #[.lineBreak s]
+    -- A block box inside an inline box (CSS 2.1 §9.2.1.1) keeps its own box: it is laid out
+    -- as an atomic box on a line of its own, as wide as the line (`AtomicFrame.opened`),
+    -- with its background, borders, padding and size. Until 2026-11-23 only its contents
+    -- were kept: `<a><div class=votearrow></div></a>` drew nothing (Hacker News).
+    let sized := fun (l : CSS.Length) => match l with | .auto => false | _ => true
+    -- a block of zero height with no border or padding collapses through (CSS 2.1 §8.3.1): no box
+    let collapsing := (match s.height with | .px h => h == 0 | _ => false) && s.padding.top == 0 && s.padding.bottom == 0 &&
+      s.borderEdges.top == 0 && s.borderEdges.bottom == 0
+    let boxed := s.display.isBlockLevel && !collapsing && (sized s.width || sized s.height || s.background.isSome ||
+      s.backgroundImage.isSome || s.backgroundGradient.isSome || s.borderEdges.top > 0 || s.borderEdges.bottom > 0 ||
+      s.borderEdges.left > 0 || s.borderEdges.right > 0)
+    let mut out : Array Inline := if boxed then #[.blockBreak s, .openAtomic id s]
+      else if s.display.isBlockLevel then #[.lineBreak s]
       else if s.display == .inlineBlock then #[.openAtomic id s]
       else (if s.display == .inline then #[.openInline id s false] else #[]) ++ (bidiOpen s).map .bidiMark
     for child in n.kids do out := out ++ (← inlineItems dom styles embedding pictures available fuel child)
-    if s.display == .inline && s.background.isSome then out := out.map (withBackground s)
-    return if s.display.isBlockLevel then out.push (.lineBreak s)
+    -- a form control's own text (its value, label or placeholder)
+    out := out ++ controlItems dom id s
+    if s.display == .inline && s.background.isSome && !s.masked then out := out.map (withBackground s)
+    return if boxed then (out.push .closeAtomic).push (.blockBreak s)
+      else if s.display.isBlockLevel then out.push (.lineBreak s)
       else if s.display == .inlineBlock then out.push .closeAtomic
       else out ++ (bidiClose s).map .bidiMark ++ (if s.display == .inline then #[.closeInline id s] else #[])
 
@@ -641,11 +1160,12 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
   let scale := run.fontSize/font.unitsPerEm
   for g in run.glyphs do
     for geometry in font.outline g.index do
-      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,transform := glyphTransform s scale g.x g.y (font.ascent*scale)}
+      -- `rise`: text of a `sup` or `sub` (CSS 2.1 §10.8.1) drawn above or below the baseline
+      let primitive : Primitive := {geometry,style := glyphStyle s run.fontSize scale,transform := glyphTransform s scale g.x (g.y-s.rise) (font.ascent*scale)}
       out := out.push (.paint ⟨some run.source,primitive⟩)
   if s.underline && !run.glyphs.isEmpty then
     let left := (run.glyphs[0]?).map (·.x) |>.getD 0
-    let top := (run.glyphs[0]?).map (·.y) |>.getD 0
+    let top := ((run.glyphs[0]?).map (·.y) |>.getD 0)-s.rise
     let width := run.glyphs.foldl (fun w g => w+g.advance) 0
     let thickness := max 1 (run.fontSize/14)
     let baseline := top+font.ascent*scale
@@ -655,7 +1175,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
 private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
   | .word _ s text _ => do
     match ← font.word s text rtl with
-    | none => return font.advance*s.fontSize/font.unitsPerEm*Float.ofNat text.length
+    | none => return (font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx)*Float.ofNat text.length
     | some word => return word.advance*s.fontSize/font.unitsPerEm
   | .replaced _ _ w _ _ | .atomic _ _ w _ _ => pure w
   | .openInline _ s continued => pure (if continued then 0 else inlineLead s)
@@ -678,7 +1198,7 @@ def colourNode (source : Nat) (glyph : FontProvider.Glyph) (x y scale : Float) (
   let w := f*Float.ofNat image.bitmap.width
   let h := f*Float.ofNat image.bitmap.height
   let map : Transform := ⟨1/f,0,0,1/f,-left/f,-top/f⟩
-  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image ⟨map,image.id,image.bitmap⟩}}⟩
+  return .paint ⟨some source,{geometry := .rect left top w h,style := {fill := .image {map, id := image.id, bitmap := image.bitmap}}}⟩
 
 private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Computed)
     (left baseline width : Float) : Array Node := Id.run do
@@ -686,16 +1206,32 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
   let scale := run.fontSize/word.unitsPerEm
   let mut out := #[]
   for (glyph,position) in word.glyphs.zip run.glyphs do
-    if let some node := colourNode run.source glyph position.x position.y scale s.color then
+    if let some node := colourNode run.source glyph position.x (position.y-s.rise) scale s.color then
       out := out.push node
       continue
     for geometry in glyph.geometry do
-      let place := glyphTransform s scale position.x position.y (baseline-position.y)
+      let place := glyphTransform s scale position.x (position.y-s.rise) (baseline-position.y)
       out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,transform := place}⟩)
   if s.underline && width > 0 then
     let thickness := max 1 (run.fontSize/14)
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline-s.rise+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
   return out
+
+-- An empty fragment has no right edge. Keep it at minus infinity until the
+-- measured width is clamped, so that shifting it cannot create an edge.
+private def inlineRight (r : Result) : Float :=
+  match r.inlineFlowRight with
+  | some x => x
+  | none => r.boxes.foldl (fun x b => max x (b.x+b.width)) (-1.0/0.0)
+
+private def mergeInlineRight (a b : Result) : Option Float :=
+  if a.inlineFlowRight.isNone && b.inlineFlowRight.isNone then none
+  else some (max (inlineRight a) (inlineRight b))
+
+@[inline] private def pushInlineBox (r : Result) (box : Box) : Result :=
+  {r with
+    boxes := r.boxes.push box
+    inlineFlowRight := r.inlineFlowRight.map (fun x => max x (box.x+box.width))}
 
 /-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
 its glyph positions moved by the same amount. -/
@@ -703,6 +1239,7 @@ private def shiftResult (dx dy : Float) (r : Result) : Result :=
   let boxes := r.boxes.map fun b => {b with x := b.x+dx, y := b.y+dy}
   let runs := r.runs.map fun run => {run with glyphs := run.glyphs.map fun g => {g with x := g.x+dx, y := g.y+dy}}
   {r with nodes := #[.group none (translate dx dy) r.nodes.toList], boxes, runs,
+          inlineFlowRight := r.inlineFlowRight.map (·+dx),
           pending := r.pending.map fun p => {p with x := p.x+dx, y := p.y+dy},
           baseline := r.baseline.map (·+dy), lastBaseline := r.lastBaseline.map (·+dy)}
 
@@ -722,27 +1259,43 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
   match s.background with
   | some c =>
     if !s.visible || width <= 0 then #[] else
-    #[.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
+    let (a,d) := font.metricsOf s
+    #[.paint ⟨some source,{geometry := .rect x top width ((a+d)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
   | none => #[]
+
+/-- A line carrying only static-position placeholders has no in-flow content. -/
+private def isStaticPlaceholder : Inline → Bool
+  | .outOfFlow _ => true
+  | _ => false
+
+private def staticLinePositions (items : Array (Float × Inline)) (x y : Float) : Array Pending :=
+  items.filterMap fun (offset, item) => match item with
+    | .outOfFlow id => some {id, x := x+offset, y}
+    | _ => none
 
 /-- All inline participants share the line baseline, computed before any glyph
 position or replaced-element position is emitted. -/
 private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool) := #[]) : Except String Result := do
+  -- CSS 2.2 §9.4.2: determine the static positions without creating a line box.
+  if items.all (fun item => isStaticPlaceholder item.2) then
+    return {pending := staticLinePositions items x y}
   let mut ascent : Float := 0
   let mut descent : Float := 0
   let mut tallTop : Float := 0
   let mut tallBottom : Float := 0
   if let some style := strut then
     let leading := lineLeading font style
-    ascent := font.ascent*style.fontSize/font.unitsPerEm+leading
-    descent := font.descent*style.fontSize/font.unitsPerEm+leading
+    let (a,d) := font.metricsOf style
+    ascent := a*style.fontSize/font.unitsPerEm+leading
+    descent := d*style.fontSize/font.unitsPerEm+leading
   for (_,item) in items do
     match item with
-    | .word _ s _ _ | .space _ s | .lineBreak s =>
+    | .word _ s _ _ | .space _ s | .lineBreak s | .blockBreak s =>
       let leading := lineLeading font s
-      ascent := max ascent (font.ascent*s.fontSize/font.unitsPerEm+leading)
-      descent := max descent (font.descent*s.fontSize/font.unitsPerEm+leading)
+      let (a,d) := font.metricsOf s
+      ascent := max ascent (a*s.fontSize/font.unitsPerEm+leading)
+      descent := max descent (d*s.fontSize/font.unitsPerEm+leading)
     -- An atomic box (an inline-block, an inline flex or grid container) sits on the line by
     -- `vertical-align`: on its own baseline (`atomicBaseline`), or by its margin box.
     | .atomic _ s _ h inner => match s.verticalAlign with
@@ -783,15 +1336,16 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   let fragment := fun (f : InlineBox.Frame Float) (s : Computed) (ended : Bool) =>
     let b := s.borderEdges
     let scale := s.fontSize/font.unitsPerEm
-    let top := y+ascent-font.ascent*scale-s.padding.top-b.top
-    let height := (font.ascent+font.descent)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
+    let (a,d) := font.metricsOf s
+    let top := y+ascent-a*scale-s.padding.top-b.top
+    let height := (a+d)*scale+s.padding.top+s.padding.bottom+b.top+b.bottom
     let left := f.lo
     -- never past the box's right edge by a rounding of the subtraction: the width of a
     -- container that shrinks to fit is read from these boxes
     let span := f.hi-f.lo
     let width := if left+span > f.hi then span-(left+span-f.hi) else span
     -- most inline boxes have nothing to paint
-    let nodes := if (s.background.isNone || reordered) && s.borderStyle == .none then #[] else
+    let nodes := if (s.background.isNone || reordered) && !s.hasBorder then #[] else
       decorations f.id {s with background := if reordered then none else s.background,
                                borderWidth := {s.borderWidth with left := if f.start then s.borderWidth.left else 0,
                                                                   right := if ended then s.borderWidth.right else 0}}
@@ -804,38 +1358,47 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     let mut extent : Option (Float × Float) := none
     match item with
     | .word source s text start =>
+      -- `top`: where the glyphs' em boxes start in the profile's units (the glyphs are drawn
+      -- at the baseline); `areaTop`: the content area of the text's own font, and `boxTop` its
+      -- line-height box (CSS 2.1 §10.6.1, §10.8.1).
       let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm
       let leading := lineLeading font s
+      let areaTop := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm
+      let boxTop := areaTop-leading
       if reordered && s.background.isSome then
-        out := {out with nodes := out.nodes ++ textBackground font source s (x+offset) top (← itemWidth font rtl item)}
+        out := {out with nodes := out.nodes ++ textBackground font source.paint s (x+offset) areaTop (← itemWidth font rtl item)}
       match ← font.word s text rtl with
       | none =>
         -- A character this font has no glyph for shows as a question mark.
         let chars := text.toList.map fun c => if font.admits c.toNat then c else '?'
-        let advance := font.advance*s.fontSize/font.unitsPerEm
+        let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run, boxes := out.boxes.push ⟨source,x+offset,top-leading,advance*Float.ofNat chars.length,s.lineHeight⟩}
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        out := pushInlineBox {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run}
+          ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
       | some word =>
         let scale := s.fontSize/word.unitsPerEm
         let width := word.advance*s.fontSize/font.unitsPerEm
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
-        let run : GlyphRun := ⟨source,font.family,s.fontSize,text,glyphs⟩
-        out := {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run,boxes := out.boxes.push ⟨source,x+offset,top-leading,width,s.lineHeight⟩}
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        out := pushInlineBox
+          {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) (y+ascent) width, runs := out.runs.push run}
+          ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩
         extent := some (x+offset,x+offset+width)
     | .space source s =>
       let advance ← spaceWidth font s
       let leading := lineLeading font s
-      let top := y+ascent-font.ascent*s.fontSize/font.unitsPerEm-leading
-      out := {out with nodes := if reordered then out.nodes ++ textBackground font source s (x+offset) (top+leading) advance else out.nodes,
-                       boxes := out.boxes.push ⟨source,x+offset,top,advance,s.lineHeight⟩}
+      let top := y+ascent-(font.metricsOf s).1*s.fontSize/font.unitsPerEm-leading
+      out := pushInlineBox
+        {out with nodes := if reordered then out.nodes ++ textBackground font source.paint s (x+offset) (top+leading) advance else out.nodes}
+        ⟨source.geometry,x+offset,top,advance,s.lineHeight⟩
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+        out := {out with nodes := out.nodes.push (.paint ⟨some source.paint,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
     | .replaced source s width height nodes =>
       let top := match s.verticalAlign with
         | .baseline => y+ascent-height
@@ -844,8 +1407,8 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         | .bottom => y+ascent+descent-height
       -- The box is the border box, inside the margins.
       let m := s.margin
-      out := {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes),
-                       boxes := out.boxes.push ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩}
+      out := pushInlineBox {out with nodes := out.nodes.push (.group none (translate (x+offset) top) nodes)}
+        ⟨source,x+offset+m.left,top+m.top,width-m.left-m.right,height-m.top-m.bottom⟩
       extent := some (x+offset,x+offset+width)
     | .atomic _ s width height inner =>
       let top := match s.verticalAlign with
@@ -856,7 +1419,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let moved := shiftResult (x+offset) top inner
       -- `inner` holds the border box of the inline-block first, then its content boxes.
       out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
-                       pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
+                       inlineFlowRight := mergeInlineRight out moved, pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
       extent := some (x+offset,x+offset+width)
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
     | .openInline id s continued =>
@@ -867,7 +1430,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       | (f,fs) :: rest =>
         let f := f.close (x+offset) (s.padding.right+s.borderEdges.right)
         let (box,nodes) := fragment f fs true
-        out := {out with boxes := out.boxes.push box}
+        out := pushInlineBox out box
         under := under ++ nodes
         frames := InlineBox.merge rest f fs.margin.left fs.margin.right true
       | [] => pure ()
@@ -878,15 +1441,25 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     match frames with
     | (f,fs) :: rest =>
       let (box,nodes) := fragment f fs false
-      out := {out with boxes := out.boxes.push box}
+      out := pushInlineBox out box
       under := under ++ nodes
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
   return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
 
+/-- An entirely out-of-flow row retains its static positions and contributes no
+    height, baseline or paint, even when the enclosing block supplies a strut. -/
+private theorem lineLayout_static_only (font : FontProfile) (items : Array (Float × Inline))
+    (x y : Float) (strut : Option Computed) (dirs : Array (Option Bool))
+    (h : items.all (fun item => isStaticPlaceholder item.2) = true) :
+    lineLayout font items x y strut dirs = .ok {pending := staticLinePositions items x y} := by
+  simp [lineLayout, h] <;> rfl
+
+#print axioms lineLayout_static_only
+
 private def appendResult (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes, boxes := a.boxes ++ b.boxes, runs := a.runs ++ b.runs, height := a.height+b.height,
-   pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
+   inlineFlowRight := mergeInlineRight a b, pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
    lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
 
 /-- A word of preformatted text: it never wraps. -/
@@ -896,7 +1469,7 @@ private def preformatted : Inline → Bool
 
 /-- No line break before `item` (CSS Text 3 §3 `white-space: nowrap`): the space before
 it is text that does not wrap, or with no space there the item itself is. -/
-private def heldByNowrap (space : Option (Nat × Computed)) : Inline → Bool
+private def heldByNowrap (space : Option (TextSource × Computed)) : Inline → Bool
   | .word _ s _ _ => match space with
     | some (_,spaceStyle) => spaceStyle.pos.nowrap
     | none => s.pos.nowrap
@@ -910,7 +1483,7 @@ character (CSS Writing Modes 3 §2.4.1). -/
 private def bidiChars : Inline → Array Char
   | .word _ _ text _ => text.toList.toArray
   | .space _ _ => #[' ']
-  | .lineBreak _ => #[' ']
+  | .lineBreak _ | .blockBreak _ => #[' ']
   | .replaced .. | .atomic .. => #['￼']
   | .bidiMark c => #[c]
   | .openAtomic _ _ | .closeAtomic | .outOfFlow _ | .openInline .. | .closeInline .. => #[]
@@ -921,6 +1494,77 @@ private def bidiClassNeeds (c : Char) : Bool :=
   match Unicode.bidiClassOf c with
   | .R | .AL | .AN | .LRE | .LRO | .RLE | .RLO | .PDF | .LRI | .RLI | .FSI | .PDI => true
   | _ => false
+
+/-- Recheck a run that crosses text sources. Use the original style for each
+piece, with the surrounding text available to the Unicode line-break rules.
+An existing item boundary may join a run without joining its paint or source. -/
+private def appendJoinedText (items : Array Inline) (lo hi : Nat)
+    (out : Array Inline) (glue : Array Bool) : Array Inline × Array Bool := Id.run do
+  let chars := (items.extract lo hi).flatMap fun
+    | .word _ _ text _ => text.toList.toArray
+    | _ => #[]
+  let strict := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .strict
+  let normal := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .normal
+  let loose := Thunk.mk fun _ => Unicode.LineBreak.breakFlags chars .loose
+  let mut offset := 0
+  let mut out := out
+  let mut glue := glue
+  for k in [lo:hi] do
+    let item := items[k]!
+    match item with
+    | .word source style text start =>
+      let flags := (match lineBreakMode style with
+        | .strict => strict
+        | .normal => normal
+        | .loose => loose).get
+      let n := text.length
+      let mut from_ := 0
+      let mut held := offset > 0 && !(flags[offset]?.getD false)
+      for cut in [1:n] do
+        if flags[offset+cut]?.getD false then
+          let piece := String.ofList (chars.extract (offset+from_) (offset+cut)).toList
+          out := out.push (.word source style piece (start+from_))
+          glue := glue.push held
+          from_ := cut
+          held := false
+      let item := if from_ == 0 then item else
+        .word source style (String.ofList (chars.extract (offset+from_) (offset+n)).toList) (start+from_)
+      out := out.push item
+      glue := glue.push held
+      offset := offset+n
+    | _ =>
+      out := out.push item
+      glue := glue.push false
+  return (out,glue)
+
+/-- Text adjacency ignores inline boundaries and out-of-flow placeholders (CSS
+Text 3 §1.5). White space, forced breaks and atomic boxes end these runs.
+A run confined to one text source already has its own UAX 14 boundaries. -/
+private def joinedInlineText (items : Array Inline) : Array Inline × Array Bool := Id.run do
+  let mut previous : Option TextSource := none
+  let mut joined := false
+  let mut start := 0
+  let mut copied := 0
+  let mut out := #[]
+  let mut glue := #[]
+  for k in [:items.size+1] do
+    match items[k]? with
+    | some (.word source _ _ _) =>
+      if let some p := previous then
+        joined := joined || p.paint != source.paint || p.geometry != source.geometry
+      previous := some source
+    | some (.openInline ..) | some (.closeInline ..) | some (.outOfFlow _) | some (.bidiMark _) => pure ()
+    | _ =>
+      if joined then
+        out := out ++ items.extract copied start
+        glue := glue ++ Array.replicate (start-copied) false
+        (out,glue) := appendJoinedText items start k out glue
+        copied := k
+      previous := none
+      joined := false
+      start := k+1
+  if copied == 0 then return (items,#[])
+  return (out ++ items.extract copied items.size, glue)
 
 /-- The block needs UAX #9: it is right to left or plaintext, or has an inline box
 with `unicode-bidi`, or a character of `bidiClassNeeds`. Otherwise every level is 0
@@ -942,7 +1586,7 @@ structure BidiItems where
 
 /-- UAX #9 P1 to I2 over the items of a block (`Unicode.levelsOfText`). A character
 that X9 removes takes the level before it. -/
-def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) : BidiItems := Id.run do
+def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) (held : Array Bool := #[]) : BidiItems := Id.run do
   let mut cs : Array Char := #[]
   let mut starts : Array Nat := #[]
   for it in items do
@@ -968,7 +1612,7 @@ def bidiItems (items : Array Inline) (paraDir : Unicode.ParaDir) : BidiItems := 
       for k in [1:chars.size+1] do
         if k == chars.size || lv[st+k]! != lv[st+from_]! then
           out := {items := out.items.push (.word source s (String.ofList (chars.extract from_ k).toList) (start+from_)),
-                  levels := out.levels.push lv[st+from_]!, glue := out.glue.push (from_ > 0),
+                  levels := out.levels.push lv[st+from_]!, glue := out.glue.push (from_ > 0 || held[i]?.getD false),
                   paraLevels := out.paraLevels.push para}
           from_ := k
     | other =>
@@ -988,7 +1632,7 @@ def bidiLine (line : Array (Float × Inline)) (levels paras : Array Nat) (lineEn
   for q in [0:n] do
     let j := n-1-q
     match line[j]!.2 with
-    | .space _ _ | .lineBreak _ | .bidiMark _ | .openInline .. | .closeInline .. => ls := ls.set! j (paras[j]?.getD 0)
+    | .space _ _ | .lineBreak _ | .blockBreak _ | .bidiMark _ | .openInline .. | .closeInline .. => ls := ls.set! j (paras[j]?.getD 0)
     | _ => break
   let order := Unicode.reorderByLevels (Array.range n) ls
   let width := fun (j : Nat) => (if j+1 < n then line[j+1]!.1 else lineEnd) - line[j]!.1
@@ -1010,18 +1654,127 @@ private def placeStarts (starts : Array (Nat × Nat × Computed)) (line : Array 
 private def continuedStarts (open_ : Array (Nat × Nat × Computed)) : Array (Float × Inline) × Array Nat :=
   if open_.isEmpty then (#[],#[]) else (open_.map fun st => (0,.openInline st.2.1 st.2.2 true),open_.map (·.1))
 
+/-- The widths of one inline participant and its preceding collapsed separator. -/
+private structure WrapMeasure where
+  width : Float
+  gap : Float
+
+/-- Greedy packing at a possibly reduced breaking width. The recorded widths
+exclude trailing collapsible white space. -/
+private def wrappedWidths (words : Array WrapMeasure) (limit : Float) : Array Float := Id.run do
+  let mut widths := #[]
+  let mut line := 0
+  for word in words do
+    if line <= 0 then
+      line := word.width
+    else
+      let next := line + word.gap + word.width
+      if next > limit then
+        widths := widths.push line
+        line := word.width
+      else
+        line := next
+  return if line > 0 then widths.push line else widths
+
+/-- Use the variance of occupied widths to compare layouts with the same line
+count and available width. This is also the variance of their remaining space. -/
+private def widthVariance (widths : Array Float) : Float :=
+  let mean := widths.foldl (· + ·) 0 / Float.ofNat widths.size
+  widths.foldl (fun sum width => sum + (width - mean) * (width - mean)) 0
+
+/-- A breaking width with the same number of lines as the ordinary layout. -/
+private abbrev CountPreservingWidth (words : Array WrapMeasure) (available : Float) :=
+  { w : Float // (wrappedWidths words w).size = (wrappedWidths words available).size }
+
+/-- Search for a more even wrap with the normal line count. Limit the search to
+ten lines and twelve probes. A reduced breaking width never changes the box width. -/
+private def chooseBalancedWidth (words : Array WrapMeasure) (available : Float) :
+    Option (CountPreservingWidth words available) := Id.run do
+  let normal := wrappedWidths words available
+  if normal.size <= 1 || normal.size > 10 then return none
+  let mut lo := words.foldl (fun w item => max w item.width) 0
+  if lo > available then return none
+  let mut hi := available
+  let mut choice := none
+  let mut score := widthVariance normal
+  for _ in [0:12] do
+    let width := (lo + hi) / 2
+    let proposed := wrappedWidths words width
+    if proposed.size > normal.size then lo := width
+    else
+      hi := width
+      if h : proposed.size = normal.size then
+        let candidate := widthVariance proposed
+        if candidate < score then
+          score := candidate
+          choice := some ⟨width, h⟩
+  return choice
+
+private def balancedWidth (words : Array WrapMeasure) (available : Float) : Option Float :=
+  (chooseBalancedWidth words available).map (·.val)
+
+private theorem balancedWidth_preservesCount (words : Array WrapMeasure) (available width : Float)
+    (selected : balancedWidth words available = some width) :
+    (wrappedWidths words width).size = (wrappedWidths words available).size := by
+  unfold balancedWidth at selected
+  cases h : chooseBalancedWidth words available with
+  | none => simp [h] at selected
+  | some good =>
+    simp only [h, Option.map_some, Option.some.injEq] at selected
+    exact selected ▸ good.property
+
+#print axioms balancedWidth_preservesCount
+
+/-- Measure text in a constant-width horizontal line box. Inline boxes with no
+horizontal edges fit the same model. For other participants, let the ordinary
+layout handle the whole run. -/
+private def inlineBalanceWidth (font : FontProfile) (items : Array Inline) (held : Array Bool)
+    (available : Float) : Except String (Option Float) := do
+  if items.size > 384 || available <= 0 || !available.isFinite then return none
+  let mut words := #[]
+  let mut separator := none
+  for i in [:items.size] do
+    let item := items[i]!
+    match item with
+    | .word _ s _ _ =>
+      if s.preformatted || s.pos.nowrap then return none
+      let width ← itemWidth font none item
+      let gap ← match separator with
+        | some space => spaceWidth font space
+        | none => pure 0
+      if width <= 0 || !width.isFinite || gap < 0 || !gap.isFinite then return none
+      if held[i]?.getD false then
+        let some previous := words.back? | return none
+        words := words.set! (words.size-1) {previous with width := previous.width + gap + width}
+      else words := words.push ⟨width,gap⟩
+      separator := none
+    | .space _ s =>
+      if s.preformatted || s.pos.nowrap then return none
+      separator := some s
+    | .openInline _ s _ => if inlineLead s != 0 then return none
+    | .closeInline _ s => if inlineTrail s != 0 then return none
+    | _ => return none
+  return balancedWidth words available
+
+/-- Earlier floats still matter to clearance and later boxes. Balancing only needs
+to know whether they can narrow any line at or below this paragraph's top. -/
+private def uniformLineBand (s : Computed) (floats : Array Floats.Box) (top : Float) : Bool :=
+  floats.isEmpty || (s.balanceText && Floats.endedBefore floats.toList (LU.ofPx top))
+
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
 each line is reordered (`bidiLine`). -/
 def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : Float)
     (strut : Option Computed := none)
-    (band : Float → Float × Float := fun _ => (0,available)) : Except String Result := do
+    (band : Float → Float × Float := fun _ => (0,available))
+    (uniformBand : Bool := true) : Except String Result := do
   let rtlBlock := strut.any (·.direction == .rtl)
   let plain := strut.any (·.unicodeBidi == .plaintext)
+  let (items0, held) := joinedInlineText items0
   let bidi := needsBidi rtlBlock plain items0
-  let bi : BidiItems := if bidi then bidiItems items0 (if plain then .auto else if rtlBlock then .rtl else .ltr)
-    else ⟨items0, #[], #[], #[]⟩
+  let bi : BidiItems := if bidi then bidiItems items0 (if plain then .auto else if rtlBlock then .rtl else .ltr) held
+    else ⟨items0, #[], held, #[]⟩
   let items := bi.items
   let dirOf := fun (k : Nat) => if bidi then (bi.levels[k]?.map (· % 2 == 1)) else none
   let glued := fun (k : Nat) => bi.glue[k]?.getD false
@@ -1031,8 +1784,19 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let rtlAlign := if plain then (bi.paraLevels[0]?.getD 0) % 2 == 1 else rtlBlock
   -- `band dy` is the room of a line that starts `dy` below `y`: its offset from `x` and its
   -- width, less than `available` beside floats (CSS 2.1 §9.5).
-  let indent := fun (w dy : Float) =>
+  -- CSS Text 3 §8.3: the first line of the block container starts `textIndent` in from its
+  -- start edge (a percentage of `available`), and has that much less room.
+  let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
+  let balanced ← if uniformBand && !bidi && firstIndent == 0 &&
+      strut.any (fun s => s.balanceText && s.balanceWrap && !s.pos.nowrap && s.pos.writingMode == .horizontalTb) then
+    inlineBalanceWidth font items held (band 0).2
+    else pure none
+  let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
+    if !first || firstIndent == 0 then (offset,room)
+    else if rtlAlign then (offset,room-firstIndent) else (offset+firstIndent,room-firstIndent)
+  let indent := fun (w dy : Float) (first : Bool) =>
+    let (offset,room) := bandAt dy first
     offset+match (strut.map (·.textAlign)).getD .start with
     | .start => if rtlAlign then max 0 (room-w) else 0
     | .end_ => if rtlAlign then 0 else max 0 (room-w)
@@ -1045,7 +1809,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
     else (line, #[])
   let mut out : Result := {}
   let mut cursorX : Float := 0
-  let mut pendingSpace : Option (Nat × Computed) := none
+  let mut pendingSpace : Option (TextSource × Computed) := none
   let mut pendingK : Nat := 0
   let mut line : Array (Float × Inline) := #[]
   let mut lineIdx : Array Nat := #[]
@@ -1059,6 +1823,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   -- an inline box that starts on it.
   let mut content := false
   let mut fresh := false
+  let mut first := true
   for k in [0:items.size] do
     let item := items[k]!
     match item with
@@ -1114,14 +1879,34 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       line := line.push (cursorX,item)
       lineIdx := lineIdx.push k
       content := true
+    | .blockBreak _ =>
+      -- the starts and ends of inline boxes are not content: a line of only those is empty
+      let real := line.any fun (_, it) => match it with
+        | .openInline .. | .closeInline .. | .bidiMark _ | .outOfFlow _ => false
+        | _ => true
+      if content && real then
+        if !waiting.isEmpty then
+          (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
+          openBoxes := openBoxes ++ waiting
+          waiting := #[]
+        let (row,dirs) := place line lineIdx cursorX
+        let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
+        out := appendResult out row
+        first := false
+        (line,lineIdx) := continuedStarts openBoxes
+        cursorX := 0
+        pendingSpace := none
+        content := false
+        fresh := false
     | .lineBreak _ =>
       if !waiting.isEmpty then
         (line,lineIdx,cursorX) := placeStarts waiting line lineIdx cursorX
         openBoxes := openBoxes ++ waiting
         waiting := #[]
       let (row,dirs) := place (line.push (cursorX,item)) (lineIdx.push k) cursorX
-      let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
+      let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
       out := appendResult out {row with height := if row.height > 0 then row.height else 19.2}
+      first := false
       (line,lineIdx) := continuedStarts openBoxes
       cursorX := 0
       pendingSpace := none
@@ -1131,45 +1916,49 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       let width ← itemWidth font (dirOf k) item
       -- The item goes on a line with the starts of the inline boxes it begins.
       let lead := if waiting.isEmpty then 0 else waiting.foldl (fun w (_,_,ws) => w+inlineLead ws) 0
-      -- The pieces of a word cut by bidi levels go on one line together.
       let mut whole := width+lead
-      if bidi && !glued k then
-        let mut j := k+1
-        for _ in [0:items.size] do
-          if j < items.size && glued j then
-            whole := whole+(← itemWidth font (dirOf j) items[j]!)
-            j := j+1
-          else break
       let gap ← if cursorX > 0 then match pendingSpace with
         | some (_,s) => spaceWidth font s
         | none => pure 0
         else pure 0
-      -- A line may break before this item: then what follows it with no break between
-      -- (`white-space: nowrap`) must fit on the line with it. Only the first item of such a
-      -- run looks ahead, so a run is measured once.
+      -- At a possible break measure the run that must follow on the same line.
+      -- This includes a word cut by inline boundaries, bidi levels, or nowrap.
       let held := heldByNowrap pendingSpace item
-      if !bidi && !held && cursorX > 0 then
+      if !glued k && (bidi || !held) && cursorX > 0 then
         let mut between : Option Computed := none
+        let mut leading : Float := 0
+        let mut opening : Nat := 0
         for j in [k+1:items.size] do
           match items[j]! with
-          | .space _ ss => if ss.preformatted then break else between := some ss
-          | .openInline _ ws _ => whole := whole+inlineLead ws
-          | .closeInline _ ws => whole := whole+inlineTrail ws
+          | .space _ ss => if bidi || ss.preformatted then break else between := some ss
+          | .openInline _ ws _ =>
+            leading := leading+inlineLead ws
+            opening := opening+1
+          | .closeInline _ ws =>
+            if opening == 0 then whole := whole+inlineTrail ws
+            else
+              leading := leading+inlineTrail ws
+              opening := opening-1
+          | .outOfFlow _ | .bidiMark _ => pure ()
           | .word source ws text start =>
-            match between with
-            | some ss =>
-              if ss.pos.nowrap then
-                whole := whole+(← spaceWidth font ss)+(← itemWidth font none (.word source ws text start))
-                between := none
-              else break
-            | none => break
+            if !glued j && (bidi || !(between.getD ws).pos.nowrap) then break
+            let gap ← match between with
+              | some ss => spaceWidth font ss
+              | none => pure 0
+            whole := whole+gap+leading+(← itemWidth font (dirOf j) (.word source ws text start))
+            between := none
+            leading := 0
+            opening := 0
           | _ => break
-      if cursorX > 0 && cursorX+gap+whole > (band out.height).2 && !preformatted item && !glued k && !held then
+      let room := (bandAt out.height first).2
+      let wrapRoom := balanced.getD room
+      if cursorX > 0 && cursorX+gap+whole > wrapRoom && !preformatted item && !glued k && !held then
         let (row,dirs) := place line lineIdx cursorX
-        out := appendResult out (← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs)
+        out := appendResult out (← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs)
         (line,lineIdx) := continuedStarts openBoxes
         cursorX := 0
         fresh := false
+        first := false
       else
         if gap > 0 then
           if let some (source,s) := pendingSpace then
@@ -1188,7 +1977,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
       content := true
   if !line.isEmpty && (content || fresh) then
     let (row,dirs) := place line lineIdx cursorX
-    let row ← lineLayout font row (x+indent cursorX out.height) (y+out.height) strut dirs
+    let row ← lineLayout font row (x+indent cursorX out.height first) (y+out.height) strut dirs
     out := appendResult out (if content then row else {row with height := 0})
   return out
 
@@ -1196,65 +1985,191 @@ private def append (a b : Result) : Result :=
   {nodes := a.nodes ++ b.nodes,boxes := a.boxes ++ b.boxes,runs := a.runs ++ b.runs, height := a.height+b.height,
    pending := a.pending ++ b.pending, baseline := a.baseline <|> b.baseline,
    lastBaseline := b.lastBaseline <|> a.lastBaseline, work := a.work+b.work, rough := a.rough || b.rough}
-/-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
-widest line (at most the room); its content is laid out at the origin inside its
-border and padding. Its bottom margin edge sits on the line's baseline, as a
-replaced element does here. -/
-private def atomicBox (font : FontProfile) (id : Nat) (s : Computed) (items : Array Inline)
-    (available : Float) : Except String Inline := do
+
+private def transformInlineBorderBox (s : Computed) (x y w h : Float) (r : Result) : Result :=
+  if s.pos.transform.isEmpty then r else
+    let (ox,ofWidth,oy,ofHeight) := s.pos.transformOrigin
+    let t := CSS.BoxTransform.about .float (CSS.BoxTransform.matrixOf s.pos.transform w h)
+      (x+ox+ofWidth*w) (y+oy+ofHeight*h)
+    {r.transformed t with inlineFlowRight := some (inlineRight r)}
+
+/-- Applying the inline-block's transform preserves the right edge used for sizing. -/
+theorem transformInlineBorderBox_inlineRight (s : Computed) (x y w h : Float) (r : Result) :
+    inlineRight (transformInlineBorderBox s x y w h r) = inlineRight r := by
+  unfold transformInlineBorderBox
+  split <;> rfl
+
+/-- An inline-block's border and decorations around its already positioned content. -/
+def framedAtomic (id : Nat) (s : Computed) (w h : Float) (inner : Result) : Inline :=
+  let m := s.margin
+  let box : Box := ⟨id,m.left,m.top,w,h⟩
+  let framed :=
+    {inner with
+      nodes := decorations id s m.left m.top w h ++ inner.nodes
+      boxes := #[box] ++ inner.boxes
+      inlineFlowRight := inner.inlineFlowRight.map (fun x => max x (box.x+box.width))}
+  .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
+    (transformInlineBorderBox s m.left m.top w h framed)
+
+/-- With an empty transform, framing retains the border box and the child's geometry. -/
+theorem framedAtomic_preserves (id : Nat) (s : Computed) (w h : Float) (inner : Result)
+    (hEmpty : s.pos.transform.isEmpty = true) :
+    match framedAtomic id s w h inner with
+    | .atomic owner _ _ _ r =>
+      owner = id ∧ r.boxes = #[⟨id,s.margin.left,s.margin.top,w,h⟩] ++ inner.boxes ∧
+        r.runs = inner.runs ∧ r.baseline = inner.baseline ∧ r.lastBaseline = inner.lastBaseline
+    | _ => False := by
+  simp [framedAtomic, transformInlineBorderBox, hEmpty]
+
+/-- The line still aligns its inline-block by the same baselines. -/
+theorem framedAtomic_baselines (id : Nat) (s : Computed) (w h : Float) (inner : Result) :
+    match framedAtomic id s w h inner with
+    | .atomic _ _ _ _ r => r.baseline = inner.baseline ∧ r.lastBaseline = inner.lastBaseline
+    | _ => False := by
+  by_cases hEmpty : s.pos.transform.isEmpty = true
+  · simp [framedAtomic, transformInlineBorderBox, hEmpty]
+  · simp [framedAtomic, transformInlineBorderBox, hEmpty, Result.transformed]
+
+/-- Kind: sizing. Says: the enclosing line measures the framed inline-block as one
+item of its margin-box width. Does not say: how its content width was chosen. -/
+theorem framedAtomic_lineWidth (font : FontProfile) (rtl : Option Bool) (id : Nat)
+    (s : Computed) (w h : Float) (inner : Result) :
+    itemWidth font rtl (framedAtomic id s w h inner) = .ok (s.margin.left+w+s.margin.right) := rfl
+
+#print axioms transformInlineBorderBox_inlineRight
+#print axioms framedAtomic_preserves
+#print axioms framedAtomic_baselines
+#print axioms framedAtomic_lineWidth
+
+/-- An open inline-block. Its line width supplies the containing width of a nested
+inline-block. The preceding siblings receive the finished box as one inline item. -/
+private structure AtomicFrame where
+  source : Nat
+  style : Computed
+  before : Array Inline
+  fixed : Option Float
+  lineWidth : Float
+
+private def AtomicFrame.opened (id : Nat) (s : Computed) (before : Array Inline)
+    (available : Float) : AtomicFrame :=
   let b := s.borderEdges
   let p := s.padding
   let m := s.margin
   let room := max 0 (available-m.left-m.right-b.left-b.right-p.left-p.right)
-  let fixed := CSS.resolve available s.width
-  let content ← inlineLayout font items 0 0 (fixed.getD room) (some {s with textAlign := .left})
-  let used := fixed.getD (content.boxes.foldl (fun w box => max w (box.x+box.width)) 0)
+  -- a block box (a block inside an inline, `inlineItems`) is as wide as the line
+  let fixed := (CSS.resolve available s.width).orElse fun _ => if s.display.isBlockLevel then some room else none
+  ⟨id,s,before,fixed,fixed.getD room⟩
+
+/-- CSS 2.2 §10.3.9 and §10.6.6: an inline-block with `width:auto` is as wide as its
+widest line (at most the room); its content is laid out at the origin inside its
+border and padding. Its bottom margin edge sits on the line's baseline, as a
+replaced element does here. -/
+private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array Inline) : Except String Inline := do
+  let s := frame.style
+  let b := s.borderEdges
+  let p := s.padding
+  let m := s.margin
+  let content ← inlineLayout font items 0 0 frame.lineWidth (some {s with textAlign := .left})
+  let used := match frame.fixed with
+    | some width => width
+    | none => max 0 (inlineRight content)
   -- Lines are aligned in the width the box has (`text-align`), once it is known.
   let leftAligned := s.textAlign == .left || (s.textAlign == .start && s.direction == .ltr) ||
     (s.textAlign == .end_ && s.direction == .rtl)
   let content ← if leftAligned then pure content else inlineLayout font items 0 0 used (some s)
-  let height := match s.height with
+  let preferredHeight := match s.height with
     | .percent _ => content.height
     | _ => max 0 ((CSS.resolve 0 s.height).getD content.height)
+  -- Percentage limits that have a definite containing height are resolved before
+  -- inline layout. An unresolved percentage has no height basis in this line.
+  let heightLimit : CSS.Length → Option Float
+    | .px h => some (max 0 h)
+    | .minContent | .maxContent | .fitContent => some content.height
+    | _ => none
+  let height := clampOpt ((heightLimit s.minHeight).getD 0) (heightLimit s.maxHeight) preferredHeight
   let w := b.left+p.left+used+p.right+b.right
   let h := b.top+p.top+height+p.bottom+b.bottom
   let inner := shiftResult (m.left+b.left+p.left) (m.top+b.top+p.top) content
-  let box : Box := ⟨id,m.left,m.top,w,h⟩
-  return .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
-    {inner with nodes := decorations id s m.left m.top w h ++ inner.nodes, boxes := #[box] ++ inner.boxes}
+  return framedAtomic frame.source s w h inner
 
-/-- Each outermost `openAtomic .. closeAtomic` becomes one `atomic` item. An
-inline-block inside another is laid out inline in it (its bounds are dropped). One
-pass over the items: a loop. -/
+/-- Each matched inline-block becomes one atomic item in its parent's line. The stack
+holds one frame per open bound, limited by the DOM depth budget of `inlineItems`. -/
 def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Except String (Array Inline) := do
   let mut out : Array Inline := #[]
-  let mut depth : Nat := 0
-  let mut opened : Option (Nat × Computed) := none
-  let mut inside : Array Inline := #[]
+  let mut frames : List AtomicFrame := []
   for item in items do
     match item with
     | .openAtomic id s =>
-      if depth == 0 then
-        opened := some (id,s)
-        inside := #[]
-      depth := depth+1
+      let room := match frames with | parent :: _ => parent.lineWidth | [] => available
+      frames := AtomicFrame.opened id s out room :: frames
+      out := #[]
     | .closeAtomic =>
-      if depth == 1 then
-        if let some (id,s) := opened then out := out.push (← atomicBox font id s inside available)
-        opened := none
-      depth := depth-1
-    | other => if depth == 0 then out := out.push other else inside := inside.push other
+      if let frame :: parents := frames then
+        let child ← atomicBox font frame out
+        out := frame.before.push child
+        frames := parents
+    | other => out := out.push other
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
-  return if depth == 0 then out else out ++ inside
+  return frames.foldl (fun rest frame => frame.before ++ rest) out
+
+/-- A wrapper to see through: an inline element (not a link, not replaced, not SVG) with no
+margin, border, padding or background of its own, that has a block-level child in flow.
+`liftBlocks` gives its children to the block flow of its parent. -/
+def seeThrough (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
+  let n := dom.get id
+  let s := styles[id]!
+  n.type == .element && s.display == .inline && !s.pos.isAbsolute && s.pos.float == .none &&
+  n.lname != "a" && n.ns != some DOM.svgNS && (blankReplaced n).isNone && n.lname != "img" &&
+  s.background.isNone && s.backgroundImage.isNone && s.backgroundGradient.isNone &&
+  s.borderEdges.top == 0 && s.borderEdges.right == 0 && s.borderEdges.bottom == 0 && s.borderEdges.left == 0 &&
+  s.padding.left == 0 && s.padding.right == 0 && s.margin.left == 0 && s.margin.right == 0 &&
+  n.kids.any fun k =>
+    let ks := styles[k]!
+    (dom.get k).type == .element && ks.display.isBlockLevel && !ks.pos.isAbsolute && ks.pos.float == .none
+
+/-- The children of a block flow with each `seeThrough` wrapper replaced by its children, in
+order, to any depth (CSS 2.1 §9.2.1.1: a block box inside an inline box breaks the inline
+box around it; the block keeps its own layout). Before 2026-11-24 the wrapper's contents
+were laid out as inline content: GitHub's header, a flex column inside the inline custom
+element `react-partial`, drew each of its items on a line of its own. At most `dom.size`
+steps. -/
+def liftBlocks (dom : Dom) (styles : Array Computed) (kids : Array Nat) : Array Nat := Id.run do
+  if !kids.any (seeThrough dom styles) then return kids
+  let mut out : Array Nat := #[]
+  let mut pending : List Nat := kids.toList
+  for _ in [0:dom.size + kids.size + 1] do
+    match pending with
+    | [] => break
+    | k :: rest =>
+      if seeThrough dom styles k then pending := (dom.get k).kids.toList ++ rest
+      else
+        out := out.push k
+        pending := rest
+  return out ++ pending.toArray
 
 /-- What goes before a list item (CSS Lists 3 §3.1 `list-style-type`): nothing with
 `none`; its number with a numbering style, or by default in an ordered list; else a
 bullet: the one that `list-style-type` names, or by default the disc, circle or square of
 a list nested one, two or more deep (HTML §15.3.7). A font with no glyph for the bullet
 (`FontProfile.admits`) gets a star. -/
-def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat) : String := Id.run do
+def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Nat)
+    (direction : Direction := .ltr) (mode : WritingMode := .horizontalTb)
+    (styles : Array Computed := #[]) : String := Id.run do
   if style == .none then return ""
-  let some parent := (dom.get id).parent | return "* "
+  let draw := fun (glyph fallback : Char) =>
+    s!"{if font.admits glyph.toNat || font.shapedWord.isSome then glyph else fallback} "
+  if style == .disclosureOpen then
+    return match mode with
+    | .horizontalTb => draw '▾' 'v'
+    | .verticalRl => draw '◂' '<'
+    | .verticalLr => draw '▸' '>'
+  if style == .disclosureClosed then
+    return match mode, direction with
+    | .horizontalTb, .ltr => draw '▸' '>'
+    | .horizontalTb, .rtl => draw '◂' '<'
+    | _, .ltr => draw '▾' 'v'
+    | _, .rtl => draw '▴' '^'
+  let some parent := Generated.boxParent dom styles (dom.get id).parent | return "* "
   if style != .number && !(style == .auto && (dom.get parent).lname == "ol") then
     let mut depth := 0
     let mut cur := parent
@@ -1270,12 +2185,24 @@ def listMarker (dom : Dom) (font : FontProfile) (style : CSS.ListStyle) (id : Na
       | _ => if depth >= 3 then '▪' else if depth == 2 then '◦' else '•'
     -- A shaped font draws the bullet, or a fallback face does (`SfntProfile`); only a
     -- fixed font without it shows `*`.
-    return if font.admits bullet.toNat || font.shapedWord.isSome then s!"{bullet} " else "* "
+    return draw bullet '*'
   let mut number := 1
   for kid in (dom.get parent).kids do
     if kid == id then break
     if (dom.get kid).lname == "li" then number := number+1
   return s!"{number}. "
+
+/-- `list-style-type:none` suppresses the marker in every writing mode. -/
+theorem listMarker_none (dom : Dom) (font : FontProfile) (id : Nat)
+    (direction : Direction) (mode : WritingMode) :
+    listMarker dom font .none id direction mode = "" := rfl
+
+#print axioms listMarker_none
+
+private def listMarkerItems (dom : Dom) (styles : Array Computed) (font : FontProfile)
+    (id : Nat) (s : Computed) : Array Inline :=
+  if !s.pos.listItem then #[]
+  else (textItems (.node id) s (listMarker dom font s.pos.listStyle id s.direction s.pos.writingMode styles)).toArray
 
 /-- What `layoutTask` and `intrinsic` lay out: an element's box, the contents of a
 block container (a cell's contents, or an anonymous cell's), or a table (an element,
@@ -1296,7 +2223,7 @@ inductive Task where
   | inner (id : Nat) (width : Float)
   /-- Absolutely positioned boxes laid out in the containing block `(cx,cy,cw,ch)`: for
   the root, whose containing block is the viewport (`render`). -/
-  | positioned (pending : Array Pending) (cx cy cw ch : Float)
+  | positioned (content : Result) (cx cy cw ch : Float)
   /-- `box id` in a block formatting context that has `floats` already (CSS 2.1 §9.5): the
   lines of the box and of its descendants are beside them. -/
   | flowed (id : Nat) (floats : Array Floats.Box)
@@ -1306,7 +2233,7 @@ inductive Task where
   deriving Repr
 
 /-- The right edge of what a line layout placed, from its left edge `0`. -/
-private def lineExtent (r : Result) : Float := r.boxes.foldl (fun m b => max m (b.x+b.width)) 0
+private def lineExtent (r : Result) : Float := max 0 (inlineRight r)
 
 /-! ### Multi-column layout (CSS Multi-column Layout 1)
 
@@ -1423,7 +2350,7 @@ private def anonymousBox (base : Computed) : Computed :=
 /-- The style of an anonymous flex or grid item (a run of text): its container's
 inherited values, with no box edges, limits, or flex and alignment values of its own. -/
 private def anonymousItem (base : Computed) : Computed :=
-  {anonymousBox base with display := .block, borderStyle := .none, clipOverflow := false,
+  {anonymousBox base with display := .block, borderStyles := .all .none, clipOverflow := false,
                           minWidth := .auto, maxWidth := .auto, minHeight := .auto, maxHeight := .auto,
                           autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {}}
 
@@ -1514,10 +2441,17 @@ private def cellContents (dom : Dom) : Table.Source → Nat × Array Nat
   | .element id => (id,(dom.get id).kids)
   | .anonymous parent kids => (parent,kids)
 
-/-- The width a cell asks of its columns (CSS 2.1 §17.5.2.2): its min-content and
-max-content widths with its padding, and its specified width. -/
-private def cellMeasure (s : Computed) (widths : Float × Float) : Table.Measure :=
-  let pad := s.padding.left+s.padding.right
+/-- The space between the content and border edges of a table or cell. The
+  collapsing border model keeps its existing sizing until it resolves shared edges. -/
+private def tableInsets (s : Computed) (collapsed : Bool) : Edges :=
+  if collapsed then s.padding else
+  let b := s.borderEdges
+  ⟨s.padding.top+b.top, s.padding.right+b.right, s.padding.bottom+b.bottom, s.padding.left+b.left⟩
+
+/-- Intrinsic column contributions include the cell's padding and separated borders. -/
+private def cellMeasure (s : Computed) (collapsed : Bool) (widths : Float × Float) : Table.Measure :=
+  let insets := tableInsets s collapsed
+  let pad := insets.left+insets.right
   {min := widths.1+pad, max := widths.2+pad,
    fixed := match s.width with | .px w => some (w+pad) | _ => none,
    percent := match s.width with | .percent p => some p | _ => none}
@@ -1532,7 +2466,8 @@ private def columnMeasure (styles : Array Computed) : Option Nat → Table.Measu
 private structure TableFrame where
   style : Computed
   margin : Edges
-  padding : Edges
+  insets : Edges
+  borderBox : Bool
   hs : Float
   vs : Float
 
@@ -1541,9 +2476,12 @@ private def tableFrame (styles : Array Computed) (element : Option Nat) (contain
     | some id => styles[id]!
     | none => {anonymousBox styles[container]! with display := .table, tableFixed := false}
   let edges := element.isSome
-  {style := s, margin := if edges then s.margin else {}, padding := if edges then s.padding else {},
-   hs := if s.borderCollapse then 0 else s.borderSpacingX,
-   vs := if s.borderCollapse then 0 else s.borderSpacingY}
+  { style := s
+    margin := if edges then s.margin else {}
+    insets := if edges then tableInsets s s.borderCollapse else {}
+    borderBox := s.pos.borderBox || s.borderCollapse
+    hs := if s.borderCollapse then 0 else s.borderSpacingX
+    vs := if s.borderCollapse then 0 else s.borderSpacingY }
 
 /-- A content width within the box's `min-width` and `max-width` when they are lengths
 (a percentage or a keyword limit does not bound an intrinsic contribution); the minimum
@@ -1594,7 +2532,7 @@ theorem compressInline_fixed (id : Nat) (s : Computed) (ow oh : Float) (nodes : 
   simp [compressInline, h]
 
 /-- Words, spaces and every item that is not a replaced atom are not changed. -/
-theorem compressInline_word (id : Nat) (s : Computed) (text : String) (start : Nat) :
+theorem compressInline_word (id : TextSource) (s : Computed) (text : String) (start : Nat) :
     compressInline (.word id s text start) = .word id s text start := rfl
 
 /-- Min-content and max-content widths (CSS Sizing 3 §5), margins included for a box.
@@ -1606,23 +2544,33 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     Nat → Task → Except String (Float × Float)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, task => do
-    let inlineWidths (items : Array Inline) : Except String (Float × Float) := do
+    -- CSS Text 3 §8.3: the first line's `text-indent` counts in both widths (a percentage
+    -- counts as 0 here, CSS Sizing 3 §5.2.1, cyclic percentages)
+    let inlineWidths (items : Array Inline) (minContent : Array (Nat × Inline)) (indent : Float) :
+        Except String (Float × Float) := do
       if items.isEmpty then return (0,0)
-      let narrow ← inlineLayout font (← atomize font (items.map compressInline) 0) 0 0 0
-      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9
+      let strut : Option Computed := if indent == 0 then none else some {textIndent := .px indent, textAlign := .left}
+      let narrowItems := minContent.foldl (fun items (i, item) => items.setIfInBounds i item) (items.map compressInline)
+      let narrow ← inlineLayout font (← atomize font narrowItems 0) 0 0 0 strut
+      let wide ← inlineLayout font (← atomize font items 1.0e9) 0 0 1.0e9 strut
       return (lineExtent narrow,lineExtent wide)
     let flowWidths (container : Nat) (kids : Array Nat) (lead : Array Inline) : Except String (Float × Float) := do
       let mut widths : Float × Float := (0,0)
       let mut inline := lead
+      let mut minContent : Array (Nat × Inline) := #[]
+      let indent := match (styles[container]?.map (·.textIndent)) with
+        | some (CSS.Length.px n) => n
+        | _ => 0
       -- The max-content widths of the floats so far that nothing has cleared (CSS 2.1
       -- §9.5): with all the room they sit side by side, and the lines and boxes after them
       -- are beside them. With no float in the flow this stays 0.
       let mut beside : Float := 0
-      for seg in Table.segments dom styles kids do
+      for seg in Table.segments dom styles (liftBlocks dom styles kids) do
         match seg with
         | .run run =>
-          let (a,b) ← inlineWidths inline
+          let (a,b) ← inlineWidths inline minContent indent
           inline := #[]
+          minContent := #[]
           let (c,d) ← intrinsic dom styles font embedding pictures fuel (.table none container run)
           widths := (max widths.1 (max a c),max widths.2 (max (b+beside) (d+beside)))
         | .node k =>
@@ -1635,15 +2583,23 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
             widths := (max widths.1 c,widths.2)
             beside := beside+d
           else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
-            let (a,b) ← inlineWidths inline
+            let (a,b) ← inlineWidths inline minContent indent
             inline := #[]
+            minContent := #[]
             widths := (max widths.1 a,max widths.2 (b+beside))
             if (styles[k]!).pos.clear != .none then beside := 0
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
             widths := (max widths.1 c,max widths.2 (d+beside))
+          else if (styles[k]!).display == .inlineBlock && blockInside dom styles k then
+            let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box k)
+            -- These items only measure the line. Their widths already include
+            -- margins, so the synthetic boxes cover that full extent.
+            let style := {styles[k]! with margin := {}}
+            minContent := minContent.push (inline.size, .replaced k style lo 0 [])
+            inline := inline.push (.replaced k style hi 0 [])
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
-      let (a,b) ← inlineWidths inline
+      let (a,b) ← inlineWidths inline minContent indent
       return (max widths.1 a,max widths.2 (b+beside))
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
       let frame := tableFrame styles element container
@@ -1651,15 +2607,18 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) frame.style.borderCollapse (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let cols := Table.columns grid.columns grid.cells measures (grid.columnElements.map (columnMeasure styles)) frame.hs
       let spacing := if grid.columns == 0 then 0 else frame.hs*Float.ofNat (grid.columns+1)
-      let edges := frame.padding.left+frame.padding.right
+      let edges := frame.insets.left+frame.insets.right
       let low := Table.total (cols.map (·.min))+spacing+edges
       let high := max low (Table.total ((Table.guesses cols 0)[3]!)+spacing+edges)
       let margins := frame.margin.left+frame.margin.right
       match frame.style.width with
-      | .px w => return (max w low+margins,max w low+margins)
+      | .px w =>
+        let borderWidth := if frame.borderBox then w else w+edges
+        let result := max borderWidth low+margins
+        return (result,result)
       | _ => return (low+margins,high+margins)
     -- What a flex or grid container may ask of its items while widths are measured.
     let children : Children := {
@@ -1700,7 +2659,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
         let w := (replacedSize s (some picture.size) 0).1
         return (compressible w+add,w+add)
       if let some size := blankReplaced n then
-        let w := (replacedSize s (some size) 0).1
+        let w := (replacedSize s size 0).1
         return (compressible w+add,w+add)
       if n.ns == some DOM.svgNS then
         let w := (← svgSize n s 0).1+add
@@ -1719,8 +2678,8 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
           let (a,b) ← gridIntrinsic children s (collectItems dom styles id)
           return (within a+add,within b+add)
         -- an outside marker (the default) takes no room in the item's lines
-        let lead := if n.lname == "li" && s.pos.listInside then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray
-          else if n.lname == "img" then altItems id s n else #[]
+        let lead := if s.pos.listItem && s.pos.listInside then listMarkerItems dom styles font id s
+          else if n.lname == "img" then altItems id s n else controlItems dom id s
         let (a,b) ← flowWidths id n.kids lead
         return (within a+add,within b+add)
     match task with
@@ -1744,6 +2703,52 @@ def renderedLegend (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
         (dom.get k).type == .element && (dom.get k).lname == "legend" && (styles[k]!).display != .none &&
           !(styles[k]!).pos.isAbsolute && (styles[k]!).pos.float == .none) == some id
   | none => false
+
+/-- Is the physical axis's logical start at its far edge? -/
+private def axisStartIsFar (s : Computed) (horizontal : Bool) : Bool :=
+  SelfPlace.startsAtEnd horizontal (s.pos.writingMode != .horizontalTb)
+    (s.pos.writingMode == .verticalRl) (s.direction == .rtl)
+
+#guard axisStartIsFar {pos := {writingMode := .verticalRl}} true
+#guard !(axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} true)
+#guard axisStartIsFar {pos := {writingMode := .verticalLr}, direction := .rtl} false
+
+/-- The fraction of an anchor box's size, from its top or left edge, at which the side an
+`anchor()` names lies (CSS Anchor Positioning 1 §3.2), for an inset of the horizontal axis or
+the vertical one, on the far side (`right`, `bottom`) or not. `start` and `end` are of the
+containing block's writing mode (`startFar`), `self-start` and `self-end` of
+its own writing mode (`selfStartFar`). A percentage is from the start side. `none`: a side of the other axis. -/
+def anchorFraction (side : AnchorSide) (horizontal far startFar selfStartFar : Bool) : Option Float :=
+  let flip := fun (f : Float) (r : Bool) => if r then 1 - f else f
+  match side with
+  | .left => if horizontal then some 0 else none
+  | .right => if horizontal then some 1 else none
+  | .top => if horizontal then none else some 0
+  | .bottom => if horizontal then none else some 1
+  | .center => some 0.5
+  | .start => some (flip 0 startFar)
+  | .end_ => some (flip 1 startFar)
+  | .selfStart => some (flip 0 selfStartFar)
+  | .selfEnd => some (flip 1 selfStartFar)
+  | .inside => some (if far then 1 else 0)
+  | .outside => some (if far then 0 else 1)
+  | .fraction f => some (flip f startFar)
+
+#guard anchorFraction .right true false false false == some 1 && anchorFraction .right false false false false == none
+#guard anchorFraction .start true false true false == some 1 && anchorFraction .outside false true false false == some 0
+
+/-- The border box `(x, y, width, height)` of the anchor named `name` among `boxes`: of the
+last element in tree order whose `anchor-name` holds it (an element's first box is its own
+border box). -/
+def anchorBoxIn (styles : Array Computed) (boxes : Array Box) (name : String) :
+    Option (Float × Float × Float × Float) := Id.run do
+  let mut found : Option (Float × Float × Float × Float) := none
+  let mut last : Option Nat := none
+  for b in boxes do
+    if last != some b.source && ((styles[b.source]?).map (·.pos.anchorNames.contains name)).getD false then
+      found := some (b.x, b.y, b.width, b.height)
+      last := some b.source
+  return found
 
 /-- The style of the box whose padding box is the containing block of the absolutely
 positioned box `id` (CSS 2.1 §10.1): its nearest ancestor that holds absolutely positioned
@@ -1798,13 +2803,13 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- with (`around`) and those of this flow. Lines, and boxes that establish a formatting
       -- context of their own, take the room beside them.
       let mut floats : Array Floats.Box := around
-      for seg in Table.segments dom styles kids do
+      for seg in Table.segments dom styles (liftBlocks dom styles kids) do
         match seg with
         | .run run =>
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -1862,7 +2867,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -1918,20 +2923,23 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
                 let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
                 pure (shrinkWidth cs.width lo hi width)
             let r ← layoutTask dom styles font embedding pictures fuel (sub <| .sized child (max 0 (outer-edges)) none) 0 0 width
-            inline := inline.push (.atomic child cs outer r.height r)
+            -- This result is a block formatting context, whose boxes are
+            -- measured by its own sizing pass.
+            inline := inline.push (.atomic child cs outer r.height {r with inlineFlowRight := none})
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight)
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}
       -- no block was laid out: `previous` is still `before`, which is not a margin of this flow
       return {content with marginBottom := if content.height <= 0 || previous >= unbounded/2 then 0 else previous}
     -- A table box (CSS 2.1 §17): captions, then the grid, then bottom captions.
-    let table (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String Result := do
+    let table (element : Option Nat) (container : Nat) (kids : Array Nat)
+        (imposedWidth imposedHeight : Option Float) : Except String Result := do
       let frame := tableFrame styles element container
       let ts := frame.style
       let grid := Table.build dom styles (element.getD container) kids
@@ -1940,28 +2948,32 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut measures : Array Table.Measure := #[]
       for cell in grid.cells do
         let (c,ks) := cellContents dom cell.source
-        measures := measures.push (cellMeasure (cellStyle styles cell.source) (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
+        measures := measures.push (cellMeasure (cellStyle styles cell.source) frame.style.borderCollapse (← intrinsic dom styles font embedding pictures fuel (.contents c ks)))
       let elements := grid.columnElements.map (columnMeasure styles)
       let cols := Table.columns grid.columns grid.cells measures elements hs
       let spacing := if grid.columns == 0 then 0 else hs*Float.ofNat (grid.columns+1)
-      let padX := frame.padding.left+frame.padding.right
-      let padY := frame.padding.top+frame.padding.bottom
+      let padX := frame.insets.left+frame.insets.right
+      let padY := frame.insets.top+frame.insets.bottom
       let lowest := Table.total (cols.map (·.min))+spacing
-      -- `width` of a table is its border box (HTML §15.3.8 `table { box-sizing: border-box }`).
-      let specified := (CSS.resolve available ts.width).map (·-padX)
+      let authoredWidth := CSS.resolve available ts.width
+      let specified := match imposedWidth with
+        | some w => some (w-padX)
+        | none => authoredWidth.map fun w => if frame.borderBox then w-padX else w
       let room := available-frame.margin.left-frame.margin.right-padX
       let contentWidth := match specified with
         | some w => max w lowest
         | none => max lowest (min room (Table.total ((Table.guesses cols room)[3]!)+spacing))
       let target := max 0 (contentWidth-spacing)
-      let widths := if ts.tableFixed && specified.isSome then
+      let widths := if ts.tableFixed && authoredWidth.isSome then
           let firstRow := (grid.cells.zip measures).filter (·.1.row == 0)
           Table.fixedWidths grid.columns firstRow elements target hs
         else Table.distribute cols target
       let contentWidth := max contentWidth (Table.extent widths hs)
       let borderWidth := contentWidth+padX
-      let outerX := x+autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)+frame.margin.left
-      let innerX := outerX+frame.padding.left
+      let shift := if imposedWidth.isSome then 0
+        else autoMarginShift ts available (frame.margin.left+borderWidth+frame.margin.right)
+      let outerX := x+shift+frame.margin.left
+      let innerX := outerX+frame.insets.left
       let colX := Table.offsets widths hs
       -- Each cell laid out once, at its column and at the top; moved down when the rows are known.
       let mut laid : Array (Result × Float) := #[]
@@ -1969,21 +2981,25 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cs := cellStyle styles cell.source
         let (c,ks) := cellContents dom cell.source
         let w := Table.spanSize widths cell.col cell.colSpan hs
-        let left := innerX+colX.getD cell.col 0+cs.padding.left
-        let r ← layoutTask dom styles font embedding pictures fuel (sub <| .contents c ks) left cs.padding.top (max 0 (w-cs.padding.left-cs.padding.right))
+        let insets := tableInsets cs ts.borderCollapse
+        let left := innerX+colX.getD cell.col 0+insets.left
+        let r ← layoutTask dom styles font embedding pictures fuel (sub <| .contents c ks)
+          left insets.top (max 0 (w-insets.left-insets.right))
         let own := (CSS.resolve 0 cs.height).getD 0
-        let outer := max (r.height+cs.padding.top+cs.padding.bottom) (own+cs.padding.top+cs.padding.bottom)
+        let outer := max r.height own+insets.top+insets.bottom
         laid := laid.push (r,outer)
       let minimum := grid.rows.map fun row => match row.element with
         | some id => (CSS.resolve 0 (styles[id]!).height).getD 0
         | none => 0
       let rows := Table.rowHeights minimum grid.cells (laid.map (·.2)) vs
       let gridHeight := Table.extent rows vs
-      let rows := match CSS.resolve 0 ts.height with
+      let specifiedBorderHeight := imposedHeight.orElse fun _ =>
+        (CSS.resolve 0 ts.height).map fun h => if frame.borderBox then h else h+padY
+      let rows := match specifiedBorderHeight with
         | some h => Table.stretch rows (h-padY-gridHeight)
         | none => rows
       let gridHeight := Table.extent rows vs
-      let borderHeight := max (gridHeight+padY) ((CSS.resolve 0 ts.height).getD 0)
+      let borderHeight := max (gridHeight+padY) (specifiedBorderHeight.getD 0)
       let rowY := Table.offsets rows vs
       -- Captions above and below, as wide as the table's border box.
       let mut out : Result := {}
@@ -1993,8 +3009,10 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           let r ← layoutTask dom styles font embedding pictures fuel (sub <| .box caption) outerX top borderWidth
           out := append out r
           top := top+r.height
-      let innerY := top+frame.padding.top
-      let mut nodes : Array Node := background (element.getD container) ts outerX top borderWidth borderHeight
+      let innerY := top+frame.insets.top
+      let tableId := element.getD container
+      let mut nodes : Array Node := if ts.borderCollapse then background tableId ts outerX top borderWidth borderHeight
+        else decorations tableId ts outerX top borderWidth borderHeight
       let mut paints : Array Node := #[]
       let mut boxes : Array Box := #[]
       let mut runs : Array GlyphRun := #[]
@@ -2007,7 +3025,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let cy := innerY+rowY.getD cell.row 0
         let w := Table.spanSize widths cell.col cell.colSpan hs
         let h := Table.spanSize rows cell.row cell.rowSpan vs
-        -- Row group, row and cell backgrounds, each in the cell's area (CSS 2.1 §17.5.1).
+        -- The originating column and group paint under the row layers, within the
+        -- cell's area even for a spanning cell (CSS 2.2 §17.5.1). A group with
+        -- no child columns supplies the sizing ID; paint its colour only once.
+        let columnGroup := grid.columnGroups.getD cell.col none
+        let column := grid.columnElements.getD cell.col none
+        if let some id := columnGroup then
+          nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
+        if column != columnGroup then
+          if let some id := column then
+            nodes := nodes ++ backgroundColour id styles[id]! cx cy w h
         let row := grid.rows.getD cell.row ⟨none,none⟩
         for layer in [row.group,row.element] do
           if let some id := layer then nodes := nodes ++ background id (styles[id]!) cx cy w h
@@ -2065,7 +3092,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .anonymous _ _ => false}
     -- An absolutely positioned box (CSS 2.1 §10.3.7 and §10.6.4) in the containing block
     -- `(cx,cy,cw,ch)`; `at'` has its static position.
-    let absolute (at' : Pending) (cx cy cw ch : Float) : Except String Result := do
+    let absolute (at' : Pending) (cx cy cw ch : Float)
+        (anchors : String → Option (Float × Float × Float × Float) := fun _ => none) : Except String Result := do
       let id := at'.id
       let s := styles[id]!
       if s.display == .none then return {}
@@ -2074,10 +3102,29 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let p := s.padding
       let edgesX := b.left+b.right+p.left+p.right
       let edgesY := b.top+b.bottom+p.top+p.bottom
-      let left := CSS.resolve cw s.pos.left
-      let right := CSS.resolve cw s.pos.right
-      let top := CSS.resolve ch s.pos.top
-      let bottom := CSS.resolve ch s.pos.bottom
+      -- `anchor()` insets (CSS Anchor Positioning 1 §3.2): the distance from the containing
+      -- block's edge to the named side of the anchor's border box; with no such anchor (or a
+      -- side of the other axis), the inset's own length, its fallback
+      -- `position-area` (CSS Anchor Positioning 1 §3.1): the containing block is the area of the
+      -- 3 × 3 grid that the default anchor's edges cut from it, and `auto` insets are 0
+      let area := s.pos.positionArea.bind fun ((x0, x1), (y0, y1)) =>
+        (s.pos.positionAnchor.bind anchors).map fun (ax, ay, aw, ah) =>
+          let xs := #[cx, ax, ax+aw, cx+cw]
+          let ys := #[cy, ay, ay+ah, cy+ch]
+          (xs[x0]!, ys[y0]!, max 0 (xs[x1]!-xs[x0]!), max 0 (ys[y1]!-ys[y0]!))
+      let (cx, cy, cw, ch) := area.getD (cx, cy, cw, ch)
+      let autoInset : Option Float := if area.isSome then some 0 else none
+      let containing := absoluteContainer dom styles id
+      let anchored := fun (ref : Option AnchorRef) (horizontal far : Bool) => (show Option Float from
+        ref.bind fun a => ((a.name.orElse fun _ => s.pos.positionAnchor).bind anchors).bind fun (ax, ay, aw, ah) =>
+          (anchorFraction a.side horizontal far (axisStartIsFar containing horizontal) (axisStartIsFar s horizontal)).map fun f =>
+            let (lo, size, cLo, cSize) := if horizontal then (ax, aw, cx, cw) else (ay, ah, cy, ch)
+            let edge := lo + f * size
+            if far then cLo + cSize - edge else edge - cLo)
+      let left := ((anchored s.pos.anchorLeft true false).orElse fun _ => CSS.resolve cw s.pos.left).orElse fun _ => autoInset
+      let right := ((anchored s.pos.anchorRight true true).orElse fun _ => CSS.resolve cw s.pos.right).orElse fun _ => autoInset
+      let top := ((anchored s.pos.anchorTop false false).orElse fun _ => CSS.resolve ch s.pos.top).orElse fun _ => autoInset
+      let bottom := ((anchored s.pos.anchorBottom false true).orElse fun _ => CSS.resolve ch s.pos.bottom).orElse fun _ => autoInset
       let specified := CSS.resolve cw s.width
       -- CSS Box Alignment 3 §6.1.2 and §6.2.2: `justify-self` and `align-self` of an
       -- absolutely positioned box; `auto` and `normal` are `stretch`.
@@ -2085,22 +3132,28 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- `align-self` for its block axis; `start` and `end` are sides of that writing mode,
       -- `self-start` and `self-end` of the box's own, `left` and `right` of the page.
       let plain := fun (a : CSS.ItemAlign) => a == .auto || a == .normal || a == .stretch
-      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else absoluteContainer dom styles id
-      let flowOf := fun (st : Computed) (horizontalAxis : Bool) =>
-        SelfPlace.startsAtEnd horizontalAxis (st.pos.writingMode != .horizontalTb) (st.pos.writingMode == .verticalRl)
-          (st.direction == .rtl)
+      let container := if plain s.align.justifySelf && plain s.align.alignSelf then s else containing
       let placeOn := fun (horizontalAxis : Bool) =>
         let inlineAxis := horizontalAxis != (container.pos.writingMode != .horizontalTb)
         let a := if inlineAxis then s.align.justifySelf else s.align.alignSelf
-        match a with
-        | .auto | .normal | .stretch => SelfPlace.Place.stretch
-        | .center => .center
-        | .end_ | .flexEnd | .lastBaseline => SelfPlace.Place.end_.physical (flowOf container horizontalAxis)
-        | .selfStart => SelfPlace.Place.start.physical (flowOf s horizontalAxis)
-        | .selfEnd => SelfPlace.Place.end_.physical (flowOf s horizontalAxis)
-        | .left => .start
-        | .right => .end_
-        | _ => SelfPlace.Place.start.physical (flowOf container horizontalAxis)
+        -- in a `position-area`, `normal` aligns toward the anchor (CSS Anchor Positioning 1
+        -- §3.1.3): the end of an area before it, the start of one after it, the centre of its own
+        let toward := if area.isNone then none else
+          s.pos.positionArea.map fun ((x0, x1), (y0, y1)) =>
+            match if horizontalAxis then (x0, x1) else (y0, y1) with
+            | (0, 1) | (0, 2) => SelfPlace.Place.end_
+            | (2, 3) | (1, 3) => SelfPlace.Place.start
+            | _ => SelfPlace.Place.center
+        match a, toward with
+        | .auto, some t | .normal, some t => t
+        | .auto, _ | .normal, _ | .stretch, _ => SelfPlace.Place.stretch
+        | .center, _ => .center
+        | .end_, _ | .flexEnd, _ | .lastBaseline, _ => SelfPlace.Place.end_.physical (axisStartIsFar container horizontalAxis)
+        | .selfStart, _ => SelfPlace.Place.start.physical (axisStartIsFar s horizontalAxis)
+        | .selfEnd, _ => SelfPlace.Place.end_.physical (axisStartIsFar s horizontalAxis)
+        | .left, _ => .start
+        | .right, _ => .end_
+        | _, _ => SelfPlace.Place.start.physical (axisStartIsFar container horizontalAxis)
       let placeX := placeOn true
       let placeY := placeOn false
       -- §10.3.7: the width is given, or fills the room between `left` and `right`, or
@@ -2169,12 +3222,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let mut below : Result := {}
       let mut above : Result := {}
       let mut kept : Array Pending := #[]
+      -- the anchors of `content` (CSS Anchor Positioning 1 §2): by name, the border box of the
+      -- last element in tree order with that `anchor-name`; read only for an `anchor()` inset
+      let anchors := fun (name : String) => anchorBoxIn styles content.boxes name
       for (z,p) in ordered do
         if (styles[p.id]!).pos.position == .fixed && !root then kept := kept.push p
         else
           let r ← match area p with
-            | some (ax,ay,aw,ah) => absolute p ax ay aw ah
-            | none => absolute p cx cy cw ch
+            | some (ax,ay,aw,ah) => absolute p ax ay aw ah anchors
+            | none => absolute p cx cy cw ch anchors
           if z < 0 then below := below.over r else above := above.over r
       return {content with nodes := below.nodes ++ content.nodes ++ above.nodes,
                            boxes := content.boxes ++ below.boxes ++ above.boxes,
@@ -2194,11 +3250,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .auto => if renderedLegend dom styles id then {s with width := .fitContent} else s
         | _ => s
       if s.display.isTable then
-        match imposedWidth with
-        | none => return (← table (some id) (n.parent.getD 0) n.kids)
-        | some w =>
-          -- A table sizes itself (CSS 2.1 §17.5.2) in the width it is given.
-          return (← layoutTask dom styles font embedding pictures fuel (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Collapsed tables still size their grid without resolving shared border edges.
+        -- Keep their available-width input until the parent and table agree on those edges.
+        if s.borderCollapse then
+          match imposedWidth with
+          | none => return (← table (some id) (n.parent.getD 0) n.kids none none)
+          | some w =>
+            return (← layoutTask dom styles font embedding pictures fuel
+              (sub <| .table (some id) (n.parent.getD 0) n.kids) x y w)
+        -- Separated tables consume the used border-box dimensions chosen by placement.
+        return (← table (some id) (n.parent.getD 0) n.kids imposedWidth imposedHeight)
       let margin := s.margin
       let padding := s.padding
       let border := s.borderEdges
@@ -2225,8 +3286,15 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             | some m => min width m
             | none => width
           max 0 (max ((widthOf s.minWidth).getD 0) width)
-      -- §10.3.3: auto margins share the room the box leaves; an imposed box is placed by its parent.
-      let shift := if imposedWidth.isSome then 0 else autoMarginShift s available (margin.left+width+edgesX+margin.right)
+      -- The parent resolves an imposed box's margins. In horizontal normal flow,
+      -- use the containing block's direction, even when the child has its own.
+      let move := fun outer =>
+        if imposedWidth.isSome then 0 else
+        let containing := (n.parent.bind fun id => styles[id]?).getD s
+        let rtl := s.display.isBlockLevel && containing.pos.writingMode == .horizontalTb &&
+          containing.direction == .rtl
+        blockMarginShift s rtl available outer
+      let shift := move (margin.left+width+edgesX+margin.right)
       -- CSS 2.1 §8.3.1: a block in a block formatting context whose top margin adjoins its
       -- first child's shows the larger of the two, and the child starts at its top edge.
       let joinsTop := imposedWidth.isNone && !contentOnly && collapsesTop dom s id
@@ -2239,7 +3307,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       -- its auto margins put it.
       let replaced := fun (w h : Float) (content : Float → Float → List Node) (s : Computed) =>
         let (ow,oh,nodes) := replacedBox id s w h content
-        let dx := if imposedWidth.isSome then 0 else autoMarginShift s available ow
+        let dx := move ow
         ({nodes := #[.group none (translate (x+dx) y) nodes],
           boxes := #[⟨id,x+dx+margin.left,outerY,ow-margin.left-margin.right,oh-margin.top-margin.bottom⟩],height := oh,
           marginBottom := margin.bottom} : Result)
@@ -2252,7 +3320,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let (w,h) := replacedSize sized (some picture.size) available
         return replaced w h (fun cx cy => pictureNodes id s picture cx cy w h) s
       if let some size := blankReplaced n then
-        let (w,h) := replacedSize sized (some size) available
+        let (w,h) := replacedSize sized size available
         return replaced w h (fun _ _ => []) s
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
@@ -2260,8 +3328,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
-      let markerItems := if n.lname == "li" then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray else #[]
-      let lead := if n.lname == "img" then altItems id s n else if s.pos.listInside then markerItems else #[]
+      let markerItems := listMarkerItems dom styles font id s
+      let lead := if n.lname == "img" then altItems id s n else if s.pos.listItem && s.pos.listInside then markerItems else controlItems dom id s
       -- CSS 2.1 §10.7: the height within `min-height` and `max-height` (px; a percentage has
       -- no definite basis here). An imposed height is the parent's and is not clamped again.
       let minHeight := match s.minHeight with | .px h => h | _ => 0
@@ -2332,7 +3400,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let content ← if markerItems.isEmpty || s.pos.listInside then pure content else do
         let marker ← inlineLayout font markerItems 0 innerY unbounded (some {s with textAlign := .left})
         let gap := s.fontSize/2
-        let dx := if s.direction == .rtl then innerX+width+gap else innerX-lineExtent marker-gap
+        -- An outside marker follows the first line's available inline-start
+        -- edge where a preceding float intrudes into this block.
+        let (offset, room) := if around.isEmpty then (0, width)
+          else floatBand around innerX width innerY s.lineHeight
+        let start := innerX+offset
+        let dx := if s.direction == .rtl then start+room+gap else start-lineExtent marker-gap
         let marker := marker.shift dx 0
         pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
                            height := max content.height marker.height}
@@ -2407,12 +3480,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .contents container kids =>
       let content ← flow (styles[container]!) container kids #[] x y available
       return {content with height := max content.height (floatsHeight content.floats y), floats := #[]}
-    | .table element container kids => table element container kids
+    | .table element container kids => table element container kids none none
     | .flowed id floats => box id none none false floats true
     | .box id => box id none none false
     | .sized id width height => box id (some width) height false
     | .inner id width => box id (some width) none true
-    | .positioned pending cx cy cw ch => place {pending} cx cy cw ch true fun _ => none
+    | .positioned content cx cy cw ch => place content cx cy cw ch true fun _ => none
     | .rough inner => layoutTask dom styles font embedding pictures fuel (.rough inner) x y available
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
@@ -2432,9 +3505,8 @@ def layoutRoot (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
   let mut laid ← block dom styles font embedding pictures 64 0 0 0 vw
   for _ in [0:4] do
     if laid.pending.isEmpty then break
-    let placed ← layoutTask dom styles font embedding pictures 64 (.positioned laid.pending 0 0 vw vh) 0 0 vw
-    laid := {laid with nodes := laid.nodes ++ placed.nodes, boxes := laid.boxes ++ placed.boxes,
-                       runs := laid.runs ++ placed.runs, pending := placed.pending, work := laid.work+placed.work}
+    -- The same paint ordering used for a local containing block applies at the root.
+    laid ← layoutTask dom styles font embedding pictures 64 (.positioned laid 0 0 vw vh) 0 0 vw
   return laid
 
 /-- The nearest HTML anchor with an href attribute, including href="". -/
@@ -2507,14 +3579,15 @@ of it (`Inline.openInline`): an inline element that is not replaced. -/
 def isInlineBox (dom : Dom) (styles : Array Computed) (id : Nat) : Bool :=
   let n := dom.get id
   n.type == .element && ((styles[id]?).map (·.display == .inline)).getD false &&
-    !["img","br","canvas","video"].contains n.lname && n.ns != some DOM.svgNS
+    !["img","br","canvas","video","iframe"].contains n.lname && n.ns != some DOM.svgNS
 
 /-- The boxes that link regions are cut from: the boxes of text, of replaced elements and
 of block-level and atomic boxes. The box of an inline box is left out: what is inside it
 has boxes of its own, so a link has a region for each piece of its content, as it had
-before inline boxes had boxes. -/
+before inline boxes had boxes. Anonymous control text has no node from which to take
+a link target. -/
 def linkSources (dom : Dom) (styles : Array Computed) (boxes : Array Box) : Array Box :=
-  boxes.filter fun b => !isInlineBox dom styles b.source
+  boxes.filter fun b => b.source < dom.size && !isInlineBox dom styles b.source
 
 /-- Link fragments come from the same visible layout boxes as glyphs and
 replaced elements. Collapsed spaces produce boxes only when retained on a line.
@@ -2538,6 +3611,32 @@ def canvasBackground (dom : Dom) (styles : Array Computed) : Option (Nat × Colo
   let some body := (dom.get root).kids.find? (fun k => (dom.get k).lname == "body") | return none
   return ((styles[body]?).bind (·.background)).map (body,·)
 
+/-- CSS Display 3 §2.4: a replaced element with internal table display participates
+as an atomic inline box. Table construction reads this used display, while the
+computed style retains the authored value. -/
+def replacedDisplay (display : Display) (replaced : Bool) : Display :=
+  if display.isTableInternal && replaced then .inlineBlock else display
+
+/-- An ordinary box keeps its display, including actual non-replaced table cells. -/
+theorem replacedDisplay_ordinary (display : Display) :
+    replacedDisplay display false = display := by
+  simp [replacedDisplay]
+
+#print axioms replacedDisplay_ordinary
+
+private def usedReplacedDisplay (dom : Dom) (pictures : Pictures) (id : Nat) (display : Display) :
+    Display :=
+  if display.isTableInternal then
+    let node := dom.get id
+    let replaced := DOM.Dom.isHtmlElement node "input" || DOM.Dom.isHtmlElement node "img" ||
+      (blankReplaced node).isSome || node.ns == some DOM.svgNS || (pictures id).isSome
+    replacedDisplay display replaced
+  else display
+
+#guard replacedDisplay .tableCell true == .inlineBlock
+#guard replacedDisplay .tableCell false == .tableCell
+#guard replacedDisplay .none true == .none
+
 /-- The scene of a tree whose styles are computed: existing DOM input, explicit viewport
 and font data, immutable scene output. `pictures` holds the decoded content of replaced
 elements. -/
@@ -2546,10 +3645,17 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
   if width == 0 || height == 0 || width > 4096 || height > 4096 then throw "unsupported viewport: require dimensions 1 to 4096"
   let vw := Float.ofNat width
   let vh := Float.ofNat height
-  let styles := computed.map fun s =>
-    {s with width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
+  let styles := computed.mapIdx fun id s =>
+    let s := withViewportEdges s vw vh
+    {s with display := usedReplacedDisplay dom pictures id s.display,
+            width := s.width.atViewport vw vh, height := s.height.atViewport vw vh,
             minWidth := s.minWidth.atViewport vw vh, maxWidth := s.maxWidth.atViewport vw vh,
             minHeight := s.minHeight.atViewport vw vh, maxHeight := s.maxHeight.atViewport vw vh,
+            cornerLengths := s.cornerLengths.map (CornerLengths.atViewport vw vh),
+            backgroundSize := s.backgroundSize.atViewport vw vh,
+            backgroundPositionX := s.backgroundPositionX.atViewport vw vh,
+            backgroundPositionY := s.backgroundPositionY.atViewport vw vh,
+            objectPosition := s.objectPosition.map fun (x,y) => (x.atViewport vw vh, y.atViewport vw vh),
             align := (flexAtViewport vw vh s).align, flex := (flexAtViewport vw vh s).flex,
             pos := (flexAtViewport vw vh s).pos}
   -- Percentage margins and padding, where the containing block's width is definite.
@@ -2573,6 +3679,30 @@ def renderStyled (dom : Dom) (computed : Array Computed) (font : FontProfile) (e
     throw "unsupported link region count or href exceeding 2048 UTF-8 bytes"
   return (⟨width,height,⟨1,1,0,0,0,0,Float.ofNat width,Float.ofNat height⟩, result.nodes.toList,result.runs,links⟩,result.boxes)
 
+/-- The boxes of the original page's nodes, used by script geometry and frame
+answers. The limit also excludes generated content and anonymous control text. -/
+def pageBoxes (nodes : Nat) (boxes : Array Box) : Array Box :=
+  boxes.filter (·.source < nodes)
+
+/-- Kind: equivalence. Says: page geometry retains exactly the boxes sourced to a
+node in the original page. Does not say: which boxes the layout emits. -/
+theorem mem_pageBoxes {nodes : Nat} {boxes : Array Box} {b : Box} :
+    b ∈ pageBoxes nodes boxes ↔ b ∈ boxes ∧ b.source < nodes := by
+  simp [pageBoxes, Array.mem_filter]
+
+/-- Kind: separation. Says: a control label's anonymous text fragment is never
+reported as a box of the page. Does not say: how the text is shaped, laid out or painted. -/
+theorem controlText_geometry_excluded (dom : Dom) (id pageSize : Nat) (h : pageSize ≤ dom.size)
+    (b : Box) (boxes : Array Box) (source : b.source = (TextSource.control dom id).geometry) :
+    b ∉ pageBoxes pageSize boxes := by
+  intro mem
+  have lt := (mem_pageBoxes.mp mem).2
+  rw [source] at lt
+  exact Nat.not_lt_of_ge h lt
+
+#print axioms mem_pageBoxes
+#print axioms controlText_geometry_excluded
+
 /-- The scene of a page and the boxes of its nodes. A page with shadow trees is laid out
 on its flat tree (`DOM.Dom.flat`), with `treeScope` its node tree for selectors
 (`CSS.TreeScope`). The tree that is laid out has the page's `::before` and `::after`
@@ -2584,7 +3714,7 @@ def render (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (embedding :
     (pictures : Pictures := noPictures) (treeScope : Option CSS.TreeScope := none) : Except String (Scene × Array Box) := do
   let made ← Generated.styled treeScope dom rules textScale state
   let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
-  return (drawn.1,drawn.2.filter (·.source < dom.size))
+  return (drawn.1,pageBoxes dom.size drawn.2)
 
 /-- `render`, and with its answer the computed styles of the page's own nodes: those the
 layout was made with (`Generated.styled`). A caller that reads styles of the laid out page
@@ -2596,7 +3726,7 @@ def renderWithStyles (dom : Dom) (rules : List CSS.Rule) (font : FontProfile) (e
     Except String ((Scene × Array Box) × Array Computed) := do
   let made ← Generated.styled treeScope dom rules textScale state
   let drawn ← renderStyled (Generated.flattenContents made.1 made.2) made.2 font embedding width height pictures
-  return ((drawn.1,drawn.2.filter (·.source < dom.size)),made.2.extract 0 dom.size)
+  return ((drawn.1,pageBoxes dom.size drawn.2),made.2.extract 0 dom.size)
 
 /-- Kind: correctness of the shared styles. Says: on a page whose sheet makes no
 generated content, the layout is the layout of the styles of `CSS.computeFor`, and the
@@ -2610,7 +3740,7 @@ theorem renderWithStyles_unused (dom : Dom) (rules : List CSS.Rule) (font : Font
     renderWithStyles dom rules font embedding width height textScale state pictures treeScope =
       (CSS.computeFor treeScope dom rules textScale state).bind fun styles =>
         (renderStyled (Generated.flattenContents dom styles) styles font embedding width height pictures).bind fun drawn =>
-          Except.ok ((drawn.1,drawn.2.filter (·.source < dom.size)),styles.extract 0 dom.size) := by
+          Except.ok ((drawn.1,pageBoxes dom.size drawn.2),styles.extract 0 dom.size) := by
   unfold renderWithStyles
   rw [Generated.styled_unused treeScope dom rules textScale state h]
   cases CSS.computeFor treeScope dom rules textScale state <;> rfl

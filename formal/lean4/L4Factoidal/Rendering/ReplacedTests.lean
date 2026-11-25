@@ -83,8 +83,11 @@ private def size (style : Computed) (available : Float := 200) := replacedSize s
 #guard fitScale .scaleDown 40 20 80 80 == (1,1)
 #guard fitScale .scaleDown 40 20 20 20 == (0.5,0.5)
 /-- The painted rectangle and the pixel map's scale and offset of a picture. -/
-private def painted (fit : ObjectFit) (w h : Float) : List (Float × Float × Float × Float × Float × Float) :=
-  (pictureNodes 1 {objectFit := fit} picture 0 0 w h).filterMap fun
+private def painted (fit : ObjectFit) (w h : Float) (position : String := "") :
+    List (Float × Float × Float × Float × Float × Float) :=
+  let style : Computed := {objectFit := fit}
+  let style := if position.isEmpty then style else (CSS.applyDeclaration style "object-position" position).getD style
+  (pictureNodes 1 style picture 0 0 w h).filterMap fun
     | .paint ⟨_,{geometry := .rect x y pw ph,style := {fill := .image r,..},..}⟩ => some (x,y,pw,ph,r.map.a,r.map.e)
     | _ => none
 #guard painted .fill 80 40 == [(0,0,80,40,0.5,0)]
@@ -93,6 +96,9 @@ private def painted (fit : ObjectFit) (w h : Float) : List (Float × Float × Fl
 -- cover: 160 by 80, cut to the box.
 #guard painted .cover 80 80 == [(0,0,80,80,0.25,10)]
 #guard painted .fill 0 10 == []
+#guard painted .contain 80 80 "50% 75%" == [(0,30,80,40,0.5,0)]
+#guard painted .contain 80 80 "center bottom" == [(0,40,80,40,0.5,0)]
+#guard painted .cover 80 80 "right center" == [(0,0,80,80,0.25,20)]
 
 -- In flow. Inline: the bottom margin edge on the baseline of the line.
 #guard boxes "<div><img id='i' src='a.png'></div>" == .ok [("i",0,0,40,20)]
@@ -185,8 +191,23 @@ private def wordsAt (html : String) : Except String (List (String × Float)) :=
 #guard wordsAt "<pre>a  b</pre>" == .ok [("a",0),("b",18)]
 #guard wordsAt "<pre>a\tb</pre>" == .ok [("a",0),("b",48)]
 #guard wordsAt "<p>a  b</p>" == .ok [("a",0),("b",12)]
+-- CSS Text 3 §8.1 to §8.3: letter-spacing after each character (the space too), word-spacing on
+-- each separator, text-indent on the first line only (a percentage of the line's room).
+#guard wordsAt "<p style='letter-spacing:10px'>a b</p>" == .ok [("a",0),("b",32)]
+#guard wordsAt "<p style='word-spacing:5px'>a b</p>" == .ok [("a",0),("b",17)]
+-- a percentage inherits as a percentage, of the font size where it is used; an em value
+-- inherits as px (CSS Text 4 §8.1). The test face's default size is 7 px.
+#guard wordsAt "<div style='font-size:32px;letter-spacing:62.5%'><p style='font-size:16px'>a b</p></div>"
+  == wordsAt "<p style='font-size:16px;letter-spacing:10px'>a b</p>"
+#guard wordsAt "<div style='font-size:32px;letter-spacing:0.3125em'><p style='font-size:16px'>a b</p></div>"
+  == wordsAt "<p style='font-size:16px;letter-spacing:10px'>a b</p>"
+#guard wordsAt "<div style='letter-spacing:10px'><p>a b</p></div>" == .ok [("a",0),("b",32)]
+#guard wordsAt "<p style='letter-spacing:calc(5px + 31.25%)'>a b</p>" == .ok [("a",0),("b",26.375)]
+#guard wordsAt "<p style='text-indent:7px'>a b</p>" == .ok [("a",7),("b",19)]
+#guard wordsAt "<div style='text-indent:7px'><p>a b</p></div>" == .ok [("a",7),("b",19)]
+#guard wordsAt "<p style='text-indent:7px'>a<br>b</p>" == .ok [("a",7),("b",0)]
 -- And does not wrap.
-#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [3.5,3.5]
+#guard (render "<pre>aaaa bbbb</pre>" "pre{width:30px}").map (·.1.glyphRuns.toList.map (fun r => (r.glyphs[0]?.map (·.y)).getD 0)) == .ok [7,7]
 
 -- CSS 2.1 §14.2: the body background fills the canvas, not the body's box.
 private def firstFill (html extra : String) : Except String (Option (Float × Float × Float × Float)) :=
@@ -205,4 +226,47 @@ private def firstFill (html extra : String) : Except String (Option (Float × Fl
 
 -- A margin on inline SVG moves it; it no longer refuses the page.
 #guard (boxes "<div><svg id='s' width='10' height='10' style='margin:4px'></svg></div>").map (·.head?) == .ok (some ("s",4,4,10,10))
+
+-- `content: url(...)` (CSS Content 3 §2.1, CSS 2.1 §12.2, issue 874): the image is a replaced
+-- box of its natural size (40 by 20 here) in the pseudo-element, between the texts beside it.
+-- `Generated.fill` adds the image as a node `Generated.imageName` after the pseudo-element's
+-- own two nodes; the picture is given for it by node number, as the engine does after the
+-- cascade (`WebDocument.generatedImages`).
+private def generated (html extra : String) (imageNode : Nat) : Except String (Scene × Array Box) := do
+  let dom := DOM.parseHtmlDocument html
+  Layout.render dom (← CSS.parse (css ++ extra)) font noSVG 200 100 1 {} fun id =>
+    if id == dom.size + imageNode then some picture else none
+private def generatedWords (html extra : String) (imageNode : Nat := 2) : Except String (List (String × Float)) :=
+  (generated html extra imageNode).map fun r => r.1.glyphRuns.toList.map fun run => (run.text,(run.glyphs[0]?.map (·.x)).getD 0)
+private def generatedBox (html extra : String) (imageNode : Nat := 2) :
+    Except String (Option (Float × Float × Float × Float)) := do
+  let dom := DOM.parseHtmlDocument html
+  let (_,found) ← Layout.render dom (← CSS.parse (css ++ extra)) font noSVG 200 100 1 {} fun id =>
+    if id == dom.size + imageNode then some picture else none
+  return found.toList.findSome? fun b =>
+    if CSS.attrValue (dom.get b.source) "id" == "a" then some (b.x,b.y,b.width,b.height) else none
+private def beside := "<p id=a>AA</p>"
+-- the image takes its 40 px, and the text starts after it
+#guard generatedWords beside "#a::before{content:url(a.png)}" == .ok [("AA",40)]
+-- after: the text first
+#guard generatedWords beside "#a::after{content:url(a.png)}" == .ok [("AA",0)]
+-- the line is as high as the image (it stands on the baseline); the 7 px is the paragraph's margin
+#guard generatedBox beside "#a::before{content:url(a.png)}" == .ok (some (0,7,200,20))
+-- no picture (the host did not give the image, or it did not decode): nothing is drawn, and the
+-- text is where it is with no pseudo-element (CSS 2.1 §12.2)
+#guard generatedWords beside "#a::before{content:url(a.png)}" (imageNode := 9) == .ok [("AA",0)]
+#guard generatedBox beside "#a::before{content:url(a.png)}" (imageNode := 9) == .ok (some (0,7,200,7))
+-- a string, the image, a string: "x" first, the image next, "y" last (the image is the third
+-- node added; the second text is the fourth)
+#guard generatedWords beside "#a::before{content:'x' url(a.png) 'y'}" == .ok [("x",0),("y",46),("AA",52)]
+-- the image is as large as its natural size, and `width` and `height` of the pseudo-element
+-- do not resize an inline box (CSS 2.1 §10.3.1): the same
+#guard generatedWords beside "#a::before{content:url(a.png);width:100px}" == .ok [("AA",40)]
+-- two images
+#guard generatedWords beside "#a::before{content:url(a.png) url(a.png)}" == .ok [("AA",40)]
+-- a counter beside an image
+#guard generatedWords beside "#a::before{content:'1' url(a.png)}" == .ok [("1",0),("AA",46)]
 end L4Factoidal.Rendering.ReplacedTests
+
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_default
+#print axioms L4Factoidal.Rendering.Layout.pictureOffset_percent

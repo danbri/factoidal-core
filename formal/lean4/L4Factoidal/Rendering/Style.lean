@@ -1,5 +1,6 @@
 import L4Factoidal.Rendering.Scene
 import L4Factoidal.DOM.OfHtml
+import L4Factoidal.DOM.Forms
 import L4Factoidal.Unicode.Bidi
 import L4Factoidal.Rendering.MediaQuery
 import L4Factoidal.Rendering.CssValues.Properties
@@ -90,9 +91,45 @@ takes part in the Unicode Bidirectional Algorithm (§2.4.2 gives the bidi
 control characters of each value). -/
 inductive UnicodeBidi where | normal | embed | isolate | bidiOverride | isolateOverride | plaintext
   deriving Repr, BEq
-/-- CSS Backgrounds 3 §4.2 line styles of this profile. -/
-inductive BorderStyle where | none | solid | inset | outset
+/-- CSS Backgrounds 3 §4.2 line styles (`hidden` is `none` here: no table conflict
+resolution reads it). -/
+inductive BorderStyle where | none | solid | inset | outset | dotted | dashed | double | groove | ridge
   deriving Repr, BEq
+/-- One value for each side of a box: top, right, bottom, left. -/
+structure Sides (α : Type) where
+  top : α
+  right : α
+  bottom : α
+  left : α
+  deriving Repr
+def Sides.all (a : α) : Sides α := ⟨a,a,a,a⟩
+/-- The sides in the order of CSS's one-to-four-value shorthands (CSS Backgrounds 3 §4). -/
+def Sides.ofList : List α → Option (Sides α)
+  | [a] => some ⟨a,a,a,a⟩
+  | [a,b] => some ⟨a,b,a,b⟩
+  | [a,b,c] => some ⟨a,b,c,b⟩
+  | [a,b,c,d] => some ⟨a,b,c,d⟩
+  | _ => none
+/-- The side named `top`, `right`, `bottom` or `left` set to `a`. -/
+def Sides.set (x : Sides α) (side : String) (a : α) : Sides α :=
+  match side with
+  | "top" => {x with top := a} | "right" => {x with right := a}
+  | "bottom" => {x with bottom := a} | _ => {x with left := a}
+def Sides.toList (x : Sides α) : List α := [x.top, x.right, x.bottom, x.left]
+/-- The border paint is independent of whether its widths take up space. -/
+inductive BorderColor where
+  | current
+  | transparent
+  | solid (color : Color)
+  deriving Repr
+
+/-- Substitute the element's computed text colour when the border uses currentcolor. -/
+def BorderColor.resolve (paint : BorderColor) (currentColor : Color) : Option Color :=
+  match paint with
+  | .current => some currentColor
+  | .transparent => none
+  | .solid c => some c
+
 /-- A `linear-gradient()` background image (CSS Images 3 §3.1): the direction as an angle in
 degrees (0 is up, 90 is right; `to bottom`, the default, is 180), or a corner (`to top
 right`: x and y each -1, 0 or 1), whose angle depends on the box; and the colour stops, each
@@ -103,6 +140,30 @@ structure BackgroundGradient where
   corner : Option (Int × Int) := none
   stops : List (Color × Float × Option (Float × Bool)) := []
   deriving Repr
+
+/-- Size of the first raster background layer (CSS Backgrounds 3 §2.9). -/
+inductive BackgroundSize where
+  | dimensions (width height : Length)
+  | cover
+  | contain
+  deriving Repr
+
+/-- An offset from the start of a background's physical positioning axis. -/
+inductive BackgroundOffset where
+  | length (value : Length)
+  | calculation (expression : CssValues.Calc) (units : CssValues.Ctx)
+
+instance : Repr BackgroundOffset where
+  reprPrec
+    | .length value, prec => reprPrec value prec
+    | .calculation expr _, prec => reprPrec (CssValues.Calc.text expr) prec
+
+structure CornerLengths where
+  topLeft : Length × Length := (.px 0,.px 0)
+  topRight : Length × Length := (.px 0,.px 0)
+  bottomRight : Length × Length := (.px 0,.px 0)
+  bottomLeft : Length × Length := (.px 0,.px 0)
+  deriving Inhabited, Repr
 
 structure Computed where
   display : Display := .inline
@@ -130,13 +191,17 @@ structure Computed where
   clipOverflow : Bool := false
   underline : Bool := false
   decorationColor : Option Color := none
-  /-- Line breaks in the source are kept (pre and its older relatives). -/
+  /-- Source spaces, tabs and line feeds are preserved. -/
   preformatted : Bool := false
+  /-- Source line feeds are preserved while spaces and tabs collapse. -/
+  preserveSegmentBreaks : Bool := false
   /-- Border widths as specified; `Computed.borderEdges` is the used width (0 with no style). -/
   borderWidth : Edges := ⟨3,3,3,3⟩
-  borderStyle : BorderStyle := .none
-  /-- None: `currentColor`. -/
-  borderColor : Option Color := none
+  /-- `border-*-style`, one for each side. -/
+  borderStyles : Sides BorderStyle := .all .none
+  /-- `border-*-color`, one for each side. -/
+  borderColors : Sides BorderColor := .all .current
+  cornerLengths : Option CornerLengths := none
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -153,8 +218,21 @@ structure Computed where
   minHeight : Length := .auto
   maxHeight : Length := .auto
   objectFit : ObjectFit := .fill
+  objectPosition : Option (Length × Length) := none
   /-- `text-align` (inherited): where the lines of a block container sit. -/
   textAlign : TextAlign := .start
+  /-- Choose more even soft breaks for a block's inline formatting context. -/
+  balanceText : Bool := false
+  /-- Whether `text-wrap-mode` permits selecting balanced soft breaks. -/
+  balanceWrap : Bool := true
+  /-- `letter-spacing` and `word-spacing` (inherited, CSS Text 3 §8.1, §8.2): added after each
+  character, and to each word separator. `normal` is 0. A percentage is of the font size of the
+  element that uses it, so it inherits as a percentage (`letterSpacingPx`). -/
+  letterSpacing : Length := .px 0
+  wordSpacing : Length := .px 0
+  /-- `text-indent` (inherited, CSS Text 3 §8.3): the indent of the first line of a block
+  container; a percentage is of the container's width. -/
+  textIndent : Length := .px 0
   /-- `direction` (inherited), from CSS or the HTML `dir` attribute. -/
   direction : Direction := .ltr
   /-- `unicode-bidi` (not inherited). -/
@@ -188,8 +266,63 @@ structure Computed where
   /-- `font-style: italic` or `oblique` (inherited): drawn with the oblique face the engine
   makes. -/
   oblique : Bool := false
+  /-- The element has a `mask-image` whose image this engine does not draw (a `url()` other
+  than a reference into the document; not inherited). CSS Masking 1 §7.1 counts an image
+  that is not shown as a transparent black layer, which hides the element. Pages use such
+  masks on empty elements whose background colour is the shape of an icon; drawn unmasked,
+  that background is a filled square. So the element's own background and border are not
+  painted (`Layout.decorations`); its content still is, unmasked, and its boxes stay in the
+  layout. -/
+  masked : Bool := false
+  /-- `vertical-align: super` (1), `sub` (-1) or neither (0) of this element (not
+  inherited); `rise` is the baseline shift it and its ancestors give its text. -/
+  shift : Int := 0
+  /-- How far the baseline of this element's text is raised, in px (inherited, summed down
+  the tree: CSS 2.1 §10.8.1 `super` and `sub`, a third and a fifth of the parent's font
+  size, as other browsers draw them). Only the glyphs move; the line box is not grown. -/
+  rise : Float := 0
+  /-- HTML §15.3.3: an element with `align=center` (and `center`) centres its block-level
+  descendants, as `text-align: -webkit-center` does in other engines. Inherited as
+  `text-align` is; any other `text-align` clears it. -/
+  centerBlocks : Bool := false
+  /-- `clip: rect(...)` with no area (CSS 2.1 §11.1.2; it applies to absolutely positioned
+  boxes) and `clip-path: inset(50%)` or more: what pages write to hide text visually and keep
+  it for screen readers (skip links, labels). Not inherited; `clipHidden` is. -/
+  clipRectEmpty : Bool := false
+  clipPathEmpty : Bool := false
+  /-- The element or an ancestor is clipped to nothing: none of it is painted (`visible`
+  false), and its boxes stay in the layout. Inherited, never cleared by a descendant. -/
+  clipHidden : Bool := false
+  /-- `background-image: url(...)` (CSS Backgrounds 3 §3.3), the first layer's URL as the page
+  wrote it after the engine resolved it against its sheet (`WebDocument`); none for `none` or a
+  gradient. Not inherited. -/
+  backgroundImage : Option String := none
+  /-- The decoded image of `backgroundImage` and its paint-table id, when the host gave its
+  bytes and they decoded (`WebDocument` sets it after the cascade); `Layout.background` tiles
+  it. None: only the colour (and a gradient) is painted, as before. -/
+  backgroundBitmap : Option (Nat × Bitmap) := none
+  /-- The natural width, height and ratio (width over height) of the background image, any of
+  them missing (CSS Images 3 §5.1): an SVG image may have none. None: those of
+  `backgroundBitmap`. -/
+  backgroundNatural : Option (Option Float × Option Float × Option Float) := none
+  backgroundSize : BackgroundSize := .dimensions .auto .auto
+  backgroundRepeat : Bool × Bool := (true, true)
+  backgroundPositionX : BackgroundOffset := .length (.percent 0)
+  backgroundPositionY : BackgroundOffset := .length (.percent 0)
+  /-- `background-clip` (CSS Backgrounds 3 §3.7): the box each layer is painted in, as
+  0 border box, 1 padding box, 2 content box; one item per comma-separated value. -/
+  backgroundClip : List Nat := [0]
+  /-- The number of background layers: the comma-separated items of `background-image`
+  (CSS Backgrounds 3 §3.1). -/
+  backgroundLayers : Nat := 1
+  /-- The element's own SVG author winners. The SVG renderer handles paint inheritance. -/
+  svgAuthor : List (String × String) := []
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
+/-- The clip of the final layer, which the background colour uses (CSS Backgrounds 3 §3.7):
+the `background-clip` list repeats to the number of layers. -/
+def Computed.colorClip (s : Computed) : Nat :=
+  s.backgroundClip.getD ((s.backgroundLayers - 1) % max 1 s.backgroundClip.length) 0
 
 /-- Properties consumed by HTML style/layout, including an embedded SVG root.
 The DOM-to-SVG adapter uses this same list to avoid a second interpretation. -/
@@ -201,12 +334,37 @@ def htmlProperties : List String :=
    "line-height","visibility","overflow","text-decoration","text-decoration-line",
    "border","border-width","border-style","border-color",
    "border-spacing","border-collapse","caption-side","vertical-align","table-layout",
-   "min-width","max-width","min-height","max-height","object-fit","text-align",
-   "direction","unicode-bidi"]
+   "min-width","max-width","min-height","max-height","object-fit","object-position","text-align",
+   "direction","unicode-bidi","background-size","background-repeat",
+   "background-position","background-position-x","background-position-y","background-clip"]
+
+/-- Longhands the embedded SVG adapter can pass to the SVG style reader. -/
+def svgAuthorProperties : List String :=
+  ["fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
+   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
+   "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule",
+   "opacity","overflow","width","height","cx","cy","r","rx","ry","x","y",
+   "font","font-family","font-size","font-style","font-weight","font-variant","font-stretch","font-size-adjust",
+   "font-kerning","font-feature-settings","text-anchor","letter-spacing","word-spacing","writing-mode","direction",
+   "unicode-bidi","dominant-baseline","alignment-baseline","baseline-shift","text-decoration","text-rendering",
+   "glyph-orientation-vertical","glyph-orientation-horizontal","kerning","line-increment","text-align",
+   "display-align","text-transform","white-space"]
 
 /-- CSS Backgrounds 3 §4.3: the computed border width is 0 when the style is none. -/
 def Computed.borderEdges (s : Computed) : Edges :=
-  if s.borderStyle == .none then {} else s.borderWidth
+  let w := s.borderWidth
+  let b := s.borderStyles
+  ⟨if b.top == .none then 0 else w.top, if b.right == .none then 0 else w.right,
+   if b.bottom == .none then 0 else w.bottom, if b.left == .none then 0 else w.left⟩
+
+/-- The style of the first side, of top, right, bottom and left, that has one; `none` when
+no side has a border. -/
+def Computed.borderStyle (s : Computed) : BorderStyle :=
+  (s.borderStyles.toList.find? (· != .none)).getD .none
+/-- Whether some side has a border style (it may still be 0 wide). -/
+def Computed.hasBorder (s : Computed) : Bool := s.borderStyle != .none
+/-- All four sides with the one style `st`. -/
+def Computed.withBorderStyle (s : Computed) (st : BorderStyle) : Computed := {s with borderStyles := .all st}
 
 structure Declaration where
   property : String
@@ -216,6 +374,12 @@ structure Declaration where
 /-- Selectors Level 4 location (§8) and user action (§9) pseudo-classes. -/
 inductive PseudoClass where | link | visited | anyLink | hover | active
   deriving Repr, BEq
+/-- A compound parsed by the full selector grammar inside a host-scoped selector. -/
+structure ScopedCompound where
+  selector : DOM.Selectors.Complex
+  specificity : Nat × Nat × Nat
+instance : Repr ScopedCompound := ⟨fun f _ => "scoped compound " ++ repr f.specificity⟩
+
 structure Compound where
   tag : Option String := none
   id : Option String := none
@@ -224,6 +388,8 @@ structure Compound where
   /-- `:host` or `:host(compound)` (CSS Scoping 1 §3.2.1): it matches only the shadow host
   of the rule's shadow tree, and the other fields test that host. -/
   host : Bool := false
+  /-- The complete predicate when these fields are only a bucket prefilter. -/
+  scopeFilter : Option ScopedCompound := none
   deriving Repr
 structure Selector where
   /-- Rightmost compound first; ancestors follow. -/
@@ -282,6 +448,9 @@ structure Rule where
   before : List Selector := []
   /-- The same for `::after`. -/
   after : List Selector := []
+  /-- The same for `::first-letter` (CSS Pseudo-Elements 4 §2.3); `Generated.firstLetters`
+  wraps the first letter of the originating element in an element that has these rules. -/
+  firstLetter : List Selector := []
   deriving Repr
 
 def attrValue (n : DOM.Node) (key : String) : String :=
@@ -291,6 +460,33 @@ def hasAttribute (n : DOM.Node) (key : String) : Bool :=
 
 private def words (s : String) : List String :=
   (s.replace "\n" " " |>.replace "\t" " " |>.replace "\r" " ").splitOn " " |>.filter (· != "")
+/-- Splits `source` at white space outside quotes and parentheses, so that `rgb(0, 0, 255)`
+is one value. One pass, no recursion. -/
+def topWords (source : String) : List String := Id.run do
+  let mut out : Array String := #[]
+  let mut item := ""
+  let mut depth := 0
+  let mut quote : Option Char := none
+  for c in source.toList do
+    if let some q := quote then
+      item := item.push c
+      if c == q then quote := none
+    else if c == '"' || c == '\'' then
+      quote := some c
+      item := item.push c
+    else if c == '(' then
+      depth := depth+1
+      item := item.push c
+    else if c == ')' then
+      depth := depth-1
+      item := item.push c
+    else if (c == ' ' || c == '\t' || c == '\n' || c == '\r') && depth == 0 then
+      if !item.isEmpty then out := out.push item
+      item := ""
+    else item := item.push c
+  if !item.isEmpty then out := out.push item
+  return out.toList
+#guard topWords "1px  solid rgb(0, 0, 255)" == ["1px","solid","rgb(0, 0, 255)"]
 private def ident (s : String) : Bool := !s.isEmpty && s.toList.all (fun c => c.isAlphanum || c == '-' || c == '_')
 /-- Splits `source` at the commas outside quotes and parentheses (CSS Syntax 3 §5.3.11,
 for a comma-separated list of component values). One pass, no recursion. -/
@@ -318,10 +514,20 @@ def splitTopCommas (source : String) : List String := Id.run do
     else item := item.push c
   return (out.push item).toList
 
+/-- The generic family keywords of CSS Fonts 4 §2.1 and the CSS-wide keywords, lower case: an
+unquoted item spelled so is a keyword, a quoted one a family name (`familyNames`). -/
+def genericFamilyKeywords : List String :=
+  ["serif","sans-serif","monospace","cursive","fantasy","system-ui","ui-serif","ui-sans-serif",
+    "ui-monospace","ui-rounded","math","emoji","fangsong","generic","default","initial","inherit",
+    "unset","revert","revert-layer"]
+
 /-- CSS Fonts 4 §2.1 `<family-name>#`: a quoted string, or identifiers separated by
-white space (joined by one space). Generic family keywords stay as they are. `none`
-for a list this profile can not read: an empty item, a backslash escape, an
-unclosed quote, or an unquoted item that is not identifiers. -/
+white space (joined by one space). Generic family keywords stay as they are. A quoted
+string spelled like a generic or CSS-wide keyword is a family name, not the keyword
+(CSS Fonts 4 §5.1: `"monospace"` names a font called monospace), so it keeps its double
+quotes and no generic-family test matches it. `none` for a list this profile can not read:
+an empty item, a backslash escape, an unclosed quote, or an unquoted item that is not
+identifiers. -/
 def familyNames (value : String) : Option (List String) := do
   let items ← (splitTopCommas value).mapM fun item => do
     let raw := trim item
@@ -331,7 +537,7 @@ def familyNames (value : String) : Option (List String) := do
       if raw.length < 2 || !raw.endsWith q.toString then none
       let inner := ((raw.drop 1).dropEnd 1).toString
       if inner.contains q || inner.isEmpty then none
-      pure inner
+      if genericFamilyKeywords.contains inner.toLower then pure ("\"" ++ inner ++ "\"") else pure inner
     else
       let parts := words raw
       if parts.isEmpty || !parts.all ident then none
@@ -370,16 +576,6 @@ private def compoundBody (s : String) : Except String Compound := do
     else if ident chunk then out := {out with tag := some chunk.toLower}
     else throw s!"unsupported CSS selector: {s}"
   return out
-/-- A compound, or `:host` and `:host(compound)` (CSS Scoping 1 §3.2.1). -/
-private def compound (s : String) : Except String Compound := do
-  if s == ":host" then return {host := true}
-  if s.startsWith ":host(" && s.endsWith ")" then
-    let inner ← compoundBody ((s.drop 6).dropEnd 1).toString
-    return {inner with host := true}
-  compoundBody s
-private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
-  (n.1 + (if p.id.isSome then 1 else 0), n.2.1 + p.classes.length + p.pseudo.length + (if p.host then 1 else 0),
-    n.2.2 + (if p.tag.isSome then 1 else 0))
 /-- The specificity of a selector of `DOM.Selectors` (Selectors 4 §17): ids; classes,
 attributes and pseudo-classes; types and pseudo-elements. `:is()`, `:not()`, `:has()` and the `of`
 list of `:nth-child()` count as their most specific argument. The recursion is on the
@@ -428,6 +624,30 @@ def complexPrefilter : DOM.Selectors.Complex → Compound
           | .type .default (some n) => if n == n.toLower then some n else none
           | _ => none }
 
+private def scopedCompound (s : String) : Except String Compound :=
+  match DOM.Selectors.parse s with
+  | some [c@(.mk [(' ', _)])] =>
+    .ok { complexPrefilter c with
+      scopeFilter := some ⟨c, complexSpecificity DOM.Selectors.maxNesting c⟩ }
+  | _ => .error s!"unsupported CSS compound: {s}"
+
+private def compound (s : String) (contextual : Bool) : Except String Compound := do
+  if s == ":host" then return {host := true}
+  let parseBody := fun body => match compoundBody body with
+    | .error message => if contextual then scopedCompound body else .error message
+    | .ok fields => .ok fields
+  if s.startsWith ":host(" && s.endsWith ")" then
+    let inner ← parseBody ((s.drop 6).dropEnd 1).toString
+    return {inner with host := true}
+  parseBody s
+
+private def compoundSpecificity (n : Nat × Nat × Nat) (p : Compound) : Nat × Nat × Nat :=
+  let (ids, classes, tags) := match p.scopeFilter with
+    | some f => f.specificity
+    | none => (if p.id.isSome then 1 else 0, p.classes.length + p.pseudo.length,
+        if p.tag.isSome then 1 else 0)
+  (n.1 + ids, n.2.1 + classes + (if p.host then 1 else 0), n.2.2 + tags)
+
 /-- A selector that the compound grammar below does not read, through `DOM.Selectors`. -/
 private def complexSelector (s : String) : Except String Selector :=
   match DOM.Selectors.parse s with
@@ -435,8 +655,8 @@ private def complexSelector (s : String) : Except String Selector :=
     .ok { parts := [complexPrefilter c], specificity := complexSpecificity DOM.Selectors.maxNesting c, complex := some c }
   | _ => .error s!"unsupported CSS selector: {s}"
 
-private def compoundSelector (s : String) : Except String Selector := do
-  let ws := words (trim s)
+private def compoundSelector (s : String) (contextual : Bool := false) : Except String Selector := do
+  let ws := if contextual then topWords (trim s) else words (trim s)
   -- `::slotted(compound)` ends the last compound (CSS Scoping 1 §3.2.2).
   let (ws, slotted) ← match ws.getLast? with
     | some w =>
@@ -447,7 +667,8 @@ private def compoundSelector (s : String) : Except String Selector := do
         pure (ws.dropLast ++ [if before.isEmpty then "*" else before], some c)
       | _ => pure (ws, none)
     | none => pure (ws, none)
-  let parts ← ws.mapM compound
+  let parts ← ws.mapM (compound · contextual)
+  if contextual && !(parts.any (·.host)) then throw "expected a shadow host selector"
   if parts.isEmpty || parts.length > 16 then throw "CSS selector exceeds supported depth"
   let specificity := (parts ++ slotted.toList).foldl compoundSpecificity (0,0,0)
   -- `::slotted` is a pseudo-element: one more in the last count.
@@ -459,7 +680,12 @@ pseudo-classes and the shadow tree selectors), else all of what `DOM.Selectors` 
 private def selector (s : String) : Except String Selector :=
   match compoundSelector s with
   | .ok sel => .ok sel
-  | .error _ => complexSelector s
+  | .error _ =>
+    if s.contains ":host" then
+      match compoundSelector s true with
+      | .ok sel => .ok sel
+      | .error _ => complexSelector s
+    else complexSelector s
 
 /-- A selector that ends in the pseudo-element `::before` or `::after` (`:before` and
 `:after` too: CSS 2.1 §5.12.3), split: the selector of the originating element, and
@@ -480,32 +706,84 @@ def generatedSelector (s : String) : Option (String × Bool) :=
   else if low.endsWith ":after" then split 6 false
   else none
 
+/-- A selector that ends in `::first-letter` (or CSS 2's `:first-letter`): the selector of
+its originating element. -/
+def firstLetterSelector (s : String) : Option String :=
+  let t := trim s
+  let low := t.toLower
+  let split := fun (n : Nat) =>
+    let base := (t.dropEnd n).toString
+    let bare := match base.toList.getLast? with
+      | none => true
+      | some c => c == ' ' || c == '>' || c == '+' || c == '~' || c == '\t' || c == '\n'
+    some (if bare then base ++ "*" else base)
+  if low.endsWith "::first-letter" then split 14
+  else if low.endsWith ":first-letter" then split 13
+  else none
+
+#guard firstLetterSelector "p::first-letter" == some "p"
+#guard firstLetterSelector "div:first-letter" == some "div"
+#guard firstLetterSelector "::first-letter" == some "*"
+#guard firstLetterSelector "p::before" == none
+
+private def radiusNames : List String :=
+  ["border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"]
+
+private def specifiedRadii (value : String) : Option (List (String × String)) := do
+  let _ ← CssValues.specified "border-radius" value
+  let components := (CssValues.stripWs (CssValues.CV.parse value)).map fun v => CssValues.serialize [v]
+  let horizontal := components.takeWhile (· != "/")
+  let axes ← match components.drop horizontal.length with
+    | [] => some horizontal
+    | "/" :: vertical => some vertical
+    | _ => none
+  let (a,b,c,d) ← CssValues.expand4 horizontal
+  let (e,f,g,h) ← CssValues.expand4 axes
+  return [a,b,c,d].zip [e,f,g,h]
+
+#guard specifiedRadii "10% 20% / 4px 8px 12px" ==
+  some [("10%","4px"),("20%","8px"),("10%","12px"),("20%","8px")]
+#guard (specifiedRadii "10px / -1px").isNone
+
 /-- The longhands that a side shorthand read by this profile sets, in the order of its
 values: the four sides of `margin`, `padding` and `inset`, the two sides of a
 flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
-`CssValues.Logical.pair`). Empty for any other property. -/
+`CssValues.Logical.pair`), or the two axes of `background-position`. -/
 def sidesOf (property : String) : List String :=
   if property == "margin" || property == "padding" then ["top","right","bottom","left"].map (property ++ "-" ++ ·)
   else if property == "inset" then ["top","right","bottom","left"]
+  else if property == "background-position" then ["background-position-x","background-position-y"]
+  else if property == "text-wrap" then ["text-wrap-mode","text-wrap-style"]
+  else if property == "border-radius" then radiusNames
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
     | none => []
 
 /-- The longhand declarations of a side shorthand: one to four values for four sides (CSS
 Box 4 §3.2), one or two for the two sides of an axis (CSS Logical 1 §4.2). The values are
-the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each. Empty when
-the property is not a side shorthand or the number of values is not one it takes. -/
+the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each.
+`background-position` uses the shared property grammar. -/
 def expandSides (property value : String) (important : Bool) : List Declaration :=
-  let names := sidesOf property
-  let each := match names.length, SheetReader.splitWords value with
-    | 4, [a] => [a,a,a,a]
-    | 4, [a,b] => [a,b,a,b]
-    | 4, [a,b,c] => [a,b,c,b]
-    | 4, [a,b,c,d] => [a,b,c,d]
-    | 2, [a] => [a,a]
-    | 2, [a,b] => [a,b]
-    | _, _ => []
-  (names.zip each).map fun (name, v) => ⟨name,v,important⟩
+  if property == "border-radius" then
+    if CssValues.cssWide.contains (trim value).toLower then
+      radiusNames.map fun name => ⟨name,value,important⟩
+    else
+      (radiusNames.zip ((specifiedRadii value).getD [])).map fun (name,(x,y)) =>
+        ⟨name,if x == y then x else x ++ " " ++ y,important⟩
+  else if property == "background-position" || property == "text-wrap" then
+    ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
+      if name == property then none else some ⟨name,v,important⟩
+  else
+    let names := sidesOf property
+    let each := match names.length, SheetReader.splitWords value with
+      | 4, [a] => [a,a,a,a]
+      | 4, [a,b] => [a,b,a,b]
+      | 4, [a,b,c] => [a,b,c,b]
+      | 4, [a,b,c,d] => [a,b,c,d]
+      | 2, [a] => [a,a]
+      | 2, [a,b] => [a,b]
+      | _, _ => []
+    (names.zip each).map fun (name, v) => ⟨name,v,important⟩
 
 /-- The longhands of a `font` shorthand that this profile has (size, family, line height),
 each with its canonical specified value; none when the value is not a `font` value or is a
@@ -515,6 +793,26 @@ def fontLonghands (value : String) (important : Bool) : List Declaration :=
   | some ls => ["font-size", "font-family", "line-height", "font-weight", "font-style"].filterMap fun n =>
       (ls.lookup n).map fun v => (⟨n, v, important⟩ : Declaration)
   | none => []
+
+/-- The URL of the first `url(...)` of a value (CSS Values 4 §4.5: unquoted, or a quoted
+string), as written; none when the value has none or it is not closed. Case is kept. -/
+def firstUrl? (value : String) : Option String := do
+  let parts := value.toLower.splitOn "url("
+  if parts.length < 2 then none
+  let at_ := parts.head!.length
+  let rest := ((value.toList.drop (at_+4)).dropWhile Char.isWhitespace)
+  match rest with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none
+      some (String.ofList inner)
+    else
+      let inner := rest.takeWhile (· != ')')
+      if inner.length == rest.length then none
+      let url := String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse
+      if url.isEmpty then none else some url
 
 /-- The text inside the first `linear-gradient(` ... `)` of a value, to its matching
 parenthesis; none when the value has none. -/
@@ -544,14 +842,28 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
     let whole : Declaration := ⟨key,d.value,d.important⟩
     -- `background` is also its colour, `background-color`, which this profile reads (`apply`,
     -- `tableDeclaration`); the shorthand stays for getComputedStyle's other longhands
-    -- and its image, `none` unless it is a `linear-gradient()` (the one image drawn)
+    -- and its image. A CSS-wide keyword applies to the image longhand too.
     if key == "background" then
-      let image := if (gradientArgs d.value).isSome then d.value else "none"
-      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ :: whole :: acc else
+      let wide := CssValues.cssWide.contains (trim d.value).toLower
+      let image := if wide || (gradientArgs d.value).isSome || (firstUrl? d.value).isSome then d.value else "none"
+      let expanded := CssValues.expand key d.value
+      let rasterPlacement : List Declaration := ["background-size", "background-repeat", "background-clip",
+        "background-position-x", "background-position-y"].filterMap fun name =>
+        (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
+      (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
+        rasterPlacement ++ (whole :: acc) else
+    if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
+      expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
-      | some ls => (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
+      | some ls =>
+        -- CSS Backgrounds 3 §4.3: with style `none` or `hidden` the side's computed width is 0,
+        -- whatever width the shorthand gives (its initial `medium`, 3 px, since border widths
+        -- are read in every unit: `borderWidthPx`).
+        let hidden := ls.any fun (n, v) => n.endsWith "-style" && ["none","hidden"].contains (trim v).toLower
+        let ls := if hidden then ls.map (fun (n, v) => if n.endsWith "-width" then (n, "0") else (n, v)) else ls
+        (ls.map fun (n, v) => (⟨n, v, d.important⟩ : Declaration)) ++ acc
       | none => acc
     else
     -- a side shorthand that mentions `var()` is kept whole: its sides are known only
@@ -644,16 +956,18 @@ def ruleOfLeaf (leaf : SheetReader.Leaf) : Option Rule :=
   else
     -- each selector with the pseudo-element it ends in: `none`, `::before`, `::after`
     let texts := (splitTopCommas leaf.prelude).map fun s => match generatedSelector s with
-      | some (base,before) => (base,some before)
-      | none => (s,none)
+      | some (base,before) => (base,some (if before then 0 else 1))
+      | none => match firstLetterSelector s with
+        | some base => (base,some 2)
+        | none => (s,none)
     match texts.mapM (fun t => selector t.1) with
     | .ok all =>
       let tagged := all.zip (texts.map (·.2))
-      let pick := fun (which : Option Bool) => tagged.filterMap fun (sel,w) => if w == which then some sel else none
+      let pick := fun (which : Option Nat) => tagged.filterMap fun (sel,w) => if w == which then some sel else none
       let declarations := declarationsOf leaf.decls
       let usesVars := declarations.any (·.usesVars)
       let usesLogical := declarations.any fun d => CssValues.Logical.mentions d.property
-      some {selectors := pick none, before := pick (some true), after := pick (some false),
+      some {selectors := pick none, before := pick (some 0), after := pick (some 1), firstLetter := pick (some 2),
             declarations, layer := leaf.rank, usesVars, usesLogical}
     | .error _ => none
 
@@ -836,7 +1150,9 @@ def hostOfScope (ts : TreeScope) (scope : Option Nat) : Option Nat :=
 /-- A compound of a rule of tree `scope`: a `:host` compound matches only the host of that
 tree, and no other compound matches it (the host is featureless there). -/
 private def compoundInK (keys : Nat → ElemKey) (ts : TreeScope) (state : ElementState) (scope : Option Nat) (id : Nat) (s : Compound) : Bool :=
-  s.host == (hostOfScope ts scope == some id) && compoundFieldsK keys ts.tree state id s
+  s.host == (hostOfScope ts scope == some id) && compoundFieldsK keys ts.tree state id s &&
+    (s.scopeFilter.map fun f =>
+      DOM.Selectors.matchComplex ts.tree none DOM.Selectors.matchFuel id f.selector).getD true
 
 /-- The next node up for a selector of tree `scope`: the parent, and from that tree's
 shadow root its host. -/
@@ -911,14 +1227,64 @@ def length (s : String) : Except String Length := do
     if let some l := calcLengthOfText s then return l
   throw s!"unsupported CSS length unit: {s}"
 def resolve (basis : Float) : Length → Option Float
-  | .auto | .vw _ | .vh _ => none | .px n => some n | .percent n => some (basis*n)
+  | .auto | .vw _ | .vh _ | .viewportMath _ _ => none | .px n => some n | .percent n => some (basis*n)
   | .calc p n => some (basis*p+n)
   | .minContent | .maxContent | .fitContent | .stretch => none
+/-- The used `letter-spacing` and `word-spacing` in px: a percentage is of this element's font
+size (CSS Text 4 §8.1, §8.2). -/
+def Computed.letterSpacingPx (s : Computed) : Float := (resolve s.fontSize s.letterSpacing).getD 0
+def Computed.wordSpacingPx (s : Computed) : Float := (resolve s.fontSize s.wordSpacing).getD 0
 /-- CSS Values 4 §6.2: viewport units, computed once the viewport is known. -/
 def Length.atViewport (width height : Float) : Length → Length
   | .vw n => .px (n*width).floor
   | .vh n => .px (n*height).floor
+  | .viewportMath expr fontSize =>
+    ((viewportSizePixels expr fontSize (tableRat width) (tableRat height)).map
+      fun n => .px (ratToFloat n)).getD .auto
   | other => other
+
+def CornerLengths.atViewport (vw vh : Float) (radii : CornerLengths) : CornerLengths :=
+  let pair := fun (xy : Length × Length) => (xy.1.atViewport vw vh, xy.2.atViewport vw vh)
+  ⟨pair radii.topLeft, pair radii.topRight, pair radii.bottomRight, pair radii.bottomLeft⟩
+
+def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
+  | .length value => .length (value.atViewport vw vh)
+  | .calculation expr units =>
+    .calculation expr {units with viewportW := tableRat vw, viewportH := tableRat vh}
+
+-- Percentages use the space left by the sized tile, which can be negative.
+def BackgroundOffset.resolve (basis : Float) : BackgroundOffset → Option Float
+  | .length value => L4Factoidal.Rendering.CSS.resolve basis value
+  | .calculation expr units =>
+    let reference := if basis < 0 then -(tableRat (-basis)) else tableRat basis
+    let units := {units with percentageBasis := some reference}
+    match CssValues.Calc.simp (some units) (CssValues.Calc.depth 64 expr + 4) expr with
+    | .val result "px" => some (ratToFloat result)
+    | _ => none
+
+def BackgroundSize.atViewport (vw vh : Float) : BackgroundSize → BackgroundSize
+  | .dimensions w h => .dimensions (w.atViewport vw vh) (h.atViewport vw vh)
+  | .cover => .cover
+  | .contain => .contain
+
+/-- Read one axis of a position validated by the CSS property grammar. -/
+private def objectPositionAxis (s : String) : Option Length :=
+  match s with
+  | "left" | "top" => some (.percent 0)
+  | "center" => some (.percent 0.5)
+  | "right" | "bottom" => some (.percent 1)
+  | _ =>
+    let edge := (s.splitOn " ").headD ""
+    if edge == "left" || edge == "top" then
+      (length (s.drop (edge.length + 1)).toString).toOption
+    else if edge == "right" || edge == "bottom" then
+      match (length (s.drop (edge.length + 1)).toString).toOption with
+      | some (.px n) => some (.calc 1 (-n))
+      | some (.percent p) => some (.percent (1-p))
+      | some (.calc p n) => some (.calc (1-p) (-n))
+      | _ => none
+    else (length s).toOption
+
 private def pixels (s : String) : Except String Float := do
   match ← length s with | .px n => return n | _ => throw "box edges require px in this CSS profile"
 private def color (source : String) : Except String Color := do
@@ -945,6 +1311,22 @@ private def color (source : String) : Except String Color := do
     | [r,g,b] => return ⟨← channel r,← channel g,← channel b⟩
     | _ => throw s!"unsupported CSS color: {source}"
   throw s!"unsupported CSS color: {source}"
+/-- A font size or other positive float as a rational, to a thousandth. -/
+def ratOfFloat (x : Float) : Rat :=
+  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
+
+/-- The computed value of `value` for `property` by the property table, with lengths in px
+against font size `fontSize`; `none` when it is not a value of the property. -/
+def tableComputed (fontSize : Float) (property value : String) : Option String :=
+  (CssValues.specified property value).map fun s =>
+    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
+
+private def borderPaint (source : String) : Except String BorderColor :=
+  match (trim source).toLower with
+  | "transparent" => .ok .transparent
+  | "currentcolor" => .ok .current
+  | _ => .solid <$> color source
+
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
   if vals.any (· < 0) then throw "negative edges outside first CSS profile"
@@ -958,19 +1340,58 @@ private def edgePixel (source : String) : Except String Float := do
   let value ← pixels source
   if value < 0 then throw "negative edges outside first CSS profile"
   return value
+/-- One border width (CSS Backgrounds 3 §4.3 `<line-width>`): `thin`, `medium` and `thick`
+are 1, 3 and 5 px; a length in any unit is read by the property table, `em` against font
+size `fontSize`. Before 2026-11-22 only `px` was read, and a width such as `1in`, `6pt` or
+`1em` gave the initial 3 px (846 WPT reftests set a border width so, mostly in css/CSS2). -/
+def borderWidthPx (fontSize : Float) (source : String) : Except String Float :=
+  snapBorderWidth <$> borderWidthRaw fontSize source
+where
+  /-- CSS Values 4 §"snap as a border width", at one device pixel per px: a width above 1 is
+  rounded down to whole pixels, a width between 0 and 1 is rounded up to 1. -/
+  snapBorderWidth (w : Float) : Float := if w <= 0 then 0 else if w < 1 then 1 else w.floor
+  borderWidthRaw (fontSize : Float) (source : String) : Except String Float := do
+    match edgePixel source with
+    | .ok v => return v
+    | .error e =>
+      match (trim source).toLower with
+      | "thin" => return 1
+      | "medium" => return 3
+      | "thick" => return 5
+      | _ =>
+        match tableComputed fontSize "border-top-width" source with
+        | some t => if t == source then throw e else edgePixel t
+        | none => throw e
+
+/-- The `border-width` shorthand: one to four `borderWidthPx` values. -/
+private def borderEdges (fontSize : Float) (s : String) : Except String Edges := do
+  match ← (words s).mapM (borderWidthPx fontSize) with
+  | [a] => return ⟨a,a,a,a⟩
+  | [a,b] => return ⟨a,b,a,b⟩
+  | [a,b,c] => return ⟨a,b,c,b⟩
+  | [a,b,c,d] => return ⟨a,b,c,d⟩
+  | _ => throw "CSS edge shorthand requires one to four values"
 /-- One margin: its length and its percentage part, a fraction of the containing block's
 width that the layout resolves (`Layout.percentEdges`). A margin may be negative. -/
-private def marginParts (source : String) : Except String (Float × Float) := do
-  match ← length source with
-  | .px n => return (n,0)
-  | .percent p => return (0,p)
-  | .calc p v => return (v,p)
+private def marginParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let value ← match length source with
+    | .ok value => pure value
+    | .error _ => length source.toLower
+  match value with
+  | .px n => return (n, 0, none)
+  | .percent p => return (0, p, none)
+  | .calc p v => return (v, p, none)
+  | .vw n => return (0, 0, some (.width n))
+  | .vh n => return (0, 0, some (.height n))
   | _ => throw "box edges require a length or a percentage"
 /-- One padding, as `marginParts`; never negative. -/
-private def paddingParts (source : String) : Except String (Float × Float) := do
-  let (px,of) ← marginParts source
-  if px < 0 || of < 0 then throw "negative edges outside first CSS profile"
-  return (px,of)
+private def paddingParts (source : String) : Except String (Float × Float × Option ViewportEdge) := do
+  let (px, of, viewport) ← marginParts source
+  let fraction : Float := match viewport with
+    | some (.width n) | some (.height n) => n
+    | none => 0
+  if px < 0 || of < 0 || fraction < 0 then throw "negative edges outside first CSS profile"
+  return (px, of, viewport)
 /-- The four margins of a `margin` shorthand: a margin may be negative (CSS 2.1 §8.3). -/
 private def marginValues (s : String) : Except String Edges := do
   match ← (words s).mapM pixels with
@@ -985,13 +1406,26 @@ private def borderStyle (source : String) : Except String BorderStyle :=
   | "solid" => pure .solid
   | "inset" => pure .inset
   | "outset" => pure .outset
+  | "dotted" => pure .dotted
+  | "dashed" => pure .dashed
+  | "double" => pure .double
+  | "groove" => pure .groove
+  | "ridge" => pure .ridge
   | _ => throw "unsupported CSS border style"
 /-- A `min-*` or `max-*` value: `none` and `auto` are `auto` here; a negative length is
 invalid (CSS 2.1 §10.4). -/
-private def limit (source : String) : Except String Length := do
+private def sizeLength (fontSize : Float) (source : String) : Except String Length :=
+  match length source with
+  | .ok value => .ok value
+  | .error error =>
+    match if source.contains '(' then viewportSizeMath fontSize source else none with
+    | some value => .ok value
+    | none => .error error
+
+private def limit (fontSize : Float) (source : String) : Except String Length := do
   let v := (trim source).toLower
   if v == "none" || v == "auto" then return .auto
-  match ← length v with
+  match ← sizeLength fontSize v with
   | .px n => if n < 0 then throw "negative CSS size limit" else return .px n
   | .percent n => if n < 0 then throw "negative CSS size limit" else return .percent n
   | other => return other
@@ -1060,16 +1494,85 @@ def parseLinearGradient (args : String) : Except String BackgroundGradient := do
   if stops.length < 2 then throw "linear-gradient needs two colour stops"
   return {angle,corner,stops}
 
+/-- Whether a `mask-image` or `mask` value has a layer whose image is a `url()` that is not
+a reference into the document (`url(#mask)`): an image this engine does not draw. -/
+def maskHides (value : String) : Bool :=
+  match value.toLower.splitOn "url(" with
+  | [] | [_] => false
+  | _ :: rest => rest.any fun p => (p.toList.dropWhile (fun c => c == ' ' || c == '"' || c == '\'')).head? != some '#'
+
+/-- CSS 2.1 §11.1.2: whether `clip: rect(top, right, bottom, left)` (commas or spaces; `auto`
+is the box's edge) has no area: its bottom at or above its top, or its right at or left of
+its left. Any other value clips nothing here. -/
+def clipRectEmpty (value : String) : Bool :=
+  let v := (trim value).toLower
+  if !(v.startsWith "rect(" && v.endsWith ")") then false else
+  let inner := String.ofList ((v.toList.drop 5).dropLast)
+  let parts := ((inner.replace "," " ").splitOn " ").filter (· != "")
+  match parts.map (fun p => if p == "auto" then none else (pixels p).toOption) with
+  | [t, r, b, l] =>
+    (match t, b with | some t, some b => b <= t | _, _ => false) ||
+    (match r, l with | some r, some l => r <= l | _, _ => false)
+  | _ => false
+
+/-- CSS Masking 1 §6.1: whether `clip-path: inset(...)` with every inset at 50% or more
+leaves no area. Other shapes and references clip nothing here. -/
+def clipPathEmpty (value : String) : Bool :=
+  let v := (trim value).toLower
+  if !(v.startsWith "inset(" && v.endsWith ")") then false else
+  let parts := ((String.ofList ((v.toList.drop 6).dropLast)).splitOn " ").filter (· != "")
+  !parts.isEmpty && parts.all fun p => p.endsWith "%" && ((String.ofList p.toList.dropLast).toNat?.getD 0) ≥ 50
+
+#guard clipRectEmpty "rect(0 0 0 0)"
+#guard clipRectEmpty "rect(0, 0, 0, 0)"
+#guard clipRectEmpty "rect(1px, 1px, 1px, 1px)"
+#guard clipRectEmpty "RECT(1px 1px 1px 1px)"
+#guard !clipRectEmpty "rect(0, 10px, 10px, 0)"
+#guard !clipRectEmpty "rect(auto, auto, auto, auto)"
+#guard !clipRectEmpty "auto"
+#guard clipPathEmpty "inset(50%)"
+#guard clipPathEmpty "inset(100%)"
+#guard !clipPathEmpty "inset(10%)"
+#guard !clipPathEmpty "circle(40%)"
+
+#guard maskHides "url(https://example.org/icon.svg)"
+#guard maskHides "url(\"data:image/svg+xml,%3Csvg%3E\") no-repeat center / 20px"
+#guard maskHides "linear-gradient(red, blue), url(a.svg)"
+#guard !maskHides "none"
+#guard !maskHides "linear-gradient(to bottom, black, transparent)"
+#guard !maskHides "url(#fade)"
+#guard !maskHides "url( '#fade' )"
+
+private def cornerPair (fontSize : Float) (source : String) : Except String (Length × Length) := do
+  let parse := fun value => do
+    let length ← match sizeLength fontSize value with
+      | .ok length => pure length
+      | .error error => match tableComputed fontSize "border-top-left-radius" value with
+        | some v => sizeLength fontSize v
+        | none => throw error
+    match length with
+    | .auto => throw "border radius cannot be auto"
+    | .px n | .percent n => if n < 0 then throw "negative CSS border radius" else pure length
+    | _ => pure length
+  match SheetReader.splitWords source with
+  | [x] => let v ← parse x; pure (v,v)
+  | [x,y] => pure (← parse x, ← parse y)
+  | _ => throw "a border corner radius takes one or two values"
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
     -- `flow-root` is a block that is the root of a block formatting context (`pos.flowRoot`)
     -- `contents`: no box of its own (`pos.contents`; `Generated.flattenContents`); what is
     -- left of it is an inline box that is never laid out
-    let s := {s with pos := {s.pos with flowRoot := d.value == "flow-root", contents := d.value == "contents"}}
+    let pos := { s.pos with
+      flowRoot := d.value == "flow-root"
+      contents := d.value == "contents"
+      listItem := d.value == "list-item" }
+    let s := {s with pos := pos}
     match (if d.value == "flow-root" then "block" else if d.value == "contents" then "inline" else d.value) with
     | "none" => return {s with display := .none}
-    | "block" => return {s with display := .block}
+    | "block" | "list-item" => return {s with display := .block}
     | "inline" => return {s with display := .inline}
     | "inline-block" => return {s with display := .inlineBlock}
     | "table" => return {s with display := .table}
@@ -1087,37 +1590,75 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "grid" => return {s with display := .grid}
     | "inline-grid" => return {s with display := .inlineGrid}
     | _ => throw "unsupported CSS display"
-  | "width" => return {s with width := ← length d.value}
-  | "height" => return {s with height := ← length d.value}
+  | "width" => return {s with width := ← sizeLength s.fontSize d.value}
+  | "height" => return {s with height := ← sizeLength s.fontSize d.value}
   | "margin" => return {s with margin := ← marginValues d.value}
   | "padding" => return {s with padding := ← edgeValues d.value}
   | "margin-top" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos := s.pos.withMarginOf 0 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos := s.pos.withMarginOf 0 of}
+      let pos := (s.pos.withMarginOf 0 0).withViewportMargin 0 none
+      return {s with margin := {s.margin with top := 0}, autoMarginTop := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 0 of).withViewportMargin 0 viewport
+    return {s with margin := {s.margin with top := px}, autoMarginTop := false, pos}
   | "margin-right" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos := s.pos.withMarginOf 1 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos := s.pos.withMarginOf 1 of}
+      let pos := (s.pos.withMarginOf 1 0).withViewportMargin 1 none
+      return {s with margin := {s.margin with right := 0}, autoMarginRight := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 1 of).withViewportMargin 1 viewport
+    return {s with margin := {s.margin with right := px}, autoMarginRight := false, pos}
   | "margin-bottom" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos := s.pos.withMarginOf 2 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos := s.pos.withMarginOf 2 of}
+      let pos := (s.pos.withMarginOf 2 0).withViewportMargin 2 none
+      return {s with margin := {s.margin with bottom := 0}, autoMarginBottom := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 2 of).withViewportMargin 2 viewport
+    return {s with margin := {s.margin with bottom := px}, autoMarginBottom := false, pos}
   | "margin-left" =>
     if (trim d.value).toLower == "auto" then
-      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos := s.pos.withMarginOf 3 0}
-    let (px,of) ← marginParts d.value
-    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos := s.pos.withMarginOf 3 of}
+      let pos := (s.pos.withMarginOf 3 0).withViewportMargin 3 none
+      return {s with margin := {s.margin with left := 0}, autoMarginLeft := true, pos}
+    let (px, of, viewport) ← marginParts d.value
+    let pos := (s.pos.withMarginOf 3 of).withViewportMargin 3 viewport
+    return {s with margin := {s.margin with left := px}, autoMarginLeft := false, pos}
+  | "letter-spacing" | "word-spacing" =>
+    let v := (trim d.value).toLower
+    -- a percentage is of the font size (CSS Text 4 §8.1, §8.2)
+    -- em values become px here (`tableComputed`); a percentage stays relative
+    let parsed := match length v with
+      | .ok l => some l
+      | .error _ => (tableComputed s.fontSize d.property v).bind fun t => (length t).toOption
+    let n ← if v == "normal" then pure (Length.px 0) else match parsed with
+      | some (.px n) => pure (Length.px n)
+      | some (.percent f) => pure (Length.percent f)
+      | some (.calc p n) => pure (Length.calc p n)
+      | _ => throw "letter-spacing and word-spacing require a length"
+    return if d.property == "letter-spacing" then {s with letterSpacing := n} else {s with wordSpacing := n}
+  | "text-indent" =>
+    match ← length d.value with
+    | .px n => return {s with textIndent := .px n}
+    | .percent n => return {s with textIndent := .percent n}
+    | .calc p n => return {s with textIndent := .calc p n}
+    | _ => throw "text-indent requires a length or a percentage"
   | "text-align" => match (trim d.value).toLower with
-    | "start" => return {s with textAlign := .start}
-    | "left" => return {s with textAlign := .left}
-    | "right" => return {s with textAlign := .right}
-    | "end" => return {s with textAlign := .end_}
-    | "center" => return {s with textAlign := .center}
+    | "start" => return {s with textAlign := .start, centerBlocks := false}
+    | "left" => return {s with textAlign := .left, centerBlocks := false}
+    | "right" => return {s with textAlign := .right, centerBlocks := false}
+    | "end" => return {s with textAlign := .end_, centerBlocks := false}
+    | "center" => return {s with textAlign := .center, centerBlocks := false}
+    -- the value of other engines for HTML's `align=center` (HTML §15.3.3): text centred,
+    -- and block-level descendants too
+    | "-webkit-center" => return {s with textAlign := .center, centerBlocks := true}
     | _ => throw "unsupported CSS text-align"
+  -- CSS Masking 1 §7.1: a mask layer whose image is not drawn here (a `url()` that is not a
+  -- reference into the document) is a transparent black image: the element is not painted.
+  -- `none` and the generated images (gradients) leave it painted, as before.
+  | "mask-image" | "-webkit-mask-image" | "mask" | "-webkit-mask" =>
+    return {s with masked := maskHides d.value}
+  -- the visually hidden pattern (`clipHidden`, `finishEffects`)
+  | "clip" => return {s with clipRectEmpty := clipRectEmpty d.value}
+  | "clip-path" | "-webkit-clip-path" => return {s with clipPathEmpty := clipPathEmpty d.value}
   | "direction" => match (trim d.value).toLower with
     | "ltr" => return {s with direction := .ltr}
     | "rtl" => return {s with direction := .rtl}
@@ -1131,17 +1672,21 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "plaintext" => return {s with unicodeBidi := .plaintext}
     | _ => throw "unsupported CSS unicode-bidi"
   | "padding-top" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with top := px}, pos := s.pos.withPaddingOf 0 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 0 of).withViewportPadding 0 viewport
+    return {s with padding := {s.padding with top := px}, pos}
   | "padding-right" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with right := px}, pos := s.pos.withPaddingOf 1 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 1 of).withViewportPadding 1 viewport
+    return {s with padding := {s.padding with right := px}, pos}
   | "padding-bottom" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with bottom := px}, pos := s.pos.withPaddingOf 2 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 2 of).withViewportPadding 2 viewport
+    return {s with padding := {s.padding with bottom := px}, pos}
   | "padding-left" =>
-    let (px,of) ← paddingParts d.value
-    return {s with padding := {s.padding with left := px}, pos := s.pos.withPaddingOf 3 of}
+    let (px, of, viewport) ← paddingParts d.value
+    let pos := (s.pos.withPaddingOf 3 of).withViewportPadding 3 viewport
+    return {s with padding := {s.padding with left := px}, pos}
   | "color" => return {s with color := ← color d.value}
   | "background" | "background-color" =>
     let bg ← if d.value == "transparent" then pure none else some <$> color d.value
@@ -1172,30 +1717,97 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
         | some (.px x) => width := some (max 0 x)
         | _ => throw "columns: not a count or a length"
     return {s with columnCount := count, columnWidth := width}
+  | "background-size" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let word := CssValues.serialize parts
+    if word == "cover" then return {s with backgroundSize := .cover}
+    if word == "contain" then return {s with backgroundSize := .contain}
+    let read := fun cv =>
+      let value := CssValues.serialize [cv]
+      (length value).toOption.orElse fun _ => tableLength s.fontSize "width" value
+    let size := match parts with
+      | [a] => (read a).map fun x => BackgroundSize.dimensions x .auto
+      | [a,b] => (read a).bind fun x => (read b).map fun y => BackgroundSize.dimensions x y
+      | _ => none
+    match size with
+    | some v => return {s with backgroundSize := v}
+    | none => throw "unsupported background size"
+  | "background-clip" =>
+    let clip : String → Except String Nat := fun v => match (trim v).toLower with
+      | "border-box" => pure 0
+      | "padding-box" => pure 1
+      | "content-box" => pure 2
+      | _ => throw "unsupported background clip"
+    return {s with backgroundClip := ← ((trim d.value).splitOn ",").mapM clip}
+  | "background-repeat" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
+    let axes ← match value with
+      | "repeat" | "repeat repeat" => pure (true,true)
+      | "repeat-x" | "repeat no-repeat" => pure (true,false)
+      | "repeat-y" | "no-repeat repeat" => pure (false,true)
+      | "no-repeat" | "no-repeat no-repeat" => pure (false,false)
+      | _ => throw "unsupported background repeat mode"
+    return {s with backgroundRepeat := axes}
+  | "background-position-x" | "background-position-y" =>
+    let parts := (CssValues.commaItems d.value).headD []
+    let value := String.intercalate " " (parts.map fun cv => CssValues.serialize [cv])
+    let some canonical := CssValues.specified d.property value | throw "invalid background position"
+    let components := CssValues.stripWs (CssValues.CV.parse (CssValues.computedForm d.property canonical))
+    let offset : BackgroundOffset ← match components with
+      | [cv@(.fn _ _)] =>
+        let some expr := CssValues.Calc.parse cv | throw "unsupported background position calculation"
+        pure (.calculation expr {fontSize := tableRat s.fontSize})
+      | _ =>
+        let some length := tableLength s.fontSize d.property value | throw "unsupported background position"
+        pure (.length length)
+    if d.property == "background-position-x" then return {s with backgroundPositionX := offset}
+    return {s with backgroundPositionY := offset}
   | "background-image" =>
-    if (trim d.value).toLower == "none" then return {s with backgroundGradient := none}
-    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() is drawn"
-    return {s with backgroundGradient := some (← parseLinearGradient args)}
+    let s := {s with backgroundLayers := max 1 (CssValues.commaItems d.value).length}
+    if ((trim d.value).toLower.splitOn ",").all (fun v => trim v == "none") then
+      return {s with backgroundGradient := none, backgroundImage := none}
+    -- The first layer: an image URL (`url(...)`) or a linear gradient, whichever comes first.
+    let urlFirst := match firstUrl? d.value, (d.value.toLower.splitOn "url(").head?, (d.value.toLower.splitOn "gradient(").head? with
+      | some _, some a, some g => decide (a.length < g.length)
+      | some _, _, _ => true
+      | none, _, _ => false
+    if urlFirst then
+      let some u := firstUrl? d.value | throw "background-image: url() not read"
+      return {s with backgroundImage := some u, backgroundGradient := none}
+    let some args := gradientArgs d.value | throw "background-image: only linear-gradient() and url() are drawn"
+    return {s with backgroundGradient := some (← parseLinearGradient args), backgroundImage := none}
   | "font-size" =>
     let v ← pixels d.value
     if v <= 0 then throw "font-size must be positive"
     return {s with fontSize := v, lineHeight := s.lineHeightFactor.map (v*·) |>.getD s.lineHeight}
   | "line-height" =>
+    if d.value == "0px" then
+      return {s with lineHeight := 0, lineHeightFactor := none}
     let factor ← if d.value.endsWith "px" then pure none
       else some <$> (if d.value == "normal" then pure 1.2 else number d.value)
     let v ← match factor with | none => pixels d.value | some n => pure (n*s.fontSize)
-    if v <= 0 then throw "line-height must be positive"
+    if v < 0 then throw "line-height must be non-negative"
     return {s with lineHeight := v, lineHeightFactor := factor}
-  -- `white-space` and `white-space-collapse` (CSS Text 4 §3): white space and line breaks
-  -- kept (`pre`, `pre-wrap`, `pre-line`, `break-spaces`, `preserve`) or collapsed
+  | "text-wrap-style" =>
+    match CssValues.specified d.property d.value with
+    | some value => return {s with balanceText := value == "balance"}
+    | none => throw "invalid text-wrap-style"
+  | "text-wrap-mode" =>
+    match CssValues.specified d.property d.value with
+    | some value => return {s with balanceWrap := value != "nowrap"}
+    | none => throw "invalid text-wrap-mode"
   | "white-space" | "white-space-collapse" =>
+    let nowrap := d.property != "white-space" && s.pos.nowrap
     match (trim d.value).toLower with
-    | "pre" | "pre-wrap" | "pre-line" | "break-spaces" | "preserve" | "preserve-breaks" | "preserve-spaces" =>
-      return {s with preformatted := true, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
-    -- `nowrap`: the spaces collapse and the lines do not break at them (`pos.nowrap`, read by the line layout)
-    | "nowrap" => return {s with preformatted := false, pos := {s.pos with nowrap := true}}
+    | "pre-line" | "preserve-breaks" =>
+      return {s with preformatted := false, preserveSegmentBreaks := true, pos := {s.pos with nowrap}}
+    | "pre" | "pre-wrap" | "break-spaces" | "preserve" | "preserve-spaces" =>
+      return {s with preformatted := true, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
+    | "nowrap" =>
+      return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap := true}}
     | "normal" | "collapse" =>
-      return {s with preformatted := false, pos := if d.property == "white-space" then {s.pos with nowrap := false} else s.pos}
+      return {s with preformatted := false, preserveSegmentBreaks := false, pos := {s.pos with nowrap}}
     | _ => throw "unsupported CSS white-space"
   | "visibility" => match d.value with
     | "visible" => return {s with visible := true}
@@ -1213,42 +1825,40 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     if d.value == "underline" then return {s with underline := true}
     if d.value == "none" then return {s with underline := false}
     throw "unsupported CSS text decoration"
-  | "border-style" => return {s with borderStyle := ← borderStyle d.value}
-  -- One side's border. This profile has one style and one colour for the four sides: a
-  -- side's style that is the first style an element gets also leaves the sides with no
-  -- style of their own without a border (their width is 0); a side's style of none
-  -- removes that side's border.
-  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← edgePixel d.value}}
-  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← edgePixel d.value}}
-  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← edgePixel d.value}}
-  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← edgePixel d.value}}
+  | "border-style" =>
+    match Sides.ofList (← (topWords d.value).mapM borderStyle) with
+    | some st => return {s with borderStyles := st}
+    | none => throw "border-style requires one to four styles"
+  | "border-top-left-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with topLeft := ← cornerPair s.fontSize d.value}}
+  | "border-top-right-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with topRight := ← cornerPair s.fontSize d.value}}
+  | "border-bottom-right-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with bottomRight := ← cornerPair s.fontSize d.value}}
+  | "border-bottom-left-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with bottomLeft := ← cornerPair s.fontSize d.value}}
+  | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← borderWidthPx s.fontSize d.value}}
+  | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← borderWidthPx s.fontSize d.value}}
+  | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← borderWidthPx s.fontSize d.value}}
+  | "border-left-width" => return {s with borderWidth := {s.borderWidth with left := ← borderWidthPx s.fontSize d.value}}
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
-    let st ← borderStyle d.value
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
-    let only : Edges := match side with
-      | "top" => {top := s.borderWidth.top}
-      | "right" => {right := s.borderWidth.right}
-      | "bottom" => {bottom := s.borderWidth.bottom}
-      | _ => {left := s.borderWidth.left}
-    let without : Edges := match side with
-      | "top" => {s.borderWidth with top := 0}
-      | "right" => {s.borderWidth with right := 0}
-      | "bottom" => {s.borderWidth with bottom := 0}
-      | _ => {s.borderWidth with left := 0}
-    if st == .none then return {s with borderWidth := without}
-    else if s.borderStyle == .none then return {s with borderStyle := st, borderWidth := only}
-    else return {s with borderStyle := st}
+    return {s with borderStyles := s.borderStyles.set side (← borderStyle d.value)}
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
-    return {s with borderColor := some (← color d.value)}
-  | "border-width" => return {s with borderWidth := ← edgeValues d.value}
-  | "border-color" => return {s with borderColor := some (← color d.value)}
+    let side := ((d.property.drop 7).takeWhile (· != '-')).toString
+    return {s with borderColors := s.borderColors.set side (← borderPaint d.value)}
+  | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
+  | "border-color" =>
+    match Sides.ofList (← (topWords d.value).mapM borderPaint) with
+    | some c => return {s with borderColors := c}
+    | none => throw "border-color requires one to four colours"
   | "border" =>
     -- CSS Backgrounds 3 §4.4: width, style and colour in any order; each omitted one is reset.
-    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyle := .none, borderColor := none}
-    for part in words d.value do
-      if let .ok style := borderStyle part then out := {out with borderStyle := style}
-      else if let .ok w := edgePixel part then out := {out with borderWidth := ⟨w,w,w,w⟩}
-      else out := {out with borderColor := some (← color part)}
+    let mut out := {s with borderWidth := ⟨3,3,3,3⟩, borderStyles := .all .none, borderColors := .all .current}
+    for part in topWords d.value do
+      if let .ok style := borderStyle part then out := {out with borderStyles := .all style}
+      else if let .ok w := borderWidthPx s.fontSize part then out := {out with borderWidth := ⟨w,w,w,w⟩}
+      else out := {out with borderColors := .all (← borderPaint part)}
     return out
   | "border-spacing" =>
     match ← (words d.value).mapM pixels with
@@ -1268,15 +1878,23 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "auto" => return {s with tableFixed := false}
     | _ => throw "unsupported CSS table-layout"
   | "vertical-align" => match d.value with
-    | "top" | "text-top" => return {s with verticalAlign := .top}
-    | "middle" => return {s with verticalAlign := .middle}
-    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom}
-    | "baseline" | "sub" | "super" => return {s with verticalAlign := .baseline}
+    | "top" | "text-top" => return {s with verticalAlign := .top, shift := 0}
+    | "middle" => return {s with verticalAlign := .middle, shift := 0}
+    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom, shift := 0}
+    | "baseline" => return {s with verticalAlign := .baseline, shift := 0}
+    | "super" => return {s with verticalAlign := .baseline, shift := 1}
+    | "sub" => return {s with verticalAlign := .baseline, shift := -1}
     | _ => throw "unsupported CSS vertical-align"
-  | "min-width" => return {s with minWidth := ← limit d.value}
-  | "max-width" => return {s with maxWidth := ← limit d.value}
-  | "min-height" => return {s with minHeight := ← limit d.value}
-  | "max-height" => return {s with maxHeight := ← limit d.value}
+  | "min-width" => return {s with minWidth := ← limit s.fontSize d.value}
+  | "max-width" => return {s with maxWidth := ← limit s.fontSize d.value}
+  | "min-height" => return {s with minHeight := ← limit s.fontSize d.value}
+  | "max-height" => return {s with maxHeight := ← limit s.fontSize d.value}
+  | "object-position" =>
+    let some value := tableComputed s.fontSize d.property d.value | throw "invalid CSS object-position"
+    let some (x,y) := CssValues.positionXY value | throw "unsupported CSS object-position"
+    let some x := objectPositionAxis x | throw "unsupported horizontal object-position"
+    let some y := objectPositionAxis y | throw "unsupported vertical object-position"
+    return {s with objectPosition := some (x,y)}
   | "object-fit" => match (trim d.value).toLower with
     | "fill" => return {s with objectFit := .fill}
     | "contain" => return {s with objectFit := .contain}
@@ -1336,16 +1954,6 @@ def colorHex (value : String) : Option String :=
       | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
       | _, _ => none
     | _ => none
-
-/-- A font size or other positive float as a rational, to a thousandth. -/
-def ratOfFloat (x : Float) : Rat :=
-  if x.isFinite && x > 0 then ((x * 1000).round.toUInt64.toNat : Rat) / 1000 else 0
-
-/-- The computed value of `value` for `property` by the property table, with lengths in px
-against font size `fontSize`; `none` when it is not a value of the property. -/
-def tableComputed (fontSize : Float) (property value : String) : Option String :=
-  (CssValues.specified property value).map fun s =>
-    CssValues.computed { num := { fontSize := ratOfFloat fontSize } } property s
 
 /-- The absolute font size keywords (CSS Fonts 4 §3.5, medium 16px) in px. -/
 def fontSizeKeyword : String → Option Float
@@ -1412,13 +2020,13 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
       value (" ".intercalate ([width, style] ++ colour.toList))
   | "border-top-style" | "border-right-style" | "border-bottom-style" | "border-left-style" =>
     match (CssValues.specified d.property d.value) with
-    | some w => value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid")
+    | some w => value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid")
     | none => none
   | "border-top-color" | "border-right-color" | "border-bottom-color" | "border-left-color" =>
     (colorHex d.value).bind fun h => if h == "transparent" then none else value h
   | "border-style" =>
     match (words d.value.toLower).head? with
-    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset"].contains w then w else "solid") else none
+    | some w => if (CssValues.specified "border-top-style" w).isSome then value (if ["none", "hidden", "inset", "outset", "dotted", "dashed", "double", "groove", "ridge"].contains w then w else "solid") else none
     | none => none
   | "border-width" =>
     (tableComputed s.fontSize "border-width" d.value).map fun t =>
@@ -1427,7 +2035,7 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     match (CssValues.specified "display" d.value) with
     | none => none
     | some t =>
-      if ["flex", "grid", "flow-root", "list-item", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
+      if ["flex", "grid", "flow-root", "grid-lanes", "block ruby", "math", "block math"].contains t then value "block"
       else if ["inline-flex", "inline-grid", "inline-grid-lanes", "ruby", "inline list-item"].contains t then value "inline-block"
       else if t == "run-in" then value "inline"
       -- the legacy flexible boxes (CSS Display 3 §2.6 note: -webkit-box) as flex containers
@@ -1448,7 +2056,8 @@ def tableValue (s : Computed) (d : Declaration) : Option String :=
     else none
   | "width" | "height" | "min-width" | "max-width" | "min-height" | "max-height"
   | "margin-top" | "margin-right" | "margin-bottom" | "margin-left"
-  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing" =>
+  | "padding-top" | "padding-right" | "padding-bottom" | "padding-left" | "border-spacing"
+  | "letter-spacing" | "word-spacing" | "text-indent" =>
     (tableComputed s.fontSize d.property d.value).bind value
   | _ =>
     -- a keyword property: the table's canonical form (lower case)
@@ -1470,13 +2079,16 @@ def ownProperties : List String :=
   ["display","width","height","margin","padding","margin-top","margin-right","margin-bottom","margin-left",
    "text-align","direction","unicode-bidi","padding-top","padding-right","padding-bottom","padding-left",
    "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
+   "text-wrap-style","text-wrap-mode",
    "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "border-top-left-radius","border-top-right-radius","border-bottom-right-radius","border-bottom-left-radius",
    "border-top-width","border-right-width","border-bottom-width","border-left-width",
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
-   "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns"]
+   "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
+   "font-family","letter-spacing","word-spacing","text-indent","background-image","background-clip","background-size","background-repeat",
+   "background-position-x","background-position-y","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1484,6 +2096,7 @@ map to a standard one (`-webkit-`, `-moz-`, `grid-`). For any other property `ap
 refuses every value (`apply_other`). -/
 def appliedName (p : String) : Bool :=
   p.startsWith "-webkit-" || p.startsWith "-moz-" || p.startsWith "grid-" || p == "content" ||
+    p == "counter-reset" || p == "counter-increment" || p == "counter-set" ||
     ownProperties.contains p || flexProperties.contains p || alignProperties.contains p ||
     positionProperties.contains p || gridProperties.contains p
 
@@ -1492,7 +2105,7 @@ property that `appliedName` does not name, whatever its value and the style. -/
 theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property = false) :
     ∃ e, apply s d = .error e := by
   simp only [appliedName, Bool.or_eq_false_iff] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
+  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨⟨hw, hm⟩, hg⟩, hc⟩, hcr⟩, hci⟩, hcs⟩, hown⟩, hflex⟩, halign⟩, hpos⟩, hgrid⟩ := h
   have h1 : FlexStyle.set s.fontSize s.flex d.property d.value = none := by
     unfold FlexStyle.set
     simp only [hw, Bool.false_eq_true, if_false]
@@ -1503,7 +2116,7 @@ theorem apply_other (s : Computed) (d : Declaration) (h : appliedName d.property
     rw [if_pos (by simpa using halign)]
   have h3 : PositionStyle.set s.fontSize s.pos d.property d.value = none := by
     unfold PositionStyle.set
-    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc]
+    simp only [hw, hm, Bool.or_false, Bool.false_eq_true, if_false, hc, hcr, hci, hcs]
     rw [if_pos (by simpa using hpos)]
   have h4 : GridStyle.set s.fontSize s.grid d.property d.value = none := by
     unfold GridStyle.set
@@ -1557,20 +2170,51 @@ widths, the style and the colour. -/
 def copyProperty (property : String) (source s : Computed) : Option Computed :=
   let lineHeightOf := fun (size : Float) (factor : Option Float) (height : Float) => (factor.map (size * ·)).getD height
   match property with
-  | "display" => some {s with display := source.display}
+  | "display" =>
+    let pos := {s.pos with contents := source.pos.contents, listItem := source.pos.listItem}
+    some {s with display := source.display, pos := pos}
   | "width" => some {s with width := source.width}
   | "height" => some {s with height := source.height}
-  | "margin-top" => some {s with margin := {s.margin with top := source.margin.top}}
-  | "margin-right" => some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight}
-  | "margin-bottom" => some {s with margin := {s.margin with bottom := source.margin.bottom}}
-  | "margin-left" => some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft}
-  | "padding-top" => some {s with padding := {s.padding with top := source.padding.top}}
-  | "padding-right" => some {s with padding := {s.padding with right := source.padding.right}}
-  | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom}}
-  | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
+  | "margin-top" =>
+    let pos := s.pos.withViewportMargin 0 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 0)).map Prod.snd)
+    some {s with margin := {s.margin with top := source.margin.top}, pos}
+  | "margin-right" =>
+    let pos := s.pos.withViewportMargin 1 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 1)).map Prod.snd)
+    some {s with margin := {s.margin with right := source.margin.right}, autoMarginRight := source.autoMarginRight, pos}
+  | "margin-bottom" =>
+    let pos := s.pos.withViewportMargin 2 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 2)).map Prod.snd)
+    some {s with margin := {s.margin with bottom := source.margin.bottom}, pos}
+  | "margin-left" =>
+    let pos := s.pos.withViewportMargin 3 ((source.pos.viewportMargins.find? (fun (edge, _) => edge == 3)).map Prod.snd)
+    some {s with margin := {s.margin with left := source.margin.left}, autoMarginLeft := source.autoMarginLeft, pos}
+  | "padding-top" =>
+    let pos := s.pos.withViewportPadding 0 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 0)).map Prod.snd)
+    some {s with padding := {s.padding with top := source.padding.top}, pos}
+  | "padding-right" =>
+    let pos := s.pos.withViewportPadding 1 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 1)).map Prod.snd)
+    some {s with padding := {s.padding with right := source.padding.right}, pos}
+  | "padding-bottom" =>
+    let pos := s.pos.withViewportPadding 2 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 2)).map Prod.snd)
+    some {s with padding := {s.padding with bottom := source.padding.bottom}, pos}
+  | "padding-left" =>
+    let pos := s.pos.withViewportPadding 3 ((source.pos.viewportPadding.find? (fun (edge, _) => edge == 3)).map Prod.snd)
+    some {s with padding := {s.padding with left := source.padding.left}, pos}
   | "color" => some {s with color := source.color}
   | "background" | "background-color" => some {s with background := source.background}
-  | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
+  | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
+  | "background-size" => some {s with backgroundSize := source.backgroundSize}
+  | "background-repeat" => some {s with backgroundRepeat := source.backgroundRepeat}
+  | "border-top-left-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      topLeft := (source.cornerLengths.getD {}).topLeft}}
+  | "border-top-right-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      topRight := (source.cornerLengths.getD {}).topRight}}
+  | "border-bottom-right-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      bottomRight := (source.cornerLengths.getD {}).bottomRight}}
+  | "border-bottom-left-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      bottomLeft := (source.cornerLengths.getD {}).bottomLeft}}
+  | "background-clip" => some {s with backgroundClip := source.backgroundClip}
+  | "background-position-x" => some {s with backgroundPositionX := source.backgroundPositionX}
+  | "background-position-y" => some {s with backgroundPositionY := source.backgroundPositionY}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
   | "font-size" =>
@@ -1586,14 +2230,18 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                  lineHeight := lineHeightOf source.fontSize source.lineHeightFactor source.lineHeight,
                  fontWeight := source.fontWeight, oblique := source.oblique}
   | "visibility" => some {s with visible := source.visible}
+  | "text-wrap-style" => some {s with balanceText := source.balanceText}
+  | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
   | "white-space" | "white-space-collapse" =>
-    some {s with preformatted := source.preformatted, pos := {s.pos with nowrap := source.pos.nowrap}}
+    let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
+    some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
+                 pos := {s.pos with nowrap}}
   | "overflow" => some {s with clipOverflow := source.clipOverflow}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
-  | "border-style" => some {s with borderStyle := source.borderStyle}
-  | "border-color" => some {s with borderColor := source.borderColor}
-  | "border" => some {s with borderWidth := source.borderWidth, borderStyle := source.borderStyle, borderColor := source.borderColor}
+  | "border-style" => some {s with borderStyles := source.borderStyles}
+  | "border-color" => some {s with borderColors := source.borderColors}
+  | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors}
   | "border-spacing" => some {s with borderSpacingX := source.borderSpacingX, borderSpacingY := source.borderSpacingY}
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
@@ -1604,7 +2252,11 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "min-height" => some {s with minHeight := source.minHeight}
   | "max-height" => some {s with maxHeight := source.maxHeight}
   | "object-fit" => some {s with objectFit := source.objectFit}
+  | "object-position" => some {s with objectPosition := source.objectPosition}
   | "text-align" => some {s with textAlign := source.textAlign}
+  | "letter-spacing" => some {s with letterSpacing := source.letterSpacing}
+  | "word-spacing" => some {s with wordSpacing := source.wordSpacing}
+  | "text-indent" => some {s with textIndent := source.textIndent}
   | "direction" => some {s with direction := source.direction}
   | "unicode-bidi" => some {s with unicodeBidi := source.unicodeBidi}
   | _ => none
@@ -1613,7 +2265,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
 them). -/
 def inheritedProperties : List String :=
   ["color","font","font-size","font-family","font-weight","font-style","line-height","visibility","border-spacing","border-collapse",
-   "caption-side","text-align","direction","white-space","white-space-collapse"]
+   "caption-side","text-align","direction","white-space","white-space-collapse","text-wrap-style","text-wrap-mode"]
 
 /-- The style a CSS-wide keyword takes the property from (CSS Cascade 4 §7.3): `inherit`
 the parent's; `initial` the initial values (the fields of an empty `Computed`); `unset`
@@ -1637,6 +2289,21 @@ private def applyWinner (parent start s : Computed) (d : Declaration) : Computed
   match wideSource parent start d with
   | some source => (copyProperty d.property source s).getD s
   | none => applyOrKeep s d
+
+/-- The ordinary winning-declaration path sets a zero pixel line height and
+clears the inherited unitless factor, preserving the remaining style fields. -/
+theorem applyWinner_lineHeight_zeroPx (parent start s : Computed) :
+    applyWinner parent start s ⟨"line-height", "0px", false⟩ =
+      {s with lineHeight := 0, lineHeightFactor := none} := by
+  have wide : wideSource parent start ⟨"line-height", "0px", false⟩ = none := by
+    have spelling : (trim "0px").toLower = "0px" := by cbv
+    simp [wideSource, spelling]
+  have supported : appliedName "line-height" = true := by simp [appliedName, ownProperties]
+  have value : apply s ⟨"line-height", "0px", false⟩ =
+      .ok {s with lineHeight := 0, lineHeightFactor := none} := rfl
+  simp only [applyWinner, wide, applyOrKeep, supported, if_true, applyOrKeepSlow, value]
+
+#print axioms applyWinner_lineHeight_zeroPx
 
 /-- `inherit` gives the parent's value. -/
 theorem copyProperty_color (source s : Computed) :
@@ -1676,16 +2343,39 @@ def droppedDeclarations (dom : Dom) (rules : List Rule) : Array String := Id.run
         out := out.push line
   return out
 
-/-- Spacing an unstyled page starts with. Margins here do not collapse, so each
-side has half of what a browser's single collapsed margin would be. -/
-private def startMargin (tag : String) (size : Float) : Edges :=
-  let gap := size/2
+/-- Whether an ancestor of `id` is a list (`dir`, `dl`, `menu`, `ol`, `ul`): HTML §15.3.8's
+`:is(dir, dl, menu, ol, ul) :is(dir, dl, menu, ol, ul) { margin-block: 0 }`. The walk takes
+at most as many steps as the arena has nodes. -/
+def insideList (dom : Dom) (id : Nat) : Bool := Id.run do
+  let mut cur := (dom.get id).parent
+  for _ in [0:dom.size] do
+    match cur with
+    | none => return false
+    | some k =>
+      let a := dom.get k
+      if ["dir","dl","menu","ol","ul"].contains a.lname then return true
+      cur := a.parent
+  return false
+
+/-- The user agent's margins of an element whose font size is `size` (HTML §15.3.3, §15.3.6,
+§15.3.7, §15.3.8): `margin-block: 1em` on `p`, `pre`, `listing`, `xmp`, `plaintext`,
+`blockquote`, `figure`, `dl` and the lists (0 for a list or `dl` in a list: `nested`);
+`blockquote` and `figure` 40 px inline; headings 0.67em to 2.33em; `dd` 40 px at the start;
+`body` 8 px. These margins collapse (`Layout.collapsePx`). Before 2026-11-23 each was half
+of this, from the time when margins here did not collapse: a `p` and a block after it stood
+8 px apart, where browsers have 16 px. -/
+def startMargin (tag : String) (size : Float) (nested : Bool := false) : Edges :=
+  let em := size
   if tag == "body" then ⟨8,8,8,8⟩
-  else if ["p","pre","dl","listing","xmp","plaintext","address","h1","h2","h3","h4","h5","h6"].contains tag then ⟨gap,0,gap,0⟩
-  else if ["ul","ol","dir","menu"].contains tag then ⟨gap,0,gap,40⟩
-  else if tag == "blockquote" then ⟨gap,40,gap,40⟩
+  else if ["p","pre","listing","xmp","plaintext"].contains tag then ⟨em,0,em,0⟩
+  else if tag == "dl" then (if nested then {} else ⟨em,0,em,0⟩)
+  else if ["ul","ol","dir","menu"].contains tag then (if nested then ⟨0,0,0,40⟩ else ⟨em,0,em,40⟩)
+  else if tag == "blockquote" || tag == "figure" then ⟨em,40,em,40⟩
   else if tag == "dd" then ⟨0,0,0,40⟩
-  else {}
+  else match tag with
+    | "h1" => ⟨0.67*em,0,0.67*em,0⟩ | "h2" => ⟨0.83*em,0,0.83*em,0⟩ | "h3" => ⟨em,0,em,0⟩
+    | "h4" => ⟨1.33*em,0,1.33*em,0⟩ | "h5" => ⟨1.67*em,0,1.67*em,0⟩ | "h6" => ⟨2.33*em,0,2.33*em,0⟩
+    | _ => {}
 
 /-- HTML §15.3.4 (the user agent's rules `pre, listing, xmp, plaintext, code, kbd, samp, tt
 { font-family: monospace }`): elements that start in the monospace family, so that with
@@ -1768,7 +2458,9 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   if tag == "table" then
     let spacing := (dimensionAttribute (attrValue n "cellspacing")).bind (resolve 0)
     let v := spacing.getD 2
-    s := {s with borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false}
+    s := { s with
+      borderSpacingX := v, borderSpacingY := v, borderCollapse := false, captionBottom := false
+      pos := {s.pos with borderBox := true} }
   if ["thead","tbody","tfoot","tr"].contains tag then s := {s with verticalAlign := .middle}
   if tag == "td" || tag == "th" then
     let pad := ((tableAncestor dom id).bind fun t => (dimensionAttribute (attrValue t "cellpadding")).bind (resolve 0)).getD 1
@@ -1781,9 +2473,13 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
   let heightHint := if ["td","th"].contains tag then nonzeroDimensionAttribute (attrValue n "height")
     else if ["table","tr"].contains tag then dimensionAttribute (attrValue n "height") else none
   if let some h := heightHint then s := {s with height := h}
-  if ["table","tr","td","th"].contains tag then
+  if ["table","thead","tbody","tfoot","tr","td","th"].contains tag then
     let bg := attrValue n "bgcolor"
     if !bg.isEmpty then if let .ok c := color bg then s := {s with background := some c}
+  -- HTML §15.3.10: a `table`'s `bordercolor` maps to the four `border-*-color` properties
+  if tag == "table" then
+    let bc := attrValue n "bordercolor"
+    if !bc.isEmpty then if let .ok c := color bc then s := {s with borderColors := .all (.solid c)}
   if ["tr","td","th","thead","tbody","tfoot"].contains tag then
     match (attrValue n "valign").toLower with
     | "top" => s := {s with verticalAlign := .top}
@@ -1792,6 +2488,12 @@ private def tableHints (dom : Dom) (id : Nat) (s parent : Computed) : Computed :
     | "baseline" => s := {s with verticalAlign := .baseline}
     | _ => pure ()
   return s
+
+/-- A margin hint as its pixels and its percentage part. -/
+def hintEdge : Option Length → Option (Float × Float)
+  | some (.px v) => some (v, 0)
+  | some (.percent p) => some (0, p)
+  | _ => none
 
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `canvas`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
@@ -1805,18 +2507,20 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
   let sized := imageInput || ["img","video","canvas","iframe","embed","object","marquee"].contains tag
   if !sized && tag != "hr" then return s
-  let mut s := s
+  -- HTML §15.4.1: the video box contains its poster at its intrinsic ratio.
+  let mut s := if tag == "video" then {s with objectFit := .contain} else s
   if let some w := dimensionAttribute (attrValue n "width") then s := {s with width := w}
   if sized then
     if let some h := dimensionAttribute (attrValue n "height") then s := {s with height := h}
   if imageInput || ["img","embed","object","marquee"].contains tag then
-    if let some (.px h) := dimensionAttribute (attrValue n "hspace") then
-      s := {s with margin := {s.margin with left := h, right := h}}
-    if let some (.px v) := dimensionAttribute (attrValue n "vspace") then
-      s := {s with margin := {s.margin with top := v, bottom := v}}
+    -- a dimension: pixels, or a percentage of the containing block's width (`marginOf`)
+    if let some (h, ho) := hintEdge (dimensionAttribute (attrValue n "hspace")) then
+      s := {s with margin := {s.margin with left := h, right := h}, pos := (s.pos.withMarginOf 1 ho).withMarginOf 3 ho}
+    if let some (v, vo) := hintEdge (dimensionAttribute (attrValue n "vspace")) then
+      s := {s with margin := {s.margin with top := v, bottom := v}, pos := (s.pos.withMarginOf 0 vo).withMarginOf 2 vo}
   if imageInput || tag == "img" || tag == "object" then
     if let some b := pixelLengthAttribute (attrValue n "border") then
-      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyle := .solid}
+      s := {s with borderWidth := ⟨b,b,b,b⟩, borderStyles := .all .solid}
   return s
 
 /-- HTML §15.4.3: an `img` in a `picture` takes its `width` and `height` hints from the
@@ -1851,6 +2555,110 @@ def bodyMarginHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
   if let some v := first ["marginwidth"] then m := {m with right := v}
   return {s with margin := m}
 
+/-- The `align` attribute value `a` (trimmed, lower case) of an HTML element named `tag`
+(HTML §15.3.3, §15.3.10): `div`, `caption`, `thead`, `tbody`, `tfoot`, `tr`, `td` and `th`
+align their text and, for `center` and `middle`, centre their block-level descendants
+(`centerBlocks`, the `-webkit-center` of other engines); `p` and `h1` to `h6` align their
+text only; a `table` with `align=center` has auto inline margins. -/
+def alignOf (tag a : String) (s : Computed) : Computed :=
+  if a == "" then s
+  else if ["div","caption","thead","tbody","tfoot","tr","td","th"].contains tag then
+    if a == "left" then {s with textAlign := .left, centerBlocks := false}
+    else if a == "right" then {s with textAlign := .right, centerBlocks := false}
+    else if a == "center" || a == "middle" then {s with textAlign := .center, centerBlocks := true}
+    else if a == "justify" then {s with textAlign := .start, centerBlocks := false}
+    else s
+  else if ["p","h1","h2","h3","h4","h5","h6"].contains tag then
+    if a == "left" then {s with textAlign := .left, centerBlocks := false}
+    else if a == "right" then {s with textAlign := .right, centerBlocks := false}
+    else if a == "center" then {s with textAlign := .center, centerBlocks := false}
+    else if a == "justify" then {s with textAlign := .start, centerBlocks := false}
+    else s
+  else if tag == "table" && a == "center" then {s with autoMarginLeft := true, autoMarginRight := true}
+  else s
+
+/-- The `align` attribute of `n`, trimmed and in lower case. -/
+def alignValue (n : DOM.Node) : String := (attrValue n "align").trimAscii.toString.toLower
+
+/-- Presentational hints of alignment, below author CSS (an author `text-align` or margin
+wins): a block-level child of a parent that centres its blocks starts with auto inline
+margins; the `center` element centres its text and its blocks (the user agent's
+`center { text-align: -webkit-center }` of other engines); then the `align` attribute
+(`alignOf`). A `table` under such a parent is centred and starts its own text at the
+start: the legacy markup that centres blocks is that of pages in quirks mode, where other
+engines reset `text-align` on tables (their quirks sheet's `table { text-align: start }`),
+and this engine does not know the document's mode. An element outside the HTML namespace,
+and any other node, is unchanged. -/
+def alignHints (n : DOM.Node) (s parent : Computed) : Computed :=
+  if n.type != .element || !(n.ns == some DOM.htmlNS || n.ns.isNone) then s else
+  let s := if parent.centerBlocks && s.display != .inline && s.display != .none then
+    {s with autoMarginLeft := true, autoMarginRight := true} else s
+  let s := if parent.centerBlocks && n.lname == "table" then {s with textAlign := .start, centerBlocks := false} else s
+  if n.lname == "center" then {s with textAlign := .center, centerBlocks := true}
+  -- a `th` with no `align` is centred (the user agent's `th { text-align: -internal-center }`)
+  else if n.lname == "th" && !hasAttribute n "align" then {s with textAlign := .center}
+  else alignOf n.lname (alignValue n) s
+
+/-- Kind: property. Says: an empty `align` value changes no style. -/
+theorem alignOf_empty (tag : String) (s : Computed) : alignOf tag "" s = s := by
+  simp [alignOf]
+
+/-- Kind: property. Says: with no `align` attribute (or an empty one), a parent that does
+not centre its blocks, and an element other than `center` and `th`, the hints change nothing. Does
+not say: what an author rule does after them. -/
+theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.centerBlocks = false)
+    (hc : n.lname ≠ "center") (ht : n.lname ≠ "th") (ha : alignValue n = "") :
+    alignHints n s parent = s := by
+  simp [alignHints, hp, hc, ht, ha, alignOf_empty]
+
+/-- Whether the element itself is clipped to nothing: `clip` with no area on an absolutely
+positioned box (CSS 2.1 §11.1.2 applies `clip` to those only), or `clip-path` with no area. -/
+def Computed.clippedAway (s : Computed) : Bool := (s.clipRectEmpty && s.pos.isAbsolute) || s.clipPathEmpty
+
+/-- After the cascade of an element: its text is raised by its own `super` (a third of the
+parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by its own `sub`
+(a fifth), over what its ancestors raise; and when it or an ancestor is clipped to nothing
+(`clippedAway`, the visually hidden pattern of skip links and screen reader text) it is
+`clipHidden` and not painted, whatever its own `visibility`. -/
+def finishEffects (parent s : Computed) : Computed :=
+  -- Absolute and fixed boxes are out of flow. Their own vertical-align does not
+  -- move their text relative to the box (CSS 2.2 §10.8.1).
+  let own : Float := if s.pos.isAbsolute then 0
+    else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
+  let hidden := parent.clipHidden || s.clippedAway
+  {s with rise := parent.rise + own, clipHidden := hidden, visible := s.visible && !hidden}
+
+/-- Kind: property (pages that hide nothing pay nothing). Says: with no clip to nothing on
+the element or above it, its visibility is its own. -/
+theorem finishEffects_visible (parent s : Computed) (hp : parent.clipHidden = false) (hs : s.clippedAway = false) :
+    (finishEffects parent s).visible = s.visible := by
+  simp [finishEffects, hp, hs]
+
+/-- Kind: property. Says: everything under an element clipped to nothing is not painted,
+whatever its own declarations (the text of a skip link stays hidden). Does not say:
+anything about layout, which is unchanged. -/
+theorem finishEffects_hidden_parent (parent s : Computed) (hp : parent.clipHidden = true) :
+    (finishEffects parent s).clipHidden = true ∧ (finishEffects parent s).visible = false := by
+  simp [finishEffects, hp]
+
+/-- Kind: property. Says: an element that is neither `sub` nor `super` raises its text as
+much as its parent does. Does not say: where the line box is (it is not grown). -/
+theorem finishEffects_rise_plain (parent s : Computed) (h : s.shift = 0) :
+    (finishEffects parent s).rise = parent.rise + 0 := by
+  simp [finishEffects, h]
+
+/-- A positioned element's own vertical alignment does not add to its baseline shift. -/
+theorem finishEffects_rise_positioned (parent s : Computed) (h : s.pos.isAbsolute = true) :
+    (finishEffects parent s).rise = parent.rise + 0 := by
+  simp [finishEffects, h]
+
+/-- Kind: property. Says: `finishEffects` keeps the display and the box sizes of the
+cascade: it changes no layout. -/
+theorem finishEffects_layout (parent s : Computed) :
+    (finishEffects parent s).display = s.display ∧ (finishEffects parent s).width = s.width ∧
+      (finishEffects parent s).height = s.height ∧ (finishEffects parent s).margin = s.margin := by
+  simp [finishEffects]
+
 /-- The properties that presentational hints changed from `before` to `after`: those the
 cascade takes from no UA rule. -/
 def hintedProperties (before after : Computed) : List String :=
@@ -1859,7 +2667,13 @@ def hintedProperties (before after : Computed) : List String :=
   (if after.margin.top == before.margin.top then [] else ["margin-top"]) ++
   (if after.margin.right == before.margin.right then [] else ["margin-right"]) ++
   (if after.margin.bottom == before.margin.bottom then [] else ["margin-bottom"]) ++
-  (if after.margin.left == before.margin.left then [] else ["margin-left"])
+  (if after.margin.left == before.margin.left then [] else ["margin-left"]) ++
+  (if after.pos.marginOf == before.pos.marginOf then [] else ["margin-top","margin-right","margin-bottom","margin-left"]) ++
+  -- the `border` of an image button, `img` or `object` (HTML §15.4.3): the widths and the
+  -- solid style it sets are above the user agent's `input` border
+  (if after.borderStyle == before.borderStyle && after.borderWidth.top == before.borderWidth.top then [] else
+    ["border","border-width","border-style","border-top-width","border-right-width","border-bottom-width",
+     "border-left-width","border-top-style","border-right-style","border-bottom-style","border-left-style"])
 
 /-- A hint that sets no width leaves the UA's `width` rules in force. -/
 theorem hintedProperties_width (before after : Computed) (h : after.width.same before.width = true) :
@@ -2072,7 +2886,7 @@ def userAgentSheet : String :=
   -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.
   ":any-link{text-decoration:underline}" ++
   ":link:active,:visited:active{color:#ff0000}" ++
-  "button{display:inline-block;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
+  "button{display:inline-block;box-sizing:border-box;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
   "button:hover{background-color:#e5e5e5}" ++
   "button:active{border-style:inset;background-color:#c8c8c8}" ++
   -- form controls (HTML §15.5.x): inline-block widgets of a fixed size, as a text field of
@@ -2080,12 +2894,129 @@ def userAgentSheet : String :=
   -- profile's choice, near the platform's
   "input{display:inline-block;padding:1px 2px;border:2px inset #767676;width:147px;height:15px;background-color:#ffffff}" ++
   "input[type=hidden]{display:none}" ++
-  "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border-width:0}" ++
+  -- a check box or radio button: a box with an edge, filled with the accent colour of other
+  -- engines while it is checked (the mark itself is not drawn)
+  "input[type=checkbox],input[type=radio]{width:13px;height:13px;margin:3px 3px 3px 4px;padding:0;border:1px solid #767676;box-sizing:border-box;background-color:#ffffff}" ++
+  "input[type=checkbox]:checked,input[type=radio]:checked{background-color:#0075ff;border-color:#0075ff}" ++
+  -- a push button made with `input` (HTML §4.10.5.1.18-20): sized by its label, as `button` is
+  "input[type=submit],input[type=reset],input[type=button]{width:auto;height:auto;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000;text-align:center}" ++
+  "input[type=file]{width:auto;height:auto;padding:0;border-width:0;background-color:transparent}" ++
+  -- form controls draw their text at the size of other engines' controls (13.33px)
+  "input,select,textarea,button{font-size:13.333px}" ++
   "textarea{display:inline-block;padding:2px;border:1px solid #767676;width:176px;height:30px;background-color:#ffffff;white-space:pre-wrap}" ++
-  "select{display:inline-block;padding:1px 0;border:1px solid #767676;width:64px;height:17px;background-color:#ffffff}" ++
-  "select>*{display:none}"
+  -- a drop-down list shows its selected option (`Layout.controlItems`), with room for its arrow
+  "select{display:inline-block;padding:1px 4px;border:1px solid #767676;background-color:#ffffff;white-space:nowrap}" ++
+  "select>*{display:none}" ++
+  -- HTML §15.3.7 and §15.5.5: a summary marker belongs to the first summary of details.
+  "li{display:list-item}" ++
+  "details>summary:first-of-type{display:list-item;list-style-type:disclosure-closed;list-style-position:inside}" ++
+  "details[open]>summary:first-of-type{list-style-type:disclosure-open}" ++
+  -- HTML §15.3.6
+  "sub,sup{font-size:smaller}" ++
+  -- HTML §15.4.1: `iframe { border: 2px inset; }`
+  "iframe{border:2px inset}"
 
 def userAgentRules : List Rule := (parse userAgentSheet).toOption.getD []
+
+/-- The text of an `option` as a drop-down list shows it (HTML §4.10.10): its `label`
+attribute when that is not empty, else its text with the white space collapsed. -/
+def optionLabel (dom : Dom) (o : Nat) : String :=
+  let n := dom.get o
+  let label := attrValue n "label"
+  if !label.isEmpty then label else " ".intercalate (words ((dom.textContent o).getD ""))
+
+/-- The `option` elements of a `select` (HTML §4.10.7, the list of options): its `option`
+children and those of its `optgroup` children, in tree order; 256 children read at each
+level. -/
+def selectOptions (dom : Dom) (sel : Nat) : List Nat :=
+  let isEl := fun (k : Nat) (name : String) => (dom.get k).type == .element && (dom.get k).lname == name
+  ((dom.get sel).kids.toList.take 256).flatMap fun k =>
+    if isEl k "option" then [k]
+    else if isEl k "optgroup" then ((dom.get k).kids.toList.take 256).filter (isEl · "option")
+    else []
+
+/-- The option a drop-down list shows (HTML §4.10.7, the selectedness setting algorithm):
+the last option that is selected (its `selected` attribute, or what a script set,
+`Node.checkedness`), else the first option. -/
+def shownOption (dom : Dom) (sel : Nat) : Option Nat :=
+  let opts := selectOptions dom sel
+  (opts.reverse.find? fun o => (dom.get o).checkedness.getD (hasAttribute (dom.get o) "selected")).orElse fun _ => opts.head?
+
+/-- `input` types whose box shows a line of text (HTML §4.10.5): the textual states, and an
+unknown or absent type (the Text state). -/
+def textualInputTypes : List String := ["", "text", "search", "email", "url", "tel", "password", "number"]
+/-- The known `input` types (HTML §4.10.5); any other value is the Text state. -/
+def knownInputTypes : List String :=
+  ["hidden", "text", "search", "tel", "url", "email", "password", "date", "month", "week",
+   "time", "datetime-local", "number", "range", "color", "checkbox", "radio", "file",
+   "submit", "image", "reset", "button"]
+
+/-- What a form control shows inside its box, and whether it is a placeholder (HTML §4.10):
+a text field its `value` (a password field a bullet for each character), else its
+`placeholder`; a push button made with `input` its `value`, else the label of its type
+(`Submit`, `Reset`); a file chooser its button and state; a drop-down list the label of the
+option it shows (`shownOption`); a `textarea` with no text its `placeholder`. Line breaks in
+a one-line control become spaces. `none` for every other node, and when there is nothing to
+show. A text field uses its current value, including edits applied to the arena. -/
+def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
+  let n := dom.get id
+  let oneLine := fun (t : String) => String.ofList (t.toList.map fun c => if c == '\n' || c == '\r' || c == '\t' then ' ' else c)
+  if n.type != .element || !(n.ns == some DOM.htmlNS || n.ns.isNone) then none
+  else if n.lname == "input" then
+    let t0 := (attrValue n "type").trimAscii.toString.toLower
+    let t := if knownInputTypes.contains t0 then t0 else ""
+    if t == "submit" || t == "reset" || t == "button" then
+      let value := oneLine (attrValue n "value")
+      if hasAttribute n "value" then (if value.isEmpty then none else some (value, false))
+      else if t == "submit" then some ("Submit", false)
+      else if t == "reset" then some ("Reset", false)
+      else none
+    else if t == "file" then some ("Choose File", false)
+    else if textualInputTypes.contains t then
+      let value := oneLine (Forms.inputValue dom id)
+      if !value.isEmpty then some ((if t == "password" then String.ofList (value.toList.map fun _ => '•') else value), false)
+      else
+        let p := oneLine (attrValue n "placeholder")
+        if p.isEmpty then none else some (p, true)
+    else none
+  else if n.lname == "select" then
+    if hasAttribute n "multiple" then none
+    else (shownOption dom id).bind fun o => let l := optionLabel dom o; if l.isEmpty then none else some (l, false)
+  else if n.lname == "textarea" then
+    if n.kids.any (fun k => !(dom.get k).data.isEmpty) then none
+    else
+      let p := attrValue n "placeholder"
+      if p.isEmpty then none else some (p, true)
+  else none
+
+/-- Kind: property (a page with no form controls pays one name test an element). Says: an
+element that is not `input`, `select` or `textarea` shows no control text. -/
+theorem controlText_other (dom : Dom) (id : Nat) (hi : (dom.get id).lname ≠ "input")
+    (hs : (dom.get id).lname ≠ "select") (ht : (dom.get id).lname ≠ "textarea") :
+    controlText dom id = none := by
+  simp [controlText, hi, hs, ht]
+
+/-- The control text of the first element named `tag` of `source` (a test helper). -/
+private def controlTextOf (source tag : String) : Option (String × Bool) :=
+  let dom := DOM.parseHtmlDocument source
+  ((dom.treeOrder 0).find? fun k => (dom.get k).lname == tag).bind (controlText dom)
+
+#guard controlTextOf "<input placeholder='Search'>" "input" == some ("Search", true)
+#guard controlTextOf "<input value='hello' placeholder='Search'>" "input" == some ("hello", false)
+#guard controlTextOf "<input type=password value='abc'>" "input" == some ("•••", false)
+#guard
+  let dom := DOM.parseHtmlDocument "<input id=p type=password value=old>"
+  let id := (dom.getElementById 0 "p").getD 0
+  controlText (dom.setNode id fun node => {node with dirtyValue := some "live"}) id == some ("••••", false)
+#guard controlTextOf "<input type=submit>" "input" == some ("Submit", false)
+#guard controlTextOf "<input type=submit value=Go>" "input" == some ("Go", false)
+#guard controlTextOf "<input type=checkbox>" "input" == none
+#guard controlTextOf "<input type=wibble placeholder=x>" "input" == some ("x", true)
+#guard controlTextOf "<select><option>One<option selected>Two<option>Three</select>" "select" == some ("Two", false)
+#guard controlTextOf "<select><optgroup label=g><option>  First   one </option></optgroup></select>" "select" == some ("First one", false)
+#guard controlTextOf "<textarea placeholder='Write'></textarea>" "textarea" == some ("Write", true)
+#guard controlTextOf "<textarea placeholder='Write'>x</textarea>" "textarea" == none
+#guard controlTextOf "<p>text</p>" "p" == none
 
 /-- A rule that matches only through `:visited` sets only colours (Selectors 4 §8.2,
 the privacy restriction that browsers apply to visited links). -/
@@ -2213,7 +3144,7 @@ theorem selectorPartsMatchInK_admits (keys : Nat → ElemKey) (ts : TreeScope) (
       obtain ⟨⟨hscope, hc⟩, _⟩ := h
       unfold compoundInK at hc
       simp only [Bool.and_eq_true] at hc
-      obtain ⟨hhost, hfields⟩ := hc
+      obtain ⟨⟨hhost, hfields⟩, _⟩ := hc
       cases hh : c.host with
       | true =>
         simp only [hh, if_true]
@@ -2514,6 +3445,44 @@ theorem closedDetailsContent_other (dom : Dom) (id p : Nat) (hp : (dom.get id).p
     (hn : ((dom.get p).lname == "details") = false) : closedDetailsContent dom id = false := by
   simp [closedDetailsContent, hp, hn]
 
+/-- The elements the user agent sheet isolates (HTML §15.3.5, "Bidirectional text"). -/
+def isolatedTags : List String :=
+  ["address","blockquote","center","div","figure","figcaption","footer","form","header","hr",
+   "legend","listing","main","p","plaintext","pre","summary","xmp","article","aside","h1","h2",
+   "h3","h4","h5","h6","hgroup","nav","section","search","table","caption","colgroup","col",
+   "thead","tbody","tfoot","tr","td","th","dir","dd","dl","dt","menu","ol","ul","li","bdi","output"]
+
+/-- The `unicode-bidi` of the user agent sheet (HTML §15.3.5) for an HTML element `tag` with the
+`dir` attribute `dir` (ASCII lower case, "" when absent) and, for an `input`, the `type`
+attribute `type` (lower case): `bdo` is `isolate-override`; an `input` of type search, tel,
+url or email, a `textarea` and a `pre` with `dir=auto` are `plaintext`; the listed elements and
+an element with a valid `dir` are `isolate`; else none (the initial `normal`). -/
+def uaUnicodeBidi (tag dir type : String) : Option UnicodeBidi :=
+  if tag == "bdo" then some .isolateOverride
+  else if dir == "auto" && (tag == "textarea" || tag == "pre" ||
+      (tag == "input" && ["search","tel","url","email"].contains type)) then some .plaintext
+  else if ["rtl","ltr","auto"].contains dir || isolatedTags.contains tag then some .isolate
+  else none
+
+/-- Kind: property. Says: `bdo` is `isolate-override`, whatever its `dir`. -/
+theorem uaUnicodeBidi_bdo (dir type : String) : uaUnicodeBidi "bdo" dir type = some .isolateOverride := by
+  simp [uaUnicodeBidi]
+
+/-- Kind: property. Says: an element with `dir=ltr` or `dir=rtl` is isolated, unless it is a `bdo`
+(which overrides as well). -/
+theorem uaUnicodeBidi_dir (tag dir type : String) (hd : dir = "ltr" ∨ dir = "rtl") (ht : tag ≠ "bdo") :
+    uaUnicodeBidi tag dir type = some .isolate := by
+  rcases hd with rfl | rfl <;> simp [uaUnicodeBidi, ht]
+
+#guard uaUnicodeBidi "div" "" "" == some .isolate
+#guard uaUnicodeBidi "span" "" "" == none
+#guard uaUnicodeBidi "span" "invalid" "" == none
+#guard uaUnicodeBidi "input" "auto" "email" == some .plaintext
+#guard uaUnicodeBidi "input" "auto" "text" == some .isolate
+#guard uaUnicodeBidi "input" "" "email" == none
+#guard uaUnicodeBidi "textarea" "auto" "" == some .plaintext
+#guard uaUnicodeBidi "pre" "" "" == some .isolate
+
 /-- Winning declarations are keyed by property, with importance, origin, specificity
 and source order compared lexicographically (CSS Cascade 4 §6.1). The user agent
 origin (`userAgentRules`) is below the author origin. Inheritance is applied first.
@@ -2543,7 +3512,9 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       hasAttr "hidden")) ||
     -- the content of a `details` that is not open (it was drawn open)
     closedDetailsContent dom id
-  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg"
+  let svgDescendant := n.ns == some DOM.svgNS &&
+    (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
+  let svgViewport := n.ns == some DOM.svgNS && n.lname == "svg" && !svgDescendant
   let svgOverflow := attrValue n "overflow"
   let scale := headingScale n.lname
   let fontSize := if scale == 1 then parent.fontSize else (parent.fontSize*scale).round
@@ -2561,17 +3532,25 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
+    rise := parent.rise, centerBlocks := parent.centerBlocks,
+    -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
+    shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
+    preserveSegmentBreaks := parent.preserveSegmentBreaks,
     display := if hidden then .none else if block then .block else tableDisplay n.lname,
-    margin := startMargin n.lname fontSize,
+    margin := startMargin n.lname fontSize (insideList dom id),
     borderSpacingX := parent.borderSpacingX, borderSpacingY := parent.borderSpacingY,
     borderCollapse := parent.borderCollapse, captionBottom := parent.captionBottom,
     textAlign := parent.textAlign, direction := parent.direction, vars := parent.vars,
+    balanceText := parent.balanceText, balanceWrap := parent.balanceWrap,
+    letterSpacing := parent.letterSpacing, wordSpacing := parent.wordSpacing, textIndent := parent.textIndent,
     -- `writing-mode` and `list-style-type` are inherited (CSS Writing Modes 4 §3.2, CSS
     -- Lists 3 §3.1); the rest of `pos` is not
     pos := {writingMode := parent.pos.writingMode, listStyle := parent.pos.listStyle,
             listInside := parent.pos.listInside, nowrap := parent.pos.nowrap,
-            textTransform := parent.pos.textTransform}}
+            -- CSS Shadow 1 §4.1.1: the HTML slot has no box by default.
+            contents := DOM.Dom.isHtmlElement n "slot" && !hidden,
+            textTransform := parent.pos.textTransform, lineBreak := parent.pos.lineBreak}}
   -- HTML §3.2.6.4 and §15.3.5: the `dir` attribute sets `direction` and isolates the
   -- element; `bdi` isolates, and `bdo` overrides with isolation. Author CSS wins.
   if n.ns == some DOM.htmlNS || n.ns.isNone then
@@ -2580,16 +3559,39 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
     else if dirAttr == "auto" || (n.lname == "bdi" && !hasAttribute n "dir") then
       initial := {initial with direction := autoDirection dom id}
-    if n.lname == "bdo" then initial := {initial with unicodeBidi := .isolateOverride}
-    else if ["rtl","ltr","auto"].contains dirAttr || n.lname == "bdi" then
-      initial := {initial with unicodeBidi := .isolate}
+    if let some b := uaUnicodeBidi n.lname dirAttr (attrValue n "type").toLower then
+      initial := {initial with unicodeBidi := b}
   let preHint := initial
+  -- MathML Core §2.1.2 and §2.1.3: on a MathML element `dir` is a presentational hint for
+  -- `direction` (`ltr` or `rtl`, ASCII case-insensitive; any other value none), and
+  -- `mathcolor`, `mathbackground` and `mathsize` for `color`, `background-color` and
+  -- `font-size`. The deprecated MathML 3 attributes (`color`, `background`, `fontsize` ...)
+  -- are not mapped.
+  if n.ns == some DOM.mathmlNS then
+    let dirAttr := (attrValue n "dir").toLower
+    if dirAttr == "rtl" then initial := {initial with direction := .rtl}
+    else if dirAttr == "ltr" then initial := {initial with direction := .ltr}
+    for (attr, property) in [("mathcolor", "color"), ("mathbackground", "background-color"), ("mathsize", "font-size")] do
+      let value := attrValue n attr
+      if !value.isEmpty then initial := applyOrKeep initial ⟨property, value, false⟩
   if n.ns == some DOM.htmlNS || n.ns.isNone then
-    initial := bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))
+    initial := alignHints n (bodyMarginHints n (sourceDimensionHints dom id (replacedHints n (tableHints dom id initial parent)))) parent
+  let legacyFontHint := if html && n.lname == "font" then
+      (HTML.Dimension.legacyFontSize (attrValue n "size")).bind fontSizeKeyword
+    else none
+  if let some size := legacyFontHint then
+    initial := {initial with fontSize := size, lineHeight := initial.lineHeightFactor.map (size*·) |>.getD initial.lineHeight}
+  let legacyColorHint := if html && n.lname == "font" then
+      CssValues.Color.legacyHTMLColor (attrValue n "color")
+    else none
+  if let some (r,g,b) := legacyColorHint then
+    let channel := fun n => Float.ofNat n / 255
+    initial := {initial with color := ⟨channel r, channel g, channel b⟩}
   -- HTML §15.1: presentational hints sit above the user agent's rules (below the author's):
   -- a property a hint sets here takes no value from a rule of the UA sheet (`input` has
   -- `width: 147px` there; `<input type=image width=40>` is 40px wide)
-  let hinted := hintedProperties preHint initial
+  let hinted := (if legacyFontHint.isSome then ["font-size"] else []) ++
+    (if legacyColorHint.isSome then ["color"] else []) ++ hintedProperties preHint initial
   -- SVG presentation attributes have lower priority than author CSS.
   -- These properties affect HTML layout/inheritance, so compute them here.
   if svgViewport then
@@ -2664,11 +3666,34 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       | none => initial.direction == .rtl
     chosen := physicalWinners {rtl} chosen
   -- Font size precedes line-height and inheritance-sensitive dependent values.
-  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then result := applyWinner parent initial result d
+  if let some (_,(_,d)) := chosen.find? (·.1 == "font-size") then
+    -- `em`, `%`, `larger` and `smaller` in `font-size` are of the parent's font size (CSS
+    -- Fonts 4 §2.5), not of the size the user agent gives the element: `h1 {font-size: 4em}`
+    -- in a 16 px body is 64 px, not 4 × 32 px. A value that does not read keeps the user
+    -- agent's size. (Until 2026-11-23 the base was the element's start, so every heading
+    -- with an `em` or `%` size was twice as large, or as the user agent scales it.)
+    let base := match wideSource parent initial d with
+      | some _ => result
+      | none => if (CssValues.specified "font-size" d.value).isSome || (apply result d).toOption.isSome
+          then {result with fontSize := parent.fontSize} else result
+    result := applyWinner parent initial base d
+    -- the user agent's margins are in em of the element's own font size (`startMargin`); an
+    -- author `margin` below still wins
+    -- (only when the margins are still the user agent's: no presentational hint set them)
+    let ua := startMargin n.lname initial.fontSize (insideList dom id)
+    if html && result.fontSize != initial.fontSize && (let a := result.margin
+        a.top == ua.top && a.right == ua.right && a.bottom == ua.bottom && a.left == ua.left) &&
+        ua.top + ua.bottom > 0 then
+      result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
+  if n.ns == some DOM.svgNS then
+    result := {result with svgAuthor := chosen.filterMap fun (key,(priority,d)) =>
+      let author := (priority[1]?.getD 0) ≥ 2
+      let outerDimension := svgViewport && (key == "width" || key == "height")
+      if author && svgAuthorProperties.contains key && !outerDimension then some (key,d.value)
+      else none}
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
-      -- Inline SVG paint declarations stay with the existing SVG producer.
-      -- External HTML paint rules are refused until that cascade is unified.
+      -- SVG paint goes to the SVG renderer; the root's layout-related properties stay here.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
       else result := applyWinner parent initial result d
   -- A root or body never clips here: the window scrolls instead.
@@ -2678,7 +3703,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
   if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
-  return {result with underline := decoration.isSome, decorationColor := decoration}
+  return finishEffects parent {result with underline := decoration.isSome, decorationColor := decoration}
 
 /-- The style of element `id` with every rule tried (`matchedRules`): the reference. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)
@@ -2695,20 +3720,27 @@ def Computed.scaleText (s : Computed) (scale : Float) : Computed :=
   {s with fontSize := size, lineHeight := height}
 
 /-- The style of node `id` under the style `parent` of its parent: an element's cascade
-(`computedFrom`); any other node, and an SVG element inside SVG, takes what is inherited.
+(`computedFrom`). SVG descendants keep the HTML inherited box style but also
+resolve their own author winners and variables for SVG rendering.
 The step of `computeAllWith` and of `restyleWith`. -/
-def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed :=
+def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent : Computed) : Except String Computed := do
   let n := dom.get id
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
-  if n.type == .element && !svgDescendant then computedFrom dom id (matchesOf id) parent else pure {parent with
-    display := .inline, width := .auto, height := .auto,
+  if n.type == .element && !svgDescendant then return ← computedFrom dom id (matchesOf id) parent
+  let inherited : Computed := {parent with
+    svgAuthor := [], display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyle := .none, borderWidth := ⟨3,3,3,3⟩, borderColor := none,
+    borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current, cornerLengths := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
-        pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform}}
+        pos := {nowrap := parent.pos.nowrap, textTransform := parent.pos.textTransform,
+                lineBreak := parent.pos.lineBreak}}
+  if n.type == .element && svgDescendant then
+    let cascade ← computedFrom dom id (matchesOf id) parent
+    return {inherited with svgAuthor := cascade.svgAuthor, vars := cascade.vars}
+  return inherited
 
 /-- Visit parents before children, using a work list and bounded arena size.
 `matchesOf id` are the rules that match element `id`, in sheet order. `root` is the
@@ -2735,9 +3767,10 @@ changes the declarations of that element alone: the styles that can differ are i
 and those of its descendants (by inheritance). `restyleWith` gives the styles of the
 whole tree from the styles before the change by styling those subtrees again, so a
 script that writes one element's style and reads a computed value pays for one subtree,
-not for the document. This holds only when no rule reads the `style` attribute
-(`readsStyleAttribute`) and the text scale is 1 (`computeAllWith` scales at its end);
-the caller (`WebDocument.measure`) checks both. -/
+not for the document. This holds only when the text scale is 1 (`computeAllWith` scales
+at its end; `WebDocument.measure` checks it), and, when a rule reads the `style` attribute
+(`readsStyleAttribute`), only with the subtree of the element's parent as the root, since
+its later siblings may then match other rules (`Page.Host.measureNow` does this). -/
 
 /-- The styles `base` with the subtrees of `roots` styled again, parents before children
 (the step of `computeAllWith`). `base` must be the styles of the same tree with text
@@ -2854,6 +3887,134 @@ def attributesReachParentOnly (rules : List Rule) : Bool :=
     | some c => selectorsUseHas [c]
     | none => false
 
+/-- What the arguments of the rules' `:has()`s read of an element: its class names
+(lower case), its attribute names (lower case; `id`, `lang`, `dir` for those selectors),
+and whether a pseudo-class there reads more (`:checked`, `:disabled`, ... : `anyAttr`). -/
+structure HasReads where
+  classes : List String := []
+  attrs : List String := []
+  anyAttr : Bool := false
+  /-- Every compound of every `:has()` argument has a class, an id or an attribute selector
+  that is not under `:not()`, its combinators are descendant or child only, and no
+  `:nth-*()` or structural pseudo-class is in an argument: an element that has none of
+  `classes` and `attrs` then matches no compound of an argument (`HasReads.childWriteOk`). -/
+  childSafe : Bool := true
+  deriving Inhabited, BEq
+
+/-- The pseudo-classes that read the place of an element among its siblings or its
+children only: an attribute write changes none of them. -/
+def structuralPseudo (n : String) : Bool :=
+  ["root", "empty", "first-child", "last-child", "only-child", "first-of-type", "last-of-type",
+   "only-of-type", "scope"].contains n || n.startsWith "heading("
+
+/-- `HasReads` of the rules: the simple selectors inside each `:has()`, also inside
+`:not()`, `:is()` and `:nth-child(… of …)` there, and `:has()`s found inside those lists
+outside a `:has()`. A work list, bounded: past the bound, or with a `:has()` already worked
+out against a document (`Simple.anchors`, whose arguments are gone), none. -/
+def hasArgumentReads (rules : List Rule) : Option HasReads := Id.run do
+  let mut pending : List (Bool × DOM.Selectors.Complex) :=
+    rules.flatMap fun r => r.selectors.filterMap fun s => s.complex.map ((false, ·))
+  let mut out : HasReads := {}
+  for _ in [:1048576] do
+    match pending with
+    | [] => return some { out with classes := out.classes.eraseDups, attrs := out.attrs.eraseDups }
+    | (inHas, .mk parts) :: rest =>
+      let mut more := rest
+      for (comb, simples) in parts do
+        if inHas then
+          let positive := simples.any fun s => match s with
+            | .cls _ | .id _ | .attr .. => true
+            | _ => false
+          if !positive || !(comb == ' ' || comb == '>') then out := { out with childSafe := false }
+        for s in simples do
+          match s with
+          | .has l => more := l.map ((true, ·)) ++ more
+          | .anchors _ => return none
+          | .nth _ _ _ l =>
+            if inHas then out := { out with childSafe := false }
+            if let some l := l then more := l.map ((inHas, ·)) ++ more
+          | .not l => more := l.map ((inHas, ·)) ++ more
+          | .is l => more := l.map ((inHas, ·)) ++ more
+          | .cls v => if inHas then out := { out with classes := v.toLower :: out.classes }
+          | .id _ => if inHas then out := { out with attrs := "id" :: out.attrs }
+          | .attr _ name _ _ _ _ => if inHas then out := { out with attrs := name.toLower :: out.attrs }
+          | .lang _ => if inHas then out := { out with attrs := "lang" :: out.attrs }
+          | .pseudo n =>
+            if inHas && structuralPseudo n then out := { out with childSafe := false }
+            if inHas && !structuralPseudo n then
+              if n.startsWith "dir(" then out := { out with attrs := "dir" :: out.attrs }
+              else out := { out with anyAttr := true }
+          | _ => pure ()
+      pending := more
+  return none
+
+/-- The class names of a `class` attribute value (split at ASCII whitespace), lower case. -/
+def classTokens (s : String) : List String :=
+  ((s.map fun c => if c == '\t' || c == '\n' || c == '\r' || c == '\x0c' then ' ' else c).splitOn " ").filterMap
+    fun t => if t.isEmpty then none else some t.toLower
+
+/-- A write of attribute `name` of an element from `old` to `new` changes no class name and
+no attribute that the `:has()` arguments read (`hasArgumentReads`): every `:has()` of the
+document then holds where it held before the write, and the matching of the other
+selectors reads the written element only in its parent's subtree, as with no `:has()`
+(`attributesReachParentOnly`). Class names compare in lower case, so a quirks-mode page
+is covered too. -/
+def HasReads.unaffected (r : HasReads) (name old new : String) : Bool :=
+  let name := name.toLower
+  if name == "class" then
+    let o := classTokens old
+    let n := classTokens new
+    !r.attrs.contains "class" &&
+      !((o.filter (!n.contains ·)) ++ (n.filter (!o.contains ·))).any r.classes.contains
+  else !r.anyAttr && !r.attrs.contains name
+
+/-- A child write: elements are added or removed, and `x` is one of them or of their
+descendants. With `childSafe`, when no such `x` has a class in `classes` or an attribute in
+`attrs`, no added or removed element matches a compound of a `:has()` argument, and the
+descendant and child relations between the other elements do not change: every `:has()`
+of the document holds where it held before the write. Attribute names compare in lower
+case, whatever their namespace. -/
+def HasReads.childWriteOk (r : HasReads) (attrs : Array (String × String)) : Bool :=
+  r.childSafe && attrs.all fun (name, value) =>
+    let name := name.toLower
+    !r.attrs.contains name && !(name == "class" && (classTokens value).any r.classes.contains)
+
+#guard (match parse ".a:has(.b, [data-x]) .c { color: red } .d:has(> p:dir(rtl)) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.classes == ["b"] && r.attrs.length == 2 && r.attrs.contains "data-x" &&
+        r.attrs.contains "dir" && !r.anyAttr
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(.b) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.unaffected "class" "x y" "x y z" && !r.unaffected "class" "x" "x B" &&
+        !r.unaffected "class" "b x" "x" && r.unaffected "aria-expanded" "false" "true"
+    | none => false
+  | .error _ => false)
+#guard (match parse ".a:has(:checked) { color: red }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => !r.unaffected "aria-expanded" "false" "true" && r.unaffected "class" "" "q"
+    | none => false
+  | .error _ => false)
+
+-- `childSafe`: positive class, id or attribute in every compound, descendant and child only
+#guard (match parse ".a:has(.b > [data-x].c) .d { color: red } #e:has(#f) { color: blue }" with
+  | .ok rules => match hasArgumentReads rules with
+    | some r => r.childSafe && r.childWriteOk #[("class", "x y"), ("title", "z")] &&
+        !r.childWriteOk #[("CLASS", "B")] && !r.childWriteOk #[("data-x", "")] && !r.childWriteOk #[("id", "q")]
+    | none => false
+  | .error _ => false)
+#guard ["a:has(p)", "a:has(+ .b)", "a:has(.b ~ .c)", "a:has(.b:empty)",
+    "a:has(.b:nth-child(2))", "a:has(:not(.b))", "a:has(:is(.b, .c))", "a:has(.b:not(:first-child))"].all
+  fun sel => match parse (sel ++ " { color: red }") with
+    | .ok rules => rules.length == 1 && match hasArgumentReads rules with
+      | some r => !r.childSafe
+      | none => true
+    | .error _ => false
+#guard (match parse ".a:not(:nth-child(2)) .b { color: red } .c:has(.d:hover) { color: blue }" with
+  | .ok rules => (hasArgumentReads rules).map (·.childSafe) == some true
+  | .error _ => false)
+
 /-! ### Animated values in the cascade
 
 CSS Cascade 4 §6.1: animation declarations override the author's normal declarations
@@ -2941,14 +4102,35 @@ def hasNoMatch (dom : Dom) (l : List DOM.Selectors.Complex) : Bool :=
 /-- The rules without the selectors that a `:has()` false everywhere keeps from matching
 (one pass over the document for each `:has()`), so that matching does not search a
 large subtree once for each element (selectors/invalidation/has-complexity.html). Rules
-with no `:has()` are as they were, and a page with none pays one test per selector. -/
+with no `:has()` are as they were. Pseudo-element selector lists survive the ordinary
+selector pruning, and a page with no ordinary `:has()` pays one test per ordinary selector. -/
 def pruneHas (dom : Dom) (rules : List Rule) : List Rule :=
   if !(rules.any fun r => r.selectors.any fun sel => (sel.complex.map (fun c => !(hasLists c).isEmpty)).getD false) then rules
   else rules.filterMap fun r =>
     let sels := r.selectors.filter fun sel => match sel.complex with
       | some c => !((hasLists c).any (hasNoMatch dom))
       | none => true
-    if sels.isEmpty then none else some { r with selectors := sels }
+    if sels.isEmpty && (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) then none
+    else some { r with selectors := sels }
+
+/-- Pruning ordinary selectors preserves a rule that contains only generated pseudo-element
+selectors. This holds even when another rule activates the pruning pass. -/
+theorem pruneHas_keeps_pseudo (dom : Dom) (rules : List Rule) (r : Rule)
+    (hr : r ∈ rules) (hs : r.selectors = [])
+    (hp : (r.before.isEmpty && r.after.isEmpty && r.firstLetter.isEmpty) = false) :
+    r ∈ pruneHas dom rules := by
+  unfold pruneHas
+  split
+  · exact hr
+  · apply List.mem_filterMap.mpr
+    refine ⟨r, hr, ?_⟩
+    simp [hs, hp] <;> cases r <;> simp_all
+
+#guard match parse ".row::after{content:'';display:block;clear:both}.unrelated:has(.missing){color:red}" with
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument "<div class=row></div>"
+    (pruneHas dom rules).map (·.after.length) == [1]
+  | .error _ => false
 
 /-- A complex selector with each compound that has a `:has()` matched once against every
 element of the document: the compound becomes its other simple selectors and the elements
@@ -3206,5 +4388,51 @@ def applyDeclaration (s : Computed) (property value : String) : Option Computed 
   match declarations (property ++ ":" ++ value) with
   | .ok ds => if ds.isEmpty then none else ds.foldlM (fun acc d => (apply acc d).toOption) s
   | .error _ => none
+
+-- `background-image: url(...)` (issue 704): the first layer's URL, case kept, quoted or not.
+#guard firstUrl? "url(a.png)" == some "a.png"
+#guard firstUrl? "URL( 'Images/B.PNG' ) no-repeat" == some "Images/B.PNG"
+#guard firstUrl? "url(\"x y.png\"), linear-gradient(red, blue)" == some "x y.png"
+#guard firstUrl? "linear-gradient(red, blue)" == none
+#guard firstUrl? "url(a.png" == none
+#guard (applyDeclaration ({} : Computed) "background-image" "url(/i/a.png)").map (·.backgroundImage) == some (some "/i/a.png")
+#guard (applyDeclaration ({} : Computed) "background-image" "none").map (·.backgroundImage) == some none
+#guard match applyDeclaration ({} : Computed) "background-size" "50% auto" with
+  | some style =>
+    match style.backgroundSize with
+    | BackgroundSize.dimensions (Length.percent value) Length.auto => value == 0.5
+    | _ => false
+  | none => false
+#guard (applyDeclaration ({} : Computed) "background-repeat" "repeat-y").map (·.backgroundRepeat) == some (false,true)
+#guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
+  (fun s => s.backgroundPositionX.resolve 80)) == some 70
+#guard ((applyDeclaration ({} : Computed) "background-position" "right 10px bottom 5px").bind
+  (fun s => s.backgroundPositionY.resolve 30)) == some 25
+#guard ((applyDeclaration ({} : Computed) "background-position-x" "center, left").bind
+  (fun s => s.backgroundPositionX.resolve (-20))) == some (-10)
+#guard ((applyDeclaration ({} : Computed) "background-position" "min(0%, 100%) max(0%, 100%)").map
+  (fun s => (s.backgroundPositionX.resolve (-50),s.backgroundPositionY.resolve (-50)))) == some (some (-50),some 0)
+#guard ((applyDeclaration ({} : Computed) "background-position-y" "max(5px, 50%)").bind
+  (fun s => s.backgroundPositionY.resolve 40)) == some 20
+#guard ((applyDeclaration ({} : Computed) "background-position-x" "calc(25% + 10vw)").bind
+  (fun s => (s.backgroundPositionX.atViewport 200 100).resolve 40)) == some 30
+#guard (applyDeclaration ({} : Computed) "background-image" "linear-gradient(red, blue), url(a.png)").map (·.backgroundImage) == some none
+
+-- Border widths in every length unit and keyword (`borderWidthPx`; WPT css/CSS2/borders).
+private def borderLeft (property value : String) : Option Float :=
+  (applyDeclaration ({} : Computed) property value).map (·.borderWidth.left)
+#guard borderLeft "border-left-width" "1in" == some 96
+#guard borderLeft "border-left-width" "2.54cm" == some 96
+#guard borderLeft "border-left-width" "25.4mm" == some 96
+#guard borderLeft "border-left-width" "72pt" == some 96
+#guard borderLeft "border-left-width" "+6pc" == some 96
+#guard borderLeft "border-left-width" "1em" == some 16
+#guard borderLeft "border-left-width" "-0pt" == some 0
+#guard borderLeft "border-left-width" "thin" == some 1
+#guard borderLeft "border-left-width" "thick" == some 5
+#guard borderLeft "border-left-width" "7px" == some 7
+#guard borderLeft "border-left-width" "-1pt" == none
+#guard borderLeft "border" "1in solid red" == some 96
+#guard borderLeft "border-width" "1pt 2pt 3pt 6pt" == some 8
 
 end L4Factoidal.Rendering.CSS

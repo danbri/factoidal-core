@@ -128,11 +128,92 @@ void ng_set_cursor(int kind) {
   if (!hoverEdges && !resizeEdges) [shownCursor() set];
 }
 
+// Accessibility. The tree is the engine's (op `accessibilityTree`, with `mac: true`): each node
+// arrives with its AX role, label, value and box already decided. This file holds one
+// NSAccessibilityElement per node and answers AppKit's questions from them. Event 15 tells the
+// host that an accessibility client asked for the elements for the first time: a host makes no
+// tree before it. A press by an assistive technology is a click at the centre of the element's
+// box (events 2 and 4), so it does what a click there does. Elements are kept by node id across
+// updates, so a screen reader's cursor stays on its element.
+@interface NGAXNode : NSAccessibilityElement
+@property(nonatomic) int32_t node;
+@property(nonatomic) NSRect box; // in the frame's pixels, from the top of the page
+@property(nonatomic) BOOL canPress;
+@property(nonatomic) BOOL fixed; // of the chrome: the box is in window pixels and does not scroll
+@property(nonatomic, strong) NSMutableArray<NGAXNode *> *kids;
+@end
+static NSMutableArray<NGAXNode *> *axTop;
+static NSMutableDictionary<NSNumber *, NGAXNode *> *axNodes;
+static int axWanted;
+static int32_t axFocus = -1;
+// The page on screen: page row `axScroll` is at window row `axChrome` (frame pixels).
+static double axChrome, axScroll;
+static void axAsked(void) { if (!axWanted) { axWanted = 1; enqueue(15, 0, 0); } }
+static double axScale(void) {
+  double scale = offscreenScale > 0 ? offscreenScale : (window ? window.backingScaleFactor : 1);
+  return scale > 0 ? scale : 1;
+}
+// The box in the window's frame pixels, and in the view's points.
+static NSRect axFrameBox(NGAXNode *n) {
+  if (n.fixed) return n.box;
+  return NSMakeRect(n.box.origin.x, n.box.origin.y - axScroll + axChrome, n.box.size.width, n.box.size.height);
+}
+static NSRect axViewBox(NGAXNode *n) {
+  NSRect r = axFrameBox(n); double scale = axScale();
+  return NSMakeRect(r.origin.x / scale, r.origin.y / scale, r.size.width / scale, r.size.height / scale);
+}
+@implementation NGAXNode
+- (NSRect)accessibilityFrame {
+  if (!content || !content.window) return NSZeroRect;
+  return [content.window convertRectToScreen:[content convertRect:axViewBox(self) toView:nil]];
+}
+- (NSArray *)accessibilityChildren { return self.kids ?: @[]; }
+- (BOOL)isAccessibilityFocused { return self.node == axFocus; }
+- (BOOL)accessibilityPerformPress {
+  if (!self.canPress || !content) return NO;
+  NSRect r = axFrameBox(self); NSSize size = backingSize(content);
+  double x = floor(NSMidX(r)), y = floor(NSMidY(r));
+  // An element with no box, or whose centre is not on screen, can not be clicked.
+  if (r.size.width <= 0 || r.size.height <= 0 || x < 0 || y < (self.fixed ? 0 : axChrome) || x >= size.width || y >= size.height) return NO;
+  enqueue(2, (int32_t)x, (int32_t)y); enqueue(4, (int32_t)x, (int32_t)y);
+  return YES;
+}
+- (BOOL)isAccessibilitySelectorAllowed:(SEL)selector {
+  if (selector == @selector(accessibilityPerformPress)) return self.canPress;
+  return [super isAccessibilitySelectorAllowed:selector];
+}
+@end
+// The deepest node whose box holds the point (in the view's points); later siblings are on top.
+static NGAXNode *axHit(NSArray<NGAXNode *> *nodes, NSPoint p) {
+  for (NGAXNode *n in nodes.reverseObjectEnumerator) {
+    NGAXNode *inner = axHit(n.kids, p);
+    if (inner) return inner;
+    if (NSPointInRect(p, axViewBox(n))) return n;
+  }
+  return nil;
+}
+static double axNumber(id value) { return [value isKindOfClass:NSNumber.class] ? [value doubleValue] : 0; }
+static NSString *axString(id value) { return [value isKindOfClass:NSString.class] ? value : nil; }
+
 @interface NGView : NSView
 @end
 @implementation NGView
 - (BOOL)isFlipped { return YES; }
 - (BOOL)acceptsFirstResponder { return YES; }
+// The page's accessibility tree hangs below this view. AppKit asks only when an assistive
+// technology (or another accessibility client) reads the window: the first question tells the host.
+- (NSArray *)accessibilityChildren { axAsked(); return axTop ?: @[]; }
+- (id)accessibilityHitTest:(NSPoint)point {
+  axAsked();
+  if (!self.window) return NSAccessibilityUnignoredAncestor(self);
+  NSPoint p = [self convertPoint:[self.window convertPointFromScreen:point] fromView:nil];
+  NGAXNode *hit = axHit(axTop, p);
+  return hit ?: NSAccessibilityUnignoredAncestor(self);
+}
+- (id)accessibilityFocusedUIElement {
+  NGAXNode *n = axFocus >= 0 ? axNodes[@(axFocus)] : nil;
+  return n ?: NSAccessibilityUnignoredAncestor(self);
+}
 - (BOOL)acceptsFirstMouse:(NSEvent *)event { (void)event; return YES; }
 - (void)sendPointer:(NSEvent *)event type:(uint32_t)type {
   tracePointer("view",event,type,&viewMoveTraced);
@@ -319,7 +400,7 @@ char *ng_open_file_panel(void) {
     panel.canChooseFiles=YES;panel.canChooseDirectories=NO;panel.allowsMultipleSelection=NO;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    panel.allowedFileTypes=@[@"html",@"htm",@"svg",@"xhtml"];
+    panel.allowedFileTypes=@[@"html",@"htm",@"svg",@"xhtml",@"epub"];
 #pragma clang diagnostic pop
     if ([panel runModal]!=NSModalResponseOK || !panel.URL) return NULL;
     return copyPath(panel.URL);
@@ -560,6 +641,116 @@ void *ng_create_offscreen(uint32_t width, uint32_t height, double scale) {
   }
 }
 int ng_offscreen(void) { return offscreenScale>0; }
+
+// Whether an accessibility client asked for the tree, or VoiceOver is on. A host asks the engine
+// for the tree only then.
+int ng_ax_wanted(void) {
+  if (!pthread_main_np()) return 0;
+  return axWanted || NSWorkspace.sharedWorkspace.voiceOverEnabled;
+}
+// Where the page is in the window, in frame pixels: page row `scroll` is at window row `top`
+// (below the chrome). A scroll with no new layout moves the elements with this alone.
+void ng_ax_set_view(double top, double scroll) {
+  if (!pthread_main_np() || !content || (top == axChrome && scroll == axScroll)) return;
+  axChrome = top; axScroll = scroll;
+  if (axTop.count) NSAccessibilityPostNotification(content, NSAccessibilityLayoutChangedNotification);
+}
+// The engine's tree as JSON: {"top", "scroll", "nodes": [{"id", "depth", "fixed", "box": [x, y, w, h],
+// "ax": {"role", "subrole", "label", "value", "help", "roleDescription", "enabled", "press",
+// "focused", "selected", "expanded", "required"}}]}, nodes in tree order. Boxes are in the
+// frame's pixels from the top of the page, or of the window for a `fixed` node (the chrome).
+// Returns the number of elements, or -1.
+int ng_ax_set_tree(const char *json) {
+  if (!pthread_main_np() || !content || !json) return -1;
+  @autoreleasepool {
+    id parsed = [NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:json length:strlen(json)] options:0 error:nil];
+    if (![parsed isKindOfClass:NSDictionary.class]) return -1;
+    NSArray *nodes = ((NSDictionary *)parsed)[@"nodes"];
+    if (![nodes isKindOfClass:NSArray.class]) return -1;
+    axChrome = axNumber(((NSDictionary *)parsed)[@"top"]); axScroll = axNumber(((NSDictionary *)parsed)[@"scroll"]);
+    NSMutableDictionary<NSNumber *, NGAXNode *> *next = [NSMutableDictionary dictionary];
+    NSMutableArray<NGAXNode *> *tops = [NSMutableArray array], *path = [NSMutableArray array];
+    int32_t focus = -1;
+    for (id item in nodes) {
+      if (![item isKindOfClass:NSDictionary.class]) continue;
+      NSDictionary *d = item;
+      NSDictionary *ax = [d[@"ax"] isKindOfClass:NSDictionary.class] ? d[@"ax"] : @{};
+      NSNumber *key = @((int32_t)axNumber(d[@"id"]));
+      if (next[key]) continue;
+      NGAXNode *n = axNodes[key] ?: [NGAXNode new];
+      n.node = key.intValue;
+      n.kids = [NSMutableArray array];
+      NSArray *box = [d[@"box"] isKindOfClass:NSArray.class] && [d[@"box"] count] == 4 ? d[@"box"] : nil;
+      n.box = box ? NSMakeRect(axNumber(box[0]), axNumber(box[1]), axNumber(box[2]), axNumber(box[3])) : NSZeroRect;
+      n.accessibilityRole = axString(ax[@"role"]) ?: NSAccessibilityGroupRole;
+      n.accessibilitySubrole = axString(ax[@"subrole"]);
+      n.accessibilityLabel = axString(ax[@"label"]);
+      n.accessibilityHelp = axString(ax[@"help"]);
+      n.accessibilityRoleDescription = axString(ax[@"roleDescription"]);
+      id value = ax[@"value"];
+      n.accessibilityValue = [value isKindOfClass:NSString.class] || [value isKindOfClass:NSNumber.class] ? value : nil;
+      n.accessibilityEnabled = ![ax[@"enabled"] isEqual:@NO];
+      n.accessibilitySelected = [ax[@"selected"] isEqual:@YES];
+      n.accessibilityExpanded = [ax[@"expanded"] isEqual:@YES];
+      n.accessibilityRequired = [ax[@"required"] isEqual:@YES];
+      n.canPress = [ax[@"press"] isEqual:@YES];
+      n.fixed = [d[@"fixed"] isEqual:@YES];
+      if ([ax[@"focused"] isEqual:@YES]) focus = n.node;
+      NSUInteger depth = (NSUInteger)fmax(0, fmin(axNumber(d[@"depth"]), 4096));
+      if (depth > path.count) depth = path.count;
+      [path removeObjectsInRange:NSMakeRange(depth, path.count - depth)];
+      NGAXNode *parent = path.lastObject;
+      n.accessibilityParent = parent ?: content;
+      if (parent) [parent.kids addObject:n]; else [tops addObject:n];
+      [path addObject:n];
+      next[key] = n;
+    }
+    axTop = tops; axNodes = next;
+    NSAccessibilityPostNotification(content, NSAccessibilityLayoutChangedNotification);
+    if (focus != axFocus) {
+      axFocus = focus;
+      NGAXNode *focused = focus >= 0 ? next[@(focus)] : nil;
+      if (focused) NSAccessibilityPostNotification(focused, NSAccessibilityFocusedUIElementChangedNotification);
+    }
+    return (int)next.count;
+  }
+}
+// Speak `text` (a live region's change, as the engine decided): `assertive` interrupts.
+void ng_ax_announce(const char *text, int assertive) {
+  if (!pthread_main_np() || !text || !window) return;
+  @autoreleasepool {
+    NSString *words = [NSString stringWithUTF8String:text];
+    if (!words.length) return;
+    NSAccessibilityPostNotificationWithUserInfo(window, NSAccessibilityAnnouncementRequestedNotification,
+      @{NSAccessibilityAnnouncementKey: words,
+        NSAccessibilityPriorityKey: @(assertive ? NSAccessibilityPriorityHigh : NSAccessibilityPriorityMedium)});
+  }
+}
+// For tests: the elements as AppKit is given them, one a line: depth, node, role, subrole, label,
+// value, box in the view's points, press, focused. The caller frees the text with ng_free.
+static void axDump(NSArray *nodes, int depth, NSMutableString *out) {
+  for (NGAXNode *n in nodes) {
+    NSRect r = axViewBox(n);
+    [out appendFormat:@"%d\t%d\t%@\t%@\t%@\t%@\t%.0f,%.0f,%.0f,%.0f\t%d\t%d\n", depth, n.node, n.accessibilityRole ?: @"",
+      n.accessibilitySubrole ?: @"", n.accessibilityLabel ?: @"", n.accessibilityValue ?: @"",
+      r.origin.x, r.origin.y, r.size.width, r.size.height, n.canPress, n.isAccessibilityFocused];
+    axDump(n.accessibilityChildren, depth + 1, out);
+  }
+}
+char *ng_test_ax_dump(void) {
+  if (!pthread_main_np() || !content) return NULL;
+  @autoreleasepool {
+    NSMutableString *out = [NSMutableString string];
+    axDump(content.accessibilityChildren, 0, out);
+    return strdup(out.UTF8String);
+  }
+}
+// For tests: an assistive technology presses node `node`. 1 when the element took it.
+int ng_test_ax_press(int32_t node) {
+  if (!pthread_main_np()) return 0;
+  NGAXNode *n = axNodes[@(node)];
+  return n ? [n accessibilityPerformPress] : 0;
+}
 // Window edge drag, done here so JS keeps running. In [NSApp sendEvent:] AppKit
 // tracks a resize in its own loop until the mouse is up, and this host only runs
 // JS between pumps, so Lean could not lay out the page during the drag.

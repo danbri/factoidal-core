@@ -554,9 +554,10 @@ deriving instance DecidableEq for Rendering.Point, Rendering.PathSegment, Render
   Rendering.GradientRecord, Rendering.Length, Rendering.StrokePiece, Rendering.ClipRect
 deriving instance DecidableEq for Rendering.FillRule, Rendering.LineCap, Rendering.LineJoin
 
-/-- Image records: the same map, id and bitmap, the bitmaps compared by `bm`. -/
+/-- Image records: same map, id, repeat axes and bitmap (compared by `bm`). -/
 def sameImage (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) (a b : Rendering.ImageRecord) : Bool :=
-  decide (a.map = b.map) && a.id == b.id && bm a.bitmap b.bitmap
+  decide (a.map = b.map) && a.id == b.id && a.repeatX == b.repeatX && a.repeatY == b.repeatY &&
+  bm a.bitmap b.bitmap
 def samePaint (bm : Rendering.Bitmap → Rendering.Bitmap → Bool) : Rendering.Paint → Rendering.Paint → Bool
   | .none,.none | .current,.current => true
   | .solid a,.solid b => decide (a = b)
@@ -582,9 +583,10 @@ variable {bm : Rendering.Bitmap → Rendering.Bitmap → Bool} (hbm : ∀ x y, b
 include hbm
 
 theorem sameImage_eq {a b : Rendering.ImageRecord} (h : sameImage bm a b = true) : a = b := by
-  rcases a with ⟨m,i,x⟩; rcases b with ⟨n,j,y⟩
+  rcases a with ⟨m,i,x,ax,ay⟩; rcases b with ⟨n,j,y,bx,by_⟩
   simp only [sameImage, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
-  obtain ⟨⟨rfl,rfl⟩,hb⟩ := h; rw [hbm _ _ hb]
+  obtain ⟨⟨⟨⟨rfl,rfl⟩,rx⟩,ry⟩,hb⟩ := h
+  rw [hbm _ _ hb, rx, ry]
 
 theorem samePaint_eq {a b : Rendering.Paint} (h : samePaint bm a b = true) : a = b := by
   cases a <;> cases b <;> simp only [samePaint, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, reduceCtorEq] at h ⊢

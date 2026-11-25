@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Text kept for screen readers</title>
+<style>body{font:16px sans-serif;margin:16px}
+.skip{position:absolute;top:12px;left:8%;clip:rect(0 0 0 0);overflow:hidden;background:#fff;padding:4px}
+.skip:focus{clip:unset}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);border:0;white-space:nowrap}
+.inset{clip-path:inset(50%);position:absolute}</style></head>
+<body>
+<a class="skip" href="#main">Skip to main content (should not show)</a>
+<h1 id="main">Text kept for screen readers</h1>
+<p>Search <span class="sr-only">this site (should not show)</span><span class="inset">and this (should not show)</span>: the words in brackets are hidden.</p>
+<p>Pages hide such text with <code>clip: rect(0 0 0 0)</code> or <code>clip-path: inset(50%)</code>; nothing between “Search” and the colon is drawn.</p>
+</body></html>

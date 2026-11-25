@@ -52,6 +52,72 @@ a `Float` literal in a function body is converted from its decimal digits at eac
 /-- `x` is `-0`. -/
 def isNegZero (x : Float) : Bool := x == 0 && (x.toBits >>> 63) == 1
 
+@[noinline] private def mathHalf : Float := 0.5
+
+/-- ECMA-262 §21.3.2.29. Round to the nearest integer, with ties toward
+positive infinity. Compare the fractional part to one half: adding one
+half to the original value can round across the boundary first. -/
+def mathRoundNumber (x : Float) : Float :=
+  if !x.isFinite || x == posZero then x
+  else if x < posZero && x ≥ -mathHalf then negZero
+  else
+    let lower := x.floor
+    if x - lower < mathHalf then lower else lower + 1
+
+theorem mathRoundNumber_zero (x : Float) (h : (x == posZero) = true) :
+    mathRoundNumber x = x := by
+  simp [mathRoundNumber, h]
+
+theorem mathRoundNumber_nonfinite (x : Float) (h : x.isFinite = false) :
+    mathRoundNumber x = x := by
+  simp [mathRoundNumber, h]
+
+#guard mathRoundNumber (Float.ofBits 0x3fdfffffffffffff) == posZero
+#guard isNegZero (mathRoundNumber (-0.5))
+#guard mathRoundNumber 4503599627370497.0 == 4503599627370497.0
+
+/-- Coefficients of the Taylor correction to expm1, highest degree first.
+Each factorial in this range is exactly representable in binary64. -/
+@[noinline] private def expMinusOneCoefficients : Array Float :=
+  #[1.0 / 1307674368000.0, 1.0 / 87178291200.0, 1.0 / 6227020800.0,
+    1.0 / 479001600.0, 1.0 / 39916800.0, 1.0 / 3628800.0,
+    1.0 / 362880.0, 1.0 / 40320.0, 1.0 / 5040.0, 1.0 / 720.0,
+    1.0 / 120.0, 1.0 / 24.0, 1.0 / 6.0, 0.5]
+
+/-- ECMA-262 §21.3.2.15. Around zero, evaluate the degree-15 series without
+subtracting two nearly equal numbers. Outside that interval use the exponential. -/
+def mathExpMinusOne (x : Float) : Float :=
+  if x == posZero then x
+  else if x.abs ≤ mathHalf then
+    let correction := expMinusOneCoefficients.foldl (fun acc c => c + x * acc) posZero
+    x + x * x * correction
+  else Float.exp x - 1
+
+/-- ECMA-262 §21.3.2.22. Correct for the rounding of `1+x` in the interval
+where cancellation in the uncorrected logarithm matters most. -/
+def mathLogOnePlus (x : Float) : Float :=
+  if x == posZero then x
+  else
+    let y := 1 + x
+    if y == 1 then x
+    else if x.abs < mathHalf then Float.log y + (x - (y - 1)) / y
+    else Float.log y
+
+/-- The zero path returns the input, preserving its sign. -/
+theorem mathExpMinusOne_zero (x : Float) (h : (x == posZero) = true) :
+    mathExpMinusOne x = x := by
+  simp [mathExpMinusOne, h]
+
+/-- The zero path returns the input, preserving its sign. -/
+theorem mathLogOnePlus_zero (x : Float) (h : (x == posZero) = true) :
+    mathLogOnePlus x = x := by
+  simp [mathLogOnePlus, h]
+
+#guard isNegZero (mathExpMinusOne negZero)
+#guard isNegZero (mathLogOnePlus negZero)
+#guard (mathExpMinusOne (Float.ofBits 1)).toBits == 1
+#guard (mathLogOnePlus (Float.ofBits 1)).toBits == 1
+
 /-- The exact value of a finite double as `sign, num / den` (`XPath4.floatParts`). -/
 def parts (x : Float) : Bool × Nat × Nat := XPath4.floatParts x
 
@@ -65,6 +131,25 @@ def truncInt (x : Float) : Int :=
     let (neg, num, den) := parts x
     let q : Int := (num / den : Nat)
     if neg then -q else q
+
+/-- The digit `d` (below 36) of a radix: `0`-`9`, then `a`-`z` (§6.1.6.1.20). `Nat.toDigits`
+is not used: Lean's `Nat.digitChar` gives `*` for 16 and above, so `(35).toString(36)` was
+`"*"` and the class names that CSS-in-JS libraries make with base 36 (Emotion: BBC News) did
+not match their rules (2026-11-23). -/
+def radixDigit (d : Nat) : Char :=
+  if d < 10 then Char.ofNat (48 + d) else Char.ofNat (87 + d)
+
+/-- `n` in base `b` (2 to 36), with no leading zeros; "0" for 0. At most 1100 digits (a
+double's integer part has at most 1024 binary digits). -/
+def natToRadix (b n : Nat) : String := Id.run do
+  if n == 0 || b < 2 then return "0"
+  let mut k := n
+  let mut out : List Char := []
+  for _ in [0:1100] do
+    if k > 0 then
+      out := radixDigit (k % b) :: out
+      k := k / b
+  return String.ofList out
 
 /-- Number::toString with radix 10 (§6.1.6.1.20). -/
 def numToString (x : Float) : String :=
@@ -277,8 +362,52 @@ def arrayIndex? (s : String) : Option Nat :=
     let n := s.foldl (fun a c => a * 10 + (c.toNat - 48)) 0
     if n < 4294967295 then some n else none
 
+/-- No array index: the bound of `arrayIndex?` (2^32 - 1). -/
+def noIndex : Nat := 4294967295
+
+/-- The array index a Number is as a property key, with no key string made: `noIndex` when its
+key (`numToString`) is not a canonical array index. It follows the cases of `numToString`, so
+that `arrayIndex? (numToString x) = some (numIndex x)` whenever this is an index
+(`arrayIndex?_keyOfNum` in `JS/Theorems.lean`: proved with no assumption about floating point). -/
+def numIndex (x : Float) : Nat :=
+  if x.isNaN then noIndex
+  else if x == 0 then 0
+  else if x.isInf then noIndex
+  else if isIntegral x && x.abs < tenPow21 then
+    match truncInt x with
+    | .ofNat i => if i < noIndex then i else noIndex
+    | _ => noIndex
+  else noIndex
+
 /-- The UTF-16 length of a string (§6.1.4: code units). -/
 def utf16Length (s : String) : Nat :=
   s.foldl (fun a c => a + (if c.toNat ≥ 0x10000 then 2 else 1)) 0
+
+/-- Number::toString(radix) for a radix other than 10 (§21.1.3.6, the digits are
+implementation-approximated): the exact integer part in base `radix`, then the fraction's
+digits, exactly, until it ends or for at most 52 digits. NaN, the infinities and 0 are
+written as with radix 10. -/
+def toStringRadix (x : Float) (radix : Nat) : String :=
+  if radix == 10 || !x.isFinite || x == 0 || radix < 2 || radix > 36 then numToString x else
+  let (neg, num, den) := parts x
+  let whole := natToRadix radix (num / den)
+  let frac := Id.run do
+    let mut r := num % den
+    let mut out : List Char := []
+    for _ in [0:52] do
+      if r > 0 && den > 0 then
+        r := r * radix
+        out := radixDigit (r / den) :: out
+        r := r % den
+    return String.ofList out.reverse
+  (if neg then "-" else "") ++ whole ++ (if frac.isEmpty then "" else "." ++ frac)
+
+#guard toStringRadix 0.5 36 == "0.i"
+#guard toStringRadix (-255) 16 == "-ff"
+#guard toStringRadix 3.5 2 == "11.1"
+#guard natToRadix 36 35 == "z"
+#guard natToRadix 36 1295 == "zz"
+#guard natToRadix 16 255 == "ff"
+#guard natToRadix 2 5 == "101"
 
 end L4Factoidal.JS

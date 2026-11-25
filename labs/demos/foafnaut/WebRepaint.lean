@@ -47,6 +47,11 @@ private def optEq {α : Type} (eq : α → α → Bool) : Option α → Option �
   | none, none => true
   | _, _ => false
 
+private def cornerLengthsEq (a b : CSS.CornerLengths) : Bool :=
+  let pairEq := fun (x y : CSS.Length × CSS.Length) => lengthEq x.1 y.1 && lengthEq x.2 y.2
+  pairEq a.topLeft b.topLeft && pairEq a.topRight b.topRight &&
+    pairEq a.bottomRight b.bottomRight && pairEq a.bottomLeft b.bottomLeft
+
 /-- Every field of `Computed` but the colours is equal, and a background, a border and
 an underline are there in both or in neither: the two styles lay out the same and make
 the same paints. The anonymous constructor names every field in order, so a field added
@@ -56,45 +61,70 @@ its descendants, each of which is compared itself. -/
 def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
-    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,borderWidth,borderStyle,
-    _borderColor,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
-    minWidth,maxWidth,minHeight,maxHeight,objectFit,textAlign,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
-    autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique⟩ =>
+    lineHeightFactor,visible,clipOverflow,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
+    borderColors,cornerLengths,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
+    minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
+    autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
+    masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
+     _backgroundPositionX,_backgroundPositionY,backgroundClip,backgroundLayers,svgAuthor⟩ =>
   display == b.display && lengthEq width b.width && lengthEq height b.height &&
   edgesEq margin b.margin && edgesEq padding b.padding &&
   background.isSome == b.background.isSome && fontSize == b.fontSize && fontFamily == b.fontFamily &&
   -- a gradient background is painted from its stops: a style with one is never the same shape
   backgroundGradient.isNone && b.backgroundGradient.isNone &&
+  -- so is a background image: its tiles are made with the box's size
+  backgroundImage.isNone && b.backgroundImage.isNone &&
   columnCount == b.columnCount && optEq (· == ·) columnWidth b.columnWidth &&
   lineHeight == b.lineHeight && optEq (· == ·) lineHeightFactor b.lineHeightFactor &&
   visible == b.visible && clipOverflow == b.clipOverflow && underline == b.underline &&
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
-  edgesEq borderWidth b.borderWidth && (borderStyle == .none) == (b.borderStyle == .none) &&
+  preserveSegmentBreaks == b.preserveSegmentBreaks &&
+  edgesEq borderWidth b.borderWidth && optEq cornerLengthsEq cornerLengths b.cornerLengths &&
+  -- each side's style, and whether its colour is drawn
+  (borderStyles.toList.zip b.borderStyles.toList).all (fun (x,y) => x == y) &&
+  (borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => (x.resolve a.color).isSome == (y.resolve b.color).isSome) &&
   borderSpacingX == b.borderSpacingX && borderSpacingY == b.borderSpacingY &&
   borderCollapse == b.borderCollapse && captionBottom == b.captionBottom &&
   verticalAlign == b.verticalAlign && tableFixed == b.tableFixed &&
   lengthEq minWidth b.minWidth && lengthEq maxWidth b.maxWidth &&
   lengthEq minHeight b.minHeight && lengthEq maxHeight b.maxHeight && objectFit == b.objectFit &&
+  optEq (fun left right => lengthEq left.1 right.1 && lengthEq left.2 right.2) objectPosition b.objectPosition &&
   textAlign == b.textAlign && direction == b.direction && unicodeBidi == b.unicodeBidi &&
+  balanceText == b.balanceText && balanceWrap == b.balanceWrap &&
+  lengthEq letterSpacing b.letterSpacing && lengthEq wordSpacing b.wordSpacing && lengthEq textIndent b.textIndent &&
+  backgroundClip == b.backgroundClip && backgroundLayers == b.backgroundLayers &&
+  -- These declarations can change the SVG scene rather than a box paint.
+  svgAuthor == b.svgAuthor &&
   autoMarginLeft == b.autoMarginLeft && autoMarginRight == b.autoMarginRight &&
   autoMarginTop == b.autoMarginTop && autoMarginBottom == b.autoMarginBottom &&
   align.same b.align && flex.same b.flex && pos.same b.pos && grid.same b.grid &&
   -- the bold and the oblique face change the paints of the glyphs, not only their colour
-  fontWeight == b.fontWeight && inheritedWeight == b.inheritedWeight && oblique == b.oblique
+  fontWeight == b.fontWeight && inheritedWeight == b.inheritedWeight && oblique == b.oblique &&
+  -- a masked box, a raised or shifted line and a clipped-away box lay out or paint differently
+  masked == b.masked && shift == b.shift && rise == b.rise && centerBlocks == b.centerBlocks &&
+  clipRectEmpty == b.clipRectEmpty && clipPathEmpty == b.clipPathEmpty && clipHidden == b.clipHidden
+
+#guard !sameShape {} {balanceText := true}
+#guard !sameShape {} {balanceWrap := false}
+#guard !sameShape {} {cornerLengths := some {topLeft := (.px 10,.px 12)}}
+#guard !sameShape {cornerLengths := some {topLeft := (.px 10,.px 12)}}
+  {cornerLengths := some {topLeft := (.px 10,.px 13)}}
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=
   sameShape a b && colorEq a.color b.color && optEq colorEq a.background b.background &&
-  optEq colorEq a.borderColor b.borderColor && optEq colorEq a.decorationColor b.decorationColor &&
-  a.borderStyle == b.borderStyle
+  (a.borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => optEq colorEq (x.resolve a.color) (y.resolve b.color)) &&
+  optEq colorEq a.decorationColor b.decorationColor
 
-/-- The two colours of a border, as `Layout.borderNodes` makes them. -/
-private def borderColors (s : Computed) : Color × Color :=
-  let c := s.borderColor.getD s.color
-  match s.borderStyle with
-  | .outset => (Layout.lighter c,Layout.darker c)
-  | .inset => (Layout.darker c,Layout.lighter c)
-  | _ => (c,c)
+/-- The colours of the bands of each side of a border, as `Layout.borderNodes` makes them
+(`Layout.borderBands`; the width does not change the colours). -/
+private def borderColors (s : Computed) : List Color :=
+  let st := s.borderStyles
+  let pc := s.borderColors
+  [(st.top,pc.top,true),(st.right,pc.right,false),(st.bottom,pc.bottom,false),(st.left,pc.left,true)].flatMap
+    fun (style,paint,start) => match paint.resolve s.color with
+      | some c => (Layout.borderBands style c start 3).map (·.2.2)
+      | none => []
 
 /-- The colour pairs (before, after) of the paints that a node's own style makes. -/
 def ownPairs (a b : Computed) : List (Color × Color) :=
@@ -102,9 +132,9 @@ def ownPairs (a b : Computed) : List (Color × Color) :=
   (match a.background,b.background with | some x,some y => [(x,y)] | _,_ => []) ++
   (if a.underline then [(a.decorationColor.getD a.color,b.decorationColor.getD b.color)] else []) ++
   (if a.borderStyle == .none then [] else
-    let (an,af) := borderColors a
-    let (bn,bf) := borderColors b
-    [(an,bn),(af,bf)])
+    let x := borderColors a
+    let y := borderColors b
+    if x.length == y.length then x.zip y else [])
 
 /-- The background pair of a node, for the text of its inline descendants. -/
 private def backgroundPairs (a b : Computed) : List (Color × Color) :=

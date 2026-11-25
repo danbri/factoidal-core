@@ -91,10 +91,17 @@ structure TypeDef where
   recSize : Nat := 1
   deriving BEq, Repr, Inhabited
 
+/-- Limits of a memory or table. `addr64`: its address type is `i64` (Wasm 3.0 memory64 and
+table64: flags 0x04 and 0x05 of the binary format), so its addresses, sizes and the results
+of `memory.grow`/`table.grow` are `i64` values; otherwise they are `i32`. -/
 structure Limits where
   min : Nat
   max : Option Nat
+  addr64 : Bool := false
   deriving BEq, Repr, Inhabited
+
+/-- The address type of a memory or table with limits `l` (`i64` for memory64/table64). -/
+def Limits.addrType (l : Limits) : ValType := if l.addr64 then .i64 else .i32
 
 structure TableType where
   limits : Limits

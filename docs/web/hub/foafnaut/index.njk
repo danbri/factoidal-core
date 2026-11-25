@@ -9,7 +9,7 @@ eleventyExcludeFromCollections: true
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval' https://cdn.jsdelivr.net; worker-src 'self' blob:; connect-src 'self' https://cdn.jsdelivr.net{% if podConnections %} https: http://127.0.0.1:* http://localhost:*{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-eval'; worker-src 'self' blob:; connect-src 'self'{% if podConnections %} https: http://127.0.0.1:* http://localhost:*{% endif %}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
   <meta name="theme-color" content="#dee3e9" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1e2025" media="(prefers-color-scheme: dark)">
   <meta name="foafnaut-build" content="{{ buildVersion }}">
@@ -22,6 +22,13 @@ eleventyExcludeFromCollections: true
       -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
     @media (prefers-color-scheme:dark){html,body{background:#1e2025}#note{color:#e6e9ee}}
     canvas{position:fixed;inset:0;width:100vw;height:100dvh;display:block;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+    /* Screen readers (accessibility-mirror.mjs): a transparent element over each thing the engine
+       drew, in the engine's accessibility tree order. They take no pointer events and draw nothing. */
+    #ax{position:fixed;inset:0;margin:0;opacity:0;pointer-events:none;overflow:hidden;z-index:1;font:12px sans-serif}
+    #ax *{margin:0;padding:0;border:0;overflow:hidden;white-space:pre-wrap}
+    /* The switch for it: off screen until it has the focus (Tab from the start of the page). */
+    #ax-switch{position:fixed;left:-9999px;top:8px;z-index:3;font:14px system-ui,sans-serif;padding:6px 10px}
+    #ax-switch:focus{left:8px}
     #keys{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px}
     #stats{position:fixed;left:0;bottom:0;margin:0;padding:2px 6px;font:11px monospace;background:#000c;color:#fff;pointer-events:none}
     /* The licence line of a Hub copy (copies.mjs): who wrote the page, its licence and the
@@ -51,7 +58,9 @@ eleventyExcludeFromCollections: true
   </style>
 </head>
 <body>
+  <button id="ax-switch" type="button" aria-pressed="false">Screen reader support</button>
   <canvas id="page" aria-label="foafnaut browser, drawn by the built-in engine with WebGPU"></canvas>
+  <div id="ax" role="region" aria-label="Page content" hidden></div>
   <input id="keys" aria-label="Address" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
   <p id="stats" role="status" hidden></p>
   <p id="copy" hidden></p>

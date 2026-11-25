@@ -83,3 +83,15 @@ export function canSwap(shownBand:Band,prefetched:{key:StateKey;band:Band},now:S
   const keptNext=scroll>=prefetched.band.keepFrom&&scroll<=prefetched.band.keepTo;
   return !keptNow&&keptNext&&sameState(prefetched.key,now);
 }
+
+/** True when a Lean frame that is due should wait for the band being prefetched. That band is
+ * made for the state of now (only the scroll differs). Giving the low-priority request a
+ * chance keeps the same band from being requested a second time. Input and ordinary script
+ * calls still run ahead of queued low-priority work. Asked for when the band comes, the
+ * frame is made for the scroll of then, or is not needed
+ * at all when the band keeps that scroll. A change of state (the page, the pointer, a size)
+ * is never held. Measured 2026-11-17 on a long specification and a fast scroll: the held
+ * frame was the second of three bands made one after another for one scroll. */
+export function holdForPrefetch(prefetching:{key:StateKey}|undefined,now:StateKey):boolean {
+  return !!prefetching&&sameState(prefetching.key,now);
+}

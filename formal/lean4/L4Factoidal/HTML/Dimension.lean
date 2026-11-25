@@ -78,6 +78,57 @@ def parseNonNegative (input : String) : Option Nat :=
 /-- The value as a float (exact for the short decimals of attributes). -/
 def Dim.toFloat (d : Dim) : Float := Float.ofScientific d.mantissa true d.scale
 
+private def fontDecimalStep (n : Nat) (c : Char) : Nat := n * 10 + (c.toNat - '0'.toNat)
+
+private theorem fontDecimalStep_clamp (n : Nat) (c : Char) :
+    min 7 (fontDecimalStep (min 7 n) c) = min 7 (fontDecimalStep n c) := by
+  by_cases h : n ≤ 7
+  · rw [Nat.min_eq_right h]
+  · have a : 7 ≤ fontDecimalStep 7 c := by unfold fontDecimalStep; omega
+    have b : 7 ≤ fontDecimalStep n c := by unfold fontDecimalStep; omega
+    rw [Nat.min_eq_left (by omega : 7 ≤ n), Nat.min_eq_left a, Nat.min_eq_left b]
+
+/-- Saturating each digit at seven gives the clamped value of the entire decimal,
+    without growing a large integer when only a legacy font size is needed. -/
+private theorem legacyFontDecimal_eq (digits : List Char) (n : Nat) :
+    digits.foldl (fun acc c => min 7 (fontDecimalStep acc c)) (min 7 n) =
+      min 7 (digits.foldl fontDecimalStep n) := by
+  induction digits generalizing n with
+  | nil => rfl
+  | cons c rest ih =>
+    simp only [List.foldl_cons, fontDecimalStep_clamp]
+    exact ih (fontDecimalStep n c)
+
+#print axioms legacyFontDecimal_eq
+
+/-- HTML §15.3.4, rules for parsing a legacy font size. A leading sign makes the
+    digit sequence relative to size 3. Anything after the digit sequence is ignored. -/
+def legacyFontSize (input : String) : Option String :=
+  let (base, minus, chars) := match input.toList.dropWhile isWs with
+    | '+' :: rest => (3, false, rest)
+    | '-' :: rest => (3, true, rest)
+    | rest => (0, false, rest)
+  let digits := chars.takeWhile isDigit
+  if digits.isEmpty then none else
+    let n := digits.foldl (fun acc c => min 7 (fontDecimalStep acc c)) 0
+    let size := if minus then base - n else base + n
+    some (match size with
+      | 0 | 1 => "x-small"
+      | 2 => "small"
+      | 3 => "medium"
+      | 4 => "large"
+      | 5 => "x-large"
+      | 6 => "xx-large"
+      | _ => "xxx-large")
+
+#guard ["1","2","3","4","5","6","7"].map legacyFontSize ==
+  ["x-small","small","medium","large","x-large","xx-large","xxx-large"].map some
+#guard legacyFontSize "  +0002suffix" == some "x-large" && legacyFontSize "-0" == some "medium"
+#guard legacyFontSize "-1" == some "small" && legacyFontSize "0" == some "x-small"
+#guard legacyFontSize "+99999999999999999999" == some "xxx-large" &&
+  legacyFontSize "-99999999999999999999" == some "x-small"
+#guard ["", " ", "+", "- 1", "size=7", ".7", "７"].all (legacyFontSize · == none)
+
 /-! ## What is proved -/
 
 /-- Says: a value whose first character after the whitespace is not a digit (a sign, a

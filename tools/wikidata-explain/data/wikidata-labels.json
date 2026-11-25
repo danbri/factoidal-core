@@ -1,0 +1,4370 @@
+{
+ "meta": {
+  "retrieved": "2026-11-24T16:14:13+00:00",
+  "source": "https://www.wikidata.org/w/api.php action=wbgetentities",
+  "languages": [
+   "en",
+   "mul"
+  ],
+  "license": "CC0 1.0 (Wikidata)",
+  "user_agent": "mlp-query-explainer/0.1 (https://github.com/danbri/factoidal) python-urllib",
+  "count": 833,
+  "ids_from": "classic_query + lean_replacement_query of mlp-all-queries.json"
+ },
+ "entities": {
+  "P10": {
+   "label": "video",
+   "label_lang": "en",
+   "description": "relevant video; use property P18 for images; for film trailers, qualify with \"object has role\" (P3831)=\"trailer\" (Q622550); for films, qualify with \"object has role\" (P3831)=\"full video available on Wikimedia Commons\" (Q89347362)",
+   "datatype": "commonsMedia"
+  },
+  "P17": {
+   "label": "country",
+   "label_lang": "en",
+   "description": "sovereign state that this subject item is in (not to be used for human beings)",
+   "datatype": "wikibase-item"
+  },
+  "P18": {
+   "label": "image",
+   "label_lang": "en",
+   "description": "image of relevant illustration of the subject; if available, also use more specific properties (sample: coat of arms image, locator map, flag image, signature image, logo image, collage image)",
+   "datatype": "commonsMedia"
+  },
+  "P19": {
+   "label": "place of birth",
+   "label_lang": "en",
+   "description": "most specific known birth location of a person, animal or fictional character",
+   "datatype": "wikibase-item"
+  },
+  "P20": {
+   "label": "place of death",
+   "label_lang": "en",
+   "description": "most specific known (e.g. city instead of country, or hospital instead of city) death location of a person, animal or fictional character",
+   "datatype": "wikibase-item"
+  },
+  "P21": {
+   "label": "sex or gender",
+   "label_lang": "en",
+   "description": "sex or gender identity of human or animal. For human: male, female, non-binary, intersex, transgender female, transgender male, agender, etc. For animal: male organism, female organism. Groups of same gender use subclass of (P279)",
+   "datatype": "wikibase-item"
+  },
+  "P27": {
+   "label": "country of citizenship",
+   "label_lang": "en",
+   "description": "the object is a country that recognizes the subject as its citizen",
+   "datatype": "wikibase-item"
+  },
+  "P30": {
+   "label": "continent",
+   "label_lang": "en",
+   "description": "continent of which the subject is a part",
+   "datatype": "wikibase-item"
+  },
+  "P31": {
+   "label": "instance of",
+   "label_lang": "en",
+   "description": "type to which this subject corresponds/belongs. Different from P279 (subclass of); for example: K2 is an instance of mountain; volcano is a subclass of mountain",
+   "datatype": "wikibase-item"
+  },
+  "P39": {
+   "label": "position held",
+   "label_lang": "en",
+   "description": "subject currently or formerly holds the object position or public office",
+   "datatype": "wikibase-item"
+  },
+  "P47": {
+   "label": "shares border with",
+   "label_lang": "en",
+   "description": "countries or administrative subdivisions, of equal level, that this item borders, either by land or water. A single common point is enough.",
+   "datatype": "wikibase-item"
+  },
+  "P50": {
+   "label": "author",
+   "label_lang": "en",
+   "description": "main creator(s) of a written work (use on works, not humans); use P2093 (author name string) when Wikidata item is unknown or does not exist",
+   "datatype": "wikibase-item"
+  },
+  "P53": {
+   "label": "family",
+   "label_lang": "en",
+   "description": "family, including dynasty and nobility houses. Not family name (use P734 for family name).",
+   "datatype": "wikibase-item"
+  },
+  "P61": {
+   "label": "discoverer or inventor",
+   "label_lang": "en",
+   "description": "subject who discovered, first described, invented, or developed this discovery or invention or scientific hypothesis or theory",
+   "datatype": "wikibase-item"
+  },
+  "P69": {
+   "label": "educated at",
+   "label_lang": "en",
+   "description": "educational institution attended by subject",
+   "datatype": "wikibase-item"
+  },
+  "P88": {
+   "label": "commissioned by",
+   "label_lang": "en",
+   "description": "person or organization that commissioned this work",
+   "datatype": "wikibase-item"
+  },
+  "P94": {
+   "label": "coat of arms image",
+   "label_lang": "en",
+   "description": "image of the item's coat of arms - for the shield part only use P4004",
+   "datatype": "commonsMedia"
+  },
+  "P101": {
+   "label": "field of work",
+   "label_lang": "en",
+   "description": "specialization of a person or organization; see P106 for the occupation/ P452 for industry",
+   "datatype": "wikibase-item"
+  },
+  "P102": {
+   "label": "member of political party",
+   "label_lang": "en",
+   "description": "the political party of which a person is or has been a member or otherwise affiliated",
+   "datatype": "wikibase-item"
+  },
+  "P105": {
+   "label": "taxon rank",
+   "label_lang": "en",
+   "description": "level in a taxonomic hierarchy",
+   "datatype": "wikibase-item"
+  },
+  "P106": {
+   "label": "occupation",
+   "label_lang": "en",
+   "description": "occupation of a person. See also \"field of work\" (Property:P101), \"position held\" (Property:P39). Not for groups of people. There, use \"field of work\" (Property:P101), \"industry\" (Property:P452), \"members have occupation\" (Property:P3989).",
+   "datatype": "wikibase-item"
+  },
+  "P108": {
+   "label": "employer",
+   "label_lang": "en",
+   "description": "person or organization for which the subject works or worked",
+   "datatype": "wikibase-item"
+  },
+  "P112": {
+   "label": "founder",
+   "label_lang": "en",
+   "description": "founder or co-founder of this organization, religion, place or entity",
+   "datatype": "wikibase-item"
+  },
+  "P127": {
+   "label": "owned by",
+   "label_lang": "en",
+   "description": "owner of the subject",
+   "datatype": "wikibase-item"
+  },
+  "P131": {
+   "label": "located in the administrative territorial entity",
+   "label_lang": "en",
+   "description": "the item is located on the territory of the following administrative entity. Use P276 for specifying locations that are non-administrative places and for items about events. Use P1382 if the item falls only partially into the administrative entity",
+   "datatype": "wikibase-item"
+  },
+  "P135": {
+   "label": "movement",
+   "label_lang": "en",
+   "description": "literary, artistic, scientific or philosophical movement or scene associated with this person or work. For political ideologies use P1142.",
+   "datatype": "wikibase-item"
+  },
+  "P136": {
+   "label": "genre",
+   "label_lang": "en",
+   "description": "creative work's genre or an artist's field of work (P101). Use main subject (P921) to relate creative works to their topic",
+   "datatype": "wikibase-item"
+  },
+  "P137": {
+   "label": "operator",
+   "label_lang": "en",
+   "description": "person, profession, organization or entity that operates the equipment, facility, or service",
+   "datatype": "wikibase-item"
+  },
+  "P138": {
+   "label": "named after",
+   "label_lang": "en",
+   "description": "entity or event that inspired the subject's name, or namesake (in at least one language). Qualifier \"applies to name\" (P5168) can be used to indicate which one",
+   "datatype": "wikibase-item"
+  },
+  "P140": {
+   "label": "religion or worldview",
+   "label_lang": "en",
+   "description": "religion of a person, organization or religious building, or associated with this subject",
+   "datatype": "wikibase-item"
+  },
+  "P141": {
+   "label": "IUCN conservation status",
+   "label_lang": "en",
+   "description": "conservation status assigned by the International Union for Conservation of Nature",
+   "datatype": "wikibase-item"
+  },
+  "P144": {
+   "label": "based on",
+   "label_lang": "en",
+   "description": "the work(s) or inputs used as the basis for subject item; for fictional analog use P1074",
+   "datatype": "wikibase-item"
+  },
+  "P156": {
+   "label": "followed by",
+   "label_lang": "en",
+   "description": "immediately following item in a series of which the subject is a part, preferably use as qualifier of P179 [if the subject has been replaced, e.g. political offices, use \"replaced by\" (P1366)]",
+   "datatype": "wikibase-item"
+  },
+  "P158": {
+   "label": "seal image",
+   "label_lang": "en",
+   "description": "image of subject's seal (emblem)",
+   "datatype": "commonsMedia"
+  },
+  "P159": {
+   "label": "headquarters location",
+   "label_lang": "en",
+   "description": "city or town where an organization's headquarters is or has been situated. Use P276 qualifier for specific building",
+   "datatype": "wikibase-item"
+  },
+  "P163": {
+   "label": "flag",
+   "label_lang": "en",
+   "description": "subject's flag",
+   "datatype": "wikibase-item"
+  },
+  "P166": {
+   "label": "award received",
+   "label_lang": "en",
+   "description": "award or recognition received by a person, organization or creative work",
+   "datatype": "wikibase-item"
+  },
+  "P170": {
+   "label": "creator",
+   "label_lang": "en",
+   "description": "maker of this creative work or other object (where no more specific property exists)",
+   "datatype": "wikibase-item"
+  },
+  "P171": {
+   "label": "parent taxon",
+   "label_lang": "en",
+   "description": "closest parent taxon of the taxon in question",
+   "datatype": "wikibase-item"
+  },
+  "P172": {
+   "label": "ethnic group",
+   "label_lang": "en",
+   "description": "subject's ethnicity (consensus is that a VERY high standard of proof is needed for this field to be used. In general this means 1) the subject claims it themselves, or 2) it is widely agreed on by scholars, or 3) is fictional and portrayed as such)",
+   "datatype": "wikibase-item"
+  },
+  "P180": {
+   "label": "depicts",
+   "label_lang": "en",
+   "description": "entity visually depicted in an image, literarily described in a work, or otherwise incorporated into an audiovisual or other medium; see also P921, 'main subject'",
+   "datatype": "wikibase-item"
+  },
+  "P184": {
+   "label": "doctoral advisor",
+   "label_lang": "en",
+   "description": "person who supervised the doctorate or PhD thesis of the subject",
+   "datatype": "wikibase-item"
+  },
+  "P186": {
+   "label": "made from material",
+   "label_lang": "en",
+   "description": "material the subject or the object is made of or derived from (do not confuse with P10672 which is used for processes)",
+   "datatype": "wikibase-item"
+  },
+  "P189": {
+   "label": "location of discovery",
+   "label_lang": "en",
+   "description": "where the item was located when discovered",
+   "datatype": "wikibase-item"
+  },
+  "P190": {
+   "label": "twinned administrative body",
+   "label_lang": "en",
+   "description": "twin towns, sister cities, twinned municipalities and other localities that have a partnership or cooperative agreement, either legally or informally acknowledged by their governments",
+   "datatype": "wikibase-item"
+  },
+  "P195": {
+   "label": "collection",
+   "label_lang": "en",
+   "description": "art, museum, archival, or bibliographic collection of which the subject is part (item is in the collection of X)",
+   "datatype": "wikibase-item"
+  },
+  "P214": {
+   "label": "VIAF cluster ID",
+   "label_lang": "en",
+   "description": "identifier for the Virtual International Authority File database [format: up to 22 digits]; please note: VIAF is a cluster, the ID can include multiple items",
+   "datatype": "external-id"
+  },
+  "P217": {
+   "label": "inventory number",
+   "label_lang": "en",
+   "description": "identifier for a physical object or a set of physical objects in a collection",
+   "datatype": "string"
+  },
+  "P218": {
+   "label": "ISO 639-1 code",
+   "label_lang": "en",
+   "description": "2-letter identifier for language or family of languages defined in ISO 639-1 standard",
+   "datatype": "external-id"
+  },
+  "P225": {
+   "label": "taxon name",
+   "label_lang": "en",
+   "description": "correct scientific name of a taxon (according to the reference given)",
+   "datatype": "string"
+  },
+  "P242": {
+   "label": "locator map image",
+   "label_lang": "en",
+   "description": "geographic map image which highlights the location of the subject within some larger entity",
+   "datatype": "commonsMedia"
+  },
+  "P245": {
+   "label": "Union List of Artist Names ID",
+   "label_lang": "en",
+   "description": "identifier from the Getty Union List of Artist Names",
+   "datatype": "external-id"
+  },
+  "P272": {
+   "label": "production company",
+   "label_lang": "en",
+   "description": "company that produced this film, audio or performing arts work",
+   "datatype": "wikibase-item"
+  },
+  "P275": {
+   "label": "copyright license",
+   "label_lang": "en",
+   "description": "license under which this copyrighted work is released",
+   "datatype": "wikibase-item"
+  },
+  "P276": {
+   "label": "location",
+   "label_lang": "en",
+   "description": "location of the object, structure or event; use P131 to indicate the containing administrative entity, P8138 for statistical entities, or P706 for geographic entities; use P7153 for locations associated with the object",
+   "datatype": "wikibase-item"
+  },
+  "P279": {
+   "label": "subclass of",
+   "label_lang": "en",
+   "description": "this item is a subclass (subset) of that item; ALL instances of this item are instances of that item; different from P31 (instance of), e.g.: volcano is a subclass of mountain; Everest is an instance of mountain",
+   "datatype": "wikibase-item"
+  },
+  "P298": {
+   "label": "ISO 3166-1 alpha-3 code",
+   "label_lang": "en",
+   "description": "identifier for a country in three-letter format per ISO 3166-1",
+   "datatype": "external-id"
+  },
+  "P304": {
+   "label": "page(s)",
+   "label_lang": "en",
+   "description": "page number of source referenced for statement. Note \"column(s)\" (P3903) and \"folio(s)\" (P7416) for other numbering systems",
+   "datatype": "string"
+  },
+  "P305": {
+   "label": "IETF language tag",
+   "label_lang": "en",
+   "description": "identifier for language or languoid per the Internet Engineering Task Force; can include a primary language subtag, subtags for script, region, variant, extension, or private-use. Format: 2 or 3 letters, followed by \"-\" if subtags present",
+   "datatype": "external-id"
+  },
+  "P345": {
+   "label": "IMDb ID",
+   "label_lang": "en",
+   "description": "identifier for the IMDb (with prefix 'tt', 'nm', 'co', 'ev', 'ch' or 'ni')",
+   "datatype": "external-id"
+  },
+  "P361": {
+   "label": "part of",
+   "label_lang": "en",
+   "description": "object of which the subject is a part (as directly as possible); inverse property of \"has part\" (P527, see also \"has parts of the class\" (P2670))",
+   "datatype": "wikibase-item"
+  },
+  "P364": {
+   "label": "original language of film or TV show",
+   "label_lang": "en",
+   "description": "language in which a film or a performance work was originally created. Deprecated for written works and songs; use P407 (\"language of work or name\") instead.",
+   "datatype": "wikibase-item"
+  },
+  "P373": {
+   "label": "Commons category",
+   "label_lang": "en",
+   "description": "name of the Wikimedia Commons category containing files related to this item (without the prefix \"Category:\")",
+   "datatype": "string"
+  },
+  "P393": {
+   "label": "edition number",
+   "label_lang": "en",
+   "description": "number of an edition (first, second, ... as 1, 2, ...) or event",
+   "datatype": "string"
+  },
+  "P397": {
+   "label": "parent astronomical body",
+   "label_lang": "en",
+   "description": "major astronomical body the item belongs to",
+   "datatype": "wikibase-item"
+  },
+  "P405": {
+   "label": "taxon author",
+   "label_lang": "en",
+   "description": "the author(s) that (optionally) may be cited with the scientific name",
+   "datatype": "wikibase-item"
+  },
+  "P407": {
+   "label": "language of work or name",
+   "label_lang": "en",
+   "description": "language associated with this creative work (such as books, shows, songs, broadcasts or websites) or a name (for persons use \"native language\" (P103) and \"languages spoken, written or signed\" (P1412))",
+   "datatype": "wikibase-item"
+  },
+  "P424": {
+   "label": "Wikimedia language code",
+   "label_lang": "en",
+   "description": "identifier for a language or variant as used by Wikimedia projects",
+   "datatype": "string"
+  },
+  "P428": {
+   "label": "botanist author abbreviation",
+   "label_lang": "en",
+   "description": "standard form (official abbreviation) of a personal name for use in an author citation (only for names of algae, fungi and plants)",
+   "datatype": "external-id"
+  },
+  "P449": {
+   "label": "original broadcaster",
+   "label_lang": "en",
+   "description": "network(s) or service(s) that originally broadcast a radio or television program",
+   "datatype": "wikibase-item"
+  },
+  "P463": {
+   "label": "member of",
+   "label_lang": "en",
+   "description": "organization, club or musical group to which the subject belongs. Do not use for membership in ethnic or social groups, nor for holding a political position, such as a member of parliament (use P39 for that)",
+   "datatype": "wikibase-item"
+  },
+  "P485": {
+   "label": "archives at",
+   "label_lang": "en",
+   "description": "the institution holding the subject's archives",
+   "datatype": "wikibase-item"
+  },
+  "P495": {
+   "label": "country of origin",
+   "label_lang": "en",
+   "description": "country of origin of this item (creative work, food, phrase, product, etc.)",
+   "datatype": "wikibase-item"
+  },
+  "P497": {
+   "label": "CBDB ID",
+   "label_lang": "en",
+   "description": "identifier for a person in the China Biographical Database",
+   "datatype": "external-id"
+  },
+  "P509": {
+   "label": "cause of death",
+   "label_lang": "en",
+   "description": "underlying or immediate cause of death. Underlying cause (e.g. car accident, stomach cancer) preferred. Use 'manner of death' (P1196) for broadest category, e.g. natural causes, accident, homicide, suicide",
+   "datatype": "wikibase-item"
+  },
+  "P518": {
+   "label": "applies to part",
+   "label_lang": "en",
+   "description": "part, aspect, or form of the item to which the claim applies",
+   "datatype": "wikibase-item"
+  },
+  "P528": {
+   "label": "catalog code",
+   "label_lang": "en",
+   "description": "catalog name of an object, use with qualifier P972",
+   "datatype": "string"
+  },
+  "P547": {
+   "label": "commemorates",
+   "label_lang": "en",
+   "description": "what or whom is commemorated by the place, monument, memorial, or holiday",
+   "datatype": "wikibase-item"
+  },
+  "P551": {
+   "label": "residence",
+   "label_lang": "en",
+   "description": "the place where the person is or has been, resident",
+   "datatype": "wikibase-item"
+  },
+  "P569": {
+   "label": "date of birth",
+   "label_lang": "en",
+   "description": "date on which the subject was born",
+   "datatype": "time"
+  },
+  "P570": {
+   "label": "date of death",
+   "label_lang": "en",
+   "description": "date on which the subject died",
+   "datatype": "time"
+  },
+  "P571": {
+   "label": "inception",
+   "label_lang": "en",
+   "description": "time when an entity begins to exist; for date of official opening use P1619",
+   "datatype": "time"
+  },
+  "P575": {
+   "label": "time of discovery or invention",
+   "label_lang": "en",
+   "description": "date or point in time when the item was discovered or invented",
+   "datatype": "time"
+  },
+  "P576": {
+   "label": "dissolved, abolished or demolished",
+   "label_lang": "en",
+   "description": "point in time at which the subject (organisation, building) ceased to exist; see \"date of official closure\" (P3999) for closing a facility, \"service retirement\" (P730) for retiring equipment, \"discontinued date\" (P2669) for stopping a product",
+   "datatype": "time"
+  },
+  "P577": {
+   "label": "publication date",
+   "label_lang": "en",
+   "description": "date or point in time when a work or product was first published or released",
+   "datatype": "time"
+  },
+  "P580": {
+   "label": "start time",
+   "label_lang": "en",
+   "description": "time an entity begins to exist or a statement starts being valid",
+   "datatype": "time"
+  },
+  "P582": {
+   "label": "end time",
+   "label_lang": "en",
+   "description": "moment when an entity ceases to exist and a statement stops being entirely valid or no longer be true",
+   "datatype": "time"
+  },
+  "P585": {
+   "label": "point in time",
+   "label_lang": "en",
+   "description": "date something took place, existed or a statement was true; for providing time use the \"refine date\" property (P4241)",
+   "datatype": "time"
+  },
+  "P607": {
+   "label": "participated in conflict",
+   "label_lang": "en",
+   "description": "battles, wars or other military engagements in which the person or item participated",
+   "datatype": "wikibase-item"
+  },
+  "P608": {
+   "label": "exhibition history",
+   "label_lang": "en",
+   "description": "exhibitions where the item is or was displayed",
+   "datatype": "wikibase-item"
+  },
+  "P611": {
+   "label": "religious order",
+   "label_lang": "en",
+   "description": "monastic or Sufi order to which an individual or religious institution belongs",
+   "datatype": "wikibase-item"
+  },
+  "P625": {
+   "label": "coordinate location",
+   "label_lang": "en",
+   "description": "geocoordinates of the subject. For Earth, please note that only the WGS84 geodetic datum is currently supported",
+   "datatype": "globe-coordinate"
+  },
+  "P627": {
+   "label": "IUCN taxon ID",
+   "label_lang": "en",
+   "description": "identifier for a taxon in the International Union for Conservation of Nature database; source for conservation status (P141)",
+   "datatype": "external-id"
+  },
+  "P629": {
+   "label": "version, edition or translation of",
+   "label_lang": "en",
+   "description": "is a version, edition or translation of this entity",
+   "datatype": "wikibase-item"
+  },
+  "P710": {
+   "label": "participant",
+   "label_lang": "en",
+   "description": "person, group of people or organization (object) that actively takes/took part in an event or process (subject). Preferably qualify with \"object has role\" (P3831). Use P1923 for participants that are teams.",
+   "datatype": "wikibase-item"
+  },
+  "P729": {
+   "label": "service entry",
+   "label_lang": "en",
+   "description": "date or point in time on which a piece or class of equipment entered operational service",
+   "datatype": "time"
+  },
+  "P794": {
+   "missing": true
+  },
+  "P800": {
+   "label": "notable work",
+   "label_lang": "en",
+   "description": "notable scientific, artistic or literary work, or other work of significance among subject's works",
+   "datatype": "wikibase-item"
+  },
+  "P825": {
+   "label": "dedicated to",
+   "label_lang": "en",
+   "description": "person or organization to whom the subject was dedicated",
+   "datatype": "wikibase-item"
+  },
+  "P830": {
+   "label": "Encyclopedia of Life ID",
+   "label_lang": "en",
+   "description": "eol.org item reference number",
+   "datatype": "external-id"
+  },
+  "P837": {
+   "label": "day in year for periodic occurrence",
+   "label_lang": "en",
+   "description": "when a specific holiday or periodic event occurs. It can be used as statement or qualifier",
+   "datatype": "wikibase-item"
+  },
+  "P841": {
+   "label": "feast day",
+   "label_lang": "en",
+   "description": "saint's principal feast day",
+   "datatype": "wikibase-item"
+  },
+  "P854": {
+   "label": "reference URL",
+   "label_lang": "en",
+   "description": "should be used for Internet URLs as references. Use \"Wikimedia import URL\" (P4656) for imports from Wikimedia sites",
+   "datatype": "url"
+  },
+  "P856": {
+   "label": "official website",
+   "label_lang": "en",
+   "description": "URL of the official page of an item (current or former). Usage: If a listed URL no longer points to the official website, do not remove it, but see the \"Hijacked or dead websites\" section of the Talk page",
+   "datatype": "url"
+  },
+  "P921": {
+   "label": "main subject",
+   "label_lang": "en",
+   "description": "primary topic of a work or act of communication",
+   "datatype": "wikibase-item"
+  },
+  "P937": {
+   "label": "work location",
+   "label_lang": "en",
+   "description": "location where persons or organisations were actively participating in employment, business or other work",
+   "datatype": "wikibase-item"
+  },
+  "P941": {
+   "label": "inspired by",
+   "label_lang": "en",
+   "description": "work, human, place or event which inspired this creative work or fictional entity",
+   "datatype": "wikibase-item"
+  },
+  "P953": {
+   "label": "work available at URL",
+   "label_lang": "en",
+   "description": "URL of a web page containing this work",
+   "datatype": "url"
+  },
+  "P973": {
+   "label": "described at URL",
+   "label_lang": "en",
+   "description": "item is described at the following URL",
+   "datatype": "url"
+  },
+  "P1001": {
+   "label": "applies to jurisdiction",
+   "label_lang": "en",
+   "description": "the item (institution, law, public office, public register, etc) or statement belongs to or has power over or applies to the value (a territorial jurisdiction: a country, state, municipality, etc)",
+   "datatype": "wikibase-item"
+  },
+  "P1026": {
+   "label": "academic thesis",
+   "label_lang": "en",
+   "description": "thesis or dissertation written for a degree",
+   "datatype": "wikibase-item"
+  },
+  "P1071": {
+   "label": "location of creation",
+   "label_lang": "en",
+   "description": "place where the item was conceived or made; where applicable, location of final assembly",
+   "datatype": "wikibase-item"
+  },
+  "P1080": {
+   "label": "from narrative universe",
+   "label_lang": "en",
+   "description": "subject's fictional entity is in the object narrative. See also P1441 (present in work) and P1445 (fictional universe described in)",
+   "datatype": "wikibase-item"
+  },
+  "P1086": {
+   "label": "atomic number",
+   "label_lang": "en",
+   "description": "number of protons found in the nucleus of the atom",
+   "datatype": "quantity"
+  },
+  "P1104": {
+   "label": "number of pages",
+   "label_lang": "en",
+   "description": "number of pages in an edition of a written work; see allowed units constraint for valid values to use for units in conjunction with a number",
+   "datatype": "quantity"
+  },
+  "P1114": {
+   "label": "quantity",
+   "label_lang": "en",
+   "description": "number of instances of this subject in the universe of the subject (the actual number of instances in Wikidata may be lower or higher)",
+   "datatype": "quantity"
+  },
+  "P1216": {
+   "label": "National Heritage List for England number",
+   "label_lang": "en",
+   "description": "number on the National Heritage List for England",
+   "datatype": "external-id"
+  },
+  "P1225": {
+   "label": "U.S. National Archives Identifier",
+   "label_lang": "en",
+   "description": "identifier for the United States National Archives and Records Administration's online catalog",
+   "datatype": "external-id"
+  },
+  "P1303": {
+   "label": "instrument",
+   "label_lang": "en",
+   "description": "musical instrument that a person plays or teaches or used in a music occupation",
+   "datatype": "wikibase-item"
+  },
+  "P1317": {
+   "label": "floruit",
+   "label_lang": "en",
+   "description": "date when the person was known to be active or alive, when birth or death not documented",
+   "datatype": "time"
+  },
+  "P1319": {
+   "label": "earliest date",
+   "label_lang": "en",
+   "description": "earliest date at which an event could have happened. Use as qualifier for other date properties",
+   "datatype": "time"
+  },
+  "P1326": {
+   "label": "latest date",
+   "label_lang": "en",
+   "description": "latest possible time that something could have occurred. Use as qualifier for other date properties",
+   "datatype": "time"
+  },
+  "P1343": {
+   "label": "described by source",
+   "label_lang": "en",
+   "description": "work where this item is described, in statistical contexts, a methodological note describing the data",
+   "datatype": "wikibase-item"
+  },
+  "P1411": {
+   "label": "nominated for",
+   "label_lang": "en",
+   "description": "award nomination received by a person, organisation or creative work (inspired from \"award received\" (Property:P166))",
+   "datatype": "wikibase-item"
+  },
+  "P1412": {
+   "label": "languages spoken, written or signed",
+   "label_lang": "en",
+   "description": "language(s) that a person or a people speaks, writes or signs, including the native language(s)",
+   "datatype": "wikibase-item"
+  },
+  "P1415": {
+   "label": "Oxford Dictionary of National Biography ID",
+   "label_lang": "en",
+   "description": "old identifier used by the Oxford Dictionary of National Biography, see discussion page for details",
+   "datatype": "external-id"
+  },
+  "P1417": {
+   "label": "Encyclopædia Britannica Online ID",
+   "label_lang": "en",
+   "description": "identifier for an article in the online version of Encyclopædia Britannica",
+   "datatype": "external-id"
+  },
+  "P1433": {
+   "label": "published in",
+   "label_lang": "en",
+   "description": "larger work that a given work was published in, like a journal, a website, a collection, a book or a music album",
+   "datatype": "wikibase-item"
+  },
+  "P1435": {
+   "label": "heritage designation",
+   "label_lang": "en",
+   "description": "heritage designation of a cultural or natural site",
+   "datatype": "wikibase-item"
+  },
+  "P1436": {
+   "label": "collection or exhibition size",
+   "label_lang": "en",
+   "description": "number of items in a collection or exhibition",
+   "datatype": "quantity"
+  },
+  "P1441": {
+   "label": "present in work",
+   "label_lang": "en",
+   "description": "this (fictional or fictionalized) entity, place, or person appears in that work as part of the narration (use P2860 for works citing other works, P361/P1433 for works being part of other works, P1343 for entities described in non-fictional accounts)",
+   "datatype": "wikibase-item"
+  },
+  "P1476": {
+   "label": "title",
+   "label_lang": "en",
+   "description": "published name of a work, such as a newspaper article, a literary work, piece of music, a website, or a performance work",
+   "datatype": "monolingualtext"
+  },
+  "P1545": {
+   "label": "series ordinal",
+   "label_lang": "en",
+   "description": "position of an item in its parent series (most frequently a 1-based index), generally to be used as a qualifier (different from \"rank\" defined as a class, and from \"ranking\" defined as a property for evaluating a quality)",
+   "datatype": "string"
+  },
+  "P1552": {
+   "label": "has characteristic",
+   "label_lang": "en",
+   "description": "inherent or distinguishing quality or feature of the entity. Use a more specific property when possible",
+   "datatype": "wikibase-item"
+  },
+  "P1559": {
+   "label": "name in native language",
+   "label_lang": "en",
+   "description": "name of a person in their native language",
+   "datatype": "monolingualtext"
+  },
+  "P1566": {
+   "label": "GeoNames ID",
+   "label_lang": "en",
+   "description": "identifier in the GeoNames geographical database",
+   "datatype": "external-id"
+  },
+  "P1574": {
+   "label": "exemplar of",
+   "label_lang": "en",
+   "description": "links an individual copy of a work to the item for that work or edition",
+   "datatype": "wikibase-item"
+  },
+  "P1614": {
+   "label": "History of Parliament ID",
+   "label_lang": "en",
+   "description": "identifier on the History of Parliament website",
+   "datatype": "external-id"
+  },
+  "P1679": {
+   "label": "Art UK artwork ID",
+   "label_lang": "en",
+   "description": "identifier for artworks (publicly owned oil paintings and sculptures in the UK)",
+   "datatype": "external-id"
+  },
+  "P1686": {
+   "label": "for work",
+   "label_lang": "en",
+   "description": "qualifier of award received (P166) to specify the work that an award was given to the creator for",
+   "datatype": "wikibase-item"
+  },
+  "P1774": {
+   "label": "workshop of",
+   "label_lang": "en",
+   "description": "artist whose work group are the likely creator of an artwork",
+   "datatype": "wikibase-item"
+  },
+  "P1802": {
+   "label": "Early Modern Letters Online person ID",
+   "label_lang": "en",
+   "description": "identifier in the Early Modern Letters Online project run by the Bodleian Library",
+   "datatype": "external-id"
+  },
+  "P1816": {
+   "label": "National Portrait Gallery (London) person ID",
+   "label_lang": "en",
+   "description": "identifier for sitters and artists represented in the National Portrait Gallery, London",
+   "datatype": "external-id"
+  },
+  "P1817": {
+   "label": "addressee",
+   "label_lang": "en",
+   "description": "person or organization to whom a letter or note is addressed",
+   "datatype": "wikibase-item"
+  },
+  "P1819": {
+   "label": "genealogics.org person ID",
+   "label_lang": "en",
+   "description": "identifier for a person at genealogics.org. Format: \"I\" followed by 8 digits",
+   "datatype": "external-id"
+  },
+  "P1843": {
+   "label": "taxon common name",
+   "label_lang": "en",
+   "description": "common or vernacular name of a biological taxon",
+   "datatype": "monolingualtext"
+  },
+  "P1922": {
+   "label": "first line",
+   "label_lang": "en",
+   "description": "first line (incipit) of a poem, first sentence of a novel, speech, etc.",
+   "datatype": "monolingualtext"
+  },
+  "P1936": {
+   "label": "Digital Atlas of the Roman Empire ID",
+   "label_lang": "en",
+   "description": "Identifier of a Roman site, in the Digital Atlas of the Roman Empire",
+   "datatype": "external-id"
+  },
+  "P1938": {
+   "label": "Project Gutenberg author ID",
+   "label_lang": "en",
+   "description": "author identifier at Project Gutenberg",
+   "datatype": "external-id"
+  },
+  "P2002": {
+   "label": "X username",
+   "label_lang": "en",
+   "description": "username on X (formerly Twitter); do not include the '@' symbol",
+   "datatype": "external-id"
+  },
+  "P2003": {
+   "label": "Instagram username",
+   "label_lang": "en",
+   "description": "item's username on Instagram",
+   "datatype": "external-id"
+  },
+  "P2013": {
+   "label": "Facebook username",
+   "label_lang": "en",
+   "description": "identifier for an official (preferably) Facebook person, product or organization page (everything that follows URL part 'https://www.facebook.com/')",
+   "datatype": "external-id"
+  },
+  "P2048": {
+   "label": "height",
+   "label_lang": "en",
+   "description": "vertical length of an entity",
+   "datatype": "quantity"
+  },
+  "P2049": {
+   "label": "width",
+   "label_lang": "en",
+   "description": "width of an object",
+   "datatype": "quantity"
+  },
+  "P2093": {
+   "label": "author name string",
+   "label_lang": "en",
+   "description": "stores unspecified author or editor name for publications; use if Wikidata item for author (P50) or editor (P98) does not exist or is not known. Do not use both.",
+   "datatype": "string"
+  },
+  "P2348": {
+   "label": "time period",
+   "label_lang": "en",
+   "description": "time period (historic period or era, sports season, theatre season, legislative period etc.) in which the subject occurred or with which it is associated",
+   "datatype": "wikibase-item"
+  },
+  "P2386": {
+   "label": "diameter",
+   "label_lang": "en",
+   "description": "diameter of a circular or spherical object",
+   "datatype": "quantity"
+  },
+  "P2474": {
+   "label": "CDLI ID",
+   "label_lang": "en",
+   "description": "unique identifier of an object in the Cuneiform Digital Library Initiative",
+   "datatype": "external-id"
+  },
+  "P2520": {
+   "label": "UNESCO Biosphere Reserve URL",
+   "label_lang": "en",
+   "description": "URL to the entry on the UNESCO biosphere reserve website",
+   "datatype": "url"
+  },
+  "P2596": {
+   "label": "culture",
+   "label_lang": "en",
+   "description": "human culture or people (or several cultures) associated with this item",
+   "datatype": "wikibase-item"
+  },
+  "P2843": {
+   "label": "Benezit ID",
+   "label_lang": "en",
+   "description": "identifier in Benezit Dictionary of Artists",
+   "datatype": "external-id"
+  },
+  "P2868": {
+   "label": "subject has role",
+   "label_lang": "en",
+   "description": "role held by the item the statement appears on (\"subject\") in the context of that statement. For the role of the statement object/value, use P3831 (\"object has role\"). For acting roles, use P453 (\"character role\"). For persons, use P39.",
+   "datatype": "wikibase-item"
+  },
+  "P3029": {
+   "label": "UK National Archives ID",
+   "label_lang": "en",
+   "description": "identifier for a person, family or organisation, in the UK's National Archives database",
+   "datatype": "external-id"
+  },
+  "P3274": {
+   "label": "content deliverer",
+   "label_lang": "en",
+   "description": "third party service (e.g. Google Books, Internet Archive, etc.) that made the content available where it was accessed",
+   "datatype": "wikibase-item"
+  },
+  "P3311": {
+   "label": "image of design plans",
+   "label_lang": "en",
+   "description": "image representing the plan of a building or place",
+   "datatype": "commonsMedia"
+  },
+  "P3429": {
+   "label": "Electronic Enlightenment ID",
+   "label_lang": "en",
+   "description": "identifier in the Electronic Enlightenment database",
+   "datatype": "external-id"
+  },
+  "P3444": {
+   "label": "eBird taxon ID",
+   "label_lang": "en",
+   "description": "identifier for a species or subspecies, in the eBird database",
+   "datatype": "external-id"
+  },
+  "P3896": {
+   "label": "geoshape",
+   "label_lang": "en",
+   "description": "geographic data from Wikimedia Commons",
+   "datatype": "geo-shape"
+  },
+  "P3939": {
+   "label": "English Short Title Catalogue ID",
+   "label_lang": "en",
+   "description": "identifier in the English Short Title Catalogue",
+   "datatype": "external-id"
+  },
+  "P4033": {
+   "label": "Mastodon address",
+   "label_lang": "en",
+   "description": "address on the Mastodon decentralized social network (the form is 'user@server.domain' without a leading '@')",
+   "datatype": "external-id"
+  },
+  "P4101": {
+   "label": "thesis submitted to",
+   "label_lang": "en",
+   "description": "institution to whom a thesis or dissertation is submitted",
+   "datatype": "wikibase-item"
+  },
+  "P4102": {
+   "label": "Atlas of Hillforts ID",
+   "label_lang": "en",
+   "description": "identifier in the Atlas of Hillforts database",
+   "datatype": "external-id"
+  },
+  "P4353": {
+   "label": "nominated by",
+   "label_lang": "en",
+   "description": "who nominated a person for an office or award; can be used as a qualifier",
+   "datatype": "wikibase-item"
+  },
+  "P4431": {
+   "label": "Google Doodle",
+   "label_lang": "en",
+   "description": "Google Doodle celebrating this entity or event",
+   "datatype": "external-id"
+  },
+  "P4438": {
+   "label": "BFI Films, TV and people ID (archived)",
+   "label_lang": "en",
+   "description": "identifier for a person or movie at BFI Film & TV Database. Format: 13 digits and lowercase letters",
+   "datatype": "external-id"
+  },
+  "P4629": {
+   "label": "Online Books Page author ID",
+   "label_lang": "en",
+   "description": "identifier for an author, at the Online Books Page website",
+   "datatype": "external-id"
+  },
+  "P4672": {
+   "label": "Early Modern Letters Online location ID",
+   "label_lang": "en",
+   "description": "identifier for a location in the Early Modern Letters Online database maintained by the University of Oxford",
+   "datatype": "external-id"
+  },
+  "P4841": {
+   "label": "total fertility rate",
+   "label_lang": "en",
+   "description": "average number of children that would be born to a woman over her lifetime who lives in this territorial entity",
+   "datatype": "quantity"
+  },
+  "P4896": {
+   "label": "3D model",
+   "label_lang": "en",
+   "description": "representation of any three-dimensional surface of an object",
+   "datatype": "commonsMedia"
+  },
+  "P5008": {
+   "label": "on focus list of Wikimedia project",
+   "label_lang": "en",
+   "description": "property to indicate that an item is of particular interest for a Wikimedia project. This property does not add notability. Items should not be created with this property if they are not notable for Wikidata. See also P6104, P972, P2354",
+   "datatype": "wikibase-item"
+  },
+  "P6108": {
+   "label": "IIIF manifest URL",
+   "label_lang": "en",
+   "description": "JSON-LD formatted document URL reference described by the IIIF Presentation API",
+   "datatype": "url"
+  },
+  "P6193": {
+   "label": "ratified by",
+   "label_lang": "en",
+   "description": "used to specify that a treaty has been ratified by a given state or subject of international law",
+   "datatype": "wikibase-item"
+  },
+  "P6216": {
+   "label": "copyright status",
+   "label_lang": "en",
+   "description": "copyright status for intellectual creations like works of art, publications, software, etc.",
+   "datatype": "wikibase-item"
+  },
+  "P6610": {
+   "label": "Ashmolean Museum ID",
+   "label_lang": "en",
+   "description": "number of the object on online collections",
+   "datatype": "external-id"
+  },
+  "P6698": {
+   "label": "Japan Search name ID",
+   "label_lang": "en",
+   "description": "identifier in the Japan Search portal",
+   "datatype": "external-id"
+  },
+  "P6802": {
+   "label": "related image",
+   "label_lang": "en",
+   "description": "less fitting image, used only because a better alternative is not available. If an appropriate image of the item is available, use P18 instead. Value should not be a generic placeholder",
+   "datatype": "commonsMedia"
+  },
+  "P6819": {
+   "label": "calligrapher",
+   "label_lang": "en",
+   "description": "calligrapher of a work",
+   "datatype": "wikibase-item"
+  },
+  "P8345": {
+   "label": "media franchise",
+   "label_lang": "en",
+   "description": "this creative work belongs to this media franchise",
+   "datatype": "wikibase-item"
+  },
+  "P8406": {
+   "label": "Grove Art Online ID",
+   "label_lang": "en",
+   "description": "identifier of a topic in Grove Art Online",
+   "datatype": "external-id"
+  },
+  "P9302": {
+   "label": "script style",
+   "label_lang": "en",
+   "description": "style of script of a document or typeface",
+   "datatype": "wikibase-item"
+  },
+  "Q5": {
+   "label": "human",
+   "label_lang": "en",
+   "description": "any single member of Homo sapiens, unique extant species of the genus Homo"
+  },
+  "Q22": {
+   "label": "Scotland",
+   "label_lang": "en",
+   "description": "country in north-west Europe, part of the United Kingdom"
+  },
+  "Q27": {
+   "label": "Ireland",
+   "label_lang": "en",
+   "description": "country in Northwestern Europe"
+  },
+  "Q42": {
+   "label": "Douglas Adams",
+   "label_lang": "mul",
+   "description": "British science fiction writer and humorist (1952–2001)"
+  },
+  "Q79": {
+   "label": "Egypt",
+   "label_lang": "en",
+   "description": "country in Northeast Africa and Southwest Asia"
+  },
+  "Q83": {
+   "label": "MediaWiki",
+   "label_lang": "en",
+   "description": "free and open-source wiki software, developed by the Wikimedia Foundation"
+  },
+  "Q140": {
+   "label": "lion",
+   "label_lang": "en",
+   "description": "species of big cat"
+  },
+  "Q142": {
+   "label": "France",
+   "label_lang": "en",
+   "description": "country in Western Europe and other continents (through its overseas territories in America, Africa and Oceania)"
+  },
+  "Q145": {
+   "label": "United Kingdom",
+   "label_lang": "en",
+   "description": "island country in north-west Europe"
+  },
+  "Q171": {
+   "label": "wiki",
+   "label_lang": "en",
+   "description": "type of website that visitors can edit"
+  },
+  "Q180": {
+   "label": "Wikimedia Foundation",
+   "label_lang": "mul",
+   "description": "American charitable organization"
+  },
+  "Q183": {
+   "label": "Germany",
+   "label_lang": "en",
+   "description": "country in Central Europe"
+  },
+  "Q258": {
+   "label": "South Africa",
+   "label_lang": "en",
+   "description": "country in southern Africa"
+  },
+  "Q262": {
+   "label": "Algeria",
+   "label_lang": "en",
+   "description": "country in North Africa"
+  },
+  "Q296": {
+   "label": "Claude Monet",
+   "label_lang": "en",
+   "description": "French painter (1840–1926)"
+  },
+  "Q297": {
+   "label": "Diego Velázquez",
+   "label_lang": "en",
+   "description": "Spanish painter (1599–1660)"
+  },
+  "Q301": {
+   "label": "El Greco",
+   "label_lang": "en",
+   "description": "Greek artist, painter, sculptor and architect (1541–1614)"
+  },
+  "Q318": {
+   "label": "galaxy",
+   "label_lang": "en",
+   "description": "large gravitationally bound system of stars and interstellar matter"
+  },
+  "Q361": {
+   "label": "World War I",
+   "label_lang": "en",
+   "description": "1914–1918 global conflict"
+  },
+  "Q398": {
+   "label": "Bahrain",
+   "label_lang": "en",
+   "description": "country in the Persian Gulf"
+  },
+  "Q428": {
+   "label": "Qur’an",
+   "label_lang": "en",
+   "description": "foundational Islamic religious text"
+  },
+  "Q515": {
+   "label": "city",
+   "label_lang": "en",
+   "description": "large human settlement"
+  },
+  "Q523": {
+   "label": "star",
+   "label_lang": "en",
+   "description": "astronomical object consisting of a luminous spheroid of plasma held together by its own gravity"
+  },
+  "Q571": {
+   "label": "book",
+   "label_lang": "en",
+   "description": "medium for recording information (words or images) typically on bound pages or more abstractly in electronic or audio form"
+  },
+  "Q577": {
+   "label": "year",
+   "label_lang": "en",
+   "description": "orbital period of the Earth: the estimated period of time for the Earth's orbit around the Sun and observed at a fixed geographic point (averaging 365.24 days); base later modified to define or adjust various calendars"
+  },
+  "Q668": {
+   "label": "India",
+   "label_lang": "en",
+   "description": "country in South Asia"
+  },
+  "Q692": {
+   "label": "William Shakespeare",
+   "label_lang": "en",
+   "description": "English playwright and poet (1564–1616)"
+  },
+  "Q762": {
+   "label": "Leonardo da Vinci",
+   "label_lang": "en",
+   "description": "Italian Renaissance polymath (1452−1519)"
+  },
+  "Q796": {
+   "label": "Iraq",
+   "label_lang": "en",
+   "description": "sovereign state in Western Asia"
+  },
+  "Q805": {
+   "label": "Yemen",
+   "label_lang": "en",
+   "description": "country in West Asia"
+  },
+  "Q817": {
+   "label": "Kuwait",
+   "label_lang": "en",
+   "description": "sovereign state in Western Asia"
+  },
+  "Q822": {
+   "label": "Lebanon",
+   "label_lang": "en",
+   "description": "country in West Asia"
+  },
+  "Q842": {
+   "label": "Oman",
+   "label_lang": "en",
+   "description": "sovereign state in western Asia"
+  },
+  "Q846": {
+   "label": "Qatar",
+   "label_lang": "en",
+   "description": "country in West Asia"
+  },
+  "Q851": {
+   "label": "Saudi Arabia",
+   "label_lang": "en",
+   "description": "country in West Asia"
+  },
+  "Q858": {
+   "label": "Syria",
+   "label_lang": "en",
+   "description": "country in West Asia"
+  },
+  "Q878": {
+   "label": "United Arab Emirates",
+   "label_lang": "en",
+   "description": "country in Western Asia"
+  },
+  "Q897": {
+   "label": "gold",
+   "label_lang": "en",
+   "description": "chemical element with symbol Au and atomic number 79; a dense, malleable, and corrosion-resistant precious metal widely used as currency, in jewelry, electronics, and as a financial reserve asset"
+  },
+  "Q912": {
+   "label": "Mali",
+   "label_lang": "en",
+   "description": "country in West Africa"
+  },
+  "Q948": {
+   "label": "Tunisia",
+   "label_lang": "en",
+   "description": "country in North Africa"
+  },
+  "Q958": {
+   "label": "South Sudan",
+   "label_lang": "en",
+   "description": "country in East Africa"
+  },
+  "Q977": {
+   "label": "Djibouti",
+   "label_lang": "en",
+   "description": "sovereign state in Africa"
+  },
+  "Q1016": {
+   "label": "Libya",
+   "label_lang": "en",
+   "description": "sovereign state in North Africa"
+  },
+  "Q1025": {
+   "label": "Mauritania",
+   "label_lang": "en",
+   "description": "sovereign state in West Africa and North Africa"
+  },
+  "Q1028": {
+   "label": "Morocco",
+   "label_lang": "en",
+   "description": "sovereign state in North Africa"
+  },
+  "Q1045": {
+   "label": "Somalia",
+   "label_lang": "en",
+   "description": "sovereign state in Africa"
+  },
+  "Q1049": {
+   "label": "Sudan",
+   "label_lang": "en",
+   "description": "country in Northeast Africa"
+  },
+  "Q1191": {
+   "label": "Maharashtra",
+   "label_lang": "en",
+   "description": "state in the western and central peninsular region of India"
+  },
+  "Q1470": {
+   "label": "M. C. Escher",
+   "label_lang": "en",
+   "description": "Dutch graphic artist (1898–1972)"
+  },
+  "Q1490": {
+   "label": "Tokyo",
+   "label_lang": "en",
+   "description": "capital and largest city of Japan"
+  },
+  "Q1860": {
+   "label": "English",
+   "label_lang": "en",
+   "description": "West Germanic language"
+  },
+  "Q2095": {
+   "label": "food",
+   "label_lang": "en",
+   "description": "any substance consumed to provide nutritional support for the body; form of energy stored in chemical"
+  },
+  "Q2763": {
+   "label": "The Holocaust",
+   "label_lang": "en",
+   "description": "genocide of around 6 million Jews by Nazi Germany, other Axis powers and local collaborators in occupied territories"
+  },
+  "Q3918": {
+   "label": "university",
+   "label_lang": "en",
+   "description": "an institution of tertiary education and research which awards academic degrees in several academic disciplines"
+  },
+  "Q5432": {
+   "label": "Francisco Goya",
+   "label_lang": "en",
+   "description": "Spanish painter and printmaker (1746–1828)"
+  },
+  "Q5577": {
+   "label": "Salvador Dalí",
+   "label_lang": "en",
+   "description": "Spanish artist (1904–1989)"
+  },
+  "Q5580": {
+   "label": "Albrecht Dürer",
+   "label_lang": "mul",
+   "description": "German painter, printmaker, mathematician, and theorist (1471–1528)"
+  },
+  "Q5582": {
+   "label": "Vincent van Gogh",
+   "label_lang": "en",
+   "description": "Dutch painter (1853–1890)"
+  },
+  "Q5589": {
+   "label": "Henri Matisse",
+   "label_lang": "en",
+   "description": "French artist (1869–1954)"
+  },
+  "Q5592": {
+   "label": "Michelangelo",
+   "label_lang": "en",
+   "description": "Italian artist and architect (1475-1564)"
+  },
+  "Q5593": {
+   "label": "Pablo Picasso",
+   "label_lang": "en",
+   "description": "Spanish painter and sculptor (1881–1973)"
+  },
+  "Q5597": {
+   "label": "Raphael",
+   "label_lang": "en",
+   "description": "Italian painter and architect (1483–1520)"
+  },
+  "Q5598": {
+   "label": "Rembrandt",
+   "label_lang": "en",
+   "description": "Dutch painter and printmaker (1606–1669)"
+  },
+  "Q5599": {
+   "label": "Peter Paul Rubens",
+   "label_lang": "en",
+   "description": "Flemish painter (1577–1640)"
+  },
+  "Q5603": {
+   "label": "Andy Warhol",
+   "label_lang": "en",
+   "description": "American artist, film director, and producer (1928–1987)"
+  },
+  "Q5669": {
+   "label": "Sandro Botticelli",
+   "label_lang": "en",
+   "description": "Italian painter (1445–1510)"
+  },
+  "Q5811": {
+   "label": "Masaccio",
+   "label_lang": "en",
+   "description": "Italian painter (1401-1428)"
+  },
+  "Q5912": {
+   "label": "Marcel Duchamp",
+   "label_lang": "en",
+   "description": "French painter, sculptor, and chess player (1887–1968)"
+  },
+  "Q6225": {
+   "label": "Coventry",
+   "label_lang": "en",
+   "description": "city in the West Midlands in England, UK"
+  },
+  "Q6256": {
+   "label": "country",
+   "label_lang": "en",
+   "description": "distinct territorial body or political entity"
+  },
+  "Q7377": {
+   "label": "mammal",
+   "label_lang": "en",
+   "description": "class of animals, mostly terrestrial tetrapods, some aquatic"
+  },
+  "Q7378": {
+   "label": "elephant",
+   "label_lang": "en",
+   "description": "large terrestrial mammals from Africa and Asia"
+  },
+  "Q7637": {
+   "label": "Ward Cunningham",
+   "label_lang": "mul",
+   "description": "American computer programmer"
+  },
+  "Q7814": {
+   "label": "Giotto",
+   "label_lang": "en",
+   "description": "Italian painter and architect (c. 1267–1337)"
+  },
+  "Q7836": {
+   "label": "René Magritte",
+   "label_lang": "en",
+   "description": "Belgian surrealist (1898–1967)"
+  },
+  "Q8134": {
+   "label": "economics",
+   "label_lang": "en",
+   "description": "social science that studies the production, distribution, and consumption of goods and services"
+  },
+  "Q8142": {
+   "label": "currency",
+   "label_lang": "en",
+   "description": "generally accepted medium of exchange for goods or services"
+  },
+  "Q8279": {
+   "label": "Shahnameh",
+   "label_lang": "en",
+   "description": "epic poem written by the Persian poet Ferdowsi"
+  },
+  "Q8462": {
+   "label": "Timur",
+   "label_lang": "en",
+   "description": "the founder of the Timurid Empire (1370–1405)"
+  },
+  "Q8641": {
+   "label": "Yiddish",
+   "label_lang": "en",
+   "description": "High German-derived language used by Ashkenazi Jews"
+  },
+  "Q9061": {
+   "label": "Karl Marx",
+   "label_lang": "en",
+   "description": "German-born philosopher (1818–1883)"
+  },
+  "Q9068": {
+   "label": "Voltaire",
+   "label_lang": "en",
+   "description": "French writer, historian and philosopher (1694–1778)"
+  },
+  "Q9438": {
+   "label": "Thomas Aquinas",
+   "label_lang": "en",
+   "description": "Italian Dominican friar, philosopher, Catholic priest, and Doctor of the Church (1225–1274)"
+  },
+  "Q9531": {
+   "label": "British Broadcasting Corporation",
+   "label_lang": "en",
+   "description": "British public service broadcaster"
+  },
+  "Q11344": {
+   "label": "chemical element",
+   "label_lang": "en",
+   "description": "species of atoms having the same number of protons in the atomic nucleus and the same chemical properties, but not necessarily the same mass, or the same stability (or half-lifetime if they are unstable)"
+  },
+  "Q11424": {
+   "label": "film",
+   "label_lang": "en",
+   "description": "visual art work that simulates experiences and communicates ideas, stories, or emotions through moving images, generally synchronized with sound since the 1930s"
+  },
+  "Q11739": {
+   "label": "Lahore",
+   "label_lang": "en",
+   "description": "capital of the Punjab province, Pakistan"
+  },
+  "Q11772": {
+   "label": "Ancient Greece",
+   "label_lang": "en",
+   "description": "Greek civilization from 1200 BC to 600 AD"
+  },
+  "Q12418": {
+   "label": "Mona Lisa",
+   "label_lang": "en",
+   "description": "oil painting by Leonardo da Vinci in the Louvre, Paris"
+  },
+  "Q12519": {
+   "label": "Magna Carta",
+   "label_lang": "en",
+   "description": "charter of rights agreed between King John of England and the nobility in 1215"
+  },
+  "Q12536": {
+   "label": "Abbasid Caliphate",
+   "label_lang": "en",
+   "description": "third Islamic caliphate (750–1517)"
+  },
+  "Q16521": {
+   "label": "taxon",
+   "label_lang": "en",
+   "description": "group of one or more organism(s), which a taxonomist adjudges to be a unit"
+  },
+  "Q16560": {
+   "label": "palace",
+   "label_lang": "en",
+   "description": "grand residence, especially a royal or episcopal residence"
+  },
+  "Q16666": {
+   "label": "Nanjing",
+   "label_lang": "en",
+   "description": "capital city of Jiangsu Province, China, former capital of the Republic of China and China's Ming dynasty"
+  },
+  "Q17169": {
+   "label": "Giovanni Bellini",
+   "label_lang": "en",
+   "description": "15th- and 16th-century Italian Renaissance painter (1430–1516)"
+  },
+  "Q19543": {
+   "label": "Hans Sachs",
+   "label_lang": "en",
+   "description": "German shoemaker, meistersinger, poet and playwright (1494-1576)"
+  },
+  "Q19652": {
+   "label": "public domain",
+   "label_lang": "en",
+   "description": "no exclusive intellectual property rights apply"
+  },
+  "Q23165": {
+   "label": "Gloucestershire",
+   "label_lang": "en",
+   "description": "ceremonial county in England (use Q21694733 for administrative non-metropolitan county)"
+  },
+  "Q23169": {
+   "label": "Oxfordshire",
+   "label_lang": "en",
+   "description": "county in England, UK"
+  },
+  "Q23380": {
+   "label": "Jean-Auguste-Dominique Ingres",
+   "label_lang": "en",
+   "description": "French painter (1780–1867)"
+  },
+  "Q23436": {
+   "label": "Edinburgh",
+   "label_lang": "en",
+   "description": "capital city of Scotland, UK"
+  },
+  "Q25729": {
+   "label": "The Persistence of Memory",
+   "label_lang": "en",
+   "description": "painting by Salvador Dalí"
+  },
+  "Q26163": {
+   "label": "Sandwich",
+   "label_lang": "en",
+   "description": "town in Kent, England"
+  },
+  "Q28803": {
+   "label": "sandwich",
+   "label_lang": "en",
+   "description": "food made with bread and other ingredients"
+  },
+  "Q29466": {
+   "label": "Kaaba",
+   "label_lang": "en",
+   "description": "cubical shrine in Mecca, Saudi Arabia; direction of prayer for Muslims"
+  },
+  "Q29530": {
+   "label": "Liberty Leading the People",
+   "label_lang": "en",
+   "description": "painting by Eugène Delacroix, Louvre"
+  },
+  "Q30755": {
+   "label": "Auguste Rodin",
+   "label_lang": "en",
+   "description": "French sculptor (1840–1917)"
+  },
+  "Q31561": {
+   "label": "acoustic guitar",
+   "label_lang": "en",
+   "description": "guitar which does not require external amplification"
+  },
+  "Q32815": {
+   "label": "mosque",
+   "label_lang": "en",
+   "description": "place of worship for followers of Islam"
+  },
+  "Q33215": {
+   "label": "constructed language",
+   "label_lang": "en",
+   "description": "human language whose phonology, grammar, and vocabulary have been consciously devised for human or human-like communication"
+  },
+  "Q33477": {
+   "label": "Eugène Delacroix",
+   "label_lang": "en",
+   "description": "French painter (1798–1863)"
+  },
+  "Q33506": {
+   "label": "museum",
+   "label_lang": "en",
+   "description": "institution that holds artifacts and other objects of scientific, artistic, cultural, historical, or other importance"
+  },
+  "Q33999": {
+   "label": "actor",
+   "label_lang": "en",
+   "description": "person who acts in a dramatic or comic production and works in film, television, theatre, or radio"
+  },
+  "Q34013": {
+   "label": "Georges Seurat",
+   "label_lang": "en",
+   "description": "French painter (1859-1891)"
+  },
+  "Q34217": {
+   "label": "Oxford",
+   "label_lang": "en",
+   "description": "city in Oxfordshire, England"
+  },
+  "Q34266": {
+   "label": "Russian Empire",
+   "label_lang": "en",
+   "description": "former empire in Eurasia and North America (1721–1917)"
+  },
+  "Q34433": {
+   "label": "University of Oxford",
+   "label_lang": "en",
+   "description": "collegiate research university in Oxford, England"
+  },
+  "Q34618": {
+   "label": "Gustave Courbet",
+   "label_lang": "en",
+   "description": "French painter (1819–1877)"
+  },
+  "Q34770": {
+   "label": "language",
+   "label_lang": "en",
+   "description": "particular system of communication, often named for the region or peoples that use it"
+  },
+  "Q35548": {
+   "label": "Paul Cézanne",
+   "label_lang": "en",
+   "description": "French painter (1839–1906)"
+  },
+  "Q35657": {
+   "label": "U.S. state",
+   "label_lang": "en",
+   "description": "constituent political entity of the United States of America"
+  },
+  "Q37517": {
+   "label": "class",
+   "label_lang": "en",
+   "description": "taxonomic rank in biology"
+  },
+  "Q37562": {
+   "label": "Donatello",
+   "label_lang": "en",
+   "description": "Early Renaissance Italian sculptor (1386–1466)"
+  },
+  "Q37571": {
+   "label": "Jackson Pollock",
+   "label_lang": "en",
+   "description": "American painter (1912–1956)"
+  },
+  "Q37577": {
+   "label": "John Calvin",
+   "label_lang": "en",
+   "description": "French Protestant reformer (1509–1564)"
+  },
+  "Q37621": {
+   "label": "Thomas Hobbes",
+   "label_lang": "en",
+   "description": "English philosopher (1588–1679)"
+  },
+  "Q37681": {
+   "label": "silk",
+   "label_lang": "en",
+   "description": "fine, lustrous, natural fiber produced by the larvae of various silk moths, especially the species Bombyx mori"
+  },
+  "Q37693": {
+   "label": "Paul Gauguin",
+   "label_lang": "en",
+   "description": "French painter and printmaker (1848–1903)"
+  },
+  "Q39546": {
+   "label": "physical tool",
+   "label_lang": "en",
+   "description": "physical item that can be used to achieve a goal"
+  },
+  "Q39931": {
+   "label": "Pierre-Auguste Renoir",
+   "label_lang": "en",
+   "description": "French painter and sculptor (1841–1919)"
+  },
+  "Q40218": {
+   "label": "spacecraft",
+   "label_lang": "en",
+   "description": "vehicle or machine designed to fly in space"
+  },
+  "Q40599": {
+   "label": "Édouard Manet",
+   "label_lang": "en",
+   "description": "French painter (1832–1883)"
+  },
+  "Q40998": {
+   "label": "phonology",
+   "label_lang": "en",
+   "description": "branch of linguistics concerned with the systematic organization of sounds in languages"
+  },
+  "Q41264": {
+   "label": "Johannes Vermeer",
+   "label_lang": "en",
+   "description": "Dutch painter (1632–1675)"
+  },
+  "Q41406": {
+   "label": "Edvard Munch",
+   "label_lang": "en",
+   "description": "Norwegian painter (1863–1944)"
+  },
+  "Q41513": {
+   "label": "William Blake",
+   "label_lang": "en",
+   "description": "English poet and artist (1757–1827)"
+  },
+  "Q41554": {
+   "label": "Nicolas Poussin",
+   "label_lang": "en",
+   "description": "French painter (1594-1665)"
+  },
+  "Q42196": {
+   "label": "Balaenoptera musculus",
+   "label_lang": "en",
+   "description": "species of marine mammal, largest living animal in the world"
+  },
+  "Q42207": {
+   "label": "Caravaggio",
+   "label_lang": "en",
+   "description": "Italian painter (1571–1610)"
+  },
+  "Q43229": {
+   "label": "organization",
+   "label_lang": "en",
+   "description": "social entity established to meet needs or pursue goals"
+  },
+  "Q43270": {
+   "label": "Pieter Bruegel the Elder",
+   "label_lang": "en",
+   "description": "Flemish painter (1526–1569)"
+  },
+  "Q43459": {
+   "label": "Ferdowsi",
+   "label_lang": "en",
+   "description": "Persian poet, author of Shahnameh (940–1020)"
+  },
+  "Q44007": {
+   "label": "Paul Klee",
+   "label_lang": "mul",
+   "description": "German-Swiss artist (1879–1940)"
+  },
+  "Q44054": {
+   "label": "Franz Marc",
+   "label_lang": "en",
+   "description": "German artist (1880–1916)"
+  },
+  "Q44539": {
+   "label": "temple",
+   "label_lang": "en",
+   "description": "structure reserved for religious or spiritual activities"
+  },
+  "Q44613": {
+   "label": "monastery",
+   "label_lang": "en",
+   "description": "complex of buildings comprising the domestic quarters and workplace(s) of monks or nuns"
+  },
+  "Q45585": {
+   "label": "The Starry Night",
+   "label_lang": "en",
+   "description": "painting by Vincent van Gogh"
+  },
+  "Q46169": {
+   "label": "national park",
+   "label_lang": "en",
+   "description": "park used for conservation purposes of animal life and plants"
+  },
+  "Q46373": {
+   "label": "Edgar Degas",
+   "label_lang": "en",
+   "description": "French Impressionist artist (1834–1917)"
+  },
+  "Q46408": {
+   "label": "Georgia O'Keeffe",
+   "label_lang": "mul",
+   "description": "American modernist artist (1887–1986)"
+  },
+  "Q47152": {
+   "label": "Mary Shelley",
+   "label_lang": "en",
+   "description": "English writer (1797–1851)"
+  },
+  "Q47170": {
+   "label": "Prize in Economic Sciences in Memory of Alfred Nobel",
+   "label_lang": "en",
+   "description": "award established in 1968 by Sveriges Riksbank in memory of Alfred Nobel"
+  },
+  "Q47551": {
+   "label": "Titian",
+   "label_lang": "en",
+   "description": "Italian painter (c.1490–1576)"
+  },
+  "Q48015": {
+   "label": "South East England",
+   "label_lang": "en",
+   "description": "region of England"
+  },
+  "Q48319": {
+   "label": "Hans Holbein the Younger",
+   "label_lang": "en",
+   "description": "German artist and printmaker (1497–1543)"
+  },
+  "Q48498": {
+   "label": "illuminated manuscript",
+   "label_lang": "en",
+   "description": "manuscript in which the text is supplemented by the addition of decoration, such as borders and miniature illustrations"
+  },
+  "Q49085": {
+   "label": "African Americans",
+   "label_lang": "en",
+   "description": "Americans with sub-Saharan African ancestry"
+  },
+  "Q49757": {
+   "label": "poet",
+   "label_lang": "en",
+   "description": "person who writes poetry"
+  },
+  "Q49848": {
+   "label": "document",
+   "label_lang": "en",
+   "description": "form for preservation of structured and identified information"
+  },
+  "Q55264": {
+   "label": "Charles Laughton",
+   "label_lang": "en",
+   "description": "British-American actor (1899–1962)"
+  },
+  "Q57821": {
+   "label": "fortification",
+   "label_lang": "en",
+   "description": "military constructions and buildings designed for defense in warfare and military bases"
+  },
+  "Q59201": {
+   "label": "Napoleon Crossing the Alps",
+   "label_lang": "en",
+   "description": "series of paintings by Jacques-Louis David in 5 versions"
+  },
+  "Q61064": {
+   "label": "Wassily Kandinsky",
+   "label_lang": "en",
+   "description": "avant-garde painter of Russian origin (1866–1944)"
+  },
+  "Q61412": {
+   "label": "Eleanor Marx",
+   "label_lang": "en",
+   "description": "English writer, translator, activist, and daughter of Karl Marx (1855–1898)"
+  },
+  "Q79012": {
+   "label": "Ferdinand Bauer",
+   "label_lang": "en",
+   "description": "Austrian botanist illustrator (1760–1826)"
+  },
+  "Q82133": {
+   "label": "Bodleian Library",
+   "label_lang": "en",
+   "description": "main research library of the University of Oxford"
+  },
+  "Q82445": {
+   "label": "Henri de Toulouse-Lautrec",
+   "label_lang": "en",
+   "description": "French painter and illustrator (1864–1901)"
+  },
+  "Q82606": {
+   "label": "Pembroke College",
+   "label_lang": "en",
+   "description": "constituent college of the University of Oxford"
+  },
+  "Q82955": {
+   "label": "politician",
+   "label_lang": "en",
+   "description": "person who seeks or holds a political office or mandate or is otherwise politically active"
+  },
+  "Q83155": {
+   "label": "Jacques-Louis David",
+   "label_lang": "en",
+   "description": "French painter (1748–1825)"
+  },
+  "Q83158": {
+   "label": "Jean Cocteau",
+   "label_lang": "en",
+   "description": "French writer and film director (1889–1963)"
+  },
+  "Q83672": {
+   "label": "Shah Jahan",
+   "label_lang": "en",
+   "description": "the fifth Mughal Emperor from 1628 to 1658"
+  },
+  "Q83872": {
+   "label": "Nighthawks",
+   "label_lang": "en",
+   "description": "1942 oil on canvas painting by Edward Hopper"
+  },
+  "Q86440": {
+   "label": "The Tempest",
+   "label_lang": "en",
+   "description": "play by William Shakespeare"
+  },
+  "Q87167": {
+   "label": "manuscript",
+   "label_lang": "en",
+   "description": "document written by hand or typed before the era of print, including literary, historical, religious, and scientific texts; distinguished from printed works by its unique, handcrafted nature"
+  },
+  "Q92086": {
+   "label": "promontory fort",
+   "label_lang": "en",
+   "description": "fortification, usually dating from the Iron Age"
+  },
+  "Q93284": {
+   "label": "Marc Chagall",
+   "label_lang": "en",
+   "description": "Belarusian-French artist (1887–1985)"
+  },
+  "Q93343": {
+   "label": "Percy Bysshe Shelley",
+   "label_lang": "en",
+   "description": "British Romantic poet (1792–1822)"
+  },
+  "Q94802": {
+   "label": "The Burial of the Count of Orgaz",
+   "label_lang": "en",
+   "description": "painting by El Greco"
+  },
+  "Q95074": {
+   "label": "character",
+   "label_lang": "en",
+   "description": "fictional human or non-human character in a narrative work of art"
+  },
+  "Q101538": {
+   "label": "Trifolium",
+   "label_lang": "en",
+   "description": "genus of plants"
+  },
+  "Q102272": {
+   "label": "Jan van Eyck",
+   "label_lang": "en",
+   "description": "Flemish painter (c.1390–1441)"
+  },
+  "Q104884": {
+   "label": "Caspar David Friedrich",
+   "label_lang": "en",
+   "description": "German Romantic landscape painter (1774–1840)"
+  },
+  "Q105420": {
+   "label": "anthology",
+   "label_lang": "en",
+   "description": "collection of written creative works chosen by the compiler"
+  },
+  "Q108700": {
+   "label": "Whigs",
+   "label_lang": "en",
+   "description": "historic liberal political party in the United Kingdom (1678-1859)"
+  },
+  "Q112014": {
+   "label": "Cabinet of the United Kingdom",
+   "label_lang": "en",
+   "description": "collective decision-making body of the British government"
+  },
+  "Q118223": {
+   "label": "South Sandwich Islands",
+   "label_lang": "en",
+   "description": "island group"
+  },
+  "Q123885": {
+   "label": "Royal Society of London",
+   "label_lang": "en",
+   "description": "English learned society for science"
+  },
+  "Q125576": {
+   "label": "papyrus",
+   "label_lang": "en",
+   "description": "writing and painting material"
+  },
+  "Q127398": {
+   "label": "Moshe ben Maimon",
+   "label_lang": "en",
+   "description": "Medieval Jewish philosopher from Spain (1135–1204)"
+  },
+  "Q128910": {
+   "label": "The Last Supper",
+   "label_lang": "en",
+   "description": "mural painting by Leonardo da Vinci"
+  },
+  "Q130436": {
+   "label": "history of Japan",
+   "label_lang": "en",
+   "description": "account of past events in the Japanese civilisation"
+  },
+  "Q130531": {
+   "label": "Hieronymus Bosch",
+   "label_lang": "en",
+   "description": "painters in art (1450–1516)"
+  },
+  "Q130777": {
+   "label": "Kazimir Malevich",
+   "label_lang": "en",
+   "description": "Russian avant-garde artist of Polish ancestry. Founder of the Suprematist movement (1879–1935)"
+  },
+  "Q132305": {
+   "label": "Willem de Kooning",
+   "label_lang": "en",
+   "description": "Dutch-American abstract expressionist artist (1904–1997)"
+  },
+  "Q133492": {
+   "label": "letter",
+   "label_lang": "en",
+   "description": "written message from one to another"
+  },
+  "Q133600": {
+   "label": "Banksy",
+   "label_lang": "en",
+   "description": "English graffiti artist, political activist, and painter"
+  },
+  "Q134447": {
+   "label": "nuclear power plant",
+   "label_lang": "en",
+   "description": "thermal power station where the heat source is a nuclear reactor"
+  },
+  "Q134741": {
+   "label": "Camille Pissarro",
+   "label_lang": "en",
+   "description": "Danish-French painter (1830-1903)"
+  },
+  "Q145780": {
+   "label": "Dead Sea scrolls",
+   "label_lang": "en",
+   "description": "15,000 fragments of about 850 scrolls from ancient Judaism"
+  },
+  "Q148837": {
+   "label": "polis",
+   "label_lang": "en",
+   "description": "ancient Greek social and political organisation"
+  },
+  "Q150679": {
+   "label": "Anthony van Dyck",
+   "label_lang": "en",
+   "description": "Flemish Baroque artist (1599–1641)"
+  },
+  "Q151047": {
+   "label": "The Birth of Venus",
+   "label_lang": "en",
+   "description": "painting by Sandro Botticelli, Uffizi"
+  },
+  "Q151097": {
+   "label": "Henry Moore",
+   "label_lang": "en",
+   "description": "English sculptor (1898–1986)"
+  },
+  "Q151152": {
+   "label": "Juan Gris",
+   "label_lang": "en",
+   "description": "Spanish artist (1887–1927)"
+  },
+  "Q151679": {
+   "label": "Roy Lichtenstein",
+   "label_lang": "en",
+   "description": "American pop artist (1923–1997)"
+  },
+  "Q151803": {
+   "label": "Piet Mondrian",
+   "label_lang": "en",
+   "description": "Dutch painter (1872–1944)"
+  },
+  "Q152384": {
+   "label": "Joan Miró",
+   "label_lang": "en",
+   "description": "Spanish painter, sculptor, and ceramicist (1893–1983)"
+  },
+  "Q152509": {
+   "label": "Luncheon on the Grass",
+   "label_lang": "en",
+   "description": "painting by Édouard Manet"
+  },
+  "Q153048": {
+   "label": "Constantin Brâncuși",
+   "label_lang": "en",
+   "description": "Romanian sculptor, photographer and painter (1876-1960)"
+  },
+  "Q153965": {
+   "label": "Joseph Beuys",
+   "label_lang": "en",
+   "description": "German artist, teacher, and theorist of art (1921–1986)"
+  },
+  "Q153988": {
+   "label": "bowl",
+   "label_lang": "en",
+   "description": "circular, open-top container frequently used as tableware"
+  },
+  "Q154340": {
+   "label": "Francis Bacon",
+   "label_lang": "en",
+   "description": "Irish-born British figurative painter (1909–1992)"
+  },
+  "Q154594": {
+   "label": "Lucian Freud",
+   "label_lang": "en",
+   "description": "British painter and agravar (1922-2011)"
+  },
+  "Q154619": {
+   "label": "Godwin's law",
+   "label_lang": "en",
+   "description": "Godwin's Law is known to be the oldest meme on the Internet, made by Mike Godwin. The memes meaning is to say: The longer an online conversation continues, The more of a chance there is to mention Hitler."
+  },
+  "Q154842": {
+   "label": "Max Ernst",
+   "label_lang": "en",
+   "description": "German artist (1891–1976)"
+  },
+  "Q155407": {
+   "label": "Jean-Michel Basquiat",
+   "label_lang": "en",
+   "description": "American artist (1960–1988)"
+  },
+  "Q155626": {
+   "label": "John Singer Sargent",
+   "label_lang": "mul",
+   "description": "American painter (1856–1925)"
+  },
+  "Q156386": {
+   "label": "Henri Rousseau",
+   "label_lang": "en",
+   "description": "French painter (1844–1910)"
+  },
+  "Q156901": {
+   "label": "Iris",
+   "label_lang": "en",
+   "description": "genus of plants in the order Iridaceae"
+  },
+  "Q157159": {
+   "label": "Abbas II",
+   "label_lang": "en",
+   "description": "Khedive of Egypt (1874-1944) (r. 1892-1914)"
+  },
+  "Q157194": {
+   "label": "Alberto Giacometti",
+   "label_lang": "en",
+   "description": "Swiss sculptor and painter (1901–1966)"
+  },
+  "Q159297": {
+   "label": "John Constable",
+   "label_lang": "en",
+   "description": "English painter (1776-1837)"
+  },
+  "Q159758": {
+   "label": "J. M. W. Turner",
+   "label_lang": "en",
+   "description": "English painter and draftsman (c. 1775–1851)"
+  },
+  "Q159907": {
+   "label": "David Hockney",
+   "label_lang": "en",
+   "description": "British painter, printmaker, set designer, photographer (1937–2026)"
+  },
+  "Q160082": {
+   "label": "Booker Prize",
+   "label_lang": "en",
+   "description": "British literary award"
+  },
+  "Q160302": {
+   "label": "University of Edinburgh",
+   "label_lang": "en",
+   "description": "public university in Edinburgh, Scotland, United Kingdom"
+  },
+  "Q160538": {
+   "label": "Gian Lorenzo Bernini",
+   "label_lang": "en",
+   "description": "Italian sculptor and architect (1598–1680)"
+  },
+  "Q161885": {
+   "label": "Kingdom of Great Britain",
+   "label_lang": "en",
+   "description": "constitutional monarchy in Western Europe (1707–1800)"
+  },
+  "Q164351": {
+   "label": "Gerhard Richter",
+   "label_lang": "en",
+   "description": "German visual artist (b. 1932)"
+  },
+  "Q164517": {
+   "label": "Dance",
+   "label_lang": "en",
+   "description": "1910 painting series made by Henri Matisse"
+  },
+  "Q164992": {
+   "label": "astrolabe",
+   "label_lang": "en",
+   "description": "astronomical instrument in the form of a disc or sphere with wires, cutouts or perforations that allows a user to calculate astronomical positions precisely"
+  },
+  "Q168845": {
+   "label": "star cluster",
+   "label_lang": "en",
+   "description": "large group of stars"
+  },
+  "Q170068": {
+   "label": "Akseli Gallen-Kallela",
+   "label_lang": "en",
+   "description": "Finnish painter (1865-1931)"
+  },
+  "Q171344": {
+   "label": "William Hogarth",
+   "label_lang": "en",
+   "description": "English painter, printmaker, pictorial satirist, social critic and editorial cartoonist (1697-1764)"
+  },
+  "Q172911": {
+   "label": "Ilya Repin",
+   "label_lang": "en",
+   "description": "Russian-empire painter of Ukrainian birth (1844-1930)"
+  },
+  "Q173223": {
+   "label": "Mary Cassatt",
+   "label_lang": "en",
+   "description": "American painter and printmaker (1844—1926)"
+  },
+  "Q174728": {
+   "label": "centimetre",
+   "label_lang": "en",
+   "description": "SI unit of length equal to one hundredth of a metre"
+  },
+  "Q174772": {
+   "label": "Abdülmecid I",
+   "label_lang": "en",
+   "description": "31th Sultan of the Ottoman Empire (1839–1861)"
+  },
+  "Q175036": {
+   "label": "Guernica",
+   "label_lang": "en",
+   "description": "1937 oil painting by Pablo Picasso"
+  },
+  "Q175628": {
+   "label": "Barge Haulers on the Volga",
+   "label_lang": "en",
+   "description": "painting by Ilya Repin"
+  },
+  "Q178885": {
+   "label": "deity",
+   "label_lang": "en",
+   "description": "natural or supernatural god or goddess, divine being"
+  },
+  "Q179900": {
+   "label": "David",
+   "label_lang": "en",
+   "description": "marble sculpture by Michelangelo, Galleria dell'Accademia"
+  },
+  "Q180673": {
+   "label": "ceremonial county of England",
+   "label_lang": "en",
+   "description": "collective name for areas, in England, to which a Lord Lieutenant is appointed"
+  },
+  "Q180733": {
+   "label": "lute",
+   "label_lang": "en",
+   "description": "musical instrument"
+  },
+  "Q181908": {
+   "label": "andesite",
+   "label_lang": "en",
+   "description": "intermediate igneous rock"
+  },
+  "Q182589": {
+   "label": "William Morris",
+   "label_lang": "en",
+   "description": "textile designer, artist, writer, printer (1834–1896)"
+  },
+  "Q182664": {
+   "label": "Giovanni Antonio Canal",
+   "label_lang": "en",
+   "description": "Italian painter of landscapes (1697–1768)"
+  },
+  "Q184814": {
+   "label": "Pre-Raphaelite Brotherhood",
+   "label_lang": "en",
+   "description": "group of English painters, poets, and critics, founded in 1848"
+  },
+  "Q185372": {
+   "label": "Girl with a Pearl Earring",
+   "label_lang": "en",
+   "description": "painting by Johannes Vermeer"
+  },
+  "Q186953": {
+   "label": "The School of Athens",
+   "label_lang": "en",
+   "description": "fresco by Raphael"
+  },
+  "Q187483": {
+   "label": "Bayeux Tapestry",
+   "label_lang": "en",
+   "description": "embroidered wall-hanging art depicting the Norman invasion of England"
+  },
+  "Q187685": {
+   "label": "doctoral thesis",
+   "label_lang": "en",
+   "description": "document submitted in support of candidature for a doctorate"
+  },
+  "Q188094": {
+   "label": "economist",
+   "label_lang": "en",
+   "description": "professional in the discipline of economics"
+  },
+  "Q188771": {
+   "label": "French Academy of Sciences",
+   "label_lang": "en",
+   "description": "learned society, founded in 1666 by Louis XIV at the suggestion of Jean-Baptiste Colbert, to encourage and protect the spirit of French scientific research"
+  },
+  "Q189762": {
+   "label": "Peter Carl Fabergé",
+   "label_lang": "en",
+   "description": "Russian jeweller (1846–1920)"
+  },
+  "Q190804": {
+   "label": "Rijksmuseum",
+   "label_lang": "en",
+   "description": "museum in Amsterdam, Netherlands"
+  },
+  "Q191163": {
+   "label": "landscape painting",
+   "label_lang": "en",
+   "description": "depiction of landscapes in painting"
+  },
+  "Q191851": {
+   "label": "vase",
+   "label_lang": "en",
+   "description": "open container"
+  },
+  "Q192110": {
+   "label": "self-portrait",
+   "label_lang": "en",
+   "description": "representation of an artist, drawn, painted, photographed, or sculpted by the artist"
+  },
+  "Q198984": {
+   "label": "Ono no Komachi",
+   "label_lang": "en",
+   "description": "Japanese poet"
+  },
+  "Q201788": {
+   "label": "historian",
+   "label_lang": "en",
+   "description": "scholar who deals with the exploration and presentation of history"
+  },
+  "Q202435": {
+   "label": "lieutenancy area of Scotland",
+   "label_lang": "en",
+   "description": "subdivision in Scotland used by the British monarch's representatives"
+  },
+  "Q203401": {
+   "label": "Edward Hopper",
+   "label_lang": "en",
+   "description": "American realist painter and printmaker (1882-1967)"
+  },
+  "Q203643": {
+   "label": "James McNeill Whistler",
+   "label_lang": "en",
+   "description": "American painter (1834-1903)"
+  },
+  "Q205148": {
+   "label": "Filippo Lippi",
+   "label_lang": "en",
+   "description": "Italian Renaissance painter (c. 1406–1469)"
+  },
+  "Q207694": {
+   "label": "art museum",
+   "label_lang": "en",
+   "description": "building or space for the exhibition of art"
+  },
+  "Q208758": {
+   "label": "Las Meninas",
+   "label_lang": "en",
+   "description": "1656 painting by Diego Velázquez"
+  },
+  "Q208993": {
+   "label": "Nicholas Roerich",
+   "label_lang": "en",
+   "description": "Russian painter, writer, archaeologist and philosopher (1874–1947)"
+  },
+  "Q209615": {
+   "label": "Francisco de Zurbarán",
+   "label_lang": "en",
+   "description": "Spanish painter (1598–1664)"
+  },
+  "Q212198": {
+   "label": "pub",
+   "label_lang": "en",
+   "description": "drinking establishment"
+  },
+  "Q212616": {
+   "label": "The Raft of the Medusa",
+   "label_lang": "en",
+   "description": "painting by Théodore Géricault"
+  },
+  "Q212657": {
+   "label": "Artemisia Gentileschi",
+   "label_lang": "en",
+   "description": "Italian Baroque painter (1593-1651)"
+  },
+  "Q212805": {
+   "label": "digital library",
+   "label_lang": "en",
+   "description": "online database of digital objects stored in electronic media formats and accessible via computers"
+  },
+  "Q214074": {
+   "label": "Claude Lorrain",
+   "label_lang": "en",
+   "description": "French painter, draughtsman and etcher (1600–1682)"
+  },
+  "Q219060": {
+   "label": "Palestine",
+   "label_lang": "en",
+   "description": "political entity that enjoys incomplete recognition as a state, located in West Asia"
+  },
+  "Q219344": {
+   "label": "The Slave Ship",
+   "label_lang": "en",
+   "description": "painting by Joseph Mallord William Turner"
+  },
+  "Q219831": {
+   "label": "The Night Watch",
+   "label_lang": "en",
+   "description": "1642 painting by Rembrandt, Rijksmuseum"
+  },
+  "Q220859": {
+   "label": "Arnolfini Portrait",
+   "label_lang": "en",
+   "description": "1434 painting by Jan van Eyck"
+  },
+  "Q233009": {
+   "label": "Elsa Lanchester",
+   "label_lang": "en",
+   "description": "British-American actress (1902–1986)"
+  },
+  "Q234109": {
+   "label": "Barbara Hepworth",
+   "label_lang": "en",
+   "description": "English sculptor (1903–1975)"
+  },
+  "Q234262": {
+   "label": "surah",
+   "label_lang": "en",
+   "description": "term for a chapter of the Quran"
+  },
+  "Q235242": {
+   "label": "Pietà",
+   "label_lang": "en",
+   "description": "sculpture by Michelangelo"
+  },
+  "Q238587": {
+   "label": "National Portrait Gallery",
+   "label_lang": "en",
+   "description": "art museum in London, England, United Kingdom"
+  },
+  "Q253300": {
+   "label": "Convention on the Protection and Promotion of the Diversity of Cultural Expressions",
+   "label_lang": "en",
+   "description": "UNESCO-related treaty"
+  },
+  "Q271884": {
+   "label": "Norman Rockwell",
+   "label_lang": "en",
+   "description": "American painter and illustrator (1894–1978)"
+  },
+  "Q272566": {
+   "label": "Aubrey Beardsley",
+   "label_lang": "en",
+   "description": "British illustrator and author (1872–1898)"
+  },
+  "Q296955": {
+   "label": "oil paint",
+   "label_lang": "en",
+   "description": "type of slow-drying paint that consists of particles of pigment suspended in a drying oil"
+  },
+  "Q311243": {
+   "label": "Wanderer above the Sea younes non non non ci je ne le connais plus je t envoie moi",
+   "label_lang": "en",
+   "description": "painting by Caspar David Friedrich at the Hamburger Kunsthalle"
+  },
+  "Q321303": {
+   "label": "The Garden of Earthly Delights",
+   "label_lang": "en",
+   "description": "medieval triptych by Hieronymus Bosch, Prado"
+  },
+  "Q322170": {
+   "label": "suffragette",
+   "label_lang": "en",
+   "description": "member of the Woman's Social and Political Union who advocated for women's right to vote"
+  },
+  "Q331225": {
+   "label": "Fabergé egg",
+   "label_lang": "en",
+   "description": "Jeweled Easter egg mostly commissioned by the Tzar of Russia"
+  },
+  "Q333515": {
+   "label": "National Trust",
+   "label_lang": "en",
+   "description": "conservation organization in England, Wales and Northern Ireland"
+  },
+  "Q334953": {
+   "label": "John Montagu, 4th Earl of Sandwich",
+   "label_lang": "en",
+   "description": "English Peer and statesman; inventor of the sandwich"
+  },
+  "Q354779": {
+   "label": "Jacob Epstein",
+   "label_lang": "en",
+   "description": "American-British sculptor (1880–1959)"
+  },
+  "Q360371": {
+   "label": "Antony Gormley",
+   "label_lang": "en",
+   "description": "British sculptor (born 1950)"
+  },
+  "Q368972": {
+   "label": "lacquerware",
+   "label_lang": "en",
+   "description": "decorative work using lacquer"
+  },
+  "Q378427": {
+   "label": "literary award",
+   "label_lang": "en",
+   "description": "type of award; award for writers, literary associations and literary works"
+  },
+  "Q381458": {
+   "label": "Christen Købke",
+   "label_lang": "en",
+   "description": "Danish artist (1810-1848)"
+  },
+  "Q421716": {
+   "label": "Nude Descending a Staircase, No. 2",
+   "label_lang": "en",
+   "description": "painting by Marcel Duchamp"
+  },
+  "Q422695": {
+   "label": "awareness day",
+   "label_lang": "en",
+   "description": "day for raising awareness or action"
+  },
+  "Q430682": {
+   "label": "Tate",
+   "label_lang": "en",
+   "description": "art institution in the United Kingdom"
+  },
+  "Q459506": {
+   "label": "University of Bristol",
+   "label_lang": "en",
+   "description": "research university located in Bristol, United Kingdom"
+  },
+  "Q464782": {
+   "label": "American Gothic",
+   "label_lang": "en",
+   "description": "1930 painting by Grant Wood"
+  },
+  "Q471379": {
+   "label": "The Scream",
+   "label_lang": "en",
+   "description": "group of paintings by Edvard Munch"
+  },
+  "Q473858": {
+   "label": "Memory of the World",
+   "label_lang": "en",
+   "description": "documentary heritage of worldwide importance, initiative launched by UNESCO"
+  },
+  "Q483501": {
+   "label": "artist",
+   "label_lang": "en",
+   "description": "person who engages in any form of artistic creation or practice"
+  },
+  "Q486839": {
+   "label": "member of parliament",
+   "label_lang": "en",
+   "description": "representative of the voters to a parliament"
+  },
+  "Q500985": {
+   "label": "The Hunters in the Snow",
+   "label_lang": "en",
+   "description": "painting by Pieter Brueghel the Elder, Kunsthistorisches Museum Wien"
+  },
+  "Q503424": {
+   "label": "University of Leeds",
+   "label_lang": "en",
+   "description": "university in Leeds, United Kingdom"
+  },
+  "Q507564": {
+   "label": "Gore Ouseley",
+   "label_lang": "en",
+   "description": "British diplomat (1770-1844)"
+  },
+  "Q509806": {
+   "label": "Washington Crossing the Delaware",
+   "label_lang": "en",
+   "description": "painting by Emanuel Leutze, Metropolitan Museum of Art"
+  },
+  "Q524289": {
+   "label": "Conservatoire national des Arts et Métiers",
+   "label_lang": "en",
+   "description": "French engineering school founded in 1794"
+  },
+  "Q531471": {
+   "label": "Chancellor of the Exchequer",
+   "label_lang": "en",
+   "description": "Minister for Finance in the United Kingdom and Head of Treasury"
+  },
+  "Q538767": {
+   "label": "Catharine Macaulay",
+   "label_lang": "en",
+   "description": "English historian, philosopher, feminist (1731-1791)"
+  },
+  "Q553204": {
+   "label": "Shah Rukh",
+   "label_lang": "en",
+   "description": "Timurid ruler"
+  },
+  "Q559425": {
+   "label": "Wang Xianzhi",
+   "label_lang": "en",
+   "description": "Chinese calligrapher"
+  },
+  "Q567861": {
+   "label": "The Last Judgment",
+   "label_lang": "en",
+   "description": "fresco by Michelangelo in the Sistine Chapel"
+  },
+  "Q630530": {
+   "label": "Songs of Innocence and of Experience",
+   "label_lang": "en",
+   "description": "poetry collection by William Blake"
+  },
+  "Q636400": {
+   "label": "Ashmolean Museum",
+   "label_lang": "en",
+   "description": "museum in Oxford, England, UK"
+  },
+  "Q636537": {
+   "label": "The Death of Marat",
+   "label_lang": "en",
+   "description": "1793 painting by Jacques-Louis David, Brussels, Royal Museums of Fine Arts of Belgium"
+  },
+  "Q639460": {
+   "label": "casket",
+   "label_lang": "en",
+   "description": "container, generally rectangular with a lock, for jewelry or trinkets"
+  },
+  "Q655705": {
+   "label": "The Musicians",
+   "label_lang": "en",
+   "description": "painting by Caravaggio in the Metropolitan Museum of Art"
+  },
+  "Q657415": {
+   "label": "Cleveland Museum of Art",
+   "label_lang": "en",
+   "description": "art museum in Cleveland, Ohio"
+  },
+  "Q667276": {
+   "label": "art exhibition",
+   "label_lang": "en",
+   "description": "organized presentation and display of works of art"
+  },
+  "Q673812": {
+   "label": "arkose",
+   "label_lang": "en",
+   "description": "sandstone variety rich in feldspath"
+  },
+  "Q678539": {
+   "label": "Earl of Sandwich",
+   "label_lang": "en",
+   "description": "noble title in the Peerage of England"
+  },
+  "Q698487": {
+   "label": "The Kiss",
+   "label_lang": "en",
+   "description": "painting by Gustav Klimt"
+  },
+  "Q699091": {
+   "label": "The Tower of Babel",
+   "label_lang": "en",
+   "description": "three paintings by Pieter Bruegel the Elder"
+  },
+  "Q702272": {
+   "label": "Johann Zoffany",
+   "label_lang": "en",
+   "description": "German painter (1733–1810)"
+  },
+  "Q718418": {
+   "label": "Jikji Memory of the World Prize",
+   "label_lang": "en",
+   "description": "UNESCO award to promote the objectives of the Memory of the World Programme"
+  },
+  "Q734834": {
+   "label": "Ghent Altarpiece",
+   "label_lang": "en",
+   "description": "Polyptych by Jan van Eyck and Hubert van Eyck"
+  },
+  "Q735085": {
+   "label": "David",
+   "label_lang": "en",
+   "description": "bronze statue by Donatello in the Bargello National Museum, Florence"
+  },
+  "Q738680": {
+   "label": "pottery of ancient Greece",
+   "label_lang": "en",
+   "description": "ancient Greek artifact made of clay"
+  },
+  "Q744099": {
+   "label": "hillfort",
+   "label_lang": "en",
+   "description": "type of earthworks used as a fortified refuge or defended settlement"
+  },
+  "Q748019": {
+   "label": "scientific society",
+   "label_lang": "en",
+   "description": "society dealing with a special field of science"
+  },
+  "Q780466": {
+   "label": "Saint George and the Dragon",
+   "label_lang": "en",
+   "description": "1470s painting by Uccello"
+  },
+  "Q836708": {
+   "label": "regular star polygon",
+   "label_lang": "en",
+   "description": "regular non-convex polygon"
+  },
+  "Q839954": {
+   "label": "archaeological site",
+   "label_lang": "en",
+   "description": "place (or group of physical sites) in which evidence of past activity is preserved"
+  },
+  "Q844675": {
+   "label": "Sistine Chapel ceiling",
+   "label_lang": "en",
+   "description": "cycle of frescoes by Michelangelo"
+  },
+  "Q854775": {
+   "label": "bhajan",
+   "label_lang": "en",
+   "description": "singing of poems or hymns in Indian tradition"
+  },
+  "Q856713": {
+   "label": "Christian hymn",
+   "label_lang": "en",
+   "description": "type of Christian song specifically written for the purpose of adoration or prayer"
+  },
+  "Q860807": {
+   "label": "Lanchester Motor Company",
+   "label_lang": "en",
+   "description": "car manufacturer"
+  },
+  "Q864503": {
+   "label": "biologist",
+   "label_lang": "en",
+   "description": "scientist studying living organisms"
+  },
+  "Q866376": {
+   "label": "Memory of the World Register – Asia and the Pacific",
+   "label_lang": "en",
+   "description": "UNESCO initiative to preserve documentary items"
+  },
+  "Q875538": {
+   "label": "public university",
+   "label_lang": "en",
+   "description": "university predominantly funded by public means"
+  },
+  "Q890678": {
+   "label": "Where Do We Come From? What Are We? Where Are We Going?",
+   "label_lang": "en",
+   "description": "painting by Paul Gauguin (made 1897-98)"
+  },
+  "Q902104": {
+   "label": "private university",
+   "label_lang": "en",
+   "description": "higher education institution not operated by a government"
+  },
+  "Q928764": {
+   "label": "parliamentary group leader",
+   "label_lang": "en",
+   "description": "member of parliament who leads a group within it"
+  },
+  "Q936580": {
+   "label": "John Sibthorp",
+   "label_lang": "en",
+   "description": "English botanist (1758-1796)"
+  },
+  "Q955824": {
+   "label": "learned society",
+   "label_lang": "en",
+   "description": "organization that exists to promote an academic discipline or profession"
+  },
+  "Q960447": {
+   "label": "Tiger in a Tropical Storm",
+   "label_lang": "en",
+   "description": "painting by Henri Rousseau"
+  },
+  "Q970968": {
+   "label": "Symphony in White, No. 1: The White Girl",
+   "label_lang": "en",
+   "description": "painting by James Abbott McNeill Whistler"
+  },
+  "Q987767": {
+   "label": "container",
+   "label_lang": "en",
+   "description": "device creating a partially or fully enclosed space that can be used to contain, store, and transport objects or materials"
+  },
+  "Q1028181": {
+   "label": "painter",
+   "label_lang": "en",
+   "description": "artist who practices painting"
+  },
+  "Q1052281": {
+   "label": "trans woman",
+   "label_lang": "en",
+   "description": "woman assigned male at birth"
+  },
+  "Q1052784": {
+   "label": "The Elephant Celebes",
+   "label_lang": "en",
+   "description": "Surreal painting by Max Ernst"
+  },
+  "Q1053681": {
+   "label": "Memory of the World Register – Africa",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q1054444": {
+   "label": "interstellar cloud",
+   "label_lang": "en",
+   "description": "accumulation of gas, plasma and dust in a galaxy"
+  },
+  "Q1055894": {
+   "label": "deputy",
+   "label_lang": "en",
+   "description": "name for legislator in many countries"
+  },
+  "Q1061035": {
+   "label": "The Treachery of Images",
+   "label_lang": "en",
+   "description": "painting by René Magritte depicting a smoking pipe"
+  },
+  "Q1065493": {
+   "label": "Ophelia",
+   "label_lang": "en",
+   "description": "painting by John Everett Millais"
+  },
+  "Q1066288": {
+   "label": "figurine",
+   "label_lang": "en",
+   "description": "small item resembling a person or animal, sometimes part of a larger work"
+  },
+  "Q1090837": {
+   "label": "Bathers at Asnières",
+   "label_lang": "en",
+   "description": "painting by Georges Seurat, National Gallery"
+  },
+  "Q1091086": {
+   "label": "The Third of May 1808",
+   "label_lang": "en",
+   "description": "painting by Francisco de Goya"
+  },
+  "Q1138080": {
+   "label": "Coventry University",
+   "label_lang": "en",
+   "description": "university in Coventry, West Midlands, United Kingdom"
+  },
+  "Q1138494": {
+   "label": "historic county of England",
+   "label_lang": "en",
+   "description": "geographical designations for areas of England, based on historical traditions"
+  },
+  "Q1145058": {
+   "label": "Tenshō",
+   "label_lang": "en",
+   "description": "era of the Azuchi–Momoyama period in feudal Japan between 1573 and 1592"
+  },
+  "Q1149652": {
+   "label": "district of India",
+   "label_lang": "en",
+   "description": "third-level administrative division in India, below the level of a states or territories, but above the subdivision and subdistrict levels"
+  },
+  "Q1167907": {
+   "label": "Luncheon of the Boating Party",
+   "label_lang": "en",
+   "description": "painting by Pierre-Auguste Renoir"
+  },
+  "Q1170115": {
+   "label": "The Private Life of Henry VIII",
+   "label_lang": "en",
+   "description": "1933 film by Alexander Korda"
+  },
+  "Q1170315": {
+   "label": "Black Square (1915)",
+   "label_lang": "en",
+   "description": "painting by Kazimir Malevich"
+  },
+  "Q1189907": {
+   "label": "Water Lilies",
+   "label_lang": "en",
+   "description": "series of approximately 250 paintings by Claude Monet"
+  },
+  "Q1192305": {
+   "label": "Smithsonian American Art Museum",
+   "label_lang": "en",
+   "description": "fine arts museum in Washington, D.C., a division of the Smithsonian Institution"
+  },
+  "Q1192436": {
+   "label": "The Farm",
+   "label_lang": "en",
+   "description": "oil painting made by Joan Miró"
+  },
+  "Q1195035": {
+   "label": "The Kiss",
+   "label_lang": "en",
+   "description": "painting by Francesco Hayez"
+  },
+  "Q1206860": {
+   "label": "Bacchus and Ariadne",
+   "label_lang": "en",
+   "description": "painting by Titian"
+  },
+  "Q1212937": {
+   "label": "The Ambassadors",
+   "label_lang": "en",
+   "description": "painting by Hans Holbein the Younger"
+  },
+  "Q1213936": {
+   "label": "The Gross Clinic",
+   "label_lang": "en",
+   "description": "painting by Thomas Eakins"
+  },
+  "Q1217288": {
+   "label": "Temptation of Saint Anthony",
+   "label_lang": "en",
+   "description": "triptych by Hieronymus Bosch, Lisbon, circa 1501"
+  },
+  "Q1249435": {
+   "label": "Oxyrhynchus Papyri",
+   "label_lang": "en",
+   "description": "literary & non-literary manuscripts recovered from Al-Minya, Egypt"
+  },
+  "Q1266946": {
+   "label": "thesis",
+   "label_lang": "en",
+   "description": "work by academic candidate"
+  },
+  "Q1299291": {
+   "label": "hypothetical chemical element",
+   "label_lang": "en",
+   "description": "chemical element which is expected to exist but has not yet been discovered"
+  },
+  "Q1302047": {
+   "label": "Jane Williams",
+   "label_lang": "en",
+   "description": "Shelley's muse"
+  },
+  "Q1311080": {
+   "label": "Navicella",
+   "label_lang": "en",
+   "description": "mosaic by Giotto di Bondone"
+  },
+  "Q1322278": {
+   "label": "Matenadaran",
+   "label_lang": "en",
+   "description": "repository of ancient manuscripts and documents in Armenia"
+  },
+  "Q1354277": {
+   "label": "L. S. Lowry",
+   "label_lang": "en",
+   "description": "British visual artist (1887–1976)"
+  },
+  "Q1368055": {
+   "label": "The Gleaners",
+   "label_lang": "en",
+   "description": "painting by Jean-François Millet"
+  },
+  "Q1425895": {
+   "label": "celestial globe",
+   "label_lang": "en",
+   "description": "type of star chart where the map is arranged on a globe"
+  },
+  "Q1432632": {
+   "label": "University of Reading",
+   "label_lang": "en",
+   "description": "university in Reading, Berkshire, England, United Kingdom"
+  },
+  "Q1453055": {
+   "label": "Frederick W. Lanchester",
+   "label_lang": "en",
+   "description": "British polymath (1868–1946)"
+  },
+  "Q1456119": {
+   "label": "Pitt Rivers Museum",
+   "label_lang": "en",
+   "description": "museum in Oxford, England, UK"
+  },
+  "Q1459037": {
+   "label": "Royal Collection",
+   "label_lang": "en",
+   "description": "art collection of the British royal family spread among more than thirteen royal residences and former residences"
+  },
+  "Q1510712": {
+   "label": "Naskh",
+   "label_lang": "en",
+   "description": "small, round script of Islamic calligraphy"
+  },
+  "Q1601879": {
+   "label": "Helen Zimmern",
+   "label_lang": "en",
+   "description": "British author (1846–1934)"
+  },
+  "Q1619527": {
+   "label": "Mr and Mrs Andrews",
+   "label_lang": "en",
+   "description": "painting by Thomas Gainsborough"
+  },
+  "Q1637706": {
+   "label": "million city",
+   "label_lang": "en",
+   "description": "city with a population of more than 1,000,000"
+  },
+  "Q1646305": {
+   "label": "Museum aan de Stroom",
+   "label_lang": "en",
+   "description": "museum in Antwerp, Belgium"
+  },
+  "Q1759631": {
+   "label": "The Tribute Money",
+   "label_lang": "en",
+   "description": "fresco by Masaccio"
+  },
+  "Q1769529": {
+   "label": "No. 5, 1948",
+   "label_lang": "en",
+   "description": "painting by Jackson Pollock"
+  },
+  "Q1792571": {
+   "label": "visual arts award",
+   "label_lang": "en",
+   "description": "award in visual and/or applied art"
+  },
+  "Q1922981": {
+   "label": "glassware",
+   "label_lang": "en",
+   "description": "objects made of glass, including glass tableware for drinking and serving"
+  },
+  "Q1978815": {
+   "label": "Grande Odalisque",
+   "label_lang": "en",
+   "description": "painting by Jean-Auguste-Dominique Ingres, Louvre"
+  },
+  "Q2047427": {
+   "label": "The Palace Museum",
+   "label_lang": "en",
+   "description": "museum in the Forbidden City, Beijing, China"
+  },
+  "Q2052291": {
+   "label": "International Booker Prize",
+   "label_lang": "en",
+   "description": "international literary award given in the United Kingdom"
+  },
+  "Q2071976": {
+   "label": "Mike Godwin",
+   "label_lang": "en",
+   "description": "American attorney and author"
+  },
+  "Q2092297": {
+   "label": "eagle",
+   "label_lang": "en",
+   "description": "large carnivorous bird"
+  },
+  "Q2142903": {
+   "label": "jewelry",
+   "label_lang": "en",
+   "description": "objects of personal adornment, which may fulfill both decorative and functional purposes"
+  },
+  "Q2210813": {
+   "label": "Bodleian Art, Archaeology and Ancient World Library",
+   "label_lang": "en",
+   "description": "library of the University of Oxford with Papyrology rooms, England, UK"
+  },
+  "Q2247406": {
+   "label": "Judith Slaying Holofernes",
+   "label_lang": "en",
+   "description": "painting by Artemisia Gentileschi"
+  },
+  "Q2272215": {
+   "label": "I and the Village",
+   "label_lang": "en",
+   "description": "painting by Marc Chagall"
+  },
+  "Q2352789": {
+   "label": "The Rape of Proserpina",
+   "label_lang": "en",
+   "description": "sculpture by Gian Lorenzo Bernini"
+  },
+  "Q2366825": {
+   "label": "The Hay Wain",
+   "label_lang": "en",
+   "description": "painting by John Constable"
+  },
+  "Q2381632": {
+   "label": "Bird in Space",
+   "label_lang": "en",
+   "description": "sculpture by Constantin Brâncuși"
+  },
+  "Q2384215": {
+   "label": "Le génie du mal",
+   "label_lang": "en",
+   "description": "religious sculpture by Belgian artist Guillaume Geefs"
+  },
+  "Q2401485": {
+   "label": "expedition",
+   "label_lang": "en",
+   "description": "discovery or research trip to a remote or undeveloped region"
+  },
+  "Q2449503": {
+   "label": "trans man",
+   "label_lang": "en",
+   "description": "man who was assigned female at birth"
+  },
+  "Q2465911": {
+   "label": "Christina's World",
+   "label_lang": "en",
+   "description": "painting by Andrew Wyeth"
+  },
+  "Q2558684": {
+   "label": "world day",
+   "label_lang": "en",
+   "description": "themed day named by an international organization"
+  },
+  "Q2581649": {
+   "label": "college of the University of Oxford",
+   "label_lang": "en",
+   "description": "colleges and PPHs which are autonomous self-governing corporations within the university"
+  },
+  "Q2622172": {
+   "label": "The Bellelli Family",
+   "label_lang": "en",
+   "description": "painting by Edgar Degas"
+  },
+  "Q2629559": {
+   "label": "The Swing",
+   "label_lang": "en",
+   "description": "oil painting by Jean-Honoré Fragonard (1767)"
+  },
+  "Q2653851": {
+   "label": "The Elevation of the Cross",
+   "label_lang": "en",
+   "description": "triptych by Peter Paul Rubens in Cathedral of Our Lady, Antwerp"
+  },
+  "Q2664039": {
+   "label": "Madame X",
+   "label_lang": "en",
+   "description": "portrait painting by John Singer Sargent"
+  },
+  "Q2666591": {
+   "label": "Chair of the Federal Reserve",
+   "label_lang": "en",
+   "description": "head of the United States Federal Reserve System"
+  },
+  "Q2727560": {
+   "label": "The Beheading of Saint John the Baptist",
+   "label_lang": "en",
+   "description": "painting by Caravaggio"
+  },
+  "Q2827531": {
+   "label": "Ahmed Cherkaoui",
+   "label_lang": "en",
+   "description": "Moroccan painter (1934-1967)"
+  },
+  "Q2905377": {
+   "label": "Black Iris",
+   "label_lang": "en",
+   "description": "painting by Georgia O'Keeffe (1926)"
+  },
+  "Q2982930": {
+   "label": "list of museums of Islamic art",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q2990634": {
+   "label": "Composition VII",
+   "label_lang": "en",
+   "description": "painting by Wassily Kandinsky"
+  },
+  "Q2997010": {
+   "label": "Blue Qur'an",
+   "label_lang": "en",
+   "description": "10th century Quranic manuscript"
+  },
+  "Q3042743": {
+   "label": "Universal Declaration on Cultural Diversity",
+   "label_lang": "en",
+   "description": "declaration adopted by UNESCO in 2001"
+  },
+  "Q3099911": {
+   "label": "scientific instrument",
+   "label_lang": "en",
+   "description": "equipment specifically designed to facilitate the acquisition of scientific data"
+  },
+  "Q3114572": {
+   "label": "Shahnameh of Shah Tahmasp",
+   "label_lang": "en",
+   "description": "illustrated manuscript of the Shahnameh"
+  },
+  "Q3118446": {
+   "label": "Grigorios Choniades",
+   "label_lang": "en",
+   "description": "Byzantine astronomer"
+  },
+  "Q3132741": {
+   "label": "substellar object",
+   "label_lang": "en",
+   "description": "astronomical object with insufficient mass to sustain nuclear fusion"
+  },
+  "Q3147516": {
+   "label": "Ibrahim Sultan",
+   "label_lang": "en",
+   "description": "Timurid prince and governor of Fars (1394–1435)"
+  },
+  "Q3172160": {
+   "label": "Jean Fusoris",
+   "label_lang": "en",
+   "description": "French clergyman, astronomer and instrument maker (1365–1436)"
+  },
+  "Q3205060": {
+   "label": "The Mature Age",
+   "label_lang": "en",
+   "description": "sculpture by Camille Claudel"
+  },
+  "Q3207063": {
+   "label": "A Harlot's Progress",
+   "label_lang": "en",
+   "description": "series of paintings and engravings by William Hogarth"
+  },
+  "Q3210239": {
+   "label": "Twittering Machine",
+   "label_lang": "en",
+   "description": "painting by Paul Klee"
+  },
+  "Q3222585": {
+   "label": "Le Désespéré",
+   "label_lang": "en",
+   "description": "painting by Gustave Courbet"
+  },
+  "Q3305213": {
+   "label": "painting",
+   "label_lang": "en",
+   "description": "visual artwork, surface artistically covered with paint"
+  },
+  "Q3331189": {
+   "label": "version, edition or translation",
+   "label_lang": "en",
+   "description": "specific expression (Q111955324) or manifestation (Q111955382) of a work, consisting in its adaptation, edition, or translation (to be used with P31 [\"instance of\"])"
+  },
+  "Q3336241": {
+   "label": "Nasser Khalili",
+   "label_lang": "en",
+   "description": "British scholar, collector and philanthropist"
+  },
+  "Q3336843": {
+   "label": "constituent country of the United Kingdom",
+   "label_lang": "en",
+   "description": "one of four constituent countries of the United Kingdom: England, Wales, Scotland and Northern Ireland"
+  },
+  "Q3338504": {
+   "label": "Permanent Private Hall",
+   "label_lang": "en",
+   "description": "educational institution within the University of Oxford"
+  },
+  "Q3391743": {
+   "label": "visual artist",
+   "label_lang": "en",
+   "description": "artist involved with the visual arts"
+  },
+  "Q3595113": {
+   "label": "Bhandarkar Oriental Research Institute",
+   "label_lang": "en",
+   "description": "research institute in Pune, India"
+  },
+  "Q3624078": {
+   "label": "sovereign state",
+   "label_lang": "en",
+   "description": "state that has the highest authority over a territory"
+  },
+  "Q3633443": {
+   "label": "At the Moulin Rouge, The Dance",
+   "label_lang": "en",
+   "description": "painting by Henri de Toulouse-Lautrec"
+  },
+  "Q3697674": {
+   "label": "Veiled Christ",
+   "label_lang": "en",
+   "description": "sculpture by Giuseppe Sanmartino"
+  },
+  "Q3877556": {
+   "label": "Nu couché",
+   "label_lang": "en",
+   "description": "painting by Amedeo Modigliani (LM)"
+  },
+  "Q3998985": {
+   "label": "Charles I in Three Positions",
+   "label_lang": "en",
+   "description": "painting by Anthony van Dyck"
+  },
+  "Q4117139": {
+   "label": "biological database",
+   "label_lang": "en",
+   "description": "database of biological information"
+  },
+  "Q4156438": {
+   "label": "Girl with peaches",
+   "label_lang": "en",
+   "description": "painting by Valentin Serov"
+  },
+  "Q4167410": {
+   "label": "Wikimedia disambiguation page",
+   "label_lang": "en",
+   "description": "type of wiki page usually in main namespace (article namespace, ns=0) containing links to articles with similar names, and very little details only, use with P31 \"instance of\""
+  },
+  "Q4233718": {
+   "label": "anonymous",
+   "label_lang": "en",
+   "description": "unknown creator of a work (do not use as value of P50; use \"unknown value\" instead)"
+  },
+  "Q4271324": {
+   "label": "mythical character",
+   "label_lang": "en",
+   "description": "character from mythology"
+  },
+  "Q4343792": {
+   "label": "Memory of the World Register – Arab States",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q4343793": {
+   "label": "Memory of the World Register – Europe and North America",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q4416090": {
+   "label": "United States senator",
+   "label_lang": "en",
+   "description": "member of the United States Senate"
+  },
+  "Q4480950": {
+   "label": "Falnama",
+   "label_lang": "en",
+   "description": "book of omens in 16th/17th century Islamic culture"
+  },
+  "Q4502142": {
+   "label": "visual artwork",
+   "label_lang": "en",
+   "description": "work of art that is primarily visual"
+  },
+  "Q4656096": {
+   "label": "A Converted British Family Sheltering a Christian Missionary from the Persecution of the Druids",
+   "label_lang": "en",
+   "description": "painting by William Holman Hunt (1827–1910), Ashmolean Museum, Oxford"
+  },
+  "Q4936657": {
+   "label": "Bodley Medal",
+   "label_lang": "en",
+   "description": "British literary award given by the Bodleian Library (2002-)"
+  },
+  "Q4992526": {
+   "label": "Memory of the World Register – International Organizations",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q5185279": {
+   "label": "poem",
+   "label_lang": "en",
+   "description": "form of literature, work of poetry, often composed of verses"
+  },
+  "Q5227308": {
+   "label": "data library",
+   "label_lang": "en",
+   "description": "collection of numeric and/or other data sets for secondary use in research",
+   "redirected_to": "Q5227240"
+  },
+  "Q5281480": {
+   "label": "disciplinary repository",
+   "label_lang": "en",
+   "description": "online archive containing works or data associated with these works of scholars in a particular subject area"
+  },
+  "Q5326366": {
+   "label": "Earl of Sandwich",
+   "label_lang": "en",
+   "description": "American restaurant franchise"
+  },
+  "Q5335686": {
+   "label": "free trade area",
+   "label_lang": "en",
+   "description": "region encompassing a trade bloc whose member countries have signed a free-trade agreement"
+  },
+  "Q5398426": {
+   "label": "television series",
+   "label_lang": "en",
+   "description": "connected set of television program episodes under the same title"
+  },
+  "Q5408678": {
+   "label": "list of national parks of the United States",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q5460305": {
+   "label": "Flora Graeca",
+   "label_lang": "en",
+   "description": "posthumous book by John Sibthorp"
+  },
+  "Q5460603": {
+   "label": "Florence Earle Coates",
+   "label_lang": "en",
+   "description": "American writer and poet (1850-1927)"
+  },
+  "Q5526647": {
+   "label": "Gassed",
+   "label_lang": "en",
+   "description": "painting by John Singer Sargent"
+  },
+  "Q5541515": {
+   "label": "George Lanchester",
+   "label_lang": "en",
+   "description": "British automotive engineer"
+  },
+  "Q5570651": {
+   "label": "global species database",
+   "label_lang": "en",
+   "description": "digital catalog of organisms"
+  },
+  "Q5729524": {
+   "label": "Henry Vaughan Lanchester",
+   "label_lang": "en",
+   "description": "British architect (1863–1953)"
+  },
+  "Q5938268": {
+   "label": "ʿAbd al-Ḥaqq Amānat Khān",
+   "label_lang": "en",
+   "description": "Iranian calligrapher (1570-1645)"
+  },
+  "Q5943957": {
+   "label": "Windsor Shahnameh",
+   "label_lang": "en",
+   "description": "illustrated manuscript of the Shahnameh epic"
+  },
+  "Q6249175": {
+   "label": "John Montagu, 5th Earl of Sandwich",
+   "label_lang": "en",
+   "description": "British politician"
+  },
+  "Q6581072": {
+   "label": "female",
+   "label_lang": "en",
+   "description": "to be used in \"sex or gender\" (P21) to indicate that the human subject is a female or \"semantic gender\" (P10339) to indicate that a word refers to a female person"
+  },
+  "Q6581097": {
+   "label": "male",
+   "label_lang": "en",
+   "description": "to be used in \"sex or gender\" (P21) to indicate that the human subject is a male or \"semantic gender\" (P10339) to indicate that a word refers to a male person"
+  },
+  "Q6583495": {
+   "label": "Portrait of Henry VIII",
+   "label_lang": "en",
+   "description": "lost painting by Hans Holbein the Younger, destroyed in 1698"
+  },
+  "Q6686945": {
+   "label": "wiki software",
+   "label_lang": "en",
+   "description": "collaborative software that runs a wiki"
+  },
+  "Q6735263": {
+   "label": "Mahmal",
+   "label_lang": "en",
+   "description": "ceremonial passenger-less litter used in Hajj pilgrimage"
+  },
+  "Q6735866": {
+   "label": "Khalili Foundation",
+   "label_lang": "en",
+   "description": "UK-based charity promoting interfaith and intercultural understanding"
+  },
+  "Q6815751": {
+   "label": "Memory of the World Register – Latin America and the Caribbean",
+   "label_lang": "en",
+   "description": "Wikimedia list article"
+  },
+  "Q6905323": {
+   "label": "Creative Commons Attribution",
+   "label_lang": "en",
+   "description": "license allowing free use of a copyrighted work, with attribution"
+  },
+  "Q6905942": {
+   "label": "Creative Commons Attribution-ShareAlike",
+   "label_lang": "en",
+   "description": "set of licenses allowing free use of a work, with attribution, under the same conditions"
+  },
+  "Q6941088": {
+   "label": "History of Science Museum",
+   "label_lang": "en",
+   "description": "museum in Oxford, UK"
+  },
+  "Q7062022": {
+   "label": "not-for-profit arts organization",
+   "label_lang": "en",
+   "description": "nonprofit organization or foundation devoted to supporting the arts"
+  },
+  "Q7439004": {
+   "label": "Screen Nation awards",
+   "label_lang": "en",
+   "description": "British entertainment industry awards given annually"
+  },
+  "Q7614320": {
+   "label": "finance minister",
+   "label_lang": "en",
+   "description": "position in a government responsible for economic and financial policies"
+  },
+  "Q7689673": {
+   "label": "taxonomic database",
+   "label_lang": "en",
+   "description": "database created to hold information related to biological taxa"
+  },
+  "Q7725634": {
+   "label": "literary work",
+   "label_lang": "en",
+   "description": "written work read for enjoyment or edification"
+  },
+  "Q7728560": {
+   "label": "The Côte des Bœufs, Pontoise",
+   "label_lang": "en",
+   "description": "painting by Camille Pissarro"
+  },
+  "Q7735033": {
+   "label": "The Four Seasons",
+   "label_lang": "en",
+   "description": "series of four paintings by Nicolas Poussin"
+  },
+  "Q10864048": {
+   "label": "first-level administrative division",
+   "label_lang": "en",
+   "description": "administrative division directly subordinate to or under administration of a national government"
+  },
+  "Q10875944": {
+   "label": "Mid-autumn Manuscript",
+   "label_lang": "en",
+   "description": "calligraphy by Wang Xianzhi"
+  },
+  "Q11358452": {
+   "label": "ancient times",
+   "label_lang": "en",
+   "description": "period in the history of Japan"
+  },
+  "Q11362747": {
+   "label": "Namikawa Yasuyuki",
+   "label_lang": "en",
+   "description": "Japanese cloisonné artist"
+  },
+  "Q11431029": {
+   "label": "Tago Stele",
+   "label_lang": "en",
+   "description": "stone memorial in Japan"
+  },
+  "Q11465812": {
+   "label": "Yamanoue Stele",
+   "label_lang": "en",
+   "description": "stele, kofun in Gunma, Japan"
+  },
+  "Q11481067": {
+   "label": "Imperial Household Artist",
+   "label_lang": "en",
+   "description": "position for distinguished Japanese artists"
+  },
+  "Q11509224": {
+   "label": "modern history of Japan",
+   "label_lang": "en",
+   "description": "period of modern Japanese history"
+  },
+  "Q11514315": {
+   "label": "historical period",
+   "label_lang": "en",
+   "description": "segment of time in history"
+  },
+  "Q11566135": {
+   "label": "Namikawa Sōsuke",
+   "label_lang": "en",
+   "description": "Japanese cloisonné artist (1847–1910)"
+  },
+  "Q11646374": {
+   "label": "Kanaizawa Stele",
+   "label_lang": "en",
+   "description": "8th century Japanese stele"
+  },
+  "Q11862829": {
+   "label": "academic discipline",
+   "label_lang": "en",
+   "description": "field of study organized around a distinct body of knowledge, theories, methods, or subject matter"
+  },
+  "Q11997323": {
+   "label": "lifeboat station",
+   "label_lang": "en",
+   "description": "station from which rescue boats are launched"
+  },
+  "Q12810868": {
+   "label": "Mihrab",
+   "label_lang": "en",
+   "description": "painting by Osman Hamdi Bey"
+  },
+  "Q13002315": {
+   "label": "legendary figure",
+   "label_lang": "en",
+   "description": "named person or animal that appears in legends that have some claim to be historical"
+  },
+  "Q13142198": {
+   "label": "Muḥammad Ṣādiq",
+   "label_lang": "en",
+   "description": "Egyptian photographer and author"
+  },
+  "Q13218630": {
+   "label": "United States representative",
+   "label_lang": "en",
+   "description": "elected member of the U.S. House of Representatives"
+  },
+  "Q13226541": {
+   "label": "human spaceflight program",
+   "label_lang": "en",
+   "description": "type of space program"
+  },
+  "Q13406463": {
+   "label": "Wikimedia list article",
+   "label_lang": "en",
+   "description": "page of a Wikimedia project with a list of something"
+  },
+  "Q13442814": {
+   "label": "scholarly article",
+   "label_lang": "en",
+   "description": "article in an academic publication, usually peer reviewed"
+  },
+  "Q14021944": {
+   "label": "Jordan",
+   "label_lang": "en",
+   "description": "unisex given name"
+  },
+  "Q14204246": {
+   "label": "Wikimedia project page",
+   "label_lang": "en",
+   "description": "page in the non-article namespace 4 on a Wikimedia project serving internal purposes"
+  },
+  "Q14979753": {
+   "label": "Fatimid Caliph",
+   "label_lang": "en",
+   "description": "ruler of the Fatimid Caliphate"
+  },
+  "Q15008032": {
+   "label": "The Feast of the Gods",
+   "label_lang": "en",
+   "description": "painting by Giovanni Bellini and Titian"
+  },
+  "Q15060255": {
+   "label": "council area",
+   "label_lang": "en",
+   "description": "Scotland top-level administrative subdivision (since 1996)"
+  },
+  "Q15090615": {
+   "label": "arts venue",
+   "label_lang": "en",
+   "description": "place where artistic works are displayed or performed"
+  },
+  "Q15109492": {
+   "label": "Lewis Evans",
+   "label_lang": "en",
+   "description": "English businessman and scientific instrument collector"
+  },
+  "Q15298259": {
+   "label": "wizard in the Harry Potter universe",
+   "label_lang": "en",
+   "description": "magical human in the Harry Potter universe"
+  },
+  "Q15632617": {
+   "label": "fictional human",
+   "label_lang": "en",
+   "description": "human being that only exists in fictional works"
+  },
+  "Q15928529": {
+   "label": "Wang Huizhi",
+   "label_lang": "en",
+   "description": "Eastern Jin calligrapher"
+  },
+  "Q15979307": {
+   "label": "principal area",
+   "label_lang": "en",
+   "description": "county or county borough of Wales administered by a principal council"
+  },
+  "Q15992445": {
+   "label": "The Martyrdom of Saint Symphorian",
+   "label_lang": "en",
+   "description": "painting by Jean Auguste Dominique Ingres"
+  },
+  "Q16024238": {
+   "label": "Memory of the World International Register",
+   "label_lang": "en",
+   "description": "UNESCO-maintained register of globally important documentary heritage"
+  },
+  "Q16147979": {
+   "label": "Bodleian Libraries",
+   "label_lang": "en",
+   "description": "group of research libraries at the University of Oxford"
+  },
+  "Q16641327": {
+   "label": "Maqamat of al-Hariri",
+   "label_lang": "en",
+   "description": "illuminated manuscript"
+  },
+  "Q16707842": {
+   "label": "Member of Parliament",
+   "label_lang": "en",
+   "description": "representative in the House of Commons of the Parliament of the United Kingdom"
+  },
+  "Q17198419": {
+   "label": "fictional war",
+   "label_lang": "en",
+   "description": "armed conflict that only exists in fictional works"
+  },
+  "Q17277950": {
+   "label": "The Card Players",
+   "label_lang": "en",
+   "description": "painting series by Paul Cézanne"
+  },
+  "Q17379525": {
+   "label": "pottery ware",
+   "label_lang": "en",
+   "description": "class of physical objects, as distinguished from the craft of pottery"
+  },
+  "Q17379835": {
+   "label": "Wikimedia page outside the main knowledge tree",
+   "label_lang": "en",
+   "description": "instance of this class should only describe a Wikimedia page, not the outside world concept described in the page"
+  },
+  "Q17437796": {
+   "label": "featured article",
+   "label_lang": "en",
+   "description": "badge being used for featured articles"
+  },
+  "Q17437798": {
+   "label": "good article",
+   "label_lang": "en",
+   "description": "badge being used for good articles"
+  },
+  "Q17442446": {
+   "label": "Wikimedia internal item",
+   "label_lang": "en",
+   "description": "instances and/or subclasses of this item are about some Wikimedia-only content and should not refer to real world entities"
+  },
+  "Q17701409": {
+   "label": "economics award",
+   "label_lang": "en",
+   "description": "type of award; award for achievements in the field of economics"
+  },
+  "Q18003128": {
+   "label": "The Thinker",
+   "label_lang": "en",
+   "description": "type of sculpture by Auguste Rodin"
+  },
+  "Q18346884": {
+   "label": "The Luxembourg Gardens, Paris",
+   "label_lang": "en",
+   "description": "painting by Albert Edelfelt"
+  },
+  "Q18527930": {
+   "label": "Edith Lanchester",
+   "label_lang": "en",
+   "description": "English socialist and feminist"
+  },
+  "Q18593264": {
+   "label": "item of collection or exhibition",
+   "label_lang": "en",
+   "description": "defines an item, such as an object or document, that is a member of a collection or part of a repository"
+  },
+  "Q19595382": {
+   "label": "Wikidata property for authority control for people",
+   "label_lang": "en",
+   "description": "type of Wikidata property"
+  },
+  "Q19609193": {
+   "label": "Composition II in Red, Blue, and Yellow",
+   "label_lang": "en",
+   "description": "painting by Piet Mondrian"
+  },
+  "Q19760121": {
+   "label": "Family Group",
+   "label_lang": "en",
+   "description": "sculpture series by Henry Moore (LH 269)"
+  },
+  "Q19904229": {
+   "label": "L'Homme au doigt",
+   "label_lang": "en",
+   "description": "sculpture by Alberto Giacometti"
+  },
+  "Q20081025": {
+   "label": "Lanchester petrol-electric car",
+   "label_lang": "en",
+   "description": "Prototype hybrid automobile"
+  },
+  "Q20737645": {
+   "label": "Timurid dynasty",
+   "label_lang": "en",
+   "description": "Turco-Mongol dynasty (1370–1857)"
+  },
+  "Q20829075": {
+   "label": "type of language",
+   "label_lang": "en",
+   "description": "Wikidata metaclass of langoid in linguistic typology"
+  },
+  "Q21074703": {
+   "label": "talismanic shirt",
+   "label_lang": "en",
+   "description": "shirt functioning as a talisman in Islamic culture"
+  },
+  "Q21664940": {
+   "label": "Kawade Shibatarō",
+   "label_lang": "en",
+   "description": "Japanese cloisonné artist (1856–1921)"
+  },
+  "Q22075301": {
+   "label": "textile artwork",
+   "label_lang": "en",
+   "description": "artwork created from textile materials"
+  },
+  "Q22092846": {
+   "label": "Sabrina Pasterski",
+   "label_lang": "en",
+   "description": "American theoretical physicist"
+  },
+  "Q22669850": {
+   "label": "calligraphic work",
+   "label_lang": "en",
+   "description": "artwork created using calligraphy"
+  },
+  "Q22692845": {
+   "label": "terminology registry",
+   "label_lang": "en",
+   "description": "collection or catalog of vocabularies and other knowledge organization systems"
+  },
+  "Q22948347": {
+   "label": "early Quranic manuscript",
+   "label_lang": "en",
+   "description": "manuscript of the Quran before 1032"
+  },
+  "Q24753667": {
+   "label": "White Rose Research Online",
+   "label_lang": "en",
+   "description": "institutional repository shared by Leeds, Sheffield and York Universities"
+  },
+  "Q27147621": {
+   "label": "Xu Lele",
+   "label_lang": "en",
+   "description": "Chinese painter (born 1955)"
+  },
+  "Q27532437": {
+   "label": "suffragist",
+   "label_lang": "en",
+   "description": "activist advocating for the women's right to vote"
+  },
+  "Q27763745": {
+   "label": "Plazido Zuloaga",
+   "label_lang": "en",
+   "description": "Spanish 19th century metalworker"
+  },
+  "Q27971968": {
+   "label": "constituency of the House of Commons",
+   "label_lang": "en",
+   "description": "constituency for the British House of Commons (post-1801)"
+  },
+  "Q28045325": {
+   "label": "John Montagu, 4th Earl of Sandwich",
+   "label_lang": "en",
+   "description": "painting by Joseph Highmore"
+  },
+  "Q28541943": {
+   "label": "Abbasid caliph",
+   "label_lang": "en",
+   "description": "(750–1258) ruler of the Abbasid Caliphate"
+  },
+  "Q28778432": {
+   "label": "Cunningham's Law",
+   "label_lang": "en",
+   "description": "law that affirms that the best way to get the right answer on the Internet is not to ask a question, but to post the wrong answer"
+  },
+  "Q29382731": {
+   "label": "metal artwork",
+   "label_lang": "en",
+   "description": "artwork or other made object of metal"
+  },
+  "Q39811647": {
+   "label": "edition of a translation",
+   "label_lang": "en",
+   "description": "edition or publication translated from another work or edition",
+   "redirected_to": "Q21112633"
+  },
+  "Q40901539": {
+   "label": "A Dictionary of the Booksellers and Printers who Were at Work in England, Scotland and Ireland from 1641 to 1667",
+   "label_lang": "en",
+   "description": "biographical dictionary of booksellers and printers"
+  },
+  "Q42426141": {
+   "label": "Three Stelae of Kōzuke",
+   "label_lang": "en",
+   "description": "stone monuments in Japan"
+  },
+  "Q43380186": {
+   "label": "With a guitar. To Jane",
+   "label_lang": "en",
+   "description": "poem by Percy Shelley"
+  },
+  "Q43380245": {
+   "label": "Shelley's guitar",
+   "label_lang": "en",
+   "description": "guitar owned by the poet Percy Shelley"
+  },
+  "Q46103484": {
+   "label": "Yabu Meizan",
+   "label_lang": "en",
+   "description": "Japanese ceramic artist"
+  },
+  "Q47018901": {
+   "label": "calendar month",
+   "label_lang": "en",
+   "description": "one of generally twelve months of a specific calendar. Use with P31"
+  },
+  "Q48129717": {
+   "label": "Wang Geyi",
+   "label_lang": "en",
+   "description": "Chinese painter, known for painting flowers"
+  },
+  "Q50068795": {
+   "label": "historical Chinese state",
+   "label_lang": "en",
+   "description": "state in China of the Imperial era (221 BCE to 1911 CE)"
+  },
+  "Q50423863": {
+   "label": "copyrighted",
+   "label_lang": "en",
+   "description": "legal state of a work as recognised as an intellectual property of an entity"
+  },
+  "Q50813061": {
+   "label": "Chunhua Pavilion Rubbings",
+   "label_lang": "en",
+   "description": "item LI1069.10 in the Ashmolean Museum, Oxford, UK"
+  },
+  "Q50819534": {
+   "label": "Wang Xianzhi with a writing brush",
+   "label_lang": "en",
+   "description": "item EA2000.156.f in the Ashmolean Museum, Oxford, UK"
+  },
+  "Q50819542": {
+   "label": "Wang Huizhi sitting under a bamboo tree",
+   "label_lang": "en",
+   "description": "item EA2000.156.j in the Ashmolean Museum, Oxford, UK"
+  },
+  "Q52496052": {
+   "label": "Sibthorp and Bauer expedition",
+   "label_lang": "en",
+   "description": "botanical expedition to the Eastern Mediterranean"
+  },
+  "Q52556635": {
+   "label": "Sherardian Library of Plant Taxonomy",
+   "label_lang": "en",
+   "description": "botanical library in the University of Oxford"
+  },
+  "Q53676578": {
+   "label": "Shahnamah of Ibrahim Sultan",
+   "label_lang": "en",
+   "description": "illuminated manscript of the Shahnameh epic poem"
+  },
+  "Q54854779": {
+   "label": "Mediterranean Scenes",
+   "label_lang": "en",
+   "description": "book of unpublished drawings of landscapes from the East Mediterranean"
+  },
+  "Q55867318": {
+   "label": "Astrolabe",
+   "label_lang": "en",
+   "description": "item 49636 in the History of Science Museum, Oxford"
+  },
+  "Q55867319": {
+   "label": "Astrolabe",
+   "label_lang": "en",
+   "description": "item 39540 in the History of Science Museum, Oxford"
+  },
+  "Q56024100": {
+   "label": "Fusoris astrolabe - CnAM 19544",
+   "label_lang": "en",
+   "description": "15th century astrolabe"
+  },
+  "Q56676227": {
+   "label": "oil painting",
+   "label_lang": "en",
+   "description": "surface artistically covered with oil paint"
+  },
+  "Q56867532": {
+   "label": "Astrolabe with inscriptions in Gothic and Arabic",
+   "label_lang": "en",
+   "description": "13th century astrolabe in collection of the Museum Aan de Stroom"
+  },
+  "Q60643108": {
+   "label": "Mary Shelley",
+   "label_lang": "en",
+   "description": "portrait by Richard Rothwell"
+  },
+  "Q60729883": {
+   "label": "Cleveland Museum of Art Open Access project",
+   "label_lang": "en",
+   "description": "project to release images and metadata under a free license in 2019"
+  },
+  "Q60809157": {
+   "label": "The Epic of Kings",
+   "label_lang": "en",
+   "description": "English translation of the Shahnameh of Ferdowsi"
+  },
+  "Q61781831": {
+   "label": "curatorial department",
+   "label_lang": "en",
+   "description": "department within a museum"
+  },
+  "Q63160499": {
+   "label": "Khalili Collections",
+   "label_lang": "en",
+   "description": "group of art collections"
+  },
+  "Q64520857": {
+   "label": "fictional human formerly considered to be historical",
+   "label_lang": "en",
+   "description": "people who never existed but were once thought to have"
+  },
+  "Q64746992": {
+   "label": "Hatip Mehmed Efendi",
+   "label_lang": "en",
+   "description": "Ottoman artist (1680–1773)"
+  },
+  "Q66454754": {
+   "label": "Nasser D. Khalili Collection of Swedish Textiles",
+   "label_lang": "en",
+   "description": "private art collection"
+  },
+  "Q66455051": {
+   "label": "Nasser D. Khalili Collection of Spanish Metalwork",
+   "label_lang": "en",
+   "description": "private collection of metal artwork"
+  },
+  "Q66455355": {
+   "label": "Nasser D. Khalili Collection of Islamic Art",
+   "label_lang": "en",
+   "description": "private collection of art from Islamic lands"
+  },
+  "Q66455644": {
+   "label": "Nasser D. Khalili Collection of Japanese Art",
+   "label_lang": "en",
+   "description": "private collection of Meiji-era art"
+  },
+  "Q66456991": {
+   "label": "Nasser D. Khalili Collection of Aramaic Documents",
+   "label_lang": "en",
+   "description": "private collection of ancient documents"
+  },
+  "Q66457023": {
+   "label": "Khalili Collection: Enamels of the World",
+   "label_lang": "en",
+   "description": "private art collection"
+  },
+  "Q66458747": {
+   "label": "Khalili Collection of Japanese Kimono",
+   "label_lang": "en",
+   "description": "private collection of Japanese kimono"
+  },
+  "Q66458773": {
+   "label": "Khalili Collection: Hajj and the Arts of Pilgrimage",
+   "label_lang": "en",
+   "description": "private collection of art and artefacts"
+  },
+  "Q67429139": {
+   "label": "Islamic Art",
+   "label_lang": "en",
+   "description": "curatorial department of The Metropolitan Museum of Art in New York, USA"
+  },
+  "Q67497236": {
+   "label": "Umayyad Caliph",
+   "label_lang": "en",
+   "description": "ruler of the Umayyad Caliphate"
+  },
+  "Q79496108": {
+   "label": "enamel",
+   "label_lang": "en",
+   "description": "item or artwork created using vitreous enamel, usually set in a metal framework"
+  },
+  "Q92731365": {
+   "label": "list of collections of Japanese art",
+   "label_lang": "en",
+   "description": "Wikipedia list article"
+  },
+  "Q95639662": {
+   "label": "Khalili Imperial Garniture",
+   "label_lang": "en",
+   "description": "trio of enamel artworks"
+  },
+  "Q95984336": {
+   "label": "The Broncho Buster",
+   "label_lang": "en",
+   "description": "sculpture by Frederic Remington"
+  },
+  "Q96377276": {
+   "label": "endangered",
+   "label_lang": "en",
+   "description": "IUCN status for species which are categorized as very likely to become extinct in the near future"
+  },
+  "Q106372429": {
+   "label": "sitara",
+   "label_lang": "en",
+   "description": "ornamental curtain used in some sacred sites of Islam"
+  },
+  "Q106648151": {
+   "label": "Khalili Astrolabe",
+   "label_lang": "en",
+   "description": "monumental astrolabe made for Shah Jahan"
+  },
+  "Q107060104": {
+   "label": "Anis Al-Hujjaj",
+   "label_lang": "en",
+   "description": "17th century literary work describing a Hajj pilgrimage"
+  },
+  "Q107663626": {
+   "label": "The Giant 'Uj and the Prophets Moses, Jesus and Muhammad",
+   "label_lang": "en",
+   "description": "painting in the Khalili Collection of Islamic Art"
+  },
+  "Q107663668": {
+   "label": "The Jami' al-Tawarikh of Rashid al-Din",
+   "label_lang": "en",
+   "description": "object MSS 727 in the Khalili Collection of Islamic Art"
+  },
+  "Q107663675": {
+   "label": "Falnamah ('Book of Divination')",
+   "label_lang": "en",
+   "description": "object MSS 979 in the Khalili Collection of Islamic Art"
+  },
+  "Q107998577": {
+   "label": "Nurse's Qur'an",
+   "label_lang": "en",
+   "description": "Qur'an manuscript made in 1020 for Fatima al-Hadinah, the governess of the Zirid Prince Badis"
+  },
+  "Q108543136": {
+   "label": "Siyer-i Nebi",
+   "label_lang": "en",
+   "description": "manuscript of the Turkish biography of Muhammad"
+  },
+  "Q109341408": {
+   "label": "Qur'an of Umar Aqta",
+   "label_lang": "en",
+   "description": "Timurid Qur'an manuscript"
+  },
+  "Q109811416": {
+   "label": "Gulshan-i 'Ishq",
+   "label_lang": "en",
+   "description": "romantic allegorical poem by the Urdu poet Nusrati"
+  },
+  "Q109893034": {
+   "label": "Aberdeen Archives, Gallery and Museums collections",
+   "label_lang": "en",
+   "description": "Museum service in Aberdeen, Scotland, United Kingdom"
+  },
+  "Q110621552": {
+   "label": "Dar al-Kiswa",
+   "label_lang": "en",
+   "description": "textile workshop in Cairo that created the sacred textiles for Mecca and Medina"
+  },
+  "Q113673240": {
+   "label": "Hajj: Journey to the Heart of Islam",
+   "label_lang": "en",
+   "description": "2012 exhibition at the British Museum"
+  },
+  "Q113813711": {
+   "label": "coin type",
+   "label_lang": "en",
+   "description": "metaclass for coins, to be used as P31 value for coin classes/types"
+  },
+  "Q114836879": {
+   "label": "Booker Prize judge",
+   "label_lang": "en",
+   "description": "member of the judging panel for the Booker Prize, changed every year"
+  },
+  "Q115010563": {
+   "label": "Booker Prize longlist",
+   "label_lang": "en",
+   "description": "level of nomination for the Booker Prize"
+  },
+  "Q115010579": {
+   "label": "Booker Prize shortlist",
+   "label_lang": "en",
+   "description": "level of nomination for the Booker Prize"
+  },
+  "Q115048320": {
+   "label": "Soheila Sokhanvari",
+   "label_lang": "en",
+   "description": "Iranian-born British visual artist, painter (b. 1964)"
+  },
+  "Q115296901": {
+   "label": "National Debt Redemption Movement Digital Archive",
+   "label_lang": "en",
+   "description": "digital archive of records created in the National Debt Redemption Movement, which was registered as a UNESCO Memory of the World in 2017"
+  },
+  "Q116993057": {
+   "label": "Shahnamah of Shah Alam II",
+   "label_lang": "en",
+   "description": "illustrated manuscript of Firdawsi's Shahnameh"
+  },
+  "Q120965348": {
+   "label": "The Shahnamah of Prince Murad Bakhsh",
+   "label_lang": "en",
+   "description": "illustrated manuscript of Firdawsi's Shahnameh"
+  },
+  "Q122067620": {
+   "label": "Heaven on Earth: Art From Islamic Lands",
+   "label_lang": "en",
+   "description": "2004 Islamic art exhibition in London"
+  },
+  "Q122258635": {
+   "label": "Empire of the Sultans: Ottoman Art of the Khalili Collection",
+   "label_lang": "en",
+   "description": "travelling exhibition of Islamic art"
+  },
+  "Q125694929": {
+   "label": "Samurai Shōkai",
+   "label_lang": "en",
+   "description": "art dealer / manufactory in Yokohama"
+  },
+  "Q132817387": {
+   "label": "Taylor-Schechter Cairo Genizah Collection",
+   "label_lang": "en",
+   "description": "collection of documents at Cambridge University Library"
+  },
+  "Q139541233": {
+   "label": "Palermo Quran",
+   "label_lang": "en",
+   "description": "dispersed tenth-century manuscript of the Quran"
+  },
+  "Q139782871": {
+   "label": "Isfahan Quran",
+   "label_lang": "en",
+   "description": "dispersed 10th century manuscript of the Quran"
+  },
+  "Q141592750": {
+   "label": "Lahore family of astrolabists",
+   "label_lang": "en",
+   "description": "four generations of scientific instrument makers in 16th and 17th-century Lahore"
+  }
+ }
+}

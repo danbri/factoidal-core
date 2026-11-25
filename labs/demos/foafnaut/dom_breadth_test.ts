@@ -35,6 +35,22 @@ try{i.size=0}catch(e){log('size',e.name)}
 log('style',getComputedStyle(a).display,getComputedStyle(a).getPropertyValue('color'));
 log('css',CSS.supports('display','block'),CSS.supports('(display: grid)'),CSS.supports('not (display: grid)'),CSS.escape('0a'),
   document.fonts.status,typeof document.fonts.ready.then,'color' in getComputedStyle(a),'backgroundColor' in getComputedStyle(a),getComputedStyle(a).length>10);
+const pi=document.createProcessingInstruction('target','b="first" a ="second"');
+const piObserver=new MutationObserver(()=>{});
+piObserver.observe(pi,{characterData:true});
+const piValue='x\\u00A0🌍y';
+pi.setAttribute('v',piValue);
+log('pi',pi.getAttributeNames().join(','),pi.getAttribute('b'),pi.getAttribute('v')===piValue,
+  pi.data.includes('v="'+piValue+'"'),piObserver.takeRecords().length);
+log('pi-toggle',pi.toggleAttribute('v',true),piObserver.takeRecords().length,
+  pi.toggleAttribute('v'),piObserver.takeRecords().length,pi.hasAttribute('v'));
+pi.toggleAttribute('v',true);
+log('pi-empty',pi.hasAttribute('v'),pi.getAttribute('v')==='',pi.getAttribute('missing')===null);
+const duplicatePi=document.createProcessingInstruction('target','b="first" b="second"');
+const nulPi=document.createProcessingInstruction('target','');
+const nulData='v="x\\x00y" other="valid"';
+nulPi.data=nulData;
+log('pi-invalid',!duplicatePi.hasAttributes(),nulPi.data===nulData,!nulPi.hasAttributes());
 d.innerHTML='<p>new</p>';log('after',r.startContainer.nodeName,r.startOffset,d.textContent);
 console.log('RESULT '+out.join(' | '));
 </script>`;
@@ -56,7 +72,9 @@ Deno.test({name:"DOM breadth: Range, Selection, traversal, markup, reflection, c
   for(const want of ["range llo big worldSec d -1 true","clone <p id=\"a\">llo <b>big</b> world</p><p id=\"c\">Sec</p>",
     "live 4 3","html <p id=\"a\">XXHello <b>big</b> world<i>!</i></p>","sel 1 Range XXHello big world! a 4",
     "sel2 forward false","walk p,i,p","iter 5","reflect -3 12 20 false  /x/y #h","dir RTL rtl","size IndexSizeError",
-    "style block rgb(0, 0, 0)","css true true false \\30 a loaded function true true true","after DIV 0 new"])
+    "style block rgb(0, 0, 0)","css true true false \\30 a loaded function true true true",
+    "pi b,a,v first true true 1","pi-toggle true 0 false 1 false","pi-empty true true true",
+    "pi-invalid true true true","after DIV 0 new"])
     assert.ok(line.includes(want),`BubblePopJS: wanted "${want}" in ${line}`);
   if(guest){
     engine.scriptLoad(await Deno.readFile(guest));

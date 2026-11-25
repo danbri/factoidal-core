@@ -1,0 +1,49 @@
+name: GSSL snapshot and GPU readback admission
+
+on:
+  pull_request:
+    paths:
+      - 'tools/gssl-sbm11-snapshot.mjs'
+      - 'tools/gssl-sbm11-webgpu.mjs'
+      - 'tests/gssl_sbm11_snapshot_test.mjs'
+      - '.github/workflows/check-gssl-snapshot-host.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Capture exact source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gssl-snapshot"
+          git rev-parse HEAD | tee "$RUNNER_TEMP/gssl-snapshot/commit.txt"
+          sha256sum tools/gssl-sbm11-snapshot.mjs \
+            tools/gssl-sbm11-webgpu.mjs \
+            tests/gssl_sbm11_snapshot_test.mjs \
+            | tee "$RUNNER_TEMP/gssl-snapshot/source.sha256"
+      - name: Validate source syntax
+        run: |
+          node --check tools/gssl-sbm11-snapshot.mjs
+          node --check tests/gssl_sbm11_snapshot_test.mjs
+      - name: Exact graph/query digests, stale reply, cancellation and refusal cases
+        run: node --test tests/gssl_sbm11_snapshot_test.mjs
+      - name: Save exact source hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gssl-snapshot-host-evidence
+          path: ${{ runner.temp }}/gssl-snapshot/
+          if-no-files-found: warn
+          retention-days: 30

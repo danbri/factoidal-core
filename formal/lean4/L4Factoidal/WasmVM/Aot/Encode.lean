@@ -94,9 +94,11 @@ def blockType (out : ByteArray) : BlockType → ByteArray
   | .idx i => sleb out i
 
 def limits (out : ByteArray) (l : Limits) : ByteArray :=
+  -- Flags: bit 0 a maximum, bit 2 address type i64 (memory64, table64).
+  let f : UInt8 := if l.addr64 then 0x04 else 0x00
   match l.max with
-  | none => uleb (out.push 0x00) l.min
-  | some m => uleb (uleb (out.push 0x01) l.min) m
+  | none => uleb (out.push f) l.min
+  | some m => uleb (uleb (out.push (f ||| 0x01)) l.min) m
 
 def tableType (out : ByteArray) (t : TableType) : ByteArray := limits (refType out t.elem) t.limits
 

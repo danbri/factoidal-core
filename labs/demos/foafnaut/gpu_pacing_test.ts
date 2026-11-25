@@ -354,21 +354,39 @@ Deno.test("gate: a heavy frame predicted right is asked about when the GPU is do
 });
 
 Deno.test("gate: a prior far too high holds no frame for long (sleep capped, early asks bound the rate)", async()=>{
-  const queue=blockingQueue(1);
+  let asks=0;
+  const queue={onSubmittedWorkDone:()=>{asks++;return Promise.resolve();}};
   const gate=createGpuGate(queue,1,undefined,0.8,undefined,{answersAtReturn:true});
-  gate.turn();
-  // A scene of 1340 units that the GPU draws at once: the prior says 1072 ms.
-  gate.after(1340);
-  const due=gate.dueIn();
-  assert(due!==null&&due<=100,`first heavy frame due in ${due} ms`);
-  for(let k=0;k<100&&gate.inFlight;k++){await sleep(5);gate.turn();}
-  assert.equal(gate.inFlight,0);
-  // Done by the ask about 100 ms after the submission: at most 100/1340 ms per unit.
-  assert(gate.stats.msPerUnit<=0.08,`rate after an early ask ${gate.stats.msPerUnit}`);
-  gate.after(1340);
-  const next=gate.dueIn();
-  assert(next!==null&&next<=120,`next heavy frame due in ${next} ms`);
-  await gate.idle();
+  // Drive the host turns with a fixed clock so the rate bound uses an on-time ask.
+  let now=1000;
+  const originalNow=Object.getOwnPropertyDescriptor(performance,"now");
+  Object.defineProperty(performance,"now",{value:()=>now,configurable:true});
+  try {
+    gate.turn();
+    // A scene of 1340 units that the GPU draws at once: the prior says 1072 ms.
+    gate.after(1340);
+    assert.equal(gate.dueIn(),100);
+    now+=99;
+    gate.turn();
+    assert.equal(asks,0);
+    now++;
+    gate.turn();
+    assert.equal(asks,1);
+    assert.equal(gate.inFlight,0);
+    // Done when asked at 100 ms, so the learned rate is at most about 100/1340 ms per unit.
+    const rate=gate.stats.msPerUnit;
+    assert(rate>0&&rate<=0.08,`rate after an early ask ${rate}`);
+    gate.after(1340);
+    const next=gate.dueIn();
+    assert(next!==null&&next<=120,`next heavy frame due in ${next} ms`);
+  } finally {
+    // Drain any planned asks before restoring the host clock.
+    try {await gate.idle();}
+    finally {
+      if(originalNow)Object.defineProperty(performance,"now",originalNow);
+      else Reflect.deleteProperty(performance,"now");
+    }
+  }
 });
 
 Deno.test("gate: a late ask about small work does not raise the rate", async()=>{

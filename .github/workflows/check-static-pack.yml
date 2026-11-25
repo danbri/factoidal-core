@@ -1,0 +1,316 @@
+name: Paralliverse Lean check
+
+on:
+  push:
+    branches: [main, wip/604-static-pack-spec]
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuKernel/Race.lean'
+      - 'formal/lean4/L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Harness/ParalliverseHubFixtures.lean'
+      - 'formal/lean4/Wasm/ParalliverseHub.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-static-pack.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/GpuKernel/Race.lean'
+      - 'formal/lean4/L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse.lean'
+      - 'formal/lean4/L4Factoidal/Paralliverse/**'
+      - 'formal/lean4/Harness/ParalliverseCpu.lean'
+      - 'formal/lean4/Harness/ParalliverseHubFixtures.lean'
+      - 'formal/lean4/Wasm/ParalliverseHub.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-static-pack.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  paralliverse:
+    if: github.event_name != 'pull_request' || github.head_ref != 'wip/604-static-pack-spec'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Lean reserves 1 GiB per runtime thread by default on this toolchain.
+      # A small proof module needs only a bounded 16 MiB stack per worker.
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+
+      - name: Compile fresh Paralliverse dependencies and print theorem axioms
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          modules=(L4Factoidal/GpuKernel/Race.lean
+                   L4Factoidal/GpuKernel/TraceInterleavingTheorems.lean
+                   L4Factoidal/Paralliverse/StaticPack.lean
+                   L4Factoidal/Paralliverse/DSL.lean
+                   L4Factoidal/Paralliverse/PackWire.lean
+                   L4Factoidal/Paralliverse/PackWireTheorems.lean
+                   L4Factoidal/Paralliverse/CountTarget.lean
+                   L4Factoidal/Paralliverse/CountPacketTheorems.lean
+                   L4Factoidal/Paralliverse/WGSL/ShaderText.lean
+                   L4Factoidal/Paralliverse/WGSL/Surface.lean
+                   L4Factoidal/Paralliverse/WGSL/ScanSurface.lean
+                   L4Factoidal/Paralliverse/WGSL/ScatterSurface.lean
+                   L4Factoidal/Paralliverse/WGSL/Count.lean
+                   L4Factoidal/Paralliverse/LoopTarget.lean
+                   L4Factoidal/Paralliverse/ScanTarget.lean
+                   L4Factoidal/Paralliverse/WGSL/Scan.lean
+                   L4Factoidal/Paralliverse/ScatterTarget.lean
+                   L4Factoidal/Paralliverse/WGSL/Scatter.lean
+                   L4Factoidal/Paralliverse/PipelineTarget.lean
+                   L4Factoidal/Paralliverse/WGSL/Pipeline.lean
+                   L4Factoidal/Paralliverse/WGSL/TraceInterleaving.lean
+                   L4Factoidal/Paralliverse.lean
+                   Wasm/ParalliverseHub.lean)
+          mkdir -p "$proof_dir/modules" "$proof_dir/c" "$proof_dir/setup"
+          python3 ../../tools/lean-module-closure.py --lean-dir . "${modules[@]}" > "$proof_dir/module-closure.txt"
+          mapfile -t modules < "$proof_dir/module-closure.txt"
+          export LEAN_PATH="$proof_dir/modules"
+          {
+            git rev-parse HEAD
+            uname -sm
+            cat lean-toolchain
+            sha256sum lean-toolchain L4Factoidal/Paralliverse.lean "${modules[@]}" Harness/ParalliverseCpu.lean Harness/ParalliverseHubFixtures.lean
+          } 2>&1 | tee "$proof_dir/source.txt"
+          (ulimit -v 4194304; exec timeout --kill-after=5s 30s lean --version) \
+            2>&1 | tee "$proof_dir/lean-version.txt"
+
+          failed=0
+          for module in "${modules[@]}"; do
+            olean="$proof_dir/modules/${module%.lean}.olean"
+            generated_c="$proof_dir/c/${module%.lean}.c"
+            setup="$proof_dir/setup/${module%.lean}.json"
+            mkdir -p "$(dirname "$olean")" "$(dirname "$generated_c")" "$(dirname "$setup")"
+            python3 - "$module" "$setup" <<'PY'
+          import json, pathlib, sys
+          pathlib.Path(sys.argv[2]).write_text(json.dumps({
+              'name': sys.argv[1][:-5].replace('/', '.'), 'package': 'l4factoidal',
+              'isModule': False, 'imports': None, 'importArts': {},
+              'dynlibs': [], 'plugins': [], 'options': {},
+          }))
+          PY
+            # These two concrete proof reductions exceeded the 2 GiB kernel cap
+            # in fresh checks. Keep only these modules bounded at 4 GiB.
+            memory_kib=4194304
+            lean_memory=2048
+            case "$module" in
+              L4Factoidal/Paralliverse/WGSL/Scatter.lean|L4Factoidal/Paralliverse/WGSL/Pipeline.lean)
+                memory_kib=6291456
+                lean_memory=4096 ;;
+            esac
+            compile=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/$(basename "$module").time.txt"
+                     lean -j1 -s16384 "-M$lean_memory" -DwarningAsError=true --setup "$setup" -o "$olean" -c "$generated_c" "$module")
+            {
+              printf 'ulimit -v %s\n' "$memory_kib"
+              printf ' %q' "${compile[@]}"
+              printf '\n'
+            } | tee -a "$proof_dir/command.txt"
+            set +e
+            (ulimit -v "$memory_kib"; exec "${compile[@]}") 2>&1 | tee -a "$proof_dir/lean.log"
+            status=("${PIPESTATUS[@]}")
+            set -e
+            printf '%s compile_exit=%s tee_exit=%s\n' "$module" "${status[@]}" | tee -a "$proof_dir/exit.txt"
+            if [ "${status[0]}" -ne 0 ] || [ "${status[1]}" -ne 0 ] || [ ! -s "$olean" ]; then
+              failed=1
+            fi
+          done
+          test "$failed" -eq 0
+
+      - name: Audit the source and reported axiom dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          python3 tools/lean-hygiene-audit.py --build-log "$proof_dir/lean.log" \
+            2>&1 | tee "$proof_dir/hygiene.log"
+          # Require evidence for the public claims, not merely a nonempty axiom log.
+          for name in packSpec_length scanFrom_length scanFrom_cons scanFrom_prefix \
+                      scan_terminal scanFrom_bounds scanFrom_disjoint admitted_total_fits \
+                      admitted_word_bounds scatter_eq_scatterRow scatter_frame \
+                      packParallel_eq_packSpec packParallel_position packChecked_eq \
+                      packWithFallback_eq_packSpec; do
+            grep -Eq "'L4Factoidal\.Paralliverse\.StaticPack\.$name' (depends on axioms:|does not depend on any axioms)" \
+              "$proof_dir/lean.log" || { echo "Missing checked theorem: $name"; exit 1; }
+            printf '%s\n' "L4Factoidal.Paralliverse.StaticPack.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in canonical_valid count_raceFree count_visible scan_visible \
+                      scatter_raceFree scatter_seq_eq eval_packProgram_memory eval_packProgram_eq_packSpec; do
+            grep -F "'L4Factoidal.Paralliverse.DSL.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.DSL.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in wordView_at decode_row_count decode_row_count_le decode_extent \
+                      decode_header_word decode_descriptor_length_word decode_descriptor_span \
+                      decode_source_word decode_total_bound decode_admitted; do
+            grep -F "'L4Factoidal.Paralliverse.PackWire.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.PackWire.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in Expr.eval_eq_evalTR descriptor_word_address count_lane dispatch_count grid_bounds canonical_valid activeOrder_perm count_grid_eq_dsl accepted_sourceRows decoded_count_eq_dsl; do
+            grep -F "'L4Factoidal.Paralliverse.CountTarget.$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "L4Factoidal.Paralliverse.CountTarget.$name" >> "$proof_dir/checked-theorems.txt"
+          done
+          for name in L4Factoidal.GpuKernel.keys_flatten_nodup \
+                      L4Factoidal.GpuKernel.applyWrites_perm_prefix \
+                      L4Factoidal.GpuKernel.applyWrites_perm_of_nodup_keys \
+                      L4Factoidal.Paralliverse.LoopTarget.read_ok \
+                      L4Factoidal.Paralliverse.LoopTarget.Expr.eval_eq_evalTR \
+                      L4Factoidal.Paralliverse.LoopTarget.Stmt.exec_eq_execTR \
+                      L4Factoidal.Paralliverse.LoopTarget.store_ok \
+                      L4Factoidal.Paralliverse.LoopTarget.observe_set \
+                      L4Factoidal.Paralliverse.ScanTarget.carry_add \
+                      L4Factoidal.Paralliverse.ScanTarget.scan_memory \
+                      L4Factoidal.Paralliverse.ScanTarget.scan_visible \
+                      L4Factoidal.Paralliverse.ScatterTarget.inactive_lane \
+                      L4Factoidal.Paralliverse.ScatterTarget.copy_words \
+                      L4Factoidal.Paralliverse.ScatterTarget.scanned_starts \
+                      L4Factoidal.Paralliverse.ScatterTarget.decoded_scatter_lane \
+                      L4Factoidal.Paralliverse.ScatterTarget.decoded_scatter_dispatch \
+                      L4Factoidal.Paralliverse.ScatterTarget.decoded_scatter_grid_eq_dsl \
+                      L4Factoidal.Paralliverse.ScatterTarget.decoded_scatter_grid_eq_packSpec \
+                      L4Factoidal.Paralliverse.PipelineTarget.decoded_pipeline \
+                      L4Factoidal.Paralliverse.PipelineTarget.decoded_pipeline_eq_packSpec \
+                      L4Factoidal.Paralliverse.WGSL.parse_count_text \
+                      L4Factoidal.Paralliverse.WGSL.count_text_launch \
+                      L4Factoidal.Paralliverse.WGSL.decoded_count_text_lane \
+                      L4Factoidal.Paralliverse.WGSL.parse_scan_text \
+                      L4Factoidal.Paralliverse.WGSL.scan_text_launch \
+                      L4Factoidal.Paralliverse.WGSL.decoded_count_scan_text \
+                      L4Factoidal.Paralliverse.WGSL.parse_scatter_text \
+                      L4Factoidal.Paralliverse.WGSL.scatter_text_launch \
+                      L4Factoidal.Paralliverse.WGSL.inactive_scatter_text \
+                      L4Factoidal.Paralliverse.WGSL.decoded_scatter_text_lane \
+                      L4Factoidal.Paralliverse.WGSL.scatter_text_traces_disjoint \
+                      L4Factoidal.Paralliverse.WGSL.TextPipeline.decoded_count_text_grid \
+                      L4Factoidal.Paralliverse.WGSL.TextPipeline.decoded_scatter_text_grid \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline_eq_packSpec \
+                      L4Factoidal.Paralliverse.WGSL.decoded_scatter_text_store_interleavings \
+                      L4Factoidal.Paralliverse.WGSL.decoded_text_pipeline_store_interleavings \
+                      L4Factoidal.Paralliverse.Hub.shader_source_exports; do
+            grep -F "'$name' " "$proof_dir/lean.log" \
+              | grep -Eq '(depends on axioms:|does not depend on any axioms)'
+            printf '%s\n' "$name" >> "$proof_dir/checked-theorems.txt"
+          done
+
+      - name: Inspect the exact package-prefixed Paralliverse C
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          python3 - "$proof_dir/c" <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path(sys.argv[1])
+          anchors = {
+              'CountTarget': 'L4Factoidal_Paralliverse_CountTarget_Expr_evalTR',
+              'LoopTarget': 'L4Factoidal_Paralliverse_LoopTarget_Stmt_exec',
+          }
+          for module, symbol in anchors.items():
+              source = (root / f'L4Factoidal/Paralliverse/{module}.c').read_text()
+              pattern = r'^LEAN_EXPORT [^\n]*\blp_l4factoidal_' + symbol + r'\([^;\n]*\)\s*\{'
+              if not re.search(pattern, source, re.M):
+                  raise SystemExit(f'Missing real package-prefixed definition: {symbol}')
+          count = sum(len(re.findall(r'^LEAN_EXPORT [^\n]*\blp_l4factoidal_\w+\([^;\n]*\)\s*\{',
+                                    p.read_text(), re.M)) for p in root.rglob('*.c'))
+          print(f'{count} package-prefixed definitions; both positive anchors present')
+          PY
+          python3 tools/lean-tail-recursion-audit.py --ir-dir "$proof_dir/c" \
+            --lean-dir formal/lean4 --json "$proof_dir/tail-diagnostic.json" --top 20 \
+            | tee "$proof_dir/tail-diagnostic.log"
+          echo 'Diagnostic over this component only; the complete Linux recursion gate remains required.'
+
+      - name: Run the ordinary CPU specification on fixed fixtures
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset LEAN_SRC_PATH
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          export LEAN_PATH="$proof_dir/modules"
+          cpu=(timeout --kill-after=10s 180s /usr/bin/time -v -o "$proof_dir/cpu-time.txt"
+               lean -j1 -s16384 -M2048 -DwarningAsError=true --run Harness/ParalliverseCpu.lean)
+          {
+            printf 'export LEAN_PATH=%q\nulimit -v 4194304\n' "$LEAN_PATH"
+            printf ' %q' "${cpu[@]}"
+            printf '\n'
+          } | tee "$proof_dir/cpu-command.txt"
+
+          set +e
+          (
+            set -e
+            ulimit -v 4194304
+            exec "${cpu[@]}"
+          ) 2>"$proof_dir/cpu-stderr.log" | tee "$proof_dir/cpu.jsonl"
+          status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'cpu_exit=%s\ntee_exit=%s\n' "${status[@]}" | tee "$proof_dir/cpu-exit.txt"
+          cat "$proof_dir/cpu-stderr.log"
+          test "${status[0]}" -eq 0
+          test "${status[1]}" -eq 0
+
+          python3 - "$proof_dir/cpu.jsonl" 2>&1 <<'PY' | tee "$proof_dir/cpu-fixtures.log"
+          import json
+          import sys
+          from pathlib import Path
+
+          expected = [
+              {"case": "empty", "words": []},
+              {"case": "zero_counts", "words": []},
+              {"case": "singleton", "words": [0]},
+              {"case": "mixed_counts", "words": [8, 3, 8, 0, 4294967295, 3]},
+              {"case": "all_nonempty", "words": [3, 2, 1, 0]},
+          ]
+          actual = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+          if actual != expected:
+              sys.exit(f"CPU fixture mismatch\nExpected {expected!r}\nActual {actual!r}")
+          print(f"{len(actual)} CPU runtime fixtures passed")
+          PY
+
+      - name: Run the actual bounded Hub CPU protocol fixtures
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/paralliverse-evidence"
+          export LEAN_PATH="$proof_dir/modules"
+          (ulimit -v 4194304; timeout --kill-after=10s 180s lean -j1 -s16384 -M2048 \
+            -DwarningAsError=true --run Harness/ParalliverseHubFixtures.lean) \
+            2>&1 | tee "$proof_dir/hub-cpu-fixtures.log"
+
+      - name: Preserve compiler, axiom and CPU fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paralliverse-lean-evidence
+          path: |
+            ${{ runner.temp }}/paralliverse-evidence/
+            !${{ runner.temp }}/paralliverse-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

@@ -69,18 +69,21 @@ static lean_obj_res l4w_refuse(lean_obj_res out) {
 #define L4W_SIZE(x) lean_sarray_size(x)
 #define L4W_PTR(x) lean_sarray_cptr(x)
 
-/* ---- Hashes: Hacl_Hash_SHA1_hash, Hacl_Hash_SHA2_hash_{256,384,512} ----------------
+/* ---- Hashes: Hacl_Hash_SHA1_hash, Hacl_Hash_SHA2_hash_{224,256,384,512} ------------
  * Precondition (F*, Spec.Hash.Definitions): input_len <= max_input_length, and the C API
  * takes a uint32_t, so input_len < 2^32. Output: exactly the digest size. */
 LEAN_EXPORT lean_obj_res l4_web_hacl_hash(uint8_t alg, b_lean_obj_arg msg) {
-  size_t hn = l4w_hash_size(alg), n = L4W_SIZE(msg);
+  /* Only this entry uses code 5 for XML SHA-224. HMAC, PSS, and WebCrypto
+   * algorithm selection continue to use the existing four hash codes. */
+  size_t hn = alg == 5 ? 28 : l4w_hash_size(alg), n = L4W_SIZE(msg);
   if (hn == 0 || n > UINT32_MAX) return l4w_empty();
   lean_obj_res out = l4w_fresh(hn);
   switch (alg) {
     case 1: Hacl_Hash_SHA1_hash(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
     case 2: Hacl_Hash_SHA2_hash_256(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
     case 3: Hacl_Hash_SHA2_hash_384(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
-    default: Hacl_Hash_SHA2_hash_512(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 4: Hacl_Hash_SHA2_hash_512(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
+    case 5: Hacl_Hash_SHA2_hash_224(L4W_PTR(out), L4W_PTR(msg), (uint32_t)n); break;
   }
   return out;
 }

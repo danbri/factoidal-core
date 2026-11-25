@@ -1142,6 +1142,10 @@ def agree10 (dir : String) : IO UInt32 := do
   IO.println s!"XSLT 1.0 corpus {dir}: {n} cases"
   IO.println s!"  XSLT 1.0 engine (L4Factoidal.XSLT): {p10} pass"
   IO.println s!"  XSLT 4.0 engine (L4Factoidal.XSLT4): {p4} pass"
+  -- The score lines of the scoreboard: the denominator is every case of
+  -- the manifest; a case whose files are not readable is a failure.
+  IO.println s!"xalan XSLT 1.0 engine: {p10} pass, {arr.size - p10} fail (out of {arr.size}); {arr.size - n} unreadable"
+  IO.println s!"xalan XSLT 4.0 engine, 1.0 stylesheets: {p4} pass, {arr.size - p4} fail (out of {arr.size}); {arr.size - n} unreadable"
   IO.println s!"  both pass: {both}; the two results agree: {agreeN}"
   IO.println s!"  pass with XSLT 1.0 only: {only10.length}"
   for x in only10 do IO.println s!"    {x}"

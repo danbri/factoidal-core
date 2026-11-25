@@ -1,0 +1,237 @@
+name: Dataflow stage equivalence check
+
+on:
+  push:
+    branches: [main, wip/604-static-pack-spec]
+    paths:
+      - 'formal/lean4/L4Factoidal/Dataflow/Stage.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Pipeline.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Dataflow/Stage.lean'
+      - 'formal/lean4/L4Factoidal/Dataflow/Pipeline.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'tools/lean-hygiene-audit.py'
+      - 'tools/lean-partial-def-baseline.txt'
+      - '.github/workflows/check-dataflow-stage.yml'
+  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      group:
+        required: true
+        type: string
+      modules:
+        required: true
+        type: string
+      theorems:
+        required: true
+        type: string
+      timeout_minutes:
+        required: true
+        type: number
+      runtime_fixture:
+        description: Optional executable fixture module from the same fresh source closure
+        required: false
+        type: string
+        default: ''
+      generated_example:
+        description: Also compile the fixture's --emit-example Lean output
+        required: false
+        type: boolean
+        default: false
+      example_markdown:
+        description: Optional repository Markdown whose Lean examples must compile
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  dataflow-stage:
+    if: inputs.group || github.event_name != 'pull_request' || github.head_ref != 'wip/604-static-pack-spec'
+    name: Lean proofs (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.job_timeout_minutes }}
+    strategy:
+      matrix:
+        include:
+          - group: ${{ inputs.group || 'dataflow-stage' }}
+            job_timeout_minutes: ${{ inputs.timeout_minutes || 30 }}
+            modules: ${{ inputs.modules || 'L4Factoidal.Dataflow.Pipeline' }}
+            larger_dependency_budgets: |-
+              L4Factoidal/OWL/RLSemantics.lean
+              L4Factoidal/Storage/Sbm11/VarintWordTheorems.lean
+            theorems: ${{ inputs.theorems || 'L4Factoidal.Dataflow.Pipeline.toStage_eq_direct' }}
+    env:
+      LEAN_STACK_SIZE_KB: 16384
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Compile fresh source dependencies and theorem modules
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          PROOF_MODULES: ${{ matrix.modules }}
+          LARGER_DEPENDENCY_BUDGETS: ${{ matrix.larger_dependency_budgets }}
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          mkdir -p "$PROOF_DIR"
+          mkdir "$PROOF_DIR/modules"
+          export LEAN_PATH="$PROOF_DIR/modules"
+          {
+            git rev-parse HEAD
+            cat lean-toolchain
+            (
+              ulimit -v 4194304
+              lean --version
+            )
+          } 2>&1 | tee "$PROOF_DIR/source.txt"
+          python3 -u - <<'PY' 2>&1 | tee "$PROOF_DIR/lean.log"
+          import hashlib, os, pathlib, re, shlex, subprocess, sys
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          proof_modules = os.environ['PROOF_MODULES'].split()
+          larger_dependencies = set(os.environ.get('LARGER_DEPENDENCY_BUDGETS', '').split())
+          seen, order = set(), []
+
+          def module_source(name):
+              return pathlib.Path(name.replace('.', '/') + '.lean')
+
+          def visit(name):
+              if name in seen:
+                  return
+              seen.add(name)
+              source = module_source(name)
+              if not source.is_file():
+                  if name.startswith('L4Factoidal.'):
+                      raise SystemExit(f'Missing local dependency: {name}')
+                  return
+              for line in source.read_text().splitlines():
+                  if re.match(r'^\s*(?:public\s+)?import\s+', line):
+                      for dep in re.sub(r'^\s*(?:public\s+)?import\s+', '', line).split('--')[0].split():
+                          visit(dep)
+              order.append(source)
+
+          for name in proof_modules:
+              visit(name)
+          proof_sources = {module_source(name) for name in proof_modules}
+          failed = False
+          for source in order:
+              target = out / 'modules' / source.with_suffix('.olean')
+              timing = out / 'timings' / source.with_suffix('.txt')
+              target.parent.mkdir(parents=True, exist_ok=True)
+              timing.parent.mkdir(parents=True, exist_ok=True)
+              with (out / 'source.txt').open('a') as f:
+                  print(hashlib.sha256(source.read_bytes()).hexdigest(), source, file=f)
+              strict = source in proof_sources
+              if str(source) in larger_dependencies and not strict:
+                  duration, os_memory_kib, lean_memory = '360s', '6291456', '-M4096'
+              else:
+                  duration, os_memory_kib, lean_memory = '180s', '4194304', '-M2048'
+              cmd = [
+                  'timeout', '--kill-after=10s', duration, '/usr/bin/time', '-v', '-o', str(timing),
+                  'bash', '-c', 'ulimit -v "$1" && shift && exec "$@"', 'lean-limit', os_memory_kib,
+                  'lean', '-j1', '-s16384', lean_memory,
+                  *(['-DwarningAsError=true'] if strict else []), '-o', str(target), str(source),
+              ]
+              print(shlex.join(cmd), flush=True)
+              result = subprocess.run(cmd)
+              print(f'{source}: compile_exit={result.returncode}', flush=True)
+              if result.returncode or not target.is_file():
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
+      - name: Require individual theorem axiom reports
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          REQUIRED_THEOREMS: ${{ matrix.theorems }}
+        run: |
+          set -euo pipefail
+          python3 tools/lean-hygiene-audit.py --build-log "$PROOF_DIR/lean.log" \
+            2>&1 | tee "$PROOF_DIR/hygiene.log"
+          python3 - <<'PY'
+          import os, pathlib, re
+          out = pathlib.Path(os.environ['PROOF_DIR'])
+          required = os.environ['REQUIRED_THEOREMS'].split()
+          reports = re.findall(
+              r"'([^']+)' (?:depends on axioms: \[[^\]]*\]|does not depend on any axioms)",
+              (out / 'lean.log').read_text(),
+          )
+          missing = set(required) - set(reports)
+          if missing:
+              raise SystemExit('Missing axiom reports for ' + ', '.join(sorted(missing)))
+          (out / 'checked-theorems.txt').write_text('\n'.join(required) + '\n')
+          PY
+      - name: Execute the fresh fixture and check generated Lean source
+        if: inputs.runtime_fixture != ''
+        working-directory: formal/lean4
+        shell: bash
+        env:
+          PROOF_DIR: ${{ runner.temp }}/${{ matrix.group }}-evidence
+          RUNTIME_FIXTURE: ${{ inputs.runtime_fixture }}
+          GENERATED_EXAMPLE: ${{ inputs.generated_example }}
+          EXAMPLE_MARKDOWN: ${{ inputs.example_markdown }}
+        run: |
+          set -euo pipefail
+          unset LEAN_SRC_PATH
+          export LEAN_PATH="$PROOF_DIR/modules"
+          module="${RUNTIME_FIXTURE//.//}.lean"
+          test -f "$module"
+          ulimit -v 4194304
+          args=(-j1 -s16384 -M2048 -DwarningAsError=true)
+          timeout --kill-after=10s 180s lean "${args[@]}" --run "$module" \
+            2>&1 | tee "$PROOF_DIR/runtime.log"
+          if [ "$GENERATED_EXAMPLE" = true ]; then
+            timeout --kill-after=10s 180s lean "${args[@]}" --run "$module" --emit-example \
+              > "$PROOF_DIR/generated-example.lean"
+            test -s "$PROOF_DIR/generated-example.lean"
+            timeout --kill-after=10s 180s lean "${args[@]}" "$PROOF_DIR/generated-example.lean" \
+              2>&1 | tee "$PROOF_DIR/generated-example.log"
+          fi
+          if [ -n "$EXAMPLE_MARKDOWN" ]; then
+            python3 - <<'PY'
+          import os, pathlib, re
+          source = pathlib.Path('../..', os.environ['EXAMPLE_MARKDOWN'])
+          examples = re.findall(r'```lean\n(.*?)\n```', source.read_text(), re.S)
+          if not examples:
+              raise SystemExit('No Lean examples in ' + str(source))
+          out = pathlib.Path(os.environ['PROOF_DIR'], 'guide-examples')
+          out.mkdir()
+          for i, code in enumerate(examples, 1):
+              (out / f'example-{i}.lean').write_text(code + '\n')
+          print(f'Compiling {len(examples)} developer-guide Lean examples')
+          PY
+            for example in "$PROOF_DIR/guide-examples/"*.lean; do
+              timeout --kill-after=10s 180s lean "${args[@]}" "$example" \
+                2>&1 | tee -a "$PROOF_DIR/guide-examples.log"
+            done
+          fi
+      - name: Preserve exact-source compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.group && format('lean-evidence-{0}', inputs.group) || format('timer-partition-lean-evidence-{0}', matrix.group) }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.group }}-evidence/
+            !${{ runner.temp }}/${{ matrix.group }}-evidence/modules/**
+          if-no-files-found: warn
+          retention-days: 30

@@ -1718,6 +1718,192 @@ def clampShapeRadii (v : List Tok) : List Tok := Id.run do
     out := out.push (if radii then clampTok0 t else t)
   return out.toList
 
+/-! ### `shape()` with arcs, and `path()` as `shape()` (CSS Shapes 2 §3.2.1 "Interpolating
+`shape()`")
+
+Two `shape()` values interpolate command by command when their commands agree. The numbers
+of an `arc` (end point, radii, `rotate` angle, 0deg when not written) interpolate; its
+`cw` and `large` flags are each end's at or past that end, and between the ends a flag is
+set when either end sets it. A `path()` beside a `shape()` is the `shape()` it stands for:
+its first move is `from`, an absolute command is a `to` command and a relative one a `by`
+command, its numbers lengths in px. -/
+
+/-- Path data as written: each command with its numbers, its case kept (a relative command
+stays relative); numbers after a command's own repeat it, and after a move they draw
+lines (SVG 2 §9.3). None when the text is not path data. One pass, no recursion. -/
+def pathRawOf (text : String) : Option (List (Char × List Int)) := Id.run do
+  let mut rest := text.toList
+  let mut out : Array (Char × List Int) := #[]
+  let mut cmd : Option Char := none
+  let mut args : Array Int := #[]
+  let mut ok := true
+  for _ in [0:text.length + 2] do
+    match cmd with
+    | some c =>
+      match pathArgs c.toUpper with
+      | some n =>
+        if args.size == n then
+          out := out.push (c, args.toList)
+          args := #[]
+          cmd := if n == 0 then none else some (if c == 'M' then 'L' else if c == 'm' then 'l' else c)
+      | none => ok := false
+    | none => pure ()
+    match rest with
+    | [] => break
+    | c :: r =>
+      if c.isWhitespace || c == ',' then rest := r
+      else if c.isAlpha && (pathArgs c.toUpper).isSome && c != 'e' && c != 'E' then
+        if !args.isEmpty then ok := false
+        cmd := some c
+        rest := r
+      else match takeNumber rest with
+        | some (numText, r') =>
+          match Fix.parse (String.ofList numText) with
+          | some v => args := args.push v; rest := r'
+          | none => ok := false; rest := r'
+        | none => ok := false; rest := r
+  if !ok || !args.isEmpty || out.isEmpty then return none
+  return some out.toList
+
+/-- A length in px. -/
+def pxTok (n : Int) : Tok := .dim n "px"
+
+/-- One path command as the `shape()` command it stands for; none for a command with the
+wrong count of numbers. An arc's flags are set when not 0; its angle is left out when 0. -/
+def shapeCommandOf (c : Char) (a : List Int) : Option (List Tok) :=
+  let way := Tok.ident (if c.isLower then "by" else "to")
+  match c.toUpper, a with
+  | 'M', [x, y] => some [.ident "move", way, pxTok x, pxTok y]
+  | 'L', [x, y] => some [.ident "line", way, pxTok x, pxTok y]
+  | 'H', [x] => some [.ident "hline", way, pxTok x]
+  | 'V', [y] => some [.ident "vline", way, pxTok y]
+  | 'Q', [x1, y1, x, y] => some [.ident "curve", way, pxTok x, pxTok y, .ident "with", pxTok x1, pxTok y1]
+  | 'C', [x1, y1, x2, y2, x, y] =>
+    some [.ident "curve", way, pxTok x, pxTok y, .ident "with", pxTok x1, pxTok y1, .slash, pxTok x2, pxTok y2]
+  | 'T', [x, y] => some [.ident "smooth", way, pxTok x, pxTok y]
+  | 'S', [x2, y2, x, y] => some [.ident "smooth", way, pxTok x, pxTok y, .ident "with", pxTok x2, pxTok y2]
+  | 'A', [rx, ry, rot, large, sweep, x, y] =>
+    some ([.ident "arc", way, pxTok x, pxTok y, .ident "of", pxTok rx, pxTok ry] ++
+      (if sweep != 0 then [.ident "cw"] else []) ++ (if large != 0 then [.ident "large"] else []) ++
+      (if rot == 0 then [] else [.ident "rotate", .dim rot "deg"]))
+  | 'Z', [] => some [.ident "close"]
+  | _, _ => none
+
+/-- A value that starts with `path()` as the same value with `shape()` in its place; none
+when it does not start with `path()`, or its path data does not start with a move. -/
+def shapeOfPath (v : List Tok) : Option (List Tok) :=
+  match v with
+  | .op "path" :: rest =>
+    let (fill, rest) : List Tok × List Tok := match rest with
+      | .ident f :: .comma :: r => (if f == "nonzero" then [] else [.ident f], r)
+      | r => ([], r)
+    match rest with
+    | .str body :: .close :: post =>
+      let inner := if body.length ≥ 2 then ((body.drop 1).toString.dropEnd 1).toString else body
+      match pathRawOf inner with
+      | some ((m, [x, y]) :: segs) =>
+        if m.toUpper != 'M' then none else
+        (segs.mapM (m := Option) fun (c, a) => shapeCommandOf c a).map fun (cs : List (List Tok)) =>
+          [Tok.op "shape"] ++ fill ++ [Tok.ident "from", pxTok x, pxTok y] ++
+            cs.foldl (fun (acc : List Tok) (c : List Tok) => acc ++ (Tok.comma :: c)) [] ++ (Tok.close :: post)
+      | _ => none
+    | _ => none
+  | _ => none
+
+/-- An `arc` command of `shape()` as its numbers (the command up to its flags, then
+`rotate` and its angle, 0deg when not written) and its flags `cw` and `large`; none for
+another command. -/
+def arcOf (item : List Tok) : Option (List Tok × Bool × Bool) :=
+  match item with
+  | .ident "arc" :: rest => Id.run do
+    let mut core : Array Tok := #[.ident "arc"]
+    let mut cw := false
+    let mut large := false
+    let mut angle : Tok := .dim 0 "deg"
+    let mut rotNext := false
+    for t in rest do
+      if rotNext then
+        angle := t
+        rotNext := false
+      else if t == .ident "cw" then cw := true
+      else if t == .ident "ccw" then cw := false
+      else if t == .ident "large" then large := true
+      else if t == .ident "small" then large := false
+      else if t == .ident "rotate" then rotNext := true
+      else core := core.push t
+    return some (core.toList ++ [.ident "rotate", angle], cw, large)
+  | _ => none
+
+/-- An arc's numbers and flags as its computed text: the flags before `rotate` (`ccw` and
+`small` are the defaults and are left out), and no `rotate` for an angle of 0. -/
+def arcText (core : List Tok) (cw large : Bool) : List Tok :=
+  let n := core.length
+  let angle := core.drop (n - 2)
+  let zero := match angle with
+    | [_, .dim 0 _] => true
+    | [_, .num 0] => true
+    | _ => false
+  core.take (n - 2) ++ (if cw then [.ident "cw"] else []) ++ (if large then [.ident "large"] else []) ++
+    (if zero then [] else angle)
+
+/-- An arc flag at progress `p`: the start's at or before the start, the end's at or past
+the end, and set between them when either end sets it. -/
+def arcFlag (p : Int) (x y : Bool) : Bool := if p ≤ 0 then x else if one ≤ p then y else x || y
+
+/-- Kind: correctness. Says: at or before the start an arc flag is the start's. -/
+theorem arcFlag_start (p : Int) (x y : Bool) (h : p ≤ 0) : arcFlag p x y = x := by
+  simp [arcFlag, h]
+
+/-- Kind: correctness. Says: at or past the end an arc flag is the end's. -/
+theorem arcFlag_end (p : Int) (x y : Bool) (h : one ≤ p) : arcFlag p x y = y := by
+  have : ¬ p ≤ 0 := by unfold Fix.one Fix.scale at h; omega
+  simp [arcFlag, this, h]
+
+/-- Kind: correctness. Says: between the ends an arc flag is set exactly when either end
+sets it. -/
+theorem arcFlag_between (p : Int) (x y : Bool) (h0 : 0 < p) (h1 : p < one) : arcFlag p x y = (x || y) := by
+  have a : ¬ p ≤ 0 := by omega
+  have b : ¬ one ≤ p := by omega
+  simp [arcFlag, a, b]
+
+/-- Two commands of `shape()` at progress `p`: two arcs by their numbers and flags, others
+component-wise; none when they do not combine. -/
+def lerpShapeItem (p : Int) (a b : List Tok) : Option (List Tok) :=
+  match arcOf a, arcOf b with
+  | some (ca, cwa, la), some (cb, cwb, lb) =>
+    (lerpList p ca cb).map fun c => arcText c (arcFlag p cwa cwb) (arcFlag p la lb)
+  | none, none => lerpList p a b
+  | _, _ => none
+
+/-- The arguments of a function up to its `)` (the `(` already read) and the tokens after
+it; none when it is not closed. A tail call each step, at most `fuel`. -/
+def closeSplit : Nat → Nat → List Tok → List Tok → Option (List Tok × List Tok)
+  | 0, _, _, _ => none
+  | _ + 1, _, _, [] => none
+  | fuel + 1, depth, acc, t :: r =>
+    match t with
+    | .close => if depth == 0 then some (acc.reverse, r) else closeSplit fuel (depth - 1) (t :: acc) r
+    | .op _ => closeSplit fuel (depth + 1) (t :: acc) r
+    | _ => closeSplit fuel depth (t :: acc) r
+
+/-- Two values that start with `shape()` (or a `path()` beside a `shape()`) at progress
+`p`, command by command; none when either is not of that form or their commands differ. -/
+def lerpShapes (p : Int) (a b : List Tok) : Option (List Tok) :=
+  let conv := fun (x y : List Tok) =>
+    if x.head? == some (.op "path") && y.head? == some (.op "shape") then shapeOfPath x else some x
+  match conv a b, conv b a with
+  | some (.op "shape" :: ra), some (.op "shape" :: rb) =>
+    match closeSplit (ra.length + 1) 0 [] ra, closeSplit (rb.length + 1) 0 [] rb with
+    | some (ia, pa), some (ib, pb) =>
+      let xs := commaItems ia
+      let ys := commaItems ib
+      if xs.length != ys.length then none else
+      match (xs.zip ys).mapM (fun (x, y) => lerpShapeItem p x y), lerpList p pa pb with
+      | some zs, some post => some ([Tok.op "shape"] ++ joinCommas zs ++ .close :: post)
+      | _, _ => none
+    | _, _ => none
+  | _, _ => none
+
 /-- Two components of which one is a zero of the other's type: a number 0 beside a
 length is that length's 0, and a length of 0 beside a number is the number 0 (a side of
 `border-image-outset` is a number or a length, and 0 is the same side either way). Other
@@ -1846,7 +2032,9 @@ def lerpKind (k : Kind) (p : Int) (a b : Value) : Option Value :=
       let (ib, hb) := insetForm b
       if ha && hb then (lerpList p (clampShapeRadii ia) (clampShapeRadii ib)).map fun r =>
         ((items (clampShapeRadii r)).map insetText).flatten
-      else (lerpList p (expandPaths a) (expandPaths b)).map fun r => collapsePaths (clampShapeRadii r)
+      else match lerpShapes p a b with
+        | some r => some r
+        | none => (lerpList p (expandPaths a) (expandPaths b)).map fun r => collapsePaths (clampShapeRadii r)
   | .gapList => (combineGap (lerpList p) a b).map fun r => r.map clampTok0
   | .radius =>
     let pair := fun (v : List Tok) => match v with
@@ -2474,6 +2662,26 @@ private def corner2 (a b : String) (p : Int) : String :=
 #guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" (-300000000) == "circle(0px at 17.5px 82.5%)"
 #guard at_ .shape "ellipse(10px 20px at 25px 75px)" "ellipse(50px 100px at 50px 50px)" (-300000000) == "ellipse(0px 0px at 17.5px 82.5px)"
 #guard at_ .shape "circle(10px at 25px 75%)" "circle(50px at 50px 50%)" half == "circle(30px at 37.5px 62.5%)"
+-- shape() arcs and path() beside shape() (css/css-masking/animations/clip-path-interpolation-shape.html)
+#guard at_ .shape "shape(from 5% 5px, arc by 15% -5px of 30px 30px cw large rotate 30deg)"
+  "shape(from 15% 15px, arc by 25% -15px of 20px 20px cw rotate 270deg)" half ==
+  "shape(from 10% 10px, arc by 20% -10px of 25px 25px cw large rotate 150deg)"
+#guard at_ .shape "shape(from 5% 5px, arc by 15% -5px of 30px 30px cw large rotate 30deg)"
+  "shape(from 15% 15px, arc by 25% -15px of 20px 20px cw rotate 270deg)" one ==
+  "shape(from 15% 15px, arc by 25% -15px of 20px 20px cw rotate 270deg)"
+#guard at_ .shape "shape(from 5px 5px, arc to 25px 20px of 10px 5px)" "shape(from 5px 5px, arc to 25px 20px of 10px 5px cw)"
+  (-300000000) == "shape(from 5px 5px, arc to 25px 20px of 10px 5px)"
+#guard at_ .shape "shape(from 5px 5px, hline to 5px, vline to -5px, close)" "path(\"M 15 15 H 25 V -15 Z\")" half ==
+  "shape(from 10px 10px, hline to 15px, vline to -10px, close)"
+#guard at_ .shape "path(\"M 5 5 q 0 80 10 10 c 20 50 25 70 30 20\")"
+  "shape(from 15px 15px, curve by 20px 0px with 10px 60px, curve by 20px 30px with 30px 40px / -5px 100px)" half ==
+  "shape(from 10px 10px, curve by 15px 5px with 5px 70px, curve by 25px 25px with 25px 45px / 10px 85px)"
+#guard at_ .shape "path(\"M 5 5 A 10,20 0 0,0 15,-15\")" "shape(from 15px 15px, arc to 5px -25px of 20px 30px cw rotate 90deg)"
+  half == "shape(from 10px 10px, arc to 10px -20px of 15px 25px cw rotate 45deg)"
+#guard at_ .shape "shape(from 5% 5px, line to 10px 10%) margin-box" "path(\"M 15 15 L 20 20\") margin-box" half ==
+  "shape(from calc(2.5% + 7.5px) 10px, line to 15px calc(5% + 10px)) margin-box"
+-- two paths still interpolate as path data
+#guard at_ .shape "path(\"M 0 0 L 10 10\")" "path(\"M 0 0 L 20 20\")" half == "path(\"M 0 0 L 15 15\")"
 -- transform-origin keywords (css-transforms/animation/transform-origin-composition.html)
 #guard toText (originWords (parse "top right 20px")) == "100% 0% 20px"
 #guard toText (originWords (parse "left top 80px")) == "0% 0% 80px"

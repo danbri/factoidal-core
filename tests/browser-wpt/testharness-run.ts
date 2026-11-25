@@ -58,6 +58,8 @@
 import {dirname,join,resolve} from "node:path";
 import {fileURLToPath as fromFileUrl} from "node:url";
 import {wptDomains,wptFetcher,wptPorts,wptRoute,wptSubdomains,type WptServe} from "./wpt-hosts.ts";
+// @ts-ignore plain JavaScript module of the Hub
+import {loadImports} from "../../docs/web/hub/foafnaut/page-load.mjs";
 
 const args=Deno.args,opt=(name:string,fallback="")=>{const i=args.indexOf(name);return i>=0?args[i+1]:fallback;};
 const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
@@ -554,6 +556,17 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       if(source===undefined)sheetFailures.push({nodeId:sh.nodeId,reason:"not fetched"});
       else sheetResources.push({nodeId:sh.nodeId,source,url:sh.url});
     }
+    // The sheets that the page's sheets import, loaded as the page host loads them
+    // (native_html_document.ts, page-load.mjs loadImports): the engine names them; each is
+    // given in `imported`. Without them a face declared in an imported sheet was never loaded
+    // (issue 884).
+    const imported:{url:string;source:string}[]=[];
+    if(sheetResources.length||/<style/i.test(html)){
+      try{
+        await loadImports(async(list:{url:string;source:string}[])=>engine.inspect(html,{url,resources:sheetResources,...(list.length?{imported:list}:{})}),
+          async(sheetURL:string)=>{const source=await readText(sheetURL);if(source===undefined)throw new Error("not fetched");return {url:sheetURL,source};},imported);
+      }catch{/* an engine without imports: the page is laid out without them */}
+    }
     // The page's web fonts (@font-face), loaded as a browser host loads them
     // (native_html_document.ts loadWebFonts): Lean names the faces the page's text uses
     // (fontFaces), the host fetches the first URL of each that it can and gives the bytes to
@@ -563,9 +576,9 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
     const webFonts:{url:string;sha256:string}[]=[];
     const hasFace=(t:string)=>/@font-face/i.test(t);
     const fontEngine=engine as unknown as {fontFaces?:(s:string,o:Record<string,unknown>)=>{faces?:{family:string;sources:string[]}[]};webFontLoad?:(b:Uint8Array,sha:string)=>unknown};
-    if((hasFace(html)||sheetResources.some(r=>hasFace(r.source)))&&typeof fontEngine.fontFaces==="function"&&typeof fontEngine.webFontLoad==="function"){
+    if((hasFace(html)||sheetResources.some(r=>hasFace(r.source))||imported.some(r=>hasFace(r.source)))&&typeof fontEngine.fontFaces==="function"&&typeof fontEngine.webFontLoad==="function"){
       try{
-        const faces=fontEngine.fontFaces(html,{url,resources:sheetResources}).faces??[];
+        const faces=fontEngine.fontFaces(html,{url,resources:sheetResources,...(imported.length?{imported}:{})}).faces??[];
         for(const face of faces.slice(0,16))for(const src of face.sources){
           let sha=fontShas.get(src);
           if(sha===undefined){
@@ -581,7 +594,8 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         }
       }catch{/* an engine without the op, or a page it refuses */}
     }
-    const layout=sheetResources.length||sheetFailures.length||webFonts.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,...(webFonts.length?{webFonts}:{})}}:{};
+    const layout=sheetResources.length||sheetFailures.length||webFonts.length||imported.length?{layout:{url,resources:sheetResources,resourceFailures:sheetFailures,
+      ...(webFonts.length?{webFonts}:{}),...(imported.length?{imported}:{})}}:{};
     // The images of a canvas test (<img src>), held by the engine by their URL, as a host
     // holds the images it fetched: Canvas 2D draws them (docs/designissues/2026-11-08-canvas-2d.md).
     // The font of the canvas text tests (an @font-face the engine does not load for

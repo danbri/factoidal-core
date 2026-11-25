@@ -197,6 +197,33 @@ export function scrollFirst({now,scrollAt,changedAt,shownAt}) {
   return now-scrollAt<SCROLL_QUIET_MS||(shownAt!==undefined&&now-shownAt<SCROLL_QUIET_MS);
 }
 
+/** A start in slices (WebScripts action `start` with `sliceSteps`): the steps of the page's
+scripts before the first turn's answer. The classic scripts run whole; the module scripts, the
+events and the tasks due at once then stop between two of them past this, the turn says
+`startMore`, and each timer turn (`advance` with `sliceSteps`) goes on, so the page is shown
+after its classic scripts and its first slice, not after every script it has
+(LeanJS.startSome; theorems startSome_never, startSome_resume). */
+export const startSliceSteps=turnSliceSteps;
+
+/** Scripts first: the fewest and the most a change of the page waits while its start has not
+finished (ms), and how many times the last layout's time it waits. */
+export const SCRIPTS_HOLD_MIN_MS=30,SCRIPTS_HOLD_MAX_MS=5000,SCRIPTS_HOLD_LAYOUTS=3;
+
+/** Scripts first, the rule of every host that starts a page in slices: whether a change of the
+page by its scripts (`changedAt`, undefined when none waits yet) waits, because the page's start
+has not finished (`more`: the last turn's `startMore`). A layout of a large page takes a second
+or more, and a start makes many small changes: drawn after each slice, the page would spend its
+time in layouts of states nobody reads. The change is drawn when the start ends, or after
+SCRIPTS_HOLD_LAYOUTS times the last layout (`layoutMs`), at least SCRIPTS_HOLD_MIN_MS and at
+most SCRIPTS_HOLD_MAX_MS: at most a quarter of a long start goes to layouts, and a page whose
+layout takes a few milliseconds is still drawn thirty times a second. */
+/** @param {{now:number,more:boolean,changedAt?:number,layoutMs?:number}} o */
+export function scriptsFirst({now,more,changedAt,layoutMs}) {
+  if(!more)return false;
+  if(changedAt===undefined)return true;
+  return now-changedAt<Math.min(SCRIPTS_HOLD_MAX_MS,Math.max(SCRIPTS_HOLD_MIN_MS,SCRIPTS_HOLD_LAYOUTS*(layoutMs??0)));
+}
+
 /** Whether an engine's error says the page's script session is gone: the engine holds no
 session (`no session`), holds another page's (`not the current session`), or ended this one
 (`session ended`, WebScripts.sealAnswer). Asking that session again can only fail again. */

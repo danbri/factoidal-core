@@ -67,8 +67,24 @@ private def bitmapOutlineExact (index : Nat) : Bool :=
 
 #guard (List.range 95).all fun n => bitmapOutlineExact (n+32)
 
+/-- The ASCII geometries are fixed and shared by all layouts. Build the table lazily
+so a font-backed session that never uses the bitmap font pays no outline work. -/
+private def bitmapOutlines : Thunk (Array (List Rendering.Geometry)) :=
+  Thunk.mk fun _ => Array.ofFn fun i : Fin 128 => bitmapOutline i.val
+
+def bitmapOutlineCached (index : Nat) : List Rendering.Geometry :=
+  if h : index < 128 then bitmapOutlines.get[index]'(by simpa [bitmapOutlines, Thunk.get] using h)
+  else bitmapOutline index
+
+/-- The cached bitmap profile returns the same geometry in the same order. -/
+theorem bitmapOutlineCached_eq (index : Nat) :
+    bitmapOutlineCached index = bitmapOutline index := by
+  by_cases h : index < 128 <;> simp [bitmapOutlineCached, h, bitmapOutlines, Thunk.get]
+
+#print axioms bitmapOutlineCached_eq
+
 def asciiFont : Rendering.Layout.FontProfile :=
-  {family := "factoidal-ascii-bitmap-v1",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := bitmapOutline, admits := fun n => 32 <= n && n <= 126}
+  {family := "factoidal-ascii-bitmap-v1",unitsPerEm := 7,advance := 6, ascent := 7,descent := 0,outline := bitmapOutlineCached, admits := fun n => 32 <= n && n <= 126}
 
 /-- The HTML parser already adjusted element and foreign-attribute names.
 This conversion transfers the semantic DOM values directly, without XML text. -/
@@ -94,11 +110,38 @@ def documentElement (dom : DOM.Dom) : Option Nat :=
     (document.kids.find? (fun id => DOM.Dom.isHtmlElement (dom.get id) "html")).orElse fun _ =>
       document.kids.find? (fun id => (dom.get id).type == .element)
 
+private def svgStyleAttribute (a : XML.NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone && a.name.localPart == "style"
+
+/-- Hand the SVG reader the browser's already-selected author values. The SVG
+reader consumes a restricted declaration list; a value containing a delimiter
+cannot be embedded in it. The original DOM and the presentation attributes keep
+their identity. The SVG reader will still check each resulting paint value. -/
+private def svgAuthorAttributes (attrs : List XML.NamespaceAttribute)
+    (values : List (String × String)) : List XML.NamespaceAttribute :=
+  let retained := attrs.filter (fun a => !svgStyleAttribute a)
+  let value := String.intercalate ";" (values.filterMap fun (key,text) =>
+    if text.contains ';' then none else some (key ++ ":" ++ text))
+  if value.isEmpty then retained
+  else retained ++ [{name := ⟨none,"style"⟩,value}]
+
+private theorem svgAuthorAttributes_preservePresentation (attrs : List XML.NamespaceAttribute)
+    (values : List (String × String)) :
+    (svgAuthorAttributes attrs values).filter (fun a => !svgStyleAttribute a) =
+      attrs.filter (fun a => !svgStyleAttribute a) := by
+  simp only [svgAuthorAttributes]
+  split <;> simp [List.filter_filter, svgStyleAttribute]
+
+#print axioms svgAuthorAttributes_preservePresentation
+
 /-- Convert the original HTML element subtree bottom-up. Every original child
 index survives, including text/comments; no host extraction or XML reparse. A `script`
 element (HTML's or SVG's) draws nothing: it stays in its place as an empty comment, so the
-SVG reader does not meet it and the indices after it are unchanged. -/
-def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceNode) := do
+SVG reader does not meet it and the indices after it are unchanged. When the HTML
+cascade is supplied, SVG style elements likewise keep their child position; their rules
+have already been consumed with the rest of the document's author styles. -/
+def documentNamespaceTree (dom : DOM.Dom) (cascade : Option (Array Rendering.CSS.Computed) := none) :
+    Except String (Nat × XML.NamespaceNode) := do
   if dom.nodes.size == 0 then throw "HTML document root missing"
   let some root := documentElement dom
     | throw "HTML element root missing"
@@ -112,8 +155,9 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
     | (finished,id)::rest =>
       let some node := dom.nodes[id]? | throw "invalid node in HTML namespace tree"
       pending := rest
-      if node.type == .element && node.lname == "script" && id != root &&
-          (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS) then
+      if node.type == .element && id != root &&
+          ((node.lname == "script" && (node.ns == some DOM.htmlNS || node.ns == some DOM.svgNS)) ||
+           (cascade.isSome && node.lname == "style" && node.ns == some DOM.svgNS)) then
         values := values.insert id (.other (.comment ""))
       else if node.type == .element then
         if !finished then pending := node.kids.toList.map (fun child => (false,child)) ++ ((true,id)::rest)
@@ -124,6 +168,11 @@ def documentNamespaceTree (dom : DOM.Dom) : Except String (Nat × XML.NamespaceN
           -- lowered SVG text; page content (markup or script) cannot give one.
           let attrs := (node.attrs.toList.filter (fun a => a.ns != some DOM.xmlnsNS && a.ns != some NativeSVG.glyphNS)).map fun a =>
             ({name := ⟨a.ns,a.lname⟩,value := a.value} : XML.NamespaceAttribute)
+          let attrs := if node.ns == some DOM.svgNS then
+            match cascade.bind (fun styles => styles[id]?) with
+            | some style => svgAuthorAttributes attrs style.svgAuthor
+            | none => attrs
+          else attrs
           values := values.insert id (.element ⟨node.ns,node.lname⟩ attrs children)
       else if node.type == .text || node.type == .cdata then
         values := values.insert id (.other (.text node.data))
@@ -234,11 +283,10 @@ environment, so that the list a host fetches (`inspect`) and every layout name t
 image whatever the window's size. Candidates in a format the engine does not decode are
 passed over, and the `src` stands when nothing else is left. -/
 
-/-- A URL whose path names an image format the engine has no decoder for: WebP, AVIF, JPEG
-XL, HEIF. -/
+/-- Formats excluded as alternate source-set candidates. -/
 def undecodablePath (url : String) : Bool :=
   let path := ((((url.splitOn "#").headD "").splitOn "?").headD "").toLower
-  [".webp", ".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending
+  [".avif", ".jxl", ".heic", ".heif"].any fun ending => path.endsWith ending
 
 /-- The environment an image source is chosen in: one device pixel to the CSS pixel, a
 viewport of 1280 by 800. -/
@@ -277,14 +325,40 @@ theorem imageSource_plain (dom : DOM.Dom) (id : Nat) (h : plainImage dom id = tr
     imageSource dom id = plainSource dom id := by
   simp [imageSource, h]
 
-/-- The image of each HTML `img`, by node, as a key of the image store
-(`NativeSVG.imageKey`: a `data:` URI as it stands, another URL resolved). -/
+/-- An image handled by the static decoder in an `object` or `embed`. An explicit type
+takes precedence over a filename; the URL can also be a typed data URL. -/
+private def embeddedImageSource (n : DOM.Node) : Option String := do
+  let sourceAttr ←
+    if DOM.Dom.isHtmlElement n "object" then some "data"
+    else if DOM.Dom.isHtmlElement n "embed" then some "src"
+    else none
+  let url := (Rendering.CSS.attrValue n sourceAttr).trimAscii.toString
+  if url.isEmpty then none else do
+    let mimeType := fun s : String => ((s.splitOn ";").headD "").trimAscii.toString.toLower
+    let declared := mimeType (Rendering.CSS.attrValue n "type")
+    let types := ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"]
+    let supported :=
+      if !declared.isEmpty then types.contains declared
+      else if url.toLower.startsWith "data:" then
+        let header := (((url.drop 5).toString).splitOn ",").headD ""
+        types.contains (mimeType header)
+      else
+        let path := (((url.splitOn "#").headD "").splitOn "?").headD ""
+        [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].any fun e => path.toLower.endsWith e
+    if supported then some url else none
+
+/-- HTML images, image embeds and video posters, keyed by the node that displays them.
+Resolve each nonempty source with the same image-store key as SVG images. -/
 def htmlImageKeys (dom : DOM.Dom) (base : Option String) : List (Nat × String) := Id.run do
   let mut out : Array (Nat × String) := #[]
   for id in [0:dom.size] do
     let n := dom.get id
     if DOM.Dom.isHtmlElement n "img" then
       if let some src := imageSource dom id then out := out.push (id,NativeSVG.imageKey base src)
+    else if DOM.Dom.isHtmlElement n "video" then
+      let poster := (Rendering.CSS.attrValue n "poster").trimAscii.toString
+      if !poster.isEmpty then out := out.push (id,NativeSVG.imageKey base poster)
+    else if let some src := embeddedImageSource n then out := out.push (id,NativeSVG.imageKey base src)
   return out.toList
 
 /-! ### An SVG document as the image of an `img` (2026-11-14)
@@ -343,52 +417,182 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
     return ({width := rw, height := rh, rgba},w,h)
 
+/-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
+none for a file that is not SVG or does not read. -/
+def vectorNatural (bytes : ByteArray) : Option (Option Float × Option Float × Option Float) :=
+  if !looksLikeSVG bytes then none else do
+    let xml ← String.fromUTF8? bytes
+    if xml.length > NativeSVG.maxInputChars then none
+    let .element _ attrs _ ← (XML.parseNamespaceView xml).toOption | none
+    some (NativeSVGForgiving.naturalSize attrs)
+
+/-- An SVG image file drawn for a tile of `tw` by `th` CSS pixels, its concrete object size
+(CSS Images 3 §5.3): a `viewBox` of its own is kept, with its `preserveAspectRatio`; with
+none, an image of a natural width and height is scaled to the tile as a whole, and an image
+without them takes the tile as its viewport. The picture has `imageRaster tw th` pixels. -/
+def vectorPictureAt (bytes : ByteArray) (tw th : Nat) : Option Rendering.Bitmap :=
+  if !looksLikeSVG bytes || tw == 0 || th == 0 || tw > 4096 || th > 4096 then none else
+    match (do
+      let some xml := String.fromUTF8? bytes | throw "SVG image is not UTF-8 text"
+      if xml.length > NativeSVG.maxInputChars then throw "SVG image exceeds 1048576 characters"
+      let root ← XML.parseNamespaceView xml
+      let .element name attrs children := root | throw "SVG image has no root element"
+      let attrs := match NativeSVGForgiving.naturalSize attrs, (NativeSVGText.plainAttr attrs "viewBox").isSome with
+        | (some w, some h, _), false =>
+          (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == "preserveAspectRatio")) ++
+            [NativeSVGText.mkAttr "viewBox" s!"0 0 {w} {h}", NativeSVGText.mkAttr "preserveAspectRatio" "none"]
+        | _, _ => attrs
+      let root := XML.NamespaceNode.element name attrs children
+      let (rw,rh) := NativeSVGForgiving.imageRaster tw th
+      let draw : Option String → Except String ByteArray := fun ground => do
+        let (scene,_) ← NativeSVGForgiving.parseNode (NativeSVGForgiving.imageRoot root tw th ground) rw rh none [] none #[] 64
+        pure scene.rgba
+      let white ← draw none
+      let rgba ← if (NativeSVGText.plainAttr attrs "viewport-fill").isSome then pure white
+        else do pure (alphaFrom white (← draw (some "#000000")))
+      if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
+      pure ({width := rw, height := rh, rgba} : Rendering.Bitmap) : Except String Rendering.Bitmap) with
+    | .ok b => some b
+    | .error _ => none
+
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
 `vectorPicture`. -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
   NativeSVG.imageStoreOf keys images vectorPicture
 
 /-- The picture of each `img` whose image decoded within the limits of the store. -/
-def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
-  let found := keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
+@[noinline] def picturesMap (store : NativeImage.Store) (keys : List (Nat × String)) :
+    Std.TreeMap Nat Rendering.Layout.Picture :=
+  keys.foldl (fun (out : Std.TreeMap Nat Rendering.Layout.Picture) (id,key) =>
     match store.get? key with
     | some (.ok (n,bitmap)) => out.insert id ⟨n,bitmap,store.natural key⟩
     | _ => out) {}
+
+/-- Reference lookup for the pictures of `keys` in `store`. The layout paths bind
+`picturesMap` outside their lookup closures so the native compiler does not rebuild
+the map on every call to the closure. -/
+def picturesOf (store : NativeImage.Store) (keys : List (Nat × String)) : Rendering.Layout.Pictures :=
+  let found := picturesMap store keys
   fun id => found.get? id
 
 /-! Each layout decoded the page's images again (`imageStoreOf`): 44 ms of a relayout of
 gov.uk (realperf). The engine keeps the last two stores by their keys and supplied bytes
 (`StoresKept`, in `WebDocument.Engine`; issue 390): a layout looks a store up there, and
-gives back the store it made, which the engine keeps. -/
-abbrev StoresKept := Array ((List String × List (String × ByteArray)) × NativeImage.Store)
+gives back the store it made, which the engine keeps.
+
+A new store (another image came) decoded every image of the page again, not only the new
+one: on a W3C specification whose SVG figures came in several groups, the decoding of the
+same files was about 85% of the engine's time before the first frame (2026-11-17). So a
+kept store also keeps what each file decoded to (`Decodes`), and a new store reads a file
+that a kept one decoded from there (`memoDecode`): the same answer, made once. -/
+
+/-- What files decoded to (`NativeImage.decodeWith vectorPicture`), by their bytes. -/
+abbrev Decodes := Array (ByteArray × NativeImage.Decoded)
+
+/-- Two byte arrays that `==` calls equal are equal. -/
+theorem bytes_eq_of_beq {a b : ByteArray} (h : (a == b) = true) : a = b := by
+  have h' : (a.data == b.data) = true := h
+  exact ByteArray.ext (eq_of_beq h')
+
+/-- What the bytes decode to: as `cache` has it for the same bytes, else `decodeWith`. -/
+def memoDecode (cache : Decodes) (b : ByteArray) : NativeImage.Decoded :=
+  match cache.find? (·.1 == b) with
+  | some (_,r) => r
+  | none => NativeImage.decodeWith vectorPicture b
+
+/-- Every entry of the cache is what its bytes decode to. -/
+def DecodesValid (cache : Decodes) : Prop := ∀ e ∈ cache, e.2 = NativeImage.decodeWith vectorPicture e.1
+
+/-- Kind: refinement. Says: from a valid cache, `memoDecode` answers what `decodeWith` does,
+for any bytes. Does not say: that the cache holds the bytes (then it decodes them). -/
+theorem memoDecode_eq (cache : Decodes) (valid : DecodesValid cache) (b : ByteArray) :
+    memoDecode cache b = NativeImage.decodeWith vectorPicture b := by
+  unfold memoDecode
+  split
+  · next _ b' r h =>
+    have mem := Array.mem_of_find?_eq_some h
+    have sat := Array.find?_some h
+    have v := valid _ mem
+    simp only at v sat
+    rw [v, bytes_eq_of_beq sat]
+  · rfl
+
+/-- What the supplied files that `keys` names decode to, read from `cache` where it has them. -/
+def decodesFor (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) : Decodes :=
+  ((images.filter fun (k,_) => keys.contains k).map fun (_,b) => (b, memoDecode cache b)).toArray
+
+/-- Kind: invariant. Says: what `decodesFor` makes from a valid cache is a valid cache. -/
+theorem decodesFor_valid (cache : Decodes) (valid : DecodesValid cache) (keys : List String)
+    (images : List (String × ByteArray)) : DecodesValid (decodesFor cache keys images) := by
+  intro e he
+  simp only [decodesFor, List.mem_toArray, List.mem_map] at he
+  obtain ⟨⟨k, b⟩, _, rfl⟩ := he
+  exact memoDecode_eq cache valid b
+
+/-- A kept store: the keys and supplied bytes it was made for, the store, and what the
+files it decoded decoded to. -/
+abbrev StoreEntry := (List String × List (String × ByteArray)) × NativeImage.Store × Decodes
+
+abbrev StoresKept := Array StoreEntry
 
 /-- The store of `keys` and `images`: the kept one, or a new one, which is also given back
-to be kept. -/
+to be kept. A new one decodes only the files that no kept store decoded. -/
 def storeIn (kept : StoresKept) (keys : List String) (images : List (String × ByteArray)) :
-    NativeImage.Store × Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    NativeImage.Store × Option StoreEntry :=
   match kept.find? (fun ((k,i),_) => k == keys && i == images) with
-  | some (_,store) => (store,none)
-  | none => let store := pageStore keys images; (store,some ((keys,images),store))
+  | some (_,store,_) => (store,none)
+  | none =>
+    let decs := decodesFor (kept.flatMap (·.2.2)) keys images
+    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images
+    (store,some ((keys,images),store,decs))
 
 /-- `kept` with `made` last, at most two. -/
-def keepStore (kept : StoresKept) (made : (List String × List (String × ByteArray)) × NativeImage.Store) : StoresKept :=
+def keepStore (kept : StoresKept) (made : StoreEntry) : StoresKept :=
   (if kept.size ≥ 2 then kept.extract 1 kept.size else kept).push made
 
 /-- A table is valid when each store is `imageStoreOf` of any keys and images that its own
-compare equal to (`==`, as `storeIn` compares them). -/
+compare equal to (`==`, as `storeIn` compares them), and what it keeps of the files is what
+they decode to. -/
 def StoresValid (kept : StoresKept) : Prop :=
-  ∀ e ∈ kept, ∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2 = pageStore keys images
+  ∀ e ∈ kept, (∀ keys images, (e.1.1 == keys && e.1.2 == images) = true → e.2.1 = pageStore keys images) ∧
+    DecodesValid e.2.2
+
+/-- Kind: refinement. Says: a store made with the files decoded by a valid cache is
+`pageStore`. -/
+theorem imageStoreOfWith_memo (decs : Decodes) (valid : DecodesValid decs) (keys : List String)
+    (images : List (String × ByteArray)) :
+    NativeSVG.imageStoreOfWith (memoDecode decs) keys images = pageStore keys images :=
+  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images
+
+/-- Kind: invariant. Says: the decodes of a valid table, all together, are a valid cache. -/
+theorem StoresValid.decodes (kept : StoresKept) (valid : StoresValid kept) :
+    DecodesValid (kept.flatMap (·.2.2)) := by
+  intro d hd
+  rw [Array.mem_flatMap] at hd
+  obtain ⟨e, he, hd⟩ := hd
+  exact (valid e he).2 d hd
 
 /-- Refinement: from a valid table, `storeIn` gives `imageStoreOf`. -/
 theorem storeIn_eq (kept : StoresKept) (valid : StoresValid kept) (keys : List String) (images : List (String × ByteArray)) :
     (storeIn kept keys images).1 = pageStore keys images := by
   unfold storeIn
   split
-  · next _ k store h =>
+  · next _ k store decs h =>
     obtain ⟨k1,k2⟩ := k
     have sat := Array.find?_some h
-    exact valid _ (Array.mem_of_find?_eq_some h) keys images sat
-  · rfl
+    exact (valid _ (Array.mem_of_find?_eq_some h)).1 keys images sat
+  · exact imageStoreOfWith_memo _ (decodesFor_valid _ (StoresValid.decodes kept valid) keys images) keys images
+
+/-- Kind: invariant. Says: what a new store keeps of the files, from a valid table, is valid. -/
+theorem storeIn_made_decodes (kept : StoresKept) (valid : StoresValid kept) (keys : List String)
+    (images : List (String × ByteArray)) (made : StoreEntry) (h : (storeIn kept keys images).2 = some made) :
+    DecodesValid made.2.2 := by
+  unfold storeIn at h
+  split at h
+  · simp at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact decodesFor_valid _ (StoresValid.decodes kept valid) keys images
 
 /-- The keys of a document's image store, in the order `makeReplacedIn` asks for them: the
 images of its SVG content, then the `img` elements'. -/
@@ -406,31 +610,36 @@ store yet: on a page with large images and SVG image files the first turn of its
 took 150 s in place of 8 (lean-lang.org, 2026-11-14). The work is the first frame's, done
 once and earlier; a page with no image makes an empty store. -/
 def storeAhead (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) : Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    (images : List (String × ByteArray)) : Option StoreEntry :=
   match storeKeys dom documentURL with
   | .ok keys => if keys.isEmpty then none else (storeIn kept keys images).2
   | .error _ => none
 
-/-- Kind: refinement. Says: a store made ahead is `pageStore` of the document's own keys
-(`storeKeys`) and of the images given, under those keys and images: what a layout that asks
-`storeIn` for the same keys and images would make itself. Does not say: that the next layout
-asks with lists that compare equal to these (it asks with `storeKeys`' expression and the
-request's images; that the kept store is then found is tested, not proved: `==` on byte
-arrays has no lawfulness instance here). -/
-theorem storeAhead_made (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) (made : (List String × List (String × ByteArray)) × NativeImage.Store)
+/-- Kind: refinement. Says: a store made ahead from a valid table is `pageStore` of the
+document's own keys (`storeKeys`) and of the images given, under those keys and images:
+what a layout that asks `storeIn` for the same keys and images would make itself. Does not
+say: that the next layout asks with lists that compare equal to these (it asks with
+`storeKeys`' expression and the request's images; that the kept store is then found is
+tested, not proved). -/
+theorem storeAhead_made (kept : StoresKept) (valid : StoresValid kept) (dom : DOM.Dom) (documentURL : Option String)
+    (images : List (String × ByteArray)) (made : StoreEntry)
     (h : storeAhead kept dom documentURL images = some made) :
-    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made = ((keys,images),pageStore keys images) := by
+    ∃ keys, storeKeys dom documentURL = .ok keys ∧ made.1 = (keys,images) ∧ made.2.1 = pageStore keys images := by
   unfold storeAhead at h
   split at h
   · rename_i keys hk
     split at h
     · simp at h
     · refine ⟨keys, hk, ?_⟩
-      unfold storeIn at h
+      have hs := storeIn_eq kept valid keys images
+      unfold storeIn at h hs
       split at h
       · simp at h
-      · simpa using h.symm
+      · rename_i hnone
+        simp only [hnone] at hs
+        simp only [Option.some.injEq] at h
+        subst h
+        exact ⟨rfl, hs⟩
   · simp at h
 
 /-- The embedding of SVG roots and the pictures of `img` elements, from one image
@@ -440,16 +649,18 @@ to glyph paths first, with `fonts`, the fonts that draw HTML text
 (`NativeSVGText.lowerDocumentGlyphs`); each element keeps its source path, and the
 glyph outlines go to the reader as numbers in a table. -/
 def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.Dom) (documentURL : Option String := none)
-    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[]) :
+    (images : List (String × ByteArray) := []) (fonts : Array Rendering.SfntProfile.Font := #[])
+    (cascade : Option (Array Rendering.CSS.Computed) := none) :
     Except String (Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words) := do
+      Option StoreEntry × NativeSVGText.Words) := do
   let imgs := htmlImageKeys dom documentURL
   if !(dom.nodes.any (fun node => node.type == .element && node.ns == some DOM.svgNS)) then
     let (store,made) := storeIn kept (imgs.map (·.2)) images
-    return (embedding dom,picturesOf store imgs,made,{})
+    let found := picturesMap store imgs
+    return (embedding dom,(fun id => found.get? id),made,{})
   if documentURL.isNone && dom.nodes.any (fun node => DOM.Dom.isHtmlElement node "base" && Rendering.CSS.hasAttribute node "href") then
     throw "unsupported HTML base href without explicit document URL/base transport"
-  let (root,source) ← documentNamespaceTree dom
+  let (root,source) ← documentNamespaceTree dom cascade
   -- CSS Color 4 colours the reader does not read, as `#rrggbb` (`SVGCssColour`); the tree's
   -- shape is unchanged, so source paths still point at the same elements
   let source := NativeSVGCssColour.tree 256 source
@@ -461,11 +672,12 @@ def makeReplacedIn (kept : StoresKept) (words : NativeSVGText.Words) (dom : DOM.
   let (store,made) := storeIn kept (NativeSVG.imageKeys source documentURL ++ imgs.map (·.2)) images
   -- A viewport of fractional CSS pixels (a percentage width with `height:auto`) keeps its
   -- exact size: the viewBox maps onto it, and the backing raster is the next whole pixel.
+  let found := picturesMap store imgs
   return (fun id style width height => do
     let path ← sourcePath dom root (dom.size+1) id []
     let inherited : NativeSVG.Style := {currentColor := WebRenderSVG.toColor style.color, visible := style.visible}
     let scene ← NativeSVG.parseRootInContextSized context path width height inherited embeddedAttributes (some store) glyphs
-    return placeSVG scene id style width height,picturesOf store imgs,made,madeWords)
+    return placeSVG scene id style width height,(fun id => found.get? id),made,madeWords)
 
 /-- The pictures of a page drawn with no SVG: the `img` pictures, made as on a page with no
 `svg` element, and an embedding that refuses every `svg` root with `refusal` (liberal mode
@@ -474,10 +686,19 @@ can not be read at all: the rest of the page is still drawn. -/
 def makeReplacedNoSvg (kept : StoresKept) (dom : DOM.Dom) (documentURL : Option String)
     (images : List (String × ByteArray)) (refusal : String) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
+      Option StoreEntry × NativeSVGText.Words :=
   let imgs := htmlImageKeys dom documentURL
   let (store,made) := storeIn kept (imgs.map (·.2)) images
-  (fun _ _ _ _ => .error refusal,picturesOf store imgs,made,{})
+  let found := picturesMap store imgs
+  (fun _ _ _ _ => .error refusal,(fun id => found.get? id),made,{})
+
+/-- Precomputing the lookup table in the SVG fallback preserves the picture
+lookup for every ID, including missing or refused images. -/
+theorem makeReplacedNoSvg_pictures (kept : StoresKept) (dom : DOM.Dom)
+    (documentURL : Option String) (images : List (String × ByteArray)) (refusal : String) :
+    (makeReplacedNoSvg kept dom documentURL images refusal).2.1 =
+      let imgs := htmlImageKeys dom documentURL
+      picturesOf (storeIn kept (imgs.map (·.2)) images).1 imgs := rfl
 
 /-- Kind: safety. Says: the embedding of `makeReplacedNoSvg` answers every `svg` root with its
 refusal and nothing else, so the layout that takes it (liberal mode, `quiet`) draws no SVG and
@@ -509,14 +730,50 @@ private def runJSON (r : Rendering.GlyphRun) : String :=
   "{\"source\":" ++ toString r.source ++ ",\"font\":" ++ quote r.font ++ ",\"size\":" ++ toString r.fontSize ++
   ",\"text\":" ++ quote r.text ++ ",\"glyphs\":" ++ array (r.glyphs.toList.map fun g =>
     array [toString g.index,toString g.x,toString g.y,toString g.advance,toString g.clusterStart,toString g.clusterEnd]) ++ "}"
-def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
-    (font : Option Rendering.FontProvider.Face) : String :=
-  let header := match font with
+private def layoutHeader (font : Option Rendering.FontProvider.Face) : String :=
+  match font with
     | none => "{\"profile\":\"lean-block-inline-ascii-bitmap-v1\",\"fontScope\":\"ASCII bitmap; no real font shaping\""
     | some face => "{\"profile\":\"lean-block-inline-font-data-v1\",\"fontScope\":\"Supplied HarfBuzz/FreeType horizontal LTR words; canonical font contours with checked backend compilation; no bidi or fallback\",\"fontResource\":{\"family\":" ++ quote face.family ++ ",\"fontSha256\":" ++ quote face.fontSha256 ++ ",\"faceIndex\":" ++ toString face.faceIndex ++ ",\"style\":" ++ quote face.style ++ ",\"unitsPerEm\":" ++ toString face.unitsPerEm ++ "}"
-  header ++ ",\"boxes\":" ++
-  array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height]) ++
-  ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++ Rendering.Links.encode s.links ++ "}"
+private def boxesJSON (boxes : Array Rendering.Layout.Box) : String :=
+  array (boxes.toList.map fun b => array [toString b.source,toString b.x,toString b.y,toString b.width,toString b.height])
+
+/-- The part of `layoutJSON` before the links: the font header, the boxes and the glyph
+runs. It reads no link and no band, so every band of one layout has the same head: the
+engine keeps it with a page layer answer and gives it again for another band
+(`WebDocument.pageArtifact`). On a long page the boxes and glyph runs of the whole page are
+most of a band's compile (a W3C specification, 2026-11-17: about 60%). -/
+def layoutHead (boxes : Array Rendering.Layout.Box) (runs : Array Rendering.GlyphRun)
+    (font : Option Rendering.FontProvider.Face) : String :=
+  layoutHeader font ++ ",\"boxes\":" ++ boxesJSON boxes ++ ",\"glyphRuns\":" ++ array (runs.toList.map runJSON)
+
+/-- The part of `layoutJSON` after the head: the links, and the end of the object. -/
+def layoutTail (links : Array Rendering.LinkRegion) : String :=
+  ",\"links\":" ++ Rendering.Links.encode links ++ "}"
+
+def layoutJSON (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) : String :=
+  layoutHead boxes s.glyphRuns font ++ layoutTail s.links
+
+/-- Kind: equality (the answer's format). Says: `layoutJSON` is the text it was before the
+head and the tail were split out (2026-11-17): the font header, then `"boxes"`,
+`"glyphRuns"` and `"links"` in that order, each written by the same function as before.
+Does not say: anything about what a host does with the text. -/
+theorem layoutJSON_eq_flat (s : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
+    (font : Option Rendering.FontProvider.Face) :
+    layoutJSON s boxes font = layoutHeader font ++ ",\"boxes\":" ++ boxesJSON boxes ++
+      ",\"glyphRuns\":" ++ array (s.glyphRuns.toList.map runJSON) ++ ",\"links\":" ++
+      Rendering.Links.encode s.links ++ "}" := by
+  simp only [layoutJSON, layoutHead, layoutTail, String.append_assoc]
+
+/-- Kind: equality. Says: for a scene whose glyph runs are `runs`, `layoutJSON` is the head
+of the boxes, `runs` and the font, then the tail of the scene's own links. So a head made
+for one scene is the head of every scene with the same runs, boxes and font, whatever its
+links. Does not say: that the links of two such scenes are the same. -/
+theorem layoutJSON_of_head (s : Rendering.Scene) (runs : Array Rendering.GlyphRun)
+    (boxes : Array Rendering.Layout.Box) (font : Option Rendering.FontProvider.Face)
+    (h : s.glyphRuns = runs) :
+    layoutJSON s boxes font = layoutHead boxes runs font ++ layoutTail s.links := by
+  subst h; rfl
 
 /-- Shared checked scene serialization for HTML and structured-document frontends:
 the artifact with the storage floats and tile words in the form `form`, and the

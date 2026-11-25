@@ -1,4 +1,5 @@
 import WebRenderFontRequests
+import L4Factoidal.Epub
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
 import WebXslt
@@ -31,6 +32,7 @@ import WebConsole
 import WebPaint
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.ImportTree
+import L4Factoidal.HTML.AccessibleTree
 
 /-! Browser document transaction. Lean discovers resources, applies DOM commands,
 orders supplied CSS, collects font requests and renders the resulting arena.
@@ -201,7 +203,7 @@ structure Kept where
 structure Made where
   parsed : Option (String × Bool × Except String DOM.Dom) := none
   sheet : Option (String × RawSheet) := none
-  store : Option ((List String × List (String × ByteArray)) × NativeImage.Store) := none
+  store : Option WebRender.StoreEntry := none
   words : NativeSVGText.Words := {}
 
 /-- `a` then the entries of `b` that `a` lacks (the first operation's wins). -/
@@ -506,22 +508,19 @@ def importEdges (text : String) : List Rendering.ImportTree.Edge :=
 /-- The document's sheets in `env`, in tree order, each with the URL its own URLs resolve
 against (the document's base for a `style` element, the sheet's URL for a supplied one,
 CSS Values 4 §4.5.1), with the skip points of mode `m`: a `media` that can not be read, a
-stylesheet the host could not fetch, and sheets past 2 MiB. -/
+stylesheet the host could not fetch, and sheets past 8 MiB. -/
 def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env) :
     Except String (List (String × String) × List WebAccept.Diagnostic) := do
   let given ← importedSheets request
-  -- Preserve the existing SVG/HTML stylesheet boundary validation. This copy
-  -- removes only the external-fetch refusal; it is never used for layout.
-  let validation := {dom with nodes := dom.nodes.map (fun n =>
-    if stylesheet n then {n with attrs := n.attrs.filter (fun a => a.lname != "href")} else n)}
-  WebRender.validateStyleBoundaries validation
+  -- The same source order governs both HTML and inline SVG author rules.
   let base := baseURL dom (str request "url")
   let mut sheets : List (String × String) := []
   let mut bytes := 0
   let mut ds : List WebAccept.Diagnostic := []
   for id in dom.treeOrder 0 do
     let n := dom.get id
-    let inline := DOM.Dom.isHtmlElement n "style"
+    let inline := DOM.Dom.isHtmlElement n "style" ||
+      (n.type == .element && n.ns == some DOM.svgNS && n.lname == "style")
     if !inline && !(stylesheet n && Rendering.CSS.hasAttribute n "href") then continue
     let (active,d) ← activeSheetIn m env n id
     ds := ds ++ d
@@ -539,8 +538,10 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
           let (_,d) ← WebAccept.skip m .stylesheetMissing (sheetWhere n id)
             s!"stylesheet resource missing or duplicated for node {id}" ()
           ds := ds ++ d
-    if bytes+source.utf8ByteSize > 2097152 then
-      let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 2MiB" ()
+    -- the engine's own limit on the text of the sheets (`maxSheetBytes`): a sheet past it is
+    -- left out whole and reported, so the engine never has to cut a sheet (issue 865)
+    if bytes+source.utf8ByteSize > Rendering.CSS.maxSheetBytes then
+      let (_,d) ← WebAccept.skip m .stylesheetBytes (sheetWhere n id) "document stylesheets exceed 8 MiB" ()
       ds := ds ++ d
       continue
     bytes := bytes+source.utf8ByteSize
@@ -548,11 +549,113 @@ def sheetsIn (m : WebAccept.Mode) (dom : DOM.Dom) (request : JSON.Json) (env : R
     -- the sheets it imports that the host gave, before it, within the same bound of bytes
     if !given.isEmpty then
       for (u,t) in Rendering.ImportTree.sheetsOf importEdges Syntax.resolveIri (fun url => given.lookup url) from_ source do
-        if bytes+t.utf8ByteSize ≤ 2097152 then
+        if bytes+t.utf8ByteSize ≤ Rendering.CSS.maxSheetBytes then
           bytes := bytes+t.utf8ByteSize
           sheets := (u,t)::sheets
+        else
+          -- reported as for a sheet of the document (issue 865); before, it was left out silently
+          let (_,d) ← WebAccept.skip m .stylesheetBytes s!"@import {u}" "document stylesheets exceed 8 MiB" ()
+          ds := ds ++ d
     sheets := (from_,source)::sheets
   return (sheets.reverse,ds)
+
+/-! ### Background images (CSS Backgrounds 3 §3.3, issue 704)
+
+A `url(...)` in a `background` or `background-image` declaration is resolved against the URL of
+the sheet it is in (CSS Values 4 §4.5), or of the document for a `style` element or attribute,
+when the sheets are read (`backgroundUrlsAbsolute`), so the cascade holds absolute URLs. The
+host fetches them as it fetches images: `inspect` lists them (`backgroundImages`) once it has
+the sheets (its second call, with `resources`). After the cascade each element's image is
+looked up in the supplied images and decoded (`attachBackgrounds`). -/
+
+/-- The argument of a `url(` whose text follows: its URL, and the text after its `)`. -/
+private def urlArg (p : String) : Option (String × String) :=
+  let cs := p.toList.dropWhile Char.isWhitespace
+  match cs with
+  | [] => none
+  | q :: more =>
+    if q == '"' || q == '\'' then
+      let inner := more.takeWhile (· != q)
+      if inner.length == more.length then none else
+      match (more.drop (inner.length+1)).dropWhile Char.isWhitespace with
+      | ')' :: rest => some (String.ofList inner,String.ofList rest)
+      | _ => none
+    else
+      let inner := cs.takeWhile (· != ')')
+      if inner.length == cs.length then none else
+      some (String.ofList (inner.reverse.dropWhile Char.isWhitespace).reverse,String.ofList (cs.drop (inner.length+1)))
+
+/-- Whether the declaration that the text after `t` is in names a background property or
+`content` (a `url()` there is an image too, CSS Content 3 §2.1): the
+text after the last `{` or `;` of `t` mentions `background`, or `t` has neither and the
+declaration before it did (`prev`). -/
+private def inBackground (prev : Bool) (t : String) : Bool :=
+  let cs := t.toLower.toList
+  let tail := (cs.reverse.takeWhile (fun c => c != '{' && c != ';' && c != '}')).reverse
+  let mentions := fun (l : List Char) => ((String.ofList l).splitOn "background").length > 1 ||
+    ((String.ofList l).splitOn "content").length > 1
+  if tail.length < cs.length then mentions tail else prev || mentions cs
+
+private def resolveBackgroundUrl (base u : String) : String :=
+  if base.isEmpty || u.toLower.startsWith "data:" then u else Syntax.resolveIri base u
+
+/-- Resolve background URLs against `base` while preserving fragment-only URLs as local
+references (CSS Values 4 §4.5.1.1). -/
+def backgroundUrlsAbsolute (base text : String) : String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return text
+  let mut out := pieces.head!
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty && !u.startsWith "#" && !u.contains '"' then
+        out := out ++ "url(\"" ++ resolveBackgroundUrl base u ++ "\")" ++ rest
+      else out := out ++ "url(" ++ p
+      st := inBackground st rest
+    | none =>
+      out := out ++ "url(" ++ p
+      st := inBackground st p
+  return out
+
+/-- The absolute URLs of background declarations that can identify image resources. -/
+def backgroundUrlsOf (base text : String) : List String := Id.run do
+  let pieces := text.splitOn "url("
+  if pieces.length < 2 then return []
+  let mut out : List String := []
+  let mut st := inBackground false pieces.head!
+  for p in pieces.tail do
+    match urlArg p with
+    | some (u,rest) =>
+      if st && !u.isEmpty && !u.startsWith "#" then out := resolveBackgroundUrl base u :: out
+      st := inBackground st rest
+    | none => st := inBackground st p
+  return out.reverse
+
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "p{background:url(i.png) no-repeat} q{content:url(x.png)}" ==
+  "p{background:url(\"https://a.test/css/i.png\") no-repeat} q{content:url(\"https://a.test/css/x.png\")}"
+#guard backgroundUrlsAbsolute "https://a.test/css/s.css" "li+li:before{content:url(\"/stylesheets/star.svg\")}" ==
+  "li+li:before{content:url(\"https://a.test/stylesheets/star.svg\")}"
+#guard backgroundUrlsOf "https://a.test/css/s.css" "a::after{content:\" \" url('../i/x.png') \"!\"}" == ["https://a.test/i/x.png"]
+#guard backgroundUrlsAbsolute "https://a.test/s.css" "a{content:url(#frag)}" == "a{content:url(#frag)}"
+#guard backgroundUrlsOf "https://a.test/" "div { color: red; background-image: url('a b.png'), url(c.png) }" ==
+  ["https://a.test/a b.png","https://a.test/c.png"]
+#guard backgroundUrlsOf "https://a.test/" "div { list-style: url(m.png) }" == []
+#guard backgroundUrlsAbsolute "https://a.test/s.css" "p{background:url(#a),url('#b')}" ==
+  "p{background:url(#a),url('#b')}"
+#guard backgroundUrlsOf "https://a.test/s.css" "p{background:url(#a),url('icons.svg#b')}" ==
+  ["https://a.test/icons.svg#b"]
+
+/-- The document with each `style` attribute's background URLs absolute against `base`. -/
+def styleAttributesAbsolute (dom : DOM.Dom) (base : String) : DOM.Dom :=
+  if !dom.nodes.any (fun n => n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1)) then dom
+  else {dom with nodes := dom.nodes.map fun n =>
+    if n.attrs.any (fun a => a.lname == "style" && (a.value.splitOn "url(").length > 1) then
+      {n with attrs := n.attrs.map fun a => if a.lname == "style" then {a with value := backgroundUrlsAbsolute base a.value} else a}
+    else n}
+
+/-- Most background images that a page has fetched. -/
+private def maxBackgroundImages : Nat := 64
 
 /-- The text of a document's sheets, read as one. -/
 def sheetSource (sheets : List (String × String)) : String := String.intercalate "\n" (sheets.map (·.2))
@@ -560,7 +663,8 @@ def sheetSource (sheets : List (String × String)) : String := String.intercalat
 /-- The rules of sheets in `env`: `CSS.parseIn env`, with the sheets read once (`sheetIn`). -/
 def rulesOfSheets (kept : Kept) (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) :
     Except String (List Rendering.CSS.Rule × Made) := do
-  let (raw,made) := sheetIn kept (sheetSource sheets)
+  -- background URLs absolute against each sheet's own URL, before the sheets are joined
+  let (raw,made) := sheetIn kept (sheetSource (sheets.map fun (b,t) => (b,backgroundUrlsAbsolute b t)))
   return (Rendering.CSS.parseInRaw env (← raw),made)
 
 /-- The rules of the document's sheets in `env` (`sheetsIn`). -/
@@ -586,6 +690,73 @@ def rules (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env 
 def facesOf (env : Rendering.MediaQuery.Env) (sheets : List (String × String)) : Array Rendering.FontFaceRule.Face :=
   if !sheets.any (fun (_,src) => (src.splitOn "@font-face").length > 1 || (src.toLower.splitOn "@font-face").length > 1) then #[]
   else Rendering.FontFaceRule.ofSheets env.medium Syntax.resolveIri sheets
+
+/-- The resource limit on `@font-face` rules (`FontFaceRule.maxFaces`), when `faces` (of
+`facesOf`) is at it: the number of rules the sheets have. Issue 865. -/
+def faceLimits (env : Rendering.MediaQuery.Env) (sheets : List (String × String))
+    (faces : Array Rendering.FontFaceRule.Face) : List WebAccept.LimitHit :=
+  if faces.size < Rendering.FontFaceRule.maxFaces then [] else
+  let blocks := sheets.foldl (fun n (_,src) => n + (Rendering.CSS.fontFaceBlocks env.medium src).length) 0
+  WebAccept.LimitHit.check "maxFaces" Rendering.FontFaceRule.maxFaces blocks "@font-face rules"
+
+/-- The resource limits of the declarations of `rules` (issue 865), each reported once with the
+largest number asked and the number of declarations:
+`Content.maxPieces` (a `content` value with more parts is dropped),
+`CssVars.maxValueBytes` (a custom property, or a value with `var()` replaced, longer than the limit
+is invalid at computed-value time) and `CssVars.maxFallbacks` (`var()` fallbacks nested that deep).
+The custom properties are resolved as one flat environment (every rule's, the last winning), so a
+value that grows through references is found where its references are found. A declaration of a
+`style` attribute is not looked at. -/
+def declarationLimits (rules : List Rendering.CSS.Rule) : List WebAccept.LimitHit := Id.run do
+  let decls := rules.flatMap (·.declarations)
+  let mentioning := decls.filter fun d => Rendering.CssVars.mentions d.value
+  let mut pieces := 0
+  let mut piecesCount := 0
+  for d in decls do
+    if d.property == "content" then
+      let n := Rendering.CSS.Content.piecesWanted d.value
+      if n > Rendering.CSS.Content.maxPieces then
+        piecesCount := piecesCount + 1
+        pieces := max pieces n
+  let mut bytes := 0
+  let mut bytesCount := 0
+  let mut levels := 0
+  let mut levelsCount := 0
+  if !mentioning.isEmpty || decls.any (·.property.startsWith "--") then
+    let own := decls.filterMap fun d => if d.property.startsWith "--" then some (d.property,d.value) else none
+    let vars := Rendering.CssVars.resolve {} own
+    for d in decls do
+      if d.property.startsWith "--" && d.value.utf8ByteSize > Rendering.CssVars.maxValueBytes then
+        bytesCount := bytesCount + 1
+        bytes := max bytes d.value.utf8ByteSize
+      else if Rendering.CssVars.mentions d.value then
+        let reached := (Rendering.CssVars.substituteR vars.find Rendering.CssVars.maxFallbacks d.value).2
+        if reached > Rendering.CssVars.maxValueBytes then
+          bytesCount := bytesCount + 1
+          bytes := max bytes reached
+        let deep := Rendering.CssVars.fallbackLevels d.value
+        if deep > Rendering.CssVars.maxFallbacks then
+          levelsCount := levelsCount + 1
+          levels := max levels deep
+  return WebAccept.LimitHit.check "maxPieces" Rendering.CSS.Content.maxPieces pieces s!"{piecesCount} content values with too many parts"
+    ++ WebAccept.LimitHit.check "maxValueBytes" Rendering.CssVars.maxValueBytes bytes s!"{bytesCount} custom property values longer than the limit"
+    ++ WebAccept.LimitHit.check "maxFallbacks" Rendering.CssVars.maxFallbacks levels s!"{levelsCount} values with var() fallbacks nested too deep"
+
+/-- The resource limit on the tracks of a grid axis (`Grid.maxTracks`): an axis with more fixed
+tracks than that (a `repeat(n, …)` counts `n` times) has the rest cut. One report, with the most
+tracks asked and the number of axes. An automatic repetition is not counted
+(`TrackList.tracksWanted`). Issue 865. -/
+def gridLimits (styles : Array Rendering.CSS.Computed) : List WebAccept.LimitHit := Id.run do
+  let mut most := 0
+  let mut count := 0
+  for st in styles do
+    if st.grid.templateColumns.entries.isEmpty && st.grid.templateRows.entries.isEmpty then continue
+    for list in [st.grid.templateColumns, st.grid.templateRows] do
+      let n := list.tracksWanted
+      if n > Rendering.Grid.maxTracks then
+        count := count + 1
+        most := max most n
+  return WebAccept.LimitHit.check "maxTracks" Rendering.Grid.maxTracks most s!"{count} grid track lists"
 
 /-- The `@font-face` rules of the document's sheets, in the request's mode. -/
 def fontFaces (dom : DOM.Dom) (request : JSON.Json) (env : Rendering.MediaQuery.Env := {medium := medium request}) :
@@ -656,6 +827,14 @@ private def classicScriptsIn (m : WebAccept.Mode) (scripting : Bool) (scripts : 
 private def classicScripts (request : JSON.Json) (scripts : List JSON.Json) : Except String (List JSON.Json) :=
   (WebAccept.accept (WebAccept.mode request) fun m => classicScriptsIn m (scripting request) scripts).map (·.1)
 
+/-- Whether an element of the page has an attribute with no namespace whose name is `on` and
+one or more letters: the names of the event handler content attributes (HTML §8.1.8.1). -/
+def hasHandlerAttributes (dom : DOM.Dom) : Bool :=
+  (dom.treeOrder 0).any fun id =>
+    let n := dom.get id
+    n.type == .element && n.attrs.any fun a =>
+      a.ns.isNone && a.lname.length > 2 && a.lname.startsWith "on" && (a.lname.drop 2).all Char.isAlpha
+
 def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : Bool) :
     Except String (JSON.Json × List WebAccept.Diagnostic) := do
   let base := baseURL dom url
@@ -677,7 +856,11 @@ def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : B
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
   return (.object [("nodes",(snapshot.field? "nodes").getD (.array [])),
-    ("scripts",.array scripts),("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
+    ("scripts",.array scripts),
+    -- An event handler content attribute (HTML §8.1.8.1) is page script too: `<body onload>`
+    -- runs with no script element, so the host starts a script session for it.
+    ("handlers",.bool (scripting && hasHandlerAttributes dom)),
+    ("stylesheets",.array sheets.reverse),("images",.array (← imageRequests dom base)),
     ("baseURL",.string base),("title",.string (documentTitle dom)),
     ("icon",match iconURL dom base with | some url => .string url | none => .null)],ds ++ d)
 
@@ -702,14 +885,38 @@ def importsLacking (dom : DOM.Dom) (url : String) (request : JSON.Json) : List S
       Rendering.ImportTree.lackingOf importEdges Syntax.resolveIri (fun u => given.lookup u) from_ text).eraseDups.take
         Rendering.ImportTree.maxSheets
 
+/-- The background images of a page that a host fetches (`backgroundImages` of `inspect`):
+the background URLs of its `style` elements, of its `style` attributes, and of the linked and
+imported sheets the request gives, each against its own base; at most
+`maxBackgroundImages`, `data:` URLs left out (the engine decodes those itself). -/
+def backgroundImageRequests (dom : DOM.Dom) (url : String) (request : JSON.Json) : List String :=
+  let base := baseURL dom url
+  let given := (importedSheets request).toOption.getD []
+  let texts : List (String × String) := (dom.treeOrder 0).toList.flatMap fun id =>
+    let n := dom.get id
+    let own := match n.attrs.find? (·.lname == "style") with
+      | some a => [(base,a.value)]
+      | none => []
+    if DOM.Dom.isHtmlElement n "style" then (base,(dom.textContent id).getD "") :: own
+    else if stylesheet n && Rendering.CSS.hasAttribute n "href" then
+      match supplied request id with
+      | .ok (some text) => ((suppliedURL request id).getD base,text) :: own
+      | _ => own
+    else own
+  ((texts ++ given).flatMap fun (b,t) => backgroundUrlsOf b t).eraseDups.filter
+    (!·.toLower.startsWith "data:") |>.take maxBackgroundImages
+
 /-- What the host fetches for a page, in the mode of `request`. In liberal mode the answer
 has `diagnostics`, the skips (`WebAccept.Diagnostic.json`), when there are any. With sheets
-that import others, `imports`: the URLs of the imported sheets the request does not give. -/
+that import others, `imports`: the URLs of the imported sheets the request does not give.
+With background images in its sheets or styles, `backgroundImages` (`{key,url}`). -/
 def inspect (dom : DOM.Dom) (url : String) (request : JSON.Json := .object []) : Except String JSON.Json := do
   let (answer,ds) ← WebAccept.accept (WebAccept.mode request) fun m => inspectIn m dom url (scripting request)
   let lacking := importsLacking dom url request
+  let backgrounds := backgroundImageRequests dom url request
   let more : List (String × JSON.Json) :=
     (if lacking.isEmpty then [] else [("imports",.array (lacking.map fun u => .object [("url",.string u)]))]) ++
+    (if backgrounds.isEmpty then [] else [("backgroundImages",.array (backgrounds.map fun u => .object [("key",.string u),("url",.string u)]))]) ++
     (if ds.isEmpty then [] else [("diagnostics",WebAccept.diagnosticsJSON ds)])
   match answer with
   | .object fields => return .object (fields ++ more)
@@ -1088,12 +1295,36 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   -- the hosts do with no URL test of their own. `origin` is the site the browser loads
   -- pages from ("" for every site), `pages` its folder of pages, `files` whether it reads
   -- local files, `base` the address of the page the link is on.
+  -- `outside` is the address whose Outside page the tab shows ("" for any other page), so a
+  -- link to it is that page's button; `search` is the search engine chosen in Settings.
   if op == "shellRoute" then
-    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := request.field? "files" == some (.bool true)}
+    let site : WebRoute.Site := {origin := str request "origin",pages := str request "pages",files := (request.field? "files" == some (.bool true)),outside := str request "outside"}
     let route := match request.field? "address" with
-      | some (.string address) => WebShell.routeAddress site (str request "base") address
+      | some (.string address) => WebShell.routeAddress {site with outside := ""} (str request "base") address (str request "search")
       | _ => WebRoute.routeAddress site (str request "base") (str request "href")
     return some (WebShell.routeJson route).toString
+  -- Words typed in the address bar (owner, 2026-11-16: no default search engine). The page
+  -- `foafnaut:search/WORDS`, from the stored `resources` and the open `tabs` the host passes:
+  -- no request is made to show it.
+  if op == "searchPage" then
+    let words := WebRoute.decodeQuery (str request "argument")
+    let tabs := match request.field? "tabs" with
+      | some (.array items) => items.filterMap fun t =>
+          let url := str t "url"; let title := str t "title"
+          if !url.isEmpty && WebState.matchesWords words url title then some ("Open tab", url, title) else none
+      | _ => []
+    let found := tabs.take WebState.maxFound ++ WebState.searchFoundOf words request
+    let stateOn := request.field? "state" == some (.bool true)
+    return some (JSON.Json.object [("title",.string (words ++ " (search)")),
+      ("source",.string (WebShell.searchPage words found stateOn (str request "search")))]).toString
+  if op == "searchChoices" then
+    return some (JSON.Json.object [("html",.string (WebShell.searchChoicesHTML (str request "setting")))]).toString
+  if op == "searchSetting" then
+    let setting := WebRoute.searchSetting (str request "setting")
+    return some (JSON.Json.object [("setting",.string setting),("name",.string (WebRoute.searchName setting))]).toString
+  if op == "outsidePage" then
+    return some (JSON.Json.object [("title",.string "Another site"),
+      ("source",.string (WebShell.outsidePage (str request "url") (request.field? "hub" == some (.bool true)) (request.field? "textnaut" == some (.bool true))))]).toString
   -- Back and forward swipes (WebGesture): `action` info, touch or wheel.
   if let some answer ← WebGesture.op op request then return some answer
   -- WebAssembly run by Lean's own engine, WasmVM (WebWasm; issue 1244).
@@ -1258,18 +1489,29 @@ def pageLayer (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) 
     tree := [.group none ⟨1,0,0,1,0,-lift⟩ (keep ++ extra)]
     links := Rendering.moveLinks (· - lift) page.links}
 
+/-- Kind: equality. Says: the layout text of a page layer (`WebRender.layoutJSON`) is the head
+of the page's boxes, glyph runs and face, the same for every band `b`, then the tail of the
+layer's links. So the engine may keep the head of one band and write only the tail for
+another band of the same layout (`pageArtifactImpl`). Does not say: that the engine keeps it. -/
+theorem pageLayer_layoutJSON (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+    (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) :
+    WebRender.layoutJSON (pageLayer page extra b) boxes face =
+      WebRender.layoutHead boxes page.glyphRuns face ++ WebRender.layoutTail (pageLayer page extra b).links :=
+  WebRender.layoutJSON_of_head _ _ _ _ rfl
+
 /-- The page layer keeps every link of the page, moved up by the band's top and nothing
 else (`LinkTheorems.moveLinks_getElem`, `LinkTheorems.hitLink_band`; issue 1268). -/
 theorem pageLayer_links (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band) :
     (pageLayer page extra b).links = Rendering.moveLinks (· - Float.ofNat b.top) page.links := rfl
 
 /-- The chrome layer: window rows `0 .. WebShell.height`. -/
-def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat) : Rendering.Scene :=
+def chromeLayer (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat)
+    (addressFont : WebShell.AddressFont := {}) : Rendering.Scene :=
   let top := max 1 (WebShell.height shell width)
   {page with
     height := top
     mapping := {page.mapping with viewportHeight := Float.ofNat top}
-    tree := WebShell.nodes shell width
+    tree := WebShell.nodes shell width addressFont
     glyphRuns := #[]
     links := #[]}
 
@@ -1280,10 +1522,11 @@ def bandTop (shell : WebShell.Shell) (width : Nat) : Nat :=
 
 /-- The chrome layer alone, for a change of `collapse` (op `chromeLayer`): its scene is the
 chrome's nodes, rows `0 .. top`. No layout and no page. -/
-def chromeScene (shell : WebShell.Shell) (width : Nat) : Rendering.Scene :=
+def chromeScene (shell : WebShell.Shell) (width : Nat)
+    (addressFont : WebShell.AddressFont := {}) : Rendering.Scene :=
   let top := max 1 (WebShell.height shell width)
   {width,height := top,mapping := {viewportWidth := Float.ofNat width,viewportHeight := Float.ofNat top},
-   tree := WebShell.nodes shell width}
+   tree := WebShell.nodes shell width addressFont}
 
 /-- The blit of a page GPU canvas (docs/designissues/2026-11-08-page-gpu.md) into the page
 layer: the canvas texture scaled to the canvas box `r` (x, y, width, height in layer
@@ -1343,6 +1586,10 @@ structure KeptPage where
   /-- The number that `damage.id` answers: a host that drew answer `id` can draw a later
   answer with `damage.base = id` by its damage rectangles alone. -/
   id : Nat := 0
+  /-- `WebRender.layoutHead` of this frame's boxes, glyph runs and face: the part of
+  `layoutText` that every band of the layout shares (`WebRender.layoutJSON_of_head`); empty
+  when not made. -/
+  layoutHead : String := ""
 
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
@@ -1392,12 +1639,24 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
       -- `pageArtifact` (the reference) stays the plain path, that `partial_frame_test.ts`
       -- compares this with.
-      let previous := kept.find? fun k => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
+      let previous : Option KeptPage := kept.find? fun (k : KeptPage) => k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree && k.retained.isSome
       match form,checks,tree,retainOn with
       | .sections first,false,false,true =>
         let layoutText := previous.bind fun k =>
           if ptrEq k.boxes boxes && ptrEq k.face face && ptrEq k.page.links page.links && ptrEq k.page.glyphRuns page.glyphRuns then
             some k.layoutText else none
+        -- Another band of the same layout: the head of its layout text is this one's
+        -- (the layer's glyph runs are the page's, and the
+        -- head reads no link: `pageLayer_layoutJSON`); only the links, moved for the band,
+        -- are written again.
+        let (layoutText,head) := match layoutText with
+          | some text => (text,(previous.map fun (k : KeptPage) => k.layoutHead).getD "")
+          | none =>
+            let head := match kept.find? fun (k : KeptPage) => !k.layoutHead.isEmpty && ptrEq k.boxes boxes && ptrEq k.face face &&
+                ptrEq k.page.glyphRuns page.glyphRuns with
+              | some k => k.layoutHead
+              | none => WebRender.layoutHead boxes page.glyphRuns face
+            (head ++ WebRender.layoutTail layer.links,head)
         -- A layout makes every primitive a new object: the address test first, then the
         -- values (`WebPaint.samePrimitive`, proved to hold only of equal primitives; bitmaps
         -- by address, as the paint table keeps one per image).
@@ -1407,25 +1666,25 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
           else if (ptrEq a.primitive.geometry b.primitive.geometry || decide (a.primitive.geometry = b.primitive.geometry)) &&
               (ptrEq a.primitive.style b.primitive.style || WebPaint.sameStyle bitmaps a.primitive.style b.primitive.style) then a.movedOf b
           else NativeSVG.Reuse.different
-        match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first layoutText with
+        match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first (some layoutText) with
         | .error e => return .error e
         | .ok (retained,damage,value,sections,layout,recompiled,moved) =>
           let id := (← pageIdRef.modifyGet fun n => (n+1,n+1))
           let number := fun (n : Nat) => toString n
           let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
             (match previous.bind (·.retained),damage with
-             | some _,some _ => number (previous.map (·.id)).get!
+             | some _,some _ => number ((previous.map fun (k : KeptPage) => k.id).getD 0)
              | _,_ => "null") ++ ",\"rects\":" ++
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id⟩ :: kept).take keptPageSlots)
+          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head⟩ : KeptPage) :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
           return .ok answer
       | _,_,_,_ =>
         let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree
         if let .ok answer := made then
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0⟩ :: kept).take keptPageSlots)
+          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,""⟩ :: kept).take keptPageSlots)
           pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
         return made
 
@@ -1451,7 +1710,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
-    (retainOn : Bool := true) (splashing : Bool := false) :
+    (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {}) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1460,7 +1719,7 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let b := band shell.scroll view
   let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
   let (chromeText,chromeSections) ←
-    WebRender.artifactWith (chromeLayer shell page width) #[] face live form.next checks tree
+    WebRender.artifactWith (chromeLayer shell page width addressFont) #[] face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
@@ -1498,9 +1757,18 @@ structure Holds where
   webFonts : Array Rendering.SfntProfile.Font := #[]
   images : List HeldImage := []
   /-- The serif face (`FontFaceRule.genericOf`), when the host gave it (`fontLoad` mode 3,
-  `loadSerifFont`): empty until a page's text resolves to `serif` (`Laid.wantsSerif`), so a
-  page with none reads no serif bytes. -/
+  `loadSerifFont`). The window and the Hub give it before the first page, so a serif page is
+  laid out once (`serifWanted_held`); a layout draws with it only on a page whose cascade has
+  serif text (`layOutDOMIn`), so a page with none lays out as with no face held. A host that
+  has not given it learns from `Laid.wantsSerif`. -/
   serif : Array Rendering.SfntProfile.Font := #[]
+  /-- The monospace face (`FontFaceRule.genericOf`), when the host gave it (`fontLoad` mode 4,
+  `loadMonoFont`), held and used as the serif face is: a layout draws with it only on a page
+  whose cascade has monospace text, and a host that has not given it learns from
+  `Laid.wantsMono`. -/
+  mono : Array Rendering.SfntProfile.Font := #[]
+  /-- Outlines of the held monospace face for the default address field. -/
+  addressFont : WebShell.AddressFont := {}
 
 instance : Inhabited Holds := ⟨{}⟩
 
@@ -1541,21 +1809,58 @@ private def loadSerifFont (h : Holds) (bytes : ByteArray) (family sha256 : Strin
     ({h with serif := #[font]}, .ok (JSON.Json.object [("serif",.string font.family),
       ("glyphs",.number (toString font.face.numGlyphs))]).toString)
 
+private def addressFontOf (font : Rendering.SfntProfile.Font) : WebShell.AddressFont := Id.run do
+  let cell := (font.face.glyph font.bytes 'M').toOption
+  let advance := (cell.bind fun g => font.face.advances[g]?).getD 0
+  if advance == 0 then return {}
+  let mut glyphs := #[]
+  for cp in [32:127] do
+    let paths : Option (List Rendering.Geometry) := do
+      let g ← (font.face.glyphCp font.bytes cp).toOption
+      if g == 0 then none else
+        let commands ← (Rendering.SfntOutline.outline font.bytes font.dir g font.cff).toOption
+        (Rendering.FontProvider.outlineGeometry 0 ⟨g,commands⟩).toOption
+    glyphs := glyphs.push paths
+  return {advance,glyphs}
+
+/-- Hold the monospace face (`fontLoad` mode 4): the policy refuses it or it replaces the one
+held. Layouts draw with it the text whose family list resolves to `monospace`
+(`FontFaceRule.genericOf`). -/
+private def loadMonoFont (h : Holds) (bytes : ByteArray) (family sha256 : String) : Holds × Except String String :=
+  match Rendering.SfntProfile.Font.read bytes family sha256 with
+  | .error e => (h, .error e)
+  | .ok font =>
+    ({h with mono := #[font], addressFont := addressFontOf font}, .ok (JSON.Json.object [("mono",.string font.family),
+      ("glyphs",.number (toString font.face.numGlyphs))]).toString)
+
 /-- The held fonts that a layout depends on, by family and SHA-256, in order (the `fonts`
-of `LayoutKey`): the page fonts (`HeldFont.names`), then the serif face, if held. -/
+of `LayoutKey`): the page fonts (`HeldFont.names`), then the serif face and the monospace
+face, if held. -/
 def Holds.fontNames (h : Holds) : List (String × String) :=
-  (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map fun f => ("serif:" ++ f.family,f.sha256)
+  (h.font.map HeldFont.names).getD [] ++ h.serif.toList.map (fun f => ("serif:" ++ f.family,f.sha256)) ++
+    h.mono.toList.map fun f => ("mono:" ++ f.family,f.sha256)
+
+/-- The web fonts a render names (`webFonts`: `[{url,sha256}]`), as (URL, SHA-256). -/
+def namedWebFonts (request : JSON.Json) : List (String × String) :=
+  match request.field? "webFonts" with
+    | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
+      | some (.string u),some (.string h) => some (u,h)
+      | _,_ => none
+    | _ => []
+
+/-- A hit when the render names more different web fonts (by SHA-256) than the engine holds
+at once (`maxWebFonts`): the oldest are let go, and text in those faces is drawn in a
+fallback font (issue 865). -/
+def webFontLimits (request : JSON.Json) : List WebAccept.LimitHit :=
+  WebAccept.LimitHit.check "maxWebFonts" maxWebFonts ((namedWebFonts request).map (·.2)).eraseDups.length
+    "web fonts named by the render"
 
 /-- The faces of `faces` with their held fonts, by the `webFonts` of the request: the
 font of the first source URL of each face that the request names with a held SHA-256,
 with the rule's family and `unicode-range`. -/
 def webFaceFonts (h : Holds) (faces : Array Rendering.FontFaceRule.Face) (request : JSON.Json) :
     Array (Option Rendering.SfntProfile.Font) :=
-  let named : List (String × String) := match request.field? "webFonts" with
-    | some (.array items) => items.filterMap fun item => match item.field? "url",item.field? "sha256" with
-      | some (.string u),some (.string h) => some (u,h)
-      | _,_ => none
-    | _ => []
+  let named := namedWebFonts request
   if named.isEmpty then faces.map (fun _ => none) else
   let held := h.webFonts
   faces.map fun face => do
@@ -1601,50 +1906,64 @@ def familyFonts (faces : Array Rendering.FontFaceRule.Face) (fonts : Array (Opti
   return out
 
 /-- The fonts of a `font-family` value before the held fonts: its web fonts
-(`familyFonts`), then the serif face when the value resolves to `serif`
-(`FontFaceRule.genericOfValue`) and one is held. -/
-def familyFontsWith (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+(`familyFonts`), then the serif face when the value resolves to `serif`, or the monospace face
+when it resolves to `monospace` (`FontFaceRule.genericOfValue`), when that face is held. -/
+def familyFontsWith (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
     Array Rendering.SfntProfile.Font :=
-  if serif.isEmpty then familyFonts faces fonts held value
-  else if Rendering.FontFaceRule.genericOfValue held value = .serif then familyFonts faces fonts held value ++ serif
-  else familyFonts faces fonts held value
+  if serif.isEmpty && mono.isEmpty then familyFonts faces fonts held value
+  else match Rendering.FontFaceRule.genericOfValue held value with
+    | .serif => familyFonts faces fonts held value ++ serif
+    | .monospace => familyFonts faces fonts held value ++ mono
+    | .first => familyFonts faces fonts held value
 
-/-- Kind: property. Says: with no serif face held, the fonts of every family value are the
-web fonts as before: a host that never gives the serif face lays every page out as before. -/
+/-- Kind: property. Says: with no serif and no monospace face held, the fonts of every family
+value are the web fonts as before: a host that never gives either face lays every page out as
+before. -/
 theorem familyFontsWith_none (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String) :
-    familyFontsWith #[] faces fonts held value = familyFonts faces fonts held value := by
-  have h0 : (#[] : Array Rendering.SfntProfile.Font).isEmpty = true := rfl
+    familyFontsWith #[] #[] faces fonts held value = familyFonts faces fonts held value := by
   unfold familyFontsWith
-  rw [if_pos h0]
+  rfl
 
-/-- Kind: property. Says: a family value that does not resolve to `serif` (`sans-serif`,
-`monospace`, a held or installed sans-serif family first) gets the same fonts whether or not
-the serif face is held: explicit families are not taken over. -/
-theorem familyFontsWith_first (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+/-- Kind: property. Says: a family value that resolves to neither `serif` nor `monospace`
+(`sans-serif`, a held or installed sans-serif family first) gets the same fonts whether or not
+the faces are held: explicit families are not taken over. -/
+theorem familyFontsWith_first (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
-    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value := by
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value := by
   unfold familyFontsWith
-  by_cases he : serif.isEmpty = true
-  · rw [if_pos he]
-  · rw [if_neg he, if_neg (by rw [h]; decide)]
+  split
+  · rfl
+  · rw [h]
 
 /-- Kind: property. Says: a family value that resolves to `serif` draws with the serif face
-after its web fonts and before the held fonts, when one is held. -/
-theorem familyFontsWith_serif (serif : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+after its web fonts and before the held fonts, when one is held; the monospace face is not
+used for it. -/
+theorem familyFontsWith_serif (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
     (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
     (hs : serif.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .serif) :
-    familyFontsWith serif faces fonts held value = familyFonts faces fonts held value ++ serif := by
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value ++ serif := by
   unfold familyFontsWith
-  rw [if_neg (by rw [hs]; decide), if_pos h]
+  rw [if_neg (by simp [hs]), h]
 
-/-- Whether the drawn text of `dom` has a family value that resolves to `serif`
-(`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that
-holds no serif face gives it when a layout says so (`Laid.wantsSerif`). Each distinct value
-is resolved once; the text of `SfntProfile.unrenderedText` elements is not drawn. -/
-def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool := Id.run do
+/-- Kind: property. Says: a family value that resolves to `monospace` draws with the monospace
+face after its web fonts and before the held fonts, when one is held; the serif face is not
+used for it. -/
+theorem familyFontsWith_mono (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (hm : mono.isEmpty = false) (h : Rendering.FontFaceRule.genericOfValue held value = .monospace) :
+    familyFontsWith serif mono faces fonts held value = familyFonts faces fonts held value ++ mono := by
+  unfold familyFontsWith
+  rw [if_neg (by simp [hm]), h]
+
+/-- Whether the drawn text of `dom` has a family value that resolves to `g`
+(`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that holds
+no face for `g` gives it when a layout says so (`Laid.wantsSerif`, `Laid.wantsMono`). Each
+distinct value is resolved once; the text of `SfntProfile.unrenderedText` elements is not
+drawn. -/
+def textWants (g : Rendering.FontFaceRule.Generic) (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool := Id.run do
   let mut seen : Std.TreeMap String Unit := {}
   -- Text nodes in a row mostly share their value: the last one is checked first.
   let mut last := "\x00"
@@ -1653,12 +1972,95 @@ def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Renderin
     if n.type != .text then continue
     let value := (styles[id]?.map (·.fontFamily)).getD ""
     if value == last || n.data.all Char.isWhitespace || seen.contains value then continue
-    if Rendering.FontFaceRule.genericOfValue held value == .serif then
+    if Rendering.FontFaceRule.genericOfValue held value == g then
       if !Rendering.SfntProfile.inUnrendered dom id then return true
     else
       seen := seen.insert value ()
       last := value
   return false
+
+/-- `textWants` for the serif face. -/
+def textWantsSerif (held : List String) (dom : DOM.Dom) (styles : Array Rendering.CSS.Computed) : Bool :=
+  textWants .serif held dom styles
+
+/-- Whether the text of a page's cascade (`Generated.styled`: the tree with its generated
+content, and the styles) resolves to `g`, before any layout; false when the cascade refused
+(the layout then refuses with it). -/
+def madeWants (g : Rendering.FontFaceRule.Generic) (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
+  match made with
+  | .ok (d,styles) => textWants g held (Rendering.Generated.flattenContents d styles) styles
+  | .error _ => false
+
+/-- `madeWants` for the serif face. -/
+def madeWantsSerif (held : List String) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) : Bool :=
+  madeWants .serif held made
+
+/-- The layout of `dom` with a cascade already made for it (`made`, from
+`Generated.styled`): what `Layout.renderWithStyles` does after its own cascade. -/
+def drawMade (dom : DOM.Dom) (made : DOM.Dom × Array Rendering.CSS.Computed) (font : Rendering.Layout.FontProfile)
+    (embedding : Rendering.Layout.Embedding) (width rows : Nat) (pictures : Rendering.Layout.Pictures) :
+    Except String ((Rendering.Scene × Array Rendering.Layout.Box) × Array Rendering.CSS.Computed) := do
+  let drawn ← Rendering.Layout.renderStyled (Rendering.Generated.flattenContents made.1 made.2) made.2 font embedding width rows pictures
+  return ((drawn.1,Rendering.Layout.pageBoxes dom.size drawn.2),made.2.extract 0 dom.size)
+
+/-- Kind: correctness of the shared cascade. Says: the layout of a page whose cascade is made
+first (`layOutDOMIn`, so that the fonts can know whether the page has serif text) is the
+layout `Layout.renderWithStyles` makes with its own cascade: making the cascade before the
+fonts changes no layout. -/
+theorem renderWithStyles_made (dom : DOM.Dom) (rules : List Rendering.CSS.Rule) (font : Rendering.Layout.FontProfile)
+    (embedding : Rendering.Layout.Embedding) (width rows : Nat) (textScale : Float) (state : Rendering.CSS.ElementState)
+    (pictures : Rendering.Layout.Pictures) (treeScope : Option Rendering.CSS.TreeScope) :
+    Rendering.Layout.renderWithStyles dom rules font embedding width rows textScale state pictures treeScope =
+      (Rendering.Generated.styled treeScope dom rules textScale state).bind
+        (fun m => drawMade dom m font embedding width rows pictures) := by
+  unfold Rendering.Layout.renderWithStyles drawMade
+  cases Rendering.Generated.styled treeScope dom rules textScale state <;> rfl
+
+/-- Whether a layout asks the host for a generic face (`Laid.wantsSerif` with the serif face,
+`Laid.wantsMono` with the monospace face): only when none is held, a page font is held, and
+the page has text in that family (`text`, worked out only then). -/
+def serifWanted (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool) : Bool :=
+  serif.isEmpty && loaded && text ()
+
+/-- Kind: property. Says: a layout made with the serif face held never asks for it, so a host
+that gives the face before the first layout of a page (run_html.ts, the Hub worker) never
+draws that page a second time for it: its first layout is final. -/
+theorem serifWanted_held (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool)
+    (h : serif.isEmpty = false) : serifWanted serif loaded text = false := by
+  simp [serifWanted, h]
+
+/-- Kind: property. Says: a page with no serif text never asks for the serif face, held or
+not: its text never costs a font load. -/
+theorem serifWanted_noText (serif : Array Rendering.SfntProfile.Font) (loaded : Bool) (text : Unit → Bool)
+    (h : text () = false) : serifWanted serif loaded text = false := by
+  simp [serifWanted, h]
+
+/-- Kind: property. Says: the family lookup a layout uses when the page has neither serif nor
+monospace text (`layOutDOMIn` passes no face then) gives every family value that resolves to
+neither the fonts it gets with the faces held: on such text the faces change nothing. -/
+theorem familyFontsWith_noSerif (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (h : Rendering.FontFaceRule.genericOfValue held value = .first) :
+    familyFontsWith #[] #[] faces fonts held value = familyFontsWith serif mono faces fonts held value := by
+  rw [familyFontsWith_none, familyFontsWith_first serif mono faces fonts held value h]
+
+/-- Kind: property. Says: a page with monospace text and no serif text gets, for every family
+value, the fonts it gets with the serif face held too (`layOutDOMIn` passes the serif face only
+for a page with serif text): on text that is not serif, holding the serif face changes nothing. -/
+theorem familyFontsWith_monoOnly (serif mono : Array Rendering.SfntProfile.Font) (faces : Array Rendering.FontFaceRule.Face)
+    (fonts : Array (Option Rendering.SfntProfile.Font)) (held : List String) (value : String)
+    (h : Rendering.FontFaceRule.genericOfValue held value ≠ .serif) :
+    familyFontsWith #[] mono faces fonts held value = familyFontsWith serif mono faces fonts held value := by
+  unfold familyFontsWith
+  cases hg : Rendering.FontFaceRule.genericOfValue held value with
+  | serif => exact absurd hg h
+  | monospace =>
+    by_cases hm : mono.isEmpty = true
+    · have h0 : mono = #[] := by simpa using hm
+      subst h0
+      simp
+    · simp [hm]
+  | first => simp
 
 /-- Read the bytes of a font file once. Later renders use it until another load
 changes the list. With `fallback`, the font goes at the end of the held list (a font
@@ -1684,6 +2086,7 @@ private def loadFont (h : Holds) (request : JSON.Json) : Holds × Except String 
   | some bytes =>
   if request.field? "webFont" == some (.bool true) then loadWebFont h bytes (str request "fontSha256" "unnamed") else
   if request.field? "serif" == some (.bool true) then loadSerifFont h bytes (str request "fontFamily" "serif") (str request "fontSha256" "unnamed") else
+  if request.field? "mono" == some (.bool true) then loadMonoFont h bytes (str request "fontFamily" "monospace") (str request "fontSha256" "unnamed") else
   loadFontBytes h bytes (str request "fontFamily" "font") (str request "fontSha256" "unnamed")
     (request.field? "fallback" == some (.bool true))
 
@@ -1695,8 +2098,10 @@ a render names the images in `heldImages`, `[{key,sha256}]`, so the bytes of a r
 request do not grow with the images (`frame_work_test.ts` counts them). `imageInfo`
 says that the engine has these ops: a host calls none of them before it asks. -/
 
-/-- Most images, and most bytes of images, that the engine holds; the oldest go first. -/
-def maxHeldImages : Nat := 64
+/-- Most images, and most bytes of images, that the engine holds; the oldest go first.
+128: the 64 `img` and SVG images that `inspect` lists (`maxDocumentImages`) and as many
+background images. -/
+def maxHeldImages : Nat := 128
 def maxHeldImageBytes : Nat := 33554432
 
 /-- Hold `bytes` as the image `key` with `sha256`, first; drop another image of the same
@@ -1741,11 +2146,14 @@ def decodeBinWith (bytes : ByteArray) (contentType fallback locale : String) : S
 @[export web_document_decode_bin]
 def decodeBin (bytes : ByteArray) (contentType : String) : String := decodeBinWith bytes contentType "" ""
 
-/-- The images a render names (`heldImages`), as key and SHA-256. -/
+/-- The images a render names (`heldImages`), as key and SHA-256: the first
+`maxHeldImages`. A name past them is not held, so its image is drawn as missing (alt
+text, no background), as for any name not held (`heldNamed`); the page is not refused.
+Cost of refusing: from 2026-11-22 the Wikipedia article "United States" (more than 64
+images and backgrounds together) was refused whole (issue 831). -/
 def namedImages (request : JSON.Json) : Except String (List (String × String)) := do
   let .array items := (request.field? "heldImages").getD (.array []) | throw "heldImages must be an array"
-  if items.length > maxHeldImages then throw s!"heldImages exceed {maxHeldImages}"
-  items.mapM fun item => do
+  (items.take maxHeldImages).mapM fun item => do
     let some (.string key) := item.field? "key" | throw "held image key must be a string"
     let some (.string sha) := item.field? "sha256" | throw "held image sha256 must be a string"
     pure (key,sha)
@@ -1786,9 +2194,11 @@ page's running animations and transitions (`elementState` reads it into the casc
 host gives the list of its script session's last turn, so the frame it paints has the
 values the page's scripts read. Until 2026-11-14 the field was not in this list, and a
 render's layout never saw it: content that fades in from `opacity: 0` stayed invisible. A
-page with no animation sends no such field and its key is as before. -/
+page with no animation sends no such field and its key is as before. `partialNote` (`false`:
+no "Partial page" note, `layOutDOMIn`) is the WPT reftest runner's; it was missing from this
+list on 2026-11-22 and the note stayed in its pictures. -/
 def layoutFields : List String := ["commands","resources","images","heldImages","url","syntax","fontData","textScalePercent","graphModel",
-  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported"]
+  "visited","media","liberal","scripting","resourceFailures","zoomUnit","webFonts","animated","imported","partialNote"]
 
 /-- The request with only `layoutFields`, in that order. -/
 def layoutRequest (request : JSON.Json) : JSON.Json :=
@@ -1834,6 +2244,8 @@ structure Laid where
   treeScope : Option Rendering.CSS.TreeScope := none
   /-- What liberal mode skipped (`WebAccept`); empty in strict mode. -/
   diagnostics : List WebAccept.Diagnostic := []
+  /-- The resource limits this layout reached (`WebAccept.LimitHit`), in both modes. -/
+  limits : List WebAccept.LimitHit := []
   /-- What a frame paints on this layout with no layout: the `transform` of script
   slots and SVG animations (`WebPaint`). -/
   paint : WebPaint.Plan := {}
@@ -1849,6 +2261,9 @@ structure Laid where
   /-- Text of the page resolves to `serif` and the engine holds no serif face
   (`textWantsSerif`): the answer says `wantsSerif`, and a host gives the face. -/
   wantsSerif : Bool := false
+  /-- Text of the page resolves to `monospace` and the engine holds no monospace face
+  (`textWants .monospace`): the answer says `wantsMono`, and a host gives the face. -/
+  wantsMono : Bool := false
 
 /-- The element state of a request (Selectors 4 §9): `hover` and `active` are node ids
 of the page (a link's `sourceNode`); `visited` lists URLs of the session history. A
@@ -1954,10 +2369,11 @@ read (the reader reads the whole document tree, where the taken-out roots stay i
 the document with no SVG at all (`WebRender.makeReplacedNoSvg`). Its type has no refusal: in
 liberal mode no SVG content refuses the page (`liberalSvg_ok`, `liberalSvg_noSvg`). -/
 def liberalSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option String)
-    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font) :
+    (images : List (String × ByteArray)) (svgFonts : Array Rendering.SfntProfile.Font)
+    (cascade : Option (Array Rendering.CSS.Computed) := none) :
     Rendering.Layout.Embedding × Rendering.Layout.Pictures × DOM.Dom × List WebAccept.Diagnostic ×
-      Option ((List String × List (String × ByteArray)) × NativeImage.Store) × NativeSVGText.Words :=
-  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts with
+      Option WebRender.StoreEntry × NativeSVGText.Words :=
+  match WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts cascade with
   | .ok (e,p,s,w) => (e,p,dom,[],s,w)
   | .error e =>
     let (bare,n) := stripSvg dom
@@ -1988,6 +2404,162 @@ theorem liberalSvg_noSvg (kept : Kept) (dom : DOM.Dom) (documentURL : Option Str
     (liberalSvg kept dom documentURL images svgFonts).2.2.2.1.map (·.skip) = [.svgContent] := by
   simp [liberalSvg, h1, h2, WebRender.makeReplacedNoSvg]
 
+/-- Background pictures take ids from here up, apart from the ids of the page's `img` and SVG
+images (`WebRender.picturesOf`): the paint table keeps one bitmap for each id. -/
+def backgroundPictureBase : Nat := 1099511627776
+
+/-- Most SVG background images drawn again at their tile size on one page. -/
+def maxVectorRedraws : Nat := 16
+
+/-- An SVG background image shown larger than its picture is drawn again at its tile size
+(`WebRender.vectorPictureAt`), for a box whose width and height are lengths in px (content
+box sizing): a stretched picture blurs its edges. Tile size by `Layout.backgroundTileSize`
+against the padding box; at most `maxVectorRedraws`, each with its own paint-table id. -/
+def redrawVectorBackgrounds (images : List (String × ByteArray)) (styles : Array Rendering.CSS.Computed) :
+    Array Rendering.CSS.Computed × Nat := Id.run do
+  let mut out := styles
+  let mut count := 0
+  for i in [0:styles.size] do
+    let st := styles[i]!
+    let some (_,b) := st.backgroundBitmap | continue
+    let some (nw,nh,ratio) := st.backgroundNatural | continue
+    let some key := st.backgroundImage | continue
+    if key.contains '#' then continue
+    let some bytes := images.lookup key | continue
+    if st.pos.borderBox then continue
+    let .px w := st.width | continue
+    let .px h := st.height | continue
+    let aw := w+st.padding.left+st.padding.right
+    let ah := h+st.padding.top+st.padding.bottom
+    let (tw,th) := Rendering.Layout.backgroundTileSize st.backgroundSize nw nh ratio aw ah
+    if !(tw.isFinite && th.isFinite) || tw < 1 || th < 1 || tw > 4096 || th > 4096 then continue
+    let (tw,th) := (tw.round.toUInt32.toNat, th.round.toUInt32.toNat)
+    if tw ≤ b.width && th ≤ b.height then continue
+    -- past the limit: counted (`vectorRedrawsWanted`), not drawn
+    count := count+1
+    if count > maxVectorRedraws then continue
+    let some bitmap := WebRender.vectorPictureAt bytes tw th | continue
+    out := out.set! i {st with backgroundBitmap := some (2*backgroundPictureBase+i,bitmap)}
+  -- with the number that wanted drawing again (`maxVectorRedraws` reports past it)
+  return (out,count)
+
+/-- The pictures of `img` elements with an SVG image shown larger than its picture, drawn
+again at the size they are shown (`Layout.fitScale` of the box and `object-fit`), as SVG
+backgrounds are (`redrawVectorBackgrounds`): for a box whose width and height are lengths
+in px (content box sizing), at most `maxVectorRedraws`, each with its own paint-table id.
+The picture keeps the image's natural size, so it is placed as before. -/
+@[noinline] def redrawnPictures (images : List (String × ByteArray)) (keys : List (Nat × String))
+    (styles : Array Rendering.CSS.Computed) (pictures : Rendering.Layout.Pictures) :
+    Std.TreeMap Nat Rendering.Layout.Picture × Nat := Id.run do
+  let mut found : Std.TreeMap Nat Rendering.Layout.Picture := {}
+  let mut wanted := 0
+  for (id,key) in keys do
+    let some picture := pictures id | continue
+    -- a fragment (`#view`, `#svgView(...)`) picks a view, which the store's picture has
+    if key.contains '#' then continue
+    -- the cheap tests first: most pictures are not shown larger than they are held
+    let some st := styles[id]? | continue
+    if st.pos.borderBox then continue
+    let .px w := st.width | continue
+    let .px h := st.height | continue
+    let (iw,ih) := picture.size
+    if iw <= 0 || ih <= 0 then continue
+    let (sx,sy) := Rendering.Layout.fitScale st.objectFit iw ih w h
+    let (dw,dh) := (iw*sx,ih*sy)
+    if !(dw.isFinite && dh.isFinite) || dw < 1 || dh < 1 || dw > 4096 || dh > 4096 then continue
+    let (dw,dh) := (dw.round.toUInt32.toNat,dh.round.toUInt32.toNat)
+    if dw ≤ picture.bitmap.width && dh ≤ picture.bitmap.height then continue
+    let some bytes := images.lookup key | continue
+    if !WebRender.looksLikeSVG bytes then continue
+    -- past the limit: counted, not drawn
+    wanted := wanted+1
+    if found.size ≥ maxVectorRedraws then continue
+    let some bitmap := WebRender.vectorPictureAt bytes dw dh | continue
+    let natural : Nat × Nat := (iw.round.toUInt32.toNat,ih.round.toUInt32.toNat)
+    let made : Rendering.Layout.Picture := ⟨3*backgroundPictureBase+id,bitmap,some natural⟩
+    found := found.insert id made
+  return (found,wanted)
+
+/-- `pictures` with the pictures of `found` in place of theirs. -/
+def withPictures (found : Std.TreeMap Nat Rendering.Layout.Picture) (pictures : Rendering.Layout.Pictures) :
+    Rendering.Layout.Pictures :=
+  if found.isEmpty then pictures
+  else fun id => match found.get? id with
+    | some p => some p
+    | none => pictures id
+
+private def attachBackgroundPicture (picture : Rendering.Layout.Pictures)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (id : Nat) (style : Rendering.CSS.Computed) : Rendering.CSS.Computed :=
+  match picture id with
+  | some pic =>
+    let natural := match style.backgroundImage.bind (naturals.lookup ·) with
+      | some n => some n
+      | none => pic.natural.map fun (w,h) => (some (Float.ofNat w),some (Float.ofNat h),some (Float.ofNat w/Float.ofNat h))
+    {style with backgroundBitmap := some (pic.id+backgroundPictureBase,pic.bitmap), backgroundNatural := natural}
+  | none => style
+
+/-- Take the already constructed picture map as data. A function of an element id can
+be eta-expanded inside the style loop, rebuilding the map for every element. -/
+@[noinline] def attachBackgroundPictures (pictures : Std.TreeMap Nat Rendering.Layout.Picture)
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) : Array Rendering.CSS.Computed :=
+  styles.mapIdx (attachBackgroundPicture (fun id => pictures.get? id) naturals)
+
+theorem attachBackgroundPictures_eq (store : NativeImage.Store) (keys : List (Nat × String))
+    (naturals : List (String × (Option Float × Option Float × Option Float)))
+    (styles : Array Rendering.CSS.Computed) :
+    attachBackgroundPictures (WebRender.picturesMap store keys) naturals styles =
+      styles.mapIdx (attachBackgroundPicture (WebRender.picturesOf store keys) naturals) := rfl
+
+#print axioms attachBackgroundPictures_eq
+
+/-- Generated images take paint-table ids from here up (`backgroundPictureBase` and the
+ids of redrawn pictures are below). -/
+def generatedPictureBase : Nat := 4*backgroundPictureBase
+
+/-- The images of the generated tree `d` (an image of a `content` value, CSS 2.1 §12.2): the
+nodes that `Generated.fill` added, in node order, with their URLs. Only ids from `base` up
+(the page's own nodes are not generated). -/
+def generatedImages (base : Nat) (d : DOM.Dom) : List (Nat × String) := Id.run do
+  let mut out : Array (Nat × String) := #[]
+  for id in [base:d.size] do
+    let n := d.get id
+    if n.type == .element && n.lname == Rendering.Generated.imageName then
+      let src := Rendering.CSS.attrValue n "src"
+      if !src.isEmpty then out := out.push (id,src)
+  return out.toList
+
+/-- The cascade with each element's background image decoded from the supplied images (a
+`data:` URL from itself), and the store made for them, for the engine to keep. A page with no
+background image gives its cascade back as it is. The pictures of the images of `content`
+values (`generatedImages`) are decoded in the same store and given by node: the layout lays
+each out as a replaced box; an image the host did not give or that did not decode has no
+picture and draws nothing (CSS 2.1 §12.2). -/
+def attachBackgrounds (stores : WebRender.StoresKept) (images : List (String × ByteArray))
+    (base : Nat) (made : Except String (DOM.Dom × Array Rendering.CSS.Computed)) :
+    Except String (DOM.Dom × Array Rendering.CSS.Computed) × Option WebRender.StoreEntry × List WebAccept.LimitHit ×
+      Std.TreeMap Nat Rendering.Layout.Picture :=
+  match made with
+  | .error e => (.error e,none,[],{})
+  | .ok (d,styles) =>
+    let generated := generatedImages base d
+    let all := ((styles.toList.filterMap (·.backgroundImage)) ++ generated.map (·.2)).eraseDups
+    let keys := all.take maxBackgroundImages
+    let over := WebAccept.LimitHit.check "maxBackgroundImages" maxBackgroundImages all.length "background images"
+    if keys.isEmpty then (.ok (d,styles),none,[],{}) else
+    let (store,entry) := WebRender.storeIn stores keys images
+    let pictureKeys := styles.toList.zipIdx.filterMap fun (st,i) => st.backgroundImage.map (i,·)
+    -- the natural size of each SVG background, read once for each URL (a page can name one
+    -- image from many elements); an image URL with a fragment shows a view: its size is the picture's
+    let naturals : List (String × (Option Float × Option Float × Option Float)) := keys.filterMap fun k =>
+      if k.contains '#' then none else (images.lookup k).bind WebRender.vectorNatural |>.map (k,·)
+    let styles := attachBackgroundPictures (WebRender.picturesMap store pictureKeys) naturals styles
+    let (styles,wanted) := redrawVectorBackgrounds images styles
+    let pictures := (WebRender.picturesMap store (generated.filter (keys.contains ·.2))).map fun _ p =>
+      {p with id := generatedPictureBase+p.id}
+    (.ok (d,styles),entry,over ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws wanted "SVG background images shown larger than their pictures",pictures)
+
 private def depthRefusal : String := "unsupported HTML nesting depth (maximum 64)"
 /-- `layOutDOM` in mode `m`, with its skip points. A liberal run is made only after a strict
 run refused (`WebAccept.accept`), so it puts `partialNote` on the page. -/
@@ -2009,7 +2581,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let (sheets,d2) ← sheetsIn m dom request env
   let (rules,madeSheet) ← rulesOfSheets kept env sheets
   modify (·.merge madeSheet)
-  let dom := if m == .liberal && graph.isNone then partialNote dom else dom
+  -- A request with `"partialNote":false` gets no note: the WPT reftest runner compares the page's
+  -- own content, and the note is the browser's (it moved each such page down 34 px and failed
+  -- 92 of 322 failing SVG reftests, issue 747). The window and the Hub still show it.
+  let dom := if m == .liberal && graph.isNone && request.field? "partialNote" != some (.bool false) then partialNote dom else dom
   -- Shadow trees (CSS Scoping 1): the layout is of the flat tree, and the selectors match
   -- on the node tree. A page with no shadow host takes none of this (`flatView`).
   let (dom,rules,treeScope) := flatView kept dom env rules
@@ -2027,18 +2602,6 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let loaded := pageFonts h.font (faceFonts.filterMap id)
   let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   let heldFamilies := ((h.font.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
-  -- The serif face draws the text whose family resolves to `serif` (`familyFontsWith`); the
-  -- words of web fonts and of the serif face are kept across layouts, as the others are.
-  let font ← match loaded,memo with
-    | some held,some words =>
-      let heldKey := Rendering.SfntProfile.fontsKey held.fonts
-      Rendering.SfntProfile.profile held.fonts words
-        (shapeKept heldKey none held.fonts)
-        (if faceFonts.all Option.isNone && h.serif.isEmpty then fun _ => #[]
-         else familyFontsWith h.serif faces faceFonts heldFamilies)
-        (held.fonts[0]?.map fun primary web =>
-          shapeKept ("with|" ++ Rendering.SfntProfile.fontsKey web ++ "|" ++ heldKey) (some primary) (web ++ held.fonts))
-    | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.
   let svgFonts := (h.font.map (·.fonts)).getD #[] ++ faceFonts.filterMap id
@@ -2046,20 +2609,64 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   -- The SVG of the page is read here. In liberal mode a refusal of it (the SVG reader reads all
   -- inline `svg` roots of the document together) lays the page out with no inline `svg`.
   let documentURL := if url.isEmpty then none else some url
+  -- Resolve styles before building the SVG view so both renderers use one cascade.
+  let state := withPointer dom (← elementState dom url request) pointer
+  let dom := styleAttributesAbsolute dom url
+  let made := Rendering.Generated.styled treeScope dom rules textScale state
+  let cascade := if (WebRender.documentElement dom).any (fun id =>
+    DOM.Dom.isHtmlElement (dom.get id) "html") then made.toOption.map (·.2) else none
   let (embedding,pictures,dom,d0,madeStore,madeWords) ← match graph with
     | some g => pure (WebGraph.embedding g,Rendering.Layout.noPictures,dom,([] : List WebAccept.Diagnostic),none,({} : NativeSVGText.Words))
     | none => match m with
       | .strict => do
-        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts
+        let (e,p,s,w) ← WebRender.makeReplacedIn kept.stores kept.words dom documentURL images svgFonts cascade
         pure (e,p,dom,[],s,w)
-      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts)
+      | .liberal => pure (liberalSvg kept dom documentURL images svgFonts cascade)
   modify (·.merge {store := madeStore,words := madeWords})
-  -- A window shorter than the chrome still lays out, on one row.
-  let state := withPointer dom (← elementState dom url request) pointer
+  -- The liberal fallback may have removed SVG roots and changed selector matches.
+  let state ← if d0.isEmpty then pure state else
+    pure (withPointer dom (← elementState dom url request) pointer)
+  let made := if d0.isEmpty then made else Rendering.Generated.styled treeScope dom rules textScale state
+  -- background images decoded into the cascade (issue 704); none on most pages
+  let (made,bgStore,bgLimits,generated) := attachBackgrounds kept.stores images dom.size made
+  modify (·.merge {store := bgStore})
+  -- the images of `content` values lay out as replaced boxes (the pictures of nodes the
+  -- cascade added, so none of the document's own)
+  let pictures := withPictures generated pictures
+  -- With the serif face held, the family lookup goes in only for a page that has serif text;
+  -- a page with none lays out as with no face held (`familyFontsWith_first`), with no lookup
+  -- for each word. A host that gives the face before the first page (run_html.ts, the Hub)
+  -- so lays a serif page out once, with its final face.
+  let serifText := !h.serif.isEmpty && loaded.isSome && madeWantsSerif heldFamilies made
+  -- The monospace face likewise, for a page whose cascade has monospace text.
+  let monoText := !h.mono.isEmpty && loaded.isSome && madeWants .monospace heldFamilies made
+  -- The serif face draws the text whose family resolves to `serif` (`familyFontsWith`); the
+  -- words of web fonts and of the serif face are kept across layouts, as the others are.
+  let font ← match loaded,memo with
+    | some held,some words =>
+      let heldKey := Rendering.SfntProfile.fontsKey held.fonts
+      Rendering.SfntProfile.profile held.fonts words
+        (shapeKept heldKey none held.fonts)
+        (if faceFonts.all Option.isNone && !serifText && !monoText then fun _ => #[]
+         else familyFontsWith (if serifText then h.serif else #[]) (if monoText then h.mono else #[]) faces faceFonts heldFamilies)
+        (held.fonts[0]?.map fun primary web =>
+          shapeKept ("with|" ++ Rendering.SfntProfile.fontsKey web ++ "|" ++ heldKey) (some primary) (web ++ held.fonts))
+    | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
   -- The layout with the styles it was made with (`Layout.renderWithStyles`): the one cascade
   -- of a layout also answers the SVG refusals below and `Laid.styles` (each cascaded the
-  -- document again before).
+  -- document again before). The page's own tree takes the cascade made above.
+  -- SVG images of `img` shown larger than their pictures, drawn again at their size
+  -- (a map, made once here: as a function-valued `match`, it was made again for each
+  -- picture the layout asked for; see `WebRender.picturesOf`)
+  let redrawn : Std.TreeMap Nat Rendering.Layout.Picture × Nat := match made with
+    | .ok (_,styles) => redrawnPictures images (WebRender.htmlImageKeys dom documentURL) styles pictures
+    | .error _ => ({},0)
+  let picturesWanted := redrawn.2
+  let pictures := withPictures redrawn.1 pictures
+  let limits := faceLimits env sheets faces ++ declarationLimits rules ++ (match made with | .ok (_,styles) => gridLimits styles | .error _ => []) ++ webFontLimits request ++ bgLimits ++ WebAccept.LimitHit.check "maxVectorRedraws" maxVectorRedraws picturesWanted
+    "SVG images shown larger than their pictures"
   let draw := fun (d : DOM.Dom) (e : Rendering.Layout.Embedding) => Rendering.Layout.renderWithStyles d rules font e width rows textScale state pictures treeScope
+  let drawPage := fun (e : Rendering.Layout.Embedding) => made.bind fun m => drawMade dom m font e width rows pictures
   -- Inline SVG is a skip point, checked so that liberal mode lays the page out once
   -- (2026-11-09: BBC News took three layouts). In the layout: the embedding draws a refused
   -- `svg` as nothing (`quiet`). After it: each `svg` root that was laid out is read again at
@@ -2069,10 +2676,10 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     | .ok nodes => .ok nodes
     | .error _ => .ok []
   let (first,used,d3,dom) ← match m with
-    | .strict => pure (draw dom embedding,embedding,([] : List WebAccept.Diagnostic),dom)
+    | .strict => pure (drawPage embedding,embedding,([] : List WebAccept.Diagnostic),dom)
     | .liberal => do
       let roots := svgRoots dom
-      let result := draw dom quiet
+      let result := drawPage quiet
       let refused := match result with
         | .ok ((_,boxes),styles) => if roots.isEmpty then [] else svgRefusals embedding styles boxes roots dom.size
         | .error _ => []
@@ -2107,7 +2714,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let laid : Laid := {scene := scene,boxes := boxes,face := face,hoverRules := hoverRules,words := memo}
   -- A page whose text resolves to `serif` while the engine holds no serif face says so; a
   -- host with a page font then gives the face and draws again. Others pay nothing more.
-  let wantsSerif := h.serif.isEmpty && loaded.isSome && textWantsSerif heldFamilies dom styles
+  let wantsSerif := serifWanted h.serif loaded.isSome fun _ => textWantsSerif heldFamilies dom styles
+  let wantsMono := serifWanted h.mono loaded.isSome fun _ => textWants .monospace heldFamilies dom styles
   return ({laid with dom := dom}
     |> fun l => {l with rules := rules}
     |> fun l => {l with textScale := textScale}
@@ -2115,7 +2723,9 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
     |> fun l => {l with treeScope := treeScope}
     |> fun l => {l with styles := Thunk.pure (.ok styles)}
     |> fun l => {l with paint := paint}
-    |> fun l => {l with wantsSerif := wantsSerif},d1 ++ d2 ++ d0 ++ d3 ++ d4)
+    |> fun l => {l with wantsSerif := wantsSerif}
+    |> fun l => {l with wantsMono := wantsMono}
+    |> fun l => {l with limits := limits},d1 ++ d2 ++ d0 ++ d3 ++ d4)
 
 /-- `layOut` after the parse: the layout of the arena `dom`, `width` by `rows` CSS pixels,
 in the mode of the request (`WebAccept.accept`). A script session's layout reads
@@ -2303,7 +2913,10 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   | 35 =>
     let px := (node / 65536).toFloat
     let py := (node % 65536).toFloat
-    match WebHit.target l.dom l.scene l.boxes px py with
+    let styles : Array Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles
+      | .error _ => #[]
+    match WebHit.targetWithStyles l.dom l.scene l.boxes styles px py with
     | some (hit,_) =>
       let chain := Id.run do
         let mut acc : Array Nat := #[hit]
@@ -2323,17 +2936,21 @@ def readAnswer (l : Laid) (node op : Nat) : Option String :=
   -- (`Rendering.Layout.scrollSize`): the padding box extended to the boxes inside it; for
   -- the root element, the viewport extended to the whole page. "0 0" with no box.
   | 38 =>
-    let border : Rendering.CSS.Edges := match l.styles.get with
-      | .ok styles => (styles[node]?.map (·.borderEdges)).getD {}
+    let style : Rendering.CSS.Computed := match l.styles.get with
+      | .ok styles => styles[node]?.getD {}
       | .error _ => {}
-    match Rendering.Layout.scrollSize l.dom l.boxes border (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node with
+    match Rendering.Layout.scrollSize l.dom l.boxes style.borderEdges
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height) node (Rendering.Layout.scrollAxes style) with
     | some (w,h) => some (line [w,h])
     | none => some "0 0"
   -- 21: the used width and height of the node's content box (CSSOM §9.1 resolved values
   -- of `width` and `height`), "" when the node has no box
   | 21 => match box, l.styles.get with
     | some (x0,y0,x1,y1), .ok styles =>
-      let s := styles[node]?.getD {}
+      -- The stored cascade is before viewport edge resolution. The script layout has
+      -- a CSS-pixel scene, so use the same viewport that renderStyled used.
+      let s := Rendering.Layout.withViewportEdges (styles[node]?.getD {})
+        (Float.ofNat l.scene.width) (Float.ofNat l.scene.height)
       let b := s.borderEdges
       some (line [max 0 (x1-x0-b.left-b.right-s.padding.left-s.padding.right),
                   max 0 (y1-y0-b.top-b.bottom-s.padding.top-s.padding.bottom)])
@@ -2373,7 +2990,7 @@ its first layout (`WebRender.storeAhead`, for the tree and the images of the ses
 the page has no image, and when the page or the request can not be read (the layout says
 why). -/
 def storeAheadOf (h : Holds) (kept : Kept) (html : String) (request : JSON.Json) :
-    Option ((List String × List (String × ByteArray)) × NativeImage.Store) :=
+    Option WebRender.StoreEntry :=
   let layout := layoutRequest ((request.field? "layout").getD (.object []))
   match (parseIn kept html (DOM.xmlSyntax (str layout "url") (str layout "syntax"))).1, suppliedImages layout with
   | .ok dom, .ok supplied =>
@@ -2401,6 +3018,21 @@ theorem keepStoreAhead_rest (h : Holds) (kept : Kept) (html : String) (request :
   unfold keepStoreAhead
   split <;> exact ⟨rfl,rfl,rfl⟩
 
+/-- Partial restyles may only touch a few nodes, while repeated ancestor tests ask
+for the same class words repeatedly. Read the keys of each node when first needed. -/
+@[noinline] private def memoElementKeys (tree : DOM.Dom) : Array (Thunk Rendering.CSS.ElemKey) :=
+  Array.ofFn (n := tree.size) fun i => Thunk.mk fun _ => Rendering.CSS.readKeys tree i.val
+
+private def elementKeyWithMemo (tree : DOM.Dom) (memo : Array (Thunk Rendering.CSS.ElemKey))
+    (id : Nat) : Rendering.CSS.ElemKey :=
+  match memo[id]? with
+  | some found => found.get
+  | none => Rendering.CSS.readKeys tree id
+
+private theorem elementKeyWithMemo_eq (tree : DOM.Dom) (id : Nat) :
+    elementKeyWithMemo tree (memoElementKeys tree) id = Rendering.CSS.readKeys tree id := by
+  by_cases h : id < tree.size <;> simp [elementKeyWithMemo, memoElementKeys, h, Thunk.get]
+
 /-- A matcher of rules for the reads of `measure` (the animation rules of op 28 and op 24, and
 the rules of the computed values): the rule buckets and the element keys of the tree, made
 once. It is data, passed to the functions that use it: a closure over the tables was
@@ -2408,8 +3040,9 @@ compiled with the tables made again at each call (each element read the keys of 
 document, n², 64 s in one script turn of a Wikipedia article on 2026-11-15). -/
 inductive RuleMatcher where
   | empty
-  /-- With no key table: the keys of an element read when a rule tests it (a few elements). -/
-  | keysRead (ix : Rendering.CSS.RuleIndex) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
+  /-- Partial restyles keep a lazily populated key table for their current arena. -/
+  | keysMemo (ix : Rendering.CSS.RuleIndex) (ks : Thunk (Array (Thunk Rendering.CSS.ElemKey)))
+      (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
   | plain (ix : Rendering.CSS.RuleIndex) (ks : Rendering.CSS.ElemKeys) (tree : DOM.Dom) (state : Rendering.CSS.ElementState)
   | scoped (ix : Rendering.CSS.ScopedIndex) (ks : Rendering.CSS.ElemKeys) (ts : Rendering.CSS.TreeScope) (state : Rendering.CSS.ElementState)
 
@@ -2423,9 +3056,20 @@ def RuleMatcher.make (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
 /-- The matches of element `id`: a look in the tables. -/
 def RuleMatcher.matched : RuleMatcher → Nat → List Rendering.CSS.Match
   | .empty, _ => []
-  | .keysRead ix tree state, id => ix.matched (Rendering.CSS.readKeys tree) tree id state
+  | .keysMemo ix ks tree state, id => ix.matched (elementKeyWithMemo tree ks.get) tree id state
   | .plain ix ks tree state, id => ix.matched (ks.get tree) tree id state
   | .scoped ix ks ts state, id => ix.matched (ks.get ts.tree) ts id state
+
+/-- The memo returns each element's current-arena keys, including during ancestor matches. -/
+theorem RuleMatcher.keysMemo_matched (ix : Rendering.CSS.RuleIndex) (tree : DOM.Dom)
+    (state : Rendering.CSS.ElementState) (id : Nat) :
+    (RuleMatcher.keysMemo ix (Thunk.mk fun _ => memoElementKeys tree) tree state).matched id =
+      ix.matched (Rendering.CSS.readKeys tree) tree id state := by
+  change ix.matched (elementKeyWithMemo tree (memoElementKeys tree)) tree id state = _
+  rw [show elementKeyWithMemo tree (memoElementKeys tree) = Rendering.CSS.readKeys tree from
+    funext (elementKeyWithMemo_eq tree)]
+
+#print axioms RuleMatcher.keysMemo_matched
 
 /-- Kind: equivalence. The tables give the matches of the bucket matcher with the keys read
 once, as `CSS.computeAll` and `CSS.computeAllIn` take them: the data form changes when the
@@ -2525,8 +3169,8 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       | some ts => .scoped (Rendering.CSS.ScopedIndex.build rules) (Rendering.CSS.ElemKeys.of ts.tree) ts state
       | none =>
         match carry with
-        -- a few elements are asked for: their keys are read when a rule tests them
-        | some _ => .keysRead index.get flat state
+        -- Initialise the table only when the partial restyle first asks for a key.
+        | some _ => .keysMemo index.get (Thunk.mk fun _ => memoElementKeys flat) flat state
         | none => .plain index.get (Rendering.CSS.ElemKeys.of flat) flat state
     let matchesOf := Rendering.CSS.withAnimated state matcher.matched
     -- an element's matches are made once a measure: the property table asks for them
@@ -2563,32 +3207,59 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
   -- document): a cascade of its own, the UA sheet and the frame document's `style` elements,
   -- from its root (`CSS.computeAllWith` at `r`). The body of such a document takes the margins
   -- of its container's `marginwidth` and `marginheight` (`CSS.containerMarginHints`), which the
-  -- script side brings in `q` as U+0002, the two values and U+0000 between them.
+  -- script side brings in `q` as U+0002, the two values and U+0000 between them, then the
+  -- container's node. A `style` element applies when its `type` and `media` say so in the
+  -- frame's media environment (HTML §4.2.6: "the element's media attribute's value matches
+  -- the environment"; Media Queries 4 §4: `width` and `height` are the frame's viewport, the
+  -- padding box of its container); a frame document none of whose sheets asks for a media
+  -- condition lays nothing out for it.
   let frameView := fun (r node : Nat) (q : String) => (do
-    let source := String.intercalate "\n" ((dom.treeOrder r).toList.filterMap fun id =>
-      if DOM.Dom.isHtmlElement (dom.get id) "style" then dom.textContent id else none)
-    let rules ← Rendering.CSS.parseIn {medium := medium request} source
+    let parts := (q.drop 1).toString.splitOn "\x00"
+    let styleIds := (dom.treeOrder r).toList.filter fun id => DOM.Dom.isHtmlElement (dom.get id) "style"
+    let asksMedia := styleIds.any fun id =>
+      !(Rendering.CSS.attrValue (dom.get id) "media").isEmpty || ((dom.textContent id).getD "").contains '@'
+    let env : Rendering.MediaQuery.Env := if !asksMedia then {medium := medium request} else
+      let viewport := match q.startsWith "\x02", (parts[2]?).bind String.toNat? with
+        | true, some f => (match laid.get with
+          | .ok l => paddingBoxOf l f
+          | .error _ => none)
+        | _, _ => none
+      { mediaEnv (medium request) width height 100 with
+        width := viewport.map (·.1), height := viewport.map (·.2),
+        deviceWidth := some width.toFloat, deviceHeight := some height.toFloat }
+    let source := String.intercalate "\n" (styleIds.filterMap fun id =>
+      match activeSheetIn .liberal env (dom.get id) id with
+      | .ok (true, _) => dom.textContent id
+      | _ => none)
+    let rules ← Rendering.CSS.parseIn env source
     let ix := Rendering.CSS.RuleIndex.build rules
     let matchesOf : Nat → List Rendering.CSS.Match := fun id => ix.matched (Rendering.CSS.readKeys dom) dom id {}
     let styles ← Rendering.CSS.computeAllWith matchesOf dom 1 r
     let n := dom.get node
     let isBody := DOM.Dom.isHtmlElement n "body" && (n.parent.bind fun p => (dom.get p).parent) == some r
-    let styles := match isBody, q.startsWith "\x02", (q.drop 1).toString.splitOn "\x00" with
-      | true, true, [mw, mh] => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
+    let styles := match isBody, q.startsWith "\x02", parts with
+      | true, true, mw :: mh :: _ => styles.modify node (Rendering.CSS.containerMarginHints mw mh)
       | _, _, _ => styles
     return ({ dom := dom, matchesOf := matchesOf, styles := styles, viewportW := width, viewportH := height } :
       Rendering.ComputedGeneric.View) : Except String Rendering.ComputedGeneric.View)
   -- what this measure leaves for the next (`Page.Carry`): for a page with no shadow tree, at
-  -- text scale 1, whose rules do not read the `style` attribute
+  -- text scale 1 (with rules that read the `style` attribute too: `Carry.readsStyle`)
   let left : Thunk (Option WasmVM.Hosts.Page.Carry) := Thunk.mk fun _ =>
     match styled.get, inputs.get with
     | .ok view, .ok (_,rules,none,state,textScale) =>
-      if textScale == 1 && (carry.isSome || !Rendering.CSS.readsStyleAttribute rules) then
+      if textScale == 1 then
         some { index := index.get, rules := rules, state := {state with animated := []}, styles := view.styles,
                -- (the rules are those of the measure before when it left them)
                parentOnly := match carry with
                  | some (c,_) => c.parentOnly
-                 | none => Rendering.CSS.attributesReachParentOnly rules }
+                 | none => Rendering.CSS.attributesReachParentOnly rules,
+               readsStyle := match carry with
+                 | some (c,_) => c.readsStyle
+                 | none => Rendering.CSS.readsStyleAttribute rules,
+               hasReads := match carry with
+                 | some (c,_) => c.hasReads
+                 | none => if Rendering.CSS.attributesReachParentOnly rules then none
+                   else Rendering.CSS.hasArgumentReads rules }
       else none
     | _, _ => none
   -- the position of each computed style name, for the reads by name of the animation engine
@@ -2880,6 +3551,9 @@ structure Engine where
   `maxOpaqueImages` every image is taken as not origin-clean (`opaqueFull`). -/
   opaqueImages : Std.HashSet String := {}
   opaqueFull : Bool := false
+  /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
+  until a host asks for a tree. -/
+  axLive : Option (String × List HTML.AccessibleTree.Region) := none
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -2953,15 +3627,94 @@ private def cpuPixels (request : JSON.Json) : Bool := request.field? "cpu" == so
 (`WebAccept.Diagnostic.json`) at the end of its JSON head. Other frames pay nothing. -/
 def withDiagnostics (request : JSON.Json) (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
   let (text,sections) := answer
-  if request.field? "diagnostics" != some (.bool true) || laid.diagnostics.isEmpty || !text.endsWith "}" then answer
-  else ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (WebAccept.diagnosticsJSON laid.diagnostics).toString ++ "}",sections)
+  if request.field? "diagnostics" != some (.bool true) || (laid.diagnostics.isEmpty && laid.limits.isEmpty) || !text.endsWith "}" then answer
+  else
+    let entries := laid.diagnostics.map WebAccept.Diagnostic.json ++ laid.limits.map WebAccept.LimitHit.json
+    ((text.dropEnd 1).toString ++ ",\"diagnostics\":" ++ (JSON.Json.array entries).toString ++ "}",sections)
 
-/-- A render answer of a layout whose text wants the serif face the engine does not hold
-(`Laid.wantsSerif`) says `"wantsSerif":true` at the end of its JSON head; others are as before. -/
+/-- A render answer of a layout whose text wants the serif face or the monospace face that the
+engine does not hold (`Laid.wantsSerif`, `Laid.wantsMono`) says `"wantsSerif":true` or
+`"wantsMono":true` at the end of its JSON head; others are as before. -/
 def withWants (laid : Laid) (answer : String × Array ByteArray) : String × Array ByteArray :=
   let (text,sections) := answer
-  if !laid.wantsSerif || !text.endsWith "}" then answer
-  else ((text.dropEnd 1).toString ++ ",\"wantsSerif\":true}",sections)
+  if !(laid.wantsSerif || laid.wantsMono) || !text.endsWith "}" then answer
+  else
+    let more := (if laid.wantsSerif then ",\"wantsSerif\":true" else "") ++ (if laid.wantsMono then ",\"wantsMono\":true" else "")
+    ((text.dropEnd 1).toString ++ more ++ "}",sections)
+
+/-- What the accessibility tree reads of a layout (`HTML.AccessibleTree.Env`): an element
+with `display: none` makes no box, `visibility` hides one, and the border boxes. With no
+computed styles (a layout that kept none) the markup decides what makes no box. -/
+def accessibilityEnv (laid : Laid) : HTML.AccessibleTree.Env :=
+  let styles : Array Rendering.CSS.Computed := match laid.styles.get with
+    | .ok s => s
+    | .error _ => #[]
+  let int := fun (f : Float) => f.round.toInt64.toInt
+  let env : HTML.AccessibleTree.Env :=
+    { rendered := fun k => match styles[k]? with
+        | some s => !(s.display == .none)
+        | none => !HTML.AccessibleTree.markupUnrendered laid.dom k,
+      visible := fun k => match styles[k]? with
+        | some s => s.visible
+        | none => true }
+  env.withBoxes (laid.boxes.map fun b => (b.source, ⟨int b.x, int b.y, (int b.width).toNat, (int b.height).toNat⟩))
+
+/-- The first number of the chrome's accessibility nodes (`WebShell.accessible`): above the
+node numbers of any page laid out. -/
+def accessibilityChromeBase : Nat := 1073741824
+
+/-- The live regions of the last accessibility tree the engine gave: the page's source and
+its regions (`HTML.AccessibleTree.regions`). -/
+abbrev LiveKept := Option (String × List HTML.AccessibleTree.Region)
+
+/-- Op `accessibilityTree`: the accessibility tree of the page of a render request (the same
+fields as the frame's, so the kept layout answers). `{"serial", "top", "scroll", "nodes",
+"announce"}`: `nodes` as `HTML.AccessibleTree.json` gives them (with `mac: true`, each with
+its `ax`: `jsonMac`; with `web: true`, each with its `web`: `jsonWeb`), each `box` in the layout's pixels from the top of the page; `top` is
+the chrome's height and `scroll` the page's scroll, so a box is at `y - scroll + top` in
+the window. With a `shell` the chrome's controls come first (`WebShell.accessible`), each
+`fixed: true` with its box in window pixels. `announce` lists the live regions to speak, `{"live", "text"}`: those whose
+text is not what the last tree of this page had (`live` is what the engine kept of that
+tree; the first tree of a page speaks nothing). `serial` is the layout's number: with
+`since` equal to it the answer is `{"serial", "unchanged": true, "top", "scroll"}` and no tree is made. With
+`view: true` the answer is `{"source"}`: the tree as a page for a person
+(`HTML.AccessibleTree.viewPage`), about the request's `url`. Also answers what the engine
+keeps next. -/
+def accessibilityAnswer (laid : Laid) (html : String) (request : JSON.Json) (top scroll : Nat) (live : LiveKept)
+    (chrome : List HTML.AccessibleTree.Entry := []) : String × LiveKept :=
+  let number := fun (n : Nat) => JSON.Json.number (toString n)
+  let since := match request.field? "since" with
+    | some (.number n) => n.toNat?
+    | _ => none
+  if laid.serial != 0 && since == some laid.serial then
+    ((JSON.Json.object [("serial",number laid.serial),("unchanged",.bool true),("top",number top),
+      ("scroll",number scroll)]).toString,live)
+  else
+    let entries := HTML.AccessibleTree.tree laid.dom (accessibilityEnv laid)
+    if request.field? "view" == some (.bool true) then
+      ((JSON.Json.object [("source",.string (HTML.AccessibleTree.viewPage (str request "url") entries))]).toString,live)
+    else
+      let regions := HTML.AccessibleTree.regions laid.dom entries
+      let speak := match live with
+        | some (page,old) => if page == html then HTML.AccessibleTree.announcements old regions else []
+        | none => []
+      let pick := fun (es : List HTML.AccessibleTree.Entry) =>
+        match (if request.field? "mac" == some (.bool true) then HTML.AccessibleTree.jsonMac es
+          else if request.field? "web" == some (.bool true) then HTML.AccessibleTree.jsonWeb es
+          else HTML.AccessibleTree.json es) with
+        | .object [(_,.array items)] => items
+        | _ => []
+      -- The chrome's nodes first, marked `fixed`: their boxes are window pixels and do not scroll.
+      -- Their numbers start above every node of a page (a page that large gets no chrome nodes).
+      let fixed := if laid.dom.size < accessibilityChromeBase then
+          (pick chrome).map (fun n => match n with
+            | .object fields => JSON.Json.object (fields ++ [("fixed",.bool true)])
+            | other => other)
+        else []
+      ((JSON.Json.object ([("serial",number laid.serial),("top",number top),("scroll",number scroll),
+        ("nodes",.array (fixed ++ pick entries))] ++
+        [("announce",.array (speak.map fun (l,t) => .object [("live",.string l),("text",.string t)]))])).toString,
+       some (html,regions))
 
 /-- An operation of the engine: it reads and changes the engine's state, and reads the
 machine through `M` (`BaseIO` in the engine, `Id` in tests: time 0, no random bytes). -/
@@ -3055,11 +3808,39 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     (request : JSON.Json) (width height : Nat) : DocM M (String × Array ByteArray) := do
   let .object fields := request | throw "document request must be an object"
   if (fields.map Prod.fst).eraseDups.length != fields.length then throw "duplicate document request field"
+  if str request "op" == "epubReader" then
+    -- The host transports bytes. The EPUB reader sets all limits and generates passive HTML.
+    if html.utf8ByteSize > (Epub.maxArchiveBytes + 2) / 3 * 4 then throw "EPUB archive size limit exceeded"
+    let some archive := WHATWG.Base64.decode html | throw "Invalid EPUB byte transport"
+    let book ← Epub.openBook archive
+    let page ← book.readerHtml (some (natField request "epubChapter"))
+    return ((JSON.Json.object [("source", .string page)]).toString, #[])
   if str request "op" == "fontLoad" then
     return (← stepState fun e => let (h,r) := loadFont e.holds request; ({e with holds := h},r),#[])
   -- A document's subresource requests go through the engine's network rules, step by step.
   if str request "op" == "subresource" then
     return (← stepState fun e => let (e, r) := e.subresource request; (e, .ok r),#[])
+  -- What a navigation's response does: shown as a page, or saved as a download under a safe
+  -- name (`Net.Subresource.navigated`, theorem `safeName_safe`). The host asks before it reads
+  -- the body.
+  -- The browser's cookies for page loads (`Net.Cookies`: `navCookie`, `navSet`, `Jar.persistent`,
+  -- theorems `sentNav_safe`, `persistent_no_session`): the host keeps the jar as text and asks
+  -- at each hop of a navigation; it writes to disk only what `keep` answers.
+  if str request "op" == "cookies" then
+    let jar := Net.Cookies.Jar.ofWire (str request "jar")
+    let now := (str request "now").toNat?.getD 0
+    let answer := match str request "action" with
+      | "request" => JSON.Json.object [("cookie", .string (Net.Cookies.navCookie jar (str request "url") (str request "initiator") now (str request "method")))]
+      | "response" => JSON.Json.object [("jar", .string (Net.Cookies.navSet jar (str request "url") now
+          (((str request "setCookie").splitOn "\n").filter fun f => !f.isEmpty)).wire)]
+      | "keep" => JSON.Json.object [("jar", .string (jar.persistent now).wire)]
+      | _ => JSON.Json.object [("error", .string "cookies: the action is request, response or keep")]
+    return (answer.toString, #[])
+  if str request "op" == "download" then
+    let answer := match Net.Subresource.navigated (str request "contentType") (str request "disposition") (str request "url") with
+      | .show => JSON.Json.object [("action", .string "show")]
+      | .save name => JSON.Json.object [("action", .string "save"), ("name", .string name)]
+    return (answer.toString, #[])
   if str request "op" == "imageLoad" then
     return (← stepState fun e => let (h,r) := loadImage e.holds request; ({e with holds := h},r),#[])
   -- The ops of held images and frame work: a host asks this before it calls them (issue 1274).
@@ -3093,7 +3874,7 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let form : NativeSVG.DataForm := if bytes then (if cpuPixels request then .sectionsCpu 0 else .sections 0)
       else if request.field? "binary" == some (.bool true) then .base64 else .decimal
     let checks := request.field? "checks" != some (.bool false)
-    let scene := chromeScene shell width
+    let scene := chromeScene shell width (← get).holds.addressFont
     let (text,sections) ← WebRender.artifactWith scene #[] none live form checks false
     return ("{\"top\":" ++ toString scene.height ++ ",\"chrome\":" ++ text ++ "}",sections)
   if str request "op" == "imageDrop" then
@@ -3144,7 +3925,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     | .ok none => pure ()
     | .error x => throw x
   let op := str request "op" "render"
-  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" then
+  if op != "render" && op != "selectedText" && op != "findInPage" && op != "printLayout" && op != "nodeAt" &&
+      op != "accessibilityTree" then
     let dom ← stepState fun e => match prepareDOMIn e.kept html request with
       | .ok (dom,made) => ({e with kept := e.kept.add made},.ok dom)
       | .error x => (e,.error x)
@@ -3199,7 +3981,10 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
         let t ← t.toNat?
         let px ← (Rendering.CSS.number x).toOption
         let py ← (Rendering.CSS.number y).toOption
-        let (node,_) ← WebHit.target laid.dom laid.scene laid.boxes px py
+        let styles : Array Rendering.CSS.Computed := match laid.styles.get with
+          | .ok styles => styles
+          | .error _ => #[]
+        let (node,_) ← WebHit.targetWithStyles laid.dom laid.scene laid.boxes styles px py
         some (t,node)
       | _ => none
     | _ => []
@@ -3220,6 +4005,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("contentHeight",number content),
       ("pages",.array (pages.map fun (top,rows) => .array [number top,number rows]))]).toString,#[])
+  -- The accessibility tree of the layout (`accessibilityAnswer`). Only a host with assistive
+  -- technology attached asks: a frame does not make it.
+  if op == "accessibilityTree" then
+    let (answer,live) := accessibilityAnswer laid html request top ((shell.map (·.scroll)).getD 0) (← get).axLive
+      ((shell.map fun value => WebShell.accessible value width accessibilityChromeBase).getD [])
+    modify fun e => {e with axLive := live}
+    return (answer,#[])
   -- Pointer positions are in window coordinates; the page starts below the chrome.
   let moved := Float.ofNat top-Float.ofNat ((shell.map (·.scroll)).getD 0)
   let chosen := (← selection request).map (fun value => WebSelection.shift value moved)
@@ -3294,12 +4086,12 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     if request.field? "layers" == some (.bool true) then
       return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty))
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont)
   let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
   let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
   let page := {scene with tree := near ++ marks}
   return withWants laid <| withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
-    | some value => WebShell.compose value page width height
+    | some value => WebShell.compose value page width height holds.addressFont
     | none => page)) boxes face live form checks tree)
 
 /-- The layout source of the engine: `Engine.frame`, which keeps layouts in the state. -/
@@ -3414,7 +4206,7 @@ def engineNew (_ : Unit) : Engine := {}
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,
-which holds string arguments in Wasm. `fallback` is 3 for the serif face (`loadSerifFont`), 2 for a web font (`loadWebFont`), 1 to
+which holds string arguments in Wasm. `fallback` is 4 for the monospace face (`loadMonoFont`), 3 for the serif face (`loadSerifFont`), 2 for a web font (`loadWebFont`), 1 to
 add the font to the held list, 0 to replace the list. The answer is the `fontLoad` answer. The guest module of page
 scripts comes the same way, as bytes (WebScripts). -/
 @[export web_document_font_load_bin]
@@ -3427,7 +4219,8 @@ def fontLoadBin (e : Engine) (bytes : ByteArray) (family sha256 : String) (fallb
     else
       let holds := e.holds
       let e := {e with holds := {}}
-      let (holds,r) := if fallback == 3 then loadSerifFont holds bytes family sha256
+      let (holds,r) := if fallback == 4 then loadMonoFont holds bytes family sha256
+        else if fallback == 3 then loadSerifFont holds bytes family sha256
         else if fallback == 2 then loadWebFont holds bytes sha256
         else loadFontBytes holds bytes family sha256 (fallback != 0)
       ({e with holds},r)

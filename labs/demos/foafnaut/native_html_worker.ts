@@ -26,8 +26,9 @@ export type WorkerRequest={id:number;op:"init";font?:{path:string;family:string}
   // The fallback fonts a page needs (native_html_fonts.ts): chosen and read here, as bytes,
   // into this engine, before the calls sent after it.
   |{id:number;op:"pageFonts";source:string}
-  // The serif face (serif_font.ts), into this engine, before the calls sent after it.
-  |{id:number;op:"serifFont";path:string;family:string};
+  // The serif face or the monospace face (serif_font.ts), into this engine, before the calls
+  // sent after it.
+  |{id:number;op:"serifFont"|"monoFont";path:string;family:string};
 export type WorkerReply={id:number;ok:true;value?:unknown;ms:number}|{id:number;ok:false;error:string;dropped?:boolean};
 
 let engine:Promise<HTMLEngine>|undefined;
@@ -48,9 +49,9 @@ const handle=async(request:WorkerRequest)=>{
       scope.postMessage({id:request.id,ok:true,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }
-    if(request.op==="serifFont"){
+    if(request.op==="serifFont"||request.op==="monoFont"){
       if(!engine)throw new Error("engine worker was not initialised");
-      const value=await loadFontFile(await engine,request.path,request.family,"bytes","serif");
+      const value=await loadFontFile(await engine,request.path,request.family,"bytes",request.op==="serifFont"?"serif":"mono");
       scope.postMessage({id:request.id,ok:true,value,ms:performance.now()-start} satisfies WorkerReply);
       return;
     }

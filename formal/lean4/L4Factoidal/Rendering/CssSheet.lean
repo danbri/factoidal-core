@@ -150,7 +150,10 @@ def anbSource (cvs : List CV) : String :=
   let (out, _) := (trimWs cvs).foldl (fun (acc : String × Bool) cv =>
     let (s, signed) := acc
     match cv with
-    | .tok (.num v _) => (s ++ (if signed && v ≥ 0 then "+" else "") ++ serialize [cv], false)
+    -- (not after `n-`: `5n- 5` is `5n-5`, its integer has no sign of its own)
+    | .tok (.num v _) =>
+      let ndash := (String.ofList (s.toList.reverse.dropWhile (· == ' ')).reverse).endsWith "-"
+      (s ++ (if signed && v ≥ 0 && !ndash then "+" else "") ++ serialize [cv], false)
     | .tok .ws => (s ++ " ", signed)
     | .tok (.delim _) => (s ++ serialize [cv], false)
     | cv => (s ++ serialize [cv], true)) ("", false)
@@ -268,6 +271,10 @@ def declaresDefaultNs (preludes : List String) : Bool :=
 
 #guard selectorText ":nth-child(odd)" == some ":nth-child(2n+1)"
 #guard selectorText ":nth-child( +n )" == some ":nth-child(n)"
+#guard selectorText ":nth-child(+ n)" == none
+#guard selectorText ":nth-child(5n- 5)" == some ":nth-child(5n-5)"
+#guard selectorText ":nth-child(-n- 5)" == some ":nth-child(-n-5)"
+#guard selectorText ":nth-child(n + 5)" == some ":nth-child(n+5)"
 #guard selectorText "li:nth-last-of-type(-N-5)" == some "li:nth-last-of-type(-n-5)"
 #guard selectorText ":nth-child(2n+0 of .a,b)" == some ":nth-child(2n of .a, b)"
 #guard selectorText ":nth-child(5n -3)" == some ":nth-child(5n-3)" && selectorText ":nth-child(-n+ 6)" == some ":nth-child(-n+6)"
@@ -711,6 +718,33 @@ def insertRule (rules : List Rule) (text : String) (index : Nat) : Except SheetE
       else if rule.kind == "Namespace" && rules.any (fun r => !isHead r) then .error .invalidState
       else .ok (before ++ rule :: after)
 
+/-- What `insertRule` reads of the rules already there: only their kinds. The refusal of a
+rule of kind `kind` at `index` among rules of the kinds `kinds`, if any (an `@import` after
+a rule that is not one, a rule before an `@import`, an `@namespace` beside other rules). -/
+def insertRefusal (kinds : List String) (kind : String) (index : Nat) : Option SheetError :=
+  let before := kinds.take index
+  let after := kinds.drop index
+  let isImport := fun (k : String) => k == "Import"
+  let isHead := fun (k : String) => k == "Import" || k == "LayerStatement" || k == "Namespace"
+  if isImport kind && before.any (fun k => !(isImport k || k == "LayerStatement")) then some .hierarchyRequest
+  else if !isHead kind && after.any isImport then some .hierarchyRequest
+  else if kind == "Namespace" && kinds.any (fun k => !isHead k) then some .invalidState
+  else none
+
+/-- `insertRule` for a holder that keeps its rules and gives only their kinds: the one new
+rule, or the error. Only the new rule's text is parsed, so an insert costs the rule, not
+the sheet (a page that adds its rules one at a time: 800 inserts into one sheet parsed the
+sheet 1,600 times). It is `insertRule` (`insertRule_eq_insertAt`). -/
+def insertAt (kinds : List String) (text : String) (index : Nat) : Except SheetError Rule :=
+  if index > kinds.length then .error .indexSize
+  else
+    match parseRule text with
+    | none => .error .syntax
+    | some rule =>
+      match insertRefusal kinds rule.kind index with
+      | some e => .error e
+      | none => .ok rule
+
 /-- `deleteRule(index)` (CSSOM §6.4.2 "remove a CSS rule"). -/
 def deleteRule (rules : List Rule) (index : Nat) : Except SheetError (List Rule) :=
   if index ≥ rules.length then .error .indexSize
@@ -749,6 +783,8 @@ text; an error as U+0001 and the name of the DOMException.
 - `rules` text → the rules, separated by U+0001; each is kind, type, prelude, body and
   cssText separated by U+0002
 - `insert` text rule index, `delete` text index
+- `insertAt` kinds rule index → U+0000 and the new rule's fields (as in `rules`), for a
+  holder that keeps its rules: `kinds` are the kinds of the rules there, separated by commas
 - `setsel` text index selector, `setbody` text index block
 - `selector` text → "1" and the canonical selector, or "0"
 - `canon` text → the sheet text in canonical form
@@ -762,6 +798,10 @@ def sheetOp (q : String) : String :=
   match q.splitOn "\x00" with
   | ["rules", text] => "\x01".intercalate ((rulesOf text).map ruleFields)
   | ["insert", text, rule, index] => answer (insertRule (rulesOf text) rule (index.toNat?.getD 0))
+  | ["insertAt", kinds, rule, index] =>
+    match insertAt (if kinds.isEmpty then [] else kinds.splitOn ",") rule (index.toNat?.getD 0) with
+    | .ok r => "\x00" ++ ruleFields r
+    | .error e => "\x01" ++ e.name
   | ["delete", text, index] =>
     match index.toNat? with
     | some i => answer (deleteRule (rulesOf text) i)
@@ -835,6 +875,23 @@ def sheetOp (q : String) : String :=
 #guard sheetOp "insert\x00a{}\x00}\x001" == "\x01SyntaxError"
 #guard sheetOp "delete\x00a{}\x005" == "\x01IndexSizeError"
 #guard sheetOp "selector\x00a  >  b" == "1a > b"
+-- insertAt: the new rule alone, decided from the kinds of the rules there
+#guard sheetOp "insertAt\x00Style\x00b{color:red}\x001" == "\x00Style\x021\x02b\x02color:red\x02b { color: red; }"
+#guard sheetOp "insertAt\x00\x00b{}\x000" == "\x00Style\x021\x02b\x02\x02b { }"
+#guard sheetOp "insertAt\x00\x00b{}\x001" == "\x01IndexSizeError"
+#guard sheetOp "insertAt\x00Style\x00}\x001" == "\x01SyntaxError"
+#guard sheetOp "insertAt\x00Style\x00@import url(x.css);\x001" == "\x01HierarchyRequestError"
+#guard sheetOp "insertAt\x00Import,Style\x00b{}\x000" == "\x01HierarchyRequestError"
+#guard sheetOp "insertAt\x00Style\x00@namespace url(x);\x000" == "\x01InvalidStateError"
+-- a sheet's canonical text reads back as rules of the same kind, type, prelude and text
+-- (tested on these, not proved; the block is kept as written, so `body` may differ in white
+-- space): what a holder that keeps its rules across an insert relies on
+#guard ["a{color:red} b , c{margin:0 auto}", "@media (min-width:100px){a{color:red}}", "@font-face{font-family:x}",
+    "@import url(x.css);", "@namespace svg url(http://www.w3.org/2000/svg);", "a::before{content:'x'}",
+    "@keyframes k{from{left:0}to{left:1px}}", "@supports (display:grid){a{display:grid}}", ".a>.b~.c+.d{}",
+    "@layer a, b; @layer a{p{color:red}} @container (min-width:1px){p{color:blue}}", "a{} @media print{b{} @media screen{c{}}}"].all fun t =>
+  let key := fun (r : Rule) => (r.kind, r.type, r.prelude, r.cssText)
+  (rulesOf (textOf (rulesOf t))).map key == (rulesOf t).map key
 
 /-- Kind: bounds. Says: `insertRule` at a valid index with an accepted rule gives one more
 rule. Does not say: where the rule is (it is at `index`, by the definition). -/
@@ -864,6 +921,49 @@ theorem insertRule_index (rules : List Rule) (text : String) (index : Nat) (h : 
     insertRule rules text index = .error .indexSize := by
   unfold insertRule
   simp [h]
+
+/-- Kind: equivalence. Says: `insertRule` on a list of rules is `insertAt` on their kinds: the
+same errors, and on success the rules with the one rule that `insertAt` answers at `index`.
+So a holder that keeps its rules and asks `insertAt` gets what `insertRule` gives. Does not
+say: that reading a sheet's text again gives the rules it was written from (tested on
+samples above, not proved). -/
+theorem insertRule_eq_insertAt (rules : List Rule) (text : String) (index : Nat) :
+    insertRule rules text index =
+      (insertAt (rules.map (·.kind)) text index).map fun r => rules.take index ++ r :: rules.drop index := by
+  unfold insertRule insertAt insertRefusal
+  simp only [List.length_map]
+  split
+  · rfl
+  · cases parseRule text with
+    | none => rfl
+    | some rule =>
+      simp only [← List.map_take, ← List.map_drop, List.any_map, Function.comp_def]
+      split
+      · rfl
+      · split
+        · rfl
+        · split
+          · rfl
+          · rfl
+
+/-- Kind: equivalence. Says: the text of a sheet after an insert is its rules' texts with the
+new rule's text at `index`, one a line: what the page-side holder writes from the texts it
+keeps. -/
+theorem textOf_insert (rules : List Rule) (r : Rule) (index : Nat) :
+    textOf (rules.take index ++ r :: rules.drop index) =
+      "\n".intercalate ((rules.map (·.cssText)).take index ++ r.cssText :: (rules.map (·.cssText)).drop index) := by
+  simp [textOf, List.map_take, List.map_drop]
+
+/-- Kind: equivalence. Says: `deleteRule` at a valid index gives the rules without the one at
+`index`, and the sheet's text is then the other rules' texts, one a line. -/
+theorem textOf_delete (rules : List Rule) (index : Nat) (out : List Rule)
+    (h : deleteRule rules index = .ok out) :
+    textOf out = "\n".intercalate ((rules.map (·.cssText)).take index ++ (rules.map (·.cssText)).drop (index + 1)) := by
+  unfold deleteRule at h
+  split at h
+  · cases h
+  · cases h
+    simp [textOf, List.map_take, List.map_drop]
 
 /-- Kind: bounds. Says: `deleteRule` at a valid index gives one rule fewer. Does not say:
 which rules remain (those before and after `index`, by the definition). -/

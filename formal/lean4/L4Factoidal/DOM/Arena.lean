@@ -121,6 +121,10 @@ structure Node where
   /-- The checkedness of an `input` once its dirty checkedness flag is set (HTML §4.10.5);
   `none` while the flag is false (`DOM.Forms.checkedness`). -/
   checkedness : Option Bool := none
+  /-- The value of an `input` in the value mode "value" once its dirty value flag is set
+  (HTML §4.10.5); `none` while the flag is false, when the `value` content attribute is the
+  value (`DOM.Forms.inputValue`). -/
+  dirtyValue : Option String := none
   /-- The shadow root of an element that is a shadow host (DOM §4.9). -/
   shadow : Option NodeId := none
   /-- On a DocumentFragment: it is a shadow root, with this state (`DOM.Shadow`). -/
@@ -752,7 +756,8 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
   let x := d.get src
   let n : Node := { type := x.type, doc := doc.getD x.doc, ns := x.ns, pfx := x.pfx, lname := x.lname,
                     attrs := x.attrs, data := x.data, pubId := x.pubId, sysId := x.sysId,
-                    htmlDoc := x.htmlDoc, contentType := x.contentType, checkedness := x.checkedness }
+                    htmlDoc := x.htmlDoc, contentType := x.contentType, checkedness := x.checkedness,
+                    dirtyValue := x.dirtyValue }
   let (d, id) := d.create n
   if x.type == .document then (d.setNode id fun y => { y with doc := id }, id) else (d, id)
 

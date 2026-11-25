@@ -38,6 +38,7 @@ first one, `mayConnect` (scheme, local address, mixed content) on the URL the ho
 request of an unknown destination is refused before anything is sent.
 -/
 import L4Factoidal.Net.PageFetch
+import L4Factoidal.WHATWG.MimeType
 
 namespace L4Factoidal.Net.Subresource
 open L4Factoidal.WHATWG
@@ -377,5 +378,111 @@ theorem kind_known (tab : Table) (page : Page) (kind url referrer : String) (pol
   unfold start
   simp only [this, if_true]
   exact ⟨_, _, _, rfl⟩
+
+/-! ## A navigation's response: shown, or saved as a download
+
+The browser shows a page, text, XML, SVG and JSON, and sniffs an answer with no type as a page.
+Anything else that a navigation brings (an archive, a PDF, an image or a video opened on its
+own, a type it does not know), and anything its server marks `Content-Disposition: attachment`,
+is saved as a file, and the page the person was on stays. The file's name is the server's
+(`filename=`), else the last part of the URL's path, made safe (`safeName`). -/
+
+/-- What the browser does with the response to a navigation. -/
+inductive Navigated where
+  | show
+  | save (name : String)
+  deriving Repr, BEq, Inhabited
+
+/-- A character a saved file's name may not hold: a path separator, `:`, a control
+character, or one of the characters other systems forbid in a name. -/
+def badNameChar (c : Char) : Bool :=
+  c == '/' || c == '\\' || c == ':' || c.toNat < 0x20 || c.toNat == 0x7F ||
+    c == '<' || c == '>' || c == '"' || c == '|' || c == '?' || c == '*'
+
+/-- The name a download is saved under: each bad character becomes `_`, leading dots go (no
+hidden file, no `..`), at most 200 characters, and `download` when nothing is left. -/
+def safeChars (raw : String) : List Char :=
+  ((raw.toList.map fun c => if badNameChar c then '_' else c).dropWhile (· == '.')).take 200
+
+def safeName (raw : String) : String :=
+  if (safeChars raw).isEmpty then "download" else String.ofList (safeChars raw)
+
+/-- ASCII lower case. -/
+def lowerAscii (s : String) : String := s.map fun c => if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (c.toNat + 32) else c
+
+/-- The parts of a `Content-Disposition` field, split at `;`, each trimmed. -/
+def dispositionParts (d : String) : List String := (d.splitOn ";").map fun p => p.trimAscii.toString
+
+/-- The `filename=` parameter of a `Content-Disposition` field, without its quotes. -/
+def dispositionName (d : String) : Option String :=
+  (dispositionParts d).findSome? fun p =>
+    if (lowerAscii p).startsWith "filename=" then
+      let v := (p.toList.drop 9).filter (· != '"')
+      if v.isEmpty then none else some (String.ofList v)
+    else none
+
+/-- The last segment of a URL's path ("" for none). -/
+def lastSegment (url : String) : String :=
+  let path := ((url.splitOn "?").headD "").splitOn "#" |>.headD ""
+  ((path.splitOn "/").getLast?).getD ""
+
+/-- The types a navigation shows (the essence of its `Content-Type`): `text/*`, HTML and
+XML, SVG, JSON, and any `+xml` or `+json` type. A missing or unparsable type is shown (sniffed
+as a page). -/
+def showsType (contentType : String) : Bool :=
+  match L4Factoidal.WHATWG.MimeType.parse contentType with
+  | none => true
+  | some m =>
+    let e := m.essence
+    m.type == "text" || e == "application/xhtml+xml" || e == "application/xml" || e == "image/svg+xml" ||
+      e == "application/json" || e.endsWith "+xml" || e.endsWith "+json"
+
+/-- What the response to a navigation of `url` with these header fields does. -/
+def navigated (contentType disposition url : String) : Navigated :=
+  let attachment := (lowerAscii ((dispositionParts disposition).headD "")) == "attachment"
+  if !attachment && showsType contentType then .show
+  else .save (safeName ((dispositionName disposition).getD (lastSegment url)))
+
+#guard navigated "text/html; charset=utf-8" "" "https://a.test/" == .show
+#guard navigated "" "" "https://a.test/x" == .show
+#guard navigated "application/json" "" "https://a.test/x.json" == .show
+#guard navigated "application/octet-stream" "attachment; filename=\"r.bin\"" "https://a.test/f" == .save "r.bin"
+#guard navigated "text/html" "attachment" "https://a.test/d/report.html?x=1" == .save "report.html"
+#guard navigated "application/zip" "" "https://a.test/" == .save "download"
+#guard navigated "application/pdf" "inline; filename=../../etc/passwd" "https://a.test/" == .save "_.._etc_passwd"
+
+/-- Kind: safety property of `safeName` (no path in a download's name). Says: the name a
+download is saved under is not empty, holds no path separator, `:`, control character or
+other forbidden character, and does not start with a dot; so a server can not make the browser
+write outside the downloads folder, over a hidden file, or to `..`. Does not say: that the
+name is unique (the host adds a number), or that its type matches its bytes. -/
+theorem safeName_safe (raw : String) :
+    (safeName raw).toList ≠ [] ∧ (∀ c ∈ (safeName raw).toList, badNameChar c = false) ∧
+      (safeName raw).toList.head? ≠ some '.' := by
+  unfold safeName
+  split
+  · refine ⟨by decide, ?_, by decide⟩
+    intro c hc
+    revert c
+    decide
+  · rename_i hne
+    rw [String.toList_ofList]
+    refine ⟨fun h => hne (by simp [h]), ?_, ?_⟩
+    · intro c hc
+      unfold safeChars at hc
+      have h1 := List.mem_of_mem_take hc
+      have h2 := (List.dropWhile_suffix _).subset h1
+      obtain ⟨d, _, rfl⟩ := List.mem_map.mp h2
+      by_cases hb : badNameChar d = true
+      · simp only [hb, ↓reduceIte]; decide
+      · simp only [hb, Bool.false_eq_true, ↓reduceIte]
+    · intro h
+      unfold safeChars at h
+      have hd := List.head?_dropWhile_not (fun c : Char => c == '.') (raw.toList.map fun c => if badNameChar c then '_' else c)
+      rw [List.head?_take] at h
+      split at h
+      · cases h
+      · rw [h] at hd
+        simp at hd
 
 end L4Factoidal.Net.Subresource

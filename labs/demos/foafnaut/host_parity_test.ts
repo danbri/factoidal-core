@@ -216,6 +216,81 @@ for(const fixture of Object.keys(expected.fixtures)) {
   });
 }
 
+Deno.test({name:"host parity: anonymous control text paints and sizes the control without adding a DOM box",
+  ignore:!engine},async()=>{
+  const {loadHTML}=await import("./native_html_engine.ts");
+  const native=await loadHTML(library);
+  const source=`<!doctype html><style>body{margin:0;line-height:40px}</style>
+    <input id="field" value="two words" style="vertical-align:top">
+    <input id="short" type="submit" value="X">
+    <input id="long" type="submit" value="Long label">
+    <script>
+      const r=document.getElementById("field").getBoundingClientRect();
+      console.log(JSON.stringify([r.x,r.y,r.width,r.height]));
+    </script>`;
+  const width=800,height=600,url="https://example.test/form";
+  const layout={url,liberal:true,textScalePercent:100,zoomUnit:100};
+  try{
+    const turn=native.scriptSession(source,{action:"start",engine:"bubblepop",url,width,height,layout});
+    assert.deepEqual(turn.errors,[]);
+    const frame=native.compile(source,width,height,{...layout,binary:false,checks:false});
+    const facts=native.inspect(source,layout) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]};
+    const boxes=frame.webRender.boxes as number[][];
+    const runs=frame.webRender.glyphRuns as {source:number;text:string}[];
+    const node=(id:string)=>facts.nodes.find(n=>n.attributes?.id===id)!.id;
+    const boxesOf=(id:string)=>boxes.filter(box=>box[0]===node(id)).map(box=>box.slice(1));
+    const rect=JSON.parse(turn.logs[0]);
+    assert.equal(rect[3],21,"the field has a 15 px content box, 2 px of padding and 4 px of border");
+    assert.deepEqual(boxesOf("field"),[rect]);
+    assert.deepEqual(runs.filter(run=>run.source===node("field")).map(run=>run.text),["two","words"]);
+    assert(boxesOf("long")[0][2]>boxesOf("short")[0][2],"the button's label contributes to its intrinsic width");
+  }finally{native.scriptSession("",{action:"close"});}
+});
+
+// A nested inline-block needs a border box even when it has no value to paint.
+// The package has both engines. The same check also runs against a standalone Wasm build.
+for(const backend of engine?["Wasm","native"]:["Wasm"]){
+  Deno.test(`host parity: nested control border boxes and pointer hits in ${backend}`,async()=>{
+    const {loadHTML}=await import("./native_html_engine.ts");
+    const api=await loadHTML(backend==="native"?library:undefined);
+    const source=`<!doctype html><style>body{margin:0}input{vertical-align:top}</style><span
+      id="wrap" style="display:inline-block;padding:3px 7px"><input id="q" value="x"><input id="empty"></span>
+      <span style="display:inline-block;width:200px"><input id="half" style="width:50%"></span>
+      <script>
+        for(const id of ["q","empty"]){
+          const r=document.getElementById(id).getBoundingClientRect();
+          const hit=document.elementFromPoint(r.x+3,r.y+3);
+          console.log(JSON.stringify([id,[r.x,r.y,r.width,r.height],hit&&hit.id]));
+        }
+      </script>`;
+    const width=800,height=600,url="https://example.test/nested-controls";
+    const layout={url,liberal:true,textScalePercent:100,zoomUnit:100};
+    try{
+      const turn=api.scriptSession(source,{action:"start",engine:"bubblepop",url,width,height,layout});
+      assert.deepEqual(turn.errors,[]);
+      assert.equal(turn.logs.length,2);
+      const frame=api.compile(source,width,height,{...layout,binary:false,checks:false});
+      const facts=api.inspect(source,layout) as unknown as {nodes:{id:number;attributes:Record<string,string>}[]};
+      const idOf=(name:string)=>facts.nodes.find(n=>n.attributes?.id===name)!.id;
+      const boxes=frame.webRender.boxes as number[][];
+      const boxesOf=(name:string)=>boxes.filter(b=>b[0]===idOf(name)).map(b=>b.slice(1));
+      const [wrap]=boxesOf("wrap");
+      assert(wrap,"the parent inline-block has a border box");
+      const runs=frame.webRender.glyphRuns as {source:number;text:string}[];
+      for(const [index,name] of ["q","empty"].entries()){
+        const [id,rect,hit]=JSON.parse(turn.logs[index]);
+        assert.equal(id,name);
+        assert.deepEqual(boxesOf(name),[[wrap[0]+7+155*index,wrap[1]+3,155,21]]);
+        assert.deepEqual(boxesOf(name),[rect]);
+        assert.equal(hit,name);
+        assert.deepEqual(runs.filter(run=>run.source===idOf(name)).map(run=>run.text),index===0?["x"]:[]);
+      }
+      assert.deepEqual(wrap.slice(2),[324,27],"the parent fits both fields and its padding");
+      assert.deepEqual(boxesOf("half").map(r=>r[2]),[108],"half the parent content width plus padding and borders");
+    }finally{api.scriptSession("",{action:"close"});}
+  });
+}
+
 // ---- the hosts' sources: the shared steps are used, not written again -----------------------------
 Deno.test("host parity: the hosts take their page steps from page-load.mjs",async()=>{
   const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
@@ -360,7 +435,14 @@ Deno.test("page-load: a script turn on the page record",async()=>{
   assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),true);assert.deepEqual(page.commands,commands);
   assert.equal(takeTurn(page,{changed:false,animated:[[3,"opacity","0.5",false]]}),false);
   const hub=await Deno.readTextFile(`${root}docs/web/hub/foafnaut/browser-worker.mjs`);
-  assert(/if\(takeTurn\(page,turn\)&&page===doc\)\{bandWanted=layered!==false&&!!L;request\(\);\}/.test(hub),"the Hub does not draw a script turn's frame on the layered path");
+  assert(/if\(takeTurn\(page,turn\)&&page===doc\)\{\s*bandWanted=layered!==false&&!!L;/.test(hub),"the Hub does not draw a script turn's frame on the layered path");
+  // scripts first (page-load.mjs scriptsFirst), the rule of every host that starts a page in slices: the
+  // turn's frame waits while the page's start has not finished, in the Hub and in the window
+  const win=await Deno.readTextFile(`${lab}run_html.ts`);
+  assert(/!first&&scriptsFirst\(\{now:performance\.now\(\),more:turn\.startMore===true,changedAt:changeHeld,layoutMs:lastLayoutMs\}\)/.test(hub)&&/sliceSteps:startSliceSteps/.test(hub),
+    "the Hub does not start a page in slices with the scripts-first rule");
+  assert(/scriptsFirst\(\{now,more:document\.script\?\.turn\.startMore===true,changedAt:pageChanged,layoutMs:lastLayoutMs\}\)/.test(win)&&/sliceSteps:startSliceSteps/.test(win),
+    "the window does not start a page in slices with the scripts-first rule");
 });
 
 // @import: the engine names what it lacks, the host fetches, until nothing is lacking.

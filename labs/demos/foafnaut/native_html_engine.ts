@@ -7,6 +7,9 @@ import createModule from "./.build/native-html/runtime/web-render.mjs";
 import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
+/** The answer of accessibilityTree: the nodes in tree order, or `unchanged` for the layout of `since`. */
+export type AccessibilityAnswer={serial:number;top:number;scroll:number;unchanged?:boolean;
+  nodes?:Record<string,unknown>[];announce?:{live:string;text:string}[]};
 /** The answer of findInPage: matches, the current one from 0, and its rectangles [x,y,w,h] in page rows. */
 /** What the desktop program reports to about:foafnaut: rows to show, and its build record. */
 export type AboutHost={rows?:[string,string][];version?:string;commit?:string};
@@ -33,8 +36,9 @@ export type HTMLLayerPlace = {top:number;view:number;bandTop:number;bandHeight:n
 export type PressAnswer = {control:string|null;sourceNode?:number|null;href?:string;rects:number[][]};
 /** A skip of liberal mode (WebAccept.Diagnostic.json): what Lean did not draw or run, and why. */
 export type Diagnostic = {source:"System";severity:string;feature:string;where:string;action:string;message:string};
-/** `wantsSerif`: the page's text resolves to serif and the engine holds no serif face (serif_font.ts). */
-export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[];wantsSerif?:boolean};
+/** `wantsSerif`, `wantsMono`: the page's text resolves to serif, or to monospace, and the engine
+holds no such face (serif_font.ts). */
+export type HTMLLayers = {layers:HTMLLayerPlace;page:HTMLArtifact;chrome:HTMLArtifact;diagnostics?:Diagnostic[];wantsSerif?:boolean;wantsMono?:boolean};
 export type Inspection = {
   baseURL:string;
   title:string;
@@ -78,7 +82,7 @@ export type ShellGo = {go:"page";url:string}|{go:"system";url:string}|{go:"comma
 export type GestureAnswer = {phase:"pending"|"swipe"|"other";direction:"back"|"forward"|null;progress:number;navigate:boolean;hint:number};
 /** Where a link or an address goes (WebRoute.lean, docs/web/hub/foafnaut/link-route.mjs). */
 export type LinkRoute = {route:"page";name:string;url:string}|{route:"graph";url:string}|{route:"navigate";url:string}|
-  {route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
+  {route:"outside";url:string}|{route:"system";url:string}|{route:"command";name:string;argument:string}|{route:"refuse";url:string;reason:string};
 export type HTMLResource = {nodeId:number;url:string;source:string};
 /** One turn of a script session (WebScripts.turnAnswer). `commands` is the whole command
 list, given only when `changed`: a host lays the page out again only then. */
@@ -88,12 +92,17 @@ export type ScriptTurn = {session:number;clock:number;changed:boolean;commandCou
   /** The values of the page's running animations and transitions at this turn: [node, longhand, computed text, isTransition]. */
   animated?:[number,string,string,boolean][];
   navigations?:{nodeId:number;url:string}[];frameLoads?:number;
+  /** A navigation of the page itself that Lean planned (a form's submission): the URL, the
+   * method, and for POST the body and its type; target `_blank` for a new tab. Said once. */
+  navigate?:{url:string;method:"get"|"post";body?:string;contentType?:string;target?:string};
   /** Requests the page asked for (XMLHttpRequest): the policy is the engine's; the host only makes them. */
   netRequests?:NetWire[];
   netCancels?:number[];
   /** A sync request: the turn changed nothing; answer it with action `syncAnswer` and the turn comes again. */
   netSync?:NetWire;
   logs:string[];errors:string[];timers:number;nextTimer:number|null;frames:number;nextWake:number|null;quiet:boolean;
+  /** The page's start stopped at its step budget (`sliceSteps`): the rest is due at once. */
+  startMore?:boolean;
   instructions:number;jobs:number;tasks:number;ns:number;layouts?:number;reads?:number;readOps?:string;
   /** Lean-validated page GPU commands of this turn (L4Factoidal.PageGpu) and their page session. */
   gpu?:unknown[];gpuPage?:number;
@@ -119,10 +128,11 @@ a JSON head and raw sections, with no Base64. The buffer is the host's own copy.
 export type BytesBackend=(html:string,requestJSON:string,width:number,height:number)=>ArrayBuffer;
 /** A font file as bytes (`web_document_font_call_bin`, WebDocument.fontLoadBin): no Base64
 and no JSON, so the file is not copied onto the call stack. The answer is the fontLoad JSON. */
-/** `fallback`: "serif" holds the serif face (mode 3, WebDocument.loadSerifFont), "web" a web font (2),
-true a fallback font (1), false replaces the held list (0). */
-export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif")=>string;
-const fontMode=(fallback:boolean|"web"|"serif")=>fallback==="serif"?3:fallback==="web"?2:fallback?1:0;
+/** `fallback`: "mono" holds the monospace face (mode 4, WebDocument.loadMonoFont), "serif" the
+serif face (3, WebDocument.loadSerifFont), "web" a web font (2), true a fallback font (1), false
+replaces the held list (0). */
+export type FontBackend=(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif"|"mono")=>string;
+const fontMode=(fallback:boolean|"web"|"serif"|"mono")=>fallback==="mono"?4:fallback==="serif"?3:fallback==="web"?2:fallback?1:0;
 /** An image as bytes (`web_document_image_call_bin`, WebDocument.imageLoadBin), held by key
 and SHA-256; undefined when the engine has no such export. The answer is the imageLoad JSON. */
 export type ImageBackend=(bytes:Uint8Array,key:string,sha256:string)=>string;
@@ -131,7 +141,8 @@ HTML encoding sniffing and the Encoding Standard's decoders), given the HTTP cha
 ("" for none); undefined when the engine has no such export. The answer is the encoding's
 name, a line feed and the text. */
 export type DecodeBackend=(bytes:Uint8Array,charset:string,fallback:string,locale:string)=>string;
-type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend};
+type LinkPicker=(text:string,width:number,height:number,x:number,y:number)=>string;
+type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend;hit?:LinkPicker};
 /** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
@@ -148,11 +159,19 @@ export function nativeBackends(path:string):Backends {
     web_document_decode_call_bin:{parameters:["buffer","u32","buffer"],result:"pointer",optional:true},
     // With the user's default for undeclared pages and the system's language (WebDocument.decodeBinWith).
     web_document_decode2_call_bin:{parameters:["buffer","u32","buffer","buffer","buffer"],result:"pointer",optional:true},
+    web_render_hit:{parameters:["buffer","u32","u32","f64","f64"],result:"pointer",optional:true},
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
   const size=new Uint32Array(1);
+  const hit=library.symbols.web_render_hit;
   return {
+    hit:hit?(text,width,height,x,y)=>{
+      const pointer=hit(cstring(text),width,height,x,y);
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return new Deno.UnsafePointerView(pointer).getCString();}
+      finally{library.symbols.web_render_free(pointer);}
+    }:undefined,
     text:(html,request,width,height)=>{
       const pointer=library.symbols.web_document_call(cstring(html),cstring(request),width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
@@ -190,16 +209,42 @@ export function nativeBackends(path:string):Backends {
 }
 export function nativeBackend(path:string):DocumentBackend {return nativeBackends(path).text;}
 /** Backend 1: the Wasm module. */
-function wasmBackends(module:Module):Backends {
+function wasmBackends(module:Module):Backends & {hit:LinkPicker} {
+  const callDocument=(name:string,html:string,request:string,width:number,height:number,extra:number[]=[])=>{
+    const args=[width,height,...extra],numeric=args.map(()=>"number");
+    if(html.length+request.length<=512*1024)
+      return module.ccall(name,"number",["string","string",...numeric],[html,request,...args]);
+
+    // ccall copies string arguments onto the Wasm stack. EPUB archives and
+    // image-bearing reader pages can exceed that stack even within source limits.
+    if(!module._malloc||!module._free)throw new Error("Published Lean HTML engine has no heap allocator");
+    const source=encoder.encode(html),options=encoder.encode(request);
+    const input=module._malloc(source.length+options.length+2);
+    if(!input)throw new Error("Published Lean HTML engine allocation failed");
+    try{
+      const requestAt=input+source.length+1,heap=module.HEAPU8;
+      heap.set(source,input);
+      heap[requestAt-1]=0;
+      heap.set(options,requestAt);
+      heap[requestAt+options.length]=0;
+      return module.ccall(name,"number",["number","number",...numeric],[input,requestAt,...args]);
+    }finally{module._free(input);}
+  };
   return {
+    hit:(text,width,height,x,y)=>{
+      const pointer=module.ccall("web_render_hit","number",["string","number","number","number","number"],[text,width,height,x,y]);
+      if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+      try{return module.UTF8ToString(pointer);}
+      finally{module.ccall("web_render_free",null,["number"],[pointer]);}
+    },
     text:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call","number",["string","string","number","number"],[html,request,width,height]);
+      const pointer=callDocument("web_document_call",html,request,width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return module.UTF8ToString(pointer);}
       finally{module.ccall("web_render_free",null,["number"],[pointer]);}
     },
     bytes:(html,request,width,height)=>{
-      const pointer=module.ccall("web_document_call_bin","number",["string","string","number","number","number"],[html,request,width,height,0]);
+      const pointer=callDocument("web_document_call_bin",html,request,width,height,[0]);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       // The first word is the total length. One copy out of the Wasm memory.
       try{const heap=module.HEAPU8,total=new DataView(heap.buffer,heap.byteOffset+pointer,4).getUint32(0,true);
@@ -293,13 +338,71 @@ function sceneOf(result:Record<string,unknown>&{dataBase64?:unknown},width:numbe
 }
 /** `answers:"bytes"` (the default) takes render answers as bytes with raw sections;
 `"text"` takes the JSON text with Base64, the reference that tests compare with. */
-/** The link regions of a frame as text, made once per array: `hit` and `press` on the same
- * frame send the same string, and Lean decodes it once (WebDocument.decodeLinks). */
-const linkTexts=new WeakMap<object,string>();
-function linksText(links:unknown[]):string {
-  let text=linkTexts.get(links);
-  if(text===undefined){text=JSON.stringify(links);linkTexts.set(links,text);}
-  return text;
+type LinkTarget = {href:string;sourceNode:number};
+type LinkChunk = {text:string;start:number;end:number;top:number;bottom:number};
+const linkChunkLimit=512*1024;
+const pressFragmentCount=8; // WebDocument.maxPressRects
+const linkWire=new WeakMap<unknown[],LinkChunk[]>();
+
+/** Keep the common single-payload path. Larger pages use contiguous, bounded
+ * chunks so Lean can pick in reverse paint order without increasing its input limit. */
+export function linkChunks(links:unknown[]):LinkChunk[] {
+  const kept=linkWire.get(links);
+  if(kept)return kept;
+  const full=JSON.stringify(links);
+  if(encoder.encode(full).length<=linkChunkLimit) {
+    const one=[{text:full,start:0,end:links.length,top:-Infinity,bottom:Infinity}];
+    linkWire.set(links,one);
+    return one;
+  }
+  const chunks:LinkChunk[]=[];
+  let start=0,bytes=2,top=Infinity,bottom=-Infinity;
+  let rows:string[]=[];
+  const flush=(end:number)=>{
+    if(!rows.length)return;
+    chunks.push({text:"["+rows.join(",")+"]",start,end,top,bottom});
+    rows=[];start=end;bytes=2;top=Infinity;bottom=-Infinity;
+  };
+  for(const [index,row] of links.entries()){
+    const encoded=JSON.stringify(row);
+    const size=encoder.encode(encoded).length;
+    if(bytes+size+(rows.length?1:0)>linkChunkLimit)flush(index);
+    rows.push(encoded);
+    bytes+=size+(rows.length>1?1:0);
+    const y=Array.isArray(row)?row[3]:undefined,h=Array.isArray(row)?row[5]:undefined;
+    // Do not exclude a malformed row here. The Lean decoder remains authoritative.
+    if(typeof y==="number"&&typeof h==="number"&&Math.abs(y)<2**31&&h>=0&&h<2**31){
+      top=Math.min(top,Math.floor(y)-1);bottom=Math.max(bottom,Math.ceil(y+h)+1);
+    }else {top=-Infinity;bottom=Infinity;}
+  }
+  flush(links.length);
+  linkWire.set(links,chunks);
+  return chunks;
+}
+
+export function pickLinkChunk(chunks:LinkChunk[],row:number,pick:(text:string)=>LinkTarget|null) {
+  for(let i=chunks.length-1;i>=0;i--){
+    const chunk=chunks[i];
+    if(row<chunk.top||row>=chunk.bottom)continue;
+    const target=pick(chunk.text);
+    if(target)return {target,chunk};
+  }
+  return null;
+}
+
+/** The winning chunk supplies the target. Earlier or later fragments of that
+ * source supply the same press highlight rectangles as the full link list. */
+export function pressLinksText(links:unknown[],chunk:LinkChunk,sourceNode:number):string {
+  const before:string[]=[],after:string[]=[];
+  let fragments=0;
+  for(const [index,row] of links.entries()){
+    if(!Array.isArray(row)||row[0]!==sourceNode)continue;
+    if(index<chunk.start)before.push(JSON.stringify(row));
+    else if(index>=chunk.end)after.push(JSON.stringify(row));
+    if(++fragments===pressFragmentCount)break;
+  }
+  const chunks=[...before,chunk.text.slice(1,-1),...after].filter(Boolean);
+  return "["+chunks.join(",")+"]";
 }
 /** Test mode: with FOAFNAUT_HOST_TRACE set to a file, every engine call adds one JSON line to it
 (docs/web/hub/foafnaut/host-trace.mjs; checked by host_contract_check.ts against the host contract).
@@ -317,18 +420,18 @@ function hostTrace(backends:Backends):Backends {
   }) as Backends;
 }
 export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes") {
-  const module = await createModule() as unknown as Module;
-  const backends=hostTrace(nativeEngine?nativeBackends(nativeEngine):wasmBackends(module));
+  const native=nativeEngine?nativeBackends(nativeEngine):undefined;
+  // Older native libraries can still use the Wasm link picker. Current ones
+  // provide the same C entry point and need no second document engine.
+  const wasm=native?.hit?undefined:wasmBackends(await createModule() as unknown as Module);
+  const backends=hostTrace(native??wasm!);
   const backend=backends.text;
-  function call(name:string,types:string[],args:unknown[]) {
-    const pointer=module.ccall(name,"number",types,args);
-    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
-    try {
-      const result=JSON.parse(module.UTF8ToString(pointer));
-      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result;
-    } finally {module.ccall("web_render_free",null,["number"],[pointer]);}
-  }
+  const hit=native?.hit??wasm!.hit;
+  const pickLinks=(text:string,width:number,height:number,x:number,y:number):LinkTarget|null=>{
+    const result=JSON.parse(hit(text,width,height,x,y));
+    if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+    return result;
+  };
   // Bytes of JSON request sent to Lean for renders: the last one and the most (frame_work_test.ts).
   const sent={renders:0,lastRenderBytes:0,maxRenderBytes:0};
   const countRender=(request:string)=>{
@@ -370,12 +473,13 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Lean reads the font once and holds it; later renders draw with it.
     // fallback:true adds the font to the engine's list, after the fonts it holds;
     // otherwise the font replaces the list. The answer counts the fonts held.
-    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>
-      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback?{fallback:true}:{})}) as FontLoaded,
+    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>
+      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback==="mono"?{mono:true}:fallback?{fallback:true}:{})}) as FontLoaded,
     // The same, with the file as bytes: no Base64, and no size limit from the call stack.
     // fallback:"serif" holds the serif face, which draws the text whose family resolves to
     // serif (FontFaceRule.genericOf); a host gives it when a render answers wantsSerif.
-    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"=false)=>{
+    // fallback:"mono" holds the monospace face, likewise for monospace text and wantsMono.
+    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>{
       const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256,fallback));
       if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
       return result as FontLoaded;
@@ -407,6 +511,30 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     and the settings page section for it; undefined for an engine from before. */
     encodingSetting:(setting:string)=>{try{return (documentCall("",{op:"encodingSetting",setting}) as {setting:string}).setting;}catch{return undefined;}},
     encodingChoices:(setting:string,locale:string)=>{try{return (documentCall("",{op:"encodingChoices",setting,locale}) as {html:string}).html;}catch{return undefined;}},
+    /** The search engine chosen in Settings, as Lean keeps it (WebRoute.searchSetting: "" for
+    none), the settings section for it, the browser's search page for typed words, and the
+    Outside page; undefined for an engine from before (the feature is then off). */
+    searchSetting:(setting:string)=>{try{return documentCall("",{op:"searchSetting",setting}) as {setting:string;name:string};}catch{return undefined;}},
+    searchChoices:(setting:string)=>{try{return (documentCall("",{op:"searchChoices",setting}) as {html:string}).html;}catch{return undefined;}},
+    searchPage:(request:{argument:string;tabs:{url:string;title:string}[];resources:unknown[];state:boolean;search:string})=>
+      documentCall("",{...request,op:"searchPage"}) as {title:string;source:string},
+    outsidePage:(url:string,hub=false,textnaut=false)=>{try{return documentCall("",{op:"outsidePage",url,hub,textnaut}) as {title:string;source:string};}catch{return undefined;}},
+    /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
+    shown, or saved under the name Lean made safe. Undefined for an engine from before the op
+    (every response is then shown, as before). */
+    /** The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the jar is
+    text the host keeps; `request` gives a hop's Cookie field, `response` the jar after its
+    Set-Cookie fields, `keep` the part that may be written to disk. Undefined for an engine from
+    before the op (page loads then carry no cookies, as before). */
+    cookies:(request:{action:"request"|"response"|"keep";jar:string;now:string;url?:string;initiator?:string;method?:string;setCookie?:string})=>{
+      try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
+    download:(request:{contentType:string;disposition:string;url:string})=>{
+      try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
+    epubReader:(bytes:Uint8Array,epubChapter:number)=>{
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return documentCall(btoa(text),{op:"epubReader",epubChapter}) as {source:string};
+    },
     decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
       if(!backends.decode)return undefined;
       const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");
@@ -443,6 +571,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
       if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
       if(result.wantsSerif===true)layers.wantsSerif=true;
+      if(result.wantsMono===true)layers.wantsMono=true;
       return layers;
     },
     // Lean decides what a chrome click, a key, an address and a link mean.
@@ -453,10 +582,31 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // The address menu's buttons and the text Copy writes; empty with the menu closed.
     shellActions:(shell:unknown,width:number)=>(documentCall("",{op:"shellActions",shell,width}) as {actions:MenuAction[]}).actions,
     // A press: the control or the link under the pointer (`row` is the page-layer row) and what to darken.
-    press:(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[])=>documentCall("",{op:"press",shell,x,y,width,row:Math.max(0,Math.floor(row)),linksText:linksText(links)}) as PressAnswer,
+    press(shell:unknown,x:number,y:number,width:number,row:number,links:unknown[]):PressAnswer {
+      const pageRow=Math.max(0,Math.floor(row));
+      const press=(linksText:string)=>documentCall("",{op:"press",shell,x,y,width,row:pageRow,linksText}) as PressAnswer;
+      const chunks=linkChunks(links);
+      if(chunks.length===1)return press(chunks[0].text);
+      const chrome=press("[]");
+      if(chrome.control||!Number.isFinite(pageRow))return chrome;
+      const pressX=Number.isInteger(x)&&x>=0?x:0;
+      // Press coordinates are natural page rows. The window hit operation checks
+      // a viewport, while press may use any row of the retained page.
+      const hit=pickLinkChunk(chunks,pageRow,text=>pickLinks(text,0xffffffff,0xffffffff,pressX,pageRow));
+      return hit?press(pressLinksText(links,hit.chunk,hit.target.sourceNode)):chrome;
+    },
     // The system pointer for a window point: "arrow", "hand" or "text" (issue 1268).
-    pointerCursor:(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number})=>
-      (documentCall("",{...request,op:"pointerCursor"}) as {cursor:string}).cursor,
+    pointerCursor(request:{shell:unknown;x:number;y:number;width:number;model?:string;links?:string;pageY?:number},
+        regions?:unknown[]):string {
+      let links=request.links;
+      const row=request.pageY;
+      if(regions&&row!==undefined){
+        const chunks=linkChunks(regions);
+        links=chunks.length===1?chunks[0].text:
+          pickLinkChunk(chunks,row,text=>pickLinks(text,0xffffffff,0xffffffff,request.x,row))?.chunk.text;
+      }
+      return (documentCall("",{...request,op:"pointerCursor",links}) as {cursor:string}).cursor;
+    },
     shellText:(shell:unknown,text:string)=>documentCall("",{op:"shellText",shell,text}) as ShellEdit,
     shellKey:(shell:unknown,key:number,modifiers=0)=>documentCall("",{op:"shellKey",shell,key,modifiers}) as ShellEdit,
     // Select all, copy, cut, paste, undo, redo and focus in the address bar; `clipboard` is the text to copy.
@@ -531,6 +681,7 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     iconPrepare:(base64:string,scale:number)=>documentCall("",{op:"iconPrepare",base64,scale}) as TabIcon,
     // A key that the macOS menu did not take: the command of Lean's key table, or null.
     pageKey:(key:number,modifiers:number)=>(documentCall("",{op:"pageKey",key,modifiers}) as {command:number|null}).command,
+    keyTable:(platform:string)=>documentCall("",{op:"keyTable",platform}) as {modifier:string;key:string;command:number}[],
     historyPush:(history:History,url:string)=>documentCall("",{op:"historyPush",history,url}) as HistoryAnswer,
     keyCommand:(platform:string,modifier:string,key:string)=>(documentCall("",{op:"keyCommand",platform,modifier,key}) as {command:number|null}).command,
     pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
@@ -540,6 +691,11 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // the current match (from 0) and its rectangles in page rows.
     findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
+    // The accessibility tree of the page of a frame's request (HTML/AccessibleTree.lean): asked
+    // only while assistive technology is attached. `options.since` is the `serial` of the last
+    // answer: the engine then answers `unchanged` for the same layout and makes no tree.
+    accessibilityTree:(source:string,width:number,height:number,options:Record<string,unknown>)=>
+      documentCall(source,{...options,op:"accessibilityTree"},width,height) as AccessibilityAnswer,
     // about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is
     // what this program reports, which the page shows as reported and does not check.
     aboutPage:(host:AboutHost)=>(documentCall("",{op:"aboutPage",host}) as {source:string}).source,
@@ -551,8 +707,8 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},
     hit(artifact:HTMLArtifact,x:number,y:number):{href:string;sourceNode:number}|null {
       if(!Number.isFinite(x)||!Number.isFinite(y))return null;
-      return call("web_render_hit",["string","number","number","number","number"],
-        [linksText(artifact.webRender.links),artifact.width,artifact.height,x,y]);
+      const chunks=linkChunks(artifact.webRender.links);
+      return pickLinkChunk(chunks,y,text=>pickLinks(text,artifact.width,artifact.height,x,y))?.target??null;
     },
   };
 }

@@ -8,6 +8,7 @@ import { arch as osArch, homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { pin, sha256, untar } from './engine.mjs';
+import { assetUrl, mainReleases, tagPattern } from './releases.mjs';
 
 const LIBRARY = 'foafnaut/libweb-render.so';
 const KEEP = [LIBRARY, 'foafnaut/README-linux.txt', 'foafnaut/engine-build.txt'];
@@ -23,23 +24,18 @@ export function nativePlatform(os = platform(), cpu = osArch()) {
  * channel: 'pinned' (engine-pin.json's entry, else as 'latest'), 'latest' (the newest self-contained
  * release), or a release tag build-<12 hex>-foafnaut-<target> (that release, if it is self-contained).
  */
-export async function nativeChoice(target, { channel = 'pinned', fetchImpl = globalThis.fetch, thePin = pin } = {}) {
+export async function nativeChoice(target, { channel = 'pinned', fetchImpl = globalThis.fetch, thePin = pin, env = process.env } = {}) {
   const pinned = thePin.native?.[target];
   if (channel === 'pinned' && pinned) return { ...pinned, pinned: true };
-  const headers = { accept: 'application/vnd.github+json', 'user-agent': 'textnaut' };
-  const list = await fetchImpl(`https://api.github.com/repos/${thePin.repository}/releases?per_page=100`, { headers });
-  if (!list.ok) throw new Error(`the release list: HTTP ${list.status}`);
-  const tag = new RegExp(`^build-[0-9a-f]{12}-foafnaut-${target}$`);
+  const tag = tagPattern(target);
   const named = channel !== 'pinned' && channel !== 'latest';
   if (named && !tag.test(channel)) throw new Error(`${channel} is not a release of the ${target} engine (build-<12 hex>-foafnaut-${target})`);
-  const releases = (await list.json()).filter((r) => tag.test(r.tag_name) && r.published_at && (!named || r.tag_name === channel))
-    .sort((a, b) => b.published_at.localeCompare(a.published_at));
+  // The newest builds of main first (releases.mjs: every page of the list, checked against main).
+  const releases = named ? [{ tag: channel }] : (await mainReleases({ target, builds: thePin.repository, fetchImpl, env })).releases;
   const asset = `foafnaut-${target}.tar.gz`;
   for (const r of releases) {
-    const infoUrl = r.assets.find((a) => a.name === 'build-info.json')?.browser_download_url;
-    const url = r.assets.find((a) => a.name === asset)?.browser_download_url;
-    if (!infoUrl || !url) continue;
-    const reply = await fetchImpl(infoUrl, { headers: { 'user-agent': 'textnaut' }, redirect: 'follow' });
+    const url = assetUrl(r.tag, asset, thePin.repository);
+    const reply = await fetchImpl(assetUrl(r.tag, 'build-info.json', thePin.repository), { headers: { 'user-agent': 'textnaut' }, redirect: 'follow' });
     if (!reply.ok) continue;
     const info = await reply.json();
     // Older Linux releases link Lean's shared runtime and need the toolchain: not these.
@@ -47,10 +43,10 @@ export async function nativeChoice(target, { channel = 'pinned', fetchImpl = glo
     const art = info.artifacts?.[asset];
     const file = art?.files?.[LIBRARY];
     if (!art?.sha256 || !file?.sha256) continue;
-    return { release: r.tag_name, url, commit: info.source_commit, tarball: { bytes: art.size, sha256: art.sha256 },
+    return { release: r.tag, url, commit: info.source_commit, tarball: { bytes: art.size, sha256: art.sha256 },
       file: { bytes: file.size, sha256: file.sha256 }, pinned: false };
   }
-  throw new Error(named ? `${channel} is not a self-contained engine release in ${thePin.repository}` : `no self-contained ${target} engine release in ${thePin.repository} yet`);
+  throw new Error(named ? `${channel} is not a self-contained engine release in ${thePin.repository}` : `no self-contained ${target} engine release of main in ${thePin.repository} yet`);
 }
 
 /** Checks the download against the choice and returns the files to keep: [{name, data}]. */
@@ -76,10 +72,10 @@ export async function installNative({ channel = 'pinned', env = process.env, hom
   const target = nativePlatform(os, cpu);
   if (!target) {
     throw new Error(os === 'darwin'
-      ? 'the native engine for macOS comes with the foafnaut app (npx -p @factoidal/core foafnaut --install-latest); Textnaut finds it there.'
+      ? 'the native engine for macOS comes with the foafnaut app (npx -p @factoidal/core foafnaut --update); Textnaut finds it there.'
       : `there is no native engine for ${os} ${cpu}; Textnaut uses the Wasm engine.`);
   }
-  const choice = await nativeChoice(target, { channel, fetchImpl, thePin });
+  const choice = await nativeChoice(target, { channel, fetchImpl, thePin, env });
   log(`textnaut: installing the native engine ${choice.release}${choice.tarball.bytes ? ` (${mb(choice.tarball.bytes)} MB)` : ''}\n` +
       `          checked against sha256 ${choice.tarball.sha256.slice(0, 16)}... ` +
       (choice.pinned ? '(pinned in this package)' : '(from the release\'s build-info.json; not pinned in this package)'));

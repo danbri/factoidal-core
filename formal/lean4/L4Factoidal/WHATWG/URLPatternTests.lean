@@ -36,7 +36,9 @@ theorem create_init_with_base (i : Init) (b : String) (ic : Bool) :
 (section 1.2, "match", step 3.1): a TypeError, not a failed match. -/
 theorem exec_init_with_base (p : Pattern) (i : Init) (b : String) :
     (exec p (.init i) (some b)).toOption = none := by
-  simp [exec, bind, Except.bind, throw, throwThe, MonadExceptOf.throw, Except.toOption]
+  unfold exec
+  simp only [Option.isSome_some, ↓reduceIte, bind, Except.bind, throw, throwThe, MonadExceptOf.throw,
+    Except.toOption]
 
 /-- Kind: an invariant of a match result. Says: a component's match gives one entry for each
 of its group names, in order.
@@ -113,5 +115,15 @@ private def pathGroups (p : Option Pattern) (input : Input) (base : Option Strin
 -- the regular expression of a part list (section 2.1.3)
 #guard (parsePattern "/a/:b{/c}?" pathnameOptions pure).toOption.map (fun ps => (regexOf ps pathnameOptions).1) ==
   some "^\\/a(?:\\/([^\\/]+?))(?:\\/c)?$"
+
+-- regular expressions are compiled with the `v` flag (section 1.4, "RegExpCreate(…, flags)"):
+-- class set difference and intersection, and `\:` in a class (WPT urlpattern, run
+-- 20261116T0528Z: three patterns were refused when they were compiled with `u`)
+#guard pathGroups (pat { pathname := some "/([[a-z]--a])" }) (.init { pathname := some "/a" }) == none
+#guard pathGroups (pat { pathname := some "/([[a-z]--a])" }) (.init { pathname := some "/b" }) == some [("0", some "b")]
+#guard pathGroups (pat { pathname := some "/([\\d&&[0-1]])" }) (.init { pathname := some "/3" }) == none
+#guard pathGroups (pat { pathname := some "/([\\d&&[0-1]])" }) (.init { pathname := some "/1" }) == some [("0", some "1")]
+#guard (pat { port := some "([^\\:]+?)" }).isSome
+#guard pathGroups (pat { pathname := some "/([[A-Z]--A])" } none true) (.init { pathname := some "/b" }) == some [("0", some "b")]
 
 end L4Factoidal.WHATWG.URLPattern

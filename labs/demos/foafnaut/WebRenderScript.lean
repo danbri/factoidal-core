@@ -17,7 +17,8 @@ private def field (value : JSON.Json) (name : String) : Except String JSON.Json 
 
 private def string (value : JSON.Json) : Except String String := do
   let .string value := value | throw "script command: expected string"
-  if value.utf8ByteSize > 65536 then throw "script command: string exceeds 64KiB"
+  -- the bound of `Hosts.Dom.maxString` (16 MiB; it was 64 KiB until 2026-11-23)
+  if value.utf8ByteSize > 16777216 then throw "script command: string exceeds 16MiB"
   return value
 
 private def nodeId (value : JSON.Json) : Except String Nat := do
@@ -48,6 +49,7 @@ def commandJson : L4Factoidal.WasmVM.Hosts.Dom.Command → JSON.Json
   | .importNode n doc deep r => .object [("op",.string "importNode"),("source",num n),("document",num doc),("deep",.bool deep),("nodeId",num r)]
   | .setChecked n v => .object [("op",.string "setChecked"),("nodeId",num n),("value",.bool v)]
   | .resetForm n => .object [("op",.string "resetForm"),("nodeId",num n)]
+  | .setValue n v => .object [("op",.string "setValue"),("nodeId",num n),("value",match v with | some s => .string s | none => .null)]
   | .setStates n v => .object [("op",.string "setStates"),("nodeId",num n),("states",num v)]
   | .registerProperty n e => .object [("op",.string "registerProperty"),("name",.string n),("entry",.string e)]
   | .replaceData n o k v => .object [("op",.string "replaceData"),("nodeId",num n),("offset",num o),("count",num k),("value",.string v)]
@@ -85,6 +87,13 @@ private def commandOf (command : JSON.Json) : Except String L4Factoidal.WasmVM.H
       | _ => throw "script command: value must be a boolean"
     return .setChecked (← node "nodeId") v
   | "resetForm" => exactly ["nodeId"]; return .resetForm (← node "nodeId")
+  | "setValue" =>
+    exactly ["nodeId","value"]
+    let v ← match ← field command "value" with
+      | .string s => pure (some s)
+      | .null => pure none
+      | _ => throw "script command: value must be a string or null"
+    return .setValue (← node "nodeId") v
   | "registerProperty" => exactly ["name","entry"]; return .registerProperty (← str "name") (← str "entry")
   | "setStates" =>
     exactly ["nodeId","states"]

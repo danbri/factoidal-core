@@ -33,8 +33,8 @@ def collectDOM (dom : DOM.Dom) : Except String (Array Rendering.FontRequests.Req
   collectDOMWithRules dom (← WebRender.styleRules dom)
 
 def collect (html : String) : Except String (Array Rendering.FontRequests.Request) := do
-  if html.utf8ByteSize > 1048576 then
-    throw "font requests: HTML exceeds 1MiB transport bound"
+  if html.utf8ByteSize > 16777216 then
+    throw "font requests: HTML exceeds 16 MiB transport bound"
   let dom := DOM.parseHtmlDocument html
   collectDOM dom
 

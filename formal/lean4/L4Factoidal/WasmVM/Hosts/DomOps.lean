@@ -49,6 +49,7 @@ import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.ProtocolHandler
 import L4Factoidal.HTML.SessionHistory
 import L4Factoidal.HTML.TableDom
+import L4Factoidal.Rendering.Geometry
 -- the computed role (WebScripts' `computed` action; an accessibility tree later)
 import L4Factoidal.HTML.AccessibleRole
 
@@ -418,6 +419,9 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
 def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
 
+/-- The op of an input's value (`169`): it writes unless it reads ("v"). -/
+def valueOp : Nat := 169
+
 def bpText (b : BP) : String := s!"{b.node} {b.offset}"
 
 /-- The TreeWalker machine's answer: "d NODE" (or "d -1") when the method is done, else
@@ -786,6 +790,10 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     -- the property names of a computed style (`ComputedGeneric.namesText`): the page
     -- reads the value of the k-th name with measure op 200 + k
     return L4Factoidal.Rendering.ComputedGeneric.namesText
+  | 156 =>
+    -- Geometry Interfaces 1: the matrices of DOMMatrix and the points they transform
+    -- (`Rendering.Geometry.answer`)
+    return L4Factoidal.Rendering.Geometry.answer q
   | 153 =>
     -- the rules of a style sheet text and its changes (CSSOM §6.4, `CssSheet.sheetOp`)
     return L4Factoidal.Rendering.CssSheet.sheetOp q
@@ -859,9 +867,19 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     | none => return "0"
     | some p =>
       -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the
-      -- first frame of that name. The page itself, `_parent`, `_top` and `_blank` would leave
-      -- or open a top-level document: not done here.
+      -- first frame of that name. A form of the page itself whose target is "", `_self`,
+      -- `_parent` or `_top` navigates the page, and `_blank` a new top-level page: the
+      -- embedder is told (`pageNavigation`, said once as a turn's `navigate`). A form in a frame
+      -- with `_parent`, `_top` or `_blank` is not done here.
       let tl := L4Factoidal.DOM.Dom.asciiLower p.target
+      if doc == 0 && ["", "_self", "_parent", "_top", "_blank"].contains tl then
+        let nav : PageNavigation :=
+          { url := p.url, method := p.method, body := p.body, contentType := p.contentType,
+            target := if tl == "_blank" then "_blank" else "" }
+        set { st with pageNavigation := some nav }
+        return "1"
+      -- a frame's navigation is a GET (no request bodies for frames yet)
+      if p.method != "get" then return "0"
       let target := if tl == "" || tl == "_self" then docEl
         else if tl.startsWith "_" then none
         else (st.frames.find? fun (fr : Nat × Nat) => attrValue? d fr.1 "name" == some p.target).map (·.1)
@@ -990,6 +1008,45 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 188 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.FormValidity.answer d n q
+  -- 169: the value of input `id` by its value mode (HTML §4.10.5.1, `DOM.Forms.inputValue`;
+  -- the page sanitizes what it reads): `q` "v" reads it; "s" and a value sets it: in mode
+  -- "value" the value and its dirty value flag (answer ""); in "default" and "default/on" the
+  -- answer is "a": the page sets the `value` content attribute (so that it is one change, seen
+  -- by mutation observers); in "filename" only "" (else InvalidStateError). "t", the old
+  -- value mode's letter (v, d, o, f) and the old value: the steps for a change of the `type`
+  -- attribute's state (HTML §4.10.5 "When an input element's type attribute changes state"),
+  -- "a" and a value when the page is to set the `value` content attribute to it, else "".
+  | 169 =>
+    let n ← nodeArg d id
+    if !L4Factoidal.DOM.Forms.isHtml d n ["input"] then throw (-2)
+    let mode := L4Factoidal.DOM.Forms.valueModeOf (L4Factoidal.DOM.Forms.inputType d n)
+    match q.toList with
+    | ['v'] => return L4Factoidal.DOM.Forms.inputValue d n
+    | 's' :: rest =>
+      match mode with
+      | .value =>
+        exec (.setValue n (some (String.ofList rest)))
+        return ""
+      | .dflt | .dfltOn => return "a"
+      | .filename => if rest.isEmpty then return "" else throw (-16)
+    | 't' :: old :: rest =>
+      let oldValue := String.ofList rest
+      if old == 'v' && (mode == .dflt || mode == .dfltOn) then
+        -- step 1: a value that is not empty becomes the `value` content attribute
+        return if oldValue.isEmpty then "" else "a" ++ oldValue
+      else if old != 'v' && mode == .value then
+        -- step 2: the value is the content attribute's again, the dirty value flag false
+        if (d.get n).dirtyValue.isSome then exec (.setValue n none)
+        return ""
+      else if mode == .value then
+        -- step 4: a value kept from mode "value" is sanitized for the new type (a clean
+        -- value is the attribute's, which the page sanitizes when it reads it)
+        if let some v := (d.get n).dirtyValue then
+          let v' := L4Factoidal.DOM.FormValidity.answer d n ("S\x00" ++ v)
+          if v' != v then exec (.setValue n (some v'))
+        return ""
+      else return ""
+    | _ => throw (-2)
   -- 189: the node that `focus()` on element `id` focuses, or with `q` "d" its focus delegate
   -- (`DOM.Focus.answer`); "" for none
   | 189 =>
@@ -1172,6 +1229,11 @@ def textKeyOf (s : State) (k : L4Factoidal.DOM.Editing.KeyInput) : Option (Nat �
       (L4Factoidal.DOM.Editing.textKeyCommandIn multiline k).map fun (c, v) => (f, c, v)
     else none
   | none => none
+
+/-- Implicit submission (`DOM.FormControls.implicitSubmission`) of Enter in the focused
+element, if it is a field that has it. -/
+def implicitOf (s : State) : Option L4Factoidal.DOM.FormControls.Implicit :=
+  (focusedElement s.dom).bind (L4Factoidal.DOM.FormControls.implicitSubmission s.dom)
 
 /-- The focus is in a text control or the selection in an editing host: the keys that
 scroll a page (space, the arrows, Page Up and Down, Home, End) edit or move the caret

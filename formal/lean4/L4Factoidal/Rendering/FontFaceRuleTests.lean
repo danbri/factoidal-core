@@ -9,6 +9,14 @@ open L4Factoidal.Rendering FontFaceRule
 #guard CSS.familyNames "Noto  Sans" == some ["Noto Sans"]
 #guard CSS.familyNames "'A', B C, monospace" == some ["A","B C","monospace"]
 #guard CSS.familyNames "a,,b" == none
+-- A quoted generic name is a family name (CSS Fonts 4 §5.1): it keeps its quotes, and the list
+-- resolves past it (WPT css/css-fonts/quoted-generic-ignored.html).
+#guard CSS.familyNames "\"fantasy\", serif" == some ["\"fantasy\"","serif"]
+#guard CSS.familyNames "'monospace', sans-serif" == some ["\"monospace\"","sans-serif"]
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"fantasy\"","serif"]) == .serif
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"cursive\"","monospace"]) == .monospace
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"monospace\"","sans-serif"]) == .first
+#guard FontFaceRule.genericOfValue [] (CSS.familyValue ["\"monospace\""]) == .serif
 #guard CSS.familyNames "\"open" == none
 #guard CSS.familyNames "x\\y" == none
 #guard CSS.familyList (CSS.familyValue ["Spinal Tap","serif"]) == ["Spinal Tap","serif"]
@@ -25,9 +33,11 @@ open L4Factoidal.Rendering FontFaceRule
 -- `src` (§4.3): readable formats only, in order; `local()` never matches.
 #guard sourceURL "url(a.ttf)" == some "a.ttf"
 #guard sourceURL "url(\"a b.otf\") format(\"opentype\")" == some "a b.otf"
-#guard sourceURL "url(a.woff2) format(\"woff2\")" == none
+#guard sourceURL "url(a.eot) format(\"embedded-opentype\")" == none
 -- WOFF 1.0 is read (`Woff.toSfnt`): a rule that offers only it gets its face.
 #guard sourceURL "url('https://example.org/s/1/A.woff') format('woff')" == some "https://example.org/s/1/A.woff"
+-- WOFF2 is read (`Woff2.toSfnt`): Google Fonts and icon fonts offer only it.
+#guard sourceURL "url(https://fonts.gstatic.com/s/x/v1/A.woff2) format('woff2')" == some "https://fonts.gstatic.com/s/x/v1/A.woff2"
 #guard sourceURL "local(Foo)" == none
 #guard sourceURL "url(a.ttf) format(truetype)" == some "a.ttf"
 
@@ -49,7 +59,7 @@ private def sheet : String :=
   "@font-face { font-family: Spinal; font-weight: bold; src: url(fonts/bold.ttf); }\n" ++
   "@font-face { font-family: Greek; src: url(g1.ttf); unicode-range: U+370-3FF; }\n" ++
   "@font-face { font-family: Greek; src: url(g2.ttf); unicode-range: U+0-FF; }\n" ++
-  "@font-face { font-family: Broken; src: url(x.woff2) format(woff2); }\n" ++
+  "@font-face { font-family: Broken; src: url(x.eot) format(embedded-opentype); }\n" ++
   "@font-face { src: url(nofamily.ttf); }"
 
 private def faces : Array Face :=

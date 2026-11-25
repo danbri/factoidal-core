@@ -80,6 +80,21 @@ private theorem pow10_foldl (n : Nat) (x : Float) :
 @[csimp] private theorem pow10_eq_fast : @pow10 = @pow10Fast := by
   funext n; exact pow10_foldl n 1
 
+/-- The exponents the number reader takes: any negative exponent of at most two digits (the
+reader's digit bound), and positive ones up to 12; a larger positive exponent is past the
+magnitude bound of 1,000,000 for every mantissa that is not 0. -/
+def exponentAllowed (negative : Bool) (exponent : Nat) : Bool := negative || exponent ≤ 12
+
+/-- Kind: bound. Says: a positive exponent is taken only up to 12. -/
+theorem exponentAllowed_positive (e : Nat) : exponentAllowed false e = true ↔ e ≤ 12 := by
+  simp [exponentAllowed]
+
+/-- Kind: property. Says: every negative exponent is taken (the round-off numbers that
+drawing programs write, `1.13686838e-13`). Does not say: anything about the digit bound,
+which the reader checks first (at most two exponent digits). -/
+theorem exponentAllowed_negative (e : Nat) : exponentAllowed true e = true := by
+  simp [exponentAllowed]
+
 /-- Strict signed decimal/exponent lexer. Relative units and non-finite values
 are errors; bounded magnitudes keep this profile within useful f32 precision. -/
 def numberReference (input : String) : Except String Float := do
@@ -103,7 +118,11 @@ def numberReference (input : String) : Except String Float := do
     if (s.contains 'e' || s.contains 'E') && expDigits.isEmpty then throw "exponent requires digits"
     if whole.length+fraction.length > 24 || expDigits.length > 2 then throw "numeric precision exceeds profile bound"
     let exponent := (String.ofList expDigits).toNat?.getD 0
-    if exponent > 12 then throw "numeric exponent exceeds profile bound"
+    -- A positive exponent above 12 is past the magnitude bound anyway. A negative one is
+    -- read up to the two digits allowed above: drawing programs write the round-off of
+    -- their arithmetic as numbers such as `1.13686838e-13` (BBC News' logo), which are 0
+    -- to any pixel; refusing them refused the whole drawing.
+    if !exponentAllowed expNegative exponent then throw "numeric exponent exceeds profile bound"
     let integer := Float.ofNat ((String.ofList whole).toNat?.getD 0)
     let decimal := Float.ofNat ((String.ofList fraction).toNat?.getD 0) / pow10 fraction.length
     let unsigned := (integer+decimal) * (if expNegative then 1/pow10 exponent else pow10 exponent)
@@ -163,6 +182,11 @@ private def sameNumber (text : String) : Bool :=
 #guard (List.range 4000).all fun n =>
   let t := toString n
   sameNumber t && sameNumber ("-" ++ t) && sameNumber ("0." ++ t) && sameNumber (t ++ "." ++ toString (n*7919 % 100000))
+-- the round-off of drawing programs is read (as about 0); a large positive exponent is not
+#guard ((number "1.13686838e-13").toOption.map fun v => decide (v.abs < 1e-12)) == some true
+#guard ((number "-3.55271368e-15").toOption.map fun v => decide (v.abs < 1e-12)) == some true
+#guard (number "1e13").toOption.isNone
+#guard (number "4.4e-05").toOption.isSome
 private def lengthNumber (input : String) : Except String Float :=
   let s := trim input
   number (if s.endsWith "px" then String.ofList (s.toList.take (s.length-2)) else s)
@@ -399,9 +423,13 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
     pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
   else lengthNumber s
 
+/-- The presentation attributes every drawing element may carry. `clip-rule` (SVG 2 §14.3.7)
+matters only for a shape inside a `clipPath`; this reader takes it and clips with the
+nonzero rule. Icon sets write it on every path (`fill-rule="evenodd" clip-rule="evenodd"`:
+GitHub's icons), and refusing it refused the whole drawing. -/
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"]
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
@@ -421,14 +449,31 @@ where
   eventHandler (name : String) : Bool :=
     name.length > 2 && name.startsWith "on" && name.toList.all fun c => c.isLower
 
+private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone &&
+    ((tag == "svg" && ["category", "icon"].contains a.name.localPart) || inertAttribute a.name.localPart)
+
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
   for a in attrs do
-    if a.name.namespace_.isNone && inertAttribute a.name.localPart then continue
+    -- Inline icons may carry application metadata on the svg element (BBC News).
+    if skipAttribute tag a then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+/-- An unqualified application metadata attribute on an SVG viewport leaves the
+validation of every other attribute unchanged, including any rejection. -/
+private theorem validateAttrs_svg_metadata (key value : String) (attrs : List NamespaceAttribute)
+    (extra : List String) (metadata : key = "category" ∨ key = "icon") :
+    validateAttrs "svg" ({ name := { namespace_ := none, localPart := key }, value } :: attrs)
+      extra = validateAttrs "svg" attrs extra := by
+  have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := key }, value } = true := by
+    rcases metadata with rfl | rfl <;> simp [skipAttribute]
+  simp [validateAttrs, List.forIn_cons, skip]
+
+#print axioms validateAttrs_svg_metadata
+
 private def cssProperties := (common.filter (· != "id")) ++ ["opacity","overflow"]
 /-- SVG 2 §9.2 geometry properties of this reader's shapes: presentation attributes that a
     style sheet or `style` may set. Each is checked where it applies (the element's own
@@ -1388,8 +1433,39 @@ private def containerVisible (attrs : List NamespaceAttribute) : Except String B
   if opacity > 0 && opacity < 1 then throw "container opacity requires compositing surface"
   return !displaySuppressed attrs && opacity > 0
 
+/-- The tokens of a path's data for `rectPathData?`: command letters and numbers, split at
+spaces, commas, letters and a sign that follows a digit. -/
+private def pathTokens (d : String) : List String :=
+  let spaced := d.toList.foldl (fun (acc : List Char) c =>
+    if c.isAlpha && c != 'e' && c != 'E' then ' ' :: c :: ' ' :: acc
+    else if c == ',' then ' ' :: acc
+    else if c == '-' && (acc.head?.map (fun p => p.isDigit || p == '.')).getD false then c :: ' ' :: acc
+    else c :: acc) []
+  ((String.ofList spaced.reverse).splitOn " ").filter (· != "")
+
+/-- A path `d` that is an axis-aligned rectangle, in the forms drawing programs export for
+the clip of a frame (`M0 0h140v21.42H0z`, `M x y H x2 V y2 H x Z`): its x, y, width and
+height. Any other path is `none`. -/
+def rectPathData? (d : String) : Option (Float × Float × Float × Float) :=
+  let num := fun (t : String) => (number t).toOption
+  match pathTokens d with
+  | ["M",x,y,"h",w,"v",h,"H",x2,z] => do
+    let (x,y,w,h,x2) := (← num x,← num y,← num w,← num h,← num x2)
+    if x2 == x && (z == "z" || z == "Z") then some (x,y,w,h) else none
+  | ["M",x,y,"H",x2,"V",y2,"H",x3,z] => do
+    let (x,y,x2,y2,x3) := (← num x,← num y,← num x2,← num y2,← num x3)
+    if x3 == x && (z == "z" || z == "Z") then some (min x x2,min y y2,(x2-x).abs,(y2-y).abs) else none
+  | _ => none
+
+#guard rectPathData? "M0 0h140v22H0z" == some (0,0,140,22)
+#guard rectPathData? "M 0,0 H 24 V 24 H 0 Z" == some (0,0,24,24)
+#guard rectPathData? "M0 0h140v22H1z" == none
+#guard (rectPathData? "M0 0h140v21.42H0z").isSome
+#guard rectPathData? "M0 0l10 10z" == none
+
 /-- CSS Masking 1 §6: `clip-path` naming a `clipPath` of one untransformed
-    `rect`. Any other clip shape stays a named refusal. -/
+    `rect`, or of one `path` that is such a rectangle (`rectPathData?`). Any other clip
+    shape stays a named refusal. -/
 private def rectClip (lengths : LengthContext) (references : NativeSVGReferences.Index) (source : String) :
     Except String (Float × Float × Float × Float) := do
   if !(source.startsWith "url(#" && source.endsWith ")") then throw "unsupported clip-path syntax"
@@ -1401,6 +1477,8 @@ private def rectClip (lengths : LengthContext) (references : NativeSVGReferences
     throw "unsupported clipPath attributes"
   let shapes := children.filter fun | .element .. => true | _ => false
   let [.element shapeName shape _] := shapes | throw "unsupported clipPath: one rect required"
+  if shapeName.localPart == "path" && (attr shape "transform").isNone then
+    if let some r := rectPathData? ((attr shape "d").getD "") then return r
   if shapeName.localPart != "rect" || (attr shape "transform").isSome then throw "unsupported clipPath: one rect required"
   return (← geometryNumber lengths shape "x",← geometryNumber lengths shape "y",
     ← geometryNumber lengths shape "width",← geometryNumber lengths shape "height")
@@ -1443,22 +1521,41 @@ private def imageKeysAt : Nat → Option String → NamespaceNode → List Strin
 def imageKeys (root : NamespaceNode) (base : Option String := none) : List String :=
   (imageKeysAt 64 base root).eraseDups
 
-/-- As `imageStore`, for the keys `keys` (SVG `image` and HTML `img` references). -/
-def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
-    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
+/-- As `imageStoreOf`, with the bytes of each image read by `dec` (`NativeImage.decodeWith`
+of a vector reader, or a decoder that gives what it gave before for the same bytes:
+`WebRender.memoDecode`). -/
+def imageStoreOfWith (dec : ByteArray → NativeImage.Decoded) (keys : List String)
+    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
   let keys := keys.eraseDups
-  -- The factor at which the document's images fit its pixel budget (`NativeImage.factorFor`),
-  -- from the sizes that the files' headers give: 1 when they fit as they are.
   let sizes := keys.filterMap fun key =>
     if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
     else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
   let k := NativeImage.factorFor sizes
   (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
-    if key.toLower.startsWith "data:" then state.1.addData state.2 key k vector
+    if key.toLower.startsWith "data:" then
+      match NativeImage.dataBytes key with
+      | .error message => (state.1.insert key (.error message),state.2)
+      | .ok bytes => state.1.addDecoded state.2 key (dec bytes) k
     else match supplied.find? (·.1 == key) with
-      | some (_,bytes) => state.1.addBytes state.2 key bytes k vector
+      | some (_,bytes) => state.1.addDecoded state.2 key (dec bytes) k
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
+
+/-- Kind: equality. Says: a store made with a decoder that answers as `decodeWith vector`
+does, on every input, is the store of `imageStoreOfWith (decodeWith vector)`. -/
+theorem imageStoreOfWith_congr (dec : ByteArray → NativeImage.Decoded) (vector : NativeImage.VectorReader)
+    (h : ∀ b, dec b = NativeImage.decodeWith vector b) (keys : List String) (supplied : List (String × ByteArray)) :
+    imageStoreOfWith dec keys supplied = imageStoreOfWith (NativeImage.decodeWith vector) keys supplied := by
+  have : dec = NativeImage.decodeWith vector := funext h
+  subst this; rfl
+
+/-- As `imageStore`, for the keys `keys` (SVG `image` and HTML `img` references): the factor
+at which the document's images fit its pixel budget (`NativeImage.factorFor`), from the
+sizes that the files' headers give (1 when they fit as they are), then each image decoded
+(`NativeImage.decodeWith vector`) and held at it (`imageStoreOfWith`). -/
+def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
+    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
+  imageStoreOfWith (NativeImage.decodeWith vector) keys supplied
 
 /-- Decode each image of a tree once. `supplied` holds the bytes that the host
     fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an
@@ -1606,7 +1703,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           | none => .error s!"image resource not supplied: {key}"
         let ((ax,ay,aw,ah),map) ← imagePlacement x y w h bitmap (attr attrs "preserveAspectRatio")
         -- fill-opacity is not a property of an image; `opacity` is.
-        let painted := {inherited with fill:=.image ⟨map,id,bitmap⟩,stroke:=.none,fillOpacity:=1}
+        let painted := {inherited with fill:=.image {map,id,bitmap},stroke:=.none,fillOpacity:=1}
         return [.paint {geometry:=.rect ax ay aw ah,style:=painted,opacity:=max 0 (min 1 opacity),transform,element:=path}]
       else if tag == "g" then
         validateAttrs tag attrs ["transform","clip-path"]
@@ -1676,8 +1773,22 @@ private def BackendPrimitive.storageRowsFast (p : BackendPrimitive) : Nat :=
   simp only [BackendPrimitive.storageRows, BackendPrimitive.storageRowsFast]
   cases p.geometry <;> simp [edges_length]
 
-/-- Largest paint table of a scene, in 32-bit words. -/
-def maxPaintTableWords : Nat := 1048576
+/-- Largest paint table of a scene, in 32-bit words (16 MiB). An HTML page has two image
+stores, each held within `NativeImage.maxDocumentPixels` (one word a pixel): the `img`
+pictures and the background images. SVG images drawn again at their size add at most 16
+pictures of at most 65536 pixels (`WebDocument.maxVectorRedraws`,
+`NativeSVGForgiving.maxImagePixels`). The paint table holds them all, with room for the
+other paints. Until 2026-11-23 the limit was one store's budget, and a page with large photos
+in both stores (live BBC News) was refused whole (issue 833). WebGPU guarantees storage
+bindings of 128 MiB (`maxStorageBufferBindingSize`). -/
+def maxPaintTableWords : Nat := 4*NativeImage.maxDocumentPixels
+
+/-- Kind: bound. Says: two stores of images and 16 redrawn pictures of 65536 pixels fit the
+paint table with a quarter of `maxDocumentPixels` left for other paints. Does not say: the
+other paints of a page fit in what is left. -/
+theorem imageStores_fit_paintTable :
+    2*NativeImage.maxDocumentPixels + 16*65536 + NativeImage.maxDocumentPixels/4 ≤ maxPaintTableWords := by
+  decide
 
 private def pointBox (points : List Point) : Float × Float × Float × Float :=
   match points with
@@ -3684,8 +3795,14 @@ private def sceneShader : String :=
   "fn texel(base:u32,w:u32,h:u32,x:f32,y:f32)->vec4f{let i=u32(clamp(x,0.0,f32(w-1u)));let j=u32(clamp(y,0.0,f32(h-1u)));" ++
   "let c=unpack4x8unorm(tiles[base+j*w+i]);return vec4f(c.rgb*c.a,c.a);}" ++
   "fn imageSample(r:u32,start:u32,p:vec2f,alpha:f32)->vec4f{" ++
-  "let fx=word(r)*p.x+word(r+1u)*p.y+word(r+2u)-0.5;let fy=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u)-0.5;" ++
-  "let w=u32(word(r+3u));let h=u32(word(r+7u));let base=start+u32(word(r+8u));let x0=floor(fx);let y0=floor(fy);" ++
+  "let dw=word(r+3u);let dh=word(r+7u);let width=abs(dw);let height=abs(dh);" ++
+  "var u=word(r)*p.x+word(r+1u)*p.y+word(r+2u);var v=word(r+4u)*p.x+word(r+5u)*p.y+word(r+6u);" ++
+  "if(dw<0.0){u=u-floor(u/width)*width;}if(dh<0.0){v=v-floor(v/height)*height;}" ++
+  "let fx=u-0.5;let fy=v-0.5;let w=u32(width);let h=u32(height);let base=start+u32(word(r+8u));" ++
+  -- unit scale on whole pixels: the pixel each sample falls in (`ImageRecord.colorAt`)
+  "if(word(r)==1.0&&word(r+1u)==0.0&&word(r+4u)==0.0&&word(r+5u)==1.0&&fract(word(r+2u))==0.0&&fract(word(r+6u))==0.0){" ++
+  "let n=texel(base,w,h,floor(fx+0.5),floor(fy+0.5));if(n.a<=0.0){return vec4f(0.0);}return vec4f(n.rgb/n.a,n.a*alpha);}" ++
+  "let x0=floor(fx);let y0=floor(fy);" ++
   "let top=mix(texel(base,w,h,x0,y0),texel(base,w,h,x0+1.0,y0),fx-x0);" ++
   "let bottom=mix(texel(base,w,h,x0,y0+1.0),texel(base,w,h,x0+1.0,y0+1.0),fx-x0);" ++
   "let c=mix(top,bottom,fy-y0);if(c.a<=0.0){return vec4f(0.0);}return vec4f(c.rgb/c.a,c.a*alpha);}\n" ++
@@ -3876,28 +3993,164 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
+/-- A dash piece's test as plain code: `pieceCondition (.disk ..)`, the Float operations written
+    out in the same order, with no expression tree, environment or closure (`diskHit_eq`). -/
+private def diskHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let dx := q.1-data[base+0]!
+  let dy := q.2-data[base+1]!
+  decide (dx*dx+dy*dy <= data[base+2]!*data[base+2]!)
+
+/-- `pieceCondition (.strip ..)` as plain code, as `diskHit` (`stripHit_eq`). -/
+private def stripHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let width := data[base+16]!
+  let half := width/Float.ofNat 2
+  let d1 := data[base+2]!-data[base+0]!
+  let d2 := data[base+3]!-data[base+1]!
+  let e1 := q.1-data[base+0]!
+  let e2 := q.2-data[base+1]!
+  let len := d1*d1+d2*d2
+  let h := (e1*d1+e2*d2)/max len (Float.ofNat 1/Float.ofNat 1000000000000)
+  let f1 := e1-h*d1
+  let f2 := e2-h*d2
+  !decide (width <= Float.ofNat 0) &&
+    (!decide (len <= Float.ofNat 0) &&
+      ((decide (Float.ofNat 0 <= h) && decide (h <= Float.ofNat 1)) &&
+        decide (f1*f1+f2*f2 <= half*half)))
+
+/-- The cross product of `triangleCondition`, with its multiplications by 1 and 0 kept. -/
+private def crossAt (u1 u2 v1 v2 : Float) : Float :=
+  (u1*Float.ofNat 1+u2*Float.ofNat 0)*(v1*Float.ofNat 0+v2*Float.ofNat 1)-
+    (u1*Float.ofNat 0+u2*Float.ofNat 1)*(v1*Float.ofNat 1+v2*Float.ofNat 0)
+
+/-- `pieceCondition (.triangle ..)` as plain code, as `diskHit` (`triangleHit_eq`). -/
+private def triangleHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let ax := data[base+0]!
+  let ay := data[base+1]!
+  let bx := data[base+2]!
+  let byy := data[base+3]!
+  let cx := data[base+8]!
+  let cy := data[base+9]!
+  let ab := crossAt (bx-ax) (byy-ay) (q.1-ax) (q.2-ay)
+  let bc := crossAt (cx-bx) (cy-byy) (q.1-bx) (q.2-byy)
+  let ca := crossAt (ax-cx) (ay-cy) (q.1-cx) (q.2-cy)
+  let area := crossAt (bx-ax) (byy-ay) (cx-ax) (cy-ay)
+  !decide (area*area <= Float.ofNat 0) &&
+    ((decide (Float.ofNat 0 <= ab) && (decide (Float.ofNat 0 <= bc) && decide (Float.ofNat 0 <= ca))) ||
+      (decide (ab <= Float.ofNat 0) && (decide (bc <= Float.ofNat 0) && decide (ca <= Float.ofNat 0))))
+
+/-- Which of the three tests a piece takes: 0 strip, 1 disk, 2 triangle. -/
+def pieceKind : NativeSVGStroke.Piece → UInt8
+  | .strip .. => 0
+  | .disk .. => 1
+  | .triangle .. => 2
+
+/-- The test of a piece of kind `kind` whose record floats start at `base`, at the point `q`. -/
+def pieceHit (data : Array Float) (kind : UInt8) (base : Nat) (q : Float × Float) : Bool :=
+  if kind == 0 then stripHit data base q else if kind == 1 then diskHit data base q else triangleHit data base q
+
+/-- Says: the plain test of each kind of piece is the typed condition of `pieceCondition`, the same
+    Float operations in the same order, at every point. Does not say: that the piece's box
+    (`pieceBox`) holds the point; the raster tests the box first, and no theorem states that a point
+    outside the box is outside the piece. -/
+theorem pieceHit_eq (piece : NativeSVGStroke.Piece) (data : Array Float) (base : Nat) (q : Float × Float) :
+    pieceHit data (pieceKind piece) base q = (pieceCondition piece base).eval {data,position := q} := by
+  cases piece <;> rfl
+
+/-- The stroke pieces of a dashed record as the CPU raster tests them: four floats a piece for
+    its box (`pieceBox`), its kind (`pieceKind`), and the record's float where piece 0 starts. -/
+structure DashPieces where
+  boxes : FloatArray
+  kinds : ByteArray
+  start : Nat
+
+def Primitive.dashPieces (p : BackendPrimitive) (data : Array Float) (base : Nat) : DashPieces :=
+  let start := base+20+geometryTailSize p.geometry
+  let (boxes,kinds) := (p.dashParts.getD []).zipIdx.foldl
+    (fun (acc : FloatArray × ByteArray) (piece,i) =>
+      let b := pieceBox piece data[start+20*i+16]!
+      ((((acc.1.push b.1).push b.2.1).push b.2.2.1).push b.2.2.2,acc.2.push (pieceKind piece)))
+    (FloatArray.empty,ByteArray.empty)
+  ⟨boxes,kinds,start⟩
+
+/-- The piece `i` when its box holds `q` and its test does. -/
+@[inline] def DashPieces.hits (d : DashPieces) (data : Array Float) (q : Float × Float) (i : Nat) : Bool :=
+  d.boxes.get! (4*i) <= q.1 && q.1 <= d.boxes.get! (4*i+2) && d.boxes.get! (4*i+1) <= q.2 &&
+    q.2 <= d.boxes.get! (4*i+3) && pieceHit data (d.kinds.get! i) (d.start+20*i) q
+
+/-- Some piece from `i` on hits `q`. -/
+def DashPieces.anyFrom (d : DashPieces) (data : Array Float) (q : Float × Float) (i : Nat) : Bool :=
+  if i < d.kinds.size then
+    if d.hits data q i then true else d.anyFrom data q (i+1)
+  else false
+termination_by d.kinds.size - i
+
+/-- Some piece among those listed from position `k` on hits `q`. -/
+def DashPieces.anyListed (d : DashPieces) (data : Array Float) (q : Float × Float) (listed : Array Nat)
+    (k : Nat) : Bool :=
+  if h : k < listed.size then
+    if d.hits data q listed[k] then true else d.anyListed data q listed (k+1)
+  else false
+termination_by listed.size - k
+
+/-- The pieces whose box holds the local line `y = py` (`y0 <= py && py <= y1`): a point of that
+    line is outside every other piece's box. -/
+def DashPieces.crossing (d : DashPieces) (py : Float) : Array Nat := Id.run do
+  let mut out := #[]
+  for i in [0:d.kinds.size] do
+    if d.boxes.get! (4*i+1) <= py && py <= d.boxes.get! (4*i+3) then out := out.push i
+  return out
+
+/-- Some piece hits `q`, taking only the pieces listed for the line of `q` when `spans` lists
+    that line (its `y` is the key, compared as floats) and every piece otherwise. A piece not
+    listed for a line has a box that misses it, so the two are the same value. -/
+def DashPieces.any (d : DashPieces) (data : Array Float) (spans : Array (Float × Array Nat)) (q : Float × Float) : Bool :=
+  match spans.find? (·.1 == q.2) with
+  | some (_,listed) => d.anyListed data q listed 0
+  | none => d.anyFrom data q 0
+
+/-- `PreparedCoverage` with the fill test left out (false) where the form allows it. A form
+    with its own closure (`local`) keeps its test, which may then hold. The CPU raster uses it
+    for a record whose fill alpha is exactly 0 (`SVGRaster.prep`): the colour is the same whether
+    the fill test holds or not. -/
+def PreparedCoverage.withoutFill : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse .. => .analytic inverse #[] (.constant false) (.constant false)
+  | .analytic inverse data _ stroke => .analytic inverse data (.constant false) stroke
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutFill
+
+/-- As `withoutFill`, for the stroke test. -/
+def PreparedCoverage.withoutStroke : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse x y w h => .rectFill inverse x y w h
+  | .analytic inverse data fill _ => .analytic inverse data fill (.constant false)
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutStroke
+
 /-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
     point is in the piece's box (`pieceBox`). A point outside the box is outside the
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
     is geometry over Float), and the CPU raster's differential test checks it. -/
-def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (fillLive strokeLive : Bool) (pieces : DashPieces) (spans : Array (Float × Array Nat)) : PreparedCoverage :=
   match p.dashParts with
   | none => p.prepareCoverage data base
-  | some pieces =>
-    let fill : Prepared Bool := match p.geometry with
-      | .polygon points => ((boundsCondition base).prepare data).and
-          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
+  | some _ =>
+    -- The edge and point counts are found once here, not at each sample. A paint that is
+    -- known to add nothing (`fillLive`, `strokeLive` false: its alpha is exactly 0) has its
+    -- test left out: the colour is the same whether that test holds or not.
+    let fill : Prepared Bool := if !fillLive then .constant false else match p.geometry with
+      | .polygon points =>
+        let count := points.length
+        ((boundsCondition base).prepare data).and
+          (.dynamic (fun env => windingHitFast env.data base count p.style.rule env.position))
       | .path contours =>
-        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
+        let count := (NativeSVGPath.edges contours).length
+        .dynamic (fun env => pathHitFast env.data base count p.style.rule env.position)
       | g => (fillCondition g base).prepare data
-    let start := base+20+geometryTailSize p.geometry
-    let culled := (pieces.zipIdx.map fun (piece,i) =>
-      let o := start+20*i
-      (pieceBox piece data[o+16]!,(pieceCondition piece o).prepare data)).toArray
     let inner : PreparedCoverage := .local p.transform.inverse fun q =>
-      let env : Env := {data,position := q}
-      (fill.eval env,culled.any fun ((x0,y0,x1,y1),c) =>
-        x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env)
+      let fillHit := match fill with
+        | .constant b => b
+        | .dynamic run => run {data,position := q}
+      (fillHit,strokeLive && pieces.any data spans q)
     match p.clips with
     | [] => inner
     | clips => .clipped (clipPass data (p.clipStart base) clips) inner
@@ -4104,6 +4357,21 @@ private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha
 private theorem Primitive.preparePaint_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
     (position : Float × Float) : p.preparePaint paint alpha position = p.paintAt paint alpha position := by
   cases paint <;> rfl
+
+/-- The row of a paint that is the same at every point (the `constantPaint` case of
+    `preparePaint`); none for a gradient or an image, whose colour depends on the point.
+    The CPU raster reads the row once per record and not through a closure at each sample. -/
+def Primitive.constantPaintRow? (p : BackendPrimitive) (paint : Paint) (alpha : Float) : Option (List Float) :=
+  match paint with
+  | .gradientRecord .. | .imageRecord .. => none
+  | _ => some (resolved paint p.style alpha)
+
+/-- Says: when `constantPaintRow?` gives a row, `preparePaint` gives that row at every point.
+    Does not say: anything about a paint that gives none; its colour is read at the point. -/
+private theorem Primitive.constantPaintRow?_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
+    (row : List Float) (h : p.constantPaintRow? paint alpha = some row) (position : Float × Float) :
+    p.preparePaint paint alpha position = row := by
+  cases paint <;> simp_all [Primitive.constantPaintRow?,Primitive.preparePaint,constantPaint]
 
 def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=

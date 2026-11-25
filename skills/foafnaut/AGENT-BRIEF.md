@@ -70,8 +70,10 @@ standards conformance.
 - **Merge rule** (owner, 2026-11-16): a PR merges when the **Linux jobs** of its `build.yml` run are green (dispatch
   `core_ref=<40-hex PR head>`: a commit not on main runs Linux jobs only, and the run's conclusion is then the Linux
   verdict), `tools/premerge.sh` passes, and the change carries its theorems. The macOS jobs (`lean-macos`, the
-  `foafnaut` bundle with the native `test.sh`, `foafnaut-macos.yml`) are not a merge requirement: they run for every
-  main commit, nightly on main and on request (`-f macos=true`). A nightly macOS failure on main (issue labelled
+  `foafnaut` bundle with the native `test.sh`, `foafnaut-macos.yml`) are not a merge requirement: they run for main's head
+  in the Mac release lane (`mac-release.yml`), nightly on main and on request (`-f macos=true`, one at a time). When you
+  start waiting on the merge gate of a PR you mean to merge, label it `landing` (remove it when merged or abandoned):
+  the Mac release waits up to 30 min for it. A nightly macOS failure on main (issue labelled
   `nightly` in factoidal-builds) is fixed or reverted the next morning. Runner, nightly and the overnight Mac runner:
   [`ci-runner`](../ci-runner/SKILL.md).
 - WPT: follow [`wpt-runs`](../wpt-runs/SKILL.md). Full measured runs only, BubblePopJS, one WPT run per machine (the

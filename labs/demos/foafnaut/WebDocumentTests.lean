@@ -14,6 +14,21 @@ private def size (html : String) (sources : List String) : Option Float := do
   let styles ← (Rendering.CSS.computeAll dom rules).toOption
   let id ← dom.getElementById 0 "target"
   return (← styles[id]?).fontSize
+private def editedInput := "<form><input id=field name=q value=original placeholder=hint></form>"
+
+/-- Exercise the same command-to-render path the desktop uses after keyboard input. -/
+private def editedInputText (value : JSON.Json) : Option (List String) := do
+  let dom := DOM.parseHtmlDocument editedInput
+  let id ← dom.getElementById 0 "field"
+  let command := json [("op",.string "setValue"),("nodeId",.number (toString id)),("value",value)]
+  let request := WebDocument.layoutRequest (json [("commands",.array [command])])
+  let laid ← (WebDocument.layOut {} ⟨editedInput,request,320,180,0,[],[],(none,none)⟩).toOption
+  return laid.scene.glyphRuns.toList.map (·.text)
+
+#guard editedInputText (.string "typed") == some ["typed"]
+#guard editedInputText (.string "") == some ["hint"]
+#guard editedInputText .null == some ["original"]
+
 private def sheetSource := "<style>p{font-size:10px}</style><link rel=stylesheet href=one.css><style>p{font-size:30px}</style><p id=target>A</p>"
 -- Embedded/external sheets share document source order, rather than grouping
 -- fetched sheets at the beginning or end of the cascade.
@@ -78,6 +93,13 @@ private def inspected := (WebDocument.inspect urlDOM "https://example.test/a/pag
 #guard match inspected.field? "scripts" with
   | some (.array [script]) => script.field? "url" == some (.string "https://example.test/a/assets/scripts/app.js")
   | _ => false
+
+-- A page whose only script is an event handler content attribute says so (`handlers`).
+#guard WebDocument.hasHandlerAttributes (DOM.parseHtmlDocument "<body onload='f()'><p>A</p>")
+#guard !WebDocument.hasHandlerAttributes (DOM.parseHtmlDocument "<body one-x=1 on=1><p>A</p>")
+#guard inspected.field? "handlers" == some (.bool false)
+#guard ((WebDocument.inspect (DOM.parseHtmlDocument "<body onload='f()'>") "https://example.test/").toOption.bind
+  (·.field? "handlers")) == some (.bool true)
 
 -- The scripting snapshot is the authoritative MIME classifier. Legacy classic
 -- types survive inspection; data blocks remain inert; padded modules refuse.
@@ -186,9 +208,9 @@ private def menu (number : Nat) (percent : Nat := 100) : Option String :=
   (WebDocument.run "" (json [("op",.string "command"),("command",.number (toString number)),("textScalePercent",.number (toString percent))]) 1 1).toOption
 #guard menu 1 == some "{\"action\":\"zoomIn\",\"textScalePercent\":110}"
 #guard menu 2 == some "{\"action\":\"zoomOut\",\"textScalePercent\":90}"
-#guard menu 3 300 == some "{\"action\":\"zoomReset\",\"textScalePercent\":200}"
--- On a 3x phone (zoomUnit 300) the reset is 200% of a usual browser's text: zoom 600.
-#guard historyField' [("op",.string "command"),("command",.number "3"),("textScalePercent",.number "450"),("zoomUnit",.number "300")] "textScalePercent" == some (.number "600")
+#guard menu 3 300 == some "{\"action\":\"zoomReset\",\"textScalePercent\":100}"
+-- On a 3x phone (zoomUnit 300) the reset is normal CSS text size: zoom 300.
+#guard historyField' [("op",.string "command"),("command",.number "3"),("textScalePercent",.number "450"),("zoomUnit",.number "300")] "textScalePercent" == some (.number "300")
 -- The settings page's text size (foafnaut:zoom/...): Lean answers the zoom and what it shows.
 private def zoomLink (argument : String) (percent unit : Nat) : List (String × JSON.Json) :=
   [("op",.string "textZoom"),("zoom",.string argument),("textScalePercent",.number (toString percent)),("zoomUnit",.number (toString unit))]
@@ -198,7 +220,7 @@ private def zoomLink (argument : String) (percent unit : Nat) : List (String × 
 #guard historyField' (zoomLink "400" 600 300) "textScalePercent" == some (.number "1200")
 #guard historyField' (zoomLink "" 450 300) "shown" == some (.number "150") && (historyField' (zoomLink "" 450 300) "refused").isNone
 #guard historyField' (zoomLink "big" 450 300) "textScalePercent" == some (.number "450") && (historyField' (zoomLink "big" 450 300) "refused").isSome
-#guard historyField' (zoomLink "" 600 300) "max" == some (.number "3000") && historyField' (zoomLink "" 600 300) "default" == some (.number "600")
+#guard historyField' (zoomLink "" 600 300) "max" == some (.number "3000") && historyField' (zoomLink "" 600 300) "default" == some (.number "300")
 #guard menu 4 == some "{\"action\":\"copy\",\"target\":\"page\",\"textScalePercent\":100}"
 -- Edit commands act on the address bar when it has the focus; paste always does (issue 1268).
 private def focusedMenu (number : Nat) : Option JSON.Json :=
@@ -438,6 +460,20 @@ private def imgDrawn := WebDocument.compileText imgPage ("{\"op\":\"render\",\"u
 #guard contains (WebDocument.compileText imgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Gone]\""
 #guard contains (WebDocument.compileText imgPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"aGk=\"}]}") 40 40) "\"text\":\"[Gone]\""
 
+-- `content: url(...)` on `::before` (issue 874): the sheet's URL is made absolute against the
+-- document, `inspect` lists the image to fetch (with the background images), and with its bytes
+-- the page is drawn with the image in the paragraph; with none, or with bytes that are not an
+-- image, the page is drawn as with no image (CSS 2.1 §12.2) and is not refused.
+private def contentPage := "<style>p::before{content:url(a.png)}</style><body style='margin:0'><p id=t style='margin:0'>A</p></body>"
+#guard contains (WebDocument.compileText contentPage "{\"op\":\"inspect\",\"url\":\"https://e.test/p/\"}" 40 40)
+  "\"backgroundImages\":[{\"key\":\"https://e.test/p/a.png\",\"url\":\"https://e.test/p/a.png\"}]"
+private def contentWith (bytes : String) := WebDocument.compileText contentPage ("{\"op\":\"render\",\"url\":\"https://e.test/p/\",\"images\":[{\"key\":\"https://e.test/p/a.png\",\"base64\":\"" ++ bytes ++ "\"}]}") 40 40
+private def contentNone := WebDocument.compileText contentPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40
+#guard !contains (contentWith imageBytes) "\"error\"" && !contains contentNone "\"error\""
+#guard contentWith imageBytes != contentNone
+-- bytes that do not decode: as no image
+#guard contentWith "aGk=" == contentNone
+
 -- An SVG file as the image of an `img` (2026-11-14; before, its alt text): the document is drawn
 -- on the CPU into a bitmap of twice its size, with alpha, and laid out by the size of its root.
 private def svgFile := "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10' viewBox='0 0 20 10'><rect width='10' height='10' fill='#ff0000'/></svg>"
@@ -459,12 +495,12 @@ private def keysOf (html : String) : List String :=
 #guard keysOf "<img src='a.png'>" == ["https://e.test/p/a.png"]
 #guard keysOf "<img srcset='b.png'>" == ["https://e.test/p/b.png"]
 #guard keysOf "<img src='a.png' srcset='b.png 2x'>" == ["https://e.test/p/a.png"]
-#guard keysOf "<img src='a.jpg' srcset='b.webp 1x, c.webp 2x'>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<img src='a.jpg' srcset='b.webp 1x, c.webp 2x'>" == ["https://e.test/p/b.webp"]
 #guard keysOf "<img src='a.jpg' srcset='small.jpg 100w, big.jpg 2000w' sizes='50px'>" == ["https://e.test/p/small.jpg"]
-#guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/a.jpg"]
+#guard keysOf "<picture><source srcset='w.webp' type='image/webp'><img src='a.jpg'></picture>" == ["https://e.test/p/w.webp"]
 #guard keysOf "<picture><source srcset='p.png'><img src='a.jpg'></picture>" == ["https://e.test/p/p.png"]
 #guard keysOf "<img alt='none'>" == []
-#guard WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
+#guard !WebRender.undecodablePath "https://e.test/a.JPG.WEBP?x=1#f" && WebRender.undecodablePath "x.avif" && !WebRender.undecodablePath "x.webp.png"
 #guard WebRender.plainImage (DOM.parseHtmlDocument "<img id=i src='a.png'>") ((DOM.parseHtmlDocument "<img id=i src='a.png'>").getElementById 0 "i" |>.getD 0)
 
 -- `@import` (2026-11-14; before, no import was followed): `inspect` names the sheets to fetch,
@@ -491,6 +527,16 @@ private def sheetA := importedSheet "https://e.test/p/a.css" "@import 'sub/b.css
 #guard importSize [("imported",.array [sheetA])] == some 30
 -- the nested sheet comes before the sheet that imports it: a.css's 30px is the later rule
 #guard importSize [("imported",.array [sheetA,importedSheet "https://e.test/p/sub/b.css" "p{font-size:40px}"])] == some 30
+-- an imported sheet that takes the document's sheets past 8 MiB (here 5 MiB of the page's own
+-- sheet and an import of 3.5 MiB; imports alone stop at 4 MiB, `importedSheets`) is left out
+-- and reported (issue 865)
+private def bigImportSkips (importBytes : Nat) : Option Nat := do
+  let dom := DOM.parseHtmlDocument ("<style>@import url(a.css);" ++ "".pushn ' ' 5242880 ++ "</style><p>A</p>")
+  let sheet := importedSheet "https://e.test/p/a.css" ("".pushn ' ' importBytes ++ "p{font-size:30px}")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal dom (importRequest [("imported",.array [sheet])]) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+  return (ds.filter (·.skip == .stylesheetBytes)).length
+#guard bigImportSkips 3670016 == some 1
+#guard bigImportSkips 1024 == some 0
 -- an import under a media query that does not hold is not applied; one that holds is
 #guard importSize [("imported",.array [importedSheet "https://e.test/p/a.css" "@import 'b.css' print;",
   importedSheet "https://e.test/p/b.css" "p{font-size:40px}"])] == some 16
@@ -543,10 +589,10 @@ private def sizeOfRoot (attrs : List (String × String)) : Nat × Nat :=
 #guard NativeSVGForgiving.imageRaster 18 18 == (36,36)
 #guard NativeSVGForgiving.imageRaster 128 128 == (256,256)
 #guard NativeSVGForgiving.imageRaster 200 200 == (200,200)
-#guard NativeSVGForgiving.imageRaster 486 169 == (243,85)
--- 2000 by 1000 is past the budget whole and at a fifth; a sixth (rounded up) fits
-#guard NativeSVGForgiving.imageRaster 2000 1000 == (334,167)
-#guard 334*167 ≤ NativeSVGForgiving.maxImagePixels && 400*200 > NativeSVGForgiving.maxImagePixels
+#guard NativeSVGForgiving.imageRaster 486 169 == (432,151)
+-- A divisor of 45/8 fits; the preceding divisor, 44/8, exceeds the pixel cap.
+#guard NativeSVGForgiving.imageRaster 2000 1000 == (356,178)
+#guard 356*178 ≤ NativeSVGForgiving.maxImagePixels && 364*182 > NativeSVGForgiving.maxImagePixels
 
 -- The tab icon (HTML §4.6.7.8): a scalable icon first, then the smallest at least 32
 -- device pixels, the last of equal ones; ICO is skipped (issue 1282); with no icon link,
@@ -771,6 +817,63 @@ private def deepPage := "<!doctype html><title>D</title><p>Top</p>" ++ String.jo
   String.join (List.replicate 80 "</div>")
 #guard renderText deepPage [] == ""
 #guard mentions (renderText deepPage [liberal,asks]) "\"feature\":\"nesting depth\"" == 1
+-- A resource limit that a page reaches is reported in both modes (issue 865): 65 different
+-- background images, past `maxBackgroundImages` (64); a page under the limit reports nothing.
+private def backgroundsPage (n : Nat) : String := "<!doctype html><title>B</title>" ++
+  String.join ((List.range n).map fun i => s!"<div style='width:4px;height:4px;background-image:url(b{i}.png)'></div>")
+#guard mentions (renderText (backgroundsPage 65) [asks]) "\"limit\":\"maxBackgroundImages\"" == 1
+#guard mentions (renderText (backgroundsPage 65) [liberal,asks]) "\"limit\":\"maxBackgroundImages\"" == 1
+#guard mentions (renderText (backgroundsPage 3) [asks]) "\"diagnostics\"" == 0
+-- 70 `@font-face` rules, past `FontFaceRule.maxFaces` (64)
+private def facesPage : String := "<!doctype html><title>F</title><style>" ++
+  String.join ((List.range 70).map fun i => "@font-face{font-family:f" ++ toString i ++ ";src:url(f" ++ toString i ++ ".woff2)}") ++ "</style><p>A</p>"
+#guard mentions (renderText facesPage [asks]) "\"limit\":\"maxFaces\"" == 1
+-- a render that names 20 different web fonts, past `maxWebFonts` (16); 3 report nothing
+private def namedFonts (n : Nat) : String × JSON.Json := ("webFonts",.array ((List.range n).map fun i =>
+  .object [("url",.string s!"https://e.test/f{i}.woff2"),("sha256",.string s!"{i}")]))
+#guard mentions (renderText facesPage [asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
+#guard mentions (renderText facesPage [liberal,asks,namedFonts 20]) "\"limit\":\"maxWebFonts\"" == 1
+#guard mentions (renderText facesPage [asks,namedFonts 3]) "\"limit\":\"maxWebFonts\"" == 0
+-- A 1×2 image repeated across 400×300 uses one repeating paint record.
+private def tilesPage : String := "<!doctype html><title>T</title><div style='width:400px;height:300px;" ++
+  "background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAACCAIAAAAW4yFwAAAAEElEQVR4nGP4z8DAwMDwHwAIAAH/B2G9UwAAAABJRU5ErkJggg==);background-size:1px 2px'></div>"
+#guard renderText tilesPage [asks] != ""
+#guard mentions (renderText tilesPage [asks]) "\"diagnostics\"" == 0
+
+-- `content` with 65 parts, past `Content.maxPieces` (64): one hit with the count; 64 report nothing (issue 865)
+private def piecesPage (n : Nat) : String := "<!doctype html><title>C</title><style>p::before{content:" ++
+  String.join (List.replicate n "'a' ") ++ "}</style><p>A</p>"
+#guard mentions (renderText (piecesPage 65) [asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 65) [asks]) "\"wanted\":65" == 1
+#guard mentions (renderText (piecesPage 65) [liberal,asks]) "\"limit\":\"maxPieces\"" == 1
+#guard mentions (renderText (piecesPage 64) [asks]) "\"limit\":\"maxPieces\"" == 0
+-- custom properties that double at each reference, so one passes `CssVars.maxValueBytes` (1 MiB):
+-- 1000 bytes, doubled 11 times, is 2,048,000. 10 doublings stay under it.
+private def doublingPage (n : Nat) : String := "<!doctype html><title>V</title><style>:root{--b0:" ++ "".pushn 'x' 1000 ++ ";" ++
+  String.join ((List.range n).map fun i => s!"--b{i+1}:var(--b{i}) var(--b{i});") ++ "}p{margin:0}</style><p>A</p>"
+#guard mentions (renderText (doublingPage 11) [asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 11) [liberal,asks]) "\"limit\":\"maxValueBytes\"" == 1
+#guard mentions (renderText (doublingPage 8) [asks]) "\"limit\":\"maxValueBytes\"" == 0
+-- one custom property longer than the limit, declared as it is
+#guard mentions (renderText ("<!doctype html><title>V</title><style>:root{--big:" ++ "".pushn 'x' 1048577 ++ "}</style><p>A</p>") [asks]) "\"limit\":\"maxValueBytes\"" == 1
+-- `var()` fallbacks nested 32 deep end the fuel (`CssVars.maxFallbacks`); 31 deep do not
+private def nestedPage (n : Nat) : String := "<!doctype html><title>N</title><style>p{width:" ++
+  String.join (List.replicate n "var(--a, ") ++ "1px" ++ "".pushn ')' n ++ "}</style><p>A</p>"
+#guard mentions (renderText (nestedPage 32) [asks]) "\"limit\":\"maxFallbacks\"" == 1
+#guard mentions (renderText (nestedPage 31) [asks]) "\"limit\":\"maxFallbacks\"" == 0
+-- a document sheet past `Style.maxSheetBytes` (8 MiB) is left out whole and reported as `stylesheetBytes` (issue 865)
+private def bigSheetSkips (n : Nat) : Option Nat := do
+  let dom := DOM.parseHtmlDocument ("<style>" ++ "".pushn ' ' n ++ "p{margin:0}</style><p>A</p>")
+  let (_,ds) ← (WebDocument.sheetsIn .liberal dom (importRequest []) (WebDocument.mediaEnv "screen" 800 600 100)).toOption
+  return (ds.filter (·.skip == .stylesheetBytes)).length
+#guard bigSheetSkips 8388700 == some 1
+#guard bigSheetSkips 1000 == some 0
+-- grid axes with more fixed tracks than `Grid.maxTracks` (100000): one hit with the most asked
+private def gridStyleOf (cols : String) : Array Rendering.CSS.Computed :=
+  #[{grid := (Rendering.CSS.GridStyle.set 16 {} "grid-template-columns" cols).getD {}}]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(200000, 10px)")).map (fun h => (h.name,h.limit,h.wanted)) == [("maxTracks",100000,200000)]
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(100000, 10px)")).isEmpty
+#guard (WebDocument.gridLimits (gridStyleOf "repeat(auto-fill, 10px)")).isEmpty
 #guard mentions (renderText deepPage [liberal]) "foafnaut:console" ≥ 1
 -- Inline SVG the SVG reader refuses (here the attribute `filter`): strict refuses the page,
 -- liberal draws it without that svg.
@@ -857,3 +960,9 @@ private def bigCurves (k : String) : String :=
 #guard cullPixels (bigCurves "40") 160 120 == some 0
 
 
+
+-- A render that names more images than the engine holds is drawn, not refused (issue 831):
+-- the names past `maxHeldImages` are left out.
+private def manyNamed := JSON.Json.object [("heldImages",.array ((List.range 200).map fun i =>
+  .object [("key",.string s!"https://example.test/{i}.png"),("sha256",.string "00")]))]
+#guard (WebDocument.namedImages manyNamed).toOption.map (·.length) == some WebDocument.maxHeldImages

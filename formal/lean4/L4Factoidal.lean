@@ -473,6 +473,13 @@ import L4Factoidal.Codec.XzTests
 import L4Factoidal.Prim.Bytes
 import L4Factoidal.Codec.Zstd
 import L4Factoidal.Codec.ZstdTests
+import L4Factoidal.Codec.Brotli
+import L4Factoidal.Codec.BrotliTests
+import L4Factoidal.Codec.WebP
+import L4Factoidal.Codec.VP8LPrefix
+import L4Factoidal.Codec.VP8LPlane
+import L4Factoidal.Codec.VP8LDecode
+import L4Factoidal.Codec.VP8Alpha
 import L4Factoidal.Qlvr.Id
 import L4Factoidal.Tdb2.Format
 import L4Factoidal.Tdb2.Read
@@ -717,6 +724,9 @@ import L4Factoidal.OWL.StructureRdf
 import L4Factoidal.OWL.FunctionalSyntax
 import L4Factoidal.OWL.SyntaxDL
 import L4Factoidal.OWL.FunctionalSyntaxTests
+import L4Factoidal.OWL.Profiles
+import L4Factoidal.OWL.StructureFromRdf
+import L4Factoidal.OWL.ProfilesTests
 import L4Factoidal.OWL.OwlXml
 import L4Factoidal.OWL.OwlXmlTests
 import L4Factoidal.OWL.ClassExprTests
@@ -1124,6 +1134,7 @@ import L4Factoidal.Net.WebSocket
 import L4Factoidal.Net.Subresource
 import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.CspSource
+import L4Factoidal.HTML.AccessibleTree
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol
@@ -1269,6 +1280,7 @@ import L4Factoidal.WHATWG.URL.IdnaData
 import L4Factoidal.WHATWG.URL.Idna
 import L4Factoidal.WHATWG.URL.Host
 import L4Factoidal.WHATWG.URL.Parser
+import L4Factoidal.WHATWG.URL.Cost
 import L4Factoidal.WHATWG.URL.Theorems
 import L4Factoidal.WHATWG.URLPattern
 import L4Factoidal.WHATWG.URLPatternTests
@@ -1337,6 +1349,8 @@ import L4Factoidal.Rendering.SfntColrTests
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.Rendering.SfntProfileTests
 import L4Factoidal.Rendering.Woff
+import L4Factoidal.Rendering.Woff2
+import L4Factoidal.Rendering.Woff2Tests
 import L4Factoidal.Rendering.SfntMarkTheorems
 import L4Factoidal.Rendering.FontFaceRule
 import L4Factoidal.Rendering.FontFaceRuleTests
@@ -1360,3 +1374,4 @@ import L4Factoidal.Dataflow.ConditionalTests
 import L4Factoidal.SPARQL.ResultsXmlAdmission
 import L4Factoidal.SPARQL.ResultsXmlRoutingTests
 import L4Factoidal.HostContract.Trace
+import L4Factoidal.Epub
