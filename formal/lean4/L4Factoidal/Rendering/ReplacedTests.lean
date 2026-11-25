@@ -24,6 +24,14 @@ private def reducedPicture : Picture := ⟨0,⟨20,10,ByteArray.mk (Array.replic
 -- A picture held reduced has the size of its image, and is painted in the same rectangle with
 -- a map that reaches half as many pixels on each side.
 #guard reducedPicture.size == picture.size
+
+-- Both density-corrected dimensions can round to zero. CSS minima still
+-- transfer through the source ratio. The tighter opposing maximum wins.
+private def subpixelPicture : Picture := {picture with natural := some ⟨0,0,some (101/51)⟩}
+#guard subpixelPicture.usedSize {minWidth := .px 101} 800 == (101,51)
+#guard subpixelPicture.usedSize {minHeight := .px 51} 800 == (101,51)
+#guard subpixelPicture.usedSize {minWidth := .px 101, maxHeight := .px 20} 800 == (101,20)
+
 private def paintOf (p : Picture) : Option (Float × Float × Float × Float × Float × Float) :=
   match pictureNodes 1 {} p 10 5 80 40 with
   | [Node.paint ⟨_,painted⟩] =>

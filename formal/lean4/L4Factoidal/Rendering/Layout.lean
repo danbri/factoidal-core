@@ -803,21 +803,24 @@ def unbounded : Float := 1.0e30
 /-- CSS 2.1 §10.4, the table for a replaced element whose `width` and `height` are
 both auto: the intrinsic size `w` by `h` within the limits, with its ratio kept where
 the limits allow it. -/
-def constrainBoth (w h minW maxW minH maxH : Float) : Float × Float :=
+def constrainBoth (w h minW maxW minH maxH : Float)
+    (ratio : Option Float := if w > 0 && h > 0 then some (w/h) else none) : Float × Float :=
   let maxW := max minW maxW
   let maxH := max minH maxH
-  if w <= 0 || h <= 0 then (min maxW (max minW w),min maxH (max minH h))
-  else if w > maxW && h > maxH then
-    if maxW/w <= maxH/h then (maxW,max minH (maxW*h/w)) else (max minW (maxH*w/h),maxH)
-  else if w < minW && h < minH then
-    if minW/w <= minH/h then (min maxW (minH*w/h),minH) else (minW,min maxH (minW*h/w))
-  else if w < minW && h > maxH then (minW,maxH)
-  else if w > maxW && h < minH then (maxW,minH)
-  else if w > maxW then (maxW,max (maxW*h/w) minH)
-  else if w < minW then (minW,min (minW*h/w) maxH)
-  else if h > maxH then (max (maxH*w/h) minW,maxH)
-  else if h < minH then (min (minH*w/h) maxW,minH)
-  else (w,h)
+  match ratio with
+  | none => (min maxW (max minW w),min maxH (max minH h))
+  | some r =>
+    if w > maxW && h > maxH then
+      if maxW <= maxH*r then (maxW,max minH (maxW/r)) else (max minW (maxH*r),maxH)
+    else if w < minW && h < minH then
+      if minW <= minH*r then (min maxW (minH*r),minH) else (minW,min maxH (minW/r))
+    else if w < minW && h > maxH then (minW,maxH)
+    else if w > maxW && h < minH then (maxW,minH)
+    else if w > maxW then (maxW,max (maxW/r) minH)
+    else if w < minW then (minW,min (minW/r) maxH)
+    else if h > maxH then (max (maxH*r) minW,maxH)
+    else if h < minH then (min (minH*r) maxW,minH)
+    else (w,h)
 
 /-- Resolve a replaced element's horizontal length. A calculation can come from
 `contentBoxed`, where a percentage size of a border box loses its horizontal edges.
@@ -869,7 +872,7 @@ def replacedNatural (s : Computed) (intrinsic : Option (Float × Float)) (availa
     let h := clampH h
     (clampW (match ratio with | some r => h*r | none => (intrinsic.map Prod.fst).getD 300),h)
   | none,none => match intrinsic with
-    | some (w,h) => constrainBoth w h minW maxW minH maxH
+    | some (w,h) => constrainBoth w h minW maxW minH maxH ratio
     | none => (clampW 300,clampH 150)
 
 /-- The used content width and height of a replaced element: `replacedNatural`, or with
