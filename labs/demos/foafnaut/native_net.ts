@@ -21,6 +21,11 @@
 // requests, which answer status 0. A request's answer is returned to its own call, by id.
 // A wire with no `address` is not pooled.
 //
+// DNS cache (`DnsCache`, `NetPool.dns`, issue 1031): resolve-only answers kept per (partition,
+// host name), 60 s, 256 entries, failures not cached, concurrent lookups shared; the answer is
+// the same `{id, addresses}` as a fresh one, so Egress.choose still runs in Lean on every
+// transfer. Without a pool there is no cache.
+//
 // Every fetch: redirect "manual" (each hop goes back to the engine), no cookies (Deno's fetch
 // has no cookie jar), a body of at most 64 MiB, 300 s at most.
 
@@ -36,7 +41,68 @@ const MAX_BODY=67108864;
 /** Extra trust roots (tests only: a local TLS server's certificate). */
 export type NetOptions={caCerts?:string[];timeoutMs?:number};
 
-export type NetPoolOptions=NetOptions&{maxClients?:number;maxPerKey?:number;idleMs?:number;partition?:string};
+export type NetPoolOptions=NetOptions&{maxClients?:number;maxPerKey?:number;idleMs?:number;partition?:string;
+  /** DNS cache (issue 1031). Off with `dnsCache:false`. Default lifetime 60 s, at most 256 entries. */
+  dnsCache?:boolean;dnsTtlMs?:number;dnsMaxEntries?:number;
+  /** Replaces Deno.resolveDns for A and AAAA (tests). Gives the addresses of one record type. */
+  resolver?:(host:string,type:"A"|"AAAA")=>Promise<string[]>;
+  now?:()=>number};
+
+/** Resolve-only answers, kept per (partition, host name). The cache stores the raw address list
+ *  that a fresh lookup gave; it never filters, orders or picks (Egress.choose in Lean does, on
+ *  every transfer, on this list). Deno.resolveDns gives no TTL (its return type is string[] or
+ *  record objects without a TTL field), so the lifetime is fixed: a hit does not renew it. An
+ *  empty answer (every lookup failed or the name has no A or AAAA record) is not cached: a
+ *  transient failure must not block the page for a period, and a failing lookup is cheap to
+ *  repeat. Concurrent lookups of one key share one resolution (also an empty one). The cache
+ *  has no part in the pin: a transfer takes its address from the answer it got, and a later
+ *  change here never moves a request in flight. Least recently used entries leave first. */
+export class DnsCache{
+  readonly stats={resolutions:0,hits:0,shared:0};
+  private entries=new Map<string,{addresses:string[];expires:number}>();
+  private pending=new Map<string,Promise<string[]>>();
+  constructor(private o:{ttlMs?:number;maxEntries?:number;enabled?:boolean;
+    resolver?:(host:string,type:"A"|"AAAA")=>Promise<string[]>;now?:()=>number}={}){}
+  get size(){return this.entries.size;}
+  private lookup=async(host:string):Promise<string[]>=>{
+    this.stats.resolutions++;
+    const r=this.o.resolver??((h:string,t:"A"|"AAAA")=>Deno.resolveDns(h,t) as Promise<string[]>);
+    const found=await Promise.allSettled([r(host,"A"),r(host,"AAAA")]);
+    return found.flatMap(x=>x.status==="fulfilled"?x.value:[]);
+  };
+  /** The addresses of `host` for `partition`. A new array on every call. */
+  async resolve(partition:string,host:string):Promise<string[]>{
+    if(this.o.enabled===false)return this.lookup(host);
+    const key=JSON.stringify([partition,host]),now=(this.o.now??Date.now)();
+    const hit=this.entries.get(key);
+    if(hit){
+      if(hit.expires>now){this.entries.delete(key);this.entries.set(key,hit);this.stats.hits++;return [...hit.addresses];}
+      this.entries.delete(key);
+    }
+    const inflight=this.pending.get(key);
+    if(inflight){this.stats.shared++;return [...await inflight];}
+    const p=this.lookup(host);
+    this.pending.set(key,p);
+    try{
+      const addresses=await p;
+      if(addresses.length>0){
+        this.entries.set(key,{addresses:[...addresses],expires:(this.o.now??Date.now)()+(this.o.ttlMs??60000)});
+        const max=this.o.maxEntries??256;
+        while(this.entries.size>max)this.entries.delete(this.entries.keys().next().value as string);
+      }
+      return [...addresses];
+    }finally{this.pending.delete(key);}
+  }
+  /** Bounded speculative resolve for the host names of visible links: at most `max` distinct
+   *  names (the first ones), `max` 0 does nothing. Answers are cached like any other; nothing
+   *  is sent to a server. Off by default (max defaults to 0). Not wired into the window host. */
+  async prefetch(partition:string,hosts:string[],max=0):Promise<number>{
+    const names=[...new Set(hosts)].slice(0,Math.max(0,max));
+    await Promise.all(names.map(h=>this.resolve(partition,h)));
+    return names.length;
+  }
+  clear(){this.entries.clear();}
+}
 
 type Tunnel = {client:Deno.HttpClient; close:()=>void};
 
@@ -120,8 +186,11 @@ export class NetPool{
   readonly entries=new Map<string,Entry>();
   /** Clients ever opened, for measurement. */
   opened=0;
+  /** One cache per pool: a separate pool (a private session) never shares it. */
+  readonly dns:DnsCache;
   constructor(opts:NetPoolOptions={}){
     this.opts={...opts,maxClients:opts.maxClients??8,maxPerKey:opts.maxPerKey??6,idleMs:opts.idleMs??30000};
+    this.dns=new DnsCache({ttlMs:opts.dnsTtlMs,maxEntries:opts.dnsMaxEntries,enabled:opts.dnsCache!==false,resolver:opts.resolver,now:opts.now});
   }
   key(w:NetWire,u:URL):string{
     return JSON.stringify([u.protocol,u.hostname,u.port,w.partition??this.opts.partition??"",w.address,w.port??null]);
@@ -213,6 +282,7 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Pro
   if(w.resolve){
     try{
       const host=new URL(w.url).hostname;
+      if(batch)return {id:w.id,addresses:await batch.dns.resolve(w.partition??batch.opts.partition??"",host)};
       const found=await Promise.allSettled([Deno.resolveDns(host,"A"),Deno.resolveDns(host,"AAAA")]);
       return {id:w.id,addresses:found.flatMap(r=>r.status==="fulfilled"?r.value:[])};
     }catch{return {id:w.id,addresses:[]};}
