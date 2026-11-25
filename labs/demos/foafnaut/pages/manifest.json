@@ -398,6 +398,9 @@
   },
   {
    "page": "particle-rex.html",
+   "checkStylesheets": {
+    "https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&display=swap": "particle-rex-check.css"
+   },
    "title": "Particle Rex, a one-button canvas game",
    "handwritten": true,
    "needs": "page scripts, Canvas 2D (L4Factoidal.PageCanvas), requestAnimationFrame, keyboard and pointer events in the engine and the guest",

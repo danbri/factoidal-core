@@ -1,0 +1,17 @@
+/* Offline test response for the stylesheet linked by particle-rex.html.
+   Declare both served weights using Google Fonts' full TTFs. The native
+   standalone scene test uses the bitmap profile and does not fetch fonts. */
+@font-face {
+  font-family: Silkscreen;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("https://fonts.gstatic.com/s/silkscreen/v6/m8JXjfVPf62XiF7kO-i9ULRvamODxdI.ttf") format("truetype");
+}
+@font-face {
+  font-family: Silkscreen;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("https://fonts.gstatic.com/s/silkscreen/v6/m8JUjfVPf62XiF7kO-i9aAhATmuo2dudFvc.ttf") format("truetype");
+}
