@@ -465,7 +465,7 @@ private def rectangularContour (x y w h : Float) : Contour :=
 
 /-- Paint a continuous solid border with one colour. Keep the inner curve
 identical to the curve used for backgrounds clipped to the padding box. -/
-private def roundedSolidBorder (id : Nat) (s : Computed) (b : Edges)
+private def roundedSolidBorder (source : Option Nat) (s : Computed) (b : Edges)
     (x y w h : Float) : Option (Array Node) := do
   let radii ← resolvedRadii s w h
   let outer ← radii.outline x y w h
@@ -481,7 +481,7 @@ private def roundedSolidBorder (id : Nat) (s : Computed) (b : Edges)
       | none => false
   if !sides.all sameSolid then none else
   let fill := fun (contours : List Contour) =>
-    Node.paint ⟨some id,{geometry := .path contours,style := {fill := .solid color,rule := .evenodd}}⟩
+    Node.paint ⟨source,{geometry := .path contours,style := {fill := .solid color,rule := .evenodd}}⟩
   let ix := x+b.left
   let iy := y+b.top
   let iw := w-b.left-b.right
@@ -510,10 +510,10 @@ colour. Where two sides meet with the same bands, the top and bottom sides take 
 as rectangles; where they differ, the corner is split on its diagonal (CSS Backgrounds 3
 §4.5 leaves the join to the user agent; browsers split it), with polygons. Dotted and dashed
 sides are marks along the side, without the diagonal. -/
-def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
+private def borderNodesFor (source : Option Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
   if !s.paintVisible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
-  if let some rounded := roundedSolidBorder id s b x y w h then return rounded
+  if let some rounded := roundedSolidBorder source s b x y w h then return rounded
   let st := s.borderStyles
   let pc := s.borderColors
   let bands := fun (style : BorderStyle) (paint : BorderColor) (start : Bool) (thick : Float) =>
@@ -530,7 +530,7 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
   let tr := split top right
   let bl := split bottom left
   let br := split bottom right
-  let paint := fun (c : Color) (g : Geometry) => Node.paint ⟨some id,{geometry := g,style := {fill := .solid c}}⟩
+  let paint := fun (c : Color) (g : Geometry) => Node.paint ⟨source,{geometry := g,style := {fill := .solid c}}⟩
   let quad := fun (c : Color) (p : List Point) =>
     -- an axis-aligned quadrilateral is drawn as a rectangle (exact edges)
     match p with
@@ -584,6 +584,37 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
       let ib := if br then y+h-f1*b.bottom else y+h-b.bottom
       out := out ++ quad c [⟨x+w-f1*b.right,it⟩,⟨x+w-f0*b.right,ot⟩,⟨x+w-f0*b.right,ob⟩,⟨x+w-f1*b.right,ib⟩]
   return out
+
+def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
+  borderNodesFor (some id) s x y w h
+
+/-- Paint an outline as a separate ring. The ring has no hit source and uses
+the border painter on the offset rectangle, with no change to the layout box.
+The automatic indicator uses two colours so one is visible on either a light
+or a dark background. -/
+private def outlineNodes (s : Computed) (x y w h : Float) : Array Node := Id.run do
+  let o := s.outline
+  if !s.paintVisible || s.masked || o.width <= 0 then return #[]
+  let offset := max o.offset (-(min w h)/2)
+  let ring := fun (style : BorderStyle) (paint : BorderColor) (inside width : Float) =>
+    let edge := inside + width
+    let ink := {s with borderStyles := .all style, borderColors := .all paint,
+                       borderWidth := ⟨width,width,width,width⟩}
+    borderNodesFor none ink (x-edge) (y-edge) (w+2*edge) (h+2*edge)
+  match o.style with
+  | .line .none => return #[]
+  | .line style => return ring style (o.color.getD .current) offset o.width
+  | .auto =>
+    if let some paint := o.color then return ring .solid paint offset o.width
+    let inner := if o.width >= 2 then (o.width/2).floor else 0
+    return ring .solid (.solid ⟨1,1,1⟩) offset inner ++
+      ring .solid (.solid ⟨0,0,0⟩) (offset+inner) (o.width-inner)
+
+private theorem outlineNodes_none (s : Computed) (x y w h : Float)
+    (hStyle : s.outline.style = .line .none) : outlineNodes s x y w h = #[] := by
+  simp [outlineNodes, hStyle] <;> split <;> rfl
+
+#print axioms outlineNodes_none
 
 -- Dots and dashes start and end the side: 100 px of 2 px dots is 26 dots 3.92 px apart.
 #guard (dashMarks true 100 2).size == 26
@@ -989,7 +1020,9 @@ def replacedBox (id : Nat) (s : Computed) (w h : Float) (content : Float → Flo
   let bw := b.left+p.left+w+p.right+b.right
   let bh := b.top+p.top+h+p.bottom+b.bottom
   (m.left+bw+m.right,m.top+bh+m.bottom,
-   (decorations id s m.left m.top bw bh).toList ++ (if s.transparent then [] else content (m.left+b.left+p.left) (m.top+b.top+p.top)))
+   (decorations id s m.left m.top bw bh).toList ++
+     (if s.transparent then [] else content (m.left+b.left+p.left) (m.top+b.top+p.top)) ++
+     (outlineNodes s m.left m.top bw bh).toList)
 
 /-- CSS 2.1 §10.3.3: how far `margin-left: auto` moves a block-level box whose margin
 box is `outer` wide in a containing block `available` wide. Both auto: half the room
@@ -1514,6 +1547,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   -- extent so far (`InlineBox`), and their backgrounds and borders, which go under the text.
   let mut frames : List (InlineBox.Frame Float × Computed) := []
   let mut under : Array Node := #[]
+  let mut outlines : Array Node := #[]
   -- On a line reordered by bidi an inline box may be in pieces: its words paint its
   -- background, and its box is the extent of all of them.
   let reordered := !dirs.isEmpty
@@ -1544,7 +1578,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
                                  let c := if f.start then c else {c with topLeft := zero, bottomLeft := zero}
                                  if ended then c else {c with topRight := zero, bottomRight := zero}}
         left top width height
-    ((⟨f.id,left,top,width,height⟩ : Box),nodes)
+    ((⟨f.id,left,top,width,height⟩ : Box), nodes, outlineNodes s left top width height)
   for k in [0:items.size] do
     let (offset,item) := items[k]!
     let rtl := dirs[k]?.getD none
@@ -1623,9 +1657,10 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       match frames with
       | (f,fs) :: rest =>
         let f := f.close (x+offset) (s.padding.right+s.borderEdges.right)
-        let (box,nodes) := fragment f fs true
+        let (box,nodes,outline) := fragment f fs true
         out := pushInlineBox out box
         under := under ++ nodes
+        outlines := outlines ++ outline
         frames := InlineBox.merge rest f fs.margin.left fs.margin.right true
       | [] => pure ()
     | _ => pure ()
@@ -1634,12 +1669,15 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
   for _ in [0:frames.length] do
     match frames with
     | (f,fs) :: rest =>
-      let (box,nodes) := fragment f fs false
+      let (box,nodes,outline) := fragment f fs false
       out := pushInlineBox out box
       under := under ++ nodes
+      outlines := outlines ++ outline
       frames := InlineBox.merge rest f fs.margin.left 0 false
     | [] => break
-  return if under.isEmpty then out else {out with nodes := under ++ out.nodes}
+  if !under.isEmpty then out := {out with nodes := under ++ out.nodes}
+  if !outlines.isEmpty then out := {out with nodes := out.nodes ++ outlines}
+  return out
 
 /-- An entirely out-of-flow row retains its static positions and contributes no
     height, baseline or paint, even when the enclosing block supplies a strut. -/
@@ -2199,7 +2237,7 @@ def framedAtomic (id : Nat) (s : Computed) (w h : Float) (inner : Result) : Inli
   let box : Box := ⟨id,m.left,m.top,w,h⟩
   let framed :=
     {inner with
-      nodes := decorations id s m.left m.top w h ++ inner.nodes
+      nodes := decorations id s m.left m.top w h ++ inner.nodes ++ outlineNodes s m.left m.top w h
       boxes := #[box] ++ inner.boxes
       inlineFlowRight := inner.inlineFlowRight.map (fun x => max x (box.x+box.width))}
   .atomic id s (m.left+w+m.right) (m.top+h+m.bottom)
@@ -2567,8 +2605,20 @@ def frameBox (id : Nat) (s : Computed) (outerX outerY borderWidth borderHeight :
   let border := s.borderEdges
   let nodes := clipContent s.clipOverflow (decorations id s outerX outerY borderWidth borderHeight) content.nodes
     ⟨outerX+border.left,outerY+border.top,borderWidth-border.left-border.right,borderHeight-border.top-border.bottom,identity⟩
-  {content with nodes, boxes := #[⟨id,outerX,outerY,borderWidth,borderHeight⟩] ++ content.boxes,
+  {content with nodes := nodes ++ outlineNodes s outerX outerY borderWidth borderHeight,
+                boxes := #[⟨id,outerX,outerY,borderWidth,borderHeight⟩] ++ content.boxes,
                 height := s.margin.top+borderHeight+s.margin.bottom, marginBottom := s.margin.bottom}
+
+/-- Outlines never enter the result fields used for positioning and hit testing. -/
+theorem frameBox_outline_geometry (id : Nat) (s : Computed) (o : Outline)
+    (x y w h : Float) (content : Result) :
+    let plain := frameBox id s x y w h content
+    let outlined := frameBox id {s with outline := o} x y w h content
+    outlined.boxes = plain.boxes ∧ outlined.runs = plain.runs ∧
+      outlined.height = plain.height ∧ outlined.marginBottom = plain.marginBottom := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
+#print axioms frameBox_outline_geometry
 
 /-- CSS 2.1 §8.3.1: the top margin of a block adjoins the top margin of its first in-flow
 block child when no border, padding or clearance is between them and the block does not
@@ -3249,6 +3299,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           boxes := boxes.push ⟨id,cx,cy,w,h⟩
         let moved := r.shiftY (cy+Table.alignOffset cs.verticalAlign h outer)
         paints := paints ++ moved.nodes
+        if let .element _ := cell.source then paints := paints ++ outlineNodes cs cx cy w h
         boxes := boxes ++ moved.boxes
         runs := runs ++ moved.runs
         pending := pending ++ moved.pending
@@ -3257,7 +3308,8 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       let tableBox : Array Box := match element with
         | some id => #[⟨id,outerX,top,borderWidth,borderHeight⟩]
         | none => #[]
-      out := {out with nodes := out.nodes ++ nodes ++ paints, boxes := out.boxes ++ tableBox ++ boxes,
+      let outline := if element.isSome then outlineNodes ts outerX top borderWidth borderHeight else #[]
+      out := {out with nodes := out.nodes ++ nodes ++ paints ++ outline, boxes := out.boxes ++ tableBox ++ boxes,
                        runs := out.runs ++ runs, height := out.height+borderHeight,
                        pending := out.pending ++ pending, work := out.work+work, rough := out.rough || rough}
       top := top+borderHeight

@@ -57,6 +57,25 @@ private def floatHeadingRows (extra : String) : Option (Bool × Bool) := do
 #guard floatHeadingRows "#float{height:21px} #heading{text-wrap:balance}" ==
   floatHeadingRows "#float{height:21px}"
 
+private def outlineSnapshot (states : Nat) (rule : String) : Option (String × String × String) := do
+  let dom := DOM.parseHtmlDocument "<a id='test' href='#next'>Next</a>"
+  let id ← dom.getElementById 0 "test"
+  let dom := dom.setNode id fun node => {node with states}
+  let rules ← (CSS.parse (css ++ rule)).toOption
+  let (scene, boxes) ← (Layout.render dom rules font noSVG 200 200).toOption
+  return (reprStr scene.tree, reprStr boxes, reprStr scene.links)
+
+-- Keyboard-focused anchors paint a ring. Pointer focus and an author override
+-- paint the same scene as the unfocused anchor. All four use the same geometry.
+#guard match outlineSnapshot 0 "", outlineSnapshot 8 "", outlineSnapshot 40 "",
+    outlineSnapshot 40 "#test {outline: none}" with
+  | some (normal, normalBoxes, normalLinks), some (pointed, pointedBoxes, pointedLinks),
+      some (focused, focusedBoxes, focusedLinks), some (overridden, overriddenBoxes, overriddenLinks) =>
+    normal == pointed && normal == overridden && normal != focused &&
+      normalBoxes == pointedBoxes && normalBoxes == focusedBoxes && normalBoxes == overriddenBoxes &&
+      normalLinks == pointedLinks && normalLinks == focusedLinks && normalLinks == overriddenLinks
+  | _, _, _, _ => false
+
 private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</div></div><div id=z>ZZ</div>"
 
 -- A sized or painted block inside an inline keeps its box (CSS 2.1 §9.2.1.1).
