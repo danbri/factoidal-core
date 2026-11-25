@@ -38,7 +38,7 @@ jobs:
           def git(*args):
               return subprocess.check_output(["git",*args], text=True).strip()
           root = pathlib.Path(git("rev-parse","--show-toplevel"))
-          paths = ["HashToField.lean", "../L4Factoidal/Crypto/SHA2.lean",
+          paths = ["HashToField.lean", "HashToFieldMain.lean", "../L4Factoidal/Crypto/SHA2.lean",
                    "scripts/check-hash-to-field.py", "lean-toolchain", "lake-manifest.json",
                    "lakefile.toml", "../../../.github/workflows/ethereum-bls-hash-field.yml"]
           pins = {}
@@ -73,7 +73,9 @@ jobs:
           export LEAN_PATH="$RUNNER_TEMP/h2f"
           lean --deps HashToField.lean | tee "$RUNNER_TEMP/hash-field-imports.log"
           lean -o "$RUNNER_TEMP/h2f/HashToField.olean" -c "$RUNNER_TEMP/h2f/field.c" HashToField.lean 2>&1 | tee "$RUNNER_TEMP/hash-field-axioms.log"
-          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/h2f/hash-field" "$RUNNER_TEMP/h2f/sha.c" "$RUNNER_TEMP/h2f/field.c"
+          export LEAN_PATH="$RUNNER_TEMP/h2f/"
+          lean -c "$RUNNER_TEMP/h2f/HashToFieldMain.c" HashToFieldMain.lean
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$RUNNER_TEMP/h2f/hash-field" "$RUNNER_TEMP/h2f/sha.c" "$RUNNER_TEMP/h2f/field.c" "$RUNNER_TEMP/h2f/HashToFieldMain.c"
           ldd "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-link.log"
           nm -u "$RUNNER_TEMP/h2f/hash-field" | tee "$RUNNER_TEMP/hash-field-symbols.log"
           if grep -E ' (EVP_|EC_|BN_|SHA256|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/hash-field-symbols.log"; then exit 1; fi
