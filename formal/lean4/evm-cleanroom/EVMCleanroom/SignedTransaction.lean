@@ -118,9 +118,9 @@ def signingBytes (kind : Nat) (fields : Array Item) (unsignedCount : Nat)
     (chain : Option Nat) : Array UInt8 :=
   let payload := (fields.extract 0 unsignedCount).foldl (fun acc item => acc ++ item.encoded) #[]
   let payload := if kind == 0 then
-    match chain with
-    | none => payload
-    | some id => payload ++ encodeScalar id ++ #[0x80, 0x80]
+      match chain with
+      | none => payload
+      | some id => payload ++ encodeScalar id ++ #[0x80, 0x80]
     else payload
   let encoded := prefix 192 247 payload.size ++ payload
   if kind == 0 then encoded else #[UInt8.ofNat kind] ++ encoded
@@ -149,6 +149,7 @@ structure Decoded where
 
 def decode (raw : Array UInt8) : Except Failure Decoded := do
   if raw.size > maxRawBytes then throw .resourceLimit
+  if raw.isEmpty then throw (.malformed "empty envelope")
   let tag := (raw[0]?).getD 0
   let kind := if tag ≥ 192 then 0 else tag.toNat
   if tag < 192 && (kind < 1 || kind > 3) then
