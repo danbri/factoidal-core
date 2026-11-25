@@ -225,9 +225,9 @@ private def edgeIndex (v : Float) (size : Nat) : Nat :=
 /-- Premultiplied colour of one pixel, in 0..1. -/
 private def Bitmap.texel (b : Bitmap) (x y : Nat) : Float × Float × Float × Float :=
   let i := (y*b.width+x)*4
-  let a := Float.ofNat (b.rgba.get! (i+3)).toNat/255
-  (Float.ofNat (b.rgba.get! i).toNat/255*a,Float.ofNat (b.rgba.get! (i+1)).toNat/255*a,
-   Float.ofNat (b.rgba.get! (i+2)).toNat/255*a,a)
+  let a := (b.rgba.get! (i+3)).toFloat/255
+  ((b.rgba.get! i).toFloat/255*a,(b.rgba.get! (i+1)).toFloat/255*a,
+   (b.rgba.get! (i+2)).toFloat/255*a,a)
 private def mixTexel (p q : Float × Float × Float × Float) (f : Float) : Float × Float × Float × Float :=
   (p.1*(1-f)+q.1*f,p.2.1*(1-f)+q.2.1*f,p.2.2.1*(1-f)+q.2.2.1*f,p.2.2.2*(1-f)+q.2.2.2*f)
 /-- Select the position within one tile before sampling texels. Subtracting a
