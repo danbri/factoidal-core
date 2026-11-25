@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
+          fetch-depth: 4
           sparse-checkout: |
             labs/demos/foafnaut/native_net.ts
             labs/demos/foafnaut/native_net_pool_test.ts
@@ -26,11 +26,26 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4
+      - name: Probe IPv6 transport
+        run: |
+          deno eval '
+          const server = Deno.serve({hostname:"::1",port:0,onListen(){}}, () => new Response("ok"));
+          const port = server.addr.port;
+          for (const hostname of ["::1","[::1]"]) {
+            const client = Deno.createHttpClient({proxy:{transport:"tcp",hostname,port}});
+            try { const r = await fetch("http://a.test:"+port+"/",{client,signal:AbortSignal.timeout(3000)}); console.log(hostname, r.status, await r.text()); }
+            catch (e) { console.log(hostname, e.message, e.cause?.message); }
+            finally { client.close(); }
+          }
+          const r = await fetch("http://[::1]:"+port+"/",{signal:AbortSignal.timeout(3000)});
+          console.log("direct",r.status,await r.text());
+          await server.shutdown();
+          '
       - name: Reproduce old fixture
         continue-on-error: true
         working-directory: labs/demos/foafnaut
         run: |
-          git show HEAD~2:labs/demos/foafnaut/native_net_pool_test.ts > baseline_pool_test.ts
+          git show 9ddee1ddf9597471427fac110a06a7030e501aa8:labs/demos/foafnaut/native_net_pool_test.ts > baseline_pool_test.ts
           deno test --allow-net --allow-run --allow-read --allow-write --filter 'two origins' baseline_pool_test.ts
       - name: Verify patched fixture
         working-directory: labs/demos/foafnaut
