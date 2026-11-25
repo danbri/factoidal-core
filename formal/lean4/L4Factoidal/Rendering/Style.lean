@@ -2052,9 +2052,12 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     return {s with borderColors := s.borderColors.set side (← borderPaint d.value)}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
   | "outline-style" =>
-    let style ← if (trim d.value).toLower == "auto" then pure OutlineStyle.auto
-      else OutlineStyle.line <$> borderStyle d.value
-    return {s with outline := {s.outline with style}}
+    match d.value with
+    | "none" => return {s with outline := {s.outline with style := .line .none}}
+    | _ =>
+      let style ← if (trim d.value).toLower == "auto" then pure OutlineStyle.auto
+        else OutlineStyle.line <$> borderStyle d.value
+      return {s with outline := {s.outline with style}}
   | "outline-width" =>
     return {s with outline := {s.outline with width := ← borderWidthPx s.fontSize d.value}}
   | "outline-color" =>
@@ -2544,7 +2547,8 @@ theorem applyWinner_outlineStyle_none (parent start s : Computed) :
     simp [wideSource, spelling]
   have supported : appliedName "outline-style" = true := by simp [appliedName, ownProperties]
   have value : apply s ⟨"outline-style", "none", false⟩ =
-      .ok {s with outline := {s.outline with style := .line .none}} := rfl
+      .ok {s with outline := {s.outline with style := .line .none}} := by
+    first | rfl | simp [apply]
   simp only [applyWinner, wide, applyOrKeep, supported, if_true, applyOrKeepSlow, value]
 
 #print axioms applyWinner_outlineStyle_none
