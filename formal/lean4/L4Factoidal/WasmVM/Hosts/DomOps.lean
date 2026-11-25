@@ -864,7 +864,9 @@ def domOpM (id op : Nat) (q : String) : Op String := do
     let enc := (L4Factoidal.WHATWG.Encoding.getEncoding frameLabel).getD .utf_8
     let baseTarget := (((d.treeOrder doc).find? fun k => L4Factoidal.DOM.Forms.isHtml d k ["base"] &&
       (L4Factoidal.DOM.Forms.attr? d k "target").isSome).bind (L4Factoidal.DOM.Forms.attr? d · "target")).getD ""
-    match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget with
+    -- `foafnaut:` pages take a GET as an http page would (the new tab page's search forms);
+    -- the host routes the address as a link (WebRoute), so a form gets no more than a link.
+    match L4Factoidal.HTML.FormSubmission.plan d form submitter docURL enc baseTarget ["foafnaut"] with
     | none => return "0"
     | some p =>
       -- the rules for choosing a navigable: "" and `_self` the form's own frame; a name, the

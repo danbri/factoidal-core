@@ -67,6 +67,12 @@ def planOf (src url : String) : Option Plan :=
   <input type=checkbox name=c checked><input name=d disabled value=x><button name=s value=v></button></form>"
   "http://x.test/p?q#f").map (·.url) == some "http://x.test/p?a=b+c&c=on#f"
 #guard (planOf "<form action='javascript:x'><input name=a></form>" "http://x.test/") == none
+-- A scheme of the user agent's own pages: GET only when the agent names it, never POST.
+#guard (planOf "<form action='foafnaut:sparql'><textarea name=q>ASK {}</textarea></form>" "file:///p.html") == none
+#guard (let d := L4Factoidal.DOM.parseHtmlDocument "<form action='foafnaut:sparql'><textarea name=q>ASK {}</textarea></form>"
+  (plan d (formIn d) none "file:///p.html" .utf_8 "" ["foafnaut"]).map (·.url)) == some "foafnaut:sparql?q=ASK+%7B%7D"
+#guard (let d := L4Factoidal.DOM.parseHtmlDocument "<form method=post action='foafnaut:sparql'><input name=q value=x></form>"
+  plan d (formIn d) none "file:///p.html" .utf_8 "" ["foafnaut"]) == none
 
 -- Implicit submission (Enter in a field, HTML §4.10.21.2): the default button is clicked; a
 -- form with no submit button is submitted when at most one field blocks it; a disabled default

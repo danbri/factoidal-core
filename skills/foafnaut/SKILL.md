@@ -591,6 +591,8 @@ https://github.com/danbri/factoidal-core/issues/1038).
 
 - [Frozen document base URLs](../../docs/designissues/2026-11-16-frozen-base-url.md): live script DOM cache, mutation hooks, URL reflection and its proof/test boundary.
 
+- [Architecture briefing](../../docs/designissues/2026-11-25-foafnaut-architecture-briefing.md) for an
+  outside engineer: design rules, numbers, why WPT is high and pages are slow, where help pays off.
 - [Frame pipeline](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md), the design
   and measurements of frames, scroll and press.
 - [Page scripts](../../docs/designissues/2026-11-08-page-scripts.md),

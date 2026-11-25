@@ -20,7 +20,12 @@ for page in manifest['pages']:
     result = json.loads(output)
     error = result.get('error')
     expected = page.get('refused')
-    if expected is None and error is None:
+    # A page that draws one primitive (the page background) shows nothing: the Settings page
+    # did that for nine days, from 2026-11-16, when its <style> element lost its end tag.
+    if expected is None and error is None and result.get('primitiveCount', 0) <= 1:
+        failed += 1
+        print(f'FAIL {page["page"]}: drew {result.get("primitiveCount")} primitive (an empty page)')
+    elif expected is None and error is None:
         rendered += 1
         print(f'rendered {page["page"]}: {result["primitiveCount"]} primitives')
     elif expected is not None and error is not None and expected in error:

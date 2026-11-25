@@ -70,7 +70,7 @@ GROUPS = [
                                'showcase-image-formats.html', 'print-showcase.html', 'print-poster.html', 'markdown-sample.html']),
     ('XML, XSLT and data', ['foaf-people.xml', 'sparql-results.xml', 'feed.xml', 'sitemap.xml', 'lab-files.xml',
                             'engine-pipeline.xml', 'books-svg.xml', 'books-xslt4.xml', 'books-xslt1.xml']),
-    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
+    ('About the engine', ['status.html', 'js-status.html', 'architecture.html', 'settings.html', 'newtab.html', 'foafnaut:wasm', SVG_TINY_SCORES]),
     ('Stress tests: heavy pages, slow to open or to scroll', STRESS),
 ]
 # One line for each link. A page with none here uses the start of its manifest "shows".
