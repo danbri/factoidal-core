@@ -197,8 +197,14 @@ for(const p of spec.pages.filter(p=>!p.url.startsWith("lab:")&&!p.snapshot&&(!on
   const order=[...c.reqs].filter(([,r])=>r.done&&r.status).sort((x,y)=>(c.bodies.get(x[0])?.length??0)-(c.bodies.get(y[0])?.length??0));
   for(const [rid,r] of order){
     if(seen.has(r.url)||r.url.startsWith("data:")||r.url.startsWith("blob:"))continue;
-    seen.add(r.url);
     const data=c.bodies.get(rid),len=data?.length??0;
+    // A successful image response with no captured bytes cannot replay the image.
+    // Leave the URL available for a later capture with a body.
+    if(r.type==="Image"&&r.status>=200&&r.status<300&&r.status!==204&&len===0){
+      skipped.push({url:r.url.slice(0,300),reason:"image response body unavailable",bytes:0});
+      continue;
+    }
+    seen.add(r.url);
     const reason=r.type==="Media"?"media":len>maxFile?"over the file limit":r.type==="Image"&&len>maxImage?"image over the limit":size+len>maxBytes?"over the page limit":"";
     if(reason){skipped.push({url:r.url.slice(0,300),reason,bytes:len});continue;}
     const {done:_d,failed:_f,frame:_frame,loader:_loader,...e}=r;
