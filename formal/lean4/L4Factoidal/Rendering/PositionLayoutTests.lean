@@ -302,6 +302,8 @@ private def markers (html extra : String) : Option (List String) := do
 #guard markers "<ul><li>A</li></ul>" "ul{list-style-type:square}" == some ["▪"]
 #guard markers "<ol><li>A</li></ol>" "ol{list-style:circle}" == some ["◦"]
 #guard markers "<ul><li>A</li></ul>" "ul{list-style:none}" == some []
+#guard markers "<ol><span><li>A</li></span><span><li>A</li></span></ol>"
+  "span{display:contents}" == some ["1.","2."]
 -- The first summary gets the disclosure marker. Authors can remove it through
 -- its display or list style, and an ordinary element can opt in to a list item.
 #guard markers "<details><summary>A</summary><summary>A</summary></details>" "" == some [">"]
@@ -520,6 +522,17 @@ private def beforeTexts (page sheet : String) : Option (List String) := do
 #guard beforeTexts "<p>a</p><p style='display:none'>b</p><p>c</p>"
   "p{counter-increment:n} p::before{content:counter(n, lower-alpha)}" == some ["a", "b"]
 #guard beforeTexts "<p>a</p>" "p::before{content:counter(x)}" == some ["0"]
+-- Boxless wrappers leave their children in the parent counter scope, and the
+-- wrapper's own reset or increment has no effect.
+private def throughContents := "<section><div><p>a</p></div><div><p>b</p></div></section>"
+#guard beforeTexts throughContents
+  "div{display:contents} p{counter-increment:n} p::before{content:counter(n)}" == some ["1","2"]
+#guard beforeTexts throughContents
+  "div{display:contents;counter-reset:n 50;counter-increment:n 10} p{counter-increment:n} p::before{content:counter(n)}" ==
+  some ["1","2"]
+#guard beforeTexts throughContents
+  "p{counter-increment:n} p::before{content:counter(n)}" == some ["1","1"]
+
 #guard beforeTexts "<ol><li>a</li><li>b</li><li>c</li></ol>"
   "ol{counter-reset:reversed(n)} li{counter-increment:n -1} li::before{content:counter(n)}" == some ["3", "2", "1"]
 -- the start of a reversed counter: the last element that increments shows minus its increment
