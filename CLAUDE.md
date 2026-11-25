@@ -1144,6 +1144,9 @@ Rust crate (`saturating-time` 0.6.0, section 8 of
 - Never open an issue, pull request, comment or mail on a project outside the owner's own
   repositories. A defect found in third-party code is recorded here (a design record, and an
   issue in an owner repository when it blocks work), with a local patch or workaround.
+- Owner, same day, verbatim: "I am the upstream route." Report each third-party defect to the
+  owner in the session report (crate or project, version, the defect, the evidence, the local
+  workaround), and record it in a design record. The owner decides whether it goes further.
 - This replaces "then it is reported to the Touchstone author" in the LWS entry above and the
   upstream bug-report route of the vendored `lean-mwe` skill: record the evidence locally.
 
