@@ -53,7 +53,7 @@ jobs:
           pins, graph, ordered, pending = {}, {}, [], set()
           standalone = {"AuthenticatedProposerMain","AuthenticatedProposer","BLSVerify","G1PublicKey","G2Signature","PairingTarget","HashToField"}
           def source(m):
-              base = p.parent if m == "L4Factoidal.Crypto.SHA2" else p
+              base = p.parent if m in a["SHA2_MODULES"] else p
               return base, a["module_path"](base,m,".lean")
           def pin(path):
               rel = str(path.resolve().relative_to(repo))
@@ -62,7 +62,7 @@ jobs:
               pins[rel] = sha
           def visit(m):
               if a["bundled"](m) or m in graph: return
-              assert m in standalone or m.startswith("EthereumConsensus.") or m=="L4Factoidal.Crypto.SHA2",m
+              assert m in standalone or m.startswith("EthereumConsensus.") or m in a["SHA2_MODULES"],m
               assert m not in pending,m
               pending.add(m)
               base,path=source(m)
