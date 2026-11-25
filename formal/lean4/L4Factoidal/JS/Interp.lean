@@ -100,6 +100,7 @@ def setElem (id i : Nat) (v : Value) : M Bool :=
 the property is absent or not plain (the caller takes the general path). -/
 def setOwnData (id : Nat) (key : String) (v : Value) : M Bool :=
   updateObj id fun o =>
+    if key == "length" && o.isArray then (false, o) else
     match o.kind with
     | .array _ | .proxy .. | .typed .. | .prim _ => (false, o)
     | _ =>
@@ -382,6 +383,58 @@ def mkError (k : ErrKind) (msg : String) : M Value := do
 
 def throwErr {α} (k : ErrKind) (msg : String) : M α := do
   throw (.throw (← mkError k msg))
+
+/-- The length of an Array stored as ordinary properties. -/
+def Obj.generalArrayLen (o : Obj) : Option (Float × Bool) :=
+  if !o.isArray then none else
+  match o.kind, o.props.get? "length" with
+  | .ordinary, some (.data (.num l) w _ _) => some (l, w)
+  | _, _ => none
+
+/-- ArraySetLength deletes indexed properties in descending order, and keeps
+the failed index and everything below it when an index cannot be deleted. -/
+def Obj.shrinkGeneralArray (o : Obj) (length : Nat) : Nat × Obj := Id.run do
+  let keys := o.ownKeys
+  let mut result := o
+  for key in keys.reverse do
+    if let some index := arrayIndex? key then
+      if index < length then break
+      if let some prop := result.props.get? key then
+        if !prop.configurable then return (index + 1, result)
+        result := { result with props := result.props.erase key }
+  return (length, result)
+
+/-- ECMA-262 §10.4.2.4 for Arrays stored as ordinary properties. Conversion
+can run user code twice, so read the current length descriptor after both
+conversions. No deletion in the subsequent scan invokes user code. -/
+def setGeneralArrayLength (number : Value → M Float) (id : Nat) (request : Desc) : M Bool := do
+  let length ← match request.value with
+    | none => pure none
+    | some value =>
+      let n := toUint32 (← number value)
+      let x ← number value
+      if Float.ofNat n != x then throwErr .range "Invalid array length"
+      pure (some n)
+  let o ← getObj id
+  let some (.data (.num old) writable enumerable configurable) := o.getOwn "length" | return false
+  let prop := PropV.data (.num old) writable enumerable configurable
+  let request := { request with value := length.map (fun n => .num (Float.ofNat n)) }
+  if !request.allowedOn prop then return false
+  let storeLength := fun (arr : Obj) (n : Float) =>
+    arr.putOwn "length" (.data (.num n) (request.writable.getD writable) enumerable configurable)
+  match length with
+  | some n =>
+    if Float.ofNat n < old then
+      charge o.keys.size
+      let (resultLen, result) := o.shrinkGeneralArray n
+      modifyObj id fun _ => storeLength result (Float.ofNat resultLen)
+      return resultLen == n
+    else
+      modifyObj id fun current => storeLength current (Float.ofNat n)
+      return true
+  | none =>
+    modifyObj id fun current => storeLength current old
+    return true
 
 /-- GetFunctionRealm (§7.3.24): the realm of a function, through bound functions to their
 target and through proxies to theirs (a revoked proxy is a TypeError); the running realm for
@@ -8047,6 +8100,12 @@ def putV : Nat → Value → String → Value → Bool → M Unit
           if i < (← liveLen ty b off len) then typedWriteV ty b off i x
           return
       | _ => pure ()
+      if key == "length" then
+        if let some (_, writable) := o.generalArrayLen then
+          let ok ← if writable then setGeneralArrayLength (toNum n) id { value := some val }
+            else pure false
+          if !ok && strict then throwErr .type "Cannot set array length"
+          return
       match o.kind, key with
       | .array es, "length" =>
         let len ← toNum n val
@@ -11970,18 +12029,15 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
           if x < Float.ofNat (← liveLen ty b off len) then typedWriteV ty b off x.toUInt64.toNat cv
         return true
     let o0 ← getObj id
+    if k == "length" && o0.generalArrayLen.isSome then
+      return ← setGeneralArrayLength (toNum n) id desc
     let old := o0.getOwn k
     match old with
     | some p => if !desc.allowedOn p then return false
     | none => if !o0.extensible then return false
     -- an Array in the general form keeps its length as a property: an index at or past it
     -- needs a writable length (§10.4.2.1 step 3)
-    let generalArrayLen : Obj → Option (Float × Bool) := fun o =>
-      if !o.isArray then none else
-      match o.kind, o.props.get? "length" with
-      | .ordinary, some (.data (.num l) w _ _) => some (l, w)
-      | _, _ => none
-    if let (some i, some (l, false)) := (arrayIndex? k, generalArrayLen o0) then
+    if let (some i, some (l, false)) := (arrayIndex? k, o0.generalArrayLen) then
       if Float.ofNat i ≥ l then return false
     let e := desc.enumerable.getD (match old with | some p => p.enumerable | none => false)
     let c := desc.configurable.getD (match old with | some p => p.configurable | none => false)
@@ -12022,7 +12078,7 @@ def defineOwnProp : Nat → Nat → String → Desc → M Bool
             let _ := (i, es)
         | _, _ => defineOwn id k (.data v w e c)
     if let some i := arrayIndex? k then
-      if let some (l, w) := generalArrayLen (← getObj id) then
+      if let some (l, w) := (← getObj id).generalArrayLen then
         if Float.ofNat i ≥ l then
           modifyObj id (·.putOwn "length" (.data (.num (Float.ofNat (i + 1))) w false false))
     return true
