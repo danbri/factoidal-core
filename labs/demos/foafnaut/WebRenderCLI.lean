@@ -218,6 +218,39 @@ def main (args : List String) : IO UInt32 := do
       IO.println ("{\"bytes\":" ++ toString first.size ++ ",\"firstUs\":" ++ toString (firstNs/1000) ++
         ",\"us\":[" ++ String.intercalate "," times.toList ++ "]}")
       return 0
+    -- A sequence of requests (a JSON array in OPTIONS): call `i` sends element `i` mod its
+    -- length, as packed bytes, after the font is loaded and a first call with element 0. Times
+    -- as `--document-bin`. For hover, `:active` and scroll band frames (issue 1124).
+    if let ["--document-bin-seq",options,font,out,count] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let some n := count.toNat? | throw (IO.userError "invalid count")
+      let mut e : WebDocument.Engine := {}
+      if font != "-" then
+        let (e',loaded) := WebDocument.fontLoadBin e (← IO.FS.readBinFile font) "Noto Sans" "cli" 0
+        e := e'
+        if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
+      let html ← IO.FS.readFile path
+      let .ok (.array requests,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "OPTIONS must be a JSON array")
+      if requests.isEmpty then throw (IO.userError "OPTIONS is empty")
+      let texts := (requests.map (·.toString)).toArray
+      let start ← IO.monoNanosNow
+      let (e',first) ← WebDocument.compileBin e html texts[0]! w.toUInt32 h.toUInt32
+      e := e'
+      let firstNs := (← IO.monoNanosNow)-start
+      let mut times : Array String := #[]
+      let mut last := first
+      for i in [0:n] do
+        let at_ ← IO.monoNanosNow
+        let (e',bytes) ← WebDocument.compileBin e html texts[(i+1) % texts.size]! w.toUInt32 h.toUInt32
+        e := e'
+        if bytes.size == 0 then return 1
+        last := bytes
+        times := times.push (toString (((← IO.monoNanosNow)-at_)/1000))
+      IO.FS.writeBinFile out last
+      IO.println ("{\"bytes\":" ++ toString last.size ++ ",\"firstUs\":" ++ toString (firstNs/1000) ++
+        ",\"us\":[" ++ String.intercalate "," times.toList ++ "]}")
+      return 0
     -- Scroll frames: the same document each time, with `shell.scroll` 40 pixels further.
     if let ["--document-scroll",options,count,font] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")

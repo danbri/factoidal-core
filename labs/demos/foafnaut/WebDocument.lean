@@ -1724,12 +1724,82 @@ theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (
     pageArtifact page extra b boxes face live form checks tree retainOn =
       WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree := rfl
 
+/-- A data form as numbers, for the keys of kept answers. -/
+def formCode : NativeSVG.DataForm → Nat × Nat
+  | .decimal => (0,0)
+  | .base64 => (1,0)
+  | .sections k => (2,k)
+  | .sectionsCpu k => (3,k)
+
+/-- The mapping, bit for bit. -/
+def mappingBits (m : Rendering.Mapping) : List UInt64 :=
+  [m.sx.toBits,m.sy.toBits,m.tx.toBits,m.ty.toBits,m.minX.toBits,m.minY.toBits,m.viewportWidth.toBits,m.viewportHeight.toBits]
+
+/-- What the chrome layer answer (`chromeArtifact`) reads: the shell; the window width; of the
+page, only its width and mapping (`chromeLayer` replaces the rest); the held fonts, whose
+monospace face gives the address font (`Holds.fontNames` names it with its SHA-256); of the
+face, only what the layout header writes (`WebRender.layoutHeader`); and the flags. Issue
+https://github.com/danbri/factoidal-core/issues/1124, stage A. -/
+structure ChromeKey where
+  shell : WebShell.Shell
+  width : Nat
+  pageWidth : Nat
+  mapping : List UInt64
+  fonts : List (String × String)
+  face : Option (String × Nat × String × String × UInt64)
+  live : Bool
+  form : Nat × Nat
+  checks : Bool
+  tree : Bool
+  deriving BEq
+
+/-- The fields of a face that the layout header writes. -/
+def faceHeader (face : Option Rendering.FontProvider.Face) : Option (String × Nat × String × String × UInt64) :=
+  face.map fun f => (f.fontSha256,f.faceIndex,f.family,f.style,f.unitsPerEm.toBits)
+
+/-- What an answer with no layers (`plainArtifact`) reads, for a scene that is the layout's own
+(`Laid.scene`, no paint values) and no marks: the layout's number (`Laid.serial`: the engine
+gives each layout and each painted pointer state its own number, so the number names the
+scene, the boxes and the face), the shell, the sizes, the held fonts (the address font) and
+the flags. -/
+structure PlainKey where
+  serial : Nat
+  shell : Option WebShell.Shell
+  width : Nat
+  height : Nat
+  fonts : List (String × String)
+  live : Bool
+  form : Nat × Nat
+  checks : Bool
+  tree : Bool
+  deriving BEq
+
+/-- The chrome layer of a layers answer. -/
+def chromeArtifact (shell : WebShell.Shell) (page : Rendering.Scene) (width : Nat)
+    (addressFont : WebShell.AddressFont) (face : Option Rendering.FontProvider.Face) (live : Bool)
+    (form : NativeSVG.DataForm) (checks tree : Bool) : Except String (String × Array ByteArray) :=
+  WebRender.artifactWith (chromeLayer shell page width addressFont) #[] face live form checks tree
+
+/-- The answer of a render with no layers: the page near the scroll with the marks, under the
+chrome when there is a shell. -/
+def plainArtifact (scene : Rendering.Scene) (marks : List Rendering.Node) (shell : Option WebShell.Shell)
+    (width height : Nat) (addressFont : WebShell.AddressFont) (boxes : Array Rendering.Layout.Box)
+    (face : Option Rendering.FontProvider.Face) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) :
+    Except String (String × Array ByteArray) :=
+  let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
+  let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
+  let page := {scene with tree := near ++ marks}
+  WebRender.artifactWith (WebPaint.cull (match shell with
+    | some value => WebShell.compose value page width height addressFont
+    | none => page)) boxes face live form checks tree
+
 /-- The answer to a render with `layers:true`. -/
 def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
-    (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {}) :
+    (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {})
+    (chrome : Option (String × Array ByteArray) := none) :
     Except String (String × Array ByteArray) := do
   let top := WebShell.height shell width
   -- A chrome that may fold: the band covers the view under the strip, the most it shows,
@@ -1737,8 +1807,10 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   let b := band shell.scroll view
   let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn
-  let (chromeText,chromeSections) ←
-    WebRender.artifactWith (chromeLayer shell page width addressFont) #[] face live form.next checks tree
+  -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
+  let (chromeText,chromeSections) ← match chrome with
+    | some answer => pure answer
+    | none => chromeArtifact shell page width addressFont face live form.next checks tree
   let number := fun (n : Nat) => JSON.Json.number (toString n)
   let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
     ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
@@ -3597,6 +3669,12 @@ structure Engine where
   /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
   until a host asks for a tree. -/
   axLive : Option (String × List HTML.AccessibleTree.Region) := none
+  /-- The last chrome layer answer and the inputs it was made from (`ChromeKey`, issue 1124). -/
+  chromeKept : Option (ChromeKey × (String × Array ByteArray)) := none
+  /-- The last answer with no layers and the inputs it was made from (`PlainKey`, issue 1124). -/
+  plainKept : Option (PlainKey × (String × Array ByteArray)) := none
+  /-- Chrome layers and answers with no layers given again from `chromeKept` and `plainKept`. -/
+  keptWhole : Nat × Nat := (0,0)
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -3931,11 +4009,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) ← modifyGet fun e => (e.frameWork,if reset then {e with frameWork := (0,0,0)} else e)
     let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
+    let (chromesKept,framesKept) ← modifyGet fun e => (e.keptWhole,if reset then {e with keptWhole := (0,0)} else e)
     let paints ← modifyGet fun e => (e.paintWork,if reset then {e with paintWork := 0} else e)
     let number := fun (n : Nat) => JSON.Json.number (toString n)
     return ((JSON.Json.object [("layouts",number layouts),("kept",number kept),("repaints",number repaints),
       ("paintOnly",number paints),("recompiled",number recompiled),("reused",number reused),("moved",number moved),
-      ("layoutSlots",number layoutSlots),("pagesMade",number pagesMade),("pagesKept",number pagesKept)]).toString,#[])
+      ("layoutSlots",number layoutSlots),("pagesMade",number pagesMade),("pagesKept",number pagesKept),
+      ("chromesKept",number chromesKept),("framesKept",number framesKept)]).toString,#[])
   if str request "op" == "xmlStylesheet" then
     let url := match ← WebXslt.stylesheetHref html with
       | some href => JSON.Json.string (Syntax.resolveIri (str request "url") href)
@@ -4130,15 +4210,46 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
     return ← WebRender.artifactWith page boxes face live form checks tree
   if let some value := shell then
     if request.field? "layers" == some (.bool true) then
+      -- The chrome layer from `chromeKept` when its inputs are those of the last frame.
+      let chromeKey : ChromeKey := ⟨value,width,scene.width,mappingBits scene.mapping,holds.fontNames,faceHeader face,
+        live,formCode form.next,checks,tree⟩
+      let chrome ← match (← get).chromeKept with
+        | some (k,answer) =>
+          if k == chromeKey then
+            modify fun e => {e with keptWhole := (e.keptWhole.1+1,e.keptWhole.2)}
+            pure answer
+          else
+            let answer ← chromeArtifact value scene width holds.addressFont face live form.next checks tree
+            modify fun e => {e with chromeKept := some (chromeKey,answer)}
+            pure answer
+        | none =>
+          let answer ← chromeArtifact value scene width holds.addressFont face live form.next checks tree
+          modify fun e => {e with chromeKept := some (chromeKey,answer)}
+          pure answer
       return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont)
-  let scrolled := Float.ofNat ((shell.map (·.scroll)).getD 0)
-  let near := nearNodes (scrolled-512) (scrolled+Float.ofNat height+512) scene.tree
-  let page := {scene with tree := near ++ marks}
-  return withWants laid <| withDiagnostics request laid (← WebRender.artifactWith (WebPaint.cull (match shell with
-    | some value => WebShell.compose value page width height holds.addressFont
-    | none => page)) boxes face live form checks tree)
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome))
+  -- The answer of the last frame when its inputs are these (`PlainKey`): the layout's own
+  -- scene (no paint values; a number the engine gave), no marks.
+  let plainKey : Option PlainKey :=
+    if laid.paint.empty && laid.serial != 0 && marks.isEmpty then
+      some ⟨laid.serial,shell,width,height,holds.fontNames,live,formCode form,checks,tree⟩
+    else none
+  let answer ← match plainKey,(← get).plainKept with
+    | some key,some (k,answer) =>
+      if k == key then
+        modify fun e => {e with keptWhole := (e.keptWhole.1,e.keptWhole.2+1)}
+        pure answer
+      else
+        let answer ← plainArtifact scene marks shell width height holds.addressFont boxes face live form checks tree
+        modify fun e => {e with plainKept := some (key,answer)}
+        pure answer
+    | some key,none =>
+      let answer ← plainArtifact scene marks shell width height holds.addressFont boxes face live form checks tree
+      modify fun e => {e with plainKept := some (key,answer)}
+      pure answer
+    | none,_ => plainArtifact scene marks shell width height holds.addressFont boxes face live form checks tree
+  return withWants laid <| withDiagnostics request laid answer
 
 /-- The layout source of the engine: `Engine.frame`, which keeps layouts in the state. -/
 def keptFrame {M : Type → Type} [Monad M] (key : LayoutKey) : DocM M Laid := stepState (·.frame key)
