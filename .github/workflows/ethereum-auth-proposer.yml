@@ -51,7 +51,7 @@ jobs:
           repo = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
           def git(*args): return subprocess.check_output(["git",*args],text=True).strip()
           pins, graph, ordered, pending = {}, {}, [], set()
-          standalone = {"AuthenticatedProposerMain","AuthenticatedProposer","BLSVerify","G1PublicKey","G2Signature","PairingTarget","HashToField"}
+          standalone = {"AuthenticatedProposerMain","ProposerProjection","AuthenticatedProposer","BLSVerify","G1PublicKey","G2Signature","PairingTarget","HashToField"}
           def source(m):
               base = p.parent if m in a["SHA2_MODULES"] else p
               return base, a["module_path"](base,m,".lean")
@@ -124,6 +124,27 @@ jobs:
               except ValueError: continue
               raise ValueError("mutation escaped")
           print("Seven actual theorem reports and four axiom controls passed")
+          PY
+      - name: Projection theorem reports and falsification controls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$RUNNER_TEMP/auth-proposer-projection-axiom-audit.log"
+          import os,pathlib,re
+          log=(pathlib.Path(os.environ["RUNNER_TEMP"])/"auth-proposer-ProposerProjection-axioms.log").read_text()
+          prefix="EthereumConsensus.SSZ.ProposerProjection."
+          expected={prefix+n for n in ("mark_overflow","mark_checked","authentication_error","authentication_success")}
+          def audit(s):
+              rows=re.findall(r"'(EthereumConsensus\.SSZ\.ProposerProjection\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)",s)
+              if len(rows)!=len(expected) or {n for n,_ in rows}!=expected: raise ValueError("inventory")
+              for n,v in rows:
+                  if not set(filter(None,(x.strip() for x in v.split(",")))) <= {"propext","Classical.choice","Quot.sound"}: raise ValueError(n)
+          audit(log)
+          for bad in ["",log+log,log.replace(prefix+"authentication_error",prefix+"other"),
+                      re.sub(r"('(EthereumConsensus\.SSZ\.ProposerProjection\.\w+)') (?:depends on axioms: \[[^]]*\]|does not depend on any axioms)",r"\1 depends on axioms: [sorryAx]",log,count=1)]:
+              try: audit(bad)
+              except ValueError: continue
+              raise ValueError("mutation escaped")
+          print("Four actual projection theorem reports and four axiom controls passed")
           PY
       - name: Native raw proposer authentication
         run: |
