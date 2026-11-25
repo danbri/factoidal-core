@@ -17774,8 +17774,8 @@
 
     // ---- select and option ----
     const optionIds = sel => idsOf(fq(sel, 'o')), selectedIds = sel => idsOf(fq(sel, 's'));
-    // the nearest ancestor select of an option
-    const selectOf = o => { for (let p = o.parentNode; p; p = p.parentNode) if (p instanceof S) return p; return null; };
+    // Lean supplies the owning select using the same subtree boundaries as options.
+    const selectOf = o => one(fq(o, 'p'));
     const setSelected = (k, v) => { chk(n.treeOp(k, v ? 1 : 0, 6)); };
     const optionsOf = cachedColl(), selectedOf = cachedColl();
     prop(S, 'options', function () { const sel = this; return optionsOf(sel, () => { const c = collectionOf(() => optionIds(sel), HTMLOptionsCollection.prototype, false); ownerOf.set(c, sel); return c; }); });

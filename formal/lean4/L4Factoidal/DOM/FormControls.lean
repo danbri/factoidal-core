@@ -43,10 +43,61 @@ def formElements (d : Dom) (f : NodeId) : Array NodeId :=
   (d.treeOrder (d.root f) false).filter fun k =>
     listed d k && !(isHtml d k ["input"] && inputType d k == "image") && formOwner d k == some f
 
-/-- The list of options of a `select` (HTML §4.10.7): its `option` descendants, in tree
-order (children, the children of `optgroup` children, and options inside other wrappers). -/
+private def optionBoundary (d : Dom) (id : NodeId) : Bool :=
+  isHtml d id ["select", "hr", "datalist", "option"]
+
+private def optionWalk (d : Dom) : Nat → List (NodeId × Bool) → Array NodeId → Array NodeId
+  | 0, _, out => out
+  | _ + 1, [], out => out
+  | fuel + 1, (id, inGroup) :: rest, out =>
+    let out := if isHtml d id ["option"] then out.push id else out
+    if optionBoundary d id then optionWalk d fuel rest out
+    else
+      let isGroup := isHtml d id ["optgroup"]
+      if inGroup && isGroup then optionWalk d fuel rest out
+      else
+        let children := (d.get id).kids.toList.map fun child => (child, inGroup || isGroup)
+        optionWalk d fuel (children ++ rest) out
+
+/-- After visiting a boundary, the scan advances straight to the next node
+outside its subtree. An option on the boundary itself can be collected. -/
+private theorem optionWalk_skips_boundary (d : Dom) (fuel id : Nat) (inGroup : Bool)
+    (rest : List (NodeId × Bool)) (out : Array NodeId) (bound : optionBoundary d id = true) :
+    optionWalk d (fuel + 1) ((id, inGroup) :: rest) out =
+      optionWalk d fuel rest (if isHtml d id ["option"] then out.push id else out) := by
+  simp [optionWalk, bound]
+
+/-- An optgroup inside another optgroup blocks all of its children. -/
+private theorem optionWalk_skips_nested_group (d : Dom) (fuel id : Nat)
+    (rest : List (NodeId × Bool)) (out : Array NodeId) (bound : optionBoundary d id = false)
+    (group : isHtml d id ["optgroup"] = true) :
+    optionWalk d (fuel + 1) ((id, true) :: rest) out =
+      optionWalk d fuel rest (if isHtml d id ["option"] then out.push id else out) := by
+  simp [optionWalk, bound, group]
+
+#print axioms optionWalk_skips_boundary
+#print axioms optionWalk_skips_nested_group
+
+/-- The list of options of a select (HTML §4.10.7), in tree order. Ordinary
+wrappers are transparent. Nested selects, rules, datalists, options and a second
+optgroup on the same path do not contribute descendants. -/
 def optionList (d : Dom) (sel : NodeId) : Array NodeId :=
-  (d.treeOrder sel false).filter fun k => isHtml d k ["option"]
+  optionWalk d (d.size + 1) ((d.get sel).kids.toList.map (·, false)) #[]
+
+/-- The select that owns an option, if a nearest select is reached without
+crossing an option-list boundary or two optgroups (HTML §4.10.10). -/
+def optionSelect (d : Dom) (id : NodeId) : Option NodeId := Id.run do
+  let mut current := (d.get id).parent
+  let mut inGroup := false
+  for _ in [0:d.size] do
+    let some ancestor := current | return none
+    if isHtml d ancestor ["select"] then return some ancestor
+    if optionBoundary d ancestor then return none
+    if isHtml d ancestor ["optgroup"] then
+      if inGroup then return none
+      inGroup := true
+    current := (d.get ancestor).parent
+  return none
 
 /-- An option's selectedness: the value a script set, else the `selected` attribute. -/
 def selectedness (d : Dom) (o : NodeId) : Bool :=
@@ -54,12 +105,17 @@ def selectedness (d : Dom) (o : NodeId) : Bool :=
   | some v => v
   | none => (attr? d o "selected").isSome
 
-/-- An option is disabled: its own `disabled`, or its parent `optgroup`'s. -/
-def optionDisabled (d : Dom) (o : NodeId) : Bool :=
-  (attr? d o "disabled").isSome ||
-    match (d.get o).parent with
-    | some p => isHtml d p ["optgroup"] && (attr? d p "disabled").isSome
-    | none => false
+/-- An option can be disabled by its own attribute or the first optgroup
+above it, stopping at the same elements that bound the list of options. -/
+def optionDisabled (d : Dom) (o : NodeId) : Bool := Id.run do
+  if (attr? d o "disabled").isSome then return true
+  let mut current := (d.get o).parent
+  for _ in [0:d.size] do
+    let some ancestor := current | return false
+    if optionBoundary d ancestor then return false
+    if isHtml d ancestor ["optgroup"] then return (attr? d ancestor "disabled").isSome
+    current := (d.get ancestor).parent
+  return false
 
 /-- A non-negative integer attribute value: ASCII digits only (leading whitespace allowed). -/
 def natAttr (s : String) : Option Nat :=
@@ -101,7 +157,8 @@ def labelsOf (d : Dom) (k : NodeId) : Array NodeId :=
 def wire (ks : Array NodeId) : String := " ".intercalate (ks.toList.map toString)
 
 /-- `node_query` op 186: "f" the form owner of `k` ("" for none); "e" the elements of form
-`k`; "o" the options of select `k`; "s" its selected options; "l" the labels of `k`; "c" the
+`k`; "o" the options of select `k`; "s" its selected options; "p" the select that owns
+option `k`; "l" the labels of `k`; "c" the
 labeled control of label `k` ("" for none); "x" the selectedness of option `k` ("1" or "0"). -/
 def answer (d : Dom) (k : NodeId) (q : String) : String :=
   match q with
@@ -109,6 +166,7 @@ def answer (d : Dom) (k : NodeId) (q : String) : String :=
   | "e" => wire (formElements d k)
   | "o" => wire (optionList d k)
   | "s" => wire (selectedOptions d k)
+  | "p" => (optionSelect d k).map toString |>.getD ""
   | "l" => wire (labelsOf d k)
   | "c" => match labeledControl d k with | some c => toString c | none => ""
   | "x" => if selectedness d k then "1" else "0"
@@ -268,5 +326,30 @@ private def tree : Dom :=
   { x with attrs := #[{ lname := "multiple", value := "" }] }) 3 == #[4, 6]
 #guard labelsOf tree 10 == #[9] && answer tree 9 "c" == "10" && answer tree 2 "f" == "1" && answer tree 1 "e" == "2 3 10 13"
 #guard displaySize tree 3 == 1 && natAttr " 12px" == some 12 && natAttr "x" == none
+
+private def wrappedOptions : Dom :=
+  { nodes := #[
+      el "select" [] none [1, 10, 12, 14],
+      el "div" [] (some 0) [2],
+      el "optgroup" [("disabled", "")] (some 1) [3, 5],
+      el "div" [] (some 2) [4],
+      el "option" [] (some 3) [],
+      el "optgroup" [] (some 2) [6],
+      el "option" [("selected", "")] (some 5) [],
+      el "option" [("selected", "")] (some 8) [],
+      el "hr" [] (some 10) [7],
+      el "option" [("selected", "")] (some 11) [],
+      el "option" [] (some 0) [8],
+      el "select" [] (some 12) [9],
+      el "div" [] (some 0) [11],
+      el "option" [("selected", "")] (some 14) [],
+      el "datalist" [] (some 0) [13]] }
+
+#guard optionList wrappedOptions 0 == #[4, 10]
+#guard optionList wrappedOptions 11 == #[9]
+#guard selectedOptions wrappedOptions 0 == #[10]
+#guard [4, 6, 7, 9, 10, 13].map (optionSelect wrappedOptions) ==
+  [some 0, none, none, some 11, some 0, none]
+#guard optionDisabled wrappedOptions 4 && !optionDisabled wrappedOptions 7
 
 end L4Factoidal.DOM.FormControls
