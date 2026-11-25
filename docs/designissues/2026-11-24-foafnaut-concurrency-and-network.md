@@ -276,3 +276,38 @@ method; say so where a claim needs it.
 5. Processes per site (section 4).
 
 Each step gets an issue with its measurement command before work starts.
+
+## 3b. Parallel image decode and word shaping (measured 2026-11-25)
+
+Profile of the first compile (first layout and frame build), `perf record --call-graph dwarf`,
+threads 0. Share of samples per phase:
+
+| Page | First compile | Image decode | Style | Text shaping | Scene | Tiles | Layout | Parse |
+|---|---|---|---|---|---|---|---|---|
+| en.m.wikipedia stub | 822 ms | 44.9% | 34.0% | 9.4% | 4.0% | 3.6% | 2.6% | 1.1% |
+| developer.mozilla.org display | 2,622 ms | 9.3% | 52.1% | 24.4% | 5.1% | 1.5% | 6.9% | 0.2% |
+| bbc.co.uk article | 3,908 ms | 67.7% | 10.3% | 5.0% | 2.7% | 5.9% | 8.1% | 0 |
+| docs.python.org tutorial | 345 ms | 7.3% | 8.3% | 43.8% | 18.5% | 10.5% | 8.3% | 0.6% |
+| en.wikipedia United States | 12,833 ms | 22.5% | 39.9% | 23.1% | 7.2% | 0.9% | 5.4% | 0.1% |
+
+Style (`CSS.computeAllWith`) follows the inheritance chain and is not cut into tasks yet.
+
+Changed: `WebRender.decodesFor` decodes each file in its own task (from 2 files;
+`decodesFor_eq`: parallel equals sequential). `SfntProfile.rememberPar` shapes the words the memo
+does not hold in 8 chunks (from 64 words; `rememberPar_eq`).
+
+Measured with `realpages/engine_par_bench.ts` on the Linux cloud VM (4 vCPU, shared), 6
+interleaved runs per page, medians in ms; "base" is the engine before the change, both with the
+default thread pool. The scene hash is the same in every run of every configuration.
+
+| Page | First, base | First, new | Ratio | Relayout, base | Relayout, new | Ratio |
+|---|---|---|---|---|---|---|
+| en.m.wikipedia stub | 764 | 683 | 0.89 | 316 | 292 | 0.92 |
+| developer.mozilla.org | 2,557 | 2,492 | 0.97 | 1,702 | 1,568 | 0.92 |
+| bbc.co.uk article | 4,019 | 2,802 | 0.70 | 1,517 | 1,488 | 0.98 |
+| docs.python.org tutorial | 253 | 333 | 1.32 | 152 | 135 | 0.89 |
+| en.wikipedia United States | 12,520 | 11,572 | 0.92 | 7,713 | 6,871 | 0.89 |
+
+Geometric mean: first compile 0.94, relayout 0.92. The python page's first compile is slower; the
+new library at threads 0 gives 344 ms on that page too, so the cost is not the threads alone.
+Open: find it, and the style phase.

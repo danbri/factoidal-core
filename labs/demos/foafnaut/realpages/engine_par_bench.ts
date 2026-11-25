@@ -6,8 +6,7 @@
 //     --preload realpages/replay.ts realpages/engine_par_bench.ts --engine LIB --url URL [--again N]
 //
 // The page is read as the window reads it with --no-scripts (prepareHTML in liberal mode: sheets,
-// web fonts, images waited for;
-// no scripts), with Noto Sans loaded first. Then one compile at 1280x800 (first layout and frame
+// web fonts, images waited for; no scripts), with Noto Sans loaded first. Then one compile at 1280x800 (first layout and frame
 // build, `firstMs`), then N compiles at widths 1281 and 1280 in turn (each a new layout and frame,
 // `againMs`). `hash` is the SHA-256 of the first frame's scene words, tiles and shader text: two
 // runs with the same hash drew the same scene. One JSON line on standard output.
