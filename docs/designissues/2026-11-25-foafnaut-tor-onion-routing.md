@@ -321,3 +321,118 @@ Testing:
   chutney builds a private network of authorities, relays and an onion service. Arti then
   bootstraps against that network, end to end, with no public traffic.
 - The live network can be tested on the owner's Mac.
+
+## 12. The Deno worker transport (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "Build the Deno Worker transport with TLS for now, but we don't
+trust it for real users just yet."
+
+Code: `labs/demos/foafnaut/tor-wasm/` (`src/lib.rs`, `deno/`, `chutney/`). It runs only after the
+caller passes `--dangerously-use-unreviewed-tor-transport` (module function
+`enable_unreviewed_transport` with that exact string); it prints the experimental code notice.
+
+### 12.1 What it is
+
+- `deno/tor-host.ts` starts `deno/tor-worker.ts` as a Deno Worker with permissions: network,
+  read of the module directory; no write, environment, subprocess, FFI, system or import. It
+  needs `--unstable-worker-options`.
+- The worker gives the module `globalThis.torHost`: `connect` (IP literal and port only; a name
+  is refused, so nothing is resolved), `read`, `write` (copies the bytes before any await,
+  because they point into module memory), `close`.
+- In the module, `HostStream` is Arti's TCP stream over those calls. TLS runs in the module:
+  Arti's `RustlsProvider` with the rustls `ring` crypto provider. Arti's own verifier checks the
+  link certificate against the relay's CERTS cell; Web PKI is not used.
+- `bootstrap(timeout, configToml)` takes an optional Arti configuration (for example a private
+  network's `[tor_network]`); `stream_request(host, port, request, max, timeout)` opens one
+  stream through the client.
+- The worker's clock is Deno's real clock, and it is a separate isolate: for this path the
+  page clock (https://github.com/danbri/factoidal-core/issues/1061) and the shared script
+  context (https://github.com/danbri/factoidal-core/issues/1059) do not apply. State is still in
+  memory (https://github.com/danbri/factoidal-core/issues/1058).
+
+### 12.2 More changes to Arti (in `arti-2.8.0-wasm.patch`)
+
+4. `tor-rtcompat`: `RustlsProvider`, `UnimplementedTls` and the `impls` module are compiled only
+   with a native runtime feature (tokio, async-std, smol). The gates now also admit
+   `wasm32-unknown-unknown`, where the embedder gives the runtime.
+5. `tor-rtcompat/src/impls.rs`: the existing wasm stubs name `socket2`, which is not a
+   dependency on that target. The import is gated, and the stub `tcp_pre_connect` returns
+   `void::Void` on wasm.
+
+For the owner (upstream route): items 4 and 5 are defects of Arti 2.8.0 on
+`wasm32-unknown-unknown`: an embedder there cannot use Arti's TLS provider without them.
+
+The patch now touches 8 files: 295 lines added, 7 removed (254 of them the in-memory store).
+
+### 12.3 Tests and results (this container, 2026-11-25)
+
+- No opt-in: 66 connection attempts refused, 0 dialled.
+- Opt-in, public network: this container cannot reach Tor. Port 443: the container's gateway
+  completes TLS with its own certificate, and Arti then refuses the link ("Invalid CircID in
+  variable cell"). Other ports: connection refused. No circuit was built through the gateway.
+- Opt-in, private network (`chutney/run.sh`: chutney with C tor 0.4.9.11, 4 authorities,
+  3 relays, 2 exits, one onion service, two local web servers): bootstrap 100%, a request
+  through an exit, and a request to the onion service (v3, vanguards on) all PASS. Client time
+  about 1 s; the script takes about 130 s, most of it the network starting.
+- `node --test xfail.test.cjs`: 6 pass, 0 fail (out of 6).
+- Foafnaut page (no host transport): unchanged behaviour; start task 2654 ms (module now
+  6.9 MB after wasm-bindgen, with rustls and ring).
+
+### 12.4 Security findings in this step
+
+1. Fixed: Arti's debug lines were printed with debug off (my filter looked for " DEBUG " with a
+   space before it; the line starts with the level). Debug lines carry relay addresses in clear
+   (`tor_proto` "starting Tor handshake with ..."), outside Arti's safe logging. Test: "no debug
+   lines by default", with a control that switches debug on and must see them.
+2. Fixed: host errors carried a JavaScript stack with local file paths into Arti's logs. Only the
+   message is kept now.
+3. Open: the worker's network permission is `net: true`, because Deno cannot limit it to the
+   relays of a consensus; the worker itself refuses names. A host that adds other network use to
+   this worker breaks the rule.
+4. Note: ring's constant-time code is compiled to wasm; a wasm engine (V8 with JIT in Deno) does
+   not promise constant-time execution. Timing side channels are not reviewed.
+5. Note: one TLS session per relay link, no session resumption (Arti disables it, per tor-spec).
+
+### 12.5 Errors in method, with their cost
+
+- The debug filter of 12.4 item 1 went out in a working build and was found by reading a page
+  log. Cost: debug lines with relay addresses would have reached any console store. The test
+  now checks it, with a control.
+- `chutney/run.sh` first checked free ports with `ss`, which this container does not have: the
+  check passed silently. A run then failed after 5 minutes because an earlier network still held
+  the ports (C tor relays take up to 30 s to exit after SIGTERM). The check now connects to each
+  port. Trap recorded in `skills/foafnaut/SKILL.md`.
+
+## 13. Does our Ethereum code have the same networking problem? (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "Look at our Ethereum code, such as it is. That will also need to do
+some networking. Does it have the same problem?"
+
+Where it is: `labs/ethereum-wasm-sparql/` and `zkvm/risc0/evm/` on `main`; the Lean EVM
+(`formal/lean4/evm-cleanroom/`) on side branches, newest in
+https://github.com/danbri/factoidal-core/pull/1057 (authenticated state witnesses).
+
+What networking it does: only `formal/lean4/evm-cleanroom/scripts/rpc/capture.mjs` (Node, on the
+pull request branch) reads public chains through seven allowlisted JSON-RPC methods over HTTPS
+(PublicNode, dRPC, Optimism, Polygon). The Lean code reads the saved captures and does no
+networking; its `TransactionTransport` module is a resource check on JSON input. The zkVM tools
+say: "No external-chain transaction, RPC call to a public chain, or remote proof request is part
+of these tools or the recorded tests." The lab on `main` does none.
+
+Answer:
+- Transport: no. JSON-RPC over HTTPS uses Web PKI TLS, which `fetch` gives in Node, Deno and
+  (where the provider sends CORS headers) a page. Raw TCP and TLS in the module, as for Tor,
+  would be needed only for peer-to-peer Ethereum (devp2p: RLPx over TCP with its own ECIES
+  handshake, discovery over UDP). None of that exists here.
+- Clock: less exposed. The checks use block numbers and hashes. A decision about "latest" or a
+  light-client sync period would need real time; in a Foafnaut page it would get the virtual
+  clock (https://github.com/danbri/factoidal-core/issues/1061).
+- Privacy: yes, a different problem. The RPC provider sees the client's address and every
+  account, contract and call it asks about. JSON-RPC through the Tor transport would hide the
+  address (many providers refuse Tor exits).
+- Trust: the Lean verifier checks accounts and code against the header's state root (EIP-1186
+  proofs), but the record says "Providers supply canonical chain selection": headers are not
+  checked against the consensus layer (no light client). For Tor, Arti checks the directory
+  authorities' signatures on the consensus; the Ethereum path has no equivalent check yet.
+- In this container, HTTPS goes through a gateway that terminates TLS, so it can read RPC
+  requests made from here.

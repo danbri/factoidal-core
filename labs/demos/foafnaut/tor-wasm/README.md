@@ -4,8 +4,14 @@ Arti 2.8.0, the Tor Project's Rust Tor client (latest stable release, tag `arti-
 commit `7c038125baef924a4bf287429c192c5af606f79c`), built for `wasm32-unknown-unknown` and run
 in a Foafnaut page on the built-in engines (BubblePopWASM runs the module, BubblePopJS the page).
 
-It is not a working Tor client yet: it has no network transport, so it starts, looks for a
-consensus, and every connection is refused. It is not a secure path for real use. The full
+In a Foafnaut page it has no network transport: it starts, looks for a consensus, and every
+connection is refused. In a Deno worker (`deno/`) it has a transport: TCP through `Deno.connect`
+and TLS inside the module. There it bootstraps on a private Tor network and reaches an exit and
+an onion service (`chutney/run.sh`).
+
+EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
+WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW. The transport is not trusted for real users: it runs
+only after the caller passes `--dangerously-use-unreviewed-tor-transport`. The full
 record (build, every change to Arti, measurements, security review, open risks):
 `docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`, section 10.
 
@@ -13,13 +19,16 @@ record (build, every change to Arti, measurements, security review, open risks):
 
 - `build.sh`: clone the tag, check its commit, apply `arti-2.8.0-wasm.patch`, build, generate
   the wasm-bindgen glue and the test page into `.build/`.
-- `arti-2.8.0-wasm.patch`: the changes to Arti (three, all wasm-only; see the record).
+- `arti-2.8.0-wasm.patch`: the changes to Arti (all wasm-only; see the record, 10.2 and 12.2).
 - `src/lib.rs`: the wasm runtime for Arti and the exported functions.
 - `pages.py`: writes `tor-bootstrap.html` (gives the page clock the real time; see the record).
 - `run.sh`: runs the page in Foafnaut on the Linux rig and prints Arti's lines and the timing.
 - `node-ref.cjs`: the same module in Node, for comparison.
-- `xfail.test.cjs`: expected failures, one per open gap, plus a check that every connection
-  is refused.
+- `xfail.test.cjs`: expected failures, one per open gap, and checks: every connection refused
+  without a host, the opt-in string, no debug lines by default.
+- `deno/tor-worker.ts`: Deno worker that runs the module and gives it TCP (IP literals only).
+- `deno/tor-host.ts`: starts the worker with narrow permissions; bootstrap and stream requests.
+- `chutney/network`, `chutney/run.sh`: a private Tor network (C tor) and the end-to-end test.
 
 ## Run
 
@@ -30,11 +39,15 @@ bash tools/foafnaut-linux-rig/setup.sh                 # from the repository roo
 labs/demos/foafnaut/tor-wasm/build.sh
 node --test labs/demos/foafnaut/tor-wasm/xfail.test.cjs
 labs/demos/foafnaut/tor-wasm/run.sh
+apt-get install -y tor                                  # private network nodes
+python3 -m pip install git+https://gitlab.torproject.org/tpo/core/chutney.git
+labs/demos/foafnaut/tor-wasm/chutney/run.sh            # end-to-end, no public traffic
 ```
 
 ## Open gaps (each has an expected-failure test)
 
-- https://github.com/danbri/factoidal-core/issues/1060 (no network transport)
+- https://github.com/danbri/factoidal-core/issues/1060 (no network transport in pages; the Deno
+  worker transport is unreviewed)
 - https://github.com/danbri/factoidal-core/issues/1061 (page clock is virtual)
 - https://github.com/danbri/factoidal-core/issues/1058 (state only in memory: guard churn)
 - https://github.com/danbri/factoidal-core/issues/1059 (shares the page's script context)

@@ -18,7 +18,10 @@ if [[ ! -f .work/arti/.patched ]]; then
   touch .work/arti/.patched
 fi
 cargo build --release --target wasm32-unknown-unknown
+# Two glue files: no-modules for the Foafnaut page, web (ES module) for the Deno worker.
 wasm-bindgen --target no-modules --no-typescript --out-dir .build \
+  target/wasm32-unknown-unknown/release/foafnaut_tor_wasm.wasm
+wasm-bindgen --target web --no-typescript --out-dir .build/web \
   target/wasm32-unknown-unknown/release/foafnaut_tor_wasm.wasm
 python3 pages.py .build "${TIMEOUT_MS:-15000}"
 ls -l .build

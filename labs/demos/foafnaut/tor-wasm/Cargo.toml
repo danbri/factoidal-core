@@ -25,9 +25,15 @@ arti-client = { path = ".work/arti/crates/arti-client", default-features = false
 ] }
 tor-keymgr = { path = ".work/arti/crates/tor-keymgr", default-features = false }
 tor-config = { path = ".work/arti/crates/tor-config", default-features = false }
-tor-rtcompat = { path = ".work/arti/crates/tor-rtcompat", default-features = false }
+tor-rtcompat = { path = ".work/arti/crates/tor-rtcompat", default-features = false, features = ["rustls"] }
 tor-general-addr = { path = ".work/arti/crates/tor-general-addr" }
 futures = "0.3"
+# TLS for Tor links runs inside the module (rustls, ring provider). Arti's own verifier checks the
+# link certificate against the relay's CERTS cell; Web PKI is not used.
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = { version = "1.15", features = ["web"] }
+ring = { version = "0.17", features = ["wasm32_unknown_unknown_js"] }
+toml = "0.8"
 void = "1"
 async-trait = "0.1"
 wasm-bindgen = "=0.2.130"

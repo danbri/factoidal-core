@@ -17,7 +17,7 @@ async function xfail(issue, check) {
   assert.ok(!passed, `unexpected pass: make this a real test and close ${issue}`);
 }
 
-test('xfail: bootstrap reaches 100% (no transport: https://github.com/danbri/factoidal-core/issues/1060)', async () => {
+test('xfail: bootstrap reaches 100% with no host transport, as in a page (https://github.com/danbri/factoidal-core/issues/1060)', async () => {
   await ready;
   await xfail('https://github.com/danbri/factoidal-core/issues/1060', async () => {
     const out = await wasm_bindgen.bootstrap(5000);
@@ -41,4 +41,28 @@ test('refused connections are counted and nothing else is tried', async () => {
   const end = JSON.parse(out.trim().split('\n').pop());
   assert.ok(end.refusedConnections > 0, 'Arti tried to connect and every attempt was refused');
   assert.equal(end.fraction, 0, 'no directory progress without a transport');
+});
+
+test('the transport stays off without the exact acknowledgement', async () => {
+  await ready;
+  assert.equal(wasm_bindgen.enable_unreviewed_transport(''), false);
+  assert.equal(wasm_bindgen.enable_unreviewed_transport('yes'), false);
+  assert.equal(wasm_bindgen.enable_unreviewed_transport('dangerously-use-unreviewed-tor-transport '), false);
+});
+
+test('no debug lines by default (they can carry relay addresses)', async () => {
+  await ready;
+  const seen = [];
+  const orig = console.log;
+  console.log = (...a) => { seen.push(a.join(' ')); };
+  try { await wasm_bindgen.bootstrap(2000); } finally { console.log = orig; }
+  const debug = seen.filter((l) => /^arti\s+(DEBUG|TRACE)/.test(l));
+  assert.equal(debug.length, 0, `debug lines printed: ${debug.slice(0, 2).join(' | ')}`);
+  assert.ok(seen.some((l) => l.startsWith('tor ')), 'the console capture saw the module');
+  // Control: with debug on, the same capture must see debug lines (else this test sees nothing).
+  const seen2 = [];
+  console.log = (...a) => { seen2.push(a.join(' ')); };
+  wasm_bindgen.log_debug(true);
+  try { await wasm_bindgen.bootstrap(2000); } finally { console.log = orig; wasm_bindgen.log_debug(false); }
+  assert.ok(seen2.some((l) => /^arti\s+DEBUG/.test(l)), 'control: debug lines visible when switched on');
 });

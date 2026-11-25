@@ -336,3 +336,78 @@ index 0000000..223cf70
 +        Ok(self.protocols.clone())
 +    }
 +}
+diff --git a/crates/tor-rtcompat/src/impls.rs b/crates/tor-rtcompat/src/impls.rs
+index 34459aa..2cf0012 100644
+--- a/crates/tor-rtcompat/src/impls.rs
++++ b/crates/tor-rtcompat/src/impls.rs
+@@ -23,6 +23,7 @@ pub(crate) mod unimpl_tls;
+ use crate::network::{
+     CommonConnectOptions, CommonListenOptions, TcpConnectOptions, TcpListenOptions,
+ };
++#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+ use socket2::Socket;
+ 
+ #[cfg(unix)]
+@@ -269,7 +270,8 @@ pub(crate) fn tcp_pre_connect(
+ pub(crate) fn tcp_pre_connect(
+     _addr: &std::net::SocketAddr,
+     _options: &TcpConnectOptions,
+-) -> std::io::Result<socket2::Socket> {
++) -> std::io::Result<void::Void> {
++    // Foafnaut wasm build: socket2 is not a dependency on this target, so no socket type.
+     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+ }
+ 
+diff --git a/crates/tor-rtcompat/src/lib.rs b/crates/tor-rtcompat/src/lib.rs
+index f32d442..3f65d58 100644
+--- a/crates/tor-rtcompat/src/lib.rs
++++ b/crates/tor-rtcompat/src/lib.rs
+@@ -52,9 +52,15 @@
+ // TODO #1645 (either remove this, or decide to have it everywhere)
+ #![cfg_attr(not(all(feature = "full")), allow(unused))]
+ 
++// Foafnaut wasm build: also compile on wasm32-unknown-unknown, for the rustls provider.
+ #[cfg(all(
+     any(feature = "native-tls", feature = "rustls"),
+-    any(feature = "async-std", feature = "tokio", feature = "smol")
++    any(
++        feature = "async-std",
++        feature = "tokio",
++        feature = "smol",
++        all(target_arch = "wasm32", target_os = "unknown")
++    )
+ ))]
+ pub(crate) mod impls;
+ pub mod task;
+@@ -93,7 +99,12 @@ pub use timer::{SleepProviderExt, Timeout, TimeoutError};
+ pub mod tls {
+     #[cfg(all(
+         any(feature = "native-tls", feature = "rustls"),
+-        any(feature = "async-std", feature = "tokio", feature = "smol")
++        any(
++            feature = "async-std",
++            feature = "tokio",
++            feature = "smol",
++            all(target_arch = "wasm32", target_os = "unknown")
++        )
+     ))]
+     pub use crate::impls::unimpl_tls::UnimplementedTls;
+     pub use crate::traits::{
+@@ -105,9 +116,16 @@ pub mod tls {
+         any(feature = "tokio", feature = "async-std", feature = "smol")
+     ))]
+     pub use crate::impls::native_tls::NativeTlsProvider;
++    // Foafnaut wasm build: also export it on wasm32-unknown-unknown, where the embedder
++    // supplies its own runtime.
+     #[cfg(all(
+         feature = "rustls",
+-        any(feature = "tokio", feature = "async-std", feature = "smol")
++        any(
++            feature = "tokio",
++            feature = "async-std",
++            feature = "smol",
++            all(target_arch = "wasm32", target_os = "unknown")
++        )
+     ))]
+     pub use crate::impls::rustls::RustlsProvider;
+     #[cfg(all(

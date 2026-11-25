@@ -1,0 +1,13 @@
+# Private Tor network for the Arti wasm transport test (chutney). Based on chutney's hs-v3-min,
+# with two exit relays added so exit traffic can be tested too. C tor runs every node; the Arti
+# wasm client in the Deno worker is the client under test.
+parent = Node()
+Authority = parent.specialize(tag="a", authority=1, relay=1)
+parent.launch_phase += 1
+NonExitRelay = parent.specialize(tag="r", relay=1)
+ExitRelay = parent.specialize(tag="e", relay=1, exit=1)
+parent.launch_phase += 1
+Client = parent.specialize(tag="c", client=1)
+HS = parent.specialize(tag="h", hs=1)
+NODES = Authority.getN(4) + NonExitRelay.getN(3) + ExitRelay.getN(2) + Client.getN(1) + HS.getN(1)
+ConfigureNodes(NODES)

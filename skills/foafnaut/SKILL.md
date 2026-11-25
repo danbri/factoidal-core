@@ -448,6 +448,11 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A port check with `ss` passes silently where `ss` is not installed (the cloud container). Check
+  a port by connecting to it (`(exec 3<>/dev/tcp/127.0.0.1/PORT)`). C tor relays take up to 30 s
+  to exit after SIGTERM, so a chutney network that was just stopped can still hold its ports.
+  2026-11-25: `tor-wasm/chutney/run.sh` ran a new network on ports still held by the last one and
+  failed after 5 minutes (Tor record, section 12.5).
 - While `build-web-render.sh --native` runs, do not run `lake build` and do not edit a Lean file
   that the build has not compiled yet, in `formal/lean4` or in `labs/demos/foafnaut`. The build
   reads `.lake` oleans and the lab sources as it goes, so the library it makes can mix old and

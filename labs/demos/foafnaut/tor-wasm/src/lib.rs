@@ -10,9 +10,14 @@
 //!   A Foafnaut page clock is virtual and starts near 1970, so the embedding page must give
 //!   `Date.now()` the real time (see `pages.py`). `bootstrap` refuses to start when the clock
 //!   reads earlier than 2024.
-//! - Network: none. TCP, Unix sockets, UDP and listening all fail with an error that names the
-//!   cause. There is no fallback to any other path: a request either goes through Tor or fails.
-//! - TLS: none, because there is no stream for it to run over.
+//! - Network: TCP to IP literals through the host (`globalThis.torHost`, given by the Deno
+//!   worker `deno/tor-worker.ts`), and only after `enable_unreviewed_transport` with the exact
+//!   acknowledgement string. Without both, every connection is refused. Unix sockets, UDP and
+//!   listening are always refused. There is no fallback path.
+//! - TLS: rustls (ring provider) inside the module, with Arti's own link verifier.
+//!
+//! EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
+//! WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW. The transport is not trusted for real users.
 //! - Blocking work: run at once on the calling thread (there are no threads).
 //! - State (guards, keys): Arti's in-memory state manager on wasm (`TestingStateMgr`), so it is
 //!   lost when the page closes. See the record for the risk.
@@ -27,7 +32,7 @@ use futures::task::{Spawn, SpawnError};
 use send_wrapper::SendWrapper;
 use tor_general_addr::unix;
 use tor_rtcompat::unimpl::{FakeListener, FakeStream};
-use tor_rtcompat::tls::{CertifiedConn, TlsAcceptorSettings, TlsConnector};
+use tor_rtcompat::tls::{CertifiedConn, RustlsProvider, TlsAcceptorSettings, TlsConnector};
 use tor_rtcompat::StreamOps;
 use tor_rtcompat::{
     Blocking, CoarseTimeProvider, JoinSetProvider, NetStreamProvider, RealCoarseTimeProvider,
@@ -66,9 +71,24 @@ fn no_transport() -> IoError {
 }
 
 /// The runtime. It holds no state of its own.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone)]
 pub struct WasmRuntime {
     coarse: RealCoarseTimeProvider,
+    tls: std::sync::Arc<RustlsProvider>,
+}
+
+impl std::fmt::Debug for WasmRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WasmRuntime")
+    }
+}
+
+impl Default for WasmRuntime {
+    fn default() -> Self {
+        // rustls needs a process-wide crypto provider; installing it twice is harmless.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        WasmRuntime { coarse: RealCoarseTimeProvider::default(), tls: std::sync::Arc::new(RustlsProvider::default()) }
+    }
 }
 
 impl Spawn for WasmRuntime {
@@ -133,12 +153,12 @@ impl CoarseTimeProvider for WasmRuntime {
 
 #[async_trait]
 impl NetStreamProvider<SocketAddr> for WasmRuntime {
-    type Stream = FakeStream;
-    type Listener = FakeListener<SocketAddr>;
+    type Stream = HostStream;
+    type Listener = HostListener;
     type ConnectOptions = tor_rtcompat::TcpConnectOptions;
     type ListenOptions = tor_rtcompat::TcpListenOptions;
-    async fn connect(&self, _a: &SocketAddr, _o: &Self::ConnectOptions) -> IoResult<FakeStream> {
-        Err(no_transport())
+    async fn connect(&self, a: &SocketAddr, _o: &Self::ConnectOptions) -> IoResult<HostStream> {
+        HostStream::connect(a).await
     }
     async fn listen(&self, _a: &SocketAddr, _o: &Self::ListenOptions) -> IoResult<Self::Listener> {
         Err(no_transport())
@@ -156,6 +176,185 @@ impl NetStreamProvider<unix::SocketAddr> for WasmRuntime {
     }
     async fn listen(&self, _a: &unix::SocketAddr, _o: &Self::ListenOptions) -> IoResult<Self::Listener> {
         Err(no_transport())
+    }
+}
+
+/// The acknowledgement a caller must pass to `enable_unreviewed_transport`.
+pub const TRANSPORT_ACK: &str = "dangerously-use-unreviewed-tor-transport";
+static TRANSPORT_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Allow connections through the host's `torHost`. Returns false (and stays off) unless `ack`
+/// is exactly `TRANSPORT_ACK`. The transport is unreviewed and not for real users.
+#[wasm_bindgen]
+pub fn enable_unreviewed_transport(ack: &str) -> bool {
+    let on = ack == TRANSPORT_ACK;
+    if on {
+        log("tor WARNING: unreviewed Tor transport enabled. EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.");
+    }
+    TRANSPORT_ON.store(on, std::sync::atomic::Ordering::SeqCst);
+    on
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = torHost, js_name = connect, catch)]
+    fn host_connect(ip: &str, port: u16) -> Result<js_sys::Promise, JsValue>;
+    #[wasm_bindgen(js_namespace = torHost, js_name = read, catch)]
+    fn host_read(h: u32, max: u32) -> Result<js_sys::Promise, JsValue>;
+    #[wasm_bindgen(js_namespace = torHost, js_name = write, catch)]
+    fn host_write(h: u32, data: &[u8]) -> Result<js_sys::Promise, JsValue>;
+    #[wasm_bindgen(js_namespace = torHost, js_name = close, catch)]
+    fn host_close(h: u32) -> Result<(), JsValue>;
+}
+
+/// The message of a host error, without its stack (a stack names local file paths).
+fn js_err(e: JsValue) -> IoError {
+    let msg = e
+        .as_string()
+        .or_else(|| js_sys::Reflect::get(&e, &"message".into()).ok().and_then(|m| m.as_string()))
+        .unwrap_or_else(|| "host error".into());
+    IoError::new(ErrorKind::Other, format!("host: {msg}"))
+}
+
+type HostFuture = SendWrapper<wasm_bindgen_futures::JsFuture>;
+
+/// A host promise as a `Send` future (the module has one thread).
+struct HostFut(HostFuture);
+impl std::future::Future for HostFut {
+    type Output = Result<JsValue, JsValue>;
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut *self.0).poll(cx)
+    }
+}
+
+/// A TCP connection held by the host. The module has one thread, so the wrappers never move.
+pub struct HostStream {
+    h: u32,
+    rd: Option<HostFuture>,
+    buf: Vec<u8>,
+    pos: usize,
+    wr: Option<(HostFuture, usize)>,
+    closed: bool,
+}
+
+impl HostStream {
+    async fn connect(a: &SocketAddr) -> IoResult<HostStream> {
+        if !TRANSPORT_ON.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(no_transport());
+        }
+        // Only IP literals reach this point: Arti connects to relays by address, so no name
+        // is ever resolved, here or in the host.
+        let p = host_connect(&a.ip().to_string(), a.port()).map_err(|_| no_transport())?;
+        let v = HostFut(SendWrapper::new(wasm_bindgen_futures::JsFuture::from(p))).await.map_err(js_err)?;
+        let h = v.as_f64().ok_or_else(|| IoError::new(ErrorKind::Other, "host: bad handle"))? as u32;
+        Ok(HostStream { h, rd: None, buf: Vec::new(), pos: 0, wr: None, closed: false })
+    }
+}
+
+impl futures::io::AsyncRead for HostStream {
+    fn poll_read(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, out: &mut [u8]) -> std::task::Poll<IoResult<usize>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        loop {
+            if this.pos < this.buf.len() {
+                let n = out.len().min(this.buf.len() - this.pos);
+                out[..n].copy_from_slice(&this.buf[this.pos..this.pos + n]);
+                this.pos += n;
+                return Poll::Ready(Ok(n));
+            }
+            if this.closed {
+                return Poll::Ready(Ok(0));
+            }
+            if this.rd.is_none() {
+                match host_read(this.h, 16384) {
+                    Ok(p) => this.rd = Some(SendWrapper::new(wasm_bindgen_futures::JsFuture::from(p))),
+                    Err(e) => return Poll::Ready(Err(js_err(e))),
+                }
+            }
+            let f = this.rd.as_mut().expect("read future");
+            match std::pin::Pin::new(&mut **f).poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(r) => {
+                    this.rd = None;
+                    let v = r.map_err(js_err)?;
+                    let a = js_sys::Uint8Array::new(&v);
+                    if a.length() == 0 {
+                        return Poll::Ready(Ok(0));
+                    }
+                    this.buf = a.to_vec();
+                    this.pos = 0;
+                }
+            }
+        }
+    }
+}
+
+impl futures::io::AsyncWrite for HostStream {
+    fn poll_write(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, data: &[u8]) -> std::task::Poll<IoResult<usize>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        if this.wr.is_none() {
+            let n = data.len().min(16384);
+            match host_write(this.h, &data[..n]) {
+                Ok(p) => this.wr = Some((SendWrapper::new(wasm_bindgen_futures::JsFuture::from(p)), n)),
+                Err(e) => return Poll::Ready(Err(js_err(e))),
+            }
+        }
+        let (f, n) = this.wr.as_mut().expect("write future");
+        let n = *n;
+        match std::pin::Pin::new(&mut **f).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(r) => {
+                this.wr = None;
+                r.map_err(js_err)?;
+                Poll::Ready(Ok(n))
+            }
+        }
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<IoResult<()>> {
+        use std::task::Poll;
+        let this = &mut *self;
+        if let Some((f, _)) = this.wr.as_mut() {
+            match std::pin::Pin::new(&mut **f).poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(r) => {
+                    this.wr = None;
+                    r.map_err(js_err)?;
+                }
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+    fn poll_close(mut self: std::pin::Pin<&mut Self>, _cx: &mut std::task::Context<'_>) -> std::task::Poll<IoResult<()>> {
+        if !self.closed {
+            self.closed = true;
+            let _ = host_close(self.h);
+        }
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for HostStream {
+    fn drop(&mut self) {
+        if !self.closed {
+            self.closed = true;
+            let _ = host_close(self.h);
+        }
+    }
+}
+
+impl StreamOps for HostStream {}
+
+/// Listening is refused, so this type is never made.
+pub struct HostListener(void::Void);
+impl tor_rtcompat::NetStreamListener<SocketAddr> for HostListener {
+    type Stream = HostStream;
+    type Incoming = futures::stream::Empty<IoResult<(HostStream, SocketAddr)>>;
+    fn incoming(self) -> Self::Incoming {
+        void::unreachable(self.0)
+    }
+    fn local_addr(&self) -> IoResult<SocketAddr> {
+        void::unreachable(self.0)
     }
 }
 
@@ -209,19 +408,19 @@ impl<S: Send + 'static> TlsConnector<S> for NoTls {
     }
 }
 
-impl TlsProvider<FakeStream> for WasmRuntime {
-    type Connector = NoTls;
-    type TlsStream = NoTlsConn;
+impl TlsProvider<HostStream> for WasmRuntime {
+    type Connector = <RustlsProvider as TlsProvider<HostStream>>::Connector;
+    type TlsStream = <RustlsProvider as TlsProvider<HostStream>>::TlsStream;
     type Acceptor = NoTls;
     type TlsServerStream = NoTlsConn;
-    fn tls_connector(&self) -> NoTls {
-        NoTls
+    fn tls_connector(&self) -> Self::Connector {
+        TlsProvider::<HostStream>::tls_connector(&*self.tls)
     }
     fn tls_acceptor(&self, _s: TlsAcceptorSettings) -> IoResult<NoTls> {
         Err(no_transport())
     }
     fn supports_keying_material_export(&self) -> bool {
-        false
+        TlsProvider::<HostStream>::supports_keying_material_export(&*self.tls)
     }
 }
 
@@ -267,7 +466,7 @@ pub fn isolated_context() -> bool {
 /// Start an Arti client and try to bootstrap it for at most `timeout_ms`. Returns one JSON
 /// object per line: each bootstrap status Arti reports, then the result.
 #[wasm_bindgen]
-pub async fn bootstrap(timeout_ms: u32) -> String {
+pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
     use futures::StreamExt;
     use tor_rtcompat::SleepProviderExt;
     let mut out = String::new();
@@ -287,7 +486,21 @@ pub async fn bootstrap(timeout_ms: u32) -> String {
     let rt = WasmRuntime::default();
     // Arti keeps its state in memory on wasm (TestingStateMgr), so these paths are never opened;
     // they only replace the defaults, which need a home directory to resolve.
-    let mut b = arti_client::config::TorClientConfigBuilder::from_directories("/arti-wasm/state", "/arti-wasm/cache");
+    // A TOML configuration (for example a private test network's `[tor_network]`) replaces the
+    // defaults; storage paths and the keystore kind below are always set by this module.
+    let mut b = match config_toml.as_deref() {
+        None => arti_client::config::TorClientConfigBuilder::default(),
+        Some(t) => match toml::from_str::<arti_client::config::TorClientConfigBuilder>(t) {
+            Ok(b) => b,
+            Err(e) => {
+                say(format!(r#"{{"step":"config","ok":false,"error":{:?}}}"#, e.to_string()));
+                return out;
+            }
+        },
+    };
+    b.storage()
+        .cache_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/cache"))
+        .state_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/state"));
     // Keys (onion service client keys included) stay in memory: nothing is written anywhere.
     b.storage()
         .keystore()
@@ -330,6 +543,7 @@ pub async fn bootstrap(timeout_ms: u32) -> String {
         Ok(Err(e)) => say(format!(r#"{{"step":"bootstrap","ok":false,"error":{:?}}}"#, e.to_string())),
         Err(_) => say(format!(r#"{{"step":"bootstrap","ok":false,"error":"timeout after {timeout_ms} ms"}}"#)),
     }
+    CLIENT.with(|c| *c.borrow_mut() = Some(client.clone()));
     let st = client.bootstrap_status();
     say(format!(
         r#"{{"step":"end","fraction":{:.2},"text":{:?},"refusedConnections":{}}}"#,
@@ -340,6 +554,51 @@ pub async fn bootstrap(timeout_ms: u32) -> String {
     out
 }
 
+thread_local! {
+    static CLIENT: std::cell::RefCell<Option<std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Through the client of the last `bootstrap`, open a stream to `host:port` (the exit resolves
+/// the name; nothing is resolved here), send `request` and return up to `max` bytes of reply.
+#[wasm_bindgen]
+pub async fn stream_request(host: String, port: u16, request: String, max: u32, timeout_ms: u32) -> String {
+    use futures::{AsyncReadExt, AsyncWriteExt};
+    use tor_rtcompat::SleepProviderExt;
+    let Some(client) = CLIENT.with(|c| c.borrow().clone()) else {
+        return r#"{"step":"stream","ok":false,"error":"no client: run bootstrap first"}"#.into();
+    };
+    let rt = WasmRuntime::default();
+    let work = async {
+        let mut s = client.connect((host.as_str(), port)).await.map_err(|e| format!("{e:?}"))?;
+        s.write_all(request.as_bytes()).await.map_err(|e| e.to_string())?;
+        s.flush().await.map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; max as usize];
+        let mut got = 0;
+        while got < buf.len() {
+            let n = s.read(&mut buf[got..]).await.map_err(|e| e.to_string())?;
+            if n == 0 { break; }
+            got += n;
+        }
+        buf.truncate(got);
+        Ok::<Vec<u8>, String>(buf)
+    };
+    let line = match rt.timeout(Duration::from_millis(timeout_ms as u64), work).await {
+        Ok(Ok(b)) => format!(r#"{{"step":"stream","ok":true,"bytes":{},"reply":{:?}}}"#, b.len(), String::from_utf8_lossy(&b)),
+        Ok(Err(e)) => format!(r#"{{"step":"stream","ok":false,"error":{:?}}}"#, e),
+        Err(_) => format!(r#"{{"step":"stream","ok":false,"error":"timeout after {timeout_ms} ms"}}"#),
+    };
+    log(&format!("tor {line}"));
+    line
+}
+
+static LOG_DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Show Arti's debug lines too (safe logging stays on).
+#[wasm_bindgen]
+pub fn log_debug(on: bool) {
+    LOG_DEBUG.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Send Arti's log lines (safe logging stays on: addresses are redacted) to the console.
 #[wasm_bindgen(start)]
 pub fn start() {
@@ -348,7 +607,10 @@ pub fn start() {
         fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
             let s = String::from_utf8_lossy(b);
             let s = s.trim_end();
-            if !s.is_empty() {
+            // The level is the first word of the line (no timestamp is written).
+            let t = s.trim_start();
+            let debug = t.starts_with("DEBUG") || t.starts_with("TRACE");
+            if !s.is_empty() && (!debug || LOG_DEBUG.load(std::sync::atomic::Ordering::SeqCst)) {
                 log(&format!("arti {s}"));
             }
             Ok(b.len())
@@ -362,6 +624,6 @@ pub fn start() {
         .with_writer(|| Console)
         .with_ansi(false)
         .without_time()
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::DEBUG)
         .try_init();
 }
