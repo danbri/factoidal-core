@@ -302,15 +302,18 @@ export async function fetchImageBytes(wanted:{key:string;url:string}[],documentU
   const read:({bytes:Uint8Array}|{reason:string})[]=new Array(wanted.length);
   let next=0;
   const worker=async()=>{
-    for(;;){
-      const index=next++;if(index>=wanted.length)return;
-      signal?.throwIfAborted();
-      try{read[index]={bytes:(await readSubresource(engine,"image",wanted[index].url,documentURL,MAX_IMAGE_BYTES,signal)).bytes};}
-      catch(error){
-        if(signal?.aborted)throw error;
-        read[index]={reason:String(error instanceof Error?error.message:error)};
+    const transport=pinnedHTTPSBatch({timeoutMs:10000});
+    try{
+      for(;;){
+        const index=next++;if(index>=wanted.length)return;
+        signal?.throwIfAborted();
+        try{read[index]={bytes:(await readSubresource(engine,"image",wanted[index].url,documentURL,MAX_IMAGE_BYTES,signal,undefined,transport)).bytes};}
+        catch(error){
+          if(signal?.aborted)throw error;
+          read[index]={reason:String(error instanceof Error?error.message:error)};
+        }
       }
-    }
+    }finally{transport.close();}
   };
   await Promise.all(Array.from({length:Math.min(6,wanted.length)},worker));
   const images:{key:string;bytes:Uint8Array}[]=[];let total=0;const limit=await pageImageLimit(engine);
