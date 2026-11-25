@@ -8,8 +8,8 @@ had a separate list that missed options inside ordinary wrappers.
 Use a bounded tree-order walk that prunes the excluded subtrees. Keep the
 option's owner query in Lean and use it for the option's selectedness,
 index and form on the script side. Reuse the shared selected options for
-the text on the collapsed control. Form submission already uses the same
-selection.
+the text on the collapsed control. The FormData path already uses the same
+selection. The navigation submission path now reads it too.
 
 Two Lean statements state the scan step at an excluded subtree and at an
 already nested optgroup. Executable fixtures cover the excluded descendants,
