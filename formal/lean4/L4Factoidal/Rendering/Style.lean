@@ -1194,7 +1194,10 @@ and its classes as the compound matcher reads them, and the classes and `id` val
 `DOM.Selectors` reads (white space as in HTML, and every `id` attribute). -/
 def ownOf (n : DOM.Node) : List Nat :=
   let k := ElemKey.read n
-  ancBit n.lname :: ancBit k.id :: k.classes.map ancBit ++
+  -- the lower-case name too: in an HTML document a type selector matches an HTML element
+  -- with no regard to ASCII case (`DOM.Selectors.htmlOf`), and a script can give an HTML
+  -- element a name with capitals (`createElementNS`)
+  ancBit n.lname :: ancBit (DOM.Selectors.lowerAscii n.lname) :: ancBit k.id :: k.classes.map ancBit ++
     (DOM.Selectors.wsSplit (attrValue n "class")).map ancBit ++
     n.attrs.toList.filterMap fun a => if a.ns.isNone && a.lname == "id" then some (ancBit a.value) else none
 
