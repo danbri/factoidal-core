@@ -8,7 +8,7 @@ import type {ScriptPlan,ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,consoleRequest,noteDiagnostics,reportSystemEntries} from "./native_console.ts";
 import {createGpuGuard} from "./gpu_pacing.ts";
 import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead,type NetSocket} from "./native_net.ts";
-import {loadNativeWindow,type NativeEvent as UIEvent} from "./native_window.ts";
+import {loadNativeWindow,pointerButton,pointerClicks,pointerModifiers,type NativeEvent as UIEvent} from "./native_window.ts";
 import {linuxModifier} from "./linux_keys.ts";
 import {POINTER_CANCEL,beginPress,movePress,pointerNode,pointerRequest,pressPointers,beforeFirstFrame,type NativePress,type PointerKind,type PresentedState} from "./native_press.ts";
 import {nativePreflight} from "./native_preflight.ts";
@@ -774,6 +774,16 @@ async function main() {
   // `hoverNode` is the link under the pointer, sent only when an author rule names `:hover`.
   type Pressed={control?:string;active?:number;rects:number[][];at:number;framed:boolean;asked:boolean};
   let pressed:Pressed|undefined,pressPresent=false,hoverNode:number|undefined,eventAt=0;
+  // Desktop gestures (issue 1031): the gesture Lean gave the press now held, the middle press
+  // waiting for its release, and the time from each gesture's queue time to its action.
+  const gesturePlatform=Deno.build.os==="darwin"?"mac":"other";
+  let pressGesture="follow",middlePress:{x:number;y:number}|undefined;
+  const gestureLatencies:number[]=[],gestureCounts:Record<string,number>={};
+  const gestureDone=(gesture:string,event:UIEvent,fields:Record<string,unknown>)=>{
+    const flags=event.flags??0,ms=Math.round((performance.now()-eventAt)*10)/10;
+    gestureLatencies.push(ms);gestureCounts[gesture]=(gestureCounts[gesture]??0)+1;
+    trace("native-html-gesture",{gesture,button:pointerButton(flags),modifiers:pointerModifiers(flags),clicks:pointerClicks(flags),queuedToActionMs:ms,...fields});
+  };
   const pressOverlayMs:number[]=[],pressFrameMs:number[]=[];
   // A press held this long gets a Lean frame with `:active` (and the sunken chrome button).
   const PRESS_FRAME_MS=150;
@@ -1301,6 +1311,17 @@ async function main() {
     // A page link loads only with --follow-links; the browser's own pages always do.
     else if(route.route!=="navigate"||follow)navigate(route.url,true,undefined,route.route==="navigate"?document.url:"");
   };
+  // A link opened in a new tab (issue 1031: Command-click, middle click). Routes that are not
+  // a page load (commands, system, refusals) do what a plain click does. The tab opens in front:
+  // loading a tab that is not shown is not written yet (issue 1031), so "backgroundTab" opens it
+  // in front too, and the trace says so.
+  const openInTab=(href:string)=>{
+    const route=router.route({...site,href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute;
+    if(route.route!=="navigate"||!follow){followRoute(route);return false;}
+    const from=document.url;
+    newTab();leaveAddress();navigate(route.url,true,undefined,from);
+    return true;
+  };
   const go=(answer:ReturnType<typeof engine.shellSubmit>)=>{
     trace("native-html-go",answer);
     // An engine from before the route op: nothing leaves the browser on its word alone.
@@ -1503,6 +1524,7 @@ async function main() {
     logGate.flush();
     const line={type:"native-html-perf-summary",present:offscreen?"offscreen-texture":"window",inputEventsDropped:native?.eventsDropped()??0,inputLatency:{from:latencyFrom(),count:latencies.length,p50Ms:percentile(latencies,0.5),p95Ms:percentile(latencies,0.95),maxMs:latencies.length?Math.max(...latencies):null},
       engine:engineRan,compileBackend:engineRan.startsWith("native")?"native":"wasm",layered,
+      gestures:{count:gestureLatencies.length,byGesture:gestureCounts,queuedToActionMsP50:percentile(gestureLatencies,0.5),queuedToActionMsMax:gestureLatencies.length?Math.max(...gestureLatencies):null},
       scrollPresents:{count:shifts.length,totalMsP50:percentile(shifts,0.5),totalMsP95:percentile(shifts,0.95),maxMs:shifts.length?Math.round(Math.max(...shifts)*10)/10:null},
       frames:{presented:totals.length,checked:checkedFrames,compiledInWorker:workerFrames,compiledOnMain:mainFrames,totalMsP50:percentile(totals,0.5),totalMsP95:percentile(totals,0.95)},
       // Time between two native event pumps: the longest time the window takes no input.
@@ -1867,6 +1889,12 @@ async function main() {
         // An accessibility client asked the window for its elements: trees from now on.
         if(event.kind===15&&!axOn){axOn=true;axDue=true;}
         if(event.kind===2){
+          // Desktop gestures (issue 1031): with a modifier or a button other than the primary one,
+          // Lean says what the press does. A plain press makes no extra call.
+          const flags=event.flags??0,button=pointerButton(flags);
+          pressGesture=flags&15||button?engine.linkGesture(gesturePlatform,button,pointerModifiers(flags)):"follow";
+          if(pressGesture==="menu"){menuPress(event.a,event.b,"context");gestureDone("menu",event,{});return;}
+          if(button===2){middlePress={x:event.a,y:event.b};return;}
           // Hit coordinates and boxes belong to the successfully presented frame.
           // One small Lean call: the control or the link pressed, and what the composite darkens.
           const answer=engine.press(shell(),event.a,event.b,width,pageRow(event.b),layered&&current&&frame?frame.webRender.links as unknown[]:[]);
@@ -1893,6 +1921,12 @@ async function main() {
           if(node!==hoverNode){hoverNode=node;dirty=true;}
         }
         if(event.kind===3&&press&&press.page===document&&!(press.page as Page).graph){view.selection=movePress(press,event.a,event.b);dirty=true;scriptPointer("move",event.a,event.b,press);}
+        if(event.kind===4&&pointerButton(event.flags??0)===2){
+          const at=middlePress;middlePress=undefined;
+          const target=at&&frame?engine.hit(frame,event.a,pageRow(event.b)):undefined;
+          if(target)gestureDone(pressGesture,event,{opened:openInTab(target.href),background:false});
+          return;
+        }
         if(event.kind===4&&press){
           const held=press,released=movePress(held,event.a,event.b);press=undefined;
           scriptPointer("up",released[2],released[3],held);
@@ -1911,6 +1945,9 @@ async function main() {
               .catch(error=>scriptFailed(page,error,"click"));
           }
           const target=frame&&engine.hit(frame,released[0],pageRow(released[1]));
+          if(target&&(pressGesture==="backgroundTab"||pressGesture==="foregroundTab")){
+            gestureDone(pressGesture,event,{opened:openInTab(target.href),background:false});return;
+          }
           if(target){console.log(JSON.stringify({type:"native-html-link",...target,url:document.url}));
             followRoute(router.route({...site,href:target.href,base:document.baseURL||document.url,outside:outsideDocs.get(document)??""}) as LinkRoute);}
         }

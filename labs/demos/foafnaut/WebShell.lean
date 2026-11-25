@@ -234,6 +234,45 @@ theorem opensMenu_address {control : Option String} {how : String} {touch : Bool
 theorem click_never_opens (control : Option String) : opensMenu control "tap" false = false := by
   simp [opensMenu]
 
+/-- What a press on the page does, from the button (0 primary, 1 secondary, 2 middle), the
+modifier bits of `native_window.m` and `native_window_linux.c` (1 Shift, 2 Command, 4 Option,
+8 Control) and the platform ("mac" or "other"). Issue 1031; the rules are those Chrome, Firefox
+and Safari share:
+
+- secondary button: the context menu;
+- macOS, Control with the primary button: the context menu;
+- middle button: a new tab in the background, in front with Shift;
+- primary button with Command (macOS) or Control (other systems): a new tab in the background,
+  in front with Shift;
+- else the press is a normal one ("follow").
+
+The answer is one of "follow", "backgroundTab", "foregroundTab", "menu". -/
+def linkGesture (platform : String) (button modifiers : Nat) : String :=
+  let shift := modifiers.testBit 0
+  let command := modifiers.testBit 1
+  let control := modifiers.testBit 3
+  let mac := platform == "mac"
+  let tab := if shift then "foregroundTab" else "backgroundTab"
+  if button == 1 then "menu"
+  else if button == 2 then tab
+  else if mac && control then "menu"
+  else if (if mac then command else control) then tab
+  else "follow"
+
+/-- A press with no modifier and the primary button is a normal press, on every platform. -/
+theorem linkGesture_plain (platform : String) : linkGesture platform 0 0 = "follow" := by
+  simp [linkGesture]
+
+/-- Command-click on macOS opens a background tab; Shift-Command-click a tab in front. -/
+example : linkGesture "mac" 0 2 = "backgroundTab" := by decide
+example : linkGesture "mac" 0 3 = "foregroundTab" := by decide
+/-- Control-click on macOS is the context menu; on other systems it opens a background tab. -/
+example : linkGesture "mac" 0 8 = "menu" := by decide
+example : linkGesture "other" 0 8 = "backgroundTab" := by decide
+/-- The middle button opens a background tab; the secondary button the menu. -/
+example : linkGesture "other" 2 0 = "backgroundTab" := by decide
+example : linkGesture "mac" 1 0 = "menu" := by decide
+
 private def tabWidth (s : Shell) (width : Nat) : Nat :=
   let room := width-(90*unit s)
   min (180*unit s) (room/max 1 s.tabs.size)

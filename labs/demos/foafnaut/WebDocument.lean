@@ -1283,6 +1283,10 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
     let platform := str request "platform" "other"
     return some (JSON.Json.array ((WebHistory.keyTable.filter (·.1 == platform)).map fun (_,m,k,c) =>
       .object [("modifier",.string m),("key",.string k),("command",.number (toString c))])).toString
+  -- What a press does by its button and modifiers (issue 1031): follow, a tab, or the menu.
+  if op == "linkGesture" then
+    let num (k : String) : Nat := match request.field? k with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    return some (JSON.Json.object [("gesture",.string (WebShell.linkGesture (str request "platform" "other") (num "button") (num "modifiers")))]).toString
   if op == "shellSubmit" then return some (WebShell.submit (str request "address")).json.toString
   if let some answer ← WebGraph.op op request then return some answer
   if let some answer ← WebEventLoop.op op request then return some answer
