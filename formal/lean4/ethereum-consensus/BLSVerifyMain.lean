@@ -42,7 +42,8 @@ private def errorName : VerifyError → String
   | .keyAdmission .infinitySum => "infinity_sum"
   | .keyAdmission .invalidSum => "internal_key_sum"
   | .signatureAdmission e => signatureName e
-  | .hashFailure e => "hash_failure " ++ reprStr e
+  | .hashFailure (.hashError .signingRootWidth) => "root_width"
+  | .hashFailure _ => "hash_failure"
   | .hashInfinity => "hash_infinity"
   | .pairingFailure e => "pairing_failure " ++ e
 
