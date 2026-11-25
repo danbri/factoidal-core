@@ -578,6 +578,17 @@ elab "fuel_match_reduce" : tactic => do
     let y' ← red args[3]!
     replaceMainGoal [← g.replaceTargetDefEq (mkAppN t.getAppFn ((args.set! 2 x').set! 3 y'))]
 
+/-- Length coercion inherits the fuel monotonicity of its two number conversions. -/
+theorem Le.generalArrayLength (number1 number2 : Value → JSM H Float)
+    (h : ∀ v, Le (number1 v) (number2 v)) (id : Nat) (desc : Desc) :
+    Le (setGeneralArrayLength number1 id desc) (setGeneralArrayLength number2 id desc) := by
+  unfold setGeneralArrayLength
+  cases hv : desc.value with
+  | none =>
+    exact Le.refl _
+  | some value =>
+    exact Le.bind (h value) fun _ => Le.bind (h value) fun _ => Le.refl _
+
 open Lean Meta Elab Tactic in
 /-- Rules proved after the walk is defined (`Le.inRealm` below, the built-ins' lemmas in
 `JS/FuelMonoNatives*.lean`): looked up by name when the walk runs. A name in a macro is resolved
@@ -589,7 +600,9 @@ elab "fuel_late_lemmas" : tactic => do
   let mut names := [`L4Factoidal.JS.FuelMono.Le.inRealm]
   -- a built-in `Natives.f core …`: its lemma is `natives_f_mono`
   if t.isAppOf ``Le && args.size ≥ 4 then
-    if let some (.str p f) := args[2]!.getAppFn.constName? then
+    if args[2]!.isAppOf ``L4Factoidal.JS.setGeneralArrayLength then
+      names := [``Le.generalArrayLength]
+    else if let some (.str p f) := args[2]!.getAppFn.constName? then
       if p == `L4Factoidal.JS.Natives then
         names := [Name.mkStr `L4Factoidal.JS.FuelMono ("natives_" ++ f ++ "_mono")]
   let env ← getEnv
