@@ -158,6 +158,13 @@ instance : Repr BackgroundOffset where
     | .length value, prec => reprPrec value prec
     | .calculation expr _, prec => reprPrec (CssValues.Calc.text expr) prec
 
+structure CornerLengths where
+  topLeft : Length × Length := (.px 0,.px 0)
+  topRight : Length × Length := (.px 0,.px 0)
+  bottomRight : Length × Length := (.px 0,.px 0)
+  bottomLeft : Length × Length := (.px 0,.px 0)
+  deriving Inhabited, Repr
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -194,6 +201,7 @@ structure Computed where
   borderStyles : Sides BorderStyle := .all .none
   /-- `border-*-color`, one for each side. -/
   borderColors : Sides BorderColor := .all .current
+  cornerLengths : Option CornerLengths := none
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -718,6 +726,25 @@ def firstLetterSelector (s : String) : Option String :=
 #guard firstLetterSelector "::first-letter" == some "*"
 #guard firstLetterSelector "p::before" == none
 
+private def radiusNames : List String :=
+  ["border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius"]
+
+private def specifiedRadii (value : String) : Option (List (String × String)) := do
+  let _ ← CssValues.specified "border-radius" value
+  let components := (CssValues.stripWs (CssValues.CV.parse value)).map fun v => CssValues.serialize [v]
+  let horizontal := components.takeWhile (· != "/")
+  let axes ← match components.drop horizontal.length with
+    | [] => some horizontal
+    | "/" :: vertical => some vertical
+    | _ => none
+  let (a,b,c,d) ← CssValues.expand4 horizontal
+  let (e,f,g,h) ← CssValues.expand4 axes
+  return [a,b,c,d].zip [e,f,g,h]
+
+#guard specifiedRadii "10% 20% / 4px 8px 12px" ==
+  some [("10%","4px"),("20%","8px"),("10%","12px"),("20%","8px")]
+#guard (specifiedRadii "10px / -1px").isNone
+
 /-- The longhands that a side shorthand read by this profile sets, in the order of its
 values: the four sides of `margin`, `padding` and `inset`, the two sides of a
 flow-relative shorthand of one axis (`margin-block`, `padding-inline`, `inset-block`;
@@ -727,6 +754,7 @@ def sidesOf (property : String) : List String :=
   else if property == "inset" then ["top","right","bottom","left"]
   else if property == "background-position" then ["background-position-x","background-position-y"]
   else if property == "text-wrap" then ["text-wrap-mode","text-wrap-style"]
+  else if property == "border-radius" then radiusNames
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
     | none => []
@@ -736,7 +764,13 @@ Box 4 §3.2), one or two for the two sides of an axis (CSS Logical 1 §4.2). The
 the component values: `calc(1px + 2px)` and `var(--a, 1px 2px)` are one each.
 `background-position` uses the shared property grammar. -/
 def expandSides (property value : String) (important : Bool) : List Declaration :=
-  if property == "background-position" || property == "text-wrap" then
+  if property == "border-radius" then
+    if CssValues.cssWide.contains (trim value).toLower then
+      radiusNames.map fun name => ⟨name,value,important⟩
+    else
+      (radiusNames.zip ((specifiedRadii value).getD [])).map fun (name,(x,y)) =>
+        ⟨name,if x == y then x else x ++ " " ++ y,important⟩
+  else if property == "background-position" || property == "text-wrap" then
     ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
       if name == property then none else some ⟨name,v,important⟩
   else
@@ -818,7 +852,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
         (expanded.bind (·.lookup name)).map fun value => ⟨name,value,d.important⟩
       (⟨"background-color",d.value,d.important⟩ : Declaration) :: ⟨"background-image",image,d.important⟩ ::
         rasterPlacement ++ (whole :: acc) else
-    if (key == "background-position" || key == "text-wrap") && !CssVars.mentions d.value then
+    if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
@@ -1209,6 +1243,10 @@ def Length.atViewport (width height : Float) : Length → Length
       fun n => .px (ratToFloat n)).getD .auto
   | other => other
 
+def CornerLengths.atViewport (vw vh : Float) (radii : CornerLengths) : CornerLengths :=
+  let pair := fun (xy : Length × Length) => (xy.1.atViewport vw vh, xy.2.atViewport vw vh)
+  ⟨pair radii.topLeft, pair radii.topRight, pair radii.bottomRight, pair radii.bottomLeft⟩
+
 def BackgroundOffset.atViewport (vw vh : Float) : BackgroundOffset → BackgroundOffset
   | .length value => .length (value.atViewport vw vh)
   | .calculation expr units =>
@@ -1505,6 +1543,22 @@ def clipPathEmpty (value : String) : Bool :=
 #guard !maskHides "url(#fade)"
 #guard !maskHides "url( '#fade' )"
 
+private def cornerPair (fontSize : Float) (source : String) : Except String (Length × Length) := do
+  let parse := fun value => do
+    let length ← match sizeLength fontSize value with
+      | .ok length => pure length
+      | .error error => match tableComputed fontSize "border-top-left-radius" value with
+        | some v => sizeLength fontSize v
+        | none => throw error
+    match length with
+    | .auto => throw "border radius cannot be auto"
+    | .px n | .percent n => if n < 0 then throw "negative CSS border radius" else pure length
+    | _ => pure length
+  match SheetReader.splitWords source with
+  | [x] => let v ← parse x; pure (v,v)
+  | [x,y] => pure (← parse x, ← parse y)
+  | _ => throw "a border corner radius takes one or two values"
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -1775,6 +1829,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     match Sides.ofList (← (topWords d.value).mapM borderStyle) with
     | some st => return {s with borderStyles := st}
     | none => throw "border-style requires one to four styles"
+  | "border-top-left-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with topLeft := ← cornerPair s.fontSize d.value}}
+  | "border-top-right-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with topRight := ← cornerPair s.fontSize d.value}}
+  | "border-bottom-right-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with bottomRight := ← cornerPair s.fontSize d.value}}
+  | "border-bottom-left-radius" =>
+    return {s with cornerLengths := some {(s.cornerLengths.getD {}) with bottomLeft := ← cornerPair s.fontSize d.value}}
   | "border-top-width" => return {s with borderWidth := {s.borderWidth with top := ← borderWidthPx s.fontSize d.value}}
   | "border-right-width" => return {s with borderWidth := {s.borderWidth with right := ← borderWidthPx s.fontSize d.value}}
   | "border-bottom-width" => return {s with borderWidth := {s.borderWidth with bottom := ← borderWidthPx s.fontSize d.value}}
@@ -2019,6 +2081,7 @@ def ownProperties : List String :=
    "color","background","background-color","font-size","line-height","white-space","white-space-collapse",
    "text-wrap-style","text-wrap-mode",
    "visibility","overflow","text-decoration","text-decoration-line","border-style",
+   "border-top-left-radius","border-top-right-radius","border-bottom-right-radius","border-bottom-left-radius",
    "border-top-width","border-right-width","border-bottom-width","border-left-width",
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
@@ -2141,6 +2204,14 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient, backgroundImage := source.backgroundImage}
   | "background-size" => some {s with backgroundSize := source.backgroundSize}
   | "background-repeat" => some {s with backgroundRepeat := source.backgroundRepeat}
+  | "border-top-left-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      topLeft := (source.cornerLengths.getD {}).topLeft}}
+  | "border-top-right-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      topRight := (source.cornerLengths.getD {}).topRight}}
+  | "border-bottom-right-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      bottomRight := (source.cornerLengths.getD {}).bottomRight}}
+  | "border-bottom-left-radius" => some {s with cornerLengths := some {(s.cornerLengths.getD {}) with
+      bottomLeft := (source.cornerLengths.getD {}).bottomLeft}}
   | "background-clip" => some {s with backgroundClip := source.backgroundClip}
   | "background-position-x" => some {s with backgroundPositionX := source.backgroundPositionX}
   | "background-position-y" => some {s with backgroundPositionY := source.backgroundPositionY}
@@ -3660,7 +3731,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     svgAuthor := [], display := .inline, width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, clipOverflow := false,
     columnCount := none, columnWidth := none,
-    borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current,
+    borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current, cornerLengths := none,
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by

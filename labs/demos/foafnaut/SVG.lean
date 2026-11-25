@@ -3993,28 +3993,164 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
+/-- A dash piece's test as plain code: `pieceCondition (.disk ..)`, the Float operations written
+    out in the same order, with no expression tree, environment or closure (`diskHit_eq`). -/
+private def diskHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let dx := q.1-data[base+0]!
+  let dy := q.2-data[base+1]!
+  decide (dx*dx+dy*dy <= data[base+2]!*data[base+2]!)
+
+/-- `pieceCondition (.strip ..)` as plain code, as `diskHit` (`stripHit_eq`). -/
+private def stripHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let width := data[base+16]!
+  let half := width/Float.ofNat 2
+  let d1 := data[base+2]!-data[base+0]!
+  let d2 := data[base+3]!-data[base+1]!
+  let e1 := q.1-data[base+0]!
+  let e2 := q.2-data[base+1]!
+  let len := d1*d1+d2*d2
+  let h := (e1*d1+e2*d2)/max len (Float.ofNat 1/Float.ofNat 1000000000000)
+  let f1 := e1-h*d1
+  let f2 := e2-h*d2
+  !decide (width <= Float.ofNat 0) &&
+    (!decide (len <= Float.ofNat 0) &&
+      ((decide (Float.ofNat 0 <= h) && decide (h <= Float.ofNat 1)) &&
+        decide (f1*f1+f2*f2 <= half*half)))
+
+/-- The cross product of `triangleCondition`, with its multiplications by 1 and 0 kept. -/
+private def crossAt (u1 u2 v1 v2 : Float) : Float :=
+  (u1*Float.ofNat 1+u2*Float.ofNat 0)*(v1*Float.ofNat 0+v2*Float.ofNat 1)-
+    (u1*Float.ofNat 0+u2*Float.ofNat 1)*(v1*Float.ofNat 1+v2*Float.ofNat 0)
+
+/-- `pieceCondition (.triangle ..)` as plain code, as `diskHit` (`triangleHit_eq`). -/
+private def triangleHit (data : Array Float) (base : Nat) (q : Float × Float) : Bool :=
+  let ax := data[base+0]!
+  let ay := data[base+1]!
+  let bx := data[base+2]!
+  let byy := data[base+3]!
+  let cx := data[base+8]!
+  let cy := data[base+9]!
+  let ab := crossAt (bx-ax) (byy-ay) (q.1-ax) (q.2-ay)
+  let bc := crossAt (cx-bx) (cy-byy) (q.1-bx) (q.2-byy)
+  let ca := crossAt (ax-cx) (ay-cy) (q.1-cx) (q.2-cy)
+  let area := crossAt (bx-ax) (byy-ay) (cx-ax) (cy-ay)
+  !decide (area*area <= Float.ofNat 0) &&
+    ((decide (Float.ofNat 0 <= ab) && (decide (Float.ofNat 0 <= bc) && decide (Float.ofNat 0 <= ca))) ||
+      (decide (ab <= Float.ofNat 0) && (decide (bc <= Float.ofNat 0) && decide (ca <= Float.ofNat 0))))
+
+/-- Which of the three tests a piece takes: 0 strip, 1 disk, 2 triangle. -/
+def pieceKind : NativeSVGStroke.Piece → UInt8
+  | .strip .. => 0
+  | .disk .. => 1
+  | .triangle .. => 2
+
+/-- The test of a piece of kind `kind` whose record floats start at `base`, at the point `q`. -/
+def pieceHit (data : Array Float) (kind : UInt8) (base : Nat) (q : Float × Float) : Bool :=
+  if kind == 0 then stripHit data base q else if kind == 1 then diskHit data base q else triangleHit data base q
+
+/-- Says: the plain test of each kind of piece is the typed condition of `pieceCondition`, the same
+    Float operations in the same order, at every point. Does not say: that the piece's box
+    (`pieceBox`) holds the point; the raster tests the box first, and no theorem states that a point
+    outside the box is outside the piece. -/
+theorem pieceHit_eq (piece : NativeSVGStroke.Piece) (data : Array Float) (base : Nat) (q : Float × Float) :
+    pieceHit data (pieceKind piece) base q = (pieceCondition piece base).eval {data,position := q} := by
+  cases piece <;> rfl
+
+/-- The stroke pieces of a dashed record as the CPU raster tests them: four floats a piece for
+    its box (`pieceBox`), its kind (`pieceKind`), and the record's float where piece 0 starts. -/
+structure DashPieces where
+  boxes : FloatArray
+  kinds : ByteArray
+  start : Nat
+
+def Primitive.dashPieces (p : BackendPrimitive) (data : Array Float) (base : Nat) : DashPieces :=
+  let start := base+20+geometryTailSize p.geometry
+  let (boxes,kinds) := (p.dashParts.getD []).zipIdx.foldl
+    (fun (acc : FloatArray × ByteArray) (piece,i) =>
+      let b := pieceBox piece data[start+20*i+16]!
+      ((((acc.1.push b.1).push b.2.1).push b.2.2.1).push b.2.2.2,acc.2.push (pieceKind piece)))
+    (FloatArray.empty,ByteArray.empty)
+  ⟨boxes,kinds,start⟩
+
+/-- The piece `i` when its box holds `q` and its test does. -/
+@[inline] def DashPieces.hits (d : DashPieces) (data : Array Float) (q : Float × Float) (i : Nat) : Bool :=
+  d.boxes.get! (4*i) <= q.1 && q.1 <= d.boxes.get! (4*i+2) && d.boxes.get! (4*i+1) <= q.2 &&
+    q.2 <= d.boxes.get! (4*i+3) && pieceHit data (d.kinds.get! i) (d.start+20*i) q
+
+/-- Some piece from `i` on hits `q`. -/
+def DashPieces.anyFrom (d : DashPieces) (data : Array Float) (q : Float × Float) (i : Nat) : Bool :=
+  if i < d.kinds.size then
+    if d.hits data q i then true else d.anyFrom data q (i+1)
+  else false
+termination_by d.kinds.size - i
+
+/-- Some piece among those listed from position `k` on hits `q`. -/
+def DashPieces.anyListed (d : DashPieces) (data : Array Float) (q : Float × Float) (listed : Array Nat)
+    (k : Nat) : Bool :=
+  if h : k < listed.size then
+    if d.hits data q listed[k] then true else d.anyListed data q listed (k+1)
+  else false
+termination_by listed.size - k
+
+/-- The pieces whose box holds the local line `y = py` (`y0 <= py && py <= y1`): a point of that
+    line is outside every other piece's box. -/
+def DashPieces.crossing (d : DashPieces) (py : Float) : Array Nat := Id.run do
+  let mut out := #[]
+  for i in [0:d.kinds.size] do
+    if d.boxes.get! (4*i+1) <= py && py <= d.boxes.get! (4*i+3) then out := out.push i
+  return out
+
+/-- Some piece hits `q`, taking only the pieces listed for the line of `q` when `spans` lists
+    that line (its `y` is the key, compared as floats) and every piece otherwise. A piece not
+    listed for a line has a box that misses it, so the two are the same value. -/
+def DashPieces.any (d : DashPieces) (data : Array Float) (spans : Array (Float × Array Nat)) (q : Float × Float) : Bool :=
+  match spans.find? (·.1 == q.2) with
+  | some (_,listed) => d.anyListed data q listed 0
+  | none => d.anyFrom data q 0
+
+/-- `PreparedCoverage` with the fill test left out (false) where the form allows it. A form
+    with its own closure (`local`) keeps its test, which may then hold. The CPU raster uses it
+    for a record whose fill alpha is exactly 0 (`SVGRaster.prep`): the colour is the same whether
+    the fill test holds or not. -/
+def PreparedCoverage.withoutFill : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse .. => .analytic inverse #[] (.constant false) (.constant false)
+  | .analytic inverse data _ stroke => .analytic inverse data (.constant false) stroke
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutFill
+
+/-- As `withoutFill`, for the stroke test. -/
+def PreparedCoverage.withoutStroke : PreparedCoverage → PreparedCoverage
+  | .rectFill inverse x y w h => .rectFill inverse x y w h
+  | .analytic inverse data fill _ => .analytic inverse data fill (.constant false)
+  | .local inverse run => .local inverse run
+  | .clipped pass inner => .clipped pass inner.withoutStroke
+
 /-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
     point is in the piece's box (`pieceBox`). A point outside the box is outside the
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
     is geometry over Float), and the CPU raster's differential test checks it. -/
-def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat) : PreparedCoverage :=
+def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat)
+    (fillLive strokeLive : Bool) (pieces : DashPieces) (spans : Array (Float × Array Nat)) : PreparedCoverage :=
   match p.dashParts with
   | none => p.prepareCoverage data base
-  | some pieces =>
-    let fill : Prepared Bool := match p.geometry with
-      | .polygon points => ((boundsCondition base).prepare data).and
-          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
+  | some _ =>
+    -- The edge and point counts are found once here, not at each sample. A paint that is
+    -- known to add nothing (`fillLive`, `strokeLive` false: its alpha is exactly 0) has its
+    -- test left out: the colour is the same whether that test holds or not.
+    let fill : Prepared Bool := if !fillLive then .constant false else match p.geometry with
+      | .polygon points =>
+        let count := points.length
+        ((boundsCondition base).prepare data).and
+          (.dynamic (fun env => windingHitFast env.data base count p.style.rule env.position))
       | .path contours =>
-        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
+        let count := (NativeSVGPath.edges contours).length
+        .dynamic (fun env => pathHitFast env.data base count p.style.rule env.position)
       | g => (fillCondition g base).prepare data
-    let start := base+20+geometryTailSize p.geometry
-    let culled := (pieces.zipIdx.map fun (piece,i) =>
-      let o := start+20*i
-      (pieceBox piece data[o+16]!,(pieceCondition piece o).prepare data)).toArray
     let inner : PreparedCoverage := .local p.transform.inverse fun q =>
-      let env : Env := {data,position := q}
-      (fill.eval env,culled.any fun ((x0,y0,x1,y1),c) =>
-        x0 <= q.1 && q.1 <= x1 && y0 <= q.2 && q.2 <= y1 && c.eval env)
+      let fillHit := match fill with
+        | .constant b => b
+        | .dynamic run => run {data,position := q}
+      (fillHit,strokeLive && pieces.any data spans q)
     match p.clips with
     | [] => inner
     | clips => .clipped (clipPass data (p.clipStart base) clips) inner
@@ -4221,6 +4357,21 @@ private def Primitive.preparePaint (p : BackendPrimitive) (paint : Paint) (alpha
 private theorem Primitive.preparePaint_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
     (position : Float × Float) : p.preparePaint paint alpha position = p.paintAt paint alpha position := by
   cases paint <;> rfl
+
+/-- The row of a paint that is the same at every point (the `constantPaint` case of
+    `preparePaint`); none for a gradient or an image, whose colour depends on the point.
+    The CPU raster reads the row once per record and not through a closure at each sample. -/
+def Primitive.constantPaintRow? (p : BackendPrimitive) (paint : Paint) (alpha : Float) : Option (List Float) :=
+  match paint with
+  | .gradientRecord .. | .imageRecord .. => none
+  | _ => some (resolved paint p.style alpha)
+
+/-- Says: when `constantPaintRow?` gives a row, `preparePaint` gives that row at every point.
+    Does not say: anything about a paint that gives none; its colour is read at the point. -/
+private theorem Primitive.constantPaintRow?_correct (p : BackendPrimitive) (paint : Paint) (alpha : Float)
+    (row : List Float) (h : p.constantPaintRow? paint alpha = some row) (position : Float × Float) :
+    p.preparePaint paint alpha position = row := by
+  cases paint <;> simp_all [Primitive.constantPaintRow?,Primitive.preparePaint,constantPaint]
 
 def Primitive.sampleStep (p : BackendPrimitive) (data : Array Float) (base : Nat)
     (position : Float × Float) (result : Color) : Color :=

@@ -804,6 +804,47 @@ def childWrite (dom : Arena) (nm : String) (a : Nat → Nat) : Option (Nat × Li
     if parent >= dom.size || ns.any (· >= dom.size) then none
     else (subtreesWithin dom ns).map fun under => (parent, under)
 
+/-- The attribute that op 167 of `node_query` (a reflected attribute's setter,
+`Hosts.Dom.domOp`) writes on element `n` with argument `q`: its name, and its value before and
+after (`none`: absent). None when the op would refuse. -/
+def reflectedWrite (dom : Arena) (n : Nat) (q : String) : Option (String × Option String × Option String) :=
+  if n >= dom.size || (dom.get n).type != .element then none else
+  match q.splitOn "\x00" with
+  | row :: rest =>
+    match row.toNat?.bind (L4Factoidal.DOM.Reflect.table[·]?) with
+    | some r => match L4Factoidal.DOM.Reflect.set r ("\x00".intercalate rest) with
+      | .ok v =>
+        let old := L4Factoidal.DOM.Reflect.attr dom n r.content
+        some (r.content, old, if v == "r" then none else if v == "" then old else some (v.drop 1).toString)
+      | .error _ => none
+    | none => none
+  | [] => none
+
+/-- The reads after a write by `node_query` op `op` on node `n` (`Hosts.Dom.treeOps`, or an
+input's value). A reflected attribute's setter (167) is noted as `set_attribute` is: nothing
+when the value does not change or the element is in no document's tree, else the subtree of
+its parent (its own for `style`; the whole document for a `style` or `link` element), with
+`:has()` rules only when their arguments do not read the attribute. Any other op styles the
+whole document at the next read, with `node_query:<op>` in `forgetBy`. Until 2026-11-25 a
+reflected attribute's setter (`el.className = ...`) styled the whole document (issue 871). -/
+def nodeQueryWrote (r : Reads) (dom : Arena) (n op : Nat) (q : String) : Reads :=
+  match (if op == 167 then reflectedWrite dom n q else none) with
+  | some (name, old, new) =>
+    if old == new || !dom.connected n then r.wrote none true
+    else
+      let x := dom.get n
+      let styleOf : Option (Nat × Bool) :=
+        if name.toLower == "style" then some (n, false)
+        else if x.lname == "style" || x.lname == "link" then none
+        else x.parent.map fun p => (p, true)
+      let r' := r.wrote (styleOf.map (·.1)) false (styleOf.any (·.2))
+      let hasOk := match ((r.styleKept.bind (·.base)).bind (·.hasReads)) with
+        | some hr => hr.unaffected name (old.getD "") (new.getD "")
+        | none => false
+      { r' with hasSafe := r'.hasSafe && hasOk,
+                forgetBy := if styleOf.isNone then s!"node_query:167={name}" else r'.forgetBy }
+  | none => { r.wrote with forgetBy := s!"node_query:{op}" }
+
 /-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
 def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
   match ws.findIdx? (·.1 == why) with
@@ -1441,7 +1482,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q
         -- 169 writes an input's value or `value` attribute, except when it reads ("v")
         let writes := Hosts.Dom.treeOps.contains (a 1) || (a 1 == Hosts.Dom.valueOp && !q.startsWith "v")
-        let reads := if writes then h.reads.wrote else h.reads
+        let reads := if writes then nodeQueryWrote h.reads ds.dom (a 0) (a 1) q else h.reads
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else
@@ -2315,6 +2356,9 @@ private def sheetsArena : Arena :=
 #guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).isSome
 #guard childWrite sheetsArena "append_child" (fun i => [3, 99][i]!) == none
 #guard childWrite sheetsArena "set_attribute" (fun i => [3, 5][i]!) == none
+-- `reflectedWrite`: a node outside the arena, a text node or an unknown row gives none
+#guard reflectedWrite sheetsArena 99 "0\x00x" == none && reflectedWrite sheetsArena 1000000 "" == none
+#guard reflectedWrite sheetsArena 5 "999999\x00x" == none
 
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
