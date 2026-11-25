@@ -124,6 +124,148 @@ theorem power_limit (a : Array Nat) (e : Nat) (h : a.size = 12)
 #print axioms EthereumConsensus.BLS.Target.powLoop_one
 #print axioms EthereumConsensus.BLS.Target.power_limit
 
+/-! Reduced Tate pairing arithmetic, experimental coordinate interface only.
+The loop runs on G1; the twist is evaluated in the existing target field.
+No private scalar, signature verdict, or production entry point. -/
+
+private def subTarget (a b : Array Nat) : Array Nat :=
+  (List.range 12).toArray.map (fun i => subF a[i]! b[i]!)
+
+private def liftBase (a : Nat) : Array Nat := zero.set! 0 a
+
+private def untwist (a b k : Nat) : Array Nat :=
+  let half := (modulus+1)/2
+  let re := mulF (addF a b) half
+  let im := mulF (subF b a) half
+  (zero.set! (2*k) re).set! (2*k+1) im
+
+private def fpPow : Nat → Nat → Nat → Nat → Nat
+  | 0, _, _, acc => acc
+  | n+1, b, e, acc =>
+    if e = 0 then acc
+    else fpPow n (mulF b b) (e/2) (if e%2 = 1 then mulF acc b else acc)
+
+private abbrev TatePoint := Nat × Nat
+
+private structure LineStep where
+  point : Option TatePoint
+  numerator : Array Nat
+  denominator : Array Nat
+
+/-- Affine chord/tangent evaluation. Infinity is represented explicitly.
+The running point lives in G1, while qx and qy are untwisted Fp12 values. -/
+private def lineStep (a b : Option TatePoint) (qx qy : Array Nat) : LineStep :=
+  match a,b with
+  | none, _ => ⟨b,one,one⟩
+  | _, none => ⟨a,one,one⟩
+  | some (x,y), some (xx,yy) =>
+    if x = xx ∧ addF y yy = 0 then
+      ⟨none,subTarget qx (liftBase x),one⟩
+    else
+      let (num,den) := if x = xx then (mulF 3 (mulF x x),addF y y)
+                       else (subF yy y,subF xx x)
+      let m := mulF num (fpPow 381 den (modulus-2) 1)
+      let nx := subF (subF (mulF m m) x) xx
+      let ny := subF (mulF m (subF x nx)) y
+      let l := subTarget (subTarget qy (liftBase y))
+                 (multiplyRaw (liftBase m) (subTarget qx (liftBase x)))
+      ⟨some (nx,ny),l,subTarget qx (liftBase nx)⟩
+
+private def miller (p : TatePoint) (qx qy : Array Nat) :
+    Option TatePoint × Array Nat × Array Nat := Id.run do
+  let mut t := some p
+  let mut n := one
+  let mut d := one
+  -- r has 255 bits; the initial leading bit is represented by t = P.
+  for i in [:254] do
+    let s := lineStep t t qx qy
+    n := multiplyRaw (multiplyRaw n n) s.numerator
+    d := multiplyRaw (multiplyRaw d d) s.denominator
+    t := s.point
+    if (order / 2^(253-i)) % 2 = 1 then
+      let s := lineStep t (some p) qx qy
+      n := multiplyRaw n s.numerator
+      d := multiplyRaw d s.denominator
+      t := s.point
+  return (t,n,d)
+
+private def onG1 (p : TatePoint) : Bool :=
+  mulF p.2 p.2 == addF (mulF (mulF p.1 p.1) p.1) 4
+
+private def onUntwisted (x y : Array Nat) : Bool :=
+  multiplyRaw y y == subTarget (multiplyRaw (multiplyRaw x x) x)
+    (liftBase (modulus-4))
+
+private def tateFromPoints (p : TatePoint) (qx qy : Array Nat) :
+    Except String (Array Nat) :=
+  if !(onG1 p && onUntwisted qx qy) then .error "curve"
+  else
+    let (t,n,d) := miller p qx qy
+    if t.isSome then .error "g1_not_subgroup"
+    else if n = zero ∨ d = zero then .error "degenerate"
+    else
+      let di := powLoop 4572 d (modulus^12-2) one
+      if multiplyRaw d di != one then .error "inverse_invariant"
+      else (finalPower (multiplyRaw n di)).mapError (fun _ => "field_invariant")
+
+private def tateAdmitted (a : Array Nat) : Except String (Array Nat) :=
+  tateFromPoints (a[0]!,a[1]!) (untwist a[2]! a[3]! 4) (untwist a[4]! a[5]! 3)
+
+def tate (a : Array Nat) : Except String (Array Nat) :=
+  if a.size ≠ 6 then .error "width"
+  else if !(a.all (fun x => decide (x < modulus))) then .error "noncanonical"
+  else
+    match tateAdmitted a with
+    | .error e => .error e
+    | .ok out => if canonical out then .ok out else .error "field_invariant"
+
+/-- Kind: admission. Says: the coordinate entry point rejects wrong width.
+Does not say: the external encoding is an Ethereum precompile ABI. -/
+theorem tate_width (a : Array Nat) (h : a.size ≠ 6) :
+    tate a = .error "width" := by
+  simp only [tate,if_pos h]
+
+/-- Kind: admission. Says: noncanonical coordinates refuse before Miller.
+Does not say: the coordinates are in the mathematical subgroups. -/
+theorem tate_noncanonical (a : Array Nat) (h : a.size = 6)
+    (hc : a.all (fun x => decide (x < modulus)) = false) :
+    tate a = .error "noncanonical" := by
+  simp [tate,h,hc]
+
+/-- Kind: admission. Says: the curve predicates gate the actual recurrence.
+Does not say: the twist and curve arithmetic refine the group law. -/
+theorem tate_curve (p : TatePoint) (x y : Array Nat)
+    (h : (onG1 p && onUntwisted x y) = false) :
+    tateFromPoints p x y = .error "curve" := by
+  simp [tateFromPoints,h]
+
+/-- Kind: linkage. Says: the public result is the candidate output and canonical.
+Does not say: a reduced Tate result equals a particular optimal Ate encoding. -/
+theorem tate_ok (a out : Array Nat) (h : tate a = .ok out) :
+    tateAdmitted a = .ok out ∧ canonical out = true := by
+  by_cases hw : a.size ≠ 6
+  · simp only [tate,if_pos hw] at h
+    cases h
+  · by_cases hc : (!(a.all (fun x => decide (x < modulus)))) = true
+    · simp only [tate,if_neg hw,if_pos hc] at h
+      cases h
+    · cases he : tateAdmitted a with
+      | error e =>
+        simp only [tate,if_neg hw,if_neg hc,he] at h
+        cases h
+      | ok v =>
+        by_cases hv : canonical v = true
+        · simp only [tate,if_neg hw,if_neg hc,he,if_pos hv,Except.ok.injEq] at h
+          subst out
+          exact ⟨rfl,hv⟩
+        · simp only [tate,if_neg hw,if_neg hc,he,if_neg hv] at h
+          cases h
+
+#print axioms EthereumConsensus.BLS.Target.tate_width
+#print axioms EthereumConsensus.BLS.Target.tate_noncanonical
+#print axioms EthereumConsensus.BLS.Target.tate_curve
+#print axioms EthereumConsensus.BLS.Target.tate_ok
+
 end EthereumConsensus.BLS.Target
 
 open EthereumConsensus.BLS.Target
@@ -157,6 +299,14 @@ private def dispatch (s : String) : Except String String := do
       match e.toNat? with
       | none => throw "invalid_decimal"
       | some n => (power a n).mapError errorName
+    | "tate" :: xs => do
+      if xs.length ≠ 6 then throw "width"
+      let mut a := #[]
+      for x in xs do
+        match x.toNat? with
+        | none => throw "invalid_decimal"
+        | some n => a := a.push n
+      tate a
     | "final" :: xs => do
       let a ← parseCoefficients xs
       (finalPower a).mapError errorName
