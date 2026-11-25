@@ -3993,6 +3993,33 @@ def Primitive.pathEdges? (p : BackendPrimitive) : Option Nat :=
   | none,.path contours => some (NativeSVGPath.edges contours).length
   | _,_ => none
 
+/-- Preparing a dashed path counts its edges once, before the rasterizer runs
+the coverage function for each sample. -/
+private def preparedDashedFill (geometry : Geometry) (rule : FillRule)
+    (data : Array Float) (base : Nat) : Prepared Bool :=
+  match geometry with
+  | .polygon points =>
+    let count := points.length
+    ((boundsCondition base).prepare data).and
+      (.dynamic (fun env => windingHitFast env.data base count rule env.position))
+  | .path contours =>
+    let count := (NativeSVGPath.edges contours).length
+    .dynamic (fun env => pathHitFast env.data base count rule env.position)
+  | g => (fillCondition g base).prepare data
+
+private theorem preparedDashedFill_eq (geometry : Geometry) (rule : FillRule)
+    (data : Array Float) (base : Nat) :
+    preparedDashedFill geometry rule data base =
+      (match geometry with
+       | .polygon points => ((boundsCondition base).prepare data).and
+           (.dynamic (fun env => windingHitFast env.data base points.length rule env.position))
+       | .path contours =>
+         .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length rule env.position)
+       | g => (fillCondition g base).prepare data) := by
+  cases geometry <;> rfl
+
+#print axioms preparedDashedFill_eq
+
 /-- `prepareCoverage` for the CPU raster: a dashed stroke tests a piece only when the
     point is in the piece's box (`pieceBox`). A point outside the box is outside the
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
@@ -4001,12 +4028,7 @@ def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) 
   match p.dashParts with
   | none => p.prepareCoverage data base
   | some pieces =>
-    let fill : Prepared Bool := match p.geometry with
-      | .polygon points => ((boundsCondition base).prepare data).and
-          (.dynamic (fun env => windingHitFast env.data base points.length p.style.rule env.position))
-      | .path contours =>
-        .dynamic (fun env => pathHitFast env.data base (NativeSVGPath.edges contours).length p.style.rule env.position)
-      | g => (fillCondition g base).prepare data
+    let fill := preparedDashedFill p.geometry p.style.rule data base
     let start := base+20+geometryTailSize p.geometry
     let culled := (pieces.zipIdx.map fun (piece,i) =>
       let o := start+20*i
