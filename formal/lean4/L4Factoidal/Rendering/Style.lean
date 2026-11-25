@@ -2704,6 +2704,17 @@ def hintEdge : Option Length → Option (Float × Float)
   | some (.percent p) => some (0, p)
   | _ => none
 
+private def canvasHints (n : DOM.Node) (s : Computed) : Computed :=
+  match HTML.Dimension.parseNonNegative (attrValue n "width"),
+      HTML.Dimension.parseNonNegative (attrValue n "height") with
+  | some w,some h => {s with pos := {s.pos with ratio := some (w,h), ratioAuto := true}}
+  | _,_ => s
+
+private theorem canvasHints_size (n : DOM.Node) (s : Computed) :
+    (canvasHints n s).width = s.width ∧ (canvasHints n s).height = s.height := by
+  unfold canvasHints
+  split <;> exact ⟨rfl,rfl⟩
+
 /-- HTML §15.4.3 and §15.3.13, §15.5.15: the `width` and `height` attributes of `img`,
 `video`, `iframe`, `embed`, `object`, `marquee` and an image button map to the
 `width` and `height` properties; `hr` width too. For `canvas`, the attributes give an
@@ -2712,13 +2723,8 @@ def hintEdge : Option Length → Option (Float × Float)
 `border` of `img`, `object` and an image button to the border widths, with a solid border.
 All below author CSS. A percentage height resolves against a definite containing height
 (`Fragment.percentHeights`) and is read as `auto` otherwise. -/
-def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
-  if DOM.Dom.isHtmlElement n "canvas" then
-    let w := HTML.Dimension.parseNonNegative (attrValue n "width")
-    let h := HTML.Dimension.parseNonNegative (attrValue n "height")
-    return match w,h with
-      | some w,some h => {s with pos := {s.pos with ratio := some (w,h), ratioAuto := true}}
-      | _,_ => s
+def replacedHints (n : DOM.Node) (s : Computed) : Computed :=
+  if DOM.Dom.isHtmlElement n "canvas" then canvasHints n s else Id.run do
   let tag := n.lname
   let imageInput := tag == "input" && (attrValue n "type").toLower == "image"
   let sized := imageInput || ["img","video","iframe","embed","object","marquee"].contains tag
@@ -2742,9 +2748,8 @@ def replacedHints (n : DOM.Node) (s : Computed) : Computed := Id.run do
 /-- Canvas bitmap attributes leave the preferred CSS width and height unchanged. -/
 theorem replacedHints_canvas_size (n : DOM.Node) (s : Computed) (h : DOM.Dom.isHtmlElement n "canvas" = true) :
     (replacedHints n s).width = s.width ∧ (replacedHints n s).height = s.height := by
-  unfold replacedHints
-  simp only [h, if_true, Id.run, pure]
-  split <;> exact ⟨rfl,rfl⟩
+  rw [replacedHints, if_pos h]
+  exact canvasHints_size n s
 
 #print axioms replacedHints_canvas_size
 
