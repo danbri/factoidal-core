@@ -135,7 +135,23 @@ def suite_dir(cache, commit, prefix):
     return cache / "suites" / commit / prefix.strip("/").replace("/", "_")
 
 
+RUNTIME = Path("labs/demos/foafnaut/.build/native-html/runtime/web-render.mjs")
+
+
+def ensure_runtime():
+    """native_html_engine.ts imports the wasm runtime statically, but with a native library it
+    never calls it. A worktree with no wasm build has no such file, and then every drawing
+    process exits 1 and every test is CRASH. Write a stub that throws if it is ever called."""
+    f = REPO / RUNTIME
+    if not f.exists():
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("// foafnaut-ab.py stub: no wasm runtime; the native library must answer.\n"
+                     "export default async function () { throw new Error(\"foafnaut-ab: wasm runtime not installed\"); }\n")
+        print(f"wrote stub {f}")
+
+
 def suites(cache, ref, manifest, wpt, first=None, jobs=2, use_release=True):
+    ensure_runtime()
     commit = sha(ref)
     lib = lib_path(cache, commit)
     if not lib.exists() and not (use_release and fetch_release(commit, lib)):
@@ -153,6 +169,12 @@ def suites(cache, ref, manifest, wpt, first=None, jobs=2, use_release=True):
                                  "--out", str(d), "--jobs", str(jobs)],
                                 cwd=REPO, env=env_path(), stdout=f, stderr=subprocess.STDOUT).returncode
         print(f"suites {commit[:12]} {p}: rc {rc}", flush=True)
+        res = d / "results.json"
+        tests = json.loads(res.read_text()).get("tests", []) if res.exists() else []
+        if tests and all(t.get("status") == "CRASH" for t in tests):
+            res.rename(d / "results.all-crash.json")
+            sys.exit(f"suites {commit[:12]} {p}: all {len(tests)} tests CRASH, so the run is not valid; "
+                     f"see {d / 'pictures'}/.stderr-*.log")
 
 
 def statuses(cache, commit, prefix):
@@ -212,6 +234,7 @@ def render_page(z, lib, out):
 def pages(cache, base, branch, realpages):
     """Both libraries render each page at the same moment, so load affects them alike. The
     times are still wall-clock: compare them only from a machine with no build running."""
+    ensure_runtime()
     a_sha, b_sha = sha(base), sha(branch)
     libs = {"A": lib_path(cache, a_sha), "B": lib_path(cache, b_sha)}
     out = cache / "pages" / f"{a_sha[:12]}-{b_sha[:12]}"
