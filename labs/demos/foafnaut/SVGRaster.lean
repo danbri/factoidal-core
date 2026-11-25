@@ -221,10 +221,36 @@ def _root_.NativeSVG.Scene.rasterTiles (s : Scene) (top rows : Nat) : ByteArray 
 
 /-! ## The fast form -/
 
+/-- The fill and stroke rows `[r,g,b,alpha]` of a record whose two paints are the same at every
+point (`Primitive.constantPaintRow?`), as floats: `overColors` reads them with no list. -/
+structure PaintRows where
+  fr : Float
+  fg : Float
+  fb : Float
+  fa : Float
+  sr : Float
+  sg : Float
+  sb : Float
+  sa : Float
+
+def paintRows? (p : BackendPrimitive) : Option PaintRows :=
+  match p.constantPaintRow? p.style.fill p.style.fillOpacity,p.constantPaintRow? p.style.stroke p.style.strokeOpacity with
+  | some f,some s => some ⟨f[0]!,f[1]!,f[2]!,f[3]!,s[0]!,s[1]!,s[2]!,s[3]!⟩
+  | _,_ => none
+
 /-- A prepared record, the record itself, and its conservative box in target pixels. -/
 structure Prep where
   item : Item
   sample : PreparedSample
+  /-- `Primitive.pathEdges?` of the record, found once and not at each pixel row. -/
+  edgeCount : Option Nat
+  /-- The paint rows when both paints are constant, else none (the closures of `sample` are used). -/
+  rows : Option PaintRows
+  /-- False when the fill (stroke) paint is constant with alpha exactly 0: its test adds nothing. -/
+  fillLive : Bool
+  strokeLive : Bool
+  /-- The stroke pieces of a dashed record, with their boxes (`Primitive.dashPieces`). -/
+  dash : Option DashPieces
   x0 : Float
   y0 : Float
   x1 : Float
@@ -235,10 +261,22 @@ private def infinity : Float := 1.0/0.0
 /-- `Primitive.screenBox`, the box `Scene.tiles` lists by; no box means every pixel. -/
 def prep (m : Mapping) (data : Array Float) (item : Item) : Prep :=
   let (x0,y0,x1,y1) := (item.1.screenBox m).getD (-infinity,-infinity,infinity,infinity)
+  let rows := paintRows? item.1
+  -- A constant paint of alpha +0 gives the same colour whether its test holds or not
+  -- (`overRows`: `fa` and `sa` are the literal 0 on both branches), so its test is left out.
+  let fillLive := match rows with | some r => r.fa.toBits != 0 | none => true
+  let strokeLive := match rows with | some r => r.sa.toBits != 0 | none => true
   let sample := item.1.prepareSample data item.2
+  let dash := if item.1.dashParts.isSome then some (item.1.dashPieces data item.2) else none
   -- A dashed stroke tests only the pieces whose box holds the point.
-  let sample := if item.1.dashParts.isSome then {sample with coverage := item.1.prepareCoverageCulled data item.2} else sample
-  ⟨item,sample,x0,y0,x1,y1⟩
+  let sample :=
+    match dash with
+    | some d => {sample with coverage := item.1.prepareCoverageCulled data item.2 fillLive strokeLive d #[]}
+    | none =>
+      let c := sample.coverage
+      let c := if fillLive then c else c.withoutFill
+      {sample with coverage := if strokeLive then c else c.withoutStroke}
+  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,dash,x0,y0,x1,y1⟩
 
 /-- True when the box of `r` meets the pixel square at `(x,y)`. -/
 @[inline] def Prep.meetsRow (r : Prep) (y : Float) : Bool := r.y0 <= y+1 && y <= r.y1
@@ -252,28 +290,114 @@ def sampleRows : Array Float :=
 the row's sixteen sample lines (`pathSpansAt`, `pathHitSpans`). A sample whose local `y`
 is not one of those lines (a rotated path) tests every edge. -/
 def Prep.forRow (m : Mapping) (data : Array Float) (yf : Float) (r : Prep) : Prep :=
-  match r.item.1.pathEdges? with
+  match r.dash with
+  | some d =>
+    -- A dashed stroke: the pieces whose box meets each of the row's sixteen sample lines
+    -- (`DashPieces.crossing`), by the local `y` of the line; any other `y` tests every piece.
+    if !r.strokeLive then r else
+    let wx := (world m (max 0 r.x0) yf).1
+    let spans := sampleRows.map fun dy =>
+      let py := (r.item.1.localPoint wx (world m wx (yf+dy)).2).2
+      (py,d.crossing py)
+    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageCulled data r.item.2 r.fillLive r.strokeLive d spans}}
+  | none =>
+  match r.edgeCount with
   | none => r
   | some count =>
+    -- A fill that adds nothing needs no edge lists (its test is already left out in `prep`).
+    if !r.fillLive then r else
     let wx := (world m (max 0 r.x0) yf).1
     let spans := sampleRows.map fun dy =>
       let py := pathSampleY (r.item.1.localPoint wx (world m wx (yf+dy)).2)
       (py,pathSpansAt data r.item.2 count py)
-    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageSpans data r.item.2 spans}}
+    let c := r.item.1.prepareCoverageSpans data r.item.2 spans
+    {r with sample := {r.sample with coverage := if r.strokeLive then c else c.withoutStroke}}
+
+/-- `overColors` with the paint rows as floats, the same Float operations in the same order. -/
+@[inline] def overRows (r : PaintRows) (opacity : Float) (fillHit strokeHit : Bool) (dst : Color) : Color :=
+  let fa : Float := if fillHit then r.fa else 0
+  let sa : Float := if strokeHit then r.sa else 0
+  let pr := r.sr*sa+r.fr*fa*(1-sa)
+  let pg := r.sg*sa+r.fg*fa*(1-sa)
+  let pb := r.sb*sa+r.fb*fa*(1-sa)
+  let lr := pr*opacity
+  let lg := pg*opacity
+  let lb := pb*opacity
+  let alpha := (sa+fa*(1-sa))*opacity
+  ⟨lr + dst.r * (1 - alpha), lg + dst.g * (1 - alpha), lb + dst.b * (1 - alpha)⟩
 
 /-- One sample over the records whose box meets the pixel's column `x`. -/
 def sampleFast (m : Mapping) (prepared : Array Prep) (column : Float) (x y : Float) : Color :=
-  if outside m x y then white
+  if outside m x y || prepared.size == 0 then white
   else
     let position := world m x y
     prepared.foldl (fun c r =>
-      if r.meetsColumn column then
+      if r.meetsColumn column && (r.fillLive || r.strokeLive) then
         -- A record that covers no sample leaves the colour as it is: its paint has
         -- alpha 0 in `overColors`, so the colour gains 0 and keeps all of itself.
         let hits := r.sample.coverage.eval position
-        if hits.1 || hits.2 then overColors (r.sample.fill position) (r.sample.stroke position) r.sample.opacity hits c
+        if hits.1 || hits.2 then
+          match r.rows with
+          | some rows => overRows rows r.sample.opacity hits.1 hits.2 c
+          | none => overColors (r.sample.fill position) (r.sample.stroke position) r.sample.opacity hits c
         else c
       else c) white
+
+/-- The offsets of the first four and the other twelve samples of a pixel (`adaptiveSampleAt`),
+as unboxed floats. -/
+def firstDx : FloatArray := ⟨(NativeGraphics.pixelSampleFirstOffsets.map (·.1)).toArray⟩
+def firstDy : FloatArray := ⟨(NativeGraphics.pixelSampleFirstOffsets.map (·.2)).toArray⟩
+def restDx : FloatArray := ⟨(NativeGraphics.pixelSampleRestOffsets.map (·.1)).toArray⟩
+def restDy : FloatArray := ⟨(NativeGraphics.pixelSampleRestOffsets.map (·.2)).toArray⟩
+
+/-- The sample counts of `adaptiveSampleAt`: four, and sixteen at an edge. -/
+def nFirst : Float := Float.ofNat NativeGraphics.pixelSampleFirstOffsets.length
+def nAll : Float := nFirst + Float.ofNat NativeGraphics.pixelSampleRestOffsets.length
+
+/-- Totals and extremes of the first samples of a pixel. -/
+structure FirstStats where
+  tr : Float
+  tg : Float
+  tb : Float
+  lr : Float
+  lg : Float
+  lb : Float
+  hr : Float
+  hg : Float
+  hb : Float
+
+/-- The first samples `i ..` of a pixel: the loop of `adaptiveSampleAt` over
+`pixelSampleFirstOffsets`, with the three running colours as floats. -/
+private def firstFrom (m : Mapping) (prepared : Array Prep) (column px py : Float) (i : Nat)
+    (tr tg tb lr lg lb hr hg hb : Float) : FirstStats :=
+  if i < firstDx.size then
+    let c := sampleFast m prepared column (px+firstDx.get! i) (py+firstDy.get! i)
+    firstFrom m prepared column px py (i+1) (tr+c.r) (tg+c.g) (tb+c.b)
+      (min lr c.r) (min lg c.g) (min lb c.b) (max hr c.r) (max hg c.g) (max hb c.b)
+  else ⟨tr,tg,tb,lr,lg,lb,hr,hg,hb⟩
+termination_by firstDx.size - i
+
+/-- The other samples `i ..` of a pixel with an edge, added to the totals. -/
+private def restFrom (m : Mapping) (prepared : Array Prep) (column px py : Float) (i : Nat)
+    (tr tg tb : Float) : Color :=
+  if i < restDx.size then
+    let c := sampleFast m prepared column (px+restDx.get! i) (py+restDy.get! i)
+    restFrom m prepared column px py (i+1) (tr+c.r) (tg+c.g) (tb+c.b)
+  else
+    ⟨tr/nAll,tg/nAll,tb/nAll⟩
+termination_by restDx.size - i
+
+/-- `adaptiveSampleAt (sampleFast m prepared column) rows px py` as loops over unboxed floats:
+the same samples, additions, minima and maxima in the same order, with no closure, list or
+colour made for each sample. A differential test (the `#guard`s below, and the SVG image
+benchmark of the pixel hashes) checks it; no theorem states it. -/
+def pixelFast (m : Mapping) (prepared : Array Prep) (column : Float) (rows : Nat) (px py : Float) : Color :=
+  let s := firstFrom m prepared column px py 0 0 0 0 1e9 1e9 1e9 (-1e9) (-1e9) (-1e9)
+  if rows <= NativeGraphics.pixelSampleRefineRowLimit && (s.hr-s.lr > NativeGraphics.pixelSampleEdgeThreshold ||
+      s.hg-s.lg > NativeGraphics.pixelSampleEdgeThreshold || s.hb-s.lb > NativeGraphics.pixelSampleEdgeThreshold) then
+    restFrom m prepared column px py 0 s.tr s.tg s.tb
+  else
+    ⟨s.tr/nFirst,s.tg/nFirst,s.tb/nFirst⟩
 
 @[inline] private def pushPixel (out : ByteArray) (c : Color) : ByteArray :=
   out.push (channel c.r) |>.push (channel c.g) |>.push (channel c.b) |>.push 255
@@ -284,7 +408,7 @@ private def rowFrom (s : Scene) (g : Grid) (rows : Nat) (row : Array (Array Prep
     (x : Nat) (out : ByteArray) : ByteArray :=
   if x < s.width then
     let xf := Float.ofNat x
-    let c := adaptiveSampleAt (sampleFast s.mapping (row[g.tileColumn x]?.getD #[]) xf) rows xf yf
+    let c := pixelFast s.mapping (row[g.tileColumn x]?.getD #[]) xf rows xf yf
     rowFrom s g rows row yf (x+1) (pushPixel out c)
   else out
 termination_by s.width - x

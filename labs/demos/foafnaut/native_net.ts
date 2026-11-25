@@ -66,7 +66,9 @@ function tunnelClient(target:string,address:string,port:number,opts:NetOptions,r
       if(upstream)closeConnection(upstream);
     }
   };
-  const timer=setTimeout(stopListening,opts.timeoutMs??300000);
+  // A reusable listener may need to reconnect even after an earlier request
+  // timed out. Its batch owns it. Each request and handshake have their own deadline.
+  const timer=reusable?undefined:setTimeout(stopListening,opts.timeoutMs??300000);
   let client:Deno.HttpClient;
   try{
     client=Deno.createHttpClient({proxy:{transport:"http",url:`http://127.0.0.1:${listener.addr.port}`,
