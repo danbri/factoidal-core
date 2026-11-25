@@ -827,8 +827,12 @@ its parent (its own for `style`; the whole document for a `style` or `link` elem
 `:has()` rules only when their arguments do not read the attribute. Any other op styles the
 whole document at the next read, with `node_query:<op>` in `forgetBy`. Until 2026-11-25 a
 reflected attribute's setter (`el.className = ...`) styled the whole document (issue 871). -/
-def nodeQueryWrote (r : Reads) (dom : Arena) (n op : Nat) (q : String) : Reads :=
-  match (if op == 167 then reflectedWrite dom n q else none) with
+def nodeQueryWrote (r : Reads) (dom after : Arena) (n op : Nat) (q : String) : Reads :=
+  -- In DomOps, op 169 can only mutate the dirty value (.setValue). When it
+  -- returns an attribute change to the guest, set_attribute records the actual write.
+  if op == Hosts.Dom.valueOp && (dom.get n).dirtyValue == (after.get n).dirtyValue then
+    r.wrote none true
+  else match (if op == 167 then reflectedWrite dom n q else none) with
   | some (name, old, new) =>
     if old == new || !dom.connected n then r.wrote none true
     else
@@ -1482,7 +1486,7 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
         let (dom, answer) := Hosts.Dom.domOp ds (a 0) (a 1) q
         -- 169 writes an input's value or `value` attribute, except when it reads ("v")
         let writes := Hosts.Dom.treeOps.contains (a 1) || (a 1 == Hosts.Dom.valueOp && !q.startsWith "v")
-        let reads := if writes then nodeQueryWrote h.reads ds.dom (a 0) (a 1) q else h.reads
+        let reads := if writes then nodeQueryWrote h.reads ds.dom dom.dom (a 0) (a 1) q else h.reads
         let (st, r) := Hosts.Dom.answerStr mem st (a 4) (a 5) answer
         ({ h with dom, reads }, st, r)
     else
@@ -2359,6 +2363,19 @@ private def sheetsArena : Arena :=
 -- `reflectedWrite`: a node outside the arena, a text node or an unknown row gives none
 #guard reflectedWrite sheetsArena 99 "0\x00x" == none && reflectedWrite sheetsArena 1000000 "" == none
 #guard reflectedWrite sheetsArena 5 "999999\x00x" == none
+
+-- A value request without a dirty-value change keeps pending restyles.
+-- An actual value change retains the conservative full recascade.
+#guard
+  let (dom, n) := aboutBlank.create { type := .element, doc := 0,
+    ns := some L4Factoidal.DOM.htmlNS, lname := "input" }
+  let dom := dom.linkChild 3 n none
+  let r : Reads := { styleWrites := some [3] }
+  let same := nodeQueryWrote r dom dom n Hosts.Dom.valueOp "t"
+  let changedDom := dom.setNode n fun x => { x with dirtyValue := some "new" }
+  let changed := nodeQueryWrote r dom changedDom n Hosts.Dom.valueOp "snew"
+  same.version == 1 && same.styleWrites == some [3] && same.styleWriteAt == 0 &&
+    changed.styleWrites.isNone && changed.styleWriteAt == 1
 
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
