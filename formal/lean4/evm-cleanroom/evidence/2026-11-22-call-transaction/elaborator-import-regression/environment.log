@@ -1,0 +1,18 @@
+/workspace/scratch/144b70d8ac20/contract-phase-results/baseline-254c8329-evm-subset: OK
+/workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset: OK
+Baseline local source 254c8329a8cd7da95b51901ba2091fa3ce43a97e; public source equivalent d3843c42d3b9c6fea8e96c3d0eebd65890dbea4b
+Candidate local runtime source fb5812620c0feb2334fa016861baeab6f7f89879
+Repository head at start: 57509d6fd1686f854479664e23b74fa51622066d
+Measurement started 2026-11-22T23:32:37Z
+Linux 41a3de7671c9 6.18.57 #1 SMP Tue Oct 20 21:56:04 UTC 2026 x86_64 GNU/Linux
+0.34 0.28 0.33 4/476 11
+v24.22.3
+Python 3.12.14
+aa2533e3fa8b1d2907e5c84933956e207a53e2b0a674e1d8bef716b1afc99ea0  /workspace/scratch/144b70d8ac20/baseline-diff.json.lean-input.tsv
+610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb  /workspace/scratch/144b70d8ac20/baseline-corpus.jsonl
+c285adb19255e851c122212213d4332d25e628461694d78ecf0129da77bff3ea  /workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/scripts/differential/byte-call-timing.mjs
+7167046438cb2bf6a083d6576ecc1dd0b61af7af01cace5e166a907e5ac9b5d9  /workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/scripts/differential/raw10000-timing.py
+Measurement finished 2026-11-22T23:32:56Z
+0.73 0.37 0.36 1/447 2181
+/workspace/scratch/144b70d8ac20/contract-phase-results/baseline-254c8329-evm-subset: OK
+/workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset: OK

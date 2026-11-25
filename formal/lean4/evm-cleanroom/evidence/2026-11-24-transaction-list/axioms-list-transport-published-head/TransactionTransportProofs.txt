@@ -1,0 +1,18 @@
+'EVMCleanroom.TransactionTransport.structural_bounded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_bounded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.feed_error' does not depend on any axioms
+'EVMCleanroom.TransactionTransport.feed_bounded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.scan_bounded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_depth_limit' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_number_limit' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_exponent_limit' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_exponent_exact' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_quoted_escaped' depends on axioms: [propext]
+'EVMCleanroom.TransactionTransport.step_quoted_escape' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_quoted_close' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionTransport.step_quoted_literal' depends on axioms: [propext]
+'EVMCleanroom.TransactionTransport.parseWith_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.parseWith_checked' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionTransport.parseJSON_scan_refused' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionTransport.parseJSON_checked' depends on axioms: [propext, Classical.choice, Quot.sound]
+

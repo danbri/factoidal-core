@@ -1,0 +1,147 @@
+
+/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000c32b70 <initialize_Lean_Data_Json>:
+  c32b70:	53                   	push   %rbx
+  c32b71:	80 3d f4 6a 15 04 01 	cmpb   $0x1,0x4156af4(%rip)        # 4d8966c <_G_initialized>
+  c32b78:	75 2f                	jne    c32ba9 <initialize_Lean_Data_Json+0x39>
+  c32b7a:	e8 a1 ca ec 03       	call   4aff620 <lean_inc_heartbeat>
+  c32b7f:	bf 10 00 00 00       	mov    $0x10,%edi
+  c32b84:	e8 27 3c ef 03       	call   4b267b0 <mi_malloc_small>
+  c32b89:	48 85 c0             	test   %rax,%rax
+  c32b8c:	0f 84 c9 01 00 00    	je     c32d5b <initialize_Lean_Data_Json+0x1eb>
+  c32b92:	48 b9 01 00 00 00 10 	movabs $0x1001000000001,%rcx
+  c32b99:	00 01 00 
+  c32b9c:	48 89 08             	mov    %rcx,(%rax)
+  c32b9f:	48 c7 40 08 01 00 00 	movq   $0x1,0x8(%rax)
+  c32ba6:	00 
+  c32ba7:	5b                   	pop    %rbx
+  c32ba8:	c3                   	ret
+  c32ba9:	c6 05 bc 6a 15 04 01 	movb   $0x1,0x4156abc(%rip)        # 4d8966c <_G_initialized>
+  c32bb0:	40 0f b6 df          	movzbl %dil,%ebx
+  c32bb4:	89 df                	mov    %ebx,%edi
+  c32bb6:	e8 65 02 00 00       	call   c32e20 <initialize_Lean_Data_Json_Stream>
+  c32bbb:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32bbf:	c1 e1 18             	shl    $0x18,%ecx
+  c32bc2:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32bc8:	0f 84 e4 00 00 00    	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32bce:	8b 08                	mov    (%rax),%ecx
+  c32bd0:	83 f9 02             	cmp    $0x2,%ecx
+  c32bd3:	0f 8c ef 00 00 00    	jl     c32cc8 <initialize_Lean_Data_Json+0x158>
+  c32bd9:	ff c9                	dec    %ecx
+  c32bdb:	89 08                	mov    %ecx,(%rax)
+  c32bdd:	89 df                	mov    %ebx,%edi
+  c32bdf:	e8 bc ed ff ff       	call   c319a0 <initialize_Lean_Data_Json_Printer>
+  c32be4:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32be8:	c1 e1 18             	shl    $0x18,%ecx
+  c32beb:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32bf1:	0f 84 bb 00 00 00    	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32bf7:	8b 08                	mov    (%rax),%ecx
+  c32bf9:	83 f9 02             	cmp    $0x2,%ecx
+  c32bfc:	0f 8c db 00 00 00    	jl     c32cdd <initialize_Lean_Data_Json+0x16d>
+  c32c02:	ff c9                	dec    %ecx
+  c32c04:	89 08                	mov    %ecx,(%rax)
+  c32c06:	89 df                	mov    %ebx,%edi
+  c32c08:	e8 53 b1 ff ff       	call   c2dd60 <initialize_Lean_Data_Json_Parser>
+  c32c0d:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32c11:	c1 e1 18             	shl    $0x18,%ecx
+  c32c14:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32c1a:	0f 84 92 00 00 00    	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32c20:	8b 08                	mov    (%rax),%ecx
+  c32c22:	83 f9 02             	cmp    $0x2,%ecx
+  c32c25:	0f 8c c7 00 00 00    	jl     c32cf2 <initialize_Lean_Data_Json+0x182>
+  c32c2b:	ff c9                	dec    %ecx
+  c32c2d:	89 08                	mov    %ecx,(%rax)
+  c32c2f:	89 df                	mov    %ebx,%edi
+  c32c31:	e8 ea 03 00 00       	call   c33020 <initialize_Lean_Data_Json_FromToJson>
+  c32c36:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32c3a:	c1 e1 18             	shl    $0x18,%ecx
+  c32c3d:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32c43:	74 6d                	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32c45:	8b 08                	mov    (%rax),%ecx
+  c32c47:	83 f9 02             	cmp    $0x2,%ecx
+  c32c4a:	0f 8c b7 00 00 00    	jl     c32d07 <initialize_Lean_Data_Json+0x197>
+  c32c50:	ff c9                	dec    %ecx
+  c32c52:	89 08                	mov    %ecx,(%rax)
+  c32c54:	89 df                	mov    %ebx,%edi
+  c32c56:	e8 45 26 00 00       	call   c352a0 <initialize_Lean_Data_Json_Elab>
+  c32c5b:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32c5f:	c1 e1 18             	shl    $0x18,%ecx
+  c32c62:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32c68:	74 48                	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32c6a:	8b 08                	mov    (%rax),%ecx
+  c32c6c:	83 f9 02             	cmp    $0x2,%ecx
+  c32c6f:	0f 8c a7 00 00 00    	jl     c32d1c <initialize_Lean_Data_Json+0x1ac>
+  c32c75:	ff c9                	dec    %ecx
+  c32c77:	89 08                	mov    %ecx,(%rax)
+  c32c79:	89 df                	mov    %ebx,%edi
+  c32c7b:	e8 00 fd ff ff       	call   c32980 <runtime_initialize_Lean_Data_Json>
+  c32c80:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32c84:	c1 e1 18             	shl    $0x18,%ecx
+  c32c87:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32c8d:	74 23                	je     c32cb2 <initialize_Lean_Data_Json+0x142>
+  c32c8f:	8b 08                	mov    (%rax),%ecx
+  c32c91:	83 f9 02             	cmp    $0x2,%ecx
+  c32c94:	0f 8c 97 00 00 00    	jl     c32d31 <initialize_Lean_Data_Json+0x1c1>
+  c32c9a:	ff c9                	dec    %ecx
+  c32c9c:	89 08                	mov    %ecx,(%rax)
+  c32c9e:	e8 7d fe ff ff       	call   c32b20 <meta_initialize_Lean_Data_Json>
+  c32ca3:	0f b6 48 07          	movzbl 0x7(%rax),%ecx
+  c32ca7:	c1 e1 18             	shl    $0x18,%ecx
+  c32caa:	81 f9 00 00 00 01    	cmp    $0x1000000,%ecx
+  c32cb0:	75 02                	jne    c32cb4 <initialize_Lean_Data_Json+0x144>
+  c32cb2:	5b                   	pop    %rbx
+  c32cb3:	c3                   	ret
+  c32cb4:	8b 08                	mov    (%rax),%ecx
+  c32cb6:	83 f9 02             	cmp    $0x2,%ecx
+  c32cb9:	0f 8c 87 00 00 00    	jl     c32d46 <initialize_Lean_Data_Json+0x1d6>
+  c32cbf:	ff c9                	dec    %ecx
+  c32cc1:	89 08                	mov    %ecx,(%rax)
+  c32cc3:	e9 b2 fe ff ff       	jmp    c32b7a <initialize_Lean_Data_Json+0xa>
+  c32cc8:	85 c9                	test   %ecx,%ecx
+  c32cca:	0f 84 0d ff ff ff    	je     c32bdd <initialize_Lean_Data_Json+0x6d>
+  c32cd0:	48 89 c7             	mov    %rax,%rdi
+  c32cd3:	e8 68 f0 e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32cd8:	e9 00 ff ff ff       	jmp    c32bdd <initialize_Lean_Data_Json+0x6d>
+  c32cdd:	85 c9                	test   %ecx,%ecx
+  c32cdf:	0f 84 21 ff ff ff    	je     c32c06 <initialize_Lean_Data_Json+0x96>
+  c32ce5:	48 89 c7             	mov    %rax,%rdi
+  c32ce8:	e8 53 f0 e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32ced:	e9 14 ff ff ff       	jmp    c32c06 <initialize_Lean_Data_Json+0x96>
+  c32cf2:	85 c9                	test   %ecx,%ecx
+  c32cf4:	0f 84 35 ff ff ff    	je     c32c2f <initialize_Lean_Data_Json+0xbf>
+  c32cfa:	48 89 c7             	mov    %rax,%rdi
+  c32cfd:	e8 3e f0 e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32d02:	e9 28 ff ff ff       	jmp    c32c2f <initialize_Lean_Data_Json+0xbf>
+  c32d07:	85 c9                	test   %ecx,%ecx
+  c32d09:	0f 84 45 ff ff ff    	je     c32c54 <initialize_Lean_Data_Json+0xe4>
+  c32d0f:	48 89 c7             	mov    %rax,%rdi
+  c32d12:	e8 29 f0 e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32d17:	e9 38 ff ff ff       	jmp    c32c54 <initialize_Lean_Data_Json+0xe4>
+  c32d1c:	85 c9                	test   %ecx,%ecx
+  c32d1e:	0f 84 55 ff ff ff    	je     c32c79 <initialize_Lean_Data_Json+0x109>
+  c32d24:	48 89 c7             	mov    %rax,%rdi
+  c32d27:	e8 14 f0 e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32d2c:	e9 48 ff ff ff       	jmp    c32c79 <initialize_Lean_Data_Json+0x109>
+  c32d31:	85 c9                	test   %ecx,%ecx
+  c32d33:	0f 84 65 ff ff ff    	je     c32c9e <initialize_Lean_Data_Json+0x12e>
+  c32d39:	48 89 c7             	mov    %rax,%rdi
+  c32d3c:	e8 ff ef e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32d41:	e9 58 ff ff ff       	jmp    c32c9e <initialize_Lean_Data_Json+0x12e>
+  c32d46:	85 c9                	test   %ecx,%ecx
+  c32d48:	0f 84 2c fe ff ff    	je     c32b7a <initialize_Lean_Data_Json+0xa>
+  c32d4e:	48 89 c7             	mov    %rax,%rdi
+  c32d51:	e8 ea ef e8 03       	call   4ac1d40 <lean_dec_ref_cold>
+  c32d56:	e9 1f fe ff ff       	jmp    c32b7a <initialize_Lean_Data_Json+0xa>
+  c32d5b:	e8 30 85 e9 03       	call   4acb290 <lean_internal_panic_out_of_memory>
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section __lcxx_override:
+
+Disassembly of section .plt:

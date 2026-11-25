@@ -1,0 +1,25 @@
+⚠ [2/6] Replayed EVMCleanroom.HeaderFees
+warning: EVMCleanroom/HeaderFees.lean:155:21: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: EVMCleanroom/HeaderFees.lean:156:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [hfirst, hparent]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: EVMCleanroom/HeaderFees.lean:191:0: 'EVMCleanroom.HeaderFees.nextBaseFee_at_target' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:192:0: 'EVMCleanroom.HeaderFees.nextBaseFee_above' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:193:0: 'EVMCleanroom.HeaderFees.nextBaseFee_below' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:194:0: 'EVMCleanroom.HeaderFees.expected_firstLondon' depends on axioms: [propext]
+info: EVMCleanroom/HeaderFees.lean:195:0: 'EVMCleanroom.HeaderFees.checkHeader_sound' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:196:0: 'EVMCleanroom.HeaderFees.missing_parent_refused' depends on axioms: [propext]
+✔ [4/6] Built EVMCleanroom.HeaderFeeCLI (352ms)
+✔ [5/6] Built EVMCleanroom.HeaderFeeCLI:c.o (297ms)
+✔ [6/6] Built «evm-header-fees»:exe (283ms)
+Build completed successfully (6 jobs).

@@ -1,0 +1,7 @@
+'EVMCleanroom.MPT.checked_hash' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.MPT.checked_inline' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.MPT.walk_zero' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.MPT.walk_success' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.MPT.lookup_success' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.MPT.lookup_preflight_refused' depends on axioms: [propext, Quot.sound]
+

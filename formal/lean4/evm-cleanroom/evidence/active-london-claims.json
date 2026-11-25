@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "status": "active-reviewed-London-source-pins",
+  "scope": "London EIP-1559 checked base-fee/header arithmetic, not full block or authenticated parent",
+  "historicalManifest": "evidence/2026-11-23-london-header/claims.json",
+  "historicalManifestSha256": "a39c702297555dd0e89ced375c73c3440d471c00f72c9fae7cc8ab8e035d06d2",
+  "historicalSourceCheckpoint": "47b5575ce4bd65e373af5a5c86f0f2bb7e9986ea",
+  "reviewedAgainstBase": "2e8a64e86b1578017cc96bcc4045d801ed6319c9",
+  "producedOn": "2026-11-24",
+  "leanToolchain": "leanprover/lean4:v4.33.1",
+  "normative": {
+    "eip": "https://eips.ethereum.org/EIPS/eip-1559",
+    "executionSpecsCommit": "391d8a05d5cb182542ac7e7330c858b6ee03f990",
+    "executionSpecsPath": "src/ethereum/forks/london/fork.py",
+    "executionSpecsBlob": "1444d5c0e452cffb0665b091b60c4c6f0a027439"
+  },
+  "sourceBlobs": {
+    "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
+    "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
+    "EVMCleanroom.lean": "4b006a6bf0764471af5a86895a2cc5fbb3b49611",
+    "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
+    "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2",
+    "lakefile-london.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1"
+  },
+  "axioms": {
+    "nextBaseFee_at_target": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "nextBaseFee_above": [
+      "propext",
+      "Quot.sound"
+    ],
+    "nextBaseFee_below": [
+      "propext",
+      "Quot.sound"
+    ],
+    "expected_firstLondon": [
+      "propext"
+    ],
+    "checkHeader_sound": [
+      "propext",
+      "Quot.sound"
+    ],
+    "missing_parent_refused": [
+      "propext"
+    ]
+  },
+  "selectedFixtureCorpus": {
+    "cases": 1555,
+    "seed": 1559,
+    "expectedOutcomes": {
+      "ok": 1389,
+      "invalid": 162,
+      "indeterminate": 4
+    },
+    "comparatorMutations": 3,
+    "notRun": 0
+  },
+  "trustedBoundaries": [
+    "Lean 4.33.1 compiler/runtime",
+    "caller-supplied parent fields, child fields and London activation flag",
+    "C stdlib/OS handling of CLI byte transport",
+    "Python formula is only a differential test oracle, not production code",
+    "The current EVMCleanroom root imports HeaderFees transitively through the independent header and transaction integration; the six selected London theorem statements remain unchanged",
+    "The standalone London executable remains selected by lakefile-london.toml with no external Lake package"
+  ],
+  "notClaimed": [
+    "canonical header authenticity or chain selection",
+    "full EELS block validation",
+    "complete fork indexing",
+    "full protocol conformance"
+  ],
+  "validation": "Expected six axiom sets are rechecked against the actual compiler report and six current source pins by check-london-claims.py; historical evidence remains unchanged."
+}

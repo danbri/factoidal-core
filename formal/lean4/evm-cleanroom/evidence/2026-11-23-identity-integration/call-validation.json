@@ -1,0 +1,154 @@
+{
+  "observedAtUtc": "2026-11-23T22:05:28.827168+00:00",
+  "cwd": "/workspace/scratch/9833f7e76cdb/factoidal-core",
+  "leanExecutable": "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset",
+  "leanSha256": "64c49e1396913d332fa4f28ecd3015172a77aa6d19dbb773da396d6c532b46e8",
+  "gethExecutable": "/workspace/scratch/9833f7e76cdb/oracles/geth-alltools-linux-amd64-1.17.10-1df30b18/evm",
+  "gethSha256": "d8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da",
+  "runs": [
+    {
+      "suite": "call-opcode",
+      "argv": [
+        "node",
+        "formal/lean4/evm-cleanroom/scripts/differential/call-opcode.mjs",
+        "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset"
+      ],
+      "environment": {
+        "EVM_GETH_EXE": "/workspace/scratch/9833f7e76cdb/oracles/geth-alltools-linux-amd64-1.17.10-1df30b18/evm"
+      },
+      "exitCode": 0,
+      "stdout": "/workspace/scratch/9833f7e76cdb/final-call-opcode.json",
+      "stderr": "/workspace/scratch/9833f7e76cdb/final-call-opcode.stderr",
+      "stdoutSha256": "a379e2b00347e4a0227382a269f218f0af1ebec1645a659129b4aad749d7a345",
+      "stderrBytes": 0,
+      "ethereumJS": {
+        "compared": 330,
+        "matched": 330,
+        "mismatches": 0
+      }
+    },
+    {
+      "suite": "call-data",
+      "argv": [
+        "node",
+        "formal/lean4/evm-cleanroom/scripts/differential/call-data.mjs",
+        "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset"
+      ],
+      "environment": {
+        "EVM_GETH_EXE": "/workspace/scratch/9833f7e76cdb/oracles/geth-alltools-linux-amd64-1.17.10-1df30b18/evm"
+      },
+      "exitCode": 0,
+      "stdout": "/workspace/scratch/9833f7e76cdb/final-call-data.json",
+      "stderr": "/workspace/scratch/9833f7e76cdb/final-call-data.stderr",
+      "stdoutSha256": "8f402a9c9e25fc901bc823cc34ba0da07e7284040abb3a37719fb947f1769e96",
+      "stderrBytes": 0,
+      "ethereumJS": {
+        "compared": 122,
+        "matched": 122,
+        "mismatches": 0
+      },
+      "geth": {
+        "compared": 112,
+        "matched": 112,
+        "mismatches": 0
+      },
+      "negativeControls": {
+        "byte": true,
+        "gas": true,
+        "status": true
+      }
+    },
+    {
+      "suite": "call-family",
+      "argv": [
+        "node",
+        "formal/lean4/evm-cleanroom/scripts/differential/call-family.mjs",
+        "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset"
+      ],
+      "environment": {
+        "EVM_GETH_EXE": "/workspace/scratch/9833f7e76cdb/oracles/geth-alltools-linux-amd64-1.17.10-1df30b18/evm"
+      },
+      "exitCode": 0,
+      "stdout": "/workspace/scratch/9833f7e76cdb/final-call-family.json",
+      "stderr": "/workspace/scratch/9833f7e76cdb/final-call-family.stderr",
+      "stdoutSha256": "9e1869c3279269cfbe3feaffeeff3f54bfa69631c7651268e7b0e0673291bc0a",
+      "stderrBytes": 0,
+      "ethereumJS": {
+        "compared": 213,
+        "matched": 213,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "geth": {
+        "compared": 194,
+        "matched": 194,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "negativeControls": {
+        "gas": true,
+        "storageOwner": true,
+        "context": true,
+        "returnBytes": true
+      },
+      "identityExecution": {
+        "cases": 27,
+        "ethereumJSMatched": 27,
+        "gethMatched": 27,
+        "clientAgreement": 27,
+        "gasMutationDetected": true
+      },
+      "exactCiPredicatePassed": true
+    },
+    {
+      "suite": "identity-call",
+      "argv": [
+        "node",
+        "formal/lean4/evm-cleanroom/scripts/differential/identity-call.mjs",
+        "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset"
+      ],
+      "environment": {
+        "EVM_GETH_EXE": "/workspace/scratch/9833f7e76cdb/oracles/geth-alltools-linux-amd64-1.17.10-1df30b18/evm"
+      },
+      "exitCode": 0,
+      "stdout": "/workspace/scratch/9833f7e76cdb/final-identity-call.json",
+      "stderr": "/workspace/scratch/9833f7e76cdb/final-identity-call.stderr",
+      "stdoutSha256": "7d9dbac63364d15836be5d6234c4ae1dcfab2480c84ddea4df6674abf5f718ed",
+      "stderrBytes": 0,
+      "ethereumJS": {
+        "compared": 660,
+        "matched": 660,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "geth": {
+        "compared": 648,
+        "matched": 648,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "negativeControls": {
+        "gas": true,
+        "successBit": true,
+        "returnData": true,
+        "copiedMemory": true
+      },
+      "crossOracle": {
+        "compared": 648,
+        "matched": 648,
+        "mismatches": 0,
+        "errors": 0
+      },
+      "gethExclusions": {
+        "staticEntry": 4,
+        "nonzeroDepth": 8
+      },
+      "warmthControl": {
+        "warmGas": "219869",
+        "coldGas": "217369",
+        "extraColdGas": "2500"
+      },
+      "exactCiPredicatePassed": true
+    }
+  ]
+}
