@@ -138,6 +138,10 @@ whose scripts stay within their budget can always be drawn. It was 4096 in four 
 test runner set 200,000 for itself. -/
 def maxCommands : Nat := 65536
 
+/-- Exclusive limit for the six DOM element-state bits shared by the script
+host and command replay. -/
+def elementStateLimit : Nat := 64
+
 /-- What recording a command reads of the arena before the change (`change`, `commit`): the
 key of the write (`Command.writeKey`), the earlier command it takes the place of, and the
 live ranges after it. -/
@@ -1537,8 +1541,8 @@ def cloneNode (args : Array Value) (s : State) : State × HostResult :=
 (or the selectedness of option `a`, `DOM.FormControls.selectedness`) to `b` (1 or 0); 7 the
 checkedness of `a`; 8 the other checked radio button of `a`'s
 group, or -1; 9 reset form `a` (DOM.Forms); 30 set the element states of `a` to the bits
-`b` (`Node.states`: 1 popover showing, 2 modal dialog, 4 custom element defined, 8 focused),
-31 read them. Shadow trees: 20 `a.attachShadow(init)` with the
+`b` (`Node.states`: 1 popover showing, 2 modal dialog, 4 custom element defined, 8 focused,
+16 custom validation failure, 32 visible focus), 31 read them. Shadow trees: 20 `a.attachShadow(init)` with the
 state bits `b` (`shadowFlags`): the shadow root, or NotSupportedError (-10); 22 empty the
 manually assigned nodes of slot `a`; 23 append node `b` to them (`slot.assign`). Ops 3, 4
 and 5 refuse a shadow root (DOM §4.5: HierarchyRequestError for `adoptNode`,
@@ -1568,7 +1572,7 @@ def treeOp (args : Array Value) (s : State) : State × HostResult :=
   | 8 => match Forms.checkedInGroup s.dom a with | some k => (s, ret k) | none => (s, ret (-1))
   | 9 => if !Forms.isHtml s.dom a ["form"] then (s, ret (-2))
     else change s (.resetForm a) fun d => changed (.resetForm a) (Forms.resetForm d a)
-  | 30 => if !isElement s.dom a || b ≥ 16 then (s, ret (-2))
+  | 30 => if !isElement s.dom a || b ≥ elementStateLimit then (s, ret (-2))
     else change s (.setStates a b) fun d => changed (.setStates a b) (d.setNode a fun x => { x with states := b })
   | 31 => (s, ret (s.dom.get a).states)
   | 4 | 5 => if !isNode s.dom b || !isDoc b then (s, ret (-2)) else if isDoc a || s.dom.isShadowRoot a then (s, ret (-10)) else
@@ -1967,7 +1971,7 @@ def Command.apply (d : Dom) : Command → Except String Dom
     return Forms.setChecked d n v
   | .setStates n v => do
     checkNode d n
-    if v ≥ 16 then throw "script command: states exceed bound"
+    if v ≥ elementStateLimit then throw "script command: states exceed bound"
     return d.setNode n fun x => { x with states := v }
   | .registerProperty name entry => do
     if d.nodes.isEmpty || (d.get 0).type != .document then throw "script command: no document"
@@ -2010,6 +2014,14 @@ def Command.apply (d : Dom) : Command → Except String Dom
     made r (d, k)
 
 -- DOMParser: an XML document, a parse error, and an HTML document joined to an arena
+/-- Replaying any accepted element-state value stores it unchanged. -/
+theorem apply_setStates (d : Dom) (n states : Nat)
+    (node : n < d.size) (fits : states < elementStateLimit) :
+    (Command.setStates n states).apply d = .ok (d.setNode n fun x => {x with states}) := by
+  simp [Command.apply, checkNode, node, Nat.not_le.mpr fits]
+
+#print axioms apply_setStates
+
 #guard (match createKind { nodes := #[{ type := .document }] } 12 "application/xml\x00<a xmlns='u'/>" with
   | (d, .ok r) => let e := d.get ((d.get r).kids[0]!)
     (e.lname, e.ns, (d.get r).contentType, (d.get r).htmlDoc) == ("a", some "u", "application/xml", false)
