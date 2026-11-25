@@ -6,7 +6,7 @@
 // plain HTML and CSS. The script reads the grammar's steps from the inert
 // <script type="application/json" id="grammar"> block; draft.mjs turns them
 // into SPARQL.
-import { draftQuery, fragmentsUpTo } from './draft.mjs';
+import { draftQuery, fragmentsUpTo, landing, waysQuery, wayQuery } from './draft.mjs';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -84,7 +84,7 @@ function start(g) {
   };
   const ENDPOINTS = [...ui.endpoint.options].map(o => ({ url: o.value, name: o.textContent }));
   const busyUntil = new Map();       // endpoint -> time before which we leave it alone
-  let cur = -1, running = null, countingAll = false, editing = false;
+  let cur = -1, running = null, countingAll = false, editing = false, trying = null;
 
   const stStatus = $('.st-status', tools);
   tools.hidden = false;
@@ -119,9 +119,13 @@ function start(g) {
     }
     ui.title.textContent = `Step ${cur + 1} of ${last + 1}: ${labelOf(cur)}`;
     ui.text.value = queryFor(cur);
+    trying = null;
     renderDiff();
     const st = g.steps[cur];
     $('.dr-top', drawer).hidden = !(cur < last && st?.v && (st.carries || []).some(v => v !== st.v));
+    $('.dr-ways', drawer).hidden = !(cur < last && landing(g, cur));
+    $('.dr-count', drawer).hidden = false;
+    $('.dr-back', drawer).hidden = true;
     ui.prev.disabled = cur === 0;
     ui.next.disabled = cur === last;
     ui.result.replaceChildren();
@@ -136,8 +140,8 @@ function start(g) {
     const now = ui.text.value.split('\n');
     const whole = cur >= last;
     ui.legend.hidden = whole || editing;
-    const before = whole || cur === 0 ? (whole ? now : []) : queryFor(cur - 1).split('\n');
-    const own = new Set(whole ? [] : g.steps[cur].sparql.flatMap(f => f.s.split('\n').map(l => l.trim())));
+    const before = trying ? queryFor(cur).split('\n') : whole || cur === 0 ? (whole ? now : []) : queryFor(cur - 1).split('\n');
+    const own = new Set(trying ? [trying.edge] : whole ? [] : g.steps[cur].sparql.flatMap(f => f.s.split('\n').map(l => l.trim())));
     const ops = diffLines(before, now).map(([t, line]) => [t === 'add' ? (own.has(line.trim()) ? 'new' : 'chg') : t, line]);
     ui.diff.replaceChildren(...ops.map(([t, line]) => {
       const span = document.createElement('span');
@@ -252,16 +256,92 @@ function start(g) {
       } else if (kind === 'count') {
         const c = await count(cur, t.signal);
         ui.status.textContent = describe(cur, c) + (c.endpoint ? ` (answered by ${c.endpoint})` : '');
+      } else if (kind === 'ways') {
+        await ways(t.signal);
       } else if (kind === 'top') {
         const j = await sparql(queryFor(cur, { top: true }), t.signal);
         ui.status.textContent = `The ${fmt.format(j.results.bindings.length)} ?${g.steps[cur].v} reached most often${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
         ui.result.append(table(j));
       } else {
         const t0 = performance.now();
-        const j = await sparql(limited(ui.text.value), t.signal);
+        const j = await sparql(trying ? ui.text.value : limited(ui.text.value), t.signal);
         ui.status.textContent = `${fmt.format(j.results.bindings.length)} rows in ${((performance.now() - t0) / 1000).toFixed(1)} s${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
         ui.result.append(table(j));
       }
+    } catch (e) {
+      ui.status.textContent = `Failed: ${e.name === 'AbortError' && t.signal.reason ? t.signal.reason.message : e.message}`;
+    } finally { t.done(); }
+  }
+
+  // Other ways on from the set this step lands on: each item-valued property
+  // its items have ("their …") or are the value of ("things with them as …"),
+  // with how many of them it reaches. Answers are kept for the session.
+  const SAMPLE = 2000;
+  const cached = async (q, signal) => {
+    const key = `ways\n${q}`;
+    let j = counts.get(key);
+    if (!j) { j = await sparql(q, signal); counts.set(key, j); }
+    return j;
+  };
+  async function ways(signal) {
+    const v = landing(g, cur);
+    ui.status.textContent = `Looking for ways on from ?${v}…`;
+    const j = await cached(waysQuery(g, cur, { sample: SAMPLE }), signal);
+    const rows = j.results.bindings.map(b => ({ dir: b.dir.value, pid: b.p.value.split('/').pop(), label: b.label?.value, items: +b.items.value }));
+    const most = Math.max(1, ...rows.map(r => r.items));
+    const known = counts.get(queryFor(cur, { count: true }))?.items;
+    const of = known != null ? Math.min(known, SAMPLE) : most;
+    ui.status.textContent = `Ways on from ?${v}: how many of ${known != null && known > SAMPLE ? `a sample of ${fmt.format(SAMPLE)} (of ${fmt.format(known)})` : `the ${fmt.format(of)}`} ?${v} each property reaches${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
+    const used = (pid) => new RegExp(`\\bwdt:${pid}(?!\\d)`).test(g.full);
+    const group = (dir, head) => {
+      const list = rows.filter(r => r.dir === dir);
+      if (!list.length) return null;
+      const sec = document.createElement('section');
+      const h = document.createElement('h3'); h.textContent = head; sec.append(h);
+      const ul = document.createElement('ul'); ul.className = 'ways';
+      for (const r of list) {
+        const li = document.createElement('li');
+        const b = document.createElement('button'); b.type = 'button';
+        b.className = 'way' + (used(r.pid) ? ' way-used' : '');
+        b.style.setProperty('--share', String(r.items / Math.max(of, most)));
+        b.title = `${dir === 'out' ? `?${v} wdt:${r.pid} ?next` : `?next wdt:${r.pid} ?${v}`}${used(r.pid) ? ' (this query uses it)' : ''}`;
+        const name = document.createElement('span'); name.className = 'way-name'; name.textContent = `${r.label || r.pid} (${r.pid})`;
+        const n = document.createElement('span'); n.className = 'way-n'; n.textContent = fmt.format(r.items);
+        b.append(name, n);
+        b.addEventListener('click', () => take({ p: `wdt:${r.pid}`, inv: dir === 'in', name: r.label || r.pid, pid: r.pid }));
+        li.append(b); ul.append(li);
+      }
+      sec.append(ul);
+      return sec;
+    };
+    const box = document.createElement('div'); box.className = 'ways-box';
+    box.append(...[group('out', `their …`), group('in', `things with them as …`)].filter(Boolean));
+    if (!rows.length) box.textContent = 'No item-valued properties found.';
+    ui.result.replaceChildren(box);
+    $('.dr-back', drawer).hidden = true;
+  }
+
+  // Try one of those ways: the step's draft plus one more pivot, run as a bag
+  // of where it leads, each with how many of the set lead there.
+  async function take(way) {
+    const v = landing(g, cur);
+    const q = wayQuery(g, cur, way);
+    const edge = q.split('\n').find(l => l.includes(` ${way.p} `)).trim();
+    trying = { ...way, edge };
+    ui.text.value = q;
+    ui.title.textContent = `Step ${cur + 1}, another way on: ${way.inv ? `things with ?${v} as ${way.name}` : `their ${way.name}`}`;
+    renderDiff();
+    updateOpen();
+    $('.dr-count', drawer).hidden = true;
+    $('.dr-top', drawer).hidden = true;
+    $('.dr-back', drawer).hidden = false;
+    const t = withTimeout(90000);
+    ui.status.textContent = 'Running…';
+    ui.result.replaceChildren();
+    try {
+      const j = await cached(q, t.signal);
+      ui.status.textContent = `Where ${way.inv ? `things with ?${v} as ${way.name}` : `their ${way.name}`} leads: the ${fmt.format(j.results.bindings.length)} reached by most ?${v}${j.endpoint ? ` (answered by ${j.endpoint})` : ''}`;
+      ui.result.append(table(j));
     } catch (e) {
       ui.status.textContent = `Failed: ${e.name === 'AbortError' && t.signal.reason ? t.signal.reason.message : e.message}`;
     } finally { t.done(); }
@@ -329,6 +409,8 @@ function start(g) {
   $('.dr-count', drawer).addEventListener('click', () => act('count'));
   $('.dr-run', drawer).addEventListener('click', () => act('run'));
   $('.dr-top', drawer).addEventListener('click', () => act('top'));
+  $('.dr-ways', drawer).addEventListener('click', () => act('ways'));
+  $('.dr-back', drawer).addEventListener('click', () => { show(cur); act('ways'); });
   ui.text.addEventListener('input', () => { updateOpen(); });
   ui.edit.addEventListener('click', () => {
     editing = !editing;

@@ -121,6 +121,24 @@ items of each earlier set it carries, and the rows. "Top values" groups the land
 as a bag: each item with the number of rows that reach it. That number is daisychain's
 `originCount`.
 
+## Ways on: other pivots from a set
+
+The query takes one path out of each set. From the set any step lands on, the page can list the
+others (Parallax's sidebar). `draft.mjs` builds two queries for this:
+
+- `waysQuery(g, k)` takes a sample of the set (2,000 items) and returns every item-valued property
+  out of it ("their employer") and into it ("things with them as doctoral advisor"), each with how many of
+  the sampled items it reaches. The sample goes inside each `UNION` branch, because QLever works out each
+  branch on its own: an unbound `?s ?p ?alum` there would scan the whole graph.
+- `wayQuery(g, k, {p, inv})` takes one of those ways: the draft up to step k, plus one Pivot, grouped as
+  a bag of where it leads.
+
+A way on is a Pivot `{p, inv}` grafted after step k. It needs nothing new in the data model, and a view
+could keep it as a branch row (`From` k).
+
+The counts say how well a path is populated. For mlp-048, all 2,000 sampled Bristol alumni have
+"educated at", but only 263 have the "country of citizenship" that the query pivots on.
+
 ## How it maps onto the kgx demos
 
 | grammar | daisychain | pivcab |

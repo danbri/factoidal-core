@@ -134,3 +134,27 @@ test('every step says what its rows carry, and every query what shape its answer
   }
   for (const k of ['rows', 'set', 'counted']) assert.ok(shapes[k] > 10, `few "${k}" answers: ${JSON.stringify(shapes)}`);
 });
+
+test('ways on: from any set a step lands on, list the properties out of and into it, and take one', async () => {
+  const { landing, waysQuery, wayQuery } = await import('../../docs/web/hub/wikidata-parallax/draft.mjs');
+  const balanced = (s) => (s.match(/\{/g) || []).length === (s.match(/\}/g) || []).length;
+  let sets = 0;
+  for (const q of queries) {
+    const g = q.grammar;
+    g.steps.forEach((s, k) => {
+      const v = landing(g, k);
+      if (!v) return;
+      sets++;
+      const w = waysQuery(g, k, { sample: 500 });
+      assert.ok(balanced(w) && w.includes('LIMIT 500') && /PREFIX wikibase:/.test(w), `${q.id} step ${k}: ways query`);
+      // Each UNION branch carries the sample: QLever works out branches on their own.
+      assert.equal((w.match(/LIMIT 500\n/g) || []).length, 2, `${q.id} step ${k}: sample in both branches`);
+      const t = wayQuery(g, k, { p: 'wdt:P27', inv: true });
+      assert.ok(balanced(t) && new RegExp(`\\?next\\d* wdt:P27 \\?${v} \\.`).test(t), `${q.id} step ${k}: way taken`);
+    });
+  }
+  assert.ok(sets > 1400, `only ${sets} sets`);
+  const q48 = queries.find(q => q.id === 'mlp-048');
+  assert.equal(landing(q48.grammar, 0), 'alum');
+  assert.match(wayQuery(q48.grammar, 0, { p: 'wdt:P108', inv: false }), /\?alum wdt:P108 \?next \.\n[^]*GROUP BY \?next/);
+});

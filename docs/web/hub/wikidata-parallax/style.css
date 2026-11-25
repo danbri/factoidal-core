@@ -269,6 +269,16 @@ details.cb:not([open]) { padding-bottom: 0; }
 .dr-count, .dr-run { font-weight: 650; }
 .dr-run { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
 .dr-status { color: var(--muted); }
+.ways-box { display: grid; gap: .4rem 1.2rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); max-height: 22rem; overflow: auto; }
+.ways-box h3 { margin: .2rem 0 .3rem; font-size: .8rem; font-weight: 600; color: var(--muted); }
+.ways { list-style: none; margin: 0; padding: 0; display: grid; gap: .2rem; }
+.drawer .way { --share: 0; width: 100%; display: flex; justify-content: space-between; gap: .6rem; padding: .22rem .5rem; font: inherit; font-size: .8rem; text-align: left;
+  color: var(--ink); border: 1px solid var(--line); border-radius: .4rem; cursor: pointer;
+  background: linear-gradient(90deg, var(--accent-soft) calc(var(--share) * 100%), var(--paper) 0); }
+.drawer .way:hover, .drawer .way:focus-visible { border-color: var(--accent); }
+.way-n { font-variant-numeric: tabular-nums; color: var(--muted); }
+.drawer .way-used { border-color: var(--accent); font-weight: 600; }
+.way-used .way-name::after { content: " · in this query"; font-weight: 400; color: var(--accent); }
 .dr-table { overflow: auto; max-height: 20rem; border: 1px solid var(--line); border-radius: .5rem; }
 .dr-table table { border-collapse: collapse; font-size: .8rem; width: 100%; }
 .dr-table th, .dr-table td { text-align: left; padding: .3rem .55rem; border-bottom: 1px solid var(--line); vertical-align: top; }

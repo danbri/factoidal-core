@@ -58,3 +58,80 @@ export function draftQuery(g, k, opts = {}) {
   const rdfs = labels.length && !/PREFIX rdfs:/.test(pre) ? 'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\n' : '';
   return `${pre}${rdfs}SELECT DISTINCT ${cols} WHERE {\n${body}${labels.length ? '\n' + labels.join('\n') : ''}\n}\nLIMIT ${opts.limit ?? 50}`;
 }
+
+const ns = {
+  wikibase: 'PREFIX wikibase: <http://wikiba.se/ontology#>',
+  rdfs: 'PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>',
+  wdt: 'PREFIX wdt: <http://www.wikidata.org/prop/direct/>',
+};
+const withPrefixes = (pre, names) => pre + names.filter(p => !new RegExp(`PREFIX\\s+${p}:`).test(pre)).map(p => ns[p] + '\n').join('');
+
+/** The set step k lands on, if the draft up to k can name it. */
+export function landing(g, k) {
+  const v = g.steps[k]?.v;
+  if (!v) return null;
+  const frags = fragmentsUpTo(g.steps, k);
+  return frags.length && frags.flatMap(visibleVars).includes(v) ? v : null;
+}
+
+/**
+ * Other ways on from the set step k lands on: every item-valued property its
+ * items have ("their …", out) or are the value of ("things with them as …", in),
+ * with how many of the items it reaches. Worked out on a sample of the set, so
+ * a big set costs no more than a small one.
+ */
+export function waysQuery(g, k, { sample = 2000, limit = 60 } = {}) {
+  const v = landing(g, k);
+  if (!v) return null;
+  const body = fragmentsUpTo(g.steps, k).join("\n").split("\n").map(l => " ".repeat(10) + l).join("\n");
+  const pre = withPrefixes(g.prefixes ? g.prefixes + '\n' : '', ['wikibase', 'rdfs']);
+  // QLever works out each UNION branch on its own, so each branch gets the sample.
+  const sampled = `{\n        SELECT DISTINCT ?${v} WHERE {\n${body}\n        }\n        LIMIT ${sample}\n      }`;
+  return `${pre}SELECT ?dir ?p (SAMPLE(?pLabel) AS ?label) ?items WHERE {
+  {
+    SELECT ?dir ?p (COUNT(DISTINCT ?${v}) AS ?items) WHERE {
+      {
+      ${sampled}
+      ?${v} ?p ?o_ .
+      BIND("out" AS ?dir)
+      } UNION {
+      ${sampled}
+      ?s_ ?p ?${v} .
+      BIND("in" AS ?dir)
+      }
+      ?prop_ wikibase:directClaim ?p ;
+             wikibase:propertyType wikibase:WikibaseItem .
+    }
+    GROUP BY ?dir ?p
+  }
+  ?prop_ wikibase:directClaim ?p .
+  OPTIONAL { ?prop_ rdfs:label ?pLabel . FILTER(LANG(?pLabel) = "en") }
+}
+GROUP BY ?dir ?p ?items
+ORDER BY DESC(?items)
+LIMIT ${limit}`;
+}
+
+/**
+ * Take one of those ways: the draft up to step k, one more pivot along
+ * `p` (a wdt: property; `inv` for "things with them as p"), and the set it
+ * reaches as a bag: each item with how many of step k's items lead to it.
+ */
+export function wayQuery(g, k, { p, inv }, { limit = 20 } = {}) {
+  const v = landing(g, k);
+  if (!v) return null;
+  const frags = fragmentsUpTo(g.steps, k);
+  const taken = new Set(frags.flatMap(visibleVars));
+  let to = 'next';
+  for (let i = 2; taken.has(to) || to === v; i++) to = `next${i}`;
+  const edge = inv ? `?${to} ${p} ?${v} .` : `?${v} ${p} ?${to} .`;
+  const pre = withPrefixes(g.prefixes ? g.prefixes + '\n' : '', ['wdt', 'rdfs']);
+  return `${pre}SELECT ?${to} (SAMPLE(?${to}Label) AS ?label) (COUNT(DISTINCT ?${v}) AS ?${v}s) WHERE {
+${indent(frags.join('\n'))}
+  ${edge}
+  OPTIONAL { ?${to} rdfs:label ?${to}Label . FILTER(LANG(?${to}Label) = "en") }
+}
+GROUP BY ?${to}
+ORDER BY DESC(?${v}s)
+LIMIT ${limit}`;
+}
