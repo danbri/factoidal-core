@@ -1,0 +1,123 @@
+name: Independent Lean BLS signing-root verification
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - '.github/workflows/ethereum-bls-verify.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bls-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-consensus
+    env:
+      LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Source and import audit, independent oracle
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$RUNNER_TEMP/bls-verify-pins.json"
+          import json, pathlib, re, subprocess
+          def git(*args): return subprocess.check_output(["git",*args],text=True).strip()
+          root=pathlib.Path(git("rev-parse","--show-toplevel"))
+          expected={"G1PublicKey.lean":["Lean"],"G2Signature.lean":["Lean"],
+            "PairingTarget.lean":["Lean"],"HashToField.lean":["Lean","L4Factoidal.Crypto.SHA2"],
+            "../L4Factoidal/Crypto/SHA2.lean":[],
+            "BLSVerify.lean":["G1PublicKey","G2Signature","PairingTarget","HashToField"],
+            "BLSVerifyMain.lean":["BLSVerify"]}
+          for name, imports in expected.items():
+              code=pathlib.Path(name).read_text()
+              code=re.sub(r"/-.*?-/","",code,flags=re.S)
+              code=re.sub(r"--[^\n]*","",code)
+              assert re.findall(r"^import\s+(\S+)\s*$",code,re.M)==imports, name
+              assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",code,re.M), name
+          paths=list(expected)+["lean-toolchain","lake-manifest.json","lakefile.toml",
+            "scripts/check-bls-verify.mjs","scripts/check-g2-map.mjs",
+            "../../../.github/workflows/ethereum-bls-verify.yml"]
+          pins={}
+          for name in paths:
+              src=pathlib.Path(name).resolve()
+              rel=str(src.relative_to(root))
+              blob=git("hash-object",str(src))
+              assert blob==git("rev-parse","HEAD:"+rel)
+              pins[rel]=blob
+          for name,sha in {
+              "G1PublicKey.lean":"d7e64f304280cb505f60252506e1500d3861f398",
+              "G2Signature.lean":"120832a8cf37cb82255e0b94e37551215725fe37",
+              "PairingTarget.lean":"2137b263efea22b0045c9cbc156807b28a82d9fa",
+              "HashToField.lean":"5a187a3cdb8353e2d1a3fae9f552d5418e272e68"}.items():
+              assert pins["formal/lean4/ethereum-consensus/"+name]==sha
+          assert pins["formal/lean4/L4Factoidal/Crypto/SHA2.lean"]=="92737f4d83035745dba29ef2c3867b01b8dfa50f"
+          assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"]==[]
+          assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
+          print(json.dumps({"head":git("rev-parse","HEAD"),"tree":git("rev-parse","HEAD^{tree}"),"source_pins":pins},sort_keys=True))
+          PY
+          node scripts/check-bls-verify.mjs --self-test | tee "$RUNNER_TEMP/bls-verify-oracle.log"
+      - name: Compile actual independent arithmetic and verifier
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lean --version | tee "$RUNNER_TEMP/bls-verify-toolchain.log"
+          export LEAN_PATH="$RUNNER_TEMP/bls"
+          mkdir -p "$LEAN_PATH/L4Factoidal/Crypto"
+          lean --root=.. -o "$LEAN_PATH/L4Factoidal/Crypto/SHA2.olean" -c "$LEAN_PATH/sha.c" ../L4Factoidal/Crypto/SHA2.lean
+          for module in G1PublicKey G2Signature PairingTarget HashToField BLSVerify; do
+            lean --deps "$module.lean" | tee "$RUNNER_TEMP/bls-verify-$module-imports.log"
+            lean -o "$LEAN_PATH/$module.olean" -c "$LEAN_PATH/$module.c" "$module.lean" 2>&1 | tee "$RUNNER_TEMP/bls-verify-$module-axioms.log"
+          done
+          lean -c "$LEAN_PATH/BLSVerifyMain.c" BLSVerifyMain.lean
+          "$(lean --print-prefix)/bin/leanc" -O2 -o "$LEAN_PATH/bls-verify" "$LEAN_PATH/"*.c
+          ldd "$LEAN_PATH/bls-verify" | tee "$RUNNER_TEMP/bls-verify-link.log"
+          nm -u "$LEAN_PATH/bls-verify" | tee "$RUNNER_TEMP/bls-verify-symbols.log"
+          if grep -E ' (EVP_|EC_|BN_|SHA256|blst_|BLS_|mcl_|Hacl_)' "$RUNNER_TEMP/bls-verify-symbols.log"; then exit 1; fi
+      - name: Exact actual theorem inventory and falsification controls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os,pathlib,re
+          log=(pathlib.Path(os.environ["RUNNER_TEMP"])/"bls-verify-BLSVerify-axioms.log").read_text()
+          prefix="EthereumConsensus.BLS.Verify."
+          expected={prefix+n for n in ("verify_over_limit","verify_key_error","verify_signature_error","verify_delegates","pairingEquation_results","verify_hash_error","pairingEquation_true")}
+          def audit(t):
+              reports=re.findall(r"'(EthereumConsensus\.BLS\.Verify\.\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)",t)
+              if len(reports)!=len(expected) or {n for n,_ in reports}!=expected: raise ValueError("inventory")
+              for n,a in reports:
+                  if not set(filter(None,(v.strip() for v in a.split(",")))) <= {"propext","Classical.choice","Quot.sound"}: raise ValueError(n)
+          audit(log)
+          for bad in ["",log+log,log.replace(prefix+"verify_delegates",prefix+"other"),
+                      re.sub(r"('(EthereumConsensus\.BLS\.Verify\.\w+)') (?:depends on axioms:\s*\[[^]]*\]|does not depend on any axioms)",r"\1 depends on axioms: [sorryAx]",log,count=1)]:
+              try: audit(bad)
+              except ValueError: continue
+              raise ValueError("mutation escaped")
+          print("Seven actual theorem reports and four axiom audit controls passed")
+          PY
+      - name: Native compressed signature verdicts
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          node scripts/check-bls-verify.mjs "$RUNNER_TEMP/bls/bls-verify" | tee "$RUNNER_TEMP/bls-verify-native.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-bls-verify-evidence
+          path: |
+            ${{ runner.temp }}/bls-verify-*.log
+            ${{ runner.temp }}/bls-verify-pins.json
