@@ -1501,17 +1501,24 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     let node := if str request "what" == "nodeProperties" then
         (L4Factoidal.HTML.AccessibleTree.ofAccId (str request "element")).bind fun k => if k < d.size then some k else none
       else refNode d (str request "element")
-    let value := match node, str request "what" with
-      | some k, "role" => L4Factoidal.HTML.AccessibleRole.computedRole d k
-      | some k, "label" => L4Factoidal.HTML.AccessibleRole.accessibleName d k
-      | some k, "properties" | some k, "nodeProperties" => (L4Factoidal.HTML.AccessibleTree.propertiesIn d k).toString
-      | _, _ => ""
+    let (host, value) := match node, str request "what" with
+      | some k, "role" => (a.page.host, L4Factoidal.HTML.AccessibleRole.computedRole d k)
+      | some k, "label" =>
+        let (host, answers) := a.page.host.measured
+        let style : L4Factoidal.HTML.AccessibleRole.NameStyle :=
+          { displayed := fun n => (answers.bind fun f => f n 42 "") != some "none"
+            visible := fun n => (answers.bind fun f => f n 42 "") != some "hidden" }
+        (host, L4Factoidal.HTML.AccessibleRole.accessibleName d k style)
+      | some k, "properties" | some k, "nodeProperties" =>
+        (a.page.host, (L4Factoidal.HTML.AccessibleTree.propertiesIn d k).toString)
+      | _, _ => (a.page.host, "")
     let found := node.isSome
     let reply := (JSON.Json.object [("type", .string "testdriver-complete"),
       ("id", .number (toString ((natField request "id").getD 0))),
       ("status", .string (if found then "success" else "error")),
       ("message", .string (if found then "" else "no such element")), ("value", .string value)]).toString
     run fun a =>
+      let a := { a with page := a.page.setHost host }
       let a := e.checkpoint (e.dispatchWith a Page.windowId "message"
         (Page.messageInit { frame := 0, toParent := false, data := reply, origin := str request "origin" })).1
       (e.advance a (e.loop a).clock).1

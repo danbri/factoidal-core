@@ -3362,6 +3362,16 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
       | .ok view =>
         if element node && dom.connected node then Rendering.Animation.Computed.valueOf nameIndex.get view node q else none
       | .error _ => none
+    -- 42: CSS facts for accessible names. Clipping affects paint, while clipped text
+    -- can still give a name (for example a visually hidden label in a button).
+    else if op == 42 then
+      let root := dom.shadowIncludingRoot node
+      match (if root != 0 then frameView root node "" else styled.get) with
+      | .ok view => (view.styles[node]?).map fun c =>
+          if c.display == .none then "none"
+          else if !c.visible && !c.clipHidden then "hidden"
+          else "visible"
+      | .error _ => none
     -- grid: the resolved `grid-template-columns` and `grid-template-rows` of a grid container
     -- are its used track sizes (CSS Grid 2 §7.2.6), read from its layout; any other value is
     -- the computed value below
@@ -3688,7 +3698,10 @@ def accessibilityEnv (laid : Laid) : HTML.AccessibleTree.Env :=
         | none => !HTML.AccessibleTree.markupUnrendered laid.dom k,
       visible := fun k => match styles[k]? with
         | some s => s.visible
-        | none => true }
+        | none => true,
+      clipped := fun k => match styles[k]? with
+        | some s => s.clipHidden
+        | none => false }
   env.withBoxes (laid.boxes.map fun b => (b.source, ⟨int b.x, int b.y, (int b.width).toNat, (int b.height).toNat⟩))
 
 /-- The first number of the chrome's accessibility nodes (`WebShell.accessible`): above the
