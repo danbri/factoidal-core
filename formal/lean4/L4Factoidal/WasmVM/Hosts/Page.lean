@@ -240,6 +240,20 @@ structure StyleKept where
   now : Int
   epoch : Nat
 
+/-- The `style` and `link` elements of a document in tree order: for each, its parent, its
+local name, its attributes, and for a `style` element its text. Two documents with equal
+signatures have the same style sheets in the same order (a `link` with the same attributes
+names the same resource), so the rules of one are the rules of the other (`Carry.rules`). -/
+abbrev SheetSignature := Array (Option Nat × String × Array L4Factoidal.DOM.Attr × String)
+
+def sheetSignature (dom : L4Factoidal.DOM.Dom) : SheetSignature :=
+  if dom.size == 0 then #[] else
+  (dom.treeOrder 0).filterMap fun n =>
+    let x := dom.get n
+    if x.type == .element && (x.lname == "style" || x.lname == "link") then
+      some (x.parent, x.lname, x.attrs, if x.lname == "style" then dom.descendantTextContent n else "")
+    else none
+
 structure Reads where
   measure : Option Measure := none
   width : Nat := 800
@@ -283,6 +297,10 @@ writes (issue https://github.com/danbri/factoidal-core/issues/871). -/
   arguments of the kept rules do not read (`Carry.hasReads`, `CSS.HasReads.unaffected`):
   with `:has()` in the rules, the subtrees of the noted elements may then be styled alone. -/
   hasSafe : Bool := true
+  /-- The style sheets of the document before the first write since the last measure that
+  added, removed or moved a `style` or `link` element (`sheetSignature`): the next measure
+  keeps the rules of the last one only when the sheets are again these (issue 871). -/
+  sheetsBefore : Option SheetSignature := none
   /-- The version that the last write which may change a style made (`Reads.wrote`, not
   neutral): a layout of that version or a later one has the styles of the document as it
   is (`Host.frameStyles`). -/
@@ -757,6 +775,21 @@ def childWriteWhy (dom : Arena) (parent : Nat) (nodes : List Nat) : String :=
     if ns.any (fun n => carriesRules (dom.get n)) then "sheet"
     else if (dom.get parent).parent.isNone then "root" else "other"
 
+/-- A child write `nm` with arguments `a` (DOM host imports): the parent, and the nodes of the
+subtrees added or removed (`subtreesWithin`; for `text_content_set` the element and its
+children). None for another import, a node outside the arena, or past `subtreeLimit`. -/
+def childWrite (dom : Arena) (nm : String) (a : Nat → Nat) : Option (Nat × List Nat) :=
+  let roots :=
+    if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then some (a 0, [a 1])
+    else if nm == "replace_child" then some (a 0, [a 1, a 2])
+    else if nm == "text_content_set" then some (a 0, [a 0])
+    else none
+  match roots with
+  | none => none
+  | some (parent, ns) =>
+    if parent >= dom.size || ns.any (· >= dom.size) then none
+    else (subtreesWithin dom ns).map fun under => (parent, under)
+
 /-- `why` counted once more in `ws` (a new reason is added while there are fewer than 64). -/
 def countWhy (ws : Array (String × Nat)) (why : String) : Array (String × Nat) :=
   match ws.findIdx? (·.1 == why) with
@@ -793,7 +826,8 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     let last : Option (StyleKept × List Nat × List Nat) :=
       match h.reads.styleKept, h.reads.styleWrites with
       | some k, some nodes =>
-        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version then
+        if k.width == w && k.height == ht && k.base.isSome && h.reads.styleVersion == h.reads.version &&
+            h.reads.sheetsBefore.all (· == sheetSignature dom) then
           -- with rules that read `style`, a written element's later siblings may match others:
           -- the subtrees of the parents (a parent noted for a `class` write goes one up, more
           -- than it needs)
@@ -814,6 +848,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
         if !(k.width == w && k.height == ht) then "viewport"
         else if k.base.isNone then "nobase"
         else if h.reads.styleVersion != h.reads.version then "version"
+        else if !h.reads.sheetsBefore.all (· == sheetSignature dom) then "sheets"
         else if (k.base.map (·.parentOnly)) != some true &&
             !(h.reads.hasSafe && ((k.base.bind (·.hasReads)).isSome)) then "has"
         else if (subtreesWithin dom (if (k.base.map (·.readsStyle)) == some true
@@ -826,7 +861,7 @@ def Host.measureNow (h : Host) : Host × Option Answers :=
     let keep := fun (h : Host) (f : Answers) (kept : Option StyleKept) =>
       ({ h with reads := { h.reads with
           kept := some (h.reads.version, f), keptNow := h.anim.now, layouts := h.reads.layouts + 1,
-          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false, hasSafe := true,
+          styleKept := kept, styleWrites := kept.map fun _ => [], styleSubtrees := false, hasSafe := true, sheetsBefore := none,
           styleVersion := h.reads.version } }, some f)
     -- with the style change made and the animated values known: the layout with them
     let finish := fun (h : Host) (anim : L4Factoidal.Rendering.Animation.State)
@@ -1506,13 +1541,13 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
       -- can carry rules; the parent's other descendants and an insert's reference child cannot.
       -- Until 2026-11-24 the parent's whole subtree was checked, and an insert into a large
       -- container styled the whole document (zh.wikipedia: 66 times; issue 871).
-      else if nm == "append_child" || nm == "remove_child" || nm == "insert_before" then
-        if sheetParent d (a 0) || touchesSheets d [a 1] then none else (d.get (a 0)).parent.map fun p => (p, true)
-      else if nm == "replace_child" then
-        if sheetParent d (a 0) || touchesSheets d [a 1, a 2] then none else (d.get (a 0)).parent.map fun p => (p, true)
-      else if nm == "text_content_set" then
-        if touchesSheets d [a 0] then none else (d.get (a 0)).parent.map fun p => (p, true)
-      else none
+      -- From 2026-11-24 a write that adds, removes or moves a `style` or `link` element is
+      -- noted too, with the sheets before it (`Reads.sheetsBefore`): the next measure styles
+      -- the whole document only when the sheets changed (zh.wikipedia moves subtrees with
+      -- TemplateStyles `<style>` elements 66 times and adds no sheet).
+      else match childWrite d nm a with
+        | some (parent, _) => if sheetParent d parent then none else (d.get parent).parent.map fun p => (p, true)
+        | none => none
     let neutral := styleNeutralImports.contains nm || detachedWrite h.dom.dom nm a
     -- with `:has()` in the kept rules: whether this write changes nothing their arguments
     -- read (`Carry.hasReads`); a child or text write always may
@@ -1534,11 +1569,17 @@ def serveExtra (mem : Nat) (mo nm : String) (args : Array Value) (h : Host) (st 
               | none => false
             else hr.unaffected name "" ""
           | .error _ => false
-        else false
+        else match childWrite d nm a with
+          | some (_, nodes) => nodes.all fun n => hr.childWriteOk ((d.get n).attrs.map fun x => (x.lname, x.value))
+          | none => false
     let reads := if readOnlyImports.contains nm then h.reads
       else h.reads.wrote (styleOf.map (·.1)) neutral (styleOf.any (·.2))
     let reads := if readOnlyImports.contains nm || neutral then reads
       else { reads with hasSafe := reads.hasSafe && hasOk }
+    let reads := if readOnlyImports.contains nm || neutral || reads.sheetsBefore.isSome then reads
+      else match childWrite d nm a with
+        | some (_, nodes) => if nodes.any fun n => carriesRules (d.get n) then { reads with sheetsBefore := some (sheetSignature d) } else reads
+        | none => reads
     -- the write that forgot the noted elements, for `Reads.wholeWhy`
     let reads := if readOnlyImports.contains nm || neutral || styleOf.isSome then reads
       else { reads with forgetBy :=
@@ -2245,6 +2286,20 @@ private def sheetsArena : Arena :=
 #guard touchesSheets sheetsArena [4] && touchesSheets sheetsArena [2] && touchesSheets sheetsArena [0]
 #guard !touchesSheets sheetsArena [5] && !touchesSheets sheetsArena [3, 6] && touchesSheets sheetsArena [3, 7]
 #guard !touchesSheets sheetsArena [8] && !touchesSheets sheetsArena [3, 8]
+-- `sheetSignature`: the one connected `style` (4, under `head` 2); the detached `link`s do
+-- not count. A `style` moved to another parent changes it; a `span` moved does not, nor
+-- does a `link` of another type made connected.
+#guard (sheetSignature sheetsArena).map (fun (p, n, _, _) => (p, n)) == #[(some 2, "style")]
+#guard sheetSignature ((sheetsArena.linkChild 3 4 none)) != sheetSignature sheetsArena
+#guard sheetSignature ((sheetsArena.linkChild 3 6 none)) == sheetSignature sheetsArena
+#guard (sheetSignature ((sheetsArena.linkChild 3 7 none))).size == 2
+-- `childWrite`: the parent and the nodes added; a node outside the arena gives none
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).all fun (p, ns) => p == 3 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "insert_before" (fun i => [3, 5, 0][i]!)).isSome
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).all fun (p, ns) => p == 5 && ns.length == 2 && ns.contains 5 && ns.contains 6
+#guard (childWrite sheetsArena "text_content_set" (fun i => [5][i]!)).isSome
+#guard childWrite sheetsArena "append_child" (fun i => [3, 99][i]!) == none
+#guard childWrite sheetsArena "set_attribute" (fun i => [3, 5][i]!) == none
 
 /-- The navigations that wait for the embedder: an `iframe` and its `src` URL. The
 `load` events of `about:blank` documents are queued here, as tasks. -/
