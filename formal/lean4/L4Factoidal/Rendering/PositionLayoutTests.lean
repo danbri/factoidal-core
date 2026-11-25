@@ -826,6 +826,18 @@ private def holds := "<div id=c><div id=f>F</div>T</div><div id=n>N</div>"
 #guard at? "<div id=c><div id=k>KK</div></div>" "#c{overflow:auto;height:5px;width:6px} #k{margin-top:20px}" "KK" == some (0,20)
 
 
+-- The search input is an inline-block inside its flex item's normal flow.
+private def searchHeight (rule : String) : Option Float := do
+  let page := "<form><div><input id=search type=search></div><button>Search</button></form>"
+  let style := "form{display:flex} #search{display:inline-block;box-sizing:border-box;" ++
+    "padding:5px;border:2px solid;width:100px;position:relative} " ++ rule
+  let (_,_,_,height) ← box page style "search"
+  return height
+
+#guard searchHeight "#search{min-block-size:47px}" == some 47
+#guard searchHeight "#search{height:60px;max-height:42px}" == some 42
+#guard searchHeight "#search{height:25px;min-height:47px;max-height:42px}" == some 47
+
 -- The baseline of an inline-block (CSS 2.1 §10.8.1): that of its last line box, so its
 -- text is on the line's baseline with the text around it; its bottom margin edge when it
 -- has no line box or clips. Glyphs are 7 px high with no descent.
