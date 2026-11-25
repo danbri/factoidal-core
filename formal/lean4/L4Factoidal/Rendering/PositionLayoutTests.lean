@@ -42,6 +42,21 @@ private def breaksSix (extra : String) : Option (Bool × Bool) := do
 #guard box sixWords "#heading{width:120px;text-wrap:balance}" "heading" ==
   box sixWords "#heading{width:120px}" "heading"
 
+-- A float that ends above a heading leaves the full line width available to balance.
+-- A float that remains alongside the heading continues to constrain its lines.
+private def headingAfterFloat := "<div id=float>F</div><div id=spacer></div><div id=heading>AAAA BBBB CCCC DDDD EEEE FFFF</div>"
+private def floatHeadingRows (extra : String) : Option (Bool × Bool) := do
+  let style := "#float{float:left;width:60px} #spacer{height:14px} #heading{width:120px} " ++ extra
+  let (_, a) ← at? headingAfterFloat style "AAAA"
+  let (_, d) ← at? headingAfterFloat style "DDDD"
+  let (_, f) ← at? headingAfterFloat style "FFFF"
+  return (a == d, d == f)
+
+#guard floatHeadingRows "#float{height:14px} #heading{text-wrap:balance}" == some (false,true)
+#guard floatHeadingRows "#float{height:14px}" == some (true,false)
+#guard floatHeadingRows "#float{height:21px} #heading{text-wrap:balance}" ==
+  floatHeadingRows "#float{height:21px}"
+
 private def page := "<div id=a>AA</div><div id=c><div id=p>PP</div><div id=q>Q</div></div><div id=z>ZZ</div>"
 
 -- A sized or painted block inside an inline keeps its box (CSS 2.1 §9.2.1.1).

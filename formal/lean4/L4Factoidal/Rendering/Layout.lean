@@ -1583,6 +1583,11 @@ private def inlineBalanceWidth (font : FontProfile) (items : Array Inline)
     | _ => return none
   return balancedWidth words available
 
+/-- Earlier floats still matter to clearance and later boxes. Balancing only needs
+to know whether they can narrow any line at or below this paragraph's top. -/
+private def uniformLineBand (s : Computed) (floats : Array Floats.Box) (top : Float) : Bool :=
+  floats.isEmpty || (s.balanceText && Floats.endedBefore floats.toList (LU.ofPx top))
+
 /-- Word wrapping constructs line participants first. The font profile and
 positioned glyph runs are consumed to paint the actual word geometry. With bidi
 (`needsBidi`), words are cut by level first, a word's pieces stay on one line, and
@@ -1610,7 +1615,7 @@ def inlineLayout (font : FontProfile) (items0 : Array Inline) (x y available : F
   let firstIndent := (strut.bind fun s => CSS.resolve available s.textIndent).getD 0
   let balanced ← if uniformBand && !bidi && firstIndent == 0 &&
       strut.any (fun s => s.balanceText && s.balanceWrap && !s.pos.nowrap && s.pos.writingMode == .horizontalTb) then
-    inlineBalanceWidth font items available
+    inlineBalanceWidth font items (band 0).2
     else pure none
   let bandAt := fun (dy : Float) (first : Bool) =>
     let (offset,room) := band dy
@@ -2621,7 +2626,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           if !inline.isEmpty then
             let top := innerY+content.height
             let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
+              (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
             content := append content lines
             inline := #[]
           let (offset,room) := floatBand floats innerX width (innerY+content.height) 1
@@ -2679,7 +2684,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             if !inline.isEmpty then
               let top := innerY+content.height
               let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
+                (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
               content := append content lines
               inline := #[]
               -- white space between blocks makes no line: the margins still adjoin
@@ -2743,7 +2748,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if !inline.isEmpty then
         let top := innerY+content.height
         let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
-          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) floats.isEmpty
+          (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
         content := append content lines
         if lines.height > 0 then previous := 0
       content := {content with floats}

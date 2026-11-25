@@ -111,6 +111,33 @@ def band (floats : List Box) (x width y h : Int) : Int × Int :=
   let r := rightEdge floats (x + width) y h
   (l, max 0 (r - l))
 
+
+/-- The placed floats all end at or before this line's top. Their exclusion
+can no longer change the inline room on this line or later lines. -/
+def endedBefore (floats : List Box) (top : Int) : Bool :=
+  floats.all fun f => decide (f.y + f.height ≤ top)
+
+theorem band_of_endedBefore (floats : List Box) (x width top y h : Int)
+    (ended : endedBefore floats top = true) (later : top ≤ y) :
+    band floats x width y h = (x, max 0 width) := by
+  have edges : ∀ (fs : List Box), endedBefore fs top = true →
+      leftEdge fs x y h = x ∧ rightEdge fs (x + width) y h = x + width := by
+    intro fs done
+    induction fs with
+    | nil => simp [leftEdge, rightEdge]
+    | cons f rest ih =>
+      have parts := Bool.and_eq_true_iff.mp done
+      have endLe : f.y + f.height ≤ top := of_decide_eq_true parts.1
+      have miss : f.meets y h = false := by
+        have noOverlap : ¬ y < f.y + f.height := by omega
+        simp [Box.meets, noOverlap]
+      simpa [leftEdge, rightEdge, miss] using ih parts.2
+  obtain ⟨left, right⟩ := edges floats ended
+  have span : x + width - x = width := by omega
+  simp [band, left, right, span]
+
+#print axioms band_of_endedBefore
+
 /-- The lowest bottom edge of the floats, and not above `y`. -/
 def below (floats : List Box) (y : Int) : Int :=
   floats.foldl (fun m f => max m (f.y + f.height)) y
