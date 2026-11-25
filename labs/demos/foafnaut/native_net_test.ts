@@ -3,7 +3,7 @@
 // not followed, a name under .invalid resolves to nothing. Local servers only; the https case
 // makes a throwaway certificate with openssl and is skipped without it.
 // deno test --allow-net --allow-run --allow-read --allow-write labs/demos/foafnaut/native_net_test.ts
-import {netAnswer,socketAct,socketOpen,socketRead} from "./native_net.ts";
+import {netAnswer,pinnedHTTPSBatch,socketAct,socketOpen,socketRead} from "./native_net.ts";
 
 function assert(c:unknown,m:string):asserts c{if(!c)throw new Error(m);}
 const text=(b?:string)=>b===undefined?"":new TextDecoder().decode(Uint8Array.from(atob(b),c=>c.charCodeAt(0)));
@@ -43,7 +43,11 @@ Deno.test("pinned https goes through the tunnel to the given address; TLS checks
     const leaf=await run(["x509","-req","-in",`${dir}/r.csr`,"-CA",`${dir}/ca.pem`,"-CAkey",`${dir}/ca.key`,"-CAcreateserial","-days","1","-extfile",`${dir}/ext`,"-out",`${dir}/c.pem`]);
     assert(leaf?.success,"openssl could not sign the test certificate");
     const caPem=await Deno.readTextFile(`${dir}/ca.pem`),cert=await Deno.readTextFile(`${dir}/c.pem`),key=await Deno.readTextFile(`${dir}/k.pem`);
-    const server=Deno.serve({hostname:"127.0.0.1",port:0,cert,key,onListen(){}},req=>new Response("tls "+new URL(req.url).host));
+    const sockets=new Set<number>();
+    const server=Deno.serve({hostname:"127.0.0.1",port:0,cert,key,onListen(){}},(req,info)=>{
+      sockets.add((info.remoteAddr as Deno.NetAddr).port);
+      return new Response("tls "+new URL(req.url).host);
+    });
     try{
       const port=server.addr.port;
       const a=await netAnswer({id:5,method:"GET",url:`https://pinned.test:${port}/`,headers:[],address:"127.0.0.1",port},{caCerts:[caPem],timeoutMs:10000});
@@ -51,6 +55,24 @@ Deno.test("pinned https goes through the tunnel to the given address; TLS checks
       // A name the certificate does not hold fails, though the address is the same.
       const b=await netAnswer({id:6,method:"GET",url:`https://other.test:${port}/`,headers:[],address:"127.0.0.1",port},{caCerts:[caPem],timeoutMs:10000});
       assert(b.status===0,`wrong name accepted: ${JSON.stringify(b)}`);
+      const opts={caCerts:[caPem],timeoutMs:10000};
+      const batch=pinnedHTTPSBatch(opts);
+      const wire={id:7,method:"GET",url:`https://pinned.test:${port}/`,headers:[],address:"127.0.0.1",port};
+      const before=sockets.size;
+      try{
+        for(let i=0;i<3;i++){
+          const answer=await netAnswer({...wire,id:i},opts,batch);
+          assert(answer.id===i&&answer.status===200&&text(answer.bodyBase64)===`tls pinned.test:${port}`,
+            `wrong pooled response ${JSON.stringify(answer)}`);
+        }
+        assert(sockets.size===before+1,`expected one new connection, got ${sockets.size-before}`);
+        const wrong=await netAnswer({...wire,url:`https://other.test:${port}/`},opts,batch);
+        assert(wrong.status===0,`wrong name accepted in batch: ${JSON.stringify(wrong)}`);
+        const oneShot=await netAnswer({...wire,method:"POST"},opts,batch);
+        assert(oneShot.status===200&&sockets.size===before+2,`one-shot POST failed: ${JSON.stringify(oneShot)}`);
+      }finally{batch.close();}
+      const oneShot=await netAnswer(wire,opts);
+      assert(oneShot.status===200&&sockets.size===before+3,`ordinary fetch failed: ${JSON.stringify(oneShot)}`);
     }finally{await server.shutdown();}
   }finally{await Deno.remove(dir,{recursive:true});}
 });
