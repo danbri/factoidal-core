@@ -646,6 +646,10 @@ async function main() {
   // A turn of a page's script session: its logs, and a new frame only when the DOM changed
   // (no DOM change, no layout; the commands are part of the layout key).
   let scriptBusy=false,scriptDone:Promise<unknown>|undefined;
+  // Timer turns back to back (issue 1098): when the last timer turn's answer came, for the wait
+  // from that answer to the next ask (the host's share of an animation frame).
+  let timerAnsweredAt:number|undefined;
+  const timerTurns={leanMs:[] as number[],callMs:[] as number[],waitMs:[] as number[]};
   // The last scroll, key or press (a STAMPED event) and since when a due timer turn waits for input.
   let inputAt=-Infinity,timerHeldSince:number|undefined;
   // Scroll first (page-load.mjs scrollFirst): while the user scrolls, a change of the page by its
@@ -765,7 +769,7 @@ async function main() {
   };
   // Set once the router exists (below): a form's GET to a foafnaut: page, routed as a link.
   let formRoute:((url:string,page:typeof document)=>void)|undefined;
-  const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string)=>{
+  const scriptTurn=(page:typeof document,turn:ScriptTurn,cause:string,host:Record<string,number>={})=>{
     // A navigation of the page itself that Lean planned (a form submitted, HTML §4.10.21.3):
     // GET loads the URL; POST sends the body Lean serialized; `_blank` opens a new tab.
     if(turn.navigate&&page===document){
@@ -787,7 +791,7 @@ async function main() {
     for(const line of turn.errors)console.error(`page error: ${line}`);
     trace("native-html-script",{cause,session:turn.session,clock:turn.clock,changed:turn.changed,commands:turn.commandCount,
       instructions:turn.instructions,jobs:turn.jobs,tasks:turn.tasks,layouts:turn.layouts,reads:turn.reads,readOps:turn.readOps,leanMs:Math.round(turn.ns/1e5)/10,nextWake:turn.nextWake,
-      ...(turn.startMore?{startMore:true}:{})});
+      ...(turn.startMore?{startMore:true}:{}),...host});
     // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
     // with probes, which held up the next turns) while the page animates its canvas.
     if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
@@ -1673,13 +1677,16 @@ async function main() {
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
         maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,maxBlockedMs:session?.stats.gpu.maxBlockedMs??0,maxWaitsBetweenPumps,turnAsks:session?.stats.gpu.turnAsks??0,fallbackAsks:session?.stats.gpu.fallbackAsks??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
+      // Page timer turns (issue 1098): the engine's time, the call beyond it, the wait before the next ask.
+      timerTurns:{count:timerTurns.leanMs.length,leanMsP50:percentile(timerTurns.leanMs,0.5),leanMsP95:percentile(timerTurns.leanMs,0.95),
+        callMsP50:percentile(timerTurns.callMs,0.5),callMsP95:percentile(timerTurns.callMs,0.95),waitMsP50:percentile(timerTurns.waitMs,0.5),waitMsP95:percentile(timerTurns.waitMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
       press:{overlay:{count:pressOverlayMs.length,p50Ms:percentile(pressOverlayMs,0.5),maxMs:pressOverlayMs.length?Math.round(Math.max(...pressOverlayMs)*10)/10:null},
         frame:{count:pressFrameMs.length,p50Ms:percentile(pressFrameMs,0.5),maxMs:pressFrameMs.length?Math.round(Math.max(...pressFrameMs)*10)/10:null}}};
     
     trace(line.type,line);
     // Off screen, "presented" means drawn and submitted to the texture: no compositor, no display.
-    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nengine workers: ${line.engineWorkers?`${line.engineWorkers.mode}, ${line.engineWorkers.started} started (${line.engineWorkers.starts.map(w=>`${w.ms} ms, +${Math.round((w.rssAfterMB-w.rssBeforeMB)*10)/10} MB`).join("; ")}), ${line.engineWorkers.live} live, most ${line.engineWorkers.maxLive}, cap ${line.engineWorkers.cap}, ${line.engineWorkers.sharedTabs} tabs shared, ${line.engineWorkers.sparesTaken} spares taken`:"none (main thread)"}; process resident ${line.processRssMB} MB\ntab shown to first frame: ${line.tabFirstFrame.count} tabs, p50 ${line.tabFirstFrame.p50Ms} ms, p95 ${line.tabFirstFrame.p95Ms} ms, max ${line.tabFirstFrame.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
+    if(perfSummary)console.log(`engine: ${engineRan}\npresent: ${line.present}\n${offscreen?"offscreen ":""}input latency: ${line.inputLatency.count} events, p50 ${line.inputLatency.p50Ms} ms, p95 ${line.inputLatency.p95Ms} ms, max ${line.inputLatency.maxMs} ms\nengine workers: ${line.engineWorkers?`${line.engineWorkers.mode}, ${line.engineWorkers.started} started (${line.engineWorkers.starts.map(w=>`${w.ms} ms, +${Math.round((w.rssAfterMB-w.rssBeforeMB)*10)/10} MB`).join("; ")}), ${line.engineWorkers.live} live, most ${line.engineWorkers.maxLive}, cap ${line.engineWorkers.cap}, ${line.engineWorkers.sharedTabs} tabs shared, ${line.engineWorkers.sparesTaken} spares taken`:"none (main thread)"}; process resident ${line.processRssMB} MB\ntab shown to first frame: ${line.tabFirstFrame.count} tabs, p50 ${line.tabFirstFrame.p50Ms} ms, p95 ${line.tabFirstFrame.p95Ms} ms, max ${line.tabFirstFrame.maxMs} ms\nframes: ${line.frames.presented} presented (${line.frames.checked} checked), totalMs p50 ${line.frames.totalMsP50}, p95 ${line.frames.totalMsP95}; pipeline builds ${session?.stats.pipelineBuilds}\nscroll presents with no Lean call: ${line.scrollPresents.count}, totalMs p50 ${line.scrollPresents.totalMsP50}, p95 ${line.scrollPresents.totalMsP95}, max ${line.scrollPresents.maxMs}\npress to present: darkening ${line.press.overlay.count}, p50 ${line.press.overlay.p50Ms} ms, max ${line.press.overlay.maxMs} ms; Lean frame ${line.press.frame.count}, p50 ${line.press.frame.p50Ms} ms, max ${line.press.frame.maxMs} ms\nscroll prefetch: ${prefetchStats.sent} sent, ${prefetchStats.ready} ready, ${prefetchStats.swaps} shown, ${prefetchStats.dropped} dropped, ${prefetchStats.stale} stale, ${prefetchStats.missed} missed\npump gap after first frame: p50 ${line.pumpGapAfterFirstFrameMs.p50} ms, p95 ${line.pumpGapAfterFirstFrameMs.p95} ms, max ${line.pumpGapAfterFirstFrameMs.max} ms\ntimer turns: ${line.timerTurns.count}, engine p50 ${line.timerTurns.leanMsP50} ms, p95 ${line.timerTurns.leanMsP95} ms; call beyond the engine p50 ${line.timerTurns.callMsP50} ms; wait before the next ask p50 ${line.timerTurns.waitMsP50} ms, p95 ${line.timerTurns.waitMsP95} ms\nidle: ${line.idle.turnsPerSecond??"-"} wakeups/s over ${line.idle.idleMs} ms idle, ${line.idle.waits} waits\npump gap all: p50 ${line.pumpGapMs.p50} ms, p95 ${line.pumpGapMs.p95} ms, max ${line.pumpGapMs.max} ms\ngpu: ${line.gpu.framesInFlight||"unbounded"} in flight, submit to done p50 ${line.gpu.submitToDoneMsP50} ms, p95 ${line.gpu.submitToDoneMsP95} ms, max in flight ${line.gpu.maxInFlight}, ${line.gpu.submits} submits, gate waits ${line.gpu.gateWaits} (${line.gpu.gateWaitMs} ms), blocked in poll ${line.gpu.blockedMs} ms (longest ${line.gpu.maxBlockedMs} ms, most waits between pumps ${line.gpu.maxWaitsBetweenPumps}), guard ${line.gpu.guardSlowed?"slowed":"full rate"} (${line.gpu.guardChanges} changes)\nlog: ${line.logGate.lines} lines, ${line.logGate.written} written, ${line.logGate.suppressed} held back in ${line.logGate.trips} flood${line.logGate.trips===1?"":"s"}, ${line.logGate.collapsed} repeats collapsed${line.logGate.top[0]?`; most said ${JSON.stringify(line.logGate.top[0].message)} ×${line.logGate.top[0].count}`:""}`);
   };
   // The pipeline trace (--pipe-trace): events of the main thread, and the most blocking GPU
   // waits seen between two pumps (HostPipeline.Model: at most one).
@@ -2467,8 +2474,14 @@ async function main() {
         if(elapsed>=script.turn.nextWake&&held)timerHeldSince??=now;
         else if(elapsed>=script.turn.nextWake){
           const page=document;scriptBusy=true;timerHeldSince=undefined;
+          // callMs: the ask to the answer, beyond the engine's own time (worker messages, FFI,
+          // answer text); waitMs: the last timer answer to this ask (the main loop's share).
+          const askedAt=performance.now(),waitMs=timerAnsweredAt===undefined?undefined:ms(timerAnsweredAt,askedAt);
           scriptDone=(scriptCall("scriptSession","",{action:"advance",session:script.session,ms:Math.max(0,Math.ceil(elapsed-script.turn.clock)),sliceSteps:turnSliceSteps}) as Promise<ScriptTurn>)
-            .then(turn=>scriptTurn(page,turn,"timers"))
+            .then(turn=>{timerAnsweredAt=performance.now();
+              const callMs=ms(askedAt+turn.ns/1e6,timerAnsweredAt);
+              timerTurns.leanMs.push(turn.ns/1e6);timerTurns.callMs.push(callMs);if(waitMs!==undefined)timerTurns.waitMs.push(waitMs);
+              scriptTurn(page,turn,"timers",{callMs,...(waitMs===undefined?{}:{waitMs})});})
             .catch(error=>scriptFailed(page,error,"timers"))
             .finally(()=>{scriptBusy=false;});
         }
