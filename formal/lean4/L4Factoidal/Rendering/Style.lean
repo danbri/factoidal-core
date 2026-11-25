@@ -221,6 +221,8 @@ structure Computed where
   lineHeightFactor : Option Float := some 1.2
   visible : Bool := true
   clipOverflow : Bool := false
+  /-- Unlike `overflow: hidden`, `clip` does not make the box a scroll container. -/
+  overflowClipOnly : Bool := false
   underline : Bool := false
   decorationColor : Option Color := none
   /-- Source spaces, tabs and line feeds are preserved. -/
@@ -2015,12 +2017,14 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "hidden" | "collapse" => return {s with visible := false}
     | _ => throw "unsupported CSS visibility"
   | "overflow" =>
-    if d.value == "visible" then return {s with clipOverflow := false, pos := {s.pos with scrolls := false}}
-    if d.value == "hidden" || d.value == "clip" then return {s with clipOverflow := true, pos := {s.pos with scrolls := false}}
+    if d.value == "visible" then
+      return {s with clipOverflow := false, overflowClipOnly := false, pos := {s.pos with scrolls := false}}
+    if d.value == "hidden" || d.value == "clip" then
+      return {s with clipOverflow := true, overflowClipOnly := d.value == "clip", pos := {s.pos with scrolls := false}}
     -- A scroll container (`pos.scrolls`): nothing scrolls yet, so nothing is clipped away,
     -- but the box holds its floats and its children's margins.
     if d.value == "auto" || d.value == "scroll" || d.value == "overlay" then
-      return {s with clipOverflow := false, pos := {s.pos with scrolls := true}}
+      return {s with clipOverflow := false, overflowClipOnly := false, pos := {s.pos with scrolls := true}}
     throw "unsupported CSS overflow mode"
   | "text-decoration" | "text-decoration-line" =>
     if d.value == "underline" then return {s with underline := true}
@@ -2550,7 +2554,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
     let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
     some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
                  pos := {s.pos with nowrap}}
-  | "overflow" => some {s with clipOverflow := source.clipOverflow}
+  | "overflow" => some {s with clipOverflow := source.clipOverflow, overflowClipOnly := source.overflowClipOnly,
+                               pos := {s.pos with scrolls := source.pos.scrolls}}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
   | "border-style" => some {s with borderStyles := source.borderStyles}

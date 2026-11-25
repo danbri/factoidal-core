@@ -3138,6 +3138,27 @@ theorem RuleMatcher.memo_get (m : RuleMatcher) (state : Rendering.CSS.ElementSta
     ((m.memo state size)[i]'(by simp [RuleMatcher.memo, h])).get = Rendering.CSS.withAnimated state m.matched i := by
   simp [RuleMatcher.memo, Thunk.get]
 
+/-- A WebDriver label can name these native elements even when the renderer
+does not draw their own boxes. Other ways of hiding them still apply. -/
+private def nativeUnboxedLabel (dom : DOM.Dom) (id : Nat) : Bool :=
+  let n := dom.get id
+  let has := Rendering.CSS.hasAttribute n
+  !has "popover" && !Rendering.CSS.closedDetailsContent dom id &&
+    (DOM.Dom.isHtmlElement n "area" ||
+      (DOM.Dom.isHtmlElement n "dialog" && !has "open") ||
+      (DOM.Dom.isHtmlElement n "optgroup" &&
+        n.parent.any fun p => DOM.Dom.isHtmlElement (dom.get p) "select"))
+
+private def labelRootAllowsUnboxed (view : Rendering.ComputedGeneric.View) (id : Nat) : Bool :=
+  let d := view.dom
+  let style : HTML.AccessibleRole.NameStyle :=
+    { displayed := fun n => ((view.styles[n]?).map (·.display != .none)).getD true }
+  nativeUnboxedLabel d id && !HTML.AccessibleRole.hiddenEl d id &&
+    !((d.get id).parent.any (HTML.AccessibleRole.hiddenReference d style)) &&
+    (Rendering.ComputedGeneric.winning
+      ((Rendering.ComputedGeneric.cascadedAll view id "display").filter
+        fun (key, _) => !Rendering.ComputedGeneric.uaNormal key)).isNone
+
 /-- The layout reads of a script session (`Page.Measure`) with the render request
 `request` (its `layoutFields`): the arena laid out `width` by `rows` (`layOutDOM`)
 when a read first asks, then the answers from that one layout. `overrides` are the
@@ -3364,12 +3385,15 @@ def measure (h : Holds) (request : JSON.Json) (kept : Kept := {}) : WasmVM.Hosts
         if element node && dom.connected node then Rendering.Animation.Computed.valueOf nameIndex.get view node q else none
       | .error _ => none
     -- 42: CSS facts for accessible names. Clipping affects paint, while clipped text
-    -- can still give a name (for example a visually hidden label in a button).
+    -- can still give a name. "label-root" also asks whether the direct WebDriver
+    -- label target is a native element without its own renderer box.
     else if op == 42 then
       let root := dom.shadowIncludingRoot node
       match (if root != 0 then frameView root node "" else styled.get) with
       | .ok view => (view.styles[node]?).map fun c =>
-          if c.display == .none then "none"
+          if c.display == .none then
+            if q == "label-root" && (c.visible || c.clipHidden) && labelRootAllowsUnboxed view node
+            then "native-unboxed" else "none"
           else if !c.visible && !c.clipHidden then "hidden"
           else "visible"
       | .error _ => none
