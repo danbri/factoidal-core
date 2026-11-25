@@ -19,16 +19,45 @@ structure Cell where
   rtl : Bool := false
   deriving Repr, Inhabited
 
+/-- What a press selects, by its click count (issue 1031): one press selects from caret to
+caret, a double click whole words, a triple click whole lines, as in Chrome, Firefox and
+Safari. -/
+inductive Granularity where
+  | character
+  | word
+  | line
+  deriving Repr, BEq, DecidableEq
+
+/-- The granularity of a press with `clicks` clicks (the window's click count; 0 for a host
+that sends none). Four clicks and more stay lines. -/
+def granularity (clicks : Nat) : Granularity :=
+  if clicks ≥ 3 then .line else if clicks == 2 then .word else .character
+
+theorem granularity_single : granularity 1 = .character := by decide
+theorem granularity_double : granularity 2 = .word := by decide
+theorem granularity_many (n : Nat) (h : 3 ≤ n) : granularity n = .line := by
+  simp [granularity, h]
+
 inductive Selection where
   | all
   | span (anchorX anchorY focusX focusY : Float)
+  /-- A span grown to whole words or whole lines at both ends (a double or triple click, and
+  the drag after it). -/
+  | spanBy (unit : Granularity) (anchorX anchorY focusX focusY : Float)
   deriving Repr
+
+/-- The selection of a press and drag with `clicks` clicks, between two points. -/
+def Selection.ofClicks (clicks : Nat) (ax ay fx fy : Float) : Selection :=
+  match granularity clicks with
+  | .character => .span ax ay fx fy
+  | unit => .spanBy unit ax ay fx fy
 
 /-- Move a selection up, from window coordinates into page coordinates. -/
 def shift (s : Selection) (top : Float) : Selection :=
   match s with
   | .all => .all
   | .span ax ay fx fy => .span ax (ay-top) fx (fy-top)
+  | .spanBy u ax ay fx fy => .spanBy u ax (ay-top) fx (fy-top)
 
 /-- Layout emits runs in document (logical) order, one for each word or each piece
 of a word at one bidi level. The clusters of a run count characters from the start
@@ -68,6 +97,82 @@ private def Cell.before (c : Cell) (x y : Float) : Bool :=
 def caret (items : Array Cell) (x y : Float) : Nat :=
   items.zipIdx.foldl (fun at_ (c,i) => if c.before x y then i+1 else at_) 0
 
+/-- White space for find: space, tab, line breaks and no-break space. -/
+def findSpace (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0xA0
+
+private def sameLine (a b : Cell) : Bool :=
+  a.y < b.y+b.height && b.y < a.y+a.height
+
+/-! ### Words and lines (double and triple click; issue 1031)
+
+Two glyphs next to each other are in one word when they are on one line and `text` puts no
+space between them: one run, or two runs with no gap (`a<b>b</b>`). A glyph is a word glyph
+unless its text starts with white space or ASCII punctuation, or is in the General Punctuation
+or CJK Symbols and Punctuation blocks. The second glyph of a cluster (no text) is a word glyph,
+so a mark stays with its base. -/
+
+/-- The glyphs `a` and `b`, in this order, join with no space between them. -/
+private def joined (a b : Cell) : Bool :=
+  sameLine a b && (a.run == b.run || !(b.x > a.x+a.width+0.5 || a.x > b.x+b.width+0.5))
+
+def wordChar (c : Char) : Bool :=
+  let n := c.toNat
+  !(findSpace c || c.isWhitespace) &&
+    !(n < 0x80 && !c.isAlphanum && c != '_') && !(0x2000 ≤ n && n ≤ 0x206F) && !(0x3000 ≤ n && n ≤ 0x303F)
+
+private def wordCell (c : Cell) : Bool :=
+  match c.text.toList.head? with
+  | some ch => wordChar ch
+  | none => true
+
+/-- The glyph under a point: the first whose box holds it, else the glyph just before the
+caret of the point, else the first. None on a page with no glyph. -/
+def glyphAt (items : Array Cell) (x y : Float) : Option Nat :=
+  if items.isEmpty then none else
+  match items.findIdx? (fun c => c.x ≤ x && x < c.x+c.width && c.y ≤ y && y < c.y+c.height) with
+  | some i => some i
+  | none => some (min (caret items x y - 1) (items.size-1))
+
+/-- The word of glyph `g`: the glyphs `low .. high` (high not included). A glyph that is not
+a word glyph is a word of its own. -/
+def wordRange (items : Array Cell) (g : Nat) : Nat × Nat := Id.run do
+  let some here := items[g]? | return (g,g)
+  if !wordCell here then return (g,g+1)
+  let mut low := g
+  for _ in [0:g] do
+    match items[low-1]?, items[low]? with
+    | some a, some b => if wordCell a && joined a b then low := low-1 else break
+    | _, _ => break
+  let mut high := g+1
+  for _ in [g+1:items.size] do
+    match items[high-1]?, items[high]? with
+    | some a, some b => if wordCell b && joined a b then high := high+1 else break
+    | _, _ => break
+  return (low,high)
+
+/-- The line of glyph `g`: the glyphs next to it on its line, `low .. high`. -/
+def lineRange (items : Array Cell) (g : Nat) : Nat × Nat := Id.run do
+  let some here := items[g]? | return (g,g)
+  let mut low := g
+  for _ in [0:g] do
+    match items[low-1]? with
+    | some a => if sameLine a here then low := low-1 else break
+    | none => break
+  let mut high := g+1
+  for _ in [g+1:items.size] do
+    match items[high]? with
+    | some b => if sameLine here b then high := high+1 else break
+    | none => break
+  return (low,high)
+
+/-- The word or the line under a point. -/
+def unitAt (items : Array Cell) (unit : Granularity) (x y : Float) : Option (Nat × Nat) :=
+  (glyphAt items x y).map fun g =>
+    match unit with
+    | .line => lineRange items g
+    | .word => wordRange items g
+    | .character => (g,g+1)
+
 /-- The glyph range of a selection, `low` included and `high` not included. -/
 def range (items : Array Cell) : Selection → Nat × Nat
   | .all => (0,items.size)
@@ -75,9 +180,10 @@ def range (items : Array Cell) : Selection → Nat × Nat
     let a := caret items ax ay
     let f := caret items fx fy
     (min a f,max a f)
-
-private def sameLine (a b : Cell) : Bool :=
-  a.y < b.y+b.height && b.y < a.y+a.height
+  | .spanBy unit ax ay fx fy =>
+    match unitAt items unit ax ay, unitAt items unit fx fy with
+    | some (a0,a1), some (f0,f1) => (min a0 f0,max a1 f1)
+    | _, _ => (0,0)
 
 /-- Selected text. A soft line wrap becomes a space and a new block becomes a
 new line. Words of the same line keep the gap that layout gave them. -/
@@ -142,8 +248,6 @@ CaseFolding.txt statuses C and S, one character for one), and white space is one
 /-- A character as find compares it. -/
 def foldChar (c : Char) : Char := Char.ofNat (L4Factoidal.Text.CaseMap.caseFoldCp c.toNat)
 
-/-- White space for find: space, tab, line breaks and no-break space. -/
-def findSpace (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0xA0
 
 /-- One space, unless the text is empty or already ends with one. -/
 private def pushSpace (out : Array (Char × Nat)) (cell : Nat) : Array (Char × Nat) :=
@@ -222,6 +326,19 @@ private def cellsOf (words : List (Float × String)) : Array Cell :=
 #guard findMatches (cellsOf [(0,"one"),(8,"two")]) "" == #[]
 #guard findMatches (cellsOf [(0,"a"),(12,"b")]) " A   b " == #[(0,2)]
 #guard foldChar 'Σ' == 'σ' && foldChar 'É' == 'é'
+
+-- Double click: the word under the point, across runs with no gap, and not past a gap or a
+-- punctuation mark. Triple click: the whole line. A drag after either grows by whole units.
+private def wordCells : Array Cell := cellsOf [(0,"Hel"),(0,"lo,"),(8,"big"),(8,"world")]
+#guard range wordCells (.spanBy .word 12 4 12 4) == (0,5)
+#guard text wordCells (.spanBy .word 12 4 12 4) == "Hello"
+#guard text wordCells (.spanBy .word 76 4 76 4) == "big"
+#guard text wordCells (.spanBy .word 44 4 44 4) == ","
+#guard text wordCells (.spanBy .word 12 4 76 4) == "Hello, big"
+#guard text wordCells (.spanBy .line 76 4 76 4) == "Hello, big world"
+#guard text wordCells (Selection.ofClicks 3 76 4 76 4) == "Hello, big world"
+#guard text wordCells (Selection.ofClicks 1 0 4 19 4) == "He"
+#guard range #[] (.spanBy .word 0 0 0 0) == (0,0)
 
 /-- A pointer that moves less than this many backing pixels is a click. -/
 def clickSlop : Float := 4

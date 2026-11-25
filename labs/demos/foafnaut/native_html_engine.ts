@@ -698,7 +698,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     linkGesture:(platform:string,button:number,modifiers:number)=>{
       try{return (documentCall("",{op:"linkGesture",platform,button,modifiers}) as {gesture:string}).gesture;}catch{return "follow";}
     },
-    pointerUp:(selection:number[])=>(documentCall("",{op:"pointerUp",selection}) as {action:string}).action,
+    // "click" or "select": a press that did not move is a click, except a double or triple click,
+    // which selects words or lines (`clicks`, issue 1031).
+    pointerUp:(selection:number[],clicks=0)=>(documentCall("",{op:"pointerUp",selection,clicks}) as {action:string}).action,
     selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
       (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
     // Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count,

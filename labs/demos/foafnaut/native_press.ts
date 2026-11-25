@@ -10,7 +10,8 @@ export function pointerRequest<Page>(page:Page,presented:PresentedState<Page>|un
   const {width,height,options,scroll}=presented;
   return {width,height,options:{...options,shell:{...options.shell as Record<string,unknown>,scroll}}};
 }
-export type NativePress<Page>={page:Page;points:number[];node?:number};
+// `clicks`: the window's click count of the press (issue 1031); 2 and 3 select words and lines.
+export type NativePress<Page>={page:Page;points:number[];node?:number;clicks?:number};
 export function beginPress<Page>(page:Page,x:number,y:number):NativePress<Page>{
   return {page,points:[x,y,x,y]};
 }

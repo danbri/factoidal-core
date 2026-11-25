@@ -730,6 +730,9 @@ private def shellEdit (action text : String) (shell : JSON.Json) : Option JSON.J
 -- Issue 1031: Command-click on macOS opens a background tab; a plain click follows the link.
 #guard (WebDocument.run "" (json [("op",.string "linkGesture"),("platform",.string "mac"),("button",.number "0"),("modifiers",.number "2")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"backgroundTab\"").length > 1)) == some true
 #guard (WebDocument.run "" (json [("op",.string "linkGesture"),("platform",.string "other"),("button",.number "0"),("modifiers",.number "0")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"follow\"").length > 1)) == some true
+-- A double click does not follow a link: it selects a word (issue 1031).
+#guard (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "5",.number "5",.number "5",.number "5"]),("clicks",.number "2")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"select\"").length > 1)) == some true
+#guard (WebDocument.run "" (json [("op",.string "pointerUp"),("selection",.array [.number "5",.number "5",.number "5",.number "5"]),("clicks",.number "1")]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"click\"").length > 1)) == some true
 -- The context menu (issue 1031): a link under the press gives the link menu, none the page menu.
 #guard (WebDocument.run "" (json [("op",.string "shellContext"),("shell",.object []),("link",.string "https://x.org/"),("selection",.bool false)]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"context\":\"link\"").length > 1)) == some true
 #guard (WebDocument.run "" (json [("op",.string "shellContext"),("shell",.object []),("link",.null),("selection",.bool true)]) 1 1).toOption.map (fun t => decide ((t.splitOn "\"contextSelection\":true").length > 1)) == some true

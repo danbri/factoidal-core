@@ -937,7 +937,9 @@ private def selection (request : JSON.Json) : Except String (Option WebSelection
   | some (.string "all") => pure (some .all)
   | some value => do
     let (ax,ay,fx,fy) ← points value
-    pure (some (.span ax ay fx fy))
+    -- `selectionClicks`: the click count of the press (issue 1031): 2 whole words, 3 lines.
+    let clicks := match request.field? "selectionClicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    pure (some (WebSelection.Selection.ofClicks clicks ax ay fx fy))
 
 private def scalePercent (request : JSON.Json) : Except String Nat := do
   let percent ← match request.field? "textScalePercent" with
@@ -1346,7 +1348,10 @@ private def inputOp {M : Type → Type} [Monad M] [WebWasm.Machine M] (op : Stri
   if let some answer ← WebSparql.op op request then return some answer
   if op == "pointerUp" then
     let (ax,ay,fx,fy) ← points ((request.field? "selection").getD .null)
-    return some (JSON.Json.object [("action",.string (if WebSelection.isClick ax ay fx fy then "click" else "select"))]).toString
+    -- A double or triple click (`clicks`, issue 1031) selects: it is not a click on a link.
+    let clicks := match request.field? "clicks" with | some (.number n) => n.toNat?.getD 0 | _ => 0
+    let click := WebSelection.isClick ax ay fx fy && WebSelection.granularity clicks == .character
+    return some (JSON.Json.object [("action",.string (if click then "click" else "select"))]).toString
   return none
 
 /-- A long page must not fill the GPU buffer with text nobody can see. Glyphs carry

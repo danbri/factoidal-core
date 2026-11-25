@@ -1961,6 +1961,14 @@ async function main() {
           scriptPointer("down",event.a,event.b,press,typeof answer.sourceNode!=="number");
           if(typeof answer.sourceNode==="number")startPress({active:answer.sourceNode,rects:answer.rects});
           if(view.selection){view.selection=undefined;dirty=true;gestureFrame=true;}
+          delete view.selectionClicks;
+          // A double or triple click (issue 1031): Lean says a press of this many clicks selects
+          // at once (pointerUp "select"), and grows the selection to whole words or lines.
+          const clicks=pointerClicks(flags);
+          if(clicks>1&&engine.pointerUp(press.points,clicks)==="select"){
+            press.clicks=clicks;view.selection=[...press.points];view.selectionClicks=clicks;dirty=true;gestureFrame=true;
+            gestureDone("select",event,{clicks});
+          }
         }
         // `:hover` (links only): a new frame when the link under the pointer changes, and only
         // when an author rule names `:hover`.
@@ -1978,7 +1986,7 @@ async function main() {
         if(event.kind===4&&press){
           const held=press,released=movePress(held,event.a,event.b);press=undefined;
           scriptPointer("up",released[2],released[3],held);
-          if(engine.pointerUp(released)!=="click")return;
+          if(engine.pointerUp(released,held.clicks??0)!=="click")return;
           // A click begins the SVG animations whose `begin` is a click on what it hits.
           const clock=animation.get(document);
           if(clock?.has&&current){clock.clicks=[...clock.clicks,[Math.round(performance.now()-clock.epoch),released[0],released[1]-current.layers.layers.top+scroll]].slice(-16);clock.running=true;dirty=true;}
