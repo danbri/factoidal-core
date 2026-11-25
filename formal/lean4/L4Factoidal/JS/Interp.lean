@@ -5826,6 +5826,24 @@ def callNativeGlobal (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value)
     | .dateNow => pure (.num ((← hostNowNs) / 1000000).floor)
     | _ => throwErr .type "not a function"
 
+/-- Add one entry to the ordinary object made by `Object.fromEntries`.
+Get both entry components before coercing the key. -/
+def addObjectEntry (core : CoreFn H) (target : Nat) (entry : Value) : M Value := do
+  if !entry.isObj then return ← throwErr .type "Iterator value is not an entry object"
+  let rawKey ← core.getV entry "0"
+  let value ← core.getV entry "1"
+  let key ← core.toKey rawKey
+  defineOwn target key (.data value true true true)
+  pure .undef
+
+/-- A primitive yields the TypeError completion before a property access or definition. -/
+private theorem addObjectEntry_primitive (core : CoreFn H) (target : Nat)
+    (entry : Value) (primitive : entry.isObj = false) :
+    addObjectEntry core target entry = throwErr .type "Iterator value is not an entry object" := by
+  simp [addObjectEntry, primitive]
+
+#print axioms addObjectEntry_primitive
+
 /-- Built-ins of `callNative`: the Object constructor and its static methods. `r` is the realm `callNative` read. -/
 def callNativeObjectStatic (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value) (args : Array Value) (newTarget : Option Value) : M Value := do
     let a0 := argD args 0
@@ -6046,10 +6064,9 @@ def callNativeObjectStatic (core : CoreFn H) (r : Realm) (id : Native) (thisV : 
       pure (.obj res)
     | .objectFromEntries =>
       let res ← newObject
-      let items ← core.iterToArray (← core.getIterator a0) #[]
-      for item in items do
-        let k ← core.toKey (← core.getV item "0")
-        defineOwn res k (.data (← core.getV item "1") true true true)
+      iterEach core (← core.getIterator a0) fun entry => do
+        let _ ← addObjectEntry core res entry
+        pure ()
       pure (.obj res)
     | _ => throwErr .type "not a function"
 
