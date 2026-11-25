@@ -168,10 +168,34 @@ for(const [request,verdict] of retained){
 }
 rows.push(['project '+'x'.repeat(8705),'error resource_limit']);
 check(rows.filter(x=>x[1].startsWith('partial_validator_projection ')).length===2,'projection fixture count');
+// Diagnostic transport: expected roots are computed in the independent oracle,
+// never supplied to the authenticated projection path.
+const flip=x=>(x[0]==='0'?'1':'0')+x.slice(1);
+for(const fixture of fixtures){
+  const {line,evidence}=fixture,[,a,b]=evidence;
+  const raw=[signature(a),signature(b),...line];
+  const [, , rr, sr]=expectedProjection(line).split(' ');
+  const add=(r,t,input,verdict)=>rows.push([['checkproject',r,t,...input].join(' '),verdict]);
+  add(rr,sr,raw,'projection_witness_consistent');
+  add(flip(rr),sr,raw,'error projected_registry_mismatch');
+  add(rr,flip(sr),raw,'error projected_state_mismatch');
+  add(line[14],sr,raw,'error projected_registry_mismatch');
+  add(rr,line[15],raw,'error projected_state_mismatch');
+  add('00',sr,raw,'error chunk_width');
+  add(rr,'00',raw,'error chunk_width');
+  add(rr,sr,raw.slice(0,-1),'error branch_length');
+  const badMember=raw.slice();badMember[28]=flip(badMember[28]);
+  add(rr,sr,badMember,'error projected_registry_mismatch');
+  const badState=raw.slice();badState[68]=flip(badState[68]);
+  add(rr,sr,badState,'error projected_state_mismatch');
+}
+check(rows.filter(x=>x[1]==='projection_witness_consistent').length===2,'checked projection fixtures');
 const expected=rows.map(r=>r[1]);
 function compare(actual){check(actual.length===expected.length,'row count');for(let i=0;i<actual.length;i++)check(actual[i]===expected[i],'row '+i+': '+actual[i]+' != '+expected[i]);}
 compare(expected);
 const controls=[expected.slice(1),[...expected,'extra'],expected.map((x,i)=>i===0?'error first_mismatch':x),expected.map((x,i)=>i===1?expected[0]:x),expected.map((x,i)=>i===2?expected[0]:x),expected.map(x=>x.startsWith('partial_validator_projection ')?x.replace(/.$/,'z'):x)];
+controls.push(expected.map(x=>x==='error projected_registry_mismatch'?'projection_witness_consistent':x),
+  expected.map(x=>x==='error projected_state_mismatch'?'projection_witness_consistent':x));
 for(const c of controls){let caught=false;try{compare(c);}catch{caught=true;}check(caught,'mutation escaped');}
 console.log(JSON.stringify({rows:rows.length,authenticated:expected.filter(x=>x.startsWith('authenticated_')).length,controls:controls.length}));
 if(process.argv[2]!=='--self-test'){
