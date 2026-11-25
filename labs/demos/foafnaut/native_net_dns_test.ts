@@ -94,7 +94,7 @@ Deno.test("measurement: resolutions and time for 20 transfers",async()=>{
   console.log("stub resolver, 10 ms per lookup, 20 sequential transfers\n"+rows.join("\n"));
 });
 
-Deno.test({name:"real lookup timing (skipped without network)",ignore:Deno.env.get("DNS_REAL")===undefined,fn:async()=>{
+Deno.test({name:"real lookup timing (skipped without network)",ignore:(()=>{try{return Deno.env.get("DNS_REAL")===undefined;}catch{return true;}})(),fn:async()=>{
   const pool=new NetPool();const w=wire(1,"example.com","p");
   const t0=performance.now();const a=await netAnswer(w,undefined,pool);const t1=performance.now();
   await netAnswer(w,undefined,pool);const t2=performance.now();
