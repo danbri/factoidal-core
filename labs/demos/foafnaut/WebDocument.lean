@@ -2632,7 +2632,8 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let faceFonts := webFaceFonts h faces request
   -- With no page font held, the page's own fonts are the fonts of its text (`pageFonts`).
   let loaded := pageFonts h.font (faceFonts.filterMap id)
-  let memo := loaded.map fun held => Rendering.SfntProfile.remember held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
+  -- The words are shaped in tasks (`rememberPar_eq`: the memo of `remember`; issue 1031).
+  let memo := loaded.map fun held => Rendering.SfntProfile.rememberPar held.fonts held.memo (Rendering.SfntProfile.wordsOf dom)
   let heldFamilies := ((h.font.map (·.fonts)).getD #[]).toList.map (·.family.toLower)
   let url := baseURL dom (str request "url")
   -- SVG text is drawn with the fonts of the HTML text.

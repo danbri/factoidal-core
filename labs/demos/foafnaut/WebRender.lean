@@ -517,15 +517,37 @@ theorem memoDecode_eq (cache : Decodes) (valid : DecodesValid cache) (b : ByteAr
     rw [v, bytes_eq_of_beq sat]
   · rfl
 
-/-- What the supplied files that `keys` names decode to, read from `cache` where it has them. -/
-def decodesFor (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) : Decodes :=
+/-- What the supplied files that `keys` names decode to, read from `cache` where it has them:
+the sequential form, which `decodesFor` is proved equal to (`decodesFor_eq`). -/
+def decodesForSeq (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) : Decodes :=
   ((images.filter fun (k,_) => keys.contains k).map fun (_,b) => (b, memoDecode cache b)).toArray
+
+/-- Below this many files a store decodes them on the calling thread (`decodesFor`). -/
+def decodeParLeast : Nat := 2
+
+/-- `decodesForSeq`, with each file decoded in a task of its own when there are at least
+`decodeParLeast` (issue 1031: image decode was 7 to 68% of the first layout of five real
+pages). Each decode is a function of the file's bytes and the kept cache alone, so the files
+are independent; one task per file, because one large image can take most of the time. A
+task reaches only the bytes of its file and the cache. -/
+def decodesFor (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) : Decodes :=
+  let files := ((images.filter fun (k,_) => keys.contains k).map (·.2)).toArray
+  L4Factoidal.Par.mapChunksAbove decodeParLeast files.size (fun b => (b, memoDecode cache b)) files
+
+/-- Kind: equality. Says: the parallel decode gives the sequential one's entries, in the same
+order, for every number of files and threads. Does not say: that it is faster. -/
+theorem decodesFor_eq (cache : Decodes) (keys : List String) (images : List (String × ByteArray)) :
+    decodesFor cache keys images = decodesForSeq cache keys images := by
+  unfold decodesFor decodesForSeq
+  rw [L4Factoidal.Par.mapChunksAbove_eq]
+  simp [List.map_map, Function.comp_def]
 
 /-- Kind: invariant. Says: what `decodesFor` makes from a valid cache is a valid cache. -/
 theorem decodesFor_valid (cache : Decodes) (valid : DecodesValid cache) (keys : List String)
     (images : List (String × ByteArray)) : DecodesValid (decodesFor cache keys images) := by
   intro e he
-  simp only [decodesFor, List.mem_toArray, List.mem_map] at he
+  rw [decodesFor_eq] at he
+  simp only [decodesForSeq, List.mem_toArray, List.mem_map] at he
   obtain ⟨⟨k, b⟩, _, rfl⟩ := he
   exact memoDecode_eq cache valid b
 
