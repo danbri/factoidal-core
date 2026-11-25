@@ -9,6 +9,8 @@ import L4Factoidal.Rendering.InkBound
 import L4Factoidal.Prim.FloatOfNat
 import L4Factoidal.Rendering.ColrRaster
 import L4Factoidal.Unicode.EmojiData
+import L4Factoidal.Par.Chunked
+import Std.Data.HashMap
 
 /-! A font profile from the bytes of a font file. Lean reads the file, shapes
 each word and takes the outlines, so no font library and no host runs.
@@ -696,6 +698,74 @@ def remember (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : 
     unless out.contains text do
       if let .ok word := wordIn fonts text 16 then out := out.insert text ⟨word,flatWord word⟩
   return out
+
+/-! ### The words of `remember` shaped in tasks (issue 1031)
+
+Shaping was 5 to 44% of the first layout of five real pages, and the words of a document
+(`wordsOf`) are shaped one by one into the memo. Each word is a function of the font list and
+its text alone, so `rememberPar` shapes the words that the memo does not hold in contiguous
+chunks, each in a task (`Par.mapChunksAbove`), and then runs the loop of `remember` with a
+lookup in what the tasks gave. `rememberPar_eq` says the memo is the one `remember` makes. -/
+
+/-- The loop of `remember`, with the shaping function given. -/
+def rememberWith (shape : String → Except String FontProvider.Word) (memo : Memo) (texts : Array String)
+    (limit : Nat := 65536) : Memo := Id.run do
+  let mut out := if memo.size > limit then {} else memo
+  for text in #[" "] ++ texts do
+    unless out.contains text do
+      if let .ok word := shape text then out := out.insert text ⟨word,flatWord word⟩
+  return out
+
+theorem rememberWith_wordIn (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : Nat) :
+    rememberWith (fun t => wordIn fonts t 16) memo texts limit = remember fonts memo texts limit := rfl
+
+/-- The table of the texts `l` paired with the values `fs`, by text. -/
+def tableOf {β : Type} (l : List String) (fs : List β) : Std.HashMap String β :=
+  (l.zip fs).foldl (fun m (t, w) => m.insert t w) {}
+
+theorem tableOf_getD {β : Type} (f : String → β) (l : List String) (t : String) :
+    (tableOf l (l.map f)).getD t (f t) = f t := by
+  unfold tableOf
+  suffices h : ∀ (m : Std.HashMap String β), (∀ a, m.getD a (f a) = f a) →
+      ((l.zip (l.map f)).foldl (fun m (t, w) => m.insert t w) m).getD t (f t) = f t by
+    exact h {} (fun a => by simp)
+  induction l with
+  | nil => intro m hm; simpa using hm t
+  | cons x xs ih =>
+    intro m hm
+    simp only [List.map_cons, List.zip_cons_cons, List.foldl_cons]
+    apply ih
+    intro a
+    rw [Std.HashMap.getD_insert]
+    split
+    · next h => simp at h; subst h; rfl
+    · exact hm a
+
+/-- Below this many words to shape, `rememberPar` shapes on the calling thread. -/
+def rememberParLeast : Nat := 64
+/-- The chunks the words are cut into, each shaped by a task. How many run at once is the
+host's thread pool; the result does not depend on it. -/
+def rememberChunks : Nat := 8
+
+/-- `remember`, with the words the memo does not hold shaped in tasks (see above). A task
+reaches the font list and the texts of its chunk. -/
+def rememberPar (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : Nat := 65536) : Memo :=
+  let base : Memo := if memo.size > limit then {} else memo
+  let fresh := (#[" "] ++ texts).filter fun t => !base.contains t
+  let shaped := Par.mapChunksAbove rememberParLeast rememberChunks (fun t => wordIn fonts t 16) fresh
+  let table := tableOf fresh.toList shaped.toList
+  rememberWith (fun t => table.getD t (wordIn fonts t 16)) memo texts limit
+
+/-- Kind: equality. Says: `rememberPar` gives the memo of `remember`, for every font list, memo,
+text list, chunk count and thread count. Does not say: that it is faster. -/
+theorem rememberPar_eq (fonts : Array Font) (memo : Memo) (texts : Array String) (limit : Nat) :
+    rememberPar fonts memo texts limit = remember fonts memo texts limit := by
+  unfold rememberPar
+  simp only [Par.mapChunksAbove_eq, Array.toList_map]
+  rw [← rememberWith_wordIn]
+  congr 1
+  funext t
+  exact tableOf_getD _ _ t
 
 /-! ### Shaped words kept across layouts (realperf)
 
