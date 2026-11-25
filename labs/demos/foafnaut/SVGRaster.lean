@@ -249,6 +249,8 @@ structure Prep where
   /-- False when the fill (stroke) paint is constant with alpha exactly 0: its test adds nothing. -/
   fillLive : Bool
   strokeLive : Bool
+  /-- The stroke pieces of a dashed record, with their boxes (`Primitive.dashPieces`). -/
+  dash : Option DashPieces
   x0 : Float
   y0 : Float
   x1 : Float
@@ -265,14 +267,16 @@ def prep (m : Mapping) (data : Array Float) (item : Item) : Prep :=
   let fillLive := match rows with | some r => r.fa.toBits != 0 | none => true
   let strokeLive := match rows with | some r => r.sa.toBits != 0 | none => true
   let sample := item.1.prepareSample data item.2
+  let dash := if item.1.dashParts.isSome then some (item.1.dashPieces data item.2) else none
   -- A dashed stroke tests only the pieces whose box holds the point.
   let sample :=
-    if item.1.dashParts.isSome then {sample with coverage := item.1.prepareCoverageCulled data item.2 fillLive strokeLive}
-    else
+    match dash with
+    | some d => {sample with coverage := item.1.prepareCoverageCulled data item.2 fillLive strokeLive d #[]}
+    | none =>
       let c := sample.coverage
       let c := if fillLive then c else c.withoutFill
       {sample with coverage := if strokeLive then c else c.withoutStroke}
-  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,x0,y0,x1,y1⟩
+  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,dash,x0,y0,x1,y1⟩
 
 /-- True when the box of `r` meets the pixel square at `(x,y)`. -/
 @[inline] def Prep.meetsRow (r : Prep) (y : Float) : Bool := r.y0 <= y+1 && y <= r.y1
@@ -286,6 +290,17 @@ def sampleRows : Array Float :=
 the row's sixteen sample lines (`pathSpansAt`, `pathHitSpans`). A sample whose local `y`
 is not one of those lines (a rotated path) tests every edge. -/
 def Prep.forRow (m : Mapping) (data : Array Float) (yf : Float) (r : Prep) : Prep :=
+  match r.dash with
+  | some d =>
+    -- A dashed stroke: the pieces whose box meets each of the row's sixteen sample lines
+    -- (`DashPieces.crossing`), by the local `y` of the line; any other `y` tests every piece.
+    if !r.strokeLive then r else
+    let wx := (world m (max 0 r.x0) yf).1
+    let spans := sampleRows.map fun dy =>
+      let py := (r.item.1.localPoint wx (world m wx (yf+dy)).2).2
+      (py,d.crossing py)
+    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageCulled data r.item.2 r.fillLive r.strokeLive d spans}}
+  | none =>
   match r.edgeCount with
   | none => r
   | some count =>
