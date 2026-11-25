@@ -132,7 +132,15 @@ private def readHeader : List String → Except String BeaconBlockHeader
     (checkedBeaconBlockHeader s i p t b).mapError (fun _ => "header_width")
   | _ => .error "parse_error"
 
-private def dispatch (project : Bool) : List String → Except String String
+private def projectionErrorName : EthereumConsensus.SSZ.ProposerProjection.ProjectionError → String
+  | .authentication reason => authErrorName reason
+  | .epochOverflow => "epoch_overflow"
+  | .registry reason => errorName reason
+  | .proof _ => "projection_proof_error"
+  | .projectedRegistryMismatch => "projected_registry_mismatch"
+  | .projectedStateMismatch => "projected_state_mismatch"
+
+private def dispatch (project : Bool) (checkRoots : Option (String × String)) : List String → Except String String
   | sigA :: sigB :: slot :: count :: key :: cred :: balance :: slashed :: eligible :: activation ::
       exit :: withdrawable :: prev :: curr :: forkEpoch :: genesis :: registry ::
       state :: rest => do
@@ -182,12 +190,19 @@ private def dispatch (project : Bool) : List String → Except String String
         forkSiblings := (siblings.drop (40 + 2 * depth)).take depth
         genesisSiblings := siblings.drop (40 + 3 * depth)
         stateRoot := stateRoot, sigA := sa, sigB := sb }
+      -- Diagnostic only: candidate witness consistency, not authentication.
+      if let some (r, t) := checkRoots then
+        let registryBytes ← readHex r
+        let stateBytes ← readHex t
+        let rr ← (Chunk.ofBytes registryBytes).mapError (fun _ => "chunk_width")
+        let tr ← (Chunk.ofBytes stateBytes).mapError (fun _ => "chunk_width")
+        let marked ← (EthereumConsensus.SSZ.ProposerProjection.markValidator
+          (mainnetRegistryEpoch currentSlot) v).mapError projectionErrorName
+        let _ ← (EthereumConsensus.SSZ.ProposerProjection.acceptProjection q
+          ⟨marked, rr, tr⟩).mapError projectionErrorName
+        return "projection_witness_consistent"
       let projection ← (EthereumConsensus.SSZ.ProposerProjection.authenticateAndProject q).mapError
-        (fun e => match e with
-          | .authentication reason => authErrorName reason
-          | .epochOverflow => "epoch_overflow"
-          | .registry reason => errorName reason
-          | .proof _ => "projection_proof_error")
+        projectionErrorName
       return "partial_validator_projection " ++
         toString projection.validator.withdrawableEpoch.toNat ++ " " ++
         L4Factoidal.Crypto.bytesToHex projection.projectedRegistryRoot.bytes ++ " " ++
@@ -211,8 +226,9 @@ def main : IO Unit := do
     if line.isEmpty then break
     let result := if line.utf8ByteSize > 8704 then .error "resource_limit"
       else match line.trimAscii.toString.splitOn " " with
-        | "project" :: rest => dispatch true rest
-        | rest => dispatch false rest
+        | "project" :: rest => dispatch true none rest
+        | "checkproject" :: r :: t :: rest => dispatch true (some (r, t)) rest
+        | rest => dispatch false none rest
     output.putStrLn (match result with
       | .ok value => value
       | .error error => "error " ++ error)
