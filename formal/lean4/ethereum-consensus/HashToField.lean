@@ -312,6 +312,14 @@ theorem checkedTarget_ok (q out : Point) (h : checkedTarget (some q) = .ok (some
   · simp only [checkedTarget,if_neg hc] at h
     cases h
 
+private theorem checkedTarget_finite (q : Option Point) (out : Point)
+    (h : checkedTarget q = .ok (some out)) : onTarget out = true := by
+  cases q with
+  | none =>
+    simp only [checkedTarget,Except.ok.injEq] at h
+    cases h
+  | some p => exact (checkedTarget_ok p out h).2
+
 /-- Kind: public output invariant.
 Says: a successful finite map output passes the actual target-curve check.
 Does not say: completeness or normative isogeny refinement. -/
@@ -321,13 +329,7 @@ theorem mapField_ok (u : Fp2) (out : Point)
   · rw [mapField_delegates u hc] at h
     by_cases hp : primeCheck u (swu u) = true
     · simp only [mapped,if_pos hp] at h
-      cases hi : iso (swu u) with
-      | none =>
-        simp only [hi,checkedTarget,Except.ok.injEq] at h
-        cases h
-      | some p =>
-        rw [hi] at h
-        exact (checkedTarget_ok p out h).2
+      exact checkedTarget_finite (iso (swu u)) out h
     · simp only [mapped,if_neg hp] at h
       cases h
   · simp only [mapField,if_neg hc] at h
