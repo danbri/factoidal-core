@@ -21,4 +21,9 @@
     is committed.
   - Installing elan or adding `plausible` follows `factoidal-lean-basics` and the Lake working
     directory rule, not the skill's `references/setup.md`.
+- Toolchain: outside `formal/lean4` this container has no default elan toolchain, so the skill's
+  `scripts/check_lean.sh` fails (`lean --version` does not finish). Run it with our pin:
+  `ELAN_TOOLCHAIN=leanprover/lean4:v4.33.1` (with `~/.elan/bin` on PATH). Checked 2026-11-26:
+  `scripts/test_check_lean.sh` 6 pass, 0 fail (out of 6); `assets/examples/` both run, and the
+  `bv_decide` example gives its documented counterexample (a = b = 4294967295#32), 39 s.
 - Do not edit the vendored files; refresh by re-fetching and updating the commit here.
