@@ -30,3 +30,14 @@ private def body2 := "<g transform='translate(30 40)'><path d='M0 0 L100 0 L50 8
 #guard same "" ("<svg version='1.2' baseProfile='tiny' x='10' y='10' width='100' height='100'>" ++ body1 ++ "</svg>") &&
   compile (doc "" ("<svg version='1.2' baseProfile='tiny' x='10' y='10' width='100' height='100'>" ++ body1 ++ "</svg>")) 480 360 ==
   compile (doc "" ("<svg x='10' y='10' width='100' height='100'>" ++ body1 ++ "</svg>")) 480 360
+
+/- SVG Tiny 1.2 §5.10.2: `xml:id` gives the element its identifier, as `id` does. A reference to
+   it (`use`, a paint server) draws the same as a reference to an `id`. -/
+private def withId (key : String) : String :=
+  "<defs><linearGradient " ++ key ++ "='g'><stop stop-color='red'/><stop offset='1' stop-color='blue'/></linearGradient>" ++
+  "<rect " ++ key ++ "='r' width='50' height='40' fill='url(#g)'/></defs><use href='#r' x='20' y='30'/>"
+#guard compile (doc "" (withId "xml:id")) 480 360 == compile (doc "" (withId "id")) 480 360
+#guard !((compile (doc "" (withId "xml:id")) 480 360).startsWith "{\"error\"")
+-- The same value twice is one identifier; two values are refused with a named reason.
+#guard compile (doc "" "<rect id='a' xml:id='a' width='5' height='5'/>") 480 360 == compile (doc "" "<rect id='a' width='5' height='5'/>") 480 360
+#guard compile (doc "" "<rect id='a' xml:id='b' width='5' height='5'/>") 480 360 == "{\"error\":\"id and xml:id differ on rect\"}"

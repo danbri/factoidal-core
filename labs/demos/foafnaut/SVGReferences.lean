@@ -19,6 +19,15 @@ def Index.get? (index : Index) (id : String) : Option Entry := index.targets.get
 private def attr (attrs : List NamespaceAttribute) (key : String) : Option String :=
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
 
+/-- SVG Tiny 1.2 §5.10.2 (`id` and `xml:id`): both give an element its identifier (XML ID 1.0
+for `xml:id`). The plain `id` is read first; `xml:id` when there is no `id`. Two different values
+on one element are refused by the SVG compiler's attribute check (`NativeSVG.validateAttrs`). -/
+def elementId (attrs : List NamespaceAttribute) : Option String :=
+  match attr attrs "id" with
+  | some id => some id
+  | none => (attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" &&
+      a.name.localPart == "id")).map (·.value)
+
 /-- Resolve xml:base in the original source element's context. Shadow instances
     preserve this context instead of rebasing references against the use host. -/
 def elementBase (attrs : List NamespaceAttribute) (parent : Option String) : Option String :=
@@ -48,7 +57,7 @@ def collect (root : NamespaceNode) (maxNodes : Nat) (documentURL : Option String
         match node with
         | .other _ => pure ()
         | .element _ attrs children =>
-          if let some id := attr attrs "id" then
+          if let some id := elementId attrs then
             if !out.contains id then out := out.insert id ⟨node,path,parentBase⟩
           let base := elementBase attrs parentBase
           pending := (children.zipIdx.map fun (child,i) => (child,path ++ [i],base)) ++ pending

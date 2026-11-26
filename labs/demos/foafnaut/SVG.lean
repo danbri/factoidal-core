@@ -453,13 +453,23 @@ private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
   a.name.namespace_.isNone &&
     ((tag == "svg" && ["category", "icon"].contains a.name.localPart) || inertAttribute a.name.localPart)
 
+/-- SVG Tiny 1.2 §5.10.2: `id` and `xml:id` on one element must name the same identifier
+(`NativeSVGReferences.elementId` reads either); two values are refused. -/
+private def xmlIdValue (attrs : List NamespaceAttribute) : Option String :=
+  (attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" && a.name.localPart == "id")).map (·.value)
+private def idsAgree (tag : String) (attrs : List NamespaceAttribute) : Except String Unit :=
+  match attr attrs "id", xmlIdValue attrs with
+  | some plain, some xml => if plain != xml then throw s!"id and xml:id differ on {tag}" else pure ()
+  | _, _ => pure ()
+
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
+  idsAgree tag attrs
   for a in attrs do
     -- Inline icons may carry application metadata on the svg element (BBC News).
     if skipAttribute tag a then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
-          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
+          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base","id"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
 /-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
@@ -514,7 +524,11 @@ private theorem validateAttrs_svg_metadata (key value : String) (attrs : List Na
       extra = validateAttrs "svg" attrs extra := by
   have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := key }, value } = true := by
     rcases metadata with rfl | rfl <;> simp [skipAttribute]
-  simp [validateAttrs, List.forIn_cons, skip]
+  have notId : key ≠ "id" := by rcases metadata with rfl | rfl <;> decide
+  have same : idsAgree "svg" ({ name := { namespace_ := none, localPart := key }, value } :: attrs) =
+      idsAgree "svg" attrs := by
+    simp [idsAgree, attr, xmlIdValue, List.find?_cons, notId]
+  simp [validateAttrs, List.forIn_cons, skip, same]
 
 #print axioms validateAttrs_svg_metadata
 
@@ -549,7 +563,7 @@ private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String 
   let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (fun d => !ignoredDimension d && !otherGeometry d)}
   -- the words of `class`, split at ASCII white space (DOM §4.9 "ordered set parser")
   let classes := (((attr attrs "class").getD "").map fun c => if c.isWhitespace then ' ' else c).splitOn " " |>.filter (!·.isEmpty)
-  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (attr attrs "id")
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (NativeSVGReferences.elementId attrs)
   -- `rx: auto` and `ry: auto` (SVG 2 §10.2, §10.4): as if the attribute were absent, so the
   -- radius takes the other one
   let winning := winning.filter fun d => !(["rx","ry"].contains d.property && (trim d.value).toLower == "auto")
@@ -1697,7 +1711,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
           (.element targetName targetAttrs targetChildren)
         -- SVG 2 §5.6.3: a pointer on the instance hits the `use` element.
-        return [.group (attr attrs "id") transform (targetTree.map (DisplayNode.ownedBy path))]
+        return [.group (NativeSVGReferences.elementId attrs) transform (targetTree.map (DisplayNode.ownedBy path))]
       else if tag == "svg" || tag == "symbol" then
         validateAttrs tag (← profileLabelsRemoved attrs) ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity"]
         if !(← containerVisible attrs) then return []
@@ -1725,9 +1739,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let retainedChildren ← readChildren childLengths cumulative inherited children
         let overflow := trim ((attr attrs "overflow").getD "hidden")
         if overflow == "visible" then
-          return [.group (attr attrs "id") contentTransform retainedChildren]
+          return [.group (NativeSVGReferences.elementId attrs) contentTransform retainedChildren]
         if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
-        return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
+        return [.clipped (NativeSVGReferences.elementId attrs) contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "image" then
         validateAttrs tag attrs ["href","x","y","width","height","preserveAspectRatio","opacity","transform","type"]
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -1757,10 +1771,10 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let retainedChildren ← readChildren lengths cumulative inherited children
         if displaySuppressed attrs then return []
         match attr attrs "clip-path" with
-        | none => return [.group (attr attrs "id") transform retainedChildren]
+        | none => return [.group (NativeSVGReferences.elementId attrs) transform retainedChildren]
         | some source =>
           let (x,y,w,h) ← rectClip lengths references (trim source)
-          return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
+          return [.clipped (NativeSVGReferences.elementId attrs) transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -2094,7 +2108,7 @@ private def nodeIds (root : NamespaceNode) : Except String (List String) := do
         match node with
         | .other _ => pending := rest
         | .element _ attrs children =>
-          if let some id := attr attrs "id" then ids := ids.push id
+          if let some id := NativeSVGReferences.elementId attrs then ids := ids.push id
           pending := children.map (fun child => (child,depth+1)) ++ rest
   throw "SVG identifier node count exceeds input bound"
 
