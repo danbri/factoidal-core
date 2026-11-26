@@ -133,6 +133,7 @@ lean -R "$LAB" "$LAB/SVGTextTests.lean"
 # Incremental equals full (issue 513): theorems about the tile edge lists and the retained compile; no runtime code.
 lean -R "$LAB" "$LAB/IncrementalProofs.lean"
 lean -R "$LAB" "$LAB/SVGGradientTests.lean"
+lean -R "$LAB" "$LAB/SVGProfileTests.lean"
 lean -R "$LAB" "$LAB/ImageTests.lean"
 lean -R "$LAB" "$LAB/ImageGIFTests.lean"
 lean -R "$LAB" "$LAB/SVGImageTests.lean"

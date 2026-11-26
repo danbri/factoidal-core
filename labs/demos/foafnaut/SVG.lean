@@ -462,6 +462,50 @@ private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extr
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+/-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
+element name the language version and the profile the author wrote for. They do not change
+how the content is drawn. A known label is checked and then removed, so no later step can
+read it; an unknown label is refused with a named reason.
+Values: `version` 1.0, 1.1, 1.2 (SVG 1.x) and 2.0; `baseProfile` none, tiny, basic, full. -/
+def profileLabel (a : NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone && (a.name.localPart == "version" || a.name.localPart == "baseProfile")
+
+def profileLabelsChecked (attrs : List NamespaceAttribute) : Except String Unit := do
+  if let some version := attr attrs "version" then
+    if !["1.0","1.1","1.2","2.0"].contains (trim version) then throw "unsupported SVG version label"
+  if let some profile := attr attrs "baseProfile" then
+    if !["none","tiny","basic","full"].contains (trim profile) then throw "unsupported SVG baseProfile label"
+
+def profileLabelsRemoved (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+  profileLabelsChecked attrs
+  pure (attrs.filter fun a => !profileLabel a)
+
+/-- An admitted root keeps exactly its other attributes: the later steps read the same list as
+for the same element written without `version` and `baseProfile`. -/
+theorem profileLabelsRemoved_ok (attrs rest : List NamespaceAttribute)
+    (h : profileLabelsRemoved attrs = .ok rest) : rest = attrs.filter fun a => !profileLabel a := by
+  unfold profileLabelsRemoved at h
+  cases hc : profileLabelsChecked attrs with
+  | error e => simp [hc, bind, Except.bind] at h
+  | ok u => simp [hc, bind, Except.bind, pure, Except.pure] at h; exact h.symm
+
+/-- Removal is complete: no label is left. -/
+theorem profileLabelsRemoved_none (attrs rest : List NamespaceAttribute)
+    (h : profileLabelsRemoved attrs = .ok rest) : ∀ a ∈ rest, profileLabel a = false := by
+  intro a ha
+  rw [profileLabelsRemoved_ok attrs rest h, List.mem_filter] at ha
+  simpa using ha.2
+
+/-- Adding a label to an element changes nothing but the check: with a known value, the list
+that the drawing steps read is the list of the element without it. -/
+theorem profileLabelsRemoved_cons (label : NamespaceAttribute) (attrs rest : List NamespaceAttribute)
+    (hl : profileLabel label = true) (h : profileLabelsRemoved (label :: attrs) = .ok rest) :
+    rest = attrs.filter fun a => !profileLabel a := by
+  rw [profileLabelsRemoved_ok _ _ h, List.filter_cons]
+  simp [hl]
+
+#print axioms profileLabelsRemoved_cons
+
 /-- An unqualified application metadata attribute on an SVG viewport leaves the
 validation of every other attribute unchanged, including any rejection. -/
 private theorem validateAttrs_svg_metadata (key value : String) (attrs : List NamespaceAttribute)
@@ -1655,7 +1699,7 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         -- SVG 2 §5.6.3: a pointer on the instance hits the `use` element.
         return [.group (attr attrs "id") transform (targetTree.map (DisplayNode.ownedBy path))]
       else if tag == "svg" || tag == "symbol" then
-        validateAttrs tag attrs ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity","version"]
+        validateAttrs tag (← profileLabelsRemoved attrs) ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity"]
         if !(← containerVisible attrs) then return []
         let x ← geometryNumber lengths attrs "x"
         let y ← geometryNumber lengths attrs "y"
@@ -2144,9 +2188,8 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     (glyphs : GlyphTable := #[]) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
-  if let some version := attr attrs "version" then
-    if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
+  let attrs ← profileLabelsRemoved attrs
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","style"]
   for key in ["width","height"] do
     if let some source := attr attrs key then
       -- `em` and `rem` (BBC News: `width="7em"`) are, like the viewport units, lengths that the
@@ -2182,7 +2225,7 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
   let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store,glyphs}
   let attrs ← applyCSS lengths paints rules "svg" attrs
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
   let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
   let parsedTree ← readListWith (fun child i => readNode context.references rules paints 33
