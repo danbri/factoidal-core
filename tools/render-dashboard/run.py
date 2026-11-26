@@ -253,7 +253,7 @@ class Run:
         harness = self.patched_corpus(corpus)
         self.call('wpt-images', [self.a.node, harness / 'run.mjs', '--output', out, '--browser', self.a.chrome,
                                  '--playwright', self.a.playwright, '--svg-lab', LAB, '--html-lab', LAB,
-                                 '--html-witness', WITNESS, '--controls'], 5400)
+                                 '--html-witness', WITNESS, '--controls'], self.a.runner_limit)
         path = out / 'capture/report.json'
         if not path.exists():
             raise NotRun(f'run.mjs wrote no report, see {self.dir}/wpt-images.log')
@@ -540,6 +540,8 @@ def main():
     p.add_argument('--tiny-archive', default=DEPMAP / 'cache/svg-tiny/W3C_SVG_12_TinyTestSuite.tar.gz')
     p.add_argument('--harfbuzz', default=DEPMAP / 'cache/render-metrics/harfbuzz-15.0.0', help='HarfBuzz 15.0.0 source tree')
     p.add_argument('--host', help='the machine, as the record names it (default: CPU model and system), e.g. to name a software GPU')
+    p.add_argument('--runner-limit', type=int, default=5400,
+                   help='wall-clock seconds for the whole wpt-images-wasm runner; a machine with a software GPU needs more. Per-test limits do not change')
     p.add_argument('--chrome-arg', action='append', default=[], help='a flag for Chrome in the wpt-images-wasm suite')
     p.add_argument('--chrome', default='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     p.add_argument('--playwright', default=DEPMAP / 'cache/browser-check/node_modules/playwright-core/index.mjs')
