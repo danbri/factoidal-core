@@ -258,13 +258,128 @@ def valueAt (tl : Timeline) (defaultValue : Float) (t : Rat) : Float :=
     `frameTime frame sampleRate` (`frame / sampleRate` in binary64). A loop
     with an accumulator. `frameOf` is the inverse used to find the first frame
     of an event; the tests check that the two agree (frame `frameOf T` has
-    time at or after `T`, the frame before it has an earlier time). -/
-def fill (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
+    time at or after `T`, the frame before it has an earlier time).
+
+    This is the specification of `fill`: exact rationals, `valueAt` per frame.
+    The renderer calls `fill`, which gives the same values faster (below). -/
+def fillSpec (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
     Array Float := Id.run do
   let mut out : Array Float := Array.mkEmpty n
   for i in [0:n] do
     out := out.push (valueAt tl defaultValue (frameTime (startFrame + i) sampleRate))
   return out
+
+/-! ## The fast form of `fill`
+
+`fill` computes the same values as `fillSpec` without rationals. A stored time is the exact value of
+a binary64 number (see "Times"), so `timeToFloat` recovers that number and the order of two stored
+times is the IEEE order of the numbers; the time of a frame is `frame / sampleRate` in binary64,
+converted to a rational and back without change when it is finite (`frameTime` reads a non-finite
+time as 0). The events are converted once per call, and the value of the parameter before each
+event (`vBefore` in `walk`) does not depend on the frame, so it is computed once per call too. The
+frames increase, so the event under the cursor only moves forward.
+
+Not proved: this relates `Float` operations, which the kernel does not unfold. The `#guard`s at the
+end of the file compare `fill` and `fillSpec` on every kind of event, the empty list, equal times,
+frames before, inside and after each event, and a sample rate of 0. A list with a curve event uses
+`fillSpec`. -/
+
+/-- An event with its time as a binary64 number. `kind`: 0 setValue, 1 linear ramp, 2 exponential
+ramp, 3 setTarget (time constant in `tc`). -/
+structure FEvent where
+  kind : Nat
+  time : Float
+  value : Float
+  tc : Float
+
+/-- The `FEvent` of an event, or `none` for a curve. -/
+def FEvent.ofEvent (e : Event) : Option FEvent :=
+  match e.kind with
+  | .setValue => some ⟨0, timeToFloat e.time, e.value, 0.0⟩
+  | .linearRamp => some ⟨1, timeToFloat e.time, e.value, 0.0⟩
+  | .exponentialRamp => some ⟨2, timeToFloat e.time, e.value, 0.0⟩
+  | .setTarget tc => some ⟨3, timeToFloat e.time, e.value, tc⟩
+  | .setValueCurve .. => none
+
+/-- `ownValue` at the time `t` (a binary64 number). -/
+def FEvent.own (e : FEvent) (vBefore t : Float) : Float :=
+  if e.kind == 3 then
+    if e.tc == 0.0 then e.value
+    else e.value + (vBefore - e.value) * Float.exp (-((t - e.time) / e.tc))
+  else e.value
+
+/-- `rampValue` with times as binary64 numbers. -/
+def fRamp (expo : Bool) (tp : Float) (v0 : Float) (t1 : Float) (v1 : Float) (t : Float) : Float :=
+  let f := (t - tp) / (t1 - tp)
+  if expo then
+    if v0 == 0 || (v0 < 0 && 0 < v1) || (0 < v0 && v1 < 0) then v0
+    else v0 * Float.pow (v1 / v0) f
+  else v0 + (v1 - v0) * f
+
+/-- The value of the parameter before each event: element 0 is the default value and element `j`
+is `ownValue` of event `j - 1` at the time of event `j`. -/
+def fBefore (d : Float) (es : Array FEvent) : Array Float := Id.run do
+  let mut out : Array Float := Array.mkEmpty es.size
+  let mut v := d
+  for j in [0:es.size] do
+    match es[j]? with
+    | none => pure ()
+    | some e =>
+      if j == 0 then v := d
+      else v := (es.getD (j - 1) e).own v e.time
+      out := out.push v
+  return out
+
+/-- The value at time `t` when the first `j` events are at or before `t`. -/
+def fValueAt (d : Float) (es : Array FEvent) (vb : Array Float) (j : Nat) (t : Float) : Float :=
+  if j == 0 then d
+  else
+    match es[j - 1]? with
+    | none => d
+    | some c =>
+      let v := vb.getD (j - 1) d
+      let (tp, vp) := if c.kind == 3 then (c.time, v) else (c.time, c.value)
+      match es[j]? with
+      | some n =>
+        if (n.kind == 1 || n.kind == 2) && tp ≤ t then fRamp (n.kind == 2) tp vp n.time n.value t
+        else c.own v t
+      | none => c.own v t
+
+/-- The time of frame `f` as a binary64 number, as `timeToFloat (frameTime f sampleRate)`. -/
+def fFrameTime (f : Nat) (sampleRate : Float) : Float :=
+  let x := f.toUInt64.toFloat / sampleRate
+  if x.isFinite then x + 0.0 else 0.0
+
+/-- The number of leading events at or before `t`, counted from `j` (the cursor only moves
+forward); a loop on the fuel `k`. -/
+def advance (es : Array FEvent) (t : Float) : Nat → Nat → Nat
+  | 0, j => j
+  | k + 1, j =>
+    match es[j]? with
+    | some e => if e.time ≤ t then advance es t k (j + 1) else j
+    | none => j
+
+/-- Fast `fill`; the events are all of the four non-curve kinds. -/
+def fillFast (es : Array FEvent) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
+    Array Float := Id.run do
+  let vb := fBefore defaultValue es
+  let mut out : Array Float := Array.mkEmpty n
+  let mut j := 0
+  for i in [0:n] do
+    let t := fFrameTime (startFrame + i) sampleRate
+    j := advance es t es.size j
+    out := out.push (fValueAt defaultValue es vb j t)
+  return out
+
+/-- a-rate values for frames `startFrame .. startFrame + n - 1`: the same values as `fillSpec`. -/
+def fill (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
+    Array Float :=
+  match tl.events with
+  | [] => Array.replicate n defaultValue
+  | evs =>
+    match evs.mapM FEvent.ofEvent with
+    | some es => fillFast es.toArray defaultValue startFrame n sampleRate
+    | none => fillSpec tl defaultValue startFrame n sampleRate
 
 /-! ## Insertion -/
 
@@ -916,6 +1031,27 @@ private def fillTl : Timeline := ⟨[sv 0 0, lin 1 1]⟩
 #guard fill fillTl 0 2 3 4.0 == #[0.5, 0.75, 1.0]
 #guard (fill fillTl 0 0 100000 48000.0).size == 100000
 #guard (fill fillTl 0 0 3 0.0).size == 3
+
+-- `fill` against `fillSpec`: every kind of event, empty list, equal times, frames before, inside
+-- and after each event, a sample rate of 0, a curve (which uses `fillSpec`).
+private def diffTl (es : List Event) (d : Float) (start n : Nat) (sr : Float) : Bool :=
+  fill ⟨es⟩ d start n sr == fillSpec ⟨es⟩ d start n sr
+private def diffAll (es : List Event) (d : Float) : Bool :=
+  diffTl es d 0 200 48000.0 && diffTl es d 37 500 48000.0 && diffTl es d 5000 300 48000.0
+    && diffTl es d 0 40 100.0 && diffTl es d 0 5 0.0 && diffTl es d 0 0 48000.0
+#guard diffAll [] 0.7
+#guard diffAll [sv 2 (q 0.001)] 0.7
+#guard diffAll [sv 2 (q 0.001), sv 3 (q 0.001), sv 5 (q 0.002)] 0.7
+#guard diffAll [sv 0 0, lin 1 (q 0.01)] 0.0
+#guard diffAll [sv 1 0, expo 0.0001 (q 0.01)] 0.0
+#guard diffAll [sv 0 0, expo 1 (q 0.01)] 0.0
+#guard diffAll [sv (-1) 0, expo 1 (q 0.01)] 0.0
+#guard diffAll [tgt 1 0 0.002, lin 3 (q 0.01)] 0.25
+#guard diffAll [tgt 1 (q 0.001) 0.003, tgt 0.2 (q 0.004) 0.001, expo 4 (q 0.02)] 0.25
+#guard diffAll [tgt 1 (q 0.001) 0.0, sv 7 (q 0.004)] 0.25
+#guard diffAll [sv 0.0001 (q 0.002), lin 0.1 (q 0.0125), expo 0.0001 (q 0.0125), sv 3 (q 0.03)] 0.0
+#guard diffAll [sv 1 (q 0.005), lin 2 (q 0.005), lin 3 (q 0.005)] 0.0
+#guard diffAll [sv 1 (q 0.001), crv #[0, 1, 0, 2] (q 0.002) (q 0.01), lin 5 (q 0.02)] 0.5
 
 /-! ## Not done
 
