@@ -751,43 +751,6 @@ theorem leBytes4 (v : Nat) :
   rw [r, List.map_toArray, List.map_cons, List.map_cons, List.map_cons, List.map_cons, List.map_nil,
     p0, p1, p2, p3, Nat.div_one]
 
-/-- Byte `s / 8` of a 64-bit word as the reference digit (`v / 2 ^ s % 256`) and as a shift. -/
-theorem byteOfU64 (v : UInt64) (s : Nat) (hs : s < 64) :
-    (v.toNat / 2 ^ s % 256).toUInt8 = (v >>> s.toUInt64).toUInt8 := by
-  apply UInt8.toNat_inj.mp
-  simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow, Nat.mod_eq_of_lt hs, UInt64.toNat_toUInt8]
-
-/-- Byte `s / 8` of a 32-bit word as the reference digit and as a shift. -/
-theorem byteOfU32 (v : UInt32) (s : Nat) (hs : s < 32) :
-    (v.toNat / 2 ^ s % 256).toUInt8 = (v >>> s.toUInt32).toUInt8 := by
-  apply UInt8.toNat_inj.mp
-  simp [UInt32.toNat_shiftRight, Nat.shiftRight_eq_div_pow, Nat.mod_eq_of_lt hs, UInt32.toNat_toUInt8]
-
-/-- The eight little-endian bytes of a 64-bit word: the reference's digits over `List.range 8`
-are the shifts of the word (no `Nat` above 2^63, so no big-number division). -/
-theorem leBytesU64 (v : UInt64) :
-    ByteArray.mk ((List.range 8).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8)
-      = ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8,
-          (v >>> 32).toUInt8, (v >>> 40).toUInt8, (v >>> 48).toUInt8, (v >>> 56).toUInt8] := by
-  have r : List.range 8 = [0, 1, 2, 3, 4, 5, 6, 7] := rfl
-  rw [r, List.map_toArray]
-  simp only [List.map_cons, List.map_nil]
-  rw [byteOfU64 v _ (by decide), byteOfU64 v _ (by decide), byteOfU64 v _ (by decide),
-    byteOfU64 v _ (by decide), byteOfU64 v _ (by decide), byteOfU64 v _ (by decide),
-    byteOfU64 v _ (by decide), byteOfU64 v _ (by decide)]
-  rfl
-
-/-- The four little-endian bytes of a 32-bit word, as shifts. -/
-theorem leBytesU32 (v : UInt32) :
-    ByteArray.mk ((List.range 4).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8)
-      = ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8] := by
-  have r : List.range 4 = [0, 1, 2, 3] := rfl
-  rw [r, List.map_toArray]
-  simp only [List.map_cons, List.map_nil]
-  rw [byteOfU32 v _ (by decide), byteOfU32 v _ (by decide), byteOfU32 v _ (by decide),
-    byteOfU32 v _ (by decide)]
-  rfl
-
 /-- Direct reads for the unsigned one-byte types and the integer types of two and four bytes
 (Int8 keeps the reference path). -/
 def typedReadByteFast (ty : Nat) (bytes : ByteArray) (at_ : Nat) : Value :=
@@ -830,15 +793,6 @@ def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
     let v := Int.toNat (toInt32Wide x % 4294967296)
     ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
       (v / 16777216 % 256).toUInt8]
-  -- Float32 and Float64 (issue 1098: the canvas prelude sends its batches as a Float64Array):
-  -- the bits as a machine word, shifted; the reference divides a `Nat` of up to 2^64.
-  | 7 =>
-    let v := x.toFloat32.toBits
-    ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8]
-  | 8 =>
-    let v := x.toBits
-    ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8,
-      (v >>> 32).toUInt8, (v >>> 40).toUInt8, (v >>> 48).toUInt8, (v >>> 56).toUInt8]
   | _ => typedBytes ty x
 
 /-- **Kind: refinement.** Says direct byte writes produce exactly the reference
@@ -846,9 +800,7 @@ bytes for every type tag and Float. Does not say anything about speed. -/
 @[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
   funext ty x
   match ty with
-  | 7 => simp only [typedBytes, typedBytesByteFast, leBytesU32]
-  | 8 => simp only [typedBytes, typedBytesByteFast, leBytesU64]
-  | _ + 9 => rfl
+  | _ + 7 => rfl
   | 0 | 1 | 2 =>
     simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
       show (2 : Int) ^ (8 * 1) = 256 from by decide]
