@@ -27,7 +27,7 @@ SyntaxError, -25 InvalidAccessError, -26 DataError, -27 QuotaExceededError
 (`WebCryptoKeys.Err.code`).
 
 Ops 100 to 119 are WebGL's (`PageGl.Api`), 120 to 139 WebCodecs' (`WebCodecs.Api`).
-Ops 173 to 189 are Web Audio's (`WebAudio.Api`; 170 to 172 are the layout observers below).
+Ops 173 to 196 are Web Audio's (`WebAudio.Api`; 170 to 172 are the layout observers below; 197 to 199 answer -2).
 
 State: the decoders of `TextDecoder`s in the middle of a stream (by the number the page
 gave them), the answer that waits, the random generator, and the session's CryptoKeys
@@ -107,7 +107,7 @@ structure State where
   caches : L4Factoidal.ClientStorage.Shed L4Factoidal.ClientStorage.Caches.Shelf := {}
   /-- WebGL: the interface tables and the contexts' state (`PageGl.Api`, ops 100 to 119). -/
   gl : L4Factoidal.PageGl.Api.State := {}
-  /-- Web Audio: the offline contexts (`WebAudio.Api`, ops 173 to 189). -/
+  /-- Web Audio: the offline and real-time contexts (`WebAudio.Api`, ops 173 to 196). -/
   audio : L4Factoidal.WebAudio.Api.State := {}
   rng : Option Crypto.WebCrypto.Drbg := none
   /-- Generate calls of the generator so far (SP 800-90A's reseed counter). -/
@@ -780,7 +780,7 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
     -- WebCodecs: frame layouts and copy plans, configuration checks (pure functions of the arguments).
     else if 120 ≤ code && code < 140 then pure' (L4Factoidal.WebCodecs.Api.op code fs)
     -- Web Audio: contexts, nodes, parameters, rendering (`WebAudio.Api`; the state is `audio`).
-    else if 173 ≤ code && code < 190 then
+    else if 173 ≤ code && code < 200 then
       let (audio, r) := L4Factoidal.WebAudio.Api.op s.audio code fs
       ({ s with audio }, r)
     -- The Web Neural Network API (`L4Factoidal.WebNN.api`): one command and its arguments.

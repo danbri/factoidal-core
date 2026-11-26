@@ -445,6 +445,24 @@ def OfflineContext.cancelScheduledValues (c : OfflineContext) (id param : Nat)
     let t ← Automation.cancelTimeOfDouble cancelTime now
     pure (Automation.cancelScheduledValues p.timeline t)
 
+/-- `setValueCurveAtTime(values, startTime, duration)`. Errors as `Automation.validate` and
+`Automation.insert` decide: a non-finite element or time is a `TypeError`, fewer than 2 values an
+`InvalidStateError`, a negative start time or a duration that is not strictly positive a
+`RangeError`, an overlap a `NotSupportedError`. -/
+def OfflineContext.setValueCurveAtTime (c : OfflineContext) (id param : Nat)
+    (values : Array Float) (startTime duration : Float) : Except Error OfflineContext :=
+  c.withParam id param fun p now cur => do
+    let t ← Automation.eventTime startTime
+    let d ← Automation.eventTime duration
+    Automation.insert p.timeline ⟨.setValueCurve values d none, t, 0.0⟩ now cur
+
+/-- `cancelAndHoldAtTime(cancelTime)`. -/
+def OfflineContext.cancelAndHoldAtTime (c : OfflineContext) (id param : Nat)
+    (cancelTime : Float) : Except Error OfflineContext :=
+  c.withParam id param fun p now _ => do
+    let t ← Automation.cancelTimeOfDouble cancelTime now
+    pure (Automation.cancelAndHold p.timeline t p.spec.defaultValue)
+
 /-- The `automationRate` attribute: `true` is "a-rate", `false` is "k-rate". -/
 def OfflineContext.setAutomationRate (c : OfflineContext) (id param : Nat) (aRate : Bool) :
     Except Error OfflineContext :=

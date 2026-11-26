@@ -29,8 +29,11 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   `getFrequencyResponse`. Called by `Render.runKernel`.
 - `WebAudio.Decode`: `decodeAudioData`: format sniffing, WAV, Opus, Vorbis and MP3 decoding to floats,
   the windowed-sinc resampler to the context rate, and the `AudioBuffer`.
-- `WebAudio.Api`: the page operations (`web_api` ops 173 to 189) and the contexts kept between
+- `WebAudio.Api`: the page operations (`web_api` ops 173 to 196) and the contexts kept between
   script turns; the op table is in its header.
+- `WebAudio.Ring`: the ring between the real-time rendering task and the audio consumer as a state
+  machine (all-or-nothing write, read with silence and under-run count), with its theorems. The
+  externs of the C sink are `WebAudio.Sink`, which this file does not import (it links C).
 - `WebAudio.Idl`: the interface table generated from WPT's `interfaces/webaudio.idl` by
   `tools/webaudio-idl-table.py` (interfaces, attributes, operations, enums, dictionaries).
 -/
@@ -45,4 +48,5 @@ import L4Factoidal.WebAudio.Oscillator
 import L4Factoidal.WebAudio.Filters
 import L4Factoidal.WebAudio.Idl
 import L4Factoidal.WebAudio.Decode
+import L4Factoidal.WebAudio.Ring
 import L4Factoidal.WebAudio.Api

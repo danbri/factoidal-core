@@ -344,11 +344,17 @@ safety offset and the buffer size; `null` and `wav`: 0).
 
 ### 13.5 The ring as a Lean state machine
 
-`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run count.
-`write k` takes `min k free` frames; `read k` gives `min k available` frames and `k` minus that of
-silence, and counts an under-run when it gives silence. Theorems: in every reachable state, read ≤
-written ≤ read + capacity; each frame is read at most once and in the order written; an under-run
-gives silence. The C ring follows it: the writer copies frames, then stores `written` with release
+`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run
+count and the frames of silence given. `write k` is all or nothing: it takes `k` frames when `k`
+is at most the free space and none otherwise (the rendering task writes whole render quanta).
+`read k` gives `min k available` frames and `k` minus that of silence, and counts one under-run
+event when it gives any silence. Theorems: in every reachable state, read ≤ written ≤ read +
+capacity; the non-silent frames given by any sequence of reads are `0, 1, 2, ...` in order with
+none twice; an under-run gives silence for exactly the frames not taken; an accepted write never
+reuses the slot of a frame not yet read. The model has no time. Rule of the consumers (C only):
+a consumer takes nothing and counts no under-run before the first write (it waits until
+`written > 0` and starts its period clock then; CoreAudio starts the output unit at the first
+write), nor while paused, so the measure "under-runs a minute" starts at 0. The C ring follows it: the writer copies frames, then stores `written` with release
 order; the reader loads `written` with acquire order, copies, then stores `read` with release
 order; each side writes only its own counter. Tests: a stress test of the C ring under
 ThreadSanitizer (a writer thread and a reader thread, random sizes, every frame value checked),
@@ -371,6 +377,17 @@ is `running` when the page has sticky activation (HTML "has been activated"), el
 `resume()` is allowed after sticky activation. Question 3 of section 7.
 
 ### 13.8 Ops 190 to 199
+
+As landed in D2 (`WebAudio/Api.lean`, header). Changes against the text below, and why:
+`newAudioContext` also answers -20 for a bad hint or callback and -23 at 16 live contexts, and
+its first outbox message is `(190, [id, rate (binary64), channels, target])` so the rendering side
+knows its parameters; the `control` call id is answered as decimal text and a `resume` before
+activation waits (`pendingResume`) until op 196; `events` has kind 4 (call rejected); op 195 gives
+a stored error result once and then removes the job, which makes it the one op that changes the
+state while it answers an error (`op_error_state` excludes it); op 196 `activate` is added; ops
+197 to 199 answer -2. Op 179 gains `setValueCurveAtTime(values, startTime, duration)` and
+`cancelAndHoldAtTime(cancelTime)`; a curve of fewer than 2 values answers -29 because
+`Automation.validate` decides so (the specification says InvalidStateError).
 
 - 190 `newAudioContext(latencyHint, sampleRate, callback)`: `latencyHint` is `interactive`,
   `balanced`, `playback` or an 8-byte double; `sampleRate` is a double or ""; `callback` is the
@@ -405,14 +422,35 @@ latency. `--perf-summary` gets a block `audio`.
 
 ### 13.10 Steps
 
-- D1: `WebAudio/Ring.lean` with its theorems; `ffi/audio_sink.c` (ring, `null`, `wav`, the Wasm
-  build); `WebAudio/Sink.lean` (the externs); Lake and `build-web-render.sh` wiring; the stress
-  test and the trace replay.
+- D1 (done 2026-11-26, branch `wip/1169-audio-ring`): `WebAudio/Ring.lean` with its theorems
+  (invariant, frames in order and once, silence and under-run count, all-or-nothing write, no
+  overwrite; no `sorry`, axioms only `propext`, `Classical.choice`, `Quot.sound`);
+  `ffi/audio_sink.c` and `ffi/audio_ring.h` (ring, `null`, `wav`, the Wasm stub; the consumer
+  takes nothing before the first write); `WebAudio/Sink.lean` (the externs; not imported by the
+  umbrella); Lake (`libl4audio`, `audio-sink-test`) and `build-web-render.sh` wiring; `tests/audio/run.sh`
+  (ThreadSanitizer stress, trace replay through the Lean model, WAV check). The Lean 4.33 ABI
+  gives an `IO a` extern no world argument and a `BaseIO a` extern the plain value (no
+  `lean_io_result`); `audio_sink.c` records it. Not done in D1: a full `build-web-render.sh --native` run (the cloud box passed the 40-minute cap at the 17th of 56 lab modules, in `SVGRaster`; the sink's object compiles with the script's flags and `nm` shows `l4_audio_sink_open`); run it on the next build machine; D1m (CoreAudio) and
+  D3 use these.
 - D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
   sessions, so this part is written against Apple's documented C API and is checked by the macOS
-  build of `danbri/factoidal-builds`.
-- D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
-  `AudioContext` in `prelude.js`.
+  build of `danbri/factoidal-builds`. Written 2026-11-26 (`audio_sink.c`, section "The coreaudio
+  consumer"): the default output unit (`kAudioUnitSubType_DefaultOutput`, which follows the
+  output device the person chose), interleaved binary32 input at the context's rate (the unit
+  converts to the device), a render callback that only calls `l4_ring_read`, the unit started at
+  the first write and stopped on pause, the device latency, safety offset and buffer size as the
+  latency, and the device's nominal rate as the preferred rate. `build-web-render.sh` links
+  AudioToolbox and CoreAudio on macOS. Checked here: the branch compiles with gcc and clang,
+  `-Wall -Wextra -Werror`, against declaration stubs written from Apple's documented signatures,
+  and calls exactly nine Apple functions. Not checked: Apple's own headers (the first macOS build
+  does that) and sound on a Mac (the owner).
+- D2: real-time contexts in `Api.lean` (ops 190 to 196, the outbox, the report merge) and
+  `AudioContext` in `prelude.js`. Lean part done 2026-11-26, branch `wip/1169-realtime-api`: the
+  state (`realtime`, `device`, `autoplay`, `activated`, `decodeJobs`, `wakeups`), ops 190 to 196,
+  the outbox in `op`, `applyReport`, `takeOutbox`, `takeDecodeJobs`, `finishDecode`,
+  `takeWakeups`, and the two new `paramCall` methods; theorems `op_outbox`, `applyReport_mono`
+  (and the list and graph-frame forms), `takeOutbox_empty`, `takeOutbox_messages`; routing
+  173 to 199 in `WasmVM/Hosts/WebApi.lean`. Not done: `prelude.js` (`AudioContext`), D3.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
