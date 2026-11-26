@@ -14,7 +14,8 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   rule of scheduled sources.
 - `WebAudio.Graph`: nodes and connections, and the ordered list of nodes of "Rendering an audio
   graph" (`DelayNode`s in cycles split into a writer and a reader; cycles with no `DelayNode`
-  muted). Not yet proved: that every node that is not muted is in the order.
+  muted). Proved: no step twice, topological order, every step of a node that is not muted is in
+  the order (for graphs built by `connect`).
 - `WebAudio.Render`: one render quantum of a context: mixed inputs, `AudioParam` values
   (automation plus connected signals, clamped), kernels in graph order, the destination's block.
 - `WebAudio.Context`: an offline context: constructor checks, nodes, connections, automation,

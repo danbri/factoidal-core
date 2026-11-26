@@ -29,7 +29,8 @@ Stage B of https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafna
      section 1.18.4). No connection joins the two. A connection to the `delayTime` parameter
      of a split delay ends at its `delayRead` (`paramDstStep`), the step that uses `delayTime`.
   2. a node that lies on a cycle of the graph so obtained is muted: it is left out of the steps
-     and listed in `muted`.
+     and listed in `muted`. So is a cycle breaker whose `DelayReader` is on a cycle made only of
+     `delayTime` connections between cycle breakers (no node step is on it).
   3. the remaining steps are put in an order in which every step comes after all the steps that
      feed it (an input or an `AudioParam` of it). The specification does this with a depth-first
      visit and a reversal. This file uses repeated selection of the first step whose feeding
@@ -46,22 +47,33 @@ Stage B of https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafna
   list, the step at the source end comes first. For a delay in a cycle the source end is its
   `delayRead`; the destination end of an audio connection is its `delayWrite` and that of a
   parameter connection its `delayRead`, so the cut at the split needs no exception.
-* `muted_on_cycle`, `muted_on_graph_cycle`: a muted node lies on a cycle of the split graph,
-  and then on a cycle of the original graph.
+* `order_complete`: in a `WellFormed` graph (every connection joins nodes of the graph, which
+  `connect` and `connectParam` keep true: `connect_wellFormed`, `connectParam_wellFormed`), every
+  step of the split graph (`nodeSteps`) that does not belong to a muted node is in the steps. The
+  proof: `live_acyclic` (the steps that are not muted have no cycle, using `reach_complete`, the
+  completeness of the fuel-bounded reachability search), `path_minimal` (a finite non-empty set of
+  vertices of an acyclic graph has a vertex that nothing in the set reaches), and `kahn_complete`
+  (Kahn's loop with fuel `vs.length` places every vertex when that holds).
+* `reach_complete`, `onCycle_iff`: `reach es v` contains every vertex joined to `v` by a path of one
+  or more edges, so `onCycle es v` is true exactly when `v` has such a path to itself.
+* `muted_on_cycle`, `muted_on_graph_cycle`: a muted node lies on a cycle of the split graph (or
+  is a cycle breaker whose `DelayReader` is on a cycle of live connections), and then on a cycle of
+  the original graph.
 * `connect_idempotent`, `connectParam_idempotent`: connecting the same termini twice gives the
   same graph as once.
 
 ## What is tested only (`#guard`)
 
-* The converse of `muted_on_cycle` (a node on a cycle of the split graph is muted) holds by the
-  definition of `mutedIds`; what is tested is that the fuel of the reachability search is
-  enough (`reachAux` stops after `es.length + 1` rounds; each round adds a new vertex, and
-  there are at most `es.length` distinct targets) and that the result is as expected on cycles
-  of length 1, 2 and 3 and on two cycles.
-* Completeness: every vertex that is not muted appears in the steps (`orderComplete`). The
-  proof needs the fact that a finite graph with no cycle has a vertex with no predecessor in
-  any non-empty subset; it is not proved here, so `order_topological` is stated for steps that
-  are in the list. Every graph of the tests below is complete.
+* `orderComplete g` (the number of steps equals the number of live steps) on the test graphs.
+  `order_complete` is the proof for every well-formed graph; the `Bool` is kept as a check for
+  graphs that are not well formed. For such a graph, a connection to a node number outside the
+  graph is not covered by the proof, and its far end is never listed.
+* The first draft of this file did not mute a cycle of `delayTime` connections between cycle
+  breakers (a `DelayReader` that feeds the `DelayReader` of a delay in a cycle, including a delay
+  that feeds its own `delayTime`): such a cycle contains no node step, `Kahn` could not place it, and
+  the delays were dropped without being listed as muted. Found while proving `order_complete`
+  (https://github.com/danbri/factoidal-core/issues/1169); the second condition of `mutedIds`
+  repairs it, tests 31 and 32.
 
 ## Not done yet
 
@@ -424,8 +436,8 @@ def order (g : Graph) : Order :=
   let vs := liveVerts M (nodeSteps g)
   { steps := kahn (predsOf es) vs.length vs [], muted := M }
 
-/-- True if every vertex that is not muted is in the steps (see the header: tested, not
-proved). -/
+/-- True if the steps are as many as the live vertices. For a well-formed graph this always holds
+(`order_complete`); the check is for tests and for graphs that are not well formed. -/
 def orderComplete (g : Graph) : Bool :=
   (order g).steps.length == (liveVerts (mutedIds g) (nodeSteps g)).length
 
@@ -484,8 +496,8 @@ private theorem reachAux_sound (es : List (α × α)) (v : α) :
       · exact hnew y h
 
 /-- Soundness of the search. Says: every vertex that `reach es v` returns is joined to `v` by a
-path of one or more edges of `es`. Does not say: that the search finds every such vertex (the
-fuel `es.length + 1` is tested, not proved, to be enough). -/
+path of one or more edges of `es`. Does not say: that the search finds every such vertex (that is
+`reach_complete`). -/
 theorem reach_sound (es : List (α × α)) (v x : α) (h : x ∈ reach es v) : Path es v x :=
   reachAux_sound es v _ [v] [] (fun y hy => Or.inl (by simpa using hy)) (by simp) x h
 
@@ -617,7 +629,7 @@ private theorem reachAux_complete (es : List (α × α)) :
       · exact ih new (seen ++ new) hcount hinv' a b hab (Or.inr ha)
 
 /-- Says: if `onCycle es v` is true, there is a path of one or more edges from `v` to `v`.
-Does not say: the converse (see `reach_sound`). -/
+Does not say: the converse (see `onCycle_iff`). -/
 theorem onCycle_sound {es : List (α × α)} {v : α} (h : onCycle es v = true) : Path es v v :=
   reach_sound es v v (by simpa [onCycle] using h)
 
@@ -876,7 +888,7 @@ theorem kahn_complete (preds : Step → List Step) (Q : Step → Prop)
         · right; exact List.mem_append_left _ h
 
 /-- Says: no step is listed twice. Does not say: that every vertex is listed (see
-`orderComplete`). -/
+`order_complete`). -/
 theorem order_nodup (g : Graph) : (order g).steps.Nodup :=
   kahn_nodup _ _ _ _ List.nodup_nil
 
@@ -924,7 +936,7 @@ theorem order_topological_step (g : Graph) {x y : Step} (hxy : (x, y) ∈ stepEd
 be `srcStep g e.src` (the node, or its `DelayReader` if it is a `DelayNode` on a cycle) and the
 destination end be `dstStep g e.dst` (the node, or its `DelayWriter`). If the source end is at index
 `i` and the destination end at index `j` of the steps, then `i < j`. Does not say: that both ends
-are in the list (see `orderComplete`); anything about a connection with a muted end; anything
+are in the list (see `order_complete`); anything about a connection with a muted end; anything
 about the order of two steps that no connection relates. -/
 theorem order_topological_edge (g : Graph) {e : Edge} (he : e ∈ g.edges)
     (ha : e.src ∉ (order g).muted) (hb : e.dst ∉ (order g).muted) {i j : Nat}
@@ -1359,6 +1371,14 @@ open Step Kind
 #guard
   let g := mk [gain, delay, destination] [(0,0,1,0), (1,0,0,0), (0,0,2,0)] [(0,0,1,0)]
   (order g).muted == [0] && (order g).steps == [delayWrite 1, delayRead 1, node 2]
+
+-- 31. A delay that feeds its own `delayTime`: the cycle has no node step; the delay is muted.
+#guard (order (mk [delay] [] [(0,0,0,0)])).muted == [0]
+  && (order (mk [delay] [] [(0,0,0,0)])).steps == [] && orderComplete (mk [delay] [] [(0,0,0,0)])
+-- 32. Two delays that feed each other's `delayTime`: both muted, the other nodes still ordered.
+#guard
+  let g := mk [delay, delay, oscillator, destination] [(2,0,3,0)] [(0,0,1,0), (1,0,0,0)]
+  (order g).muted == [0, 1] && (order g).steps == [node 2, node 3] && orderComplete g
 
 -- Connections.
 -- 24. connect: a good connection, a repeated connection, bad indices, unknown node.
