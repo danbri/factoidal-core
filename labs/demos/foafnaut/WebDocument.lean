@@ -18,6 +18,7 @@ import WebState
 import WebSparql
 import WebScripts
 import L4Factoidal.Net.Subresource
+import L4Factoidal.Prim.Bytes
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
@@ -1803,6 +1804,99 @@ def plainArtifact (scene : Rendering.Scene) (marks : List Rendering.Node) (shell
     | some value => WebShell.compose value page width height addressFont
     | none => page)) boxes face live form checks tree
 
+/-- The `damage.id` that a retained page layer answer ends with (`pageArtifact`: its text ends
+`"damage":{"id":N,...}}`); `none` for an answer with no damage (the plain path). The pattern
+holds quote marks, which JSON writes escaped inside a string, so only the damage object matches. -/
+def pageAnswerId (text : String) : Option Nat :=
+  match (text.splitOn "\"damage\":{\"id\":").getLast? with
+  | none => none
+  | some tail =>
+    if tail.length == text.length then none
+    else (String.ofList (tail.toList.takeWhile Char.isDigit)).toNat?
+
+#guard pageAnswerId "{\"a\":1,\"damage\":{\"id\":42,\"base\":null,\"rects\":null}}" == some 42
+#guard pageAnswerId "{\"a\":\"\\\"damage\\\":{\\\"id\\\":7\"}" == none
+#guard pageAnswerId "{\"abi\":1}" == none
+
+/-- The byte ranges `(offset, length)` where `new` differs from `old`, for two arrays of one size
+(issue 1124, stage C). Compared in 8-byte words, then the last bytes one by one; a run that starts
+at most `gap` bytes after the last one ends joins it. Offsets and lengths are multiples of 4 when
+the size is. One pass, no list. -/
+def changedRanges (old new : ByteArray) (gap : Nat := 64) : Array (Nat × Nat) := Id.run do
+  let size := new.size
+  let words := size / 8
+  let mut out : Array (Nat × Nat) := #[]
+  let mut start := 0
+  let mut stop := 0
+  let mut open_ := false
+  for w in [0:words] do
+    let p := (8*w).toUSize
+    if Prim.Bytes.ldU64LE old p != Prim.Bytes.ldU64LE new p then
+      if open_ && 8*w ≤ stop+gap then stop := 8*w+8
+      else
+        if open_ then out := out.push (start,stop-start)
+        start := 8*w
+        stop := 8*w+8
+        open_ := true
+  for i in [8*words:size] do
+    if old.get! i != new.get! i then
+      let at_ := i - i % 4
+      if open_ && at_ ≤ stop+gap then stop := max stop (min size (at_+4))
+      else
+        if open_ then out := out.push (start,stop-start)
+        start := at_
+        stop := min size (at_+4)
+        open_ := true
+  if open_ then out := out.push (start,stop-start)
+  return out
+
+/-- The bytes of `new` in `ranges`, in order: a patch section. -/
+def rangeBytes (new : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
+  ranges.foldl (fun acc (o,l) => new.copySlice o acc acc.size l) (ByteArray.emptyWithCapacity (ranges.foldl (fun n r => n+r.2) 0))
+
+/-- Applying a patch: `old` with the bytes of `patch` written at `ranges`, in order. The host does
+this (`native_html_layout.ts`, `applyPatch`); the tests check that it gives `new`. -/
+def applyRanges (old patch : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
+  (ranges.foldl (fun (acc,at_) (o,l) => (patch.copySlice at_ acc o l,at_+l)) (old,0)).1
+
+#guard let a := ByteArray.mk #[1,2,3,4,5,6,7,8,9,10,11,12]; let b := ByteArray.mk #[1,2,3,4,5,6,7,9,9,10,11,13]
+  changedRanges a b 0 == #[(0,12)] && applyRanges a (rangeBytes b (changedRanges a b 0)) (changedRanges a b 0) == b
+#guard let a := ByteArray.mk ((Array.range 200).map (·.toUInt8)); let b := (a.set! 40 0).set! 190 0
+  changedRanges a b 0 == #[(40,8),(184,8)] && changedRanges a b 200 == #[(40,152)] && changedRanges a a == #[] &&
+    applyRanges a (rangeBytes b (changedRanges a b 0)) (changedRanges a b 0) == b
+
+/-- A patch of one section as JSON: the base answer, the ranges, the full size. -/
+def patchJSON (base : Nat) (ranges : Array (Nat × Nat)) (size : Nat) : String :=
+  "{\"base\":" ++ toString base ++ ",\"ranges\":[" ++
+    ",".intercalate (ranges.toList.map fun (o,l) => "[" ++ toString o ++ "," ++ toString l ++ "]") ++
+    "],\"size\":" ++ toString size ++ "}"
+
+/-- The page part of a layers answer for a host that holds the page answer `held` (its
+`damage.id`, storage bytes and tile bytes; request field `have`, issue 1124 stage C):
+- this frame's answer is `held` itself (`pageAnswerId`): `{"kept":id}` and empty sections;
+- the same section sizes and at most half the bytes changed: the answer's text with
+  `"dataPatch"` and `"tilesPatch"` (`changedRanges` against `held`), and as sections only the
+  changed bytes (`rangeBytes`). `applyRanges` of the held bytes and a patch gives this frame's
+  section (`changedRanges_apply` below is the check over test arrays);
+- otherwise the answer as it is.
+The second result says the page is kept. -/
+def pageForHost (text : String) (sections : Array ByteArray) (held : Option (Nat × ByteArray × ByteArray)) :
+    (String × Array ByteArray) × Bool :=
+  match held,pageAnswerId text with
+  | some (h,data,tiles),some id =>
+    if h == id then (("{\"kept\":" ++ toString h ++ "}",sections.map fun _ => ByteArray.empty),true)
+    else match sections with
+      | #[newData,newTiles] =>
+        if data.size != newData.size || tiles.size != newTiles.size then ((text,sections),false) else
+        let dr := changedRanges data newData
+        let tr := changedRanges tiles newTiles
+        let changed := (dr ++ tr).foldl (fun n r => n+r.2) 0
+        if 2*changed > newData.size+newTiles.size then ((text,sections),false) else
+        (((text.dropEnd 1).toString ++ ",\"dataPatch\":" ++ patchJSON h dr newData.size ++
+          ",\"tilesPatch\":" ++ patchJSON h tr newTiles.size ++ "}",#[rangeBytes newData dr,rangeBytes newTiles tr]),false)
+      | _ => ((text,sections),false)
+  | _,_ => ((text,sections),false)
+
 /-- The view under the chrome and the band of the page layer of a layers answer. A chrome that
 may fold: the band covers the view under the strip, the most it shows, so a change of
 `collapse` keeps the band and only the chrome layer is drawn again. -/
@@ -1818,8 +1912,8 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
     (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {})
     (chrome : Option (String × Array ByteArray) := none)
-    (layout : Option (ByteArray × ByteArray) := none) :
-    Except String (String × Array ByteArray) := do
+    (layout : Option (ByteArray × ByteArray) := none) (held : Option (Nat × ByteArray × ByteArray) := none) :
+    Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) := do
   let top := WebShell.height shell width
   let (view,b) := layersBand shell width height
   -- `layout`: the boxes, glyph runs and links of this band as sections (`WebRender.layoutSections`,
@@ -1839,15 +1933,21 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
   let first := match form with
     | .sections k | .sectionsCpu k => k
     | _ => 0
-  match layout with
+  -- `held` (issue 1124, stage C): the page answer the host holds (`pageForHost`). The second
+  -- result is this frame's page answer whole (its id and sections), for the engine to keep.
+  let sent : Option (Nat × ByteArray × ByteArray) := match pageAnswerId pageText,pageSections with
+    | some id,#[data,tiles] => some (id,data,tiles)
+    | _,_ => none
+  let ((pageText,pageSections),keptPage) := pageForHost pageText pageSections held
+  match (if keptPage then none else layout) with
   | some (nums,text) =>
     let at_ := first+pageSections.size+chromeSections.size
-    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
+    return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
       ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
-      pageSections ++ chromeSections ++ #[nums,text])
+      pageSections ++ chromeSections ++ #[nums,text]),sent)
   | none =>
-    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
-      pageSections ++ chromeSections)
+    return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
+      pageSections ++ chromeSections),sent)
 
 /-- The fonts the engine holds between calls, so that a scroll does not read them
 again. The first is the primary font; the others draw the characters it lacks, in
@@ -3696,6 +3796,9 @@ theorem frameWith_eq (h : Holds) (memo : Lru LayoutKey Laid) (valid : ValidEntry
 What the engine keeps between calls of its C ABI, as a value: the shim holds it and
 passes it to each call, which gives back the next one. -/
 
+/-- Page answers the engine keeps for `have` (the frame on screen and a prefetched band). -/
+def pagesSentSlots : Nat := 3
+
 /-- The engine's state between calls. -/
 structure Engine where
   /-- Held fonts, web fonts and images (`fontLoad`, `imageLoad`). -/
@@ -3748,6 +3851,9 @@ structure Engine where
   /-- The layout sections of the last band (`WebRender.layoutSections`), by the layout's number
   and the band's top (issue 1124, stage B). -/
   layoutKept : Option ((Nat × Nat) × (ByteArray × ByteArray)) := none
+  /-- The last page layer answers given, whole: `damage.id`, storage bytes, tile bytes
+  (`pageForHost`, issue 1124 stage C); at most `pagesSentSlots`. -/
+  pagesSent : List (Nat × ByteArray × ByteArray) := []
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -4322,9 +4428,20 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
               modify fun e => {e with layoutKept := some (key,sections)}
               pure (some sections)
         else pure none
-      return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+      -- `have:{page:id}`: the page answer the host holds, if the engine gave it (`pagesSent`).
+      let haveId : Option Nat := match request.field? "have" with
+        | some h@(.object _) => match h.field? "page" with
+          | some (.number n) => n.toNat?
+          | _ => none
+        | _ => none
+      let sentPages := (← get).pagesSent
+      let held := haveId.bind fun h => sentPages.find? (·.1 == h)
+      let (answer,sent) ← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout)
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout held
+      if let some page := sent then
+        modify fun e => {e with pagesSent := (page :: e.pagesSent.filter (·.1 != page.1)).take pagesSentSlots}
+      return withWants laid <| withDiagnostics request laid answer
   -- The answer of the last frame when its inputs are these (`PlainKey`): the layout's own
   -- scene (no paint values; a number the engine gave), no marks.
   let plainKey : Option PlainKey :=

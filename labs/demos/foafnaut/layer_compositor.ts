@@ -9,6 +9,7 @@ import {requestRenderPlan,bufferUsage,commandInterpreter,type RenderPlan,type De
 import {unpad,checkPixels} from "./gpu_transport.ts";
 import {sceneCost,sceneCostIn} from "./gpu_pacing.ts";
 import type {HTMLArtifact,HTMLLayers} from "./native_html_engine.ts";
+import type {SectionPatch} from "./native_html_layout.ts";
 // Page canvases drawn by page scripts: Lean-validated GPU commands (L4Factoidal.PageGpu,
 // docs/designissues/2026-11-08-page-gpu.md), the same replay as the Hub's.
 import {createPageGpu} from "../../../docs/web/hub/foafnaut/page-gpu.mjs";
@@ -67,6 +68,8 @@ export function sameScene(a:HTMLArtifact,b:HTMLArtifact):boolean {
 type Slot={uniform?:Growing;tiles?:Growing;bind?:GPUBindGroup;bindKey:string;texture?:GPUTexture;size:string;
   /** The Lean answer `damage.id` drawn in `texture`. */
   drawn?:number;
+  /** The Lean answer `damage.id` whose storage floats and tile words are in the buffers (patched uploads). */
+  uploaded?:number;
   /** The answer with no damage (the chrome layer) the texture was drawn from. */
   drawnFrame?:HTMLArtifact};
 export type PassResult={steps:Record<string,number>;pixels?:Uint8Array;hash:string;units?:number};
@@ -82,7 +85,7 @@ const LAYER_USAGE=()=>GPUTextureUsage.RENDER_ATTACHMENT|GPUTextureUsage.TEXTURE_
 export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,limits:DeviceFacts=device.limits,onReadback?:(phase:"begin"|"end")=>void) {
   const plans=new Map<string,RenderPlan>();
   const pipelines=new Map<string,GPURenderPipeline>();
-  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,scenesSame:0,bandedScenes:0};
+  const stats={planRequests:0,pipelineBuilds:0,layerTextures:0,bindGroups:0,scenesFull:0,scenesPartial:0,scenesKept:0,scenesSame:0,bandedScenes:0,patchedUploads:0};
   const grow=(slot:Growing|undefined,bytes:number,usage:number):Growing=>{
     if(slot&&slot.capacity>=bytes)return slot;
     slot?.buffer.destroy();
@@ -214,10 +217,26 @@ export function createLayerRenderer(device:GPUDevice,format:GPUTextureFormat,lim
       slot.bindKey=want;stats.bindGroups++;
     }
     steps.prepareResources=Math.round((performance.now()-resourceStart)*10)/10;
+    // A page answer patched against the one in the buffers (issue 1124 stage C, resolvePage):
+    // only its changed byte ranges are written, when the buffers hold its base answer.
+    const patched=frame as unknown as {dataPatch?:SectionPatch;tilesPatch?:SectionPatch};
+    const buffersHold=(patch:SectionPatch|undefined)=>!!patch&&slot.uploaded===patch.base&&
+      slot.uniform?.buffer===before[0]&&(!tileWords||slot.tiles?.buffer===before[1]);
     const write=()=>{
       const uploadStart=performance.now();
-      device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset,(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>);
-      if(tileWords)device.queue.writeBuffer(slot.tiles!.buffer,0,new Uint32Array(tileWords));
+      const data=(frame.data instanceof Float32Array?frame.data:new Float32Array(frame.data)) as Float32Array<ArrayBuffer>;
+      if(buffersHold(patched.dataPatch)){
+        for(const [offset,length] of patched.dataPatch!.ranges)
+          device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset+offset,data,offset/4,length/4);
+        stats.patchedUploads=(stats.patchedUploads??0)+1;
+      }else device.queue.writeBuffer(slot.uniform!.buffer,p.uniform.offset,data);
+      if(tileWords){
+        const words=tileWords instanceof Uint32Array?tileWords as Uint32Array<ArrayBuffer>:new Uint32Array(tileWords);
+        if(buffersHold(patched.tilesPatch))
+          for(const [offset,length] of patched.tilesPatch!.ranges)device.queue.writeBuffer(slot.tiles!.buffer,offset,words,offset/4,length/4);
+        else device.queue.writeBuffer(slot.tiles!.buffer,0,words);
+      }
+      slot.uploaded=(frame as unknown as {damage?:{id?:number}}).damage?.id;
       steps.uploadBuffers=Math.round((performance.now()-uploadStart)*10)/10;
     };
     // The texture holds answer `damage.base` (scene shader pixels do not read the target): draw

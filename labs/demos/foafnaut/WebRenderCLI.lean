@@ -251,6 +251,105 @@ def main (args : List String) : IO UInt32 := do
       IO.println ("{\"bytes\":" ++ toString last.size ++ ",\"firstUs\":" ++ toString (firstNs/1000) ++
         ",\"us\":[" ++ String.intercalate "," times.toList ++ "]}")
       return 0
+    -- Stage C check (issue 1124): each request of the sequence goes twice from one engine state,
+    -- with `have` naming the page answer held from the step before and without it. The page
+    -- sections of the first, made whole from the held bytes (`{"kept":id}`, or
+    -- `WebDocument.applyRanges` of a patch), must equal those of the second. Prints the count of
+    -- kept, patched and whole answers and the bytes sent; exit 1 at the first difference.
+    if let ["--document-bin-check",options,font,count] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let some n := count.toNat? | throw (IO.userError "invalid count")
+      let bad := fun (message : String) => (IO.println message *> pure (1 : UInt32))
+      let mut e : WebDocument.Engine := {}
+      if font != "-" then
+        let (e',loaded) := WebDocument.fontLoadBin e (← IO.FS.readBinFile font) "Noto Sans" "cli" 0
+        e := e'
+        if loaded.startsWith "{\"error\"" then IO.println loaded; return 1
+      let html ← IO.FS.readFile path
+      let .ok (.array requests,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "OPTIONS must be a JSON array")
+      if requests.isEmpty then throw (IO.userError "OPTIONS is empty")
+      let requests := requests.toArray
+      -- The packed answer: its head as JSON and its sections.
+      let unpack := fun (b : ByteArray) => Id.run do
+        let u32 := fun (i : Nat) => (b.get! i).toNat + 256*(b.get! (i+1)).toNat + 65536*(b.get! (i+2)).toNat + 16777216*(b.get! (i+3)).toNat
+        let headSize := u32 4
+        let k := u32 8
+        let mut at_ := 12+4*k
+        let head := String.fromUTF8! (b.extract at_ (at_+headSize))
+        at_ := at_+headSize
+        let mut sections : Array ByteArray := #[]
+        for i in [0:k] do
+          let len := u32 (12+4*i)
+          sections := sections.push (b.extract at_ (at_+len))
+          at_ := at_+(len+3)/4*4
+        let json := match JSON.parseJsonText head with | .ok (j,_) => j | .error _ => .null
+        return (json,sections)
+      let natAt := fun (j : JSON.Json) (key : String) => match j.field? key with
+        | some (.number t) => t.toNat?
+        | _ => none
+      let rangesOf := fun (j : JSON.Json) => match j.field? "ranges" with
+        | some (.array rs) => rs.toArray.filterMap fun r => match r with
+          | .array [.number o,.number l] => do pure ((← o.toNat?),(← l.toNat?))
+          | _ => none
+        | _ => #[]
+      let mut held : Option (Nat × ByteArray × ByteArray) := none
+      let mut counts := (0,0,0)
+      let mut sentBytes := 0
+      let mut wholeBytes := 0
+      for i in [0:n] do
+        let request := requests[i % requests.size]?.getD .null
+        let withHave := match request,held with
+          | .object fields,some (id,_,_) => JSON.Json.object (fields ++ [("have",JSON.Json.object [("page",JSON.Json.number (toString id))])])
+          | other,_ => other
+        let (e',answer) ← WebDocument.compileBin e html withHave.toString w.toUInt32 h.toUInt32
+        let (_,whole) ← WebDocument.compileBin e html request.toString w.toUInt32 h.toUInt32
+        e := e'
+        sentBytes := sentBytes+answer.size
+        wholeBytes := wholeBytes+whole.size
+        let (aj,asec) := unpack answer
+        let (wj,wsec) := unpack whole
+        -- The page sections of `answer` made whole, and its kind (0 kept, 1 patched, 2 whole),
+        -- with the whole answer's page sections and id; or what is wrong.
+        let step : Except String (ByteArray × ByteArray × Nat × ByteArray × ByteArray × Option Nat) := do
+          let some ap := aj.field? "page" | throw "no page layer"
+          let some wp := wj.field? "page" | throw "no page layer in the whole answer"
+          let some wd := natAt wp "dataSection" | throw "whole answer has no data section"
+          let some wt := natAt wp "tilesSection" | throw "whole answer has no tiles section"
+          let wholeData := wsec[wd]?.getD .empty
+          let wholeTiles := wsec[wt]?.getD .empty
+          -- The id the host holds next: the one of the answer sent (the second call, from the same
+          -- state, may lay the page out again and number its answer anew).
+          let wholeId := match natAt ap "kept" with
+            | some id => some id
+            | none => (ap.field? "damage").bind (natAt · "id")
+          match natAt ap "kept",held with
+          | some id,some (h,d,t) =>
+            if id != h then throw s!"kept {id} but held {h}"
+            return (d,t,0,wholeData,wholeTiles,wholeId)
+          | some _,none => throw "kept with nothing held"
+          | none,_ =>
+            let some ad := natAt ap "dataSection" | throw "no data section"
+            let some at_ := natAt ap "tilesSection" | throw "no tiles section"
+            match ap.field? "dataPatch",ap.field? "tilesPatch",held with
+            | some dp,some tp,some (h,d,t) =>
+              if natAt dp "base" != some h || natAt tp "base" != some h then throw s!"patch base is not the held answer {h}"
+              return (WebDocument.applyRanges d (asec[ad]?.getD .empty) (rangesOf dp),
+                WebDocument.applyRanges t (asec[at_]?.getD .empty) (rangesOf tp),1,wholeData,wholeTiles,wholeId)
+            | none,none,_ => return (asec[ad]?.getD .empty,asec[at_]?.getD .empty,2,wholeData,wholeTiles,wholeId)
+            | _,_,_ => throw "a patch with nothing held"
+        let (data,tiles,kind,wholeData,wholeTiles,wholeId) ← match step with
+          | .ok r => pure r
+          | .error message => return ← bad s!"step {i}: {message}"
+        if data != wholeData || tiles != wholeTiles then
+          return ← bad s!"step {i}: page sections differ from the whole answer (kind {kind}: data {data.size}/{wholeData.size}, tiles {tiles.size}/{wholeTiles.size})"
+        counts := match kind with
+          | 0 => (counts.1+1,counts.2.1,counts.2.2)
+          | 1 => (counts.1,counts.2.1+1,counts.2.2)
+          | _ => (counts.1,counts.2.1,counts.2.2+1)
+        held := wholeId.map fun id => (id,wholeData,wholeTiles)
+      IO.println s!"\{\"steps\":{n},\"kept\":{counts.1},\"patched\":{counts.2.1},\"whole\":{counts.2.2},\"sentBytes\":{sentBytes},\"wholeBytes\":{wholeBytes}}"
+      return 0
     -- Scroll frames: the same document each time, with `shell.scroll` 40 pixels further.
     if let ["--document-scroll",options,count,font] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")

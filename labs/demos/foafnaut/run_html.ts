@@ -27,6 +27,7 @@ import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import {startTabWorkers,type TabWorkers} from "./native_html_tabs.ts";
 import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
+import {heldPageId,resolvePage} from "./native_html_layout.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -1842,8 +1843,12 @@ async function main() {
       let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
         if(layered){
-          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options,gesture));bandMs=workerMs;}
-          else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
+          // `have` (issue 1124 stage C): the page answer on screen; Lean answers it kept or patched.
+          const held=current?.layers.page,have=heldPageId(held);
+          const options=have===undefined?request.options:{...request.options,have:{page:have}};
+          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,options,gesture));bandMs=workerMs;}
+          else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,options);}
+          nextLayers=resolvePage(nextLayers,held);
           next=nextLayers.page;
         }
         else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options,gesture));}
