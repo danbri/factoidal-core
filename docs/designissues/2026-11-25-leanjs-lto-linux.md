@@ -97,3 +97,31 @@ fails there would stop every Linux release. To make it the default: add those pa
 step, raise the `leanjs` budget by hand with this record as the reason, then change
 `leanjsLto` in `lakefile.lean` to `!= some "off"`. Tracking:
 https://github.com/danbri/factoidal-core/issues/471.
+
+## What the default needs (2026-11-26)
+
+Checked against `danbri/factoidal-builds` `.github/workflows/build.yml` (read 2026-11-26, step
+"Shipped binaries link no Lean compiler code; size budget", the only step that builds `leanjs`):
+
+1. **Size budget: not a blocker on Linux.** `tools/binary-budget.json` has a `leanjs` budget only for
+   `darwin-arm64`. `binary-budget.py check` reports a binary with no budget on its platform and does
+   not fail (its usage text). LTO is on only for x86-64 Linux, so the +2.2% meets no budget. The
+   reason given in "Landing state" above for keeping the opt-in was wrong for this half.
+2. **Packages: the blocker.** That step installs nothing; the Linux job installs `libc++-dev
+   libc++abi-dev` only for the native Foafnaut step (line 818 on that date), not before `leanjs`.
+   `ffi/leanrt-lto.sh` also needs `gmp.h` and network for its first fetch of the pinned Lean sources.
+
+Change requested for `danbri/factoidal-builds` (not made here: the release manager dispatches and
+merges builds), in that step before `lake build leanjs`:
+
+```yaml
+          if [ "$(uname -s)-$(uname -m)" = "Linux-x86_64" ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q libc++-dev libc++abi-dev libgmp-dev
+          fi
+```
+
+Then, in core, after a builds run with that change is green: `leanjsLto` in
+`formal/lean4/lakefile.lean` becomes `get_config? leanjsLto != some "off" && <x86-64 Linux>`, and this
+record's "Landing state" is updated. Order matters: if core changes first, the Linux `leanjs` step
+stops with the message of `ffi/leanrt-lto.sh`.
