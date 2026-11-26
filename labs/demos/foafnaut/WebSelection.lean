@@ -94,16 +94,44 @@ to its right, or to its left for a right-to-left glyph. -/
 private def Cell.before (c : Cell) (x y : Float) : Bool :=
   c.y+c.height <= y || (c.y <= y && (if c.rtl then x <= c.x+c.width/2 else c.x+c.width/2 <= x))
 
-/-- The caret position of a point: one past the last glyph before the point. -/
-def caret (items : Array Cell) (x y : Float) : Nat :=
-  Id.run do
-    let mut at_ := 0
-    for (c,i) in items.zipIdx do
-      let before := c.before x y
-      if c.x <= x && x < c.x+c.width && c.y <= y && y < c.y+c.height then
-        return if before then i+1 else i
-      if before then at_ := i+1
-    return at_
+private def intervalDistance (p lo hi : Float) : Float := max 0 (max (lo-p) (p-hi))
+
+private def Cell.caretEdge (c : Cell) (i : Nat) (x : Float) : Nat :=
+  if (if c.rtl then x <= c.x+c.width/2 else x >= c.x+c.width/2) then i+1 else i
+
+/-- A point over a glyph uses its painted box. In a gap, find the nearest
+displayed line, then the nearest horizontal caret edge on that line. -/
+def caret (items : Array Cell) (x y : Float) : Nat := Id.run do
+  let infinity := (1.0 : Float)/0
+  let mut dy := infinity
+  let mut dx := infinity
+  let mut line := none
+  let mut top := infinity
+  let mut bottom := -infinity
+  let mut at_ := 0
+  for (c,i) in items.zipIdx do
+    if c.x <= x && x < c.x+c.width && c.y <= y && y < c.y+c.height then
+      return c.caretEdge i x
+    if c.before x y then at_ := i+1
+    top := min top c.y
+    bottom := max bottom (c.y+c.height)
+    let cy := intervalDistance y c.y (c.y+c.height)
+    let cx := intervalDistance x c.x (c.x+c.width)
+    if cy < dy || (cy == dy && cx < dx) then
+      dy := cy
+      dx := cx
+      line := c.lineKey
+  if y < top then return 0
+  if y >= bottom then return items.size
+  let some key := line | return at_
+  dx := infinity
+  for (c,i) in items.zipIdx do
+    if c.lineKey == some key then
+      let cx := intervalDistance x c.x (c.x+c.width)
+      if cx < dx then
+        dx := cx
+        at_ := c.caretEdge i x
+  return at_
 
 /-- White space for find: space, tab, line breaks and no-break space. -/
 def findSpace (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0xA0
@@ -543,6 +571,18 @@ private def displacedSample := cells #[
 #guard caret displacedSample 7 100 == 1
 #guard text (cells #[{sampleRun 1 "X" 0 0 with lineKey := some (1,0)},
   {sampleRun 2 "X" 6 0 with lineKey := some (2,0)}]) .all == "X\nX"
+-- A B and a raised C share one line. A click in the inter-word gap goes
+-- between A and B even though C is entirely above the pointer.
+private def gapSample := cells #[
+  {source := 1, font := "Ahem", fontSize := 20, text := "A", glyphs := #[⟨0,0,96,20,0,1⟩], lineKey := some (1,0)},
+  {source := 1, font := "Ahem", fontSize := 20, text := "B", glyphs := #[⟨0,40,96,20,2,3⟩], lineKey := some (1,0)},
+  {source := 2, font := "Ahem", fontSize := 20, text := "C", glyphs := #[⟨0,60,0,20,0,1⟩], lineKey := some (1,0)}]
+#guard caret gapSample 25 100 == 1
+private def markerSample := cells #[
+  {sampleRun 1 "1." 0 0 with lineKey := some (2,0)},
+  {sampleRun 2 "Alpha" 20 0 with lineKey := some (2,0)}]
+#guard text markerSample .all == "1. Alpha"
+#guard lineRange markerSample 0 == (0,7)
 private def sample := cells #[sampleRun 1 "one" 0 0,sampleRun 1 "two" 24 0 4,sampleRun 1 "three" 0 12 8,sampleRun 2 "four" 0 30]
 #guard text sample .all == "one two three\nfour"
 #guard text sample (.span 7 5 38 5) == "ne tw"

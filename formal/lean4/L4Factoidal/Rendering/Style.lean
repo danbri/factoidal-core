@@ -2299,9 +2299,12 @@ the style `s`. -/
 def tableDynamic (s : Computed) (d : Declaration) : Option String :=
   let value := fun (v : String) => some v
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
+  let fontRelative (property : String) := (CssValues.specified property d.value).map fun value =>
+    CssValues.computed {num := {fontSize := tableRat s.fontSize, rootFontSize := tableRat s.rootFontSize}}
+      property value
   match d.property with
   | "font-size" =>
-    match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
+    match (fontRelative "font-size").map (·.toLower) with
     | none => none
     | some t =>
       match fontSizeKeyword t, percentOf t with
@@ -2312,10 +2315,7 @@ def tableDynamic (s : Computed) (d : Declaration) : Option String :=
         else if t == "smaller" then value (px (s.fontSize / 1.2))
         else value t
   | "line-height" =>
-    let computed := (CssValues.specified "line-height" d.value).map fun v =>
-      CssValues.computed {num := {fontSize := tableRat s.fontSize, rootFontSize := tableRat s.rootFontSize}}
-        "line-height" v
-    match computed with
+    match fontRelative "line-height" with
     | none => none
     | some t =>
       match percentOf t with

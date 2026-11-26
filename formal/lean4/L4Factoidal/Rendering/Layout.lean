@@ -3823,7 +3823,12 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         let start := outerX+offset
         let dx := if s.direction == .rtl then start+room+gap else start-lineExtent marker-gap
         let marker := marker.shift dx 0
-        pure {content with nodes := content.nodes ++ marker.nodes, runs := marker.runs ++ content.runs,
+        -- Outside markers are measured separately but participate in the
+        -- item's first text line for selection, copying and Find.
+        let runs := match content.runs[0]?.bind (·.lineKey) with
+          | none => marker.runs
+          | some line => marker.runs.map fun run => {run with lineKey := some line}
+        pure {content with nodes := content.nodes ++ marker.nodes, runs := runs ++ content.runs,
                            height := max content.height marker.height}
       -- One more box laid out. A document whose layout takes more work than its limit is
       -- refused here (`workLimit`), with what it has done so far bounded by that limit.
@@ -3937,6 +3942,20 @@ private def verticalGeometry (style : String) := (verticalAlignFixture style).ma
 -- second glyph is 24px below the first, including the child's half-leading.
 #guard verticalGeometry "line-height:2rem;vertical-align:50%" ==
   some (58, #[some 14, some 38], #[0,14,38])
+
+-- A root-relative font size also supplies the local em for vertical-align.
+#guard ((verticalAlignFixture "font-size:1rem;vertical-align:1em").bind fun r => do
+  let a ← r.runs[0]?
+  let b ← r.runs[1]?
+  let x ← a.glyphs[0]?
+  let y ← b.glyphs[0]?
+  let delta := (y.y+b.fontSize*0.8)-(x.y+a.fontSize*0.8)
+  return a.fontSize == 24 && (delta-24).abs < 0.001) == some true
+
+#guard ((inlineMarkupFixture "<ol><li>Alpha</li></ol>").bind fun r => do
+  let marker ← r.runs.find? (fun run => run.text == "1.")
+  let label ← r.runs.find? (fun run => run.text == "Alpha")
+  return label.lineKey.isSome && marker.lineKey == label.lineKey) == some true
 
 -- The middle inline's displacement is zero after the two offsets cancel.
 -- Its own 100px line-height still contributes even though its text is in a
