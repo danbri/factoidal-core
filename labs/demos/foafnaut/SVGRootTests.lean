@@ -80,6 +80,25 @@ def run : IO Unit := do
     check (invalidCircle.primitives.length == 1 && (invalidCircle.samplePixel 4 4).b == 1 &&
       (invalidCircle.samplePixel 4 4).r == 0)
       "invalid negative radius painted or suppressed an unrelated sibling"
+  -- Percent-decoded fill/stroke paint servers agree with unescaped IDs, including
+  -- Unicode IDs, malformed percent escapes, and the UTF-8 replacement character.
+  for (raw, id) in [("%66%6f%6f", "foo"), ("%C3%A9", "é"), ("%ZZ", "%ZZ"),
+      ("%E2%82", "�")] do
+    let source := fun (name : String) =>
+      "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><defs>" ++
+      "<linearGradient id='" ++ id ++ "'><stop offset='0' stop-color='green'/>" ++
+      "<stop offset='1' stop-color='green'/></linearGradient></defs>" ++
+      "<rect width='16' height='16' fill='url(#" ++ name ++ ") red'/></svg>"
+    let decoded ← unwrap (parse (source raw))
+    let plain ← unwrap (parse (source id))
+    let a := decoded.samplePixel 8 8
+    let b := plain.samplePixel 8 8
+    check (a.r == b.r && a.g == b.g && a.b == b.b && a.g > a.r)
+      "escaped gradient ID did not render as its decoded ID"
+  let absent ← unwrap (parse "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='url(#%6dissing) red'/></svg>")
+  let fallback := absent.samplePixel 8 8
+  check (fallback.r == 1 && fallback.g == 0 && fallback.b == 0)
+    "missing escaped paint reference did not use its fallback"
   IO.println "PASS zero root viewBox no paint, invalid-negative viewBox fallback/percentages/clips and invalid circle radius initial value"
   IO.println "PASS public namespace DOM root, inherited style, exact artifact, viewport sampling and standalone validation"
 
