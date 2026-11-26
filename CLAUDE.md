@@ -1181,6 +1181,22 @@ can defer for now and add more if concrete usecases arise."
   https://github.com/danbri/factoidal-core/pull/766 (finite-field Diffie-Hellman, dh-es, with
   1024-bit primes behind an opt-in). It stays unmerged until the owner answers on it.
 
+### Tor in Foafnaut: desktop on macOS, keychain, no Hub (owner, 2026-11-26)
+
+Owner, 2026-11-26, verbatim, to three questions (connect Tor to the browser; the storage key;
+the Hub): "YES"; "Storage key - os keychain, yes on macosx. For now we build tor and test it
+macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfellows."
+
+- Tor is connected to the native desktop browser: page requests go through the Tor worker of
+  the host, one partition (circuit set) per top-level site, with a new identity control.
+- The Tor state key comes from the macOS Keychain.
+- Tor is built and tested for macOS. Coordinator's reading, not the owner's words: runs of the
+  private chutney network in a Linux cloud container stay as development checks; the test that
+  counts is on macOS.
+- No Tor in the Hub (the browser running inside another browser), and none inside pages: Tor runs
+  only in the host's worker. Record:
+  `docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`, section 17.
+
 ### Never report upstream (owner, 2026-11-25)
 
 Owner, 2026-11-25, verbatim: "Nothing upstream. Sites are swamped with sloppy llm tickets. Never

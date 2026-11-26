@@ -557,3 +557,47 @@ Fix in the same step: the worker's IPv6 check tested only the characters used, s
 passed it and could have reached Deno's resolver as names. `deno/ip-literal.ts` now accepts IPv4
 with no leading zeros and IPv6 only when the WHATWG URL parser accepts it in brackets; no zone id.
 `deno/ip-literal.test.ts`: 2 pass, 0 fail (out of 2 groups, 28 cases); the old check fails it.
+
+## 17. Decisions of 2026-11-26: desktop on macOS, Keychain, no Hub
+
+Owner, 2026-11-26, verbatim, to three questions (connect Tor to the browser; the storage key;
+the Hub): "YES"; "Storage key - os keychain, yes on macosx. For now we build tor and test it
+macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfellows."
+
+What follows:
+
+- Tor runs only in a dedicated Deno worker of the native desktop host. `isolated_context()` now
+  checks that `globalThis` is a `WorkerGlobalScope` (Deno module workers have no
+  `importScripts`, so the earlier check was wrong); `deno/tor.test.ts` asserts it in a real
+  worker. https://github.com/danbri/factoidal-core/issues/1059 is closed.
+- No Tor in pages or in the Hub, so the page clock gap does not apply:
+  https://github.com/danbri/factoidal-core/issues/1061 is closed as not planned. The page
+  files (`pages.py`, `run.sh`, `node-ref.cjs`) are removed; the probe in `../tor-probe/` stays
+  as the record of the measurement in section 8.
+- The state key comes from the macOS Keychain (`security find-generic-password`, created on
+  first use). Today `deno/tor-state.ts` `keySource()` says "environment"; its expected failure
+  names https://github.com/danbri/factoidal-core/issues/1058.
+- Coordinator's reading, not the owner's words: runs on the Linux chutney network stay as
+  development checks; the test that counts is on macOS.
+
+Plan for connecting the browser (https://github.com/danbri/factoidal-core/issues/1060):
+
+1. The Tor worker serves SOCKS5 on 127.0.0.1, port 0. The username is the partition (the
+   top-level site); the password is a secret made per session, so no other local process can
+   use the port. Names are resolved by the exit (`socks5h`), never locally.
+2. The wasm module gets a stream API (open, read, write, close) over Arti `DataStream`.
+3. The host's network pool uses `Deno.createHttpClient({ proxy: { transport: "socks5",
+   url: "socks5h://127.0.0.1:PORT", basicAuth } })`, one client per partition.
+4. In Tor mode the Lean egress policy makes no local name lookup, no DNS prefetch and no name
+   cache; WebSocket is refused at first (an expected failure with its own issue).
+5. A new identity control in the browser calls `new_identity()` and drops the clients.
+
+Coordination: the owner is rethinking how the macOS build uses Deno (worker count and
+duplication) in another session, under
+https://github.com/danbri/factoidal-core/issues/1031 (threads, tabs, processes, network). What
+Tor needs from any structure: one Tor client for the whole browser (one guard set, one state
+file), not one per tab; its memory apart from page scripts (a worker or a process); a long-lived
+host that keeps circuits across tab changes; and the network pool able to send through a SOCKS5
+proxy with a per-partition user name. The Tor worker does not need its own Deno: it can be a
+worker inside whatever Deno host stays. Steps 3 to 5 wait for that design; steps 1 and 2 do not
+depend on it.

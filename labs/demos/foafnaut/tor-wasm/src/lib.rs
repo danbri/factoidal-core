@@ -492,13 +492,14 @@ pub fn state_load(json: &str) -> i32 {
     }
 }
 
-/// True when this module runs in a dedicated worker, where no other page script can read its
-/// memory. Expected-failure test: xfail.test.cjs.
+/// True when this module runs in a dedicated worker (a Deno or Web Worker: `globalThis` is a
+/// `WorkerGlobalScope`), where no page script can read its memory.
 #[wasm_bindgen]
 pub fn isolated_context() -> bool {
-    let g = js_sys::global();
-    js_sys::Reflect::has(&g, &"WorkerGlobalScope".into()).unwrap_or(false)
-        && js_sys::Reflect::has(&g, &"importScripts".into()).unwrap_or(false)
+    let check = js_sys::Function::new_no_args(
+        "return typeof WorkerGlobalScope === 'function' && globalThis instanceof WorkerGlobalScope",
+    );
+    check.call0(&JsValue::UNDEFINED).ok().and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 /// Start an Arti client and try to bootstrap it for at most `timeout_ms`. Returns one JSON
