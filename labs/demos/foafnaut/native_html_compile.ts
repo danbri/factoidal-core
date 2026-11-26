@@ -39,6 +39,9 @@ export type CompileClient={
    * (docs/designissues/2026-11-26-foafnaut-engine-sessions.md); false with its own copy, Wasm,
    * or an engine from before sessions. */
   readonly session?:boolean;
+  /** "task": the engine is a session on its own Lean task, called from this thread
+   * (native_engine_tasks.ts); otherwise an engine worker. */
+  readonly kind?:"worker"|"task";
   terminate():void;
 };
 /** How long a worker with a session may take to free it and close after `terminate` (its call

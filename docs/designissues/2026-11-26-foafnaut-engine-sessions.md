@@ -154,4 +154,110 @@ D5. Item 9 becomes an atomic add.
 
 D6. `ready()` runs once for the process (`pthread_once`).
 
-(Stages 2 to 4, their measurements and further decisions are added below as they land.)
+## 3. Stage 2: engine sessions in one library
+
+What was built (`wip/engine-sessions`):
+
+- C shim (`web_render_shim.c`): a `web_session` holds an engine value and a mutex.
+  `web_session_new` and `web_session_free` make and end one; `web_session_call`,
+  `web_session_call_bin`, `web_session_font_call_bin`, `web_session_image_call_bin` and
+  `web_session_hit` take it. The calls with no session argument use a default session made at
+  start, so the Wasm build and the tests that call the old exports are unchanged. The
+  runtime, the task pool and the module initialisers start once (`pthread_once`).
+- Lean: `WebDocument.KeptPages` is the field `Engine.pages`; `pageArtifact` and `layersJSON`
+  take it and give the next one; op `frameWork` reads its counts.
+- Host: `--engine-mode sessions` (run_html.ts): one engine worker per tab, as before, but every
+  worker opens the one library and makes an engine session of its own; no copy of the library
+  file. A library from before sessions falls back to copies. `--engine-mode copies` is the mode
+  of 2026-11-25. `native_html_worker.ts` takes `end`: it drops the calls that have not started,
+  frees its session after the call in progress, and closes.
+
+Why sessions on two threads are safe, and what that rests on:
+
+1. One thread at a time touches an engine value: a session's calls hold its mutex. A value that
+   a later call takes on another thread is ordered after the earlier call by that mutex
+   (release, then acquire), so its non-atomic reference counts are changed by one thread at a
+   time.
+2. What sessions share: persistent constants (their counts are never changed); the shaped-word
+   table and the schema memo (items 4 and 8: their values are multi-threaded, with atomic
+   counts, and each ref is used with one family of operations); the task pool (its own locks);
+   mimalloc (a heap per thread, and frees from other threads).
+3. C state: the start-up (`pthread_once`) and the wipe counter (atomic).
+4. Trusted, not shown here: Lean's runtime in C and C++ under concurrent use, the C compiler, and
+   that the walk of section 1 found all global state (it did not read `Init` and `Std`).
+   `engine_sessions_test.ts` runs three sessions on three threads and compares every answer
+   with one session alone, byte for byte: a race would show as a different answer or a crash.
+   A pass does not show that there is none.
+
+## 4. Stage 3: a session on its own Lean task
+
+What was built:
+
+- `WebSession.lean`: a `Session` is an inbox (`IO.Ref (Array Job)`), a wake promise
+  (`IO.Ref (Option (IO.Promise Unit))`), a closing flag and a count of calls answered. `start`
+  runs `serve` with `IO.asTask` at `Task.Priority.dedicated`: a thread of its own, outside the
+  task pool, with Lean's thread stack. `serve` makes the engine value itself and keeps it, so it
+  is never shared between threads (a value that two threads can reach is marked multi-threaded
+  and copied on every change). A caller (`call`) adds a job with a promise, wakes the task, and
+  waits for the promise. `close` sets the flag; the task answers the jobs it has and ends.
+- No lost wake-up: `serve` finds the inbox empty, publishes a new wake promise, then looks at
+  the inbox and the flag again before it waits. A job or a `close` that came before the
+  promise was published is seen by the second look; one that comes after it takes the
+  promise and resolves it. Each ref is used only with `modify` and `modifyGet`, which exclude
+  each other; `get` or `set` beside them can lose a write (`skills/lean4-performance`).
+- C shim: `web_session_new_task` makes a session whose calls go to its task (NULL in the Wasm
+  build, and with no task pool, `FOAFNAUT_LEAN_THREADS=0`, where a task would run on the
+  calling thread and never return); `web_session_close` stops it taking calls. The same
+  `web_session_*` calls submit to the task and wait on the calling thread.
+- Host: `--engine-mode tasks`: no engine worker. Each tab's client (`native_engine_tasks.ts`)
+  keeps the lanes of the engine worker (gesture, input, ordinary, low) and one call of the
+  session in flight, and calls through Deno's nonblocking FFI (`loadHTMLSession` in
+  `native_html_engine.ts`). A library with no task sessions falls back to `sessions`.
+- The remote engine calls are written once (`remoteMethods` over a small kernel), for the
+  engine on the calling thread and for the session engine, so the two can not read an answer
+  differently. The synchronous engine gives the same answers as before the change on 22
+  calls (Wasm engine, a differential run on 2026-11-26).
+
+D7. How the host waits: Deno's nonblocking FFI. Deno runs the call on a thread of its blocking
+pool, which waits for the task's answer, and resolves a promise on the main thread's event
+loop. Reasons: it needs no polling (a polled completion queue adds up to one loop period to
+each answer, and the loop sleeps up to 100 ms when idle), no call from a Lean thread into
+JavaScript (a callback needs an `@[extern]` or a C thread that waits, and the lab's `extern`
+count may not rise without the owner), and no engine worker. A call waits on a pool thread,
+not on a Lean thread: the session's own thread runs the engine.
+
+D8. Lanes stay in TypeScript, per session, with one call in flight. Reason: the order rules
+(gesture first, input before ordinary, one low request that a newer one replaces) are those of
+`native_html_queue.ts`, tested by `native_html_queue_test.ts`; moving them into Lean is a
+separate change. The Lean inbox takes any number of calls in arrival order.
+
+D9. On the main thread now, and in the worker before: the checks and the JSON text of each
+request, the reading of each answer, and the fallback-font choice of a page with characters
+above ASCII (`font-coverage.mjs` reads every character of the source). This is measured as
+the main thread's pump gap and as input latency (section 5).
+
+## 5. Measurement method
+
+Command (repeatable, no person needed): `labs/demos/foafnaut/tools/engine_sessions_bench.py`
+with one `--config NAME=LAB:ENGINE[:MODE]` for each side. Each scenario runs N times for each
+configuration, the configurations interleaved, each run under
+`flock /tmp/foafnaut-timing.lock`, in a window under Xvfb with Mesa software Vulkan (the Linux
+rig, `tools/foafnaut-linux-rig/setup.sh`). Both sides are local builds of one base,
+`origin/main` `1553ce0b`: the base in a second worktree with its own host, the branch in this
+checkout, built on the same machine with the same flags (`build-web-render.sh --native`,
+ccache). The Wasm engine of the main thread (small calls) is the released one for both sides.
+
+Scenarios: `heavy` (tab A navigates to a page of 20,000 table rows, 2.4 MB; 300 ms later tab B
+opens and gets 21 keys 150 ms apart from each other's text event, each a key press that the host
+stamps and its text into the address field), `tabs` (seven new tabs 1 s apart), `one` (the start
+page only, the memory base for `tabs`), `status` (`pages/status.html`, the resize sweep: seven
+Lean frames), `rex` (`pages/particle-rex.html` for 8 s). Numbers: input latency from the host's
+stamp (event queued) to the frame presented (`native-html-input-latency`), tab first frame
+(`native-html-tab-first-frame`: tab shown to its first frame presented), process resident memory
+at exit, engine start (`native-html-engine-worker`, `ms` less `warmMs`), frame total.
+
+Evidence limits: Linux only (no Mac was available); software Vulkan draws a frame in 300 to 600
+ms, so frame and latency numbers include that draw and are not comparable with a Mac; a 4-vCPU
+cloud machine with other tenants.
+
+(Measurements and stage 4 are added below as they land.)

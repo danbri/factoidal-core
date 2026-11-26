@@ -4339,9 +4339,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   let (slotRequest,slotValues) := WebPaint.slotKey (layoutRequest request)
   let key : LayoutKey := ⟨html,slotRequest,width,height,layoutTop shell width,fonts,
     heldNamed holds (← namedImages request),requestPointer request⟩
+  -- A canceled call (an engine session that the host stopped, `WebSession.cancel`) stops here,
+  -- before its layout, and below, before its paint. A layout in progress runs to its end.
+  if ← WebWasm.Machine.canceled then throw "engine call canceled"
   let laid ← laidOut key
   let (laid,slotValues) ← if laid.paint.unpaintable.isEmpty || slotValues.isEmpty then pure (laid,slotValues)
     else do pure (← laidOut {key with request := layoutRequest request},{})
+  if ← WebWasm.Machine.canceled then throw "engine call canceled"
   -- Paint-only values: slots and animations at the page clock (`animationTime`, ms),
   -- with the clicks of the page (`animationClicks`: [[ms, pageX, pageY], ...]).
   let now := natField request "animationTime"

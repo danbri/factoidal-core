@@ -884,6 +884,10 @@ export type SessionEngine={[K in keyof RemoteEngine]:(...args:Parameters<RemoteE
   readonly inFlight:number;
   /** Take no more calls: the calls sent are answered (by the task), a later call fails. */
   close():void;
+  /** Close and cancel the session's task: the call in progress stops at the engine's next
+  check (before a render's layout and before its paint) and the calls not started fail. A
+  layout in progress runs to its end. A library from before cancellation: as `close`. */
+  cancel():void;
   /** Close, wait until no call is in flight, then free the session. */
   endSession():Promise<void>;
   readonly ended:boolean;
@@ -900,6 +904,7 @@ export function loadHTMLSession(path:string):SessionEngine {
   const library=Deno.dlopen(path,{
     web_session_new_task:{parameters:[],result:"pointer",optional:true},
     web_session_close:{parameters:["pointer"],result:"void",optional:true},
+    web_session_cancel:{parameters:["pointer"],result:"void",optional:true},
     web_session_free:{parameters:["pointer"],result:"void",optional:true},
     call:{name:"web_session_call",parameters:["pointer","buffer","buffer","u32","u32"],result:"pointer",nonblocking:true,optional:true},
     callBin:{name:"web_session_call_bin",parameters:["pointer","buffer","buffer","u32","u32","buffer"],result:"pointer",nonblocking:true,optional:true},
@@ -909,10 +914,11 @@ export function loadHTMLSession(path:string):SessionEngine {
     web_render_free:{parameters:["pointer"],result:"void"},
   } as const);
   const sym=library.symbols;
-  if(!sym.web_session_new_task||!sym.web_session_close||!sym.web_session_free||!sym.call||!sym.callBin||!sym.font||!sym.image){
-    library.close();throw new Error("this engine has no task sessions (web_session_new_task)");}
+  // The library is never closed: its runtime may have started threads that run its code.
+  if(!sym.web_session_new_task||!sym.web_session_close||!sym.web_session_free||!sym.call||!sym.callBin||!sym.font||!sym.image)
+    throw new Error("this engine has no task sessions (web_session_new_task)");
   const session=sym.web_session_new_task();
-  if(!session){library.close();throw new Error("engine task session did not start (no Lean task manager: FOAFNAUT_LEAN_THREADS=0?)");}
+  if(!session)throw new Error("engine task session did not start (no Lean task manager: FOAFNAUT_LEAN_THREADS=0?)");
   let closed=false,ended=false;
   // The calls in flight. Each keeps its argument buffers until it is answered: the native call
   // reads them on another thread.
@@ -997,6 +1003,7 @@ export function loadHTMLSession(path:string):SessionEngine {
     inFlight:{get:()=>flight.size},
     ended:{get:()=>ended},
     close:{value:()=>{if(closed)return;closed=true;sym.web_session_close!(session);}},
+    cancel:{value:()=>{if(ended)return;closed=true;if(sym.web_session_cancel)sym.web_session_cancel(session);else sym.web_session_close!(session);}},
     endSession:{value:async()=>{
       if(ended)return;
       if(!closed){closed=true;sym.web_session_close!(session);}

@@ -37,8 +37,9 @@ import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
 export type WorkerStart={/** -1: a spare */tab:number;warmMs?:number;worker:number;ms:number;rssBeforeMB:number;rssAfterMB:number;copyMs:number;shared:boolean;
-  /** The worker's engine is a session in the shared library (no copy). */session?:boolean};
-export type TabWorkerStats={mode:"per-tab"|"one";engines?:"copies"|"sessions";cap:number;started:number;live:number;maxLive:number;sharedTabs:number;
+  /** The worker's engine is a session in the shared library (no copy). */session?:boolean;
+  /** "task": a session on its own Lean task, with no worker (native_engine_tasks.ts). */kind?:"task"};
+export type TabWorkerStats={mode:"per-tab"|"one";engines?:"copies"|"sessions"|"tasks";cap:number;started:number;live:number;maxLive:number;sharedTabs:number;
   failedStarts:number;sparesTaken:number;starts:WorkerStart[]};
 export type TabWorkers=CompileClient&{
   /** Run `work` with its engine calls on the worker of `tab` (started if it has none). */
@@ -93,7 +94,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
   let quickjs:Uint8Array|undefined;
   let spare:Slot|undefined,sparesTaken=0,spareTimer:ReturnType<typeof setTimeout>|undefined;
   // The first worker's engine has a session of its own: the library has sessions.
-  let sessionsWork=false;
+  let sessionsWork=false,tasksWork=false;
   const live=()=>slots.filter(slot=>!slot.ended);
   const startSlot=(tab:number,first:boolean):Slot=>{
     const slot:Slot={serial:++serial,tabs:new Set(tab<0?[]:[tab]),sessions:new Map(),fontSources:new Set(),ended:false,ready:undefined!};
@@ -121,7 +122,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       let warmMs:number|undefined;
       if(tab<0&&options.warm){const w0=performance.now();await options.warm(client).catch(()=>{});warmMs=round(performance.now()-w0);}
       const record:WorkerStart={tab,...(warmMs!==undefined?{warmMs}:{}),worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false,
-        ...(client.session?{session:true}:{})};
+        ...(client.session?{session:true}:{}),...(client.kind==="task"?{kind:"task" as const}:{})};
       starts.push(record);
       options.log({type:"native-html-engine-worker",state:"started",...record,live:live().length,mode:options.perTab?"per-tab":"one"});
       if(slot.ended)client.terminate();
@@ -244,7 +245,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     ?async(bytes:Uint8Array)=>(await broadcastLoad(bytes)).value
     :async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   const first=startSlot(0,true);tabSlot.set(0,first);shownAt.set(0,performance.now());
-  sessionsWork=!!(await first.ready).session;
+  {const client=await first.ready;sessionsWork=!!client.session;tasksWork=client.kind==="task";}
   if(options.copies===false&&options.nativeEngine&&!sessionsWork)
     options.log({type:"native-html-engine-worker",state:"no-sessions",why:"the library has no engine sessions: each worker loads its own copy"});
   const sum=(f:(c:CompileClient)=>number)=>live().reduce((n,s)=>n+(s.client?f(s.client):0),0);
@@ -262,7 +263,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     },
     prewarm,
     ownWorker:tab=>{const slot=tabSlot.get(tab);return !!slot&&options.perTab&&slot.tabs.size===1&&!slot.ended;},
-    stats:()=>({mode:options.perTab?"per-tab":"one",...(options.nativeEngine?{engines:options.copies===false&&sessionsWork?"sessions" as const:"copies" as const}:{}),
+    stats:()=>({mode:options.perTab?"per-tab":"one",...(options.nativeEngine?{engines:tasksWork?"tasks" as const:options.copies===false&&sessionsWork?"sessions" as const:"copies" as const}:{}),
       cap,started:starts.length,live:live().length,maxLive,sharedTabs,failedStarts,sparesTaken,starts}),
     call,inputCall,engine,
     gestureCall:(name:RemoteCall,...args:unknown[])=>route("gestureCall",name,args),

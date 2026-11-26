@@ -178,7 +178,7 @@ SHIM_EXPORTS=(
   _web_document_call _web_document_call_bin _web_document_font_call_bin _web_document_image_call_bin
   _web_document_decode_call_bin _web_document_decode2_call_bin _web_render_hit _web_render_free
   _web_session_new _web_session_free _web_session_call _web_session_call_bin _web_session_font_call_bin
-  _web_session_image_call_bin _web_session_hit _web_session_new_task _web_session_close
+  _web_session_image_call_bin _web_session_hit _web_session_new_task _web_session_close _web_session_cancel
 )
 # Fails the build if GNU MP reached a linked binary (issue 393).
 assert_no_gmp(){

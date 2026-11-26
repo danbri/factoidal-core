@@ -169,9 +169,11 @@ is the `deriving Repr` of `NativeSVG.DisplayNode`.
 
 Lowered 2026-11-26 (engine sessions, issue 1031): the kept page layers are a field of the
 engine (`WebDocument.KeptPages`), so `pageWork` (one `unsafe`, one `@[implemented_by]`, one
-`opaque`) is gone and `pageArtifact`'s implementation keeps no global; the lab keeps 2
-`unsafe` and 2 `@[implemented_by]` (`shapeKept`, `pageArtifact`), 4 `opaque`, and 1
-`initialize` cell (`shapedKept`). Record: docs/designissues/2026-11-26-foafnaut-engine-sessions.md.
+`opaque`) and the `initialize` cells `keptPageRef`, `pageWorkRef` and `pageIdRef` (each an
+`opaque` constant) are gone, and `pageArtifact`'s implementation keeps no global. Measured by
+`#hygiene_counts` on wip/engine-sessions: the lab keeps 2 `unsafe` and 2 `@[implemented_by]`
+(`shapeKept`, `pageArtifact`) and 1 `opaque` (the `initialize` cell `shapedKept`). Record:
+docs/designissues/2026-11-26-foafnaut-engine-sessions.md.
 
 Raised 2026-11-14 with the owner's approval (the ratchet's rule above): the formal
 `extern` count goes from 22 to 27 for five new entry points of `Crypto/WebHacl.lean`
@@ -185,7 +187,7 @@ having RSA or SHA-3. -/
 -- Lean reference body and the differential test `tests/prim/run.sh` (CLAUDE.md, "Support library").
 -- The primitives are not new: the lab's import closure now reaches five more `extern` declarations.
 def baseline : Counts :=
-  ⟨⟨50, 2, 2, 1, 0, 4⟩, ⟨369, 0, 0, 153, 32, 1⟩⟩
+  ⟨⟨50, 2, 2, 1, 0, 1⟩, ⟨369, 0, 0, 153, 32, 1⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/

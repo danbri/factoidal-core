@@ -31,7 +31,9 @@ typedef struct web_session {
 } web_session;
 #ifndef __EMSCRIPTEN__
 /* WebSession.lean: the session's task and its calls. Each call waits on the calling thread
-   for the task's answer; the arguments are made here, on the calling thread. */
+   for the task's answer; the arguments are made here, on the calling thread. The handle is an
+   owned argument of each (a Lean export can not borrow), so a caller adds a reference first;
+   the handle's counts are atomic (lean_mark_mt in web_session_new_task). */
 extern lean_object *web_session_task_start(lean_object *);
 extern lean_object *web_session_task_call(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
 extern lean_object *web_session_task_call_bin(lean_object *,lean_object *,lean_object *,uint32_t,uint32_t);
@@ -39,6 +41,7 @@ extern lean_object *web_session_task_font(lean_object *,lean_object *,lean_objec
 extern lean_object *web_session_task_image(lean_object *,lean_object *,lean_object *,lean_object *);
 extern lean_object *web_session_task_hit(lean_object *,lean_object *,uint32_t,uint32_t,double,double);
 extern lean_object *web_session_task_close(lean_object *,uint8_t);
+extern lean_object *web_session_task_cancel(lean_object *,uint8_t);
 #endif
 static web_session *default_session;
 static void session_lock(web_session *s) {
@@ -157,7 +160,18 @@ web_session *web_session_new_task(void) {
    answered with an error, and its task then ends. Does not wait. Nothing for other sessions. */
 void web_session_close(web_session *s) {
 #ifndef __EMSCRIPTEN__
-  if (s && s->task) lean_dec(web_session_task_close(s->task,0));
+  if (s && s->task) { lean_inc(s->task); lean_dec(web_session_task_close(s->task,0)); }
+#else
+  (void)s;
+#endif
+}
+/* Stop a session (task sessions): close it and cancel its task (IO.cancel), so the call in
+   progress stops at the engine's next check (WebWasm.Machine.canceled: before a render's layout
+   and before its paint) and the calls not started are refused; a layout in progress runs to its
+   end. Does not wait. Nothing for other sessions. */
+void web_session_cancel(web_session *s) {
+#ifndef __EMSCRIPTEN__
+  if (s && s->task) { lean_inc(s->task); lean_dec(web_session_task_cancel(s->task,0)); }
 #else
   (void)s;
 #endif
@@ -169,8 +183,10 @@ void web_session_free(web_session *s) {
   if (!s || s==default_session) return;
 #ifndef __EMSCRIPTEN__
   if (s->task) {
+    /* The close takes the session's own reference to the handle: the handle is freed when the
+       task ends (the task's closure holds the session, not the handle). */
     lean_dec(web_session_task_close(s->task,0));
-    lean_dec(s->task); s->task=NULL;
+    s->task=NULL;
   }
 #endif
   session_lock(s);
@@ -206,7 +222,7 @@ char *web_session_call(web_session *s,const char *html,const char *request,uint3
   if (!ready() || !s) return NULL;
   lean_object *h=lean_mk_string(html),*r=lean_mk_string(request),*value;
 #ifndef __EMSCRIPTEN__
-  if (s->task) value=web_session_task_call(s->task,h,r,width,height); else
+  if (s->task) { lean_inc(s->task); value=web_session_task_call(s->task,h,r,width,height); } else
 #endif
   {
     session_lock(s);
@@ -227,7 +243,7 @@ uint8_t *web_session_call_bin(web_session *s,const char *html,const char *reques
   if (!ready() || !s) return NULL;
   lean_object *h=lean_mk_string(html),*r=lean_mk_string(request),*value;
 #ifndef __EMSCRIPTEN__
-  if (s->task) value=web_session_task_call_bin(s->task,h,r,width,height); else
+  if (s->task) { lean_inc(s->task); value=web_session_task_call_bin(s->task,h,r,width,height); } else
 #endif
   {
     session_lock(s);
@@ -257,7 +273,7 @@ char *web_session_font_call_bin(web_session *s,const uint8_t *bytes,uint32_t len
   if (length) memcpy(lean_sarray_cptr(array),bytes,length);
   lean_object *f=lean_mk_string(family),*h=lean_mk_string(sha256),*value;
 #ifndef __EMSCRIPTEN__
-  if (s->task) value=web_session_task_font(s->task,array,f,h,fallback); else
+  if (s->task) { lean_inc(s->task); value=web_session_task_font(s->task,array,f,h,fallback); } else
 #endif
   {
     session_lock(s);
@@ -282,7 +298,7 @@ char *web_session_image_call_bin(web_session *s,const uint8_t *bytes,uint32_t le
   if (length) memcpy(lean_sarray_cptr(array),bytes,length);
   lean_object *k=lean_mk_string(key),*h=lean_mk_string(sha256),*value;
 #ifndef __EMSCRIPTEN__
-  if (s->task) value=web_session_task_image(s->task,array,k,h); else
+  if (s->task) { lean_inc(s->task); value=web_session_task_image(s->task,array,k,h); } else
 #endif
   {
     session_lock(s);
@@ -326,7 +342,7 @@ char *web_session_hit(web_session *s,const char *regions,uint32_t width,uint32_t
   if (!ready() || !s) return NULL;
   lean_object *r=lean_mk_string(regions),*value;
 #ifndef __EMSCRIPTEN__
-  if (s->task) value=web_session_task_hit(s->task,r,width,height,x,y); else
+  if (s->task) { lean_inc(s->task); value=web_session_task_hit(s->task,r,width,height,x,y); } else
 #endif
   {
     session_lock(s);
