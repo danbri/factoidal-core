@@ -698,3 +698,41 @@ Second hotspot run, 2026-11-26 about 18:02 UTC (`--debug --trace-conns`):
   leaves the module. `chutney/run.sh` checks that no Arti line holds a relay address with
   `--debug` on (63 lines scrubbed in the check run). Logs made before this change can hold guard
   addresses.
+
+## 20. SOCKS5 decisions in Lean, with theorems (2026-11-26)
+
+`formal/lean4/L4Factoidal/Net/Socks5.lean` (decisions, Lean core only) and `Socks5Theorems.lean`
+(commit ab8261334), both imported from the `L4Factoidal` root. `lake build
+L4Factoidal.Net.Socks5Theorems` succeeds; every `#guard` passes. No `sorry`, `axiom`,
+`native_decide` or `partial def`. Axioms: at most `propext`, `Classical.choice`, `Quot.sound`;
+`listenAddress_loopback` uses none.
+
+- Authentication: `connect_only_with_secret`, `proxyCheck_only_with_secret` (a connect or
+  proxy-check verdict implies the RFC 1929 password field equals the session secret, version 1,
+  user name admissible); `wrong_password_refused`, `wrong_password_length_refused`,
+  `no_userpass_method_refused`, `not_socks5_refused`, `non_connect_command_refused`,
+  `connect_command_is_connect`, `truncated_needMore` (every shorter prefix of an admitted input
+  is "need more"), `handshake_final` (a decision does not change when more bytes arrive).
+- Partition: `connect_partition`, `partition_function_of_user`, `partition_injective`,
+  `connect_partition_ok`, `Partition.key_injective`.
+- Secret non-interference: `handshake_factor` (the secret enters only through one bit:
+  password equal or not), `handshake_secret_free`, `handshake_eq_unless_password_is_secret`,
+  `handshake_noninterference`, `same_reason_same_outcome`, `run_sent_shape` (the server sends
+  one of 8 fixed byte strings). The form "equal whenever both are refusals" is false (one
+  session refuses at the password, the other admits and then refuses the address type), so it
+  is not stated.
+- Comparison: `diffFold_eq_foldl`, `padZip_length`, `padZip_getElem?`, `secretEq_iff`. Not a
+  claim of constant CPU time.
+- `listenAddress_loopback`; host message model: `hostRun_answers_to_starter`,
+  `secret_only_to_starter`.
+
+Not covered yet: the TypeScript does not call the Lean decision (wiring through a wasm or
+native entry point is next), so no theorem is about the running code; the differential fuzz and
+the test of the real host against the message model are still to be written. `replyFor` (Tor
+error to reply code) is not in Lean.
+
+Difference found by the Lean model: `TextDecoder` removed a leading UTF-8 byte order mark, so
+`socks5.ts` admitted user name `EF BB BF 61` as "a" (a partition that collides with "a") while
+Lean refuses it. Repaired: both decoders keep the mark (`ignoreBOM: true`); `socks5.test.ts`
+checks the refusal. `tools/lean-unbuilt-modules.py --gate` exits 1 on `main` because of 27
+other modules not reached from a root; the two new modules are reached.

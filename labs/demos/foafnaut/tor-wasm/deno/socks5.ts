@@ -94,7 +94,7 @@ export async function serveOne(conn: Deno.Conn, password: Uint8Array, tor: TorSt
     const uname = await r.exact(ulen);
     const [plen] = await r.exact(1);
     const pass = await r.exact(plen);
-    const partition = new TextDecoder().decode(uname);
+    const partition = new TextDecoder("utf-8", { ignoreBOM: true }).decode(uname);
     if (aver !== 1 || !sameBytes(pass, password) || ulen === 0 || !/^[\x21-\x7e]+$/.test(partition)) {
       await send([1, 1]);
       note({ ev: "refused", why: "authentication failed" });
@@ -106,7 +106,7 @@ export async function serveOne(conn: Deno.Conn, password: Uint8Array, tor: TorSt
     if (rver !== 5) { note({ ev: "refused", why: "bad request version" }); return; }
     let host: string;
     if (atyp === 1) host = Array.from(await r.exact(4)).join(".");
-    else if (atyp === 3) { const [n] = await r.exact(1); host = new TextDecoder().decode(await r.exact(n)); }
+    else if (atyp === 3) { const [n] = await r.exact(1); host = new TextDecoder("utf-8", { ignoreBOM: true }).decode(await r.exact(n)); }
     else if (atyp === 4) host = ipv6Text(await r.exact(16));
     else { await reply(REP.addressNotSupported); note({ ev: "refused", why: "address type" }); return; }
     const pb = await r.exact(2);
