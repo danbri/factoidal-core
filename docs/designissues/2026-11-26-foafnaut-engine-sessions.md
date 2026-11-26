@@ -373,7 +373,9 @@ numbers of section 6, whose new tab rows counted only fast tabs (withdrawn, see 
 there); section 6a (against `b7286ac7`) showed the new tab gain only at p50; section 6b shows
 none, against a `main` whose own frames had become faster. Why `tasks` gives later first frames
 is not known; a check with a larger Lean task pool (6 threads; the sessions share one pool, a
-library copy has its own) did not remove it (section 6b).
+library copy has its own) did not remove it (section 6b). Later the same day (section 7b): those
+first-frame numbers include CPU probes that a window in use does not compute; without them `tasks`
+gives earlier first frames (7d), and the default is a question for the owner (7f).
 
 D12. The library pins itself (`RTLD_NODELETE`) before its first task session starts
 (`pin_once` in `web_render_shim.c`), and makes no task session when it can not. Reason: a
@@ -551,7 +553,7 @@ tab first frame matters, but steady speed and memory use may matter more." The c
 (release manager of 0.38.0) asked for four steps on Linux: a steady-state scenario with 5, 20 and
 50 tabs; a profile of tab B's first frame in `tasks` mode; a prototype of the pooled shape behind
 a flag, with a check whether two Deno workers can share one WebGPU device; and this record. The
-default stays `copies`; this section ends with a question to the owner.
+default stays `copies`; 7f asks the owner a question about it.
 
 ### 7a. What was built (on `main`, each behind an option)
 
@@ -673,8 +675,175 @@ measured in 7d.
 
 ### 7d. Steady state with 5, 20 and 50 tabs
 
-The runs of this section are in progress on the Linux rig (with `--idle-checks-only`, 7b); the
-tables follow here when they end.
+Method: Linux VM, 4 vCPU, Xvfb, Mesa llvmpipe (no GPU); the library built from `main`
+`48aa98e6`; the host at the commits of 7a; scenarios `steady5`, `steady20`, `steady50` with
+`--idle-checks-only` (7b); configurations interleaved, one run at a time under
+`/tmp/foafnaut-timing.lock`; median of the runs, the largest in brackets; tables from
+`engine_sessions_report.py --markdown`. Every run loaded every page (N-1 history pushes) and
+exited 0. With the cap of 8 engines (`--engine-workers`, every mode), 12 of 20 tabs and 42 of 50
+share an engine.
+
+Hidden tabs running (`--hidden-tabs running`): the pages of the tabs not shown run their timers and
+animation frames as the shown page (Particle Rex in tab 2, about 27 turns a second). This is the
+load "other tabs run scripts". 3 runs a configuration.
+
+Hidden tabs running, 5 tabs, 3 runs a configuration (pooled1 and pooled2: 1 and 2 host workers):
+
+| Number | copies | sessions | tasks | pooled1 | pooled2 |
+|---|---|---|---|---|---|
+| Resident memory after the loads, MB | 1424 (1475) | 1120 (1139) | 952 (1031) | 1031 (1044) | 1002 (1014) |
+| Lean frame total p50, ms | 75 (85) | 72 (75) | 74 (82) | 80 (85) | 81 (82) |
+| Lean frame total p95, ms | 403 (418) | 385 (394) | 428 (443) | 400 (411) | 385 (405) |
+| Scroll present total p95, ms | 5.6 (6.3) | 7.9 (12) | 9.1 (12) | 6.9 (7.1) | 5.9 (8.3) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 20 (22) | 22 (42) | 20 (21) | 20 (26) | 22 (24) |
+| Process CPU in the 10 s idle, % of one CPU | 98 (99) | 100 (102) | 102 (105) | 103 (104) | 102 (102) |
+| Hidden tab turns in that 10 s | 269 (278) | 260 (267) | 276 (282) | 264 (276) | 269 (275) |
+
+Hidden tabs running, 20 tabs, 3 runs a configuration (pooled1 and pooled2: 1 and 2 host workers):
+
+| Number | copies | sessions | tasks | pooled1 | pooled2 |
+|---|---|---|---|---|---|
+| Resident memory after the loads, MB | 1912 (1943) | 1459 (1508) | 1246 (1250) | 1268 (1307) | 1269 (1272) |
+| Lean frame total p50, ms | 79 (80) | 78 (79) | 76 (83) | 75 (81) | 75 (79) |
+| Lean frame total p95, ms | 390 (393) | 394 (395) | 392 (419) | 377 (421) | 382 (382) |
+| Scroll present total p95, ms | 8.7 (9.5) | 7.7 (12) | 8.1 (9.9) | 7.8 (9.2) | 6.2 (8.4) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 19 (23) | 24 (25) | 24 (26) | 22 (24) | 21 (23) |
+| Process CPU in the 10 s idle, % of one CPU | 98 (100) | 99 (100) | 100 (102) | 101 (103) | 100 (105) |
+| Hidden tab turns in that 10 s | 271 (281) | 276 (278) | 287 (287) | 280 (280) | 286 (297) |
+
+Hidden tabs running, 50 tabs, 1 run a configuration (two Particle Rex tabs among the 49):
+
+| Number | copies | tasks | pooled2 |
+|---|---|---|---|
+| Resident memory after the loads, MB | 2164 (2164) | 1547 (1547) | 1585 (1585) |
+| Lean frame total p50, ms | 52 (52) | 53 (53) | 50 (50) |
+| Lean frame total p95, ms | 420 (420) | 444 (444) | 422 (422) |
+| Scroll present total p95, ms | 11 (11) | 4.9 (4.9) | 7.9 (7.9) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 20 (20) | 18 (18) | 21 (21) |
+| Process CPU in the 10 s idle, % of one CPU | 178 (178) | 182 (182) | 187 (187) |
+| Hidden tab turns in that 10 s | 496 (496) | 532 (532) | 475 (475) |
+
+Hidden tabs stopped (the default): no page script runs in a tab not shown. 2 runs a configuration.
+
+Hidden tabs stopped, 5 tabs, 2 runs a configuration:
+
+| Number | copies | sessions | tasks |
+|---|---|---|---|
+| Resident memory after the loads, MB | 1405 (1421) | 1144 (1163) | 968 (1015) |
+| Lean frame total p50, ms | 73 (75) | 76 (76) | 76 (76) |
+| Lean frame total p95, ms | 391 (393) | 400 (407) | 393 (398) |
+| Scroll present total p95, ms | 9.1 (12) | 6.3 (6.3) | 7.8 (8.2) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 22 (25) | 27 (30) | 21 (21) |
+| Process CPU in the 10 s idle, % of one CPU | 18 (19) | 19 (19) | 19 (19) |
+
+Hidden tabs stopped, 20 tabs, 2 runs a configuration:
+
+| Number | copies | sessions | tasks |
+|---|---|---|---|
+| Resident memory after the loads, MB | 1871 (1925) | 1436 (1449) | 1240 (1258) |
+| Lean frame total p50, ms | 79 (80) | 86 (87) | 80 (81) |
+| Lean frame total p95, ms | 413 (430) | 398 (399) | 409 (427) |
+| Scroll present total p95, ms | 9.2 (11) | 6.0 (6.0) | 7.9 (9.6) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 22 (23) | 20 (21) | 21 (23) |
+| Process CPU in the 10 s idle, % of one CPU | 21 (22) | 21 (21) | 19 (19) |
+
+Hidden tabs stopped, 50 tabs, 2 runs a configuration:
+
+| Number | copies | sessions | tasks |
+|---|---|---|---|
+| Resident memory after the loads, MB | 2006 (2024) | 1604 (1620) | 1370 (1381) |
+| Lean frame total p50, ms | 113 (113) | 87 (114) | 50 (53) |
+| Lean frame total p95, ms | 440 (472) | 437 (450) | 440 (442) |
+| Scroll present total p95, ms | 6.6 (7.7) | 7.8 (8.7) | 7.5 (10) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 23 (25) | 22 (23) | 23 (26) |
+| Process CPU in the 10 s idle, % of one CPU | 22 (22) | 20 (21) | 21 (22) |
+
+What the numbers say, on this rig:
+
+- Resident memory: `tasks` is the lowest in every table. With hidden tabs stopped, against
+  `copies`: 968 against 1,405 MB with 5 tabs, 1,240 against 1,871 with 20, 1,370 against 2,006
+  with 50 (31 to 34% less); `sessions` is between them. `pooled` adds 20 to 80 MB to `tasks`.
+- Idle CPU per tab not shown, hidden tabs stopped: the 10 s idle window holds one idle check of the
+  shown tab (the probe frame of 7b that a window asks for once idle: about 2 s of engine CPU on the
+  start page), so the process uses 18 to 22% of one CPU in every mode. The runs of 7b with
+  per-frame probes have no idle check: there the process used 0.6% (5 tabs) to 2.3% (50 tabs), under
+  0.25% per tab not shown, in every mode. With hidden tabs running, 98 to 105% of one CPU in every
+  mode: the idle check and about 80% more, almost all of it the hidden Particle Rex.
+- The tab on screen while other tabs run scripts: Lean frame total p50 72 to 81 ms and p95 377 to
+  428 ms, scroll present p95 5.6 to 9.1 ms, gesture `queuedToActionMs` p95 19 to 24 ms, in every
+  mode at 5 and 20 tabs. No mode is better or worse than the run-to-run spread.
+- `pooled`: the frames, gestures, pump gap (p95 10 ms in every mode) and input latency of `tasks`,
+  and 20 to 80 MB more resident memory (one or two more Deno workers). On this rig the main thread
+  is not the bottleneck (7c), so the host workers had little to take from it.
+
+New tab first frame, the guard, without the probes (3 runs a configuration):
+
+| Number | copies | tasks | tasks, `--warming-spare new` |
+|---|---|---|---|
+| New tab first frame p50, 7 tabs 3 s apart, every tab counted, ms | 310 (312) | 307 (309) | 285 (296) |
+| New tab first frame p95, same, ms | 472 (501) | 412 (416) | 346 (367) |
+| Tab B first frame, tab A loading 2 MB (3 runs), ms | 1,295 (1,316) | 477 (1,168) | 860 (871) |
+| Tab B input latency p95, same, ms | 1,087 (1,132) | 502 (1,039) | 832 (872) |
+
+With 5 more runs of `heavy` for `copies` and `tasks` (8 a mode): tab B's first frame, copies
+median 1,248 ms (1,011 to 1,347); tasks median 1,056 ms, in two groups: 3 runs at 424 to 477 ms
+and 5 runs at 1,025 to 1,186 ms (the cause of the two groups is not identified). Tab B input
+latency p95: copies median 1,066 ms (850 to 1,153), tasks 829 ms (450 to 1,039). In `heavy` the
+load of tab A starts at the start page's first frame, while that page's later work (images, the new
+tab page, the spare) still runs; the profile runs of 7c start it after a `mark` step, once the page
+settled, and gave 453 to 587 ms in both modes.
+
+The 19 new tabs of the loaded 20-tab runs give the same order: new tab first frame p95 copies 517
+ms, sessions 441, tasks 323, pooled 332 (1 worker) and 376 (2 workers).
+
+D18. `--warming-spare` stays `take` by default. Reason: the runs do not show `new` better. It
+gave the lowest new tab p95 (346 against 412 ms, 3 runs each), and in `heavy` 772 to 871 ms (3
+runs) against `take`'s two groups (424 to 477 ms and 1,025 to 1,186 ms, 8 runs). Without the
+probes a spare's warm-up took 80 to 260 ms (12 runs), so a tab rarely waits long for it, and the
+bench does not count how often the rule acted. A change needs that count and more runs.
+
+One engine for every tab (`--engine-workers 64`), hidden tabs stopped, 20 tabs, 2 runs a configuration:
+
+| Number | tasks64 | pooled64 | sessions64 |
+|---|---|---|---|
+| Engines live at most | 21 (21) | 21 (21) | 21 (21) |
+| Resident memory after the loads, MB | 1672 (1700) | 1686 (1689) | 2273 (2319) |
+| Lean frame total p95, ms | 390 (404) | 411 (434) | 392 (407) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 20 (21) | 20 (20) | 19 (20) |
+
+One engine for every tab (`--engine-workers 64`), hidden tabs stopped, 50 tabs, 2 runs a configuration:
+
+| Number | tasks64 | pooled64 | sessions64 |
+|---|---|---|---|
+| Engines live at most | 51 (51) | 51 (51) | 51 (51) |
+| Resident memory after the loads, MB | 3097 (3123) | 3160 (3190) | 3978 (3995) |
+| Lean frame total p95, ms | 398 (418) | 406 (420) | 421 (439) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 23 (24) | 22 (24) | 21 (22) |
+
+With one engine for every tab, an engine with its page costs about 47 MB in `tasks` and 57 MB in
+`sessions` (from 20 to 50 tabs). In `copies` mode on Linux the 9th worker's copy of the library
+does not load ("cannot allocate memory in static TLS block"; the library is `STATIC_TLS`), and its
+tab shares worker 1, so 8 engines is the most. Issue:
+https://github.com/danbri/factoidal-core/issues/1160 (expected failure in
+`engine_sessions_test.ts`). The default cap of 8 keeps `copies` at that limit; with
+`--engine-workers 64` and 20 tabs, 9 workers were started (the 9th failed) and the process held
+1,993 MB.
+
+Hidden tabs throttled (at most one timer turn a second), 20 tabs, 2 runs a configuration:
+
+| Number | copies | tasks | pooled2 |
+|---|---|---|---|
+| Resident memory after the loads, MB | 1894 (1948) | 1212 (1242) | 1264 (1270) |
+| Process CPU in the 10 s idle, % of one CPU | 24 (24) | 23 (23) | 23 (23) |
+| Hidden tab turns in that 10 s | 11 (11) | 11 (11) | 11 (11) |
+| Lean frame total p95, ms | 404 (412) | 396 (406) | 412 (433) |
+| Gesture queuedToActionMs p50, ms | 13 (14) | 13 (14) | 13 (14) |
+| Gesture queuedToActionMs p95 (largest of 15), ms | 53 (53) | 52 (55) | 50 (51) |
+
+With hidden tabs throttled, gesture `queuedToActionMs` p95 is 50 to 53 ms in every mode, against 19
+to 27 ms with hidden tabs stopped or running. `pooled` does not lower it, so it is host work on the
+main thread when a throttled turn (1 s of the page clock) is applied, not engine work; not traced
+further.
 
 ### 7e. Can two Deno workers share one WebGPU device?
 
@@ -686,3 +855,48 @@ function, `instanceof GPUDevice` false). A device in each of two workers on the 
 and 17 MB of resident memory per device. Objects of one device can not be used on another, so a
 frame made from two devices needs copies through the CPU. Decision D16: the main thread stays the
 one GPU owner; host workers do no GPU work. Not checked here: Metal on the Mac.
+
+### 7f. The default: a question for the owner
+
+The default stays `copies`. The coordinator's brief: "If tasks or the pooled shape wins on the
+steady-state metrics, write the proposed default rule as a question for the owner. Do not change
+the default yourself." The rule of `CLAUDE.md` (2026-11-26): a change of the default is judged on
+steady state with 5, 20 and 50 tabs (resident memory, idle CPU per background tab, frame time p95
+and `queuedToActionMs` of the tab on screen while other tabs run scripts, GPU memory per tab on the
+Mac), with new tab first frame as a guard.
+
+On this Linux rig, without a GPU and without the probes of 7b, `tasks` against `copies`:
+
+- resident memory: 31 to 34% less with 5, 20 and 50 tabs (hidden tabs stopped), 29 to 35% less with
+  hidden tabs running;
+- idle CPU per tab not shown: the same;
+- frame time p95 and `queuedToActionMs` of the tab on screen while other tabs run scripts: the
+  same within the run-to-run spread, with 5, 20 and 50 tabs (50: one run);
+- GPU memory per tab: not measured (no Mac);
+- guard, new tab first frame: p95 412 against 472 ms (7 tabs 3 s apart), 323 against 517 ms (the
+  19 new tabs of the loaded 20-tab runs); tab B while tab A loads, median 1,056 against 1,248 ms.
+
+`pooled` measured as `tasks` with 20 to 80 MB more: on this rig it shows no gain from host workers.
+
+Proposed rule (D19, a question, not a decision): make `--engine-mode tasks` the default when one
+run of `steady5`, `steady20`, `steady50` (hidden tabs stopped and running) and `tabs-spaced` on the
+Mac, with `--idle-checks-only`, gives for `tasks` against `copies`: (1) less resident memory, (2) a
+frame time p95 and a gesture `queuedToActionMs` p95 of the tab on screen within the run-to-run
+spread or lower, (3) a new tab first frame p95 no higher, and (4) GPU memory per tab no higher. Keep
+`copies`, `sessions` and `pooled` selectable. The question: is this the rule? Or should `tasks`
+become the default now, on the Linux numbers, with the Mac run as a check after?
+
+### 7g. Gaps
+
+- The Mac: no run here, so no GPU, no Metal, no GPU memory per tab; the macOS link of the new
+  exports is not built (section 6b).
+- The frame and first-frame numbers of sections 6 to 6b include the probes of 7b; the mode
+  comparisons there stand, the times do not describe the window in use.
+- `--hidden-tabs throttled` runs at most one animation frame a turn (D14); a browser runs none for a
+  hidden document. The 50 ms gesture p95 with throttled tabs is not traced.
+- V8 background threads: 0.4 to 1.3 CPU-s in a first-frame window, in both modes; not identified.
+- `heavy`: the two groups of `tasks` (424 to 477 ms and 1,025 to 1,186 ms) are not explained.
+- `--engine-mode copies` past 8 engines on Linux: https://github.com/danbri/factoidal-core/issues/1160.
+- The cap of 8 (`--engine-workers`) holds in every mode: with 20 tabs 12 share an engine, with 50
+  tabs 42 do. With hidden tabs running, a tab that shares the engine of the tab on screen runs its
+  scripts on that engine.
