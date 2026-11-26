@@ -210,6 +210,11 @@ private def svgDimensions (attributes css : String) : Except String (Float × Fl
 #guard (svgDimensions "height='20' viewBox='0 0 0 1'" "").toOption == some (300,20)
 #guard (svgDimensions "height='20' viewBox='0 0 -2 1'" "").toOption == some (300,20)
 #guard (svgDimensions "" "").toOption == some (300,150)
+#guard (svgDimensions "width='40' viewBox='0 0 4 1'" "svg{width:max-content}").toOption == some (40,10)
+#guard (svgDimensions "height='40' viewBox='0 0 4 1'" "svg{width:max-content}").toOption == some (160,40)
+#guard (svgDimensions "width='40' height='40' viewBox='0 0 4 1'" "svg{width:max-content}").toOption == some (40,40)
+#guard (svgDimensions "height='40' viewBox='0 0 4 1'" "svg{height:max-content}").toOption == some (160,40)
+#guard (svgDimensions "width='40' height='40' viewBox='0 0 4 1'" "svg{height:max-content}").toOption == some (40,40)
 private def svgFlow (display : String) : Except String (List (Float × Float)) := do
   let dom := DOM.parseHtmlDocument "<svg height='200' viewBox='0 0 100.5 100'></svg>"
   let (_,boxes) ← Layout.render dom (← CSS.parse ("body{margin:0}svg{display:" ++ display ++ "}")) font (fun _ _ _ _ => .ok []) 800 600
