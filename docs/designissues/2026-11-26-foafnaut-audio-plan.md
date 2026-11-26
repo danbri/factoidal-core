@@ -130,6 +130,8 @@ After audio: WebXR audio, then the video stages of issue 588 with section 4's ru
 
 1. AAC through AudioToolbox (the macOS decoder), as Firefox does: yes or no?
 2. Later: the HRTF data set for `PannerNode` (its licence will be reported first).
+3. Autoplay (section 13.7): may a page start sound only after the person has used it (clicked,
+   typed), as Chrome and Safari do? The default here is yes.
 
 ## 8. Stage A, done 2026-11-26
 
@@ -257,3 +259,146 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   each against `Media/Modules.lean` before use.
 - Measure: `tests/browser-wpt/testharness-run.ts` on the WPT `webaudio` names, with the test files
   fetched by name, before and after each step.
+
+## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
+
+### 13.1 Threads and state
+
+- **Control side.** The page's `WebApi.State.audio`, a pure value, as for offline contexts. A
+  real-time context is the same context state (graph, nodes, automation, sample rate) plus a
+  record of its own: the state (`suspended`, `running`, `closed`), the outbox of control messages,
+  the last report of the rendering side, and the handle of the page callback that takes its
+  events.
+- **Rendering side.** One Lean dedicated task (`Task.Priority.dedicated`, a thread of its own) per
+  real-time context, in the engine library, as the engine sessions of
+  https://github.com/danbri/factoidal-core/issues/1031 (engine per tab). It holds its own copy of
+  the context state. The engine library starts Lean's task manager in native builds
+  (`web_render_shim.c`, `FOAFNAUT_LEAN_THREADS`); with no task manager there is no real-time
+  context.
+- **Output.** C in the engine library, `formal/lean4/ffi/audio_sink.c`: a single-producer,
+  single-consumer ring of binary32 frames, and one consumer of the ring:
+  - `coreaudio` (macOS): the default output unit; its render callback copies frames from the ring
+    and gives silence for what is missing;
+  - `null` (every POSIX system): a thread of the sink takes frames at the sample rate and drops
+    them;
+  - `wav:PATH` (every POSIX system): as `null`, and the frames go to a WAV file (32-bit float),
+    for tests;
+  - none in the Wasm build: `new AudioContext()` answers `NotSupportedError` there (audio in the
+    Hub is not a goal, section 2).
+  `FOAFNAUT_AUDIO_SINK` chooses; the default is `coreaudio` on macOS and `null` elsewhere. The C
+  decides nothing about the audio: it copies frames, counts, and keeps time.
+
+### 13.2 Control messages
+
+Web Audio API, "Control Thread and Rendering Thread": the control thread queues control messages;
+the rendering thread takes the whole queue at the start of a render quantum. Here:
+
+1. Each op 176 to 185 that succeeds on a real-time context appends its op code and fields to the
+   context's outbox. The control side applies the op to its own copy, as for an offline context,
+   and answers the page.
+2. At the end of each page task (each turn of the engine), the engine's IO layer moves each outbox
+   to the inbox of its rendering task, as one batch. So the changes made in one task apply in the
+   same render quantum (Firefox applies them at its "stable state" in the same way).
+3. The rendering task applies each message with the same function as the control side (`Api.op`)
+   to its own copy, before its next quantum. Node ids are given in op order, so both copies give
+   the same ids. A message that fails on the rendering side is not expected (the same function on
+   the same sequence of ops); it is counted and traced as `audio-divergence`.
+4. `start(when)` and the automation times are absolute context times; a time before the
+   rendering side's current time starts or applies at once, which is the specification's rule.
+5. The rendering task computes the processing order (`Plan.of`) again only when a message
+   changes the graph.
+
+### 13.3 From the rendering side to the page
+
+After each batch of quanta, the rendering task publishes a report: frames rendered, the sources
+that ended, the state changes it made (running after `resume`, suspended, closed), and the sink's
+counters (frames played, under-runs, device latency). Before each page task the IO layer copies the
+newest report into the control side:
+
+- `currentTime` is frames rendered divided by the sample rate (the specification's
+  `[[current frame]]` of the rendering thread). The control side keeps the larger of the old and
+  the new value, so `currentTime` never decreases (a theorem of D2).
+- When the report has events, the IO layer queues the context's callback
+  (`EventLoop.queueTask`, as `mapAsync` does for GPU readbacks). The callback reads the events with
+  op 193 and fires `ended` and `statechange`, and resolves the promises of `resume()`,
+  `suspend()` and `close()`.
+- While a context runs, the turn's `nextWake` is at most 25 ms ahead, so that the host gives the
+  turns that deliver the events.
+- When the page session ends (navigation, tab closed), its contexts close: their tasks end and
+  their sinks close.
+
+### 13.4 The rendering task
+
+1. Take the inbox; apply the messages.
+2. If the context is suspended or closed: wait for a message, a `resume` or a `close`.
+3. Read the sink's counters. While frames written minus frames played is below the target: render
+   one quantum (`Render.renderQuantumWith`), convert it to interleaved binary32, write it to the
+   ring.
+4. Publish the report. Sleep until about half of the target has played (at least 1 ms).
+
+Target, from `latencyHint`: `interactive` 1,024 frames, `balanced` 2,048, `playback` 4,096; a
+number of seconds `s` gives `ceil(s × rate)`, from 256 to 16,384. The ring holds 4 times the
+target (at least 8,192 frames). `baseLatency` is the target divided by the rate;
+`outputLatency` is the device latency that the sink reports (CoreAudio: the device latency, the
+safety offset and the buffer size; `null` and `wav`: 0).
+
+### 13.5 The ring as a Lean state machine
+
+`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run count.
+`write k` takes `min k free` frames; `read k` gives `min k available` frames and `k` minus that of
+silence, and counts an under-run when it gives silence. Theorems: in every reachable state, read ≤
+written ≤ read + capacity; each frame is read at most once and in the order written; an under-run
+gives silence. The C ring follows it: the writer copies frames, then stores `written` with release
+order; the reader loads `written` with acquire order, copies, then stores `read` with release
+order; each side writes only its own counter. Tests: a stress test of the C ring under
+ThreadSanitizer (a writer thread and a reader thread, random sizes, every frame value checked),
+and a sequential trace of C ring operations replayed through the Lean model, which must give the
+same results.
+
+### 13.6 Ties to Lean proofs (section 4)
+
+The ring model's theorems; the C ring's tests; the named assumption "CoreAudio plays the frames it
+is given, in order, at the device rate" on every path that uses the macOS sink; `currentTime`
+never decreases. An end-to-end test on Linux: a page plays one second of a 440 Hz
+`OscillatorNode` through the `wav` sink; the file holds the frames of an `OfflineAudioContext`
+render of the same graph (bit for bit, binary32), and there is no under-run.
+
+### 13.7 Autoplay
+
+Chrome and Safari start a context `suspended` when the page has no user activation, and
+`resume()` needs one; Firefox has a setting. Coordinator's default, not the owner's: a new context
+is `running` when the page has sticky activation (HTML "has been activated"), else `suspended`;
+`resume()` is allowed after sticky activation. Question 3 of section 7.
+
+### 13.8 Ops 190 to 199
+
+- 190 `newAudioContext(latencyHint, sampleRate, callback)`: `latencyHint` is `interactive`,
+  `balanced`, `playback` or an 8-byte double; `sampleRate` is a double or ""; `callback` is the
+  page callback handle for events. Answers `"ID RATE CHANNELS STATE"`. -23 for a rate outside 3,000
+  to 768,000 Hz, or when the engine has no sink.
+- 191 `control(ctx, verb)`: `resume`, `suspend` or `close`; the promise resolves on the event.
+- 192 `time(ctx)`: `currentTime`, `baseLatency`, `outputLatency` (doubles), the state (one byte),
+  then `getOutputTimestamp()`'s `contextTime` and `performanceTime` (doubles).
+- 193 `events(ctx)`: the events since the last call: a `u32` count, then for each a kind byte (1
+  source ended, 2 state changed, 3 promise of a `control` call resolved) and a `u32` value.
+- 194 `decodeAudioData` (stage C). 195 to 199 are kept for Web Audio.
+
+### 13.9 Measures
+
+A trace line `native-audio` once a second for each running context: frames rendered and played,
+under-runs, CPU time of rendering per second of audio, frames ahead (least and most), device
+latency. `--perf-summary` gets a block `audio`.
+
+### 13.10 Steps
+
+- D1: `WebAudio/Ring.lean` with its theorems; `ffi/audio_sink.c` (ring, `null`, `wav`, the Wasm
+  build); `WebAudio/Sink.lean` (the externs); Lake and `build-web-render.sh` wiring; the stress
+  test and the trace replay.
+- D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
+  sessions, so this part is written against Apple's documented C API and is checked by the macOS
+  build of `danbri/factoidal-builds`.
+- D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
+  `AudioContext` in `prelude.js`.
+- D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
+  with the page), the trace lines, the end-to-end test.
+- Then the owner's check on the Mac, and stage E (the jukebox).
