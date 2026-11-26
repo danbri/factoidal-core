@@ -154,10 +154,10 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 
 | File | What | State |
 |---|---|---|
-| `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`) |
+| `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`); tail-recursive loops and shape theorems on `wip/1169-mix-delay` |
 | `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time; stored times exact values of binary64 numbers, sums and frame conversion in binary64 (`ceil(t × rate)`, as WPT `audioparam-testing.js`) | on `main` (`cd8ab064f` to `b5bfaa30f`): 7 theorems, 114 `#guard` |
 | `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c`, `7cce27238`): no step twice, every connection in processing order, muted nodes lie on cycles; not yet proved: every node that is not muted is in the order |
-| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`): shape and state theorems, 67 `#guard`; fractional delay by linear interpolation (the specification names none) |
+| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`); cycle minimum and channel-count change on `wip/1169-mix-delay`: shape and state theorems, 75 `#guard`; fractional delay by linear interpolation (the specification names none) |
 | `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | on `main` (`531881c86`, `e270b721b`), rendered through `Render` |
 | `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | on `main` (`27c4e37d1`), rendered through `Render` |
 | `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | on `main`: frame, shape and graph theorems; Oscillator, BiquadFilter and AudioBufferSource output silence until their kernels land |
@@ -201,11 +201,23 @@ Found by the work on `Render.lean`; none blocks the offline renderer.
    leaves that cycle uncut, so the nodes on it are muted (`Graph.lean` guard 23c).
 2. `Graph.lean`: not proved that every node that is not muted appears in the order (it needs "a
    finite graph with no cycle has a vertex with no incoming edge").
-3. `Mix.lean`: `mixInput` has no shape theorem; `Render.lean` normalizes the shape instead.
-4. `Kernels.lean`: a `DelayNode` with `maxDelayTime` below one render quantum, in a cycle, has a
-   minimum delay above its maximum in `clampDelay`; no test covers it.
-5. `Kernels.lean`: when a delay's input channel count changes, stored samples are not up-mixed or
-   down-mixed as the `DelayNode` section says.
+3. Fixed (`b867dfc8b` and the commit before it): `Mix.mixInput` and `Mix.apply` are tail-recursive
+   loops (`mixConns`, `addRows`, `addFrames`, `applyRows`, `rowMix`, `scaleAdd`; channels updated
+   in place with `Array.modify` and `set!`). Theorems `Mix.mixInput_shape` (`toCh` channels of
+   `frames` samples for any connections) and `Mix.apply_shape` (every channel has `frames`
+   samples). `Render.normalize` is left as it is.
+4. Fixed (`b867dfc8b`): in a cycle the minimum wins, as the specification says ("clamped to a minimum of
+   one render quantum"): the delay is at least `n` frames even above `maxDelayTime`.
+   `DelayState` has `maxFrames`; the ring has `max maxFrames quantum + 1` frames (`Render` passes
+   its quantum to `DelayState.init`; the default 0 gives `maxFrames + 1`); the upper clamp is
+   `min (max maxFrames minFrames) (size - 1)`, so a quantum larger than the one given at node
+   creation cannot index outside the ring. `#guard`s: 2-frame maximum, cycle, 4-frame quantum
+   delays by 4; outside a cycle by 2.
+5. Fixed (`b867dfc8b`): when the input channel count differs from the stored one, `delayProcess` replaces
+   the whole ring by `Mix.apply (Mix.matrix interp old new) ring size` (`DelayState.retarget`);
+   `interp` is a `DelayState` field that `Render.runKernel` sets from the node's
+   `channelInterpretation`. `delay_state_wf` and `delay_shape` still hold. `#guard`s: mono to
+   stereo (both channels), stereo (1, 3) to mono (2), `discrete` 2 to 1 (channel 0), unchanged count.
 
 ## 12. Stage B, last part: the page interfaces
 
