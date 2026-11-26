@@ -1818,37 +1818,92 @@ def pageAnswerId (text : String) : Option Nat :=
 #guard pageAnswerId "{\"a\":\"\\\"damage\\\":{\\\"id\\\":7\"}" == none
 #guard pageAnswerId "{\"abi\":1}" == none
 
+/-- Whether the 8 bytes at `p` differ: `ldU64LE` of each (bytes past the end read 0). -/
+def wordsDifferRef (old new : ByteArray) (p : USize) : Bool :=
+  Prim.Bytes.ldU64LE old p != Prim.Bytes.ldU64LE new p
+
+/-- `wordsDifferRef` with one 8-byte load from each array where the word is inside both
+(`Prim.Bytes.ldU64LEIn`, C), by the `USize` window test of `ldU64LE`. Equal to the reference:
+`wordsDiffer_eq`. -/
+@[inline] def wordsDiffer (old new : ByteArray) (p : USize) : Bool :=
+  if h : p < p + 8 ∧ p + 8 ≤ old.usize ∧ p + 8 ≤ new.usize then
+    have win : ∀ (d : ByteArray), p + 8 ≤ d.usize → p.toNat + 8 ≤ d.usize.toNat := fun d hd => by
+      have a := USize.le_iff_toNat_le.mp hd
+      rw [Prim.Bytes.usize_add_small h.1 8 (by rw [Prim.Bytes.usize_eight_toNat]; omega), Prim.Bytes.usize_eight_toNat] at a
+      exact a
+    Prim.Bytes.ldU64LEIn old p (win old h.2.1) != Prim.Bytes.ldU64LEIn new p (win new h.2.2)
+  else wordsDifferRef old new p
+
+theorem wordsDiffer_eq : wordsDiffer = wordsDifferRef := by
+  funext old new p
+  unfold wordsDiffer
+  split
+  · simp only [wordsDifferRef, ← Prim.Bytes.ldU64LE_eq_in]
+  · rfl
+
+/-- The first word index from `w` (below `words`) whose 8 bytes differ (`differs` at byte
+`8*w`), or `words`. `USize` indices: a loop with no allocation. -/
+@[specialize] def nextDiffering (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words w : USize) : USize :=
+  if h : w < words then
+    if differs old new (8*w) then w else nextDiffering differs old new words (w+1)
+  else words
+termination_by words.toNat - w.toNat
+decreasing_by have := Prim.Bytes.usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega
+
+/-- The first word index from `w` (below `words`) whose 8 bytes are the same, or `words`. -/
+@[specialize] def nextSame (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words w : USize) : USize :=
+  if h : w < words then
+    if differs old new (8*w) then nextSame differs old new words (w+1) else w
+  else words
+termination_by words.toNat - w.toNat
+decreasing_by have := Prim.Bytes.usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega
+
+/-- The ranges of differing words from word `w` on, after `out`; a run of differing words that
+starts at most `gap` bytes after the last range ends joins it. One step per run; `fuel` bounds
+the steps (each step moves past at least one word, so `words+1` is enough). -/
+@[specialize] def wordRanges (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words : USize) (gap : Nat) :
+    Nat → USize → Array (Nat × Nat) → Array (Nat × Nat)
+  | 0, _, out => out
+  | fuel+1, w, out =>
+    let s := nextDiffering differs old new words w
+    if s < words then
+      let e := max (s+1) (nextSame differs old new words s)
+      let (s,e) := (s.toNat,e.toNat)
+      match out.back? with
+      | some (o,l) =>
+        if 8*s ≤ o+l+gap then wordRanges differs old new words gap fuel e.toUSize (out.pop.push (o,8*e-o))
+        else wordRanges differs old new words gap fuel e.toUSize (out.push (8*s,8*(e-s)))
+      | none => wordRanges differs old new words gap fuel e.toUSize (out.push (8*s,8*(e-s)))
+    else out
+
 /-- The byte ranges `(offset, length)` where `new` differs from `old`, for two arrays of one size
-(issue 1124, stage C). Compared in 8-byte words, then the last bytes one by one; a run that starts
-at most `gap` bytes after the last one ends joins it. Offsets and lengths are multiples of 4 when
-the size is. One pass, no list. -/
-def changedRanges (old new : ByteArray) (gap : Nat := 64) : Array (Nat × Nat) := Id.run do
+(issue 1124, stage C), with `differs` the test of one 8-byte word: the word ranges
+(`wordRanges`), then the last bytes one by one. A run that starts at most `gap` bytes after the
+last one ends joins it. Offsets and lengths are multiples of 4 when the size is. -/
+@[specialize] def changedRangesWith (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (gap : Nat := 64) :
+    Array (Nat × Nat) := Id.run do
   let size := new.size
   let words := size / 8
-  let mut out : Array (Nat × Nat) := #[]
-  let mut start := 0
-  let mut stop := 0
-  let mut open_ := false
-  for w in [0:words] do
-    let p := (8*w).toUSize
-    if Prim.Bytes.ldU64LE old p != Prim.Bytes.ldU64LE new p then
-      if open_ && 8*w ≤ stop+gap then stop := 8*w+8
-      else
-        if open_ then out := out.push (start,stop-start)
-        start := 8*w
-        stop := 8*w+8
-        open_ := true
+  -- Word indices in `USize`: an array's size is below `USize.size`, so `words` is exact.
+  let mut out := wordRanges differs old new words.toUSize gap (words+1) 0 #[]
   for i in [8*words:size] do
     if old.get! i != new.get! i then
       let at_ := i - i % 4
-      if open_ && at_ ≤ stop+gap then stop := max stop (min size (at_+4))
-      else
-        if open_ then out := out.push (start,stop-start)
-        start := at_
-        stop := min size (at_+4)
-        open_ := true
-  if open_ then out := out.push (start,stop-start)
+      match out.back? with
+      | some (o,l) =>
+        if at_ ≤ o+l+gap then out := out.pop.push (o,max (o+l) (min size (at_+4))-o)
+        else out := out.push (at_,min size (at_+4)-at_)
+      | none => out := out.push (at_,min size (at_+4)-at_)
   return out
+
+/-- `changedRangesWith` with the fast word test; the same ranges as with the reference test
+(`changedRanges_eq`). -/
+def changedRanges (old new : ByteArray) (gap : Nat := 64) : Array (Nat × Nat) :=
+  changedRangesWith wordsDiffer old new gap
+
+theorem changedRanges_eq (old new : ByteArray) (gap : Nat) :
+    changedRanges old new gap = changedRangesWith wordsDifferRef old new gap := by
+  rw [changedRanges, wordsDiffer_eq]
 
 /-- The bytes of `new` in `ranges`, in order: a patch section. -/
 def rangeBytes (new : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
@@ -1859,11 +1914,14 @@ this (`native_html_layout.ts`, `applyPatch`); the tests check that it gives `new
 def applyRanges (old patch : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
   (ranges.foldl (fun (acc,at_) (o,l) => (patch.copySlice at_ acc o l,at_+l)) (old,0)).1
 
+-- The guards run the reference word test (the interpreter has no code for the C load).
 #guard let a := ByteArray.mk #[1,2,3,4,5,6,7,8,9,10,11,12]; let b := ByteArray.mk #[1,2,3,4,5,6,7,9,9,10,11,13]
-  changedRanges a b 0 == #[(0,12)] && applyRanges a (rangeBytes b (changedRanges a b 0)) (changedRanges a b 0) == b
+  let r := changedRangesWith wordsDifferRef a b 0
+  r == #[(0,12)] && applyRanges a (rangeBytes b r) r == b
 #guard let a := ByteArray.mk ((Array.range 200).map (·.toUInt8)); let b := (a.set! 40 0).set! 190 0
-  changedRanges a b 0 == #[(40,8),(184,8)] && changedRanges a b 200 == #[(40,152)] && changedRanges a a == #[] &&
-    applyRanges a (rangeBytes b (changedRanges a b 0)) (changedRanges a b 0) == b
+  let r := changedRangesWith wordsDifferRef a b 0
+  r == #[(40,8),(184,8)] && changedRangesWith wordsDifferRef a b 200 == #[(40,152)] &&
+    changedRangesWith wordsDifferRef a a == #[] && applyRanges a (rangeBytes b r) r == b
 
 /-- A patch of one section as JSON: the base answer, the ranges, the full size. -/
 def patchJSON (base : Nat) (ranges : Array (Nat × Nat)) (size : Nat) : String :=
