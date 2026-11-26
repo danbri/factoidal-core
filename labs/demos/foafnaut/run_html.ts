@@ -28,6 +28,7 @@ import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import {startTabWorkers,type TabWorkers} from "./native_html_tabs.ts";
 import {startTaskClient} from "./native_engine_tasks.ts";
+import {startHostPool,type HostPool} from "./native_engine_pool.ts";
 import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
 import {heldPageId,resolvePage} from "./native_html_layout.ts";
 
@@ -56,14 +57,14 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks] [--hidden-tabs stopped|throttled|running] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks|pooled [--host-workers 1|2]] [--hidden-tabs stopped|throttled|running] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let windowSize:[number,number]|undefined;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"="copies",hiddenTabs:"stopped"|"throttled"|"running"="stopped";
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"|"pooled"="copies",hostWorkers=1,hiddenTabs:"stopped"|"throttled"|"running"="stopped";
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -149,8 +150,12 @@ async function main() {
     // this thread (native_engine_tasks.ts). "tasks" uses about a fifth of the memory per tab, but it
     // is not the default: it did not measure better on the first frame of a tab (D11 of that
     // record). A library without task sessions falls back to "sessions", one without sessions
-    // to "copies".
-    else if(arg==="--engine-mode"){const m=args.shift();if(m!=="copies"&&m!=="sessions"&&m!=="tasks")throw new Error("--engine-mode needs copies, sessions or tasks");engineMode=m;}
+    // to "copies". "pooled" (a prototype, section 7 of that record): the sessions of "tasks", served
+    // by one or two host workers (--host-workers) that make the requests and read the answers
+    // (native_engine_pool.ts), so this thread does neither.
+    else if(arg==="--engine-mode"){const m=args.shift();if(m!=="copies"&&m!=="sessions"&&m!=="tasks"&&m!=="pooled")throw new Error("--engine-mode needs copies, sessions, tasks or pooled");engineMode=m;}
+    // The host workers of --engine-mode pooled (native_engine_pool.ts): 1 or 2.
+    else if(arg==="--host-workers"){const n=Number(args.shift());if(n!==1&&n!==2)throw new Error("--host-workers needs 1 or 2");hostWorkers=n;}
     else if(arg==="--hidden-tabs"){const m=args.shift();if(m!=="stopped"&&m!=="throttled"&&m!=="running")throw new Error("--hidden-tabs needs stopped, throttled or running");hiddenTabs=m;}
     // One Lean frame for each scroll step, as before the two layers (for comparison).
     else if(arg==="--single-frame")layered=false;
@@ -359,8 +364,18 @@ async function main() {
     const warm=async(client:CompileClient)=>{const r=requestAt(newTabReady??home,0);
       return layered?client.compileLayers(r.source,width,height,r.options):client.compile(r.source,width,height,r.options);};
     const sessions=engineMode!=="copies"&&!oneEngineWorker;
-    let tasks=engineMode==="tasks"&&!oneEngineWorker&&!!nativeEngine;
+    let tasks=(engineMode==="tasks"||engineMode==="pooled")&&!oneEngineWorker&&!!nativeEngine;
+    // --engine-mode pooled: the sessions of every tab are served by one or two host workers.
+    let pool:{font:typeof workerFont;ready:Promise<HostPool>}|undefined;
     const startOne=async(font:typeof workerFont,copy:string|undefined)=>{
+      if(tasks&&copy&&engineMode==="pooled")try{
+        if(!pool||pool.font!==font)pool={font,ready:startHostPool(hostWorkers,copy,font,logAll)};
+        return await (await pool.ready).client(font);
+      }catch(error){
+        tasks=false;
+        console.log(JSON.stringify({type:"native-html-engine-tasks",t:Math.round(performance.now()),state:"fallback",to:"sessions",
+          reason:String(error instanceof Error?error.message:error)}));
+      }
       if(tasks&&copy)try{return await startTaskClient(font,copy);}catch(error){
         tasks=false;
         console.log(JSON.stringify({type:"native-html-engine-tasks",t:Math.round(performance.now()),state:"fallback",to:"sessions",

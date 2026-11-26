@@ -40,8 +40,9 @@ export type CompileClient={
    * or an engine from before sessions. */
   readonly session?:boolean;
   /** "task": the engine is a session on its own Lean task, called from this thread
-   * (native_engine_tasks.ts); otherwise an engine worker. */
-  readonly kind?:"worker"|"task";
+   * (native_engine_tasks.ts); "pooled": such a session, called from a host worker that serves
+   * many tabs (native_engine_pool.ts); otherwise an engine worker. */
+  readonly kind?:"worker"|"task"|"pooled";
   terminate():void;
 };
 /** How long a worker with a session may take to free it and close after `terminate` (its call
