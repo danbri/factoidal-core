@@ -20,8 +20,8 @@
   are proved over `Rat` (`linearValue`) and the `Float` code is tested against
   that definition with `#guard`.
 
-  Theorems proved (no `sorry`, no axiom beyond `propext`, `Classical.choice`,
-  `Quot.sound` where `omega`/`simp` use them):
+  Theorems proved (`#print axioms` shows only `propext`, `Classical.choice`,
+  `Quot.sound`):
     `insert_sorted`, `insertAfterEqual_spec`, `insert_after_equal`,
     `cancelScheduledValues_spec`, `curve_overlap_refused`,
     `linearValue_end`, `linearValue_mono`.
@@ -611,5 +611,247 @@ theorem linearValue_mono (t0 v0 t1 v1 ta tb : Rat) (h01 : t0 < t1) (hv : v0 ≤ 
   have hf : (ta - t0) / (t1 - t0) ≤ (tb - t0) / (t1 - t0) := rat_div_le_div hd hsub
   have hs : 0 ≤ v1 - v0 := (Rat.le_iff_sub_nonneg _ _).mp hv
   exact Rat.add_le_add_left.mpr (Rat.mul_le_mul_of_nonneg_left hf hs)
+
+/-! ## Tests
+
+  Each `#guard` is checked when the file is compiled. Cases marked "WPT" follow
+  the web-platform-tests files under
+  `webaudio/the-audio-api/the-audioparam-interface/` and
+  `webaudio/resources/audioparam-testing.js`; their times are the page's
+  doubles, converted exactly. -/
+
+private def q (x : Float) : Rat := (ofDouble x).getD 0
+private def sv (v : Float) (t : Rat) : Event := ⟨.setValue, t, v⟩
+private def lin (v : Float) (t : Rat) : Event := ⟨.linearRamp, t, v⟩
+private def expo (v : Float) (t : Rat) : Event := ⟨.exponentialRamp, t, v⟩
+private def tgt (v : Float) (t : Rat) (tc : Float) : Event := ⟨.setTarget tc, t, v⟩
+private def crv (vs : Array Float) (t d : Rat) : Event := ⟨.setValueCurve vs d none, t, 0⟩
+
+private def build (es : List Event) (ct : Rat := 0) (cv : Float := 1) : Except Error Timeline :=
+  es.foldlM (fun tl e => insert tl e ct cv) ⟨[]⟩
+
+private def kindOf : Except Error Timeline → String
+  | .ok _ => "ok"
+  | .error (.notSupported _) => "notSupported"
+  | .error (.range _) => "range"
+  | .error (.invalidState _) => "invalidState"
+  | .error (.type _) => "type"
+
+private def val (r : Except Error Timeline) (d : Float) (t : Rat) : Float :=
+  match r with
+  | .ok tl => valueAt tl d t
+  | .error _ => 0.0 / 0.0
+
+private def times (r : Except Error Timeline) : List Rat :=
+  match r with
+  | .ok tl => tl.events.map (·.time)
+  | .error _ => []
+
+private def approx (a b : Float) (tol : Float := 1e-9) : Bool := (a - b).abs ≤ tol
+
+private def nan : Float := 0.0 / 0.0
+private def inf : Float := 1.0 / 0.0
+
+private def withTl (r : Except Error Timeline) (f : Timeline → Timeline) : Except Error Timeline :=
+  match r with
+  | .ok tl => .ok (f tl)
+  | .error e => .error e
+
+-- Exact conversion of doubles.
+#guard ofDouble 0.5 == some (1 / 2 : Rat)
+#guard ofDouble (-0.75) == some (-3 / 4 : Rat)
+#guard ofDouble 0.1 == some (mkRat 3602879701896397 36028797018963968)
+#guard ofDouble nan == none && ofDouble inf == none && ofDouble (-inf) == none
+#guard ofDouble 5e-324 == some (mkRat 1 (2 ^ 1074))
+#guard ofDouble 0.0 == some 0 && ofDouble 1e300 != none
+
+-- Placement: after equal times, before later times (`setValueAtTime` etc.).
+#guard times (build [sv 1 1, sv 3 3, sv 2 2]) == [1, 2, 3]
+#guard val (build [sv 1 1, sv 2 1]) 0 1 == 2.0
+#guard val (build [sv 1 1, sv 2 1]) 0 0 == 0.0
+-- A time before currentTime is clamped to currentTime.
+#guard times (build [sv 1 1] (ct := 2)) == [2]
+
+-- Argument errors. WPT `audioparam-exceptional-values.html`.
+#guard kindOf (build [sv 1 (-1)]) == "range"
+#guard kindOf (build [sv nan 1]) == "type" && kindOf (build [lin inf 1]) == "type"
+#guard kindOf (build [tgt nan 1 1]) == "type" && kindOf (build [tgt 1 1 inf]) == "type"
+#guard kindOf (build [sv 1 1, expo 0 2]) == "range"
+#guard kindOf (build [sv 1 1, expo (-1e-100) 2]) == "range"
+#guard kindOf (build [sv 1 1, expo 1e-100 2]) == "range"
+#guard kindOf (build [tgt 1 1 (-1)]) == "range"
+#guard kindOf (build [crv #[0, 0, 0] 1 0]) == "range"
+#guard kindOf (build [crv #[0, 0, 0] 1 (-1)]) == "range"
+#guard kindOf (build [crv #[1, 2, inf, 3] 1 1]) == "type"
+#guard kindOf (build [crv #[1, nan, 2, 3] 1 1]) == "type"
+-- WPT `audioparam-setValueCurve-exceptions.html` "curve lengths".
+#guard kindOf (build [crv #[] 0 (1 / 100)]) == "invalidState"
+#guard kindOf (build [crv #[1] 0 (1 / 100)]) == "invalidState"
+#guard kindOf (build [crv #[1, 2] 0 (1 / 100)]) == "ok"
+-- Non-finite times (`eventTime`) and `cancelTime`.
+#guard (match eventTime nan with | .error (.type _) => true | _ => false)
+#guard (match cancelTimeOfDouble (-1) 0 with | .error (.range _) => true | _ => false)
+#guard (match cancelTimeOfDouble nan 0 with | .error (.type _) => true | _ => false)
+#guard (match cancelTimeOfDouble inf 0 with | .error (.type _) => true | _ => false)
+#guard (match cancelTimeOfDouble 1 2 with | .ok c => c == 2 | _ => false)
+
+-- Curve overlap. WPT `audioparam-setValueCurve-exceptions.html`.
+-- "setValueCurve": curve over [1, 2) with events inside it, and after it.
+#guard kindOf (build [crv #[0, 0] 1 1, sv 1 (3 / 2)]) == "notSupported"
+#guard kindOf (build [crv #[0, 0] 1 1, lin 1 (3 / 2)]) == "notSupported"
+#guard kindOf (build [crv #[0, 0] 1 1, expo 1 (3 / 2)]) == "notSupported"
+#guard kindOf (build [crv #[0, 0] 1 1, tgt 1 (3 / 2) 1]) == "notSupported"
+#guard kindOf (build [crv #[0, 0] 1 1, sv 1 (21 / 10)]) == "ok"
+-- "value setter": a setValue at the curve start.
+#guard kindOf (build [crv #[0, 0] 0 (1 / 5), sv 0 0]) == "notSupported"
+-- "automations" (times from the page: interval 0.125 / 10).
+private def autos : List Event :=
+  [lin 1 (q 0.0125), expo 1 (q 0.025), tgt 1 (q 0.0375) 0.1, crv #[0, 0] (q 0.05) (q 0.1)]
+#guard kindOf (build autos) == "ok"
+#guard kindOf (build (autos ++ [crv #[0, 0] (q 0.00625) (q 0.01)])) == "notSupported"
+#guard kindOf (build (autos ++ [crv #[0, 0] (q 0.01875) (q 0.01)])) == "notSupported"
+#guard kindOf (build (autos ++ [crv #[0, 0] (q 0.03125) (q 0.01)])) == "notSupported"
+#guard kindOf (build (autos ++ [crv #[0, 0] (q 0.04375) (q 0.01)])) == "notSupported"
+-- "start-end": automations may begin where another ends (times are exact multiples of 1/400;
+-- the page's doubles add with rounding, so the exact form is used here).
+#guard kindOf (build [sv 1 0, lin 0 (1 / 400), crv #[0, 0] (1 / 400) (1 / 400),
+    expo 1 (3 / 400), crv #[0, 0] (3 / 400) (1 / 400), crv #[0, 0] (4 / 400) (1 / 400),
+    sv 0 (5 / 400), crv #[0, 0] (5 / 400) (1 / 400), tgt 1 (6 / 400) 1]) == "ok"
+-- "curve overlap": a curve over [5, 15) and six overlapping curves, then an event at its end.
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 5 10]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 5 5]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] (5 / 2) 10]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 10 10]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 6 9]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 4 11]) == "notSupported"
+#guard kindOf (build [crv #[1, 2, 3] 5 10, sv 1 15]) == "ok"
+-- "catch-exception": a refused event leaves the earlier timeline as it was.
+#guard (match insert ⟨[sv 1 0]⟩ (crv #[0, nan] (1 / 100) (1 / 2)) 0 1 with
+        | .error (.type _) => true
+        | _ => false)
+
+-- Implicit setValue of a ramp with no earlier event: `setValueAtTime(currentValue, currentTime)`.
+#guard times (build [lin 1 2] (ct := 0) (cv := 0.5)) == [0, 2]
+#guard val (build [lin 1 2] (ct := 0) (cv := 0.5)) 0 1 == 0.75
+#guard val (build [lin 1 2] (ct := 1) (cv := 0.5)) 0 0 == 0.0
+
+-- Linear ramp. WPT `audioparam-testing.js` `createLinearRampArray`; `audioparam-cancel-and-hold.html`
+-- `linearRampTest` (0 to 1 over [0, 0.01], then 1 to 0 ending at 0.5).
+#guard approx (val (build [sv 0 0, lin 1 (q 0.01), lin 0 (q 0.5)]) 0 (q 0.255)) (1 - (0.255 - 0.01) / 0.49)
+#guard val (build [sv 0 0, lin 1 1]) 0 1 == 1.0
+#guard val (build [sv 0 0, lin 1 1]) 0 5 == 1.0
+#guard val (build [sv 0 0, lin 1 1]) 0 (1 / 2) == 0.5
+-- The `Float` code against the `Rat` formula `linearValue`.
+#guard approx (val (build [sv 2 1, lin 8 5]) 0 3) (ratToFloat (linearValue 1 2 5 8 3)) 1e-12
+#guard approx (val (build [sv 2 1, lin (-8) 5]) 0 (7 / 3)) (ratToFloat (linearValue 1 2 5 (-8) (7 / 3))) 1e-12
+#guard approx (val (build [sv 0 0, lin 1 (q 0.01)]) 0 (q 0.007)) (ratToFloat (linearValue 0 0 (q 0.01) 1 (q 0.007))) 1e-12
+
+-- Exponential ramp: `v0 (v1/v0)^((t-T0)/(T1-T0))`; opposite signs or zero start hold `v0`.
+#guard approx (val (build [sv 1 0, expo 4 2]) 0 1) 2.0 1e-12
+#guard val (build [sv 1 0, expo 4 2]) 0 2 == 4.0
+#guard val (build [sv (-1) 0, expo 1 1]) 0 (1 / 2) == -1.0
+#guard val (build [sv 0 0, expo 1 1]) 0 (1 / 2) == 0.0
+#guard approx (val (build [sv 0.001 0, expo 2 1]) 0 (1 / 2)) (Float.sqrt (0.001 * 2)) 1e-12
+
+-- setTarget: `v1 + (v0 - v1) e^(-(t-T0)/tau)`; tau 0 jumps; the next event ends it.
+#guard approx (val (build [sv 1 0, tgt 0 1 0.5]) 0 (3 / 2)) (Float.exp (-1.0)) 1e-12
+#guard val (build [sv 1 0, tgt 0 1 0.5]) 0 1 == 1.0
+#guard val (build [sv 1 0, tgt 0 1 0]) 0 1 == 0.0
+#guard val (build [sv 1 0, tgt 0 1 1, sv 5 2]) 0 2 == 5.0
+#guard approx (val (build [sv 1 0, tgt 0 1 1, sv 5 2]) 0 (199 / 100)) (Float.exp (-0.99)) 1e-12
+-- WPT `audioparam-cancel-and-hold.html` "initial setTarget": no earlier event, default 1.
+#guard approx (val (build [tgt 0 0 0.1]) 1 (1 / 10)) (Float.exp (-1.0)) 1e-12
+-- A ramp after a setTarget replaces it; the curve is continuous.
+#guard approx (val (build [sv 1 0, tgt 0 1 1, lin 3 3]) 0 2) 2.0 1e-12
+-- A ramp after a setTarget that has started: an implicit setValue at currentTime.
+private def started : Except Error Timeline :=
+  build [sv 1 0, tgt 0 1 1] >>= fun tl => insert tl (lin 2 3) (3 / 2) 1
+#guard times started == [0, 1, 3 / 2, 3]
+#guard approx (val started 0 (3 / 2)) (Float.exp (-0.5)) 1e-12
+#guard val started 0 3 == 2.0
+
+-- Value curve: interpolation, last value held. `setValueCurveAtTime`.
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 1 == 0.0
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 (3 / 2) == 0.5
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 2 == 1.0
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 (5 / 2) == 0.5
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 3 == 0.0
+#guard val (build [crv #[0, 1, 0] 1 2]) 7 0 == 7.0
+-- A ramp after a curve starts at the curve end with its last value.
+#guard val (build [crv #[0, 1] 0 1, lin 3 2]) 0 (3 / 2) == 2.0
+#guard val (build [crv #[0, 1] 0 1, lin 3 2]) 0 (1 / 2) == 0.5
+
+-- cancelScheduledValues. WPT `cancel-scheduled-values.html` "cancel1".
+private def cancel1 : Except Error Timeline :=
+  build [sv 0.5 0, sv 1.5 (1 / 4), crv #[1, -1] (1 / 4) (1 / 4), sv 99 (1 / 2)]
+private def cancel1At (c : Rat) : Except Error Timeline :=
+  withTl cancel1 (fun tl => cancelScheduledValues tl c)
+#guard times (cancel1At (q 0.3)) == [0, 1 / 4]
+#guard val (cancel1At (q 0.3)) 0 (q 0.3) == 1.5
+#guard times (cancel1At (q 0.3) >>= fun tl => insert tl (sv 3 (q 0.375)) 0 1) == [0, 1 / 4, q 0.375]
+#guard val (cancel1At (q 0.3) >>= fun tl => insert tl (sv 3 (q 0.375)) 0 1) 0 (q 0.4) == 3.0
+-- At the end of the curve the curve and the later event are removed; after the end they stay.
+#guard times (cancel1At (1 / 2)) == [0, 1 / 4]
+#guard times (cancel1At (3 / 5)) == [0, 1 / 4, 1 / 4, 1 / 2]
+
+-- cancelAndHold. WPT `audioparam-cancel-and-hold.html`.
+private def hold (r : Except Error Timeline) (c : Rat) : Except Error Timeline :=
+  withTl r (fun tl => cancelAndHold tl c 1)
+-- "cancel setTarget now" and "cancel future setTarget".
+#guard val (hold (build [sv 0.5 0, tgt 0 (1 / 4) 0.1]) (1 / 4)) 1 1 == 0.5
+#guard val (hold (build [sv 0.5 0, tgt 0 (3 / 8) 0.1]) (1 / 4)) 1 1 == 0.5
+#guard times (hold (build [sv 0.5 0, tgt 0 (3 / 8) 0.1]) (1 / 4)) == [0]
+-- "cancel future setValueCurve" and "cancel setValueCurve now".
+#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (3 / 8) (1 / 10)]) (1 / 4)) 1 1 == 0.5
+#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (1 / 4) (1 / 10)]) (1 / 4)) 1 1 == 0.5
+-- Linear ramp cancelled mid-ramp: the hold value is the ramp value at the cancel time.
+private def ramp2 : Except Error Timeline := build [sv 0 0, lin 1 (q 0.01), lin 0 (q 0.5)]
+#guard approx (val (hold ramp2 (1 / 4)) 0 1) (1 - (0.25 - 0.01) / 0.49)
+#guard approx (val (hold ramp2 (1 / 4)) 0 (q 0.1)) (val ramp2 0 (q 0.1))
+#guard approx (val (hold ramp2 (1 / 4)) 0 (1 / 4)) (1 - (0.25 - 0.01) / 0.49)
+-- Cancelled twice.
+#guard approx (val (hold (hold ramp2 (1 / 4)) (3 / 8)) 0 1) (1 - (0.25 - 0.01) / 0.49)
+-- setTarget cancelled after a ramp.
+private def tgt2 : Except Error Timeline := build [sv 0 0, lin 1 (q 0.01), tgt 0 (q 0.01) 0.05]
+#guard approx (val (hold tgt2 (1 / 4)) 0 1) (Float.exp (-(0.25 - 0.01) / 0.05)) 1e-12
+-- Curve cancelled in the middle: held at the value of the original sampling.
+private def curve2 : Except Error Timeline :=
+  build [sv 0 0, lin 1 (q 0.01), crv #[1, 0] (q 0.01) (q 0.49)]
+#guard approx (val (hold curve2 (1 / 4)) 0 1) (1 - 0.24 / 0.49) 1e-12
+#guard approx (val (hold curve2 (1 / 4)) 0 (q 0.1)) (val curve2 0 (q 0.1)) 1e-12
+-- Cancel after the end of the curve changes nothing.
+#guard val (hold curve2 (3 / 5)) 0 1 == 0.0
+
+-- Block fill: a-rate values at `frame / sampleRate`.
+private def fillTl : Timeline := ⟨[sv 0 0, lin 1 1]⟩
+#guard fill fillTl 0 0 5 4 == #[0.0, 0.25, 0.5, 0.75, 1.0]
+#guard fill fillTl 0 2 3 4 == #[0.5, 0.75, 1.0]
+#guard (fill fillTl 0 0 100000 48000).size == 100000
+#guard (fill fillTl 0 0 3 0).size == 3
+
+/-! ## Not done
+
+  - Values are binary64 `Float`. The IDL type of a value is binary32; the page
+    layer must round to binary32 before calling `insert`. Only the
+    exponential-ramp zero test accounts for it (`validate`).
+  - Clamping to the nominal range (`minValue`, `maxValue`) is not here
+    ("Computation of Value": automation runs unclamped, clamping applies to
+    the output).
+  - `paramComputedValue` (sum with the input buffer, NaN to default) and
+    k-rate sampling are not here; `fill` is the a-rate case.
+  - The `value` attribute setter is `insert` of a `setValue` at `currentTime`;
+    it refuses inside a curve (guard "value setter").
+  - `cancelScheduledValues` and `cancelAndHold` take an already clamped time;
+    `cancelTimeOfDouble` does the clamp and the errors.
+  - `cancelAndHold` on a ramp whose cancel time lies inside a curve that ends
+    before the ramp starts rewrites the ramp at that time, as the text of the
+    specification does; no WPT case covers it.
+  - A curve that starts exactly at the cancel time of `cancelAndHold` is
+    removed (WPT "cancel setValueCurve now"); the specification text would
+    hold its first value.
+  - `valueAt` scans the list for each query: `fill` costs O(frames x events).
+    A cursor over the list is a later change; the semantics stay `valueAt`.
+  - No theorem relates the `Float` code to `linearValue`; the `#guard`s do.
+-/
 
 end L4Factoidal.WebAudio.Automation
