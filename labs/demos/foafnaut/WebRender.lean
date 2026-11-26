@@ -407,13 +407,13 @@ def alphaFrom (white black : ByteArray) : ByteArray := Id.run do
     out := (((out.push (channel 0).toUInt8).push (channel 1).toUInt8).push (channel 2).toUInt8).push alpha.toUInt8
   return out
 
-/-- An SVG document as a picture: its bitmap and the size of the image in CSS pixels. None
-for bytes that are not an SVG document. -/
-def vectorPicture : NativeImage.VectorReader := fun bytes =>
+/-- An SVG document as a picture, with its root changed by `adjust` before it is drawn: its
+bitmap and the size of the image in CSS pixels. None for bytes that are not an SVG document. -/
+def vectorPictureWith (adjust : XML.NamespaceNode → XML.NamespaceNode) : NativeImage.VectorReader := fun bytes =>
   if !looksLikeSVG bytes then none else some do
     let some xml := String.fromUTF8? bytes | throw "SVG image is not UTF-8 text"
     if xml.length > NativeSVG.maxInputChars then throw "SVG image exceeds 1048576 characters"
-    let root ← XML.parseNamespaceView xml
+    let root := adjust (← XML.parseNamespaceView xml)
     let .element _ attrs _ := root | throw "SVG image has no root element"
     let (w,h) := NativeSVGForgiving.imageSize attrs
     let (rw,rh) := NativeSVGForgiving.imageRaster w h
@@ -425,6 +425,197 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
       else do pure (alphaFrom white (← draw (some "#000000")))
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
     return ({width := rw, height := rh, rgba},w,h,NativeSVGForgiving.naturalSize attrs)
+
+/-- An SVG document as a picture: its bitmap and the size of the image in CSS pixels. None
+for bytes that are not an SVG document. -/
+def vectorPicture : NativeImage.VectorReader := vectorPictureWith id
+
+/-! The fragment of an SVG image's URL picks a view of it: an SVG view specification
+(SVG 2 §16.4.2, `#svgView(viewBox(…);preserveAspectRatio(…);transform(…))`, which may be
+followed by `&` and a time segment) or a spatial media fragment (Media Fragments URI 1.0
+§4.2.2, `#xywh=[pixel:|percent:]x,y,w,h`; with several, the last one counts, §5.1.4). A
+fragment that is not one of these leaves the image as it is. -/
+
+/-- A view of an SVG image, read from the fragment of its URL. -/
+structure ImageView where
+  viewBox : Option String := none
+  preserveAspectRatio : Option String := none
+  transform : Option String := none
+  /-- A spatial media fragment: x, y, width, height, and whether they are percentages. -/
+  clip : Option (Float × Float × Float × Float × Bool) := none
+  deriving BEq, Repr
+
+private def hexDigit (c : Char) : Option Nat :=
+  if c.isDigit then some (c.toNat - '0'.toNat)
+  else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
+  else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10) else none
+
+/-- Percent-decoding (RFC 3986 §2.1), one character a step, tail recursive; none for a `%`
+not followed by two hexadecimal digits or bytes that are not UTF-8. -/
+private def percentBytes : List Char → List UInt8 → Option (List UInt8)
+  | [], acc => some acc.reverse
+  | '%' :: a :: b :: rest, acc =>
+    match hexDigit a, hexDigit b with
+    | some x, some y => percentBytes rest ((x*16+y).toUInt8 :: acc)
+    | _, _ => none
+  | '%' :: _, _ => none
+  | c :: rest, acc => percentBytes rest ((String.singleton c).toUTF8.toList.reverse ++ acc)
+
+def percentDecode (s : String) : Option String :=
+  (percentBytes s.toList []).bind fun bytes => String.fromUTF8? ⟨bytes.toArray⟩
+
+/-- A number of a spatial fragment (Media Fragments URI 1.0 §4.2.2): digits for pixels,
+digits with an optional `.` and digits for percentages. No sign. -/
+private def fragmentNumber (decimals : Bool) (s : String) : Option Float :=
+  let digits := fun (t : String) => !t.isEmpty && t.all Char.isDigit
+  match s.splitOn "." with
+  | [a] => if digits a then some (Float.ofNat a.toNat!) else none
+  | [a,b] => if decimals && digits a && digits b then (NativeSVG.numberReference s).toOption else none
+  | _ => none
+
+/-- The value of `xywh`: four numbers with an optional `pixel:` or `percent:`; the width and
+the height must be more than zero. -/
+def parseXywh (value : String) : Option (Float × Float × Float × Float × Bool) := do
+  let (percent, rest) :=
+    if value.startsWith "percent:" then (true, (value.drop 8).toString)
+    else if value.startsWith "pixel:" then (false, (value.drop 6).toString) else (false, value)
+  let [x,y,w,h] ← (rest.splitOn ",").mapM (fragmentNumber percent) | none
+  if w ≤ 0 || h ≤ 0 then none else some (x,y,w,h,percent)
+
+/-- One attribute of a view specification, `name(arguments)`, in `view`. -/
+private def viewAttribute (view : ImageView) (item : String) : Option ImageView := do
+  let item := item.trimAscii.toString
+  let [name, _] := item.splitOn "(" |>.take 2 | none
+  let name := name.trimAscii.toString
+  guard (item.endsWith ")")
+  let args := ((item.drop (name.length+1)).dropEnd 1).toString.trimAscii.toString
+  -- `item` may have spaces before `(`: then `drop` above is off; refuse that form
+  guard (item.startsWith (name ++ "("))
+  match name with
+  | "viewBox" =>
+    let fields := (args.replace "," " ").splitOn " " |>.filter (· != "")
+    let [_,_,w,h] ← fields.mapM (fun f => (NativeSVG.numberReference f).toOption) | none
+    if w ≤ 0 || h ≤ 0 then none else some {view with viewBox := some (" ".intercalate fields)}
+  | "preserveAspectRatio" => some {view with preserveAspectRatio := some (args.replace "," " ")}
+  | "transform" => some {view with transform := some args}
+  | "zoomAndPan" => some view
+  | _ => none
+
+/-- An SVG view specification, `svgView(…)` and an optional `&` time segment (`t=…`). -/
+def parseSvgView (fragment : String) : Option ImageView := do
+  let spec :: tail := fragment.splitOn "&" | none
+  guard (tail.all (·.startsWith "t="))
+  let spec := spec.trimAscii.toString
+  guard (spec.startsWith "svgView(" && spec.endsWith ")")
+  let inner := ((spec.drop 8).dropEnd 1).toString.trimAscii.toString
+  let items := (inner.splitOn ";").filter (·.trimAscii.toString != "")
+  guard !items.isEmpty
+  items.foldlM viewAttribute {}
+
+/-- The view that a fragment names, or none. -/
+def parseImageFragment (fragment : String) : Option ImageView := do
+  let fragment ← percentDecode fragment
+  if fragment.startsWith "svgView(" then parseSvgView fragment
+  else
+    let values := (fragment.splitOn "&").filterMap fun part => match part.splitOn "=" with
+      | [n, v] => if n == "xywh" then some v else none
+      | _ => none
+    let clip ← parseXywh (← values.getLast?)
+    some {clip := some clip}
+
+#guard parseImageFragment "xywh=100,100,100,100" == some {clip := some (100,100,100,100,false)}
+#guard parseImageFragment "xywh=pixel:1,2,3,4" == some {clip := some (1,2,3,4,false)}
+#guard parseImageFragment "xywh=percent:50,0,50.5,100" == some {clip := some (50,0,50.5,100,true)}
+#guard parseImageFragment "xywh=0,0,100,100&xywh=100,100,100,100" == some {clip := some (100,100,100,100,false)}
+#guard parseImageFragment "xywh=100.0,100.0,100.0,100.0" == none
+#guard parseImageFragment "xywh=100,100,-100,100" == none
+#guard parseImageFragment "xywh=100,100,0,100" == none
+#guard parseImageFragment "svgView(viewBox(100,0,100,100))" == some {viewBox := some "100 0 100 100"}
+#guard parseImageFragment "svgView( viewBox(100,0,100,100) )" == some {viewBox := some "100 0 100 100"}
+#guard parseImageFragment "svgView(viewBox(100,0,100,100)%3BpreserveAspectRatio(none))" ==
+  some {viewBox := some "100 0 100 100", preserveAspectRatio := some "none"}
+#guard parseImageFragment "svgView(preserveAspectRatio(none) ; viewBox(100,0,100,100))" ==
+  some {viewBox := some "100 0 100 100", preserveAspectRatio := some "none"}
+#guard parseImageFragment "svgView(transform(scale(2)))" == some {transform := some "scale(2)"}
+#guard parseImageFragment "svgView(viewBox(100,0,100,100))&t=0" == some {viewBox := some "100 0 100 100"}
+#guard parseImageFragment "svgView(viewBox(0,0,100,100))&xywh=100,0,100,100" == none
+#guard parseImageFragment "view1" == none
+
+/-- The root with a spatial clip: the region of the image, in CSS pixels of its size
+(`imageSize` before rounding; percentages of that size), clipped to the image (Media
+Fragments URI 1.0 §5.1.3), becomes the whole image: its `width` and `height` are the
+region's, and its `viewBox` is the region mapped into user space by the root's own
+`viewBox` and `preserveAspectRatio` (SVG 2 §8.2). An empty region, a root of zero size or
+a `preserveAspectRatio` that does not read leaves the attributes as they are. -/
+def clipAttributes (attrs : List XML.NamespaceAttribute) (clip : Float × Float × Float × Float × Bool) :
+    List XML.NamespaceAttribute := Id.run do
+  let (x,y,w,h,percent) := clip
+  let plain := fun (key : String) => NativeSVGText.plainAttr attrs key
+  let box := NativeSVGForgiving.rootViewBox (plain "viewBox")
+  let fields := ((plain "viewBox").getD "").replace "," " " |>.splitOn " " |>.filter (· != "")
+  let origin : Float × Float := match fields.mapM (fun f => (NativeSVG.numberReference f).toOption) with
+    | some [vx,vy,_,_] => (vx,vy)
+    | _ => (0,0)
+  let pw := NativeSVGForgiving.rootPixels (plain "width") true
+  let ph := NativeSVGForgiving.rootPixels (plain "height") true
+  let (iw,ih) : Float × Float := match pw,ph,box with
+    | some w,some h,_ => (w,h)
+    | some w,none,some (bw,bh) => (w,w*bh/bw)
+    | none,some h,some (bw,bh) => (h*bw/bh,h)
+    | none,none,some (bw,bh) => (bw,bh)
+    | some w,none,none => (w,150)
+    | none,some h,none => (300,h)
+    | none,none,none => (300,150)
+  if iw ≤ 0 || ih ≤ 0 then return attrs
+  let (x,y,w,h) := if percent then (x*iw/100,y*ih/100,w*iw/100,h*ih/100) else (x,y,w,h)
+  let (x0,y0,x1,y1) := (min x iw, min y ih, min (x+w) iw, min (y+h) ih)
+  if x1-x0 ≤ 0 || y1-y0 ≤ 0 then return attrs
+  let (vw,vh) := box.getD (iw,ih)
+  let words := ((plain "preserveAspectRatio").getD "xMidYMid meet").splitOn " " |>.filter (· != "")
+  let (align,mode) := match words with
+    | [a] => (a,"meet") | [a,m] => (a,m) | _ => ("","")
+  let some (ax,ay) : Option (Nat × Nat) := if align == "none" then some (0,0) else
+      ([("xMinYMin",(0,0)),("xMidYMin",(1,0)),("xMaxYMin",(2,0)),("xMinYMid",(0,1)),("xMidYMid",(1,1)),
+        ("xMaxYMid",(2,1)),("xMinYMax",(0,2)),("xMidYMax",(1,2)),("xMaxYMax",(2,2))].lookup align)
+    | return attrs
+  if !["meet","slice"].contains mode then return attrs
+  let (sx,sy) := if align == "none" then (iw/vw,ih/vh)
+    else let s := if mode == "meet" then min (iw/vw) (ih/vh) else max (iw/vw) (ih/vh); (s,s)
+  let (tx,ty) := if align == "none" then (0,0)
+    else ((iw-vw*sx)*Float.ofNat ax/2,(ih-vh*sy)*Float.ofNat ay/2)
+  let kept := attrs.filter fun a =>
+    !(a.name.namespace_.isNone && ["width","height","viewBox","preserveAspectRatio"].contains a.name.localPart)
+  let ux := origin.1+(x0-tx)/sx
+  let uy := origin.2+(y0-ty)/sy
+  return kept ++ [NativeSVGText.mkAttr "width" (toString (x1-x0)), NativeSVGText.mkAttr "height" (toString (y1-y0)),
+    NativeSVGText.mkAttr "viewBox" s!"{ux} {uy} {(x1-x0)/sx} {(y1-y0)/sy}",
+    NativeSVGText.mkAttr "preserveAspectRatio" "none"]
+
+/-- The root of an SVG image with `view` applied: a `viewBox` and a `preserveAspectRatio` in
+place of its own, a `transform` on a group of its children, a spatial clip
+(`clipAttributes`). -/
+def applyImageView (view : ImageView) : XML.NamespaceNode → XML.NamespaceNode
+  | .element name attrs children =>
+    let set := fun (attrs : List XML.NamespaceAttribute) (key : String) (value : Option String) =>
+      match value with
+      | some v => (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == key)) ++ [NativeSVGText.mkAttr key v]
+      | none => attrs
+    let attrs := set (set attrs "viewBox" view.viewBox) "preserveAspectRatio" view.preserveAspectRatio
+    let children := match view.transform with
+      | some t => [NativeSVGText.svgElement "g" [NativeSVGText.mkAttr "transform" t] children]
+      | none => children
+    let attrs := match view.clip with
+      | some clip => clipAttributes attrs clip
+      | none => attrs
+    .element name attrs children
+  | node => node
+
+/-- An SVG image read with the view that `fragment` names (`parseImageFragment`); a fragment
+that names none reads it as `vectorPicture` does. -/
+def vectorPictureView (fragment : String) : NativeImage.VectorReader :=
+  match parseImageFragment fragment with
+  | some view => vectorPictureWith (applyImageView view)
+  | none => vectorPicture
 
 /-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
 none for a file that is not SVG or does not read. -/
@@ -467,7 +658,7 @@ def vectorPictureAt (bytes : ByteArray) (tw th : Nat) : Option Rendering.Bitmap 
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
 `vectorPicture`. -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
-  NativeSVG.imageStoreOf keys images vectorPicture
+  NativeSVG.imageStoreOf keys images vectorPicture vectorPictureView
 
 private def storedPicture (store : NativeImage.Store) (key : String) :
     Option (Rendering.Layout.Picture × Option NativeImage.VectorAxes) := do
@@ -611,6 +802,11 @@ theorem decodesFor_valid (cache : Decodes) (valid : DecodesValid cache) (keys : 
   obtain ⟨⟨k, b⟩, _, rfl⟩ := he
   exact memoDecode_eq cache valid b
 
+/-- How a page reads an image whose URL has a fragment: not kept in the cache of decodes,
+which is keyed by bytes alone. -/
+def viewDecode (fragment : String) (bytes : ByteArray) : NativeImage.Decoded :=
+  NativeImage.decodeWith (vectorPictureView fragment) bytes
+
 /-- A kept store: the keys and supplied bytes it was made for, the store, and what the
 files it decoded decoded to. -/
 abbrev StoreEntry := (List String × List (String × ByteArray)) × NativeImage.Store × Decodes
@@ -625,7 +821,7 @@ def storeIn (kept : StoresKept) (keys : List String) (images : List (String × B
   | some (_,store,_) => (store,none)
   | none =>
     let decs := decodesFor (kept.flatMap (·.2.2)) keys images
-    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images
+    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images viewDecode
     (store,some ((keys,images),store,decs))
 
 /-- `kept` with `made` last, at most two. -/
@@ -643,8 +839,8 @@ def StoresValid (kept : StoresKept) : Prop :=
 `pageStore`. -/
 theorem imageStoreOfWith_memo (decs : Decodes) (valid : DecodesValid decs) (keys : List String)
     (images : List (String × ByteArray)) :
-    NativeSVG.imageStoreOfWith (memoDecode decs) keys images = pageStore keys images :=
-  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images
+    NativeSVG.imageStoreOfWith (memoDecode decs) keys images viewDecode = pageStore keys images :=
+  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images viewDecode
 
 /-- Kind: invariant. Says: the decodes of a valid table, all together, are a valid cache. -/
 theorem StoresValid.decodes (kept : StoresKept) (valid : StoresValid kept) :

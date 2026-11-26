@@ -1521,31 +1521,59 @@ private def imageKeysAt : Nat → Option String → NamespaceNode → List Strin
 def imageKeys (root : NamespaceNode) (base : Option String := none) : List String :=
   (imageKeysAt 64 base root).eraseDups
 
+/-- A URL split at its first `#` (RFC 3986 §3.5): the resource and the fragment, none when
+the URL has no `#`. -/
+def splitImageFragment (key : String) : String × Option String :=
+  match key.splitOn "#" with
+  | base :: rest@(_ :: _) => (base, some ("#".intercalate rest))
+  | _ => (key, none)
+
+#guard splitImageFragment "a.svg#xywh=1,2,3,4" == ("a.svg", some "xywh=1,2,3,4")
+#guard splitImageFragment "a.svg" == ("a.svg", none)
+
+/-- The bytes supplied for an image key: those of the key itself, else, for a key with a
+fragment, those of the resource without it (a fetch does not send the fragment, RFC 3986
+§3.5, so a host can key the bytes either way). -/
+def suppliedFor (supplied : List (String × ByteArray)) (key : String) : Option ByteArray :=
+  match supplied.find? (·.1 == key) with
+  | some (_,bytes) => some bytes
+  | none => match splitImageFragment key with
+    | (base, some _) => (supplied.find? (·.1 == base)).map (·.2)
+    | _ => none
+
 /-- As `imageStoreOf`, with the bytes of each image read by `dec` (`NativeImage.decodeWith`
 of a vector reader, or a decoder that gives what it gave before for the same bytes:
-`WebRender.memoDecode`). -/
+`WebRender.memoDecode`). A key with a non-empty fragment is read by `decView` with that
+fragment, which picks a view of an SVG image (`WebRender.vectorPictureView`); by default it
+is read as the key without its fragment. -/
 def imageStoreOfWith (dec : ByteArray → NativeImage.Decoded) (keys : List String)
-    (supplied : List (String × ByteArray) := []) : NativeImage.Store :=
+    (supplied : List (String × ByteArray) := [])
+    (decView : String → ByteArray → NativeImage.Decoded := fun _ => dec) : NativeImage.Store :=
   let keys := keys.eraseDups
+  let read := fun (key : String) (bytes : ByteArray) => match splitImageFragment key with
+    | (_, some fragment) => if fragment.isEmpty then dec bytes else decView fragment bytes
+    | _ => dec bytes
   let sizes := keys.filterMap fun key =>
     if key.toLower.startsWith "data:" then (NativeImage.dataBytes key).toOption.bind NativeImage.naturalSize
-    else (supplied.find? (·.1 == key)).bind fun (_,bytes) => NativeImage.naturalSize bytes
+    else (suppliedFor supplied key).bind NativeImage.naturalSize
   let k := NativeImage.factorFor sizes
   (keys.foldl (fun (state : NativeImage.Store × Nat) key =>
     if key.toLower.startsWith "data:" then
       match NativeImage.dataBytes key with
       | .error message => (state.1.insert key (.error message),state.2)
       | .ok bytes => state.1.addDecoded state.2 key (dec bytes) k
-    else match supplied.find? (·.1 == key) with
-      | some (_,bytes) => state.1.addDecoded state.2 key (dec bytes) k
+    else match suppliedFor supplied key with
+      | some bytes => state.1.addDecoded state.2 key (read key bytes) k
       | none => (state.1.insert key (.error s!"image resource not supplied: {key}"),state.2))
     (({} : NativeImage.Store),0)).1
 
 /-- Kind: equality. Says: a store made with a decoder that answers as `decodeWith vector`
-does, on every input, is the store of `imageStoreOfWith (decodeWith vector)`. -/
+does, on every input, is the store of `imageStoreOfWith (decodeWith vector)` with the same
+reader of views. -/
 theorem imageStoreOfWith_congr (dec : ByteArray → NativeImage.Decoded) (vector : NativeImage.VectorReader)
-    (h : ∀ b, dec b = NativeImage.decodeWith vector b) (keys : List String) (supplied : List (String × ByteArray)) :
-    imageStoreOfWith dec keys supplied = imageStoreOfWith (NativeImage.decodeWith vector) keys supplied := by
+    (h : ∀ b, dec b = NativeImage.decodeWith vector b) (keys : List String) (supplied : List (String × ByteArray))
+    (decView : String → ByteArray → NativeImage.Decoded) :
+    imageStoreOfWith dec keys supplied decView = imageStoreOfWith (NativeImage.decodeWith vector) keys supplied decView := by
   have : dec = NativeImage.decodeWith vector := funext h
   subst this; rfl
 
@@ -1554,8 +1582,9 @@ at which the document's images fit its pixel budget (`NativeImage.factorFor`), f
 sizes that the files' headers give (1 when they fit as they are), then each image decoded
 (`NativeImage.decodeWith vector`) and held at it (`imageStoreOfWith`). -/
 def imageStoreOf (keys : List String) (supplied : List (String × ByteArray) := [])
-    (vector : NativeImage.VectorReader := fun _ => none) : NativeImage.Store :=
-  imageStoreOfWith (NativeImage.decodeWith vector) keys supplied
+    (vector : NativeImage.VectorReader := fun _ => none)
+    (view : String → NativeImage.VectorReader := fun _ => vector) : NativeImage.Store :=
+  imageStoreOfWith (NativeImage.decodeWith vector) keys supplied (fun f => NativeImage.decodeWith (view f))
 
 /-- Decode each image of a tree once. `supplied` holds the bytes that the host
     fetched, by key; a `data:` URI needs no host. A reference with no bytes, and an
