@@ -472,6 +472,12 @@ private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extr
           (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base","id"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+/-- Namespaces whose elements act or draw in an SVG document (SVG Tiny 1.2: XML Events §15.3
+for `listener`; XHTML and MathML content of `foreignObject`). An element in one of them is
+refused, not passed over as private data (§23.1). XHTML `link` and `meta` are read before. -/
+def behaviourNamespaces : List String :=
+  ["http://www.w3.org/2001/xml-events","http://www.w3.org/1999/xhtml","http://www.w3.org/1998/Math/MathML"]
+
 /-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
 element name the language version and the profile the author wrote for. They do not change
 how the content is drawn. A known label is checked and then removed, so no later step can
@@ -1676,7 +1682,15 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if (attr rawAttrs "http-equiv").isSome then throw "active HTML metadata unsupported"
         if !children.isEmpty then throw "HTML metadata must be empty"
         return []
-      if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
+      if name.namespace_ != some svgURI then
+        -- SVG Tiny 1.2 §23.1 (foreign namespaces and private data): an element in a namespace
+        -- the user agent does not know is kept in the document and not rendered, with its
+        -- subtree. Refused instead: no namespace (an SVG element written without one), and
+        -- namespaces that have behaviour or rendering this reader does not implement
+        -- (`behaviourNamespaces`).
+        if name.namespace_.isNone || behaviourNamespaces.contains (name.namespace_.getD "") then
+          throw s!"foreign/non-SVG element: {name.localPart}"
+        return []
       let tag := name.localPart
       if ["style","metadata","defs","stop"].contains tag || paintServers.contains tag ||
           (tag == "symbol" && !instanceRoot) then return []

@@ -41,3 +41,12 @@ private def withId (key : String) : String :=
 -- The same value twice is one identifier; two values are refused with a named reason.
 #guard compile (doc "" "<rect id='a' xml:id='a' width='5' height='5'/>") 480 360 == compile (doc "" "<rect id='a' width='5' height='5'/>") 480 360
 #guard compile (doc "" "<rect id='a' xml:id='b' width='5' height='5'/>") 480 360 == "{\"error\":\"id and xml:id differ on rect\"}"
+
+/- SVG Tiny 1.2 §23.1: an element in an unknown namespace is private data, not rendered, with
+   its subtree (the W3C suite's own `SVGTestCase` description, editor data). -/
+private def privateData := "<p:note xmlns:p='urn:example:private'><p:x/><rect width='9' height='9' fill='red'/></p:note>"
+#guard compile (doc "" (privateData ++ body1)) 480 360 == compile (doc "" body1) 480 360
+-- Refused: no namespace, XML Events (behaviour) and XHTML outside the metadata it reads.
+#guard (compile (doc "" "<rect xmlns='' width='1' height='1'/>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
+#guard (compile (doc "" "<ev:listener xmlns:ev='http://www.w3.org/2001/xml-events' event='click'/>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
+#guard (compile (doc "" "<h:p xmlns:h='http://www.w3.org/1999/xhtml'>x</h:p>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
