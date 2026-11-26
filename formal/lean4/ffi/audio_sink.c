@@ -17,7 +17,11 @@
  *              32-bit WAV file; the sizes in the header are patched when the sink closes. For tests.
  *   coreaudio  macOS: the default output unit. NOT written yet: see the marked place below. Until
  *              then it answers an error.
- * A paused consumer takes nothing and counts no under-run.
+ * A paused consumer takes nothing and counts no under-run. Neither does a consumer before the
+ * first write: it waits (sleeping) until frames written > 0 and starts its period clock then, so
+ * the time between open and the first render quantum is not an under-run. (The CoreAudio consumer
+ * does the same: it starts the output unit at the first write.) Ring.lean has no time and is
+ * unchanged by this rule.
  *
  * The Wasm build has no audio output: every open fails ("no audio output in the Wasm build") and
  * no thread symbol is used.
@@ -165,9 +169,14 @@ static int wav_write_frames(FILE *f, const float *v, size_t n_values) {
 static void *consumer_main(void *arg) {
   l4_sink *s = (l4_sink *)arg;
   const double period_ns = (double)L4_PERIOD_FRAMES * 1e9 / s->rate;
-  uint64_t base = now_ns();
   uint64_t periods = 0;
   int wav_ok = 1;
+  /* Nothing is taken and no under-run is counted before the first write: wait (sleeping, as when
+   * paused) until `written > 0`, and start the period clock then. */
+  while (!atomic_load_explicit(&s->stop, memory_order_acquire) &&
+         atomic_load_explicit(&s->ring.written, memory_order_acquire) == 0)
+    sleep_ns(500000ull);
+  uint64_t base = now_ns();
   while (!atomic_load_explicit(&s->stop, memory_order_acquire)) {
     if (atomic_load_explicit(&s->paused, memory_order_acquire)) {
       sleep_ns(1000000ull);

@@ -115,6 +115,7 @@ def main : IO UInt32 := do
   IO.sleep 20
   let c0 ← Sink.counters s
   check t "counters size" (c0.size == 8)
+  check t "no under-run before the first write" (c0[2]! == 0.0)
   check t "counters rate, channels, capacity" (c0[5]! == 48000.0 && c0[6]! == 2.0 && c0[7]! == 256.0)
   let n1 ← Sink.write s (FloatArray.mk (Array.replicate 3 0.5))
   check t "size not a multiple of channels takes nothing" (n1 == 0) s!"{n1}"
@@ -147,7 +148,12 @@ def main : IO UInt32 := do
   Sink.close s
   -- One second of sine through `null`: counters only.
   let sn ← Sink.«open» "null" 48000.0 2 8192
-  let (el, _, atLast, cEnd) ← playSecond sn
+  IO.sleep 60
+  let cIdle ← Sink.counters sn
+  check t "null: no under-run and no frame taken before the first write" (cIdle[2]! == 0.0 && cIdle[1]! == 0.0)
+    s!"{cIdle}"
+  let (el, firstN, atLast, cEnd) ← playSecond sn
+  check t "null: no under-run at the first write" (firstN[2]! == 0.0) s!"{firstN[2]!}"
   Sink.close sn
   check t "null: all frames written" (cEnd[0]! == 48000.0) s!"{cEnd[0]!}"
   check t "null: all frames read" (cEnd[1]! == 48000.0) s!"{cEnd[1]!}"
@@ -156,6 +162,7 @@ def main : IO UInt32 := do
   -- One second of sine through `wav`: the file.
   let path := s!"{tmp}/audio-sink-test-{← IO.monoNanosNow}.wav"
   let sw ← Sink.«open» s!"wav:{path}" 48000.0 2 8192
+  IO.sleep 30
   let (el, first, atLast, cEnd) ← playSecond sw
   Sink.close sw
   Sink.close sw
@@ -163,6 +170,7 @@ def main : IO UInt32 := do
   check t "wav: elapsed 1 s +- 15 %" (el ≥ 850 && el ≤ 1150) s!"{el} ms"
   -- No under-run from the first write until the last quantum was written; one more at the end
   -- (the last period holds 128 frames and 128 of silence).
+  check t "wav: no under-run from open until the last quantum was written" (atLast[2]! == 0.0) s!"{atLast[2]!}"
   check t "wav: no under-run after the first write, while writing" (atLast[2]! == first[2]!)
     s!"{first[2]!} -> {atLast[2]!}"
   check t "wav: at most one under-run at the end" (cEnd[2]! - first[2]! ≤ 1.0) s!"{first[2]!} -> {cEnd[2]!}"
