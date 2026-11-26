@@ -57,15 +57,19 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   interpolation" in the specification). A value within 1e-9 frames of a whole frame is taken to
   be that frame (`snapFrames`), so that 3 x (1/44100) x 44100 reads frame 3 and not frame
   2.9999999999999996; the specification requires an exact frame to return that frame.
-* Interpolation is linear. The frame after the last frame of the buffer is silence when the
-  source does not loop, and the frame at the (floored) loop start when playback is inside the
+* Interpolation is linear. The frame after the last frame of the buffer is the last two frames
+  continued linearly when the source does not loop (a one-frame buffer holds its value; WPT
+  `buffer-resampling.html`, "extrapolation at end of AudioBuffer"; the specification leaves the
+  value open), and the frame at the (floored) loop start when playback is inside the
   loop and the next frame is at or after the loop end ("as if the looped audio occurred in
   sequential regions", the specification's looping section).
 * The reversed loop of the pseudocode (`loopStart` at or after the buffer duration while
   `loopEnd` is after `loopStart`) would make the `while` loops of the pseudocode run for ever.
   The looping section says "If any of these constraints are violated, the loop is considered to
   include the entire buffer contents", so after clamping `loopEnd` to the duration a loop with
-  start not before end is the whole buffer.
+  start not before end is the whole buffer. A negative `loopStart` is 0 (the attribute's text:
+  "If loopStart is less than 0, looping will begin at 0"; WPT
+  `audiobuffersource-playbackrate-negative.html`; the pseudocode says the whole buffer).
 * The pseudocode's `while` loops that wrap the playhead are computed by division, with one
   correction step; for a finite playhead the result is the pseudocode's result up to rounding.
 * A sub-sample start time: the pseudocode starts playback at the first frame `f` with
@@ -74,6 +78,8 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   advanced by `(f - start * sampleRate)` frames of playback (`< 1` context frame): the signal is
   what it would have been, had playback begun at the exact `start` time. For `playbackRate` 0 the
   advance is 0 (WPT `audiobuffersource-playbackrate-zero.html`, second case).
+* A `duration` counts from the exact start time: the part of a context frame before the first frame
+  played is spent from it (WPT `sub-sample-scheduling.html`, "sub-sample-grain").
 * `start`, `stop` and the sample rate bounds: see `AudioBuffer.create` and `SourceState.start`.
   The sample rate range 3000 to 768000 Hz and the limit of 32 channels are the ones in the task
   description; the specification (section "Supported Sample Rates") requires only 8000 to 96000
@@ -92,7 +98,7 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   false clears the "entered loop" flag, a change of the loop points leaves the playhead where it
   is.
 * The setter of `buffer` (`InvalidStateError` for a second non-null buffer) and the "acquire the
-  content" snapshot: the caller holds `SourceConfig.buffer`.
+  content" snapshot: the caller holds `SourceConfig.buffer` (`Context.acquireBuffer` replaces it).
 * `ended` events and the cleanup of the node after playback: `SourceState.finished` is the
   flag; the graph module acts on it.
 * `createBuffer`'s `NaN` and infinite arguments (`TypeError` by WebIDL): `create` refuses a
