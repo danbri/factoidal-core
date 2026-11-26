@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "kind": "after-pruning-native-runtime-boundary-audit",
+  "generatedAt": "2026-11-25T15:18:44.565792+00:00",
+  "programs": {
+    "evm-transaction-list": {
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-transaction-list",
+      "bytes": 6970160,
+      "sha256": "f2499ce6ea3d4e1562699bf26426b6e6b698d9c2ea63492a9e2d5f1e2b1196ef",
+      "definedSymbolCount": 32695,
+      "symbols": {
+        "LeanElabSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "\\bl_Lean_Elab_",
+          "examples": []
+        },
+        "LeanMetaSymbolsIncludingInitData": {
+          "matchingSymbolLines": 7,
+          "regex": "\\bl_Lean_Meta_",
+          "examples": [
+            "000000000042ff60 B l_Lean_Meta_Simp_defaultMaxSteps",
+            "000000000042ff5f B l_Lean_Meta_instInhabitedEtaStructMode",
+            "000000000042ff5e B l_Lean_Meta_instInhabitedEtaStructMode_default",
+            "000000000042ff70 B l_Lean_Meta_instInhabitedOccurrences",
+            "000000000042ff68 B l_Lean_Meta_instInhabitedOccurrences_default",
+            "000000000042ff5d B l_Lean_Meta_instInhabitedTransparencyMode",
+            "000000000042ff5c B l_Lean_Meta_instInhabitedTransparencyMode_default"
+          ]
+        },
+        "typeCheckerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "type_checker",
+          "examples": []
+        },
+        "compilerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "(?:Lean_Compiler|lean::compiler|_ZN4lean8compiler)",
+          "examples": []
+        },
+        "JsonElabInitializerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "initialize_Lean_Data_Json_Elab",
+          "examples": []
+        },
+        "fullLeanBootstrap": {
+          "matchingSymbolLines": 0,
+          "regex": "\\b(?:lean_initialize|initialize_Lean)$",
+          "examples": []
+        },
+        "runtimeBootstrap": {
+          "matchingSymbolLines": 1,
+          "regex": "\\blean_initialize_runtime_module$",
+          "examples": [
+            "000000000036beb0 T lean_initialize_runtime_module"
+          ]
+        }
+      },
+      "dynamicLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "entryObject": {
+        "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c.o.export",
+        "bytes": 125096,
+        "sha256": "2ddb0487e38f51d662707b7edc350a982d19e988307874a35f70f8323844096e",
+        "initializationImports": [
+          "U initialize_Init",
+          "U initialize_evm__cleanroom_EVMCleanroom_TransactionCodec",
+          "U initialize_evm__cleanroom_EVMCleanroom_TransactionList",
+          "U initialize_evm__cleanroom_EVMCleanroom_WitnessAdmissionProofs",
+          "U initialize_evm__cleanroom_EVMCleanroom_WitnessJSON",
+          "U lean_initialize_runtime_module"
+        ],
+        "compileTraceSha256": "b320c971f3f8247f627d349716a7abf7fa881e4f006b4934074707ebbc23f3a6",
+        "compileTrace": {
+          "synthetic": false,
+          "schemaVersion": "2025-09-10",
+          "outputs": "448438875ca43f30.o",
+          "log": [
+            {
+              "message": ".> /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/bin/clang -c -o /workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c.o.export /workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c -I /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/include -fstack-clash-protection -ffp-contract=off -fdata-sections -ffunction-sections -fPIC -fvisibility=hidden -Wno-unused-command-line-argument --sysroot /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux -nostdinc -isystem /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/include/clang -O3 -DNDEBUG -Dlean_initialize=lean_initialize_runtime_module -DLEAN_EXPORTING",
+              "level": "trace"
+            }
+          ],
+          "inputs": [
+            [
+              "EVMCleanroom.TransactionListCLI:c",
+              [
+                [
+                  "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c",
+                  "7bfaa960e077260e"
+                ],
+                [
+                  "Lean 4.33.1, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+                  "0051240b7c23c453"
+                ]
+              ]
+            ],
+            [
+              "Lean 4.33.1, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+              "0051240b7c23c453"
+            ],
+            [
+              "traceArgs: #[-O3, -DNDEBUG, -Dlean_initialize=lean_initialize_runtime_module, -DLEAN_EXPORTING]",
+              "ba5e469ffc81aa28"
+            ],
+            [
+              "x86_64-unknown-linux-gnu",
+              "53a0e8937c307c28"
+            ]
+          ],
+          "depHash": "79ca8da5df8ea648"
+        }
+      },
+      "before": {
+        "sha256": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7",
+        "bytes": 121089912
+      },
+      "bytesRemoved": 114119752
+    },
+    "evm-witness-proof": {
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-witness-proof",
+      "bytes": 6505840,
+      "sha256": "1b346ba5356058e3a013c4e7397882904495db2afca3f9389800628a12c3c2f0",
+      "definedSymbolCount": 31877,
+      "symbols": {
+        "LeanElabSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "\\bl_Lean_Elab_",
+          "examples": []
+        },
+        "LeanMetaSymbolsIncludingInitData": {
+          "matchingSymbolLines": 7,
+          "regex": "\\bl_Lean_Meta_",
+          "examples": [
+            "00000000003d17c0 B l_Lean_Meta_Simp_defaultMaxSteps",
+            "00000000003d17bf B l_Lean_Meta_instInhabitedEtaStructMode",
+            "00000000003d17be B l_Lean_Meta_instInhabitedEtaStructMode_default",
+            "00000000003d17d0 B l_Lean_Meta_instInhabitedOccurrences",
+            "00000000003d17c8 B l_Lean_Meta_instInhabitedOccurrences_default",
+            "00000000003d17bd B l_Lean_Meta_instInhabitedTransparencyMode",
+            "00000000003d17bc B l_Lean_Meta_instInhabitedTransparencyMode_default"
+          ]
+        },
+        "typeCheckerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "type_checker",
+          "examples": []
+        },
+        "compilerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "(?:Lean_Compiler|lean::compiler|_ZN4lean8compiler)",
+          "examples": []
+        },
+        "JsonElabInitializerSymbols": {
+          "matchingSymbolLines": 0,
+          "regex": "initialize_Lean_Data_Json_Elab",
+          "examples": []
+        },
+        "fullLeanBootstrap": {
+          "matchingSymbolLines": 0,
+          "regex": "\\b(?:lean_initialize|initialize_Lean)$",
+          "examples": []
+        },
+        "runtimeBootstrap": {
+          "matchingSymbolLines": 1,
+          "regex": "\\blean_initialize_runtime_module$",
+          "examples": [
+            "000000000030e4f0 T lean_initialize_runtime_module"
+          ]
+        }
+      },
+      "dynamicLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "entryObject": {
+        "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c.o.export",
+        "bytes": 74952,
+        "sha256": "81f139b35d79ea1dc121cb5fa18cf4b0176bfe983287b086bf9a9c926324b31f",
+        "initializationImports": [
+          "U initialize_Init",
+          "U initialize_evm__cleanroom_EVMCleanroom_MPT",
+          "U initialize_evm__cleanroom_EVMCleanroom_TransactionCodec",
+          "U initialize_evm__cleanroom_EVMCleanroom_WitnessJSON",
+          "U lean_initialize_runtime_module"
+        ],
+        "compileTraceSha256": "874371ed2d97fe73a310ba7c15ee847e63184629804e3a581de8cac09b2515f4",
+        "compileTrace": {
+          "synthetic": false,
+          "schemaVersion": "2025-09-10",
+          "outputs": "77047360fb52985f.o",
+          "log": [
+            {
+              "message": ".> /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/bin/clang -c -o /workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c.o.export /workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c -I /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/include -fstack-clash-protection -ffp-contract=off -fdata-sections -ffunction-sections -fPIC -fvisibility=hidden -Wno-unused-command-line-argument --sysroot /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux -nostdinc -isystem /workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/include/clang -O3 -DNDEBUG -Dlean_initialize=lean_initialize_runtime_module -DLEAN_EXPORTING",
+              "level": "trace"
+            }
+          ],
+          "inputs": [
+            [
+              "EVMCleanroom.WitnessPrimitiveCLI:c",
+              [
+                [
+                  "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c",
+                  "08f673d66ff00c07"
+                ],
+                [
+                  "Lean 4.33.1, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+                  "0051240b7c23c453"
+                ]
+              ]
+            ],
+            [
+              "Lean 4.33.1, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+              "0051240b7c23c453"
+            ],
+            [
+              "traceArgs: #[-O3, -DNDEBUG, -Dlean_initialize=lean_initialize_runtime_module, -DLEAN_EXPORTING]",
+              "ba5e469ffc81aa28"
+            ],
+            [
+              "x86_64-unknown-linux-gnu",
+              "53a0e8937c307c28"
+            ]
+          ],
+          "depHash": "234a48d64bd99227"
+        }
+      },
+      "before": {
+        "sha256": "f92022447d5f69b2497839ab8cba09e7c72f2b467d1dc61a73d26322ac37326c",
+        "bytes": 120632352
+      },
+      "bytesRemoved": 114126512
+    }
+  },
+  "nativeObservations": [
+    {
+      "label": "state",
+      "command": [
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-transaction-list",
+        "--dangerously-enable-unverified-keccak",
+        "--state-witness",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/evidence/2026-11-25-mpt-witness/runtime-boundary.state-request.json"
+      ],
+      "exitCode": 0,
+      "status": "authenticated",
+      "requestSha256": "a6c284221d4a473056ece8e1c94a8ffe987a799ec6761ebf6418afebc8b5d385",
+      "outputSha256": "41115a6726b4ae3ef6e439d4cebcffffd22292e58fe53418ae708403825330e8",
+      "exactBytesEqualBeforePruning": true,
+      "stderr": "",
+      "environmentOverrides": {
+        "PATH": "/nonexistent-runtime-boundary",
+        "LEAN_PATH": "",
+        "LEAN_SYSROOT": "",
+        "LEAN_NUM_THREADS": "1",
+        "LEAN_STACK_SIZE_KB": "32768",
+        "MIMALLOC_ARENA_RESERVE": "64M"
+      }
+    },
+    {
+      "label": "authenticated",
+      "command": [
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-transaction-list",
+        "--dangerously-enable-unverified-keccak",
+        "--authenticated-transaction-list",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/evidence/2026-11-25-mpt-witness/runtime-boundary.authenticated-request.json"
+      ],
+      "exitCode": 0,
+      "status": "executed",
+      "requestSha256": "944a85cb510f89b7afeb888c213aea46f69aea76a7b6e85f0f7df85b7a57c1b0",
+      "outputSha256": "8f05ccbfe37e29b3a636bbbd7520d106b21c904f51943ab02967b10e53badf70",
+      "exactBytesEqualBeforePruning": true,
+      "stderr": "",
+      "environmentOverrides": {
+        "PATH": "/nonexistent-runtime-boundary",
+        "LEAN_PATH": "",
+        "LEAN_SYSROOT": "",
+        "LEAN_NUM_THREADS": "1",
+        "LEAN_STACK_SIZE_KB": "32768",
+        "MIMALLOC_ARENA_RESERVE": "64M"
+      }
+    }
+  ],
+  "sources": [
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/lakefile-witness.toml",
+      "bytes": 659,
+      "sha256": "f812cd03aa8c0d5255c38535f7de1e9318fd13567354384c3c3812c693f1ad5e"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/lakefile-transaction-list.toml",
+      "bytes": 576,
+      "sha256": "dcb9f8360de33ff0d4523f612e2218b4f28602001ba93618a947b58ca3f26403"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/lakefile-mpt-primitives-local.toml",
+      "bytes": 703,
+      "sha256": "d8957fa6b1f83dd1a440ed88ca90587690159aead0a91682cc15a93a1715277e"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/lakefile-mpt-local.toml",
+      "bytes": 620,
+      "sha256": "f312837f0b5cff41b92a8af6cc202bcd28ca239f4700e7119b322b9f96e2f1e4"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/lean-toolchain",
+      "bytes": 25,
+      "sha256": "3aac669c7a910ec2389f4e4f921b605adf6ebf2d1e0c9b9cd0be4d33f3f5db71"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/TransactionCodec.lean",
+      "bytes": 8977,
+      "sha256": "d2062d4a0e211ae5dc374a238d27dac26da32099d05c0a0e349cc4b35ba1c230"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/WitnessJSON.lean",
+      "bytes": 3941,
+      "sha256": "07f56b315754c0a53e52552fb8f9b6453a2a10b17365845367b0d9ff55930f5a"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListCLI.lean",
+      "bytes": 10877,
+      "sha256": "43c19d21a572b6c01844050510ac7619f67c071e7e8c94160501d00b98353528"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/WitnessPrimitiveCLI.lean",
+      "bytes": 5245,
+      "sha256": "b4f1f1a283a149c4b7496392a8197a1004ee7913e16bbd6f08b619329a23b42a"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/WitnessAdmission.lean",
+      "bytes": 11931,
+      "sha256": "219667304d8d6ccdcd1795acd94e894d49dcaf547967445bc969cfa09205cb3c"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/WitnessAdmissionProofs.lean",
+      "bytes": 15141,
+      "sha256": "003adb2986a8e5c358390e05a4882c48b10a96937d9b5a82678c41e6e3a91977"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/MPT.lean",
+      "bytes": 14571,
+      "sha256": "3928589704809fbd38b27e6d179525b208a044eedb759035151a6bc397713620"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/CanonicalRLP.lean",
+      "bytes": 13956,
+      "sha256": "5a5c53a29c04c78f9590d393e4275e0e7f1e0abc6e424c2f9e6e4ceda948bfa8"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/src/lean/Lean/Compiler/LCNF/EmitC.lean",
+      "bytes": 41489,
+      "sha256": "b583be256c880a879bf723bb4c2cd87bd80d433d0539ea67d87c28a6da500216"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/src/lean/Lean/Compiler/LCNF/EmitUtil.lean",
+      "bytes": 2166,
+      "sha256": "a940bfa697130609453846c9af49f426cb644a03f3fa4974f3ca947c3798436e"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/src/lean/Init/MetaTypes.lean",
+      "bytes": 22335,
+      "sha256": "6ce9ae712999c2b8837cd19a66a262023b31fc0530bb2fd822871d25173cfc7d"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/Wasm/l4_shim.c",
+      "bytes": 19399,
+      "sha256": "37e820b4f18649a858c525ba831afda1798d3691fa7ff80767d4de2586346b1a"
+    }
+  ],
+  "build": {
+    "log": "/tmp/ethereum-mpt-runtime-only-build.log",
+    "jobs": 66,
+    "exitCode": 0,
+    "startupCompilerFlag": "-Dlean_initialize=lean_initialize_runtime_module",
+    "scope": [
+      "lakefile-witness.toml",
+      "lakefile-transaction-list.toml"
+    ],
+    "toolchainVersion": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+    "explanation": "The pinned compiler selects full Lean startup for any runtime Lean.* import. These two configurations use only reviewed JSON data routines from Lean.*; the explicit C compilation flag selects the same ordinary runtime initializer already used by repository-owned Wasm/l4_shim.c. This is trusted native startup glue and must be re-audited if that runtime import closure changes."
+  },
+  "findings": [
+    "Both actual native entry objects import lean_initialize_runtime_module and do not import lean_initialize; disassembled main calls the ordinary runtime initializer.",
+    "The rebuilt native images have no elaborator, compiler, type_checker, Json.Elab initializer, lean_initialize or initialize_Lean symbols.",
+    "Seven Lean_Meta names remain only as BSS default configuration data defined in Init.MetaTypes; they are not callable Meta or tactic procedures.",
+    "Native request paths remain compiled WitnessAdmission/MPT/RLP/Keccak and TransactionList data processing. Ethereum Merkle witnesses are checked by these ordinary byte/hash algorithms.",
+    "The same mathematical proof fields and theorem bodies remain erased from request data; Lean allocation, reference counting and task runtime remain required.",
+    "Both sampled full outputs are byte-identical to the frozen before-pruning executable with no usable Lean command path."
+  ],
+  "syscallTracing": {
+    "succeeded": false,
+    "reason": "ptrace is prohibited in this environment; preserved before-pruning strace denial applies. No dynamic execve or in-process call trace was obtained."
+  },
+  "limits": [
+    "This is a static symbol/dependency and generated-entry-object audit with two concrete native request observations; it is not a dynamic syscall trace.",
+    "Absence from the audited native symbol tables does not by itself prove absence of all possible dynamic code loading or absolute-path helpers. The narrow source closure and hash-bound CI gate provide additional reviewable controls.",
+    "The seven Init.MetaTypes BSS constants are explicitly retained and should not be described as zero Lean_Meta names.",
+    "The compiler, runtime, native build glue and cryptographic correctness assumptions remain in the trusted computing base; this audit does not establish a full Ethereum client or fully verified Keccak."
+  ]
+}

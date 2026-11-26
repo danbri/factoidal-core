@@ -51,6 +51,10 @@ shard packer, the proofs between them, the costs paid and open):
 
 ## Toolchain
 
+- Keep Ethereum proof assistance in development and CI. For the reviewed native
+  JSON/startup boundary and its required gates, read the
+  [runtime decision](../../docs/designissues/2026-11-25-ethereum-runtime-boundary.md).
+  Do not apply its startup flag to unrelated executables.
 - Install: `curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y`.
 - **PATH trap (2026-08-22, paid for):** every fresh harness shell
   needs `export PATH="$HOME/.elan/bin:$PATH"` or `lake` is absent —

@@ -1,0 +1,235 @@
+{
+  "checkerSha256": "6f82dd0a00aee2bcfb1a998eae1692b01a2d6dc2ae022f064562700c50d82b2b",
+  "dynamicExecutionClaim": "None: this gate does not trace calls or syscalls and does not measure runtime overhead.",
+  "executables": {
+    "evm-transaction-list": {
+      "allowedInitMetaTypesConstants": [
+        {
+          "name": "l_Lean_Meta_Simp_defaultMaxSteps",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode_default",
+          "symbolType": "B"
+        }
+      ],
+      "bytes": 6970160,
+      "elf": {
+        "byteOrder": "little",
+        "class": 64,
+        "machine": 62,
+        "type": "DYN"
+      },
+      "forbiddenLibraries": [],
+      "forbiddenSymbols": {
+        "LeanEvaluator": {
+          "count": 0,
+          "examples": []
+        },
+        "compiler": {
+          "count": 0,
+          "examples": []
+        },
+        "elaborator": {
+          "count": 0,
+          "examples": []
+        },
+        "fullLeanBootstrap": {
+          "count": 0,
+          "examples": []
+        },
+        "jsonElaboratorInitializer": {
+          "count": 0,
+          "examples": []
+        },
+        "kernel": {
+          "count": 0,
+          "examples": []
+        },
+        "metaprogramming": {
+          "count": 0,
+          "examples": []
+        },
+        "typeChecker": {
+          "count": 0,
+          "examples": []
+        }
+      },
+      "inspectionWarnings": [],
+      "issues": [],
+      "missingDefinedSymbols": [],
+      "neededLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "nmCommand": [
+        "nm",
+        "--demangle",
+        "--no-sort",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list"
+      ],
+      "nmOutputSha256": "39a6d3328e9714f906bfd1746791b8d18aedfbb094f0db3f38438989bac0387b",
+      "passed": true,
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list",
+      "readelfCommand": [
+        "readelf",
+        "--dynamic",
+        "--wide",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list"
+      ],
+      "readelfOutputSha256": "6514cc9fe4c28f29f6756889d9795bc729488a73282808f208597bc44ac90912",
+      "requiredDefinedSymbols": [
+        "initialize_evm__cleanroom_EVMCleanroom_TransactionListCLI",
+        "lean_initialize_runtime_module",
+        "lp_evm__cleanroom_EVMCleanroom_CanonicalRLP_decode",
+        "lp_evm__cleanroom_EVMCleanroom_MPT_lookup",
+        "lp_evm__cleanroom_EVMCleanroom_WitnessAdmission_runAuthenticated",
+        "main",
+        "run_main"
+      ],
+      "sha256": "f2499ce6ea3d4e1562699bf26426b6e6b698d9c2ea63492a9e2d5f1e2b1196ef",
+      "symbolCount": 32994
+    },
+    "evm-witness-proof": {
+      "allowedInitMetaTypesConstants": [
+        {
+          "name": "l_Lean_Meta_Simp_defaultMaxSteps",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode_default",
+          "symbolType": "B"
+        }
+      ],
+      "bytes": 6505840,
+      "elf": {
+        "byteOrder": "little",
+        "class": 64,
+        "machine": 62,
+        "type": "DYN"
+      },
+      "forbiddenLibraries": [],
+      "forbiddenSymbols": {
+        "LeanEvaluator": {
+          "count": 0,
+          "examples": []
+        },
+        "compiler": {
+          "count": 0,
+          "examples": []
+        },
+        "elaborator": {
+          "count": 0,
+          "examples": []
+        },
+        "fullLeanBootstrap": {
+          "count": 0,
+          "examples": []
+        },
+        "jsonElaboratorInitializer": {
+          "count": 0,
+          "examples": []
+        },
+        "kernel": {
+          "count": 0,
+          "examples": []
+        },
+        "metaprogramming": {
+          "count": 0,
+          "examples": []
+        },
+        "typeChecker": {
+          "count": 0,
+          "examples": []
+        }
+      },
+      "inspectionWarnings": [],
+      "issues": [],
+      "missingDefinedSymbols": [],
+      "neededLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "nmCommand": [
+        "nm",
+        "--demangle",
+        "--no-sort",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-witness-proof"
+      ],
+      "nmOutputSha256": "cf31d3e0db9db74986ae604c74d5d5048e6c6cbdbb08d5f2f87c7a353c748f8f",
+      "passed": true,
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-witness-proof",
+      "readelfCommand": [
+        "readelf",
+        "--dynamic",
+        "--wide",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-witness-proof"
+      ],
+      "readelfOutputSha256": "eace156aeb6909b665444785cf8559cdbc8297e1d2a4b191941da85853d0faaf",
+      "requiredDefinedSymbols": [
+        "initialize_evm__cleanroom_EVMCleanroom_WitnessPrimitiveCLI",
+        "lean_initialize_runtime_module",
+        "lp_evm__cleanroom_EVMCleanroom_CanonicalRLP_decode",
+        "lp_evm__cleanroom_EVMCleanroom_MPT_lookup",
+        "main",
+        "run_main"
+      ],
+      "sha256": "1b346ba5356058e3a013c4e7397882904495db2afca3f9389800628a12c3c2f0",
+      "symbolCount": 32176
+    }
+  },
+  "nmVersion": "GNU nm (GNU Binutils for Debian) 2.44",
+  "readelfVersion": "GNU readelf (GNU Binutils for Debian) 2.44",
+  "schemaVersion": 1,
+  "scope": "Static ELF, defined/undefined symbol and direct shared-library inspection. Positive project entry symbols are mandatory. This permits the Lean object runtime and Std data/reflection support, but rejects the selected actual proof-engine/API families and full Lean bootstrap.",
+  "sourceAxiomReportSha256": "e045260f12207f827880e588425a351c3905adac378f92a34ba2ade84348a041",
+  "status": "native-runtime-boundary-pass"
+}

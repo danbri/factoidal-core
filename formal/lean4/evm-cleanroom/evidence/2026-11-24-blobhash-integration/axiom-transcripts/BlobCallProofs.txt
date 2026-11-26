@@ -1,0 +1,6 @@
+'EVMCleanroom.BlobCall.prepareWithFees_checked' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.prepare_blobHashes_checked' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.BlobCall.prepared_entry_blobHashes' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.admitted_entry_blobHashes' does not depend on any axioms
+'EVMCleanroom.BlobCall.validated_entry_blobHashes' depends on axioms: [propext, Quot.sound]
+

@@ -1,0 +1,29 @@
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:48:0: error: Expression
+  single 20 == some (99882, 4, [1], [0, 17, 128, 255], 100, 1)
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:49:0: error: Expression
+  dispatched 20 == single 20
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:50:0: error: Expression
+  single 18 == single 20
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:51:0: error: Expression
+  dispatched 18 == single 18
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:60:0: error: Expression
+  single 15 0 == some (99885, 0, [1], [0, 0, 0, 0], 100, 1)
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:61:0: error: Expression
+  dispatched 15 0 == single 15 0
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:66:0: error: Expression
+  single 0 4 1 == some (93182, 4, [1], [0, 17, 128, 255], 99, 2)
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:67:0: error: Expression
+  dispatched 0 4 1 == single 0 4 1
+did not evaluate to `true`
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/IdentityCallTests.lean:75:0: error: Expression
+  match callStep 20 testWorld 193 oversizedCaller with
+  | CallStep.indeterminate Error.resourceLimit => true
+  | x => false
+did not evaluate to `true`

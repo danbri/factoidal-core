@@ -1,0 +1,553 @@
+name: EVM cleanroom Lean seed
+
+on:
+  push:
+    branches: ["feat/lean-evm-cleanroom-seed", "feat/lean-prague-six-state-roots-20261121", "feat/lean-evm-real-call-opcode-20261121", "feat/lean-frontier-historical-mainnet-46147-20261122", "feat/lean-frontier-state-witness-20261122", "feat/lean-evm-value-call-20261122", "feat/lean-evm-call-context-20261122", "wip/ethereum-contract-rpc-20261122", "wip/ethereum-solidity-integration-20261122"]
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-cleanroom.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: evm-cleanroom-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Lean and check proof declarations and guards
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Build additional witness proof roots for the expanded active ledger
+        working-directory: formal/lean4
+        env:
+          LEAN_NUM_THREADS: "1"
+          LEAN_STACK_SIZE_KB: "32768"
+          MIMALLOC_ARENA_RESERVE: "64M"
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("evm-cleanroom")
+          source = (root / "lakefile-witness.toml").read_text()
+          assert "moreLeanArgs" not in source
+          (root / "lakefile-witness-ci.toml").write_text(source.replace(
+              'version = "0.1.0"', 'version = "0.1.0"\nmoreLeanArgs = ["-j1", "-M2048", "-s32768"]', 1))
+          PY
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-witness-ci.toml build \
+            EVMCleanroom.CanonicalRLPTests EVMCleanroom.MPT EVMCleanroom.WitnessAdmissionProofs
+      - name: Verify active source blobs and theorem inventory against v2 evidence
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==170,x'
+      - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==5,x'
+          python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==324 and x["sourceFiles"]==30,x'
+      - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --prague-tx-fee 1 179 1 1 28170 7 0 7 1000000 0 0 3 1 1 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["chargedGas"]=="28170" and x["blobGasUsed"]=="131072" and x["blobFeeBurn"]=="131072" and x["senderAfterBalance"]=="671738",x'
+          lake exe evm-subset --prague-tx-fee 0 1221 1 1 69840 7 0 7 1000000 0 0 4 0 0 0 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["intrinsicGas"]=="69836" and x["floorGas"]=="69840" and x["chargedGas"]=="69840" and x["senderAfterBalance"]=="511120",x'
+          lake exe evm-subset --prague-authorize 0 1 0 0 1 1 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["nonce"]=="1" and x["codeHex"]=="0xef0100"+"0"*39+"1" and x["refundGas"]=="0",x'
+          lake exe evm-subset --prague-authorize 2 1 0 0 1 1 1 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="authorization-chain-id-mismatch",x'
+          lake exe evm-subset --prague-tx-fee 1 179 1 1 28170 7 0 7 1000000 0 0 3 1 0 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="blob-cap-below-current-fee",x'
+      - name: Smoke test actual Lean CALL 0xf1 parent execution, rollback and status
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f100 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="25278" and x["slot0"]=="1" and x["warmAddress"] is True,x'
+          lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f15f5ffd 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["gasRemaining"]=="25274" and x["slot0"]=="0" and x["warmAddress"] is False,x'
+          lake exe evm-subset --call-opcode 5f5f5f5f5f60c3617530f1fe 600160005500 50000 100 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="exceptional" and x["gasRemaining"]=="0" and x["slot0"]=="0" and x["warmAddress"] is False,x'
+      - name: Verify fork-exact Frontier transaction gas, wei conservation and fail-closed validation
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["senderAfterBalance"]=="949999999999968663" and x["receiverAfterBalance"]=="31337" and x["minerAfterBalance"]=="1050000000000000000" and x["gasUsed"]=="21000" and x["senderAfterNonce"]=="1",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 1 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="nonce-mismatch",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="recipient-code-execution-not-modelled",x'
+          lake exe evm-subset --frontier-transfer 20999 21003 50000000000000 31337 0 0 2000000000000000000 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="below-frontier-intrinsic",x'
+          lake exe evm-subset --frontier-transfer 21000 21003 50000000000000 31337 0 0 1 0 0 0 0 1 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="error" and x["reason"]=="insufficient-upfront-balance",x'
+      - name: Smoke test actual zero/nonzero ETH CALL, stipend and parent rollback in Lean
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 00 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="40700" and x["parentBalance"]=="998" and x["childBalance"]=="2",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 00 50017 100 0 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["0"] and x["gasRemaining"]=="40700" and x["parentBalance"]=="0" and x["childBalance"]=="0",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f15f5ffd 00 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["gasRemaining"]=="40696" and x["parentBalance"]=="1000" and x["childBalance"]=="0",x'
+          lake exe evm-subset --call-opcode 5f5f5f5f61000260c3617530f100 '' 50017 100 1000 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="stopped" and x["stack"]==["1"] and x["gasRemaining"]=="15700" and x["parentBalance"]=="998" and x["childBalance"]=="2",x'
+      - name: Execute restricted EVM CLI and check emitted JSON
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset 600260030100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"schemaVersion":2,"status":"ok","gasRemaining":"91","pc":"6","halted":True,"stack":["5"],"memorySizeBytes":"0","memoryWord0":"0","memoryObservedBytes":"0","memoryTruncated":False,"memoryHex":""}, x'
+          lake exe evm-subset 600260005260005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["memorySizeBytes"],x["gasRemaining"]) == (["2"],"2","32","82"), x'
+          lake exe evm-subset 61012c601f5360005100 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert (x["stack"],x["memoryWord0"],x["gasRemaining"]) == (["44"],"44","82"), x'
+          lake exe evm-subset 600160405300 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); m=bytes.fromhex(x["memoryHex"]); assert len(m)==96 and m[:64]==bytes(64) and m[64]==1 and m[65:]==bytes(31) and x["memoryTruncated"] is False, x'
+          lake exe evm-subset $(python3 -c 'print("7f" + "ff"*32 + "00")') 100 3 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["stack"] == [str((1<<256)-1)] and x["gasRemaining"]=="97", x'
+          lake exe evm-subset 01 100 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"stackUnderflow"}, x'
+          lake exe evm-subset 6001 2 10 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Execute one-account storage and refund regressions
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --storage 60005400 10000 5 0 7 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="7" and x["gasRemaining"]=="7897" and x["warm"] is True, x'
+          lake exe evm-subset --storage 600160005500 30000 6 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="1" and x["gasRemaining"]=="7894" and x["refund"]=="0", x'
+          lake exe evm-subset --storage 6001600055600060005500 50000 10 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="27788" and x["refund"]=="19900", x'
+          lake exe evm-subset --storage 600060005500 10000 6 0 7 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="ok" and x["current"]=="0" and x["gasRemaining"]=="4994" and x["refund"]=="4800", x'
+          lake exe evm-subset --storage 600160005500 2306 6 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x == {"status":"error","error":"outOfGas"}, x'
+      - name: Check RETURN/REVERT with gas-preserving storage checkpoint rollback
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          lake exe evm-subset --frame-storage 600160005560006000fd 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="reverted" and x["current"]=="0" and x["gasRemaining"]=="7888" and x["refund"]=="0" and x["warm"] is False and x["returnDataHex"]=="",x'
+          lake exe evm-subset --frame-storage 600160005560006000f3 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="returned" and x["current"]=="1" and x["gasRemaining"]=="7888" and x["warm"] is True,x'
+          lake exe evm-subset --frame-storage 602a60005360016000f3 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="returned" and x["returnDataHex"]=="2a" and x["gasRemaining"]=="29982",x'
+          lake exe evm-subset --frame-storage 60016000556001600055 23000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="exceptional" and x["error"]=="outOfGas" and x["gasRemaining"]=="0" and x["current"]=="0",x'
+          lake exe evm-subset --frame-storage f100 30000 12 0 0 | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="unsupported" and x["error"]=="invalidOpcode",x'
+      - name: Batch execute independent bytecode cases in a single Lean process
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          printf '600260030100\t100\t10\n600160005260005100\t100\t10\n' > /tmp/evm-subset-batch.tsv
+          lake exe evm-subset --batch /tmp/evm-subset-batch.tsv | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin]; assert len(rows)==2 and rows[0]["stack"]==["5"] and rows[1]["stack"]==["1"] and rows[1]["memoryWord0"]=="1", rows'
+      - name: Inspect pinned published EELS state-test fixtures (NOT a conformance run)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/evm-shanghai-push0-state-tests.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contract_during_call_contexts.json"
+          node scripts/eels-state-preflight.mjs /tmp/evm-shanghai-push0-state-tests.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="parsed-not-executed" and x["fixtures"]>=1 and x["vectors"]>=1 and x["unsupported"]==x["vectors"] and x["executed"]==0 and x["conformancePasses"]==0, x'
+      - name: Compare real Lean execution gas charges against pinned EELS Prague schedule
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-gas.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/gas.py"
+          node scripts/check-eels-gas.mjs /tmp/ethereum-eels-prague-gas.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]>=14 and x["mismatches"]==0, x'
+
+      - name: Compare memory opcodes and expansion gas to pinned EELS semantics
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output /tmp/ethereum-eels-prague-memory.py \
+            "https://raw.githubusercontent.com/ethereum/execution-specs/1da5a11ca8cd3a4ad00fd1821c27ef01a4b18653/src/ethereum/forks/prague/vm/instructions/memory.py"
+          node scripts/check-eels-memory.mjs /tmp/ethereum-eels-prague-gas.py /tmp/ethereum-eels-prague-memory.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==6 and x["mismatches"]==0, x'
+  differential:
+    # PR-only avoids installing a second Lean/npm toolchain for both push and PR.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122' || github.ref == 'refs/heads/wip/ethereum-solidity-integration-20261122'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Lean for independent differential execution
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          auto-config: false
+      - name: Install independent EthereumJS EVM 10.1.3
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/differential --depth=0
+          sha256sum scripts/differential/package-lock.json
+      - name: Differentially execute independent storage histories against EthereumJS Prague
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/storage.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mismatches"]==0 and x["matched"]>=100 and "refund" in x["observedFields"],x'
+      - name: Differentially verify RETURN/REVERT and atomic rollback against EthereumJS runCall
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/frame.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mismatches"]==0 and x["matched"]>=13 and "returnDataHex" in x["fields"], x'
+      - name: Differentially verify zero-value child-call journal against real EthereumJS CALL bytecode
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/call-slice.mjs | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["failed"]==0 and x["passed"]==4 and x["compared"]==4,x'
+      - name: Differentially challenge CALL gas cap, cold OOG and child rollback at 102 boundaries
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/call-boundary.mjs | tee .lake/differential/call-boundary.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==102 and x["matched"]==102 and x["mismatches"]==0 and x["parentOOGCases"]==6 and x["successCases"]>0 and x["childFailureCases"]>0 and x["oracleGasMutationDetected"],x'
+      - name: Execute Osaka CLZ with 1022 full-width oracle comparisons and fork/gas boundary challenges
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/osaka-clz.mjs | tee .lake/differential/osaka-clz.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["fork"]=="Osaka" and x["tested"]==1022 and x["passed"]==1022 and x["failed"]==0 and all(x[k] for k in ("forkGuardHeld","comparatorMutationCaught","underflowRejected","outOfGasRejected","exactGasAccepted","independentExactGas")),x'
+      - name: Differentially execute actual F1 opcode and parent journal against EthereumJS (330 programs)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/call-opcode.mjs
+          node scripts/differential/call-opcode.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-opcode.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==330 and x["matched"]==330 and x["mismatches"]==0 and x["parentReverts"]>0 and x["parentExceptions"]>0 and x["childSuccesses"]>0 and x["childFailures"]>0 and x["gasMutationRejected"] and x["nonemptyInputPassed"] and x["identityPrecompileMatched"] and x["precompileScopeRefused"],x'
+      - name: Execute actual nonzero-value CALL under EthereumJS oracle, gas stipend and new-account challenges
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/value-call.mjs
+          node scripts/differential/value-call.mjs .lake/build/bin/evm-subset | tee .lake/differential/value-call.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==450 and x["matched"]==450 and x["mismatches"]==0 and x["parentsReverted"]>0 and x["parentsExceptional"]>0 and x["childFailures"]>0 and x["childSuccesses"]>0 and x["comparisonMutationCaught"],x'
+      - name: Compare actual CALLVALUE SELFBALANCE ADDRESS CALLER on 160 real child programs
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/call-context.mjs
+          node scripts/differential/call-context.mjs .lake/build/bin/evm-subset | tee .lake/differential/call-context.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==160 and x["passed"]==160 and x["failed"]==0 and x["childCommitted"]>0 and x["childFailed"]>0 and x["observedParentBalance"]>0 and x["mutatedGasRejected"],x'
+      - name: Differentially verify GASPRICE and post-Merge PREVRANDAO with EthereumJS Shanghai
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/tx-env.mjs
+          node scripts/differential/tx-env.mjs | tee .lake/differential/tx-env.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==45 and x["mismatches"]==0 and all(x["negativeControls"].values()),x'
+      - name: Compare EIP-1344 CHAINID with independent EthereumJS on synthetic Mainnet
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/chain-id.mjs
+          node scripts/differential/chain-id.mjs | tee .lake/differential/chain-id.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==30 and x["matched"]==30 and x["mismatches"]==0 and x["negativeControl"],x'
+      - name: Check block header environment opcodes against independent EthereumJS Shanghai
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node --check scripts/differential/block-environment.mjs
+          node scripts/differential/block-environment.mjs | tee .lake/differential/block-environment.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==40 and x["mismatches"]==0 and x["negativeControl"], x'
+      - name: Verify Cancun BLOBBASEFEE against independent EthereumJS and older-fork refusal
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node scripts/differential/blob-base-fee.mjs | tee .lake/differential/blob-base-fee.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==42 and x["mismatches"]==0 and x["ambiguousOldForkRefused"] and all(x["negativeControls"].values()),x'
+      - name: Compare calldata, unsigned word operations and bounded frame output against EthereumJS
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          lake -d evm-cleanroom build evm-subset
+          mkdir -p evm-cleanroom/.lake/differential
+          node evm-cleanroom/scripts/differential/calldata.mjs | tee evm-cleanroom/.lake/differential/calldata.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==331 and x["matched"]==331 and x["mismatches"]==0 and x["negativeControls"]==3 and x["inputErrors"]==8 and x["fuelLimitChecks"]==1,x'
+      - name: Compare byte copy, CALL memory windows and nested journals against EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==124 and x["mismatches"]==0 and x["gasBoundaryTriplets"]==7 and all(x["negativeControls"].values()),x'
+          node scripts/differential/call-data.mjs | tee .lake/differential/call-data.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==122 and x["mismatches"]==0 and len(x["refusalChecks"])==1 and len(x["executedPrecompileChecks"])==2 and all(c["matched"] for c in x["executedPrecompileChecks"]) and x["globalFuelBoundary"] and all(x["negativeControls"].values()),x'
+      - name: Compare opt-in Keccak and log instruction results with Cancun EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node scripts/differential/hash-log.mjs | tee .lake/differential/hash-log.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==80 and x["mismatches"]==0 and x["fixture"]["xkcpVectors"]==24 and x["gasBoundaryTriplets"]==7 and len(x["nativeBoundaries"])==6 and len(x["negativeControls"])==4 and all(x["negativeControls"].values()) and not x["firstFailures"],x'
+      - name: Compare the Shanghai byte and CALL fixture subset against pinned Geth
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          geth_dir=$(mktemp -d "$RUNNER_TEMP/evm-geth.XXXXXX")
+          geth_release=geth-alltools-linux-amd64-1.17.10-1df30b18
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://gethstore.blob.core.windows.net/builds/$geth_release.tar.gz" \
+            --output "$geth_dir/geth.tar.gz"
+          printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
+          tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
+          export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          node scripts/differential/byte-copy.mjs | tee .lake/differential/byte-copy-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==124 and g["mismatches"]==0 and g["zeroGasExcluded"]==0,g'
+          node scripts/differential/call-data.mjs | tee .lake/differential/call-data-geth.json | python3 -c 'import json,sys; g=json.load(sys.stdin)["geth"]; assert g["compared"]==g["matched"]==112 and g["mismatches"]==0 and g["excluded"]=={"staticEntry":5,"osaka":1,"nonzeroDepth":3,"coldParent":1,"zeroGas":0},g'
+      - name: Compare CALLCODE, DELEGATECALL and STATICCALL against EthereumJS and pinned Geth
+        timeout-minutes: 3
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/call-family.mjs | tee .lake/differential/call-family.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          e, g, i = x["ethereumJS"], x["geth"], x["inventory"]
+          assert e["compared"] == e["matched"] == i["execution"] == 213 and e["mismatches"] == e["errors"] == 0, e
+          assert g["compared"] == g["matched"] == g["eligible"] == g["crossOracleMatched"] == 194 and g["mismatches"] == g["errors"] == 0, g
+          assert g["excluded"] == {"staticEntry": 3, "osaka": 1, "nonzeroDepth": 9, "coldParent": 3, "zeroGas": 3}, g
+          assert len(x["gasBoundaryGroups"]) == 10
+          ident = x["identityExecution"]
+          assert ident["cases"] == ident["ethereumJSMatched"] == ident["gethMatched"] == ident["clientAgreement"] == 27, ident
+          assert ident["gasMutationDetected"] and len(ident["rows"]) == 27, ident
+          assert i["categories"]["overhead"]["ethereumJS"]["matched"] == i["categories"]["cap"]["ethereumJS"]["matched"] == 30
+          assert i["boundaries"] == len(x["boundaries"]) == 9
+          assert sum(b.get("reason") == "unsupportedFork" for b in x["boundaries"]) == 3
+          assert sum(b.get("reason") == "stepLimit" for b in x["boundaries"]) == 3
+          assert sum(b.get("matched") is True and b["status"] == "stopped" for b in x["boundaries"]) == 3
+          assert len(x["parserChecks"]) == 8 and sum(p["exitCode"] == 2 for p in x["parserChecks"]) == 4
+          assert x["negativeControls"] == dict.fromkeys(["gas", "storageOwner", "context", "returnBytes"], True) and not x["failures"], x["failures"][:3]'
+      - name: Execute identity through all four CALL opcodes against EthereumJS and pinned Geth
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/identity-call.mjs .lake/build/bin/evm-subset \
+            | tee .lake/differential/identity-call.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          e, g = x["ethereumJS"], x["geth"]
+          assert x["cases"] == len(x["inventory"]) == e["compared"] == e["matched"] == 660, e
+          assert e["mismatches"] == e["errors"] == x["failed"] == 0 and not x["firstFailures"], x["firstFailures"]
+          assert g["compared"] == g["matched"] == g["eligible"] == 648 and g["mismatches"] == g["errors"] == 0, g
+          assert g["excluded"] == {"staticEntry": 4, "nonzeroDepth": 8}, g
+          cross = g["crossOracle"]
+          assert cross["compared"] == cross["matched"] == 648 and cross["mismatches"] == cross["errors"] == 0, cross
+          assert set(x["variants"]) == {"call", "callcode", "delegatecall", "staticcall"}, x["variants"]
+          assert x["warmthControl"]["extraColdGas"] == "2500", x["warmthControl"]
+          assert x["negativeControls"] == dict.fromkeys(["gas", "successBit", "returnData", "copiedMemory"], True), x["negativeControls"]'
+      - name: Compare self-CALL and child context with a separate precompile boundary check
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          mkdir -p evm-cleanroom/.lake/differential
+          node evm-cleanroom/scripts/differential/call-repairs.mjs | tee evm-cleanroom/.lake/differential/call-repairs.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==len(x["comparisons"])==6 and not x["failures"] and len(x["boundaries"])==0,x; assert any(c["name"]=="identity-zero-gas" and c["expected"]==c["actual"] and c["actual"]["stack"]==["0"] for c in x["comparisons"]),x'
+      - name: Verify guarded Solidity runtime and signed word operations against EthereumJS
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          mkdir -p evm-cleanroom/.lake/differential
+          node evm-cleanroom/scripts/differential/solidity-pure.mjs | tee evm-cleanroom/.lake/differential/solidity-pure.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==763 and x["mismatches"]==0 and x["signedCases"]==332 and x["sgtCases"]==67 and x["signExtendCases"]==146 and x["modularCases"]==100 and x["modExpCases"]==169 and x["forbiddenRefusals"]==5 and x["legacyCompatibility"]==1,x'
+      - name: Replay read-only RPC captures offline with the compiled guarded frame comparator
+        shell: bash
+        working-directory: formal/lean4
+        run: |
+          mkdir -p evm-cleanroom/.lake/differential
+          EVM_RPC_TEST_LEAN_EXE="$PWD/evm-cleanroom/.lake/build/bin/evm-subset" node --test --test-reporter=tap evm-cleanroom/scripts/rpc/capture.test.mjs | tee evm-cleanroom/.lake/differential/rpc-capture-tests.tap
+          python3 -c 'from pathlib import Path; report=Path("evm-cleanroom/.lake/differential/rpc-capture-tests.tap").read_text().splitlines(); assert {"# tests 46","# pass 46","# fail 0","# skipped 0"}.issubset(report),report'
+      - name: Generate versioned synthetic corpus and compare independent runtimes
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/differential
+          node scripts/differential/generate.mjs --seed 20261119 --count 10000 --out .lake/differential/corpus.jsonl | tee .lake/differential/generator.json
+          # The fixture corpus itself is versioned evidence. Changes in bytes
+          # require an explicit reviewed update to this committed SHA-256.
+          printf '610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb  .lake/differential/corpus.jsonl\n' | sha256sum --check
+          node scripts/differential/run.mjs --lean-exe .lake/build/bin/evm-subset --corpus .lake/differential/corpus.jsonl --out .lake/differential/report.json --failures .lake/differential/failures.jsonl
+      - name: Verify comparator detects deliberately false expectations
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/selftest.mjs .lake/differential/corpus.jsonl .lake/differential/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["allDetected"] and len(x["controls"])==3 and sum(c.get("reproduced",False) for c in x["controls"])==2 and sum(c.get("minimized",False) for c in x["controls"])==1 and any(c.get("classification")=="unsupported" for c in x["controls"]), x'
+      - name: Build and validate content-addressed evidence manifest
+        if: always()
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/differential/evidence-manifest.mjs .lake/differential | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="consistent", x'
+      - name: Archive exact corpus, dependencies, results and disagreements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-differential-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            formal/lean4/evm-cleanroom/.lake/differential/
+            formal/lean4/evm-cleanroom/scripts/differential/package-lock.json
+  eels-real-state:
+    # Validate real EELS post-state roots, not merely JSON structure.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/feat/lean-prague-six-state-roots-20261121' || github.ref == 'refs/heads/feat/lean-evm-real-call-opcode-20261121' || github.ref == 'refs/heads/feat/lean-frontier-historical-mainnet-46147-20261122' || github.ref == 'refs/heads/feat/lean-frontier-state-witness-20261122' || github.ref == 'refs/heads/feat/lean-evm-value-call-20261122' || github.ref == 'refs/heads/feat/lean-evm-call-context-20261122' || github.ref == 'refs/heads/wip/ethereum-contract-rpc-20261122' || github.ref == 'refs/heads/wip/ethereum-solidity-integration-20261122'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile Lean EVM and machine-check empty-code theorem
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Install state-test transaction/trie dependencies
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/eels --depth=0
+          printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Build native EVM and transaction entry points
+        working-directory: formal/lean4
+        run: lake -d evm-cleanroom build evm-subset evm-call-transaction
+      - name: Keep Lean compiler symbols out of the legacy EVM executable
+        working-directory: formal/lean4
+        run: python3 ../../tools/binary-budget.py check evm-subset=evm-cleanroom/.lake/build/bin/evm-subset
+      - name: Check transaction CLI forwarding and missing-companion behavior
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node scripts/eels/call-transaction-cli-routing.mjs \
+            "$PWD/.lake/build/bin/evm-subset" "$PWD/.lake/build/bin/evm-call-transaction" \
+            | tee .lake/eels/call-transaction-cli-routing.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x=={"kind":"call-transaction-cli-routing","routed":3,"missing":2,"legacy":1},x'
+      - name: Compare witness-limited call transactions and their roots with EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node scripts/eels/call-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
+            | tee .lake/eels/call-transaction-differential.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==60 and x["independentAdmissionRejections"]==8 and x["preSerializationRejections"]==1 and x["boundaryRefusals"]==11 and x["negativeControls"]=={"changedGas":True,"changedReceiptLog":True,"changedStateBalance":True} and not x["failures"],x'
+      - name: Replay the authenticated Shanghai mainnet contract transaction with Lean, EthereumJS and Geth
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          geth_dir=$(mktemp -d "$RUNNER_TEMP/evm-geth-replay.XXXXXX")
+          geth_release=geth-alltools-linux-amd64-1.17.10-1df30b18
+          curl --fail --show-error --silent --location --retry 3 \
+            "https://gethstore.blob.core.windows.net/builds/$geth_release.tar.gz" \
+            --output "$geth_dir/geth.tar.gz"
+          printf 'f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf  %s\n' "$geth_dir/geth.tar.gz" | sha256sum --check
+          tar -xzf "$geth_dir/geth.tar.gz" -C "$geth_dir" "$geth_release/evm"
+          export EVM_GETH_EXE="$geth_dir/$geth_release/evm"
+          node scripts/eels/replay-authenticated-contract.mjs \
+            evidence/historical-1cat-shanghai-19100013.json "$PWD/.lake/build/bin/evm-call-transaction" \
+            | tee .lake/eels/historical-shanghai-contract-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="authenticated-shanghai-contract-replay-match" and x["fixtureSha256"]=="053b2d915c3a03ab529634ec6128df6e1e917418f355b51cb652af4e9162c78c" and x["transactionIndex"]==0 and x["authenticatedAccounts"]==3 and x["authenticatedStorageSlots"]==4 and x["gasUsed"]=="33987" and x["refundGas"]=="4800" and x["receiptStatus"]==1 and x["logCount"]==1 and x["returnBytesHex"]=="0"*63+"1" and x["keccakOptIn"] and x["ethereumJS"]["matched"] and x["geth"]["matched"] and x["roots"]["intermediateStateRoot"]=="0x4ec90276be487d2567d41039696e1bb75b3fa8cb796fc9705f5d83c606a17000" and x["roots"]["targetStorageRoot"]==x["publishedFinalTargetStorageRoot"]=="0x4fb8888e09be2dd7e1b31f7e39e670b7820adf8d179f382c34481a632ba0a08a" and len(x["negativeControls"])==6,x'
+      - name: Compare signed identity transactions and complete state against EthereumJS and pinned Geth
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          geth_exes=("$RUNNER_TEMP"/evm-geth-replay.*/geth-alltools-linux-amd64-1.17.10-1df30b18/evm)
+          test "${#geth_exes[@]}" -eq 1
+          export EVM_GETH_EXE="${geth_exes[0]}"
+          node scripts/differential/identity-transaction.mjs .lake/build/bin/evm-call-transaction \
+            | tee .lake/eels/identity-transaction.json | python3 -c '
+          import json, sys
+          x = json.load(sys.stdin)
+          assert x["compared"] == x["matched"] == len(x["rows"]) == 84, x
+          assert x["nestedCases"] == 57 and x["directCases"] == 27, x
+          assert x["ethereumJS"]["matched"] == x["geth"]["matched"] == 84, x
+          assert x["failed"] == x["unsupported"] == x["localRefusals"] == x["notExecuted"] == 0 and not x["failures"], x["failures"]
+          assert x["missingWitnessRefused"], x
+          assert x["negativeControls"] == dict.fromkeys(["changedGas", "changedReceiptStatus", "changedTargetCredit", "changedOutputBytes"], True), x["negativeControls"]'
+      - name: Verify the captured Ethereum mainnet SwapRouter code against its header and EIP-1186 proof
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node scripts/eels/verify-rpc-code-witness.mjs \
+            scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-factory.json \
+            scripts/rpc/evidence/ethereum-mainnet-26473707-swaprouter-code-proof.json \
+            | tee .lake/eels/mainnet-rpc-code-proof.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="header-and-code-witness-match" and x["chainId"]==1 and x["codeBytes"]==12070 and x["accountProofNodes"]==8 and x["negativeControls"]==["changed-runtime-byte","changed-state-root"],x'
+      - name: Require all six official Prague EELS signed transaction types with Lean and authenticated roots
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          curl --fail --location --silent --show-error --retry 2 \
+            --output .lake/eels/eip7623.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/prague/eip7623_increase_calldata_cost/test_eip_7623.json"
+          printf '9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4  .lake/eels/eip7623.json\n' | sha256sum --check
+          node scripts/eels/run-lean-prague-all-types.mjs --fixture .lake/eels/eip7623.json --out .lake/eels/lean-prague-all-results.json | tee .lake/eels/summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-prague-all-results.json")); assert x["status"]=="pass" and x["passed"]==6 and x["failed"]==0 and x["unsupported"]==0 and x["actualLeanStateTestsExecuted"]==6 and len(x["cases"])==6 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"]),x'
+      - name: Compare all six Prague cases to content-pinned EELS roots and falsify ledger reports
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-prague-six-ledger.py .lake/eels/lean-prague-all-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="six-published-prague-roots-confirmed" and x["passed"]==6 and x["unsupported"]==0 and x["adversarialLedgerMutationsRejected"]==6,x'
+      - name: Execute genuine nonempty EELS Cancun contracts using Lean and reconstruct state roots
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          curl --fail --location --silent --show-error --retry 2 \
+            --output .lake/eels/push0-contracts.json \
+            "https://raw.githubusercontent.com/ethereumjs/execution-spec-tests-fixtures/3c4287ae3aea1f45af9288629834f0584fcde69a/stable/state_tests/shanghai/eip3855_push0/test_push0_contracts.json"
+          printf '1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba  .lake/eels/push0-contracts.json\n' | sha256sum --check
+          node scripts/eels/run-lean-contract-state-tests.mjs \
+            --fixture .lake/eels/push0-contracts.json \
+            --out .lake/eels/lean-contract-results.json | tee .lake/eels/contract-summary.json
+          python3 -c 'import json; x=json.load(open(".lake/eels/lean-contract-results.json")); t=x["totals"]; assert x["status"]=="pass" and t["passed"]==6 and t["failed"]==0 and t["unsupported"]==0 and t["forkCases"]==6 and t["fixtureCases"]==24 and all(c["computedStateRoot"]==c["expectedStateRoot"] for c in x["cases"] if c["status"]=="pass"),x'
+      - name: Verify active v2 assurance and falsification controls against fresh Cancun replay
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/check-active-ledger.py --contract-result .lake/eels/lean-contract-results.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["currentContractReplayChecked"],x'
+          python3 scripts/test-active-ledger.py
+      - name: Reject falsified nonempty EELS contract roots, storage and signer
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/contract-selftest.mjs .lake/eels/push0-contracts.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==4 and all(c["rejected"] for c in x["controls"]),x'
+      - name: Reject forged Prague EIP-4844 blobs and EIP-7702 signatures, delegation and roots
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/prague-all-selftest.mjs .lake/eels/eip7623.json .lake/eels/negative-controls | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["checked"]==9 and all(c["rejected"] for c in x["checks"]),x'
+      - name: Reconstruct real Ethereum mainnet Frontier block 46147 transaction and receipt commitments
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          npm ls --prefix scripts/eels @ethereumjs/mpt @ethereumjs/rlp
+          node scripts/eels/replay-first-mainnet.mjs \
+            --fixture evidence/frontier-mainnet-46147.json \
+            --out .lake/eels/first-real-mainnet.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
+      - name: Verify present/absent secure-account proofs, sparse state updates and ten adversarial changes
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/verify-frontier-account-witness.mjs \
+            --historical evidence/frontier-mainnet-46147.json \
+            --selftest \
+            --out .lake/eels/frontier-prestate-synthetic-mpt-test.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="synthetic-archive-proof-mutation-tests-pass" and x["syntheticOnly"] is True and x["completeTrieMatchesSparseProofTrie"] and x["forgedProofsRejected"]==10 and x["syntheticScenarios"]==2 and x["testedPresentAndAbsentRecipient"] and x["historicalPrestateAvailable"] is False and x["actualMainnetStateRootReplayed"] is False,x'
+          node --check scripts/eels/fetch-frontier-account-witness.mjs
+      - name: Decode exact immutable block-46146 archive witness (offline, content-addressed)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          base64 --decode evidence/frontier-mainnet-46146-account-proofs.json.gz.b64 | \
+            gzip --decompress > .lake/eels/frontier-46146-archive-witness.json
+          printf '9c9286d7c9500aca5426b7bf44bc74b19f84d2b16761dfb10ea7948bbef17924  .lake/eels/frontier-46146-archive-witness.json\n' | sha256sum --check
+          python3 -c 'import json; x=json.load(open(".lake/eels/frontier-46146-archive-witness.json")); assert x["schemaVersion"]==1 and x["parentHeader"]["number"]=="0xb442" and x["parentHeader"]["hash"]=="0x5a41d0e66b4120775176c09fcf39e7c0520517a13d2b57b18d33d342df038bfc" and len(x["accounts"])==3,x'
+      - name: Require REAL authenticated 2015 transaction and block state roots via Lean and EthereumJS MPT
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/verify-frontier-account-witness.mjs \
+            --historical evidence/frontier-mainnet-46147.json \
+            --witness .lake/eels/frontier-46146-archive-witness.json \
+            --out .lake/eels/frontier-real-mainnet-state-root-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="full-historical-three-account-root-replay-pass" and x["block"]=="46147" and x["witnessedAccounts"]==3 and x["derivedIntermediateStateRoot"]=="0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["derivedFinalBlockStateRoot"]=="0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169" and x["transactionGasUsed"]=="21000" and x["transactionFeeWei"]=="1050000000000000000",x'
+      - name: Independently recompute both REAL roots using pure Python Keccak/RLP/MPT
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/eels/independent-frontier-trie.py .lake/eels/frontier-46146-archive-witness.json \
+            | tee .lake/eels/frontier-independent-python-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["accountsVerified"]==3 and x["recipientNonexistentBeforeTransaction"] and x["intermediateRoot"]=="96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["postBlockRoot"]=="0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",x'
+          python3 scripts/eels/frontier-independent-negative.py .lake/eels/frontier-46146-archive-witness.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["mainnetReplayVerified"] and x["adversarialControlsRejected"]==6 and x["originalTransactionAndBlockRootsReplayed"]==2 and x["keccakVectorsChecked"]==24,x'
+      - name: Preserve published fixture, host transition results and npm resolution
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-eels-state-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            formal/lean4/evm-cleanroom/.lake/eels/
+            formal/lean4/evm-cleanroom/scripts/eels/package-lock.json

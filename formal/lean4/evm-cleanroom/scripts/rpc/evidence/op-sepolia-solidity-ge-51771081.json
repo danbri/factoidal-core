@@ -1,0 +1,343 @@
+{
+  "schemaVersion": 1,
+  "captureStatus": "captured",
+  "expectedProfile": {
+    "id": "op-sepolia",
+    "name": "OP Sepolia",
+    "chainId": 11155420,
+    "chainType": "op-stack-rollup",
+    "defaultRpc": "https://sepolia.optimism.io",
+    "source": "https://github.com/ethereum-optimism/superchain-registry/blob/main/chainList.json"
+  },
+  "provider": {
+    "origin": "https://sepolia.optimism.io",
+    "customEndpoint": false,
+    "chainId": "0xaa37dc"
+  },
+  "acquisition": {
+    "blockSelector": "latest",
+    "stateQuerySelector": "canonical-block-hash",
+    "before": {
+      "number": "0x315f6c9",
+      "hash": "0x9ece6403078e793bdabf952c0004d941ae4f724166da4352435378e8fdef47d5"
+    },
+    "after": {
+      "number": "0x315f6c9",
+      "hash": "0x9ece6403078e793bdabf952c0004d941ae4f724166da4352435378e8fdef47d5"
+    },
+    "requests": [
+      {
+        "id": 1,
+        "method": "eth_chainId",
+        "params": [],
+        "startedAt": "2026-11-22T10:51:38.139Z",
+        "durationMs": 4751,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 59,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 45,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 45,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "ef1b85ff59f7be46cfe6640e8559047aa13d4eadad5de15e4eada6e7b89d320f"
+      },
+      {
+        "id": 2,
+        "method": "eth_getBlockByNumber",
+        "params": [
+          "latest",
+          false
+        ],
+        "startedAt": "2026-11-22T10:51:42.891Z",
+        "durationMs": 152,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 82,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1979,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1979,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "06f565428e945db9aad693225c46254251f15740796e70549b0229c419a41b93"
+      },
+      {
+        "id": 3,
+        "method": "eth_getBlockByNumber",
+        "params": [
+          "0x315f6c9",
+          false
+        ],
+        "startedAt": "2026-11-22T10:51:43.044Z",
+        "durationMs": 154,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 85,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1979,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1979,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "b1b7d26960033899347ed5da72aa35178f1aff9c7352d3732cf580fcc14a2940"
+      },
+      {
+        "id": 4,
+        "method": "eth_getBlockByHash",
+        "params": [
+          "0xbadb931218b4aebded55a498a2b6be3954f16257a28777390c1e25240aeded07",
+          false
+        ],
+        "startedAt": "2026-11-22T10:51:43.199Z",
+        "durationMs": 153,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 140,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1910,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1910,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "fa64158e84898b21ed3b11b39ad7dbaa50f7d49f2b643dbd8669443391c30e87"
+      },
+      {
+        "id": 5,
+        "method": "eth_getCode",
+        "params": [
+          "0x1111111111111111111111111111111111111111",
+          {
+            "blockHash": "0x9ece6403078e793bdabf952c0004d941ae4f724166da4352435378e8fdef47d5",
+            "requireCanonical": true
+          }
+        ],
+        "startedAt": "2026-11-22T10:51:43.352Z",
+        "durationMs": 154,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 210,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 39,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 39,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "263a270121832710785bd2ad62130d058d4d1286203cda4201ee673170664a8d"
+      },
+      {
+        "id": 6,
+        "method": "eth_call",
+        "params": [
+          {
+            "to": "0x1111111111111111111111111111111111111111",
+            "data": "0x85e1f66c80000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000000",
+            "value": "0x0"
+          },
+          {
+            "blockHash": "0x9ece6403078e793bdabf952c0004d941ae4f724166da4352435378e8fdef47d5",
+            "requireCanonical": true
+          },
+          {
+            "0x1111111111111111111111111111111111111111": {
+              "code": "0x60808060405260043610156011575f80fd5b5f3560e01c6385e1f66c146023575f80fd5b34604157604036600319011260415760209060243560043510158152f35b5f80fdfea26469706673582212203f1f62cd947375d9cd810b7e54c10b2cfcd7e139a554c233d856392377f5cf6b64736f6c634300081e0033"
+            }
+          }
+        ],
+        "startedAt": "2026-11-22T10:51:43.507Z",
+        "durationMs": 155,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 683,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 103,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 103,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "29e2bd94fbf2f0ab4afb31524c3b38c5763cc2d6c71292f05bef542220d2ee5d"
+      },
+      {
+        "id": 7,
+        "method": "eth_getBlockByNumber",
+        "params": [
+          "0x315f6c9",
+          false
+        ],
+        "startedAt": "2026-11-22T10:51:43.662Z",
+        "durationMs": 153,
+        "requestHeaders": {
+          "content-type": "application/json",
+          "content-length": 85,
+          "accept-encoding": "identity"
+        },
+        "responseHeaders": {
+          "content-length": 1979,
+          "content-type": "application/json"
+        },
+        "httpStatus": 200,
+        "bytes": 1979,
+        "remoteAddress": null,
+        "tls": {
+          "protocol": "TLSv1.3",
+          "cipher": "TLS_AES_256_GCM_SHA384",
+          "serverCertificateSha256": "C8:A3:B5:FD:4D:B6:3B:3F:AC:36:07:DD:82:49:9C:87:A3:B6:4E:A1:80:E3:EB:80:B5:CB:09:E3:35:5C:02:2E",
+          "verified": true
+        },
+        "responseBodySha256": "857743b0b4a618e9b2d58933911d6d01f8d6074254427283a8cdf8fd698c72dc"
+      }
+    ]
+  },
+  "providerAssertions": {
+    "block": {
+      "baseFeePerGas": "0xfa",
+      "blobGasUsed": "0x49250",
+      "difficulty": "0x0",
+      "excessBlobGas": "0x0",
+      "extraData": "0x01000000fa000000020000000000000000",
+      "gasLimit": "0x2625a00",
+      "gasUsed": "0x57bfa",
+      "hash": "0x9ece6403078e793bdabf952c0004d941ae4f724166da4352435378e8fdef47d5",
+      "logsBloom": "0x00000000000000000000000000000000000001000000004000000000000000000000100000000000000008000000000000000000000200000000020000000000000000000000000000000001002000000000000001000000000000000000000000000000020000000000000000002800000000000800000000000800000010001000000000000000000000000000000000000480000000000000000000200000000000001000000000000400040000000000000000000000000000200000000000000000000000000000000000000000004000000000000000000000000020000000000000000000000080000000000000000000002000000000000000000000",
+      "miner": "0x4200000000000000000000000000000000000011",
+      "mixHash": "0x9a6f2f9b6d9414b5e7f78a7455217004faddd0826c802a8d196e9ca212776d1b",
+      "nonce": "0x0000000000000000",
+      "number": "0x315f6c9",
+      "parentBeaconBlockRoot": "0x898eebfaccb59441084bbd4815274773718bc92e5620c6e8fe4c3ef3239ad606",
+      "parentHash": "0xbadb931218b4aebded55a498a2b6be3954f16257a28777390c1e25240aeded07",
+      "receiptsRoot": "0x2c0fdddc92aa619eb7a55c10d7a69ef0a9e206b4e6117850bb3c14679d04c5e2",
+      "requestsHash": "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "size": "0x9a7",
+      "stateRoot": "0x350d78878434d81a91f335573130d472a56244dae2f51a6730a3ee0cd0f70a40",
+      "timestamp": "0x6b02c93e",
+      "transactions": [
+        "0xc1e58bed08af28a34ca4438fc40dfddfdd0f16b69d56b680f9b8187664e4b0eb",
+        "0x32d8cd8c7e13ab2dcb0bab236230faa0d3937add9f098e3222a361d0f5afe790",
+        "0x3ad000b8a7a67cf65251824df31d4dd54d9c808f67993b5eca4991c42b97aaf2"
+      ],
+      "transactionsRoot": "0xd35e6cbb5985dab3fe321f0c455803bc5b33f4844dec614452395e4e922755ef",
+      "uncles": [],
+      "withdrawals": [],
+      "withdrawalsRoot": "0x4fc859af56f88514804f3913e9e5d272f273660eb7f43189b12538d7ea3c338e"
+    },
+    "parentBlock": {
+      "baseFeePerGas": "0xfa",
+      "blobGasUsed": "0x19fa0",
+      "difficulty": "0x0",
+      "excessBlobGas": "0x0",
+      "extraData": "0x01000000fa000000020000000000000000",
+      "gasLimit": "0x2625a00",
+      "gasUsed": "0x2986a",
+      "hash": "0xbadb931218b4aebded55a498a2b6be3954f16257a28777390c1e25240aeded07",
+      "logsBloom": "0x00000100000000000000000000000000000000000001000000000000000000000000100000040000000000000000000000000000000280000000200000000000000000000001000000001001002000000000000001000000000000000000008000000000020000000000000000000800000000040000000000000000000000000000000000000000000000000000000000000480000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000",
+      "miner": "0x4200000000000000000000000000000000000011",
+      "mixHash": "0x9a6f2f9b6d9414b5e7f78a7455217004faddd0826c802a8d196e9ca212776d1b",
+      "nonce": "0x0000000000000000",
+      "number": "0x315f6c8",
+      "parentBeaconBlockRoot": "0x898eebfaccb59441084bbd4815274773718bc92e5620c6e8fe4c3ef3239ad606",
+      "parentHash": "0x7f8e152a2981bc629874f162aa8385867f116d791c0341911e0ae4683113a1d7",
+      "receiptsRoot": "0x1c81ec7c5994d175e74bb53ff00477f072ec25a93c56cb2892c786f1f72becb8",
+      "requestsHash": "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha3Uncles": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+      "size": "0x66b",
+      "stateRoot": "0xe2d96ca1f8c0cab2d19a7b7127285c257d9da7b16b115a8beb8aa36136cb6de1",
+      "timestamp": "0x6b02c93c",
+      "transactions": [
+        "0x1c6978846c6d46a9a00de517794509b8359ea58b7bf1167fe5e4b9c8dbb9e312",
+        "0xc83dc47ebbd748ad8e5b4d8d95e5f2ff093b7eb16d41626a17872273db5f6eb4"
+      ],
+      "transactionsRoot": "0x8144b23626431f159b46f9bd658f44e472705879e3f6999398ca59f959c1423b",
+      "uncles": [],
+      "withdrawals": [],
+      "withdrawalsRoot": "0x4fc859af56f88514804f3913e9e5d272f273660eb7f43189b12538d7ea3c338e"
+    },
+    "call": {
+      "address": "0x1111111111111111111111111111111111111111",
+      "dataHex": "0x85e1f66c80000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000000",
+      "valueHex": "0x0",
+      "chainCodeHex": "0x",
+      "executionCode": {
+        "source": "synthetic-state-override",
+        "dataHex": "0x60808060405260043610156011575f80fd5b5f3560e01c6385e1f66c146023575f80fd5b34604157604036600319011260415760209060243560043510158152f35b5f80fdfea26469706673582212203f1f62cd947375d9cd810b7e54c10b2cfcd7e139a554c233d856392377f5cf6b64736f6c634300081e0033"
+      },
+      "outcome": {
+        "kind": "return",
+        "dataHex": "0x0000000000000000000000000000000000000000000000000000000000000001"
+      }
+    }
+  },
+  "verification": {
+    "localComparison": {
+      "status": "match",
+      "engine": "evm-subset --pure-frame-call",
+      "codeSource": "synthetic-state-override",
+      "gas": "1000000",
+      "fuel": "10000",
+      "comparisonContext": "zero-value-context-free-v1",
+      "local": {
+        "kind": "return",
+        "dataHex": "0x0000000000000000000000000000000000000000000000000000000000000001"
+      }
+    },
+    "stateRoot": "unverified",
+    "transactionExecution": "unverified",
+    "blockHash": "unverified",
+    "consensus": "unverified"
+  }
+}
