@@ -188,9 +188,18 @@ only when the host holds a page (a match on a pair evaluated both). Band change 
 callgrind per frame: 691.6 M before, 606.6 M after; answers byte-equal over 4 pages and 3
 sequences.
 
+Then `edgeYs`: the fill edge ends of `tileListing` in one pass over each contour's points, in
+place of `NativeSVGPath.edges` (lists made by `zip` and `flatMap`) mapped to their y values;
+`edgeYs_eq` proves the same array. 606.6 M to 597.6 M.
+
+Tried and not kept: the tile listing on one thread (`listingParLeast` raised), to save the
+marking of objects for threads (`lean_mark_mt`) and the atomic frees after it. 597.7 M against
+606.6 M instructions, but 75-100 ms against 64-92 ms of wall time on 4 vCPUs: the parallel
+listing stays.
+
 ## 7. What remains
 
-- Scroll-band change: 607 M instructions on index.html after section 6 (654 M at the base of
+- Scroll-band change: 598 M instructions on index.html after section 6 (654 M at the base of
   section 2, 692 M at main b8dca504). The retained compile does not
   serve it, and a translation of the band changes every record and tile listing by floating-point
   arithmetic, so equal bytes need the work again. Measured parts to make cheaper with the same

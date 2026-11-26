@@ -3611,6 +3611,73 @@ def Primitive.edgeBands (m : Mapping) (p : BackendPrimitive) (edges : Array (Flo
     body := body ++ edgesMeeting edges (lo-margin) (hi+margin)
   return out.push body.size ++ body
 
+/-! Fill edge ends as an array (issue https://github.com/danbri/factoidal-core/issues/1124):
+`NativeSVGPath.edges` makes lists of pairs with `zip` and `flatMap`, which `tileListing` mapped to
+their y values for every primitive of a band (about 50 M of 607 M instructions of a band change).
+`edgeYs` makes the same array in one pass over each contour's points (`edgeYs_eq`). -/
+
+def cycStep {α β : Type} (f : α → β) : Array (β × β) × α → α → Array (β × β) × α :=
+  fun (acc,prev) p => (acc.push (f prev,f p),p)
+
+theorem cycFold {α β : Type} (f : α → β) : ∀ (rest : List α) (prev : α) (acc : Array (β × β)),
+    rest.foldl (cycStep f) (acc,prev) =
+      (acc ++ (((prev::rest).zip rest).map fun (a,b) => (f a,f b)).toArray, (prev::rest).getLast (by simp)) := by
+  intro rest
+  induction rest with
+  | nil => intro prev acc; simp
+  | cons x xs ih =>
+    intro prev acc
+    simp only [List.foldl_cons, cycStep]
+    rw [ih x]
+    simp [List.getLast_cons]
+
+theorem zipSnoc {α : Type} (y : α) : ∀ (prev : α) (rest : List α),
+    (prev::rest).zip (rest ++ [y]) = (prev::rest).zip rest ++ [((prev::rest).getLast (by simp), y)] := by
+  intro prev rest
+  induction rest generalizing prev with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.cons_append, List.zip_cons_cons, ih x, List.getLast_cons]
+    simp
+
+def cycPairs {α β : Type} (f : α → β) (acc : Array (β × β)) : List α → Array (β × β)
+  | [] => acc
+  | first :: rest =>
+    let (acc,last) := rest.foldl (cycStep f) (acc,first)
+    acc.push (f last,f first)
+
+theorem cycPairs_eq {α β : Type} (f : α → β) (acc : Array (β × β)) (l : List α) :
+    cycPairs f acc l = acc ++ ((l.zip (l.drop 1 ++ l.take 1)).map fun (a,b) => (f a,f b)).toArray := by
+  cases l with
+  | nil => simp [cycPairs]
+  | cons first rest =>
+    simp only [cycPairs, cycFold]
+    simp only [List.drop_one, List.tail_cons, List.take_one, List.head?_cons, Option.toList_some]
+    rw [zipSnoc]
+    simp
+
+theorem cycAll {γ α β : Type} (pts : γ → List α) (f : α → β) : ∀ (cs : List γ) (acc : Array (β × β)),
+    cs.foldl (fun acc c => cycPairs f acc (pts c)) acc =
+      acc ++ (((cs.flatMap fun c => (pts c).zip ((pts c).drop 1 ++ (pts c).take 1))).map fun (a,b) => (f a,f b)).toArray := by
+  intro cs
+  induction cs with
+  | nil => intro acc; simp
+  | cons c cs ih =>
+    intro acc
+    rw [List.foldl_cons, ih, cycPairs_eq]
+    simp [List.flatMap_cons, List.map_append, Array.append_assoc]
+
+/-- The local y of each end of each fill edge of `contours`, in the order of
+`NativeSVGPath.edges`: one pass over each contour's points. -/
+def edgeYs (contours : List LinearContour) : Array (Float × Float) :=
+  contours.foldl (fun acc c => cycPairs (·.y) acc c.points) #[]
+
+theorem edgeYs_eq (contours : List LinearContour) :
+    edgeYs contours = ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray := by
+  unfold edgeYs NativeSVGPath.edges
+  rw [cycAll]
+  simp
+
 /-- The tiles of one primitive, its fill edges in each row band of a tile and its stroke
 pieces in each cell (`tilesOf`): a function of the primitive, the mapping and the grid alone,
 so a retained compile keeps it with the primitive (`RetainedItem.listing`) and a frame that
@@ -3618,7 +3685,7 @@ changes nothing else lists it again without filtering any edge or placing any pi
 def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPrimitive) : TileListing := Id.run do
   -- The local y of each end of each fill edge of a path (in the order of its record).
   let ys : Option (Array (Float × Float)) := match p.geometry with
-    | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
+    | .path contours => some (edgeYs contours)
     | _ => none
   -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
   -- of tiles to one range of local y: one edge part for the row.
