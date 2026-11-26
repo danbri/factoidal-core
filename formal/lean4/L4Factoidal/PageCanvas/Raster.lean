@@ -406,6 +406,52 @@ abbrev Mask := Option ByteArray
   | none => 1
   | some b => b[i]!.toFloat / 255
 
+/-- Byte `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
+@[inline] def byteAt (a : ByteArray) (i : USize) : UInt8 :=
+  if h : i < a.usize then a.uget i (Prim.Bytes.usize_lt_size h) else 0
+
+theorem floatArray_usize_lt_size {a : FloatArray} {i : USize} (h : i < a.usize) : i.toNat < a.size := by
+  have h1 := USize.lt_iff_toNat_lt.mp h
+  simp only [FloatArray.usize, USize.toNat_ofNat', Nat.toUSize] at h1
+  have := Nat.mod_le a.size (2 ^ System.Platform.numBits)
+  omega
+
+/-- Value `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
+@[inline] def floatAt (a : FloatArray) (i : USize) : Float :=
+  if h : i < a.usize then a.uget i (floatArray_usize_lt_size h) else 0
+
+/-- The clip mask of a canvas of width `W` and `n` pixels after a clip with coverage `cov`,
+inside the old mask `old` (HTML §4.12.5.1.15: the new clip region is the intersection), the
+reference. -/
+def clipMaskRef (W n : Nat) (cov : Coverage) (old : Mask) : ByteArray := Id.run do
+  let mut m := bzeros n
+  let b := cov.box
+  for j in [0:b.h] do
+    for i in [0:b.w] do
+      let idx := (b.y + j) * W + (b.x + i)
+      let v := cov.cov[j * b.w + i]! * maskAt old idx
+      m := m.set! idx (toByte v)
+  return m
+
+/-- One row of `clipMask`: `n` pixels from canvas index `idx` and coverage index `ci`. -/
+def clipRow (cov : FloatArray) (old : Mask) : Nat → USize → USize → ByteArray → ByteArray
+  | 0, _, _, m => m
+  | n+1, idx, ci, m =>
+    let k : Float := match old with
+      | none => 1
+      | some o => (byteAt o idx).toFloat / 255
+    clipRow cov old n (idx + 1) (ci + 1) (Prim.Bytes.setU8 m idx (toByte (floatAt cov ci * k)))
+
+/-- `clipMaskRef` with each row a tail call on `USize` indices (issue 1098: the game sets a
+clip of the whole canvas each frame). The same expression for each byte; a `#guard` of
+`Tests.lean` compares the two. -/
+def clipMask (W n : Nat) (cov : Coverage) (old : Mask) : ByteArray := Id.run do
+  let mut m := bzeros n
+  let b := cov.box
+  for j in [0:b.h] do
+    m := clipRow cov.cov old b.w ((b.y + j) * W + b.x).toUSize (j * b.w).toUSize m
+  return m
+
 /-- What a draw paints: the paint, its coverage and alpha, the operator and the clip. -/
 structure Draw where
   ready : Ready
@@ -519,20 +565,6 @@ def rowConstant : Ready → Bool
 
 /-- Pixels a solid draw must cover before `overTable` is made for it. -/
 def tableMin : Nat := 2048
-
-/-- Byte `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
-@[inline] def byteAt (a : ByteArray) (i : USize) : UInt8 :=
-  if h : i < a.usize then a.uget i (Prim.Bytes.usize_lt_size h) else 0
-
-theorem floatArray_usize_lt_size {a : FloatArray} {i : USize} (h : i < a.usize) : i.toNat < a.size := by
-  have h1 := USize.lt_iff_toNat_lt.mp h
-  simp only [FloatArray.usize, USize.toNat_ofNat', Nat.toUSize] at h1
-  have := Nat.mod_le a.size (2 ^ System.Platform.numBits)
-  omega
-
-/-- Value `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
-@[inline] def floatAt (a : FloatArray) (i : USize) : Float :=
-  if h : i < a.usize then a.uget i (floatArray_usize_lt_size h) else 0
 
 /-- `n` pixels of one row of `compositeOver`: column `x`, mask index `idx` (the pixel's
 index in the canvas), coverage index `ci`. A tail call on `USize` indices: as a `for` loop

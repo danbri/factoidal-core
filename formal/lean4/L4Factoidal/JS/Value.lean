@@ -309,6 +309,8 @@ structure Ctx where
   home : Value := .undef
   /-- The running function object (a class constructor's fields). -/
   fnObj : Value := .undef
+  /-- The number of arguments of the running call (`Expr.argCount`). -/
+  argc : Nat := 0
   deriving Inhabited
 
 inductive BindMode where

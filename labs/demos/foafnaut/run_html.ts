@@ -27,6 +27,7 @@ import {pngOf,texturePixels} from "./png_write.ts";
 import {startCompileWorker,type CompileClient} from "./native_html_compile.ts";
 import {startTabWorkers,type TabWorkers} from "./native_html_tabs.ts";
 import {MONO_FAMILY,SERIF_FAMILY,monoFontPath,serifFontHost,serifFontPath,wantsMono,wantsSerif} from "./serif_font.ts";
+import {heldPageId,resolvePage} from "./native_html_layout.ts";
 
 /** What this program was built from: the record build-executables.sh compiles into it. */
 type BuildInfo={commit?:string;commitFull?:string;dirty?:boolean;builtAt?:string;version?:string;release?:boolean};
@@ -399,6 +400,7 @@ async function main() {
   // Presents of page canvases with no Lean frame (a turn's replay, blit and composite), and
   // their times, for the exit summary.
   const pageGpuMs:number[]=[];
+  const pageUploadBytes:number[]=[];
   const takeShot=async()=>{
     const texture=session?.offscreenTexture,file=shotFile;
     if(!texture||!file||!device)return;
@@ -409,8 +411,12 @@ async function main() {
   const gpuFlush=()=>{
     if(!session)return;
     while(gpuTurns.length){const t=gpuTurns.shift()!,start=performance.now();
+      // The canvas pixels this turn writes to textures (Lean's rectangles, issue 1098): bytes and rectangles.
+      let uploadBytes=0,rects=0;
+      for(const c of t.commands as {k?:string;w?:number;h?:number}[])if(c?.k==="pixels"){uploadBytes+=(c.w??0)*(c.h??0)*4;rects++;}
       session.pageGpu(t.page,t.commands).then(r=>{if(!r?.presented)return;const ms=Math.round((performance.now()-start)*10)/10;
-        pageGpuMs.push(ms);if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms}));
+        pageGpuMs.push(ms);pageUploadBytes.push(uploadBytes);
+        if(perfSummary)console.log(JSON.stringify({type:"native-html-page-canvas",t:Math.round(performance.now()),ms,uploadBytes,rects}));
         if(shotFile&&!shotAtEnd&&pageGpuMs.length>=120&&!(document as {imagesPending?:()=>boolean}).imagesPending?.())takeShot();})
         .catch(error=>console.error("Native HTML: page GPU failed:",String(error)));}
   };
@@ -1701,7 +1707,7 @@ async function main() {
         turnsPerSecond:idleStats.idleMs>0?Math.round(idleStats.idleTurns/(idleStats.idleMs/1000)*10)/10:null},
       gpu:{framesInFlight,submitToDoneMsP50:percentile(session?.gpuTimes??[],0.5),submitToDoneMsP95:percentile(session?.gpuTimes??[],0.95),
         maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,maxBlockedMs:session?.stats.gpu.maxBlockedMs??0,maxWaitsBetweenPumps,turnAsks:session?.stats.gpu.turnAsks??0,fallbackAsks:session?.stats.gpu.fallbackAsks??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
-      logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95)},
+      logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95),uploadBytesP50:percentile(pageUploadBytes,0.5),uploadBytesP95:percentile(pageUploadBytes,0.95)},
       // Page timer turns (issue 1098): the engine's time, the call beyond it, the wait before the next ask.
       timerTurns:{count:timerTurns.leanMs.length,leanMsP50:percentile(timerTurns.leanMs,0.5),leanMsP95:percentile(timerTurns.leanMs,0.95),
         callMsP50:percentile(timerTurns.callMs,0.5),callMsP95:percentile(timerTurns.callMs,0.95),waitMsP50:percentile(timerTurns.waitMs,0.5),waitMsP95:percentile(timerTurns.waitMs,0.95)},
@@ -1837,8 +1843,12 @@ async function main() {
       let next:HTMLArtifact,nextLayers:HTMLLayers|undefined,where="worker",workerMs:number|undefined;
       try{
         if(layered){
-          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,request.options,gesture));bandMs=workerMs;}
-          else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,request.options);}
+          // `have` (issue 1124 stage C): the page answer on screen; Lean answers it kept or patched.
+          const held=current?.layers.page,have=heldPageId(held);
+          const options=have===undefined?request.options:{...request.options,have:{page:have}};
+          if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,options,gesture));bandMs=workerMs;}
+          else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,options);}
+          nextLayers=resolvePage(nextLayers,held);
           next=nextLayers.page;
         }
         else if(worker?.alive){({artifact:next,workerMs}=await worker.compile(request.source,sentWidth,sentHeight,request.options,gesture));}

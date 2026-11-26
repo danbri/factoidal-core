@@ -32,6 +32,12 @@ export function unrle(b,w,h){
   return out;
 }
 
+// Base64 text to bytes: the engine's built-in decoder where it has one, else atob into one array.
+const fromB64=typeof Uint8Array.fromBase64==='function'?t=>Uint8Array.fromBase64(t)
+  :t=>{const s=atob(t),n=s.length,out=new Uint8Array(n);for(let i=0;i<n;i++)out[i]=s.charCodeAt(i);return out;};
+// The bytes of a `pixels` command (straight RGBA rows of the rectangle w x h; run-length with `rle`).
+export function decodePixels(c){const raw=fromB64(c.data);return c.rle?unrle(raw,c.w,c.h):raw;}
+
 export function createPageGpu(device,{watchdogMs=WATCHDOG_MS}={}){
   let page=-1,blitCode='',blitPipeline,rect,lostPage=-1,lostTold=false;
   const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0,computePasses:0,dispatches:0,reads:0,lost:0};
@@ -61,8 +67,10 @@ export function createPageGpu(device,{watchdogMs=WATCHDOG_MS}={}){
       case 'shader':objs.set(c.g[1],device.createShaderModule({code:c.code}));break;
       // Canvas 2D (docs/designissues/2026-11-08-canvas-2d.md): the pixels Lean drew, the whole canvas.
       case 'pixels':{
-        const raw=Uint8Array.from(atob(c.data),ch=>ch.charCodeAt(0)),bytes=c.rle?unrle(raw,c.w,c.h):raw;
-        device.queue.writeTexture({texture:of(c.g)},bytes,{bytesPerRow:c.w*4},[c.w,c.h]);stats.pixels++;break;
+        // Only the rectangle drawn since the last pixels (x, y; the whole canvas when absent).
+        const bytes=decodePixels(c);
+        device.queue.writeTexture({texture:of(c.g),origin:[c.x??0,c.y??0]},bytes,{bytesPerRow:c.w*4},[c.w,c.h]);
+        stats.pixels++;stats.pixelBytes=(stats.pixelBytes??0)+bytes.byteLength;break;
       }
       case 'pipeline':{
         const module=of(c.shader);

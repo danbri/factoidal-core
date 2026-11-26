@@ -8,7 +8,8 @@ L4Factoidal.PageCanvas.Theorems: what Lean proves about Canvas 2D
    - `Raster.blendPixel_outside_clip`: a pixel outside the clip region keeps its value;
    - `run_size`: after any display list every canvas's bitmap has `width × height × 4`
      bytes; `Canvas.onBitmap_size`: a draw keeps the size of the bitmap it draws on;
-   - `Canvas.emit_pixels`: the host gets pixels only of a canvas's own size.
+   - `Canvas.emit_pixels`: the host gets pixels only of a canvas's own size, in a rectangle
+     inside it (`Box.within_le`; the rectangle is the canvas's damage, issue 1098).
 2. `save`/`restore` is a stack: `State.Stack.restore_save`, `restore_setters_save`.
 3. Origin-clean flags (HTML §4.12.5.6; origin isolation C2, issue 524, lemma L13 of
    docs/designissues/2026-11-16-origin-isolation.md):
