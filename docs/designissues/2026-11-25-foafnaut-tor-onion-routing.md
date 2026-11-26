@@ -642,11 +642,14 @@ depend on it.
   the 75 s macOS connect timeout), worst event-loop lag 38 ms with no stall. `nc` to a directory
   authority on 443 timed out in the same state of the Mac.
 - Correction: the message of commit e33848e6b says "The network path drops TCP to Tor relays;
-  not the transport". That is not established. An OONI Probe Tor test from the same Mac and
-  network at 16:59 UTC reached all 10 directory authorities
-  (https://explorer.ooni.org/measurement/20261126170052.206194_GB_tor_46e6945a9999a913). The
-  likely difference is the state of the Mac (Tailscale still partly active). What the trace
-  does establish: CPU work in the module did not block the event loop, and the connections
-  that opened worked.
-- Deciding run: `tailscale status`, `nc`, C tor and `--trace-conns` back to back. If `nc` and C
+  not the transport". That is not established. An OONI Probe Tor test made by another user on
+  the same ISP (Hyperoptic, AS56478) at 16:59 UTC reached all 10 directory authorities
+  (https://explorer.ooni.org/measurement/20261126170052.206194_GB_tor_46e6945a9999a913). It
+  was not made from the owner's Mac or house network (a first reading said it was, from
+  "platform macos"). It shows only that the ISP does not block Tor. A block in the house
+  network (a router or firewall with security filtering) or on the laptop (a VPN or Tailscale
+  route, a filter extension) is still possible. What the trace does establish: CPU work in the
+  module did not block the event loop, and the connections that opened worked.
+- Deciding runs: `tailscale status`, `nc`, C tor and `--trace-conns` back to back on the Mac;
+  and a phone test on the house Wi-Fi against mobile data. If `nc` and C
   tor connect and our client does not, the fault is in our transport.
