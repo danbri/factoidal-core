@@ -2244,6 +2244,55 @@ theorem familyFontsWith_mono (serif mono : Array Rendering.SfntProfile.Font) (fa
   unfold familyFontsWith
   rw [if_neg (by simp [hm]), h]
 
+/-- The answers of `f` for `keys`, each computed once, in a hash map (`memoLookup`). The layout
+asks for the fonts of a `font-family` value (`familyFontsWith`) for each word and each line, and
+each ask read the value again (`CSS.familyList`) and searched the faces: on a long page that was
+about a third of the first layout (https://github.com/danbri/factoidal-core/issues/1168).
+The table is a value of its own, made once by the caller with `let`: a function
+`memoOn f keys : String → α` with the map in its body is compiled as a function of three
+arguments, and made the map again at each ask (measured 2026-11-26: the first layout 1.6 times
+slower at p50, three pages with no first frame in 240 s). -/
+def memoTable {α : Type} (f : String → α) (keys : Array String) : Std.HashMap String α :=
+  keys.foldl (fun m k => if m.contains k then m else m.insert k (f k)) {}
+
+/-- `f v` from `table` when it holds `v`, else computed. -/
+def memoLookup {α : Type} (f : String → α) (table : Std.HashMap String α) (v : String) : α :=
+  match table[v]? with
+  | some a => a
+  | none => f v
+
+/-- Kind: equivalence. Says: a lookup in `memoTable f keys` is `f`: the layout with the fonts of
+each family value computed once is the layout with them computed at each ask.
+Does not say: anything of time or memory. -/
+theorem memoLookup_memoTable {α : Type} (f : String → α) (keys : Array String) :
+    memoLookup f (memoTable f keys) = f := by
+  funext v
+  unfold memoLookup memoTable
+  rw [← Array.foldl_toList]
+  have inv : ∀ (l : List String) (m : Std.HashMap String α), (∀ k a, m[k]? = some a → a = f k) →
+      ∀ k a, (l.foldl (fun m k => if m.contains k then m else m.insert k (f k)) m)[k]? = some a → a = f k := by
+    intro l
+    induction l with
+    | nil => intro m h; simpa using h
+    | cons x xs ih =>
+      intro m h
+      apply ih
+      intro k a hk
+      simp only at hk
+      split at hk
+      · exact h k a hk
+      · rw [Std.HashMap.getElem?_insert] at hk
+        split at hk
+        · rename_i heq; simp at hk heq; subst heq; exact hk.symm
+        · exact h k a hk
+  have h0 : ∀ k a, (({} : Std.HashMap String α))[k]? = some a → a = f k := by simp
+  split
+  · rename_i a ha; exact inv _ _ h0 v a ha
+  · rfl
+
+#guard memoLookup (fun s => s.length) (memoTable (fun s => s.length) #["ab","c","ab"]) "ab" == 2
+#guard memoLookup (fun s => s.length) (memoTable (fun s => s.length) #["ab","c"]) "xyz" == 3
+
 /-- Whether the drawn text of `dom` has a family value that resolves to `g`
 (`FontFaceRule.genericOfValue`), by the computed styles of its text nodes: a host that holds
 no face for `g` gives it when a layout says so (`Laid.wantsSerif`, `Laid.wantsMono`). Each
@@ -2945,13 +2994,17 @@ def layOutDOMIn (h : Holds) (m : WebAccept.Mode) (request : JSON.Json) (graph : 
   let monoText := !h.mono.isEmpty && loaded.isSome && madeWants .monospace heldFamilies made
   -- The serif face draws the text whose family resolves to `serif` (`familyFontsWith`); the
   -- words of web fonts and of the serif face are kept across layouts, as the others are.
+  -- The fonts of each distinct family value of the cascade, once (`memoLookup_memoTable`).
+  let familyFontsOf := familyFontsWith (if serifText then h.serif else #[]) (if monoText then h.mono else #[]) faces faceFonts heldFamilies
+  let familyTable := if faceFonts.all Option.isNone && !serifText && !monoText then {} else
+    memoTable familyFontsOf (match made with | .ok (_,styles) => styles.map (·.fontFamily) | .error _ => #[])
   let font ← match loaded,memo with
     | some held,some words =>
       let heldKey := Rendering.SfntProfile.fontsKey held.fonts
       Rendering.SfntProfile.profile held.fonts words
         (shapeKept heldKey none held.fonts)
         (if faceFonts.all Option.isNone && !serifText && !monoText then fun _ => #[]
-         else familyFontsWith (if serifText then h.serif else #[]) (if monoText then h.mono else #[]) faces faceFonts heldFamilies)
+         else memoLookup familyFontsOf familyTable)
         (held.fonts[0]?.map fun primary web =>
           shapeKept ("with|" ++ Rendering.SfntProfile.fontsKey web ++ "|" ++ heldKey) (some primary) (web ++ held.fonts))
     | _,_ => pure (match face with | some f => Rendering.Layout.FontProfile.ofFace f | none => WebRender.asciiFont)
