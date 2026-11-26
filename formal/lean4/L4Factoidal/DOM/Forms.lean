@@ -127,12 +127,13 @@ def checkedInGroup (d : Dom) (k : NodeId) : Option NodeId :=
   (radioGroup d k).find? (checkedness d ·)
 
 /-- The reset algorithm of a form (HTML §4.10.22): its inputs lose the dirty checkedness
-and dirty value flags (their value is again the `value` attribute), and the options of its
+and dirty value flags (their value is again the `value` attribute); textareas take their
+child text and clear their dirty value flag and clean clone snapshot; and the options of its
 selects their dirtiness (the selectedness is again the `selected` attribute). -/
 def resetForm (d : Dom) (form : NodeId) : Dom :=
   (d.treeOrder form false).foldl (fun d j =>
-    if (isHtml d j ["input"] && formOwner d j == some form) || isHtml d j ["option"] then
-      d.setNode j fun x => { x with checkedness := none, dirtyValue := none }
+    if (isHtml d j ["input", "textarea"] && formOwner d j == some form) || isHtml d j ["option"] then
+      d.setNode j fun x => { x with checkedness := none, dirtyValue := none, textareaValue := none }
     else d) d
 
 /-- The summary of its parent details (HTML §4.11.2): the first `summary` child of a

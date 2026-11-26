@@ -121,10 +121,15 @@ structure Node where
   /-- The checkedness of an `input` once its dirty checkedness flag is set (HTML §4.10.5);
   `none` while the flag is false (`DOM.Forms.checkedness`). -/
   checkedness : Option Bool := none
-  /-- The value of an `input` in the value mode "value" once its dirty value flag is set
-  (HTML §4.10.5); `none` while the flag is false, when the `value` content attribute is the
-  value (`DOM.Forms.inputValue`). -/
+  /-- The raw value of a textarea, or the value of an input in value mode "value",
+  once its dirty value flag is set (HTML §4.10.5, §4.10.11). With `none`, inputs read
+  their `value` attribute; textareas read their clean value (`textareaRawValue`). -/
   dirtyValue : Option String := none
+  /-- A clean textarea's raw value after cloning. Usually a clean textarea reads its
+  child text directly; a shallow clone has that same raw value but no children. The
+  next children-changed step discards this snapshot. `dirtyValue` holds a textarea's
+  raw value once its dirty value flag is true (HTML §4.10.11). -/
+  textareaValue : Option String := none
   /-- The shadow root of an element that is a shadow host (DOM §4.9). -/
   shadow : Option NodeId := none
   /-- On a DocumentFragment: it is a shadow root, with this state (`DOM.Shadow`). -/
@@ -183,6 +188,43 @@ def isCharacterData (n : Node) : Bool := n.type == .text || n.type == .cdata || 
 def isTextNode (n : Node) : Bool := n.type == .text || n.type == .cdata
 def isHtmlElement (n : Node) (nm : String) : Bool :=
   n.type == .element && n.ns == some htmlNS && n.lname == nm
+
+/-- Child text content (DOM §4.2): only Text children, not all descendants. -/
+def childTextContent (d : Dom) (n : NodeId) : String :=
+  (d.get n).kids.foldl (init := "") fun s k =>
+    let x := d.get k
+    if isTextNode x then s ++ x.data else s
+
+/-- A textarea's raw value, independently of its default child text (HTML §4.10.11).
+The optional clean snapshot is needed for a shallow pristine clone. -/
+def textareaRawValue (d : Dom) (n : NodeId) : String :=
+  match (d.get n).dirtyValue with
+  | some v => v
+  | none => (d.get n).textareaValue.getD (d.childTextContent n)
+
+/-- Kind: property. Says: a dirty textarea reads its stored raw value.
+Does not say: cloning or mutations preserve the state; those have regression guards. -/
+theorem textareaRawValue_dirty (d : Dom) (n : NodeId) (v : String)
+    (h : (d.get n).dirtyValue = some v) : d.textareaRawValue n = v := by
+  simp [textareaRawValue, h]
+
+#print axioms textareaRawValue_dirty
+
+/-- HTML §4.10.11 children changed steps: a clean textarea takes its child text.
+Dirty textareas retain their raw value. Other elements have no textarea state. -/
+def textareaChildrenChanged (d : Dom) (n : NodeId) : Dom :=
+  let x := d.get n
+  if isHtmlElement x "textarea" && x.dirtyValue.isNone && x.textareaValue.isSome then
+    d.setNode n fun y => { y with textareaValue := none }
+  else d
+
+/-- CharacterData changes run the parent's children changed steps for Text nodes. -/
+def textareaTextChanged (d : Dom) (n : NodeId) : Dom :=
+  if isTextNode (d.get n) then
+    match (d.get n).parent with
+    | some p => d.textareaChildrenChanged p
+    | none => d
+  else d
 
 def children (d : Dom) (p : NodeId) : Array NodeId := (d.get p).kids
 
@@ -355,7 +397,10 @@ def remove (d : Dom) (node : NodeId) : Dom :=
   match (d.get node).parent with
   | none => d
   | some p =>
-    let d1 := d.setNode p fun pn => { pn with kids := pn.kids.filter (· != node) }
+    let d1 := d.setNode p fun pn =>
+      { pn with
+        kids := pn.kids.filter (· != node)
+        textareaValue := if isHtmlElement pn "textarea" && pn.dirtyValue.isNone then none else pn.textareaValue }
     d1.setNode node fun n => { n with parent := none }
 
 /-- Set the node document of `node` and its inclusive descendants, and of the
@@ -390,7 +435,9 @@ def linkChild (d : Dom) (p c : NodeId) (before : Option NodeId) : Dom :=
       | some b => match ks.findIdx? (· == b) with
         | some k => ks.insertIdxIfInBounds k c
         | none => ks.push c
-    { pn with kids }
+    { pn with
+      kids
+      textareaValue := if isHtmlElement pn "textarea" && pn.dirtyValue.isNone then none else pn.textareaValue }
   d1.setNode c fun n => { n with parent := some p }
 
 /-- "Insert" `node` into `parent` before `child` (DOM §4.2.3). A
@@ -442,7 +489,7 @@ def replaceAll (d : Dom) (node : Option NodeId) (parent : NodeId) : Dom := Id.ru
   for k in (d.get parent).kids do d := d.remove k
   match node with
   | some n => d.insert n parent none
-  | none => d
+  | none => d.textareaChildrenChanged parent
 
 /-- "Pre-remove" (DOM §4.2.3); `parent.removeChild(child)`. -/
 def preRemove (d : Dom) (child parent : NodeId) : Res Unit :=
@@ -701,7 +748,8 @@ def setTextContent (d : Dom) (n : NodeId) (value : String) : Dom :=
     else
       let (d, t) := d.createTextNode x.doc value
       d.replaceAll (some t) n
-  | .text | .cdata | .comment | .pi => d.setNode n fun y => { y with data := value }
+  | .text | .cdata | .comment | .pi =>
+    (d.setNode n fun y => { y with data := value }).textareaTextChanged n
   | .document | .doctype => d
 
 /-- `normalize()` (DOM §4.4): for each exclusive Text descendant in tree order,
@@ -743,7 +791,7 @@ def normalizeChildren (d : Dom) (p : NodeId) : Dom := Id.run do
   if let some t := keeper then d := d.setNode t fun y => { y with data := acc }
   d := d.setNode p fun y => { y with kids := keep }
   for g in gone do d := d.setNode g fun y => { y with parent := none }
-  return d
+  return d.textareaChildrenChanged p
 
 def normalize (d : Dom) (n : NodeId) : Dom := Id.run do
   let mut d := d
@@ -758,7 +806,9 @@ def cloneSingle (d : Dom) (src : NodeId) (doc : Option NodeId) : Dom × NodeId :
   let n : Node := { type := x.type, doc := doc.getD x.doc, ns := x.ns, pfx := x.pfx, lname := x.lname,
                     attrs := x.attrs, data := x.data, pubId := x.pubId, sysId := x.sysId,
                     htmlDoc := x.htmlDoc, contentType := x.contentType, checkedness := x.checkedness,
-                    dirtyValue := x.dirtyValue }
+                    dirtyValue := x.dirtyValue,
+                    textareaValue := if isHtmlElement x "textarea" && x.dirtyValue.isNone
+                      then some (d.textareaRawValue src) else none }
   let (d, id) := d.create n
   if x.type == .document then (d.setNode id fun y => { y with doc := id }, id) else (d, id)
 

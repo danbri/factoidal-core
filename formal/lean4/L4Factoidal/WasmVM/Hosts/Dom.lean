@@ -93,8 +93,8 @@ inductive Command where
   | importNode (node doc : Nat) (deep : Bool) (result : Nat)
   /-- The checkedness of an `input` set to `value` (`DOM.Forms.setChecked`). -/
   | setChecked (node : Nat) (value : Bool)
-  /-- The dirty value of an `input` (`Node.dirtyValue`): `some v` sets its value to `v` and
-  its dirty value flag, `none` clears the flag (HTML §4.10.5). -/
+  /-- The dirty value of an input or textarea (`Node.dirtyValue`): `some v` sets its raw
+  value and dirty value flag; `none` clears the flag (HTML §4.10.5, §4.10.11). -/
   | setValue (node : Nat) (value : Option String)
   /-- The reset algorithm of form `node` (`DOM.Forms.resetForm`). -/
   | resetForm (node : Nat)
@@ -1983,7 +1983,7 @@ def Command.apply (d : Dom) : Command → Except String Dom
     return Forms.resetForm d n
   | .setValue n v => do
     checkNode d n
-    if !Forms.isHtml d n ["input"] then throw "script command: target must be an input"
+    if !Forms.isHtml d n ["input", "textarea"] then throw "script command: target must be an input or textarea"
     return d.setNode n fun x => { x with dirtyValue := v }
   | .attachShadow h f r => do
     checkNode d h

@@ -17713,8 +17713,7 @@
   // options, "l" the labels of a control, "c" a label's control, "x" an option's
   // selectedness; tree_op 6 sets an option's selectedness. The selection of a text control is
   // the page's state; `setRangeText`'s arithmetic is Lean's (HTML.TextSelection, 187).
-  // A textarea's value is its text content and an input's its `value` attribute, as before
-  // (there is no separate dirty value yet).
+  // Lean keeps input and textarea live values apart from their content defaults (op 169).
   {
     const fq = (el, q) => { const r = n.query(nodeId(el), 186, q); return typeof r === 'string' ? r : ''; };
     const idsOf = r => (r === '' ? [] : r.split(' ').map(Number));
@@ -17863,9 +17862,14 @@
     ImageFactory.prototype = named.HTMLImageElement.prototype; def('Image', ImageFactory);
 
     // ---- textarea, output, fieldset ----
-    prop(T, 'value', function () { return this.textContent.replace(/\r\n?/g, '\n'); }, function (v) {
+    // HTML §4.10.11: Lean keeps the raw value and dirty flag apart from child text,
+    // including through shallow cloning. The IDL getter normalizes newlines.
+    prop(T, 'value', function () { return chk(n.query(nodeId(this), 169, 'v')).replace(/\r\n?/g, '\n'); }, function (v) {
       v = v === null ? '' : String(v);
-      if (v !== this.textContent) { this.textContent = v; selOf(this).start = selOf(this).end = v.length; selOf(this).dir = 'none'; }
+      const before = this.value;
+      chk(n.query(nodeId(this), 169, 's' + v));
+      const now = this.value;
+      if (now !== before) { const s = selOf(this); s.start = s.end = now.length; s.dir = 'none'; }
     });
     prop(T, 'defaultValue', function () { return this.textContent; }, function (v) { this.textContent = String(v); });
     prop(T, 'textLength', function () { return this.value.length; });

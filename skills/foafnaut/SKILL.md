@@ -621,6 +621,8 @@ https://github.com/danbri/factoidal-core/issues/1038).
 
 ## Records
 
+- [Textarea live-value cloning](../../docs/designissues/2026-11-26-textarea-cloning.md): clean clone snapshots, dirty values, DOM mutation hooks and the targeted WPT evidence.
+
 - [Frozen document base URLs](../../docs/designissues/2026-11-16-frozen-base-url.md): live script DOM cache, mutation hooks, URL reflection and its proof/test boundary.
 
 - [Architecture briefing](../../docs/designissues/2026-11-25-foafnaut-architecture-briefing.md) for an

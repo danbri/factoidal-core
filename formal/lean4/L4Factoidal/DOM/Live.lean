@@ -103,14 +103,14 @@ def replaceAll (d : Dom) (lv : Live) (node : Option NodeId) (parent : NodeId) : 
   for k in (d.get parent).kids do (d, lv) := remove d lv k
   match node with
   | some n => return insert d lv n parent none
-  | none => return (d, lv)
+  | none => return (d.textareaChildrenChanged parent, lv)
 
 /-- "Replace data" (DOM §4.10) after its checks: `count` units at `offset` by `data`. -/
 def replaceData (d : Dom) (lv : Live) (node offset count : Nat) (data : String) : Dom × Live :=
   let x := d.get node
   let len := utf16Length x.data
   let count := min count (len - offset)
-  (d.setNode node fun y => { y with data := replaceUnits y.data offset count data },
+  ((d.setNode node fun y => { y with data := replaceUnits y.data offset count data }).textareaTextChanged node,
    lv.mapBP (replaceDataStep node offset count (utf16Length data)))
 
 /-- `textContent` setter (DOM §4.4), as `Dom.setTextContent`. -/

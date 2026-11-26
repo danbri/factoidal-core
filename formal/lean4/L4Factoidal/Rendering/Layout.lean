@@ -1318,20 +1318,27 @@ private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
     let alt := CSS.attrValue n "alt"
     if alt.isEmpty then #[] else (textItems (.node id) s s!"[{alt}]").toArray
 
-/-- What a form control shows in its box (`CSS.controlText`): its value or label on one
-line in its own colour, a placeholder in the grey of other engines (`#757575`). Nothing for
-any other element. -/
-private def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
+/-- A textarea's children hold its default value; its visible live value comes from
+`controlItems`. Hide those children in both layout and intrinsic sizing. -/
+private def layoutNode (dom : Dom) (id : Nat) : DOM.Node :=
+  let n := dom.get id
+  if DOM.Dom.isHtmlElement n "textarea" then {n with kids := #[]} else n
+
+/-- What a form control shows in its box (`CSS.controlText`): its live value, label or
+placeholder. A textarea retains its whitespace and wrapping style; other controls use
+one line. Font preflight uses these same text items. -/
+def controlItems (dom : Dom) (id : Nat) (s : Computed) : Array Inline :=
   match CSS.controlText dom id with
   | none => #[]
   | some (text, placeholder) =>
     let grey : Color := ⟨0.459,0.459,0.459⟩
-    let pos := {s.pos with nowrap := true}
+    let textarea := DOM.Dom.isHtmlElement (dom.get id) "textarea"
+    let pos := if textarea then s.pos else {s.pos with nowrap := true}
     let t : Computed := { s with
       background := none
       underline := false
-      preformatted := false
-      preserveSegmentBreaks := false
+      preformatted := textarea && s.preformatted
+      preserveSegmentBreaks := textarea && s.preserveSegmentBreaks
       color := if placeholder then grey else s.color
       pos
     }
@@ -1376,7 +1383,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     (available : Float) : Nat → Nat → Except String (Array Inline)
   | 0, _ => throw "unsupported HTML nesting depth (maximum 64)"
   | fuel+1, id => do
-    let n := dom.get id
+    let n := layoutNode dom id
     let s := styles[id]!
     if s.display == .none then return #[]
     if n.type == .text then return (textItems (.node id) s n.data).toArray
@@ -2971,7 +2978,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
     -- The widths of an element's box. `outer`: of its margin box, as its `width` has it;
     -- else of its contents alone, whatever its `width` says (`Children.contentIntrinsic`).
     let boxWidths (id : Nat) (outer : Bool) : Except String (Float × Float) := do
-      let n := dom.get id
+      let n := layoutNode dom id
       let s := styles[id]!
       if s.display == .none then return (0,0)
       let edges := horizontalEdges s
@@ -3004,6 +3011,9 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
       match outer,s.width with
       | true,.px w => return (within w+edges,within w+edges)
       | _,_ =>
+        if DOM.Dom.isHtmlElement n "textarea" then
+          let (a,b) ← flowWidths id #[] (controlItems dom id s)
+          return (within a+add,within b+add)
         if s.display.isFlex then
           let (a,b) ← flexIntrinsic children s (collectItems dom styles id)
           return (within a+add,within b+add)
@@ -3606,7 +3616,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     -- (`Task.inner`).
     let box (id : Nat) (imposedWidth imposedHeight : Option Float) (contentOnly : Bool)
         (around : Array Floats.Box := #[]) (participates : Bool := false) : Except String Result := do
-      let n := dom.get id
+      let n := layoutNode dom id
       let s := styles[id]!
       if s.display == .none then return {}
       -- HTML §15.5.13: the rendered legend of a fieldset shrinks to fit its contents.
@@ -3743,7 +3753,9 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | none => match s.height with
           | .px h => if contentLimits then none else some (clampOpt minHeight maxHeight (max 0 h))
           | _ => if ratioFixed then ratioHeight.map (clampOpt minHeight maxHeight) else none
-      let content ← if s.display.isFlex then
+      let content ← if DOM.Dom.isHtmlElement n "textarea" then
+          flow s id #[] lead innerX innerY width (if joinsTop then unbounded else 0) around definite
+        else if s.display.isFlex then
           flexLayout children s (collectItems dom styles id)
             {x := innerX, y := innerY, width, height := definite, minHeight, maxHeight, measure}
         else if s.display.isGrid then

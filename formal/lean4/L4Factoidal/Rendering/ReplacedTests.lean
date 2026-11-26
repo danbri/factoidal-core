@@ -360,6 +360,55 @@ private def twoColour : Bitmap := ⟨6,6,ByteArray.mk <| Id.run do
   near (borderImageTiles .tile 0 70 30)[0]!.2.2.1 (1/3)
 #guard (borderImageTiles .tile 0 70 35).size == 2
 
+-- Textarea live state must reach the glyphs, independently of the default child text.
+-- The arena update is the state produced by the page host's `setValue` command.
+private def textareaDOM (value : Option String) (cloning : Option Bool := none) : Dom := Id.run do
+  let dom := DOM.parseHtmlDocument "<form id=f><textarea id=t placeholder=hint>default</textarea></form>"
+  let id := (dom.getElementById 0 "t").getD 0
+  let dom := dom.setNode id fun n => {n with dirtyValue := value}
+  match cloning with
+  | none => return dom
+  | some deep =>
+    let form := (dom.getElementById 0 "f").getD 0
+    let (dom, copy) := dom.cloneNode id deep
+    return ((dom.remove id).appendChild form copy).1
+
+private def textareaScene (dom : Dom) (extra : String := "") : Except String (Scene × Array Box) := do
+  let rules ← CSS.parse (css ++ "textarea{font-size:7px;line-height:7px;border:0;padding:0;width:60px;height:30px}" ++ extra)
+  Layout.render dom rules font noSVG 200 100
+
+private def textareaWords (dom : Dom) (extra : String := "") : Except String (List String) :=
+  (textareaScene dom extra).map fun r => r.1.glyphRuns.toList.map (·.text)
+
+#guard textareaWords (textareaDOM none) == .ok ["default"]
+#guard textareaWords (textareaDOM (some "live")) == .ok ["live"]
+#guard (let dom := textareaDOM (some "live")
+  dom.childTextContent ((dom.getElementById 0 "t").getD 0)) == "default"
+#guard textareaWords (textareaDOM (some "")) == .ok ["hint"]
+#guard textareaWords (textareaDOM (some "live") (some false)) == .ok ["live"]
+#guard textareaWords (textareaDOM (some "live") (some true)) == .ok ["live"]
+#guard textareaWords (textareaDOM none (some false)) == .ok ["default"]
+#guard textareaWords (textareaDOM (some "live")) "textarea{display:block}" == .ok ["live"]
+#guard textareaWords (textareaDOM (some "live")) "textarea{display:inline}" == .ok ["live"]
+#guard textareaWords (textareaDOM (some "live")) "textarea{display:flex}" == .ok ["live"]
+#guard (let dom := textareaDOM (some "live")
+  let id := (dom.getElementById 0 "t").getD 0
+  (textareaScene dom "textarea{width:auto}").toOption.bind fun r =>
+    (r.2.find? (fun b => b.source == id)).map (·.width)) == some 24
+#guard (let dom := textareaDOM (some "live")
+  let form := (dom.getElementById 0 "f").getD 0
+  textareaWords (Forms.resetForm dom form)) == .ok ["default"]
+#guard textareaWords (textareaDOM (some "first\r\nsecond\rlast")) == .ok ["first", "second", "last"]
+#guard ((textareaScene (textareaDOM (some "first\r\nsecond\rlast"))).toOption.map fun r =>
+  let ys := r.1.glyphRuns.toList.filterMap fun run => run.glyphs[0]?.map (·.y)
+  match ys with | [a,b,c] => a < b && b < c | _ => false) == some true
+#guard ((textareaScene (textareaDOM (some "aa bb")) "textarea{width:15px}").toOption.map fun r =>
+  let ys := r.1.glyphRuns.toList.filterMap fun run => run.glyphs[0]?.map (·.y)
+  match ys with | [a,b] => a < b | _ => false) == some true
+#guard ((textareaScene (textareaDOM (some "a  b"))).toOption.map fun r =>
+  let xs := r.1.glyphRuns.toList.filterMap fun run => run.glyphs[0]?.map (·.x)
+  match xs with | [a,b] => b-a == 18 | _ => false) == some true
+
 end L4Factoidal.Rendering.ReplacedTests
 
 #print axioms L4Factoidal.Rendering.Layout.pictureOffset_default
