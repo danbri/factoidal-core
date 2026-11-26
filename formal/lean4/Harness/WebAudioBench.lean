@@ -119,9 +119,16 @@ def run (c : Context.OfflineContext) (quanta : Nat) : IO (Float × UInt64) := do
   let t1 ← IO.monoNanosNow
   return ((t1 - t0).toFloat / 1.0e6 / quanta.toFloat, h)
 
-def median (xs : Array Float) : Float :=
-  let s := xs.qsort (· < ·)
-  s.getD (s.size / 2) 0.0
+/-- The median of a short array: the element with as many smaller as larger ones (insertion sort
+as loops; the array has 5 elements). -/
+def median (xs : Array Float) : Float := Id.run do
+  let mut s : Array Float := #[]
+  for x in xs do
+    let mut pos := s.size
+    for k in [0:s.size] do
+      if x < s.getD k 0.0 && pos == s.size then pos := k
+    s := s.insertIdxIfInBounds pos x
+  return s.getD (s.size / 2) 0.0
 
 def bench (name : String) (mk : IO Context.OfflineContext) (quanta : Nat) : IO Unit := do
   let c ← mk
