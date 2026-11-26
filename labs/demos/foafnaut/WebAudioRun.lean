@@ -14,11 +14,13 @@ through the engine's audio output (`L4Factoidal.WebAudio.Sink`, `formal/lean4/ff
   13.4): take the inbox and apply the messages (`RenderSide.applyBatch`); while running, read the
   sink's counters and render the quanta that bring the frames ahead of the output to the context's
   target (`RenderSide.quantaFor`), each written to the sink when it is rendered
-  (`RenderSide.quantum`); collect the sources that ended; publish the report; sleep until about
-  half the target has played (at least 1 ms). While suspended it waits for a message (a promise the poster resolves, as
-  `WebSession.serve` waits). The sink is opened by the task with the context's rate, the device's
-  channels and a capacity of 4 times the target (at least 8192 frames), paused while the context is
-  suspended and closed when it closes.
+  (`RenderSide.quantum`), except while the output takes nothing yet (after the sink opens, or
+  after a `resume()`: the sink stays paused until then), when they go in one write
+  (`RenderSide.fill`); collect the sources that ended; publish the report; sleep until about half
+  the target has played (at least 1 ms). While suspended it waits for a message (a promise the
+  poster resolves, as `WebSession.serve` waits). The sink is opened by the task with the context's
+  rate, the device's channels and a capacity of 4 times the target (at least 8192 frames), paused
+  while the context is suspended and closed when it closes.
 - **The registry** (`Registry`, a field of `WebDocument.Engine`): the runs by (page session,
   context), the audio output (asked once, `probe`) and the sink spec.
 - **`before`** (before a `scriptSession` call): the engine's audio output goes to `Held.audio`
