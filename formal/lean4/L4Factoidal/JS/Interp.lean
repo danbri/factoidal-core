@@ -8837,6 +8837,8 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
             modify fun h => { h with depth := saved }
             throw e
     let info := fd.info
+    -- the count of arguments, for `Expr.argCount` (taken before the plain path moves `args`)
+    let argc := args.size
     -- `args` is moved into the environment on the plain path (the array must have one owner:
     -- `fillSlots` then grows it in place)
     let (fenv, args) ← if info.plain then do
@@ -8846,16 +8848,16 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
       else do
         let e ← newEnv env
         pure (e, args)
-    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info) fun e => do
+    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info argc) fun e => do
       modify fun h => { h with depth := saved }
       if info.frameLocal then releaseEnv fenv
       throw e
 termination_by structural n _ _ _ _ _ _ _ _ _ => n
 
 /-- The rest of a call, after the environment is made (`callClosure`). -/
-def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → M Value
-  | 0, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info => do
+def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → Nat → M Value
+  | 0, _, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info, argc => do
     let r ← realm
     let thisV ← if fd.arrow then pure capThis
       else if fd.strict then pure thisV
@@ -8865,7 +8867,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
         | v => do pure (.obj (← toObj n v))
     let nt := if fd.arrow then capNT else newTarget
     let fo := if fd.arrow then Value.undef else fnObj
-    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo, argc }
     if !info.plain then
       if fd.usesArgs then
         let a ← alloc { proto := .obj r.objectProto, kind := .args }
@@ -8952,7 +8954,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
       match c with
       | .ret v => pure v
       | _ => pure .undef
-termination_by structural n _ _ _ _ _ _ _ _ _ _ _ => n
+termination_by structural n _ _ _ _ _ _ _ _ _ _ _ _ => n
 
 def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -9449,6 +9451,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure v
     | .classE c => evalClass n ctx c ""
     | .newTarget => pure ctx.newTarget
+    | .argCount => pure (.num (Float.ofNat ctx.argc))
     | .yieldE .. => throwErr .syntax "yield in this position is not supported"
     | .superMember k =>
       let proto ← homeProto ctx
