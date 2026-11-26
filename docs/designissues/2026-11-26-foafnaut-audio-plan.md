@@ -419,7 +419,7 @@ latency. `--perf-summary` gets a block `audio`.
   umbrella); Lake (`libl4audio`, `audio-sink-test`) and `build-web-render.sh` wiring; `tests/audio/run.sh`
   (ThreadSanitizer stress, trace replay through the Lean model, WAV check). The Lean 4.33 ABI
   gives an `IO a` extern no world argument and a `BaseIO a` extern the plain value (no
-  `lean_io_result`); `audio_sink.c` records it. Still to do in D1: nothing; D1m (CoreAudio) and
+  `lean_io_result`); `audio_sink.c` records it. Not done in D1: a full `build-web-render.sh --native` run (the cloud box passed the 40-minute cap at the 17th of 56 lab modules, in `SVGRaster`; the sink's object compiles with the script's flags and `nm` shows `l4_audio_sink_open`); run it on the next build machine; D1m (CoreAudio) and
   D3 use these.
 - D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
   sessions, so this part is written against Apple's documented C API and is checked by the macOS
