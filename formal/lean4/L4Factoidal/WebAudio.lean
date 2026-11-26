@@ -21,11 +21,11 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   `startRendering` (whole quanta, then `length` frames rounded to binary32).
 - `WebAudio.Buffer`: `AudioBuffer` (channels of binary32 values; copy rules) and the
   `AudioBufferSourceNode` playback algorithm (rate, detune, loops, offset, duration, sub-sample
-  start, sample-rate conversion). Not yet called by `Render`.
+  start, sample-rate conversion). Called by `Render.runKernel`.
 - `WebAudio.Oscillator`: `PeriodicWave` (normalization), the built-in waveforms, and the
-  `OscillatorNode` kernel (band-limited Fourier sum). Not yet called by `Render`.
+  `OscillatorNode` kernel (band-limited Fourier sum). Called by `Render.runKernel`.
 - `WebAudio.Filters`: `BiquadFilterNode` coefficients for the eight types, the kernel, and
-  `getFrequencyResponse`. Not yet called by `Render`.
+  `getFrequencyResponse`. Called by `Render.runKernel`.
 - `WebAudio.Idl`: the interface table generated from WPT's `interfaces/webaudio.idl` by
   `tools/webaudio-idl-table.py` (interfaces, attributes, operations, enums, dictionaries).
 -/

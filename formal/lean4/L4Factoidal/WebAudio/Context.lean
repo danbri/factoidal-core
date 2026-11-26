@@ -1014,6 +1014,345 @@ private def feedback (dt : Float) (c : OfflineContext) : Except Error OfflineCon
   | .ok out => out.size == 3 && out.all (·.size == 1)
   | .error _ => false)
 
+/-! ### Oscillator, BiquadFilter, AudioBufferSource and the split delay
+
+Sample rate 4096 Hz, quantum 4. An oscillator at 1024 Hz advances its phase by 1/4 cycle per frame,
+so its sine takes the exact values 0, 1, 0, -1 (WPT `OscillatorNode/osc-basic-waveform.html`
+compares a sine with `sin` in the same way). -/
+
+/-- Like `go`, and also returns the context after the render. -/
+private def goC (nch len : Nat) (build : OfflineContext → Except Error OfflineContext)
+    (q : Nat := 4) : Except Error (OfflineContext × Array FloatArray) := do
+  let c ← OfflineContext.new nch len 4096.0 q
+  let c ← build c
+  c.startRendering
+
+private def sine4 : List Float := [0, 1, 0, -1]
+
+/-- An oscillator of frequency `f` into the destination; returns the context and the node. -/
+private def oscTo (c : OfflineContext) (f : Float) : Except Error (OfflineContext × Nat) := do
+  let (c, s) ← c.createOscillator
+  let c ← c.connect s 0 0 0
+  let c ← c.setValueAtTime s 0 f 0.0
+  pure (c, s)
+
+-- 1. Sine at 1024 Hz started at 0, length 8 (two quanta).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1024.0
+    c.start s) [sine4 ++ sine4]
+-- 2. Not started: silence.
+#guard chk (go 1 8 fun c => do
+    let (c, _) ← oscTo c 1024.0
+    pure c) [zeros 8]
+-- 3. Start at frame 2 (inside the first quantum): the phase is 0 at the start frame.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1024.0
+    c.start s (fr 2)) [[0, 0, 0, 1, 0, -1, 0, 1]]
+-- 4. Start at 0, stop at frame 5 (inside the second quantum).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1024.0
+    let c ← c.start s
+    c.stop s (fr 5)) [[0, 1, 0, -1, 0, 0, 0, 0]]
+-- 5. Stop inside the quantum of the start: start at frame 1, stop at frame 3.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1024.0
+    let c ← c.start s (fr 1)
+    c.stop s (fr 3)) [[0, 0, 1, 0, 0, 0, 0, 0]]
+-- 6. Detune 1200 cents doubles the frequency: 512 Hz with detune 1200 is 1024 Hz.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 512.0
+    let c ← c.setValueAtTime s 1 1200.0 0.0
+    c.start s) [sine4 ++ sine4]
+-- 7. Frequency automation, a step at frame 4 from 512 to 1024 Hz (a-rate, so the step is
+-- applied inside the quantum boundary at frame 4): the phase is 0.5 at frame 4.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 512.0
+    let c ← c.setValueAtTime s 0 1024.0 (fr 4)
+    c.start s) [[0, 0.70710678, 1, 0.70710678, 0, -1, 0, 1]]
+-- 8. A frequency above Nyquist is clamped to Nyquist (nominal range), where no partial is below
+-- the Nyquist frequency: silence.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1.0e9
+    c.start s) [zeros 8]
+-- 9. A negative frequency (inside the nominal range): the phase runs backwards.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c (-1024.0)
+    c.start s) [[0, -1, 0, 1, 0, -1, 0, 1]]
+-- 10. `frequency` driven by a ConstantSource: intrinsic 0 plus the input of 1024.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← c.createOscillator
+    let c ← c.connect s 0 0 0
+    let c ← c.setValueAtTime s 0 0.0 0.0
+    let (c, k) ← c.createConstantSource
+    let c ← c.setParamValue k 0 1024.0
+    let c ← c.connectParam k 0 s 0
+    let c ← c.start k
+    c.start s) [sine4 ++ sine4]
+-- 11. An oscillator through a gain of 0.5.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← c.createOscillator
+    let (c, g) ← c.createGain
+    let c ← c.setValueAtTime s 0 1024.0 0.0
+    let c ← c.setValueAtTime g 0 0.5 0.0
+    let c ← c.connect s 0 g 0
+    let c ← c.connect g 0 0 0
+    c.start s) [[0, 0.5, 0, -0.5, 0, 0.5, 0, -0.5]]
+-- 12. A custom wave (cosine, normalization off) with `setPeriodicWave`.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← oscTo c 1024.0
+    let w ← c.createPeriodicWave ⟨#[0.0, 1.0]⟩ ⟨#[0.0, 0.0]⟩ true
+    let c ← c.setPeriodicWave s w
+    c.start s) [[1, 0, -1, 0, 1, 0, -1, 0]]
+-- 13. `type` setter: a built-in type is accepted, `custom` is InvalidStateError.
+#guard (match OfflineContext.new 1 4 4096.0 4 >>= fun c => c.createOscillator with
+  | .ok (c, s) =>
+    (c.setOscillatorType s .square).toOption.isSome &&
+    isErr (c.setOscillatorType s .custom >>= fun _ => pure ()) (.invalidState "type custom needs a PeriodicWave")
+  | .error _ => false)
+-- 14. Errors of `start` and `stop` of an oscillator, and of `createPeriodicWave`.
+#guard (match OfflineContext.new 1 4 4096.0 4 >>= fun c => c.createOscillator with
+  | .ok (c, s) =>
+    isErr (c.stop s >>= fun _ => pure ()) (.invalidState "start was not called") &&
+    isErr (c.start s (-1.0) >>= fun _ => pure ()) (.range "when is negative") &&
+    (match c.start s with
+     | .ok c2 => isErr (c2.start s >>= fun _ => pure ()) (.invalidState "start was called before")
+     | .error _ => false) &&
+    isErr (c.createPeriodicWave ⟨#[0.0, 1.0]⟩ ⟨#[0.0]⟩ >>= fun _ => pure ()) .indexSize &&
+    isErr (c.createPeriodicWave ⟨#[0.0]⟩ ⟨#[0.0]⟩ >>= fun _ => pure ()) .indexSize
+  | .error _ => false)
+-- 15. A setter on a node of another type is InvalidStateError; an unknown node is `unknownNode`.
+#guard (match OfflineContext.new 1 4 4096.0 4 >>= fun c => c.createGain with
+  | .ok (c, g) =>
+    isErr (c.setLoop g true >>= fun _ => pure ()) (.invalidState "the node is not an AudioBufferSourceNode") &&
+    isErr (c.setBiquadType 9 .notch >>= fun _ => pure ()) .unknownNode
+  | .error _ => false)
+
+/-! Filters. The reference is the filter kernel run alone on the blocks of the oscillator kernel
+run alone (same state, same parameter values). -/
+
+/-- The oscillator kernel alone: `k` blocks of 4 frames of a sine of frequency `f`. -/
+private def oscRef (f : Float) (k : Nat) : List Block :=
+  let s0 : Oscillator.OscState :=
+    { sampleRate := 4096.0, type := .sine, wave := Render.sineWave, startFrame := some 0 }
+  (List.range k).foldl (init := ([], s0)) (fun (acc : List Block × Oscillator.OscState) _ =>
+      let r := Oscillator.oscProcess 4 acc.2 #[] #[⟨#[f]⟩, ⟨#[0.0]⟩]
+      (acc.1 ++ [r.2.getD 0 #[]], r.1)) |>.1
+
+/-- The filter kernel alone over the blocks, with `freqs` the frequency of each block. -/
+private def filterRef (t : Filters.BiquadType) (freqs : List Float) (blocks : List Block) :
+    List Float :=
+  let s0 : Filters.BiquadState := { type := t, sampleRate := 4096.0 }
+  let r := (List.zip freqs blocks).foldl (init := (s0, ([] : List Float)))
+    (fun (acc : Filters.BiquadState × List Float) (p : Float × Block) =>
+      let o := Filters.biquadProcess 4 acc.1
+        #[p.2] #[⟨#[p.1, p.1, p.1, p.1]⟩, ⟨#[0.0, 0.0, 0.0, 0.0]⟩, ⟨#[1.0, 1.0, 1.0, 1.0]⟩,
+                 ⟨#[0.0, 0.0, 0.0, 0.0]⟩]
+      (o.1, acc.2 ++ ((o.2.getD 0 #[]).getD 0 ⟨#[]⟩).data.toList))
+  r.2
+
+/-- Oscillator at `f` through a filter of type `t`, to the destination. -/
+private def oscFilter (c : OfflineContext) (f : Float) (t : Filters.BiquadType) :
+    Except Error (OfflineContext × Nat) := do
+  let (c, s) ← c.createOscillator
+  let (c, b) ← c.createBiquadFilter
+  let c ← c.setValueAtTime s 0 f 0.0
+  let c ← c.setBiquadType b t
+  let c ← c.connect s 0 b 0
+  let c ← c.connect b 0 0 0
+  let c ← c.start s
+  pure (c, b)
+
+-- 16. Lowpass (default frequency 350, Q 1) on a 1024 Hz sine equals the kernel alone.
+#guard chk (go 1 16 fun c => do
+    let (c, _) ← oscFilter c 1024.0 .lowpass
+    pure c) [filterRef .lowpass [350, 350, 350, 350] (oscRef 1024.0 4)]
+-- 17. Highpass equals the kernel alone.
+#guard chk (go 1 16 fun c => do
+    let (c, _) ← oscFilter c 1024.0 .highpass
+    pure c) [filterRef .highpass [350, 350, 350, 350] (oscRef 1024.0 4)]
+-- 18. The filter changes the signal: the lowpass output is smaller than the sine at frame 15, and
+-- the highpass output differs from the lowpass output.
+#guard (match go 1 16 (fun c => do let (c, _) ← oscFilter c 1024.0 .lowpass; pure c),
+              go 1 16 (fun c => do let (c, _) ← oscFilter c 1024.0 .highpass; pure c) with
+  | .ok a, .ok b => (a[0]!.data[15]!).abs < 0.9 && (a[0]!.data[15]! - b[0]!.data[15]!).abs > 1e-3
+  | _, _ => false)
+-- 19. A step of the filter frequency at frame 8 (the start of a quantum) equals the kernel alone
+-- with the new frequency from the third block.
+#guard chk (go 1 16 fun c => do
+    let (c, b) ← oscFilter c 1024.0 .lowpass
+    c.setValueAtTime b 0 700.0 (fr 8)) [filterRef .lowpass [350, 350, 700, 700] (oscRef 1024.0 4)]
+-- 20. An oscillator not started gives a filter output of silence.
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← c.createOscillator
+    let (c, b) ← c.createBiquadFilter
+    let c ← c.connect s 0 b 0
+    c.connect b 0 0 0) [zeros 8]
+
+/-! AudioBufferSourceNode. The buffer has the sample rate of the context, so a rate of 1 plays one
+buffer frame per output frame. -/
+
+/-- A buffer from channel lists, at 4096 Hz. -/
+private def mkBuf (c : OfflineContext) (chs : List (List Float)) : Except Error Buffer.AudioBuffer := do
+  let len := (chs.headD []).length
+  let b ← c.createBuffer chs.length len 4096.0
+  pure ((List.range chs.length).foldl (init := b) fun b ch =>
+    (List.range len).foldl (init := b) fun b i => b.writeSample ch i ((chs.getD ch []).getD i 0.0))
+
+/-- A buffer source of the buffer `[1, 2, 3, 4]` into the destination. -/
+private def bufTo (c : OfflineContext) : Except Error (OfflineContext × Nat) := do
+  let b ← mkBuf c [[1, 2, 3, 4]]
+  let (c, s) ← c.createBufferSource
+  let c ← c.setBuffer s (some b)
+  let c ← c.connect s 0 0 0
+  pure (c, s)
+
+-- 21. Rate 1: the buffer once, then silence.
+#guard chk (go 1 12 fun c => do
+    let (c, s) ← bufTo c
+    c.start s) [[1, 2, 3, 4] ++ zeros 8]
+-- 22. Not started: silence.
+#guard chk (go 1 8 fun c => do
+    let (c, _) ← bufTo c
+    pure c) [zeros 8]
+-- 23. playbackRate 0.5: linear interpolation; the last half frame mixes the last sample with 0.
+#guard chk (go 1 12 fun c => do
+    let (c, s) ← bufTo c
+    let c ← c.setValueAtTime s 0 0.5 0.0
+    c.start s) [[1, 1.5, 2, 2.5, 3, 3.5, 4, 2] ++ zeros 4]
+-- 24. detune 1200 cents doubles the rate (k-rate).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← bufTo c
+    let c ← c.setValueAtTime s 1 1200.0 0.0
+    c.start s) [[1, 3] ++ zeros 6]
+-- 25. loop over the whole buffer.
+#guard chk (go 1 12 fun c => do
+    let (c, s) ← bufTo c
+    let c ← c.setLoop s true
+    c.start s) [[1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4]]
+-- 26. loop between frame 1 and frame 3 (`loopStart`, `loopEnd` in seconds).
+#guard chk (go 1 12 fun c => do
+    let (c, s) ← bufTo c
+    let c ← c.setLoop s true
+    let c ← c.setLoopStart s (fr 1)
+    let c ← c.setLoopEnd s (fr 3)
+    c.start s) [[1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]]
+-- 27. start(0, offset = 2 frames).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← bufTo c
+    c.startBuffer s 0.0 (fr 2)) [[3, 4] ++ zeros 6]
+-- 28. start(when = frame 2), stop at frame 4 (inside the second quantum for stop at 5).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← bufTo c
+    let c ← c.start s (fr 2)
+    c.stop s (fr 5)) [[0, 0, 1, 2, 3, 0, 0, 0]]
+-- 29. start(0, 0, duration = 3 frames).
+#guard chk (go 1 8 fun c => do
+    let (c, s) ← bufTo c
+    c.startBuffer s 0.0 0.0 (some (fr 3))) [[1, 2, 3] ++ zeros 5]
+-- 30. A buffer of two channels into a destination of two channels.
+#guard chk (go 2 8 fun c => do
+    let b ← mkBuf c [[1, 2], [3, 4]]
+    let (c, s) ← c.createBufferSource
+    let c ← c.setBuffer s (some b)
+    let c ← c.connect s 0 0 0
+    c.start s) [[1, 2] ++ zeros 6, [3, 4] ++ zeros 6]
+-- 31. A buffer source modulating a gain: the gain is 0 plus the buffer value, the input is 1.
+#guard chk (go 1 8 fun c => do
+    let b ← mkBuf c [[1, 2, 3, 4]]
+    let (c, s) ← c.createBufferSource
+    let c ← c.setBuffer s (some b)
+    let (c, g) ← c.createGain
+    let (c, k) ← c.createConstantSource
+    let c ← c.setValueAtTime g 0 0.0 0.0
+    let c ← c.connect k 0 g 0
+    let c ← c.connect g 0 0 0
+    let c ← c.connectParam s 0 g 0
+    let c ← c.start k
+    c.start s) [[1, 2, 3, 4] ++ zeros 4]
+-- 32. `ended`: true after the buffer has played out and the block has ended; false when the source
+-- loops, when it was not started, and before the render.
+#guard (match goC 1 8 (fun c => do let (c, s) ← bufTo c; c.start s) with
+  | .ok (c, _) => c.ended 1
+  | .error _ => false)
+#guard (match goC 1 8 (fun c => do let (c, s) ← bufTo c; let c ← c.setLoop s true; c.start s) with
+  | .ok (c, _) => !c.ended 1
+  | .error _ => false)
+#guard (match goC 1 8 (fun c => do let (c, _) ← bufTo c; pure c) with
+  | .ok (c, _) => !c.ended 1
+  | .error _ => false)
+-- 33. `ended` of an oscillator once its stop frame has passed.
+#guard (match goC 1 8 (fun c => do
+      let (c, s) ← oscTo c 1024.0
+      let c ← c.start s
+      c.stop s (fr 3)) with
+  | .ok (c, _) => c.ended 1
+  | .error _ => false)
+-- 34. Errors of the buffer source: a second non-null buffer, `start` twice, `stop` before
+-- `start`, a negative offset, a non-finite `when`, `createBuffer` out of range.
+#guard (match (do
+    let c ← OfflineContext.new 1 4 4096.0 4
+    let b ← mkBuf c [[1, 2, 3, 4]]
+    let (c, s) ← c.createBufferSource
+    let c ← c.setBuffer s (some b)
+    pure (c, s, b) : Except Error (OfflineContext × Nat × Buffer.AudioBuffer)) with
+  | .ok (c, s, b) =>
+    isErr (c.setBuffer s (some b) >>= fun _ => pure ()) (.invalidState "buffer was already set to a non-null value") &&
+    (c.setBuffer s none).toOption.isSome &&
+    isErr (c.stop s >>= fun _ => pure ()) (.invalidState "invalid state") &&
+    isErr (c.startBuffer s 0.0 (-1.0) >>= fun _ => pure ()) (.range "negative argument") &&
+    isErr (c.start s (0.0 / 0.0) >>= fun _ => pure ()) (.type "when is not finite") &&
+    (match c.start s with
+     | .ok c2 => isErr (c2.start s >>= fun _ => pure ()) (.invalidState "invalid state") &&
+                 isErr (c2.startBuffer s >>= fun _ => pure ()) (.invalidState "invalid state")
+     | .error _ => false)
+  | .error _ => false)
+#guard (match OfflineContext.new 1 4 4096.0 4 with
+  | .ok c =>
+    isErr (c.createBuffer 0 4 4096.0 >>= fun _ => pure ()) (.notSupported "argument outside the supported range") &&
+    isErr (c.createBuffer 1 0 4096.0 >>= fun _ => pure ()) (.notSupported "argument outside the supported range") &&
+    isErr (c.createBuffer 1 4 2999.0 >>= fun _ => pure ()) (.notSupported "argument outside the supported range") &&
+    (c.createBuffer 1 4 3000.0).toOption.isSome
+  | .error _ => false)
+
+/-! The `delayTime` of a delay in a cycle, fed by a node that is numbered after the delay.
+Nodes: 0 destination, 1 delay, 2 gain (0, the feedback path), 3 constant source (1) into the delay,
+4 constant source (6 frames) into `delayTime`. Order: 4, `delayRead 1`, ..., `delayWrite 1`
+(`Graph.paramDstStep`). The delay of 6 frames is above the one-quantum minimum of a delay in a
+cycle, so the constant 1 arrives at frame 6. Before `delayTime` went to the reader, the reader
+did not see node 4 and the delay was the minimum of 4 frames. -/
+private def delayCycle (c : OfflineContext) : Except Error OfflineContext := do
+  let (c, d) ← c.createDelay
+  let (c, g) ← c.createGain
+  let (c, k1) ← c.createConstantSource
+  let (c, k2) ← c.createConstantSource
+  let c ← c.setValueAtTime g 0 0.0 0.0
+  let c ← c.connect d 0 0 0
+  let c ← c.connect d 0 g 0
+  let c ← c.connect g 0 d 0
+  let c ← c.connect k1 0 d 0
+  let c ← c.setParamValue k2 0 (fr 6)
+  let c ← c.connectParam k2 0 d 0
+  let c ← c.start k1
+  c.start k2
+
+-- 35. The delay is 6 frames.
+#guard chk (go 1 12 delayCycle) [zeros 6 ++ ones 6]
+-- 36. The same with the `delayTime` source numbered before the delay.
+#guard chk (go 1 12 fun c => do
+    let (c, k2) ← c.createConstantSource
+    let c ← c.setParamValue k2 0 (fr 6)
+    let c ← c.start k2
+    let (c, d) ← c.createDelay
+    let (c, g) ← c.createGain
+    let (c, k1) ← c.createConstantSource
+    let c ← c.setValueAtTime g 0 0.0 0.0
+    let c ← c.connect d 0 0 0
+    let c ← c.connect d 0 g 0
+    let c ← c.connect g 0 d 0
+    let c ← c.connect k1 0 d 0
+    let c ← c.connectParam k2 0 d 0
+    c.start k1) [zeros 6 ++ ones 6]
+
 end Tests
 
 end L4Factoidal.WebAudio.Context
