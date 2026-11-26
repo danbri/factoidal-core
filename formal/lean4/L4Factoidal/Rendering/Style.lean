@@ -813,6 +813,7 @@ def sidesOf (property : String) : List String :=
   else if property == "inset" then ["top","right","bottom","left"]
   else if property == "background-position" then ["background-position-x","background-position-y"]
   else if property == "text-wrap" then ["text-wrap-mode","text-wrap-style"]
+  else if property == "white-space" then ["white-space-collapse","text-wrap-mode"]
   else if property == "border-radius" then radiusNames
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
@@ -829,9 +830,10 @@ def expandSides (property value : String) (important : Bool) : List Declaration 
     else
       (radiusNames.zip ((specifiedRadii value).getD [])).map fun (name,(x,y)) =>
         ⟨name,if x == y then x else x ++ " " ++ y,important⟩
-  else if property == "background-position" || property == "text-wrap" then
+  else if ["background-position","text-wrap","white-space"].contains property then
+    let names := sidesOf property
     ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
-      if name == property then none else some ⟨name,v,important⟩
+      if names.contains name then some ⟨name,v,important⟩ else none
   else
     let names := sidesOf property
     let each := match names.length, SheetReader.splitWords value with
@@ -958,7 +960,7 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       | none => acc else
     if key == "border" && !CssVars.mentions d.value then
       (borderImageInitial.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ (whole :: acc) else
-    if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
+    if ["background-position","text-wrap","white-space","border-radius"].contains key && !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
@@ -1995,7 +1997,9 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | none => throw "invalid text-wrap-style"
   | "text-wrap-mode" =>
     match CssValues.specified d.property d.value with
-    | some value => return {s with balanceWrap := value != "nowrap"}
+    | some value =>
+      let nowrap := value == "nowrap"
+      return {s with balanceWrap := !nowrap, pos := {s.pos with nowrap}}
     | none => throw "invalid text-wrap-mode"
   | "white-space" | "white-space-collapse" =>
     let nowrap := d.property != "white-space" && s.pos.nowrap
@@ -2554,7 +2558,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "visibility" => some {s with visible := source.visible}
   | "opacity" => some {s with opacityZero := source.opacityZero}
   | "text-wrap-style" => some {s with balanceText := source.balanceText}
-  | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
+  | "text-wrap-mode" =>
+    some {s with balanceWrap := source.balanceWrap, pos := {s.pos with nowrap := source.pos.nowrap}}
   | "white-space" | "white-space-collapse" =>
     let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
     some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
