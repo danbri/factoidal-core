@@ -3,7 +3,7 @@ L4Factoidal.Media.Bench: `lake exe media-bench`, from `formal/lean4`
 (record: docs/designissues/2026-11-08-media-wasmvm.md).
 
     media-bench test                        container tests (no decoder modules needed)
-    media-bench audio WASMDIR FILE [OUT]    decode the audio of an Ogg or WebM file in
+    media-bench audio WASMDIR FILE [OUT]    decode the audio of an Ogg, WebM or MP3 file in
                                             WasmVM; OUT gets a WAV file and OUT.s16 the
                                             raw samples
     media-bench video WASMDIR FILE [N] [OUT]  decode N VP8 frames (default all) of a
@@ -13,10 +13,16 @@ L4Factoidal.Media.Bench: `lake exe media-bench`, from `formal/lean4`
                                             folder and play it with `afplay` (macOS):
                                             the PCM is ours, `afplay` only plays it
 
-WASMDIR holds `opus-wasmvm.wasm`, `vorbis-wasmvm.wasm` and `vp8-wasmvm.wasm` from
-`tools/wasmvm/build-media.sh`.
+    media-bench check WASMDIR               the pins of `Media.Modules`: size, SHA-256, and
+                                            the `mw_abi` version of each module run in WasmVM
+
+WASMDIR holds `opus-wasmvm.wasm`, `vorbis-wasmvm.wasm`, `vp8-wasmvm.wasm` and
+`mp3-wasmvm.wasm` from `danbri/factoidal-builds` (`third_party/media-decoders`), fetched by
+`tools/fetch-media-decoders.sh`. A module whose bytes are not the pinned ones is refused;
+`MEDIA_ANY_MODULE=1` uses it with a warning (to compare a rebuild, never for a result).
 -/
 import L4Factoidal.Media.Decode
+import L4Factoidal.Media.Modules
 import L4Factoidal.Media.Tests
 
 namespace L4Factoidal.Media.Bench
@@ -34,10 +40,45 @@ def fmt2 (x : Float) : String :=
   let n := (x * 100).round.toUInt64.toNat
   s!"{n / 100}.{if n % 100 < 10 then "0" else ""}{n % 100}"
 
+/-- A module's bytes after the pin check of `Media.Modules` (size and SHA-256). With
+`MEDIA_ANY_MODULE=1` in the environment a module that is not the pinned one is used, with a
+warning on standard error. -/
+def readModule (dir : System.FilePath) (file : String) : IO ByteArray := do
+  let b ← IO.FS.readBinFile (dir / file)
+  match Modules.check file b with
+  | .ok _ => return b
+  | .error e =>
+    if (← IO.getEnv "MEDIA_ANY_MODULE") == some "1" then
+      IO.eprintln s!"warning: {e}; used because MEDIA_ANY_MODULE=1"
+      return b
+    throw (IO.userError s!"{e}; MEDIA_ANY_MODULE=1 uses it anyway")
+
+/-- `media-bench check`: every pin, with the interface version the module itself reports. -/
+def checkPins (dir : System.FilePath) : IO UInt32 := do
+  let mut bad := 0
+  for p in Modules.pins do
+    let b ← IO.FS.readBinFile (dir / p.file)
+    match Modules.check p.file b with
+    | .error e =>
+      IO.println s!"FAIL {e}"
+      bad := bad + 1
+    | .ok _ =>
+      let m ← Decode.load b
+      let (_, abi) ← m.callI32 "mw_abi" #[]
+      if abi == p.abi then
+        IO.println s!"ok   {p.file}: {p.bytes} bytes, SHA-256 {p.sha256}, mw_abi {abi}"
+      else
+        IO.println s!"FAIL {p.file}: mw_abi {abi}, pinned {p.abi}"
+        bad := bad + 1
+  IO.println s!"{Modules.pins.length - bad} of {Modules.pins.length} modules are the pinned ones ({Modules.source})"
+  return (if bad == 0 then 0 else 1)
+
 def decodeAudio (dir : System.FilePath) (file : String) : IO Decode.Pcm := do
-  let opusW ← IO.FS.readBinFile (dir / "opus-wasmvm.wasm")
-  let vorbisW ← IO.FS.readBinFile (dir / "vorbis-wasmvm.wasm")
   let b ← IO.FS.readBinFile file
+  if file.endsWith ".mp3" then
+    return (← Decode.mp3 (← readModule dir "mp3-wasmvm.wasm") b (← IO.ofExcept (Mp3.read b)))
+  let opusW ← readModule dir "opus-wasmvm.wasm"
+  let vorbisW ← readModule dir "vorbis-wasmvm.wasm"
   if isWebM b then Decode.webmAudio opusW vorbisW (← IO.ofExcept (WebM.demux b))
   else Decode.oggAudio opusW vorbisW b
 
@@ -70,7 +111,7 @@ def ppm (p : Decode.Picture) : ByteArray := Id.run do
   return out
 
 def video (dir : System.FilePath) (file : String) (limit : Option Nat) (out : Option String) : IO UInt32 := do
-  let w ← IO.FS.readBinFile (dir / "vp8-wasmvm.wasm")
+  let w ← readModule dir "vp8-wasmvm.wasm"
   let r ← IO.ofExcept (WebM.demux (← IO.FS.readBinFile file))
   let some t := r.tracks.find? (·.codec == "V_VP8") | IO.println "no VP8 track"; return 1
   let fs := r.framesOf t.number
@@ -93,6 +134,7 @@ def video (dir : System.FilePath) (file : String) (limit : Option Nat) (out : Op
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["test"] => return (if (← Tests.run) then 0 else 1)
+  | ["check", d] => checkPins d
   | ["audio", d, f] => audio d f none
   | ["audio", d, f, o] => audio d f (some o)
   | ["play", d, f] => play d f
@@ -100,7 +142,7 @@ def main (args : List String) : IO UInt32 := do
   | ["video", d, f, n] => video d f n.toNat? none
   | ["video", d, f, n, o] => video d f n.toNat? (some o)
   | _ =>
-    IO.println "usage: media-bench test | audio WASMDIR FILE [OUT] | play WASMDIR FILE | video WASMDIR FILE [N] [OUT]"
+    IO.println "usage: media-bench test | check WASMDIR | audio WASMDIR FILE [OUT] | play WASMDIR FILE | video WASMDIR FILE [N] [OUT]"
     return 2
 
 end L4Factoidal.Media.Bench

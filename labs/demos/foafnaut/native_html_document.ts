@@ -450,7 +450,8 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const inspection=await engine.inspect(document.source,{url:document.url,...mode});
   phase("inspect");
   noteDiagnostics(page,inspection,false);
-  const scriptElements=inspection.scripts.some(script=>script.kind!=="data");
+  // `modules`: the page's module scripts, which the script session fetches itself (issue 1161).
+  const scriptElements=inspection.scripts.some(script=>script.kind!=="data")||((inspection as {modules?:number}).modules??0)>0;
   if(scriptElements&&!scriptHost)
     throw new Error("Page scripts need the QuickJS guest module (--quickjs-wasm FILE) and an engine with scriptSession; this page is refused");
   // A page whose only script is an event handler content attribute (`<body onload>`, Lean's

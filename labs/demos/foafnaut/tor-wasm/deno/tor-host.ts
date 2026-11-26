@@ -34,7 +34,7 @@ if (stateDir) {
   if (typeof opened === "string") console.log(JSON.stringify({ step: "tor-state", saved: false, why: opened }));
   else store = opened;
 }
-type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean };
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean; writes?: number; firstOut?: number; firstOutB?: number; eof?: number; closedBy?: string };
 type Reply = { result: unknown; dialled: number; open: number; socks?: unknown[]; streamsOpen?: number; conns?: ConnTrace[]; at?: number; loop?: { maxLagMs: number; stalls: { at: number; ms: number }[] } };
 /** --trace-conns: print the connections a step made, and a summary of where they stopped. */
 function printConns(step: string, r: Reply) {
@@ -48,6 +48,10 @@ function printConns(step: string, r: Reply) {
     ipv6Failed: n((c) => c.v6 === true && c.err !== undefined), opened: n((c) => c.open !== undefined),
     sentNothing: n((c) => c.open !== undefined && c.outB === 0),
     sentButNoReply: n((c) => c.outB > 0 && c.inB === 0),
+    // inB 0 after a write: no ServerHello came, so the stop is in the TLS handshake, before the
+    // Tor link handshake (VERSIONS, CERTS). A reply then a stop is later.
+    noReplyThenPeerClosed: n((c) => c.outB > 0 && c.inB === 0 && c.eof !== undefined),
+    noReplyClosedByArti: n((c) => c.outB > 0 && c.inB === 0 && c.eof === undefined && c.closed !== undefined),
     replied: n((c) => c.inB > 0) }));
   if (r.loop) console.log(JSON.stringify({ step: "loop", during: step, ...r.loop }));
 }

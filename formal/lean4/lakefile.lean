@@ -294,7 +294,8 @@ extern_lib libl4hostread pkg := do
   buildStaticLib (pkg.staticLibDir / name) #[hr]
 
 /-- True when `leanjs` is linked with link-time optimisation (see `lean_lib JS` below): on
-x86-64 Linux with `-K leanjsLto=on`. Opt-in until the factoidal-builds Linux image installs
+x86-64 Linux with `-R -K leanjsLto=on` (without `-R`, a workspace configured before keeps
+its old value of the option and builds without LTO, with no message). Opt-in until the factoidal-builds Linux image installs
 libc++, libc++abi and gmp headers and the leanjs size budget allows +2.2 % (issue 471). The
 macOS linker reads only its own compiler's bitcode, so other hosts build without it. -/
 def leanjsLto : Bool :=
@@ -463,6 +464,10 @@ lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
 @[default_target] lean_lib Media where
   roots := #[`L4Factoidal.Media]
 lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
+
+-- The Web Audio API in Lean (issue 1169; docs/designissues/2026-11-26-foafnaut-audio-plan.md).
+@[default_target] lean_lib WebAudio where
+  roots := #[`L4Factoidal.WebAudio]
 
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where

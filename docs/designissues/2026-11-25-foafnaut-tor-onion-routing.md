@@ -630,6 +630,18 @@ depend on it.
   the server, exit fetches 111 and 182 ms, onion fetches 563 to 770 ms. `deno test deno/`: 11
   pass, 0 fail (out of 11; 1 expected failure each for issues 1058 and 1060 among them).
   `node --test module.test.cjs`: 5 pass, 0 fail (out of 5).
+- Owner, 2026-11-26, verbatim, on the SOCKS5 secret given only to the browser's main thread:
+  "make sure this is splattered with theorems of great impressiveness and robustness". The
+  SOCKS5 decisions in `deno/socks5.ts` are also anti-pattern 36 (RFC decisions in TS). Plan:
+  move the parse and admit/refuse decisions into Lean (`L4Factoidal/Net/Socks5.lean`), keep only
+  byte I/O in TS, and prove: (a) no CONNECT is admitted unless the RFC 1929 exchange gave exactly
+  the session secret, for all inputs; (b) the partition key is a function of the user name
+  alone and injective; (c) every log, trace or error value is equal for two states that differ
+  only in the secret; (d) the comparison reads every byte of both values (structural; not a
+  proof of constant CPU time); (e) the listen address is loopback; (f) a Lean model of the
+  host messages, in which the secret goes only to the thread that started the worker, with a
+  test of the real TS host against it. Then a differential fuzz of the Lean decision against
+  the TS code. A property is called proved only when `lake build` builds its file from a root.
 - Next for https://github.com/danbri/factoidal-core/issues/1060: in Tor mode, the main-thread
   fetches of `native_html_document.ts` and `run_html.ts` use one `torHttpClient` per top-level
   site; WebSocket refused at first; new identity control; no local name lookup in the Lean
@@ -653,3 +665,74 @@ depend on it.
 - Deciding runs: `tailscale status`, `nc`, C tor and `--trace-conns` back to back on the Mac;
   and a phone test on the house Wi-Fi against mobile data. If `nc` and C
   tor connect and our client does not, the fault is in our transport.
+
+Update, same day, phone hotspot (giffgaff 5G), about 17:47 to 17:51 UTC, main after 1d197c7c3:
+
+- `nc` to a directory authority on 443 succeeded; C tor 0.4.9.17 bootstrapped 100%. So the
+  earlier failures came from the house network (or the laptop's state on it), which drops TCP
+  to Tor relays: `nc` timed out there with Tailscale off and succeeds on the hotspot.
+- Ours: bootstrap ok in about 6 s. First public onion service fetch: the Tor Project onion site
+  answered "HTTP/1.1 200 OK" (2048 bytes) through partition `b`. Worst event-loop lag 322 ms,
+  no stall.
+- Open defect: the exit request (example.com:80) timed out after 180 s. Over the run, 5 of 9 new
+  connections opened, sent bytes and got no bytes back. The native client has no such failures
+  on the same network.
+- Trace after this run: per connection, the size and time of the first write (the TLS
+  ClientHello: 239 to 247 bytes on the private network), the write count, end of stream from the
+  peer, read errors with their text, and summary counts `noReplyThenPeerClosed` and
+  `noReplyClosedByArti`. A connection with bytes sent and none received stopped in the TLS
+  handshake (no ServerHello), before the Tor link handshake (VERSIONS, CERTS). rustls has TLS
+  1.2 and 1.3 enabled (`tls12` feature on).
+
+Second hotspot run, 2026-11-26 about 18:02 UTC (`--debug --trace-conns`):
+
+- ✅ Exit request: example.com:80 answered "HTTP/1.1 200 OK" (888 bytes, Cloudflare) through
+  circuit 2.0, about 4 s after start; 1 new connection in that step, which answered. The 180 s
+  exit timeout of the first hotspot run did not repeat; its cause is not known.
+- One connection in bootstrap sent its ClientHello (255 bytes) and received nothing; it was not
+  closed by the end. Bootstrap completed through other channels.
+- Leak found: with `--debug`, an Arti debug line printed relay addresses ("starting Tor
+  handshake with Direct([<IPv4>:443, [<IPv6>]:443])"); Arti's safe logging does not cover that
+  line. A guard address identifies the client across sessions. Repair: `redact_addrs` in
+  `src/lib.rs` replaces every IPv4 and IPv6 address in an Arti line with "[scrubbed]" before it
+  leaves the module. `chutney/run.sh` checks that no Arti line holds a relay address with
+  `--debug` on (63 lines scrubbed in the check run). Logs made before this change can hold guard
+  addresses.
+
+## 20. SOCKS5 decisions in Lean, with theorems (2026-11-26)
+
+`formal/lean4/L4Factoidal/Net/Socks5.lean` (decisions, Lean core only) and `Socks5Theorems.lean`
+(commit ab8261334), both imported from the `L4Factoidal` root. `lake build
+L4Factoidal.Net.Socks5Theorems` succeeds; every `#guard` passes. No `sorry`, `axiom`,
+`native_decide` or `partial def`. Axioms: at most `propext`, `Classical.choice`, `Quot.sound`;
+`listenAddress_loopback` uses none.
+
+- Authentication: `connect_only_with_secret`, `proxyCheck_only_with_secret` (a connect or
+  proxy-check verdict implies the RFC 1929 password field equals the session secret, version 1,
+  user name admissible); `wrong_password_refused`, `wrong_password_length_refused`,
+  `no_userpass_method_refused`, `not_socks5_refused`, `non_connect_command_refused`,
+  `connect_command_is_connect`, `truncated_needMore` (every shorter prefix of an admitted input
+  is "need more"), `handshake_final` (a decision does not change when more bytes arrive).
+- Partition: `connect_partition`, `partition_function_of_user`, `partition_injective`,
+  `connect_partition_ok`, `Partition.key_injective`.
+- Secret non-interference: `handshake_factor` (the secret enters only through one bit:
+  password equal or not), `handshake_secret_free`, `handshake_eq_unless_password_is_secret`,
+  `handshake_noninterference`, `same_reason_same_outcome`, `run_sent_shape` (the server sends
+  one of 8 fixed byte strings). The form "equal whenever both are refusals" is false (one
+  session refuses at the password, the other admits and then refuses the address type), so it
+  is not stated.
+- Comparison: `diffFold_eq_foldl`, `padZip_length`, `padZip_getElem?`, `secretEq_iff`. Not a
+  claim of constant CPU time.
+- `listenAddress_loopback`; host message model: `hostRun_answers_to_starter`,
+  `secret_only_to_starter`.
+
+Not covered yet: the TypeScript does not call the Lean decision (wiring through a wasm or
+native entry point is next), so no theorem is about the running code; the differential fuzz and
+the test of the real host against the message model are still to be written. `replyFor` (Tor
+error to reply code) is not in Lean.
+
+Difference found by the Lean model: `TextDecoder` removed a leading UTF-8 byte order mark, so
+`socks5.ts` admitted user name `EF BB BF 61` as "a" (a partition that collides with "a") while
+Lean refuses it. Repaired: both decoders keep the mark (`ignoreBOM: true`); `socks5.test.ts`
+checks the refusal. `tools/lean-unbuilt-modules.py --gate` exits 1 on `main` because of 27
+other modules not reached from a root; the two new modules are reached.

@@ -146,3 +146,19 @@ Deno.test("start-up check: with NO_PROXY set, every request still reaches the pr
     if (before === undefined) Deno.env.delete("NO_PROXY"); else Deno.env.set("NO_PROXY", before);
   }
 });
+
+Deno.test("a user name that starts with a UTF-8 byte order mark is refused (as in L4Factoidal/Net/Socks5.lean)", async () => {
+  const { tor, opened } = fakeTor();
+  const s = startSocks5(tor);
+  try {
+    const c = await Deno.connect({ hostname: "127.0.0.1", port: s.port });
+    const b = new Uint8Array(2);
+    await c.write(new Uint8Array([5, 1, 2]));
+    await c.read(b);
+    const p = new TextEncoder().encode(s.password);
+    await c.write(new Uint8Array([1, 4, 0xef, 0xbb, 0xbf, 0x61, p.length, ...p]));
+    const n = await c.read(b);
+    c.close();
+    if (n !== 2 || b[1] !== 1 || opened.length !== 0) throw new Error(`auth reply ${b}`);
+  } finally { s.stop(); }
+});

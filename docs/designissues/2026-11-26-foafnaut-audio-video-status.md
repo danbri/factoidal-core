@@ -19,7 +19,7 @@ engine. The page side, the audio output of the Mac host and GPU video are not st
 | VP8 decode | In WasmVM, byte-identical to libvpx; 35 fps at 160x90, 10 to 12 fps at 320x180 | media-wasmvm record |
 | Ogg, WebM (Matroska) readers | Lean (`Media/Ogg.lean`, `Media/WebM.lean`) | media-wasmvm record |
 | I420 to RGBA | Lean, on the CPU (2.5 ms a 320x180 frame) | media-wasmvm record |
-| Decoder Wasm modules (libopus, libvorbis, libvpx; 377 KB) | Not in any repository; built on one machine by `tools/wasmvm/build-media.sh`; whether to vendor them or build them in CI is an open owner decision (2026-11-08) | media-wasmvm record |
+| Decoder Wasm modules (libopus, libvorbis, libvpx; 377 KB) | Not in any repository; built on one machine by `tools/wasmvm/build-media.sh`; whether to vendor them or build them in CI is an open owner decision (2026-11-08). Decided the same day: vendored in factoidal-builds, see [2026-11-26-foafnaut-audio-plan.md](2026-11-26-foafnaut-audio-plan.md) | media-wasmvm record |
 | `HTMLMediaElement`, `MediaError`, `TimeRanges`, `Audio()` | In the page's JavaScript with no decoder: `canPlayType` answers "", `load()` ends in the source-not-supported steps, `play()` rejects | `docs/designissues/2026-11-14-dom-html.md`, step 12 |
 | `<video>` in layout | A replaced box of the right size; no frame drawn | issue 588 |
 | WebCodecs | Object model, layouts, `copyTo`, colour spaces, PCM `AudioDecoder` in Lean; no video or compressed audio codec | webgl-webcodecs record |

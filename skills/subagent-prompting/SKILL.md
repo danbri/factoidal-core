@@ -242,6 +242,23 @@ say: report the head SHA; the coordinator dispatches builds one at a time.
 Give `core_ref` as a SHA read from `git rev-parse`, never typed from
 memory (the same night a dispatch went out with an invented SHA tail).
 
+### Landing several worker commits: stop at the first failure
+
+When the orchestrator lands a worker's branch by cherry-picking its commits in a loop, the loop
+must end the whole command on the first failed pick, and the worktree is removed only after the
+landing is pushed:
+
+```
+for c in $(git rev-list --reverse origin/main..origin/BRANCH); do
+  git cherry-pick "$c" || { echo "pick $c failed"; exit 1; }
+done    # run this in a subshell or a script, so `exit 1` ends it
+```
+
+A `break` in the loop returns status 0, so a `&&` chain after the loop goes on. Cost: on
+2026-11-26 a pick conflicted in `WebAudio.lean`; the build, the plan edit and the removal of the
+worker's worktree ran on the half-applied tree. Nothing was lost only because the worker had
+pushed its branch (the conflict was inside a comment, so the build passed too).
+
 ### Comment-trap warning in every .fst / .ml brief
 
 Any brief that asks the agent to WRITE F\* or OCaml must include this

@@ -1,5 +1,12 @@
 # Audio and video in Foafnaut, decoded in WasmVM
 
+Update 2026-11-26: the decoder modules and their build chain (`build-media.sh`, the entry points)
+moved to `danbri/factoidal-builds`, `third_party/media-decoders`, with provenance and licences,
+and an MP3 decoder (minimp3) was added (owner's decision 1 of
+[2026-11-26-foafnaut-audio-plan.md](2026-11-26-foafnaut-audio-plan.md)). Lean pins their SHA-256
+in `Media/Modules.lean`; `tools/fetch-media-decoders.sh` fetches them. Paths below that name
+`tools/wasmvm/build-media.sh` and `tools/wasmvm/media/` describe the state of 2026-11-08.
+
 2026-11-08. Owner: "Try to make basic audio/video work via wasm?"
 
 ## Result

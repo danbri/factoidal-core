@@ -1138,6 +1138,8 @@ import L4Factoidal.HTML.AccessibleTree
 import L4Factoidal.Net.BlobUrls
 import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol
+import L4Factoidal.Net.Socks5
+import L4Factoidal.Net.Socks5Theorems
 import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Route
