@@ -4100,7 +4100,7 @@ theorem ElemKeys.get_covers (dom : Dom) (id : Nat) : AncCovers ((ElemKeys.of dom
         · simp [ownOf]
         · rw [hk.1] at hc
           simp only [ownOf, List.mem_append, List.mem_cons, List.mem_map]
-          exact Or.inl (Or.inl (Or.inr (Or.inr ⟨c, hc, rfl⟩)))
+          exact Or.inl (Or.inl (Or.inr (Or.inr (Or.inr ⟨c, hc, rfl⟩))))
         · rw [hk.2]
           apply hm
           simp [ownOf, readKeys, ElemKey.read]
