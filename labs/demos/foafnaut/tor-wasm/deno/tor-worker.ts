@@ -22,7 +22,7 @@ let dialled = 0;
 // connect errors. Addresses are not recorded. Used to find where channels stall.
 const t0 = performance.now();
 const ms = () => Math.round(performance.now() - t0);
-type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean };
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean; writes?: number; firstOut?: number; firstOutB?: number; eof?: number; closedBy?: string };
 const traces: ConnTrace[] = [];
 const traceOf = new Map<number, ConnTrace>();
 let tracing = false;
@@ -67,9 +67,19 @@ setInterval(() => {
     const c = conns.get(h);
     if (!c) return new Uint8Array(0);
     const b = new Uint8Array(Math.min(max, 65536));
-    const n = await c.read(b);
     const tr = traceOf.get(h);
-    if (tr) { tr.reads++; if (n && tr.firstIn === undefined) tr.firstIn = ms(); tr.inB += n ?? 0; }
+    let n: number | null;
+    try {
+      n = await c.read(b);
+    } catch (e) {
+      // A reset or other read error: keep its class and text (addresses removed).
+      if (tr && tr.err === undefined) {
+        tr.err = "read:" + String((e as Error).name ?? e);
+        tr.msg = String((e as Error).message ?? "").replace(/[0-9a-fA-F:.]{7,}/g, "<addr>").slice(0, 120);
+      }
+      throw e;
+    }
+    if (tr) { tr.reads++; if (n && tr.firstIn === undefined) tr.firstIn = ms(); tr.inB += n ?? 0; if (n === null && tr.eof === undefined) tr.eof = ms(); }
     return n === null ? new Uint8Array(0) : b.subarray(0, n);
   },
   async write(h: number, view: Uint8Array): Promise<number> {
@@ -79,7 +89,13 @@ setInterval(() => {
     let off = 0;
     while (off < data.length) off += await c.write(data.subarray(off));
     const tr = traceOf.get(h);
-    if (tr) tr.outB += data.length;
+    if (tr) {
+      tr.outB += data.length;
+      tr.writes = (tr.writes ?? 0) + 1;
+      // The first write is the TLS ClientHello: its size and time show whether the peer was
+      // asked at all before the channel timed out.
+      if (tr.firstOut === undefined) { tr.firstOut = ms(); tr.firstOutB = data.length; }
+    }
     return data.length;
   },
   close(h: number): void {
@@ -87,7 +103,7 @@ setInterval(() => {
     if (!c) return;
     conns.delete(h);
     const tr = traceOf.get(h);
-    if (tr) tr.closed = ms();
+    if (tr) { tr.closed = ms(); tr.closedBy = tr.eof !== undefined ? "peer-then-arti" : "arti"; }
     try { c.close(); } catch { /* already closed */ }
   },
 };

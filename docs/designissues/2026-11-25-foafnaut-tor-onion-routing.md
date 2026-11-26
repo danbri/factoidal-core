@@ -653,3 +653,21 @@ depend on it.
 - Deciding runs: `tailscale status`, `nc`, C tor and `--trace-conns` back to back on the Mac;
   and a phone test on the house Wi-Fi against mobile data. If `nc` and C
   tor connect and our client does not, the fault is in our transport.
+
+Update, same day, phone hotspot (giffgaff 5G), about 17:47 to 17:51 UTC, main after 1d197c7c3:
+
+- `nc` to a directory authority on 443 succeeded; C tor 0.4.9.17 bootstrapped 100%. So the
+  earlier failures came from the house network (or the laptop's state on it), which drops TCP
+  to Tor relays: `nc` timed out there with Tailscale off and succeeds on the hotspot.
+- Ours: bootstrap ok in about 6 s. First public onion service fetch: the Tor Project onion site
+  answered "HTTP/1.1 200 OK" (2048 bytes) through partition `b`. Worst event-loop lag 322 ms,
+  no stall.
+- Open defect: the exit request (example.com:80) timed out after 180 s. Over the run, 5 of 9 new
+  connections opened, sent bytes and got no bytes back. The native client has no such failures
+  on the same network.
+- Trace after this run: per connection, the size and time of the first write (the TLS
+  ClientHello: 239 to 247 bytes on the private network), the write count, end of stream from the
+  peer, read errors with their text, and summary counts `noReplyThenPeerClosed` and
+  `noReplyClosedByArti`. A connection with bytes sent and none received stopped in the TLS
+  handshake (no ServerHello), before the Tor link handshake (VERSIONS, CERTS). rustls has TLS
+  1.2 and 1.3 enabled (`tls12` feature on).
