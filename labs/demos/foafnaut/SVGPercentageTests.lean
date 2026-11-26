@@ -15,6 +15,18 @@ def run : IO Unit := do
     check (x1==20 && y1==20 && x2==180 && y2==80) "line percentage axes"
     check (close r 15.8113883) "circle normalized diagonal"
   | _ => throw (IO.userError "unexpected primitive list")
+  let cssLengths ← scene "width='300' height='200'" "<style>rect{x:30px;y:60px;width:120px;height:100px}</style><rect/>"
+  match cssLengths.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
+  | [.rect x y w h] => check (x==30 && y==60 && w==120 && h==100) "CSS rect pixel geometry properties"
+  | _ => throw (IO.userError "CSS rect pixel geometry primitive")
+  let cssPercent ← scene "width='300' height='200'" "<style>rect{x:10%;y:30%;width:40%;height:50%}</style><rect/>"
+  match cssPercent.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
+  | [.rect x y w h] => check (x==30 && y==60 && w==120 && h==100) "CSS rect percentage geometry axes"
+  | _ => throw (IO.userError "CSS rect percentage geometry primitive")
+  let cssCascade ← scene "width='300' height='200'" "<style>rect{width:40%;height:50%}</style><rect width='30' height='40' style='width:25%;height:10%'/>"
+  match cssCascade.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
+  | [.rect _ _ w h] => check (w==75 && h==20) "inline CSS rect dimensions outrank stylesheet and attributes"
+  | _ => throw (IO.userError "CSS rect cascade primitive")
   for preserve in ["none", "xMidYMid meet", "xMidYMid slice"] do
     let s ← scene ("width='400' height='100' viewBox='10 20 100 50' preserveAspectRatio='"++preserve++"'") "<g transform='scale(2)' stroke='black' stroke-width='10%'><rect x='10%' y='20%' width='50%' height='50%' stroke-width='inherit'/></g>"
     match s.primitives with
