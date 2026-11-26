@@ -1111,7 +1111,9 @@ regression; otherwise land it behind a flag and report." Measured on Linux only 
 1,369 against 1,269 ms and tab B's first frame while tab A loads is 1,424 against 1,122 ms. A
 first report that night said `tasks` was better on the new tab first frame; its numbers counted
 only the tabs that drew within 1 s, and they are withdrawn. Record (D11, sections 6 to 6b) and
-macOS gap: `docs/designissues/2026-11-26-foafnaut-engine-sessions.md`.
+macOS gap: `docs/designissues/2026-11-26-foafnaut-engine-sessions.md`. Those first-frame numbers
+include CPU probes that every frame of a `--steps` run asks for and a window in use does not
+(`everyFrame`, trap in `skills/foafnaut`); numbers without them: section 7 of that record.
 
 Owner input, 2026-11-26, as written in the status note "Foafnaut engine per tab: status and
 proposals": "The Linux tests had no GPU." "A Deno per tab is too costly if it is used only for

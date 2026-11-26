@@ -512,6 +512,18 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps (`--gesture-sweep`,
+  `--scroll-sweep`, `--command-sweep` and the others that set `commands`) sets `everyFrame` in
+  `run_html.ts` (`--watch-sweep` does not): every frame asks Lean for CPU probes
+  (`Scene.checks`, the scene drawn on the CPU at six points). A window in use asks for none in an
+  interactive frame (`checks:false`) and for one probe frame once it is idle. So the frame times
+  of such a run are not those of the window in use. 2026-11-26, 5 tabs, `tasks`, one run each:
+  Lean frame p50 591 ms with the probes, 70 ms with `--idle-checks-only`; new tab first frame
+  p50 1,300 and 299 ms. In a profile of a tab's first frame, 95% of the spare engine's samples
+  were in `Scene.checks`. The first-frame numbers on which D11 of the engine sessions record was
+  decided include the probes. Measure frames of the window in use with `--idle-checks-only`; keep
+  the probes for correctness runs.
+
 - A new tab (`showTab`) stops the load in progress in the tab that was shown, and that tab keeps
   its old page. 2026-11-26: the first steady-state trial opened the next tab 2 s after sending
   tab 2 to `particle-rex.html`, which needs about 3.7 s; tab 2 kept the new tab page, so the "load

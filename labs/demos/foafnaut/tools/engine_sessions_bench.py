@@ -46,8 +46,9 @@ Scenarios (the steps language of run_html.ts --steps):
           timer turns, so the pages of the other tabs run no script; with --hidden-tabs throttled
           or running (a FLAGS item) they do, and their turns are counted (hiddenTurnsIdle,
           hiddenTurnsActive, hiddenLeanMsActive). Run with --idle-checks-only (since 2026-11-26
-          09:30 UTC): the other scenarios, as every sweep and --steps run, ask Lean for CPU probes
-          in every frame, which an interactive frame of the window in use does not do.
+          09:30 UTC). The scenarios heavy, tabs, tabs-spaced and status (--steps, --resize-sweep)
+          ask Lean for CPU probes in every frame, which an interactive frame of the window in use
+          does not do (add --idle-checks-only as a FLAGS item); one and rex (--watch-sweep) do not.
 
 Output: one JSON object, with each run's numbers and, per configuration and scenario, the
 median, the worst and the coefficient of variation of each number
