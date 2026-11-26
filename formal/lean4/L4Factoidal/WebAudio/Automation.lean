@@ -20,6 +20,13 @@
   are proved over `Rat` (`linearValue`) and the `Float` code is tested against
   that definition with `#guard`.
 
+  Times. Stored times are exact values of binary64 numbers (every time is a
+  value `ofDouble` returns), so comparisons of stored times are exact and equal
+  the IEEE comparison of the doubles. Sums, products and frame conversion are
+  rounded to binary64 as the page and other engines compute them: `addTimes`
+  (for example the curve end `T + D`), the ramp and curve fractions, and
+  `frameOf` / `frameTime`. Callers store only times that came from `ofDouble`.
+
   Theorems proved (`#print axioms` shows only `propext`, `Classical.choice`,
   `Quot.sound`):
     `insert_sorted`, `insertAfterEqual_spec`, `insert_after_equal`,
@@ -55,6 +62,40 @@ def ofDouble (x : Float) : Option Rat :=
     times. Large numerators or denominators round twice; the tests state the
     tolerance. -/
 def ratToFloat (q : Rat) : Float := Float.ofInt q.num / Float.ofNat q.den
+
+/-- The double that a stored time is the exact value of: the inverse of
+    `ofDouble` on its image. The denominator of such a time is a power of two,
+    so scaling is exact. -/
+def timeToFloat (q : Rat) : Float :=
+  Float.scaleB (Float.ofInt q.num) (-(Nat.log2 q.den : Int))
+
+/-- Sum of two stored times computed in binary64 and converted back exactly,
+    as the page and other engines add times (for example the end `T + D` of a
+    curve). The result is again the exact value of a double. A sum that
+    overflows to infinity gives 0. -/
+def addTimes (a b : Rat) : Rat :=
+  (ofDouble (timeToFloat a + timeToFloat b)).getD 0
+
+/-- Time of a frame: `frame / sampleRate` divided in binary64. -/
+def frameTime (frame : Nat) (sampleRate : Float) : Rat :=
+  (ofDouble (Float.ofNat frame / sampleRate)).getD 0
+
+/-- First frame at or after time `t`: `ceil (t * sampleRate)` with the product
+    rounded to binary64. Convention of the AudioParam tests: WPT
+    `webaudio/resources/audioparam-testing.js`, `getStartEndFrames`, whose
+    comment reads "Start frame is the ceiling of the start time because the
+    ramp starts at or after the sample frame", used by
+    `createLinearRampArray`, `createExponentialRampArray` and
+    `createExponentialApproachArray`. The specification says an event takes
+    effect at its time; a frame is rendered at `frame / sampleRate`, so the
+    first frame that sees the event is the first whose time is at or after it.
+    The other WPT convention, `timeToSampleFrame` in
+    `webaudio/resources/audit-util.js` (`floor (0.5 + t * sampleRate)`, rounding
+    to nearest), is used for buffer and render lengths and for comparing
+    segments in `audioparam-testing.js` (`createConstantArray`,
+    `comparePartialSignals`); it is not used here. -/
+def frameOf (t : Rat) (sampleRate : Float) : Nat :=
+  (Float.ceil (timeToFloat t * sampleRate)).toUInt64.toNat
 
 /-! ## Types -/
 
@@ -105,7 +146,7 @@ def eventTime (x : Float) : Except Error Rat :=
     the event time for every other type. -/
 def spanEnd (e : Event) : Rat :=
   match e.kind with
-  | .setValueCurve _ d h => h.getD (e.time + d)
+  | .setValueCurve _ d h => h.getD (addTimes e.time d)
   | _ => e.time
 
 def isCurve (e : Event) : Bool :=
@@ -127,16 +168,17 @@ def isRamp (e : Event) : Bool :=
     (`setValueCurveAtTime`). -/
 def curveValue (vs : Array Float) (t0 d t : Rat) : Float :=
   let n := vs.size
-  if t0 + d ≤ t then vs.getD (n - 1) 0
+  if addTimes t0 d ≤ t then vs.getD (n - 1) 0
   else
-    let r : Rat := (((n - 1 : Nat) : Rat) / d) * (t - t0)
+    let r : Float := ((Float.ofNat (n - 1) / timeToFloat d)) * (timeToFloat t - timeToFloat t0)
     if r < 0 then vs.getD 0 0
     else
-      let k := r.floor.toNat
-      let x : Rat := r - (k : Rat)
+      let kf := Float.floor r
+      let k := kf.toUInt64.toNat
+      let x : Float := r - kf
       let a := vs.getD k 0
       let b := vs.getD (k + 1) a
-      a + (b - a) * ratToFloat x
+      a + (b - a) * x
 
 /-- The value of event `e` at time `t ≥ e.time`, ignoring any later event.
     `vBefore` is the value of the parameter just before `e` (used by
@@ -149,7 +191,7 @@ def ownValue (e : Event) (vBefore : Float) (t : Rat) : Float :=
   | .exponentialRamp => e.value
   | .setTarget tc =>
       if tc == 0 then e.value
-      else e.value + (vBefore - e.value) * Float.exp (-(ratToFloat (t - e.time) / tc))
+      else e.value + (vBefore - e.value) * Float.exp (-((timeToFloat t - timeToFloat e.time) / tc))
   | .setValueCurve vs d h =>
       curveValue vs e.time d (match h with | some h' => if t < h' then t else h' | none => t)
 
@@ -167,7 +209,7 @@ def endPoint (c : Cur) : Rat × Float :=
   match c.e.kind with
   | .setTarget _ => (c.e.time, c.vBefore)
   | .setValueCurve vs d h =>
-      let fin := h.getD (c.e.time + d)
+      let fin := h.getD (addTimes c.e.time d)
       (fin, curveValue vs c.e.time d fin)
   | _ => (c.e.time, c.e.value)
 
@@ -177,7 +219,7 @@ def endPoint (c : Cur) : Rat × Float :=
     Exponential: `v0 (v1/v0)^((t - tp)/(t1 - tp))`, and `v0` when `v0` is zero
     or `v0` and `v1` have opposite signs. -/
 def rampValue (expo : Bool) (tp : Rat) (v0 : Float) (t1 : Rat) (v1 : Float) (t : Rat) : Float :=
-  let f := ratToFloat ((t - tp) / (t1 - tp))
+  let f := (timeToFloat t - timeToFloat tp) / (timeToFloat t1 - timeToFloat tp)
   if expo then
     if v0 == 0 || (v0 < 0 && 0 < v1) || (0 < v0 && v1 < 0) then v0
     else v0 * Float.pow (v1 / v0) f
@@ -213,12 +255,15 @@ def valueAt (tl : Timeline) (defaultValue : Float) (t : Rat) : Float :=
     | none => ownValue c.e c.vBefore t
 
 /-- a-rate values for frames `startFrame .. startFrame + n - 1`, at time
-    `frame / sampleRate`. A loop with an accumulator. -/
-def fill (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Rat) :
+    `frameTime frame sampleRate` (`frame / sampleRate` in binary64). A loop
+    with an accumulator. `frameOf` is the inverse used to find the first frame
+    of an event; the tests check that the two agree (frame `frameOf T` has
+    time at or after `T`, the frame before it has an earlier time). -/
+def fill (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
     Array Float := Id.run do
   let mut out : Array Float := Array.mkEmpty n
   for i in [0:n] do
-    out := out.push (valueAt tl defaultValue (((startFrame + i : Nat) : Rat) / sampleRate))
+    out := out.push (valueAt tl defaultValue (frameTime (startFrame + i) sampleRate))
   return out
 
 /-! ## Insertion -/
@@ -268,7 +313,7 @@ def clampTime (e : Event) (currentTime : Rat) : Event :=
     time in `[T, T + D)` of an existing curve. -/
 def overlapsCurve (es : List Event) (e : Event) : Bool :=
   (match e.kind with
-    | .setValueCurve _ d _ => es.any (fun x => e.time < x.time && x.time < e.time + d)
+    | .setValueCurve _ d _ => es.any (fun x => e.time < x.time && x.time < addTimes e.time d)
     | _ => false)
   || es.any (fun x => isCurve x && x.time ≤ e.time && e.time < spanEnd x)
 
@@ -538,7 +583,7 @@ theorem cancelScheduledValues_spec (tl : Timeline) (c : Rat) :
 theorem curve_overlap_refused (tl : Timeline) (vs : Array Float) (T D : Rat)
     (ct : Rat) (cv : Float) (v : Float)
     (hct : ct ≤ T) (hvalid : validate ⟨.setValueCurve vs D none, T, v⟩ = none)
-    (hx : ∃ x ∈ tl.events, T < x.time ∧ x.time < T + D) :
+    (hx : ∃ x ∈ tl.events, T < x.time ∧ x.time < addTimes T D) :
     ∃ msg, insert tl ⟨.setValueCurve vs D none, T, v⟩ ct cv = .error (.notSupported msg) := by
   refine ⟨"event overlaps a value curve", ?_⟩
   have hclamp : clampTime ⟨.setValueCurve vs D none, T, v⟩ ct = ⟨.setValueCurve vs D none, T, v⟩ := by
@@ -685,9 +730,9 @@ private def withTl (r : Except Error Timeline) (f : Timeline → Timeline) : Exc
 #guard kindOf (build [crv #[1, 2, inf, 3] 1 1]) == "type"
 #guard kindOf (build [crv #[1, nan, 2, 3] 1 1]) == "type"
 -- WPT `audioparam-setValueCurve-exceptions.html` "curve lengths".
-#guard kindOf (build [crv #[] 0 (1 / 100)]) == "invalidState"
-#guard kindOf (build [crv #[1] 0 (1 / 100)]) == "invalidState"
-#guard kindOf (build [crv #[1, 2] 0 (1 / 100)]) == "ok"
+#guard kindOf (build [crv #[] 0 (q 0.01)]) == "invalidState"
+#guard kindOf (build [crv #[1] 0 (q 0.01)]) == "invalidState"
+#guard kindOf (build [crv #[1, 2] 0 (q 0.01)]) == "ok"
 -- Non-finite times (`eventTime`) and `cancelTime`.
 #guard (match eventTime nan with | .error (.type _) => true | _ => false)
 #guard (match cancelTimeOfDouble (-1) 0 with | .error (.range _) => true | _ => false)
@@ -701,9 +746,9 @@ private def withTl (r : Except Error Timeline) (f : Timeline → Timeline) : Exc
 #guard kindOf (build [crv #[0, 0] 1 1, lin 1 (3 / 2)]) == "notSupported"
 #guard kindOf (build [crv #[0, 0] 1 1, expo 1 (3 / 2)]) == "notSupported"
 #guard kindOf (build [crv #[0, 0] 1 1, tgt 1 (3 / 2) 1]) == "notSupported"
-#guard kindOf (build [crv #[0, 0] 1 1, sv 1 (21 / 10)]) == "ok"
+#guard kindOf (build [crv #[0, 0] 1 1, sv 1 (q 2.1)]) == "ok"
 -- "value setter": a setValue at the curve start.
-#guard kindOf (build [crv #[0, 0] 0 (1 / 5), sv 0 0]) == "notSupported"
+#guard kindOf (build [crv #[0, 0] 0 (q 0.2), sv 0 0]) == "notSupported"
 -- "automations" (times from the page: interval 0.125 / 10).
 private def autos : List Event :=
   [lin 1 (q 0.0125), expo 1 (q 0.025), tgt 1 (q 0.0375) 0.1, crv #[0, 0] (q 0.05) (q 0.1)]
@@ -712,11 +757,18 @@ private def autos : List Event :=
 #guard kindOf (build (autos ++ [crv #[0, 0] (q 0.01875) (q 0.01)])) == "notSupported"
 #guard kindOf (build (autos ++ [crv #[0, 0] (q 0.03125) (q 0.01)])) == "notSupported"
 #guard kindOf (build (autos ++ [crv #[0, 0] (q 0.04375) (q 0.01)])) == "notSupported"
--- "start-end": automations may begin where another ends (times are exact multiples of 1/400;
--- the page's doubles add with rounding, so the exact form is used here).
-#guard kindOf (build [sv 1 0, lin 0 (1 / 400), crv #[0, 0] (1 / 400) (1 / 400),
-    expo 1 (3 / 400), crv #[0, 0] (3 / 400) (1 / 400), crv #[0, 0] (4 / 400) (1 / 400),
-    sv 0 (5 / 400), crv #[0, 0] (5 / 400) (1 / 400), tgt 1 (6 / 400) 1]) == "ok"
+-- "start-end": the page's own doubles, accumulated in binary64 as the page does
+-- (`time += timeInterval`, `time += 2 * timeInterval`).
+private def startEnd : List Event :=
+  let iv : Float := 0.125 / 50
+  let t1 := 0.0 + iv
+  let t3 := t1 + 2 * iv
+  let t4 := t3 + iv
+  let t5 := t4 + iv
+  let t6 := t5 + iv
+  [sv 1 0, lin 0 (q t1), crv #[0, 0] (q t1) (q iv), expo 1 (q t3), crv #[0, 0] (q t3) (q iv),
+   crv #[0, 0] (q t4) (q iv), sv 0 (q t5), crv #[0, 0] (q t5) (q iv), tgt 1 (q t6) 1]
+#guard kindOf (build startEnd) == "ok"
 -- "curve overlap": a curve over [5, 15) and six overlapping curves, then an event at its end.
 #guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 5 10]) == "notSupported"
 #guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 5 5]) == "notSupported"
@@ -726,7 +778,7 @@ private def autos : List Event :=
 #guard kindOf (build [crv #[1, 2, 3] 5 10, crv #[1, 2, 3] 4 11]) == "notSupported"
 #guard kindOf (build [crv #[1, 2, 3] 5 10, sv 1 15]) == "ok"
 -- "catch-exception": a refused event leaves the earlier timeline as it was.
-#guard (match insert ⟨[sv 1 0]⟩ (crv #[0, nan] (1 / 100) (1 / 2)) 0 1 with
+#guard (match insert ⟨[sv 1 0]⟩ (crv #[0, nan] (q 0.01) (1 / 2)) 0 1 with
         | .error (.type _) => true
         | _ => false)
 
@@ -743,7 +795,7 @@ private def autos : List Event :=
 #guard val (build [sv 0 0, lin 1 1]) 0 (1 / 2) == 0.5
 -- The `Float` code against the `Rat` formula `linearValue`.
 #guard approx (val (build [sv 2 1, lin 8 5]) 0 3) (ratToFloat (linearValue 1 2 5 8 3)) 1e-12
-#guard approx (val (build [sv 2 1, lin (-8) 5]) 0 (7 / 3)) (ratToFloat (linearValue 1 2 5 (-8) (7 / 3))) 1e-12
+#guard approx (val (build [sv 2 1, lin (-8) 5]) 0 (q 2.3333333333333335)) (ratToFloat (linearValue 1 2 5 (-8) (q 2.3333333333333335))) 1e-12
 #guard approx (val (build [sv 0 0, lin 1 (q 0.01)]) 0 (q 0.007)) (ratToFloat (linearValue 0 0 (q 0.01) 1 (q 0.007))) 1e-12
 
 -- Exponential ramp: `v0 (v1/v0)^((t-T0)/(T1-T0))`; opposite signs or zero start hold `v0`.
@@ -758,9 +810,9 @@ private def autos : List Event :=
 #guard val (build [sv 1 0, tgt 0 1 0.5]) 0 1 == 1.0
 #guard val (build [sv 1 0, tgt 0 1 0]) 0 1 == 0.0
 #guard val (build [sv 1 0, tgt 0 1 1, sv 5 2]) 0 2 == 5.0
-#guard approx (val (build [sv 1 0, tgt 0 1 1, sv 5 2]) 0 (199 / 100)) (Float.exp (-0.99)) 1e-12
+#guard approx (val (build [sv 1 0, tgt 0 1 1, sv 5 2]) 0 (q 1.99)) (Float.exp (-0.99)) 1e-12
 -- WPT `audioparam-cancel-and-hold.html` "initial setTarget": no earlier event, default 1.
-#guard approx (val (build [tgt 0 0 0.1]) 1 (1 / 10)) (Float.exp (-1.0)) 1e-12
+#guard approx (val (build [tgt 0 0 0.1]) 1 (q 0.1)) (Float.exp (-1.0)) 1e-12
 -- A ramp after a setTarget replaces it; the curve is continuous.
 #guard approx (val (build [sv 1 0, tgt 0 1 1, lin 3 3]) 0 2) 2.0 1e-12
 -- A ramp after a setTarget that has started: an implicit setValue at currentTime.
@@ -792,7 +844,7 @@ private def cancel1At (c : Rat) : Except Error Timeline :=
 #guard val (cancel1At (q 0.3) >>= fun tl => insert tl (sv 3 (q 0.375)) 0 1) 0 (q 0.4) == 3.0
 -- At the end of the curve the curve and the later event are removed; after the end they stay.
 #guard times (cancel1At (1 / 2)) == [0, 1 / 4]
-#guard times (cancel1At (3 / 5)) == [0, 1 / 4, 1 / 4, 1 / 2]
+#guard times (cancel1At (q 0.6)) == [0, 1 / 4, 1 / 4, 1 / 2]
 
 -- cancelAndHold. WPT `audioparam-cancel-and-hold.html`.
 private def hold (r : Except Error Timeline) (c : Rat) : Except Error Timeline :=
@@ -802,8 +854,8 @@ private def hold (r : Except Error Timeline) (c : Rat) : Except Error Timeline :
 #guard val (hold (build [sv 0.5 0, tgt 0 (3 / 8) 0.1]) (1 / 4)) 1 1 == 0.5
 #guard times (hold (build [sv 0.5 0, tgt 0 (3 / 8) 0.1]) (1 / 4)) == [0]
 -- "cancel future setValueCurve" and "cancel setValueCurve now".
-#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (3 / 8) (1 / 10)]) (1 / 4)) 1 1 == 0.5
-#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (1 / 4) (1 / 10)]) (1 / 4)) 1 1 == 0.5
+#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (3 / 8) (q 0.1)]) (1 / 4)) 1 1 == 0.5
+#guard val (hold (build [sv 0.5 0, crv #[-1, 1] (1 / 4) (q 0.1)]) (1 / 4)) 1 1 == 0.5
 -- Linear ramp cancelled mid-ramp: the hold value is the ramp value at the cancel time.
 private def ramp2 : Except Error Timeline := build [sv 0 0, lin 1 (q 0.01), lin 0 (q 0.5)]
 #guard approx (val (hold ramp2 (1 / 4)) 0 1) (1 - (0.25 - 0.01) / 0.49)
@@ -820,14 +872,28 @@ private def curve2 : Except Error Timeline :=
 #guard approx (val (hold curve2 (1 / 4)) 0 1) (1 - 0.24 / 0.49) 1e-12
 #guard approx (val (hold curve2 (1 / 4)) 0 (q 0.1)) (val curve2 0 (q 0.1)) 1e-12
 -- Cancel after the end of the curve changes nothing.
-#guard val (hold curve2 (3 / 5)) 0 1 == 0.0
+#guard val (hold curve2 (q 0.6)) 0 1 == 0.0
 
+-- Binary64 sums and frames. A stored time converts back exactly.
+#guard timeToFloat (q 0.1) == 0.1 && timeToFloat (q 1e300) == 1e300 && timeToFloat (q 5e-324) == 5e-324
+#guard timeToFloat (q (-0.75)) == -0.75 && timeToFloat 0 == 0.0 && timeToFloat 3 == 3.0
+#guard ofDouble (timeToFloat (q 0.0125)) == some (q 0.0125)
+-- The exact sum differs from the binary64 sum: 0.1 + 0.2 is 0.30000000000000004 in binary64.
+#guard addTimes (q 0.1) (q 0.2) == q 0.30000000000000004 && q 0.1 + q 0.2 != q 0.30000000000000004
+-- Event at the double 0.1, 44100 Hz: binary64 `0.1 * 44100` is exactly 4410.0, so the first frame is
+-- 4410; in exact arithmetic it would be 4411 (4410 / 44100 is below the stored time).
+#guard frameOf (q 0.1) 44100 == 4410
+#guard -((-(q 0.1 * 44100)).floor) == 4411
+#guard frameTime 4410 44100 == q 0.1
+#guard q 0.1 ≤ frameTime (frameOf (q 0.1) 44100) 44100
+-- The frame before the first frame has an earlier time.
+#guard frameTime (frameOf (q 0.0125) 48000 - 1) 48000 < q 0.0125 && frameOf (q 0.0125) 48000 == 600
 -- Block fill: a-rate values at `frame / sampleRate`.
 private def fillTl : Timeline := ⟨[sv 0 0, lin 1 1]⟩
-#guard fill fillTl 0 0 5 4 == #[0.0, 0.25, 0.5, 0.75, 1.0]
-#guard fill fillTl 0 2 3 4 == #[0.5, 0.75, 1.0]
-#guard (fill fillTl 0 0 100000 48000).size == 100000
-#guard (fill fillTl 0 0 3 0).size == 3
+#guard fill fillTl 0 0 5 4.0 == #[0.0, 0.25, 0.5, 0.75, 1.0]
+#guard fill fillTl 0 2 3 4.0 == #[0.5, 0.75, 1.0]
+#guard (fill fillTl 0 0 100000 48000.0).size == 100000
+#guard (fill fillTl 0 0 3 0.0).size == 3
 
 /-! ## Not done
 
