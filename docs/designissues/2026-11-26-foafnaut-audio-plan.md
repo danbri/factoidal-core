@@ -179,7 +179,15 @@ frame headers; the first frame confirmed by the next header; the information fra
 LAME delay and padding applied (gapless, as FFmpeg). `Decode.mp3` gives one whole frame per call
 to the MP3 module and checks each result. On the three clips the WasmVM output equals the V8 run of
 the same module bit for bit, the lengths equal FFmpeg's, and the samples are within 2 of 32768 of
-FFmpeg's decoder. `decodeAudioData` itself comes with the page interfaces.
+FFmpeg's decoder.
+
+Second part (`7599e970a` to `a17dd53f9`): `Media/Wav.lean` (PCM 8 to 32 bits, float 32 and 64,
+A-law, µ-law, extensible; identical to FFmpeg on every WAV tried), float decoder paths for Opus,
+Vorbis (every channel, 8 at most, in Web Audio's channel order) and MP3, and
+`WebAudio/Decode.lean`: `decodeAudioData` (format sniffing, module pin check, decoding, a
+Kaiser-windowed sinc resampler to the context's rate: gain within 1e-4 up to 0.9 of the lower
+Nyquist, -103 dB at 1.1; about 98 dB SNR against FFmpeg's resampler in the interior). Not yet:
+end trimming of Vorbis in WebM; Opus with more than two channels. `media-bench decode` runs it.
 
 ## 11. Open defects in the landed engine files (2026-11-26)
 
