@@ -1,0 +1,72 @@
+[
+  {
+    "binary": "ssz-gindex",
+    "checker": "check-gindex.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "SSZ generalized-index oracle: 1025 rows matched, including index-zero refusal boundary; no hash/consensus claim"
+  },
+  {
+    "binary": "ssz-checked-branch",
+    "checker": "check-checked-branch.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "SSZ checked-branch oracle: 1025 Lean rows matched; 2 index refusals and 1025 malformed-length refusals; arithmetic pairing only, no SHA-256 or complete SSZ conformance"
+  },
+  {
+    "binary": "lmd-latest",
+    "checker": "check-lmd-latest.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "Beacon LMD latest-message: 2048 Lean rows matched Python reference; conflicting_equal_epoch=308, equal_epoch=308, equivocating=293, first=438, newer=515, stale=494; no signature, FFG or fork-choice-head claim"
+  },
+  {
+    "binary": "lmd-store",
+    "checker": "check-lmd-store.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "LMD VoteStore: 1024 sequential Lean transitions matched independent Python keyed-state oracle; equal_refused=2, equivocator_refused=117, first_accepted=6, invalid_refused=94, newer_accepted=640, stale_refused=165; no signed attestation, bounded map, fork-choice-head or finality claim"
+  },
+  {
+    "binary": "lmd-score",
+    "checker": "check-attestation-score.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "Matched 1024 actual Lean cases: 79 duplicate-index refusals, 95 positive boosts, 156 updated scores; 0 mismatches"
+  },
+  {
+    "binary": "lmd-computed-boost",
+    "checker": "check-proposer-score.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "Matched 1024/1024 Lean rows: 79 duplicate refusals, 94 positive boosts, 156 observable vote changes, 137 rounding discriminators, 0 mismatches"
+  },
+  {
+    "binary": "lmd-checked-ancestry",
+    "checker": "check-ancestry.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "Matched 1024/1024 Lean rows: 556 refusals, 468 completed scores, 288 inconclusive probes, 32 positive boosts, 36 observable vote updates; 0 mismatches"
+  },
+  {
+    "binary": "lmd-checked-child",
+    "checker": "check-child-selection.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "Matched 1024/1024 Lean rows: 527 refusals, 83 genuine empty inventories, 414 selected heads, 5 selected-score ties, 92 boost winner changes, 63 admitted-vote winner changes; 0 mismatches"
+  },
+  {
+    "binary": "lmd-stored-head",
+    "checker": "check-stored-head.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "PASS 1024 independent finite-store head comparisons; step_outcomes={'R': 369, '2': 499, '1': 156}; terminal_heads={'R': 760, '4': 250, '3': 14}; mismatches=0"
+  },
+  {
+    "binary": "ssz-multiproof-helpers",
+    "checker": "check-multiproof-helpers.py",
+    "native_exit": 0,
+    "checker_exit": 0,
+    "result": "SSZ multiproof positional oracle: 2048 actual Lean rows matched; 890 admitted, 1158 refused, 157 valid empty-helper cases; 3 comparator mutations detected; no cryptographic claim"
+  }
+]

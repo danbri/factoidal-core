@@ -1,0 +1,93 @@
+{
+  "schema": "factoidal.ethereum-consensus.vector-u64-claims.v1",
+  "scope": "Local bounded SSZ fixed Vector[N,uint64] serialization and packed root; no final consensus claim",
+  "compiler": "leanprover/lean4:v4.33.1",
+  "base": "0c9be2a2ef6bca9a1eb5da253f7e848d5b52471d",
+  "sources": [
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/VectorU64.lean",
+      "git_blob_sha": "d84159c860a5e2b41debe3e1d994a315259bb844"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/VectorU64Main.lean",
+      "git_blob_sha": "684f80d38be6e6240f7504e7df61cdcfd3da6eaf"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean",
+      "git_blob_sha": "e2d3b3e2b4eb29c0ed2cea820a36713ae93ebb6d"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProof.lean",
+      "git_blob_sha": "ff547b1c8547769ec36673c0f6dde3fb29bf40a1"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2.lean",
+      "git_blob_sha": "92737f4d83035745dba29ef2c3867b01b8dfa50f"
+    }
+  ],
+  "theorems": [
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_cap",
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_count",
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_exact",
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_cap",
+    "EthereumConsensus.SSZ.vectorU64HashLevel_two",
+    "EthereumConsensus.SSZ.vectorU64Reduce_single",
+    "EthereumConsensus.SSZ.vectorU64Reduce_two",
+    "EthereumConsensus.SSZ.vectorU64Reduce_zero_empty",
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_count"
+  ],
+  "axiom_allowlist": [
+    "Classical.choice",
+    "Quot.sound",
+    "propext"
+  ],
+  "normative": {
+    "repo": "ethereum/ssz-specs",
+    "sha": "4c2f08805080c6b4b12ede7bf48ad6a80229f4b1",
+    "scope": "fixed vectors of basic uint64, packed leaf Merkleization"
+  },
+  "trust_boundary": [
+    "Lean compiler/kernel/runtime",
+    "existing pure SHA-256, without independent FIPS refinement",
+    "JSONL is line capped only after host input allocation",
+    "no BLS, beacon state, vector length provenance or general consensus"
+  ],
+  "theorem_axioms": {
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_cap": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_refuses_count": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64Wire_exact": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_cap": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64HashLevel_two": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_single": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_two": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.vectorU64Reduce_zero_empty": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.checkedVectorU64_refuses_count": [
+      "propext",
+      "Quot.sound"
+    ]
+  },
+  "verified_source_head": "67948c3c24197f2ed29a909f1c91539f417815dd",
+  "verified_workflow": "https://github.com/danbri/factoidal-core/actions/runs/45235021923",
+  "source_head_new_test_cases": 1406
+}

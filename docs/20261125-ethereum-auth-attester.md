@@ -1,0 +1,7 @@
+# Commitment-bound aggregate attester authentication — 25 November 2026
+
+Parent #725, issue #1021. Base #1020 c4fd4365b8c9d1a1fad05d9401c81bc37a66e10a; actual hosted job 139065975371 passed 51/51 proposer rows (28562.120 ms), seven axiom reports [propext, Quot.sound]. New isolated branch preserves predecessor sources.
+
+The raw attester path calls checkAllStateSigners, then both aggregate BLS verifications using the exact ordered registry-derived key lists and their corresponding signing roots. An empty eligible intersection is refused after both signatures pass. Success returns unchanged prepared evidence and is conditional on the supplied state root and the registry proof-of-possession invariant; it neither authenticates a canonical root nor mutates state. Resource and internal errors are not protocol-invalid verdicts.
+
+Eight new linkage theorem statements, with actual axiom output required by CI. Independent Python SSZ oracle derives four distinct keys using fixed public test scalars 1–4; independent affine RFC oracle generates signatures for left sum 6 and right sum 9. Two layouts, correct aggregates, wrong aggregate, swapped/negated signatures, noncommon signer corruption and other branch mutations. Planned 83 native rows plus five comparator and four axiom controls; no new native pass claimed before CI. Empty eligible refusal has a theorem statement; a raw native fixture remains to add. Compiler/runtime, host transport and oracle correctness remain explicit assumptions. No external implementation dependency, no main merge.

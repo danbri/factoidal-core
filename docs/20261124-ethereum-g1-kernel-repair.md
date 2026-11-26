@@ -1,0 +1,7 @@
+# Independent BLS G1 kernel repair — 24 November 2026
+
+Tracks #960, #954 and #725. Isolated branch from #955 head `1cbdfd60b2499fb725b5ec1f910df26fb01ce6e6`.
+
+[Actual predecessor Linux job](https://github.com/danbri/factoidal-core/actions/runs/45477441481/job/138741295142) failed compilation at line 168: dependent case elimination rewrote the target candidate equality to reflexivity. The first three actual axiom reports contained only permitted axioms; the fourth contained `sorryAx` as a consequence of the elaboration error. No native test ran. This change replaces the stale equality proof with reflexivity, retaining the full original statement; four additional statements give exact candidate-error propagation, acceptance and the two admission rejection branches. The actual executable and independent affine oracle are unchanged. The exact inventory gate now requires all eight printed reports. No claim of a new checked theorem or native pass before the fresh hosted job passes. Retained tests remain required, and the broader corpus recursion gate is still open.
+
+Theorems concern the executable candidate and predicate decisions; they do not prove mathematical scalar multiplication, square-root completeness, BLS signature authentication or complete consensus. Lean compiler/runtime trusted, no new imports, pinned 4.33.1 and zero external Lake packages unchanged. No merge or release.
