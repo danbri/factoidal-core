@@ -140,8 +140,10 @@ that do not know sessions. Reason: item 1 is the only C global; the Lean engine 
 value (item 10).
 
 D2. Items 5 to 7 become fields of `Engine`, so each session has its own. Reason: they are per
-document state. This removes two `unsafe`, two `@[implemented_by]`, one `opaque` and three
-`initialize` cells from the lab.
+document state. Measured by the lab hygiene count (`LabHygiene.lean`, builds of the base and
+of the branch): `unsafe` 3 to 2, `@[implemented_by]` 3 to 2, `opaque` 5 to 1 (the three
+`initialize` cells and `pageWork` are gone). Until 2026-11-26 this line said "two `unsafe`, two
+`@[implemented_by]`, one `opaque`", written before the build.
 
 D3. Item 4 stays one table for the process, shared by all sessions. Reason: its values are a
 pure function of the key, so sharing gives the same answers, and its ref operations are of one
@@ -390,7 +392,18 @@ task session's layers answer decodes to the same boxes, glyph runs, links, pixel
 and layer places as the engine on this thread); `layout_sections_test.ts` (issue 1124) 2 of 2,
 directly and through an engine worker.
 
-Byte comparison of the demo pages against a build of `main` `b7286ac7`: not yet run (that build is in progress).
+Byte comparison against a build of `main` `b7286ac7` (same machine, its own lab tree), through the
+merged host code, on the 28 HTML demo pages of `pages/manifest.json` that the app does not refuse:
+a frame, a scrolled frame, and two layers answers (the second kept the page layer), 1600 by 1200,
+text 150 percent, with the decoded layout sections of each layers answer. `main`'s library
+against the merged library on this thread: 28 of 28 the same. The merged library on this thread
+against the same library through a task session (`loadHTMLSession`): 28 of 28 the same. The
+`frameWork` counts of the three are equal (28 layouts, 84 kept, 38,939 primitives compiled, 28
+page layers made, 28 given again). A first run of the task session showed 3 pages different
+(the 3 with images): the harness had sent the pages' image loads to the engine on this thread
+only. With them sent to the session as well (as the host does: `imageLoad`, `webFontLoad` and
+`fontFaces` are remote calls of the tab's engine), all 28 are the same. Window screenshots (`--offscreen --shot`)
+of the 3 pages with images from the host in `tasks` and `copies` mode are the same bytes.
 
 Confirmation measurement against that build: not yet run.
 
