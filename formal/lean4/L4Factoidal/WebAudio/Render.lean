@@ -313,6 +313,13 @@ def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (interp : Mix.Interp
   -- A node type with no kernel (`Kind.other`): one mono channel of silence per output.
   | _, _ => (ks, Array.replicate k.numOutputs (silence 1 n))
 
+/-- The output of a node is binary32 data: each sample is rounded to the nearest binary32 value, so
+that an overflow is an infinity at the node that overflows (and `inf - inf` is NaN where two such
+outputs meet), as in a single-precision engine. The kernels compute in binary64. Specification:
+"AudioBuffer ... 32-bit floating-point"; WPT `nan-param.html` needs this. -/
+def roundOut (bs : Array Block) : Array Block :=
+  bs.map fun b => b.map fun c => mkChan c.size fun i => (getF c i).toFloat32.toFloat
+
 /-- Process one step of the ordered list. -/
 def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
   | .node id =>
@@ -324,7 +331,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       let r := runKernel st.quantum st.frame k cyc node.chan.interp node.ks inputs params
       let acc' := if id == st.dest then { acc with destIn := inputs.getD 0 #[] } else acc
       { acc' with nodes := acc'.nodes.set! id { node with ks := r.1 }
-                  outs := acc'.outs.set! id r.2 }
+                  outs := acc'.outs.set! id (roundOut r.2) }
     | _, _ => acc
   | .delayRead id =>
     match acc.nodes[id]?, st.graph.kinds[id]? with
@@ -333,7 +340,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       | .delay s _ =>
         let silent : Array Block := #[silence s.bufs.size st.quantum]
         let r := runKernel st.quantum st.frame k true node.chan.interp node.ks silent (nodeParams st acc id node)
-        { acc with outs := acc.outs.set! id r.2 }
+        { acc with outs := acc.outs.set! id (roundOut r.2) }
       | _ => acc
     | _, _ => acc
   | .delayWrite id =>

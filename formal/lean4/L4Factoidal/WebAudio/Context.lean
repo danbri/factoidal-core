@@ -707,6 +707,23 @@ private def zeros (k : Nat) : List Float := List.replicate k 0.0
 #guard (match OfflineContext.new 1 1 8000.0 0 with | .error (.notSupported _) => true | _ => false)
 #guard (match OfflineContext.new 1 1 3000.0 18001 with | .error (.notSupported _) => true | _ => false)
 
+-- binary32 outputs (WPT nan-param.html): 1e30 through a gain of 1e30 is +infinity, through a gain of
+-- -1e30 is -infinity, and the two meet at the destination as NaN.
+#guard (match go 1 4 (fun c => do
+    let (c, m) ← c.createConstantSource
+    let c ← c.setValueAtTime m 0 1e30 0.0
+    let (c, g1) ← c.createGain
+    let (c, g2) ← c.createGain
+    let c ← c.setValueAtTime g1 0 1e30 0.0
+    let c ← c.setValueAtTime g2 0 (-1e30) 0.0
+    let c ← c.connect m 0 g1 0
+    let c ← c.connect m 0 g2 0
+    let c ← c.connect g1 0 0 0
+    let c ← c.connect g2 0 0 0
+    c.start m) with
+  | .ok out => (out.getD 0 ⟨#[]⟩).data.all (fun x => x != x)
+  | .error _ => false)
+
 -- Rendering in steps: length 10, quanta of 4, a source starting at frame 5. One quantum gives 4
 -- frames, the next step is cut at the length (6 frames, not 8), and a third step is refused.
 private def stepped : Except Error (Array FloatArray × Array FloatArray × Bool) := do
