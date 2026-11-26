@@ -488,7 +488,7 @@ private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String 
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
   -- a geometry property cascades only on an element that has it as an attribute
   let geometry := match tag with
-    | "rect" => ["x","y","rx","ry"]
+    | "rect" => ["x","y","width","height","rx","ry"]
     | "circle" => ["cx","cy","r"]
     | "ellipse" => ["cx","cy","rx","ry"]
     | _ => []
@@ -799,7 +799,11 @@ private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : 
     if d.property == "opacity" then let _ ← number d.value; pure ()
     else if d.property == "overflow" then
       if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
-    else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
+    else if ["width","height"].contains d.property then
+      if tag == "rect" then
+        let value ← relativeLength d.value 1
+        if value < 0 then throw "negative rectangle dimensions"
+      else throw "unsupported CSS geometry property"
     else if geometryProperties.contains d.property then
       if ["rx","ry"].contains d.property && (trim d.value).toLower == "auto" then pure ()
       else let _ ← relativeLength d.value 1; pure ()
