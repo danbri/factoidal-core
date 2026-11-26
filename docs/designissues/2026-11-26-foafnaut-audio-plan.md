@@ -146,3 +146,28 @@ After audio: WebXR audio, then the video stages of issue 588 with section 4's ru
   decoder; Opus and Vorbis within 1 of 32768 of FFmpeg, with the instruction counts of 2026-11-08;
   VP8 frames byte-identical to libvpx; the float exports equal the int16 exports before rounding,
   on every sample; `media-bench test` 34 passed, 0 failed; `media-bench check` 4 of 4.
+
+## 9. Stage B: the structure of the engine
+
+Files under `formal/lean4/L4Factoidal/WebAudio/` (library `WebAudio`, umbrella `WebAudio.lean`).
+Each file imports `Init` and earlier `WebAudio` files only, so it type-checks alone and fast.
+
+| File | What | State |
+|---|---|---|
+| `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`) |
+| `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time (event times exact `Rat`) | in progress |
+| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | next |
+| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | next |
+| `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | after |
+| `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules | after |
+| `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | after |
+| `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | after |
+
+A block is `Array FloatArray`: one `FloatArray` of `n` frames per channel, `n = 128` (the render
+quantum; Web Audio 1.1's `renderSizeHint` makes it a parameter). Processing is in 64-bit floats;
+values exposed to script (`AudioBuffer` data) are rounded to 32-bit floats, as the specification
+requires. A kernel has the form
+`process : State → (inputs : Array Block) → (params : Array FloatArray) → State × Array Block`,
+with `params[i]` holding `n` values (a-rate) or one value (k-rate). The page interfaces
+(`prelude.js`, the interface table from the Web Audio IDL, the ops) come after `Render.lean` and
+`Context.lean`, so that `OfflineAudioContext` tests can run first.
