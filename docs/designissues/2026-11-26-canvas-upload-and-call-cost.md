@@ -88,6 +88,18 @@ Where the time was:
    Most of the Lean time per call is in `composite` and the coverage of each draw
    (`Raster.lean`).
 
+## 3a. Later steps of the same night
+
+| Step | Change | Measured (same machine, two builds of one base) |
+| --- | --- | --- |
+| 068b8b4b0 | `arguments.length` with no arguments object | pairs 4.6 to 4.9 → 3.8 µs per call; game-like frame 27.7 → 19.0 ms engine time |
+| 7111c6c24 | run scan two pixels per 8-byte load; prelude receiver checks with no optional chain | pairs 3.8 to 4.0 → 2.8 to 3.5 µs per call; game-like frame wall 29.7 → 24.0 ms |
+| 14bc1cf1c | host `unrle` with a `DataView` and one scratch buffer | decode of a 1600x1000 frame 7 to 13 → 1.1 to 1.4 ms; rig present p50 15.5 to 16.6 → 13.6 to 13.7 ms |
+
+Particle Rex on the rig moved from 4.4 fps (main 9fa1d855) to 7.2 to 8.6 fps, most of it from
+the raster session's work on `Raster.lean`. Runs of the game differ by more than the later
+steps (the game state at each press differs), so its fps is not used to judge a single step.
+
 ## 4. Defects found
 
 - `canvas2d_reference.mjs` checked for Chrome at the Mac path when imported and called
