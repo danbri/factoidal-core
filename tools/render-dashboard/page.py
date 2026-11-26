@@ -39,7 +39,7 @@ STATE_CLASS = {
     'fail': 'bad', 'mismatch': 'bad', 'different': 'bad', 'differ': 'bad', 'empty': 'bad',
     'error': 'error', 'crash': 'error', 'timeout': 'error', 'harness_error': 'error', 'gpu_error': 'error',
     'refused': 'refused', 'rejected': 'refused',
-    'unsupported': 'unsupported',
+    'unsupported': 'unsupported', 'needs_animation': 'unsupported',
     'unavailable': 'unavailable', 'incomplete': 'unavailable', 'no_assertions': 'unavailable',
 }
 # The order is checked for colour blindness: adjacent colours stay apart.

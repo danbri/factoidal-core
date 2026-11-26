@@ -669,6 +669,101 @@ pub async fn stream_request(partition: String, host: String, port: u16, request:
     line
 }
 
+// Open streams for the host (the SOCKS5 server of the Tor worker). Each stream is split into a
+// reader and a writer, so one read and one write can wait at the same time. A half is taken out
+// of its map while an operation runs on it; a second operation on the same half is refused.
+thread_local! {
+    static READERS: std::cell::RefCell<std::collections::HashMap<u32, arti_client::DataReader>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static WRITERS: std::cell::RefCell<std::collections::HashMap<u32, arti_client::DataWriter>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static CLOSED: std::cell::RefCell<std::collections::HashSet<u32>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+static NEXT_STREAM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Open a stream to `host:port` through the isolated client of `partition` (the exit resolves
+/// a name; nothing is resolved here). Returns a stream handle. Errors name the cause class:
+/// "refused" (bad input or no client), "timeout", or "tor" (Arti's error kind).
+#[wasm_bindgen]
+pub async fn stream_open(partition: String, host: String, port: u16, timeout_ms: u32) -> Result<u32, JsValue> {
+    use tor_rtcompat::SleepProviderExt;
+    if host.is_empty() || port == 0 {
+        return Err(JsValue::from_str("refused: empty host or port 0"));
+    }
+    let client = client_for(&partition).map_err(|e| JsValue::from_str(&format!("refused: {e}")))?;
+    let rt = WasmRuntime::default();
+    let s = match rt.timeout(Duration::from_millis(timeout_ms as u64), client.connect((host.as_str(), port))).await {
+        Err(_) => return Err(JsValue::from_str("timeout")),
+        Ok(Err(e)) => {
+            use tor_error::HasKind;
+            return Err(JsValue::from_str(&format!("tor: {}", e.kind())));
+        }
+        Ok(Ok(s)) => s,
+    };
+    let h = NEXT_STREAM.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let (r, w) = s.split();
+    READERS.with(|m| m.borrow_mut().insert(h, r));
+    WRITERS.with(|m| m.borrow_mut().insert(h, w));
+    Ok(h)
+}
+
+/// Read up to `max` bytes from stream `h`. An empty result is the end of the stream.
+#[wasm_bindgen]
+pub async fn stream_read(h: u32, max: u32) -> Result<js_sys::Uint8Array, JsValue> {
+    use futures::AsyncReadExt;
+    let mut r = READERS
+        .with(|m| m.borrow_mut().remove(&h))
+        .ok_or_else(|| JsValue::from_str("refused: no such stream, or a read is already waiting"))?;
+    let mut buf = vec![0u8; (max as usize).clamp(1, 65536)];
+    let res = r.read(&mut buf).await;
+    if !CLOSED.with(|c| c.borrow().contains(&h)) {
+        READERS.with(|m| m.borrow_mut().insert(h, r));
+    }
+    let n = res.map_err(|e| JsValue::from_str(&format!("tor: {}", e.kind())))?;
+    Ok(js_sys::Uint8Array::from(&buf[..n]))
+}
+
+/// Write all of `data` to stream `h` and flush it (Arti sends a cell when flushed or full).
+#[wasm_bindgen]
+pub async fn stream_write(h: u32, data: Vec<u8>) -> Result<u32, JsValue> {
+    use futures::AsyncWriteExt;
+    let mut w = WRITERS
+        .with(|m| m.borrow_mut().remove(&h))
+        .ok_or_else(|| JsValue::from_str("refused: no such stream, or a write is already waiting"))?;
+    let res = async {
+        w.write_all(&data).await?;
+        w.flush().await
+    }
+    .await;
+    if !CLOSED.with(|c| c.borrow().contains(&h)) {
+        WRITERS.with(|m| m.borrow_mut().insert(h, w));
+    }
+    res.map_err(|e| JsValue::from_str(&format!("tor: {}", e.kind())))?;
+    Ok(data.len() as u32)
+}
+
+/// Close stream `h`: drop both halves (Arti sends END). A waiting read or write ends with an
+/// error or end of stream. Returns false for an unknown handle.
+#[wasm_bindgen]
+pub fn stream_close(h: u32) -> bool {
+    let r = READERS.with(|m| m.borrow_mut().remove(&h)).is_some();
+    let w = WRITERS.with(|m| m.borrow_mut().remove(&h)).is_some();
+    if !(r || w) {
+        return false;
+    }
+    CLOSED.with(|c| c.borrow_mut().insert(h));
+    true
+}
+
+/// Number of open streams (for tests and the host's trace).
+#[wasm_bindgen]
+pub fn streams_open() -> u32 {
+    let r: std::collections::HashSet<u32> = READERS.with(|m| m.borrow().keys().copied().collect());
+    let w: std::collections::HashSet<u32> = WRITERS.with(|m| m.borrow().keys().copied().collect());
+    r.union(&w).count() as u32
+}
+
 static LOG_DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Show Arti's debug lines too (safe logging stays on).

@@ -23,6 +23,10 @@ record (build, every change to Arti, measurements, security review, open risks):
   the wasm-bindgen glue and the test page into `.build/`.
 - `arti-2.8.0-wasm.patch`: the changes to Arti (all wasm-only; see the record, 10.2 and 12.2).
 - `src/lib.rs`: the wasm runtime for Arti and the exported functions.
+- `deno/socks5.ts`: the SOCKS5 server (CONNECT, username/password; user name = partition),
+  `torHttpClient` (clears `NO_PROXY`, which Deno's fetch would otherwise apply) and
+  `proxyCheck` (refuse Tor mode if any loopback or private request would go around the proxy).
+  Tests: `deno/socks5.test.ts`. Host: `--fetch PARTITION@URL` fetches through it.
 - `module.test.cjs`: checks of the module in Node: it fails closed with no host transport, the
   opt-in needs the exact string, no debug lines by default, state out and back.
 - `deno/tor.test.ts`: the module runs in a dedicated Deno worker; expected failures for

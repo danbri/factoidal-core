@@ -13,6 +13,7 @@
 import init, * as tor from "../.build/web/foafnaut_tor_wasm.js";
 
 import { isIpLiteral } from "./ip-literal.ts";
+import { startSocks5, type Socks5Event } from "./socks5.ts";
 
 const conns = new Map<number, Deno.TcpConn>();
 let next = 1;
@@ -25,6 +26,19 @@ type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB
 const traces: ConnTrace[] = [];
 const traceOf = new Map<number, ConnTrace>();
 let tracing = false;
+// Event-loop lag: the module has one thread, so CPU work in it (parsing a consensus, checking
+// signatures) delays every socket read and timer. A tick every 50 ms records how late it ran;
+// runs of more than 1 s are kept with their start time.
+let lagMax = 0;
+const stalls: { at: number; ms: number }[] = [];
+let lastTick = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const late = now - lastTick - 50;
+  lastTick = now;
+  if (late > lagMax) lagMax = late;
+  if (late > 1000) stalls.push({ at: Math.round(now - t0 - late), ms: Math.round(late) });
+}, 50);
 
 (globalThis as unknown as { torHost: unknown }).torHost = {
   async connect(ip: string, port: number): Promise<number> {
@@ -89,7 +103,13 @@ type Msg =
   | { id: number; op: "stream"; partition: string; host: string; port: number; request: string; max: number; timeoutMs: number }
   | { id: number; op: "new-identity" }
   | { id: number; op: "isolated" }
-  | { id: number; op: "trace"; on: boolean };
+  | { id: number; op: "trace"; on: boolean }
+  | { id: number; op: "socks"; timeoutMs: number };
+
+// The SOCKS5 server, started once by op "socks". The port and password go only to the thread
+// that started this worker. Events keep no host names.
+let socks: { port: number; password: string } | undefined;
+const socksEvents: Socks5Event[] = [];
 
 self.onmessage = async (e: MessageEvent<Msg>) => {
   const m = e.data;
@@ -105,7 +125,23 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "new-identity") result = tor.new_identity();
   else if (m.op === "isolated") result = tor.isolated_context();
   else if (m.op === "trace") { tracing = m.on; result = tracing; }
+  else if (m.op === "socks") {
+    if (!socks) {
+      const t = m.timeoutMs;
+      const s = startSocks5({
+        open: (p, host, port) => tor.stream_open(p, host, port, t),
+        read: (h, max) => tor.stream_read(h, max),
+        write: (h, d) => tor.stream_write(h, d),
+        close: (h) => { tor.stream_close(h); },
+      }, (e) => { if (socksEvents.length < 1000) socksEvents.push(e); });
+      socks = { port: s.port, password: s.password };
+    }
+    result = socks;
+  }
   const conn = tracing ? traces.splice(0, traces.length) : undefined;
-  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size, ...(conn ? { conns: conn, at: ms() } : {}) });
+  const socksSeen = socks ? { socks: socksEvents.splice(0, socksEvents.length), streamsOpen: tor.streams_open() } : {};
+  const loop = tracing ? { maxLagMs: Math.round(lagMax), stalls: stalls.splice(0, stalls.length) } : undefined;
+  if (tracing) lagMax = 0;
+  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size, ...socksSeen, ...(conn ? { conns: conn, at: ms(), loop } : {}) });
 };
 (self as unknown as Worker).postMessage({ ready: true });

@@ -1208,8 +1208,10 @@ which the parser reads as a `yield` in an async function) inside an expression i
 moved before its statement when it is evaluated unconditionally: `f(await p)`
 becomes `let %y0 = await p; f(%y0)`. The callee and operands to its left are then
 evaluated after the suspension, not before: a known difference from §13.3.6 when
-they have side effects. `yield` inside `&&`, `||`, `??`, `?:`, functions and classes
-stays, and the machine refuses that statement. -/
+they have side effects. A `yield` on one branch of `&&`, `||`, `??`, `?:` or a logical
+assignment runs inside an `if`; one in a destructuring pattern is lowered to statements
+(`dstrLower`). A `yield` inside an optional chain stays, and the machine refuses that
+statement: https://github.com/danbri/factoidal-core/issues/1167. -/
 
 /-- Lifting: the next temporary, and the statements that must run first. -/
 abbrev Lift := StateM (Nat × Array Stmt)
@@ -1243,6 +1245,142 @@ def liftTemp (e : Expr) : Lift Expr := do
   let x := liftName k
   set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some e)]))
   pure (.ident x)
+
+/-! ### Destructuring assignment with a `yield` in its pattern
+
+`[x = yield] = v`, `({a: o[yield]} = v)`: the pattern's own steps (§13.15.5.5
+IteratorDestructuringAssignmentEvaluation, §13.15.5.6 KeyedDestructuringAssignmentEvaluation)
+become statements, so the generator machine can stop at each `yield`: for each element the
+target's operands, then IteratorStep, then the default, then PutValue. The iterator is closed
+in a `finally` (§7.4.11): quietly after a throw, checked after a normal or `return`
+completion. The internal calls `%dstr(op, ...)` (`dstrOp`) do GetIterator, the step, the
+closes, RequireObjectCoercible and CopyDataProperties. -/
+
+/-- An internal call of the lowering (a `%` name, which source text cannot write). -/
+def dstrCall (op : String) (args : List Expr) : Expr := .call (.ident "%dstr") (.str op :: args)
+
+/-- A temporary of the lowering. Its own prefix: a later lift pass of an expression in the
+pattern (a default, a target) uses `%y` names in a block of its own, so it cannot hide these. -/
+def dstrFresh : StateM Nat String := modifyGet fun k => ("%d" ++ toString k, k + 1)
+
+def dstrLet (x : String) (e : Option Expr) : Stmt := .decl .letK [Decl.mk (.id x) e]
+
+/-- The target of an element that is not a pattern: its operands into temporaries first
+(DestructuringAssignmentTarget is evaluated before the value is taken). -/
+def dstrTarget : Pat → StateM Nat (List Stmt × Option Expr)
+  | .id x => pure ([], some (.ident x))
+  | .target (.member o k) => do
+    let x ← dstrFresh
+    pure ([dstrLet x (some o)], some (.member (.ident x) k))
+  | .target (.index o k) => do
+    let x ← dstrFresh
+    let y ← dstrFresh
+    pure ([dstrLet x (some o), dstrLet y (some k)], some (.index (.ident x) (.ident y)))
+  | .target e => pure ([], some e)
+  | _ => pure ([], none)
+
+/-- One IteratorStep into `v` (left `undefined` when the iterator is done). The record is done
+before the call, so a throw of `next`, `done` or `value` does not close it. -/
+def dstrStep (it dn : String) (into : String → Stmt) : StateM Nat Stmt := do
+  let r ← dstrFresh
+  pure (.ifS (.unary .not (.ident dn)) (.block [
+    .expr (.assign none (.ident dn) (.bool true)),
+    dstrLet r (some (dstrCall "next" [.ident it])),
+    .ifS (.unary .not (.member (.ident r) "done"))
+      (.block [into r, .expr (.assign none (.ident dn) (.bool false))]) none]) none)
+
+mutual
+/-- The default (when the value `v` is `undefined`) and the store into the target, or into a
+nested pattern (lowered here when it has a `yield`). A name takes the default directly, so an
+anonymous function is named after it. -/
+def dstrStore : Nat → Option DeclKind → Pat → Option Expr → Option Expr → String → StateM Nat (List Stmt)
+  | 0, _, _, _, _, _ => pure []
+  | n + 1, bind, p, tgt, d, v => do
+    let undef : Expr := .binary .seq (.ident v) (.unary .void (.num 0))
+    -- a name of a `let` or `const` declaration is initialised here (`init`: the binding its
+    -- scope made, in its TDZ until then; the steps may be inside the `try` of an array pattern)
+    let putV (e : Expr) : Stmt := match p, bind with
+      | .id x, some k => .expr (dstrCall "init" [.str x, e, .bool (k == .letK)])
+      | _, _ => match tgt with
+        | some t => .expr (.assign none t e)
+        | none => .expr (.assignPat p e)
+    let put ← match p with
+      | .obj .. | .arr .. =>
+        if p.hasYield then dstrLower n bind v p
+        else pure [match bind with
+          | some k => Stmt.decl k [Decl.mk p (some (.ident v))]
+          | none => Stmt.expr (.assignPat p (.ident v))]
+      | _ => pure [putV (.ident v)]
+    match p, d with
+    -- one statement, not a block: a block would be a scope of its own for the declaration
+    | .id _, some e => pure [.ifS undef (putV e) (some (putV (.ident v)))]
+    | _, some e => pure (.ifS undef (.expr (.assign none (.ident v) e)) none :: put)
+    | _, none => pure put
+
+def dstrElems : Nat → Option DeclKind → String → String → List (Option PatElem) → StateM Nat (List Stmt)
+  | 0, _, _, _, _ => pure []
+  | _ + 1, _, _, _, [] => pure []
+  | n + 1, bind, it, dn, none :: es => do
+    let st ← dstrStep it dn (fun _ => .empty)
+    pure (st :: (← dstrElems n bind it dn es))
+  | n + 1, bind, it, dn, some (.mk p d) :: es => do
+    let (prep, tgt) ← dstrTarget p
+    let v ← dstrFresh
+    let st ← dstrStep it dn (fun r => .expr (.assign none (.ident v) (.member (.ident r) "value")))
+    let store ← dstrStore n bind p tgt d v
+    pure (prep ++ [dstrLet v none, st] ++ store ++ (← dstrElems n bind it dn es))
+
+def dstrProps : Nat → Option DeclKind → String → List PatProp → StateM Nat (List Stmt × List Expr)
+  | 0, _, _, _ => pure ([], [])
+  | _ + 1, _, _, [] => pure ([], [])
+  | n + 1, bind, src, .mk k p d :: ps => do
+    let (keyPrep, key, get) ← match k with
+      | .lit s => pure ([], Expr.str s, Expr.member (.ident src) s)
+      | .computed e => do
+        let x ← dstrFresh
+        pure ([dstrLet x (some e)], Expr.ident x, Expr.index (.ident src) (.ident x))
+    let (prep, tgt) ← dstrTarget p
+    let v ← dstrFresh
+    let store ← dstrStore n bind p tgt d v
+    let (rest, keys) ← dstrProps n bind src ps
+    pure (keyPrep ++ prep ++ [dstrLet v (some get)] ++ store ++ rest, key :: keys)
+
+/-- The statements of `p = src` (`src` a temporary holding the value); with `bind`, the names
+of the pattern are bound by declarations of that kind (`let [a = yield] = v`). -/
+def dstrLower : Nat → Option DeclKind → String → Pat → StateM Nat (List Stmt)
+  | 0, _, _, _ => pure []
+  | n + 1, bind, src, .arr es rest => do
+    let it ← dstrFresh
+    let dn ← dstrFresh
+    let ex ← dstrFresh
+    let body ← dstrElems n bind it dn es
+    let restS ← match rest with
+      | none => pure []
+      | some rp => do
+        let (prep, tgt) ← dstrTarget rp
+        let a ← dstrFresh
+        let st ← dstrStep it dn (fun r => .expr (dstrCall "push" [.ident a, .member (.ident r) "value"]))
+        let store ← dstrStore n bind rp tgt none a
+        pure (prep ++ [dstrLet a (some (.array [])), .whileS (.unary .not (.ident dn)) st] ++ store)
+    let quiet : Stmt := .ifS (.unary .not (.ident dn)) (.block [
+      .expr (.assign none (.ident dn) (.bool true)), .expr (dstrCall "closeQuiet" [.ident it])]) none
+    pure [dstrLet it (some (dstrCall "iter" [.ident src])), dstrLet dn (some (.bool false)),
+      .tryS (body ++ restS) (some (.id ex)) (some [quiet, .throwS (.ident ex)])
+        (some [.ifS (.unary .not (.ident dn)) (.expr (dstrCall "close" [.ident it])) none])]
+  | n + 1, bind, src, .obj ps rest => do
+    let (body, keys) ← dstrProps n bind src ps
+    let restS ← match rest with
+      | none => pure []
+      | some rp => do
+        let (prep, tgt) ← dstrTarget rp
+        let a ← dstrFresh
+        let store ← dstrStore n bind rp tgt none a
+        pure (prep ++ [dstrLet a (some (dstrCall "rest" (.ident src :: keys)))] ++ store)
+    pure (.expr (dstrCall "req" [.ident src]) :: body ++ restS)
+  | n + 1, bind, src, p => do
+    let (prep, tgt) ← dstrTarget p
+    pure (prep ++ (← dstrStore n bind p tgt none src))
+end
 
 mutual
 /-- Move each `yield` out of `e`, in order, into statements before it. Operands evaluated
@@ -1319,6 +1457,50 @@ def liftE : Nat → Expr → Lift Expr
         | .member o k => do pure (Expr.member (← liftE n o) k)
         | _ => pure t
       pure (.assign op t (← liftE n v))
+    -- `[a, b] = await e` (§13.15.5.2): the value's yields first; a pattern with yields of its
+    -- own is lowered to statements (`dstrLower`)
+    | .assignPat p v =>
+      if !p.hasYield then pure (.assignPat p (← liftE n v)) else do
+        -- the value into a temporary, then the pattern's steps as statements (`dstrLower`);
+        -- the expression's value is the value assigned (§13.15.2)
+        let v ← liftE n v
+        let (k, acc) ← get
+        let ((x, ss), k') := (do let x ← dstrFresh; pure (x, ← dstrLower 10000 none x p)).run k
+        set (k', (acc.push (dstrLet x (some v))) ++ ss.toArray)
+        pure (.ident x)
+    | .update pre inc t => pure (.update pre inc (← liftE n t))
+    | .superCall args => pure (.superCall (← liftL n args))
+    | .superIndex k => pure (.superIndex (← liftE n k))
+    | .tagged tag c r subs => do
+      let tag ← liftE n tag
+      pure (.tagged tag c r (← liftL n subs))
+    | .logAssign op t v =>
+      if !v.hasYield then
+        pure (.logAssign op (← liftE n t) v)
+      else
+        -- `t ||= await v` (§13.15.2): the target is read once; the value and the store run
+        -- only when the test asks for them, as for `logical`
+        let t ← match t with
+          | .member o k => do
+            let o ← liftE n o
+            pure (Expr.member (← if isLiteral o then pure o else liftTemp o) k)
+          | .index o k => do
+            let o ← liftE n o
+            let o ← if isLiteral o then pure o else liftTemp o
+            let k ← liftE n k
+            pure (Expr.index o (← if isLiteral k then pure k else liftTemp k))
+          | _ => pure t
+        let (k, acc) ← get
+        let x := liftName k
+        set (k + 1, acc)
+        let (v', pre) ← liftBranch n v
+        let test : Expr := match op with
+          | .and => .ident x
+          | .or => .unary .not (.ident x)
+          | .coalesce => .binary .seq (.binary .eq (.ident x) .null) (.bool true)
+        liftPush (.decl .letK [Decl.mk (.id x) (some t)])
+        liftPush (.ifS test (.block (pre ++ [.expr (.assign none (.ident x) (.assign none t v'))])) none)
+        pure (.ident x)
     | .object ps => pure (.object (← liftP n ps))
     | .classE (.mk name h ctor ms) =>
       -- ClassDefinitionEvaluation (§15.7.14) evaluates the heritage, then the computed keys in
@@ -1397,6 +1579,14 @@ def liftP : Nat → List PropDef → Lift (List PropDef)
 termination_by structural n _ => n
 end
 
+/-- A `let`, `const` or `var` declaration whose pattern holds a `yield` (`let [a = yield] = v`):
+the value into a temporary, then the pattern's steps (`dstrLower`); a `var` name is assigned,
+a `let` or `const` name is initialised by a declaration at its step. -/
+def liftDecl (seed : Nat) (k : DeclKind) (p : Pat) (e : Expr) : List Stmt :=
+  let bind : Option DeclKind := match k with | .var => none | k => some k
+  let ((x, ss), _) := (do let x ← dstrFresh; pure (x, ← dstrLower 10000 bind x p)).run seed
+  dstrLet x (some e) :: ss
+
 /-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
 def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
   let run (e : Expr) : Expr × Array Stmt :=
@@ -1423,7 +1613,11 @@ def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
     | _ => none
   | .ret (some e) => wrap e (fun x => .ret (some x))
   | .throwS e => wrap e .throwS
-  | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
+  | .decl k [Decl.mk p (some e)] =>
+    if p.hasYield then some (liftDecl seed k p e)
+    else wrap e (fun x => .decl k [Decl.mk p (some x)])
+  -- several declarators: one statement each, in order (each then runs or lifts on its own)
+  | .decl k (d :: d' :: ds) => some ((d :: d' :: ds).map fun d => .decl k [d])
   | .ifS c t f =>
     -- the test may itself be a `yield` (`if (await x)`), which `genEnter` does not take apart
     let (c', acc) := run c
@@ -9722,6 +9916,44 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
       if toBool cv then evalExpr n ctx t else evalExpr n ctx f
     | .seq a b => let _ ← evalExpr n ctx a; evalExpr n ctx b
+    | .call (.ident "%dstr") [.str "init", .str x, e, .bool mutable] =>
+      -- InitializeReferencedBinding of a `let` or `const` name of a lowered declaration
+      let v ← evalNamed n ctx e (.id x)
+      match (← get).findEnv x 100000 ctx.env with
+      | some env => declare env x { v, mutable }
+      | none => throwErr .reference s!"{x} is not defined"
+      pure .undef
+    | .call (.ident "%dstr") (.str op :: args) =>
+      -- the internal calls of a lowered destructuring assignment (`dstrLower`)
+      let argv ← evalArgs n ctx args #[]
+      let a0 := argv.getD 0 .undef
+      match op with
+      | "iter" => getIterator n a0
+      | "next" =>
+        let next ← getV n a0 "next"
+        let r ← callV n next a0 #[]
+        if !r.isObj then throwErr .type "Iterator result is not an object"
+        pure r
+      | "close" => iterClose n a0; pure .undef
+      | "closeQuiet" => let _ ← catchJS (iterClose n a0) (fun _ => pure ()); pure .undef
+      | "push" =>
+        if let .obj id := a0 then
+          let v := argv.getD 1 .undef
+          modifyObj id fun o => match o.kind with
+            | .array es => { o with kind := .array (es.push v) }
+            | _ => o
+        pure .undef
+      | "req" =>
+        match a0 with
+        | .undef | .null => throwErr .type "Cannot destructure 'undefined' or 'null'"
+        | v => pure v
+      | "rest" =>
+        let mut used : List String := []
+        for k in argv.toList.drop 1 do used := (← toKey n k) :: used
+        let o ← newObject
+        copyDataProps n o a0 used
+        pure (.obj o)
+      | _ => throwErr .syntax "internal destructuring call"
     | .call callee args =>
       let (f, thisV) ← match callee with
         | .optCallee inner =>

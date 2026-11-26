@@ -160,6 +160,15 @@ Desktop host (Deno, TypeScript, macOS only):
   CLOCK_REALTIME` and `LAB/tools/perf_window_report.py` (the steps start with `mark`). On this
   VM `/usr/bin/perf` fails for its kernel: use `/usr/lib/linux-tools-6.8.0-151/perf` with `-e
   cpu-clock`. Whether a WebGPU device can go to another worker: `LAB/tools/webgpu_share_check.ts`.
+- Which subsystem the engine time of a page went to (BubblePopJS, canvas raster, page paint,
+  fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
+  in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
+  `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
+- Audio and video: no playback in pages, no `AudioContext`, no audio output in the Mac host, no
+  hardware video decode. What exists (decoders in WasmVM, Ogg and WebM in Lean, WebCodecs object
+  model) and the owner's open decisions:
+  `docs/designissues/2026-11-26-foafnaut-audio-video-status.md`; plan
+  https://github.com/danbri/factoidal-core/issues/588.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
@@ -552,6 +561,13 @@ Several sessions work on the owner's laptop at once.
   run (gdb: a session task thread in `lean_dec_ref_cold`, a Deno thread in `_dl_close_worker`).
   `web_session_new_task` now pins the library (`RTLD_NODELETE`; record D12). Read a test's exit
   code, not only its pass count.
+- Deno's fetch reads `NO_PROXY`/`no_proxy` when a client is made, even a client with an explicit
+  SOCKS5 proxy, and sends listed hosts directly. 2026-11-26, Deno 2.9.8: with the container's
+  `NO_PROXY`, `http://127.0.0.1/` went direct while Tor was the proxy, and a private network
+  test passed 5 of 5 with 2 of the 5 requests outside Tor (3 ms instead of 111 to 182 ms; the
+  SOCKS server saw 3 streams). Make Tor clients with `torHttpClient` and run `proxyCheck`
+  (`labs/demos/foafnaut/tor-wasm/deno/socks5.ts`) before the first Tor fetch. Deno's fetch also
+  refuses the Fetch standard's bad ports (9 and others) before any proxy.
 - A port check with `ss` passes silently where `ss` is not installed (the cloud container). Check
   a port by connecting to it (`(exec 3<>/dev/tcp/127.0.0.1/PORT)`). C tor relays take up to 30 s
   to exit after SIGTERM, so a chutney network that was just stopped can still hold its ports.

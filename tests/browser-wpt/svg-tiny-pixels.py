@@ -11,7 +11,11 @@ W3C verdict: W3C pass criteria are read by a person, and allow label text to
 differ. A blank white image goes through the same bands as a control.
 
 The test renders the first frame only. Animated and scripted tests have
-references taken at a later moment, so they can not match yet.
+references taken at a later moment, so they can not match yet. The suite states
+no time for its references (svg/ files and htmlObjectHarness/ pages checked
+2026-11-26), so a case that needs animation and is not MATCH has the status
+NEEDS_ANIMATION: it is counted apart, not as MISMATCH or CLOSE. Its band is kept
+in 'firstFrameBand'. https://github.com/danbri/factoidal-core/issues/1165
 """
 import argparse, collections, concurrent.futures, hashlib, json, os, subprocess, tarfile, time
 from pathlib import Path
@@ -23,6 +27,9 @@ TOLERANCE = 32            # channel difference that counts as a different pixel
 MATCH = (0.005, 0.95)     # most different share, least ink recall
 CLOSE = (0.05, 0.70)
 INK = 24                  # distance from white that counts as ink
+# Lines of the Lean log that say the file animates (same prefixes as the dashboard).
+ANIMATION = ('element: animate', 'element: set', 'element in text: set', 'element in text: animate',
+             'element: animation', 'element: discard')
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--archive', required=True, type=Path)
@@ -124,7 +131,10 @@ def judge(row):
     with Image.open(out / 'expected' / (stem + '.png')) as image:
         measured = score(actual, flatten(image))
     raw.unlink()
-    return {**row, 'status': measured.pop('band'), **measured}
+    band = measured.pop('band')
+    if band != 'MATCH' and any(line.startswith(ANIMATION) for line in row.get('dropped', [])):
+        return {**row, 'status': 'NEEDS_ANIMATION', 'firstFrameBand': band, **measured}
+    return {**row, 'status': band, **measured}
 
 
 stems = sorted(s for s in pairs if not a.only or a.only in s)
