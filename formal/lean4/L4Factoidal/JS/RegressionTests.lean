@@ -855,4 +855,14 @@ exact path (`toFixed(20)`, `toExponential(18)` of the largest double). -/
 #guard out "function t() { return eval('arguments.length'); } print(t(1, 2))" == ["Uncaught ReferenceError: arguments is not defined"]
 #guard out "function u() { arguments.length++; return arguments.length; } print(u(1, 2))" == ["3"]
 
+-- TypedArray.prototype.set from an array: all Numbers go in one write; a value with valueOf
+-- goes one element at a time, in order (issue 1098). Lines from Node.
+#guard out "var f = new Float64Array(new ArrayBuffer(8 + 8 * 4), 8, 4); f.set([1.5, -0.1, 1e300, NaN]); print(f.join(','))" == ["1.5,-0.1,1e+300,NaN"]
+#guard out "var b = new Uint8ClampedArray(5); b.set([300, -5, 1.5, 2.5], 1); print(b.join(','))" == ["0,255,0,2,2"]
+#guard out "var s = new Int16Array(4); s.set([70000, -1], 2); print(s.join(','))" == ["0,0,4464,-1"]
+#guard out "var g = new Float32Array(3); g.set([1 / 3, 1e40, -0]); print(g.join(','), Object.is(g[2], -0))" == ["0.3333333432674408,Infinity,0 true"]
+#guard out "var u = new Uint32Array(3); var seen = []; u.set([1, { valueOf() { seen.push(u[0]); return 9; } }, 3]); print(u.join(','), seen.join(','))" == ["1,9,3 1"]
+#guard out "try { new Uint8Array(2).set([1, 2, 3]); } catch (e) { print(e.name); }" == ["RangeError"]
+#guard out "var d = new Float64Array(2); d.set([7]); print(d.join(','))" == ["7,0"]
+
 end L4Factoidal.JS.Tests

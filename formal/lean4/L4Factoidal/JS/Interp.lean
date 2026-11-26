@@ -1635,6 +1635,17 @@ def typedWriteV (ty buf off i : Nat) (v : Value) : M Unit :=
       else bo
     | _ => bo
 
+/-- Write `bs` into buffer `buf` at byte `at_`, when it fits (`typedWriteV` for many elements
+at once). -/
+def typedWriteAll (buf at_ : Nat) (bs : ByteArray) : M Unit :=
+  modifyObj buf fun bo => match bo.kind with
+    | .buffer bytes =>
+      if at_ + bs.size ≤ bytes.size then
+        let bo := { bo with kind := .buffer ByteArray.empty }
+        { bo with kind := .buffer (bs.copySlice 0 bytes at_ bs.size) }
+      else bo
+    | _ => bo
+
 /-- The hidden slots of an ArrayBuffer: its maximum length (resizable), whether it is
 detached, whether it is a SharedArrayBuffer. -/
 def bufMaxKey : String := privKey "%ArrayBufferMaxByteLength"
@@ -5815,7 +5826,17 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         let len ← liveLen ty b off len
         let xs ← core.elemsOf a0
         if at_ + xs.size > len then throwErr .range "offset is out of bounds"
-        for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← core.typedConv ty xs[i]!)
+        -- Every element a Number and the type not a BigInt one: no conversion can run page
+        -- code, so the bytes of all the elements go in one write (the bytes `typedWriteV`
+        -- writes one element at a time; issue 1098). Else one element at a time.
+        let es := elemSize ty
+        let fits := off + (at_ + xs.size) * es ≤ (bufferBytes (← getObj b)).size
+        if !typedIsBig ty && fits && xs.all (fun x => x matches .num _) then
+          let bs := xs.foldl (fun acc x => match x with | .num v => acc ++ typedBytes ty v | _ => acc)
+            (ByteArray.emptyWithCapacity (xs.size * es))
+          typedWriteAll b (off + at_ * es) bs
+        else
+          for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← core.typedConv ty xs[i]!)
         pure .undef
       | .typedSubarray =>
         -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,

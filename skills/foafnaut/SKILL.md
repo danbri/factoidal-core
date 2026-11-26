@@ -424,6 +424,12 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
   unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
   2026-11-09 the kernel then killed a build on the same machine.
+- A change to `formal/lean4/L4Factoidal/JS/Interp.lean` (above all to the arguments of a
+  function of the interpreter's mutual block) is checked with `lake build L4Factoidal.JS.FuelMonoAll`
+  as well (from `formal/lean4`; about 20 minutes): the fuel-monotonicity statements name each
+  function's arguments, and neither the engine build nor `JS.RegressionTests` imports them. Cost:
+  on 2026-11-26 068b8b4b0 gave `callBody` one more argument; the engine built and the tests passed,
+  and `FuelMonoIH` on main did not compile for about four hours (repair 861c0f1ad).
 - A repaired defect of BubblePopJS gets its scripts in
   `formal/lean4/L4Factoidal/JS/RegressionTests.lean`: `#guard out "<script>" == [lines]`, with
   the lines that QuickJS-NG and Node both print. `lake build L4Factoidal.JS` runs them. When a
