@@ -45,4 +45,5 @@ import L4Factoidal.WebAudio.Oscillator
 import L4Factoidal.WebAudio.Filters
 import L4Factoidal.WebAudio.Idl
 import L4Factoidal.WebAudio.Decode
+import L4Factoidal.WebAudio.Ring
 import L4Factoidal.WebAudio.Api
