@@ -360,6 +360,17 @@ software Vulkan times: do not compare them with a Mac. A Lean engine change need
 first. Before this, the cost of having no rig: on 2026-11-25 the gesture work of issue 1031 was
 pushed with only a type check, because the window could not run here.
 
+A page that animates by script (a canvas game) is paced by its timer turns. `--perf-summary`
+prints a "timer turns" line (each `native-html-script` line of cause `timers` has the same
+fields): the engine's own time of a turn, `callMs` (the ask to the answer minus the engine's
+time: worker messages, FFI, the answer's wire form such as `PageCanvas.rle`) and `waitMs` (the
+answer to the next ask). Frame time is about their sum. Example, Particle Rex on the rig,
+2026-11-26: engine 32 ms, call 4.5 ms, wait 0.2 ms, 26.7 fps. To split the engine's time by Lean
+function, drive the page with no window (a Deno script that calls `scriptSession` with
+`action:"advance"`) under `perf record --call-graph dwarf`; the frame-pointer call graph of a
+window run does not reach into the Lean library. Issue
+https://github.com/danbri/factoidal-core/issues/1098 (Particle Rex frame costs).
+
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
 apt-get install -y --no-install-recommends time linux-tools-generic valgrind libc++-dev libc++abi-dev
