@@ -95,6 +95,12 @@ Where the time was:
 | 068b8b4b0 | `arguments.length` with no arguments object | pairs 4.6 to 4.9 → 3.8 µs per call; game-like frame 27.7 → 19.0 ms engine time |
 | 7111c6c24 | run scan two pixels per 8-byte load; prelude receiver checks with no optional chain | pairs 3.8 to 4.0 → 2.8 to 3.5 µs per call; game-like frame wall 29.7 → 24.0 ms |
 | 14bc1cf1c | host `unrle` with a `DataView` and one scratch buffer | decode of a 1600x1000 frame 7 to 13 → 1.1 to 1.4 ms; rig present p50 15.5 to 16.6 → 13.6 to 13.7 ms |
+| 6d51c25c7, f2100d239 | ArrayBuffer bytes pushed into one array (`zeroBytes`, `@[csimp]`); `TypedArray.prototype.set` of Numbers in one write | 300 frames of 3,000 calls: 12.6 to 13.3 → 11.1 to 12.0 ms a frame |
+
+Error of this night: 068b8b4b0 changed the arguments of `callBody` and was checked with the
+engine build and `JS.RegressionTests` only. The fuel-monotonicity files name those arguments;
+`FuelMonoIH` on main did not compile for about four hours (repair 861c0f1ad). Rule, in
+`skills/foafnaut`: after a change to `JS/Interp.lean`, also `lake build L4Factoidal.JS.FuelMonoAll`.
 
 Particle Rex on the rig moved from 4.4 fps (main 9fa1d855) to 7.2 to 8.6 fps, most of it from
 the raster session's work on `Raster.lean`. Runs of the game differ by more than the later
