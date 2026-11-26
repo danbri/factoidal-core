@@ -245,7 +245,8 @@ if [ "$MODE" = --native ]; then
   AUDIO_FRAMEWORKS=()
   [ "$(uname -s)" = Darwin ] && AUDIO_FRAMEWORKS=(-framework AudioToolbox -framework CoreAudio)
   # The audio sink's entry points are in the library's objects (the Lean externs of Sink.lean).
-  nm "$BUILD/obj-native/hacl_audio_sink.o" | grep -q ' T _\{0,1\}l4_audio_sink_open$'
+  # grep reads all of nm's output (not -q): an early exit would end nm with SIGPIPE under pipefail.
+  nm "$BUILD/obj-native/hacl_audio_sink.o" | grep ' T _\{0,1\}l4_audio_sink_open$' >/dev/null
   echo "AUDIO_SINK_SYMBOLS: nm shows l4_audio_sink_open in $(basename "$BUILD/obj-native/hacl_audio_sink.o")"
   LEANLIB="$TOOLCHAIN/lib/lean"
   # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
