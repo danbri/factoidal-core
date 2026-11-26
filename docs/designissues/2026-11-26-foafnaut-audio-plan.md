@@ -156,7 +156,7 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 |---|---|---|
 | `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`); tail-recursive loops and shape theorems on `wip/1169-mix-delay` |
 | `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time; stored times exact values of binary64 numbers, sums and frame conversion in binary64 (`ceil(t × rate)`, as WPT `audioparam-testing.js`) | on `main` (`cd8ab064f` to `b5bfaa30f`): 7 theorems, 114 `#guard` |
-| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c`, `7cce27238`): no step twice, every connection in processing order, muted nodes lie on cycles; not yet proved: every node that is not muted is in the order |
+| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c` to `e9f637920`): no step twice, every connection in processing order, muted nodes lie on cycles, every node that is not muted is in the order (well-formed graphs) |
 | `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`); cycle minimum and channel-count change on `wip/1169-mix-delay`: shape and state theorems, 75 `#guard`; fractional delay by linear interpolation (the specification names none) |
 | `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | on `main` (`531881c86`, `e270b721b`), rendered through `Render` |
 | `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | on `main` (`27c4e37d1`), rendered through `Render` |
@@ -199,8 +199,18 @@ Found by the work on `Render.lean`; none blocks the offline renderer.
    general form over `dstStep` is false once parameter edges go to the reader. Behaviour to check
    against WPT or another engine: a delay whose `delayTime` is driven from inside its own cycle
    leaves that cycle uncut, so the nodes on it are muted (`Graph.lean` guard 23c).
-2. `Graph.lean`: not proved that every node that is not muted appears in the order (it needs "a
-   finite graph with no cycle has a vertex with no incoming edge").
+2. Fixed (`c3f61291b` to `e9f637920`): `order_complete` proves that, in a well-formed graph
+   (every connection's ends are nodes of the graph; `connect`, `connectParam` and `addNode` keep
+   this, `connect_wellFormed` and the others), every step of a node that is not muted is in the
+   order. The proof found a defect: a `DelayNode` whose `delayTime` is fed only through
+   `delayTime` connections between delays (a delay into its own `delayTime`, or two delays into
+   each other's) left a cycle of `DelayReader` steps that the split does not cut and that has no
+   node step to mute, so the delay was neither ordered nor muted. Such a delay is now muted
+   (`mutedIds`; guards 31 and 32), and a muted delay loses both of its steps (`isMuted` by node).
+   So `muted_on_cycle` now says: a muted node is on a node cycle, or its `DelayReader` is on a
+   cycle of the connections that touch no other muted node. The offline renderer computes the
+   order once for each `startRendering` (`Plan.of`); the real-time renderer must compute it again
+   only when the graph changes (section 13).
 3. Fixed (`b867dfc8b` and the commit before it): `Mix.mixInput` and `Mix.apply` are tail-recursive
    loops (`mixConns`, `addRows`, `addFrames`, `applyRows`, `rowMix`, `scaleAdd`; channels updated
    in place with `Array.modify` and `set!`). Theorems `Mix.mixInput_shape` (`toCh` channels of
