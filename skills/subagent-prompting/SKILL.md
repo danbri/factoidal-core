@@ -259,6 +259,21 @@ A `break` in the loop returns status 0, so a `&&` chain after the loop goes on. 
 worker's worktree ran on the half-applied tree. Nothing was lost only because the worker had
 pushed its branch (the conflict was inside a comment, so the build passed too).
 
+### Before the push to `main`: the CI gates, not only the build
+
+A worker's `lake build` passing is not the CI verdict. Before pushing landed commits to `main`,
+run `tools/premerge.sh` (the cheap CI checks, about a minute: generated files, the FOUNDATION
+gates, the dataflow inventory line, `Std` in the Wasm engine) and, for a change to Lean code, the
+tail-recursion gate on a finished build of the changed modules
+(`python3 tools/lean-tail-recursion-audit.py --gate`; not while a build writes `.lake/build/ir`,
+which makes the audit read a deleted file and crash), or `tools/premerge.sh --with-lean`. A new
+recursive definition over input-proportional data is a loop (CLAUDE.md, "Loops yes, new partial
+def no"); a recursion that is bounded or used only in theorems and `#guard`s gets an allow-list
+row with its reason in `tools/lean-tail-recursion-allow.txt`. Put the same two commands in every
+worker brief that ends in a landing. Cost: on 2026-11-26 the WebAudio landings (issue 1169) failed
+the tail-recursion gate and the dataflow inventory check of `build.yml` on `main`; another session
+repaired them (c105a71cc, and issue 1172 for `Automation.insertAfterEqual`).
+
 ### Comment-trap warning in every .fst / .ml brief
 
 Any brief that asks the agent to WRITE F\* or OCaml must include this
