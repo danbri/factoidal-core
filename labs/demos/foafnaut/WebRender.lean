@@ -425,7 +425,7 @@ private def viewPart (part : String) : Option (String × String) := do
   if pieces.length < 2 || !part.endsWith ")" then none
   let name := pieces.head!.trimAscii.toString
   if name.isEmpty then none
-  let value := (String.intercalate "(" (pieces.drop 1)).dropRight 1
+  let value := ((String.intercalate "(" (pieces.drop 1)).dropEnd 1).toString
   some (name, value.trimAscii.toString)
 
 /-- The view of an image reference's fragment: the fragment is percent-decoded (WHATWG URL
@@ -439,7 +439,7 @@ def svgViewOf (key : String) : Option SvgView := do
   let spec ← (fragment.splitOn "&").find? fun p => p.trimAscii.toString.startsWith "svgView("
   let spec := spec.trimAscii.toString
   if !spec.endsWith ")" then none
-  let inner := ((spec.drop "svgView(".length).toString.dropRight 1).toString
+  let inner := ((spec.drop "svgView(".length).toString.dropEnd 1).toString
   let parts := (inner.splitOn ";").filter (·.trimAscii.toString != "")
   if parts.isEmpty then none
   parts.foldlM (init := ({} : SvgView)) fun view part => do
