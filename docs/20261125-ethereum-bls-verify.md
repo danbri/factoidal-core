@@ -1,0 +1,15 @@
+# Independent Ethereum BLS signing-root verification — 25 November 2026
+
+Parent #725, work item #1017. Base #1016 at 3dfb239f0a1caa96e0b29d6307ec39089e829a03; specialised job 139015053946 concluded success. Separate owned branch. No main merge or external implementation dependency.
+
+## Executable model
+The public function EthereumConsensus.BLS.Verify.verifySigningRoot takes a nonempty list of compressed G1 public keys, a 32-byte signing root and compressed G2 signature. It calls the existing aggregate admission (cap 2048), G2 signature admission, POP hash-to-curve, then checks equality of two actual reduced Tate values e(aggregatePK,H(root)) and e(G1 generator,signature). False is distinct from admission, resource, hash or pairing errors. The caller must establish possession for every public key: this is not a rogue-key-safe arbitrary public-key aggregator. Consensus-specific empty committee exception and authenticated state transitions are not yet implemented. Universal group-law, pairing and RFC refinement remains open. Lean compiler/runtime and host test transport remain trusted.
+
+Four existing modules now have namespaced test transport entrypoints and separate minimal main wrappers. No arithmetic or previous theorem body was changed in these modules. The five retained specialised workflows compile the wrappers and retain their existing native and exact theorem gates. Updated source pins: G1 d7e64f304280cb505f60252506e1500d3861f398, G2 120832a8cf37cb82255e0b94e37551215725fe37, target 2137b263efea22b0045c9cbc156807b28a82d9fa, hash 5a187a3cdb8353e2d1a3fae9f552d5418e272e68. Existing SHA2 and pinned Lean 4.33.1 and zero external Lake packages unchanged.
+
+## Verification
+Seven new theorem statements: verify_over_limit, verify_key_error, verify_signature_error, verify_delegates, pairingEquation_results, verify_hash_error, pairingEquation_true. They concern the actual admission/equality control flow, not universal BLS refinement. Actual kernel reports must be read from new CI; no local Lean installation in this environment.
+
+Test-only Node oracle reuses independent RFC hash-to-curve rows, computes affine G1 keys and G2 signatures with Euclidean inverses, tests valid singles, aggregate permutations and duplicates; wrong roots, keys, negated signatures and missing signers; malformed points, cancellation, width and cap refusal. 62 expected cases (24 true, 24 false, 14 rejection); five comparator mutations. Hosted fresh build and native execution required; no pass inferred from generated expectations.
+
+Reproduce on pinned Linux using .github/workflows/ethereum-bls-verify.yml. This compiles the actual four modules and SHA2 to C, compiles the integrated library and test main, links and audits native symbols, prints exact source pins and actual theorem reports, runs comparator controls and checks every native result. Retained workflows rerun separately. The fixed pairing loop, final exponentiation and subgroup bounds are inherited; runtime for admitted max-key inputs and mathematical correctness are not established by this gate. No claim of full consensus or production readiness.

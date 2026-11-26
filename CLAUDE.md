@@ -508,6 +508,38 @@ regime suite is at 70 pass, 0 fail (out of 70; re-measured 2026-07-10). Tracked 
 outside the entailment regime suite (the anchor still MULTIPLIES rows
 per P-edge and drops vacuous-truth individuals).
 
+## Independent Ethereum implementation (2026-11-23)
+
+The Ethereum execution-and-consensus goal is a fresh, independent, pure
+Lean 4 implementation. Protocol logic and the proof engine must stay in
+repository-owned Lean code. Do not introduce an external implementation
+dependency without explicit approval, whether by package import, vendoring,
+copying, translation, wrapping, a transitive package or a separate compiler
+lane. Assistant-written proposals and general continuation instructions do
+not provide that approval.
+
+The unapproved EthLib proposal and dependency PR were withdrawn without
+merging: https://github.com/danbri/factoidal-core/issues/830 and
+https://github.com/danbri/factoidal-core/pull/832. The error was treating a
+separate implementation as an established dependency, then treating the
+assistant's own proposal as authority to adopt it. Do not reopen that path
+or count it as implementation progress.
+
+Normative specifications and published vectors remain reference material.
+Existing reference clients and standard testing tools may be used as test
+oracles; they do not supply the system's runtime answers. Reuse existing
+pure Lean modules within this repository after checking their imports.
+For Ethereum SSZ hashing, the selected source is the pure
+`L4Factoidal.Crypto.SHA2` module, not `SHA2Native` or the broad Factoidal
+root. Keep the compiler/runtime trust boundary and unproved cryptographic
+properties explicit. Existing crypto choices for other products are not
+changed by this Ethereum-specific direction.
+
+[Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
+
+Acceptance: https://github.com/danbri/factoidal-core/issues/725.
+Concrete SSZ byte proofs: https://github.com/danbri/factoidal-core/issues/834.
+
 ## Standing decisions (owner, 2026-08-24)
 
 Recorded here because they were repeated several times before being

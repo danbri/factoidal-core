@@ -1,0 +1,9 @@
+# Ethereum proposer projection proof repair — 25 November 2026
+
+Parent: #725. Work item: #1039. Base: #1030 at `97634fdb4501bef38fae2a6559640a3294315883`. Proof edit: `49ecebe9539b73399e735b769629f8a4f938a020`, Lean source blob `f9fbb900a735091c5cee963c4999601d27e9d269`.
+
+[Actual predecessor job](https://github.com/danbri/factoidal-core/actions/runs/45618777416/job/139221050647) ran the independent fixture/signature oracle successfully but failed combined compilation. ProposerProjection.lean:182:19 and :184:50 reported maximum recursion depth. The successful_projection report included sorryAx due to failed elaboration. This is NOT a passing theorem; the downstream selected axiom and native gates were skipped. Predecessor merge tree dff047061a43c825e6d21795424fb4ee1cae7f94; source blob c0458d056e5d247112e1f83f0e9ae43771826117.
+
+Change: reuse authentication_error and authentication_success, narrow the projection simplifications to projectChecked and the known buildProjection equation, and eliminate disjoint Except constructors explicitly. All executable definitions, theorem statements, other proofs and the inventory of reports are unchanged. No global resource limit increase. No new external dependency; pinned Lean 4.33.1 unchanged.
+
+Verification: fresh hosted combined gate must compile, produce all 14 selected actual reports without disallowed axioms, run all 122 differential expectations, and pass retained falsification controls. Local Lean and shared Mac worker unavailable. No fresh kernel/native pass is asserted before the gate finishes. The successful_projection statement concerns the actual authentication and reconstructed witness verdicts, not the complete slashing transition or independent cryptographic refinement. Exit scheduling, slashings, balance penalties and rewards remain open.

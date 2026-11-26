@@ -1,0 +1,295 @@
+{
+  "schema": "factoidal.ethereum-consensus.byte-proof-claims.v1",
+  "scope": "29 new SSZ byte-proof statements plus six reused SHA2 width/padding statements; conditional finite-tree correctness and actual verification verdicts; no full FIPS or authenticated beacon-state claim; retained axiom audit on the independently extended basic-codec stack",
+  "base_commit": "7c50781db078f03c573ee32c38551c4fba2ac015",
+  "toolchain": "leanprover/lean4:v4.33.1",
+  "compiler_commit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6",
+  "sources": [
+    {
+      "path": "formal/lean4/ethereum-consensus/AncestryMain.lean",
+      "git_blob_sha": "f8ed01bc64de9a80a3f72fe972f00d70c15ebc3f"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/BasicMain.lean",
+      "git_blob_sha": "e72494bc9de26db7a467309eb005458228fa163e"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/BoostMain.lean",
+      "git_blob_sha": "5c3ba0e872bb2daab3beb01985092b564894d976"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/ByteProofMain.lean",
+      "git_blob_sha": "a156a10d6c186bf8f2ae9b3f03536cc809619667"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/CheckedMain.lean",
+      "git_blob_sha": "eedd064c4e88ff6d69811f4d31bbcbbbaf205a01"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/ChildMain.lean",
+      "git_blob_sha": "d9081dc3783730f34f5c401720f3f26fc2b4ab1a"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus.lean",
+      "git_blob_sha": "e697564e6eae6ccf7c5942ace1a3feaa470935ec"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/AttestationScore.lean",
+      "git_blob_sha": "e148ccef216287b2757f618603a2a822276b1c88"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/CheckedAncestry.lean",
+      "git_blob_sha": "3fb8b92abd221a48c5b4ae80bd55c498b24ab012"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/ChildSelection.lean",
+      "git_blob_sha": "aa1a8a5e5e3927151be718e8a1da5a6a122523f4"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/LatestMessage.lean",
+      "git_blob_sha": "917320d526e073a2a1780d2c030a40b6cd0adf07"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/ProposerScore.lean",
+      "git_blob_sha": "e329f342be77ff1519d357b72d63b36123040f85"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/StoredHead.lean",
+      "git_blob_sha": "671f3808f6e4f5b17994f97ea6bdef4f15f22a2e"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/ForkChoice/VoteStore.lean",
+      "git_blob_sha": "20b5e7d0b37a08d09402b9f3af9af66db62b9f29"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean",
+      "git_blob_sha": "e2d3b3e2b4eb29c0ed2cea820a36713ae93ebb6d"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProof.lean",
+      "git_blob_sha": "ff547b1c8547769ec36673c0f6dde3fb29bf40a1"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProofTheorems.lean",
+      "git_blob_sha": "2fd9c36db65c98f6e7895696762cab3856bc7d53"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/CheckedBranch.lean",
+      "git_blob_sha": "9c3ebadf0100b86d4e6f9d20b87d6d0311a6e734"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/GIndex.lean",
+      "git_blob_sha": "68292f05814e61ed0ad6007f155ddc9303c73f2d"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/MultiProofHelpers.lean",
+      "git_blob_sha": "3bb33d5661020979c55ca7d188bc8af20054132d"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/LatestMain.lean",
+      "git_blob_sha": "48e6ab53c9cd7ba7be303c66101c3969723004cb"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/Main.lean",
+      "git_blob_sha": "ad4a72fceebf79ba4c54808ff234970df5f5b9b3"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/MultiProofMain.lean",
+      "git_blob_sha": "01e43bd4ecc2fc03de068459304383c5c8b69de1"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/StoredHeadMain.lean",
+      "git_blob_sha": "3911bc1836ac3efa0edfa33678d80e3a4e93d31a"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/StoreMain.lean",
+      "git_blob_sha": "405522d5f2f0c9923e46581beff341cda9699bf3"
+    },
+    {
+      "path": "formal/lean4/ethereum-consensus/WeightMain.lean",
+      "git_blob_sha": "43a1c0995096c74cc27697a8bb5a29b1f4dfe86f"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2.lean",
+      "git_blob_sha": "92737f4d83035745dba29ef2c3867b01b8dfa50f"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Tests.lean",
+      "git_blob_sha": "7ac4c2235566cd636d85848241fbbd1f3a1b246b"
+    },
+    {
+      "path": "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean",
+      "git_blob_sha": "b878ce9d43eeeb77f06598fd55d9c01d9c62597c"
+    }
+  ],
+  "theorem_sources": [
+    "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean",
+    "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProofTheorems.lean"
+  ],
+  "theorem_axioms": {
+    "L4Factoidal.Crypto.pushN_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "L4Factoidal.Crypto.pad256_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "L4Factoidal.Crypto.pad512_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "L4Factoidal.Crypto.sha256_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "L4Factoidal.Crypto.sha384_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "L4Factoidal.Crypto.sha512_size": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.hashPair_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.hashPair_ordered_sha256": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.Chunk.ofBytes_refuses_wrong_width": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.Chunk.bytes_ofBytes_ok": [],
+    "EthereumConsensus.SSZ.byteArray_beq_iff_eq": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.mapChunks_refuses_wrong_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.mapChunks_of_valid": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_refuses_invalid_index": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_refuses_over_depth": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_refuses_wrong_length": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_refuses_leaf_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_refuses_proof_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteBranch_of_valid": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.frontierRoot_eq_some": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.reduceFrontier_zero_fuel": [
+      "propext"
+    ],
+    "EthereumConsensus.SSZ.reduceFrontierStep_of_ok": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.reduceFrontierStep_length": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.reduceFrontierStep_preserves": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.reduceFrontier_agrees": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_agrees": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_over_claim_cap": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_over_depth": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_invalid_claims": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_wrong_leaf_count": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_wrong_proof_length": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_leaf_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.calculateByteMulti_refuses_proof_width": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.verifyByteBranch_of_ok": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "EthereumConsensus.SSZ.verifyByteMulti_of_ok": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ]
+  },
+  "normative": {
+    "repository": "ethereum/ssz-specs",
+    "commit": "4c2f08805080c6b4b12ede7bf48ad6a80229f4b1",
+    "paths": [
+      "src/ssz/gindex.py",
+      "src/ssz/proofs.py",
+      "src/ssz/verification.py"
+    ]
+  },
+  "trust_boundary": [
+    "Lean kernel, compiler, standard library and runtime",
+    "Expected root authenticity is supplied by the caller",
+    "Finite-tree recurrence and initial-node agreement in the structural theorem",
+    "Test-only Python hashlib and independently constructed trees",
+    "CLI line allocated before payload limit; decoding and list traversal can precede refusal"
+  ],
+  "open_obligations": [
+    "General helper/reconstruction completeness",
+    "Full SHA-256 FIPS refinement and cryptographic security",
+    "SSZ type/layout and full fixture conformance",
+    "Authenticated beacon state, BLS, finality and networking"
+  ]
+}

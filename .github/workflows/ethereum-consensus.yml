@@ -1,0 +1,265 @@
+name: Lean beacon SSZ proofs and LMD foundations
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/ethereum-consensus/**"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2.lean"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2Tests.lean"
+      - "formal/lean4/lean-toolchain"
+      - ".github/workflows/ethereum-consensus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ethereum-consensus-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  ssz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: formal/lean4
+    env:
+      LEAN_NUM_THREADS: "2"
+      LEAN_STACK_SIZE_KB: "65536"
+      LAKE_ARTIFACT_CACHE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit standalone source dependencies
+        run: python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py --self-test
+      - name: Install pinned Lean before focused build localisation
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Localise SSZ module build failure before full regression gate
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          python3 ethereum-consensus/scripts/check-container-build.py --self-test
+          python3 ethereum-consensus/scripts/check-container-root-axioms.py --self-test
+          python3 ethereum-consensus/scripts/check-container-build.py --output "$RUNNER_TEMP/ethereum-consensus-build-diagnostics"
+      - name: Compile Lean 4.33.1 definitions, guards and axiom audit
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EthereumConsensus
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Re-run exact theorem files through Lean for printed axiom evidence
+        run: |
+          set -euo pipefail
+          check_lean() {
+            lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/$1"
+          }
+          check_lean EthereumConsensus/SSZ/GIndex.lean
+          check_lean EthereumConsensus/SSZ/CheckedBranch.lean
+          check_lean EthereumConsensus/SSZ/MultiProofHelpers.lean | tee "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
+          (
+            cd ethereum-consensus
+            python3 scripts/check-multiproof-axiom-ledger.py evidence/2026-11-23-ssz-multiproof-claim-ledger.json "$RUNNER_TEMP/ethereum-ssz-multiproof-axioms.log"
+          )
+          check_lean EthereumConsensus/ForkChoice/LatestMessage.lean
+          check_lean EthereumConsensus/ForkChoice/VoteStore.lean
+          check_lean EthereumConsensus/ForkChoice/AttestationScore.lean
+          check_lean EthereumConsensus/ForkChoice/ProposerScore.lean
+          check_lean EthereumConsensus/ForkChoice/CheckedAncestry.lean
+          check_lean EthereumConsensus/ForkChoice/ChildSelection.lean
+          check_lean EthereumConsensus/ForkChoice/StoredHead.lean
+          {
+            check_lean EthereumConsensus/SSZ/ByteProof.lean
+            lake -d ethereum-consensus env lean "$PWD/L4Factoidal/Crypto/SHA2Theorems.lean"
+            check_lean EthereumConsensus/SSZ/ByteProofTheorems.lean
+          } | tee "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
+          python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
+            ethereum-consensus/evidence/2026-11-26-byte-proof-json-runtime-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
+      - name: Compile and inspect the native SSZ byte-proof executable
+        run: |
+          set -euo pipefail
+          unset LEAN_PATH LEAN_SRC_PATH
+          lake -d ethereum-consensus -v build ssz-byte-proofs 2>&1 | tee "$RUNNER_TEMP/ethereum-byte-proof-build.log"
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --link-log "$RUNNER_TEMP/ethereum-byte-proof-build.log" \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-dependencies.json"
+      - name: Audit native SSZ byte-proof runtime boundary
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-native-runtime.py \
+            ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-runtime.json"
+          python3 - "$RUNNER_TEMP/ethereum-byte-proof-runtime.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report["passed"] and report["runtimeInitializerDefined"] and not report["fullBootstrapDefined"]
+          PY
+      - name: Check native SSZ byte proofs against the independent reference
+        run: |
+          python3 ethereum-consensus/scripts/check-byte-proofs.py \
+            ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-report.json"
+      - name: Compile and audit the pure Lean SSZ basic scalar codecs
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus build ssz-basic-types
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
+          python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
+            ethereum-consensus/evidence/2026-11-26-basic-type-json-runtime-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
+          python3 ethereum-consensus/scripts/check-basic-types.py \
+            ethereum-consensus/.lake/build/bin/ssz-basic-types \
+            --report "$RUNNER_TEMP/ethereum-ssz-basic-results.json"
+      - name: Check fixed-length uint64 SSZ vector Merkle roots in pure Lean
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus build ssz-vector-u64
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/VectorU64.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-vector-axioms.log"
+          python3 ethereum-consensus/scripts/check-vector-u64-axioms.py \
+            ethereum-consensus/evidence/2026-11-23-vector-u64-claim-ledger.json \
+            "$RUNNER_TEMP/ethereum-ssz-vector-axioms.log"
+          python3 ethereum-consensus/scripts/check-vector-u64.py \
+            ethereum-consensus/.lake/build/bin/ssz-vector-u64 \
+            --report "$RUNNER_TEMP/ethereum-ssz-vector-results.json"
+      - name: Check four fixed-shape SSZ beacon container roots in independent Lean
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus -v build ssz-container-roots 2>&1 | tee "$RUNNER_TEMP/ethereum-container-build.log"
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ContainerRoots.lean" |
+            tee "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log"
+          python3 ethereum-consensus/scripts/check-container-root-axioms.py \
+            "$RUNNER_TEMP/ethereum-ssz-containers-axioms.log" | tee "$RUNNER_TEMP/ethereum-ssz-containers-ledger.json"
+          python3 ethereum-consensus/scripts/check-container-roots.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots \
+            --report "$RUNNER_TEMP/ethereum-ssz-containers-results.json"
+      - name: Audit fork-aware signing domains and native header signing
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/SigningDomains.lean" |
+            tee "$RUNNER_TEMP/ethereum-signing-axioms.log"
+          python3 ethereum-consensus/scripts/check-signing-domain-axioms.py \
+            "$RUNNER_TEMP/ethereum-signing-axioms.log" | tee "$RUNNER_TEMP/ethereum-signing-ledger.json"
+          python3 ethereum-consensus/scripts/check-signing-domains.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-signing-results.json"
+      - name: Audit actual attestation SSZ and target-epoch signing results
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/AttestationData.lean" |
+            tee "$RUNNER_TEMP/ethereum-attestation-axioms.log"
+          python3 ethereum-consensus/scripts/check-attestation-data-axioms.py \
+            "$RUNNER_TEMP/ethereum-attestation-axioms.log" | tee "$RUNNER_TEMP/ethereum-attestation-ledger.json"
+          python3 ethereum-consensus/scripts/check-attestation-data.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-attestation-results.json"
+      - name: Check indexed attester-slashing preparation and actual signing roots
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/AttesterSlashing.lean" |
+            tee "$RUNNER_TEMP/ethereum-slashing-axioms.log"
+          python3 ethereum-consensus/scripts/check-attester-slashing-axioms.py \
+            "$RUNNER_TEMP/ethereum-slashing-axioms.log" | tee "$RUNNER_TEMP/ethereum-slashing-ledger.json"
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-container-roots \
+            --link-log "$RUNNER_TEMP/ethereum-container-build.log" \
+            --report "$RUNNER_TEMP/ethereum-slashing-dependencies.json"
+          python3 ethereum-consensus/scripts/check-attester-slashing.py \
+            ethereum-consensus/.lake/build/bin/ssz-container-roots | tee "$RUNNER_TEMP/ethereum-slashing-results.json"
+      - name: Falsify retained exact-source attestation and slashing ledgers
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-retained-ledger-controls.py \
+            "$RUNNER_TEMP/ethereum-attestation-axioms.log" "$RUNNER_TEMP/ethereum-slashing-axioms.log"
+      - name: Independent SSZ generalized-index reference over 1025 inputs
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe ssz-gindex | python3 ethereum-consensus/scripts/check-gindex.py
+      - name: Independent checked SSZ branch policy and fold (1025 inputs)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe ssz-checked-branch | python3 ethereum-consensus/scripts/check-checked-branch.py
+      - name: Independent LMD latest-message reference over 2048 inputs
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-latest | python3 ethereum-consensus/scripts/check-lmd-latest.py
+      - name: Independent guarded vote-store sequential trace (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-store | python3 ethereum-consensus/scripts/check-lmd-store.py
+      - name: Independent LMD attestation score and proposer boost (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-score | python3 ethereum-consensus/scripts/check-attestation-score.py
+      - name: Independent two-stage proposer score and LMD bridge (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-computed-boost | python3 ethereum-consensus/scripts/check-proposer-score.py
+      - name: Independent bounded ancestry and LMD checked score (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-checked-ancestry | python3 ethereum-consensus/scripts/check-ancestry.py
+      - name: Independent fail-closed weighted child selector (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-checked-child | python3 ethereum-consensus/scripts/check-child-selection.py
+      - name: Independent finite-inventory bounded get_head (1024 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe lmd-stored-head | python3 ethereum-consensus/scripts/check-stored-head.py
+      - name: Independent bounded SSZ multiproof helper indices (2048 rows)
+        run: |
+          set -euo pipefail
+          lake -d ethereum-consensus exe ssz-multiproof-helpers | python3 ethereum-consensus/scripts/check-multiproof-helpers.py
+      - name: Upload SSZ byte-proof evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ethereum-ssz-byte-proof-evidence
+          path: |
+            ${{ runner.temp }}/ethereum-byte-proof-axioms.log
+            ${{ runner.temp }}/ethereum-byte-proof-build.log
+            ${{ runner.temp }}/ethereum-byte-proof-dependencies.json
+            ${{ runner.temp }}/ethereum-byte-proof-runtime.json
+            ${{ runner.temp }}/ethereum-byte-proof-report.json
+            ${{ runner.temp }}/ethereum-ssz-basic-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-basic-results.json
+            ${{ runner.temp }}/ethereum-ssz-vector-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-vector-results.json
+            ${{ runner.temp }}/ethereum-ssz-containers-axioms.log
+            ${{ runner.temp }}/ethereum-ssz-containers-ledger.json
+            ${{ runner.temp }}/ethereum-consensus-build-diagnostics/
+            ${{ runner.temp }}/ethereum-ssz-containers-results.json
+            ${{ runner.temp }}/ethereum-signing-axioms.log
+            ${{ runner.temp }}/ethereum-signing-ledger.json
+            ${{ runner.temp }}/ethereum-signing-results.json
+            ${{ runner.temp }}/ethereum-attestation-axioms.log
+            ${{ runner.temp }}/ethereum-attestation-ledger.json
+            ${{ runner.temp }}/ethereum-attestation-results.json
+            ${{ runner.temp }}/ethereum-container-build.log
+            ${{ runner.temp }}/ethereum-slashing-axioms.log
+            ${{ runner.temp }}/ethereum-slashing-ledger.json
+            ${{ runner.temp }}/ethereum-slashing-dependencies.json
+            ${{ runner.temp }}/ethereum-slashing-results.json
+          if-no-files-found: warn

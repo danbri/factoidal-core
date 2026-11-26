@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Independent standard-library SSZ registry oracle; no client runtime code."""
+import hashlib
+import functools
+import random
+import subprocess
+import sys
+
+LIMIT = 1 << 40
+MAX64 = (1 << 64) - 1
+ZERO = bytes(32)
+
+def pair(a, b):
+    return hashlib.sha256(a + b).digest()
+
+def basic(value):
+    return value.to_bytes(32, "little")
+
+def merkle(fields):
+    assert len(fields) and len(fields) & (len(fields) - 1) == 0
+    while len(fields) > 1:
+        fields = [pair(a, b) for a, b in zip(fields[::2], fields[1::2])]
+    return fields[0]
+
+def leaf(v):
+    key, cred, balance, slashed, eligible, activation, exit_epoch, withdrawable = v
+    return merkle([pair(key[:32], key[32:] + bytes(16)), cred, basic(balance),
+                   basic(slashed), basic(eligible), basic(activation),
+                   basic(exit_epoch), basic(withdrawable)])
+
+def fixture(v, count, index):
+    """Materialise only non-uniform subtrees; all other actual leaves
+    contain the same valid-width filler validator, padding is zero."""
+    value = leaf(v)
+    filler = leaf((bytes(48), ZERO, 0, 0, 0, 0, MAX64, MAX64))
+    @functools.cache
+    def uniform(node, depth):
+        if depth == 0:
+            return node
+        child = uniform(node, depth - 1)
+        return pair(child, child)
+    @functools.cache
+    def subtree(start, depth):
+        end = start + (1 << depth)
+        if start >= count:
+            return uniform(ZERO, depth)
+        if end <= count and not start <= index < end:
+            return uniform(filler, depth)
+        if depth == 0:
+            return value
+        half = 1 << (depth - 1)
+        return pair(subtree(start, depth-1), subtree(start+half, depth-1))
+    siblings = [subtree(((index >> d) ^ 1) << d, d) for d in range(40)]
+    return pair(subtree(0, 40), basic(count)), siblings
+
+def reconstruct(value, index, count, siblings):
+    for d, sibling in enumerate(siblings):
+        value = pair(sibling, value) if index & (1 << d) else pair(value, sibling)
+    return pair(value, basic(count))
+
+def changed(b):
+    return bytes([b[0] ^ 1]) + b[1:]
+
+def state_fixture(registry_root, fields_count, rng):
+    # Build the complete padded container in a heap. Only the validators
+    # field is a real registry root; other fields are synthetic roots.
+    width = 1 << (fields_count - 1).bit_length()
+    heap = [ZERO] * (2 * width)
+    for i in range(fields_count):
+        heap[width + i] = rng.randbytes(32)
+    heap[width + 11] = registry_root
+    for i in range(width - 1, 0, -1):
+        heap[i] = pair(heap[2*i], heap[2*i+1])
+    index = width + 11
+    siblings = []
+    while index > 1:
+        siblings.append(heap[index ^ 1])
+        index //= 2
+    # Independent layer-based Merkle calculation must match the heap.
+    assert merkle(heap[width:]) == heap[1]
+    return width, heap[1], siblings
+
+def slot_state_fixture(registry_root, slot, fields_count, rng):
+    width = 1 << (fields_count - 1).bit_length()
+    fields = [rng.randbytes(32) for _ in range(fields_count)] + [ZERO] * (width-fields_count)
+    fields[2] = basic(slot)
+    fields[11] = registry_root
+    layers = [fields]
+    while len(layers[-1]) > 1:
+        q = layers[-1]
+        layers.append([pair(x, y) for x, y in zip(q[::2], q[1::2])])
+    root = layers[-1][0]
+    def branch(pos):
+        return [layer[(pos >> d) ^ 1] for d, layer in enumerate(layers[:-1])]
+    def reconstruct_field(pos, value, siblings):
+        for d, sibling in enumerate(siblings):
+            value = pair(sibling, value) if pos & (1 << d) else pair(value, sibling)
+        return value
+    reg, sl = branch(11), branch(2)
+    assert reconstruct_field(11, registry_root, reg) == root
+    assert reconstruct_field(2, basic(slot), sl) == root
+    assert reconstruct_field(2, basic(slot ^ 1), sl) != root
+    return root, reg, sl
+
+
+def context_fixture(registry_root, slot, context, rng):
+    prev, curr, activation, genesis = context
+    fields = [rng.randbytes(32) for _ in range(28 if slot < 364032*32 else 37)]
+    fields[1] = genesis
+    fields[2] = basic(slot)
+    fields[3] = merkle([prev.ljust(32,b"\0"), curr.ljust(32,b"\0"), basic(activation), ZERO])
+    fields[11] = registry_root
+    fields += [ZERO] * ((1 << (len(fields)-1).bit_length()) - len(fields))
+    # Heap construction, independent from the Lean bottom-up branch API.
+    width = len(fields)
+    heap = [ZERO] * width + fields
+    for j in range(width-1, 0, -1):
+        heap[j] = pair(heap[j*2], heap[j*2+1])
+    def proof(pos):
+        node = width + pos
+        siblings = []
+        while node > 1:
+            siblings.append(heap[node ^ 1])
+            node //= 2
+        # Cross-check all four fields against a layer-built root.
+        value = fields[pos]
+        for d, sibling in enumerate(siblings):
+            value = pair(sibling, value) if pos & (1 << d) else pair(value,sibling)
+        assert value == heap[1] == merkle(fields)
+        return siblings
+    return heap[1], [proof(pos) for pos in (11,2,3,1)]
+
+def vote_root(context, vote):
+    prev, curr, activation, genesis = context
+    slot, idx, block, se, sr, te, tr = vote
+    version = prev if te < activation else curr
+    domain = bytes([1,0,0,0]) + pair(version.ljust(32,b"\0"),genesis)[:28]
+    object_root = merkle([basic(slot),basic(idx),block,pair(basic(se),sr),
+                          pair(basic(te),tr),ZERO,ZERO,ZERO])
+    return pair(object_root,domain).hex()
+
+def fullstate_cases():
+    rng = random.Random(908)
+    rows = []
+    def wire(seq):
+        return [x.hex() if isinstance(x, bytes) else str(x) for x in seq]
+    for i in range(128):
+        slot = [31,32,364032*32-1,364032*32][i % 4]
+        epoch = slot//32
+        count, index = 3, i % 3
+        v = (rng.randbytes(48),rng.randbytes(32),32_000_000_000,
+             (i//4)%2,0,0,MAX64,MAX64)
+        rr, ss = fixture(v,count,index)
+        c = (rng.randbytes(4),rng.randbytes(4), max(3,epoch), rng.randbytes(32))
+        root, branches = context_fixture(rr,slot,c,rng)
+        ep = c[2]
+        if i % 2:
+            # Directional surround votes exercise both sides of fork selection.
+            a = (64,0,rng.randbytes(32),0,ZERO,ep+1,ZERO)
+            b = (32,0,rng.randbytes(32),1,ZERO,ep-1,ZERO)
+        else:
+            # A double vote at exactly the fork boundary.
+            a = (64,0,rng.randbytes(32),0,ZERO,ep,ZERO)
+            b = (64,0,rng.randbytes(32),0,ZERO,ep,ZERO)
+        left = right = str(index)
+        def emit(expected, ctx=c, va=a, vb=b, l=left, r=right,
+                 br=branches, sr=root, registry=rr, state_slot=slot, reg_sibs=ss):
+            tokens = ["fullstate",str(count),str(index),str(state_slot),"0",
+                      *wire(v),registry.hex(),*wire(reg_sibs),sr.hex(),
+                      *wire([x for branch in br for x in branch]),
+                      *wire(ctx),*wire(va),*wire(vb),l,r]
+            row = " ".join(tokens)
+            assert len(row.encode())+1 <= 8192
+            rows.append((row,expected))
+        suffix = " "+vote_root(c,a)+" "+vote_root(c,b)
+        verdict = "not_slashable" if v[3] else "candidate_not_authenticated"
+        emit(verdict+suffix)
+        emit("error not_conflicting",vb=a)
+        emit("error bad_indices",l="-")
+        emit("error bad_indices",l=f"{index},{index}")
+        emit("error no_common_indices",r=str((index+1)%count))
+        emit("error resource_limit",l=",".join(map(str,range(33))))
+        for field in range(4):
+            edited = list(c)
+            edited[field] = changed(c[field]) if isinstance(c[field],bytes) else c[field]^1
+            emit("error genesis_mismatch" if field==3 else "error fork_mismatch",ctx=edited)
+        for j, verdict_name in enumerate(["state_root_mismatch","slot_root_mismatch",
+                                          "error fork_mismatch","error genesis_mismatch"]):
+            altered = [branch.copy() for branch in branches]
+            altered[j][i%len(altered[j])] = changed(altered[j][i%len(altered[j])])
+            emit(verdict_name + (suffix if j<2 else ""),br=altered)
+        emit("error fork_width",ctx=(b"x",*c[1:]))
+        emit("error chunk_width",ctx=(*c[:3],b"x"))
+        emit("slot_root_mismatch"+suffix,state_slot=slot^1)
+        emit("state_root_mismatch"+suffix,registry=changed(rr))
+        bad = ss.copy()
+        bad[i%40] = changed(bad[i%40])
+        emit("root_mismatch"+suffix,reg_sibs=bad)
+        emit("error not_common",l=str((index+1)%count),r=str((index+1)%count))
+    return rows
+
+
+def allsigner_cases():
+    rng = random.Random(923)
+    rows = []
+    def wire(values):
+        return [x.hex() if isinstance(x, bytes) else str(x) for x in values]
+    for i in range(64):
+        slot = [31, 32, 364032*32-1, 364032*32][i % 4]
+        epoch = slot // 32
+        count = 4
+        vs = [(rng.randbytes(48),rng.randbytes(32),32_000_000_000,
+               int((i+j)%3==0),0,0,MAX64,MAX64) for j in range(count)]
+        # Materialise four distinct actual leaves, extend to depth 40
+        # using the independently computed empty subtree roots.
+        leaves = [leaf(v) for v in vs]
+        layers = [leaves, [pair(leaves[0],leaves[1]),pair(leaves[2],leaves[3])]]
+        top = pair(*layers[1])
+        empty = ZERO
+        zeros = []
+        for depth in range(40):
+            zeros.append(empty)
+            empty = pair(empty,empty)
+        for depth in range(2,40):
+            top = pair(top,zeros[depth])
+        rr = pair(top,basic(count))
+        proofs = [[leaves[j^1], layers[1][(j//2)^1], *zeros[2:]] for j in range(count)]
+        assert all(reconstruct(leaves[j],j,count,proofs[j])==rr for j in range(count))
+        c = (rng.randbytes(4),rng.randbytes(4),max(3,epoch),rng.randbytes(32))
+        root, branches = context_fixture(rr,slot,c,rng)
+        a = (64,0,rng.randbytes(32),0,ZERO,c[2],ZERO)
+        b = (64,0,rng.randbytes(32),0,ZERO,c[2],ZERO)
+        left, right = [0,1,2], [1,2,3]
+        lw = [[j,*vs[j],*proofs[j]] for j in left]
+        rw = [[j,*vs[j],*proofs[j]] for j in right]
+        def indices(xs):
+            return ",".join(map(str,xs)) or "-"
+        def emit(expected, l=left, r=right, wl=lw, wr=rw,
+                 registry=rr, sr=root, br=branches, n=count):
+            tokens = ["allsigners",str(slot),str(n),registry.hex(),sr.hex(),
+                      *wire([x for branch in br for x in branch]),*wire(c),
+                      *wire(a),*wire(b),indices(l),indices(r),str(len(wl)),str(len(wr)),
+                      *wire([x for w in wl+wr for x in w])]
+            row = " ".join(tokens)
+            assert len(row.encode())+1 <= 262144
+            rows.append((row,expected))
+        def keys(xs):
+            return ",".join(vs[j][0].hex() for j in xs)
+        eligible = [j for j in left if j in right and not vs[j][3] and vs[j][5]<=epoch<vs[j][7]]
+        good = " ".join(["prepared_not_authenticated",vote_root(c,a),vote_root(c,b),
+                         keys(left),keys(right),indices(eligible)])
+        emit(good)
+        # The two noncommon signer witnesses must be verified too.
+        for side, wlist in [(0,lw),(1,rw)]:
+            for j in range(len(wlist)):
+                for field in [1, 3, 9+(i%40)]:
+                    edited = [w.copy() for w in wlist]
+                    value = edited[j][field]
+                    edited[j][field] = changed(value) if isinstance(value,bytes) else value^1
+                    emit("error signer_root_mismatch", **({"wl":edited} if side==0 else {"wr":edited}))
+        emit("error index_mismatch",wl=lw[:-1])
+        emit("error index_mismatch",wr=rw+[rw[-1]])
+        emit("error index_mismatch",wl=[lw[1],lw[0],lw[2]])
+        emit("error index_mismatch",wr=[rw[0],rw[0],rw[2]])
+        emit("error bad_indices",l=[0,0,2])
+        emit("error resource_limit",r=list(range(33)))
+        emit("error resource_limit",wr=[rw[0]]*33)
+        emit("error index_outside",r=[1,2,4],wr=[rw[0],rw[1],[4,*rw[2][1:]]])
+        emit("error signer_root_mismatch",n=count+1)
+        emit("error state_root_mismatch",registry=changed(rr))
+        for j,label in enumerate(["state_root_mismatch","slot_root_mismatch","fork_mismatch","genesis_mismatch"]):
+            edited=[p.copy() for p in branches]
+            edited[j][0]=changed(edited[j][0])
+            emit("error "+label,br=edited)
+    assert len(rows)==64*33, len(rows)
+    return rows
+
+def cases():
+    rng = random.Random(881)
+    state_rng = random.Random(896)
+    slot_rng = random.Random(901)
+    rows = []
+    def add(op, count, index, epoch, common, v, root, siblings, expected):
+        key, cred, *numbers = v
+        row = " ".join(map(str, [op, count, index, epoch, common, key.hex(), cred.hex(),
+                                   *numbers, root.hex(), *(s.hex() for s in siblings)]))
+        assert len(row.encode()) + 1 <= 4096
+        rows.append((row, expected))
+    for i in range(128):
+        count = [1, 2, 3, 7, 8, 9, 1 << 20, LIMIT-1, LIMIT][i % 9]
+        index = [0, count-1, rng.randrange(count)][i % 3]
+        activation = rng.randrange(1, 1000)
+        withdrawable = activation + rng.randrange(1, 1000)
+        epoch = [activation-1, activation, withdrawable-1, withdrawable][i % 4]
+        slashed = (i // 4) % 2
+        # Deliberately place exit at or before activation to detect an incorrect
+        # use of exit_epoch. Root admission is SSZ, not semantic state validation.
+        v = (rng.randbytes(48), rng.randbytes(32), [0, MAX64, 32_000_000_000][i % 3],
+             slashed, 0, activation, activation-1, withdrawable)
+        root, siblings = fixture(v, count, index)
+        assert reconstruct(leaf(v), index, count, siblings) == root
+        good = "candidate_not_authenticated" if not slashed and activation <= epoch < withdrawable else "not_slashable"
+        add("root", count, index, epoch, 1, v, root, [], leaf(v).hex())
+        add("proof", count, index, epoch, 1, v, root, siblings, "match " + root.hex())
+        add("candidate", count, index, epoch, 1, v, root, siblings, good)
+        add("candidate", count, index, epoch, 0, v, root, siblings, "error not_common")
+        add("candidate", count, index, epoch, 1, v, changed(root), siblings, "root_mismatch")
+        # Change one sibling, one leaf field, and the claimed length independently.
+        wrong = list(siblings)
+        wrong[i % 40] = changed(wrong[i % 40])
+        add("proof", count, index, epoch, 1, v, root, wrong,
+            "mismatch " + reconstruct(leaf(v), index, count, wrong).hex())
+        bad_v = (changed(v[0]), *v[1:])
+        add("proof", count, index, epoch, 1, bad_v, root, siblings,
+            "mismatch " + reconstruct(leaf(bad_v), index, count, siblings).hex())
+        alt_count = count+1 if count < LIMIT else count-1
+        if index < alt_count:
+            add("proof", alt_count, index, epoch, 1, v, root, siblings,
+                "mismatch " + reconstruct(leaf(v), index, alt_count, siblings).hex())
+        else:
+            add("proof", alt_count, index, epoch, 1, v, root, siblings, "error index_outside")
+        add("proof", count, count, epoch, 1, v, root, siblings, "error index_outside")
+        add("proof", LIMIT+1, index, epoch, 1, v, root, siblings, "error registry_length")
+        add("proof", count, index, epoch, 1, v, root, siblings[:-1], "error branch_length")
+        if i == 0:
+            add("proof", count, index, epoch, 1, v, root, siblings + [ZERO], "error branch_length")
+            add("proof", count, index, epoch, 1, v, root, [b"x"] + siblings[1:], "error chunk_width")
+            add("proof", count, index, epoch, 1, v, b"x", siblings, "error chunk_width")
+            add("proof", count, index, epoch, 1, (v[0][:-1], *v[1:]), root, siblings, "error public_key_width")
+            add("proof", count, index, epoch, 1, (v[0], v[1][:-1], *v[2:]), root, siblings, "error credentials_width")
+        if count > 1:
+            other = (index + 1) % count
+            add("proof", count, other, epoch, 1, v, root, siblings,
+                "mismatch " + reconstruct(leaf(v), other, count, siblings).hex())
+        # Exercise the exact transport mapping for every Validator field,
+        # including equal-width fields that a swapped assignment could conceal.
+        if i < 8:
+            for field in range(8):
+                edited = list(v)
+                edited[field] = changed(v[field]) if field < 2 else v[field] ^ 1
+                edited = tuple(edited)
+                edited_root = leaf(edited)
+                assert edited_root != leaf(v)
+                add("root", count, index, epoch, 1, edited, root, [], edited_root.hex())
+                add("proof", count, index, epoch, 1, edited, root, siblings,
+                    "mismatch " + reconstruct(edited_root, index, count, siblings).hex())
+        # State layouts are derived from the pinned BeaconState field counts
+        # (Phase0, Altair, Bellatrix, Capella, Deneb, Electra, Fulu).
+        width, state_root, state_sibs = state_fixture(
+            root, [21, 24, 25, 28, 28, 37, 38][i % 7], state_rng)
+        op = "state" + str(width)
+        other_op = "state64" if width == 32 else "state32"
+        combined = siblings + [state_root] + state_sibs
+        add(op, count, index, epoch, 1, v, root, combined, good)
+        add(op, count, index, epoch, 0, v, root, combined, "error not_common")
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [changed(state_root)] + state_sibs, "state_root_mismatch")
+        add(op, count, index, epoch, 1, v, changed(root), combined, "state_root_mismatch")
+        changed_state = list(state_sibs)
+        changed_state[i % len(state_sibs)] = changed(changed_state[i % len(state_sibs)])
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [state_root] + changed_state, "state_root_mismatch")
+        add(op, count, index, epoch, 1, v, root,
+            wrong + [state_root] + state_sibs, "root_mismatch")
+        add(op, count, index, epoch, 1, bad_v, root, combined, "root_mismatch")
+        add(other_op, count, index, epoch, 1, v, root, combined, "error branch_length")
+        add(op, count, index, epoch, 1, v, root, combined[:-1], "error branch_length")
+        add(op, count, index, epoch, 1, v, root,
+            siblings + [b"x"] + state_sibs, "error chunk_width")
+        add(op, count, index, epoch, 1, v, b"x", combined, "error chunk_width")
+        # Mainnet slot proves the epoch used in slashability and selects
+        # the layout at Electra. All non-target fields are synthetic.
+        electra_slot = 364032 * 32
+        slot = [0, 31, 32, 33, activation*32-1, activation*32,
+                withdrawable*32-1, withdrawable*32, electra_slot-1,
+                electra_slot, electra_slot+31, MAX64][i % 12]
+        slot_epoch = slot // 32
+        slot_v = v
+        if i % 12 >= 8:
+            slot_v = (*v[:5], slot_epoch, slot_epoch, slot_epoch+1)
+        slot_root, slot_reg = fixture(slot_v, count, index)
+        fields_count = 28 if slot < electra_slot else 37
+        sr, reg, sl = slot_state_fixture(slot_root, slot, fields_count, slot_rng)
+        both = slot_reg + [sr] + reg + sl
+        expected_slot = ("candidate_not_authenticated" if not slot_v[3]
+                         and slot_v[5] <= slot_epoch < slot_v[7] else "not_slashable")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both, expected_slot)
+        add("slotstate", count, index, slot, 0, slot_v, slot_root, both, "error not_common")
+        add("slotstate", count, index, slot ^ 1, 1, slot_v, slot_root, both, "slot_root_mismatch")
+        bad_sl = sl.copy()
+        bad_sl[i % len(sl)] = changed(bad_sl[i % len(sl)])
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [sr] + reg + bad_sl, "slot_root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [changed(sr)] + reg + sl, "slot_root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, changed(slot_root), both, "state_root_mismatch")
+        bad_reg = slot_reg.copy()
+        bad_reg[i % 40] = changed(bad_reg[i % 40])
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            bad_reg + [sr] + reg + sl, "root_mismatch")
+        add("slotstate", count, index, slot, 1, (changed(slot_v[0]), *slot_v[1:]),
+            slot_root, both, "root_mismatch")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both[:-1], "error branch_length")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root, both + [ZERO], "error branch_length")
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [sr] + reg + [b"x"] + sl[1:], "error chunk_width")
+        wrong_sr, wrong_reg, wrong_sl = slot_state_fixture(
+            slot_root, slot, 37 if fields_count == 28 else 28, slot_rng)
+        add("slotstate", count, index, slot, 1, slot_v, slot_root,
+            slot_reg + [wrong_sr] + wrong_reg + wrong_sl, "error branch_length")
+    # Transport errors must not turn into proof or candidate verdicts.
+    valid = rows[0][0].split(" ")
+    for field, value, error in [
+        (1, "-1", "parse_error"), (2, str(MAX64 + 1), "out_of_range"),
+        (3, str(MAX64 + 1), "out_of_range"), (4, "2", "parse_error"),
+        (5, "gg", "invalid_hex"), (6, "a", "invalid_hex"),
+        (7, str(MAX64 + 1), "out_of_range"), (8, "2", "parse_error"),
+        (9, str(MAX64 + 1), "out_of_range"), (10, str(MAX64 + 1), "out_of_range"),
+        (11, str(MAX64 + 1), "out_of_range"), (12, str(MAX64 + 1), "out_of_range"),
+        (0, "unknown", "unknown_operation"),
+    ]:
+        edited = valid.copy()
+        edited[field] = value
+        rows.append((" ".join(edited), "error " + error))
+    rows.extend([("bad", "error parse_error"), ("x" * 4097, "error resource_limit")])
+    assert len(rows) == 4613
+    full = fullstate_cases()
+    rows.extend(full)
+    # Retain the real fullstate request shape; mutate transport fields without
+    # rebuilding its commitment, so the error must precede protocol dispatch.
+    valid_full = full[0][0].split(" ")
+    assert valid_full[0] == "fullstate" and valid_full[4] == "0"
+    for field, value, error in [
+        (4, "1", "parse_error"),
+        (-14, "78", "vote_width"),
+        (-16, str(MAX64 + 1), "out_of_range"),
+        (-14, "gg", "invalid_hex"),
+        (-1, ",".join(map(str, range(33))), "resource_limit"),
+    ]:
+        edited = valid_full.copy()
+        edited[field] = value
+        rows.append((" ".join(edited), "error " + error))
+    rows.extend([
+        (" ".join(valid_full[:-1]), "error branch_length"),
+        (" ".join(valid_full + ["0"]), "error branch_length"),
+        ("fullstate " + "x" * 8192, "error resource_limit"),
+    ])
+    rows.extend(allsigner_cases())
+    return rows
+
+def compare(rows, actual):
+    expected = [want for _, want in rows]
+    if len(actual) != len(expected):
+        raise ValueError(f"output count {len(actual)} != {len(expected)}")
+    for i, (a, e) in enumerate(zip(actual, expected)):
+        if a != e:
+            raise ValueError(f"row {i}: got {a!r}, expected {e!r}")
+
+def main():
+    rows = cases()
+    expected = [want for _, want in rows]
+    compare(rows, expected)
+    for corrupt in [expected[:-1], ["forged"] + expected[1:],
+                    expected[:2] + ["candidate_not_authenticated"] + expected[3:],
+                    expected + ["extra"]]:
+        try:
+            compare(rows, corrupt)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("comparator corruption not detected")
+    state_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("state32 "))
+    forged = expected.copy()
+    forged[state_row] = "state_root_mismatch" if expected[state_row] != "state_root_mismatch" else "candidate_not_authenticated"
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("state comparator corruption not detected")
+    slot_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("slotstate "))
+    forged = expected.copy()
+    forged[slot_row] = "slot_root_mismatch"
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("slot comparator corruption not detected")
+    full_row = next(i for i, (row, _) in enumerate(rows) if row.startswith("fullstate "))
+    forged = expected.copy()
+    forged[full_row] = forged[full_row][:-1] + ("0" if forged[full_row][-1] != "0" else "1")
+    try:
+        compare(rows, forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("signing root comparator corruption not detected")
+    allrow = next(i for i,(row,_) in enumerate(rows) if row.startswith("allsigners "))
+    forged = expected.copy()
+    fields = forged[allrow].split(" ")
+    fields[3] = ",".join(reversed(fields[3].split(",")))
+    forged[allrow] = " ".join(fields)
+    try:
+        compare(rows,forged)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("signer key order comparator corruption not detected")
+    assert len(rows) == 9293
+    print(f"Prepared {len(rows)} rows; eight comparator controls detected", flush=True)
+    if sys.argv[1:] == ["--self-test"]:
+        return
+    if len(sys.argv) < 2:
+        raise ValueError("provide Lean runner command")
+    proc = subprocess.run(sys.argv[1:], input="\n".join(row for row, _ in rows)+"\n",
+                          text=True, capture_output=True, timeout=240, check=True)
+    compare(rows, proc.stdout.splitlines())
+    print(f"PASS {len(rows)}/{len(rows)} actual Lean registry cases")
+
+if __name__ == "__main__":
+    main()
