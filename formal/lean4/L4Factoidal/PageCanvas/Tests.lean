@@ -112,17 +112,20 @@ def noiseMask (n seed : Nat) : ByteArray :=
 def diffW : Nat := 64
 def diffH : Nat := 40
 
-/-- Draws of every kind of paint and coverage, at each alpha. -/
-def diffDraws : List Draw := Id.run do
+/-- Coverages of rectangles (whole, fractional, larger than the canvas) and polygons. -/
+def diffCovs : List Coverage :=
   let W := diffW
   let H := diffH
-  let covs : List Coverage := [
-    rectCoverage W H 0 0 (nf W) (nf H),
+  [ rectCoverage W H 0 0 (nf W) (nf H),
     rectCoverage W H 3.25 2.5 50.75 31.5,
     rectCoverage W H (-5) (-5) 100 100,
     coverage W H (edgesOf #[⟨FloatArray.mk #[2, 1, 60, 8, 20, 39], true⟩]) .nonzero,
     coverage W H (edgesOf #[⟨FloatArray.mk #[0, 0, 64, 0, 64, 40, 0, 40], true⟩,
       ⟨FloatArray.mk #[10, 10, 30, 10, 30, 30, 10, 30], true⟩]) .evenodd]
+
+/-- Draws of every kind of paint and coverage, at each alpha. -/
+def diffDraws : List Draw := Id.run do
+  let covs := diffCovs
   let grad : Gradient := { kind := .linear 0 2 0 35, stops := #[⟨0, ⟨32, 48, 96, 1⟩⟩, ⟨1, ⟨192, 128, 80, 1⟩⟩] }
   let gradA : Gradient := { grad with stops := #[⟨0, ⟨255, 0, 0, 0.5⟩⟩, ⟨1, ⟨0, 0, 255, 1⟩⟩] }
   let gradX : Gradient := { grad with kind := .linear 3 0 60 4 }
@@ -137,7 +140,7 @@ def diffDraws : List Draw := Id.run do
   for cov in covs do
     for r in readies do
       for a in [1.0, 0.5, 0.3] do
-        for clip in [none, some (noiseMask (W * H) 7)] do
+        for clip in [none, some (noiseMask (diffW * diffH) 7)] do
           out := ⟨r, cov, a, .sourceOver, clip⟩ :: out
   return out
 
@@ -197,5 +200,9 @@ def noiseFloats (n seed : Nat) : FloatArray :=
   let (c2, d2, e2) := rowSumsRef w 40 lo hi (noiseFloats 80 lo) (noiseFloats 22 (hi + 5)) (noiseFloats 22 (lo + hi + 9))
   c1.data.map Float.toBits == c2.data.map Float.toBits && d1.data.map Float.toBits == d2.data.map Float.toBits &&
     e1.data.map Float.toBits == e2.data.map Float.toBits
+
+-- The clip mask by rows on `USize` indices is the reference mask, under no clip and under one.
+#guard diffCovs.all fun cov => [none, some (noiseMask (diffW * diffH) 7)].all fun old =>
+  clipMask diffW (diffW * diffH) cov old == clipMaskRef diffW (diffW * diffH) cov old
 
 end L4Factoidal.PageCanvas.Tests

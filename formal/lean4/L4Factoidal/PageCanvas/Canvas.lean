@@ -769,17 +769,7 @@ def Run.step (r : Run) (cmd : Cmd) : Run :=
       | none => (c, r)
   | .clip path rule => r.withCur fun c r =>
       let cov := coverage c.width c.height (edgesOf ((r.devicePath c path).flatten 0.1)) rule
-      let n := c.width * c.height
-      let old := c.stack.cur.clip
-      let mask := Id.run do
-        let mut m := bzeros n
-        let b := cov.box
-        for j in [0:b.h] do
-          for i in [0:b.w] do
-            let idx := (b.y + j) * c.width + (b.x + i)
-            let v := cov.cov[j * b.w + i]! * maskAt old idx
-            m := m.set! idx (toByte v)
-        return m
+      let mask := clipMask c.width (c.width * c.height) cov c.stack.cur.clip
       ({ c with stack := c.stack.set fun s => { s with clip := some mask } }, r)
   | .fillRect x y w h => r.withCur fun c r => (r.rectDraw c x y w h c.stack.cur.fill false, r)
   | .clearRect x y w h => r.withCur fun c r => (r.rectDraw c x y w h c.stack.cur.fill true, r)
