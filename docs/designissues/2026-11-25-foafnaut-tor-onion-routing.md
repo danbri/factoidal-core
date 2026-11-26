@@ -683,3 +683,18 @@ Update, same day, phone hotspot (giffgaff 5G), about 17:47 to 17:51 UTC, main af
   `noReplyClosedByArti`. A connection with bytes sent and none received stopped in the TLS
   handshake (no ServerHello), before the Tor link handshake (VERSIONS, CERTS). rustls has TLS
   1.2 and 1.3 enabled (`tls12` feature on).
+
+Second hotspot run, 2026-11-26 about 18:02 UTC (`--debug --trace-conns`):
+
+- ✅ Exit request: example.com:80 answered "HTTP/1.1 200 OK" (888 bytes, Cloudflare) through
+  circuit 2.0, about 4 s after start; 1 new connection in that step, which answered. The 180 s
+  exit timeout of the first hotspot run did not repeat; its cause is not known.
+- One connection in bootstrap sent its ClientHello (255 bytes) and received nothing; it was not
+  closed by the end. Bootstrap completed through other channels.
+- Leak found: with `--debug`, an Arti debug line printed relay addresses ("starting Tor
+  handshake with Direct([<IPv4>:443, [<IPv6>]:443])"); Arti's safe logging does not cover that
+  line. A guard address identifies the client across sessions. Repair: `redact_addrs` in
+  `src/lib.rs` replaces every IPv4 and IPv6 address in an Arti line with "[scrubbed]" before it
+  leaves the module. `chutney/run.sh` checks that no Arti line holds a relay address with
+  `--debug` on (63 lines scrubbed in the check run). Logs made before this change can hold guard
+  addresses.
