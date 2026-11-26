@@ -5,7 +5,10 @@ Follows https://webaudio.github.io/web-audio-api/ : the `OfflineAudioContext` in
 (constructor `OfflineAudioContext(numberOfChannels, length, sampleRate)` and its checks,
 `startRendering`), section 2.4 "Supported Sample Rates", section 2.5 "Supported Render Quantum
 Sizes", the factory methods of `BaseAudioContext` (`createGain`, `createConstantSource`,
-`createDelay`, `createStereoPanner`, `createChannelSplitter`, `createChannelMerger`), `connect`,
+`createDelay`, `createStereoPanner`, `createChannelSplitter`, `createChannelMerger`,
+`createOscillator`, `createBiquadFilter`, `createBufferSource`, `createBuffer`,
+`createPeriodicWave`), the setters of those nodes (`type`, `setPeriodicWave`, `buffer`, `loop`,
+`loopStart`, `loopEnd`), `connect`,
 `AudioScheduledSourceNode.start` and `stop`, and the `AudioParam` methods.
 
 Stage B of https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut); plan:
@@ -22,7 +25,8 @@ specification (`Error`: `NotSupportedError`, `IndexSizeError`, `InvalidAccessErr
 in the graph, which cannot happen through the API where the argument is an object). Node ids:
 the destination is node 0 and each created node gets the next number. Parameter numbers are
 those of `Graph.Kind.numParams`: Gain `gain` 0; ConstantSource `offset` 0; Delay `delayTime` 0;
-StereoPanner `pan` 0.
+StereoPanner `pan` 0; Oscillator `frequency` 0, `detune` 1; BiquadFilter `frequency` 0, `detune` 1,
+`Q` 2, `gain` 3; AudioBufferSource `playbackRate` 0, `detune` 1.
 
 `startRendering` renders `ceil (length / n)` quanta, then returns `numberOfChannels` channels of
 exactly `length` frames. Each value is rounded to binary32 (`Float.toFloat32`), because the
@@ -42,9 +46,8 @@ refused). Values are `#guard` tests.
 * `startRendering(chunkSize)`, `suspend` and `resume`: one call renders all `length` frames.
 * The page layer converts doubles to binary32 for `AudioParam` values and times (the IDL type is
   `float`); here the values are binary64 as given.
-* `disconnect`, `createBuffer`-based nodes, Oscillator, BiquadFilter, AudioBufferSource (other
-  files; a node of these types exists in the graph and outputs silence until `Render.runKernel`
-  has its kernel), `setValueCurveAtTime`, `cancelAndHoldAtTime` (in `Automation`, not exposed
+* `disconnect`, `getFrequencyResponse` of the filter, the `ended` event as an event (`ended` is
+  a function of the context: true when the source has finished), `setValueCurveAtTime`, `cancelAndHoldAtTime` (in `Automation`, not exposed
   here), `AudioListener`, and `OfflineAudioContextOptions.renderSizeHint` as a string (the
   quantum size is a number argument).
 -/
@@ -53,6 +56,9 @@ import L4Factoidal.WebAudio.Automation
 import L4Factoidal.WebAudio.Kernels
 import L4Factoidal.WebAudio.Graph
 import L4Factoidal.WebAudio.Render
+import L4Factoidal.WebAudio.Oscillator
+import L4Factoidal.WebAudio.Filters
+import L4Factoidal.WebAudio.Buffer
 
 namespace L4Factoidal.WebAudio.Context
 
@@ -75,6 +81,20 @@ def Error.ofGraph : Graph.Error → Error
   | .indexSize => .indexSize
   | .invalidAccess => .invalidAccess
   | .unknownNode => .unknownNode
+
+/-- The error of `Buffer.lean`. -/
+def Error.ofBuffer : Buffer.Error → Error
+  | .typeError => .type "argument is not finite"
+  | .indexSize => .indexSize
+  | .notSupported => .notSupported "argument outside the supported range"
+  | .invalidState => .invalidState "invalid state"
+  | .range => .range "negative argument"
+
+/-- The error of `Oscillator.lean`. -/
+def Error.ofWave : Oscillator.WaveError → Error
+  | .indexSizeError => .indexSize
+  | .typeError => .type "coefficient is not finite"
+  | .invalidStateError => .invalidState "type custom needs a PeriodicWave"
 
 /-- The error of an `AudioParam` automation method. -/
 def Error.ofAutomation : Automation.Error → Error
@@ -159,6 +179,34 @@ def OfflineContext.createChannelMerger (c : OfflineContext) (numberOfInputs : Na
   if 1 ≤ numberOfInputs ∧ numberOfInputs ≤ 32 then .ok (c.addNode (.merger numberOfInputs))
   else .error .indexSize
 
+/-- `createOscillator()`: type `sine`, `frequency` 440, `detune` 0. -/
+def OfflineContext.createOscillator (c : OfflineContext) : Except Error (OfflineContext × Nat) :=
+  .ok (c.addNode .oscillator)
+
+/-- `createBiquadFilter()`: type `lowpass`, `frequency` 350, `detune` 0, `Q` 1, `gain` 0. -/
+def OfflineContext.createBiquadFilter (c : OfflineContext) : Except Error (OfflineContext × Nat) :=
+  .ok (c.addNode .biquad)
+
+/-- `createBufferSource()`: no buffer, `loop` false, `loopStart` and `loopEnd` 0,
+`playbackRate` 1, `detune` 0. -/
+def OfflineContext.createBufferSource (c : OfflineContext) : Except Error (OfflineContext × Nat) :=
+  .ok (c.addNode .bufferSource)
+
+/-- `createBuffer(numberOfChannels, length, sampleRate)`: `NotSupportedError` when a value is out
+of range (`Buffer.AudioBuffer.create`). -/
+def OfflineContext.createBuffer (_ : OfflineContext) (numberOfChannels length : Nat)
+    (sampleRate : Float) : Except Error Buffer.AudioBuffer :=
+  match Buffer.AudioBuffer.create numberOfChannels length sampleRate with
+  | .ok b => .ok b
+  | .error e => .error (Error.ofBuffer e)
+
+/-- `createPeriodicWave(real, imag, constraints)` (`Oscillator.createPeriodicWave`). -/
+def OfflineContext.createPeriodicWave (_ : OfflineContext) (real imag : FloatArray)
+    (disableNormalization : Bool := false) : Except Error Oscillator.PeriodicWave :=
+  match Oscillator.createPeriodicWave real imag disableNormalization with
+  | .ok w => .ok w
+  | .error e => .error (Error.ofWave e)
+
 /-! ## Connections -/
 
 /-- `connect(destinationNode, output, input)`. -/
@@ -197,9 +245,29 @@ def OfflineContext.start (c : OfflineContext) (id : Nat) (when_ : Float := 0.0) 
         else
           .ok (c.setKs id
             { nd with ks := .const { s with startFrame := some (Kernels.frameOfTime when_ c.sampleRate) } })
-      -- PLACE FOR Oscillator and AudioBufferSource: their `start` (other files).
-      | .pending => .ok c
+      | .osc s =>
+        if s.startFrame.isSome then .error (.invalidState "start was called before")
+        else .ok (c.setKs id { nd with ks := .osc (s.start when_) })
+      | .buf cfg s set =>
+        match s.start when_ with
+        | .ok s' => .ok (c.setKs id { nd with ks := .buf cfg s' set })
+        | .error e => .error (Error.ofBuffer e)
       | _ => .error (.invalidState "the node is not a scheduled source")
+
+/-- `start(when, offset, duration)` of an `AudioBufferSourceNode` (`duration` absent: play to the
+end). `InvalidStateError` when `start` was called before, `TypeError` for a non-finite argument,
+`RangeError` for a negative one (`Buffer.SourceState.start`). -/
+def OfflineContext.startBuffer (c : OfflineContext) (id : Nat) (when_ : Float := 0.0)
+    (offset : Float := 0.0) (duration : Option Float := none) : Except Error OfflineContext :=
+  match c.state.nodes[id]? with
+  | none => .error .unknownNode
+  | some nd =>
+    match nd.ks with
+    | .buf cfg s set =>
+      match s.start when_ offset duration with
+      | .ok s' => .ok (c.setKs id { nd with ks := .buf cfg s' set })
+      | .error e => .error (Error.ofBuffer e)
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
 
 /-- `stop(when)` of a scheduled source. `InvalidStateError` when `start` was not called,
 `RangeError` for a negative time, `TypeError` for a non-finite one. -/
@@ -217,8 +285,106 @@ def OfflineContext.stop (c : OfflineContext) (id : Nat) (when_ : Float := 0.0) :
         else
           .ok (c.setKs id
             { nd with ks := .const { s with stopFrame := some (Kernels.frameOfTime when_ c.sampleRate) } })
-      | .pending => .ok c
+      | .osc s =>
+        if s.startFrame.isNone then .error (.invalidState "start was not called")
+        else .ok (c.setKs id { nd with ks := .osc (s.stop when_) })
+      | .buf cfg s set =>
+        match s.stop (some when_) with
+        | .ok s' => .ok (c.setKs id { nd with ks := .buf cfg s' set })
+        | .error e => .error (Error.ofBuffer e)
       | _ => .error (.invalidState "the node is not a scheduled source")
+
+/-- Has the scheduled source finished? A constant source or oscillator: its stop frame is set and
+has been reached by the current frame. An `AudioBufferSourceNode`: it was started and its playback
+has ended (`SourceState.finished`: the stop time, the `duration` or the end of a buffer that does
+not loop, reached at the end of a block). This is the condition of the `ended` event, not the
+event. -/
+def OfflineContext.ended (c : OfflineContext) (id : Nat) : Bool :=
+  match c.state.nodes[id]? with
+  | some nd =>
+    match nd.ks with
+    | .const s => match s.stopFrame with | some e => decide (e ≤ c.state.frame) | none => false
+    | .osc s => match s.stopFrame with | some e => decide (e ≤ c.state.frame) | none => false
+    | .buf _ s _ => s.startFrame.isSome && s.finished
+    | _ => false
+  | none => false
+
+/-! ## Node attributes -/
+
+/-- Replace the kernel state of node `id` by `f` of it (`f` may fail with the error of the
+specification). -/
+private def OfflineContext.modifyKs (c : OfflineContext) (id : Nat)
+    (f : Render.KState → Except Error Render.KState) : Except Error OfflineContext :=
+  match c.state.nodes[id]? with
+  | none => .error .unknownNode
+  | some nd =>
+    match f nd.ks with
+    | .ok ks => .ok (c.setKs id { nd with ks := ks })
+    | .error e => .error e
+
+/-- The `type` setter of an `OscillatorNode`: a built-in type; `custom` gives `InvalidStateError`.
+The phase is kept. -/
+def OfflineContext.setOscillatorType (c : OfflineContext) (id : Nat) (t : Oscillator.OscType) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .osc s =>
+      match s.setType t with
+      | .ok s' => .ok (.osc s')
+      | .error e => .error (Error.ofWave e)
+    | _ => .error (.invalidState "the node is not an OscillatorNode")
+
+/-- `setPeriodicWave(periodicWave)`: the type becomes `custom`; the phase is kept. -/
+def OfflineContext.setPeriodicWave (c : OfflineContext) (id : Nat) (w : Oscillator.PeriodicWave) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .osc s => .ok (.osc (s.setPeriodicWave w))
+    | _ => .error (.invalidState "the node is not an OscillatorNode")
+
+/-- The `type` setter of a `BiquadFilterNode`. -/
+def OfflineContext.setBiquadType (c : OfflineContext) (id : Nat) (t : Filters.BiquadType) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .biquad s => .ok (.biquad { s with type := t })
+    | _ => .error (.invalidState "the node is not a BiquadFilterNode")
+
+/-- The `buffer` setter of an `AudioBufferSourceNode`. `InvalidStateError` when a non-null buffer
+was set before and the new value is non-null too ("the buffer attribute ... was previously set to
+a non-null value"). Setting `null` is allowed. -/
+def OfflineContext.setBuffer (c : OfflineContext) (id : Nat) (b : Option Buffer.AudioBuffer) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .buf cfg s set =>
+      if b.isSome && set then .error (.invalidState "buffer was already set to a non-null value")
+      else .ok (.buf { cfg with buffer := b } s (set || b.isSome))
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
+
+/-- The `loop` attribute. -/
+def OfflineContext.setLoop (c : OfflineContext) (id : Nat) (loop : Bool) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .buf cfg s set => .ok (.buf { cfg with loop := loop } s set)
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
+
+/-- The `loopStart` attribute, in seconds of the buffer. -/
+def OfflineContext.setLoopStart (c : OfflineContext) (id : Nat) (v : Float) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .buf cfg s set => .ok (.buf { cfg with loopStart := v } s set)
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
+
+/-- The `loopEnd` attribute, in seconds of the buffer. -/
+def OfflineContext.setLoopEnd (c : OfflineContext) (id : Nat) (v : Float) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .buf cfg s set => .ok (.buf { cfg with loopEnd := v } s set)
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
 
 /-! ## AudioParam automation -/
 
