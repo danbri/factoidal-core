@@ -1587,6 +1587,20 @@ def liftDecl (seed : Nat) (k : DeclKind) (p : Pat) (e : Expr) : List Stmt :=
   let ((x, ss), _) := (do let x ← dstrFresh; pure (x, ← dstrLower 10000 bind x p)).run seed
   dstrLet x (some e) :: ss
 
+/-- A `for`-`in` or `for`-`of` whose target holds a `yield` (`for ([x = yield] of xs)`): each
+value into a temporary of the loop, then the target as the body's first statement, a
+destructuring assignment or declaration that `liftE` and `liftDecl` lower. A `let` or `const`
+target is still a binding of each iteration (the body's block). -/
+def forTargetTemp (k : Nat) (isOf : Bool) (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt) : Stmt :=
+  let t := s!"%ft{k}"
+  let bind : Stmt := match kind, target with
+    | some dk, _ => .decl dk [Decl.mk target (some (.ident t))]
+    | none, .target e => .expr (.assign none e (.ident t))
+    | none, .id x => .expr (.assign none (.ident x) (.ident t))
+    | none, p => .expr (.assignPat p (.ident t))
+  let body' : Stmt := .block [bind, body]
+  if isOf then .forOf (some .letK) (.id t) obj body' else .forIn (some .letK) (.id t) obj body'
+
 /-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
 def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
   let run (e : Expr) : Expr × Array Stmt :=
@@ -10986,7 +11000,8 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
     | .forIn kind target obj body =>
-      if obj.hasYield then
+      if target.hasYield then genEnter n ctx labels (forTargetTemp (← get).envs.size false kind target obj body) rest
+      else if obj.hasYield then
         -- the object's yields first, in a temporary (as for `for-of`)
         let t := s!"%it{(← get).envs.size}"
         genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
@@ -11006,7 +11021,8 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok it => genRun n (.loopOf ctx labels kind target it body :: rest) (.send .undef)
     | .forOf kind target obj body =>
-      if obj.hasYield then
+      if target.hasYield then genEnter n ctx labels (forTargetTemp (← get).envs.size true kind target obj body) rest
+      else if obj.hasYield then
         -- the iterable's yields first, in a temporary
         let t := s!"%it{(← get).envs.size}"
         genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],

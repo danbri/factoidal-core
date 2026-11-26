@@ -560,7 +560,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
         | none => false) ||
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
-    | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
+    | .forIn _ t o b | .forOf _ t o b => Pat.hasYieldF n t || Expr.hasYieldF n o || Stmt.hasYieldF n b
     | .block ss | .blockF ss => Stmt.anyYield n ss
     | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||

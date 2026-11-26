@@ -453,6 +453,13 @@ def classItems : Nat → List ClassItem → P (List ClassItem)
               | some (k, neg) => bump 2; pure (Sum.inr (ClassItem.esc k neg))
               | none =>
                 if e == 'b' then bump 2; pure (.inl (Char.ofNat 8))
+                else if !uni && e.isDigit && !(e == '0' && (cs[i+3]?.map Char.isDigit) != some true) then
+                  -- Annex B ClassEscape at the end of a range, as at its start (`[\240-\377]`,
+                  -- Observable Plot's CSS class name pattern: issue 1161)
+                  let ds := ((List.range 3).filterMap fun k => cs[i + 2 + k]?).takeWhile Char.isDigit
+                  match legacyDigits ds with
+                  | ch :: rest => modify (fun s => { s with pos := i + 2 + (ds.length - rest.length) }); pure (.inl ch)
+                  | [] => bump 2; pure (.inl e)
                 else match charEscape cs uni (i + 2) with
                   | some (ch, j) =>
                     if uni && j == i + 3 && ch == e && !identityOk e && e != '-' then
