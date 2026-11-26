@@ -236,6 +236,9 @@ structure PeriodicWave where
   /-- The largest `k` with `a[k] ≠ 0` or `b[k] ≠ 0` (0 if there is none); partials above it are
   not summed. -/
   last : Nat
+  /-- Every `a[k]` is 0 (the built-in waves, and any wave built with no cosine terms): the series
+  is summed with `partialSumSin`, which does not multiply by the zero terms. -/
+  realZero : Bool
 
 /-- The last index with a non-zero coefficient. -/
 def lastNonZero (a b : FloatArray) (len : Nat) : Nat := Id.run do
@@ -253,7 +256,8 @@ def PeriodicWave.build (len : Nat) (real imag : FloatArray) (disableNormalizatio
   let f := if disableNormalization then 0.0 else normalizationFactor a b
   { real := a, imag := b, normalize := !disableNormalization
     scale := if !disableNormalization && f > 0.0 then 1.0 / f else 1.0
-    last := lastNonZero a b len }
+    last := lastNonZero a b len
+    realZero := a.data.all (fun x => x == 0.0) }
 
 def allFinite (a : FloatArray) : Bool := a.data.all (fun x => x.isFinite)
 
@@ -338,6 +342,16 @@ def partialSum (a b : FloatArray) (c1 s1 : Float) : Nat → Nat → Float → Fl
     partialSum a b c1 s1 m (k + 1) (ck * c1 - sk * s1) (sk * c1 + ck * s1)
       (acc + getF a k * ck + getF b k * sk)
 
+/-- `partialSum` for `a` all zero: the same value without the multiplications by `a[k]`.
+`acc + 0 * ck` is `acc` because `ck` is finite and `acc` is never `-0` (it starts at `+0` and a
+round-to-nearest sum is `-0` only when both addends are `-0`). Tested against `partialSum` with
+`#guard`, not proved (the kernel does not unfold `Float` arithmetic). -/
+def partialSumSin (b : FloatArray) (c1 s1 : Float) : Nat → Nat → Float → Float → Float → Float
+  | 0, _, _, _, acc => acc
+  | m + 1, k, ck, sk, acc =>
+    partialSumSin b c1 s1 m (k + 1) (ck * c1 - sk * s1) (sk * c1 + ck * s1)
+      (acc + getF b k * sk)
+
 /-- The Fourier series cut at `K`, one `cos` and one `sin` per partial (the reference for the error
 bound; slower than `partialSum`). -/
 def directSum (a b : FloatArray) (phase : Float) (K : Nat) : Float :=
@@ -362,7 +376,9 @@ def waveAt (w : PeriodicWave) (sampleRate fc phase : Float) : Float :=
   let th := 2.0 * piF * phase
   let c1 := Float.cos th
   let s1 := Float.sin th
-  w.scale * partialSum w.real w.imag c1 s1 (partialCount w sampleRate fc) 1 c1 s1 0.0
+  let cnt := partialCount w sampleRate fc
+  w.scale * (if w.realZero then partialSumSin w.imag c1 s1 cnt 1 c1 s1 0.0
+             else partialSum w.real w.imag c1 s1 cnt 1 c1 s1 0.0)
 
 /-! ## The block kernel -/
 
@@ -619,6 +635,17 @@ def rawWave (t : OscType) : PeriodicWave := PeriodicWave.build builtinLen builti
 #guard (waveAt (rawWave .triangle) 44100.0 1.0 0.75 + 1.0).abs < 1.0e-3
 -- sine at phase 0.25 is 1
 #guard (waveAt (builtinWave .sine) 44100.0 440.0 0.25 - 1.0).abs < 1.0e-14
+-- `partialSumSin` against `partialSum`: bit equal on the built-in waves (a = 0) at many phases.
+private def sinSumSame (t : OscType) (cnt : Nat) : Bool :=
+  (List.range 12).all fun i =>
+    let th := 2.0 * piF * (i.toFloat * 0.0831)
+    let c1 := Float.cos th
+    let s1 := Float.sin th
+    let w := builtinWave t
+    (partialSumSin w.imag c1 s1 cnt 1 c1 s1 0.0).toBits == (partialSum w.real w.imag c1 s1 cnt 1 c1 s1 0.0).toBits
+#guard sinSumSame .sine 1 && sinSumSame .square 217 && sinSumSame .sawtooth 218 &&
+  sinSumSame .triangle 2047 && sinSumSame .sawtooth 0
+#guard (builtinWave .sawtooth).realZero && (builtinWave .sine).realZero
 
 -- error bound of the recurrence against one `cos` and `sin` per partial
 def sawW : PeriodicWave := builtinWave .sawtooth
