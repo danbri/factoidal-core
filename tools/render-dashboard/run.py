@@ -70,6 +70,17 @@ def sha_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def host_name():
+    """CPU model and system of this machine, for the record."""
+    import platform
+    if sys.platform == 'darwin':
+        cpu = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True).stdout.strip()
+        return f"{cpu or platform.machine()}, macOS"
+    cpu = next((line.split(':', 1)[1].strip() for line in Path('/proc/cpuinfo').read_text().splitlines()
+                if line.startswith('model name')), platform.machine()) if Path('/proc/cpuinfo').exists() else platform.machine()
+    return f'{cpu}, {os.cpu_count()} CPUs, {platform.system()}'
+
+
 def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args], text=True).strip()
 
@@ -150,7 +161,7 @@ class Run:
         self.records.append({'format': 'factoidal-render-score-v1', 'suite': suite, 'title': title, 'origin': 'measured',
                              'runner': runner, 'input': pin, 'denominator': denominator, 'commit': self.commit,
                              'date': time.strftime('%Y-%m-%d', time.gmtime()), 'counts': counts,
-                             'groups': groups or [], 'host': 'Apple M1, macOS', **extra,
+                             'groups': groups or [], 'host': host_name(), **extra,
                              **({'dirty': self.dirty} if self.dirty else {})})
 
     # Suites. Each one calls add() once for each score it gives.
