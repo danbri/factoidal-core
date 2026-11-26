@@ -489,10 +489,165 @@ fuel `es.length + 1` is tested, not proved, to be enough). -/
 theorem reach_sound (es : List (α × α)) (v x : α) (h : x ∈ reach es v) : Path es v x :=
   reachAux_sound es v _ [v] [] (fun y hy => Or.inl (by simpa using hy)) (by simp) x h
 
+private theorem reachAux_mono (es : List (α × α)) :
+    ∀ (f : Nat) (fr seen : List α) (x : α), x ∈ seen → x ∈ reachAux es f fr seen := by
+  intro f
+  induction f with
+  | zero => intro fr seen x hx; simpa [reachAux] using hx
+  | succ f ih =>
+    intro fr seen x hx
+    simp only [reachAux]
+    split
+    · exact hx
+    · exact ih _ _ x (List.mem_append_left _ hx)
+
+private theorem filter_len_lt {β : Type} (q q' : β → Bool) (h : ∀ y, q' y = true → q y = true) :
+    ∀ T : List β, (∃ x ∈ T, q x = true ∧ q' x = false) →
+      (T.filter q').length < (T.filter q).length := by
+  have hle : ∀ T : List β, (T.filter q').length ≤ (T.filter q).length := by
+    intro T
+    induction T with
+    | nil => simp
+    | cons z T ih2 =>
+      simp only [List.filter_cons]
+      by_cases h1 : q' z = true
+      · have := h z h1
+        simp [h1, this]; omega
+      · by_cases h2 : q z = true <;> simp [h1, h2] <;> omega
+  intro T
+  induction T with
+  | nil => intro ⟨x, hx, _⟩; simp at hx
+  | cons y T ih =>
+    intro ⟨x, hx, hqx, hq'x⟩
+    rcases List.mem_cons.mp hx with rfl | hxT
+    · simp only [List.filter_cons, hqx, hq'x]
+      have := hle T
+      simp; omega
+    · have := ih ⟨x, hxT, hqx, hq'x⟩
+      simp only [List.filter_cons]
+      by_cases h1 : q' y = true
+      · have := h y h1
+        simp [h1, this]; omega
+      · by_cases h2 : q y = true <;> simp [h1, h2] <;> omega
+
+private theorem reachAux_complete (es : List (α × α)) :
+    ∀ (f : Nat) (fr seen : List α),
+      ((es.map Prod.snd).filter (fun x => decide (x ∉ seen))).length ≤ f →
+      (∀ a b, (a, b) ∈ es → a ∈ seen → b ∈ seen ∨ a ∈ fr) →
+      ∀ a b, (a, b) ∈ es → (a ∈ fr ∨ a ∈ reachAux es f fr seen) → b ∈ reachAux es f fr seen := by
+  intro f
+  induction f with
+  | zero =>
+    intro fr seen hc _ a b hab _
+    simp only [reachAux]
+    have hlen : ((es.map Prod.snd).filter (fun x => decide (x ∉ seen))) = [] :=
+      List.length_eq_zero_iff.mp (Nat.le_zero.mp hc)
+    refine Classical.byContradiction fun hb => ?_
+    have : b ∈ (es.map Prod.snd).filter (fun x => decide (x ∉ seen)) := by
+      simp only [List.mem_filter, decide_eq_true_eq]
+      exact ⟨List.mem_map.mpr ⟨(a, b), hab, rfl⟩, hb⟩
+    rw [hlen] at this
+    simp at this
+  | succ f ih =>
+    intro fr seen hc hinv a b hab hh
+    have hexp : ∀ a b, (a, b) ∈ es → a ∈ fr → b ∈ expand es fr := by
+      intro a b hab ha
+      simp only [expand, List.mem_filterMap]
+      exact ⟨(a, b), hab, by simp [ha]⟩
+    by_cases hne : ((expand es fr).filter (fun x => decide (x ∉ seen))).isEmpty
+    · have hR : reachAux es (f + 1) fr seen = seen := by
+        simp only [reachAux]; rw [if_pos hne]
+      have hfr : ∀ a b, (a, b) ∈ es → a ∈ fr → b ∈ seen := by
+        intro a b hab ha
+        refine Classical.byContradiction fun hb => ?_
+        have hm : b ∈ (expand es fr).filter (fun x => decide (x ∉ seen)) := by
+          simp only [List.mem_filter, decide_eq_true_eq]
+          exact ⟨hexp a b hab ha, hb⟩
+        have := List.isEmpty_iff.mp hne
+        rw [this] at hm
+        simp at hm
+      rw [hR]
+      rcases hh with ha | ha
+      · exact hfr a b hab ha
+      · rw [hR] at ha
+        rcases hinv a b hab ha with h | h
+        · exact h
+        · exact hfr a b hab h
+    · have hR : reachAux es (f + 1) fr seen
+          = reachAux es f ((expand es fr).filter (fun x => decide (x ∉ seen)))
+              (seen ++ (expand es fr).filter (fun x => decide (x ∉ seen))) := by
+        simp only [reachAux]; rw [if_neg hne]
+      rw [hR] at hh ⊢
+      have hnew_mem : ∀ y, y ∈ (expand es fr).filter (fun x => decide (x ∉ seen)) →
+          y ∈ expand es fr ∧ y ∉ seen := by
+        intro y hy
+        simpa [List.mem_filter] using hy
+      generalize hnew : (expand es fr).filter (fun x => decide (x ∉ seen)) = new at *
+      have hbnew : ∀ a b, (a, b) ∈ es → a ∈ fr → b ∈ seen ++ new := by
+        intro a b hab ha
+        by_cases hb : b ∈ seen
+        · exact List.mem_append_left _ hb
+        · refine List.mem_append_right _ ?_
+          rw [← hnew]
+          simp only [List.mem_filter, decide_eq_true_eq]
+          exact ⟨hexp a b hab ha, hb⟩
+      have hcount : ((es.map Prod.snd).filter (fun x => decide (x ∉ seen ++ new))).length ≤ f := by
+        have hx : ∃ x, x ∈ new := by
+          cases new with
+          | nil => simp at hne
+          | cons x xs => exact ⟨x, List.mem_cons_self⟩
+        obtain ⟨x, hx⟩ := hx
+        obtain ⟨hxe, hxs⟩ := hnew_mem x hx
+        obtain ⟨a', ha', hxa⟩ := mem_expand hxe
+        have hlt := filter_len_lt (fun x => decide (x ∉ seen)) (fun x => decide (x ∉ seen ++ new))
+          (by intro y hy; simp only [decide_eq_true_eq, List.mem_append, not_or] at hy ⊢; exact hy.1)
+          (es.map Prod.snd)
+          ⟨x, List.mem_map.mpr ⟨(a', x), hxa, rfl⟩,
+            by simpa using hxs, by simp [hx]⟩
+        omega
+      have hinv' : ∀ a b, (a, b) ∈ es → a ∈ seen ++ new → b ∈ seen ++ new ∨ a ∈ new := by
+        intro a b hab ha
+        rcases List.mem_append.mp ha with ha | ha
+        · rcases hinv a b hab ha with h | h
+          · exact Or.inl (List.mem_append_left _ h)
+          · exact Or.inl (hbnew a b hab h)
+        · exact Or.inr ha
+      rcases hh with ha | ha
+      · exact reachAux_mono es f _ _ b (hbnew a b hab ha)
+      · exact ih new (seen ++ new) hcount hinv' a b hab (Or.inr ha)
+
 /-- Says: if `onCycle es v` is true, there is a path of one or more edges from `v` to `v`.
 Does not say: the converse (see `reach_sound`). -/
 theorem onCycle_sound {es : List (α × α)} {v : α} (h : onCycle es v = true) : Path es v v :=
   reach_sound es v v (by simpa [onCycle] using h)
+
+private theorem reach_complete_aux (es : List (α × α)) (v : α) :
+    ∀ a c, Path es a c → (a = v ∨ a ∈ reach es v) → c ∈ reach es v := by
+  have hstep : ∀ a b, (a, b) ∈ es → (a = v ∨ a ∈ reach es v) → b ∈ reach es v := by
+    intro a b hab ha
+    refine reachAux_complete es (es.length + 1) [v] [] ?_ (by simp) a b hab ?_
+    · have := List.length_filter_le (fun x => decide (x ∉ ([] : List α))) (es.map Prod.snd)
+      rw [List.length_map] at this
+      omega
+    · rcases ha with rfl | ha
+      · exact Or.inl (by simp)
+      · exact Or.inr ha
+  intro a c hp
+  induction hp with
+  | @edge a b hab => exact fun ha => hstep a b hab ha
+  | @step a b c hab _ ih => exact fun ha => ih (Or.inr (hstep a b hab ha))
+
+/-- Completeness of the search: every vertex joined to `v` by a path of one or more edges of `es`
+is returned by `reach es v`. The fuel `es.length + 1` is enough because each round that does not
+stop adds a target that is not yet found, and `es` has at most `es.length` targets. Does not say:
+anything about the order of the result. -/
+theorem reach_complete (es : List (α × α)) (v x : α) (h : Path es v x) : x ∈ reach es v :=
+  reach_complete_aux es v v x h (Or.inl rfl)
+
+/-- Says: `onCycle es v` is true exactly when there is a path of one or more edges from `v` to `v`.
+Does not say: how long the cycle is. -/
+theorem onCycle_iff {es : List (α × α)} {v : α} : onCycle es v = true ↔ Path es v v :=
+  ⟨onCycle_sound, fun h => by simpa [onCycle] using reach_complete es v v h⟩
 
 /-! ### Muted nodes lie on cycles -/
 
