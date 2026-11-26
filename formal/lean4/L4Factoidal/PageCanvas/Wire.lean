@@ -89,8 +89,10 @@ def strings (text : String) : Except String (Array String) := do
 def u32 (b : ByteArray) (i : Nat) : Nat :=
   b[i]!.toNat + b[i+1]!.toNat * 256 + b[i+2]!.toNat * 65536 + b[i+3]!.toNat * 16777216
 
+/-- The little-endian binary64 at byte `i` (eight byte reads, no list: issue 1098). -/
 def f64 (b : ByteArray) (i : Nat) : Float :=
-  let w := (List.range 8).foldl (fun (acc : UInt64) k => acc ||| (b[i+k]!.toUInt64 <<< (8 * k).toUInt64)) 0
+  let w := b[i]!.toUInt64 ||| (b[i+1]!.toUInt64 <<< 8) ||| (b[i+2]!.toUInt64 <<< 16) ||| (b[i+3]!.toUInt64 <<< 24) |||
+    (b[i+4]!.toUInt64 <<< 32) ||| (b[i+5]!.toUInt64 <<< 40) ||| (b[i+6]!.toUInt64 <<< 48) ||| (b[i+7]!.toUInt64 <<< 56)
   Float.ofBits w
 
 /-- Op 203: a batch whose numbers are text (`Number::toString` of each, joined by commas),

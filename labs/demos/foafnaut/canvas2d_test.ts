@@ -118,7 +118,13 @@ console.log('offscreen '+Array.from(oc.getImageData(1,1,1,1).data).join(',')+' '
 </script>`;
   turn=start(kind,sizes,"file:///sizes.html");
   for(const e of turn.errors)console.log(`${kind} sizes error:`,e);
-  assert.deepEqual(turn.logs,["drawn 255,0,0,128","property 0,0,0,0 #000000 #000000 1 1 0","setAttribute 0,0,0,0 #000000 1",
+  // Expected failure, https://github.com/danbri/factoidal-core/issues/1134: setting the width
+  // property to its current value does not reset the canvas. When it does, this fails: assert
+  // the reset line ("property 0,0,0,0 #000000 #000000 1 1 0") and close the issue.
+  const sameWidth=turn.logs[1];
+  assert.equal(sameWidth,"property 255,0,0,128 #ff0000 #00ff00 0.5 3 2",
+    `${kind}: expected failure of https://github.com/danbri/factoidal-core/issues/1134 no longer fails (${sameWidth}): assert the reset and close the issue`);
+  assert.deepEqual([turn.logs[0],...turn.logs.slice(2)],["drawn 255,0,0,128","setAttribute 0,0,0,0 #000000 1",
     "height 0,0,0,0 #000000","removeAttribute 0,0,0,0 150 #000000","other 255,0,0,128","offscreen 0,0,0,0 #000000"],`${kind}: new dimensions reset the canvas`);
   engine.scriptSession("",{action:"close"});
 

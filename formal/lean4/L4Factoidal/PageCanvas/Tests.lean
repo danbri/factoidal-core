@@ -206,6 +206,10 @@ def noiseFloats (n seed : Nat) : FloatArray :=
   clipMask diffW (diffW * diffH) cov old == clipMaskRef diffW (diffW * diffH) cov old
 
 
+-- Binary numbers of a batch (op 200): little-endian binary64, read at any offset.
+#guard (Wire.f64 ⟨#[0, 0, 0, 0, 0, 0, 0xF8, 0x3F]⟩ 0).toBits == (1.5 : Float).toBits
+#guard (Wire.f64 ⟨#[9, 0x9A, 0x99, 0x99, 0x99, 0x99, 0x99, 0xB9, 0xBF]⟩ 1).toBits == (-0.1 : Float).toBits
+
 /-! ### Rectangle uploads (issue 1098)
 
 The host keeps a texture and writes into it only the rectangle of each `pixels` command. After

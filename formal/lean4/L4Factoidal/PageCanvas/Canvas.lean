@@ -1290,31 +1290,36 @@ def rle (d : ByteArray) : ByteArray := Id.run do
     for k in [lit:n] do out := pushStraight d k out
   return out
 
-/-- `rle` of the rectangle `x, y, w, h` of a `W`-wide bitmap, row after row (a run may go on
-into the next row). With the full width it reads one range of the bitmap. -/
-def rleRect (d : ByteArray) (W x y w h : Nat) : ByteArray := Id.run do
-  let n := w * h
-  let base := y * W + x
-  -- The bitmap's pixel of the rectangle's pixel `p`.
-  let idx := fun (p : Nat) => if w == W then base + p else base + (p / w) * W + p % w
-  let mut out := ByteArray.emptyWithCapacity (n / 4 + 16)
-  let mut i := 0
-  let mut lit := 0
-  while i < n do
-    let v := wordAt d (idx i)
+/-- `rle` of the `n` pixels from pixel `start` of a bitmap, appended to `out`. -/
+def rleRangeInto (out : ByteArray) (d : ByteArray) (start n : Nat) : ByteArray := Id.run do
+  let stop := start + n
+  let mut out := out
+  let mut i := start
+  let mut lit := start
+  while i < stop do
+    let v := wordAt d i
     let mut j := i + 1
-    while j < n && wordAt d (idx j) == v do j := j + 1
+    while j < stop && wordAt d j == v do j := j + 1
     if j - i >= 3 then
       if lit < i then
         out := pushWord out (2147483648 + (i - lit))
-        for k in [lit:i] do out := pushStraight d (idx k) out
+        for k in [lit:i] do out := pushStraight d k out
       out := pushWord out (j - i)
-      out := pushStraight d (idx i) out
+      out := pushStraight d i out
       lit := j
     i := j
-  if lit < n then
-    out := pushWord out (2147483648 + (n - lit))
-    for k in [lit:n] do out := pushStraight d (idx k) out
+  if lit < stop then
+    out := pushWord out (2147483648 + (stop - lit))
+    for k in [lit:stop] do out := pushStraight d k out
+  return out
+
+/-- `rle` of the rectangle `x, y, w, h` of a `W`-wide bitmap, row after row, read in place: one
+range when the rectangle has the bitmap's width, else one range a row (a run ends at a row's end). -/
+def rleRect (d : ByteArray) (W x y w h : Nat) : ByteArray := Id.run do
+  let out := ByteArray.emptyWithCapacity (w * h / 4 + 16)
+  if w == W then return rleRangeInto out d (y * W) (w * h)
+  let mut out := out
+  for j in [0:h] do out := rleRangeInto out d ((y + j) * W + x) w
   return out
 
 def HostCmd.json (page : Nat) : HostCmd → String
