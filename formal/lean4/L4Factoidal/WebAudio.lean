@@ -19,6 +19,9 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   (automation plus connected signals, clamped), kernels in graph order, the destination's block.
 - `WebAudio.Context`: an offline context: constructor checks, nodes, connections, automation,
   `startRendering` (whole quanta, then `length` frames rounded to binary32).
+- `WebAudio.Buffer`: `AudioBuffer` (channels of binary32 values; copy rules) and the
+  `AudioBufferSourceNode` playback algorithm (rate, detune, loops, offset, duration, sub-sample
+  start, sample-rate conversion). Not yet called by `Render`.
 -/
 import L4Factoidal.WebAudio.Mix
 import L4Factoidal.WebAudio.Automation
@@ -26,3 +29,4 @@ import L4Factoidal.WebAudio.Kernels
 import L4Factoidal.WebAudio.Graph
 import L4Factoidal.WebAudio.Render
 import L4Factoidal.WebAudio.Context
+import L4Factoidal.WebAudio.Buffer
