@@ -570,7 +570,7 @@ private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String Unit) (rules : List NativeSVGCSS.Rule)
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
-  -- a geometry property cascades only on an element that has it as an attribute
+  -- geometry properties cascade only on the element types that support them
   let geometry := match tag with
     | "rect" => ["x","y","width","height","rx","ry"]
     | "circle" => ["cx","cy","r"]
