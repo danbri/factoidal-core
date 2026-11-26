@@ -95,6 +95,12 @@ def run : IO Unit := do
     let b := plain.samplePixel 8 8
     check (a.r == b.r && a.g == b.g && a.b == b.b && a.g > a.r)
       "escaped gradient ID did not render as its decoded ID"
+  for raw in ["%66%6F%6F", "foo"] do
+    let stroke ← unwrap (parse ("<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><defs>" ++
+      "<linearGradient id='foo'><stop offset='0' stop-color='green'/><stop offset='1' stop-color='green'/></linearGradient>" ++
+      "</defs><rect x='2' y='2' width='12' height='12' fill='none' stroke='url(#" ++ raw ++ ") red' stroke-width='4'/></svg>"))
+    let edge := stroke.samplePixel 2 8
+    check (edge.g > edge.r) "encoded gradient stroke used fallback or failed to paint"
   let absent ← unwrap (parse "<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16'><rect width='16' height='16' fill='url(#%6dissing) red'/></svg>")
   let fallback := absent.samplePixel 8 8
   check (fallback.r == 1 && fallback.g == 0 && fallback.b == 0)
