@@ -2460,9 +2460,11 @@ async function main() {
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
         // "mark" (a test step): the process's CPU time so far (user and system) and its resident
         // memory, so a sweep can measure a window between two marks (engine_sessions_bench.py,
-        // the steady scenarios: idle CPU of the tabs not shown).
+        // the steady scenarios: idle CPU of the tabs not shown); and the wall clock (epochMs), so
+        // the trace's times (t) can be put beside a profiler's (tools/perf_window_report.py).
         else if(step==="mark"){const cpu=process.cpuUsage();
-          trace("native-html-mark",{cpuMs:Math.round((cpu.user+cpu.system)/1000),rssMB:Math.round(Deno.memoryUsage().rss/1048576),tabs:tabs.length,active});}
+          trace("native-html-mark",{cpuMs:Math.round((cpu.user+cpu.system)/1000),rssMB:Math.round(Deno.memoryUsage().rss/1048576),tabs:tabs.length,active,
+            epochMs:Math.round((performance.timeOrigin+performance.now())*1000)/1000});}
         else if(typeof step==="string"&&/^at(Link|Text):/.test(step)){
           // The first link's centre, or 60 backing pixels right of its end on its row.
           const [where,kind,flags]=step.split(":"),link=frame.webRender.links?.[0] as number[]|undefined;
