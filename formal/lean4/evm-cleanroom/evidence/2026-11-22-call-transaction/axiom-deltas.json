@@ -1,0 +1,574 @@
+[
+  {
+    "name": "EVMCleanroom.step_exp",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_mod",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_sgt",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_callDataLoad",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_callDataSize",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_slt",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_slt_underflow",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_callValue_zero",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_callDataCopy",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_codeSize",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_codeCopy",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_returnDataSize",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_returnDataCopy",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_returnDataCopy_outOfBounds",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_addMod",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_mulMod",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_sdiv",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_smod",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_sar",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_signExtend",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_origin",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_caller",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_chainId",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_chainId_unknown_fork",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockCoinbase",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockTimestamp",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockNumber",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockGasLimit",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockBaseFee",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blockBaseFee_unknown_fork",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_effectiveGasPrice",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_prevRandao",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_prevRandao_unknown_fork",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blobBaseFee_cancun",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blobBaseFee_osaka",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_blobBaseFee_unknown_fork",
+    "source": "EVMCleanroom/Core.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.run_original_unchanged",
+    "source": "EVMCleanroom/Proofs.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.Frame.run_revert_atomic",
+    "source": "EVMCleanroom/Frame.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.Frame.run_exception_atomic",
+    "source": "EVMCleanroom/Frame.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.Frame.executeWithPolicy_refuses",
+    "source": "EVMCleanroom/Frame.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.Frame.runWithPolicy_refines",
+    "source": "EVMCleanroom/Frame.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.World.runAt_revert_world_unchanged",
+    "source": "EVMCleanroom/World.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.World.runAt_exception_world_unchanged",
+    "source": "EVMCleanroom/World.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.CallOpcode.run_parent_revert_atomic",
+    "source": "EVMCleanroom/CallOpcode.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.CallOpcode.run_parent_exception_atomic",
+    "source": "EVMCleanroom/CallOpcode.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.CallOpcode.executeAtDepth_no_fuel",
+    "source": "EVMCleanroom/CallOpcode.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.WorldCall.callWithValue_precompile",
+    "source": "EVMCleanroom/ValueCall.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.WorldCall.callWithValue_child_exception",
+    "source": "EVMCleanroom/ValueCall.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.WorldCall.callZeroValue_precompile",
+    "source": "EVMCleanroom/Call.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.WorldCall.callZeroValue_child_exception",
+    "source": "EVMCleanroom/Call.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_slt_outOfGas",
+    "source": "EVMCleanroom/SolidityProofs.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  {
+    "name": "EVMCleanroom.step_preserves_zero_value_context",
+    "source": "EVMCleanroom/SolidityProofs.lean",
+    "before": [
+      "propext"
+    ],
+    "after": [
+      "Quot.sound",
+      "propext"
+    ]
+  }
+]

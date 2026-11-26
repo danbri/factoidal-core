@@ -1,0 +1,7 @@
+# Execution integration candidate — 25 November 2026
+
+Tracks #1085, #725 and #652. Base main `af74c4f5da51c68326f5b850cc0b1083bb36313a`; selected independent execution tip `d1db8f7374938df29e5a5738bf2d224ffae05dc9` (PR1057); common ancestor `7005bfeed9a4dcc00c92c70209fa63ffe3562be1`.
+
+Constructed by three-way Git object comparison, retaining main and adding the exact execution subtree `5b24435b2e7e7007b92f8d13274322a4bea00816` (443 files), eight unchanged dedicated workflow blobs, 35 execution worknotes/design records, and one skill. The two overlapping text documents retain both sides' additions. No protocol, theorem, dependency or toolchain change; no external implementation dependency. No feature development from the raw-signed stack is included: PR1080's latest job failed at the native proof-engine exclusion gate.
+
+This is a source integration candidate, not a new passing build. Local checkout, Lean compiler and shared coordination log were unavailable in the current environment; no local premerge or new axiom/native results are claimed. The isolated remote branch and Git tree audit replace only the local source assembly, not the required build gates. Run exact-candidate premerge, every affected dedicated workflow, full repository corpus/dataflow and source-matched Linux factoidal-builds before any owner merge decision. Preserve experimental scope and runtime trust boundary. No merge or release.

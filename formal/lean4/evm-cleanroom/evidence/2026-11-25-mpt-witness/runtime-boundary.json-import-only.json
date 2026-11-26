@@ -1,0 +1,299 @@
+{
+  "schemaVersion": 1,
+  "kind": "intermediate-json-import-only-runtime-boundary-audit",
+  "generatedAt": "2026-11-25T15:14:29.665175+00:00",
+  "programs": {
+    "evm-transaction-list": {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list",
+      "bytes": 121089976,
+      "sha256": "ac21fb0c4fe647e33edb2e45d9cc2760b25be5a41ac4a6d3c9d06ec29799ead2",
+      "definedSymbolCount": 296555,
+      "symbols": {
+        "LeanElabSymbols": {
+          "matchingSymbolLines": 24537,
+          "regex": "\\bl_Lean_Elab_",
+          "examples": [
+            "00000000017f7140 T l_Lean_Elab_AutoBoundImplicitContext_push",
+            "00000000044ce290 T l_Lean_Elab_CheckTactic_elabCheckTactic",
+            "00000000044d07d0 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure",
+            "00000000044d0a10 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure___boxed",
+            "00000000004a5aa0 r l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__0_value",
+            "0000000004d38b40 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value",
+            "0000000004d38b80 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_0",
+            "0000000004d38b60 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_1"
+          ]
+        },
+        "LeanMetaSymbols": {
+          "matchingSymbolLines": 20916,
+          "regex": "\\bl_Lean_Meta_",
+          "examples": [
+            "000000000382f5f0 T l_Lean_Meta_AC_abstractAtoms",
+            "0000000000440f58 r l_Lean_Meta_AC_abstractAtoms___closed__0_value",
+            "0000000003836320 T l_Lean_Meta_AC_acNfHypMeta___lam__4",
+            "0000000003836d90 T l_Lean_Meta_AC_acNfHypMeta___lam__4___boxed",
+            "00000000038372b0 T l_Lean_Meta_AC_acNfHypTactic___lam__0",
+            "00000000038377a0 T l_Lean_Meta_AC_acNfHypTactic___lam__0___boxed",
+            "0000000004cd5af8 d l_Lean_Meta_AC_acNfTargetTactic___closed__0_value",
+            "0000000003836e60 T l_Lean_Meta_AC_acNfTargetTactic___lam__0"
+          ]
+        },
+        "kernelOrTypeCheckerSymbols": {
+          "matchingSymbolLines": 414,
+          "regex": "(?:type_checker|kernel|Kernel)",
+          "examples": [
+            "0000000000bbda20 t _ZN4lean12type_checker10eta_expandERKNS_4exprE",
+            "0000000000bb2f90 t _ZN4lean12type_checker10infer_fvarERKNS_4exprE",
+            "0000000000bb55b0 t _ZN4lean12type_checker10infer_projERKNS_4exprEb",
+            "0000000000bb6210 t _ZN4lean12type_checker10infer_typeERKNS_4exprE",
+            "0000000000bb9690 t _ZN4lean12type_checker10reduce_natERKNS_4exprE",
+            "0000000000bb8c90 t _ZN4lean12type_checker10reduce_powERKNS_4exprE",
+            "0000000000bb2e80 t _ZN4lean12type_checker11check_levelERKNS_5levelE",
+            "0000000000bb62a0 t _ZN4lean12type_checker11ensure_sortERKNS_4exprES3_"
+          ]
+        },
+        "compilerSymbols": {
+          "matchingSymbolLines": 14010,
+          "regex": "(?:Lean_Compiler|lean::compiler|_ZN4lean8compiler)",
+          "examples": [
+            "0000000001fb5d20 t _init_l_Array_repr___at___00Lean_Compiler_LCNF_UnreachableBranches_elimDead_spec__2___closed__1",
+            "0000000001fb28d0 t _init_l_Array_repr___at___00Lean_Compiler_LCNF_UnreachableBranches_elimDead_spec__2___closed__2",
+            "0000000001d23af0 t _init_l_Lean_Compiler_CSimp_add___closed__1",
+            "0000000001d27bc0 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__0",
+            "0000000001d27b40 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__1",
+            "0000000001d27bb0 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__2",
+            "0000000001d27ae0 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__3",
+            "0000000001d27a30 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__4"
+          ]
+        },
+        "JsonElabInitializerSymbols": {
+          "matchingSymbolLines": 3,
+          "regex": "initialize_Lean_Data_Json_Elab",
+          "examples": [
+            "00000000018226e0 T initialize_Lean_Data_Json_Elab",
+            "0000000001822650 T meta_initialize_Lean_Data_Json_Elab",
+            "00000000018225d0 T runtime_initialize_Lean_Data_Json_Elab"
+          ]
+        }
+      }
+    },
+    "evm-witness-proof": {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-witness-proof",
+      "bytes": 120632480,
+      "sha256": "15730bf46d583f0d5e8c6e41a2d4061fd6bddd0879522575527f1535bebaf673",
+      "definedSymbolCount": 295751,
+      "symbols": {
+        "LeanElabSymbols": {
+          "matchingSymbolLines": 24537,
+          "regex": "\\bl_Lean_Elab_",
+          "examples": [
+            "000000000179b600 T l_Lean_Elab_AutoBoundImplicitContext_push",
+            "0000000004472750 T l_Lean_Elab_CheckTactic_elabCheckTactic",
+            "0000000004474c90 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure",
+            "0000000004474ed0 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure___boxed",
+            "00000000004a2840 r l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__0_value",
+            "0000000004cdbd08 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value",
+            "0000000004cdbd48 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_0",
+            "0000000004cdbd28 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_1"
+          ]
+        },
+        "LeanMetaSymbols": {
+          "matchingSymbolLines": 20916,
+          "regex": "\\bl_Lean_Meta_",
+          "examples": [
+            "00000000037d3ab0 T l_Lean_Meta_AC_abstractAtoms",
+            "000000000043dcf8 r l_Lean_Meta_AC_abstractAtoms___closed__0_value",
+            "00000000037da7e0 T l_Lean_Meta_AC_acNfHypMeta___lam__4",
+            "00000000037db250 T l_Lean_Meta_AC_acNfHypMeta___lam__4___boxed",
+            "00000000037db770 T l_Lean_Meta_AC_acNfHypTactic___lam__0",
+            "00000000037dbc60 T l_Lean_Meta_AC_acNfHypTactic___lam__0___boxed",
+            "0000000004c78cc0 d l_Lean_Meta_AC_acNfTargetTactic___closed__0_value",
+            "00000000037db320 T l_Lean_Meta_AC_acNfTargetTactic___lam__0"
+          ]
+        },
+        "kernelOrTypeCheckerSymbols": {
+          "matchingSymbolLines": 414,
+          "regex": "(?:type_checker|kernel|Kernel)",
+          "examples": [
+            "0000000000b61ee0 t _ZN4lean12type_checker10eta_expandERKNS_4exprE",
+            "0000000000b57450 t _ZN4lean12type_checker10infer_fvarERKNS_4exprE",
+            "0000000000b59a70 t _ZN4lean12type_checker10infer_projERKNS_4exprEb",
+            "0000000000b5a6d0 t _ZN4lean12type_checker10infer_typeERKNS_4exprE",
+            "0000000000b5db50 t _ZN4lean12type_checker10reduce_natERKNS_4exprE",
+            "0000000000b5d150 t _ZN4lean12type_checker10reduce_powERKNS_4exprE",
+            "0000000000b57340 t _ZN4lean12type_checker11check_levelERKNS_5levelE",
+            "0000000000b5a760 t _ZN4lean12type_checker11ensure_sortERKNS_4exprES3_"
+          ]
+        },
+        "compilerSymbols": {
+          "matchingSymbolLines": 14010,
+          "regex": "(?:Lean_Compiler|lean::compiler|_ZN4lean8compiler)",
+          "examples": [
+            "0000000001f5a1e0 t _init_l_Array_repr___at___00Lean_Compiler_LCNF_UnreachableBranches_elimDead_spec__2___closed__1",
+            "0000000001f56d90 t _init_l_Array_repr___at___00Lean_Compiler_LCNF_UnreachableBranches_elimDead_spec__2___closed__2",
+            "0000000001cc7fb0 t _init_l_Lean_Compiler_CSimp_add___closed__1",
+            "0000000001ccc080 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__0",
+            "0000000001ccc000 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__1",
+            "0000000001ccc070 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__2",
+            "0000000001ccbfa0 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__3",
+            "0000000001ccbef0 t _init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__4"
+          ]
+        },
+        "JsonElabInitializerSymbols": {
+          "matchingSymbolLines": 3,
+          "regex": "initialize_Lean_Data_Json_Elab",
+          "examples": [
+            "00000000017c6ba0 T initialize_Lean_Data_Json_Elab",
+            "00000000017c6b10 T meta_initialize_Lean_Data_Json_Elab",
+            "00000000017c6a90 T runtime_initialize_Lean_Data_Json_Elab"
+          ]
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/TransactionCodec.lean",
+      "bytes": 8977,
+      "sha256": "d2062d4a0e211ae5dc374a238d27dac26da32099d05c0a0e349cc4b35ba1c230"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/WitnessJSON.lean",
+      "bytes": 3941,
+      "sha256": "07f56b315754c0a53e52552fb8f9b6453a2a10b17365845367b0d9ff55930f5a"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c",
+      "bytes": 265180,
+      "sha256": "ba3525a82322ca30adac74decba961ead2d889b8b846a4dd6cfa63e5c6454e1e"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c",
+      "bytes": 132920,
+      "sha256": "30f9da4d8c1c89cb12769c3438d8aeeeb3407722e411cc2a4b2566838d5d667e"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/src/lean/Lean/Compiler/LCNF/EmitC.lean",
+      "bytes": 41489,
+      "sha256": "b583be256c880a879bf723bb4c2cd87bd80d433d0539ea67d87c28a6da500216"
+    },
+    {
+      "path": "/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/src/lean/Lean/Compiler/LCNF/EmitUtil.lean",
+      "bytes": 2166,
+      "sha256": "a940bfa697130609453846c9af49f426cb644a03f3fa4974f3ca947c3798436e"
+    }
+  ],
+  "build": {
+    "log": "/tmp/ethereum-mpt-json-pruning-build.log",
+    "jobs": 66,
+    "exitCode": 0
+  },
+  "findings": [
+    "Narrowing JSON imports compiles but does not remove the proof-assistant bootstrap.",
+    "Generated main calls lean_initialize because usesModuleFrom env Lean is true for runtime Lean.Data.Json modules.",
+    "Disassembly of lean_initialize directly calls initialize_Lean, initialize_kernel_module, initialize_library_core_module, initialize_library_module and initialize_constructions_module.",
+    "Legacy vs module tiny probes show module headers alone do not avoid this bootstrap; diagnostic-only C bootstrap substitution isolates the edge."
+  ],
+  "limitations": [
+    "This is intermediate evidence; no removed-machinery or runtime-only-binary claim is made.",
+    "Syscall tracing remains unavailable because ptrace is prohibited; the earlier failed-trace evidence is preserved."
+  ],
+  "tinyProbeResults": [
+    {
+      "name": "InitOnly",
+      "bytes": 4347392,
+      "sha256": "3f4a7ee349d09f709fe911be7ae858959efbf862fb6e6788f17460ee7571b98d",
+      "exitCode": 0,
+      "stdout": "runtime-init-probe\n",
+      "stderr": "",
+      "usesLeanInitialize": false,
+      "symbolCounts": {
+        "Elab": 0,
+        "Meta": 7,
+        "kernel": 2,
+        "compiler": 0,
+        "JsonElab": 0
+      }
+    },
+    {
+      "name": "ModuleInit",
+      "bytes": 2281832,
+      "sha256": "ea1bd30d81e8937b21f0ae824abc7c16676db39f676f3fbd970e877b57b8cd9a",
+      "exitCode": 0,
+      "stdout": "runtime-init-probe\n",
+      "stderr": "",
+      "usesLeanInitialize": false,
+      "symbolCounts": {
+        "Elab": 0,
+        "Meta": 7,
+        "kernel": 2,
+        "compiler": 0,
+        "JsonElab": 0
+      }
+    },
+    {
+      "name": "LegacyJson",
+      "bytes": 120472104,
+      "sha256": "b60f207edcfd5053bae691fcfee08043307138bd95efbf7330d9d8304745abfb",
+      "exitCode": 0,
+      "stdout": "{\"value\":1}\n",
+      "stderr": "",
+      "usesLeanInitialize": true,
+      "symbolCounts": {
+        "Elab": 24537,
+        "Meta": 20916,
+        "kernel": 424,
+        "compiler": 23009,
+        "JsonElab": 3
+      }
+    },
+    {
+      "name": "LegacyJson-runtime",
+      "bytes": 4638128,
+      "sha256": "87b4f1fb225339078f5c4bc65eacad694359bb3612dadaafc73994bb6827bcd5",
+      "exitCode": 0,
+      "stdout": "{\"value\":1}\n",
+      "stderr": "",
+      "usesLeanInitialize": true,
+      "symbolCounts": {
+        "Elab": 0,
+        "Meta": 7,
+        "kernel": 2,
+        "compiler": 0,
+        "JsonElab": 0
+      }
+    },
+    {
+      "name": "ModuleJson",
+      "bytes": 120472056,
+      "sha256": "2740ccb92ea958a089bff991e6d9a35bf9bd518c09822a33411ae96432074b70",
+      "exitCode": 0,
+      "stdout": "{\"value\":1}\n",
+      "stderr": "",
+      "usesLeanInitialize": true,
+      "symbolCounts": {
+        "Elab": 24537,
+        "Meta": 20916,
+        "kernel": 424,
+        "compiler": 23009,
+        "JsonElab": 3
+      }
+    },
+    {
+      "name": "ModuleJson-runtime",
+      "bytes": 2491544,
+      "sha256": "a3e6f77ecdd5211d492bbf2fa0e9f9cd765d13445e65cd9fe516267335e44a7f",
+      "exitCode": 0,
+      "stdout": "{\"value\":1}\n",
+      "stderr": "",
+      "usesLeanInitialize": true,
+      "symbolCounts": {
+        "Elab": 0,
+        "Meta": 7,
+        "kernel": 2,
+        "compiler": 0,
+        "JsonElab": 0
+      }
+    }
+  ],
+  "tinyProbeCountingNote": "Tiny-probe original regex counts count regex occurrences, which may exceed matching lines; authoritative program counts above count each matching nm line once."
+}

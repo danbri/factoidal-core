@@ -1,0 +1,19 @@
+'EVMCleanroom.WitnessAdmission.account_count_exhausted' does not depend on any axioms
+'EVMCleanroom.WitnessAdmission.slot_count_exhausted' does not depend on any axioms
+'EVMCleanroom.WitnessAdmission.byte_budget_refused' depends on axioms: [propext]
+'EVMCleanroom.WitnessAdmission.proof_count_refused' depends on axioms: [propext]
+'EVMCleanroom.WitnessAdmission.preflight_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.account_lookup_connected' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.storage_lookup_connected' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.absent_storage_zero' depends on axioms: [propext]
+'EVMCleanroom.WitnessAdmission.present_account_decoded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.checked_account_fields' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.storage_loop_covered' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.admitted_storage_connected' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.account_loop_covered' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.admitted_witnesses_connected' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.account_loop_length' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.admitted_inventory_length' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.authentication_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.WitnessAdmission.authenticated_run_accepted' depends on axioms: [propext, Quot.sound]
+

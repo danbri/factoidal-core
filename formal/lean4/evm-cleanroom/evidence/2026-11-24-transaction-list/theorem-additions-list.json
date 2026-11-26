@@ -1,0 +1,446 @@
+[
+  {
+    "name": "EVMCleanroom.TransactionList.witnessWorld_fresh",
+    "source_symbol": "EVMCleanroom.TransactionList.witnessWorld_fresh",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable transaction boundary. Says: constructing the next transaction world snapshots its current account storage as original storage and clears the refund, log journal, blob hashes and effective execution price from any earlier transaction. Does not say: that the supplied witnesses are authenticated or complete.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.witnessWorld_fresh_warmth",
+    "source_symbol": "EVMCleanroom.TransactionList.witnessWorld_fresh_warmth",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable transaction boundary. Says: initial warmth is determined only by the new transaction's sender, recipient, beneficiary, precompile range and access list; slot warmth is precisely the new access list, with no earlier world involved. Does not say: that the externally supplied access list is valid.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.finish_cumulativeGasUsed",
+    "source_symbol": "EVMCleanroom.TransactionList.finish_cumulativeGasUsed",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable settlement accounting. Says: actual successful fee settlement adds precisely this receipt's gas charge to the supplied prefix counter. Does not say: that the prefix represents an authenticated block.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.settleFrame_cumulativeGasUsed",
+    "source_symbol": "EVMCleanroom.TransactionList.settleFrame_cumulativeGasUsed",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable settlement composition. Says: stopped, returned, reverted and exceptional frames all retain the exact prefix-plus-receipt gas accounting of the real settlement function. Does not say: that an indeterminate frame produces a receipt.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.runAdmitted_cumulativeGasUsed",
+    "source_symbol": "EVMCleanroom.TransactionList.runAdmitted_cumulativeGasUsed",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable transaction composition. Says: the real admitted transaction path preserves exact cumulative gas accounting through escrow, value transfer, execution and settlement. Does not say: that this lower-level function admits the envelope itself.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.runWithBlobHashes_cumulativeGasUsed",
+    "source_symbol": "EVMCleanroom.TransactionList.runWithBlobHashes_cumulativeGasUsed",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: public execution accounting. Says: every actual result of the shared ordinary/blob execution entry adds exactly its own settled charge to the supplied prefix gas counter. Does not say: that the prefix or explicit blob context is authenticated.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshWitness_projection",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshWitness_projection",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: executable witness projection. Says: refresh copies the settled account's existence, balance, nonce and code, while retaining the supplied address and ordered storage-key list. Does not say: that unlisted storage has become witnessed.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshWitness_listed_storage",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshWitness_listed_storage",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable witness projection. Says: every listed storage key refreshes to the settled world's exact value, including zero; lookup remains independent of old slot values. Does not say: anything about the value of an unlisted key.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshWitnesses_inventory",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshWitnesses_inventory",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: executable witness inventory preservation. Says: refreshing a settled world neither adds, removes nor reorders witnessed addresses. Does not say: that the initial witness inventory covers the whole state.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshWitnesses_find",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshWitnesses_find",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: executable lookup correspondence. Says: account lookup in refreshed witnesses selects the same original inventory entry and then refreshes its values. Does not say: that duplicate input addresses pass admission.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshed_request_coverage",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshed_request_coverage",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable witness coverage preservation. Says: the next real request's account and slot coverage is exactly the original inventory's coverage, despite refreshing all covered values. Does not say: that an unwitnessed account or slot can execute.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.refreshed_request_original",
+    "source_symbol": "EVMCleanroom.TransactionList.refreshed_request_original",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable transaction-original storage. Says: after refresh from a previous settled world, the next request's original value for a covered slot is that previous post-state value. Does not say: that the prior transaction succeeded rather than reverted.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.countFits_iff",
+    "source_symbol": "EVMCleanroom.TransactionList.countFits_iff",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: bounded-prefix resource check. Says: the executable bounded-prefix counter accepts exactly lists whose length is at most its allowance. Does not say: that list elements themselves satisfy any resource limit.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.preflight_bounded",
+    "source_symbol": "EVMCleanroom.TransactionList.preflight_bounded",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: aggregate resource admission. Says: actual list preflight acceptance enforces the transaction count, total reserved instruction fuel and aggregate input-byte bounds. Does not say: that executing within those limits establishes consensus.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.preflight_too_many",
+    "source_symbol": "EVMCleanroom.TransactionList.preflight_too_many",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: defined resource refusal. Says: more than 256 entries gives the resource refusal before any header hashing, witness refresh or entry execution. Does not say: that 256 entries are necessarily executable.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.preflight_aggregate_limit",
+    "source_symbol": "EVMCleanroom.TransactionList.preflight_aggregate_limit",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: defined aggregate resource refusal. Says: exceeding the total reserved-fuel or input-byte allowance produces the resource refusal, including when an earlier resource check also fails. Does not say: that per-transaction resource admission has succeeded.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.advance_observation_limit",
+    "source_symbol": "EVMCleanroom.TransactionList.advance_observation_limit",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: defined retained-output refusal. Says: the actual advance function refuses before extending the receipt list whenever accumulated output, log data, topics and addresses exceed the observation budget. Does not say: that the prior EVM frame allocated no temporary memory.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.advance_exact",
+    "source_symbol": "EVMCleanroom.TransactionList.advance_exact",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: executable prefix update. Says: within the retained-observation budget, advance refreshes exactly the settled state, adds actual gas/blob charges, prepends this receipt and increments the index once. Does not say: that the supplied transition was produced by runEntry.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.advance_checked",
+    "source_symbol": "EVMCleanroom.TransactionList.advance_checked",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable prefix projection. Says: successful advance has the exact refreshed state, counters, receipt order and bounded observation count shown by the implementation. Does not say: that arbitrary caller-created transitions are valid.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.runEntry_cumulativeGasUsed",
+    "source_symbol": "EVMCleanroom.TransactionList.runEntry_cumulativeGasUsed",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: actual entry-to-prefix accounting. Says: either ordinary execution or the admitted blob path returns exactly prefix gas plus its real settled receipt charge, including status zero. Does not say: that supplied headers or decoded envelopes are authentic.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.loop_receipt_trace",
+    "source_symbol": "EVMCleanroom.TransactionList.loop_receipt_trace",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: ordered executable receipt trace. Says: a completed loop appends the exact receipts of successive real entry results in execution order, preserving all existing receipt data. Each successor uses the actual advance state of its predecessor, and the trace ends with exactly the completed loop's final witnesses. Does not say: that the trace's initial witnesses or envelopes are authentic.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.loop_order",
+    "source_symbol": "EVMCleanroom.TransactionList.loop_order",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: structural execution correspondence. Says: a completed actual loop adds one receipt and one index per input, preserves input kind order and the existing prefix of receipt kinds, and retains the same address inventory. Does not say: that an entry can finish when its underlying runner refuses.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.loop_accounting",
+    "source_symbol": "EVMCleanroom.TransactionList.loop_accounting",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: actual loop accounting invariant. Says: starting from balanced prefix counters and correct cumulative receipts, every completed loop retains exact receipt gas/blob sums, cumulative receipt gas and the retained-observation bound. Does not say: that these receipts are serialised or trie-authenticated.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.loop_entry_refused",
+    "source_symbol": "EVMCleanroom.TransactionList.loop_entry_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: indexed failure propagation. Says: an entry refusal stops the actual loop at the current index with the same reason and exposes no successful suffix or partial cursor. Does not say: that the failed entry is invalid when its reason is local.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.loop_advance_refused",
+    "source_symbol": "EVMCleanroom.TransactionList.loop_advance_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: indexed retained-output refusal. Says: an observation-budget refusal after a real entry stops the list at that entry's index and preserves the refusal instead of accepting a prefix. Does not say: that the preceding individual frame was not executed.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.finish_checked",
+    "source_symbol": "EVMCleanroom.TransactionList.finish_checked",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: exact declared-total admission. Says: final acceptance preserves the actual loop observations and requires both execution-gas and blob-gas totals to equal the child header exactly. Does not say: that the supplied list matches the header's transaction root.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.run_accepted",
+    "source_symbol": "EVMCleanroom.TransactionList.run_accepted",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: public list execution contract. Says: every accepted public run has one ordered receipt per input, exact receipt gas/blob sums and cumulative gas, unchanged witness address inventory, bounded retained observations, and exact header totals. Does not say: that signatures, trie roots, withdrawals or chain membership were authenticated by this transition.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.run_preflight_refused",
+    "source_symbol": "EVMCleanroom.TransactionList.run_preflight_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: public preflight refusal. Says: a failed actual preflight returns its reason before any entry or header processing, with no fabricated transaction index. Does not say: that local resource refusal establishes block invalidity.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionList.blob_position_refused",
+    "source_symbol": "EVMCleanroom.TransactionList.blob_position_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: list-owned refusal classification. Says: the blob adapter's inconsistent block-position refusal becomes a definite declaration rejection in the list adapter, whose public run derives its prefix gas and blob counters from previous executions. Does not say: that the standalone partial-position blob adapter changed.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-list-proof-guards-build-5.log",
+      "source_sha256": "d3f285674ffa3d89fe135db6aa37e9a89505b762728e930a3637904ba1bb6a82",
+      "source_git_blob": "3e8e228d335849cae72acf66f5365f6aa116f6fa"
+    }
+  }
+]
