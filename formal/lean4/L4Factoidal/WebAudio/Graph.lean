@@ -668,6 +668,36 @@ theorem path_mono {E1 E2 : List (α × α)} (h : ∀ e ∈ E1, e ∈ E2) {a b : 
   | edge hm => exact Path.edge (h _ hm)
   | step hm _ ih => exact Path.step (h _ hm) ih
 
+omit [DecidableEq α] in
+/-- A finite non-empty set of vertices on none of which `Path E` has a cycle has a vertex that no
+vertex of the set reaches. This replaces the counting argument on the length of a walk. -/
+theorem path_minimal {E : List (α × α)} : ∀ R : List α, R ≠ [] → (∀ x ∈ R, ¬ Path E x x) →
+    ∃ v ∈ R, ∀ p ∈ R, ¬ Path E p v := by
+  intro R
+  induction R with
+  | nil => intro h; exact absurd rfl h
+  | cons a R ih =>
+    intro _ hirr
+    by_cases hR : R = []
+    · subst hR
+      refine ⟨a, List.mem_cons_self, ?_⟩
+      intro p hp
+      have : p = a := by simpa using hp
+      subst this
+      exact hirr _ List.mem_cons_self
+    · obtain ⟨v, hv, hmin⟩ := ih hR (fun x hx => hirr x (List.mem_cons_of_mem _ hx))
+      by_cases hav : Path E a v
+      · refine ⟨a, List.mem_cons_self, ?_⟩
+        intro p hp hpa
+        rcases List.mem_cons.mp hp with rfl | hpR
+        · exact hirr _ List.mem_cons_self hpa
+        · exact hmin p hpR (hpa.trans hav)
+      · refine ⟨v, List.mem_cons_of_mem _ hv, ?_⟩
+        intro p hp hpv
+        rcases List.mem_cons.mp hp with rfl | hpR
+        · exact hav hpv
+        · exact hmin p hpR hpv
+
 /-- An edge of the split graph gives an edge of the original graph between the same nodes. -/
 theorem stepEdge_project (g : Graph) {x y : Step} (hm : (x, y) ∈ stepEdges g) :
     (x.nodeId, y.nodeId) ∈ depEdges g := by
@@ -784,6 +814,67 @@ theorem kahn_nodup (preds : Step → List Step) :
       intro hab
       exact hv (hab ▸ ha)
 
+/-- Says: Kahn's loop with enough fuel (`rem.length`) lists every vertex of `rem`, provided that
+(a) every non-empty set of vertices of the kind `Q` has a vertex with no feeding step in the set
+(`hacyc`), (b) no vertex of `rem` is placed yet, and (c) every feeding step of a vertex of `rem` is
+in `rem` or placed. Does not say: anything about the order (see `kahn_good`). -/
+theorem kahn_complete (preds : Step → List Step) (Q : Step → Prop)
+    (hacyc : ∀ R : List Step, R ≠ [] → (∀ x ∈ R, Q x) → ∃ v ∈ R, ∀ p ∈ preds v, p ∉ R) :
+    ∀ (f : Nat) (rem acc : List Step), rem.length ≤ f → (∀ w ∈ rem, Q w) → (∀ w ∈ rem, w ∉ acc) →
+      (∀ w ∈ rem, ∀ p ∈ preds w, p ∈ rem ∨ p ∈ acc) →
+      ∀ x, (x ∈ rem ∨ x ∈ acc) → x ∈ kahn preds f rem acc := by
+  intro f
+  induction f with
+  | zero =>
+    intro rem acc hl _ _ _ x hx
+    have : rem = [] := List.length_eq_zero_iff.mp (Nat.le_zero.mp hl)
+    subst this
+    simpa [kahn] using hx
+  | succ f ih =>
+    intro rem acc hl hQ hdisj hcl x hx
+    simp only [kahn]
+    split
+    · rename_i hv
+      by_cases hrem : rem = []
+      · subst hrem
+        simpa using hx
+      · obtain ⟨v, hvR, hvmin⟩ := hacyc rem hrem hQ
+        have hno := List.find?_eq_none.mp hv v hvR
+        exfalso
+        apply hno
+        simp only [Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem, Bool.not_eq_true']
+        refine ⟨by simpa using hdisj v hvR, ?_⟩
+        intro p hp
+        rcases hcl v hvR p hp with h | h
+        · exact absurd h (hvmin p hp)
+        · exact h
+    · rename_i v hv
+      have hsome := List.find?_some hv
+      have hvR : v ∈ rem := List.mem_of_find?_eq_some hv
+      simp only [Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem] at hsome
+      have hlt : (rem.filter (fun w => w != v)).length < rem.length := by
+        rw [List.length_filter_lt_length_iff_exists]
+        exact ⟨v, hvR, by simp⟩
+      refine ih _ _ (by omega) ?_ ?_ ?_ x ?_
+      · intro w hw; exact hQ w (List.mem_filter.mp hw).1
+      · intro w hw
+        have hw' := List.mem_filter.mp hw
+        have : w ≠ v := by simpa using hw'.2
+        simp only [List.mem_append, List.mem_singleton, not_or]
+        exact ⟨hdisj w hw'.1, this⟩
+      · intro w hw p hp
+        have hw' := List.mem_filter.mp hw
+        rcases hcl w hw'.1 p hp with h | h
+        · by_cases hpv : p = v
+          · subst hpv; right; simp
+          · left; exact List.mem_filter.mpr ⟨h, by simpa using hpv⟩
+        · right; exact List.mem_append_left _ h
+      · rcases hx with h | h
+        · by_cases hxv : x = v
+          · subst hxv; right; simp
+          · left; exact List.mem_filter.mpr ⟨h, by simpa using hxv⟩
+        · right; exact List.mem_append_left _ h
+
 /-- Says: no step is listed twice. Does not say: that every vertex is listed (see
 `orderComplete`). -/
 theorem order_nodup (g : Graph) : (order g).steps.Nodup :=
@@ -857,6 +948,166 @@ theorem order_topological_param (g : Graph) {e : ParamEdge} (he : e ∈ g.paramE
         exact Or.inr ⟨e, he, rfl⟩)
     (isMuted_srcStep g ha) (isMuted_paramDstStep g hb) hi hj
 
+/-! ### Completeness of the order -/
+
+/-- Every connection joins two nodes of the graph. `connect` and `connectParam` keep this true
+(`connect_wellFormed`, `connectParam_wellFormed`), and so do the `disconnect` functions, which only
+remove connections. -/
+def WellFormed (g : Graph) : Prop :=
+  (∀ e ∈ g.edges, e.src < g.kinds.size ∧ e.dst < g.kinds.size) ∧
+  (∀ e ∈ g.paramEdges, e.src < g.kinds.size ∧ e.dst < g.kinds.size)
+
+theorem mem_predsOf {es : List (Step × Step)} {p v : Step} : p ∈ predsOf es v ↔ (p, v) ∈ es := by
+  simp only [predsOf, List.mem_map, List.mem_filter, beq_iff_eq]
+  constructor
+  · rintro ⟨⟨a, b⟩, ⟨hm, hb⟩, rfl⟩
+    simp only at hb ⊢
+    subst hb
+    exact hm
+  · intro h
+    exact ⟨(p, v), ⟨h, rfl⟩, rfl⟩
+
+theorem nodeSteps_lt {g : Graph} {s : Step} (h : s ∈ nodeSteps g) : s.nodeId < g.kinds.size := by
+  simp only [nodeSteps, List.mem_flatMap, List.mem_range] at h
+  obtain ⟨i, hi, hs⟩ := h
+  by_cases hc : isCycleDelay g i = true
+  · rw [if_pos hc] at hs
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+    rcases hs with rfl | rfl <;> simpa [Step.nodeId] using hi
+  · rw [if_neg hc] at hs
+    simp only [List.mem_singleton] at hs
+    subst hs
+    simpa [Step.nodeId] using hi
+
+theorem srcStep_mem {g : Graph} {i : NodeId} (hi : i < g.kinds.size) : srcStep g i ∈ nodeSteps g := by
+  simp only [nodeSteps, List.mem_flatMap, List.mem_range]
+  refine ⟨i, hi, ?_⟩
+  unfold srcStep
+  by_cases hc : isCycleDelay g i = true <;> simp [hc]
+
+theorem dstStep_mem {g : Graph} {i : NodeId} (hi : i < g.kinds.size) : dstStep g i ∈ nodeSteps g := by
+  simp only [nodeSteps, List.mem_flatMap, List.mem_range]
+  refine ⟨i, hi, ?_⟩
+  unfold dstStep
+  by_cases hc : isCycleDelay g i = true <;> simp [hc]
+
+theorem paramDstStep_mem {g : Graph} {i : NodeId} (hi : i < g.kinds.size) :
+    paramDstStep g i ∈ nodeSteps g := by
+  simp only [nodeSteps, List.mem_flatMap, List.mem_range]
+  refine ⟨i, hi, ?_⟩
+  unfold paramDstStep
+  by_cases hc : isCycleDelay g i = true <;> simp [hc]
+
+/-- Both ends of a step edge are vertices of the split graph. -/
+theorem stepEdge_mem_nodeSteps {g : Graph} (hwf : WellFormed g) {x y : Step}
+    (h : (x, y) ∈ stepEdges g) : x ∈ nodeSteps g ∧ y ∈ nodeSteps g := by
+  simp only [stepEdges, List.mem_append, List.mem_map] at h
+  rcases h with ⟨e, he, hxy⟩ | ⟨e, he, hxy⟩
+  · obtain ⟨h1, h2⟩ := hwf.1 e he
+    simp only [Prod.mk.injEq] at hxy
+    obtain ⟨rfl, rfl⟩ := hxy
+    exact ⟨srcStep_mem h1, dstStep_mem h2⟩
+  · obtain ⟨h1, h2⟩ := hwf.2 e he
+    simp only [Prod.mk.injEq] at hxy
+    obtain ⟨rfl, rfl⟩ := hxy
+    exact ⟨srcStep_mem h1, paramDstStep_mem h2⟩
+
+/-- No step edge starts at a `DelayWriter`: it has no output. -/
+theorem no_delayWrite_src (g : Graph) {i : NodeId} {y : Step} : (Step.delayWrite i, y) ∉ stepEdges g := by
+  intro h
+  simp only [stepEdges, List.mem_append, List.mem_map, Prod.mk.injEq] at h
+  rcases h with ⟨e, _, h1, _⟩ | ⟨e, _, h1, _⟩ <;>
+    (unfold srcStep at h1; split at h1 <;> simp at h1)
+
+theorem isMuted_mono {M0 M : List NodeId} (h : ∀ i ∈ M0, i ∈ M) {s : Step}
+    (hs : isMuted M0 s = true) : isMuted M s = true := by
+  simp only [isMuted, List.contains_iff_mem] at hs ⊢
+  exact h _ hs
+
+theorem liveEdges_mono {M0 M : List NodeId} (h : ∀ i ∈ M0, i ∈ M) (es : List (Step × Step)) :
+    ∀ e ∈ liveEdges M es, e ∈ liveEdges M0 es := by
+  intro e he
+  simp only [liveEdges, List.mem_filter, Bool.and_eq_true, Bool.not_eq_true'] at he ⊢
+  obtain ⟨h1, h2, h3⟩ := he
+  refine ⟨h1, ?_, ?_⟩
+  · cases hh : isMuted M0 e.1
+    · rfl
+    · have := isMuted_mono h hh
+      rw [h2] at this
+      cases this
+  · cases hh : isMuted M0 e.2
+    · rfl
+    · have := isMuted_mono h hh
+      rw [h3] at this
+      cases this
+
+/-- Says: the graph of the steps that are not muted has no cycle: no live step has a path of one or
+more live connections back to itself. A cycle through a live node step would put the node on a cycle
+of `stepEdges`, which `mutedIds` lists (this uses `reach_complete`); a `DelayWriter` has no output;
+a cycle through a `DelayReader` alone is listed by the second condition of `mutedIds`. Does not
+say: anything about a graph that is not well formed (none is needed: the steps considered are
+vertices). -/
+theorem live_acyclic (g : Graph) :
+    ∀ x ∈ liveVerts (mutedIds g) (nodeSteps g), ¬ Path (liveEdges (mutedIds g) (stepEdges g)) x x := by
+  intro x hx hp
+  simp only [liveVerts, List.mem_filter, Bool.not_eq_true'] at hx
+  obtain ⟨hxn, hxm⟩ := hx
+  have hsub : ∀ e ∈ liveEdges (mutedIds g) (stepEdges g), e ∈ stepEdges g :=
+    fun e he => (List.mem_filter.mp he).1
+  have hM0 : ∀ i ∈ mutedNodes g, i ∈ mutedIds g := by
+    intro i hi
+    simp only [mutedNodes, mutedIds, List.mem_filter, Bool.or_eq_true] at hi ⊢
+    exact ⟨hi.1, Or.inl hi.2⟩
+  have hlt := nodeSteps_lt hxn
+  cases x with
+  | node i =>
+    have hc : onCycle (stepEdges g) (Step.node i) = true := onCycle_iff.mpr (path_mono hsub hp)
+    have hi : i ∈ mutedIds g := by
+      simp only [mutedIds, List.mem_filter, List.mem_range, Bool.or_eq_true]
+      exact ⟨hlt, Or.inl hc⟩
+    simp only [isMuted, List.contains_eq_mem, decide_eq_false_iff_not] at hxm
+    exact hxm hi
+  | delayWrite i =>
+    cases hp with
+    | edge h => exact no_delayWrite_src g (hsub _ h)
+    | step h _ => exact no_delayWrite_src g (hsub _ h)
+  | delayRead i =>
+    have hc : onCycle (liveEdges (mutedNodes g) (stepEdges g)) (Step.delayRead i) = true :=
+      onCycle_iff.mpr (path_mono (liveEdges_mono hM0 _) hp)
+    have hi : i ∈ mutedIds g := by
+      simp only [mutedIds, List.mem_filter, List.mem_range, Bool.or_eq_true]
+      exact ⟨hlt, Or.inr hc⟩
+    simp only [isMuted, List.contains_eq_mem, decide_eq_false_iff_not] at hxm
+    exact hxm hi
+
+/-- Says: in a well-formed graph, every step of the split graph (`nodeSteps`) that does not belong to
+a muted node is in `(order g).steps`. Together with `order_nodup` and the topological theorems, the
+steps are exactly the live steps, each once, in an order that respects the connections. Does not say:
+which topological order is chosen (the specification does not fix one); anything about a graph with
+a connection to a node number outside the graph (such a connection cannot be made with `connect`,
+`connectParam`: see `connect_wellFormed`). -/
+theorem order_complete (g : Graph) (hwf : WellFormed g) {s : Step} (hs : s ∈ nodeSteps g)
+    (hm : isMuted (mutedIds g) s = false) : s ∈ (order g).steps := by
+  have hsv : s ∈ liveVerts (mutedIds g) (nodeSteps g) := by
+    simp only [liveVerts, List.mem_filter, Bool.not_eq_true']
+    exact ⟨hs, hm⟩
+  unfold order
+  simp only
+  refine kahn_complete (predsOf (liveEdges (mutedIds g) (stepEdges g)))
+    (fun x => x ∈ liveVerts (mutedIds g) (nodeSteps g)) ?_ _ _ [] (Nat.le_refl _)
+    (fun w hw => hw) (by simp) ?_ s (Or.inl hsv)
+  · intro R hR hQ
+    obtain ⟨v, hv, hmin⟩ := path_minimal (E := liveEdges (mutedIds g) (stepEdges g)) R hR
+      (fun x hx => live_acyclic g x (hQ x hx))
+    refine ⟨v, hv, fun p hp hpR => hmin p hpR (Path.edge (mem_predsOf.mp hp))⟩
+  · intro w hw p hp
+    left
+    have hmem := mem_predsOf.mp hp
+    simp only [liveEdges, List.mem_filter, Bool.and_eq_true, Bool.not_eq_true'] at hmem
+    obtain ⟨hse, hp1, _⟩ := hmem
+    simp only [liveVerts, List.mem_filter, Bool.not_eq_true']
+    exact ⟨(stepEdge_mem_nodeSteps hwf hse).1, hp1⟩
+
 /-! ### Connecting twice -/
 
 /-- Says: if `connect g a o b i` succeeds with result `g'`, connecting the same output to the same
@@ -896,6 +1147,76 @@ theorem connectParam_idempotent {g g' : Graph} {a o b p : Nat}
         simp [hks, hkd, hb]
     · simp [hb] at h
   · simp at h
+
+theorem idx_lt {ks : Array Kind} {a : Nat} {k : Kind} (h : ks[a]? = some k) : a < ks.size :=
+  (Array.getElem?_eq_some_iff.mp h).1
+
+/-- Says: `connect` keeps a well-formed graph well formed. Does not say: that the connection is
+made (it can fail with an error, and then there is no new graph). -/
+theorem connect_wellFormed {g g' : Graph} (hwf : WellFormed g) {a o b i : Nat}
+    (h : connect g a o b i = .ok g') : WellFormed g' := by
+  unfold connect at h
+  split at h
+  · rename_i ks kd hks hkd
+    have ha := idx_lt hks
+    have hb' := idx_lt hkd
+    by_cases hb : o < ks.numOutputs ∧ i < kd.numInputs
+    · simp only [hb, and_self, if_true] at h
+      by_cases hm : (⟨a, o, b, i⟩ : Edge) ∈ g.edges
+      · simp only [hm, if_true] at h
+        cases h
+        exact hwf
+      · simp only [hm, if_false] at h
+        cases h
+        refine ⟨?_, hwf.2⟩
+        intro e he
+        simp only [List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact hwf.1 e he
+        · exact ⟨ha, hb'⟩
+    · simp [hb] at h
+  · simp at h
+
+/-- Says: the same for `connectParam`. -/
+theorem connectParam_wellFormed {g g' : Graph} (hwf : WellFormed g) {a o b p : Nat}
+    (h : connectParam g a o b p = .ok g') : WellFormed g' := by
+  unfold connectParam at h
+  split at h
+  · rename_i ks kd hks hkd
+    have ha := idx_lt hks
+    have hb' := idx_lt hkd
+    by_cases hb : o < ks.numOutputs ∧ p < kd.numParams
+    · simp only [hb, and_self, if_true] at h
+      by_cases hm : (⟨a, o, b, p⟩ : ParamEdge) ∈ g.paramEdges
+      · simp only [hm, if_true] at h
+        cases h
+        exact hwf
+      · simp only [hm, if_false] at h
+        cases h
+        refine ⟨hwf.1, ?_⟩
+        intro e he
+        simp only [List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact hwf.2 e he
+        · exact ⟨ha, hb'⟩
+    · simp [hb] at h
+  · simp at h
+
+theorem empty_wellFormed : WellFormed Graph.empty := by
+  simp [WellFormed, Graph.empty]
+
+/-- Says: adding a node keeps a graph well formed. -/
+theorem addNode_wellFormed (g : Graph) (k : Kind) (hwf : WellFormed g) :
+    WellFormed (g.addNode k).1 := by
+  refine ⟨fun e he => ?_, fun e he => ?_⟩
+  · obtain ⟨h1, h2⟩ := hwf.1 e he
+    show e.src < (g.kinds.push k).size ∧ e.dst < (g.kinds.push k).size
+    rw [Array.size_push]
+    exact ⟨Nat.lt_succ_of_lt h1, Nat.lt_succ_of_lt h2⟩
+  · obtain ⟨h1, h2⟩ := hwf.2 e he
+    show e.src < (g.kinds.push k).size ∧ e.dst < (g.kinds.push k).size
+    rw [Array.size_push]
+    exact ⟨Nat.lt_succ_of_lt h1, Nat.lt_succ_of_lt h2⟩
 
 /-! ## Tests -/
 
