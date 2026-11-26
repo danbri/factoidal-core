@@ -437,6 +437,14 @@ Answer:
 - In this container, HTTPS goes through a gateway that terminates TLS, so it can read RPC
   requests made from here.
 
+Update 2026-11-26 (Ethereum code now on `main`, merge b70f732cd): in neither component does Lean
+open a socket. Ethereum: `formal/lean4/evm-cleanroom/scripts/rpc/rpc-client.mjs` (Node,
+`node:https`, TLS from Node) makes the JSON-RPC calls and saves captures; the Lean code reads
+those files, and its CLI only starts a local companion executable (`IO.Process.spawn`). Tor: Arti
+(Rust, compiled to wasm) does the Tor protocol and its own TLS (rustls); a Deno worker gives it
+raw TCP (`Deno.connect`); Lean holds the SOCKS5 decisions and their theorems (section 20), not yet
+called by the running code.
+
 ## 14. Keeping Tor state between runs (2026-11-25)
 
 Owner, 2026-11-25, verbatim: "sure (more than cookies?)" (to persistent state for the Deno
