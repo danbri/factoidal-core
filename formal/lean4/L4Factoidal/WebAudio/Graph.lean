@@ -378,19 +378,26 @@ def nodeSteps (g : Graph) : List Step :=
   (List.range g.kinds.size).flatMap
     (fun i => if isCycleDelay g i then [Step.delayWrite i, Step.delayRead i] else [Step.node i])
 
-/-- The muted nodes: those on a cycle of the graph after the split. -/
-def mutedIds (g : Graph) : List NodeId :=
-  let se := stepEdges g
-  (List.range g.kinds.size).filter (fun i => onCycle se (Step.node i))
-
-/-- Is the step a muted node? -/
-def isMuted (M : List NodeId) : Step → Bool
-  | .node i => M.contains i
-  | _ => false
+/-- Is the step a step of a muted node? (A muted `DelayNode` loses both of its steps.) -/
+def isMuted (M : List NodeId) (s : Step) : Bool := M.contains s.nodeId
 
 /-- The step edges that do not touch a muted node. -/
 def liveEdges (M : List NodeId) (es : List (Step × Step)) : List (Step × Step) :=
   es.filter (fun e => !isMuted M e.1 && !isMuted M e.2)
+
+/-- The nodes whose own step is on a cycle of the graph after the split. -/
+def mutedNodes (g : Graph) : List NodeId :=
+  (List.range g.kinds.size).filter (fun i => onCycle (stepEdges g) (Step.node i))
+
+/-- The muted nodes: those on a cycle of the graph after the split, and the `DelayNode`s in a
+cycle whose `DelayReader` is on a cycle that has no other muted node. The second kind is a cycle
+made only of `delayTime` connections between cycle breakers (`DelayReader` to `DelayReader`): the
+split does not cut it, and no node step is on it to be muted. Without this case such a delay has
+no step before it in any order and `order` would drop it. -/
+def mutedIds (g : Graph) : List NodeId :=
+  let se := stepEdges g
+  (List.range g.kinds.size).filter
+    (fun i => onCycle se (Step.node i) || onCycle (liveEdges (mutedNodes g) se) (Step.delayRead i))
 
 /-- The vertices that are not muted nodes. -/
 def liveVerts (M : List NodeId) (vs : List Step) : List Step :=
@@ -498,6 +505,14 @@ theorem nodeId_dstStep (g : Graph) (b : NodeId) : (dstStep g b).nodeId = b := by
 theorem nodeId_paramDstStep (g : Graph) (b : NodeId) : (paramDstStep g b).nodeId = b := by
   unfold paramDstStep; split <;> rfl
 
+omit [DecidableEq α] in
+/-- Paths survive adding edges. -/
+theorem path_mono {E1 E2 : List (α × α)} (h : ∀ e ∈ E1, e ∈ E2) {a b : α} (p : Path E1 a b) :
+    Path E2 a b := by
+  induction p with
+  | edge hm => exact Path.edge (h _ hm)
+  | step hm _ ih => exact Path.step (h _ hm) ih
+
 /-- An edge of the split graph gives an edge of the original graph between the same nodes. -/
 theorem stepEdge_project (g : Graph) {x y : Step} (hm : (x, y) ∈ stepEdges g) :
     (x.nodeId, y.nodeId) ∈ depEdges g := by
@@ -522,22 +537,30 @@ theorem path_project (g : Graph) {x y : Step} (h : Path (stepEdges g) x y) :
   | step hm _ ih => exact Path.step (stepEdge_project g hm) ih
 
 /-- Says: a node listed in `muted` has a path of one or more connections back to itself in the
-graph after the `DelayNode`s that are in cycles have been split (`stepEdges`). Does not say: that
-every node on such a cycle is listed (that is the definition of `mutedIds`, and the fuel of the
-search is tested); and nothing about a node that only receives from a muted node, which is not
-muted. -/
+graph after the `DelayNode`s that are in cycles have been split (`stepEdges`), through its own node
+step; or it is a `DelayNode` whose `DelayReader` has such a path through connections that touch no
+node of the first kind (a cycle of `delayTime` connections between cycle breakers). Does not say:
+that every node on such a cycle is listed (that is the definition of `mutedIds`; completeness of
+the search is `reach_complete`); and nothing about a node that only receives from a muted node,
+which is not muted. -/
 theorem muted_on_cycle (g : Graph) {i : NodeId} (h : i ∈ (order g).muted) :
-    Path (stepEdges g) (Step.node i) (Step.node i) := by
-  simp only [order, mutedIds, List.mem_filter] at h
-  exact onCycle_sound h.2
+    Path (stepEdges g) (Step.node i) (Step.node i) ∨
+    Path (liveEdges (mutedNodes g) (stepEdges g)) (Step.delayRead i) (Step.delayRead i) := by
+  simp only [order, mutedIds, List.mem_filter, Bool.or_eq_true] at h
+  rcases h.2 with h2 | h2
+  · exact Or.inl (onCycle_sound h2)
+  · exact Or.inr (onCycle_sound h2)
 
 /-- Says: a node listed in `muted` is on a cycle of the graph as the author connected it (audio and
 parameter connections both count). Does not say: the converse. A node on a cycle that passes
 through a `DelayNode` is not muted, because the split cuts that cycle. -/
 theorem muted_on_graph_cycle (g : Graph) {i : NodeId} (h : i ∈ (order g).muted) :
     Path (depEdges g) i i := by
-  have := path_project g (muted_on_cycle g h)
-  simpa [Step.nodeId] using this
+  rcases muted_on_cycle g h with h1 | h1
+  · have := path_project g h1
+    simpa [Step.nodeId] using this
+  · have := path_project g (path_mono (fun e he => (List.mem_filter.mp he).1) h1)
+    simpa [Step.nodeId] using this
 
 end Proofs
 
@@ -617,24 +640,21 @@ theorem order_good (g : Graph) :
 
 private theorem isMuted_srcStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
     isMuted (mutedIds g) (srcStep g a) = false := by
-  unfold srcStep
-  split
-  · rfl
-  · simpa [isMuted] using ha
+  unfold isMuted
+  rw [nodeId_srcStep]
+  simpa using ha
 
 private theorem isMuted_dstStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
     isMuted (mutedIds g) (dstStep g a) = false := by
-  unfold dstStep
-  split
-  · rfl
-  · simpa [isMuted] using ha
+  unfold isMuted
+  rw [nodeId_dstStep]
+  simpa using ha
 
 private theorem isMuted_paramDstStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
     isMuted (mutedIds g) (paramDstStep g a) = false := by
-  unfold paramDstStep
-  split
-  · rfl
-  · simpa [isMuted] using ha
+  unfold isMuted
+  rw [nodeId_paramDstStep]
+  simpa using ha
 
 /-- If `(x, y)` is an edge of the split graph, neither end a muted node, then `x` comes before `y`
 in the steps (when both are listed). -/
