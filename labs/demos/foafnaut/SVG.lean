@@ -809,6 +809,23 @@ private def paintFragmentId (fragment : String) : String :=
 #guard paintFragmentId "%E0%80%80" == "���"
 #guard paintFragmentId "%EF%BB%BF" == "\ufeff"
 
+/-- Raw fragment syntax supported by this CSS URL reader. Validate before percent
+decoding so encoded spaces may identify an element without admitting whitespace,
+quotes, parentheses or backslashes into an unquoted CSS URL token. Quoted targets
+retain the same restricted profile. -/
+private def paintFragmentSyntax (fragment : String) : Bool :=
+  fragment.toList.all fun c =>
+    (c.isAlphanum && c.toNat < 128) || ['_','-',':','.','%'].contains c ||
+      (c.toNat >= 128 && !c.isWhitespace)
+
+#guard paintFragmentSyntax "foo%20bar"
+#guard paintFragmentSyntax "%C3%A9"
+#guard !paintFragmentSyntax "foo bar"
+#guard !paintFragmentSyntax "foo\"bar"
+#guard !paintFragmentSyntax "foo'bar"
+#guard !paintFragmentSyntax "foo\\bar"
+#guard !paintFragmentSyntax "foo(bar"
+
 private def readPaint (lengths : LengthContext) (paints : PaintContext) (source : String) : Except String Paint := do
   let s := trim source
   if s.startsWith "url(" then
@@ -819,7 +836,9 @@ private def readPaint (lengths : LengthContext) (paints : PaintContext) (source 
         (target.startsWith "'" && target.endsWith "'") then
         String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
     if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
-    let id := paintFragmentId (String.ofList (target.toList.drop 1))
+    let rawId := String.ofList (target.toList.drop 1)
+    if !paintFragmentSyntax rawId then throw "unsupported paint fragment syntax/encoding"
+    let id := paintFragmentId rawId
     let fallback := trim fallback
     let fallbackPaint : Paint ←
       if fallback.isEmpty || fallback.toLower == "none" then pure .none
