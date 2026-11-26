@@ -398,7 +398,8 @@ def remove (d : Dom) (node : NodeId) : Dom :=
   | none => d
   | some p =>
     let d1 := d.setNode p fun pn =>
-      { pn with kids := pn.kids.filter (· != node),
+      { pn with
+        kids := pn.kids.filter (· != node)
         textareaValue := if isHtmlElement pn "textarea" && pn.dirtyValue.isNone then none else pn.textareaValue }
     d1.setNode node fun n => { n with parent := none }
 
@@ -434,7 +435,8 @@ def linkChild (d : Dom) (p c : NodeId) (before : Option NodeId) : Dom :=
       | some b => match ks.findIdx? (· == b) with
         | some k => ks.insertIdxIfInBounds k c
         | none => ks.push c
-    { pn with kids,
+    { pn with
+      kids
       textareaValue := if isHtmlElement pn "textarea" && pn.dirtyValue.isNone then none else pn.textareaValue }
   d1.setNode c fun n => { n with parent := some p }
 

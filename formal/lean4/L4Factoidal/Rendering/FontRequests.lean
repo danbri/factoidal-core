@@ -1,9 +1,10 @@
 import L4Factoidal.Rendering.Layout
 
 /-! Font-data preflight over the existing Lean DOM and computed styles.
-The collector calls Layout.inlineItems on text nodes, hence executes the exact
-same textItems scanner as rendering. It does not tokenize HTML or decide any
-host layout. This module is not yet imported by the frozen runtime. -/
+The collector calls Layout.inlineItems on text nodes and Layout.controlItems on
+textareas, hence executes the same text scanner and live-value path as rendering.
+It does not tokenize HTML or decide any
+host layout. WebRenderFontRequests uses it before document layout. -/
 namespace L4Factoidal.Rendering.FontRequests
 open DOM CSS Layout
 structure Request where
@@ -76,9 +77,11 @@ def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except
           let block ← context dom styles (dom.size+1) (node.parent.getD 0)
           active := active.insert block ()
         continue
-      if node.type == .text then
+      let textarea := DOM.Dom.isHtmlElement node "textarea"
+      if node.type == .text || textarea then
         let block ← context dom styles (dom.size+1) id
-        let items ← Layout.inlineItems dom styles noEmbedding Layout.noPictures 0 1 id
+        let items ← if textarea then pure (Layout.controlItems dom id style)
+          else Layout.inlineItems dom styles noEmbedding Layout.noPictures 0 1 id
         for item in items do
           match item with
           | .word _ s text _ =>
@@ -91,6 +94,6 @@ def forDOM (dom : Dom) (rules : List CSS.Rule) (textScale : Float := 1) : Except
         let block ← context dom styles (dom.size+1) (node.parent.getD 0)
         active := active.insert block ()
         requests ← add requests style " "
-      pending := node.kids.toList ++ pending
+      if !textarea then pending := node.kids.toList ++ pending
   throw "font requests: DOM traversal exceeds arena"
 end L4Factoidal.Rendering.FontRequests

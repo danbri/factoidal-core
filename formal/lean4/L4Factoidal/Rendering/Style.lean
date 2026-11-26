@@ -3332,7 +3332,7 @@ def knownInputTypes : List String :=
 a text field its `value` (a password field a bullet for each character), else its
 `placeholder`; a push button made with `input` its `value`, else the label of its type
 (`Submit`, `Reset`); a file chooser its button and state; a drop-down list the label of the
-option it shows (`shownOption`); a `textarea` with no text its `placeholder`. Line breaks in
+option it shows (`shownOption`); a textarea its live value, or its placeholder when empty. Line breaks in
 a one-line control become spaces. `none` for every other node, and when there is nothing to
 show. A text field uses its current value, including edits applied to the arena. -/
 def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
@@ -3360,7 +3360,8 @@ def controlText (dom : Dom) (id : Nat) : Option (String × Bool) :=
     if hasAttribute n "multiple" then none
     else (shownOption dom id).bind fun o => let l := optionLabel dom o; if l.isEmpty then none else some (l, false)
   else if n.lname == "textarea" then
-    if n.kids.any (fun k => !(dom.get k).data.isEmpty) then none
+    let value := String.ofList (HTML.normalizeNewlinesList (dom.textareaRawValue id).toList)
+    if !value.isEmpty then some (value, false)
     else
       let p := attrValue n "placeholder"
       if p.isEmpty then none else some (p, true)
@@ -3392,7 +3393,19 @@ private def controlTextOf (source tag : String) : Option (String × Bool) :=
 #guard controlTextOf "<select><option>One<option selected>Two<option>Three</select>" "select" == some ("Two", false)
 #guard controlTextOf "<select><optgroup label=g><option>  First   one </option></optgroup></select>" "select" == some ("First one", false)
 #guard controlTextOf "<textarea placeholder='Write'></textarea>" "textarea" == some ("Write", true)
-#guard controlTextOf "<textarea placeholder='Write'>x</textarea>" "textarea" == none
+#guard controlTextOf "<textarea placeholder='Write'>x</textarea>" "textarea" == some ("x", false)
+#guard
+  let dom := DOM.parseHtmlDocument "<textarea id=t placeholder='Write'>default</textarea>"
+  let id := (dom.getElementById 0 "t").getD 0
+  controlText (dom.setNode id fun n => {n with dirtyValue := some "live"}) id == some ("live", false)
+#guard
+  let dom := DOM.parseHtmlDocument "<textarea id=t placeholder='Write'>default</textarea>"
+  let id := (dom.getElementById 0 "t").getD 0
+  controlText (dom.setNode id fun n => {n with dirtyValue := some ""}) id == some ("Write", true)
+#guard
+  let dom := DOM.parseHtmlDocument "<textarea id=t></textarea>"
+  let id := (dom.getElementById 0 "t").getD 0
+  controlText (dom.setNode id fun n => {n with dirtyValue := some "a\r\nb\rc"}) id == some ("a\nb\nc", false)
 #guard controlTextOf "<p>text</p>" "p" == none
 
 /-- A rule that matches only through `:visited` sets only colours (Selectors 4 §8.2,

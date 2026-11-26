@@ -22,4 +22,24 @@ private def keys (result : Except String (Array Request)) := result.toOption.map
 #guard (run ("<div>" ++ String.ofList (List.replicate 65537 'A') ++ "</div>")).toOption.isNone
 #guard (run ("<div>" ++ String.intercalate " " ((List.range 4096).map fun n => "W" ++ toString n) ++ "</div>")).toOption.isNone
 #guard (run "<div>AA</div>" ("body{font-family:'" ++ String.ofList (List.replicate 257 'A') ++ "'}")).toOption.isNone
+-- Textarea shaping requests follow live control text and exclude default descendants.
+private def textareaRequests (value : String) (cloning : Option Bool := none) : Except String (Array Request) := do
+  let dom := DOM.parseHtmlDocument "<textarea id=t placeholder=hint>default</textarea>"
+  let id := (dom.getElementById 0 "t").getD 0
+  let dom := dom.setNode id fun n => {n with dirtyValue := some value}
+  let dom := match cloning with
+    | none => dom
+    | some deep =>
+      let parent := (dom.get id).parent.getD 0
+      let (dom, copy) := dom.cloneNode id deep
+      ((dom.remove id).appendChild parent copy).1
+  forDOM dom (← CSS.parse "body,textarea{font-family:Ahem;font-size:20px}")
+
+#guard keys (textareaRequests "live") == some [("Ahem",20," "),("Ahem",20,"live")]
+#guard keys (textareaRequests "live" (some false)) == keys (textareaRequests "live")
+#guard keys (textareaRequests "live" (some true)) == keys (textareaRequests "live")
+#guard keys (textareaRequests "") == some [("Ahem",20," "),("Ahem",20,"hint")]
+#guard keys (textareaRequests "first\r\nsecond\rlast") ==
+  some [("Ahem",20," "),("Ahem",20,"first"),("Ahem",20,"last"),("Ahem",20,"second")]
+
 end L4Factoidal.Rendering.FontRequestsTests

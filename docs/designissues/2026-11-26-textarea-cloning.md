@@ -39,6 +39,37 @@ accepts either control. The shared prelude getter/setter forwards this state and
 WebIDL conversion, newline normalization and selection handling. Output and input property
 implementations are unchanged.
 
+## Rendering and font preflight
+
+The first candidate, `b30a6d12e16ee9e567673a4bd5c41da2b69c38d4`, fixed the DOM path
+but left a visible regression: `CSS.controlText` supplied only textarea placeholders,
+while `Layout` painted the default child text. Script `.value = "live"` would therefore
+leave the default text visible. The renderer now reads `textareaRawValue` through
+`CSS.controlText`, normalizes CRLF/CR, and supplies the visible text as anonymous control
+items. Textarea items retain their computed whitespace/wrapping style.
+
+The inline, box-layout and intrinsic-sizing paths hide a textarea's default children.
+Textarea inner content uses its control items, including with authored flex display,
+rather than rendering those children again. The DOM itself retains those children.
+Font preflight (`Rendering.FontRequests`, called by `WebRenderFontRequests`) uses the same
+control-item scanner for textareas and skips their default descendants. Thus a live word
+requests its own font data, rather than requesting only the default word. Other controls
+retain their existing paths.
+
+The source audit follows the page host's `setValue` command through
+`WebRenderScript` serialization/replay and `WebDocument` command application before layout.
+`WebDocument.layoutFields` includes `commands`, so a new value command changes the kept
+layout key. This is a source audit, not a measured live-frame/cache test.
+
+Three new `Style` guards cover live value, dirty-empty placeholder and newline normalization.
+Sixteen `ReplacedTests` guards inspect actual `Layout.render` output/state: live glyph text
+with unchanged default children; default, empty and reset states; shallow/deep dirty clones
+and shallow pristine clone; inline/block/flex display; auto-width intrinsic size; normalized
+multiline glyph text and increasing line positions; wrapping; and retained double-space
+advance. They construct the arena state produced by `setValue`; they do not execute page
+JavaScript. Five `FontRequestsTests` guards check exact live font requests, both clone depths,
+empty-placeholder requests and normalized multiline requests. All await compilation in CI.
+
 ## Assurance boundary
 
 `Dom.textareaRawValue_dirty` states only that a dirty textarea reads its stored raw value.
@@ -53,9 +84,14 @@ they test ABI forwarding, conversions, API normalization and selection, not nati
 execution. `node --check tools/wasmvm/quickjs/prelude.js` and `bash -n tests/dom/run.sh` pass.
 The source suite is wired into the existing DOM CI runner.
 
+The Lean job in the first exact package run [45749995114](https://github.com/danbri/factoidal-builds/actions/runs/45749995114)
+failed compiling `Arena.lean` at lines 401 and 437: the new fields in two record updates
+were indented left of the first inline field. Both updates now use aligned multiline
+record fields. The updated candidate still requires an exact-head CI result.
+
 No local Lean/native/Wasm build, WPT run or performance comparison was run: disk was below
 the repository's build limit. Exact candidate package and selected testharness WPT CI are
 required. The PR stays draft until those results exist. A focused run is a development
 check, not a full WPT score. Request the textarea directory, input cloning controls and a
-regression selection at the same pinned WPT revision. Visual editing/rendering and the
-full A/B rendering gate remain unmeasured.
+regression selection at the same pinned WPT revision. The new renderer/glyph guards await CI execution. Live browser editing, screenshot/pixel
+comparison and the full A/B rendering gate remain unmeasured.
