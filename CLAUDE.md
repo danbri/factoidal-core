@@ -1760,6 +1760,12 @@ session.
   diff-scoped trust and hygiene check registry for Lean changes
   (`maxHeartbeats`, `native_decide`, `axiom`, `sorry`, `unsafe`/`partial`,
   silenced linters), `#print axioms` as the authoritative check.
+- [`lean-verify`](third_party/skills/hirosassa-lean-verify/lean-verify/SKILL.md)
+  — vendored unmodified from hirosassa/lean-verify (MIT, provenance and local policy in
+  `third_party/skills/hirosassa-lean-verify/PROVENANCE.md`): model one small function or rewrite
+  rule from C, Rust or TypeScript in Lean core, find a counterexample (`bv_decide`, `#eval`) or
+  prove equivalence in the model. On trial:
+  https://github.com/danbri/factoidal-core/issues/1136.
 - [`lean4-proof-patterns`](skills/lean4-proof-patterns/SKILL.md) — prove
   properties of fuel-bounded, match-heavy definitions without Mathlib:
   the theorem shape for fuel independence, nested-match splitting, the
