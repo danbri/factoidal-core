@@ -150,9 +150,9 @@ def parseSheet (properties : List String) (source : String) : Except String (Lis
     rules := rules.push {selectors,declarations:= ← declarationsClean properties body}
   pure rules.toList
 
-/-- Caller validates the full property value grammar BEFORE cascade selection.
-    This strict profile refuses malformed/unsupported declarations, including
-    overridden declarations; it does not emulate CSS's ignore-invalid behavior.
+/-- Caller validates the full property value grammar on rules that match this element, before
+    choosing a winner. This strict profile refuses malformed/unsupported declarations, including
+    overridden declarations of matching rules; unmatched selectors do not affect this element.
     Returned declarations are unique by property. Higher priority replaces lower:
     presentation attributes, matched author rules by specificity (CSS Cascade 5 §6.4) and
     then source order, inline style. `classes` and `id` are the element's, for `.class`
@@ -160,11 +160,11 @@ def parseSheet (properties : List String) (source : String) : Except String (Lis
 def cascade (validate : Declaration → Except String Unit) (tag : String)
     (presentation : List Declaration) (rules : List Rule) (inlineStyle : List Declaration)
     (classes : List String := []) (id : Option String := none) : Except String (List Declaration) := do
-  for d in presentation ++ rules.flatMap (·.declarations) ++ inlineStyle do validate d
   let subject : Subject := {tag, id, classes}
+  let matched := rules.filterMap fun r => (matchSpecificity r.selectors subject).map (·, r)
+  for d in presentation ++ matched.flatMap (·.2.declarations) ++ inlineStyle do validate d
   -- each matched rule with the specificity of its most specific matching selector; a
   -- stable sort keeps source order among equals
-  let matched := rules.filterMap fun r => (matchSpecificity r.selectors subject).map (·, r)
   let applicable := (matched.mergeSort (fun a b => !specLT b.1 a.1)).map (·.2)
   let all := presentation ++ applicable.flatMap (·.declarations) ++ inlineStyle
   let mut result : List Declaration := []
