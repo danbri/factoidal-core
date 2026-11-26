@@ -158,8 +158,8 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 | `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time; stored times exact values of binary64 numbers, sums and frame conversion in binary64 (`ceil(t × rate)`, as WPT `audioparam-testing.js`) | on `main` (`cd8ab064f` to `b5bfaa30f`): 7 theorems, 114 `#guard` |
 | `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c`, `7cce27238`): no step twice, every connection in processing order, muted nodes lie on cycles; not yet proved: every node that is not muted is in the order |
 | `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`): shape and state theorems, 67 `#guard`; fractional delay by linear interpolation (the specification names none) |
-| `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | in progress |
-| `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | in progress |
+| `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | on `main` (`531881c86`, `e270b721b`), rendered through `Render` |
+| `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | on `main` (`27c4e37d1`), rendered through `Render` |
 | `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | on `main`: frame, shape and graph theorems; Oscillator, BiquadFilter and AudioBufferSource output silence until their kernels land |
 | `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | on `main`: constructor checks, nodes, connections, automation methods, `startRendering`; shape theorems; 62 `#guard` renders |
 
@@ -185,10 +185,12 @@ FFmpeg's decoder. `decodeAudioData` itself comes with the page interfaces.
 
 Found by the work on `Render.lean`; none blocks the offline renderer.
 
-1. `Graph.lean`: the `delayTime` parameter edge of a `DelayNode` that is split in a cycle goes to
-   the writer step, but the reader step needs `delayTime`. A source of `delayTime` that comes later
-   in the order is not seen by the reader (`Render.lean` uses silence for it). Fix: send the
-   parameter edges of a split delay to its reader step in `dstStep` and `stepEdges`, and order them.
+1. Fixed: parameter edges into a split `DelayNode` now end at its reader step (`paramDstStep`),
+   so a later `delayTime` source is processed first. The ordering theorems were restated for audio
+   edges (`order_topological_edge`) and parameter edges (`order_topological_param`), because the
+   general form over `dstStep` is false once parameter edges go to the reader. Behaviour to check
+   against WPT or another engine: a delay whose `delayTime` is driven from inside its own cycle
+   leaves that cycle uncut, so the nodes on it are muted (`Graph.lean` guard 23c).
 2. `Graph.lean`: not proved that every node that is not muted appears in the order (it needs "a
    finite graph with no cycle has a vertex with no incoming edge").
 3. `Mix.lean`: `mixInput` has no shape theorem; `Render.lean` normalizes the shape instead.
