@@ -224,6 +224,11 @@ Not done: a worker that dies still sends every tab to the main thread (as before
 own tabs; a background tab gets no lower step budget; the Hub has one engine instance; the
 Veil model has no shared worker at the cap.
 
+2026-11-26: the library copies are gone in two new modes, `--engine-mode sessions` (a worker
+per tab, each with an engine session in one library) and `--engine-mode tasks` (no worker: a
+session per tab on its own Lean dedicated task). Record and measurements:
+`2026-11-26-foafnaut-engine-sessions.md`.
+
 Dedicated workers of a page can move to their own threads in the same way, because each is
 already a separate session value. The deterministic interleaving then becomes one possible order.
 The structured clone in `JS/Clone.lean` is already the only thing that crosses.

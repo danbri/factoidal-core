@@ -131,10 +131,20 @@ Desktop host (Deno, TypeScript, macOS only):
   friends. `native_window_queue_test.ts` checks the queue.
 - `LAB/native_html_worker.ts`, `LAB/native_html_compile.ts`: an engine worker. One ordered
   queue for every slow engine call of its tabs.
-- `LAB/native_html_tabs.ts`: one engine worker per tab, at most 8 live (`--engine-workers N`);
-  routes each call to its tab's worker, a script session's calls to the worker that holds it.
+- `LAB/native_html_tabs.ts`: one engine per tab, at most 8 live (`--engine-workers N`);
+  routes each call to its tab's engine, a script session's calls to the engine that holds it.
   `--one-engine-worker` keeps one worker for all tabs. Trace `native-html-engine-worker`,
   `native-html-tab-first-frame`; summary `engineWorkers`, `tabFirstFrame`, `processRssMB`.
+- Engine sessions (`docs/designissues/2026-11-26-foafnaut-engine-sessions.md`): one native
+  library holds any number of engine states (`web_session_*` in `web_render_shim.c`).
+  `--engine-mode tasks` (the default since 2026-11-26, measured better on Linux in section 6 of
+  that record): no worker, each tab's session runs on its own Lean dedicated task
+  (`WebSession.lean`), called from the main thread through nonblocking FFI
+  (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in `native_html_engine.ts`); closing a tab
+  cancels its session. `sessions`: a worker per tab with a session in the one library. `copies`:
+  a worker per tab with its own copy of the library (the default of 2026-11-25). Tests: `engine_sessions_test.ts`;
+  measurement: `LAB/tools/engine_sessions_bench.py` (Linux rig). The remote engine calls are
+  written once over a kernel (`remoteMethods`), for the engine on this thread and the session.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
@@ -153,7 +163,9 @@ Engine in the lab, Lean modules at the top of `LAB`:
 - `WebRenderScript.lean` chooses the page script engine (`defaultEngine`).
   `WebScripts.lean` runs page scripts.
 - `SVG*.lean`, `Image*.lean`, `RenderPlan.lean`, `Font.lean`, `Graphics.lean`.
-- `web_render_shim.c` is the C ABI of the engine.
+- `web_render_shim.c` is the C ABI of the engine: engine sessions (`web_session_new`,
+  `web_session_new_task`, `web_session_cancel`, `web_session_free`) and the calls on them; the
+  calls with no session use a default session. `WebSession.lean` is a session on a Lean task.
 
 Engine in the library, under `formal/lean4/L4Factoidal/`:
 
@@ -480,6 +492,13 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A native library whose Lean code runs on threads of its own (a task session's dedicated task,
+  pool workers with work) must not be unloaded while they run. Deno closes its library handles
+  when its runtime ends, and the last `dlclose` unloads the code. 2026-11-26:
+  `engine_sessions_test.ts` passed its 8 tests and then ended with a segmentation fault on every
+  run (gdb: a session task thread in `lean_dec_ref_cold`, a Deno thread in `_dl_close_worker`).
+  `web_session_new_task` now pins the library (`RTLD_NODELETE`; record D12). Read a test's exit
+  code, not only its pass count.
 - A port check with `ss` passes silently where `ss` is not installed (the cloud container). Check
   a port by connecting to it (`(exec 3<>/dev/tcp/127.0.0.1/PORT)`). C tor relays take up to 30 s
   to exit after SIGTERM, so a chutney network that was just stopped can still hold its ports.

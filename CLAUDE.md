@@ -1101,6 +1101,17 @@ change to it. New tab page, owner, same day: links to Settings and the Console, 
 (SPARQL demos), and a dinosaur emoji link to the owner's game Particle Rex
 (`pages/particle-rex.html`, keys WASD and arrows), which is also a real-world test of the engine.
 
+2026-11-26: still one engine per tab, but the default is now an engine session per tab on its own
+Lean dedicated task in one native library (`--engine-mode tasks`), not a worker with a copy of the
+library. Rule, owner's brief for the night of 2026-11-25, verbatim: "Changing the default from
+workers to Lean tasks: land it as default only if it measures better on tabFirstFrame, memory per
+tab and tab-B input latency with no frame regression; otherwise land it behind a flag and report."
+Measured on Linux only, medians of 5 runs, against `origin/main` `1553ce0b`: new tab first frame
+p95 874 against 984 ms, resident memory per extra tab 21 against 101 MB, tab B input latency p95
+1,059 against 1,324 ms, no frame change beyond the spread. `--engine-mode copies` (the 2026-11-25
+default) and `sessions` stay selectable. Record and macOS gap:
+`docs/designissues/2026-11-26-foafnaut-engine-sessions.md`.
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -

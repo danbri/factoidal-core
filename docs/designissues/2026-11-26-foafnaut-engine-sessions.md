@@ -299,4 +299,95 @@ Evidence limits: Linux only (no Mac was available); software Vulkan draws a fram
 ms, so frame and latency numbers include that draw and are not comparable with a Mac; a 4-vCPU
 cloud machine with other tenants.
 
-(Measurements and stage 4 are added below as they land.)
+## 6. Measured (2026-11-26, one run of the command above)
+
+Machine: Linux cloud VM, 4 vCPU, Xvfb, Mesa software Vulkan. Base: a local build of
+`origin/main` `1553ce0b` with its own host (worktree). Branch: a local build of
+`wip/engine-sessions` `578f74a8` (the Lean and C of stages 2 to 4), host at `0ba44e22`.
+5 runs per configuration, interleaved, each under the timing lock. Median, worst run in
+brackets, coefficient of variation (CV) where it matters. `copies` is the branch in the base's
+mode: its numbers are the control for the base.
+
+| Number | base | copies | sessions | tasks |
+|---|---|---|---|---|
+| Tab B input latency p50, tab A loading 2.4 MB, ms | 398 (417) | 392 (397) | 387 (399) | 371 (391) |
+| Tab B input latency p95, same, ms | 1,324 (1,367) | 1,367 (1,401) | 1,151 (1,184) | 1,059 (1,178) |
+| Tab B first frame, tab A loading, ms | 1,406 (1,509) | 1,213 (1,400) | 1,443 (1,467) | 1,346 (1,444) |
+| New tab first frame p50, 7 new tabs, ms | 746 (920) | 703 (763) | 634 (800) | 641 (845) |
+| New tab first frame p95, 7 new tabs, ms | 984 (1,015) | 991 (1,002) | 922 (997) | 874 (971) |
+| Engine start, per extra engine, ms | 127 (129) | 143 (149) | 43 (49) | 4.2 (4.5) |
+| Resident memory added by an engine start, MB | 105 (146) | 107 (119) | 28 (47) | 1.1 (4.5) |
+| Process resident memory at exit, 8 tabs, MB | 1,481 (1,505) | 1,463 (1,505) | 1,008 (1,051) | 808 (834) |
+| Process resident memory at exit, 1 tab, MB | 771 (787) | 779 (799) | 717 (721) | 662 (667) |
+| Resident memory per extra tab, MB | 101 | 98 | 42 | 21 |
+| Frame total p50, status.html resize sweep, ms | 691 (751) | 658 (700) | 654 (704) | 677 (746) |
+| Frame total p95, same, ms | 2,812 (2,986) | 2,740 (2,876) | 2,719 (2,923) | 2,640 (2,989) |
+| Timer turns in 8 s, particle-rex.html | 99 (102) | 97 (101) | 93 (99) | 98 (101) |
+| Engine time per timer turn p50, same, ms | 61 (65) | 62 (66) | 66 (72) | 62 (65) |
+| Call beyond the engine per turn p50, same, ms | 7.1 (7.9) | 7.3 (7.5) | 7.7 (8.0) | 5.3 (5.4) |
+| Page canvas present p50, same, ms | 7.1 (7.4) | 7.1 (7.2) | 7.1 (7.4) | 7.3 (7.5) |
+| Main thread pump gap p95, heavy, ms | 234 (241) | 234 (236) | 232 (238) | 234 (243) |
+
+Resident memory per extra tab is (8 tabs - 1 tab) / 7 of the medians. The Particle Rex rows
+are from a second run of that scenario only (the first run's driver did not read the timer turn
+and canvas fields); its other numbers agreed with the first run.
+
+Reading (tasks against base): memory per extra tab 21 against 101 MB (CV about 0.02), engine
+start 4.2 against 127 ms, tab B input latency p50 371 against 398 ms (CV 0.022 and 0.024) and
+p95 1,059 against 1,324 ms (CV 0.06 and 0.07), new tab first frame p95 874 against 984 ms (CV
+0.045 and 0.02). New tab first frame p50 641 against 746 ms is a gain of about one CV (0.14 and
+0.10): weaker evidence. Frames: status.html p50 677 against 691 ms (CV 0.06 both), Particle
+Rex turns 98 against 99 and canvas present p50 7.3 against 7.1 ms (CV 0.016 and 0.024): no
+change beyond the spread. The call beyond the engine per timer turn falls by 1.8 ms: no worker
+message each way.
+
+Checks on the branch library: `engine_sessions_test.ts` 7 of 7 pass and its expected failure
+(https://github.com/danbri/factoidal-core/issues/1135) is recorded; the 28 demo pages of
+`pages/manifest.json` give the same bytes from the base and the branch library (a frame, a
+scrolled frame, both layers, and the page layer kept for a chrome-only frame, 1600 by 1200,
+text 150 percent), with equal `frameWork` counts (28 pages made, 28 kept). A short call on
+tab B was answered in 25 ms while tab A's 1.8 s layout ran (test 5).
+
+D11. `--engine-mode tasks` is the default for the native engine from 2026-11-26. Rule, from the
+owner's brief for the night of 2026-11-25: "Changing the default from workers to Lean tasks:
+land it as default only if it measures better on tabFirstFrame, memory per tab and tab-B input
+latency with no frame regression; otherwise land it behind a flag and report." It measured
+better on all three, with no frame change beyond the spread. `copies` and `sessions` stay
+selectable, and are the fallbacks: a library with no task sessions or no task manager falls
+back to `sessions`, one with no sessions to `copies`.
+
+D12. The library pins itself (`RTLD_NODELETE`) before its first task session starts
+(`pin_once` in `web_render_shim.c`), and makes no task session when it can not. Reason: a
+session's task runs on a thread of its own, which the host can not stop or wait for, so a
+`dlclose` of the last handle would unload code that the thread still runs. Deno closes its
+library handles when its runtime ends. Seen 2026-11-26 on the first full `test.sh` run after the
+build: `engine_sessions_test.ts` passed its 8 tests and then ended with a segmentation fault (exit
+139) on every run, 6 of 6. gdb: a session task thread in `lean_dec_ref_cold` (freeing its engine
+state at the end of `WebSession.serve`) while a Deno thread was in `_dl_close_worker`. With the
+pin: 20 of 20 runs exit 0. The worker modes (`copies`, `sessions`) are unchanged: they start no
+task session, so their libraries are not pinned and a closed tab's copy is still unloaded.
+
+Evidence limits: Linux only; no Mac was available, so macOS (the product's main platform) is
+not measured, and the macOS link (the exported symbol list) is not built here. Software Vulkan
+frames dominate the latency numbers. The numbers above are of the library before D12; D12 adds
+one `dlopen` call at the first task session and changes only whether the library can be
+unloaded.
+
+`labs/demos/foafnaut/test.sh --skip-build` on this machine, branch with D12: 13 checks, 9
+passed, 4 failed. Passed: `engine_sessions_test.ts` (8 tests, the expected failure recorded),
+`emoji_pixels_test.ts`, `gpu_kernel_diff.ts` (3 of 3 cases equal), and the coordinate, status
+page, demo page source and Spinal Tap snapshot checks; `wasm/build.sh --check` and
+`pipeline_trace_check.ts` pass by printing NOT RUN (no wabt here; the window library is macOS
+only). Failed, and the same on the base build (`origin/main` `1553ce0b`, same machine):
+`check-demo-pages.py`, 53 of 54 pages, `particle-rex.html` refused ("unsupported external HTML
+stylesheet without supplied resource transport"); the `native_net` tests, 16 of 17, one server
+can not listen on IPv6 here ("Address family not supported by protocol"). Failed because this
+machine has no Emscripten, so `build-engines.sh` did not make `.build/engines/*.mjs`: `deno
+check` and `deno test` of the pure tests as one run. Run one file at a time instead: 19 of the 26
+pure test files pass on the branch and on the base; the other 7 can not load an engine module
+(`foafnaut-engine.mjs`, `demos-engine.mjs` and five others), and none of those 7 imports a file
+this work changed. `deno check` of `run_html.ts`, the changed modules, `engine_sessions_test.ts`
+and the 19 files passes. NOT RUN here: `native_html_test.ts` and the other tests that need the
+Wasm engine (Emscripten), the macOS window library or `lake build frame-cost-cases`. One run of
+the browser with no `--engine-mode` option (the default) per scenario (tabs, heavy, rex), with
+the library of D12: each exits 0 in mode `tasks`.

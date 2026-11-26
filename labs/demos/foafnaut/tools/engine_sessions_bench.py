@@ -22,7 +22,9 @@ Scenarios (the steps language of run_html.ts --steps):
           memory at exit, engine start (ms and resident memory, from native-html-engine-worker).
   one     the start page and no new tab: process resident memory at exit (the base for tabs).
   status  pages/status.html, resize sweep (7 sizes, a Lean frame each): frame total p50 and p95.
-  rex     pages/particle-rex.html for 8 s: frame total p50 and p95, timer turns.
+  rex     pages/particle-rex.html for 8 s (its title screen animates): timer turns (count, engine
+          ms per turn, call beyond the engine, wait before the next ask) and page-canvas
+          presents (count, ms), frame total.
 
 Output: one JSON object, with each run's numbers and, per configuration and scenario, the
 median, the worst and the coefficient of variation of each number
@@ -90,7 +92,10 @@ def numbers(scenario, records):
         gap = summary.get("pumpGapAfterFirstFrameMs") or {}
         out["pumpGapP95Ms"], out["pumpGapMaxMs"] = gap.get("p95"), gap.get("max")
         tt = summary.get("timerTurns") or {}
-        out["timerTurns"], out["timerLeanP50Ms"] = tt.get("count"), tt.get("leanMsP50")
+        out["timerTurns"], out["timerLeanP50Ms"], out["timerLeanP95Ms"] = tt.get("count"), tt.get("leanMsP50"), tt.get("leanMsP95")
+        out["timerCallP50Ms"], out["timerWaitP50Ms"], out["timerWaitP95Ms"] = tt.get("callMsP50"), tt.get("waitMsP50"), tt.get("waitMsP95")
+        pc = summary.get("pageCanvasPresents") or {}
+        out["canvasPresents"], out["canvasP50Ms"], out["canvasP95Ms"] = pc.get("count"), pc.get("p50Ms"), pc.get("p95Ms")
         ew = summary.get("engineWorkers") or {}
         out["engines"] = ew.get("engines") or ew.get("mode")
     starts = [r for r in records if r.get("type") == "native-html-engine-worker" and r.get("state") == "started"]
