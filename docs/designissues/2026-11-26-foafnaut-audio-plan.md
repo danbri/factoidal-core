@@ -196,3 +196,30 @@ Found by the work on `Render.lean`; none blocks the offline renderer.
    minimum delay above its maximum in `clampDelay`; no test covers it.
 5. `Kernels.lean`: when a delay's input channel count changes, stored samples are not up-mixed or
    down-mixed as the `DelayNode` section says.
+
+## 12. Stage B, last part: the page interfaces (design)
+
+How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude.js` calls
+`apiCall(op, args)`; `WasmVM/Hosts/WebApi.lean` routes the op; ops 100 to 119 are WebGL's, 120 to
+139 WebCodecs').
+
+- Ops 170 to 189 are Web Audio's, in a new module `WebAudio/Api.lean`. Its state is a field of
+  `WebApi.State` (`audio`), so contexts persist between script turns: the contexts by id, each an
+  `OfflineContext` for now (a real-time context in stage D).
+- The page builds its classes from the interface table (`WebAudio/Idl.lean`, generated from WPT's
+  `interfaces/webaudio.idl` by `tools/webaudio-idl-table.py`; one op answers its text, as WebGL's op
+  100 does), so names, `length`s, attributes and enum values come from one list.
+- Every decision is Lean's: argument ranges, the specification's errors (an op answers an error
+  code that the page turns into the named `DOMException`), the graph, automation, rendering.
+  `prelude.js` converts arguments as Web IDL says and keeps the page's objects.
+- `AudioBuffer` data lives in the page (`Float32Array`s, as the specification's
+  `getChannelData` requires); it goes to Lean when the specification says the content is acquired
+  (setting `AudioBufferSourceNode.buffer`, `ConvolverNode.buffer`).
+- `OfflineAudioContext.startRendering()`: the op renders the whole length in Lean and answers the
+  channels (binary32 bytes) and the source nodes that ended; the page resolves the promise and
+  fires `ended` and `complete` in queued tasks, in the order the specification gives.
+- `decodeAudioData()`: the bytes go to Lean; WAV is read in Lean, MP3, Ogg Vorbis and Opus by the
+  decoder modules (stage C). The engine gets the module bytes from its host at start, and checks
+  each against `Media/Modules.lean` before use.
+- Measure: `tests/browser-wpt/testharness-run.ts` on the WPT `webaudio` names, with the test files
+  fetched by name, before and after each step.
