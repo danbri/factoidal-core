@@ -12,7 +12,11 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
 - `WebAudio.Kernels`: block processing of Gain, ConstantSource, Delay, StereoPanner,
   ChannelSplitter and ChannelMerger as pure functions with explicit state; the start and stop
   rule of scheduled sources.
+- `WebAudio.Graph`: nodes and connections, and the ordered list of nodes of "Rendering an audio
+  graph" (`DelayNode`s in cycles split into a writer and a reader; cycles with no `DelayNode`
+  muted). Not yet proved: that every node that is not muted is in the order.
 -/
 import L4Factoidal.WebAudio.Mix
 import L4Factoidal.WebAudio.Automation
 import L4Factoidal.WebAudio.Kernels
+import L4Factoidal.WebAudio.Graph
