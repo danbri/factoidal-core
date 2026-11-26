@@ -1,0 +1,123 @@
+name: Independent Lean proposer slashing evidence
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - '.github/workflows/ethereum-proposer-slashing.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proposer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: formal/lean4
+    env:
+      LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Check reference vectors and actual source graph
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-proposer-slashing.py --self-test
+          python3 - <<'PY' | tee "$RUNNER_TEMP/proposer-source-pins.json"
+          import json, pathlib, runpy, subprocess
+          p = pathlib.Path("ethereum-consensus").resolve()
+          a = runpy.run_path(str(p / "scripts/check-pure-lean-dependencies.py"))
+          graph = a["source_graph"](p, a["config_roots"](p) | {"ProposerSlashingMain"})
+          a["check_negative_controls"](p, graph)
+          repo = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"], text=True).strip())
+          pins = {}
+          for mod in graph:
+              src = a["module_path"](p.parent if mod in a["SHA2_MODULES"] else p, mod, ".lean")
+              rel = str(src.relative_to(repo))
+              blob = subprocess.check_output(["git","hash-object",str(src)],text=True).strip()
+              assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
+              pins[rel] = blob
+          for src in [p/"lean-toolchain",p/"lakefile.toml",p/"lake-manifest.json",
+                      p/"scripts/check-proposer-slashing.py",p/"scripts/check-pure-lean-dependencies.py"]:
+              rel = str(src.relative_to(repo))
+              blob = subprocess.check_output(["git","hash-object",str(src)],text=True).strip()
+              assert blob == subprocess.check_output(["git","rev-parse","HEAD:"+rel],text=True).strip()
+              pins[rel] = blob
+          print(json.dumps({"head":subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
+                            "tree":subprocess.check_output(["git","rev-parse","HEAD^{tree}"],text=True).strip(),
+                            "source_pins":pins},sort_keys=True))
+          PY
+      - name: Compile pinned Lean libraries and proposer module
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lake -d ethereum-consensus build EthereumConsensus FactoidalSHA2 2>&1 | tee "$RUNNER_TEMP/proposer-libraries.log"
+          lake -d ethereum-consensus -v build ssz-proposer-slashing 2>&1 | tee "$RUNNER_TEMP/proposer-native-build.log"
+      - name: Capture actual theorem axioms and audit compiled imports
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/ProposerSlashing.lean" | tee "$RUNNER_TEMP/proposer-axioms.log"
+          python3 - <<'PY'
+          import os, pathlib, re, runpy, subprocess
+          p = pathlib.Path("ethereum-consensus").resolve()
+          source = (p/"EthereumConsensus/SSZ/ProposerSlashing.lean").read_text()
+          names = set(re.findall(r"^#print axioms (\S+)", source, re.M))
+          log = (pathlib.Path(os.environ["RUNNER_TEMP"])/"proposer-axioms.log").read_text()
+          reports = re.findall(r"'(EthereumConsensus\.SSZ\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)", log)
+          expected = {"EthereumConsensus.SSZ."+n for n in (
+              "sameProposerRootFields_iff",
+              "checkProposerState_different_slot",
+              "checkProposerState_different_proposer",
+              "checkProposerState_identical",
+              "checkProposerState_bad_context",
+              "checkProposerState_slot_mismatch",
+              "checkProposerState_delegates",
+              "checkProposerRegistry_mismatch",
+              "checkProposerRegistry_member_mismatch",
+              "checkProposerRegistry_not_slashable",
+              "checkProposerRegistry_delegates",
+              "prepareProposerRoots_delegates",)}
+          assert names == expected and len(reports) == 12 and {n for n,_ in reports} == expected
+          for name, axioms in reports:
+              assert set(filter(None, (a.strip() for a in axioms.split(",")))) <= {"propext","Classical.choice","Quot.sound"}, name
+          a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
+          graph = a["source_graph"](p, a["config_roots"](p) | {"ProposerSlashingMain"})
+          prefix = pathlib.Path(subprocess.check_output(["lake","-d","ethereum-consensus","env","lean","--print-prefix"],text=True).strip())
+          compiled = a["audit_build"](p/".lake/build",prefix,graph)
+          assert {"ProposerSlashingMain", "EthereumConsensus.SSZ.ProposerSlashing"} <= set(compiled)
+          PY
+          python3 ethereum-consensus/scripts/check-pure-lean-dependencies.py \
+            --build-dir ethereum-consensus/.lake/build \
+            --toolchain-root "$(lean --print-prefix)" \
+            --binary ethereum-consensus/.lake/build/bin/ssz-proposer-slashing \
+            --link-log "$RUNNER_TEMP/proposer-native-build.log" \
+            --report "$RUNNER_TEMP/proposer-dependencies.json"
+      - name: Execute actual proposer evidence functions against independent oracle
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          python3 ethereum-consensus/scripts/check-proposer-slashing.py ethereum-consensus/.lake/build/bin/ssz-proposer-slashing | tee "$RUNNER_TEMP/proposer-results.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proposer-slashing-evidence
+          path: |
+            ${{ runner.temp }}/proposer-source-pins.json
+            ${{ runner.temp }}/proposer-libraries.log
+            ${{ runner.temp }}/proposer-native-build.log
+            ${{ runner.temp }}/proposer-dependencies.json
+            ${{ runner.temp }}/proposer-axioms.log
+            ${{ runner.temp }}/proposer-results.log

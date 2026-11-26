@@ -1,0 +1,76 @@
+name = "ethereum_consensus"
+version = "0.1.0"
+defaultTargets = ["EthereumConsensus", "FactoidalSHA2"]
+
+[[lean_lib]]
+name = "EthereumConsensus"
+
+[[lean_lib]]
+name = "FactoidalSHA2"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto.SHA2", "L4Factoidal.Crypto.SHA2Theorems", "L4Factoidal.Crypto.SHA2Tests"]
+
+[[lean_exe]]
+name = "ssz-gindex"
+root = "Main"
+
+[[lean_exe]]
+name = "ssz-checked-branch"
+root = "CheckedMain"
+
+[[lean_exe]]
+name = "lmd-latest"
+root = "LatestMain"
+
+[[lean_exe]]
+name = "lmd-store"
+root = "StoreMain"
+
+[[lean_exe]]
+name = "lmd-score"
+root = "WeightMain"
+
+[[lean_exe]]
+name = "lmd-computed-boost"
+root = "BoostMain"
+
+[[lean_exe]]
+name = "lmd-checked-ancestry"
+root = "AncestryMain"
+
+[[lean_exe]]
+name = "lmd-checked-child"
+root = "ChildMain"
+
+[[lean_exe]]
+name = "lmd-stored-head"
+root = "StoredHeadMain"
+
+[[lean_exe]]
+name = "ssz-multiproof-helpers"
+root = "MultiProofMain"
+
+[[lean_exe]]
+name = "ssz-byte-proofs"
+root = "ByteProofMain"
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
+
+[[lean_exe]]
+name = "ssz-basic-types"
+root = "BasicMain"
+
+[[lean_exe]]
+name = "ssz-vector-u64"
+root = "VectorU64Main"
+
+[[lean_exe]]
+name = "ssz-container-roots"
+root = "ContainerRootsMain"
+
+[[lean_exe]]
+name = "ssz-validator-registry"
+root = "RegistryProofMain"
+
+[[lean_exe]]
+name = "ssz-proposer-slashing"
+root = "ProposerSlashingMain"
