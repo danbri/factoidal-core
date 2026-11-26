@@ -466,6 +466,29 @@ root-level Lake failures.
     the doc update belong together; "fixed it, will document later"
     is how the same failure bills twice.
 
+    Differential tests must join each reference outcome to the same fixture
+    outcome and index used for the implementation. Agreement between two
+    references is insufficient if they can agree on the wrong category or
+    position. On 2026-11-24, review of the Ethereum ordered-list harness found
+    that both references could agree on a rejection index without that index
+    being compared to the native expectation. The recorded cases agreed, but
+    the comparator needed explicit joins and common-mode mutations before
+    publication. A transaction API is also not automatically a block oracle:
+    EthereumJS `runBlock` owns cumulative gas-pool admission outside `runTx`.
+    Record: `docs/20261124-evm-transaction-list.md`.
+
+    Source audits that follow live integration use active manifests. Preserve
+    dated evidence unchanged and review all affected active pins when imports
+    change. On 2026-11-24, the London-fee hosted gate correctly stopped because
+    its dated manifest still pinned the pre-integration root imports; a
+    separate active manifest repaired the gate without rewriting that evidence.
+
+    A JSON file-size cap does not bound parser nesting or numeric exponent
+    work. On 2026-11-24, a 6 MB transaction-list request passed the 16 MiB
+    file cap but aborted standard JSON parsing through deep nesting. The
+    transaction CLIs now check nesting and numeric-token/exponent bounds in
+    Lean before parsing, with a retained crash reproducer and boundary tests.
+
 ## Known sound-but-narrow rewrites
 
 `OWL.QueryRewrite.fst` — N=1 qualified `CE_MaxCardinality` rewrite

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-23",
+  "phase": "direct pure Lean identity precompile, not integrated CALL",
+  "parent_goal": "https://github.com/danbri/factoidal-core/issues/725",
+  "implementation_issue": "https://github.com/danbri/factoidal-core/issues/835",
+  "draft_pr": "https://github.com/danbri/factoidal-core/pull/837",
+  "tested_head": "49b45fdaf3a5c9e073116c9b454dce0c4e43ec95",
+  "linux_run": "https://github.com/danbri/factoidal-core/actions/runs/45213565261",
+  "lean_toolchain": "leanprover/lean4:v4.33.1",
+  "build_target": "evm-identity-precompile",
+  "source_git_blobs": {
+    "EVMCleanroom/IdentityPrecompile.lean": "c41e54ce1d521ff55eb9910f74ec066e9e66c064",
+    "EVMCleanroom/IdentityCLI.lean": "f88a68dc41a60dcddc19b21541eb1fae24c4f4bb",
+    "scripts/differential/identity-precompile.py": "d8daa1aa4024a4cae5f6716f0a7f72421d5fc1d6",
+    "scripts/check-identity-axioms.py": "7497a91ba8bb838ae44baa9dd084d681a8343b73",
+    "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
+    "EVMCleanroom.lean": "8bd0f5d2a3a99c566532d25113281ffd55bd6ecf"
+  },
+  "actual_kernel_axioms": {
+    "EVMCleanroom.IdentityPrecompile.execute_oversize": [
+      "propext"
+    ],
+    "EVMCleanroom.IdentityPrecompile.execute_underfunded": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EVMCleanroom.IdentityPrecompile.execute_exact": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EVMCleanroom.IdentityPrecompile.execute_preserves_input": [
+      "propext",
+      "Quot.sound"
+    ],
+    "EVMCleanroom.IdentityPrecompile.execute_gas_accounting": [
+      "propext",
+      "Quot.sound"
+    ]
+  },
+  "selected_axiom_report_count": 5,
+  "source_guards": 17,
+  "axiom_checker_negative_controls": 3,
+  "differential": {
+    "cases_executed_by_lean": 1056,
+    "matched": 1056,
+    "mismatches": 0,
+    "outcomes": {
+      "ok": 528,
+      "exceptional": 176,
+      "indeterminate": 352
+    },
+    "input_bytes_compared": 122207,
+    "comparator_mutations_rejected": 3,
+    "malformed_batch_rejected": true,
+    "oracle": "independent Python standard library; no EVM package"
+  },
+  "constraints": {
+    "external_lake_packages": 0,
+    "extern_crypto_or_unverified_fallback": false,
+    "direct_resource_cap_is_nonprotocol": true,
+    "CALL_integration": false,
+    "ethereum_fork_exact_context": false,
+    "end_to_end_EELS_refinement": false,
+    "native_compiler_runtime_trusted": true,
+    "independent_review": false,
+    "broad_premerge_pass": false
+  },
+  "regression_status_at_evidence_capture": {
+    "Frontier-run-45213565021": "success",
+    "EVM-cleanroom-run-45213565191": "in_progress",
+    "Lean-corpus-run-45213565471": "in_progress",
+    "npm-suite-run-45213565162": "in_progress",
+    "AES-run-45213564891": "success"
+  }
+}

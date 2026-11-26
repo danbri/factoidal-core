@@ -1,0 +1,11 @@
+ℹ [2/3] Built EVMCleanroom.CanonicalRLP (1.2s)
+info: EVMCleanroom/CanonicalRLP.lean:321:0: 'EVMCleanroom.CanonicalRLP.decode_over_limit' depends on axioms: [propext]
+info: EVMCleanroom/CanonicalRLP.lean:322:0: 'EVMCleanroom.CanonicalRLP.admitHeader_bounds' does not depend on any axioms
+info: EVMCleanroom/CanonicalRLP.lean:323:0: 'EVMCleanroom.CanonicalRLP.readHeader_bounds' does not depend on any axioms
+info: EVMCleanroom/CanonicalRLP.lean:324:0: 'EVMCleanroom.CanonicalRLP.validateSegments_zero' does not depend on any axioms
+info: EVMCleanroom/CanonicalRLP.lean:325:0: 'EVMCleanroom.CanonicalRLP.decode_input_bound' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/CanonicalRLP.lean:326:0: 'EVMCleanroom.CanonicalRLP.decode_source' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/CanonicalRLP.lean:327:0: 'EVMCleanroom.CanonicalRLP.decode_keeps_encoded' does not depend on any axioms
+info: EVMCleanroom/CanonicalRLP.lean:328:0: 'EVMCleanroom.CanonicalRLP.scalar_success' depends on axioms: [propext, Quot.sound]
+✔ [3/3] Built EVMCleanroom.CanonicalRLPTests (532ms)
+Build completed successfully (3 jobs).

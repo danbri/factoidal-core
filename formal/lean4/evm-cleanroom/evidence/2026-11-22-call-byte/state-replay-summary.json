@@ -1,0 +1,95 @@
+[
+  {
+    "name": "prague",
+    "exit": 0,
+    "seconds": 2.43,
+    "status": "pass",
+    "totals": null,
+    "passed": 6,
+    "failed": 0,
+    "unsupported": 0,
+    "actualLeanStateTestsExecuted": 6
+  },
+  {
+    "name": "prague-ledger",
+    "exit": 0,
+    "seconds": 0.04,
+    "status": "six-published-prague-roots-confirmed",
+    "totals": null,
+    "passed": 6,
+    "unsupported": 0,
+    "adversarialLedgerMutationsRejected": 6
+  },
+  {
+    "name": "prague-controls",
+    "exit": 0,
+    "seconds": 19.04,
+    "status": "pass",
+    "totals": null,
+    "checked": 9
+  },
+  {
+    "name": "cancun",
+    "exit": 0,
+    "seconds": 2.21,
+    "status": "pass",
+    "totals": null,
+    "passed": 6,
+    "failed": 0,
+    "unsupported": 0
+  },
+  {
+    "name": "cancun-controls",
+    "exit": 0,
+    "seconds": 6.54,
+    "status": "pass",
+    "totals": null,
+    "checked": 4
+  },
+  {
+    "name": "frontier-envelope",
+    "exit": 0,
+    "seconds": 0.32,
+    "status": "pass",
+    "totals": null,
+    "checked": [
+      "canonical signed raw transaction hash and recovered sender",
+      "historical Frontier block header hash from 15 fields",
+      "historical one-transaction MPT root from real signed raw RLP",
+      "historical pre-Byzantium receipt MPT root from published intermediate state root",
+      "Lean conditional transfer/fee/nonce transition (illustrative balances)"
+    ],
+    "adversarialControlsRejected": 6
+  },
+  {
+    "name": "frontier-synthetic",
+    "exit": 0,
+    "seconds": 0.45,
+    "status": "synthetic-archive-proof-mutation-tests-pass",
+    "totals": null,
+    "forgedProofsRejected": 10
+  },
+  {
+    "name": "frontier-authenticated",
+    "exit": 0,
+    "seconds": 0.45,
+    "status": "full-historical-three-account-root-replay-pass",
+    "totals": null
+  },
+  {
+    "name": "frontier-python",
+    "exit": 0,
+    "seconds": 0.09,
+    "status": "pass",
+    "totals": null
+  },
+  {
+    "name": "frontier-python-controls",
+    "exit": 0,
+    "seconds": 0.19,
+    "status": "pass",
+    "totals": null,
+    "adversarialControlsRejected": 6,
+    "keccakVectorsChecked": 24
+  }
+]

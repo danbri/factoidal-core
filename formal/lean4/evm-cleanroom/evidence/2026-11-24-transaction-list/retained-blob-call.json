@@ -1,0 +1,1 @@
+{"cases":200,"matched":200,"counts":{"executed":180,"rejected":8,"indeterminate":12},"mutationsRejected":7,"frameOracle":"EthereumJS 10.1.3 Cancun","signedTransactionOracle":false,"missingOptInRejected":true,"malformedRejected":true,"malformedRequestsRejected":9}

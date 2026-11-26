@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "sourceFile": "PureCompare.sol",
+  "sourceSha256": "1902fb0d23a84d0934be763a6550a9f76d69ea24a0f2f5ab79f8c35ce8fa4190",
+  "contract": "PureCompare",
+  "compiler": {
+    "version": "0.8.30+commit.73712a01.Emscripten.clang",
+    "distribution": "https://registry.npmjs.org/solc/-/solc-0.8.30.tgz",
+    "integrity": "sha512-9Srk/gndtBmoUbg4CE6ypAzPQlElv8ntbnl6SigUBAzgXKn35v87sj04uZeoZWjtDkdzT0qKFcIo/wl63UMxdw==",
+    "soljsonSha256": "3bb491a777f76dff9b2fe73ce29ca20e21a971b59a2f2cf8f73415424f00be06"
+  },
+  "settings": {
+    "evmVersion": "shanghai",
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "metadata": {
+      "appendCBOR": true,
+      "bytecodeHash": "ipfs"
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "evm.deployedBytecode.object",
+          "evm.methodIdentifiers"
+        ]
+      }
+    }
+  },
+  "methodSignature": "ge(uint256,uint256)",
+  "methodIdentifier": "85e1f66c",
+  "runtimeSha256": "43157a6981862c97757f117321f1281aff96d1b08eb8298be8b934f102b8219e",
+  "runtimeHex": "60808060405260043610156011575f80fd5b5f3560e01c6385e1f66c146023575f80fd5b34604157604036600319011260415760209060243560043510158152f35b5f80fdfea26469706673582212203f1f62cd947375d9cd810b7e54c10b2cfcd7e139a554c233d856392377f5cf6b64736f6c634300081e0033"
+}

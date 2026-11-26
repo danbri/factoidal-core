@@ -1,0 +1,9 @@
+'EVMCleanroom.BlobCall.burn_sender' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.burn_other' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.burn_exact' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.funds_refused' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.prepared_exact' depends on axioms: [propext]
+'EVMCleanroom.BlobCall.header_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.BlobCall.execute_exact' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.BlobCall.prepared_blobHashes' depends on axioms: [propext]
+
