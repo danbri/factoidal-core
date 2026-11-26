@@ -22,7 +22,7 @@ let dialled = 0;
 // connect errors. Addresses are not recorded. Used to find where channels stall.
 const t0 = performance.now();
 const ms = () => Math.round(performance.now() - t0);
-type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean };
 const traces: ConnTrace[] = [];
 const traceOf = new Map<number, ConnTrace>();
 let tracing = false;
@@ -45,13 +45,15 @@ setInterval(() => {
     if (!isIpLiteral(ip)) throw new Error("refused: not an IP literal");
     if (!(port > 0 && port < 65536)) throw new Error("refused: bad port");
     dialled++;
-    const tr: ConnTrace = { h: 0, dial: ms(), inB: 0, outB: 0, reads: 0 };
+    const tr: ConnTrace = { h: 0, dial: ms(), inB: 0, outB: 0, reads: 0, v6: ip.includes(":") };
     traces.push(tr);
     let c: Deno.TcpConn;
     try {
       c = await Deno.connect({ hostname: ip, port, transport: "tcp" });
     } catch (e) {
       tr.err = String((e as Error).name ?? e);
+      // The OS text (for example "No route to host (os error 65)"), with any address removed.
+      tr.msg = String((e as Error).message ?? "").replace(/[0-9a-fA-F:.]{7,}/g, "<addr>").slice(0, 120);
       tr.closed = ms();
       throw e;
     }
