@@ -9,7 +9,6 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const here=path.dirname(fileURLToPath(import.meta.url));
 const CHROME=process.env.CHROME??'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-if(!fs.existsSync(CHROME)){console.log('NOT RUN: canvas2d_reference.mjs needs Chrome (set CHROME)');process.exit(0);}
 export const scenePage=(scenes,log)=>`<!doctype html><html><body><pre id="out"></pre><script>
 ${scenes}
 const hexes='0123456789abcdef',tab=[];
@@ -25,7 +24,10 @@ for(const [name,draw] of canvas2dScenes){
 }
 ${log?"":"document.getElementById('out').textContent=JSON.stringify(out);"}
 </script></body></html>`;
+// Only when run as a script: canvas2d_test.ts imports scenePage, and a check at import ended
+// that test with exit 0 and no test run on every machine with no Chrome at this path (issue 1098).
 if(process.argv[1]===fileURLToPath(import.meta.url)){
+  if(!fs.existsSync(CHROME)){console.log('NOT RUN: canvas2d_reference.mjs needs Chrome (set CHROME)');process.exit(0);}
   const work=fs.mkdtempSync(path.join(os.tmpdir(),'canvas2d-ref-'));
   const file=path.join(work,'scenes.html');
   fs.writeFileSync(file,scenePage(fs.readFileSync(path.join(here,'canvas2d-scenes.js'),'utf8'),false));

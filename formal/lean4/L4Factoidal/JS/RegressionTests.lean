@@ -838,4 +838,21 @@ exact path (`toFixed(20)`, `toExponential(18)` of the largest double). -/
 #guard out "print((1/3).toExponential(), (1e-7).toExponential(3), (123456).toExponential(2), (-9.99).toExponential(1), (5e-324).toExponential(), (0).toExponential(2), (1.7976931348623157e308).toExponential(18))" ==
   ["3.333333333333333e-1 1.000e-7 1.23e+5 -1.0e+1 5e-324 0.00e+0 1.797693134862315708e+308"]
 
+-- `arguments.length` alone is the call's count (Expr.argCount, no arguments object, issue
+-- 1098); any other use of `arguments` keeps the arguments object. Lines from Node.
+#guard out "function f(a, b, c, d) { return arguments.length; } print(f(), f(1), f(1, 2, 3, 4), f(1, 2, 3, undefined), f(1, 2, 3, 4, 5, 6))" == ["0 1 4 4 6"]
+#guard out "function g(a) { 'use strict'; if (arguments.length < 2) return 'short ' + arguments.length; return a; } print(g(1), g(1, 2))" == ["short 1 1"]
+#guard out "function h() { var k = () => arguments.length; return k(9, 9, 9); } print(h(1, 2))" == ["2"]
+#guard out "function m() { arguments.length = 7; return arguments.length; } print(m(1))" == ["7"]
+#guard out "function p() { return arguments.length + ':' + arguments[0]; } print(p('x', 'y'))" == ["2:x"]
+#guard out "function q(arguments) { return arguments.length; } print(q('abc'))" == ["3"]
+#guard out "function r() { function inner() { return arguments.length; } return inner(1, 2, 3) + arguments.length; } print(r(1))" == ["4"]
+#guard out "var o = { set v(x) { this.n = arguments.length; }, meth(a, b) { return arguments.length; } }; o.v = 5; print(o.n, o.meth(1), o.meth.length)" == ["1 1 2"]
+-- Expected failures, https://github.com/danbri/factoidal-core/issues/1148: `arguments` in a
+-- default parameter value and in a direct eval (Node: "0 4" and "2"). When these fail, assert
+-- Node's lines and close the issue.
+#guard out "function s(a = arguments.length) { return a; } print(s(), s(4))" == ["Uncaught ReferenceError: arguments is not defined"]
+#guard out "function t() { return eval('arguments.length'); } print(t(1, 2))" == ["Uncaught ReferenceError: arguments is not defined"]
+#guard out "function u() { arguments.length++; return arguments.length; } print(u(1, 2))" == ["3"]
+
 end L4Factoidal.JS.Tests

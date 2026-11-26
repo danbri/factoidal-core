@@ -581,7 +581,12 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       const place=result.layers as HTMLLayerPlace|undefined;
       if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
         throw new Error("Unexpected published Lean HTML layers ABI");
-      const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
+      // `{kept:id}` or a patched page (request field `have`, issue 1124 stage C): made whole from the
+      // page answer the caller holds, and checked, by native_html_layout.ts resolvePage.
+      const pageFields=result.page as {kept?:unknown;dataPatch?:unknown}|undefined;
+      const kept=typeof pageFields?.kept==="number"||!!pageFields?.dataPatch;
+      const layers:HTMLLayers={layers:place,page:kept?result.page as unknown as HTMLArtifact:sceneOf(result.page,width,place.bandHeight),
+        chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
       if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
       if(result.wantsSerif===true)layers.wantsSerif=true;
       if(result.wantsMono===true)layers.wantsMono=true;

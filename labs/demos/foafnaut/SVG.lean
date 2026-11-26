@@ -3409,6 +3409,48 @@ def edgeMeets (edges : Array (Float × Float)) (lo hi : Float) (i : Nat) : Bool 
   !(max a b < lo) && !(min a b > hi)
 def edgesMeeting (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
   (Array.range edges.size).filter (edgeMeets edges lo hi)
+
+/-- The indices from `i` below `n` that satisfy `p`, pushed onto `acc`: one tail call per index,
+no `Array.range` (issue https://github.com/danbri/factoidal-core/issues/1124: the band change
+made an `Array.range` for every row band of every tile, 47 M instructions of 654 M). -/
+@[specialize] def filterRangeGo (p : Nat → Bool) (n i : Nat) (acc : Array Nat) : Array Nat :=
+  if h : i < n then filterRangeGo p n (i+1) (if p i then acc.push i else acc) else acc
+termination_by n - i
+
+theorem filterRangeGo_eq (p : Nat → Bool) (n : Nat) : ∀ (k i : Nat) (acc : Array Nat), n - i = k →
+    filterRangeGo p n i acc = acc ++ ((List.range' i (n-i)).filter p).toArray := by
+  intro k
+  induction k with
+  | zero =>
+    intro i acc hk
+    unfold filterRangeGo
+    have : ¬ i < n := by omega
+    simp [this, hk]
+  | succ k ih =>
+    intro i acc hk
+    unfold filterRangeGo
+    have hi : i < n := by omega
+    simp only [hi, dite_true]
+    rw [ih (i+1) _ (by omega)]
+    have : n - i = (n - (i+1)) + 1 := by omega
+    rw [this, List.range'_succ]
+    cases hp : p i <;> simp [hp]
+
+/-- Says: the loop gives the indices that `(Array.range n).filter p` gives, in order. -/
+theorem filterRangeGo_range (p : Nat → Bool) (n : Nat) :
+    filterRangeGo p n 0 #[] = (Array.range n).filter p := by
+  rw [filterRangeGo_eq p n (n - 0) 0 #[] rfl]
+  apply Array.ext'
+  simp [Array.toList_range, List.range_eq_range']
+
+/-- `edgesMeeting` by `filterRangeGo`; the compiler uses it in place of `edgesMeeting`
+(`edgesMeeting_eq_loop`, `@[csimp]`). -/
+def edgesMeetingLoop (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
+  filterRangeGo (edgeMeets edges lo hi) edges.size 0 #[]
+
+@[csimp] theorem edgesMeeting_eq_loop : @edgesMeeting = @edgesMeetingLoop := by
+  funext edges lo hi
+  rw [edgesMeeting, edgesMeetingLoop, filterRangeGo_range]
 /-- `edgesMeeting` is a filter of `List.range`, the form of `pathHitList_eq`. -/
 theorem edgesMeeting_eq (edges : Array (Float × Float)) (lo hi : Float) :
     edgesMeeting edges lo hi = ((List.range edges.size).filter (edgeMeets edges lo hi)).toArray := by

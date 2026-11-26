@@ -360,6 +360,17 @@ software Vulkan times: do not compare them with a Mac. A Lean engine change need
 first. Before this, the cost of having no rig: on 2026-11-25 the gesture work of issue 1031 was
 pushed with only a type check, because the window could not run here.
 
+A page that animates by script (a canvas game) is paced by its timer turns. `--perf-summary`
+prints a "timer turns" line (each `native-html-script` line of cause `timers` has the same
+fields): the engine's own time of a turn, `callMs` (the ask to the answer minus the engine's
+time: worker messages, FFI, the answer's wire form such as `PageCanvas.rle`) and `waitMs` (the
+answer to the next ask). Frame time is about their sum. Example, Particle Rex on the rig,
+2026-11-26: engine 32 ms, call 4.5 ms, wait 0.2 ms, 26.7 fps. To split the engine's time by Lean
+function, drive the page with no window (a Deno script that calls `scriptSession` with
+`action:"advance"`) under `perf record --call-graph dwarf`; the frame-pointer call graph of a
+window run does not reach into the Lean library. Issue
+https://github.com/danbri/factoidal-core/issues/1098 (Particle Rex frame costs).
+
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
 apt-get install -y --no-install-recommends time linux-tools-generic valgrind libc++-dev libc++abi-dev
@@ -378,8 +389,24 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   With no `"checks":false` each frame also computes the probe pixels (two to three times the time).
 - Exact cost by function: `valgrind --tool=callgrind` on that command at COUNT 1 and COUNT 4;
   the difference, divided by 3, is one frame. COUNT 0 is start, font load and first compile.
+- That request has no `layers` and no `shell`: it measures the path with no layers, which neither
+  host uses for frames. A browser frame is `"layers":true,"binary":true` with a `shell` object (see
+  `spinal_perf.ts`). Cost of not saying so: the 249 M instructions of the 2026-11-25 briefing were
+  of that path; the browser's frame on a kept layout was 12-15 M (issue 1124).
+- Hover, press and scroll-band frames: `--document-bin-seq SEQ.json FONT OUT COUNT` (call `i`
+  sends element `i` mod the array's length). `--document-bin-check SEQ.json FONT COUNT` checks the
+  page answers kept or patched by `have` against whole answers.
+- The native host tests of `test.sh` (64 checks, against 12 without) run on Linux when
+  `.build/web-render/engines/libweb-render.dylib` exists and `web-render.wasm` is in that
+  directory: `ln -sf libweb-render.so libweb-render.dylib`, and copy `web-render.{mjs,wasm}` from
+  `.build/native-html/runtime` (the rig's release). The Wasm engine is then the release, not this
+  checkout.
   `perf` on this kind of VM has only `-e cpu-clock` (no hardware counters); the binary is
   `/usr/lib/linux-tools/*/perf`.
+- Canvas 2D cost: µs per canvas call and pixel bytes uploaded per frame,
+  `labs/demos/foafnaut/canvas_cost_bench.ts` (header has the command); Particle Rex in play on
+  the rig with `--steps fixtures/particle-rex-play.json`. How the pixels reach the GPU and what
+  each call costs: [docs/designissues/2026-11-26-canvas-upload-and-call-cost.md](../../docs/designissues/2026-11-26-canvas-upload-and-call-cost.md).
 - Real-world libraries on each engine (right answer, CPU time, memory), under a memory
   watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
   unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
@@ -600,6 +627,10 @@ https://github.com/danbri/factoidal-core/issues/1038).
   outside engineer: design rules, numbers, why WPT is high and pages are slow, where help pays off.
 - [Frame pipeline](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md), the design
   and measurements of frames, scroll and press.
+- [Kept answers, layout sections, page patches](../../docs/designissues/2026-11-25-foafnaut-display-list.md)
+  (issue 1124): the chrome and no-layers answers kept by key, `layoutSections`, `have` with
+  `{"kept":id}` and byte patches, `--document-bin-seq` and `--document-bin-check`, the band change
+  profile.
 - [Page scripts](../../docs/designissues/2026-11-08-page-scripts.md),
   [BubblePopJS](../../docs/designissues/2026-11-08-lean-js-engine.md),
   [event loop](../../docs/designissues/2026-11-08-event-loop.md),

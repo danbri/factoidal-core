@@ -781,7 +781,56 @@ implements all of ECMA-262 or that this is faster. -/
   | 3 | 4 => simp only [typedRead, typedReadByteFast, leSum2, Nat.add_zero]
   | 5 | 6 => simp only [typedRead, typedReadByteFast, leSum4, Nat.add_zero]
 
-/-- Direct buffers for the integer element types of one, two and four bytes. -/
+/-- The eight bytes of a 64-bit word, least significant first. -/
+def leBytesU64 (v : UInt64) : ByteArray :=
+  ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8,
+    (v >>> 32).toUInt8, (v >>> 40).toUInt8, (v >>> 48).toUInt8, (v >>> 56).toUInt8]
+
+/-- The four bytes of a 32-bit word, least significant first. -/
+def leBytesU32 (v : UInt32) : ByteArray :=
+  ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8]
+
+/-- Byte `k` of a 64-bit word as the reference writes it (a quotient by a power of two) and as a shift. -/
+theorem leByte64 (v : UInt64) (k : Nat) (hk : k < 8) :
+    (v.toNat / 2 ^ (8 * k) % 256).toUInt8 = (v >>> (8 * k).toUInt64).toUInt8 := by
+  apply UInt8.toNat_inj.mp
+  have h1 : ((8 * k).toUInt64).toNat = 8 * k := by
+    simp only [Nat.toUInt64, UInt64.toNat_ofNat']; omega
+  simp only [Nat.toUInt8, UInt8.toNat_ofNat', UInt64.toNat_toUInt8, UInt64.toNat_shiftRight, h1,
+    Nat.shiftRight_eq_div_pow]
+  rw [Nat.mod_eq_of_lt (by omega : 8 * k < 64)]; simp
+
+theorem leByte32 (v : UInt32) (k : Nat) (hk : k < 4) :
+    (v.toNat / 2 ^ (8 * k) % 256).toUInt8 = (v >>> (8 * k).toUInt32).toUInt8 := by
+  apply UInt8.toNat_inj.mp
+  have h1 : ((8 * k).toUInt32).toNat = 8 * k := by
+    simp only [Nat.toUInt32, UInt32.toNat_ofNat']; omega
+  simp only [Nat.toUInt8, UInt8.toNat_ofNat', UInt32.toNat_toUInt8, UInt32.toNat_shiftRight, h1,
+    Nat.shiftRight_eq_div_pow]
+  rw [Nat.mod_eq_of_lt (by omega : 8 * k < 32)]; simp
+
+/-- **Kind: refinement.** The reference's eight little-endian digits of a 64-bit word are its
+shifted bytes. -/
+theorem leBytes8_eq (v : UInt64) :
+    ByteArray.mk ((List.range 8).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8) = leBytesU64 v := by
+  have e : List.range 8 = [0, 1, 2, 3, 4, 5, 6, 7] := rfl
+  simp only [leBytesU64, e, List.map_toArray, List.map_cons, List.map_nil]
+  rw [leByte64 v 0 (by omega), leByte64 v 1 (by omega), leByte64 v 2 (by omega), leByte64 v 3 (by omega),
+    leByte64 v 4 (by omega), leByte64 v 5 (by omega), leByte64 v 6 (by omega), leByte64 v 7 (by omega)]
+  simp only [Nat.mul_zero]
+  rfl
+
+/-- **Kind: refinement.** The same for four bytes of a 32-bit word. -/
+theorem leBytes4_eq (v : UInt32) :
+    ByteArray.mk ((List.range 4).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8) = leBytesU32 v := by
+  have e : List.range 4 = [0, 1, 2, 3] := rfl
+  simp only [leBytesU32, e, List.map_toArray, List.map_cons, List.map_nil]
+  rw [leByte32 v 0 (by omega), leByte32 v 1 (by omega), leByte32 v 2 (by omega), leByte32 v 3 (by omega)]
+  simp only [Nat.mul_zero]
+  rfl
+
+/-- Direct buffers for the integer element types of one, two and four bytes, and for Float32
+and Float64. -/
 def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
   match ty with
   | 0 | 1 => ByteArray.mk #[(Int.toNat (toInt32Wide x % 256) % 256).toUInt8]
@@ -793,14 +842,21 @@ def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
     let v := Int.toNat (toInt32Wide x % 4294967296)
     ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
       (v / 16777216 % 256).toUInt8]
-  | _ => typedBytes ty x
+  -- Float32 and Float64: the bits as shifted bytes, no division by a power of two (issue 1098:
+  -- a Float64Array.set of a Canvas 2D batch spent most of its time in big-number powers).
+  | 7 => leBytesU32 x.toFloat32.toBits
+  | 11 => typedBytes ty x
+  | _ => leBytesU64 x.toBits
 
 /-- **Kind: refinement.** Says direct byte writes produce exactly the reference
 bytes for every type tag and Float. Does not say anything about speed. -/
 @[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
   funext ty x
   match ty with
-  | _ + 7 => rfl
+  | 7 => simp only [typedBytes, typedBytesByteFast]; exact leBytes4_eq _
+  | 11 => rfl
+  | 8 | 9 | 10 => simp only [typedBytes, typedBytesByteFast]; exact leBytes8_eq _
+  | _ + 12 => simp only [typedBytes, typedBytesByteFast]; exact leBytes8_eq _
   | 0 | 1 | 2 =>
     simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
       show (2 : Int) ^ (8 * 1) = 256 from by decide]
@@ -8781,6 +8837,8 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
             modify fun h => { h with depth := saved }
             throw e
     let info := fd.info
+    -- the count of arguments, for `Expr.argCount` (taken before the plain path moves `args`)
+    let argc := args.size
     -- `args` is moved into the environment on the plain path (the array must have one owner:
     -- `fillSlots` then grows it in place)
     let (fenv, args) ← if info.plain then do
@@ -8790,16 +8848,16 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
       else do
         let e ← newEnv env
         pure (e, args)
-    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info) fun e => do
+    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info argc) fun e => do
       modify fun h => { h with depth := saved }
       if info.frameLocal then releaseEnv fenv
       throw e
 termination_by structural n _ _ _ _ _ _ _ _ _ => n
 
 /-- The rest of a call, after the environment is made (`callClosure`). -/
-def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → M Value
-  | 0, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info => do
+def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → Nat → M Value
+  | 0, _, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info, argc => do
     let r ← realm
     let thisV ← if fd.arrow then pure capThis
       else if fd.strict then pure thisV
@@ -8809,7 +8867,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
         | v => do pure (.obj (← toObj n v))
     let nt := if fd.arrow then capNT else newTarget
     let fo := if fd.arrow then Value.undef else fnObj
-    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo, argc }
     if !info.plain then
       if fd.usesArgs then
         let a ← alloc { proto := .obj r.objectProto, kind := .args }
@@ -8896,7 +8954,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
       match c with
       | .ret v => pure v
       | _ => pure .undef
-termination_by structural n _ _ _ _ _ _ _ _ _ _ _ => n
+termination_by structural n _ _ _ _ _ _ _ _ _ _ _ _ => n
 
 def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -9393,6 +9451,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure v
     | .classE c => evalClass n ctx c ""
     | .newTarget => pure ctx.newTarget
+    | .argCount => pure (.num (Float.ofNat ctx.argc))
     | .yieldE .. => throwErr .syntax "yield in this position is not supported"
     | .superMember k =>
       let proto ← homeProto ctx

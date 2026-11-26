@@ -43,6 +43,15 @@ structure St where
   /-- Functions seen and functions compiled (coverage statistics). -/
   funs : Nat := 0
   compiled : Nat := 0
+  /-- `arguments` of the function being resolved: reads of `arguments.length` made
+  `Expr.argCount`, and whether `arguments` is used in any other way (also any use inside an
+  arrow function, whose `arguments` is this function's). -/
+  argsLen : Nat := 0
+  argsOther : Bool := false
+  inArrow : Bool := false
+  /-- The function being resolved is tried with `Expr.argCount` for its `arguments.length`
+  reads (`rFun`'s first pass); false on the pass that keeps `arguments` as written. -/
+  argsRewrite : Bool := false
 
 abbrev R := StateM St
 
@@ -96,28 +105,42 @@ def rE : Nat → Frames → Expr → R Expr
     | .str s => pure (.lit (.str s))
     | .bool b => pure (.lit (.bool b))
     | .null => pure (.lit .null)
-    | .bigint _ | .this | .newTarget | .regex _ _ | .superMember _ | .local .. | .lit _ => pure e
-    | .ident x => pure (nameE fs x)
+    | .bigint _ | .this | .newTarget | .argCount | .regex _ _ | .superMember _ | .local .. | .lit _ => pure e
+    | .ident x =>
+      if x == "arguments" then modify ({ · with argsOther := true })
+      pure (nameE fs x)
     | .array es => pure (.array (← rEs n fs es))
     | .object ps => pure (.object (← rProps n fs ps))
     | .func f => pure (.func (← rFun n fs false f))
     | .unary op a =>
       -- `typeof x` and `delete x` of a plain name keep the name
       match op, a with
-      | .typeof, .ident _ | .delete, .ident _ => pure e
+      | .typeof, .ident x | .delete, .ident x =>
+        if x == "arguments" then modify ({ · with argsOther := true })
+        pure e
+      | .delete, .member (.ident "arguments") _ => do modify ({ · with argsOther := true }); pure e
       | _, _ => pure (.unary op (← rE n fs a))
     | .binary op a b => pure (.binary op (← rE n fs a) (← rE n fs b))
     | .logical op a b => pure (.logical op (← rE n fs a) (← rE n fs b))
-    | .assign op t v => pure (.assign op (← rE n fs t) (← rE n fs v))
-    | .logAssign op t v => pure (.logAssign op (← rE n fs t) (← rE n fs v))
+    -- a write to `arguments.length` is another use of `arguments` (`argTarget`)
+    | .assign op t v => pure (.assign op (← argTarget n fs t) (← rE n fs v))
+    | .logAssign op t v => pure (.logAssign op (← argTarget n fs t) (← rE n fs v))
     | .assignPat p v => pure (.assignPat (← rPat n fs p) (← rE n fs v))
-    | .update pre inc t => pure (.update pre inc (← rE n fs t))
+    | .update pre inc t => pure (.update pre inc (← argTarget n fs t))
     | .cond a b c => pure (.cond (← rE n fs a) (← rE n fs b) (← rE n fs c))
     | .call f args =>
       if let .ident "eval" := f then modify ({ · with dynamic := true })
       pure (.call (← rE n fs f) (← rEs n fs args))
     | .new f args => pure (.new (← rE n fs f) (← rEs n fs args))
-    | .member o k => pure (.member (← rE n fs o) k)
+    | .member o k =>
+      -- `arguments.length`, read: the call's count, when the function uses `arguments` no
+      -- other way (`rFun` checks that after the body, and resolves it again if not)
+      if let .ident "arguments" := o then
+        let st ← get
+        if k == "length" && st.argsRewrite && !st.inArrow then
+          modify fun s => { s with argsLen := s.argsLen + 1 }
+          return .argCount
+      pure (.member (← rE n fs o) k)
     | .index o k => pure (.index (← rE n fs o) (← rE n fs k))
     | .seq a b => pure (.seq (← rE n fs a) (← rE n fs b))
     | .spread a => pure (.spread (← rE n fs a))
@@ -132,6 +155,15 @@ def rE : Nat → Frames → Expr → R Expr
     | .chain a => pure (.chain (← rE n fs a))
     | .optBase a => pure (.optBase (← rE n fs a))
     | .optCallee a => pure (.optCallee (← rE n fs a))
+
+/-- An assignment or update target: `arguments.length` there is a use of `arguments` that is
+not a read, so it stays a member expression. -/
+def argTarget : Nat → Frames → Expr → R Expr
+  | 0, _, e => pure e
+  | n + 1, fs, e =>
+    match e with
+    | .member (.ident "arguments") _ => do modify ({ · with argsOther := true }); pure e
+    | _ => rE n fs e
 
 def rEs : Nat → Frames → List Expr → R (List Expr)
   | 0, _, es => pure es
@@ -192,8 +224,35 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
   | n + 1, fs, decl, f => do
     match f with
     | .mk name params rest body vars usesArgs strict kind gen async _ =>
+      -- `arguments` whose only use is to read `arguments.length`: the function is resolved
+      -- as if it did not use `arguments` (no arguments object, the plain slot frame), with
+      -- `Expr.argCount` for each read. Any other use, a direct `eval`, or a `with`, and it
+      -- is resolved again as written (issue 1098).
+      let names := (params.flatMap fun p => match p with | .mk p _ => p.names) ++
+        (match rest with | some p => p.names | none => []) ++ vars
+      let candidate := usesArgs && kind != .arrow && !gen && !async && !names.contains "arguments"
+      let start ← get
+      if candidate then
+        let f' : FunDef := .mk name params rest body vars false strict kind gen async default
+        let (r, own) ← rFunAs n fs decl true f'
+        if !own.argsOther && !own.dynamic && own.argsLen > 0 then return r
+        set start
+      return (← rFunAs n fs decl false f).1
+
+/-- `rFun` once the use of `arguments` is decided: `f.usesArgs` says whether the function
+makes its arguments object. Also the function's own record: its `arguments.length` reads,
+other uses of `arguments`, and whether it has a direct `eval` or a `with`. -/
+def rFunAs : Nat → Frames → Bool → Bool → FunDef → R (FunDef × St)
+  | 0, _, _, _, f => pure (f, {})
+  | n + 1, fs, decl, rewrite, f => do
+    match f with
+    | .mk name params rest body vars usesArgs strict kind gen async _ =>
       let outer ← get
-      set { outer with closure := false }
+      -- a function has its own `arguments`, an arrow function shares its parent's
+      let arrow := kind == .arrow
+      set { outer with closure := false, argsLen := if arrow then outer.argsLen else 0,
+                       argsOther := if arrow then outer.argsOther else false,
+                       inArrow := arrow, argsRewrite := if arrow then outer.argsRewrite else rewrite }
       let fs0 := match name with
         | some x => if kind == .arrow || decl then fs else frameOf #[x] :: fs
         | none => fs
@@ -209,7 +268,10 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
         | none => fs1
       let body' ← rSs n fs2 body
       let inner ← get
-      set ({ inner with dynamic := outer.dynamic || inner.dynamic, closure := true, funs := inner.funs + 1 } : St)
+      -- back to the parent's `arguments` record; an arrow's uses count as the parent's
+      let (argsLen, argsOther) := if arrow then (inner.argsLen, inner.argsOther) else (outer.argsLen, outer.argsOther)
+      set ({ inner with dynamic := outer.dynamic || inner.dynamic, closure := true, funs := inner.funs + 1,
+                        argsLen, argsOther, inArrow := outer.inArrow, argsRewrite := outer.argsRewrite } : St)
       let info : FunInfo :=
         { layout := frame
           index := FunInfo.indexOf frame
@@ -220,7 +282,7 @@ def rFun : Nat → Frames → Bool → FunDef → R FunDef
       let code := if inner.dynamic then none else Compile.compile fd
       if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
       let info := { info with code }
-      pure (.mk name params' rest' body' vars usesArgs strict kind gen async info)
+      pure (.mk name params' rest' body' vars usesArgs strict kind gen async info, inner)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
   | 0, _, ps => pure ps

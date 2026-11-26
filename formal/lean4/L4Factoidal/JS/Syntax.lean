@@ -284,6 +284,10 @@ inductive Expr where
   | superMember (name : String)
   | superIndex (key : Expr)
   | newTarget
+  /-- The number of arguments of the running call: what `arguments.length` reads in a function
+  whose only use of `arguments` is to read its `length` (the resolver puts it there, so the
+  function makes no arguments object and keeps its slot frame; issue 1098). -/
+  | argCount
   /-- `yield e`, `yield* e` (§15.5). -/
   | yieldE (delegate : Bool) (arg : Option Expr)
   /-- A regular expression literal (§13.2.7): a new RegExp object at each evaluation. -/
@@ -472,7 +476,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
   | n + 1, e =>
     match e with
     | .yieldE .. => true
-    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .superMember _
+    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .argCount | .superMember _
     | .func _ | .regex _ _ => false
     | .classE (.mk _ h _ ms) =>
       -- the heritage and the computed keys run where the class is (§15.7.14); the bodies do not
