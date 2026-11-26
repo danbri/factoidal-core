@@ -2,8 +2,9 @@
 L4Factoidal.Media.Decode: audio and video decoders, compiled to WebAssembly, run in
 the Lean WasmVM engine (record: docs/designissues/2026-11-08-media-wasmvm.md).
 
-The modules come from `tools/wasmvm/build-media.sh` (libopus, libvorbis, libvpx's VP8
-decoder; not in the repository). Their entry points are in `tools/wasmvm/media/`.
+The modules (libopus, libvorbis, libvpx's VP8 decoder, minimp3) and their build chain are
+in `danbri/factoidal-builds`, `third_party/media-decoders`; `Media.Modules` pins their SHA-256
+and `tools/fetch-media-decoders.sh` fetches them.
 The containers are read in Lean (`Media.Ogg`, `Media.WebM`); a module gets one packet
 or frame per call and gives PCM samples or a picture. The host browser's decoders
 are not used.

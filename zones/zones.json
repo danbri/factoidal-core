@@ -501,8 +501,6 @@
         "tools/wasmvm/quickjs/**",
         "tools/wasmvm/build-quickjs.sh",
         "tools/fuelmono-gen.py",
-        "tools/wasmvm/media/**",
-        "tools/wasmvm/build-media.sh",
         "tools/check-svg-dash-proof.py",
         "tools/unicode/**",
         "tools/gen_casemap.py",
@@ -524,8 +522,7 @@
       "id": "tools-graphics",
       "zone": "graphics",
       "paths": [
-        "tools/wasmvm/media/**",
-        "tools/wasmvm/build-media.sh",
+        "tools/fetch-media-decoders.sh",
         "tools/check-svg-dash-proof.py"
       ],
       "exclude": []
@@ -621,8 +618,7 @@
         "tools/wasmvm/quickjs/**",
         "tools/wasmvm/build-quickjs.sh",
         "tools/fuelmono-gen.py",
-        "tools/wasmvm/media/**",
-        "tools/wasmvm/build-media.sh",
+        "tools/fetch-media-decoders.sh",
         "tools/check-svg-dash-proof.py",
         "tools/unicode/**",
         "tools/gen_casemap.py",
