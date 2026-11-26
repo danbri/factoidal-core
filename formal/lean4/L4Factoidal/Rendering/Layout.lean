@@ -165,17 +165,32 @@ def clipContent (clip : Bool) (decorations content : Array Node) (paddingBox : C
 -- formatting contexts (`Constraints`, `Item`, `Children`, `ContentBox`).
 abbrev Embedding := Nat → CSS.Computed → Float → Float → Except String (List Node)
 
+/-- SVG width/height attributes are definite intrinsic sizes when the CSS sizing
+keyword asks for max-content. Percentages are not intrinsic dimensions; this profile
+accepts unitless SVG user units and px attributes here, matching the presentation-attribute
+lengths used by the renderer. -/
+private def svgAttributeLength (node : DOM.Node) (name : String) : Option Float :=
+  let raw := (CSS.attrValue node name).trimAscii.toString
+  if raw.endsWith "%" then none
+  else
+    let value := if raw.endsWith "px" then (raw.dropEnd 2).toString else raw
+    (CSS.number value).toOption
+
 /-- Replaced SVG dimensions share the same calculation in inline and block
 flow. A positive viewBox supplies the intrinsic ratio when a dimension is auto.
 The ratio-only case uses the definite available containing width (CSS 2.2 10.3.2).
 Presentation lengths participate in the CSS cascade before this calculation. -/
 def svgSize (node : DOM.Node) (style : Computed) (available : Float) : Except String (Float × Float) := do
-  let width := CSS.resolve available style.width
+  let width := match style.width with
+    | .maxContent => svgAttributeLength node "width"
+    | other => CSS.resolve available other
   -- CSS 2.1 §10.5: a percentage height whose containing block has no definite height
   -- computes to `auto` (the height then follows from the width and the `viewBox`). It was
   -- refused, and with it every inline icon styled `height: 100%` (BBC News: 179).
+  -- For max-content, retain a definite SVG height attribute as its intrinsic size.
   let height := match style.height with
     | .percent _ => none
+    | .maxContent => svgAttributeLength node "height"
     | other => CSS.resolve 0 other
   if let (some w,some h) := (width,height) then return (max 0 w,max 0 h)
   let source := CSS.attrValue node "viewBox"
