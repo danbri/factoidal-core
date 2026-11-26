@@ -26,6 +26,7 @@ arti-client = { path = ".work/arti/crates/arti-client", default-features = false
 tor-keymgr = { path = ".work/arti/crates/tor-keymgr", default-features = false }
 tor-config = { path = ".work/arti/crates/tor-config", default-features = false }
 tor-persist = { path = ".work/arti/crates/tor-persist", default-features = false, features = ["testing"] }
+tor-error = { path = ".work/arti/crates/tor-error" }
 serde_json = "1"
 tor-rtcompat = { path = ".work/arti/crates/tor-rtcompat", default-features = false, features = ["rustls"] }
 tor-general-addr = { path = ".work/arti/crates/tor-general-addr" }

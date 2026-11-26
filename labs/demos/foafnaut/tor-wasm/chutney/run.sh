@@ -43,6 +43,8 @@ deno run --unstable-worker-options --allow-net --allow-read --allow-write --allo
   --request NEWID --request siteA@127.0.0.1:4748 --request siteC@"$ONION:5858" \
   --request PAR --request p1@127.0.0.1:4748 --request p2@127.0.0.1:4748 --request p3@"$ONION:5858" \
   --request p4@127.0.0.1:4748 --request p5@"$ONION:5858" --request p6@127.0.0.1:4748 --request END \
+  --fetch a.example@http://127.0.0.1:4748/ --fetch b.example@http://127.0.0.1:4748/ \
+  --fetch c.example@http://"$ONION":5858/ --fetch d.example@http://"$ONION":5858/ --fetch a.example@http://"$ONION":5858/ \
   --restart-check --hold 70000 --state-dir "$WORK/tor-state" --debug --trace-conns >"$OUT" 2>&1
 grep -E '^\{' "$OUT"
 ok=0
@@ -58,6 +60,9 @@ if [[ ${#circs[@]} -eq 4 && "${circs[0]}" == "${circs[1]}" && "${circs[2]}" != "
 else echo "FAIL isolation"; ok=1; fi
 grep -q 'onion service target' "$OUT" && echo "PASS onion service request" || { echo "FAIL onion service request"; ok=1; }
 grep -q '"step":"parallel","run":"1","streams":6,"ok":6' "$OUT" && echo "PASS 6 streams at once (4 exit, 2 onion; new partitions, so new circuits)" || { echo "FAIL parallel streams"; ok=1; }
+grep -q '"step":"proxy-check","run":"1","ok":true' "$OUT" && echo "PASS start-up check: loopback, private and reserved names all reach the proxy (NO_PROXY cleared)" || { echo "FAIL proxy check"; ok=1; }
+grep -qE '"step":"socks","run":"1","fetches":5,"ok":5,"ms":[0-9]+,"streamsOpenAfter":0,"events":5' "$OUT" && echo "PASS 5 fetches at once through the SOCKS5 server, all 5 seen by it (Deno fetch, socks5h; 2 exit, 3 onion)" || { echo "FAIL SOCKS5 fetches"; ok=1; }
+grep -E '"step":"(socks|socks-fetch)","run":"1"' "$OUT" | cut -c1-200
 grep '"step":"loop"' "$OUT" | head -3
 grep -q '"via":"sealed LWS storage".*"sameGuards":true' "$OUT" && echo "PASS same guards after restart, through the sealed store" || { echo "FAIL same guards after restart"; ok=1; }
 grep -q '"filesWithGuardIdsInClearText":0' "$OUT" && echo "PASS no guard identity in clear text on disk" || { echo "FAIL state at rest"; ok=1; }

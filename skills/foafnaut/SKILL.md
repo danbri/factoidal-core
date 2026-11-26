@@ -561,6 +561,13 @@ Several sessions work on the owner's laptop at once.
   run (gdb: a session task thread in `lean_dec_ref_cold`, a Deno thread in `_dl_close_worker`).
   `web_session_new_task` now pins the library (`RTLD_NODELETE`; record D12). Read a test's exit
   code, not only its pass count.
+- Deno's fetch reads `NO_PROXY`/`no_proxy` when a client is made, even a client with an explicit
+  SOCKS5 proxy, and sends listed hosts directly. 2026-11-26, Deno 2.9.8: with the container's
+  `NO_PROXY`, `http://127.0.0.1/` went direct while Tor was the proxy, and a private network
+  test passed 5 of 5 with 2 of the 5 requests outside Tor (3 ms instead of 111 to 182 ms; the
+  SOCKS server saw 3 streams). Make Tor clients with `torHttpClient` and run `proxyCheck`
+  (`labs/demos/foafnaut/tor-wasm/deno/socks5.ts`) before the first Tor fetch. Deno's fetch also
+  refuses the Fetch standard's bad ports (9 and others) before any proxy.
 - A port check with `ss` passes silently where `ss` is not installed (the cloud container). Check
   a port by connecting to it (`(exec 3<>/dev/tcp/127.0.0.1/PORT)`). C tor relays take up to 30 s
   to exit after SIGTERM, so a chutney network that was just stopped can still hold its ports.

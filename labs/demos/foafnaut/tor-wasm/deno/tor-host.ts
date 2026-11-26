@@ -6,7 +6,7 @@
 //
 // deno run --unstable-worker-options --allow-net --allow-read [--allow-write --allow-run --allow-env] deno/tor-host.ts \
 //   --dangerously-use-unreviewed-tor-transport [--config arti.toml] [--timeout 60000] \
-//   [--request [PARTITION@]HOST:PORT | NEWID | PAR | END ...] [--debug] [--trace-conns] [--restart-check] [--hold MS] [--state-dir DIR]
+//   [--request [PARTITION@]HOST:PORT | NEWID | PAR | END ...] [--fetch PARTITION@URL ...] [--debug] [--trace-conns] [--restart-check] [--hold MS] [--state-dir DIR]
 // --trace-conns: after each step, one JSON line per TCP connection of that step and one "loop"
 // line (worst event-loop lag, and every stall over 1 s: CPU work blocks reads and timers) (times in ms
 // from the worker's start, bytes in and out, connect errors; no addresses), and a summary.
@@ -17,9 +17,13 @@ const ack = flag("--dangerously-use-unreviewed-tor-transport") ? "dangerously-us
 const config = opt("--config") ? await Deno.readTextFile(opt("--config")!) : undefined;
 const timeoutMs = Number(opt("--timeout") ?? 60000);
 const requests = args.flatMap((a, i) => (a === "--request" ? [args[i + 1]] : []));
+// --fetch PARTITION@URL: fetch from this (main) thread through the worker's SOCKS5 server, as
+// the browser's network pool will (socks5h: names go to the exit). All --fetch run at once.
+const fetches = args.flatMap((a, i) => (a === "--fetch" ? [args[i + 1]] : []));
 
 console.error("EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW.");
 const dir = new URL("./", import.meta.url);
+import { proxyCheck, type Socks5Event, torHttpClient } from "./socks5.ts";
 import { openTorState, type TorStateStore } from "./tor-state.ts";
 // --state-dir DIR: keep Arti's state in a sealed local LWS storage in DIR (needs
 // FOAFNAUT_TOR_STATE_KEY). Without it, or when the store cannot be opened, state is in memory only.
@@ -31,7 +35,7 @@ if (stateDir) {
   else store = opened;
 }
 type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
-type Reply = { result: unknown; dialled: number; open: number; conns?: ConnTrace[]; at?: number; loop?: { maxLagMs: number; stalls: { at: number; ms: number }[] } };
+type Reply = { result: unknown; dialled: number; open: number; socks?: unknown[]; streamsOpen?: number; conns?: ConnTrace[]; at?: number; loop?: { maxLagMs: number; stalls: { at: number; ms: number }[] } };
 /** --trace-conns: print the connections a step made, and a summary of where they stopped. */
 function printConns(step: string, r: Reply) {
   if (!r.conns) return;
@@ -141,6 +145,32 @@ async function runOnce(label: string, saved?: string): Promise<string> {
       continue;
     }
     await one(spec);
+  }
+  if (fetches.length) {
+    const sp = await call({ op: "socks", timeoutMs });
+    const { port, password } = sp.result as { port: number; password: string };
+    // Start-up check: loopback, private and reserved names must all reach the proxy.
+    const missed = await proxyCheck(port, password, async () =>
+      ((await call({ op: "isolated" })).socks as Socks5Event[] ?? []).flatMap((e) => (e.ev === "proxy-check" ? [e.target] : [])));
+    console.log(JSON.stringify({ step: "proxy-check", run: label, ok: missed.length === 0, missed }));
+    if (missed.length) throw new Error("refused: some requests would go around Tor; no fetch is made");
+    const t = performance.now();
+    const out = await Promise.all(fetches.map(async (spec) => {
+      const atSign = spec.indexOf("@");
+      const partition = spec.slice(0, atSign), url = spec.slice(atSign + 1);
+      const client = torHttpClient(port, partition, password);
+      const t1 = performance.now();
+      try {
+        const res = await fetch(url, { client, signal: AbortSignal.timeout(timeoutMs) });
+        const body = await res.text();
+        return { partition, ok: res.ok, status: res.status, bytes: body.length, body: body.slice(0, 60), ms: Math.round(performance.now() - t1) };
+      } catch (e) {
+        return { partition, ok: false, error: String((e as Error).message).slice(0, 200), ms: Math.round(performance.now() - t1) };
+      } finally { client.close(); }
+    }));
+    for (const o of out) console.log(JSON.stringify({ step: "socks-fetch", run: label, ...o }));
+    const after = await call({ op: "isolated" });
+    console.log(JSON.stringify({ step: "socks", run: label, fetches: out.length, ok: out.filter((o) => o.ok).length, ms: Math.round(performance.now() - t), streamsOpenAfter: after.streamsOpen, events: after.socks?.length }));
   }
   // Arti stores its state every 60 s and when its circuit manager is dropped. --hold waits for
   // the periodic store before the snapshot.

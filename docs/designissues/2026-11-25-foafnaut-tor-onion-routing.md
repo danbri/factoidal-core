@@ -601,3 +601,36 @@ host that keeps circuits across tab changes; and the network pool able to send t
 proxy with a per-partition user name. The Tor worker does not need its own Deno: it can be a
 worker inside whatever Deno host stays. Steps 3 to 5 wait for that design; steps 1 and 2 do not
 depend on it.
+
+## 18. Stream API, SOCKS5 server, and the NO_PROXY bypass (2026-11-26)
+
+- Module: `stream_open(partition, host, port, timeout)`, `stream_read`, `stream_write` (writes
+  and flushes), `stream_close`, `streams_open`. Each stream is split into an Arti `DataReader`
+  and `DataWriter`, so one read and one write can wait at the same time; a second operation on
+  the same half is refused. Errors give a class ("refused", "timeout", "tor: <Arti error
+  kind>"), not Arti's full text.
+- `deno/socks5.ts`: RFC 1928 CONNECT only, RFC 1929 username/password required. The user name
+  is the partition (top-level site); the password is 32 random bytes per session (hex), compared
+  in time that does not depend on where it differs. BIND, UDP ASSOCIATE and the "no
+  authentication" method are refused. Domain names go to Tor unchanged (the exit resolves them).
+  Listens on 127.0.0.1, port chosen by the system. The worker starts it on op "socks" and gives
+  the port and password only to the thread that started the worker.
+- Finding: Deno's fetch (2.9.8) applies `NO_PROXY` to a client with an explicit SOCKS5 proxy
+  and sends listed hosts directly. The first private network run with SOCKS passed 5 of 5
+  fetches while 2 of them (to 127.0.0.1) bypassed Tor: 3 ms each, and the server saw 3 streams.
+  Repair: `torHttpClient` clears `NO_PROXY` and `no_proxy` before it makes a client (Deno reads
+  them then), and `proxyCheck` fetches loopback (IPv4, IPv6, `localhost`), a 10/8 address and a
+  `.invalid` name with the reserved user `foafnaut-proxy-check`; the server records and refuses
+  those, and the host refuses to fetch through Tor if any did not arrive. `deno/socks5.test.ts`
+  has a control that shows the check sees the bypass when `NO_PROXY` is in force. This is a
+  start-up check only: a later change of the environment by other code in the same process is
+  not seen.
+- Results, private network (chutney, Linux, development check): all 9 checks PASS, including
+  the start-up check and 5 Deno fetches at once through SOCKS5 (2 exit, 3 onion), all 5 seen by
+  the server, exit fetches 111 and 182 ms, onion fetches 563 to 770 ms. `deno test deno/`: 11
+  pass, 0 fail (out of 11; 1 expected failure each for issues 1058 and 1060 among them).
+  `node --test module.test.cjs`: 5 pass, 0 fail (out of 5).
+- Next for https://github.com/danbri/factoidal-core/issues/1060: in Tor mode, the main-thread
+  fetches of `native_html_document.ts` and `run_html.ts` use one `torHttpClient` per top-level
+  site; WebSocket refused at first; new identity control; no local name lookup in the Lean
+  egress policy.
