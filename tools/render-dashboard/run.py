@@ -262,7 +262,7 @@ class Run:
         if self.a.chrome_arg:
             launch = "chromium.launch({executablePath:resolve(chrome),headless:true})"
             patches.append(('Chrome is started with ' + ' '.join(self.a.chrome_arg), launch,
-                            launch[:-1] + ',args:' + json.dumps(self.a.chrome_arg) + '})'))
+                            launch[:-2] + ',args:' + json.dumps(self.a.chrome_arg) + '})'))
         return patches
 
     def patched_corpus(self, corpus):
