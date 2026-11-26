@@ -28,7 +28,7 @@ theorem IH_zero {H : Type} (t1 t2 : Mode) (m : Nat) : IH H t1 t2 0 m where
   h_binop := fun a0 a1 a2 => Le.unfold (binop.eq_def (md := t1) _ _ _ _) rfl (Le.fuel _)
   h_callV := fun a0 a1 a2 => Le.unfold (callV.eq_def (md := t1) _ _ _ _) rfl (Le.fuel _)
   h_callClosure := fun a0 a1 a2 a3 a4 a5 a6 a7 a8 => Le.unfold (callClosure.eq_def (md := t1) _ _ _ _ _ _ _ _ _ _) rfl (Le.fuel _)
-  h_callBody := fun a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 => Le.unfold (callBody.eq_def (md := t1) _ _ _ _ _ _ _ _ _ _ _ _) rfl (Le.fuel _)
+  h_callBody := fun a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 => Le.unfold (callBody.eq_def (md := t1) _ _ _ _ _ _ _ _ _ _ _ _ _) rfl (Le.fuel _)
   h_bindParams := fun a0 a1 a2 a3 => Le.unfold (bindParams.eq_def (md := t1) _ _ _ _ _) rfl (Le.fuel _)
   h_evalNamed := fun a0 a1 a2 => Le.unfold (evalNamed.eq_def (md := t1) _ _ _ _) rfl (Le.fuel _)
   h_initFields := fun a0 a1 a2 => Le.unfold (initFields.eq_def (md := t1) _ _ _ _) rfl (Le.fuel _)

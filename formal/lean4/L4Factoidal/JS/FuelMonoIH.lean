@@ -40,7 +40,7 @@ structure IH (H : Type) (t1 t2 : Mode) (n m : Nat) : Prop where
   h_binop : ∀ (a0 : BinOp) (a1 : Value) (a2 : Value), Le (binop (H := H) (md := t1) n a0 a1 a2) (binop (md := t2) m a0 a1 a2)
   h_callV : ∀ (a0 : Value) (a1 : Value) (a2 : Array Value), Le (callV (H := H) (md := t1) n a0 a1 a2) (callV (md := t2) m a0 a1 a2)
   h_callClosure : ∀ (a0 : FunDef) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Value) (a5 : Value) (a6 : Value) (a7 : Value) (a8 : Array Value), Le (callClosure (H := H) (md := t1) n a0 a1 a2 a3 a4 a5 a6 a7 a8) (callClosure (md := t2) m a0 a1 a2 a3 a4 a5 a6 a7 a8)
-  h_callBody : ∀ (a0 : FunDef) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Value) (a5 : Value) (a6 : Value) (a7 : Value) (a8 : Array Value) (a9 : Nat) (a10 : FunInfo), Le (callBody (H := H) (md := t1) n a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10) (callBody (md := t2) m a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10)
+  h_callBody : ∀ (a0 : FunDef) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Value) (a5 : Value) (a6 : Value) (a7 : Value) (a8 : Array Value) (a9 : Nat) (a10 : FunInfo) (a11 : Nat), Le (callBody (H := H) (md := t1) n a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11) (callBody (md := t2) m a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11)
   h_bindParams : ∀ (a0 : Ctx) (a1 : List PatElem) (a2 : Array Value) (a3 : Nat), Le (bindParams (H := H) (md := t1) n a0 a1 a2 a3) (bindParams (md := t2) m a0 a1 a2 a3)
   h_evalNamed : ∀ (a0 : Ctx) (a1 : Expr) (a2 : Pat), Le (evalNamed (H := H) (md := t1) n a0 a1 a2) (evalNamed (md := t2) m a0 a1 a2)
   h_initFields : ∀ (a0 : Ctx) (a1 : Value) (a2 : Value), Le (initFields (H := H) (md := t1) n a0 a1 a2) (initFields (md := t2) m a0 a1 a2)
