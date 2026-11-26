@@ -22,6 +22,7 @@ export LC_ALL=C
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 LEAN="$ROOT/formal/lean4"
+node --test "$HERE/textarea-prelude.test.mjs"
 (cd "$LEAN" && timeout 1800 lake build l4dom l4html5lib >/dev/null)
 (cd "$HERE" && timeout 600 npm ci --no-audit --no-fund >/dev/null)
 RC=0

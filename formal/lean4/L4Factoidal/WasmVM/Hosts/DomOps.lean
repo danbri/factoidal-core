@@ -420,7 +420,7 @@ def selContainsNode (s : State) (node : Nat) (partial_ : Bool) : Bool :=
 /-- The ops that change the tree (`Hosts.Page` counts them as writes for layout reads). -/
 def treeOps : List Nat := [112, 113, 114, 116, 119, 120, 149, 167]
 
-/-- The op of an input's value (`169`): it writes unless it reads ("v"). -/
+/-- The op of an input or textarea's value (`169`): it writes unless it reads ("v"). -/
 def valueOp : Nat := 169
 
 def bpText (b : BP) : String := s!"{b.node} {b.offset}"
@@ -1011,7 +1011,8 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   | 188 =>
     let n ← nodeArg d id
     return L4Factoidal.DOM.FormValidity.answer d n q
-  -- 169: the value of input `id` by its value mode (HTML §4.10.5.1, `DOM.Forms.inputValue`;
+  -- 169: textarea raw value and dirty flag (HTML §4.10.11), or the value of input `id`
+  -- by its value mode (HTML §4.10.5.1, `DOM.Forms.inputValue`;
   -- the page sanitizes what it reads): `q` "v" reads it; "s" and a value sets it: in mode
   -- "value" the value and its dirty value flag (answer ""); in "default" and "default/on" the
   -- answer is "a": the page sets the `value` content attribute (so that it is one change, seen
@@ -1021,6 +1022,13 @@ def domOpM (id op : Nat) (q : String) : Op String := do
   -- "a" and a value when the page is to set the `value` content attribute to it, else "".
   | 169 =>
     let n ← nodeArg d id
+    if L4Factoidal.DOM.Forms.isHtml d n ["textarea"] then
+      match q.toList with
+      | ['v'] => return d.textareaRawValue n
+      | 's' :: rest =>
+        exec (.setValue n (some (String.ofList rest)))
+        return ""
+      | _ => throw (-2)
     if !L4Factoidal.DOM.Forms.isHtml d n ["input"] then throw (-2)
     let mode := L4Factoidal.DOM.Forms.valueModeOf (L4Factoidal.DOM.Forms.inputType d n)
     match q.toList with

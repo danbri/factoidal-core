@@ -8,6 +8,7 @@ algorithm in whatwg/dom `3c53f93a`.
 import L4Factoidal.DOM.OfHtml
 import L4Factoidal.DOM.Selectors
 import L4Factoidal.DOM.Forms
+import L4Factoidal.DOM.Live
 
 namespace L4Factoidal.DOM.Tests
 
@@ -232,6 +233,58 @@ def valueDoc : Dom := parseHtmlDocument
 #guard (let d := valueDoc.setNode (byId valueDoc "t") fun x => { x with dirtyValue := some "z" }
   let (d, c) := d.cloneSingle (byId d "t") none
   (d.get c).dirtyValue) == some "z"
+-- Textarea cloning (HTML §4.10.11; WPT 94e2796a cloning-steps.html): the two upstream
+-- cases are both shallow, dirty clones. Also cover pristine/deep clones and later edits.
+def textareaDoc : Dom := parseHtmlDocument "<form id=f><textarea id=t>default</textarea></form>"
+#guard ([false, true].map fun deep => Id.run do
+  let t := byId textareaDoc "t"
+  let d := textareaDoc.setNode t fun x => { x with dirtyValue := some "foo bar" }
+  let (d, c) := d.cloneNode t deep
+  let d := (d.setAttribute c "value" "something else").1
+  return (d.textareaRawValue c, (d.get c).dirtyValue, d.childTextContent c)) ==
+  [("foo bar", some "foo bar", ""), ("foo bar", some "foo bar", "default")]
+#guard ([false, true].map fun deep => Id.run do
+  let (d, c) := textareaDoc.cloneNode (byId textareaDoc "t") deep
+  return (d.textareaRawValue c, (d.get c).dirtyValue, d.childTextContent c)) ==
+  [("default", none, ""), ("default", none, "default")]
+#guard (let (d, c) := textareaDoc.cloneNode (byId textareaDoc "t") false
+  let d := d.setTextContent c "new default"
+  (d.textareaRawValue c, (d.get c).dirtyValue)) == ("new default", none)
+#guard (let (d, c) := textareaDoc.cloneNode (byId textareaDoc "t") false
+  let d := d.setTextContent c ""
+  d.textareaRawValue c) == ""
+#guard (let t := byId textareaDoc "t"
+  let d := textareaDoc.setNode t fun x => { x with dirtyValue := some "" }
+  let (d, c) := d.cloneNode t true
+  let d := d.setTextContent c "new default"
+  (d.textareaRawValue c, d.childTextContent c, d.textareaRawValue t)) == ("", "new default", "")
+#guard (let (d, c) := textareaDoc.cloneNode (byId textareaDoc "t") true
+  let text := (d.get c).kids[0]!
+  let (d, _) := Live.replaceData d {} text 0 7 "changed"
+  (d.textareaRawValue c, (d.get c).dirtyValue)) == ("changed", none)
+#guard (let t := byId textareaDoc "t"
+  let d := textareaDoc.setNode t fun x => { x with dirtyValue := some "live" }
+  let (d, c) := d.cloneNode t true
+  let text := (d.get c).kids[0]!
+  let (d, _) := Live.replaceData d {} text 0 7 "changed"
+  (d.textareaRawValue c, d.childTextContent c)) == ("live", "changed")
+#guard (let t := byId textareaDoc "t"
+  let d := textareaDoc.setNode t fun x => { x with dirtyValue := some "live" }
+  let (d, f) := d.cloneNode (byId d "f") true
+  let d := Forms.resetForm d f
+  let c := (d.get f).kids[0]!
+  (d.textareaRawValue c, (d.get c).dirtyValue, (d.get c).textareaValue)) == ("default", none, none)
+#guard (let (d, c) := textareaDoc.cloneNode (byId textareaDoc "t") false
+  let (d, text) := d.createTextNode 0 "added"
+  let d := d.linkChild c text none
+  let before := d.textareaRawValue c
+  let d := d.remove text
+  (before, d.textareaRawValue c)) == ("added", "")
+#guard (let t := byId textareaDoc "t"
+  let d := textareaDoc.setNode t fun x => { x with dirtyValue := some "a\r\nb\rc" }
+  let (d, c) := d.cloneNode t false
+  d.textareaRawValue c) == "a\r\nb\rc"
+
 -- the activation target: the target itself, else the nearest ancestor when it bubbles
 #guard Forms.activationTarget formDoc (byId formDoc "s") true == some (byId formDoc "l")
 #guard Forms.activationTarget formDoc (byId formDoc "s") false == none
