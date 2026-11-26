@@ -14,12 +14,14 @@
 //  7. a canceled task session refuses the calls it had not started, and the call in progress
 //     stops at the engine's next check (before a render's paint), so three long calls cost one;
 //  8. expected failure: a cancel does not stop a layout in progress
-//     (https://github.com/danbri/factoidal-core/issues/1135).
+//     (https://github.com/danbri/factoidal-core/issues/1135);
+//  9. a task session's layers answer carries the layout sections (issue 1124 stage B), decoded as
+//     for the engine on this thread: the same boxes, glyph runs, links, pixel data and tile words.
 // Needs the native library (`build-web-render.sh --native`); `WEB_RENDER_LIB=` names another.
 // Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
 import {loadHTML,loadHTMLSession} from "./native_html_engine.ts";
-import {loadFontFile} from "./native_html_document.ts";
+import {loadFontFile,prepareHTML} from "./native_html_document.ts";
 import {answersOf} from "./fixtures/engine_sessions_answers.ts";
 
 const lab=new URL("./",import.meta.url).pathname;
@@ -164,3 +166,27 @@ xfail("a cancel stops a layout in progress within 200 ms","https://github.com/da
   }finally{await s.endSession();}
 });
 
+Deno.test({name:"engine sessions: a task session decodes the layout sections of a layers answer as the engine on this thread",ignore:noLibrary,fn:async()=>{
+  const direct=await loadHTML(library,"bytes",{session:true});
+  const s=await loadHTMLSession(library);
+  try{
+    await loadFontFile(direct,font,"Noto Sans");
+    await loadFontFile(s as unknown as Parameters<typeof loadFontFile>[0],font,"Noto Sans");
+    const shell={tabs:[{title:"t"}],active:0,address:"https://example.invalid/",cursor:0,focused:false,canBack:false,canForward:false,
+      loading:false,scale:1,theme:"light",pages:1,scroll:900,pressed:""};
+    const doc=await prepareHTML(direct,new URL("./pages/status.html",import.meta.url).href);
+    const options={...doc.request(1600,1000).options,shell,checks:false};
+    const a=direct.compileLayers(doc.source,1600,1000,options);
+    const b=await s.compileLayers(doc.source,1600,1000,options);
+    type Web={boxes:unknown[];glyphRuns:unknown[];links:unknown[];layoutSections?:boolean};
+    const wa=a.page.webRender as unknown as Web,wb=b.page.webRender as unknown as Web;
+    assert.equal(wb.layoutSections,true,"the task session's answer has layout sections");
+    for(const key of ["boxes","glyphRuns","links"] as const){
+      assert(wb[key].length>0,`no ${key}`);
+      assert.deepEqual(wb[key],wa[key],`${key} differ`);
+    }
+    assert.deepEqual([...b.page.data as Float32Array],[...a.page.data as Float32Array],"pixel data");
+    assert.deepEqual([...(b.page.tiles??[]) as Uint32Array],[...(a.page.tiles??[]) as Uint32Array],"tile words");
+    assert.deepEqual(b.layers,a.layers,"layer places");
+  }finally{direct.endSession();await s.endSession();}
+}});
