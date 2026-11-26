@@ -630,6 +630,18 @@ depend on it.
   the server, exit fetches 111 and 182 ms, onion fetches 563 to 770 ms. `deno test deno/`: 11
   pass, 0 fail (out of 11; 1 expected failure each for issues 1058 and 1060 among them).
   `node --test module.test.cjs`: 5 pass, 0 fail (out of 5).
+- Owner, 2026-11-26, verbatim, on the SOCKS5 secret given only to the browser's main thread:
+  "make sure this is splattered with theorems of great impressiveness and robustness". The
+  SOCKS5 decisions in `deno/socks5.ts` are also anti-pattern 36 (RFC decisions in TS). Plan:
+  move the parse and admit/refuse decisions into Lean (`L4Factoidal/Net/Socks5.lean`), keep only
+  byte I/O in TS, and prove: (a) no CONNECT is admitted unless the RFC 1929 exchange gave exactly
+  the session secret, for all inputs; (b) the partition key is a function of the user name
+  alone and injective; (c) every log, trace or error value is equal for two states that differ
+  only in the secret; (d) the comparison reads every byte of both values (structural; not a
+  proof of constant CPU time); (e) the listen address is loopback; (f) a Lean model of the
+  host messages, in which the secret goes only to the thread that started the worker, with a
+  test of the real TS host against it. Then a differential fuzz of the Lean decision against
+  the TS code. A property is called proved only when `lake build` builds its file from a root.
 - Next for https://github.com/danbri/factoidal-core/issues/1060: in Tor mode, the main-thread
   fetches of `native_html_document.ts` and `run_html.ts` use one `torHttpClient` per top-level
   site; WebSocket refused at first; new identity control; no local name lookup in the Lean
