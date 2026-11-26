@@ -155,13 +155,13 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 | File | What | State |
 |---|---|---|
 | `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`) |
-| `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time (event times exact `Rat`) | in progress |
-| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | next |
-| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | next |
-| `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | after |
-| `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules | after |
-| `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | after |
-| `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | after |
+| `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time; stored times exact values of binary64 numbers, sums and frame conversion in binary64 (`ceil(t × rate)`, as WPT `audioparam-testing.js`) | on `main` (`cd8ab064f` to `b5bfaa30f`): 7 theorems, 114 `#guard` |
+| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c`, `7cce27238`): no step twice, every connection in processing order, muted nodes lie on cycles; not yet proved: every node that is not muted is in the order |
+| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`): shape and state theorems, 67 `#guard`; fractional delay by linear interpolation (the specification names none) |
+| `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | in progress |
+| `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | in progress |
+| `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | in progress |
+| `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | in progress |
 
 A block is `Array FloatArray`: one `FloatArray` of `n` frames per channel, `n = 128` (the render
 quantum; Web Audio 1.1's `renderSizeHint` makes it a parameter). Processing is in 64-bit floats;
@@ -171,3 +171,12 @@ requires. A kernel has the form
 with `params[i]` holding `n` values (a-rate) or one value (k-rate). The page interfaces
 (`prelude.js`, the interface table from the Web Audio IDL, the ops) come after `Render.lean` and
 `Context.lean`, so that `OfflineAudioContext` tests can run first.
+
+## 10. Stage C, first part: the MP3 reader (2026-11-26)
+
+`Media/Mp3.lean` (`bbd44a137`): ID3v2, ID3v1 and APEv2 tags skipped; MPEG-1, MPEG-2 and MPEG-2.5
+frame headers; the first frame confirmed by the next header; the information frame left out; the
+LAME delay and padding applied (gapless, as FFmpeg). `Decode.mp3` gives one whole frame per call
+to the MP3 module and checks each result. On the three clips the WasmVM output equals the V8 run of
+the same module bit for bit, the lengths equal FFmpeg's, and the samples are within 2 of 32768 of
+FFmpeg's decoder. `decodeAudioData` itself comes with the page interfaces.
