@@ -77,6 +77,10 @@
   // ---- callbacks, by number ------------------------------------------------------
   const callbacks = new Map(); let nextCallback = 1;
   const register = f => { const id = nextCallback++; callbacks.set(id, f); return id; };
+  // Callbacks the engine queues as a task more than once (the event delivery of a real-time
+  // AudioContext, op 190): the host's release after each such task leaves them, and the page
+  // deletes them itself.
+  const kept = new Set();
 
   // ---- nodes ---------------------------------------------------------------------
   const wrappers = new Map();
@@ -5544,9 +5548,16 @@
   // without the operations leaves the interfaces undefined. Stage B of
   // https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
   //
+  // AudioContext (ops 190 to 196, step D3 of the plan): Lean's control side of the context; the
+  // engine renders it on a task of its own and plays it through its audio output
+  // (labs/demos/foafnaut/WebAudioRun.lean). Its events (sources ended, control calls carried out or
+  // refused, changes of state) come back through a page callback that the engine queues as a task;
+  // the callback reads them (op 193). With no audio output (the Wasm build, or no Lean task
+  // manager) the constructor throws NotSupportedError. The page's first trusted activation-triggering
+  // input event (HTML "activation triggering input event") calls op 196 once: a context made before
+  // it starts suspended and its resume() waits for it, unless the engine allows autoplay.
+  //
   // What this section does not do, each with the issue that tracks it:
-  //  - AudioContext does not play. It builds graphs on a Lean context that is never rendered, so
-  //    currentTime stays 0 and no sound is made. Real-time output is stage D.
   //  - The nodes that the engine cannot render (Analyser, Convolver, DynamicsCompressor, IIRFilter,
   //    Panner, WaveShaper, ScriptProcessor, the MediaElement and MediaStream nodes, AudioWorklet and
   //    AudioListener) exist as interface objects; their constructors and factory methods throw
@@ -5555,8 +5566,9 @@
   //  - The ops have no read of a node's channelCount, channelCountMode, channelInterpretation, type,
   //    loop, loopStart or loopEnd, and no read of a context's state. The page keeps the value of the
   //    last set that Lean accepted, and the defaults of Render.chanDefaults.
-  //  - The ops have no setValueCurveAtTime, cancelAndHoldAtTime, OfflineAudioContext.suspend(time)
-  //    or a way to free a context.
+  //  - The ops have no OfflineAudioContext.suspend(time) or a way to free an offline context.
+  //  - AudioContext.setSinkId(), a sinkId other than the default, playbackStats and the onerror of a
+  //    device that fails are not served.
   //  - AudioBufferSourceNode takes the buffer's samples when `buffer` is set (op 184), not at start()
   //    as the specification's "acquire the content" says: a change to the samples between the set
   //    and start() is not heard.
@@ -5803,18 +5815,75 @@
           self: null, params: [], kind: 'destination', maxChannelCount: cs.channels });
       }
     }
-    // A real-time context. It builds graphs on a Lean context of two channels that is never rendered:
-    // no sound is made and currentTime stays 0 (stage D, issue 1169).
+    // A real-time context (op 190): Lean answers its id, its rate, the output's channel count and its
+    // first state. `cb` is the page callback the engine queues when the rendering side reports.
+    // `control` is the [[control thread state]] (a call sets it at once); `state` is the attribute,
+    // set when the rendering side's change of state is delivered (rtEvents).
+    const STATES = ['suspended', 'running', 'closed'];
     class AudioContext extends BaseAudioContext {
       constructor(options = undefined) {
-        const o = dictConv('AudioContextOptions', options, "Failed to construct 'AudioContext'");
-        const cs = makeContext('AudioContext', 2, 1048576, o.sampleRate === undefined ? 44100 : o.sampleRate, quantumOf(o.renderSizeHint));
+        const what = "Failed to construct 'AudioContext'";
+        const o = dictConv('AudioContextOptions', options, what);
+        const hint = o.latencyHint === undefined ? 'interactive' : o.latencyHint;
+        const cs = { iface: 'AudioContext', id: 0, sampleRate: 0, channels: 2, length: 0, state: 'suspended', control: 'suspended',
+          nodes: new Map(), destination: null, self: null, started: false, offline: false, realtime: true, calls: new Map(), cb: 0 };
+        const cb = register(() => { rtEvents(cs); });
+        kept.add(cb);
+        let r;
+        try { r = ask(190, [typeof hint === 'number' ? f64(hint) : String(hint), o.sampleRate === undefined ? '' : f64(o.sampleRate), String(cb)], what); }
+        catch (e) { callbacks.delete(cb); kept.delete(cb); throw e; }
+        const f = String(r).split(' ');
+        cs.id = Number(f[0]); cs.sampleRate = Number(f[1]); cs.state = cs.control = f[3]; cs.cb = cb;
         super(SECRET, cs);
         cs.self = this;
         cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
-          self: null, params: [], kind: 'destination', maxChannelCount: 2 });
+          self: null, params: [], kind: 'destination', maxChannelCount: Number(f[2]) });
       }
     }
+    // Op 192: currentTime, baseLatency and outputLatency (seconds), the state, then
+    // getOutputTimestamp()'s contextTime and performanceTime (0 before the first report).
+    const rtTime = cs => {
+      const dv = new DataView(ask(192, [cs.id], 'AudioContext', true));
+      return { currentTime: dv.getFloat64(0, true), baseLatency: dv.getFloat64(8, true), outputLatency: dv.getFloat64(16, true),
+        contextTime: dv.getFloat64(25, true), performanceTime: dv.getFloat64(33, true) };
+    };
+    // The events since the last call (op 193), in the specification's order: `ended` of each source
+    // that finished (a task each); the promises of the control calls carried out (resolved) or
+    // refused (rejected); then each change of state: the `state` attribute is set and `statechange`
+    // is queued (resume(), suspend() and close(): resolve the promise, set the state attribute,
+    // "queue a media element task to fire an event named statechange").
+    function rtEvents(cs) {
+      const r = apiCall(193, [String(cs.id)], 0, true);
+      if (!(r instanceof ArrayBuffer)) return;
+      const dv = new DataView(r), count = dv.getUint32(0, true), evs = [];
+      for (let i = 0; i < count; i++) evs.push([dv.getUint8(4 + 5 * i), dv.getUint32(5 + 5 * i, true)]);
+      for (const [k, v] of evs) if (k === 1) task(() => { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); });
+      for (const [k, v] of evs) {
+        if (k !== 3 && k !== 4) continue;
+        const call = cs.calls.get(v);
+        if (call === undefined) continue;
+        cs.calls.delete(v);
+        if (k === 3) call.resolve();
+        else call.reject(dom('InvalidStateError', `Failed to execute '${call.verb}' on 'AudioContext': the context is closed or has no audio output`));
+      }
+      for (const [k, v] of evs) {
+        if (k !== 2) continue;
+        const st = STATES[v];
+        if (st !== undefined && cs.state !== st) { cs.state = st; task(() => { fire(cs.self, 'statechange'); }); }
+      }
+      if (cs.state === 'closed' && cs.calls.size === 0) { callbacks.delete(cs.cb); kept.delete(cs.cb); }
+    }
+    // resume(), suspend() and close() (op 191): the promise settles when the rendering side has
+    // carried the call out; a call after close() is refused at once ([[control thread state]]).
+    const rtControl = (s, verb) => {
+      const what = `Failed to execute '${verb}' on 'AudioContext'`;
+      if (s.control === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is closed`));
+      return new Promise((resolve, reject) => {
+        const call = Number(ask(191, [s.id, verb], what));
+        s.calls.set(call, { verb, resolve, reject });
+        s.control = verb === 'resume' ? 'running' : verb === 'suspend' ? 'suspended' : 'closed';
+      });
+    };
     class OfflineAudioCompletionEvent extends Event {
       constructor(type, init) {
         needNew(arguments.length, 2, 'OfflineAudioCompletionEvent');
@@ -5971,14 +6040,14 @@
     const A = {
       'BaseAudioContext.destination': { get: s => s.destination },
       'BaseAudioContext.sampleRate': { get: s => Math.fround(s.sampleRate) },
-      'BaseAudioContext.currentTime': { get: s => ctxInfo(s).frame / s.sampleRate },
+      'BaseAudioContext.currentTime': { get: s => (s.realtime ? rtTime(s).currentTime : ctxInfo(s).frame / s.sampleRate) },
       'BaseAudioContext.listener': { get: () => { throw unsup('BaseAudioContext.listener (AudioListener)'); } },
       'BaseAudioContext.state': { get: s => s.state },
       'BaseAudioContext.renderQuantumSize': { get: s => ctxInfo(s).quantum },
       'BaseAudioContext.audioWorklet': { get: () => { throw unsup('BaseAudioContext.audioWorklet (AudioWorklet)'); } },
-      // No output device yet (stage D, issue 1169): the latencies are 0 and the sink is the default one.
-      'AudioContext.baseLatency': { get: () => 0 },
-      'AudioContext.outputLatency': { get: () => 0 },
+      // The frames the rendering side keeps ahead, and the output's own latency, over the rate (op 192).
+      'AudioContext.baseLatency': { get: s => rtTime(s).baseLatency },
+      'AudioContext.outputLatency': { get: s => rtTime(s).outputLatency },
       'AudioContext.sinkId': { get: () => '' },
       'AudioContext.playbackStats': { get: () => { throw unsup('AudioContext.playbackStats'); } },
       'OfflineAudioContext.length': { get: s => s.length },
@@ -6062,22 +6131,10 @@
         task(() => { if (typeof a[2] === 'function') { try { a[2].call(undefined, e); } catch (x) { report(x); } } });
         return rejected(e);
       },
-      'AudioContext.getOutputTimestamp': (s) => ({ contextTime: ctxInfo(s).frame / s.sampleRate, performanceTime: 0 }),
-      'AudioContext.resume': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed"));
-        if (s.state !== 'running') pendingState(s, 'running');
-        return Promise.resolve();
-      },
-      'AudioContext.suspend': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed"));
-        if (s.state !== 'suspended') pendingState(s, 'suspended');
-        return Promise.resolve();
-      },
-      'AudioContext.close': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'close' on 'AudioContext': Cannot close a context that is already closed"));
-        pendingState(s, 'closed');
-        return Promise.resolve();
-      },
+      'AudioContext.getOutputTimestamp': (s) => { const t = rtTime(s); return { contextTime: t.contextTime, performanceTime: t.performanceTime }; },
+      'AudioContext.resume': (s) => rtControl(s, 'resume'),
+      'AudioContext.suspend': (s) => rtControl(s, 'suspend'),
+      'AudioContext.close': (s) => rtControl(s, 'close'),
       'AudioContext.setSinkId': () => rejected(unsup('AudioContext.setSinkId')),
       'OfflineAudioContext.startRendering': (s) => {
         const ab = ask(187, [s.id], "Failed to execute 'startRendering' on 'OfflineAudioContext'", true);
@@ -6196,13 +6253,14 @@
     M['AudioParam.exponentialRampToValueAtTime'] = paramMethod('exponentialRampToValueAtTime', ['f', 'd']);
     M['AudioParam.setTargetAtTime'] = paramMethod('setTargetAtTime', ['f', 'd', 'f']);
     M['AudioParam.cancelScheduledValues'] = paramMethod('cancelScheduledValues', ['d']);
-    // Not in the ops (issue 1169): the arguments are converted, then the call is refused.
-    M['AudioParam.setValueCurveAtTime'] = (s, a) => {
+    // setValueCurveAtTime(values, startTime, duration): the values as binary32 (op 179).
+    M['AudioParam.setValueCurveAtTime'] = (s, a, self) => {
       const what = "Failed to execute 'setValueCurveAtTime' on 'AudioParam'";
-      seqFloats(a[0], what); toDouble(a[1], what); toDouble(a[2], what);
-      throw unsup('AudioParam.setValueCurveAtTime');
+      const values = seqFloats(a[0], what), start = toDouble(a[1], what), duration = toDouble(a[2], what);
+      ask(179, [s.node.cs.id, s.node.id, s.index, 'setValueCurveAtTime', u8(values), f64(start), f64(duration)], what);
+      return self;
     };
-    M['AudioParam.cancelAndHoldAtTime'] = (s, a) => { toDouble(a[0], "Failed to execute 'cancelAndHoldAtTime' on 'AudioParam'"); throw unsup('AudioParam.cancelAndHoldAtTime'); };
+    M['AudioParam.cancelAndHoldAtTime'] = paramMethod('cancelAndHoldAtTime', ['d']);
     const PROMISES = new Set(['BaseAudioContext.decodeAudioData', 'AudioContext.resume', 'AudioContext.suspend', 'AudioContext.close', 'AudioContext.setSinkId',
       'OfflineAudioContext.startRendering', 'OfflineAudioContext.resume', 'OfflineAudioContext.suspend', 'OfflineAudioContext.close']);
     // ---- the interface objects: members from Lean's table ----
@@ -20062,6 +20120,22 @@
     idlShape(name, gd && gd.value);
   }
 
+  // HTML §6.4.3, "activation triggering input event": keydown (not Escape, not a modifier key),
+  // mousedown, pointerdown of a mouse, pointerup of another pointer, touchend. The first trusted
+  // one is the page's sticky activation, which Web Audio's autoplay rule reads (op 196, once).
+  let activationNoted = false;
+  const modifierKeys = new Set(['Alt', 'AltGraph', 'CapsLock', 'Control', 'Fn', 'FnLock', 'Hyper', 'Meta', 'NumLock', 'ScrollLock', 'Shift', 'Super', 'Symbol', 'SymbolLock']);
+  const activationTriggering = (type, data) =>
+    type === 'keydown' ? typeof data.key === 'string' && data.key !== 'Escape' && !modifierKeys.has(data.key)
+      : type === 'mousedown' || type === 'touchend' ? true
+      : type === 'pointerdown' ? data.pointerType === 'mouse'
+      : type === 'pointerup' ? typeof data.pointerType === 'string' && data.pointerType !== 'mouse'
+      : false;
+  const noteActivation = (type, data) => {
+    if (activationNoted || !activationTriggering(type, data)) return;
+    activationNoted = true;
+    if (apiOn()) apiCall(196, []);
+  };
   return {
     // Lean runs a timer (target -1) or an animation frame callback (target -2, `arg` the time).
     call(id, target, arg) {
@@ -20170,6 +20244,7 @@
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       noteFocusInput(type, e);
+      noteActivation(type, data);
       // "update the current document readiness" fires readystatechange at the document
       // the document's milestones (Navigation Timing 2 §4: domInteractive, DOMContentLoaded's start)
       if (type === 'DOMContentLoaded' && target === 0) { navNote('domInteractive'); navNote('domContentLoadedEventStart'); }
@@ -20206,7 +20281,7 @@
     start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); noteEmptyScripts(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); creationHref = href; },
-    release(id) { callbacks.delete(id); },
+    release(id) { if (!kept.has(id)) callbacks.delete(id); },
     // Section workers: this realm becomes a dedicated worker's global scope.
     worker(url, name) { makeWorkerScope(String(url), String(name)); },
   };

@@ -17,6 +17,7 @@ import WebWasm
 import WebState
 import WebSparql
 import WebScripts
+import WebAudioRun
 import L4Factoidal.Net.Subresource
 import L4Factoidal.Prim.Bytes
 import L4Factoidal.Rendering.SfntProfile
@@ -3920,6 +3921,9 @@ structure Engine where
   /-- The page layer answers kept for the next frame, their counts and the last `damage.id`
   (`pageArtifact`, `layersJSON`). -/
   pages : KeptPages := {}
+  /-- Real-time Web Audio: the rendering tasks of the page's `AudioContext`s and the audio output
+  (`WebAudioRun`; plan docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 13). -/
+  audio : WebAudioRun.Registry := {}
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -4552,6 +4556,34 @@ def answerIn {M : Type → Type} [Monad M] [WebWasm.Machine M] (e : Engine) (byt
   let (r,e) ← ((answerWith keptFrame bytes html request width height).run).run e
   return (e,r)
 
+/-- `answerIn` in the engine (`BaseIO`), with real-time Web Audio (`WebAudioRun`): before a
+`scriptSession` call the reports of the page's rendering tasks are merged and the callbacks of
+the contexts with events queued (`WebAudioRun.before`); after it the page's control messages go to
+the tasks (`WebAudioRun.after`). The steps are here and not inside `answerWith`, which is generic
+in its monad (the logical model `Id` has no audio output: `new AudioContext()` answers
+`NotSupportedError` there, as in the Wasm build). Op `audioRuns` answers the runs and their
+measures (`WebAudioRun.runsAnswer`). -/
+def answerAudio (e : Engine) (bytes : Bool) (html : String) (request : JSON.Json) (width height : Nat) :
+    BaseIO (Engine × Except String (String × Array ByteArray)) := do
+  match request.field? "op" with
+  | some (.string "audioRuns") =>
+    let (reg, _) ← WebAudioRun.probe e.audio
+    return ({ e with audio := reg }, .ok (← WebAudioRun.runsAnswer reg, #[]))
+  | some (.string "scriptSession") =>
+    let held := e.scripts
+    let e := { e with scripts := {} }
+    let reg := e.audio
+    let e := { e with audio := {} }
+    let (reg, held) ← WebAudioRun.before reg held
+    let (e, r) ← answerIn { e with scripts := held, audio := reg } bytes html request width height
+    let held := e.scripts
+    let e := { e with scripts := {} }
+    let reg := e.audio
+    let e := { e with audio := {} }
+    let (reg, held) ← WebAudioRun.after reg held
+    return ({ e with scripts := held, audio := reg }, r)
+  | _ => answerIn e bytes html request width height
+
 /-- The JSON text answer, in the logical model (`Id`), from the state `e`: storage floats
 in Base64 (`binary:true`) or decimal. -/
 def runIn (e : Engine) (html : String) (request : JSON.Json) (width height : Nat) : Engine × Except String String :=
@@ -4620,7 +4652,7 @@ def compileBin (e : Engine) (html request : String) (width height : UInt32) : Ba
   match parseRequest request with
   | .error message => return (e,packAnswer (WebRender.errorJSON message) #[])
   | .ok j =>
-    let (e,r) ← answerIn e true html j width.toNat height.toNat
+    let (e,r) ← answerAudio e true html j width.toNat height.toNat
     return (e,match r with
       | .ok (head,sections) => packAnswer head sections
       | .error message => packAnswer (WebRender.errorJSON message) #[])
@@ -4630,7 +4662,7 @@ def compile (e : Engine) (html request : String) (width height : UInt32) : BaseI
   match parseRequest request with
   | .error message => return (e,WebRender.errorJSON message)
   | .ok j =>
-    let (e,r) ← answerIn e false html j width.toNat height.toNat
+    let (e,r) ← answerAudio e false html j width.toNat height.toNat
     return (e,match r with
       | .ok (value,_) => value
       | .error message => WebRender.errorJSON message)

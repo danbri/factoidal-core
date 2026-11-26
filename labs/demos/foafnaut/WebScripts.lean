@@ -232,6 +232,15 @@ structure StartPoint where
 
 instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := default, todo := [], mods := {}, missing := #[] }⟩
 
+/-- What the engine says of its audio output (`WebAudioRun`, plan
+docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 13): the device's sample rate and
+channel count (none: no real-time audio, as in the Wasm build), and whether a real-time context
+runs with no user activation. A new session takes it (`Page.Limits.audioDevice`, `autoplay`). -/
+structure AudioEnv where
+  device : Option (Float × Nat) := none
+  autoplay : Bool := false
+  deriving Inhabited
+
 /-- What the engine holds between calls: the prepared module and one session. -/
 structure Held where
   module : Option Page.Module' := none
@@ -289,8 +298,18 @@ structure Held where
   /-- The WebDriver endpoint, when the test runner started one (`webdriverStart`): the
   gate's configuration (secret, port), the protocol's state and what this browser is. -/
   webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser × WebDriver.Window.State × WebDriver.Page.Doc) := none
+  /-- The engine's audio output, set by the engine before each call (`WebAudioRun.before`); a
+  session started then takes it, with `autoplay` also on when the `start` request has
+  `autoplay:true`. -/
+  audio : AudioEnv := {}
 
 instance : Inhabited Held := ⟨{}⟩
+
+/-- The audio fields of a new session's limits: the engine's device, and autoplay when the engine
+or the `start` request allows it. -/
+def audioLimits (held : Held) (request : JSON.Json) (lim : Page.Limits) : Page.Limits :=
+  { lim with audioDevice := held.audio.device,
+             autoplay := held.audio.autoplay || request.field? "autoplay" == some (.bool true) }
 
 /-! `Held` is a field of the engine's state (`WebDocument.Engine`), passed in and given back
 by each operation here (issue 390). The caller takes it out of the state before the call,
@@ -469,6 +488,9 @@ theorem animatedOf_earlier (reads : Page.Reads) (now : Int) (hn : reads.keptNow 
     animatedOf reads now = none := by
   simp [animatedOf, hn]
 
+/-- The most time between two turns while a real-time audio context runs (plan 13.3). -/
+def audioTurnMs : Nat := 25
+
 /-- The answer of a turn. -/
 def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
@@ -486,7 +508,10 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
     -- a task still queued (an advance that stopped between tasks, `sliceSteps`) is due now
-    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+    -- a real-time audio context that runs, or waits for its rendering side to answer a call: a
+    -- turn at most 25 ms ahead, so that its events are delivered (`WebAudio.Api.needsTurns`)
+    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake,
+        if L4Factoidal.WebAudio.Api.needsTurns s.host.web.audio then some (loop.clock + audioTurnMs) else none].filterMap (fun x => x) with
       | [] => .null
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
@@ -968,7 +993,10 @@ path (the Hub). -/
 at most 32 MiB of memory, at most 4096 commands and 256 console lines, so a frame cannot
 starve its page. -/
 def frameLimits (lim : Page.Limits) (fEnt : Nat → ByteArray) (el : Nat) : Page.Limits :=
-  { lim with entropy := fEnt el, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
+  { lim with entropy := fEnt el, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false,
+             -- a frame's session has its own outbox, which the engine does not take (`WebAudioRun`):
+             -- no real-time audio in a sandboxed frame (`new AudioContext()` answers NotSupportedError)
+             audioDevice := none }
 
 /-- Tasks a frame's session may run in one round; rounds of messages in one pump; frames
 with sessions in one page. -/
@@ -1372,7 +1400,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let ent ← match held.startEntropy with
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
-  let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := audioLimits held request { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let syn := str request "syntax"
   let kept := match held.startParsed with
     | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syn then some p else none
@@ -1729,7 +1757,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
+        let prog := PageAot.startProg aot dom url scripts (audioLimits held request { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" }) #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, startTodo := none, nextSession := id + 1, layoutRequest := layoutOf request } id {} {} true true prog
@@ -1746,7 +1774,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts (audioLimits held request { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts }) #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => return (held, .error s!"scriptSession: {e}")
