@@ -10,8 +10,7 @@
 //  3. a device in each of two workers on the same adapter: each writes a buffer, a compute pass
 //     doubles it, and the worker reads it back (each device works alone);
 //  4. the resident memory of the process before and after each worker's device.
-// WebGPU objects are not serializable or transferable in the WebGPU specification (no
-// [Serializable] or [Transferable] on GPUDevice); this checks what Deno does.
+// It checks what Deno does, not what the WebGPU specification says.
 const say=(record:Record<string,unknown>)=>console.log(JSON.stringify(record));
 const rssMB=()=>Math.round(Deno.memoryUsage().rss/1048576*10)/10;
 
