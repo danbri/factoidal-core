@@ -63,7 +63,7 @@ private def trim (s : String) : String := s.trimAscii.toString
 private def error (s : String) : Except String α := .error s
 private def need (value : Option α) (message : String) : Except String α :=
   match value with | some x => pure x | none => error message
-private def quote (s : String) : String :=
+def quote (s : String) : String :=
   "\"" ++ (s.replace "\\" "\\\\" |>.replace "\"" "\\\"" |>.replace "\n" "\\n" |>.replace "\r" "\\r" |>.replace "\t" "\\t") ++ "\""
 private def jsonArray (xs : List String) : String := "[" ++ String.intercalate "," xs ++ "]"
 private def pow10 (n : Nat) : Float := (List.range n).foldl (fun x _ => x*10) 1
@@ -2292,8 +2292,9 @@ def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
   parseRootInContextSized context rootSourcePath (Float.ofNat outputWidth) (Float.ofNat outputHeight)
     inheritedStyle rootAttributeNormalizer images
 
-def parse (xml : String) (outputWidth outputHeight : Nat := 0)
-    (documentURL : Option String := none) : Except String Scene := do
+/-- The checks of a standalone SVG document before its tree is read (UTF-8, no DTD, no
+processing instruction), and its namespace tree. -/
+def checkedRoot (xml : String) : Except String NamespaceNode := do
   if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
   if let some encoding := document.decl.bind (·.encoding) then
@@ -2301,8 +2302,11 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0)
   if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
   for node in document.prolog ++ document.epilog do
     match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
-  let root ← parseNamespaceView xml
-  parseRoot root outputWidth outputHeight {} documentURL
+  parseNamespaceView xml
+
+def parse (xml : String) (outputWidth outputHeight : Nat := 0)
+    (documentURL : Option String := none) : Except String Scene := do
+  parseRoot (← checkedRoot xml) outputWidth outputHeight {} documentURL
 
 /-! ### A scene given as values, with no SVG text
 

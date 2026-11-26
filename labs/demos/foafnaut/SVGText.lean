@@ -975,4 +975,23 @@ def lowerDocumentGlyphs (fonts : Array Font) (root : NamespaceNode) :
   let (node,log,table,_) := lowerDocumentGlyphsIn {} fonts root
   (node,log,table)
 
+/-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
+`fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
+reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
+here the first entry refuses the document, with its text as the reason. -/
+def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
+    (documentURL : Option String := none) : Except String NativeSVG.Scene := do
+  let root ← NativeSVG.checkedRoot xml
+  let (tree,log,glyphs) := lowerDocumentGlyphs fonts root
+  if let some first := log.head? then throw s!"text lowering: {first}"
+  let context ← NativeSVG.ReferenceContext.create tree documentURL
+  NativeSVG.parseRootInContextSized context [] (Float.ofNat outputWidth) (Float.ofNat outputHeight)
+    {} (fun attrs => .ok attrs) none glyphs
+
+/-- `parseWithFonts` as the JSON artifact of `NativeSVG.compile`. -/
+def compileWithFonts (fonts : Array Font) (xml : String) (width height : Nat) : String :=
+  match parseWithFonts fonts xml width height >>= NativeSVG.Scene.artifact with
+  | .ok artifact => artifact
+  | .error message => "{\"error\":" ++ NativeSVG.quote message ++ "}"
+
 end NativeSVGText

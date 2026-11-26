@@ -8,13 +8,16 @@ private def result (body : String) := (parse (svg body) 40 40).toOption
 private def primitives (body : String) : Nat := ((result body).map (·.1.compiled.length)).getD 999
 private def log (body : String) : List String := ((result body).map (·.2)).getD []
 
--- The strict reader refuses these documents; the forgiving pass draws the rest.
-#guard (NativeSVG.parse (svg "<rect width='9' height='9'/>") 40 40).toOption.isNone
+-- The strict reader takes version and baseProfile (SVG Tiny 1.2 §5.1.2) and refuses text;
+-- the forgiving pass draws the rest.
+#guard (NativeSVG.parse (svg "<rect width='9' height='9'/>") 40 40).toOption.isSome
+#guard (NativeSVG.parse (svg "<text>label</text>") 40 40).toOption.isNone
 #guard primitives "<rect width='9' height='9'/>" == 1
 #guard primitives "<text>label</text><rect width='9' height='9'/>" == 1
 #guard (log "<text>label</text>").contains "element: text"
 #guard (log "<foo xmlns='urn:x'/>").contains "foreign element: foo"
-#guard (log "<g font-size='9'/>").contains "attribute: g font-size"
+-- Text properties on a group change no pixel; the strict reader reads past them (SVG Tiny 1.2 §10.10).
+#guard !(log "<g font-size='9'/>").contains "attribute: g font-size"
 -- A value the reader refuses removes that element only, and is logged.
 #guard primitives "<rect width='-1' height='9'/><rect width='9' height='9'/>" == 1
 #guard (log "<rect width='-1' height='9'/>").any (·.startsWith "removed rect")
