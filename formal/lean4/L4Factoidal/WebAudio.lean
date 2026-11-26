@@ -15,8 +15,14 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
 - `WebAudio.Graph`: nodes and connections, and the ordered list of nodes of "Rendering an audio
   graph" (`DelayNode`s in cycles split into a writer and a reader; cycles with no `DelayNode`
   muted). Not yet proved: that every node that is not muted is in the order.
+- `WebAudio.Render`: one render quantum of a context: mixed inputs, `AudioParam` values
+  (automation plus connected signals, clamped), kernels in graph order, the destination's block.
+- `WebAudio.Context`: an offline context: constructor checks, nodes, connections, automation,
+  `startRendering` (whole quanta, then `length` frames rounded to binary32).
 -/
 import L4Factoidal.WebAudio.Mix
 import L4Factoidal.WebAudio.Automation
 import L4Factoidal.WebAudio.Kernels
 import L4Factoidal.WebAudio.Graph
+import L4Factoidal.WebAudio.Render
+import L4Factoidal.WebAudio.Context
