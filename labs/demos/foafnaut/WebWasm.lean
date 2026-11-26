@@ -70,10 +70,17 @@ class Machine (m : Type → Type) where
   timed {α : Type} : (Unit → α) → m (α × Nat)
   /-- `n` random bytes from the host's generator; empty when it has none. -/
   randomBytes : Nat → m ByteArray
+  /-- The host stopped the call in progress (docs/designissues/2026-11-26-foafnaut-engine-sessions.md,
+  stage 4). In the engine (`BaseIO`) this is the cancellation of the Lean task that runs the call
+  (`IO.checkCanceled`): the task of an engine session that the host canceled
+  (`WebSession.cancel`). A call on a thread that Lean did not start is never canceled. `Id`:
+  never. -/
+  canceled : m Bool
 
 instance : Machine Id where
   timed f := (f (), 0)
   randomBytes _ := ByteArray.empty
+  canceled := false
 
 /-- `f ()`, evaluated when this action runs (so not moved out of a timed span). -/
 @[noinline] def evalNow {α : Type} (f : Unit → α) : BaseIO α := pure (f ())
@@ -88,14 +95,17 @@ instance : Machine BaseIO where
     match ← (IO.getRandomBytes n.toUSize).toBaseIO with
     | .ok b => pure b
     | .error _ => pure ByteArray.empty
+  canceled := IO.checkCanceled
 
 instance {ε : Type} {m : Type → Type} [Monad m] [Machine m] : Machine (ExceptT ε m) where
   timed f := ExceptT.lift (Machine.timed f)
   randomBytes n := ExceptT.lift (Machine.randomBytes n)
+  canceled := ExceptT.lift Machine.canceled
 
 instance {σ : Type} {m : Type → Type} [Monad m] [Machine m] : Machine (StateT σ m) where
   timed f := StateT.lift (Machine.timed f)
   randomBytes n := StateT.lift (Machine.randomBytes n)
+  canceled := StateT.lift Machine.canceled
 
 /-- `f ()` and the nanoseconds it took on the machine's clock (0 in `Id`). -/
 @[inline] def timed {m : Type → Type} [Machine m] {α : Type} (f : Unit → α) : m (α × Nat) := Machine.timed f

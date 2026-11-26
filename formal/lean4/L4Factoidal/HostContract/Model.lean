@@ -87,7 +87,7 @@ structure OpSpec where
   needs : List Cap := []
   deriving Repr
 
-/-- The operations hosts send, from the hosts' sources on 2026-11-15 (`native_html_engine.ts`,
+/-- The operations hosts send, from the hosts' sources on 2026-11-26 (`native_html_engine.ts`,
 `browser-worker.mjs`, `link-route.mjs`, `docs/web/hub/textnaut/engine-core.mjs`). An operation
 not in this list is a violation. `fontBytes`, `imageBytes` and `decode` name the calls of the
 byte exports, which carry no `"op"`. -/
@@ -124,7 +124,7 @@ def ops : List OpSpec :=
     ⟨"shellText", .query, []⟩, ⟨"shellKey", .query, [.keyboard]⟩, ⟨"shellEdit", .query, [.keyboard]⟩,
     ⟨"shellContext", .query, [.pointer]⟩, ⟨"linkGesture", .query, [.pointer]⟩,
     ⟨"shellHit", .query, [.pointer]⟩, ⟨"shellActions", .query, []⟩, ⟨"shellSubmit", .query, []⟩,
-    ⟨"shellLink", .query, []⟩, ⟨"shellRoute", .query, []⟩, ⟨"shellInfo", .query, []⟩,
+    ⟨"shellLink", .query, []⟩, ⟨"shellRoute", .query, []⟩, ⟨"shellCommitFocus", .query, []⟩, ⟨"shellInfo", .query, []⟩,
     ⟨"keyTable", .query, [.keyboard]⟩, ⟨"findEdit", .query, [.keyboard]⟩,
     -- counters and host facts
     ⟨"frameWork", .counter, []⟩, ⟨"imageInfo", .counter, []⟩, ⟨"cpuInfo", .counter, []⟩,
@@ -140,7 +140,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 74
+#guard opNames.length == 75
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state
@@ -153,7 +153,11 @@ with no host capability needed to calculate the answer. Does not say: that the h
 storage or network use is pure, or that its persistence obeys the cookie policy. -/
 theorem cookies_contract : kindOf "cookies" = .query ∧ needsOf "cookies" = [] := by decide
 
+/-- Page-commit focus is a pure answer to the navigation state; it needs no shell capability. -/
+theorem shellCommitFocus_contract : kindOf "shellCommitFocus" = .query ∧ needsOf "shellCommitFocus" = [] := by decide
+
 #print axioms cookies_contract
+#print axioms shellCommitFocus_contract
 
 /-- Request fields with which a host relaxes an engine policy (record
 docs/designissues/2026-11-14-engine-integration.md, "Theorems across the seams"): `hostCors`

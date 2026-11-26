@@ -63,7 +63,7 @@ private def trim (s : String) : String := s.trimAscii.toString
 private def error (s : String) : Except String α := .error s
 private def need (value : Option α) (message : String) : Except String α :=
   match value with | some x => pure x | none => error message
-private def quote (s : String) : String :=
+def quote (s : String) : String :=
   "\"" ++ (s.replace "\\" "\\\\" |>.replace "\"" "\\\"" |>.replace "\n" "\\n" |>.replace "\r" "\\r" |>.replace "\t" "\\t") ++ "\""
 private def jsonArray (xs : List String) : String := "[" ++ String.intercalate "," xs ++ "]"
 private def pow10 (n : Nat) : Float := (List.range n).foldl (fun x _ => x*10) 1
@@ -423,13 +423,21 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
     pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
   else lengthNumber s
 
+/-- SVG Tiny 1.2 §10.10 to §10.12 and §10.11.4 (property index, appendix C): the text and font
+properties. They are inherited, and only `text` and `textArea` read them. This reader draws
+neither (both are refused as unsupported elements), so on any other element these properties
+change no pixel: they are read past. The W3C Tiny suite writes them on the `g` around each test's
+label text. -/
+private def textProperties := ["font-family","font-size","font-style","font-variant","font-weight",
+  "text-anchor","display-align","line-increment","text-align"]
 /-- The presentation attributes every drawing element may carry. `clip-rule` (SVG 2 §14.3.7)
 matters only for a shape inside a `clipPath`; this reader takes it and clips with the
 nonzero rule. Icon sets write it on every path (`fill-rule="evenodd" clip-rule="evenodd"`:
 GitHub's icons), and refusing it refused the whole drawing. -/
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"] ++
+  textProperties
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
@@ -459,9 +467,84 @@ private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extr
     if skipAttribute tag a then continue
     if let some uri := a.name.namespace_ then
       if uri == svgURI || (uri == "http://www.w3.org/1999/xlink" && !(["use","linearGradient","radialGradient","image"].contains tag && a.name.localPart == "href")) ||
-          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base"].contains a.name.localPart) then
+          (uri == "http://www.w3.org/XML/1998/namespace" && !["lang","space","base","id"].contains a.name.localPart) then
         throw s!"qualified attribute unsupported on {tag}: {a.name.localPart}"
     else if !(common++extra).contains a.name.localPart then throw s!"unsupported attribute on {tag}: {a.name.localPart}"
+/-- Namespaces whose elements act or draw in an SVG document (SVG Tiny 1.2: XML Events §15.3
+for `listener`; XHTML and MathML content of `foreignObject`). An element in one of them is
+refused, not passed over as private data (§23.1). XHTML `link` and `meta` are read before. -/
+def behaviourNamespaces : List String :=
+  ["http://www.w3.org/2001/xml-events","http://www.w3.org/1999/xhtml","http://www.w3.org/1998/Math/MathML"]
+
+/-- SVG Tiny 1.2 §5.1.2 (`zoomAndPan`): `magnify`, the lacuna value, lets the user zoom and
+pan, which the viewer does; the drawing is the same. `disable` asks the viewer to turn zoom and
+pan off, which this viewer does not do, so it is refused. The attribute is removed after the
+check. -/
+def zoomAndPanChecked (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+  if let some value := attr attrs "zoomAndPan" then
+    if trim value != "magnify" then throw s!"zoomAndPan {trim value}: the viewer does not turn off zoom and pan"
+  pure (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == "zoomAndPan"))
+
+/-- SVG Tiny 1.2 §16 (animation), §15 (scripting and `handler`), §12 (`audio`, `video`,
+`animation`): elements whose effect is in time or in script. -/
+def timedElements : List String :=
+  ["set","animate","animateColor","animateMotion","animateTransform","discard","script","handler",
+   "audio","video","animation","listener"]
+
+/-- The first timed or scripted element at or under `node` (SVG namespace, or the XML Events
+`listener`), to a depth of `fuel`; a deeper subtree counts as one. -/
+def timedElementIn : Nat → NamespaceNode → Option String
+  | 0,_ => some "nesting deeper than the check reads"
+  | _,.other _ => none
+  | fuel+1,.element name _ children =>
+    if (name.namespace_ == some svgURI || name.namespace_ == some "http://www.w3.org/2001/xml-events") &&
+        timedElements.contains name.localPart then some name.localPart
+    else children.findSome? (timedElementIn fuel)
+
+/-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
+element name the language version and the profile the author wrote for. They do not change
+how the content is drawn. A known label is checked and then removed, so no later step can
+read it; an unknown label is refused with a named reason.
+Values: `version` 1.0, 1.1, 1.2 (SVG 1.x) and 2.0; `baseProfile` none, tiny, basic, full. -/
+def profileLabel (a : NamespaceAttribute) : Bool :=
+  a.name.namespace_.isNone && (a.name.localPart == "version" || a.name.localPart == "baseProfile")
+
+def profileLabelsChecked (attrs : List NamespaceAttribute) : Except String Unit := do
+  if let some version := attr attrs "version" then
+    if !["1.0","1.1","1.2","2.0"].contains (trim version) then throw "unsupported SVG version label"
+  if let some profile := attr attrs "baseProfile" then
+    if !["none","tiny","basic","full"].contains (trim profile) then throw "unsupported SVG baseProfile label"
+
+def profileLabelsRemoved (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+  profileLabelsChecked attrs
+  pure (attrs.filter fun a => !profileLabel a)
+
+/-- An admitted root keeps exactly its other attributes: the later steps read the same list as
+for the same element written without `version` and `baseProfile`. -/
+theorem profileLabelsRemoved_ok (attrs rest : List NamespaceAttribute)
+    (h : profileLabelsRemoved attrs = .ok rest) : rest = attrs.filter fun a => !profileLabel a := by
+  unfold profileLabelsRemoved at h
+  cases hc : profileLabelsChecked attrs with
+  | error e => simp [hc, bind, Except.bind] at h
+  | ok u => simp [hc, bind, Except.bind, pure, Except.pure] at h; exact h.symm
+
+/-- Removal is complete: no label is left. -/
+theorem profileLabelsRemoved_none (attrs rest : List NamespaceAttribute)
+    (h : profileLabelsRemoved attrs = .ok rest) : ∀ a ∈ rest, profileLabel a = false := by
+  intro a ha
+  rw [profileLabelsRemoved_ok attrs rest h, List.mem_filter] at ha
+  simpa using ha.2
+
+/-- Adding a label to an element changes nothing but the check: with a known value, the list
+that the drawing steps read is the list of the element without it. -/
+theorem profileLabelsRemoved_cons (label : NamespaceAttribute) (attrs rest : List NamespaceAttribute)
+    (hl : profileLabel label = true) (h : profileLabelsRemoved (label :: attrs) = .ok rest) :
+    rest = attrs.filter fun a => !profileLabel a := by
+  rw [profileLabelsRemoved_ok _ _ h, List.filter_cons]
+  simp [hl]
+
+#print axioms profileLabelsRemoved_cons
+
 /-- An unqualified application metadata attribute on an SVG viewport leaves the
 validation of every other attribute unchanged, including any rejection. -/
 private theorem validateAttrs_svg_metadata (key value : String) (attrs : List NamespaceAttribute)
@@ -505,7 +588,7 @@ private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String 
   let rules := rules.map fun rule => {rule with declarations:=rule.declarations.filter (fun d => !ignoredDimension d && !otherGeometry d)}
   -- the words of `class`, split at ASCII white space (DOM §4.9 "ordered set parser")
   let classes := (((attr attrs "class").getD "").map fun c => if c.isWhitespace then ' ' else c).splitOn " " |>.filter (!·.isEmpty)
-  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (attr attrs "id")
+  let winning ← NativeSVGCSS.cascade validate tag presentation rules inlineStyle classes (NativeSVGReferences.elementId attrs)
   -- `rx: auto` and `ry: auto` (SVG 2 §10.2, §10.4): as if the attribute were absent, so the
   -- radius takes the other one
   let winning := winning.filter fun d => !(["rx","ry"].contains d.property && (trim d.value).toLower == "auto")
@@ -1301,9 +1384,14 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x2 ← geometryNumber lengths attrs "x2"; let y2 ← geometryNumber lengths attrs "y2"
     return some (.line x1 y1 x2 y2)
   else if tag == "polygon" || tag == "polyline" then
-    let source ← need (attr attrs "points") "polygon requires points"
+    -- SVG Tiny 1.2 §9.6 and §9.7: the lacuna value of `points` is the empty list, which
+    -- disables rendering of the element; an odd number of coordinates is treated as if the
+    -- attribute were not specified.
+    let source := (attr attrs "points").getD ""
+    if (trim source).isEmpty then return none
     let values ← numbers source
-    if values.length < (if tag=="polygon" then 6 else 4) || values.length%2 != 0 || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
+    if values.length%2 != 0 then return none
+    if values.length < (if tag=="polygon" then 6 else 4) || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
     return if tag=="polygon" then some (.polygon pairs) else some (.path [NativeSVGPath.ofLinear ⟨pairs,false⟩])
   else if tag == "path" then
@@ -1618,8 +1706,21 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         if (attr rawAttrs "http-equiv").isSome then throw "active HTML metadata unsupported"
         if !children.isEmpty then throw "HTML metadata must be empty"
         return []
-      if name.namespace_ != some svgURI then throw s!"foreign/non-SVG element: {name.localPart}"
+      if name.namespace_ != some svgURI then
+        -- SVG Tiny 1.2 §23.1 (foreign namespaces and private data): an element in a namespace
+        -- the user agent does not know is kept in the document and not rendered, with its
+        -- subtree. Refused instead: no namespace (an SVG element written without one), and
+        -- namespaces that have behaviour or rendering this reader does not implement
+        -- (`behaviourNamespaces`).
+        if name.namespace_.isNone || behaviourNamespaces.contains (name.namespace_.getD "") then
+          throw s!"foreign/non-SVG element: {name.localPart}"
+        return []
       let tag := name.localPart
+      -- Content that is not drawn where it stands. A timed or scripted element in it still
+      -- acts on the document (SVG Tiny 1.2 §16.2: an animation targets any element by
+      -- `xlink:href`), and this reader runs neither, so it refuses it as it does elsewhere.
+      if tag == "defs" then
+        if let some timed := timedElementIn 32 node then throw s!"element in defs unsupported: {timed}"
       if ["style","metadata","defs","stop"].contains tag || paintServers.contains tag ||
           (tag == "symbol" && !instanceRoot) then return []
       let attrs ← applyCSS lengths paints rules tag rawAttrs true
@@ -1653,9 +1754,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           {lengths,parent:=cumulative,style:=inherited,path:=target.path,ancestors:=active,instanceRoot:=true,baseURL:=target.parentBase}
           (.element targetName targetAttrs targetChildren)
         -- SVG 2 §5.6.3: a pointer on the instance hits the `use` element.
-        return [.group (attr attrs "id") transform (targetTree.map (DisplayNode.ownedBy path))]
+        return [.group (NativeSVGReferences.elementId attrs) transform (targetTree.map (DisplayNode.ownedBy path))]
       else if tag == "svg" || tag == "symbol" then
-        validateAttrs tag attrs ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity","version"]
+        validateAttrs tag (← profileLabelsRemoved attrs) ["x","y","width","height","viewBox","preserveAspectRatio","overflow","transform","opacity"]
         if !(← containerVisible attrs) then return []
         let x ← geometryNumber lengths attrs "x"
         let y ← geometryNumber lengths attrs "y"
@@ -1681,9 +1782,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let retainedChildren ← readChildren childLengths cumulative inherited children
         let overflow := trim ((attr attrs "overflow").getD "hidden")
         if overflow == "visible" then
-          return [.group (attr attrs "id") contentTransform retainedChildren]
+          return [.group (NativeSVGReferences.elementId attrs) contentTransform retainedChildren]
         if !["hidden","scroll","auto"].contains overflow then throw "unsupported viewport overflow"
-        return [.clipped (attr attrs "id") contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
+        return [.clipped (NativeSVGReferences.elementId attrs) contentTransform ⟨0,0,w,h,viewportTransform⟩ retainedChildren]
       else if tag == "image" then
         validateAttrs tag attrs ["href","x","y","width","height","preserveAspectRatio","opacity","transform","type"]
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -1713,10 +1814,10 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
         let retainedChildren ← readChildren lengths cumulative inherited children
         if displaySuppressed attrs then return []
         match attr attrs "clip-path" with
-        | none => return [.group (attr attrs "id") transform retainedChildren]
+        | none => return [.group (NativeSVGReferences.elementId attrs) transform retainedChildren]
         | some source =>
           let (x,y,w,h) ← rectClip lengths references (trim source)
-          return [.clipped (attr attrs "id") transform ⟨x,y,w,h,transform⟩ retainedChildren]
+          return [.clipped (NativeSVGReferences.elementId attrs) transform ⟨x,y,w,h,transform⟩ retainedChildren]
       else
         validateAttrs tag attrs (extraAttrs tag)
         let transform ← checkedTransform (← elementTransform parent ((attr attrs "transform").getD ""))
@@ -1736,7 +1837,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
               let _ ← readNode references rules paints fuel
                 {lengths,parent:=cumulative,style:=inherited,path,ancestors:=active,baseURL} child
               pure ()
-            else throw "graphics children unsupported"
+            -- Named, so a refusal says what is missing (SVG Tiny 1.2 §16: animation elements
+            -- such as `set` and `animate` are children of the shape they animate).
+            else throw s!"graphics child unsupported: {n.localPart}"
           | .other (.comment _) => pure ()
           | .other (.text text) | .other (.cdata text) => if !whitespace text then throw "text painting unsupported"
           | _ => throw "processing instruction unsupported"
@@ -2050,7 +2153,7 @@ private def nodeIds (root : NamespaceNode) : Except String (List String) := do
         match node with
         | .other _ => pending := rest
         | .element _ attrs children =>
-          if let some id := attr attrs "id" then ids := ids.push id
+          if let some id := NativeSVGReferences.elementId attrs then ids := ids.push id
           pending := children.map (fun child => (child,depth+1)) ++ rest
   throw "SVG identifier node count exceeds input bound"
 
@@ -2135,6 +2238,27 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
 
 #print axioms ReferenceContext.create_existing
 
+/-- SVG Tiny 1.2 §11.11 (`viewport-fill`, `viewport-fill-opacity` on the root `svg`): the whole
+viewport is painted with the colour first. Read as a `rect` with no stroke whose box is the
+viewport in the root's user units: the output pixel (d) of user coordinate (u) is
+(u - minX)·sx + tx, so the viewport [0, viewportWidth] is [minX - tx/sx, minX + (viewportWidth - tx)/sx].
+`none`, and `inherit` (the root inherits the initial value, `none`), paint nothing. -/
+private def viewportFillRect (mapping : Mapping) (attrs : List NamespaceAttribute) : Option NamespaceNode :=
+  match attr attrs "viewport-fill" with
+  | none => none
+  | some fill =>
+    if ["none","inherit"].contains (trim fill) then none else
+    let plain := fun (key value : String) => ({name:={namespace_:=none,localPart:=key},value} : NamespaceAttribute)
+    let opacity := match attr attrs "viewport-fill-opacity" with
+      | none => []
+      | some value => if trim value == "inherit" then [] else [plain "fill-opacity" value]
+    let x := mapping.minX - mapping.tx/mapping.sx
+    let y := mapping.minY - mapping.ty/mapping.sy
+    some (.element {namespace_:=some svgURI,localPart:="rect"}
+      ([plain "x" (toString x),plain "y" (toString y),plain "width" (toString (mapping.viewportWidth/mapping.sx)),
+        plain "height" (toString (mapping.viewportHeight/mapping.sy)),plain "fill" fill,
+        plain "stroke" "none",plain "visibility" "visible"] ++ opacity) [])
+
 /-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
@@ -2144,9 +2268,9 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
     (glyphs : GlyphTable := #[]) : Except String Scene := do
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version","style"]
-  if let some version := attr attrs "version" then
-    if !["1.1","2.0"].contains version then throw "unsupported SVG version label"
+  let attrs ← profileLabelsRemoved attrs
+  let attrs ← zoomAndPanChecked attrs
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","style","viewport-fill","viewport-fill-opacity"]
   for key in ["width","height"] do
     if let some source := attr attrs key then
       -- `em` and `rem` (BBC News: `width="7em"`) are, like the viewport units, lengths that the
@@ -2182,12 +2306,20 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
   let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store,glyphs}
   let attrs ← applyCSS lengths paints rules "svg" attrs
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","version"]
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","viewport-fill","viewport-fill-opacity"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
   let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
   let parsedTree ← readListWith (fun child i => readNode context.references rules paints 33
     {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
-  let tree := if displaySuppressed attrs then [] else parsedTree
+  -- The viewport fill is drawn before the content, as the root's own paint (source path of
+  -- the root), so the source paths of the children do not change.
+  let background ← match viewportFillRect mapping attrs with
+    | none => pure []
+    | some rect =>
+      let rootContext : ReadContext :=
+        {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath,ancestors,baseURL:=rootBase}
+      readNode context.references rules paints 33 rootContext rect
+  let tree := if displaySuppressed attrs then [] else background ++ parsedTree
   Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
 
 /-- Standalone SVG keeps a local original document and the existing public API.
@@ -2227,8 +2359,9 @@ def parseRootInContext (context : ReferenceContext) (rootSourcePath : List Nat)
   parseRootInContextSized context rootSourcePath (Float.ofNat outputWidth) (Float.ofNat outputHeight)
     inheritedStyle rootAttributeNormalizer images
 
-def parse (xml : String) (outputWidth outputHeight : Nat := 0)
-    (documentURL : Option String := none) : Except String Scene := do
+/-- The checks of a standalone SVG document before its tree is read (UTF-8, no DTD, no
+processing instruction), and its namespace tree. -/
+def checkedRoot (xml : String) : Except String NamespaceNode := do
   if xml.length > maxInputChars then throw "SVG input exceeds 1048576 characters"
   let document ← (parseXML xml).mapError (fun e => s!"XML: {e.message} at {e.position}")
   if let some encoding := document.decl.bind (·.encoding) then
@@ -2236,8 +2369,11 @@ def parse (xml : String) (outputWidth outputHeight : Nat := 0)
   if document.doctype.isSome then throw "DOCTYPE/DTD unsupported in SVG profile"
   for node in document.prolog ++ document.epilog do
     match node with | .pi .. => throw "processing instruction unsupported" | _ => pure ()
-  let root ← parseNamespaceView xml
-  parseRoot root outputWidth outputHeight {} documentURL
+  parseNamespaceView xml
+
+def parse (xml : String) (outputWidth outputHeight : Nat := 0)
+    (documentURL : Option String := none) : Except String Scene := do
+  parseRoot (← checkedRoot xml) outputWidth outputHeight {} documentURL
 
 /-! ### A scene given as values, with no SVG text
 
@@ -3409,6 +3545,48 @@ def edgeMeets (edges : Array (Float × Float)) (lo hi : Float) (i : Nat) : Bool 
   !(max a b < lo) && !(min a b > hi)
 def edgesMeeting (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
   (Array.range edges.size).filter (edgeMeets edges lo hi)
+
+/-- The indices from `i` below `n` that satisfy `p`, pushed onto `acc`: one tail call per index,
+no `Array.range` (issue https://github.com/danbri/factoidal-core/issues/1124: the band change
+made an `Array.range` for every row band of every tile, 47 M instructions of 654 M). -/
+@[specialize] def filterRangeGo (p : Nat → Bool) (n i : Nat) (acc : Array Nat) : Array Nat :=
+  if h : i < n then filterRangeGo p n (i+1) (if p i then acc.push i else acc) else acc
+termination_by n - i
+
+theorem filterRangeGo_eq (p : Nat → Bool) (n : Nat) : ∀ (k i : Nat) (acc : Array Nat), n - i = k →
+    filterRangeGo p n i acc = acc ++ ((List.range' i (n-i)).filter p).toArray := by
+  intro k
+  induction k with
+  | zero =>
+    intro i acc hk
+    unfold filterRangeGo
+    have : ¬ i < n := by omega
+    simp [this, hk]
+  | succ k ih =>
+    intro i acc hk
+    unfold filterRangeGo
+    have hi : i < n := by omega
+    simp only [hi, dite_true]
+    rw [ih (i+1) _ (by omega)]
+    have : n - i = (n - (i+1)) + 1 := by omega
+    rw [this, List.range'_succ]
+    cases hp : p i <;> simp [hp]
+
+/-- Says: the loop gives the indices that `(Array.range n).filter p` gives, in order. -/
+theorem filterRangeGo_range (p : Nat → Bool) (n : Nat) :
+    filterRangeGo p n 0 #[] = (Array.range n).filter p := by
+  rw [filterRangeGo_eq p n (n - 0) 0 #[] rfl]
+  apply Array.ext'
+  simp [Array.toList_range, List.range_eq_range']
+
+/-- `edgesMeeting` by `filterRangeGo`; the compiler uses it in place of `edgesMeeting`
+(`edgesMeeting_eq_loop`, `@[csimp]`). -/
+def edgesMeetingLoop (edges : Array (Float × Float)) (lo hi : Float) : Array Nat :=
+  filterRangeGo (edgeMeets edges lo hi) edges.size 0 #[]
+
+@[csimp] theorem edgesMeeting_eq_loop : @edgesMeeting = @edgesMeetingLoop := by
+  funext edges lo hi
+  rw [edgesMeeting, edgesMeetingLoop, filterRangeGo_range]
 /-- `edgesMeeting` is a filter of `List.range`, the form of `pathHitList_eq`. -/
 theorem edgesMeeting_eq (edges : Array (Float × Float)) (lo hi : Float) :
     edgesMeeting edges lo hi = ((List.range edges.size).filter (edgeMeets edges lo hi)).toArray := by
@@ -3569,6 +3747,73 @@ def Primitive.edgeBands (m : Mapping) (p : BackendPrimitive) (edges : Array (Flo
     body := body ++ edgesMeeting edges (lo-margin) (hi+margin)
   return out.push body.size ++ body
 
+/-! Fill edge ends as an array (issue https://github.com/danbri/factoidal-core/issues/1124):
+`NativeSVGPath.edges` makes lists of pairs with `zip` and `flatMap`, which `tileListing` mapped to
+their y values for every primitive of a band (about 50 M of 607 M instructions of a band change).
+`edgeYs` makes the same array in one pass over each contour's points (`edgeYs_eq`). -/
+
+def cycStep {α β : Type} (f : α → β) : Array (β × β) × α → α → Array (β × β) × α :=
+  fun (acc,prev) p => (acc.push (f prev,f p),p)
+
+theorem cycFold {α β : Type} (f : α → β) : ∀ (rest : List α) (prev : α) (acc : Array (β × β)),
+    rest.foldl (cycStep f) (acc,prev) =
+      (acc ++ (((prev::rest).zip rest).map fun (a,b) => (f a,f b)).toArray, (prev::rest).getLast (by simp)) := by
+  intro rest
+  induction rest with
+  | nil => intro prev acc; simp
+  | cons x xs ih =>
+    intro prev acc
+    simp only [List.foldl_cons, cycStep]
+    rw [ih x]
+    simp [List.getLast_cons]
+
+theorem zipSnoc {α : Type} (y : α) : ∀ (prev : α) (rest : List α),
+    (prev::rest).zip (rest ++ [y]) = (prev::rest).zip rest ++ [((prev::rest).getLast (by simp), y)] := by
+  intro prev rest
+  induction rest generalizing prev with
+  | nil => simp
+  | cons x xs ih =>
+    simp only [List.cons_append, List.zip_cons_cons, ih x, List.getLast_cons]
+    simp
+
+def cycPairs {α β : Type} (f : α → β) (acc : Array (β × β)) : List α → Array (β × β)
+  | [] => acc
+  | first :: rest =>
+    let (acc,last) := rest.foldl (cycStep f) (acc,first)
+    acc.push (f last,f first)
+
+theorem cycPairs_eq {α β : Type} (f : α → β) (acc : Array (β × β)) (l : List α) :
+    cycPairs f acc l = acc ++ ((l.zip (l.drop 1 ++ l.take 1)).map fun (a,b) => (f a,f b)).toArray := by
+  cases l with
+  | nil => simp [cycPairs]
+  | cons first rest =>
+    simp only [cycPairs, cycFold]
+    simp only [List.drop_one, List.tail_cons, List.take_one, List.head?_cons, Option.toList_some]
+    rw [zipSnoc]
+    simp
+
+theorem cycAll {γ α β : Type} (pts : γ → List α) (f : α → β) : ∀ (cs : List γ) (acc : Array (β × β)),
+    cs.foldl (fun acc c => cycPairs f acc (pts c)) acc =
+      acc ++ (((cs.flatMap fun c => (pts c).zip ((pts c).drop 1 ++ (pts c).take 1))).map fun (a,b) => (f a,f b)).toArray := by
+  intro cs
+  induction cs with
+  | nil => intro acc; simp
+  | cons c cs ih =>
+    intro acc
+    rw [List.foldl_cons, ih, cycPairs_eq]
+    simp [List.flatMap_cons, List.map_append, Array.append_assoc]
+
+/-- The local y of each end of each fill edge of `contours`, in the order of
+`NativeSVGPath.edges`: one pass over each contour's points. -/
+def edgeYs (contours : List NativeSVGPath.LinearContour) : Array (Float × Float) :=
+  contours.foldl (fun acc c => cycPairs (·.y) acc c.points) #[]
+
+theorem edgeYs_eq (contours : List NativeSVGPath.LinearContour) :
+    edgeYs contours = ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray := by
+  unfold edgeYs NativeSVGPath.edges
+  rw [cycAll]
+  simp
+
 /-- The tiles of one primitive, its fill edges in each row band of a tile and its stroke
 pieces in each cell (`tilesOf`): a function of the primitive, the mapping and the grid alone,
 so a retained compile keeps it with the primitive (`RetainedItem.listing`) and a frame that
@@ -3576,7 +3821,7 @@ changes nothing else lists it again without filtering any edge or placing any pi
 def Primitive.tileListing (mapping : Mapping) (across down : Nat) (p : BackendPrimitive) : TileListing := Id.run do
   -- The local y of each end of each fill edge of a path (in the order of its record).
   let ys : Option (Array (Float × Float)) := match p.geometry with
-    | .path contours => some ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray
+    | .path contours => some (edgeYs contours)
     | _ => none
   -- A transform whose local y does not depend on x (no rotation or skew of y) maps a row
   -- of tiles to one range of local y: one edge part for the row.

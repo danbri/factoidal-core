@@ -20,20 +20,32 @@ const b64=bytes=>{let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCha
 const BINDING={uniform:{type:'uniform'},'read-only-storage':{type:'read-only-storage'},storage:{type:'storage'}};
 // Lean's run-length form of a 2D canvas's pixels (PageCanvas.rle): a word n, then with the
 // high bit n pixels as they are, else one pixel n times. Only copies bytes.
-export function unrle(b,w,h){
-  const out=new Uint8Array(w*h*4),o32=new Uint32Array(out.buffer),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
+// A run's pixel is read as a word in this machine's byte order, so fill writes its four bytes.
+const LITTLE=new Uint8Array(new Uint32Array([1]).buffer)[0]===1;
+// `into`: a buffer of w*h*4 bytes to write (reused by the replay; every pixel is written).
+export function unrle(b,w,h,into){
+  const out=into&&into.length===w*h*4?into:new Uint8Array(w*h*4),o32=new Uint32Array(out.buffer,out.byteOffset,w*h),dv=new DataView(b.buffer,b.byteOffset,b.byteLength);
   let i=0,p=0;
   while(i+4<=b.length&&p<w*h){
     const head=dv.getUint32(i,true),n=Math.min(head&0x7fffffff,w*h-p);i+=4;
     if(head&0x80000000){out.set(b.subarray(i,i+4*n),4*p);i+=4*n;}
-    else{o32.fill(new Uint32Array(b.slice(i,i+4).buffer)[0],p,p+n);i+=4;}
+    else{if(i+4>b.length)break;o32.fill(dv.getUint32(i,LITTLE),p,p+n);i+=4;}
     p+=n;
   }
+  // Short input: the rest is transparent (as a new buffer is).
+  if(p<w*h)o32.fill(0,p,w*h);
   return out;
 }
 
+// Base64 text to bytes: the engine's built-in decoder where it has one, else atob into one array.
+const fromB64=typeof Uint8Array.fromBase64==='function'?t=>Uint8Array.fromBase64(t)
+  :t=>{const s=atob(t),n=s.length,out=new Uint8Array(n);for(let i=0;i<n;i++)out[i]=s.charCodeAt(i);return out;};
+// The bytes of a `pixels` command (straight RGBA rows of the rectangle w x h; run-length with `rle`).
+export function decodePixels(c,into){const raw=fromB64(c.data);return c.rle?unrle(raw,c.w,c.h,into):raw;}
+
 export function createPageGpu(device,{watchdogMs=WATCHDOG_MS}={}){
   let page=-1,blitCode='',blitPipeline,rect,lostPage=-1,lostTold=false;
+  let scratch;
   const objs=new Map(),canvases=new Map(),stats={commands:0,passes:0,pixels:0,errors:0,blits:0,computePasses:0,dispatches:0,reads:0,lost:0};
   // Readbacks of this replay: [ticket, the buffer], mapped after the replay's commands.
   let reads=[];
@@ -61,8 +73,13 @@ export function createPageGpu(device,{watchdogMs=WATCHDOG_MS}={}){
       case 'shader':objs.set(c.g[1],device.createShaderModule({code:c.code}));break;
       // Canvas 2D (docs/designissues/2026-11-08-canvas-2d.md): the pixels Lean drew, the whole canvas.
       case 'pixels':{
-        const raw=Uint8Array.from(atob(c.data),ch=>ch.charCodeAt(0)),bytes=c.rle?unrle(raw,c.w,c.h):raw;
-        device.queue.writeTexture({texture:of(c.g)},bytes,{bytesPerRow:c.w*4},[c.w,c.h]);stats.pixels++;break;
+        // Only the rectangle drawn since the last pixels (x, y; the whole canvas when absent).
+        // One scratch buffer, the size of the largest rectangle so far: writeTexture copies it.
+        const need=c.w*c.h*4;
+        if(c.rle&&(!scratch||scratch.byteLength<need))scratch=new Uint8Array(need);
+        const bytes=decodePixels(c,c.rle?scratch.subarray(0,need):undefined);
+        device.queue.writeTexture({texture:of(c.g),origin:[c.x??0,c.y??0]},bytes,{bytesPerRow:c.w*4},[c.w,c.h]);
+        stats.pixels++;stats.pixelBytes=(stats.pixelBytes??0)+bytes.byteLength;break;
       }
       case 'pipeline':{
         const module=of(c.shader);

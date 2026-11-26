@@ -11,7 +11,7 @@ const source = join(here, '..', '..', '..', 'labs', 'demos', 'foafnaut');
 const target = join(here, '..', 'app');
 
 /** Files of labs/demos/foafnaut that the program uses, relative to it. */
-export const SHARED = ['finite_floats.ts', 'native_console.ts', 'native_html_document.ts', 'native_html_engine.ts', 'native_net.ts'];
+export const SHARED = ['finite_floats.ts', 'native_console.ts', 'native_html_document.ts', 'native_html_engine.ts', 'native_html_layout.ts', 'native_net.ts'];
 /** Files outside labs/demos/foafnaut that the program imports: [import path relative to it, path in app/].
  * The import lines of the copied files are rewritten to the copy, so the package holds no path above app/. */
 export const OUTSIDE = [['../../../docs/web/hub/foafnaut/page-load.mjs', 'hub/page-load.mjs'], ['../../../docs/web/hub/foafnaut/log-gate.mjs', 'hub/log-gate.mjs'],

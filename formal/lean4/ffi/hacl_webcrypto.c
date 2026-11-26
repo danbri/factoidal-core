@@ -384,13 +384,15 @@ LEAN_EXPORT uint8_t l4_web_hacl_rsapss_verify(uint8_t alg, b_lean_obj_arg n, b_l
  * dropped its copy first) its bytes are zeroed in place before it is freed; a shared
  * array cannot be zeroed without changing another holder's value, so it is only
  * released. The answer is the array's size in both cases (the Lean specification of
- * `wipe` is `b.size`); `l4_web_hacl_wiped` counts the bytes actually zeroed, for tests. */
+ * `wipe` is `b.size`); `l4_web_hacl_wiped` counts the bytes actually zeroed, for tests.
+ * The count is added to and read atomically: engine sessions on two threads can wipe at
+ * the same time (docs/designissues/2026-11-26-foafnaut-engine-sessions.md, item 9). */
 static uint64_t l4w_wiped_total = 0;
 LEAN_EXPORT lean_obj_res l4_web_hacl_wipe(lean_obj_arg b) {
   size_t n = L4W_SIZE(b);
   if (lean_is_exclusive(b) && n) {
     Lib_Memzero0_memzero0(L4W_PTR(b), (uint64_t)n);
-    l4w_wiped_total += n;
+    __atomic_fetch_add(&l4w_wiped_total, (uint64_t)n, __ATOMIC_RELAXED);
   }
   lean_dec_ref(b);
   return lean_usize_to_nat(n);
@@ -399,5 +401,5 @@ LEAN_EXPORT lean_obj_res l4_web_hacl_wipe(lean_obj_arg b) {
  * (its emitted prototype is `l4_web_hacl_wiped()`), so this takes none; a parameter here
  * made wasm-ld's signatures disagree and every call trap (core Wasm build, 2026-11-09). */
 LEAN_EXPORT lean_obj_res l4_web_hacl_wiped(void) {
-  return lean_io_result_mk_ok(lean_uint64_to_nat(l4w_wiped_total));
+  return lean_io_result_mk_ok(lean_uint64_to_nat(__atomic_load_n(&l4w_wiped_total, __ATOMIC_RELAXED)));
 }

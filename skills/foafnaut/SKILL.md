@@ -131,10 +131,44 @@ Desktop host (Deno, TypeScript, macOS only):
   friends. `native_window_queue_test.ts` checks the queue.
 - `LAB/native_html_worker.ts`, `LAB/native_html_compile.ts`: an engine worker. One ordered
   queue for every slow engine call of its tabs.
-- `LAB/native_html_tabs.ts`: one engine worker per tab, at most 8 live (`--engine-workers N`);
-  routes each call to its tab's worker, a script session's calls to the worker that holds it.
+- `LAB/native_html_tabs.ts`: one engine per tab, at most 8 live (`--engine-workers N`);
+  routes each call to its tab's engine, a script session's calls to the engine that holds it.
   `--one-engine-worker` keeps one worker for all tabs. Trace `native-html-engine-worker`,
   `native-html-tab-first-frame`; summary `engineWorkers`, `tabFirstFrame`, `processRssMB`.
+- Engine sessions (`docs/designissues/2026-11-26-foafnaut-engine-sessions.md`): one native
+  library holds any number of engine states (`web_session_*` in `web_render_shim.c`).
+  `--engine-mode copies` (the default): a worker per tab with its own copy of the library.
+  `sessions`: a worker per tab with a session in the one library. `tasks`: no worker, each tab's
+  session runs on its own Lean dedicated task (`WebSession.lean`), called from the main thread
+  through nonblocking FFI (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in
+  `native_html_engine.ts`); closing a tab cancels its session. `tasks` uses less memory (31 to 34%
+  less than `copies` with 5 to 50 tabs) and, measured without per-frame probes, gives earlier first
+  frames on Linux; it is not the default: that is a question for the owner (record 7f; D11 rested on
+  numbers with the probes). Tests: `engine_sessions_test.ts`;
+  measurement: `LAB/tools/engine_sessions_bench.py` (Linux rig). The remote engine calls are
+  written once over a kernel (`remoteMethods`), for the engine on this thread and the session.
+  `pooled` (a prototype, record section 7): the sessions of `tasks`, served by one or two host
+  workers (`--host-workers 1|2`, `LAB/native_engine_pool.ts`) that make the requests and read
+  the answers; the main thread keeps each tab's lanes (`laneClient`, `native_engine_tasks.ts`).
+- Tabs not shown (`--hidden-tabs`, record section 7): `stopped` (the default) gives their pages
+  no timer turn; `throttled` at most one a second; `running` as the shown page (a load for
+  measurement). With the last two a hidden page's canvas commands are held and replayed when its
+  tab is shown, coalesced by rectangle. Summary `hiddenTabs`.
+- Steady state with many tabs: `engine_sessions_bench.py --scenario steady5|steady20|steady50`
+  (configurations take more host flags: `NAME=LAB:ENGINE:MODE:--hidden-tabs=running`), read with
+  `LAB/tools/engine_sessions_report.py`. Where the CPU of a window went: `perf record -k
+  CLOCK_REALTIME` and `LAB/tools/perf_window_report.py` (the steps start with `mark`). On this
+  VM `/usr/bin/perf` fails for its kernel: use `/usr/lib/linux-tools-6.8.0-151/perf` with `-e
+  cpu-clock`. Whether a WebGPU device can go to another worker: `LAB/tools/webgpu_share_check.ts`.
+- Which subsystem the engine time of a page went to (BubblePopJS, canvas raster, page paint,
+  fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
+  in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
+  `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
+- Audio and video: no playback in pages, no `AudioContext`, no audio output in the Mac host, no
+  hardware video decode. What exists (decoders in WasmVM, Ogg and WebM in Lean, WebCodecs object
+  model) and the owner's open decisions:
+  `docs/designissues/2026-11-26-foafnaut-audio-video-status.md`; plan
+  https://github.com/danbri/factoidal-core/issues/588.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
@@ -153,7 +187,9 @@ Engine in the lab, Lean modules at the top of `LAB`:
 - `WebRenderScript.lean` chooses the page script engine (`defaultEngine`).
   `WebScripts.lean` runs page scripts.
 - `SVG*.lean`, `Image*.lean`, `RenderPlan.lean`, `Font.lean`, `Graphics.lean`.
-- `web_render_shim.c` is the C ABI of the engine.
+- `web_render_shim.c` is the C ABI of the engine: engine sessions (`web_session_new`,
+  `web_session_new_task`, `web_session_cancel`, `web_session_free`) and the calls on them; the
+  calls with no session use a default session. `WebSession.lean` is a session on a Lean task.
 
 Engine in the library, under `formal/lean4/L4Factoidal/`:
 
@@ -360,6 +396,17 @@ software Vulkan times: do not compare them with a Mac. A Lean engine change need
 first. Before this, the cost of having no rig: on 2026-11-25 the gesture work of issue 1031 was
 pushed with only a type check, because the window could not run here.
 
+A page that animates by script (a canvas game) is paced by its timer turns. `--perf-summary`
+prints a "timer turns" line (each `native-html-script` line of cause `timers` has the same
+fields): the engine's own time of a turn, `callMs` (the ask to the answer minus the engine's
+time: worker messages, FFI, the answer's wire form such as `PageCanvas.rle`) and `waitMs` (the
+answer to the next ask). Frame time is about their sum. Example, Particle Rex on the rig,
+2026-11-26: engine 32 ms, call 4.5 ms, wait 0.2 ms, 26.7 fps. To split the engine's time by Lean
+function, drive the page with no window (a Deno script that calls `scriptSession` with
+`action:"advance"`) under `perf record --call-graph dwarf`; the frame-pointer call graph of a
+window run does not reach into the Lean library. Issue
+https://github.com/danbri/factoidal-core/issues/1098 (Particle Rex frame costs).
+
 ```sh
 # tools (Ubuntu 24.04): elan and the pinned Lean (skills/session-restore), then
 apt-get install -y --no-install-recommends time linux-tools-generic valgrind libc++-dev libc++abi-dev
@@ -378,12 +425,34 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   With no `"checks":false` each frame also computes the probe pixels (two to three times the time).
 - Exact cost by function: `valgrind --tool=callgrind` on that command at COUNT 1 and COUNT 4;
   the difference, divided by 3, is one frame. COUNT 0 is start, font load and first compile.
+- That request has no `layers` and no `shell`: it measures the path with no layers, which neither
+  host uses for frames. A browser frame is `"layers":true,"binary":true` with a `shell` object (see
+  `spinal_perf.ts`). Cost of not saying so: the 249 M instructions of the 2026-11-25 briefing were
+  of that path; the browser's frame on a kept layout was 12-15 M (issue 1124).
+- Hover, press and scroll-band frames: `--document-bin-seq SEQ.json FONT OUT COUNT` (call `i`
+  sends element `i` mod the array's length). `--document-bin-check SEQ.json FONT COUNT` checks the
+  page answers kept or patched by `have` against whole answers.
+- The native host tests of `test.sh` (64 checks, against 12 without) run on Linux when
+  `.build/web-render/engines/libweb-render.dylib` exists and `web-render.wasm` is in that
+  directory: `ln -sf libweb-render.so libweb-render.dylib`, and copy `web-render.{mjs,wasm}` from
+  `.build/native-html/runtime` (the rig's release). The Wasm engine is then the release, not this
+  checkout.
   `perf` on this kind of VM has only `-e cpu-clock` (no hardware counters); the binary is
   `/usr/lib/linux-tools/*/perf`.
+- Canvas 2D cost: µs per canvas call and pixel bytes uploaded per frame,
+  `labs/demos/foafnaut/canvas_cost_bench.ts` (header has the command); Particle Rex in play on
+  the rig with `--steps fixtures/particle-rex-play.json`. How the pixels reach the GPU and what
+  each call costs: [docs/designissues/2026-11-26-canvas-upload-and-call-cost.md](../../docs/designissues/2026-11-26-canvas-upload-and-call-cost.md).
 - Real-world libraries on each engine (right answer, CPU time, memory), under a memory
   watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
   unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
   2026-11-09 the kernel then killed a build on the same machine.
+- A change to `formal/lean4/L4Factoidal/JS/Interp.lean` (above all to the arguments of a
+  function of the interpreter's mutual block) is checked with `lake build L4Factoidal.JS.FuelMonoAll`
+  as well (from `formal/lean4`; about 20 minutes): the fuel-monotonicity statements name each
+  function's arguments, and neither the engine build nor `JS.RegressionTests` imports them. Cost:
+  on 2026-11-26 068b8b4b0 gave `callBody` one more argument; the engine built and the tests passed,
+  and `FuelMonoIH` on main did not compile for about four hours (repair 861c0f1ad).
 - A repaired defect of BubblePopJS gets its scripts in
   `formal/lean4/L4Factoidal/JS/RegressionTests.lean`: `#guard out "<script>" == [lines]`, with
   the lines that QuickJS-NG and Node both print. `lake build L4Factoidal.JS` runs them. When a
@@ -453,6 +522,52 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps (`--gesture-sweep`,
+  `--scroll-sweep`, `--command-sweep` and the others that set `commands`) sets `everyFrame` in
+  `run_html.ts` (`--watch-sweep` does not): every frame asks Lean for CPU probes
+  (`Scene.checks`, the scene drawn on the CPU at six points). A window in use asks for none in an
+  interactive frame (`checks:false`) and for one probe frame once it is idle. So the frame times
+  of such a run are not those of the window in use. 2026-11-26, 5 tabs, `tasks`, one run each:
+  Lean frame p50 591 ms with the probes, 70 ms with `--idle-checks-only`; new tab first frame
+  p50 1,300 and 299 ms. In a profile of a tab's first frame, 95% of the spare engine's samples
+  were in `Scene.checks`. The first-frame numbers on which D11 of the engine sessions record was
+  decided include the probes. Measure frames of the window in use with `--idle-checks-only`; keep
+  the probes for correctness runs.
+
+- A new tab (`showTab`) stops the load in progress in the tab that was shown, and that tab keeps
+  its old page. 2026-11-26: the first steady-state trial opened the next tab 2 s after sending
+  tab 2 to `particle-rex.html`, which needs about 3.7 s; tab 2 kept the new tab page, so the "load
+  in one background tab" ran no script. Let each step wait for a settled frame, and check
+  `pagesLoaded` in the bench output.
+- In Deno 2.9.4, `structuredClone` or `postMessage` of a `GPUDevice`, `GPUBuffer` or `GPUTexture`
+  does not fail: it gives an empty object with no methods. A check that only looks for an error
+  reads this as a device that moved. `tools/webgpu_share_check.ts` checks the prototype and a
+  call on the copy.
+- `--engine-mode copies` loads each engine from a copy of the library and deletes the file, so
+  `perf` names none of the engine's functions in those workers (`[unknown]`). Make the script with
+  `--show-mmap-events` and give `perf_window_report.py --library` the original.
+
+- `tabFirstFrame` counts only the tabs that drew before the next tab was shown: `run_html.ts`
+  times one shown tab (`tabShown`), and a newer tab replaces it. A sweep that opens tabs faster
+  than they draw drops the slow ones, so the mode with more slow tabs reports a better p95.
+  2026-11-26: the first report of the engine sessions work said "new tab first frame p95 874
+  against 984 ms"; with tabs 1 s apart the counted tabs were 27 and 19 of 35. Open tabs far
+  enough apart that each one draws (`engine_sessions_bench.py --scenario tabs-spaced`, 3 s), and
+  report the count next to the percentiles.
+- A native library whose Lean code runs on threads of its own (a task session's dedicated task,
+  pool workers with work) must not be unloaded while they run. Deno closes its library handles
+  when its runtime ends, and the last `dlclose` unloads the code. 2026-11-26:
+  `engine_sessions_test.ts` passed its 8 tests and then ended with a segmentation fault on every
+  run (gdb: a session task thread in `lean_dec_ref_cold`, a Deno thread in `_dl_close_worker`).
+  `web_session_new_task` now pins the library (`RTLD_NODELETE`; record D12). Read a test's exit
+  code, not only its pass count.
+- Deno's fetch reads `NO_PROXY`/`no_proxy` when a client is made, even a client with an explicit
+  SOCKS5 proxy, and sends listed hosts directly. 2026-11-26, Deno 2.9.8: with the container's
+  `NO_PROXY`, `http://127.0.0.1/` went direct while Tor was the proxy, and a private network
+  test passed 5 of 5 with 2 of the 5 requests outside Tor (3 ms instead of 111 to 182 ms; the
+  SOCKS server saw 3 streams). Make Tor clients with `torHttpClient` and run `proxyCheck`
+  (`labs/demos/foafnaut/tor-wasm/deno/socks5.ts`) before the first Tor fetch. Deno's fetch also
+  refuses the Fetch standard's bad ports (9 and others) before any proxy.
 - A port check with `ss` passes silently where `ss` is not installed (the cloud container). Check
   a port by connecting to it (`(exec 3<>/dev/tcp/127.0.0.1/PORT)`). C tor relays take up to 30 s
   to exit after SIGTERM, so a chutney network that was just stopped can still hold its ports.
@@ -600,6 +715,10 @@ https://github.com/danbri/factoidal-core/issues/1038).
   outside engineer: design rules, numbers, why WPT is high and pages are slow, where help pays off.
 - [Frame pipeline](../../docs/designissues/2026-11-07-foafnaut-frame-pipeline.md), the design
   and measurements of frames, scroll and press.
+- [Kept answers, layout sections, page patches](../../docs/designissues/2026-11-25-foafnaut-display-list.md)
+  (issue 1124): the chrome and no-layers answers kept by key, `layoutSections`, `have` with
+  `{"kept":id}` and byte patches, `--document-bin-seq` and `--document-bin-check`, the band change
+  profile.
 - [Page scripts](../../docs/designissues/2026-11-08-page-scripts.md),
   [BubblePopJS](../../docs/designissues/2026-11-08-lean-js-engine.md),
   [event loop](../../docs/designissues/2026-11-08-event-loop.md),

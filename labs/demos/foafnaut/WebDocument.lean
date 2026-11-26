@@ -18,6 +18,7 @@ import WebState
 import WebSparql
 import WebScripts
 import L4Factoidal.Net.Subresource
+import L4Factoidal.Prim.Bytes
 import L4Factoidal.Rendering.SfntProfile
 import L4Factoidal.FrameCost.Band
 import L4Factoidal.FrameCost.Lru
@@ -1620,21 +1621,17 @@ structure KeptPage where
 /-- Page layer answers kept: the last two, for a chrome change and back. -/
 def keptPageSlots : Nat := 2
 
-initialize keptPageRef : IO.Ref (List KeptPage) ← IO.mkRef []
-/-- Page layers made and given again from `keptPageRef`; then primitives compiled again, kept
-and moved with their geometry kept by the retained compile. -/
-initialize pageWorkRef : IO.Ref (Nat × Nat × Nat × Nat × Nat) ← IO.mkRef (0,0,0,0,0)
-/-- Answers numbered for `damage.id`. -/
-initialize pageIdRef : IO.Ref Nat ← IO.mkRef 0
-
-set_option compiler.extract_closed false in
-private unsafe def pageWorkImpl (reset : Bool) : Nat × Nat × Nat × Nat × Nat :=
-  unsafeBaseIO do
-    let work ← pageWorkRef.get
-    if reset then pageWorkRef.set (0,0,0,0,0)
-    return work
-/-- Page layers made and page layers kept (`pageArtifact`), as `frameWork` counts layouts. -/
-@[implemented_by pageWorkImpl, noinline] private opaque pageWork (reset : Bool) : Nat × Nat × Nat × Nat × Nat
+/-- The page layer answers an engine keeps (`pageArtifact`), a field of `Engine`, so each
+engine session has its own (docs/designissues/2026-11-26-foafnaut-engine-sessions.md, D2;
+before, three `initialize` cells of the process). -/
+structure KeptPages where
+  /-- The last `keptPageSlots` answers, newest first. -/
+  pages : List KeptPage := []
+  /-- Page layers made and given again; then primitives compiled again, kept and moved with
+  their geometry kept by the retained compile (op `frameWork`). -/
+  work : Nat × Nat × Nat × Nat × Nat := (0,0,0,0,0)
+  /-- The last number given to `damage.id`. -/
+  lastId : Nat := 0
 
 private def formSame : NativeSVG.DataForm → NativeSVG.DataForm → Bool
   | .decimal,.decimal => true
@@ -1648,19 +1645,17 @@ are the same objects as those it was made from (`ptrEq`; the entry holds them, s
 addresses are not used again while it is kept) and the band and flags are equal. So it is
 the answer that `artifactWith` gives again for these inputs. -/
 set_option compiler.extract_closed false in
-private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+private unsafe def pageArtifactImpl (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) (retainOn : Bool := true) (layoutOff : Bool := false) :
-    Except String (String × Array ByteArray) :=
-  unsafeBaseIO do
+    KeptPages × Except String (String × Array ByteArray) := Id.run do
     let same := fun (k : KeptPage) => ptrEq k.page page && ptrEq k.boxes boxes && ptrEq k.face face &&
       ptrEq k.extra extra && k.band == b && k.live == live && formSame k.form form && k.checks == checks && k.tree == tree &&
       (retainOn || k.retained.isNone) && k.layoutOff == layoutOff
-    let kept ← keptPageRef.get
+    let kept := kp.pages
     match kept.find? same with
     | some k =>
-      pageWorkRef.modify fun (m,g,x) => (m,g+1,x)
-      return .ok k.answer
+      return ({kp with work := let (m,g,x) := kp.work; (m,g+1,x)},.ok k.answer)
     | none =>
       let layer := pageLayer page extra b
       -- The retained compile only for a frame host's answer: sections, no probes, no tree.
@@ -1695,9 +1690,9 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
               (ptrEq a.primitive.style b.primitive.style || WebPaint.sameStyle bitmaps a.primitive.style b.primitive.style) then a.movedOf b
           else NativeSVG.Reuse.different
         match WebPaint.retainedAnswer reuseLeaf (previous.bind (·.retained)) layer boxes face first (some layoutText) with
-        | .error e => return .error e
+        | .error e => return (kp,.error e)
         | .ok (retained,damage,value,sections,layout,recompiled,moved) =>
-          let id := (← pageIdRef.modifyGet fun n => (n+1,n+1))
+          let id := kp.lastId+1
           let number := fun (n : Nat) => toString n
           let damageText := "{\"id\":" ++ number id ++ ",\"base\":" ++
             (match previous.bind (·.retained),damage with
@@ -1706,32 +1701,36 @@ private unsafe def pageArtifactImpl (page : Rendering.Scene) (extra : List Rende
             (match damage with | some rects => NativeSVG.damageJSON rects | none => "null") ++ "}"
           let value := (value.dropEnd 1).toString ++ ",\"damage\":" ++ damageText ++ "}"
           let answer := (value,sections)
-          keptPageRef.set (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head,layoutOff⟩ : KeptPage) :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g,a,b,c) => (m+1,g,a+recompiled,b+(retained.items.size-recompiled-moved),c+moved)
-          return .ok answer
+          let pages := (((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,some retained,layout,id,head,layoutOff⟩ : KeptPage) :: kept).take keptPageSlots)
+          let (m,g,a,r,c) := kp.work
+          return ({pages,work := (m+1,g,a+recompiled,r+(retained.items.size-recompiled-moved),c+moved),lastId := id},.ok answer)
       | _,_,_,_ =>
         let made := WebRender.artifactWith (WebPaint.cull layer) boxes face live form checks tree layoutOff
-        if let .ok answer := made then
-          keptPageRef.set ((⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,"",layoutOff⟩ :: kept).take keptPageSlots)
-          pageWorkRef.modify fun (m,g,x) => (m+1,g,x)
-        return made
+        match made with
+        | .ok answer =>
+          let work := let (m,g,x) := kp.work; (m+1,g,x)
+          return ({kp with pages := (⟨page,extra,b,boxes,face,live,form,checks,tree,answer,none,"",0,"",layoutOff⟩ :: kept).take keptPageSlots, work},made)
+        | .error _ => return (kp,made)
 
 /-- The page layer of a layers answer. Its value is `artifactWith` of the band of the page,
 with its curves off the band made lines (`WebPaint.cull`: the same pixels, fewer edges for a
 zoomed group);
 the engine gives a kept answer again when the inputs are the same objects (a frame whose
-only change is in the chrome: loading, the address, a pressed chrome control, the menu). -/
+only change is in the chrome: loading, the address, a pressed chrome control, the menu).
+The kept answers are the engine's own (`kp`, `Engine.pages`); the reference body keeps none. -/
 @[implemented_by pageArtifactImpl]
-def pageArtifact (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+def pageArtifact (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree : Bool) (_retainOn : Bool := true) (layoutOff : Bool := false) :
-    Except String (String × Array ByteArray) :=
-  WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff
+    KeptPages × Except String (String × Array ByteArray) :=
+  (kp,WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff)
 
-theorem pageArtifact_eq (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
+/-- Kind: equality. Says: the answer of `pageArtifact` (its reference body) is `artifactWith` of
+the culled page layer, whatever the kept answers. Does not say: what the implementation keeps. -/
+theorem pageArtifact_eq (kp : KeptPages) (page : Rendering.Scene) (extra : List Rendering.Node) (b : Band)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face) (live : Bool)
     (form : NativeSVG.DataForm) (checks tree retainOn layoutOff : Bool) :
-    pageArtifact page extra b boxes face live form checks tree retainOn layoutOff =
+    (pageArtifact kp page extra b boxes face live form checks tree retainOn layoutOff).2 =
       WebRender.artifactWith (WebPaint.cull (pageLayer page extra b)) boxes face live form checks tree layoutOff := rfl
 
 /-- A data form as numbers, for the keys of kept answers. -/
@@ -1803,6 +1802,161 @@ def plainArtifact (scene : Rendering.Scene) (marks : List Rendering.Node) (shell
     | some value => WebShell.compose value page width height addressFont
     | none => page)) boxes face live form checks tree
 
+/-- The `damage.id` that a retained page layer answer ends with (`pageArtifact`: its text ends
+`"damage":{"id":N,...}}`); `none` for an answer with no damage (the plain path). The pattern
+holds quote marks, which JSON writes escaped inside a string, so only the damage object matches. -/
+def pageAnswerId (text : String) : Option Nat :=
+  match (text.splitOn "\"damage\":{\"id\":").getLast? with
+  | none => none
+  | some tail =>
+    if tail.length == text.length then none
+    else (String.ofList (tail.toList.takeWhile Char.isDigit)).toNat?
+
+#guard pageAnswerId "{\"a\":1,\"damage\":{\"id\":42,\"base\":null,\"rects\":null}}" == some 42
+#guard pageAnswerId "{\"a\":\"\\\"damage\\\":{\\\"id\\\":7\"}" == none
+#guard pageAnswerId "{\"abi\":1}" == none
+
+/-- Whether the 8 bytes at `p` differ: `ldU64LE` of each (bytes past the end read 0). -/
+def wordsDifferRef (old new : ByteArray) (p : USize) : Bool :=
+  Prim.Bytes.ldU64LE old p != Prim.Bytes.ldU64LE new p
+
+/-- `wordsDifferRef` with one 8-byte load from each array where the word is inside both
+(`Prim.Bytes.ldU64LEIn`, C), by the `USize` window test of `ldU64LE`. Equal to the reference:
+`wordsDiffer_eq`. -/
+@[inline] def wordsDiffer (old new : ByteArray) (p : USize) : Bool :=
+  if h : p < p + 8 ∧ p + 8 ≤ old.usize ∧ p + 8 ≤ new.usize then
+    have win : ∀ (d : ByteArray), p + 8 ≤ d.usize → p.toNat + 8 ≤ d.usize.toNat := fun d hd => by
+      have a := USize.le_iff_toNat_le.mp hd
+      rw [Prim.Bytes.usize_add_small h.1 8 (by rw [Prim.Bytes.usize_eight_toNat]; omega), Prim.Bytes.usize_eight_toNat] at a
+      exact a
+    Prim.Bytes.ldU64LEIn old p (win old h.2.1) != Prim.Bytes.ldU64LEIn new p (win new h.2.2)
+  else wordsDifferRef old new p
+
+theorem wordsDiffer_eq : wordsDiffer = wordsDifferRef := by
+  funext old new p
+  unfold wordsDiffer
+  split
+  · simp only [wordsDifferRef, ← Prim.Bytes.ldU64LE_eq_in]
+  · rfl
+
+/-- The first word index from `w` (below `words`) whose 8 bytes differ (`differs` at byte
+`8*w`), or `words`. `USize` indices: a loop with no allocation. -/
+@[specialize] def nextDiffering (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words w : USize) : USize :=
+  if h : w < words then
+    if differs old new (8*w) then w else nextDiffering differs old new words (w+1)
+  else words
+termination_by words.toNat - w.toNat
+decreasing_by have := Prim.Bytes.usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega
+
+/-- The first word index from `w` (below `words`) whose 8 bytes are the same, or `words`. -/
+@[specialize] def nextSame (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words w : USize) : USize :=
+  if h : w < words then
+    if differs old new (8*w) then nextSame differs old new words (w+1) else w
+  else words
+termination_by words.toNat - w.toNat
+decreasing_by have := Prim.Bytes.usize_succ_toNat h; have := USize.lt_iff_toNat_lt.mp h; omega
+
+/-- The ranges of differing words from word `w` on, after `out`; a run of differing words that
+starts at most `gap` bytes after the last range ends joins it. One step per run; `fuel` bounds
+the steps (each step moves past at least one word, so `words+1` is enough). -/
+@[specialize] def wordRanges (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (words : USize) (gap : Nat) :
+    Nat → USize → Array (Nat × Nat) → Array (Nat × Nat)
+  | 0, _, out => out
+  | fuel+1, w, out =>
+    let s := nextDiffering differs old new words w
+    if s < words then
+      let e := max (s+1) (nextSame differs old new words s)
+      let (s,e) := (s.toNat,e.toNat)
+      match out.back? with
+      | some (o,l) =>
+        if 8*s ≤ o+l+gap then wordRanges differs old new words gap fuel e.toUSize (out.pop.push (o,8*e-o))
+        else wordRanges differs old new words gap fuel e.toUSize (out.push (8*s,8*(e-s)))
+      | none => wordRanges differs old new words gap fuel e.toUSize (out.push (8*s,8*(e-s)))
+    else out
+
+/-- The byte ranges `(offset, length)` where `new` differs from `old`, for two arrays of one size
+(issue 1124, stage C), with `differs` the test of one 8-byte word: the word ranges
+(`wordRanges`), then the last bytes one by one. A run that starts at most `gap` bytes after the
+last one ends joins it. Offsets and lengths are multiples of 4 when the size is. -/
+@[specialize] def changedRangesWith (differs : ByteArray → ByteArray → USize → Bool) (old new : ByteArray) (gap : Nat := 64) :
+    Array (Nat × Nat) := Id.run do
+  let size := new.size
+  let words := size / 8
+  -- Word indices in `USize`: an array's size is below `USize.size`, so `words` is exact.
+  let mut out := wordRanges differs old new words.toUSize gap (words+1) 0 #[]
+  for i in [8*words:size] do
+    if old.get! i != new.get! i then
+      let at_ := i - i % 4
+      match out.back? with
+      | some (o,l) =>
+        if at_ ≤ o+l+gap then out := out.pop.push (o,max (o+l) (min size (at_+4))-o)
+        else out := out.push (at_,min size (at_+4)-at_)
+      | none => out := out.push (at_,min size (at_+4)-at_)
+  return out
+
+/-- `changedRangesWith` with the fast word test; the same ranges as with the reference test
+(`changedRanges_eq`). -/
+def changedRanges (old new : ByteArray) (gap : Nat := 64) : Array (Nat × Nat) :=
+  changedRangesWith wordsDiffer old new gap
+
+theorem changedRanges_eq (old new : ByteArray) (gap : Nat) :
+    changedRanges old new gap = changedRangesWith wordsDifferRef old new gap := by
+  rw [changedRanges, wordsDiffer_eq]
+
+/-- The bytes of `new` in `ranges`, in order: a patch section. -/
+def rangeBytes (new : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
+  ranges.foldl (fun acc (o,l) => new.copySlice o acc acc.size l) (ByteArray.emptyWithCapacity (ranges.foldl (fun n r => n+r.2) 0))
+
+/-- Applying a patch: `old` with the bytes of `patch` written at `ranges`, in order. The host does
+this (`native_html_layout.ts`, `applyPatch`); the tests check that it gives `new`. -/
+def applyRanges (old patch : ByteArray) (ranges : Array (Nat × Nat)) : ByteArray :=
+  (ranges.foldl (fun (acc,at_) (o,l) => (patch.copySlice at_ acc o l,at_+l)) (old,0)).1
+
+-- The guards run the reference word test (the interpreter has no code for the C load).
+#guard let a := ByteArray.mk #[1,2,3,4,5,6,7,8,9,10,11,12]; let b := ByteArray.mk #[1,2,3,4,5,6,7,9,9,10,11,13]
+  let r := changedRangesWith wordsDifferRef a b 0
+  r == #[(0,12)] && applyRanges a (rangeBytes b r) r == b
+#guard let a := ByteArray.mk ((Array.range 200).map (·.toUInt8)); let b := (a.set! 40 0).set! 190 0
+  let r := changedRangesWith wordsDifferRef a b 0
+  r == #[(40,8),(184,8)] && changedRangesWith wordsDifferRef a b 200 == #[(40,152)] &&
+    changedRangesWith wordsDifferRef a a == #[] && applyRanges a (rangeBytes b r) r == b
+
+/-- A patch of one section as JSON: the base answer, the ranges, the full size. -/
+def patchJSON (base : Nat) (ranges : Array (Nat × Nat)) (size : Nat) : String :=
+  "{\"base\":" ++ toString base ++ ",\"ranges\":[" ++
+    ",".intercalate (ranges.toList.map fun (o,l) => "[" ++ toString o ++ "," ++ toString l ++ "]") ++
+    "],\"size\":" ++ toString size ++ "}"
+
+/-- The page part of a layers answer for a host that holds the page answer `held` (its
+`damage.id`, storage bytes and tile bytes; request field `have`, issue 1124 stage C):
+- this frame's answer is `held` itself (`pageAnswerId`): `{"kept":id}` and empty sections;
+- the same section sizes and at most half the bytes changed: the answer's text with
+  `"dataPatch"` and `"tilesPatch"` (`changedRanges` against `held`), and as sections only the
+  changed bytes (`rangeBytes`). `applyRanges` of the held bytes and a patch gives this frame's
+  section (`changedRanges_apply` below is the check over test arrays);
+- otherwise the answer as it is.
+The second result says the page is kept. -/
+def pageForHost (text : String) (sections : Array ByteArray) (held : Option (Nat × ByteArray × ByteArray)) :
+    (String × Array ByteArray) × Bool :=
+  -- `held` first: with nothing held the page text is not read.
+  match held with
+  | none => ((text,sections),false)
+  | some (h,data,tiles) =>
+  match pageAnswerId text with
+  | none => ((text,sections),false)
+  | some id =>
+    if h == id then (("{\"kept\":" ++ toString h ++ "}",sections.map fun _ => ByteArray.empty),true)
+    else match sections with
+      | #[newData,newTiles] =>
+        if data.size != newData.size || tiles.size != newTiles.size then ((text,sections),false) else
+        let dr := changedRanges data newData
+        let tr := changedRanges tiles newTiles
+        let changed := (dr ++ tr).foldl (fun n r => n+r.2) 0
+        if 2*changed > newData.size+newTiles.size then ((text,sections),false) else
+        (((text.dropEnd 1).toString ++ ",\"dataPatch\":" ++ patchJSON h dr newData.size ++
+          ",\"tilesPatch\":" ++ patchJSON h tr newTiles.size ++ "}",#[rangeBytes newData dr,rangeBytes newTiles tr]),false)
+      | _ => ((text,sections),false)
+
 /-- The view under the chrome and the band of the page layer of a layers answer. A chrome that
 may fold: the band covers the view under the strip, the most it shows, so a change of
 `collapse` keeps the band and only the chrome layer is drawn again. -/
@@ -1811,43 +1965,56 @@ def layersBand (shell : WebShell.Shell) (width height : Nat) : Nat × Band :=
   let view := max 1 (height-(if shell.collapsible then bandTop shell width else top))
   (view,band shell.scroll view)
 
-/-- The answer to a render with `layers:true`. -/
-def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
+/-- The answer to a render with `layers:true`, and the page layer answers kept after it
+(`pageArtifact`). -/
+def layersJSON (kp : KeptPages) (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List Rendering.Node)
     (boxes : Array Rendering.Layout.Box) (face : Option Rendering.FontProvider.Face)
     (width height : Nat) (live : Bool) (form : NativeSVG.DataForm) (checks tree : Bool) (hoverRules : Bool := false)
     (canvases : List Rendering.Layout.Box := []) (animating : Bool := false) (animations : Bool := false)
     (retainOn : Bool := true) (splashing : Bool := false) (addressFont : WebShell.AddressFont := {})
     (chrome : Option (String × Array ByteArray) := none)
-    (layout : Option (ByteArray × ByteArray) := none) :
-    Except String (String × Array ByteArray) := do
+    (layout : Option (ByteArray × ByteArray) := none) (held : Option (Nat × ByteArray × ByteArray) := none) :
+    KeptPages × Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) :=
   let top := WebShell.height shell width
   let (view,b) := layersBand shell width height
   -- `layout`: the boxes, glyph runs and links of this band as sections (`WebRender.layoutSections`,
   -- request field `layoutSections`), given by the caller; the page's text then leaves them out.
-  let (pageText,pageSections) ← pageArtifact page extra b boxes face live form checks tree retainOn layout.isSome
-  -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
-  let (chromeText,chromeSections) ← match chrome with
-    | some answer => pure answer
-    | none => chromeArtifact shell page width addressFont face live form.next checks tree
-  let number := fun (n : Nat) => JSON.Json.number (toString n)
-  let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
-    ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
-    ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
-    ("splash",.bool splashing),
-    ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
-    (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
-  let first := match form with
-    | .sections k | .sectionsCpu k => k
-    | _ => 0
-  match layout with
-  | some (nums,text) =>
-    let at_ := first+pageSections.size+chromeSections.size
-    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
-      ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
-      pageSections ++ chromeSections ++ #[nums,text])
-  | none =>
-    return ("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
-      pageSections ++ chromeSections)
+  let (kp,pageAnswer) := pageArtifact kp page extra b boxes face live form checks tree retainOn layout.isSome
+  let answer : Except String ((String × Array ByteArray) × Option (Nat × ByteArray × ByteArray)) := do
+    let (pageText,pageSections) ← pageAnswer
+    -- `chrome`: the caller's kept chrome answer for these inputs (`keptChrome`), else made here.
+    let (chromeText,chromeSections) ← match chrome with
+      | some answer => pure answer
+      | none => chromeArtifact shell page width addressFont face live form.next checks tree
+    let number := fun (n : Nat) => JSON.Json.number (toString n)
+    let place := JSON.Json.object ([("top",number top),("view",number view),("bandTop",number b.top),
+      ("bandHeight",number b.height),("keepFrom",number b.keepFrom),("keepTo",number (b.keepTo view)),
+      ("composite",.string compositeShader),("hoverRules",.bool hoverRules),("animating",.bool animating),("animations",.bool animations),
+      ("splash",.bool splashing),
+      ("scrollLimit",number (scrollLimit (WebPrint.contentHeight boxes) view))] ++
+      (if canvases.isEmpty then [] else [("canvases",canvasRects canvases b width),("canvasBlit",.string canvasBlitShader)]))
+    let first := match form with
+      | .sections k | .sectionsCpu k => k
+      | _ => 0
+    -- `held` (issue 1124, stage C): the page answer the host holds (`pageForHost`). The second
+    -- result is this frame's page answer whole (its id and sections), for the engine to keep.
+    -- Only for a host with layout sections (the one that sends `have`): `pageAnswerId` reads the
+    -- page text, which without them holds the boxes, glyph runs and links (about 400 KB).
+    let sent : Option (Nat × ByteArray × ByteArray) := if layout.isNone then none else
+      match pageAnswerId pageText,pageSections with
+      | some id,#[data,tiles] => some (id,data,tiles)
+      | _,_ => none
+    let ((pageText,pageSections),keptPage) := pageForHost pageText pageSections held
+    match (if keptPage then none else layout) with
+    | some (nums,text) =>
+      let at_ := first+pageSections.size+chromeSections.size
+      return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++
+        ",\"layout\":{\"section\":" ++ toString at_ ++ ",\"strings\":" ++ toString (at_+1) ++ "}}",
+        pageSections ++ chromeSections ++ #[nums,text]),sent)
+    | none =>
+      return (("{\"layers\":" ++ place.toString ++ ",\"page\":" ++ pageText ++ ",\"chrome\":" ++ chromeText ++ "}",
+        pageSections ++ chromeSections),sent)
+  (kp,answer)
 
 /-- The fonts the engine holds between calls, so that a scroll does not read them
 again. The first is the primary font; the others draw the characters it lacks, in
@@ -3228,15 +3395,6 @@ theorem RuleMatcher.make_matched (rules : List Rendering.CSS.Rule) (flat : DOM.D
       | .some ts => (Rendering.CSS.ScopedIndex.build rules).matched ((Rendering.CSS.ElemKeys.of ts.tree).get ts.tree) ts id state := by
   cases treeScope <;> rfl
 
-/-- Kind: equivalence. With no shadow tree the tables give the matches of every rule tried
-against the arena's own keys (`ElemKeys.get_of`): the keys table is the arena. -/
-theorem RuleMatcher.make_matched_keys (rules : List Rendering.CSS.Rule) (flat : DOM.Dom)
-    (state : Rendering.CSS.ElementState) (id : Nat) :
-    (RuleMatcher.make rules flat Option.none state).matched id =
-      (Rendering.CSS.RuleIndex.build rules).matched (Rendering.CSS.readKeys flat) flat id state := by
-  show (Rendering.CSS.RuleIndex.build rules).matched ((Rendering.CSS.ElemKeys.of flat).get flat) flat id state = _
-  rw [Rendering.CSS.ElemKeys.get_of]
-
 /-- The matches of every element of a tree of `size` nodes, each made when first asked for (one
 thunk a node), with the animated values after them (`CSS.withAnimated`). The matcher is an
 argument, made before the call: its tables are made once, whatever the number of elements. -/
@@ -3696,6 +3854,9 @@ theorem frameWith_eq (h : Holds) (memo : Lru LayoutKey Laid) (valid : ValidEntry
 What the engine keeps between calls of its C ABI, as a value: the shim holds it and
 passes it to each call, which gives back the next one. -/
 
+/-- Page answers the engine keeps for `have` (the frame on screen and a prefetched band). -/
+def pagesSentSlots : Nat := 3
+
 /-- The engine's state between calls. -/
 structure Engine where
   /-- Held fonts, web fonts and images (`fontLoad`, `imageLoad`). -/
@@ -3732,8 +3893,8 @@ structure Engine where
   opaqueImages : Std.HashSet String := {}
   opaqueFull : Bool := false
   /-- The `@font-face` faces of the last script session started that has web fonts
-  (`canvasFaceFonts`, issue 1075): its Canvas 2D text picks them by family. One engine worker
-  holds one tab, so this is that tab's page; a frame that starts later with web fonts of its
+  (`canvasFaceFonts`, issue 1075): its Canvas 2D text picks them by family. One engine (a worker
+  or a session) holds one tab, so this is that tab's page; a frame that starts later with web fonts of its
   own replaces it. -/
   canvasFaces : Array Rendering.SfntProfile.Font := #[]
   /-- The live regions of the last accessibility tree given (`accessibilityAnswer`); none
@@ -3748,6 +3909,12 @@ structure Engine where
   /-- The layout sections of the last band (`WebRender.layoutSections`), by the layout's number
   and the band's top (issue 1124, stage B). -/
   layoutKept : Option ((Nat × Nat) × (ByteArray × ByteArray)) := none
+  /-- The last page layer answers given, whole: `damage.id`, storage bytes, tile bytes
+  (`pageForHost`, issue 1124 stage C); at most `pagesSentSlots`. -/
+  pagesSent : List (Nat × ByteArray × ByteArray) := []
+  /-- The page layer answers kept for the next frame, their counts and the last `damage.id`
+  (`pageArtifact`, `layersJSON`). -/
+  pages : KeptPages := {}
 
 instance : Inhabited Engine := ⟨{}⟩
 
@@ -4081,7 +4248,8 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   if str request "op" == "frameWork" then
     let reset := request.field? "reset" == some (.bool true)
     let (layouts,kept,repaints) ← modifyGet fun e => (e.frameWork,if reset then {e with frameWork := (0,0,0)} else e)
-    let (pagesMade,pagesKept,recompiled,reused,moved) := pageWork reset
+    let (pagesMade,pagesKept,recompiled,reused,moved) ← modifyGet fun e =>
+      (e.pages.work,if reset then {e with pages := {e.pages with work := (0,0,0,0,0)}} else e)
     let (chromesKept,framesKept) ← modifyGet fun e => (e.keptWhole,if reset then {e with keptWhole := (0,0)} else e)
     let paints ← modifyGet fun e => (e.paintWork,if reset then {e with paintWork := 0} else e)
     let number := fun (n : Nat) => JSON.Json.number (toString n)
@@ -4171,9 +4339,13 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
   let (slotRequest,slotValues) := WebPaint.slotKey (layoutRequest request)
   let key : LayoutKey := ⟨html,slotRequest,width,height,layoutTop shell width,fonts,
     heldNamed holds (← namedImages request),requestPointer request⟩
+  -- A canceled call (an engine session that the host stopped, `WebSession.cancel`) stops here,
+  -- before its layout, and below, before its paint. A layout in progress runs to its end.
+  if ← WebWasm.Machine.canceled then throw "engine call canceled"
   let laid ← laidOut key
   let (laid,slotValues) ← if laid.paint.unpaintable.isEmpty || slotValues.isEmpty then pure (laid,slotValues)
     else do pure (← laidOut {key with request := layoutRequest request},{})
+  if ← WebWasm.Machine.canceled then throw "engine call canceled"
   -- Paint-only values: slots and animations at the page clock (`animationTime`, ms),
   -- with the clicks of the page (`animationClicks`: [[ms, pageX, pageY], ...]).
   let now := natField request "animationTime"
@@ -4322,9 +4494,22 @@ def answerWith {M : Type → Type} [Monad M] [WebWasm.Machine M] (laidOut : Layo
               modify fun e => {e with layoutKept := some (key,sections)}
               pure (some sections)
         else pure none
-      return withWants laid <| withDiagnostics request laid (← layersJSON value scene marks boxes face width height live form checks tree laid.hoverRules
+      -- `have:{page:id}`: the page answer the host holds, if the engine gave it (`pagesSent`).
+      let haveId : Option Nat := match request.field? "have" with
+        | some h@(.object _) => match h.field? "page" with
+          | some (.number n) => n.toNat?
+          | _ => none
+        | _ => none
+      let sentPages := (← get).pagesSent
+      let held := haveId.bind fun h => sentPages.find? (·.1 == h)
+      let (kp,result) := layersJSON (← get).pages value scene marks boxes face width height live form checks tree laid.hoverRules
         (canvasBoxes laid.dom boxes) animating (!laid.paint.animations.isEmpty)
-        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout)
+        (request.field? "retained" != some (.bool false)) (!splash.isEmpty) holds.addressFont (some chrome) layout held
+      modify fun e => {e with pages := kp}
+      let (answer,sent) ← result
+      if let some page := sent then
+        modify fun e => {e with pagesSent := (page :: e.pagesSent.filter (·.1 != page.1)).take pagesSentSlots}
+      return withWants laid <| withDiagnostics request laid answer
   -- The answer of the last frame when its inputs are these (`PlainKey`): the layout's own
   -- scene (no paint values; a number the engine gave), no marks.
   let plainKey : Option PlainKey :=

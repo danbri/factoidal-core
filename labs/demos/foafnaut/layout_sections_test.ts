@@ -8,6 +8,7 @@ import {strict as assert} from "node:assert";
 import {loadHTML} from "./native_html_engine.ts";
 import {prepareHTML,loadFontFile} from "./native_html_document.ts";
 import {startCompileWorker} from "./native_html_compile.ts";
+import {heldPageId,resolvePage} from "./native_html_layout.ts";
 
 const suffix=Deno.build.os==="darwin"?"dylib":"so";
 const library=new URL(`./.build/web-render/engines/libweb-render.${suffix}`,import.meta.url).pathname;
@@ -57,4 +58,31 @@ Deno.test({name:"layout sections through the engine worker",ignore:noLibrary,san
     const {layers}=await worker.compileLayers(doc.source,1600,1000,options);
     same(json.page.webRender as unknown as Web,layers.page.webRender as unknown as Web,"worker");
   }finally{worker.terminate();}
+}});
+// Stage C: with `have` naming the page answer the host holds, Lean answers `{kept:id}` or a byte
+// patch; resolvePage makes the page whole, and its storage floats and tile words are those of the
+// answer without `have`.
+Deno.test({name:"kept and patched page answers made whole equal the whole answers",ignore:noLibrary,async fn(){
+  const engine=await loadHTML(library);
+  await loadFontFile(engine,font,"Noto Sans");
+  const links=Array.from({length:60},(_,i)=>`<p>Line ${i} <a href="https://x.test/${i}">link ${i}</a> and text.</p>`).join("");
+  const html=`<!doctype html><style>a{color:#0000ee}a:hover{color:#ff0000}</style>${links}`;
+  const doc=await prepareHTML(engine,"https://x.test/",undefined,html);
+  const base={...doc.request(1600,1000).options,shell,checks:false};
+  const steps=[{},{},{shell:{...shell,loading:true}},{hover:9},{hover:15},{},{shell:{...shell,scroll:900}},{shell:{...shell,scroll:900}}];
+  let held=engine.compileLayers(doc.source,1600,1000,base);
+  const kinds={kept:0,patched:0,whole:0};
+  for(const step of steps){
+    const options={...base,...step};
+    const have=heldPageId(held.page);
+    const raw=engine.compileLayers(doc.source,1600,1000,have===undefined?options:{...options,have:{page:have}});
+    const kind=typeof (raw.page as {kept?:unknown}).kept==="number"?"kept":(raw.page as {dataPatch?:unknown}).dataPatch?"patched":"whole";
+    kinds[kind]++;
+    const next=resolvePage(raw,held.page);
+    const whole=engine.compileLayers(doc.source,1600,1000,options);
+    assert.deepEqual(new Uint8Array((next.page.data as Float32Array).slice().buffer),new Uint8Array((whole.page.data as Float32Array).slice().buffer),`${kind}: storage floats`);
+    assert.deepEqual([...next.page.tiles as Uint32Array],[...whole.page.tiles as Uint32Array],`${kind}: tile words`);
+    held=next;
+  }
+  assert(kinds.kept>0&&kinds.patched>0,`kept and patched answers occur: ${JSON.stringify(kinds)}`);
 }});

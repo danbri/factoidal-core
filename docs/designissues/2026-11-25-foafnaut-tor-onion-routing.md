@@ -526,3 +526,130 @@ Limits:
   fetched by its tag.
 - Pages: no change. https://github.com/danbri/factoidal-core/issues/1058 stays open for the page
   path; its expected failure (`state_backend()` is "lws-sealed") still fails there.
+
+## 16. Stream isolation, new identity, periodic save, memory quota (2026-11-26)
+
+Owner, 2026-11-26, verbatim: "keep improving Tor if there is more to do".
+
+- Stream isolation: `stream_request(partition, ...)` uses one Arti `isolated_client()` per
+  partition (for a browser, the top-level site). Streams of the same partition may share a
+  circuit; streams of different partitions never do. An empty partition is refused, so no caller
+  shares circuits by accident. Host syntax: `--request PARTITION@HOST:PORT`.
+- New identity: `new_identity()` forgets every partition's isolation, so later streams use
+  circuits that no earlier stream used. Host: `--request NEWID`.
+- Periodic save: with `--state-dir`, the host saves the state every 60 s during a run, and at the
+  end.
+- Memory quota: 256 MiB (`MEMORY_QUOTA_BYTES`) unless the configuration sets `[system.memory]`.
+  On wasm Arti cannot read the machine's memory and used a constant 1 GiB (section 10.4 item 8).
+
+Test (`chutney/run.sh`, private network): exit streams siteA, siteA, siteB, new identity, siteA
+used circuits `Circ 2.0, 2.0, 2.1, 2.2`: PASS "isolation (same partition shares, other partition
+and new identity do not)". The check reads Arti's debug lines ("Got a circuit for ... tunnel_id"),
+because Arti keeps a stream's circuit private; debug is on only in this test (section 12.4). All
+six checks pass. Arti logged "Memory quota tracking initialised max=256 MiB"; the host made two
+periodic saves. `node --test xfail.test.cjs`: 7 pass, 0 fail (out of 7).
+
+Not done: the Foafnaut side that gives each page's top-level site as the partition, and a
+"new identity" control in the browser. Both need the page transport
+(https://github.com/danbri/factoidal-core/issues/1060).
+
+Fix in the same step: the worker's IPv6 check tested only the characters used, so `a:b` and `:::`
+passed it and could have reached Deno's resolver as names. `deno/ip-literal.ts` now accepts IPv4
+with no leading zeros and IPv6 only when the WHATWG URL parser accepts it in brackets; no zone id.
+`deno/ip-literal.test.ts`: 2 pass, 0 fail (out of 2 groups, 28 cases); the old check fails it.
+
+## 17. Decisions of 2026-11-26: desktop on macOS, Keychain, no Hub
+
+Owner, 2026-11-26, verbatim, to three questions (connect Tor to the browser; the storage key;
+the Hub): "YES"; "Storage key - os keychain, yes on macosx. For now we build tor and test it
+macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfellows."
+
+What follows:
+
+- Tor runs only in a dedicated Deno worker of the native desktop host. `isolated_context()` now
+  checks that `globalThis` is a `WorkerGlobalScope` (Deno module workers have no
+  `importScripts`, so the earlier check was wrong); `deno/tor.test.ts` asserts it in a real
+  worker. https://github.com/danbri/factoidal-core/issues/1059 is closed.
+- No Tor in pages or in the Hub, so the page clock gap does not apply:
+  https://github.com/danbri/factoidal-core/issues/1061 is closed as not planned. The page
+  files (`pages.py`, `run.sh`, `node-ref.cjs`) are removed; the probe in `../tor-probe/` stays
+  as the record of the measurement in section 8.
+- The state key comes from the macOS Keychain (`security find-generic-password`, created on
+  first use). Today `deno/tor-state.ts` `keySource()` says "environment"; its expected failure
+  names https://github.com/danbri/factoidal-core/issues/1058.
+- Coordinator's reading, not the owner's words: runs on the Linux chutney network stay as
+  development checks; the test that counts is on macOS.
+
+Plan for connecting the browser (https://github.com/danbri/factoidal-core/issues/1060):
+
+1. The Tor worker serves SOCKS5 on 127.0.0.1, port 0. The username is the partition (the
+   top-level site); the password is a secret made per session, so no other local process can
+   use the port. Names are resolved by the exit (`socks5h`), never locally.
+2. The wasm module gets a stream API (open, read, write, close) over Arti `DataStream`.
+3. The host's network pool uses `Deno.createHttpClient({ proxy: { transport: "socks5",
+   url: "socks5h://127.0.0.1:PORT", basicAuth } })`, one client per partition.
+4. In Tor mode the Lean egress policy makes no local name lookup, no DNS prefetch and no name
+   cache; WebSocket is refused at first (an expected failure with its own issue).
+5. A new identity control in the browser calls `new_identity()` and drops the clients.
+
+Coordination: the owner is rethinking how the macOS build uses Deno (worker count and
+duplication) in another session, under
+https://github.com/danbri/factoidal-core/issues/1031 (threads, tabs, processes, network). What
+Tor needs from any structure: one Tor client for the whole browser (one guard set, one state
+file), not one per tab; its memory apart from page scripts (a worker or a process); a long-lived
+host that keeps circuits across tab changes; and the network pool able to send through a SOCKS5
+proxy with a per-partition user name. The Tor worker does not need its own Deno: it can be a
+worker inside whatever Deno host stays. Steps 3 to 5 wait for that design; steps 1 and 2 do not
+depend on it.
+
+## 18. Stream API, SOCKS5 server, and the NO_PROXY bypass (2026-11-26)
+
+- Module: `stream_open(partition, host, port, timeout)`, `stream_read`, `stream_write` (writes
+  and flushes), `stream_close`, `streams_open`. Each stream is split into an Arti `DataReader`
+  and `DataWriter`, so one read and one write can wait at the same time; a second operation on
+  the same half is refused. Errors give a class ("refused", "timeout", "tor: <Arti error
+  kind>"), not Arti's full text.
+- `deno/socks5.ts`: RFC 1928 CONNECT only, RFC 1929 username/password required. The user name
+  is the partition (top-level site); the password is 32 random bytes per session (hex), compared
+  in time that does not depend on where it differs. BIND, UDP ASSOCIATE and the "no
+  authentication" method are refused. Domain names go to Tor unchanged (the exit resolves them).
+  Listens on 127.0.0.1, port chosen by the system. The worker starts it on op "socks" and gives
+  the port and password only to the thread that started the worker.
+- Finding: Deno's fetch (2.9.8) applies `NO_PROXY` to a client with an explicit SOCKS5 proxy
+  and sends listed hosts directly. The first private network run with SOCKS passed 5 of 5
+  fetches while 2 of them (to 127.0.0.1) bypassed Tor: 3 ms each, and the server saw 3 streams.
+  Repair: `torHttpClient` clears `NO_PROXY` and `no_proxy` before it makes a client (Deno reads
+  them then), and `proxyCheck` fetches loopback (IPv4, IPv6, `localhost`), a 10/8 address and a
+  `.invalid` name with the reserved user `foafnaut-proxy-check`; the server records and refuses
+  those, and the host refuses to fetch through Tor if any did not arrive. `deno/socks5.test.ts`
+  has a control that shows the check sees the bypass when `NO_PROXY` is in force. This is a
+  start-up check only: a later change of the environment by other code in the same process is
+  not seen.
+- Results, private network (chutney, Linux, development check): all 9 checks PASS, including
+  the start-up check and 5 Deno fetches at once through SOCKS5 (2 exit, 3 onion), all 5 seen by
+  the server, exit fetches 111 and 182 ms, onion fetches 563 to 770 ms. `deno test deno/`: 11
+  pass, 0 fail (out of 11; 1 expected failure each for issues 1058 and 1060 among them).
+  `node --test module.test.cjs`: 5 pass, 0 fail (out of 5).
+- Next for https://github.com/danbri/factoidal-core/issues/1060: in Tor mode, the main-thread
+  fetches of `native_html_document.ts` and `run_html.ts` use one `torHttpClient` per top-level
+  site; WebSocket refused at first; new identity control; no local name lookup in the Lean
+  egress policy.
+
+## 19. Public-network failure on the owner's Mac (2026-11-26): cause open
+
+- Run with `--trace-conns`, Tailscale reported off: 158 TCP dials, 2 opened (both completed the
+  TLS and Tor handshakes, about 4.4 KB in each), 113 connect failures (about 70 TimedOut after
+  the 75 s macOS connect timeout), worst event-loop lag 38 ms with no stall. `nc` to a directory
+  authority on 443 timed out in the same state of the Mac.
+- Correction: the message of commit e33848e6b says "The network path drops TCP to Tor relays;
+  not the transport". That is not established. An OONI Probe Tor test made by another user on
+  the same ISP (Hyperoptic, AS56478) at 16:59 UTC reached all 10 directory authorities
+  (https://explorer.ooni.org/measurement/20261126170052.206194_GB_tor_46e6945a9999a913). It
+  was not made from the owner's Mac or house network (a first reading said it was, from
+  "platform macos"). It shows only that the ISP does not block Tor. A block in the house
+  network (a router or firewall with security filtering) or on the laptop (a VPN or Tailscale
+  route, a filter extension) is still possible. What the trace does establish: CPU work in the
+  module did not block the event loop, and the connections that opened worked.
+- Deciding runs: `tailscale status`, `nc`, C tor and `--trace-conns` back to back on the Mac;
+  and a phone test on the house Wi-Fi against mobile data. If `nc` and C
+  tor connect and our client does not, the fault is in our transport.

@@ -684,6 +684,41 @@ def clampByte (x : Float) : Nat :=
   let g := if r < 0.5 then f else if r > 0.5 then f + 1 else if f.toUInt64.toNat % 2 == 0 then f else f + 1
   g.toUInt64.toNat
 
+/-- `n` zero bytes (a new ArrayBuffer's data block, §25.1.3.1 CreateByteDataBlock), as
+`ByteArray.mk (Array.replicate n 0)` writes it: an array of `n` boxed values, then a copy.
+The compiled program runs `zeroBytesFast` (`zeroBytes_eq_fast`). -/
+def zeroBytes (n : Nat) : ByteArray := ⟨Array.replicate n 0⟩
+
+/-- Append `k` zero bytes. -/
+def pushZeroBytes : Nat → ByteArray → ByteArray
+  | 0, b => b
+  | k + 1, b => pushZeroBytes k (b.push 0)
+
+/-- `n` zero bytes pushed into one array of capacity `n`: no boxed array and no copy. The
+Canvas 2D prelude makes an ArrayBuffer for each batch; the boxed form took 8 bytes of fresh
+memory per byte, and the kernel's zeroing of it was 8 % of a frame (issue 1098). -/
+def zeroBytesFast (n : Nat) : ByteArray := pushZeroBytes n (ByteArray.emptyWithCapacity n)
+
+theorem push0_toList (b : ByteArray) : (b.push 0).data.toList = b.data.toList ++ [0] := by
+  simp [ByteArray.push]
+
+theorem pushZeroBytes_toList (k : Nat) (b : ByteArray) :
+    (pushZeroBytes k b).data.toList = b.data.toList ++ List.replicate k 0 := by
+  induction k generalizing b with
+  | zero => simp [pushZeroBytes]
+  | succ k ih =>
+    simp only [pushZeroBytes, ih, push0_toList, List.append_assoc]
+    rw [List.singleton_append, ← List.replicate_succ]
+
+/-- **Kind: refinement.** Says the pushed zeros are the reference's `n` zero bytes. Does not
+say anything about speed. -/
+@[csimp] theorem zeroBytes_eq_fast : @zeroBytes = @zeroBytesFast := by
+  funext n
+  apply ByteArray.ext
+  apply Array.ext'
+  simp only [zeroBytesFast, pushZeroBytes_toList, zeroBytes, Array.toList_replicate]
+  rfl
+
 /-- The bytes of a number stored as element type `ty` (§25.1.3.17 NumericToRawBytes). -/
 def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   let le := fun (v : Nat) (w : Nat) => ByteArray.mk ((List.range w).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
@@ -781,7 +816,56 @@ implements all of ECMA-262 or that this is faster. -/
   | 3 | 4 => simp only [typedRead, typedReadByteFast, leSum2, Nat.add_zero]
   | 5 | 6 => simp only [typedRead, typedReadByteFast, leSum4, Nat.add_zero]
 
-/-- Direct buffers for the integer element types of one, two and four bytes. -/
+/-- The eight bytes of a 64-bit word, least significant first. -/
+def leBytesU64 (v : UInt64) : ByteArray :=
+  ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8,
+    (v >>> 32).toUInt8, (v >>> 40).toUInt8, (v >>> 48).toUInt8, (v >>> 56).toUInt8]
+
+/-- The four bytes of a 32-bit word, least significant first. -/
+def leBytesU32 (v : UInt32) : ByteArray :=
+  ByteArray.mk #[v.toUInt8, (v >>> 8).toUInt8, (v >>> 16).toUInt8, (v >>> 24).toUInt8]
+
+/-- Byte `k` of a 64-bit word as the reference writes it (a quotient by a power of two) and as a shift. -/
+theorem leByte64 (v : UInt64) (k : Nat) (hk : k < 8) :
+    (v.toNat / 2 ^ (8 * k) % 256).toUInt8 = (v >>> (8 * k).toUInt64).toUInt8 := by
+  apply UInt8.toNat_inj.mp
+  have h1 : ((8 * k).toUInt64).toNat = 8 * k := by
+    simp only [Nat.toUInt64, UInt64.toNat_ofNat']; omega
+  simp only [Nat.toUInt8, UInt8.toNat_ofNat', UInt64.toNat_toUInt8, UInt64.toNat_shiftRight, h1,
+    Nat.shiftRight_eq_div_pow]
+  rw [Nat.mod_eq_of_lt (by omega : 8 * k < 64)]; simp
+
+theorem leByte32 (v : UInt32) (k : Nat) (hk : k < 4) :
+    (v.toNat / 2 ^ (8 * k) % 256).toUInt8 = (v >>> (8 * k).toUInt32).toUInt8 := by
+  apply UInt8.toNat_inj.mp
+  have h1 : ((8 * k).toUInt32).toNat = 8 * k := by
+    simp only [Nat.toUInt32, UInt32.toNat_ofNat']; omega
+  simp only [Nat.toUInt8, UInt8.toNat_ofNat', UInt32.toNat_toUInt8, UInt32.toNat_shiftRight, h1,
+    Nat.shiftRight_eq_div_pow]
+  rw [Nat.mod_eq_of_lt (by omega : 8 * k < 32)]; simp
+
+/-- **Kind: refinement.** The reference's eight little-endian digits of a 64-bit word are its
+shifted bytes. -/
+theorem leBytes8_eq (v : UInt64) :
+    ByteArray.mk ((List.range 8).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8) = leBytesU64 v := by
+  have e : List.range 8 = [0, 1, 2, 3, 4, 5, 6, 7] := rfl
+  simp only [leBytesU64, e, List.map_toArray, List.map_cons, List.map_nil]
+  rw [leByte64 v 0 (by omega), leByte64 v 1 (by omega), leByte64 v 2 (by omega), leByte64 v 3 (by omega),
+    leByte64 v 4 (by omega), leByte64 v 5 (by omega), leByte64 v 6 (by omega), leByte64 v 7 (by omega)]
+  simp only [Nat.mul_zero]
+  rfl
+
+/-- **Kind: refinement.** The same for four bytes of a 32-bit word. -/
+theorem leBytes4_eq (v : UInt32) :
+    ByteArray.mk ((List.range 4).toArray.map fun k => (v.toNat / 2 ^ (8 * k) % 256).toUInt8) = leBytesU32 v := by
+  have e : List.range 4 = [0, 1, 2, 3] := rfl
+  simp only [leBytesU32, e, List.map_toArray, List.map_cons, List.map_nil]
+  rw [leByte32 v 0 (by omega), leByte32 v 1 (by omega), leByte32 v 2 (by omega), leByte32 v 3 (by omega)]
+  simp only [Nat.mul_zero]
+  rfl
+
+/-- Direct buffers for the integer element types of one, two and four bytes, and for Float32
+and Float64. -/
 def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
   match ty with
   | 0 | 1 => ByteArray.mk #[(Int.toNat (toInt32Wide x % 256) % 256).toUInt8]
@@ -793,14 +877,21 @@ def typedBytesByteFast (ty : Nat) (x : Float) : ByteArray :=
     let v := Int.toNat (toInt32Wide x % 4294967296)
     ByteArray.mk #[(v % 256).toUInt8, (v / 256 % 256).toUInt8, (v / 65536 % 256).toUInt8,
       (v / 16777216 % 256).toUInt8]
-  | _ => typedBytes ty x
+  -- Float32 and Float64: the bits as shifted bytes, no division by a power of two (issue 1098:
+  -- a Float64Array.set of a Canvas 2D batch spent most of its time in big-number powers).
+  | 7 => leBytesU32 x.toFloat32.toBits
+  | 11 => typedBytes ty x
+  | _ => leBytesU64 x.toBits
 
 /-- **Kind: refinement.** Says direct byte writes produce exactly the reference
 bytes for every type tag and Float. Does not say anything about speed. -/
 @[csimp] theorem typedBytes_eq_byteFast : typedBytes = typedBytesByteFast := by
   funext ty x
   match ty with
-  | _ + 7 => rfl
+  | 7 => simp only [typedBytes, typedBytesByteFast]; exact leBytes4_eq _
+  | 11 => rfl
+  | 8 | 9 | 10 => simp only [typedBytes, typedBytesByteFast]; exact leBytes8_eq _
+  | _ + 12 => simp only [typedBytes, typedBytesByteFast]; exact leBytes8_eq _
   | 0 | 1 | 2 =>
     simp only [typedBytes, typedBytesByteFast, List.range_one, Array.map_singleton, Nat.mul_zero, Nat.pow_zero, Nat.div_one,
       show (2 : Int) ^ (8 * 1) = 256 from by decide]
@@ -1117,8 +1208,10 @@ which the parser reads as a `yield` in an async function) inside an expression i
 moved before its statement when it is evaluated unconditionally: `f(await p)`
 becomes `let %y0 = await p; f(%y0)`. The callee and operands to its left are then
 evaluated after the suspension, not before: a known difference from §13.3.6 when
-they have side effects. `yield` inside `&&`, `||`, `??`, `?:`, functions and classes
-stays, and the machine refuses that statement. -/
+they have side effects. A `yield` on one branch of `&&`, `||`, `??`, `?:` or a logical
+assignment runs inside an `if`; one in a destructuring pattern is lowered to statements
+(`dstrLower`). A `yield` inside an optional chain stays, and the machine refuses that
+statement: https://github.com/danbri/factoidal-core/issues/1167. -/
 
 /-- Lifting: the next temporary, and the statements that must run first. -/
 abbrev Lift := StateM (Nat × Array Stmt)
@@ -1152,6 +1245,142 @@ def liftTemp (e : Expr) : Lift Expr := do
   let x := liftName k
   set (k + 1, acc.push (Stmt.decl .letK [Decl.mk (.id x) (some e)]))
   pure (.ident x)
+
+/-! ### Destructuring assignment with a `yield` in its pattern
+
+`[x = yield] = v`, `({a: o[yield]} = v)`: the pattern's own steps (§13.15.5.5
+IteratorDestructuringAssignmentEvaluation, §13.15.5.6 KeyedDestructuringAssignmentEvaluation)
+become statements, so the generator machine can stop at each `yield`: for each element the
+target's operands, then IteratorStep, then the default, then PutValue. The iterator is closed
+in a `finally` (§7.4.11): quietly after a throw, checked after a normal or `return`
+completion. The internal calls `%dstr(op, ...)` (`dstrOp`) do GetIterator, the step, the
+closes, RequireObjectCoercible and CopyDataProperties. -/
+
+/-- An internal call of the lowering (a `%` name, which source text cannot write). -/
+def dstrCall (op : String) (args : List Expr) : Expr := .call (.ident "%dstr") (.str op :: args)
+
+/-- A temporary of the lowering. Its own prefix: a later lift pass of an expression in the
+pattern (a default, a target) uses `%y` names in a block of its own, so it cannot hide these. -/
+def dstrFresh : StateM Nat String := modifyGet fun k => ("%d" ++ toString k, k + 1)
+
+def dstrLet (x : String) (e : Option Expr) : Stmt := .decl .letK [Decl.mk (.id x) e]
+
+/-- The target of an element that is not a pattern: its operands into temporaries first
+(DestructuringAssignmentTarget is evaluated before the value is taken). -/
+def dstrTarget : Pat → StateM Nat (List Stmt × Option Expr)
+  | .id x => pure ([], some (.ident x))
+  | .target (.member o k) => do
+    let x ← dstrFresh
+    pure ([dstrLet x (some o)], some (.member (.ident x) k))
+  | .target (.index o k) => do
+    let x ← dstrFresh
+    let y ← dstrFresh
+    pure ([dstrLet x (some o), dstrLet y (some k)], some (.index (.ident x) (.ident y)))
+  | .target e => pure ([], some e)
+  | _ => pure ([], none)
+
+/-- One IteratorStep into `v` (left `undefined` when the iterator is done). The record is done
+before the call, so a throw of `next`, `done` or `value` does not close it. -/
+def dstrStep (it dn : String) (into : String → Stmt) : StateM Nat Stmt := do
+  let r ← dstrFresh
+  pure (.ifS (.unary .not (.ident dn)) (.block [
+    .expr (.assign none (.ident dn) (.bool true)),
+    dstrLet r (some (dstrCall "next" [.ident it])),
+    .ifS (.unary .not (.member (.ident r) "done"))
+      (.block [into r, .expr (.assign none (.ident dn) (.bool false))]) none]) none)
+
+mutual
+/-- The default (when the value `v` is `undefined`) and the store into the target, or into a
+nested pattern (lowered here when it has a `yield`). A name takes the default directly, so an
+anonymous function is named after it. -/
+def dstrStore : Nat → Option DeclKind → Pat → Option Expr → Option Expr → String → StateM Nat (List Stmt)
+  | 0, _, _, _, _, _ => pure []
+  | n + 1, bind, p, tgt, d, v => do
+    let undef : Expr := .binary .seq (.ident v) (.unary .void (.num 0))
+    -- a name of a `let` or `const` declaration is initialised here (`init`: the binding its
+    -- scope made, in its TDZ until then; the steps may be inside the `try` of an array pattern)
+    let putV (e : Expr) : Stmt := match p, bind with
+      | .id x, some k => .expr (dstrCall "init" [.str x, e, .bool (k == .letK)])
+      | _, _ => match tgt with
+        | some t => .expr (.assign none t e)
+        | none => .expr (.assignPat p e)
+    let put ← match p with
+      | .obj .. | .arr .. =>
+        if p.hasYield then dstrLower n bind v p
+        else pure [match bind with
+          | some k => Stmt.decl k [Decl.mk p (some (.ident v))]
+          | none => Stmt.expr (.assignPat p (.ident v))]
+      | _ => pure [putV (.ident v)]
+    match p, d with
+    -- one statement, not a block: a block would be a scope of its own for the declaration
+    | .id _, some e => pure [.ifS undef (putV e) (some (putV (.ident v)))]
+    | _, some e => pure (.ifS undef (.expr (.assign none (.ident v) e)) none :: put)
+    | _, none => pure put
+
+def dstrElems : Nat → Option DeclKind → String → String → List (Option PatElem) → StateM Nat (List Stmt)
+  | 0, _, _, _, _ => pure []
+  | _ + 1, _, _, _, [] => pure []
+  | n + 1, bind, it, dn, none :: es => do
+    let st ← dstrStep it dn (fun _ => .empty)
+    pure (st :: (← dstrElems n bind it dn es))
+  | n + 1, bind, it, dn, some (.mk p d) :: es => do
+    let (prep, tgt) ← dstrTarget p
+    let v ← dstrFresh
+    let st ← dstrStep it dn (fun r => .expr (.assign none (.ident v) (.member (.ident r) "value")))
+    let store ← dstrStore n bind p tgt d v
+    pure (prep ++ [dstrLet v none, st] ++ store ++ (← dstrElems n bind it dn es))
+
+def dstrProps : Nat → Option DeclKind → String → List PatProp → StateM Nat (List Stmt × List Expr)
+  | 0, _, _, _ => pure ([], [])
+  | _ + 1, _, _, [] => pure ([], [])
+  | n + 1, bind, src, .mk k p d :: ps => do
+    let (keyPrep, key, get) ← match k with
+      | .lit s => pure ([], Expr.str s, Expr.member (.ident src) s)
+      | .computed e => do
+        let x ← dstrFresh
+        pure ([dstrLet x (some e)], Expr.ident x, Expr.index (.ident src) (.ident x))
+    let (prep, tgt) ← dstrTarget p
+    let v ← dstrFresh
+    let store ← dstrStore n bind p tgt d v
+    let (rest, keys) ← dstrProps n bind src ps
+    pure (keyPrep ++ prep ++ [dstrLet v (some get)] ++ store ++ rest, key :: keys)
+
+/-- The statements of `p = src` (`src` a temporary holding the value); with `bind`, the names
+of the pattern are bound by declarations of that kind (`let [a = yield] = v`). -/
+def dstrLower : Nat → Option DeclKind → String → Pat → StateM Nat (List Stmt)
+  | 0, _, _, _ => pure []
+  | n + 1, bind, src, .arr es rest => do
+    let it ← dstrFresh
+    let dn ← dstrFresh
+    let ex ← dstrFresh
+    let body ← dstrElems n bind it dn es
+    let restS ← match rest with
+      | none => pure []
+      | some rp => do
+        let (prep, tgt) ← dstrTarget rp
+        let a ← dstrFresh
+        let st ← dstrStep it dn (fun r => .expr (dstrCall "push" [.ident a, .member (.ident r) "value"]))
+        let store ← dstrStore n bind rp tgt none a
+        pure (prep ++ [dstrLet a (some (.array [])), .whileS (.unary .not (.ident dn)) st] ++ store)
+    let quiet : Stmt := .ifS (.unary .not (.ident dn)) (.block [
+      .expr (.assign none (.ident dn) (.bool true)), .expr (dstrCall "closeQuiet" [.ident it])]) none
+    pure [dstrLet it (some (dstrCall "iter" [.ident src])), dstrLet dn (some (.bool false)),
+      .tryS (body ++ restS) (some (.id ex)) (some [quiet, .throwS (.ident ex)])
+        (some [.ifS (.unary .not (.ident dn)) (.expr (dstrCall "close" [.ident it])) none])]
+  | n + 1, bind, src, .obj ps rest => do
+    let (body, keys) ← dstrProps n bind src ps
+    let restS ← match rest with
+      | none => pure []
+      | some rp => do
+        let (prep, tgt) ← dstrTarget rp
+        let a ← dstrFresh
+        let store ← dstrStore n bind rp tgt none a
+        pure (prep ++ [dstrLet a (some (dstrCall "rest" (.ident src :: keys)))] ++ store)
+    pure (.expr (dstrCall "req" [.ident src]) :: body ++ restS)
+  | n + 1, bind, src, p => do
+    let (prep, tgt) ← dstrTarget p
+    pure (prep ++ (← dstrStore n bind p tgt none src))
+end
 
 mutual
 /-- Move each `yield` out of `e`, in order, into statements before it. Operands evaluated
@@ -1228,6 +1457,50 @@ def liftE : Nat → Expr → Lift Expr
         | .member o k => do pure (Expr.member (← liftE n o) k)
         | _ => pure t
       pure (.assign op t (← liftE n v))
+    -- `[a, b] = await e` (§13.15.5.2): the value's yields first; a pattern with yields of its
+    -- own is lowered to statements (`dstrLower`)
+    | .assignPat p v =>
+      if !p.hasYield then pure (.assignPat p (← liftE n v)) else do
+        -- the value into a temporary, then the pattern's steps as statements (`dstrLower`);
+        -- the expression's value is the value assigned (§13.15.2)
+        let v ← liftE n v
+        let (k, acc) ← get
+        let ((x, ss), k') := (do let x ← dstrFresh; pure (x, ← dstrLower 10000 none x p)).run k
+        set (k', (acc.push (dstrLet x (some v))) ++ ss.toArray)
+        pure (.ident x)
+    | .update pre inc t => pure (.update pre inc (← liftE n t))
+    | .superCall args => pure (.superCall (← liftL n args))
+    | .superIndex k => pure (.superIndex (← liftE n k))
+    | .tagged tag c r subs => do
+      let tag ← liftE n tag
+      pure (.tagged tag c r (← liftL n subs))
+    | .logAssign op t v =>
+      if !v.hasYield then
+        pure (.logAssign op (← liftE n t) v)
+      else
+        -- `t ||= await v` (§13.15.2): the target is read once; the value and the store run
+        -- only when the test asks for them, as for `logical`
+        let t ← match t with
+          | .member o k => do
+            let o ← liftE n o
+            pure (Expr.member (← if isLiteral o then pure o else liftTemp o) k)
+          | .index o k => do
+            let o ← liftE n o
+            let o ← if isLiteral o then pure o else liftTemp o
+            let k ← liftE n k
+            pure (Expr.index o (← if isLiteral k then pure k else liftTemp k))
+          | _ => pure t
+        let (k, acc) ← get
+        let x := liftName k
+        set (k + 1, acc)
+        let (v', pre) ← liftBranch n v
+        let test : Expr := match op with
+          | .and => .ident x
+          | .or => .unary .not (.ident x)
+          | .coalesce => .binary .seq (.binary .eq (.ident x) .null) (.bool true)
+        liftPush (.decl .letK [Decl.mk (.id x) (some t)])
+        liftPush (.ifS test (.block (pre ++ [.expr (.assign none (.ident x) (.assign none t v'))])) none)
+        pure (.ident x)
     | .object ps => pure (.object (← liftP n ps))
     | .classE (.mk name h ctor ms) =>
       -- ClassDefinitionEvaluation (§15.7.14) evaluates the heritage, then the computed keys in
@@ -1306,6 +1579,28 @@ def liftP : Nat → List PropDef → Lift (List PropDef)
 termination_by structural n _ => n
 end
 
+/-- A `let`, `const` or `var` declaration whose pattern holds a `yield` (`let [a = yield] = v`):
+the value into a temporary, then the pattern's steps (`dstrLower`); a `var` name is assigned,
+a `let` or `const` name is initialised by a declaration at its step. -/
+def liftDecl (seed : Nat) (k : DeclKind) (p : Pat) (e : Expr) : List Stmt :=
+  let bind : Option DeclKind := match k with | .var => none | k => some k
+  let ((x, ss), _) := (do let x ← dstrFresh; pure (x, ← dstrLower 10000 bind x p)).run seed
+  dstrLet x (some e) :: ss
+
+/-- A `for`-`in` or `for`-`of` whose target holds a `yield` (`for ([x = yield] of xs)`): each
+value into a temporary of the loop, then the target as the body's first statement, a
+destructuring assignment or declaration that `liftE` and `liftDecl` lower. A `let` or `const`
+target is still a binding of each iteration (the body's block). -/
+def forTargetTemp (k : Nat) (isOf : Bool) (kind : Option DeclKind) (target : Pat) (obj : Expr) (body : Stmt) : Stmt :=
+  let t := s!"%ft{k}"
+  let bind : Stmt := match kind, target with
+    | some dk, _ => .decl dk [Decl.mk target (some (.ident t))]
+    | none, .target e => .expr (.assign none e (.ident t))
+    | none, .id x => .expr (.assign none (.ident x) (.ident t))
+    | none, p => .expr (.assignPat p (.ident t))
+  let body' : Stmt := .block [bind, body]
+  if isOf then .forOf (some .letK) (.id t) obj body' else .forIn (some .letK) (.id t) obj body'
+
 /-- A statement with its lifted `yield`s before it, or `none` when nothing moved. -/
 def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
   let run (e : Expr) : Expr × Array Stmt :=
@@ -1332,7 +1627,11 @@ def liftStmt (seed : Nat) (s : Stmt) : Option (List Stmt) :=
     | _ => none
   | .ret (some e) => wrap e (fun x => .ret (some x))
   | .throwS e => wrap e .throwS
-  | .decl k [Decl.mk p (some e)] => wrap e (fun x => .decl k [Decl.mk p (some x)])
+  | .decl k [Decl.mk p (some e)] =>
+    if p.hasYield then some (liftDecl seed k p e)
+    else wrap e (fun x => .decl k [Decl.mk p (some x)])
+  -- several declarators: one statement each, in order (each then runs or lifts on its own)
+  | .decl k (d :: d' :: ds) => some ((d :: d' :: ds).map fun d => .decl k [d])
   | .ifS c t f =>
     -- the test may itself be a `yield` (`if (await x)`), which `genEnter` does not take apart
     let (c', acc) := run c
@@ -1538,6 +1837,17 @@ def typedWriteV (ty buf off i : Nat) (v : Value) : M Unit :=
   modifyObj buf fun bo => match bo.kind with
     | .buffer bytes =>
       let at_ := off + i * elemSize ty
+      if at_ + bs.size ≤ bytes.size then
+        let bo := { bo with kind := .buffer ByteArray.empty }
+        { bo with kind := .buffer (bs.copySlice 0 bytes at_ bs.size) }
+      else bo
+    | _ => bo
+
+/-- Write `bs` into buffer `buf` at byte `at_`, when it fits (`typedWriteV` for many elements
+at once). -/
+def typedWriteAll (buf at_ : Nat) (bs : ByteArray) : M Unit :=
+  modifyObj buf fun bo => match bo.kind with
+    | .buffer bytes =>
       if at_ + bs.size ≤ bytes.size then
         let bo := { bo with kind := .buffer ByteArray.empty }
         { bo with kind := .buffer (bs.copySlice 0 bytes at_ bs.size) }
@@ -2438,7 +2748,7 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
           pure (some m)
       | _ => pure none
     let resized (bytes : ByteArray) (l : Nat) : ByteArray :=
-      if l ≤ bytes.size then bytes.extract 0 l else bytes ++ ByteArray.mk (Array.replicate (l - bytes.size) 0)
+      if l ≤ bytes.size then bytes.extract 0 l else bytes ++ zeroBytes (l - bytes.size)
     match id with
     | (.x (.dataViewGetter which)) =>
       -- §25.3.4.1 buffer, .2 byteLength, .3 byteOffset: a TypeError on a detached or
@@ -2502,7 +2812,7 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
         if len > m then throwErr .range "byteLength exceeds maxByteLength"
       let p ← core.getV nt "prototype"
       let sid ← alloc { proto := (← protoOr p nt (·.sharedBufferProto)),
-                        kind := .buffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0)) }
+                        kind := .buffer (zeroBytes (len.toUInt64.toNat)) }
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       if let some m := max then defineOwn sid bufMaxKey (.data (.num m) true false false)
       pure (.obj sid)
@@ -2858,7 +3168,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
       pure (ty, b, off, ← liveLen ty b off len)
     -- a new typed array of type `ty` holding these (already converted) values
     let fresh (ty : Nat) (xs : Array Value) : M Value := do
-      let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
+      let buf ← newBuffer (zeroBytes (xs.size * elemSize ty))
       let .obj bid := buf | pure buf
       for i in [0:xs.size] do typedWriteV ty bid 0 i xs[i]!
       newTyped ty bid 0 xs.size
@@ -5558,7 +5868,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         | _ => pure none
       if let some m := max then
         if len > m then throwErr .range "byteLength exceeds maxByteLength"
-      let buf ← newBuffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0))
+      let buf ← newBuffer (zeroBytes (len.toUInt64.toNat))
       if let (.obj bid, some m) := (buf, max) then
         defineOwn bid bufMaxKey (.data (.num m) true false false)
       -- the prototype is the new target's (OrdinaryCreateFromConstructor)
@@ -5590,7 +5900,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
       needNew ((typedNames[ty]?.map (·.1)).getD "TypedArray")
       let es := elemSize ty
       let fromList (xs : Array Value) : M Value := do
-        let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * es) 0))
+        let buf ← newBuffer (zeroBytes (xs.size * es))
         let .obj bid := buf | pure buf
         for i in [0:xs.size] do typedWriteV ty bid 0 i (← core.typedConv ty xs[i]!)
         newTyped ty bid 0 xs.size
@@ -5628,7 +5938,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
       | v =>
         let len := toIntegerOrInf (← core.toNum v)
         if len < 0 || len > 268435456 then throwErr .range "Invalid typed array length"
-        let buf ← newBuffer (ByteArray.mk (Array.replicate (len.toUInt64.toNat * es) 0))
+        let buf ← newBuffer (zeroBytes (len.toUInt64.toNat * es))
         let .obj bid := buf | pure buf
         newTyped ty bid 0 len.toUInt64.toNat
     | .dataViewCtor =>
@@ -5724,7 +6034,17 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         let len ← liveLen ty b off len
         let xs ← core.elemsOf a0
         if at_ + xs.size > len then throwErr .range "offset is out of bounds"
-        for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← core.typedConv ty xs[i]!)
+        -- Every element a Number and the type not a BigInt one: no conversion can run page
+        -- code, so the bytes of all the elements go in one write (the bytes `typedWriteV`
+        -- writes one element at a time; issue 1098). Else one element at a time.
+        let es := elemSize ty
+        let fits := off + (at_ + xs.size) * es ≤ (bufferBytes (← getObj b)).size
+        if !typedIsBig ty && fits && xs.all (fun x => x matches .num _) then
+          let bs := xs.foldl (fun acc x => match x with | .num v => acc ++ typedBytes ty v | _ => acc)
+            (ByteArray.emptyWithCapacity (xs.size * es))
+          typedWriteAll b (off + at_ * es) bs
+        else
+          for i in [0:xs.size] do typedWriteV ty b off (at_ + i) (← core.typedConv ty xs[i]!)
         pure .undef
       | .typedSubarray =>
         -- §23.2.3.30: the bounds (converted first), then TypedArraySpeciesCreate(O, « buffer,
@@ -8781,6 +9101,8 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
             modify fun h => { h with depth := saved }
             throw e
     let info := fd.info
+    -- the count of arguments, for `Expr.argCount` (taken before the plain path moves `args`)
+    let argc := args.size
     -- `args` is moved into the environment on the plain path (the array must have one owner:
     -- `fillSlots` then grows it in place)
     let (fenv, args) ← if info.plain then do
@@ -8790,16 +9112,16 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
       else do
         let e ← newEnv env
         pure (e, args)
-    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info) fun e => do
+    tryCatch (callBody n fd env capThis capNT home fnObj thisV newTarget args fenv info argc) fun e => do
       modify fun h => { h with depth := saved }
       if info.frameLocal then releaseEnv fenv
       throw e
 termination_by structural n _ _ _ _ _ _ _ _ _ => n
 
 /-- The rest of a call, after the environment is made (`callClosure`). -/
-def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → M Value
-  | 0, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
-  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info => do
+def callBody : Nat → FunDef → Nat → Value → Value → Value → Value → Value → Value → Array Value → Nat → FunInfo → Nat → M Value
+  | 0, _, _, _, _, _, _, _, _, _, _, _, _ => throw (.halt "fuel")
+  | n + 1, fd, env, capThis, capNT, home, fnObj, thisV, newTarget, args, fenv, info, argc => do
     let r ← realm
     let thisV ← if fd.arrow then pure capThis
       else if fd.strict then pure thisV
@@ -8809,7 +9131,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
         | v => do pure (.obj (← toObj n v))
     let nt := if fd.arrow then capNT else newTarget
     let fo := if fd.arrow then Value.undef else fnObj
-    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo }
+    let ctx : Ctx := { env := fenv, thisV := thisV, strict := fd.strict, newTarget := nt, home := home, fnObj := fo, argc }
     if !info.plain then
       if fd.usesArgs then
         let a ← alloc { proto := .obj r.objectProto, kind := .args }
@@ -8896,7 +9218,7 @@ def callBody : Nat → FunDef → Nat → Value → Value → Value → Value �
       match c with
       | .ret v => pure v
       | _ => pure .undef
-termination_by structural n _ _ _ _ _ _ _ _ _ _ _ => n
+termination_by structural n _ _ _ _ _ _ _ _ _ _ _ _ => n
 
 def bindParams : Nat → Ctx → List PatElem → Array Value → Nat → M Unit
   | 0, _, _, _, _ => throw (.halt "fuel")
@@ -9393,6 +9715,7 @@ def evalExpr : Nat → Ctx → Expr → M Value
       pure v
     | .classE c => evalClass n ctx c ""
     | .newTarget => pure ctx.newTarget
+    | .argCount => pure (.num (Float.ofNat ctx.argc))
     | .yieldE .. => throwErr .syntax "yield in this position is not supported"
     | .superMember k =>
       let proto ← homeProto ctx
@@ -9607,6 +9930,44 @@ def evalExpr : Nat → Ctx → Expr → M Value
       let cv ← (match leafV (← get) ctx c with | .hole => evalExpr n ctx c | v => pure v)
       if toBool cv then evalExpr n ctx t else evalExpr n ctx f
     | .seq a b => let _ ← evalExpr n ctx a; evalExpr n ctx b
+    | .call (.ident "%dstr") [.str "init", .str x, e, .bool mutable] =>
+      -- InitializeReferencedBinding of a `let` or `const` name of a lowered declaration
+      let v ← evalNamed n ctx e (.id x)
+      match (← get).findEnv x 100000 ctx.env with
+      | some env => declare env x { v, mutable }
+      | none => throwErr .reference s!"{x} is not defined"
+      pure .undef
+    | .call (.ident "%dstr") (.str op :: args) =>
+      -- the internal calls of a lowered destructuring assignment (`dstrLower`)
+      let argv ← evalArgs n ctx args #[]
+      let a0 := argv.getD 0 .undef
+      match op with
+      | "iter" => getIterator n a0
+      | "next" =>
+        let next ← getV n a0 "next"
+        let r ← callV n next a0 #[]
+        if !r.isObj then throwErr .type "Iterator result is not an object"
+        pure r
+      | "close" => iterClose n a0; pure .undef
+      | "closeQuiet" => let _ ← catchJS (iterClose n a0) (fun _ => pure ()); pure .undef
+      | "push" =>
+        if let .obj id := a0 then
+          let v := argv.getD 1 .undef
+          modifyObj id fun o => match o.kind with
+            | .array es => { o with kind := .array (es.push v) }
+            | _ => o
+        pure .undef
+      | "req" =>
+        match a0 with
+        | .undef | .null => throwErr .type "Cannot destructure 'undefined' or 'null'"
+        | v => pure v
+      | "rest" =>
+        let mut used : List String := []
+        for k in argv.toList.drop 1 do used := (← toKey n k) :: used
+        let o ← newObject
+        copyDataProps n o a0 used
+        pure (.obj o)
+      | _ => throwErr .syntax "internal destructuring call"
     | .call callee args =>
       let (f, thisV) ← match callee with
         | .optCallee inner =>
@@ -10639,7 +11000,8 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok (ctx', perIter) => genRun n (.loopFor ctx' labels perIter test update body true :: rest) (.send .undef)
     | .forIn kind target obj body =>
-      if obj.hasYield then
+      if target.hasYield then genEnter n ctx labels (forTargetTemp (← get).envs.size false kind target obj body) rest
+      else if obj.hasYield then
         -- the object's yields first, in a temporary (as for `for-of`)
         let t := s!"%it{(← get).envs.size}"
         genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],
@@ -10659,7 +11021,8 @@ def genEnter : Nat → Ctx → List String → Stmt → List GFrame → M GOut
       | .error a => throw a
       | .ok it => genRun n (.loopOf ctx labels kind target it body :: rest) (.send .undef)
     | .forOf kind target obj body =>
-      if obj.hasYield then
+      if target.hasYield then genEnter n ctx labels (forTargetTemp (← get).envs.size true kind target obj body) rest
+      else if obj.hasYield then
         -- the iterable's yields first, in a temporary
         let t := s!"%it{(← get).envs.size}"
         genRun n (.block ctx [.decl .letK [Decl.mk (.id t) (some obj)],

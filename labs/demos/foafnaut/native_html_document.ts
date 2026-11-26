@@ -394,7 +394,15 @@ and the Settings checkbox): Lean skips what it may skip and says so, and this ho
 the fetches that failed instead of refusing the page. */
 export type AcceptOptions={liberal?:boolean;request?:DocumentRequest;downloads?:string;cookies?:DocumentCookies;
   epubReader?:(bytes:Uint8Array,chapter:number)=>{source:string}};
+/** The receiver of one record for each page load (`native-html-load-phases`): the time of each
+step before the first frame. Set by a host that traces (run_html.ts); others write nothing. */
+let loadPhaseTrace:((record:Record<string,unknown>)=>void)|undefined;
+export function setLoadPhaseTrace(trace:((record:Record<string,unknown>)=>void)|undefined){loadPhaseTrace=trace;}
 export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSignal,inline?:string,accept:AcceptOptions={}) {
+  // The time of each step of the load before the first frame (observability, issue of the
+  // real-page load time): one native-html-load-phases line per page, ms each, in order.
+  const phaseStart=performance.now();let phaseAt=phaseStart;const phases:Record<string,number>={};
+  const phase=(name:string)=>{const now=performance.now();phases[name]=Math.round(((phases[name]??0)+now-phaseAt)*10)/10;phaseAt=now;};
   const decode:PageDecoder|undefined=typeof engine.decodeDocument==="function"?(b,c)=>engine.decodeDocument!(b,c,pageDecoding.fallback,pageDecoding.locale):undefined;
   const isLocalEpub=inline===undefined&&url.startsWith("file:")&&new URL(url).pathname.toLowerCase().endsWith(".epub");
   if(isLocalEpub){
@@ -414,6 +422,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
       ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})
     :{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
+  phase("document");
   // The page's console (native_console.ts): System entries now, script lines later.
   const page={};
   if(document.status)addEntries(page,[{source:"System",severity:"warning",feature:"page",where:document.url,message:`HTTP ${document.status}`,action:"the server's page is shown"}]);
@@ -425,6 +434,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const sources=[{kind:"Source",url:document.url,source:document.source}];
   // Lean finds the stylesheet and runs it. The host only fetches the bytes.
   const xml=await engine.xmlStylesheet(document.source,{url:document.url});
+  phase("xmlStylesheet");
   if(xml.url) {
     navigationURL(xml.url,document.url,document.url);
     const sheet=await readSource(xml.url,signal);
@@ -438,6 +448,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   }
   const fonts=fontHost?.(document.source).catch(error=>console.error("Native HTML: fallback fonts:",String(error)));
   const inspection=await engine.inspect(document.source,{url:document.url,...mode});
+  phase("inspect");
   noteDiagnostics(page,inspection,false);
   const scriptElements=inspection.scripts.some(script=>script.kind!=="data");
   if(scriptElements&&!scriptHost)
@@ -502,6 +513,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
       return {failure:{nodeId:descriptor.nodeId,url:descriptor.url,reason:String(error instanceof Error?error.message:error)}};
     }
   });
+  phase("sheets");
   for(const read of sheetsRead)if("failure" in read)resourceFailures.push(read.failure);else resources.push(read);
   // The sheets that the page's sheets import (page-load.mjs loadImports): the engine names
   // them, with the fetched sheets in hand, and reads each in place of its @import rule. A page
@@ -529,6 +541,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     if(signal?.aborted)throw error;
     console.error(`Native HTML: imported style sheets: ${String(error instanceof Error?error.message:error)}`);
   }
+  phase("inspectWithSheets");
   // Lean lists the images it wants and decides each transfer (any origin: Net.Subresource);
   // the host makes the requests, with size caps. One that fails or is refused is left out, and the page shows its alt text.
   // An engine that holds images gets each one once, and renders name them.
@@ -555,13 +568,16 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   const later=imagesAfterFirstFrame&&!(scripted&&scriptHost)&&((inspection.images??[]).length>0||backgroundWanted.length>0);
   let revision=0,imagesPending=later,imagesStarted=!later;
   const images:Record<string,unknown>=later?{}:await imageOptions(engine,await pageImageBytes);
+  phase("images");
   // The tab icon that Lean chose (WebDocument.iconURL), by the rules of images. One that fails or is refused leaves the tab with no icon.
   let iconBase64:string|undefined;
   if(inspection.icon&&iconReading)try{
     iconBase64=base64((await iconReading).bytes);
   }catch(error){if(signal?.aborted)throw error;console.error(`Native HTML icon refused: ${inspection.icon}: ${String(error instanceof Error?error.message:error)}`);
     fetchFailed("tab icon",inspection.icon,`icon not read: ${String(error instanceof Error?error.message:error)}`,"tab shown with no icon");}
+  phase("icon");
   const webFonts=await webFontsReading;
+  phase("webFonts");
   // `diagnostics:true` asks Lean for the skips in the answer: the first frame only (noteDiagnostics).
   options={url:document.url,resources,...images,...mode,...(webFonts.length?{webFonts}:{}),...(resourceFailures.length?{resourceFailures}:{}),
     ...(imported.length?{imported}:{}),...(accept.liberal?{diagnostics:true}:{})};
@@ -570,9 +586,11 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   // request, so a render replays them over the parsed page.
   let script:{session:number;turn:ScriptTurn}|undefined;
   await fonts;
+  phase("fallbackFonts");
   if(scripted&&scriptHost) {
     const supplied:{nodeId:number;source:string}[]=[];
     const scriptsRead=await scriptsReading!;
+    phase("scriptBytes");
     for(const read of scriptsRead)if(read){
       sources.push({kind:"Script",url:read.url,source:read.source});
       supplied.push({nodeId:read.nodeId,source:read.source});
@@ -590,6 +608,7 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
         message:String(error instanceof Error?error.message:error),action:"scripts not run"}]);
       return undefined;
     });
+    phase("scriptStart");
     if(turn){
       noteTurn(page,turn);
       script={session:turn.session,turn};
@@ -661,6 +680,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     if(signal?.aborted)throw error;
     console.error(`Native HTML: resources of script-made elements: ${String(error instanceof Error?error.message:error)}`);
   }
+  phase("scriptResources");
+  loadPhaseTrace?.({type:"native-html-load-phases",t:Math.round(performance.now()),url:document.url,
+    bytes:document.bytes,sheets:resources.length,images:(inspection.images??[]).length,scripted,imagesLater:later,
+    totalMs:Math.round((performance.now()-phaseStart)*10)/10,phases});
   // Later turns: one check at a time, not sooner than `againWait` ms after the last one; the
   // wait doubles (to 4 s) while checks find nothing, so a page that animates its tree and adds
   // no sheet or image is asked rarely.

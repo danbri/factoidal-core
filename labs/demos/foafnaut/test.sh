@@ -84,7 +84,7 @@ fi
 # The native HTML tests need the web-render engine, which Builds makes after this
 # step in its engines job and before it in its macOS job, and more permissions.
 TESTS=()
-for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/about_page_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/serif_face_test.ts"|"$LAB/mono_face_test.ts"|"$LAB/background_image_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/native_html_key_test.ts"|"$LAB/network_gaps_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts"|"$LAB/showoff_test.ts"|"$LAB/emoji_pixels_test.ts"|"$LAB/bubblepop_cost_test.ts"|"$LAB/particle_rex_test.ts"|"$LAB/shader_gallery_test.ts"|"$LAB/partial_frame_test.ts"|"$LAB/layout_sections_test.ts"|"$LAB/workers_test.ts"|"$LAB/many_images_test.ts"|"$LAB/script_reads_holds_test.ts"|"$LAB/script_turn_cost_test.ts"|"$LAB/cssom_insert_cost_test.ts"|"$LAB/live_list_cost_test.ts"|"$LAB/turn_slice_test.ts"|"$LAB/start_slice_test.ts"|"$LAB/start_resume_test.ts"|"$LAB/undo_snapshot_test.ts"|"$LAB/svg_depth_test.ts"|"$LAB/host_parity_test.ts"|"$LAB/native_net_test.ts"|"$LAB/native_net_pool_test.ts"|"$LAB/native_net_dns_test.ts"|"$LAB/origin_isolation_test.ts"|"$LAB/native_window_ax_test.ts"|"$LAB/accessibility_tree_test.ts") ;; *) TESTS+=("$test");; esac; done
+for test in "$LAB/"*_test.ts; do case "$test" in "$LAB/native_html_test.ts"|"$LAB/about_page_test.ts"|"$LAB/native_html_bytes_test.ts"|"$LAB/native_html_fonts_test.ts"|"$LAB/serif_face_test.ts"|"$LAB/mono_face_test.ts"|"$LAB/background_image_test.ts"|"$LAB/native_html_wasm_test.ts"|"$LAB/native_html_sparql_test.ts"|"$LAB/native_window_queue_test.ts"|"$LAB/showcase_gaps_test.ts"|"$LAB/print_gaps_test.ts"|"$LAB/svg_text_test.ts"|"$LAB/browser_state_test.ts"|"$LAB/html_images_test.ts"|"$LAB/frame_work_test.ts"|"$LAB/link_route_test.ts"|"$LAB/native_html_scripts_test.ts"|"$LAB/gesture_test.ts"|"$LAB/frame_cost_test.ts"|"$LAB/scroll_prefetch_test.ts"|"$LAB/native_html_pointer_test.ts"|"$LAB/native_html_key_test.ts"|"$LAB/network_gaps_test.ts"|"$LAB/page_gpu_test.ts"|"$LAB/bubblepop_pages_test.ts"|"$LAB/dom_breadth_test.ts"|"$LAB/canvas2d_test.ts"|"$LAB/long_words_test.ts"|"$LAB/native_liberal_test.ts"|"$LAB/device_pixels_test.ts"|"$LAB/showoff_test.ts"|"$LAB/emoji_pixels_test.ts"|"$LAB/bubblepop_cost_test.ts"|"$LAB/particle_rex_test.ts"|"$LAB/shader_gallery_test.ts"|"$LAB/partial_frame_test.ts"|"$LAB/layout_sections_test.ts"|"$LAB/workers_test.ts"|"$LAB/many_images_test.ts"|"$LAB/script_reads_holds_test.ts"|"$LAB/script_turn_cost_test.ts"|"$LAB/cssom_insert_cost_test.ts"|"$LAB/live_list_cost_test.ts"|"$LAB/turn_slice_test.ts"|"$LAB/start_slice_test.ts"|"$LAB/start_resume_test.ts"|"$LAB/undo_snapshot_test.ts"|"$LAB/svg_depth_test.ts"|"$LAB/host_parity_test.ts"|"$LAB/native_net_test.ts"|"$LAB/native_net_pool_test.ts"|"$LAB/native_net_dns_test.ts"|"$LAB/origin_isolation_test.ts"|"$LAB/native_window_ax_test.ts"|"$LAB/accessibility_tree_test.ts"|"$LAB/engine_sessions_test.ts") ;; *) TESTS+=("$test");; esac; done
 check "deno check (hosts and pure tests)" deno check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --unstable-ffi \
   "$LAB/run_ui.ts" "$LAB/run_lean.ts" "$LAB/run_svg.ts" "$LAB/run_foaf_svg.ts" "${TESTS[@]}"
 check "deno test (pure tests)" deno test --no-check --no-config --no-npm --node-modules-dir=none --unstable-webgpu --allow-read "${TESTS[@]}"
@@ -94,6 +94,19 @@ check "deno test (pure tests)" deno test --no-check --no-config --no-npm --node-
 # certificate with openssl. DNS_REAL=1 adds one real DNS lookup to the DNS cache test (off by default:
 # a CI runner may have no DNS).
 check "native_net tests (pool, DNS cache)" deno test --no-config --no-npm --node-modules-dir=none --allow-net --allow-run=openssl --allow-read --allow-write --allow-env=DNS_REAL "$LAB/native_net_test.ts" "$LAB/native_net_pool_test.ts" "$LAB/native_net_dns_test.ts"
+# Engine sessions (docs/designissues/2026-11-26-foafnaut-engine-sessions.md): sessions in one native
+# library hold separate state, an ended session refuses calls, and three threads at once give the
+# bytes of one session alone. Needs the native library (.dylib on macOS, .so on Linux).
+SESSION_LIB=""
+for f in "$LAB/.build/web-render/engines/libweb-render.dylib" "$LAB/.build/web-render/engines/libweb-render.so"; do
+  [ -f "$f" ] && { SESSION_LIB=$f; break; }
+done
+if [ -n "$SESSION_LIB" ]; then
+  check "engine_sessions_test.ts" env WEB_RENDER_LIB="$SESSION_LIB" deno test --no-check --no-config --no-npm --node-modules-dir=none \
+    --unstable-ffi --allow-read --allow-write --allow-ffi --allow-env "$LAB/engine_sessions_test.ts"
+else
+  echo 'NOT RUN: engine_sessions_test.ts needs the native library (build-web-render.sh --native)'
+fi
 # Frame cost ratchet: frame_cost_test.ts (above) replays the cases of the Lean model
 # (L4Factoidal/FrameCost); the fixture must be the model's output.
 FRAME_COST_CASES="$LAB/../../../formal/lean4/.lake/build/bin/frame-cost-cases"

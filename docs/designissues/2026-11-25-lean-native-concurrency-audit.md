@@ -284,6 +284,9 @@ nothing. Each needs the measurement in its row first.
 - Whether the engine state held in the native library per loaded copy (rows 1) can be made per
   session without a change to `web_render_shim.c` and its Lean state. The record names the
   constraint but not the cause. A read of the shim and the Lean engine is the next step.
+  (2026-11-26: answered in `2026-11-26-foafnaut-engine-sessions.md`. The cause was one static
+  engine value in the shim and three `initialize` cells of kept page layers; both are now per
+  session, and row 1 has a mode with no worker: a Lean dedicated task per tab.)
 - Whether `Task.Priority.dedicated` threads can run a long engine call that must be stopped on a
   deadline. A Lean task cannot be killed. Row 2 shows why this is needed on the Hub.
 - Whether a plugin isolation design is wanted (row 32). No record says so.

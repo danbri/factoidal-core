@@ -3,7 +3,8 @@
 # node). Starts the network and two local web servers, runs deno/tor-host.ts with the opt-in,
 # and checks: bootstrap 100%, one request through an exit, one request to an onion service, and
 # the same guards after a second worker starts from the state the first one saved in a sealed
-# local LWS storage (deno/tor-state.ts), and no guard identity in clear text in that storage.
+# local LWS storage (deno/tor-state.ts), and no guard identity in clear text in that storage;
+# and stream isolation: one circuit per partition, and new ones after a new identity.
 # Needs the @factoidal/core engine bundle (tools/fetch-builds.sh --set web).
 # Exits 0 only when all three pass. No public Tor traffic.
 # Needs: tor (apt), chutney (pip install git+https://gitlab.torproject.org/tpo/core/chutney.git),
@@ -38,12 +39,31 @@ FOAFNAUT_TOR_STATE_KEY=$(node "$HERE/../../../../../npm/factoidal/bin/factoidal.
 export FOAFNAUT_TOR_STATE_KEY
 deno run --unstable-worker-options --allow-net --allow-read --allow-write --allow-run --allow-env "$HERE/../deno/tor-host.ts" \
   --dangerously-use-unreviewed-tor-transport --config "$NET/nodes/arti.toml" --timeout 120000 \
-  --request 127.0.0.1:4748 --request "$ONION:5858" --restart-check --hold 70000 --state-dir "$WORK/tor-state" >"$OUT" 2>&1
+  --request siteA@127.0.0.1:4748 --request siteA@127.0.0.1:4748 --request siteB@127.0.0.1:4748 \
+  --request NEWID --request siteA@127.0.0.1:4748 --request siteC@"$ONION:5858" \
+  --request PAR --request p1@127.0.0.1:4748 --request p2@127.0.0.1:4748 --request p3@"$ONION:5858" \
+  --request p4@127.0.0.1:4748 --request p5@"$ONION:5858" --request p6@127.0.0.1:4748 --request END \
+  --fetch a.example@http://127.0.0.1:4748/ --fetch b.example@http://127.0.0.1:4748/ \
+  --fetch c.example@http://"$ONION":5858/ --fetch d.example@http://"$ONION":5858/ --fetch a.example@http://"$ONION":5858/ \
+  --restart-check --hold 70000 --state-dir "$WORK/tor-state" --debug --trace-conns >"$OUT" 2>&1
 grep -E '^\{' "$OUT"
 ok=0
 grep -q '"step":"bootstrap","ok":true' "$OUT" && echo "PASS bootstrap" || { echo "FAIL bootstrap"; ok=1; }
 grep -q 'exit target' "$OUT" && echo "PASS exit request" || { echo "FAIL exit request"; ok=1; }
+# Isolation, from Arti's debug lines (this run only; debug is off by default): the circuits of the
+# four exit streams of run 1, in order: siteA, siteA, siteB, then siteA after a new identity.
+mapfile -t circs < <(grep -oE 'Got a circuit for .* tunnel_id=Circ [0-9.]+' "$OUT" | head -4 | grep -oE 'Circ [0-9.]+$')
+echo "circuits: ${circs[*]}"
+if [[ ${#circs[@]} -eq 4 && "${circs[0]}" == "${circs[1]}" && "${circs[2]}" != "${circs[0]}" \
+      && "${circs[3]}" != "${circs[0]}" && "${circs[3]}" != "${circs[2]}" ]]; then
+  echo "PASS isolation (same partition shares, other partition and new identity do not)"
+else echo "FAIL isolation"; ok=1; fi
 grep -q 'onion service target' "$OUT" && echo "PASS onion service request" || { echo "FAIL onion service request"; ok=1; }
+grep -q '"step":"parallel","run":"1","streams":6,"ok":6' "$OUT" && echo "PASS 6 streams at once (4 exit, 2 onion; new partitions, so new circuits)" || { echo "FAIL parallel streams"; ok=1; }
+grep -q '"step":"proxy-check","run":"1","ok":true' "$OUT" && echo "PASS start-up check: loopback, private and reserved names all reach the proxy (NO_PROXY cleared)" || { echo "FAIL proxy check"; ok=1; }
+grep -qE '"step":"socks","run":"1","fetches":5,"ok":5,"ms":[0-9]+,"streamsOpenAfter":0,"events":5' "$OUT" && echo "PASS 5 fetches at once through the SOCKS5 server, all 5 seen by it (Deno fetch, socks5h; 2 exit, 3 onion)" || { echo "FAIL SOCKS5 fetches"; ok=1; }
+grep -E '"step":"(socks|socks-fetch)","run":"1"' "$OUT" | cut -c1-200
+grep '"step":"loop"' "$OUT" | head -3
 grep -q '"via":"sealed LWS storage".*"sameGuards":true' "$OUT" && echo "PASS same guards after restart, through the sealed store" || { echo "FAIL same guards after restart"; ok=1; }
 grep -q '"filesWithGuardIdsInClearText":0' "$OUT" && echo "PASS no guard identity in clear text on disk" || { echo "FAIL state at rest"; ok=1; }
 echo "logs: $WORK"

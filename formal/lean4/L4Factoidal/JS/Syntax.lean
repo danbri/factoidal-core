@@ -284,6 +284,10 @@ inductive Expr where
   | superMember (name : String)
   | superIndex (key : Expr)
   | newTarget
+  /-- The number of arguments of the running call: what `arguments.length` reads in a function
+  whose only use of `arguments` is to read its `length` (the resolver puts it there, so the
+  function makes no arguments object and keeps its slot frame; issue 1098). -/
+  | argCount
   /-- `yield e`, `yield* e` (§15.5). -/
   | yieldE (delegate : Bool) (arg : Option Expr)
   /-- A regular expression literal (§13.2.7): a new RegExp object at each evaluation. -/
@@ -472,7 +476,7 @@ def Expr.hasYieldF : Nat → Expr → Bool
   | n + 1, e =>
     match e with
     | .yieldE .. => true
-    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .superMember _
+    | .num _ | .bigint _ | .str _ | .bool _ | .null | .ident _ | .local .. | .lit _ | .this | .newTarget | .argCount | .superMember _
     | .func _ | .regex _ _ => false
     | .classE (.mk _ h _ ms) =>
       -- the heritage and the computed keys run where the class is (§15.7.14); the bodies do not
@@ -483,9 +487,35 @@ def Expr.hasYieldF : Nat → Expr → Bool
     | .unary _ a | .update _ _ a | .spread a | .superIndex a | .member a _ => Expr.hasYieldF n a
     | .binary _ a b | .logical _ a b | .assign _ a b | .logAssign _ a b | .index a b | .seq a b =>
       Expr.hasYieldF n a || Expr.hasYieldF n b
-    | .assignPat _ v => Expr.hasYieldF n v
+    | .assignPat p v => Pat.hasYieldF n p || Expr.hasYieldF n v
     | .cond a b c => Expr.hasYieldF n a || Expr.hasYieldF n b || Expr.hasYieldF n c
     | .call f args | .new f args => Expr.hasYieldF n f || Expr.anyYield n args
+
+/-- A `yield` in an assignment pattern: a computed key, a default, or a target's operands
+(`[x = yield] = v`, `({[yield]: y} = v)`, `[o[yield]] = v`). -/
+def Pat.hasYieldF : Nat → Pat → Bool
+  | 0, _ => true
+  | n + 1, p =>
+    match p with
+    | .id _ => false
+    | .target e => Expr.hasYieldF n e
+    | .obj ps r => PatProp.anyYield n ps || (match r with | some r => Pat.hasYieldF n r | none => false)
+    | .arr es r => PatElem.anyYield n es || (match r with | some r => Pat.hasYieldF n r | none => false)
+
+def PatProp.anyYield : Nat → List PatProp → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, (.mk k p d) :: ps =>
+    (match k with | .computed e => Expr.hasYieldF n e | _ => false) || Pat.hasYieldF n p ||
+      (match d with | some e => Expr.hasYieldF n e | none => false) || PatProp.anyYield n ps
+
+def PatElem.anyYield : Nat → List (Option PatElem) → Bool
+  | 0, _ => true
+  | _ + 1, [] => false
+  | n + 1, e :: es =>
+    (match e with
+      | some (.mk p d) => Pat.hasYieldF n p || (match d with | some e => Expr.hasYieldF n e | none => false)
+      | none => false) || PatElem.anyYield n es
 
 def Expr.anyYield : Nat → List Expr → Bool
   | 0, _ => true
@@ -530,7 +560,7 @@ def Stmt.hasYieldF : Nat → Stmt → Bool
         | none => false) ||
       (match t with | some e => Expr.hasYieldF n e | none => false) ||
       (match u with | some e => Expr.hasYieldF n e | none => false) || Stmt.hasYieldF n b
-    | .forIn _ _ o b | .forOf _ _ o b => Expr.hasYieldF n o || Stmt.hasYieldF n b
+    | .forIn _ t o b | .forOf _ t o b => Pat.hasYieldF n t || Expr.hasYieldF n o || Stmt.hasYieldF n b
     | .block ss | .blockF ss => Stmt.anyYield n ss
     | .compiled _ s => Stmt.hasYieldF n s
     | .tryS b _ h f => Stmt.anyYield n b ||
@@ -548,8 +578,8 @@ def Stmt.anyYield : Nat → List Stmt → Bool
 def Decl.anyYield : Nat → List Decl → Bool
   | 0, _ => true
   | _ + 1, [] => false
-  | n + 1, (.mk _ i) :: ds =>
-    (match i with | some e => Expr.hasYieldF n e | none => false) || Decl.anyYield n ds
+  | n + 1, (.mk p i) :: ds =>
+    Pat.hasYieldF n p || (match i with | some e => Expr.hasYieldF n e | none => false) || Decl.anyYield n ds
 
 def Case.anyYield : Nat → List Case → Bool
   | 0, _ => true
@@ -628,5 +658,6 @@ def switchStmts (k : Nat) (labels : List String) (d : Expr) (cs : List Case) : O
 def Expr.hasYield (e : Expr) : Bool := Expr.hasYieldF 100000 e
 def Stmt.hasYield (s : Stmt) : Bool := Stmt.hasYieldF 100000 s
 def Decl.hasYield (d : Decl) : Bool := Decl.anyYield 100000 [d]
+def Pat.hasYield (p : Pat) : Bool := Pat.hasYieldF 100000 p
 
 end L4Factoidal.JS

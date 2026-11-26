@@ -716,6 +716,26 @@ iterator's own fails. -/
 -- `for-in` with `await` in its body or in its object, in an async function (the generator
 -- machine had no `for-in`: "yield in this position is not supported")
 #guard out "async function f() { var o = { a: 1, b: 2 }, s = ''; for (var k in o) { s += k + (await o[k]); } for (var j in await o) s += j; return s; } f().then(function (v) { print(v); })" == ["a1b2ab"]
+
+-- `await` in a destructuring assignment, a tagged template, `++`, `super[...]`
+-- and `||=`, `&&=`, `??=` (issue 1161: the Hub conformance page's `[D, H] = await
+-- Promise.all(...)` was "yield in this position is not supported")
+#guard out "async function f() { let D, H; [D, H] = await Promise.all([1, 2]); ({a: D} = await {a: D + H}); return D; } f().then(function (v) { print(v); })" == ["3"]
+#guard out "function* g() { let a, b; [a, b] = yield 1; return a + b; } var it = g(); it.next(); print(it.next([4, 5]).value)" == ["9"]
+#guard out "async function f() { var t = (s, x) => s.join('|') + x; var o = [0]; o[await 0]++; return t`a${await 7}b` + o[0]; } f().then(function (v) { print(v); })" == ["a|b71"]
+#guard out "class A { get k() { return 'K'; } } class C extends A { async m() { return super[await 'k']; } } new C().m().then(function (v) { print(v); })" == ["K"]
+#guard out "async function f() { var o = { a: 0, b: 1, c: null }, n = 0; var g = async () => { n++; return 9; }; o.a ||= await g(); o.b ||= await g(); o.b &&= await g(); o.c ??= await g(); var z = 0; z ||= await 4; return [o.a, o.b, o.c, n, z].join(); } f().then(function (v) { print(v); })" == ["9,9,9,3,4"]
+-- `yield` and `await` inside the pattern of a destructuring assignment or declaration: the
+-- pattern's steps are lowered to statements (`dstrLower`), in the order of §13.15.5.5 and
+-- §13.15.5.6, with the iterator closed after a throw or a `return`
+#guard out "function* g() { var x, o = {p: 0}, r, y, z; r = [x = yield 1, , ...o[yield 2]] = [undefined, 0, 7, 8]; ({a: o.b = yield 3, [yield 4]: y, ...z} = {a: undefined, k: 5, m: 6}); return [x, o.p.join(), o.b, y, JSON.stringify(z), r.length].join('|'); } var it = g(); print(it.next().value, it.next(9).value, it.next('p').value, it.next('B').value); print(it.next('k').value)" == ["1 2 3 4", "9|7,8|B|5|{\"m\":6}|4"]
+#guard out "function* g() { let [a = yield 1] = []; const {b = yield 2, c = b, f = function(){}} = {}; var [d = yield 3] = []; let e = yield 4, h = yield 5; return [a, b, c, d, e, h, f.name].join(); } var it = g(); it.next(); it.next(1); it.next(2); it.next(3); it.next(4); print(it.next(5).value)" == ["1,2,2,3,4,5,f"]
+#guard out "function* g() { const [x = yield] = []; x = 2 } var it = g(); it.next(); try { it.next(1) } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var n = 0, it = { [Symbol.iterator]() { return this; }, next() { return { done: false }; }, return() { n++; return {}; } }; function* g() { var a; [a = yield] = it; } var i = g(); i.next(); print(i.return(5).value, n)" == ["5 1"]
+#guard out "async function f() { let {a, b: [c = await 3] = []} = {a: await 1}; return a + c } f().then(print)" == ["4"]
+-- Expected failure, https://github.com/danbri/factoidal-core/issues/1167: a `yield` inside an
+-- optional chain is refused. This guard fails when the case starts to pass: then assert "1".
+#guard out "function* g() { var o = {a: 1}; return o?.[yield]; } var it = g(); try { it.next(); print(it.next('a').value) } catch (e) { print(e.name) }" == ["SyntaxError"]
 /-! ## RegExp: Unicode properties, code points with `u`, modifiers, `v` class sets, `d`
 
 Test262 (built-ins/RegExp, 2026-11-15) found these: Script_Extensions, Script long names, the
@@ -728,6 +748,9 @@ the `v` flag's class sets, match indices (`d`) and duplicate group names were no
 #guard out "try { new RegExp('\\\\p{ASCII=Y}', 'u'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "print(/^.$/u.test('\\u{1F600}'), /^.$/.test('\\u{1F600}'), /^\\p{Script=Toto}$/u.test('\\u{1E290}'), '\\u{1F600}x'.match(/./gu).length)" == ["true false true 2"]
 #guard out "print(/\\udf06/u.exec('\\ud834\\udf06'), /^[\\u{1F600}-\\u{1F64F}]$/u.test('\\u{1F610}'))" == ["null true"]
+-- Annex B legacy octal escapes at the end of a class range (Observable Plot's
+-- `[\240-\377]`; issue 1161: the Hub's Rendering scores page did not load its modules)
+#guard out "print(/[\\240-\\377]/.test('\\u00e9'), /[a-\\377]/.test('b'), /[\\240-\\250]/.test('\\u00b0'), /[\\1-\\7]/.test('\\u0003'))" == ["true true false true"]
 #guard out "print(/(?i:a)b/.test('Ab'), /(?i:a)b/.test('AB'), /(?-i:a)b/i.test('aB'), /(?-i:a)b/i.test('AB'))" == ["true false true false"]
 #guard out "try { new RegExp('(?ii:a)'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "print(/\\u212a/iu.test('k'), /\\u212a/i.test('k'), /\\w/iu.test('\\u017f'), /[a-z]/i.test('\\u212a'))" == ["true false true false"]
@@ -837,5 +860,32 @@ exact path (`toFixed(20)`, `toExponential(18)` of the largest double). -/
   ["123.5 0.00012 3 9.99 1.0e+2 0.33333333333333331 1.00e+21 -0.00001"]
 #guard out "print((1/3).toExponential(), (1e-7).toExponential(3), (123456).toExponential(2), (-9.99).toExponential(1), (5e-324).toExponential(), (0).toExponential(2), (1.7976931348623157e308).toExponential(18))" ==
   ["3.333333333333333e-1 1.000e-7 1.23e+5 -1.0e+1 5e-324 0.00e+0 1.797693134862315708e+308"]
+
+-- `arguments.length` alone is the call's count (Expr.argCount, no arguments object, issue
+-- 1098); any other use of `arguments` keeps the arguments object. Lines from Node.
+#guard out "function f(a, b, c, d) { return arguments.length; } print(f(), f(1), f(1, 2, 3, 4), f(1, 2, 3, undefined), f(1, 2, 3, 4, 5, 6))" == ["0 1 4 4 6"]
+#guard out "function g(a) { 'use strict'; if (arguments.length < 2) return 'short ' + arguments.length; return a; } print(g(1), g(1, 2))" == ["short 1 1"]
+#guard out "function h() { var k = () => arguments.length; return k(9, 9, 9); } print(h(1, 2))" == ["2"]
+#guard out "function m() { arguments.length = 7; return arguments.length; } print(m(1))" == ["7"]
+#guard out "function p() { return arguments.length + ':' + arguments[0]; } print(p('x', 'y'))" == ["2:x"]
+#guard out "function q(arguments) { return arguments.length; } print(q('abc'))" == ["3"]
+#guard out "function r() { function inner() { return arguments.length; } return inner(1, 2, 3) + arguments.length; } print(r(1))" == ["4"]
+#guard out "var o = { set v(x) { this.n = arguments.length; }, meth(a, b) { return arguments.length; } }; o.v = 5; print(o.n, o.meth(1), o.meth.length)" == ["1 1 2"]
+-- Expected failures, https://github.com/danbri/factoidal-core/issues/1148: `arguments` in a
+-- default parameter value and in a direct eval (Node: "0 4" and "2"). When these fail, assert
+-- Node's lines and close the issue.
+#guard out "function s(a = arguments.length) { return a; } print(s(), s(4))" == ["Uncaught ReferenceError: arguments is not defined"]
+#guard out "function t() { return eval('arguments.length'); } print(t(1, 2))" == ["Uncaught ReferenceError: arguments is not defined"]
+#guard out "function u() { arguments.length++; return arguments.length; } print(u(1, 2))" == ["3"]
+
+-- TypedArray.prototype.set from an array: all Numbers go in one write; a value with valueOf
+-- goes one element at a time, in order (issue 1098). Lines from Node.
+#guard out "var f = new Float64Array(new ArrayBuffer(8 + 8 * 4), 8, 4); f.set([1.5, -0.1, 1e300, NaN]); print(f.join(','))" == ["1.5,-0.1,1e+300,NaN"]
+#guard out "var b = new Uint8ClampedArray(5); b.set([300, -5, 1.5, 2.5], 1); print(b.join(','))" == ["0,255,0,2,2"]
+#guard out "var s = new Int16Array(4); s.set([70000, -1], 2); print(s.join(','))" == ["0,0,4464,-1"]
+#guard out "var g = new Float32Array(3); g.set([1 / 3, 1e40, -0]); print(g.join(','), Object.is(g[2], -0))" == ["0.3333333432674408,Infinity,0 true"]
+#guard out "var u = new Uint32Array(3); var seen = []; u.set([1, { valueOf() { seen.push(u[0]); return 9; } }, 3]); print(u.join(','), seen.join(','))" == ["1,9,3 1"]
+#guard out "try { new Uint8Array(2).set([1, 2, 3]); } catch (e) { print(e.name); }" == ["RangeError"]
+#guard out "var d = new Float64Array(2); d.set([7]); print(d.join(','))" == ["7,0"]
 
 end L4Factoidal.JS.Tests

@@ -121,7 +121,10 @@ Real pages (`realpages-survey`, macOS, live, 24 pages, engine 3f499a901):
 **Measured causes of slowness, in order of size:**
 
 1. **No real incrementality in the frame path.** A frame on a kept layout (status page, 2,940 primitives) cost
-   249 M instructions. In that frame:
+   249 M instructions. Correction, 2026-11-26: that figure is the path without layers, which no host uses. The same
+   frame on the layers path, which every host uses, cost 12.3 M instructions, and 3.0 M after display list stage A
+   (74d4c4f54, https://github.com/danbri/factoidal-core/issues/1124 (retained display list)). The breakdown below is
+   for the path without layers. In that frame:
    - 39% turns the scene into float32 bytes;
    - 32% rebuilds the scene from the layout;
    - 19% writes boxes and glyph runs as JSON text (13% is `printf` float-to-text);
@@ -199,8 +202,10 @@ was never designed as a whole.
 1. **Frame and scene architecture (largest, and needs judgement).** Design a retained display list in mutable
    `ByteArray`/`FloatArray` storage, with damage tracking. Patch it in place from a dirty set. Use a binary ABI with no
    JSON or decimal text on the frame path, and one upload of changed ranges. State the refinement against the current
-   `Scene.make` / `jsonWith` as the spec. Target: a kept-layout frame at a small fraction of today's 249 M
-   instructions.
+   `Scene.make` / `jsonWith` as the spec. Target: a kept-layout frame at a small fraction of the cost on the
+   layers path (12.3 M instructions before stage A, 3.0 M after; the 249 M figure above is the path without layers).
+   The canvas-game frame (Rex) has other costs: https://github.com/danbri/factoidal-core/issues/1098 (canvas game at
+   10 fps).
 2. **Style invalidation and incremental layout.** Add selector invalidation sets, ancestor Bloom filters and style
    sharing. Add dirty bits through layout, so that a DOM change or a script turn costs a subtree, not the document.
    The "incremental equals full" statement already exists as the correctness target; what it lacks is preservation

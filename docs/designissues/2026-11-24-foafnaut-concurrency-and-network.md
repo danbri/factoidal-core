@@ -143,6 +143,28 @@ Open question (not measured): which of our worker and Emscripten paths could bec
 
 Inventory of these paths (step 1, nothing measured): `2026-11-25-lean-native-concurrency-audit.md`.
 
+### 2b. Proofs about external code (2026-11-25)
+
+Owner, 2026-11-25, verbatim: "ugh you can still have proofs relating to external code, certs etc
+though?" (to: Lean's interpreter is not a sandbox for untrusted code).
+
+Yes. Lean proves things about a checker, and the checker gives the guarantee about the external
+artifact. Three forms are in the tree:
+
+- A proved host for untrusted code: the WASI host of the WebAssembly engine proves that a call the
+  embedder did not grant does nothing and never succeeds (`WasmVM/Wasi.lean`, `denied_is_pure`,
+  `host_path_open`). Untrusted wasm runs inside it.
+- A certificate checked by proved code: an external proof or receipt comes with the artifact, and
+  Lean code checks it (`Attestation/AdmissionTheorems.lean` for the ASK attestation policy;
+  `zkvm/risc0/evm` for the Groth16 receipts).
+- A signature or hash checked with verified crypto: HACL\* primitives through
+  `Crypto/WebHacl.lean`, `Crypto/Ed25519.lean`.
+
+What each gives is a statement with named assumptions: the cryptographic assumptions, the
+hardware, the compiler and runtime that run the checker, and for a model of other-language code
+(the `lean-verify` skill) the human check that the model matches the code. External code that no
+proved checker, certificate or sandbox covers gets no guarantee from Lean.
+
 ## 3. One engine worker per tab (first step for tabs and windows)
 
 A document is a Lean value, so it can live in its own worker.
@@ -201,6 +223,11 @@ latency includes that draw.
 Not done: a worker that dies still sends every tab to the main thread (as before), not only its
 own tabs; a background tab gets no lower step budget; the Hub has one engine instance; the
 Veil model has no shared worker at the cap.
+
+2026-11-26: the library copies are gone in two new modes, `--engine-mode sessions` (a worker
+per tab, each with an engine session in one library) and `--engine-mode tasks` (no worker: a
+session per tab on its own Lean dedicated task). Record and measurements:
+`2026-11-26-foafnaut-engine-sessions.md`.
 
 Dedicated workers of a page can move to their own threads in the same way, because each is
 already a separate session value. The deterministic interleaving then becomes one possible order.

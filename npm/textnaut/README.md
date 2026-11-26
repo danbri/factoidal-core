@@ -21,7 +21,7 @@ Or install it: `npm install -g @foafos/textnaut`, then:
 
 ## Engine
 
-Textnaut uses the native engine when it is installed. Otherwise it downloads the Wasm engine once (11.7 MB, checked by SHA-256).
+Textnaut uses the native engine when it is installed. Otherwise it downloads the Wasm engine once (13.2 MB, checked by SHA-256).
 
 - Linux (x86_64): `textnaut --install-native` downloads the native engine once, checks it by SHA-256 and keeps it in `~/.foafnaut` (or `$FOAFNAUT_HOME`); from then on Textnaut uses it. It needs only glibc, no other install. This package pins the release; `--install-native latest` takes the newest self-contained release instead, checked against that release's own build-info.
 - macOS (Apple silicon): the native engine comes with the foafnaut app (`npx -p @factoidal/core foafnaut --update`).
@@ -30,6 +30,7 @@ Textnaut uses the native engine when it is installed. Otherwise it downloads the
 
 ## Changes
 
+- 0.1.5: pins the Wasm and the native Linux x86_64 engine of core 023a9ce12 (the release of `@factoidal/core` 0.38.0), with the speed work of 2026-11-26: canvas raster and calls, number to text in BubblePopJS, display list stages A and B.
 - 0.1.4: pins the native Linux x86_64 engine, so `textnaut --install-native` installs a release checked against this package, and moves the Wasm pin to the same engine commit. 0.1.3 could no longer fetch its Wasm engine: the release it pinned was rebuilt, and its download no longer matched the pinned SHA-256 (Textnaut refused it, as it should). Releases are no longer replaced.
 - 0.1.3: the engine of 0.37.0; the package carries all the host sources it needs.
 

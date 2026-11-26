@@ -1039,6 +1039,23 @@ function scriptPointer(kind,x,y,pointerType){
       pressure:down?0.5:0,pointerType:pointerType??'mouse'}));
   }catch(error){scriptFailed(doc,error,'pointer');}
 }
+// A key for the page (issue 1139; WebScripts action key, WebDriver.HostKeys): the page sees
+// keydown first; the key's command from Lean's table (scrolling) runs as its default action only
+// when the page did not cancel it (the turn's keyDefault). A page with no scripts takes the
+// command at once. With an engine that takes key phases (issue 1074) a held key is held until its
+// keyup; an older engine gets a whole press at keydown and nothing at keyup.
+function pageKey(data){
+  const run=()=>{if(data.phase!=='up'&&data.command!==undefined)command(data.command);};
+  const script=doc?.script;
+  if(!script||!scriptOps.includes('key')){run();return;}
+  const phases=scriptInfo?.keyPhases===true;
+  if(data.phase==='up'&&!phases)return;
+  try{
+    const turn=scriptCall('',{op:'scriptSession',action:'key',session:script.session,key:data.key,modifiers:data.modifiers??0,...(phases?{phase:data.phase}:{})});
+    scriptTurn(doc,turn);
+    if(turn.keyDefault!==false)run();
+  }catch(error){scriptFailed(doc,error,'key');run();}
+}
 function scriptResize(){
   const script=doc?.script;if(!script||!scriptOps.includes('resize'))return;
   try{scriptTurn(doc,scriptCall('',{op:'scriptSession',action:'resize',session:script.session,width,height,zoomUnit:zoomUnit(),shell:shell()}));}
@@ -1998,6 +2015,7 @@ function apply(data){
     const target=hit(data.x,data.y);
     if(target?.href)follow(router.route({...site,href:target.href,base:doc.baseURL||doc.url,outside:doc?.outside??''}));
   }
+  if(data.type==='pageKey')pageKey(data);
   if(data.type==='text'&&focused){const {clipboard:_,...next}=call('',{op:'shellText',shell:shell(),text:data.text});field=next;request();}
   if(data.type==='key'&&focused){
     if(data.key===36)goTo(field.address);

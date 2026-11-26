@@ -112,17 +112,20 @@ def noiseMask (n seed : Nat) : ByteArray :=
 def diffW : Nat := 64
 def diffH : Nat := 40
 
-/-- Draws of every kind of paint and coverage, at each alpha. -/
-def diffDraws : List Draw := Id.run do
+/-- Coverages of rectangles (whole, fractional, larger than the canvas) and polygons. -/
+def diffCovs : List Coverage :=
   let W := diffW
   let H := diffH
-  let covs : List Coverage := [
-    rectCoverage W H 0 0 (nf W) (nf H),
+  [ rectCoverage W H 0 0 (nf W) (nf H),
     rectCoverage W H 3.25 2.5 50.75 31.5,
     rectCoverage W H (-5) (-5) 100 100,
     coverage W H (edgesOf #[⟨FloatArray.mk #[2, 1, 60, 8, 20, 39], true⟩]) .nonzero,
     coverage W H (edgesOf #[⟨FloatArray.mk #[0, 0, 64, 0, 64, 40, 0, 40], true⟩,
       ⟨FloatArray.mk #[10, 10, 30, 10, 30, 30, 10, 30], true⟩]) .evenodd]
+
+/-- Draws of every kind of paint and coverage, at each alpha. -/
+def diffDraws : List Draw := Id.run do
+  let covs := diffCovs
   let grad : Gradient := { kind := .linear 0 2 0 35, stops := #[⟨0, ⟨32, 48, 96, 1⟩⟩, ⟨1, ⟨192, 128, 80, 1⟩⟩] }
   let gradA : Gradient := { grad with stops := #[⟨0, ⟨255, 0, 0, 0.5⟩⟩, ⟨1, ⟨0, 0, 255, 1⟩⟩] }
   let gradX : Gradient := { grad with kind := .linear 3 0 60 4 }
@@ -137,7 +140,7 @@ def diffDraws : List Draw := Id.run do
   for cov in covs do
     for r in readies do
       for a in [1.0, 0.5, 0.3] do
-        for clip in [none, some (noiseMask (W * H) 7)] do
+        for clip in [none, some (noiseMask (diffW * diffH) 7)] do
           out := ⟨r, cov, a, .sourceOver, clip⟩ :: out
   return out
 
@@ -197,5 +200,92 @@ def noiseFloats (n seed : Nat) : FloatArray :=
   let (c2, d2, e2) := rowSumsRef w 40 lo hi (noiseFloats 80 lo) (noiseFloats 22 (hi + 5)) (noiseFloats 22 (lo + hi + 9))
   c1.data.map Float.toBits == c2.data.map Float.toBits && d1.data.map Float.toBits == d2.data.map Float.toBits &&
     e1.data.map Float.toBits == e2.data.map Float.toBits
+
+-- The clip mask by rows on `USize` indices is the reference mask, under no clip and under one.
+#guard diffCovs.all fun cov => [none, some (noiseMask (diffW * diffH) 7)].all fun old =>
+  clipMask diffW (diffW * diffH) cov old == clipMaskRef diffW (diffW * diffH) cov old
+
+
+-- Binary numbers of a batch (op 200): little-endian binary64, read at any offset.
+#guard (Wire.f64 ⟨#[0, 0, 0, 0, 0, 0, 0xF8, 0x3F]⟩ 0).toBits == (1.5 : Float).toBits
+#guard (Wire.f64 ⟨#[9, 0x9A, 0x99, 0x99, 0x99, 0x99, 0x99, 0xB9, 0xBF]⟩ 1).toBits == (-0.1 : Float).toBits
+
+/-! ### Rectangle uploads (issue 1098)
+
+The host keeps a texture and writes into it only the rectangle of each `pixels` command. After
+every batch, that texture must equal the whole canvas (straight RGBA). -/
+
+/-- The host's reading of `rleRect`'s output (`unrle` of page-gpu.mjs): `n` pixels. -/
+def unrleBytes (b : ByteArray) (n : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (n * 4)
+  let mut i := 0
+  let mut p := 0
+  for _ in [0:n + 1] do
+    if i + 4 > b.size || p >= n then break
+    let head := Wire.u32 b i
+    i := i + 4
+    let k := min (head % 2147483648) (n - p)
+    if head >= 2147483648 then
+      for q in [0:4 * k] do out := out.push b[i + q]!
+      i := i + 4 * (head % 2147483648)
+    else
+      for _ in [0:k] do out := (((out.push b[i]!).push b[i+1]!).push b[i+2]!).push b[i+3]!
+      i := i + 4
+    p := p + k
+  return out
+
+/-- Run the batches on one `w × h` canvas, apply each emitted rectangle to a texture, and
+compare it with the canvas after every batch. Also the total pixels sent. -/
+def uploads (w h : Nat) (batches : List (List Cmd)) : Bool × Nat := Id.run do
+  let mut s : Store := {}
+  let mut tex := ByteArray.mk (Array.replicate (w * h * 4) 0)
+  let mut ok := true
+  let mut sent := 0
+  let mut first := true
+  for b in batches do
+    s := s.run {} ((if first then #[Cmd.init 1 w h true] else #[Cmd.select 1]) ++ b.toArray)
+    first := false
+    let (s', out) := s.emit
+    s := s'
+    for hc in out do
+      match hc with
+      | .pixels _ W _ x y pw ph data =>
+        let px := unrleBytes (rleRect data W x y pw ph) (pw * ph)
+        sent := sent + pw * ph
+        for j in [0:ph] do
+          for i in [0:pw * 4] do
+            tex := tex.set! (((y + j) * w + x) * 4 + i) px[j * pw * 4 + i]!
+      | _ => pure ()
+    match s.canvases.get? 1 with
+    | some c => ok := ok && tex.toList == (c.straight 0 0 w h).toList
+    | none => ok := false
+  return (ok, sent)
+
+-- A small rect after the first frame sends only its own pixels (20 × 10 canvas: 200, then 6).
+#guard uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.fillColor "#f00", .fillRect 3 4 3 2]] == (true, 206)
+-- Fractional edges, alpha, a stroke, a clear, a partial clearRect, a path.
+#guard (uploads 20 10 [[.fillColor "#00f", .fillRect 1.5 2.25 4.5 3],
+  [.alpha 0.5, .fillColor "#f80", .fillRect 10.3 1.7 6 6],
+  [.strokeColor "#000", .lineWidth 2, .strokeRect 2 2 8 5],
+  [.clearRect 4 3 3 3],
+  [.beginPath, .moveTo 1 1, .lineTo 18 8, .lineTo 3 9, .closePath, .fill 0 .nonzero],
+  [.clearRect 0 0 20 10]]).1
+-- An unbounded operator (copy) changes pixels outside the shape.
+#guard (uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.composite "copy", .fillColor "#f00", .fillRect 2 2 3 3]]).1
+-- A shadow is drawn outside the shape's box.
+#guard (uploads 20 10 [[], [.shadowColor "#000", .shadowBlur 4, .shadowX 3, .shadowY 2, .fillColor "#f00", .fillRect 5 3 4 3]]).1
+-- putImageData writes its own rectangle; reset clears all.
+#guard (uploads 8 6 [[], [.putImageData ⟨#[255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 255, 9, 9, 9, 0]⟩ 2 2 3 1 0 0 2 2], [.reset]]).1
+-- A batch that draws nothing sends nothing.
+#guard uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.fillColor "#f00"]] == (true, 200)
+
+-- The run scan reads two pixels at a time: runs of odd and even length, a run that ends one
+-- pixel before the range, and a run cut by the end of a row (8 x 3 canvas, rect 1..7).
+#guard (uploads 8 3 [[.fillColor "#0f0", .fillRect 0 0 8 3], [.fillColor "#f00", .fillRect 1 0 5 1, .fillRect 2 1 2 1, .fillRect 1 2 6 1]]).1
+#guard (uploads 9 2 [[.fillColor "#00f", .fillRect 0 0 7 2], [.fillColor "#ff0", .fillRect 0 0 1 2, .fillRect 8 1 1 1]]).1
+#guard unrleBytes (rleRect ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩ 6 0 0 6 1) 6 ==
+  ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩
+#guard rleRect ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩ 6 0 0 6 1 ==
+  ⟨#[5, 0, 0, 0, 1, 2, 3, 255, 1, 0, 0, 128, 9, 9, 9, 255]⟩
 
 end L4Factoidal.PageCanvas.Tests

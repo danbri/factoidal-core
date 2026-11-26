@@ -1224,6 +1224,7 @@ dependencies = [
  "serde_json",
  "toml 0.8.23",
  "tor-config",
+ "tor-error",
  "tor-general-addr",
  "tor-keymgr",
  "tor-persist",

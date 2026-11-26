@@ -200,6 +200,7 @@ def eExpr : Nat → Expr → EM Unit
     | .superMember nm => do putNat 28; putStr nm
     | .superIndex k => do putNat 29; eExpr n k
     | .newTarget => putNat 30
+    | .argCount => putNat 36
     | .yieldE d a => do
       putNat 31; putBool d
       match a with
@@ -381,7 +382,7 @@ def eProp (p : PropV) : EM Unit :=
   | .acc g s e c => do putNat 1; eValue g; eValue s; putBool e; putBool c
 
 def eCtx (c : Ctx) : EM Unit := do
-  putNat c.env; eValue c.thisV; putBool c.strict; eValue c.newTarget; eValue c.home; eValue c.fnObj
+  putNat c.env; eValue c.thisV; putBool c.strict; eValue c.newTarget; eValue c.home; eValue c.fnObj; putNat c.argc
 
 def eLabels (ls : List String) : EM Unit := putStrs ls
 
@@ -674,6 +675,7 @@ def dExpr : Nat → DM Expr
     | 28 => pure (.superMember (← getStr))
     | 29 => pure (.superIndex (← dExpr n))
     | 30 => pure .newTarget
+    | 36 => pure .argCount
     | 31 =>
       let d ← getBool
       let a ← getOpt (dExpr n)
@@ -886,8 +888,8 @@ def dProp : DM PropV := do
 
 def dCtx : DM Ctx := do
   let env ← getNat; let thisV ← dValue; let strict ← getBool; let newTarget ← dValue
-  let home ← dValue; let fnObj ← dValue
-  pure { env, thisV, strict, newTarget, home, fnObj }
+  let home ← dValue; let fnObj ← dValue; let argc ← getNat
+  pure { env, thisV, strict, newTarget, home, fnObj, argc }
 
 def dCompl : DM GCompl := do
   match ← getNat with

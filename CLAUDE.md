@@ -1156,6 +1156,30 @@ change to it. New tab page, owner, same day: links to Settings and the Console, 
 (SPARQL demos), and a dinosaur emoji link to the owner's game Particle Rex
 (`pages/particle-rex.html`, keys WASD and arrows), which is also a real-world test of the engine.
 
+2026-11-26: one library can now hold an engine session per tab, on a worker
+(`--engine-mode sessions`) or on its own Lean dedicated task (`--engine-mode tasks`). The default
+stays one worker with its own library copy per tab (`copies`). Rule, owner's brief for the night of
+2026-11-25, verbatim: "Changing the default from workers to Lean tasks: land it as default only if
+it measures better on tabFirstFrame, memory per tab and tab-B input latency with no frame
+regression; otherwise land it behind a flag and report." Measured on Linux only against `main`
+`7285ab37`: `tasks` uses 23 against 109 MB per extra tab, but its new tab first frame p95 is
+1,369 against 1,269 ms and tab B's first frame while tab A loads is 1,424 against 1,122 ms. A
+first report that night said `tasks` was better on the new tab first frame; its numbers counted
+only the tabs that drew within 1 s, and they are withdrawn. Record (D11, sections 6 to 6b) and
+macOS gap: `docs/designissues/2026-11-26-foafnaut-engine-sessions.md`. Those first-frame numbers
+include CPU probes that every frame of a `--steps` run asks for and a window in use does not
+(`everyFrame`, trap in `skills/foafnaut`); numbers without them: section 7 of that record.
+
+Owner input, 2026-11-26, as written in the status note "Foafnaut engine per tab: status and
+proposals": "The Linux tests had no GPU." "A Deno per tab is too costly if it is used only for
+host work and WebGPU. Can we pool and reuse one or two Denos?" "New tab first frame matters, but
+steady speed and memory use may matter more." So a change of the engine-mode default is judged on
+steady state with 5, 20 and 50 tabs (resident memory, idle CPU per background tab, frame time p95
+and `queuedToActionMs` of the tab on screen while other tabs run scripts, GPU memory per tab on the
+Mac), with new tab first frame as a guard. The shape to test (not decided): every tab's engine a
+Lean task in one library, one GPU owner, a pool of 1 or 2 Deno workers for host I/O, background
+tabs make no frames. Work: https://github.com/danbri/factoidal-core/issues/1031.
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -
@@ -1211,6 +1235,22 @@ can defer for now and add more if concrete usecases arise."
 - Coordinator's reading, not the owner's words: this answer does not decide
   https://github.com/danbri/factoidal-core/pull/766 (finite-field Diffie-Hellman, dh-es, with
   1024-bit primes behind an opt-in). It stays unmerged until the owner answers on it.
+
+### Tor in Foafnaut: desktop on macOS, keychain, no Hub (owner, 2026-11-26)
+
+Owner, 2026-11-26, verbatim, to three questions (connect Tor to the browser; the storage key;
+the Hub): "YES"; "Storage key - os keychain, yes on macosx. For now we build tor and test it
+macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfellows."
+
+- Tor is connected to the native desktop browser: page requests go through the Tor worker of
+  the host, one partition (circuit set) per top-level site, with a new identity control.
+- The Tor state key comes from the macOS Keychain.
+- Tor is built and tested for macOS. Coordinator's reading, not the owner's words: runs of the
+  private chutney network in a Linux cloud container stay as development checks; the test that
+  counts is on macOS.
+- No Tor in the Hub (the browser running inside another browser), and none inside pages: Tor runs
+  only in the host's worker. Record:
+  `docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`, section 17.
 
 ### Never report upstream (owner, 2026-11-25)
 

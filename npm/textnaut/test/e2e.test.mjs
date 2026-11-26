@@ -1,5 +1,5 @@
 // Packs the package, installs the tarball into a temporary directory outside the repository and
-// runs it for real with the pinned Wasm engine. Downloads the engine (11.7 MB) once, into a
+// runs it for real with the pinned Wasm engine. Downloads the pinned engine (its size is in engine-pin.json) once, into a
 // temporary cache. Skipped, with the reason, when there is no Deno or TEXTNAUT_NO_NETWORK is set.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const page = join(root, '..', '..', 'labs', 'demos', 'foafnaut', 'pages', 'showcase.html');
 const hasDeno = spawnSync('deno', ['--version']).status === 0;
+const pinMB = (JSON.parse(readFileSync(join(root, 'engine-pin.json'), 'utf8')).tarball.bytes / 1e6).toFixed(1);
 const skip = !hasDeno ? 'no deno' : process.env.TEXTNAUT_NO_NETWORK ? 'TEXTNAUT_NO_NETWORK is set' : false;
 
 test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engine', { skip, timeout: 300000 }, () => {
@@ -32,7 +33,7 @@ test('packed tarball, installed elsewhere, dumps a page on the fetched Wasm engi
   const first = spawnSync(bin, ['--dump', '--width', '70', page], { encoding: 'utf8', env, cwd: work, timeout: 240000 });
   assert.equal(first.status, 0, first.stderr);
   assert(/fetching Deno 2\.9\.6 from npm, once/.test(first.stderr), first.stderr);
-  assert(/fetching the Wasm engine, once: 11\.7 MB/.test(first.stderr), first.stderr);
+  assert(first.stderr.includes(`fetching the Wasm engine, once: ${pinMB} MB`), first.stderr);
   assert(/engine wasm/.test(first.stderr), first.stderr);
   assert(first.stdout.length > 200 && /\[\d+\]/.test(first.stdout), first.stdout.slice(0, 300));
   console.log(first.stderr.trim().split('\n').slice(-1)[0]);

@@ -18,7 +18,7 @@
 #   (committed state, no build output, no third_party/ except the snapshot test.sh reads):
 #     test.sh checks that need no engine: native_coordinates_test.c, status-to-html.py,
 #       build-demo-pages.py (the generated demo pages), wasm/build.sh --check,
-#       spinal-tap-snapshot.py, native_net_test.ts
+#       spinal-tap-snapshot.py, native_net tests (transport, pool, DNS cache)
 #     deno check of the hosts and pure tests (test.sh's list), with the generated engine
 #       modules (.build/*.mjs) replaced by untyped stubs
 #     FOUNDATION gates of tests/dataflow/run.sh (foundation, entry-point, runners,
@@ -233,7 +233,7 @@ lean_in_binaries() {
 T0=$(now)
 if touches '^(labs/|docs/web/|tools/|third_party/data/)'; then
   check "test.sh: generators and native_net (no engine)" testsh_checks native_coordinates_test.c status-to-html.py \
-    build-demo-pages.py "wasm/build.sh --check" spinal-tap-snapshot.py native_net_test.ts
+    build-demo-pages.py "wasm/build.sh --check" spinal-tap-snapshot.py "native_net tests (pool, DNS cache)"
   check "deno check (hosts and pure tests)" deno_check
 else skip "test.sh generators"; skip "deno check"; fi
 if touches '^(foundation/|tools/|tests/|docs/dataflow-inventory.md|formal/|npm/)'; then

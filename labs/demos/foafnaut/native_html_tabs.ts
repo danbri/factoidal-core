@@ -8,11 +8,13 @@
 //  - every other call goes to the worker of the tab shown now.
 // Each worker is one native_html_compile.ts client, with its own queue and its own rules
 // (lanes, low request replaced, rejected calls when it dies). Each loads its own engine and
-// fonts: the native library keeps one engine state per loaded copy, so each worker after the
-// first loads its own copy of the library file (a second dlopen of the same file would share
-// that state between two threads). The serif and monospace faces and the QuickJS guest module
-// given to one worker are given to every worker started later. The fallback fonts of a page go to
-// the worker that lays it out, before its first render there.
+// fonts. With `copies` (the mode of 2026-11-25) each worker after the first loads its own copy
+// of the library file, because a library from before engine sessions keeps one engine state
+// per loaded copy. Without it, every worker opens the one library and makes an engine session
+// of its own (docs/designissues/2026-11-26-foafnaut-engine-sessions.md). The serif and
+// monospace faces and the QuickJS guest module given to one worker are given to every worker
+// started later. The fallback fonts of a page go to the worker that lays it out, before its
+// first render there.
 //
 // Session numbers: each engine numbers its own sessions, so the numbers the host sees are
 // numbers of this module, mapped to (worker, engine session) and back.
@@ -34,8 +36,11 @@ import type {CompileClient} from "./native_html_compile.ts";
 import {REMOTE_CALLS,type RemoteCall} from "./native_html_calls.ts";
 import type {PageFonts} from "./native_html_fonts.ts";
 
-export type WorkerStart={/** -1: a spare */tab:number;warmMs?:number;worker:number;ms:number;rssBeforeMB:number;rssAfterMB:number;copyMs:number;shared:boolean};
-export type TabWorkerStats={mode:"per-tab"|"one";cap:number;started:number;live:number;maxLive:number;sharedTabs:number;
+export type WorkerStart={/** -1: a spare */tab:number;warmMs?:number;worker:number;ms:number;rssBeforeMB:number;rssAfterMB:number;copyMs:number;shared:boolean;
+  /** The worker's engine is a session in the shared library (no copy). */session?:boolean;
+  /** "task": a session on its own Lean task, with no worker (native_engine_tasks.ts); "pooled": such a
+  session served by a host worker (native_engine_pool.ts). */kind?:"task"|"pooled"};
+export type TabWorkerStats={mode:"per-tab"|"one";engines?:"copies"|"sessions"|"tasks"|"pooled";cap:number;started:number;live:number;maxLive:number;sharedTabs:number;
   failedStarts:number;sparesTaken:number;starts:WorkerStart[]};
 export type TabWorkers=CompileClient&{
   /** Run `work` with its engine calls on the worker of `tab` (started if it has none). */
@@ -51,7 +56,8 @@ export type TabWorkers=CompileClient&{
   stats():TabWorkerStats;
 };
 type Slot={serial:number;client?:CompileClient;ready:Promise<CompileClient>;tabs:Set<number>;
-  sessions:Map<number,number>;fontSources:Set<string>;ended:boolean};
+  sessions:Map<number,number>;fontSources:Set<string>;ended:boolean;
+  /** A spare's warm-up layout is done (or it had none). */warmed?:boolean};
 export type TabWorkerOptions={
   perTab:boolean;cap:number;
   /** Start one worker; `engineCopy` is the library path for this worker, undefined for Wasm. */
@@ -62,10 +68,17 @@ export type TabWorkerOptions={
   log:(record:Record<string,unknown>)=>void;
   /** Directory for the copies of the native library (default: the system temporary directory). */
   tmpDir?:string;
+  /** Each worker after the first loads its own copy of the library (default true). False: every
+  worker opens the one library; `start` then makes an engine session in each. */
+  copies?:boolean;
   /** Keep one warmed worker with no tab for the next new tab (per-tab mode only). */
   spare?:boolean;
   /** Lay out a page on a spare worker, so its engine is warm. */
   warm?:(client:CompileClient)=>Promise<unknown>;
+  /** With task sessions (tasks, pooled): "new" gives a new tab a new session when the spare has
+  not finished its warm-up; "take" (the default) makes the tab take it and wait for the warm-up,
+  as with workers. Workers always take the spare. */
+  warmingSpare?:"take"|"new";
 };
 const rssMB=()=>{try{return Math.round(Deno.memoryUsage().rss/1048576*10)/10;}catch{return -1;}};
 const round=(ms:number)=>Math.round(ms*10)/10;
@@ -86,6 +99,8 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
   const replay:{op:"serifFont"|"monoFont";path:string;family:string}[]=[];
   let quickjs:Uint8Array|undefined;
   let spare:Slot|undefined,sparesTaken=0,spareTimer:ReturnType<typeof setTimeout>|undefined;
+  // The first worker's engine has a session of its own: the library has sessions.
+  let sessionsWork=false,tasksWork:false|"tasks"|"pooled"=false;
   const live=()=>slots.filter(slot=>!slot.ended);
   const startSlot=(tab:number,first:boolean):Slot=>{
     const slot:Slot={serial:++serial,tabs:new Set(tab<0?[]:[tab]),sessions:new Map(),fontSources:new Set(),ended:false,ready:undefined!};
@@ -93,7 +108,8 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     slot.ready=(async()=>{
       const t0=performance.now(),rss0=rssMB();
       let path=options.nativeEngine,copyMs=0;
-      if(path&&!first){
+      // A library from before engine sessions (its first worker has none) needs copies.
+      if(path&&!first&&(options.copies!==false||!sessionsWork)){
         // A copy of the library file: its own engine state (see the top of this file).
         const c0=performance.now();
         const dir=options.tmpDir??Deno.env.get("TMPDIR")??"/tmp";
@@ -111,7 +127,9 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       // A spare lays out a page before a tab takes it (calls of a tab that takes it meanwhile wait behind it).
       let warmMs:number|undefined;
       if(tab<0&&options.warm){const w0=performance.now();await options.warm(client).catch(()=>{});warmMs=round(performance.now()-w0);}
-      const record:WorkerStart={tab,...(warmMs!==undefined?{warmMs}:{}),worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false};
+      slot.warmed=true;
+      const record:WorkerStart={tab,...(warmMs!==undefined?{warmMs}:{}),worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false,
+        ...(client.session?{session:true}:{}),...(client.kind==="task"||client.kind==="pooled"?{kind:client.kind}:{})};
       starts.push(record);
       options.log({type:"native-html-engine-worker",state:"started",...record,live:live().length,mode:options.perTab?"per-tab":"one"});
       if(slot.ended)client.terminate();
@@ -134,7 +152,15 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     if(have&&!have.ended)return have;
     let slot:Slot;
     const running=live();
-    if(spare&&!spare.ended){
+    // A task session starts in about 5 ms, and a spare still in its warm-up layout would make the
+    // tab wait for that layout (record section 7, the profile of a tab's first frame): with task
+    // sessions such a tab gets a session of its own while there is room, and the spare stays.
+    const skipSpare=!!spare&&!spare.ended&&!spare.warmed&&tasksWork!==false&&options.warmingSpare==="new"&&running.length<cap;
+    if(skipSpare){
+      slot=startSlot(tab,false);
+      options.log({type:"native-html-engine-worker",state:"spare-warming",tab,worker:spare!.serial,live:running.length+1});
+    }
+    else if(spare&&!spare.ended){
       slot=spare;spare=undefined;slot.tabs.add(tab);sparesTaken++;
       options.log({type:"native-html-engine-worker",state:"spare-taken",tab,worker:slot.serial,live:running.length});
       clearTimeout(spareTimer);spareTimer=setTimeout(prewarm,2000);
@@ -234,7 +260,9 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     ?async(bytes:Uint8Array)=>(await broadcastLoad(bytes)).value
     :async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   const first=startSlot(0,true);tabSlot.set(0,first);shownAt.set(0,performance.now());
-  await first.ready;
+  {const client=await first.ready;sessionsWork=!!client.session;tasksWork=client.kind==="task"?"tasks":client.kind==="pooled"?"pooled":false;}
+  if(options.copies===false&&options.nativeEngine&&!sessionsWork)
+    options.log({type:"native-html-engine-worker",state:"no-sessions",why:"the library has no engine sessions: each worker loads its own copy"});
   const sum=(f:(c:CompileClient)=>number)=>live().reduce((n,s)=>n+(s.client?f(s.client):0),0);
   const pool={
     get alive(){return !dead;},
@@ -250,7 +278,8 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     },
     prewarm,
     ownWorker:tab=>{const slot=tabSlot.get(tab);return !!slot&&options.perTab&&slot.tabs.size===1&&!slot.ended;},
-    stats:()=>({mode:options.perTab?"per-tab":"one",cap,started:starts.length,live:live().length,maxLive,sharedTabs,failedStarts,sparesTaken,starts}),
+    stats:()=>({mode:options.perTab?"per-tab":"one",...(options.nativeEngine?{engines:tasksWork?tasksWork:options.copies===false&&sessionsWork?"sessions" as const:"copies" as const}:{}),
+      cap,started:starts.length,live:live().length,maxLive,sharedTabs,failedStarts,sparesTaken,starts}),
     call,inputCall,engine,
     gestureCall:(name:RemoteCall,...args:unknown[])=>route("gestureCall",name,args),
     async prefetchLayers(source,width,height,opts){const {slot,client}=await current();fontsFor(slot,client,source);return client.prefetchLayers(source,width,height,opts);},

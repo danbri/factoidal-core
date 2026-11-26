@@ -63,6 +63,57 @@ private def sheet :=
 #guard RuleIndex.mergeRuns ((List.range 33).toArray.map fun i => #[i,40+i%3]) ==
   ((List.range 33) ++ [40,41,42]).toArray
 
+/-! The ancestor filter (`ElemKey.anc`, `Selector.need`, record
+docs/designissues/2026-11-25-ancestor-filter.md): for each element of a page and each
+selector of a sheet, a selector that the filter refuses does not match
+(`NeedSound`; proved for selectors of compounds by `CSS.needSound_plain`, checked here
+for the selectors with `complex`), and the filter does refuse some selectors. -/
+
+/-- Whether, on every element and for every selector of the sheet, the filter refuses only
+selectors that do not match; and the number of pairs it refuses. -/
+def refusals (html css : String) (state : ElementState := {}) : Bool × Nat :=
+  match CSS.parse css with
+  | .error _ => (false, 0)
+  | .ok rules =>
+    let dom := DOM.parseHtmlDocument html
+    let ks := ElemKeys.of dom
+    let keys := ks.get dom
+    let sels := rules.flatMap (·.selectors)
+    (List.range dom.size).foldl (fun (ok, n) id =>
+      if (dom.get id).type != .element then (ok, n) else
+      sels.foldl (fun (ok, n) sel =>
+        if ancAdmits (keys id).anc sel.need then (ok, n)
+        else (ok && !selectorMatchesK keys dom id sel state, n + 1)) (ok, n)) (true, 0)
+
+private def ancPage :=
+  "<html class='js'><body id='top' class='skin ns-0'><div id='x' class='a b'><p class='b'>one <a href='/u' data-k='v w'>link</a></p>" ++
+  "<ul class='list a'><li class='item'>i</li><li class='item b a'>j <span>k</span><span class='c'>kk</span></li></ul></div>" ++
+  "<section class='s'><div class='a'><span class='c' id='y'>s</span><span class='c' id='y'>dup</span></div><a href='#v' class='b'>v</a><a>no</a></section>" ++
+  "<table class='infobox'><tr style='color:red'><td class='x\t\ny\x0Cz'>c</td><td>d</td></tr></table>" ++
+  "<DIV CLASS='UP lo'><P Class='Lo'>t</P></DIV><button>go</button></body></html>"
+private def ancSheet :=
+  ".a .b{color:#010101}.ns-0 .a span{color:#020202}.skin>div .b{color:#030303}.nope .b{color:#040404}" ++
+  "body.ns-0 :not(.nope) a{color:#050505}.js .skin .infobox tr[style] td{color:#060606}.a + .a{color:#070707}" ++
+  "#x ~ section .c{color:#080808}.s>.a>span#y{color:#090909}div :is(.c,.d) {color:#0a0a0a}.infobox td:first-child{color:#0b0b0b}" ++
+  ".x .y{color:#0c0c0c}.y.z td{color:#0d0d0d}.UP .Lo{color:#0e0e0e}.up p{color:#0f0f0f}.x\\.y{color:#101010}" ++
+  "html body div p{color:#111111}p.b a[data-k~=w]{color:#121212}.item.b.a span{color:#131313}ul li span.c{color:#141414}" ++
+  "section:not(.s) span{color:#151515}.ns-0 .nope > p{color:#161616}*{margin:0}[data-k]{color:#171717}"
+
+#guard agrees ancPage ancSheet
+#guard agrees ancPage ancSheet {hover := some 9, visited := [7]}
+#guard stylesAgree ancPage ancSheet
+#guard (refusals ancPage ancSheet).1
+#guard (refusals ancPage ancSheet).2 > 40
+#guard (refusals ancPage "").2 == 0
+
+/-- A chain of `n` nested divisions, the innermost one the subject of the rules. -/
+private def deepPage (n : Nat) : String :=
+  String.join ((List.range n).map fun i => s!"<div class='d{i % 7}'>") ++ "<p class='leaf'>x</p>" ++
+    String.join ((List.range n).map fun _ => "</div>")
+#guard agrees (deepPage 60) ".d3 .leaf{color:red}.d3>.d4 .leaf{color:blue}.q .leaf{color:green}div div div div p{margin:1px}.d0 .d1 .d2 .d3 .d4 .d5 .d6 .leaf{color:#123456}"
+#guard (refusals (deepPage 60) ".d3 .leaf{color:red}.q .leaf{color:green}.q>.d1 .d2 .leaf{color:#123456}").1
+#guard (refusals (deepPage 60) ".d3 .leaf{color:red}.q .leaf{color:green}.q>.d1 .d2 .leaf{color:#123456}").2 > 0
+
 /-- The candidates all elements try. -/
 def candidateTotal (html css : String) : Nat :=
   match CSS.parse css with

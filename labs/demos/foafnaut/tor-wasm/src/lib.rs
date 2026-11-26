@@ -46,6 +46,9 @@ extern "C" {
     fn log(s: &str);
 }
 
+/// Arti's memory quota in this build: 256 MiB (reclamation starts above it).
+const MEMORY_QUOTA_BYTES: usize = 256 * 1024 * 1024;
+
 /// 2024-01-01T00:00:00Z. A wall clock earlier than this is not a real clock (a Foafnaut page
 /// clock starts near 1970), and Tor must not run on it: consensus validity, certificate
 /// lifetimes and onion service time periods all depend on the real date.
@@ -489,13 +492,14 @@ pub fn state_load(json: &str) -> i32 {
     }
 }
 
-/// True when this module runs in a dedicated worker, where no other page script can read its
-/// memory. Expected-failure test: xfail.test.cjs.
+/// True when this module runs in a dedicated worker (a Deno or Web Worker: `globalThis` is a
+/// `WorkerGlobalScope`), where no page script can read its memory.
 #[wasm_bindgen]
 pub fn isolated_context() -> bool {
-    let g = js_sys::global();
-    js_sys::Reflect::has(&g, &"WorkerGlobalScope".into()).unwrap_or(false)
-        && js_sys::Reflect::has(&g, &"importScripts".into()).unwrap_or(false)
+    let check = js_sys::Function::new_no_args(
+        "return typeof WorkerGlobalScope === 'function' && globalThis instanceof WorkerGlobalScope",
+    );
+    check.call0(&JsValue::UNDEFINED).ok().and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 /// Start an Arti client and try to bootstrap it for at most `timeout_ms`. Returns one JSON
@@ -536,6 +540,11 @@ pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
     b.storage()
         .cache_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/cache"))
         .state_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/state"));
+    // Memory quota: on wasm Arti cannot read the machine's memory size and uses 1 GiB. Set a
+    // fixed limit unless the configuration gave one, so a hostile peer cannot grow buffers to it.
+    if config_toml.as_deref().is_none_or(|t| !t.contains("[system.memory]")) {
+        b.system().memory().max(MEMORY_QUOTA_BYTES);
+    }
     // Keys (onion service client keys included) stay in memory: nothing is written anywhere.
     b.storage()
         .keystore()
@@ -591,6 +600,32 @@ pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
 
 thread_local! {
     static CLIENT: std::cell::RefCell<Option<std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> = const { std::cell::RefCell::new(None) };
+    /// One isolated client per network partition (for a browser: the top-level site). Streams of
+    /// two partitions never share a circuit (Arti `isolated_client`).
+    static PARTITIONS: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The client for `partition`: a new isolated client the first time a partition is seen.
+/// An empty partition name is refused, so no caller can share a circuit by accident.
+fn client_for(partition: &str) -> Result<std::sync::Arc<arti_client::TorClient<WasmRuntime>>, String> {
+    if partition.is_empty() {
+        return Err("no partition: every stream must name its partition (for a browser, the top-level site)".into());
+    }
+    let base = CLIENT.with(|c| c.borrow().clone()).ok_or("no client: run bootstrap first")?;
+    Ok(PARTITIONS.with(|m| m.borrow_mut().entry(partition.to_string()).or_insert_with(|| base.isolated_client()).clone()))
+}
+
+/// New identity: forget every partition's isolation, so later streams use new circuits that no
+/// earlier stream used. Returns the number of partitions forgotten.
+#[wasm_bindgen]
+pub fn new_identity() -> u32 {
+    PARTITIONS.with(|m| {
+        let mut m = m.borrow_mut();
+        let n = m.len() as u32;
+        m.clear();
+        n
+    })
 }
 
 /// Drop the client of the last `bootstrap`. Arti flushes its state when its circuit manager
@@ -600,14 +635,15 @@ pub fn close() -> bool {
     CLIENT.with(|c| c.borrow_mut().take()).is_some()
 }
 
-/// Through the client of the last `bootstrap`, open a stream to `host:port` (the exit resolves
+/// Through the isolated client of `partition`, open a stream to `host:port` (the exit resolves
 /// the name; nothing is resolved here), send `request` and return up to `max` bytes of reply.
 #[wasm_bindgen]
-pub async fn stream_request(host: String, port: u16, request: String, max: u32, timeout_ms: u32) -> String {
+pub async fn stream_request(partition: String, host: String, port: u16, request: String, max: u32, timeout_ms: u32) -> String {
     use futures::{AsyncReadExt, AsyncWriteExt};
     use tor_rtcompat::SleepProviderExt;
-    let Some(client) = CLIENT.with(|c| c.borrow().clone()) else {
-        return r#"{"step":"stream","ok":false,"error":"no client: run bootstrap first"}"#.into();
+    let client = match client_for(&partition) {
+        Ok(c) => c,
+        Err(e) => return format!(r#"{{"step":"stream","ok":false,"error":{e:?}}}"#),
     };
     let rt = WasmRuntime::default();
     let work = async {
@@ -631,6 +667,101 @@ pub async fn stream_request(host: String, port: u16, request: String, max: u32, 
     };
     log(&format!("tor {line}"));
     line
+}
+
+// Open streams for the host (the SOCKS5 server of the Tor worker). Each stream is split into a
+// reader and a writer, so one read and one write can wait at the same time. A half is taken out
+// of its map while an operation runs on it; a second operation on the same half is refused.
+thread_local! {
+    static READERS: std::cell::RefCell<std::collections::HashMap<u32, arti_client::DataReader>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static WRITERS: std::cell::RefCell<std::collections::HashMap<u32, arti_client::DataWriter>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+    static CLOSED: std::cell::RefCell<std::collections::HashSet<u32>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+static NEXT_STREAM: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+/// Open a stream to `host:port` through the isolated client of `partition` (the exit resolves
+/// a name; nothing is resolved here). Returns a stream handle. Errors name the cause class:
+/// "refused" (bad input or no client), "timeout", or "tor" (Arti's error kind).
+#[wasm_bindgen]
+pub async fn stream_open(partition: String, host: String, port: u16, timeout_ms: u32) -> Result<u32, JsValue> {
+    use tor_rtcompat::SleepProviderExt;
+    if host.is_empty() || port == 0 {
+        return Err(JsValue::from_str("refused: empty host or port 0"));
+    }
+    let client = client_for(&partition).map_err(|e| JsValue::from_str(&format!("refused: {e}")))?;
+    let rt = WasmRuntime::default();
+    let s = match rt.timeout(Duration::from_millis(timeout_ms as u64), client.connect((host.as_str(), port))).await {
+        Err(_) => return Err(JsValue::from_str("timeout")),
+        Ok(Err(e)) => {
+            use tor_error::HasKind;
+            return Err(JsValue::from_str(&format!("tor: {}", e.kind())));
+        }
+        Ok(Ok(s)) => s,
+    };
+    let h = NEXT_STREAM.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let (r, w) = s.split();
+    READERS.with(|m| m.borrow_mut().insert(h, r));
+    WRITERS.with(|m| m.borrow_mut().insert(h, w));
+    Ok(h)
+}
+
+/// Read up to `max` bytes from stream `h`. An empty result is the end of the stream.
+#[wasm_bindgen]
+pub async fn stream_read(h: u32, max: u32) -> Result<js_sys::Uint8Array, JsValue> {
+    use futures::AsyncReadExt;
+    let mut r = READERS
+        .with(|m| m.borrow_mut().remove(&h))
+        .ok_or_else(|| JsValue::from_str("refused: no such stream, or a read is already waiting"))?;
+    let mut buf = vec![0u8; (max as usize).clamp(1, 65536)];
+    let res = r.read(&mut buf).await;
+    if !CLOSED.with(|c| c.borrow().contains(&h)) {
+        READERS.with(|m| m.borrow_mut().insert(h, r));
+    }
+    let n = res.map_err(|e| JsValue::from_str(&format!("tor: {}", e.kind())))?;
+    Ok(js_sys::Uint8Array::from(&buf[..n]))
+}
+
+/// Write all of `data` to stream `h` and flush it (Arti sends a cell when flushed or full).
+#[wasm_bindgen]
+pub async fn stream_write(h: u32, data: Vec<u8>) -> Result<u32, JsValue> {
+    use futures::AsyncWriteExt;
+    let mut w = WRITERS
+        .with(|m| m.borrow_mut().remove(&h))
+        .ok_or_else(|| JsValue::from_str("refused: no such stream, or a write is already waiting"))?;
+    let res = async {
+        w.write_all(&data).await?;
+        w.flush().await
+    }
+    .await;
+    if !CLOSED.with(|c| c.borrow().contains(&h)) {
+        WRITERS.with(|m| m.borrow_mut().insert(h, w));
+    }
+    res.map_err(|e| JsValue::from_str(&format!("tor: {}", e.kind())))?;
+    Ok(data.len() as u32)
+}
+
+/// Close stream `h`: drop both halves (Arti sends END). A waiting read or write ends with an
+/// error or end of stream. Returns false for an unknown handle.
+#[wasm_bindgen]
+pub fn stream_close(h: u32) -> bool {
+    let r = READERS.with(|m| m.borrow_mut().remove(&h)).is_some();
+    let w = WRITERS.with(|m| m.borrow_mut().remove(&h)).is_some();
+    if !(r || w) {
+        return false;
+    }
+    CLOSED.with(|c| c.borrow_mut().insert(h));
+    true
+}
+
+/// Number of open streams (for tests and the host's trace).
+#[wasm_bindgen]
+pub fn streams_open() -> u32 {
+    let r: std::collections::HashSet<u32> = READERS.with(|m| m.borrow().keys().copied().collect());
+    let w: std::collections::HashSet<u32> = WRITERS.with(|m| m.borrow().keys().copied().collect());
+    r.union(&w).count() as u32
 }
 
 static LOG_DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

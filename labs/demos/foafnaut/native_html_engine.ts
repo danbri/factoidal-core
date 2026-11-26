@@ -1,10 +1,15 @@
 // Byte/JSON transport for the published Lean HTML engine. No host markup parser.
 import type {NetWire} from "./native_net.ts";
 import {allFinite} from "./finite_floats.ts";
-// This ignored runtime is installed only after checking the Builds manifest.
-// @ts-ignore generated release module
-import createModule from "./.build/native-html/runtime/web-render.mjs";
-import {traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
+// The Wasm runtime (installed only after checking the Builds manifest) is imported when the Wasm
+// backend is used, not at load: a host with the native library alone (the macOS CI job, a native
+// engine session) does not need it.
+async function createModule():Promise<unknown>{
+  // @ts-ignore generated release module
+  const runtime=await import("./.build/native-html/runtime/web-render.mjs");
+  return await runtime.default();
+}
+import {bytesLine,documentLine,traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 import {attachLayout} from "./native_html_layout.ts";
 
 /** What a tab or scroll command needs: tab count and active tab; scroll, view height, scroll limit and screen scale. */
@@ -151,9 +156,24 @@ type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:I
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
 export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number;paintOnly?:number;recompiled?:number;reused?:number;moved?:number};
-/** Backend 2: a native dylib of the same Lean objects. Every call must come from one thread; no nonblocking FFI. */
-export function nativeBackends(path:string):Backends {
+/** An engine session of the native library (web_session_new; docs/designissues/2026-11-26-foafnaut-engine-sessions.md):
+the engine state of one tab. `end` frees it; a call after that throws. */
+export type NativeSession={end():void;readonly ended:boolean};
+/** Backend 2: a native dylib of the same Lean objects. Without `withSession`, every call uses
+the library's one default session and must come from one thread; no nonblocking FFI. With it,
+the calls use an engine session of their own: any number of sessions share one loaded library,
+and calls on two sessions may run on two threads at once. A library from before sessions has no
+web_session_new: `session` is then undefined and the calls use the default session. */
+export function nativeBackends(path:string,withSession=false):Backends&{session?:NativeSession} {
   const library=Deno.dlopen(path,{
+    // Engine sessions; an engine from before them has none of these (they stay null).
+    web_session_new:{parameters:[],result:"pointer",optional:true},
+    web_session_free:{parameters:["pointer"],result:"void",optional:true},
+    web_session_call:{parameters:["pointer","buffer","buffer","u32","u32"],result:"pointer",optional:true},
+    web_session_call_bin:{parameters:["pointer","buffer","buffer","u32","u32","buffer"],result:"pointer",optional:true},
+    web_session_font_call_bin:{parameters:["pointer","buffer","u32","buffer","buffer","u32"],result:"pointer",optional:true},
+    web_session_image_call_bin:{parameters:["pointer","buffer","u32","buffer","buffer"],result:"pointer",optional:true},
+    web_session_hit:{parameters:["pointer","buffer","u32","u32","f64","f64"],result:"pointer",optional:true},
     web_document_call:{parameters:["buffer","buffer","u32","u32"],result:"pointer"},
     web_document_call_bin:{parameters:["buffer","buffer","u32","u32","buffer"],result:"pointer"},
     web_document_font_call_bin:{parameters:["buffer","u32","buffer","buffer","u32"],result:"pointer"},
@@ -168,8 +188,21 @@ export function nativeBackends(path:string):Backends {
   } as const);
   const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
   const size=new Uint32Array(1);
-  const hit=library.symbols.web_render_hit;
+  const sym=library.symbols;
+  // The session's calls, or the default session's: the same arguments after the session.
+  const pointer0=withSession&&sym.web_session_new?sym.web_session_new():undefined;
+  if(withSession&&sym.web_session_new&&!pointer0)throw new Error("Native engine session did not start");
+  let ended=false;
+  const at=()=>{if(ended)throw new Error("Native engine session ended");return pointer0!;};
+  const session:NativeSession|undefined=pointer0?{get ended(){return ended;},end(){if(ended)return;ended=true;sym.web_session_free!(pointer0);}}:undefined;
+  type Bytes=Uint8Array<ArrayBuffer>;
+  const callText=pointer0?(h:Bytes,r:Bytes,w:number,v:number)=>sym.web_session_call!(at(),h,r,w,v):sym.web_document_call;
+  const callBin=pointer0?(h:Bytes,r:Bytes,w:number,v:number,n:Uint32Array)=>sym.web_session_call_bin!(at(),h,r,w,v,n):sym.web_document_call_bin;
+  const callFont=pointer0?(b:Uint8Array,n:number,f:Bytes,h:Bytes,m:number)=>sym.web_session_font_call_bin!(at(),b,n,f,h,m):sym.web_document_font_call_bin;
+  const callImage=pointer0?(b:Uint8Array,n:number,k:Bytes,h:Bytes)=>sym.web_session_image_call_bin!(at(),b,n,k,h):sym.web_document_image_call_bin;
+  const hit=pointer0?(t:Bytes,w:number,v:number,x:number,y:number)=>sym.web_session_hit!(at(),t,w,v,x,y):sym.web_render_hit;
   return {
+    ...(session?{session}:{}),
     hit:hit?(text,width,height,x,y)=>{
       const pointer=hit(cstring(text),width,height,x,y);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
@@ -177,26 +210,26 @@ export function nativeBackends(path:string):Backends {
       finally{library.symbols.web_render_free(pointer);}
     }:undefined,
     text:(html,request,width,height)=>{
-      const pointer=library.symbols.web_document_call(cstring(html),cstring(request),width,height);
+      const pointer=callText(cstring(html),cstring(request),width,height);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
     },
     bytes:(html,request,width,height)=>{
-      const pointer=library.symbols.web_document_call_bin(cstring(html),cstring(request),width,height,size);
+      const pointer=callBin(cstring(html),cstring(request),width,height,size);
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       // One copy out of the engine's memory; the engine frees its buffer.
       try{return Deno.UnsafePointerView.getArrayBuffer(pointer,size[0]).slice(0);}
       finally{library.symbols.web_render_free(pointer);}
     },
     font:(bytes,family,sha256,fallback)=>{
-      const pointer=library.symbols.web_document_font_call_bin(bytes,bytes.length,cstring(family),cstring(sha256),fontMode(fallback));
+      const pointer=callFont(bytes,bytes.length,cstring(family),cstring(sha256),fontMode(fallback));
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
     },
-    image:library.symbols.web_document_image_call_bin?(bytes,key,sha256)=>{
-      const pointer=library.symbols.web_document_image_call_bin!(bytes,bytes.length,cstring(key),cstring(sha256));
+    image:callImage?(bytes,key,sha256)=>{
+      const pointer=callImage(bytes,bytes.length,cstring(key),cstring(sha256));
       if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
       try{return new Deno.UnsafePointerView(pointer).getCString();}
       finally{library.symbols.web_render_free(pointer);}
@@ -423,8 +456,223 @@ function hostTrace(backends:Backends):Backends {
     catch(error){if(!warned){warned=true;console.error(`host trace: not written to ${file}: ${error}`);}}
   }) as Backends;
 }
-export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes") {
-  const native=nativeEngine?nativeBackends(nativeEngine):undefined;
+/** A bytes answer (`web_document_call_bin`) read: its JSON head, with each scene's sections and
+the layout sections (issue 1124 stage B) as views of the buffer, decoded when read. A Lean error
+is thrown. */
+function placedAnswer(buffer:ArrayBuffer) {
+  const {head,sections}=unpackAnswer(buffer);
+  if(head?.error)throw new Error(`Lean HTML: ${head.error}`);
+  for(const scene of [head,head.page,head.chrome])
+    if(scene&&typeof scene==="object")placeSections(scene as Record<string,unknown>,buffer,sections);
+  const layout=head.layout as {section?:unknown;strings?:unknown}|undefined,page=head.page as {webRender?:Record<string,unknown>}|undefined;
+  if(layout&&page?.webRender&&typeof layout.section==="number"&&typeof layout.strings==="number"){
+    const nums=sections[layout.section],text=sections[layout.strings];
+    if(!nums||!text)throw new Error("Unexpected Lean layout sections");
+    page.webRender.layoutData={nums:new Uint8Array(buffer,nums[0],nums[1]),text:new Uint8Array(buffer,text[0],text[1])};
+    delete head.layout;attachLayout(page.webRender);
+  }
+  return head;
+}
+/** A layers answer read and checked: the place, the two scenes, and the flags (render with
+`layers:true`). */
+function layersOf(result:Record<string,unknown>,width:number):HTMLLayers {
+  const place=result.layers as HTMLLayerPlace|undefined;
+  if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
+    throw new Error("Unexpected published Lean HTML layers ABI");
+  // `{kept:id}` or a patched page (request field `have`, issue 1124 stage C): made whole from the
+  // page answer the caller holds, and checked, by native_html_layout.ts resolvePage.
+  const pageFields=result.page as {kept?:unknown;dataPatch?:unknown}|undefined;
+  const kept=typeof pageFields?.kept==="number"||!!pageFields?.dataPatch;
+  const layers:HTMLLayers={layers:place,page:kept?result.page as unknown as HTMLArtifact:sceneOf(result.page as Record<string,unknown>,width,place.bandHeight),
+    chrome:sceneOf(result.chrome as Record<string,unknown>,width,Math.max(1,place.top))};
+  if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
+  if(result.wantsSerif===true)layers.wantsSerif=true;
+  if(result.wantsMono===true)layers.wantsMono=true;
+  return layers;
+}
+/** A JSON text answer, checked: a Lean error is thrown. */
+function checkedAnswer(text:string) {
+  const result=JSON.parse(text);
+  if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
+  return result;
+}
+/** What the remote calls need from an engine (remoteMethods). `doc` and `render` are the
+document and render calls with their checks (an answer or a promise of one); `font`, `image` and
+`decode` give the text answers of the byte calls; `then` uses an answer when it is there (at once
+for an engine on this thread, when the promise settles for a session task); `orUndefined` makes
+a failure undefined, as the methods' `try ... catch` did. */
+// deno-lint-ignore no-explicit-any
+type Answer=any;
+type Kernel={
+  doc:(source:string,options:Record<string,unknown>,width?:number,height?:number)=>Answer;
+  render:(source:string,options:Record<string,unknown>,width:number,height:number)=>Answer;
+  font:(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif"|"mono")=>Answer;
+  image?:(bytes:Uint8Array,key:string,sha256:string)=>Answer;
+  decode?:(bytes:Uint8Array,charset:string,fallback:string,locale:string)=>Answer;
+  then:(answer:Answer,use:(value:Answer)=>unknown)=>Answer;
+  orUndefined:(call:()=>Answer)=>Answer;
+  sent:{renders:number;lastRenderBytes:number;maxRenderBytes:number};
+  /** Ask a layers render for its boxes, glyph runs and links as sections (`layoutSections`, issue
+  1124 stage B): with bytes answers only; a text answer keeps them in its JSON. */
+  layoutSections:boolean;
+};
+/** The engine calls that run in an engine worker or an engine session (REMOTE_CALLS in
+native_html_calls.ts, and the font loads), with the types of an engine on this thread. They are
+written once, over a Kernel, so the engine of a worker and the session engine can not differ in
+how they read an answer (two copies of a list drifted before: native_html_calls.ts). */
+export type RemoteEngine={
+  xmlStylesheet(source:string,options:Record<string,unknown>):{url:string|null};
+  xslt(source:string,options:Record<string,unknown>):{source:string;engine:string};
+  inspect(source:string,options:Record<string,unknown>):Inspection;
+  /** Lean reads the font once and holds it; later renders draw with it. fallback:true adds the
+  font to the engine's list, after the fonts it holds; otherwise the font replaces the list.
+  The answer counts the fonts held. */
+  fontLoad(fontBase64:string,fontFamily:string,fontSha256:string,fallback?:boolean|"serif"|"mono"):FontLoaded;
+  /** The same, with the file as bytes: no Base64, and no size limit from the call stack.
+  fallback:"serif" holds the serif face, which draws the text whose family resolves to serif
+  (FontFaceRule.genericOf); a host gives it when a render answers wantsSerif. fallback:"mono"
+  holds the monospace face, likewise for monospace text and wantsMono. */
+  fontLoadBytes(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback?:boolean|"serif"|"mono"):FontLoaded;
+  fontRequests(source:string,options:Record<string,unknown>):Answer;
+  /** Web fonts (CSS Fonts 4 §4, WebDocument.fontFaces): the @font-face faces the page's rendered
+  text uses, each with its URLs to try in order; then each fetched face goes in with webFontLoad
+  (Lean checks it with the font policy and holds it by SHA-256). */
+  fontFaces(source:string,options:Record<string,unknown>):WebFontFaces;
+  webFontLoad(bytes:Uint8Array,fontSha256:string):{webFont:string;glyphs:number;held:number};
+  /** One step of a subresource transfer (WebDocument op `subresource`, Net.Subresource): the
+  request the host makes next, or what is used, or the refusal. An engine from before it throws
+  "unknown document operation". */
+  subresource(request:Record<string,unknown>):Answer;
+  /** Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
+  Undefined for an engine from before them, which then gets `images` with the bytes in each
+  request, as before (issue 1274). */
+  imageInfo():ImageInfo|undefined;
+  /** The setting for pages that declare no encoding, as Lean stores it (WebState.encodingSetting),
+  and the settings page section for it; undefined for an engine from before. */
+  encodingSetting(setting:string):string|undefined;
+  encodingChoices(setting:string,locale:string):string|undefined;
+  /** The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the jar is
+  text the host keeps; `request` gives a hop's Cookie field, `response` the jar after its
+  Set-Cookie fields, `keep` the part that may be written to disk. Undefined for an engine from
+  before the op (page loads then carry no cookies, as before). */
+  cookies(request:{action:"request"|"response"|"keep";jar:string;now:string;url?:string;initiator?:string;method?:string;setCookie?:string}):
+    {cookie?:string;jar?:string;error?:string}|undefined;
+  /** What a navigation's response does (WebDocument op `download`, Net.Subresource.navigated):
+  shown, or saved under the name Lean made safe. Undefined for an engine from before the op
+  (every response is then shown, as before). */
+  download(request:{contentType:string;disposition:string;url:string}):{action:"show"}|{action:"save";name:string}|undefined;
+  /** The page's bytes as text, decoded by Lean (HTML encoding sniffing, the Encoding Standard's
+  decoders); undefined for an engine from before (the host then reads UTF-8). */
+  decodeDocument(bytes:Uint8Array,charset?:string,fallback?:string,locale?:string):{encoding:string;source:string}|undefined;
+  imageLoad(bytes:Uint8Array,key:string,sha256:string):{key:string;sha256:string;bytes:number;held:number};
+  imageDrop():{held:number};
+  /** Lean's count of its frame work; undefined for an engine without it. */
+  frameWork(reset?:boolean):FrameWork|undefined;
+  /** Bytes of JSON request this host sent to Lean for renders. */
+  requestBytes():{renders:number;lastRenderBytes:number;maxRenderBytes:number};
+  compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact;
+  /** One render as two layers; the options must carry a shell. */
+  compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):HTMLLayers;
+  /** Where the pages of a print layout break (`media:"print"` in the options). */
+  printLayout(source:string,width:number,height:number,options:Record<string,unknown>):PrintLayout;
+  /** The FOAF graph page: the model is Lean's; the host keeps it as text. */
+  graphStart(rdf:string,width:number,height:number,shell:unknown):GraphFrame;
+  graphEvent(model:string,kind:number,a:number,b:number,width:number,shell:unknown):GraphFrame;
+  graphPage(model:string):string;
+  sourcePage(kind:string,url:string,source:string):string;
+  /** The page foafnaut:wasm, as HTML that Lean then lays out. */
+  wasmPage(request?:Partial<WasmRequest>&{url?:string}):{source:string;title:string};
+  sparqlPage(argument:string):{source:string;title:string;next:string};
+  scriptInfo():{ops:string[];module:boolean;bytes:number;engine:string;engines?:string[]};
+  scriptSetting(setting:string):{setting:string;name:string};
+  scriptPlan(request:{setting:string;scripts:number;host?:string;unavailable?:string;failure?:string}):ScriptPlan;
+  /** The settings page's rows of the engines, the current one ticked. */
+  scriptChoices(setting:string,host?:string):string;
+  /** The guest module, as bytes through the font byte call (family `guest:quickjs`). */
+  scriptLoad(bytes:Uint8Array):{module:boolean;bytes:number};
+  scriptSession(source:string,request:Record<string,unknown>):ScriptTurn;
+  /** The node under a window point, for a click that page scripts receive. */
+  nodeAt(source:string,width:number,height:number,options:Record<string,unknown>):number|null;
+  /** The node under a window point and the coordinates of its pointer events (WebHit). */
+  pointerAt(source:string,width:number,height:number,options:Record<string,unknown>):{node:number|null}&Record<string,number>;
+  selectedText(source:string,width:number,height:number,options:Record<string,unknown>):string;
+  /** Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count, the
+  current match (from 0) and its rectangles in page rows. */
+  findInPage(source:string,width:number,height:number,options:Record<string,unknown>):FindAnswer;
+  /** The accessibility tree of the page of a frame's request (HTML/AccessibleTree.lean): asked
+  only while assistive technology is attached. `options.since` is the `serial` of the last
+  answer: the engine then answers `unchanged` for the same layout and makes no tree. */
+  accessibilityTree(source:string,width:number,height:number,options:Record<string,unknown>):AccessibilityAnswer;
+  /** about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is what
+  this program reports, which the page shows as reported and does not check. */
+  aboutPage(host:AboutHost):string;
+  /** The engine's own build facts (WebBuild), its --version line, and a line when `host`'s record disagrees. */
+  engineBuild(host?:AboutHost):{version:string;commit:string;builtAt:string;dirty:boolean;release:boolean;line:string;mismatch?:string};
+};
+function remoteMethods(k:Kernel):RemoteEngine {
+  const {doc,render,then,orUndefined}=k;
+  const field=(name:string)=>(value:Answer)=>value[name];
+  return {
+    xmlStylesheet:(source,options)=>doc(source,{...options,op:"xmlStylesheet"}),
+    xslt:(source,options)=>doc(source,{...options,op:"xslt"}),
+    inspect:(source,options)=>doc(source,{...options,op:"inspect"}),
+    fontLoad:(fontBase64,fontFamily,fontSha256,fallback=false)=>
+      doc("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback==="mono"?{mono:true}:fallback?{fallback:true}:{})}),
+    fontLoadBytes:(bytes,fontFamily,fontSha256,fallback=false)=>then(k.font(bytes,fontFamily,fontSha256,fallback),checkedAnswer),
+    fontRequests:(source,options)=>doc(source,{...options,op:"fontRequests"}),
+    fontFaces:(source,options)=>doc(source,{...options,op:"fontFaces"}),
+    webFontLoad:(bytes,fontSha256)=>then(k.font(bytes,"",fontSha256,"web"),checkedAnswer),
+    subresource:request=>doc("",{...request,op:"subresource"}),
+    imageInfo:()=>orUndefined(()=>then(doc("",{op:"imageInfo"}),(info:ImageInfo)=>Array.isArray(info?.ops)&&info.ops.includes("imageLoad")?info:undefined)),
+    encodingSetting:setting=>orUndefined(()=>then(doc("",{op:"encodingSetting",setting}),field("setting"))),
+    encodingChoices:(setting,locale)=>orUndefined(()=>then(doc("",{op:"encodingChoices",setting,locale}),field("html"))),
+    cookies:request=>orUndefined(()=>doc("",{...request,op:"cookies"})),
+    download:request=>orUndefined(()=>doc("",{...request,op:"download"})),
+    decodeDocument:(bytes,charset="",fallback="",locale="")=>{
+      if(!k.decode)return undefined;
+      return then(k.decode(bytes,charset,fallback,locale),(answer:string)=>{const i=answer.indexOf("\n");return {encoding:answer.slice(0,i),source:answer.slice(i+1)};});
+    },
+    imageLoad:(bytes,key,sha256)=>{
+      if(k.image)return then(k.image(bytes,key,sha256),checkedAnswer);
+      let text="";
+      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
+      return doc("",{op:"imageLoad",key,sha256,imageBase64:btoa(text)});
+    },
+    imageDrop:()=>doc("",{op:"imageDrop"}),
+    frameWork:(reset=false)=>orUndefined(()=>doc("",{op:"frameWork",...(reset?{reset:true}:{})})),
+    requestBytes:()=>({...k.sent}),
+    compile:(source,width,height,options)=>then(render(source,{binary:true,...options,op:"render"},width,height),(r:Answer)=>sceneOf(r,width,height)),
+    compileLayers:(source,width,height,options)=>then(render(source,{binary:true,layoutSections:k.layoutSections,...options,layers:true,op:"render"},width,height),(r:Answer)=>layersOf(r,width)),
+    printLayout:(source,width,height,options)=>doc(source,{...options,op:"printLayout"},width,height),
+    graphStart:(rdf,width,height,shell)=>doc("",{op:"graphStart",rdf,width,height,shell}),
+    graphEvent:(model,kind,a,b,width,shell)=>doc("",{op:"graphEvent",model,kind,a,b,width,shell}),
+    graphPage:model=>then(doc("",{op:"graphPage",model}),field("source")),
+    sourcePage:(kind,url,source)=>then(doc("",{op:"sourcePage",kind,url,source}),field("source")),
+    wasmPage:(request={})=>doc("",{...request,op:"wasmPage"}),
+    sparqlPage:argument=>doc("",{op:"sparqlPage",argument}),
+    scriptInfo:()=>doc("",{op:"scriptSession",action:"info"}),
+    scriptSetting:setting=>doc("",{op:"scriptSetting",setting}),
+    scriptPlan:request=>doc("",{...request,op:"scriptPlan"}),
+    scriptChoices:(setting,host="native")=>then(doc("",{op:"scriptChoices",setting,host}),field("html")),
+    scriptLoad:bytes=>then(k.font(bytes,"guest:quickjs","",false),checkedAnswer),
+    scriptSession:(source,request)=>doc(source,{...request,op:"scriptSession"}),
+    nodeAt:(source,width,height,options)=>then(doc(source,{...options,op:"nodeAt"},width,height),field("node")),
+    pointerAt:(source,width,height,options)=>doc(source,{...options,op:"nodeAt"},width,height),
+    selectedText:(source,width,height,options)=>then(doc(source,{...options,op:"selectedText"},width,height),field("text")),
+    findInPage:(source,width,height,options)=>doc(source,{...options,op:"findInPage"},width,height),
+    accessibilityTree:(source,width,height,options)=>doc(source,{...options,op:"accessibilityTree"},width,height),
+    aboutPage:host=>then(doc("",{op:"aboutPage",host}),field("source")),
+    engineBuild:(host={})=>doc("",{op:"engineBuild",host}),
+  };
+}
+/** The kernel of an engine on this thread: every answer is there at once. */
+const syncKernel=(base:Omit<Kernel,"then"|"orUndefined">):Kernel=>({...base,
+  then:(answer,use)=>use(answer),
+  orUndefined:call=>{try{return call();}catch{return undefined;}}});
+/** `session`: with a native library, the engine's calls use an engine session of their own
+(nativeBackends); the answer's `endSession` frees it. Without it, the default session. */
+export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="bytes",{session=false}:{session?:boolean}={}) {
+  const native=nativeEngine?nativeBackends(nativeEngine,session):undefined;
   // Older native libraries can still use the Wasm link picker. Current ones
   // provide the same C entry point and need no second document engine.
   const wasm=native?.hit?undefined:wasmBackends(await createModule() as unknown as Module);
@@ -464,65 +712,36 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     const request=JSON.stringify(options);
     if(countRender(request)>20971520)throw new Error("Document request exceeds 20 MiB");
     const buffer=backends.bytes(source,request,width,height);
-    const {head,sections}=unpackAnswer(buffer);
-    if(head?.error)throw new Error(`Lean HTML: ${head.error}`);
-    for(const scene of [head,head.page,head.chrome])
-      if(scene&&typeof scene==="object")placeSections(scene as Record<string,unknown>,buffer,sections);
-    // Layout sections (issue 1124 stage B): views of the buffer, decoded when read.
-    const layout=head.layout as {section?:unknown;strings?:unknown}|undefined,page=head.page as {webRender?:Record<string,unknown>}|undefined;
-    if(layout&&page?.webRender&&typeof layout.section==="number"&&typeof layout.strings==="number"){
-      const nums=sections[layout.section],text=sections[layout.strings];
-      if(!nums||!text)throw new Error("Unexpected Lean layout sections");
-      page.webRender.layoutData={nums:new Uint8Array(buffer,nums[0],nums[1]),text:new Uint8Array(buffer,text[0],text[1])};
-      delete head.layout;attachLayout(page.webRender);
-    }
-    return head;
+    return placedAnswer(buffer);
   };
   return {
-    xmlStylesheet:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xmlStylesheet"}) as {url:string|null},
-    xslt:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"xslt"}) as {source:string;engine:string},
-    inspect:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"inspect"}) as Inspection,
+    ...remoteMethods(syncKernel({doc:documentCall,render:renderCall,font:backends.font,image:backends.image,decode:backends.decode,sent,
+      layoutSections:answers!=="text"})),
+    /** True when the calls use an engine session of their own (`loadHTML(..., {session:true})`
+    with a library that has sessions); false for the default session and the Wasm engine. */
+    sessionOwn:!!native?.session,
+    /** Free the engine session (`session:true`); a call after this throws. No-op without one. */
+    endSession:()=>native?.session?.end(),
     // Lean reads the font once and holds it; later renders draw with it.
     // fallback:true adds the font to the engine's list, after the fonts it holds;
     // otherwise the font replaces the list. The answer counts the fonts held.
-    fontLoad:(fontBase64:string,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>
-      documentCall("",{op:"fontLoad",fontBase64,fontFamily,fontSha256,...(fallback==="serif"?{serif:true}:fallback==="mono"?{mono:true}:fallback?{fallback:true}:{})}) as FontLoaded,
     // The same, with the file as bytes: no Base64, and no size limit from the call stack.
     // fallback:"serif" holds the serif face, which draws the text whose family resolves to
     // serif (FontFaceRule.genericOf); a host gives it when a render answers wantsSerif.
     // fallback:"mono" holds the monospace face, likewise for monospace text and wantsMono.
-    fontLoadBytes:(bytes:Uint8Array,fontFamily:string,fontSha256:string,fallback:boolean|"serif"|"mono"=false)=>{
-      const result=JSON.parse(backends.font(bytes,fontFamily,fontSha256,fallback));
-      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result as FontLoaded;
-    },
-    fontRequests:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontRequests"}),
     // Web fonts (CSS Fonts 4 §4, WebDocument.fontFaces): the @font-face faces the page's
     // rendered text uses, each with its URLs to try in order; then each fetched face goes
     // in with webFontLoad (Lean checks it with the font policy and holds it by SHA-256).
-    fontFaces:(source:string,options:Record<string,unknown>)=>documentCall(source,{...options,op:"fontFaces"}) as WebFontFaces,
-    webFontLoad:(bytes:Uint8Array,fontSha256:string)=>{
-      const result=JSON.parse(backends.font(bytes,"",fontSha256,"web"));
-      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result as {webFont:string;glyphs:number;held:number};
-    },
     // One step of a subresource transfer (WebDocument op `subresource`, Net.Subresource): the
     // request the host makes next, or what is used, or the refusal. An engine from before it
     // throws "unknown document operation".
-    subresource:(request:Record<string,unknown>)=>documentCall("",{...request,op:"subresource"}),
     // Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
     // `imageInfo` answers undefined for an engine from before them, which then gets
     // `images` with the bytes in each request, as before (issue 1274).
-    imageInfo:():ImageInfo|undefined=>{
-      try{const info=documentCall("",{op:"imageInfo"}) as ImageInfo;return Array.isArray(info?.ops)&&info.ops.includes("imageLoad")?info:undefined;}
-      catch{return undefined;}
-    },
     /** The page's bytes as text, decoded by Lean (HTML encoding sniffing, the Encoding
     Standard's decoders); undefined for an engine from before (the host then reads UTF-8). */
     /** The setting for pages that declare no encoding, as Lean stores it (WebState.encodingSetting),
     and the settings page section for it; undefined for an engine from before. */
-    encodingSetting:(setting:string)=>{try{return (documentCall("",{op:"encodingSetting",setting}) as {setting:string}).setting;}catch{return undefined;}},
-    encodingChoices:(setting:string,locale:string)=>{try{return (documentCall("",{op:"encodingChoices",setting,locale}) as {html:string}).html;}catch{return undefined;}},
     /** The search engine chosen in Settings, as Lean keeps it (WebRoute.searchSetting: "" for
     none), the settings section for it, the browser's search page for typed words, and the
     Outside page; undefined for an engine from before (the feature is then off). */
@@ -538,55 +757,14 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     text the host keeps; `request` gives a hop's Cookie field, `response` the jar after its
     Set-Cookie fields, `keep` the part that may be written to disk. Undefined for an engine from
     before the op (page loads then carry no cookies, as before). */
-    cookies:(request:{action:"request"|"response"|"keep";jar:string;now:string;url?:string;initiator?:string;method?:string;setCookie?:string})=>{
-      try{return documentCall("",{...request,op:"cookies"}) as {cookie?:string;jar?:string;error?:string};}catch{return undefined;}},
-    download:(request:{contentType:string;disposition:string;url:string})=>{
-      try{return documentCall("",{...request,op:"download"}) as {action:"show"}|{action:"save";name:string};}catch{return undefined;}},
     epubReader:(bytes:Uint8Array,epubChapter:number)=>{
       let text="";
       for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
       return documentCall(btoa(text),{op:"epubReader",epubChapter}) as {source:string};
     },
-    decodeDocument:(bytes:Uint8Array,charset="",fallback="",locale="")=>{
-      if(!backends.decode)return undefined;
-      const answer=backends.decode(bytes,charset,fallback,locale),i=answer.indexOf("\n");
-      return {encoding:answer.slice(0,i),source:answer.slice(i+1)};
-    },
-    imageLoad:(bytes:Uint8Array,key:string,sha256:string)=>{
-      if(backends.image){
-        const result=JSON.parse(backends.image(bytes,key,sha256));
-        if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-        return result as {key:string;sha256:string;bytes:number;held:number};
-      }
-      let text="";
-      for(let i=0;i<bytes.length;i+=32768)text+=String.fromCharCode(...bytes.subarray(i,i+32768));
-      return documentCall("",{op:"imageLoad",key,sha256,imageBase64:btoa(text)}) as {key:string;sha256:string;bytes:number;held:number};
-    },
-    imageDrop:()=>documentCall("",{op:"imageDrop"}) as {held:number},
     /** Lean's count of its frame work; undefined for an engine without it. */
-    frameWork:(reset=false):FrameWork|undefined=>{
-      try{return documentCall("",{op:"frameWork",...(reset?{reset:true}:{})}) as FrameWork;}catch{return undefined;}
-    },
-    /** Bytes of JSON request this host sent to Lean for renders. */
-    requestBytes:()=>({...sent}),
     // The CSS declarations that Lean's profile can not read and drops, "property: value (reason)".
     droppedCSS:(source:string,options:Record<string,unknown>)=>(documentCall(source,{...options,op:"droppedCSS"}) as {dropped:string[]}).dropped,
-    compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact {
-      return sceneOf(renderCall(source,{binary:true,...options,op:"render"},width,height),width,height);
-    },
-    /** One render as two layers; the options must carry a shell. */
-    compileLayers(source:string,width:number,height:number,options:Record<string,unknown>):HTMLLayers {
-      // layoutSections: boxes, glyph runs and links as sections (an engine from before answers JSON).
-      const result=renderCall(source,{binary:true,layoutSections:answers!=="text",...options,layers:true,op:"render"},width,height);
-      const place=result.layers as HTMLLayerPlace|undefined;
-      if(!place||!["top","view","bandTop","bandHeight","keepFrom","keepTo"].every(k=>Number.isSafeInteger((place as Record<string,unknown>)[k]))||typeof place.composite!=="string")
-        throw new Error("Unexpected published Lean HTML layers ABI");
-      const layers:HTMLLayers={layers:place,page:sceneOf(result.page,width,place.bandHeight),chrome:sceneOf(result.chrome,width,Math.max(1,place.top))};
-      if(Array.isArray(result.diagnostics))layers.diagnostics=result.diagnostics as Diagnostic[];
-      if(result.wantsSerif===true)layers.wantsSerif=true;
-      if(result.wantsMono===true)layers.wantsMono=true;
-      return layers;
-    },
     // Lean decides what a chrome click, a key, an address and a link mean.
     shellHit:(shell:unknown,x:number,y:number,width:number)=>(documentCall("",{op:"shellHit",shell,x,y,width}) as {control:string|null}).control,
     // The control under a press, and whether this press opens the address menu (`how`: tap, hold or context).
@@ -631,8 +809,6 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Select all, copy, cut, paste, undo, redo and focus in the address bar; `clipboard` is the text to copy.
     shellEdit:(shell:unknown,action:string,text="")=>documentCall("",{op:"shellEdit",shell,action,text}) as ShellEdit&{clipboard?:string|null;go?:string|null},
     // Where the pages of a print layout break (`media:"print"` in the options).
-    printLayout:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      documentCall(source,{...options,op:"printLayout"},width,height) as PrintLayout,
     shellSubmit:(address:string)=>documentCall("",{op:"shellSubmit",address}) as ShellGo,
     // Where the keyboard focus goes when a page commits (WebShell.focusOnCommit, issue 1077):
     // "page" or "address"; null from an older engine, which has no such operation.
@@ -641,23 +817,17 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
       catch(error){if(String(error).includes("unknown document operation"))return null;throw error;}
     },
     // The FOAF graph page: the model is Lean's; the host keeps it as text.
-    graphStart:(rdf:string,width:number,height:number,shell:unknown)=>documentCall("",{op:"graphStart",rdf,width,height,shell}) as GraphFrame,
-    graphEvent:(model:string,kind:number,a:number,b:number,width:number,shell:unknown)=>documentCall("",{op:"graphEvent",model,kind,a,b,width,shell}) as GraphFrame,
-    graphPage:(model:string)=>(documentCall("",{op:"graphPage",model}) as {source:string}).source,
-    sourcePage:(kind:string,url:string,source:string)=>(documentCall("",{op:"sourcePage",kind,url,source}) as {source:string}).source,
     // WebAssembly run by WasmVM, Lean's engine, inside this engine (WebWasm.lean, issue 1244).
     // Modules are Base64 in the request; values use the spec-test JSON form.
     wasmInfo:()=>documentCall("",{op:"wasmInfo"}) as WasmInfo,
     wasmRun:(request:WasmRequest)=>documentCall("",{...request,op:"wasmRun"}) as WasmRun,
     wasmSpecSample:()=>documentCall("",{op:"wasmSpecSample"}) as WasmSpecSample,
     /** The page foafnaut:wasm, as HTML that Lean then lays out. */
-    wasmPage:(request:Partial<WasmRequest>&{url?:string}={})=>documentCall("",{...request,op:"wasmPage"}) as {source:string;title:string},
     // The SPARQL planner drawn as live debug (WebSparql.lean). An older engine answers
     // "unknown document operation".
     sparqlInfo:()=>documentCall("",{op:"sparqlInfo"}) as {engine:string;ops:string[];datasets:string[];examples:{name:string;query:string}[]},
     sparqlExplain:(request:{query:string;dataset?:string;data?:string;run?:boolean})=>documentCall("",{...request,op:"sparqlExplain"}) as SparqlExplain,
     /** The page foafnaut:sparql; `argument` is the address after `foafnaut:sparql/`. */
-    sparqlPage:(argument:string)=>documentCall("",{op:"sparqlPage",argument}) as {source:string;title:string;next:string},
     /** The console tab of a page (WebConsole): Lean writes the page from the entries the host kept. */
     consolePage:(request:Record<string,unknown>)=>documentCall("",{...request,op:"consolePage"}) as {source:string;title:string},
     shellLink:(href:string)=>documentCall("",{op:"shellLink",href}) as ShellGo,
@@ -672,27 +842,9 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // Page scripts run by Lean (WebScripts.lean): QuickJS-NG in WasmVM on the page's arena,
     // the Lean event loop deciding each callback. An older engine answers "unknown document
     // operation" to scriptInfo; a host then keeps refusing scripted pages (issue 1274).
-    scriptInfo:()=>documentCall("",{op:"scriptSession",action:"info"}) as {ops:string[];module:boolean;bytes:number;engine:string;engines?:string[]},
     // The page script setting (WebRenderScript.plan): Lean says what a setting means on a host
     // ("native" or "hub"): the engine, whether the scripts run, the chrome marker, a notice.
-    scriptSetting:(setting:string)=>documentCall("",{op:"scriptSetting",setting}) as {setting:string;name:string},
-    scriptPlan:(request:{setting:string;scripts:number;host?:string;unavailable?:string;failure?:string})=>
-      documentCall("",{...request,op:"scriptPlan"}) as ScriptPlan,
     /** The settings page's rows of the engines, the current one ticked. */
-    scriptChoices:(setting:string,host="native")=>(documentCall("",{op:"scriptChoices",setting,host}) as {html:string}).html,
-    /** The guest module, as bytes through the font byte call (family `guest:quickjs`). */
-    scriptLoad:(bytes:Uint8Array)=>{
-      const result=JSON.parse(backends.font(bytes,"guest:quickjs","",false));
-      if(result?.error)throw new Error(`Lean HTML: ${result.error}`);
-      return result as {module:boolean;bytes:number};
-    },
-    scriptSession:(source:string,request:Record<string,unknown>)=>documentCall(source,{...request,op:"scriptSession"}) as ScriptTurn,
-    /** The node under a window point, for a click that page scripts receive. */
-    nodeAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      (documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}).node,
-    /** The node under a window point and the coordinates of its pointer events (WebHit). */
-    pointerAt:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      documentCall(source,{...options,op:"nodeAt"},width,height) as {node:number|null}&Record<string,number>,
     // Lean decides what a menu command and a pointer release mean.
     // `state` gives the tab count, the scroll and the view, from which Lean answers a tab or a scroll.
     command:(command:number,textScalePercent:number,history?:History,focused=false,state:CommandState={})=>documentCall("",{op:"command",command,textScalePercent,focused,...state,...(history?{history}:{})}) as
@@ -717,23 +869,6 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
     // "click" or "select": a press that did not move is a click, except a double or triple click,
     // which selects words or lines (`clicks`, issue 1031).
     pointerUp:(selection:number[],clicks=0)=>(documentCall("",{op:"pointerUp",selection,clicks}) as {action:string}).action,
-    selectedText:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      (documentCall(source,{...options,op:"selectedText"},width,height) as {text:string}).text,
-    // Find in page (WebSelection.findMatches): `options.find` is {query, current}. The count,
-    // the current match (from 0) and its rectangles in page rows.
-    findInPage:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      documentCall(source,{...options,op:"findInPage"},width,height) as FindAnswer,
-    // The accessibility tree of the page of a frame's request (HTML/AccessibleTree.lean): asked
-    // only while assistive technology is attached. `options.since` is the `serial` of the last
-    // answer: the engine then answers `unchanged` for the same layout and makes no tree.
-    accessibilityTree:(source:string,width:number,height:number,options:Record<string,unknown>)=>
-      documentCall(source,{...options,op:"accessibilityTree"},width,height) as AccessibilityAnswer,
-    // about:foafnaut, written by the engine (WebAbout) from its own build facts; `host` is
-    // what this program reports, which the page shows as reported and does not check.
-    aboutPage:(host:AboutHost)=>(documentCall("",{op:"aboutPage",host}) as {source:string}).source,
-    // The engine's own build facts (WebBuild), its --version line, and a line when `host`'s record disagrees.
-    engineBuild:(host:AboutHost={})=>documentCall("",{op:"engineBuild",host}) as
-      {version:string;commit:string;builtAt:string;dirty:boolean;release:boolean;line:string;mismatch?:string},
     // A key (macOS key code and modifier bits) or typed text in the find field (WebShell.findEdit).
     findEdit:(query:string,edit:{text?:string;key?:number;modifiers?:number})=>
       documentCall("",{op:"findEdit",query,...edit}) as {query:string;step:"none"|"next"|"previous"|"close"},
@@ -745,3 +880,146 @@ export async function loadHTML(nativeEngine?:string,answers:"bytes"|"text"="byte
   };
 }
 export type HTMLEngine = Awaited<ReturnType<typeof loadHTML>>;
+
+/** The engine of a session on its own Lean task: the remote calls (RemoteEngine), each answering
+a promise. */
+export type SessionEngine={[K in keyof RemoteEngine]:(...args:Parameters<RemoteEngine[K]>)=>Promise<Awaited<ReturnType<RemoteEngine[K]>>>}&{
+  readonly sessionOwn:true;
+  /** Calls sent and not answered. */
+  readonly inFlight:number;
+  /** Take no more calls: the calls sent are answered (by the task), a later call fails. */
+  close():void;
+  /** Close and cancel the session's task: the call in progress stops at the engine's next
+  check (before a render's layout and before its paint) and the calls not started fail. A
+  layout in progress runs to its end. A library from before cancellation: as `close`. */
+  cancel():void;
+  /** Close, wait until no call is in flight, then free the session. */
+  endSession():Promise<void>;
+  readonly ended:boolean;
+};
+/** An engine session on its own Lean task (web_session_new_task; WebSession.lean;
+docs/designissues/2026-11-26-foafnaut-engine-sessions.md, stage 3). Its calls go through
+nonblocking FFI: Deno runs each on a thread of its own, which waits for the session task's
+answer, so the calling thread (the window's main thread) never waits for the engine. The task
+runs a session's calls one at a time, in arrival order; calls on two sessions run at the same
+time. The checks before a call and the reading of its answer are those of `loadHTML`
+(remoteMethods). Throws when the library has no task sessions (an engine from before them, or
+FOAFNAUT_LEAN_THREADS=0: no task manager). The first session of a process starts the engine's
+runtime (its module initialisers); that call is nonblocking too, so this thread does not wait
+for it. */
+export async function loadHTMLSession(path:string):Promise<SessionEngine> {
+  const library=Deno.dlopen(path,{
+    web_session_new_task:{parameters:[],result:"pointer",nonblocking:true,optional:true},
+    web_session_close:{parameters:["pointer"],result:"void",optional:true},
+    web_session_cancel:{parameters:["pointer"],result:"void",optional:true},
+    web_session_free:{parameters:["pointer"],result:"void",optional:true},
+    call:{name:"web_session_call",parameters:["pointer","buffer","buffer","u32","u32"],result:"pointer",nonblocking:true,optional:true},
+    callBin:{name:"web_session_call_bin",parameters:["pointer","buffer","buffer","u32","u32","buffer"],result:"pointer",nonblocking:true,optional:true},
+    font:{name:"web_session_font_call_bin",parameters:["pointer","buffer","u32","buffer","buffer","u32"],result:"pointer",nonblocking:true,optional:true},
+    image:{name:"web_session_image_call_bin",parameters:["pointer","buffer","u32","buffer","buffer"],result:"pointer",nonblocking:true,optional:true},
+    decode2:{name:"web_document_decode2_call_bin",parameters:["buffer","u32","buffer","buffer","buffer"],result:"pointer",nonblocking:true,optional:true},
+    web_render_free:{parameters:["pointer"],result:"void"},
+  } as const);
+  const sym=library.symbols;
+  // The library is never closed: its runtime may have started threads that run its code.
+  if(!sym.web_session_new_task||!sym.web_session_close||!sym.web_session_free||!sym.call||!sym.callBin||!sym.font||!sym.image)
+    throw new Error("this engine has no task sessions (web_session_new_task)");
+  const session=await sym.web_session_new_task();
+  if(!session)throw new Error("engine task session did not start (no Lean task manager: FOAFNAUT_LEAN_THREADS=0?)");
+  let closed=false,ended=false;
+  // The calls in flight. Each keeps its argument buffers until it is answered: the native call
+  // reads them on another thread.
+  const flight=new Set<Promise<unknown>>();
+  const track=<T,>(call:Promise<T>,..._keep:unknown[]):Promise<T>=>{
+    const p=call.finally(()=>{flight.delete(p);void _keep;});flight.add(p);return p;};
+  const live=()=>{if(closed)throw new Error("Native engine session ended");return session;};
+  const cstring=(text:string)=>{if(text.includes("\0"))throw new Error("Native engine input contains NUL");return encoder.encode(text+"\0");};
+  // The source as a C string, with the bound of sourceBound, encoded once.
+  const boundedSource=(source:string)=>{
+    if(source.includes("\0"))throw new Error("HTML/CSS input contains NUL or exceeds 16 MiB");
+    const bytes=encoder.encode(source+"\0");
+    if(bytes.length-1>MAX_SOURCE_BYTES)throw new Error("HTML/CSS input contains NUL or exceeds 16 MiB");
+    return bytes;
+  };
+  const viewport=(width:number,height:number)=>{if(![width,height].every(n=>Number.isInteger(n)&&n>0&&n<=4096))
+    throw new Error("Native HTML viewport must be 1..4096 backing pixels");};
+  const text=(pointer:Deno.PointerValue)=>{
+    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+    try{return new Deno.UnsafePointerView(pointer).getCString();}finally{sym.web_render_free(pointer);}
+  };
+  const sent={renders:0,lastRenderBytes:0,maxRenderBytes:0};
+  const countRender=(request:Uint8Array)=>{const n=request.length-1;sent.renders++;sent.lastRenderBytes=n;sent.maxRenderBytes=Math.max(sent.maxRenderBytes,n);return n;};
+  // Test mode, as hostTrace: each answered call adds one line to FOAFNAUT_HOST_TRACE.
+  let tracePath:string|undefined;
+  try{tracePath=Deno.env.get("FOAFNAUT_HOST_TRACE");}catch{tracePath=undefined;}
+  const trace=(line:unknown)=>{if(!tracePath)return;
+    try{Deno.writeFileSync(tracePath,encoder.encode(JSON.stringify(line)+"\n"),{append:true});}catch{/* as hostTrace: not written */}};
+  const doc=async(source:string,options:Record<string,unknown>,width=1,height=1)=>{
+    const h=boundedSource(source);
+    viewport(width,height);
+    const requestText=JSON.stringify(options),r=cstring(requestText);
+    if(options.op==="render")countRender(r);
+    if(r.length-1>20971520)throw new Error("Document request exceeds 20 MiB");
+    const answer=text(await track(sym.call!(live(),h,r,width,height),h,r));
+    if(tracePath)trace(documentLine("web_document_call",source,requestText,width,height,answer));
+    return checkedAnswer(answer);
+  };
+  const render=async(source:string,options:Record<string,unknown>,width:number,height:number)=>{
+    // Decimal floats (binary:false) are a text answer only.
+    if(options.binary===false)return doc(source,options,width,height);
+    const h=boundedSource(source);
+    viewport(width,height);
+    const requestText=JSON.stringify(options),r=cstring(requestText);
+    if(countRender(r)>20971520)throw new Error("Document request exceeds 20 MiB");
+    const size=new Uint32Array(1);
+    const pointer=await track(sym.callBin!(live(),h,r,width,height,size),h,r,size);
+    if(!pointer)throw new Error("Published Lean HTML engine allocation failed");
+    let buffer:ArrayBuffer;
+    // One copy out of the engine's memory; the engine frees its buffer.
+    try{buffer=Deno.UnsafePointerView.getArrayBuffer(pointer,size[0]).slice(0);}finally{sym.web_render_free(pointer);}
+    if(tracePath)trace(documentLine("web_document_call_bin",source,requestText,width,height,buffer));
+    return placedAnswer(buffer);
+  };
+  const font=async(bytes:Uint8Array,family:string,sha256:string,fallback:boolean|"web"|"serif"|"mono")=>{
+    const f=cstring(family),h=cstring(sha256);
+    const answer=text(await track(sym.font!(live(),bytes,bytes.length,f,h,fontMode(fallback)),bytes,f,h));
+    if(tracePath)trace(bytesLine("web_document_font_call_bin","fontBytes",bytes,`${family} ${sha256} ${fallback}`,answer));
+    return answer;
+  };
+  const image=async(bytes:Uint8Array,key:string,sha256:string)=>{
+    const k=cstring(key),h=cstring(sha256);
+    const answer=text(await track(sym.image!(live(),bytes,bytes.length,k,h),bytes,k,h));
+    if(tracePath)trace(bytesLine("web_document_image_call_bin","imageBytes",bytes,`${key} ${sha256}`,answer));
+    return answer;
+  };
+  const decode=sym.decode2?async(bytes:Uint8Array,charset:string,fallback:string,locale:string)=>{
+    const c=cstring(charset),f=cstring(fallback),l=cstring(locale);
+    const answer=text(await track(sym.decode2!(bytes,bytes.length,c,f,l),bytes,c,f,l));
+    if(tracePath)trace(bytesLine("web_document_decode2_call_bin","decode",bytes,`${charset} ${fallback} ${locale}`,answer));
+    return answer;
+  }:undefined;
+  const methods=remoteMethods({doc,render,font,image,decode,sent,layoutSections:true,
+    then:(answer,use)=>Promise.resolve(answer).then(use),
+    orUndefined:call=>{try{return Promise.resolve(call()).catch(()=>undefined);}catch{return Promise.resolve(undefined);}}});
+  // Every method answers a promise; a check that throws before the call rejects it.
+  const engine=Object.fromEntries(Object.entries(methods).map(([name,f])=>
+    [name,async(...args:unknown[])=>await (f as (...a:unknown[])=>unknown)(...args)])) as unknown as SessionEngine;
+  // (Object.assign would copy the getters' values once: these are defined as getters.)
+  Object.defineProperties(engine,{
+    sessionOwn:{value:true},
+    inFlight:{get:()=>flight.size},
+    ended:{get:()=>ended},
+    close:{value:()=>{if(closed)return;closed=true;sym.web_session_close!(session);}},
+    cancel:{value:()=>{if(ended)return;closed=true;if(sym.web_session_cancel)sym.web_session_cancel(session);else sym.web_session_close!(session);}},
+    endSession:{value:async()=>{
+      if(ended)return;
+      if(!closed){closed=true;sym.web_session_close!(session);}
+      // The task answers what it has (a call that comes after close is answered at once):
+      // every call in flight settles, and none reads the session after that.
+      while(flight.size)await Promise.allSettled([...flight]);
+      ended=true;sym.web_session_free!(session);
+    }},
+  });
+  return engine;
+}
+

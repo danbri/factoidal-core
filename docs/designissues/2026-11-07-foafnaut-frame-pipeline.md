@@ -515,6 +515,10 @@ sets `everyFrame`). The graph click is 195 ms there and 27.6 ms with `--idle-che
 
 ### Where a frame on a kept layout goes (measured 2026-11-08)
 
+Continued 2026-11-25 in `docs/designissues/2026-11-25-foafnaut-display-list.md` (issue
+https://github.com/danbri/factoidal-core/issues/1124): kept chrome and no-layers answers, layout
+sections, page answers kept or patched against the one the host holds, and the scroll-band profile.
+
 The index page (1,063 primitives, 229 links), native engine, `compileLayers` at 1600 by 1000
 with `checks:false`, 10 calls each: the same request 28.7 ms; `active` toggled 53.1 ms;
 scroll toggled 31.9 ms. `frameWork`: 0 layouts, 10 kept, so the layout cache works. With
