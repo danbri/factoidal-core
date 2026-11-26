@@ -2,7 +2,7 @@ name: Ethereum exact candidate premerge probe
 # One-off hosted test harness, not part of the candidate or a release workflow.
 on:
   push:
-    branches: [wip/ethereum-exact-premerge-probe-20261126]
+    branches: [wip/ethereum-exact-premerge-probe-20261126-0904]
     paths: ['.github/workflows/ethereum-exact-premerge-probe.yml']
 permissions:
   contents: read
@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: a7dc8a8d2045399cadb1de2adaea16f143a92490
+          ref: d9e8c61f483996c280204be31a20d015e4eb5410
           persist-credentials: false
       - uses: denoland/setup-deno@v2
         with:
@@ -35,8 +35,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = a7dc8a8d2045399cadb1de2adaea16f143a92490
-          test "$(git rev-parse HEAD^{tree})" = 511df5066c3441fa9b5e03e381f8fc5d153ce886
+          test "$(git rev-parse HEAD)" = d9e8c61f483996c280204be31a20d015e4eb5410
+          test "$(git rev-parse HEAD^{tree})" = a8647416aa423d720cf5648d038e7d23ea62ec82
           test "$(git rev-parse HEAD:tools/premerge.sh)" = a25dc508d881e0671c970b2dc82e56271202bf01
           test -z "$(git status --porcelain)"
           git log -1 --format='%H %T %P'
