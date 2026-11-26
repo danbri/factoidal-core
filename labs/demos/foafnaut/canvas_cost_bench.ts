@@ -27,6 +27,8 @@ const cases:Case[]=[
   {name:"fillStyle+fillRect",w:800,h:500,calls:3000,body:"for(let i=0;i<1500;i++){x.fillStyle=i%2?'#f00':'#00f';x.fillRect((i*7)%700,(i*3)%480,5,5);}"},
   // Item 3: one small rect on a full-window canvas; the host gets the canvas's pixels.
   {name:"one small rect 1600x1000",w:1600,h:1000,calls:1,body:"x.fillRect(10,10,20,20);"},
+  // A game frame: the sky as a vertical gradient over the whole canvas, then 300 small sprites.
+  {name:"sky+300 rects 1600x1000",w:1600,h:1000,calls:302,body:"const g=x.createLinearGradient(0,0,0,1000);g.addColorStop(0,'#123');g.addColorStop(1,'#9cf');x.fillStyle=g;x.fillRect(0,0,1600,1000);x.fillStyle='#fa0';for(let i=0;i<300;i++)x.fillRect((i*53)%1580,(i*29)%980,12,12);"},
   {name:"full clear+fill 1600x1000",w:1600,h:1000,calls:2,body:"x.clearRect(0,0,1600,1000);x.fillRect(0,0,1600,1000);"},
 ];
 
