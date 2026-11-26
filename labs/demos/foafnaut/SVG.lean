@@ -8,6 +8,7 @@ import SVGDash
 import SVGDashUnits
 import SVGStroke
 import ImageData
+import L4Factoidal.WHATWG.URL.PercentDecode
 -- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
 -- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
 -- this import.
@@ -765,6 +766,49 @@ private def readSolidColor (paints : PaintContext) (entry : NativeSVGReferences.
 private def transparentPaint : Gradient :=
   {shape:=.linear 0 0 1 0,boundingBoxUnits:=false,stops:=[{offset:=0,color:=renderingColor (rgb 0 0 0),opacity:=0}]}
 
+/-- UTF-8 decode without BOM removal, replacing malformed byte sequences. A malformed
+sequence consumes its valid prefix and retries the first non-continuation byte, as in
+the Encoding Standard's replacement mode. -/
+private def paintUtf8 (bytes : ByteArray) : String := Id.run do
+  let mut out := ""
+  let mut i := 0
+  for _ in [:bytes.size] do
+    if i < bytes.size then
+      match bytes.utf8DecodeChar? i with
+      | some c =>
+        out := out.push c
+        i := i + c.utf8Size
+      | none =>
+        let first := bytes[i]!.toNat
+        let need := if 0xC2 ≤ first && first ≤ 0xDF then 2
+          else if 0xE0 ≤ first && first ≤ 0xEF then 3
+          else if 0xF0 ≤ first && first ≤ 0xF4 then 4 else 1
+        let mut consumed := 1
+        for j in [1:need] do
+          if consumed == j && i + j < bytes.size then
+            let b := bytes[i+j]!.toNat
+            let lo := if j == 1 && first == 0xE0 then 0xA0 else if j == 1 && first == 0xF0 then 0x90 else 0x80
+            let hi := if j == 1 && first == 0xED then 0x9F else if j == 1 && first == 0xF4 then 0x8F else 0xBF
+            if lo ≤ b && b ≤ hi then consumed := consumed + 1
+        out := out.push '�'
+        i := i + consumed
+  return out
+
+/-- Percent-decode fragment bytes exactly once; malformed percent escapes stay literal,
+`+` is not a space, and UTF-8 errors are replaced. -/
+private def paintFragmentId (fragment : String) : String :=
+  paintUtf8 (L4Factoidal.WHATWG.URL.percentDecode fragment.toUTF8)
+
+#guard paintFragmentId "%66%6f%6f" == "foo"
+#guard paintFragmentId "%C3%A9" == "é"
+#guard paintFragmentId "%25ZZ" == "%ZZ"
+#guard paintFragmentId "%ZZ" == "%ZZ"
+#guard paintFragmentId "a+b" == "a+b"
+#guard paintFragmentId "%E2%82" == "�"
+#guard paintFragmentId "%E2%82A" == "�A"
+#guard paintFragmentId "%E0%80%80" == "���"
+#guard paintFragmentId "%EF%BB%BF" == "\ufeff"
+
 private def readPaint (lengths : LengthContext) (paints : PaintContext) (source : String) : Except String Paint := do
   let s := trim source
   if s.startsWith "url(" then
@@ -775,9 +819,7 @@ private def readPaint (lengths : LengthContext) (paints : PaintContext) (source 
         (target.startsWith "'" && target.endsWith "'") then
         String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
     if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
-    let id := String.ofList (target.toList.drop 1)
-    if !id.toList.all (fun c => c.isAlphanum && c.toNat < 128 || ['_','-',':','.'].contains c) then
-      throw "unsupported paint fragment syntax/encoding"
+    let id := paintFragmentId (String.ofList (target.toList.drop 1))
     let fallback := trim fallback
     let fallbackPaint : Paint ←
       if fallback.isEmpty || fallback.toLower == "none" then pure .none
