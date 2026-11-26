@@ -454,6 +454,33 @@ ms (tasks); the second is the first `newtab.html` after start, with 1.27 s of la
 every mode is that second tab; why its first layout takes four times the later ones is not known
 (it is not the engine start: a task session starts in 4 ms).
 
+### 6b. After the rebase onto `main` `7285ab37`
+
+22 more commits reached `main` while section 6a was measured. Stage C of issue
+https://github.com/danbri/factoidal-core/issues/1124 lets the host name the page answer it holds
+(`have:{page:id}`, the answer's `damage.id`); the engine keeps its last page answers whole
+(`Engine.pagesSent`) and answers the page `{"kept":id}` or as a patch against that answer. The
+merge keeps `pagesSent` in `Engine` beside `pages`, and `layersJSON` takes the session's kept page
+layers and the held page and gives back both the new kept page layers and the answer to keep.
+
+D13. The host names a held page answer only for the document on screen (`run_html.ts`: `have`
+only when `current.document` is the frame's document). Reason: page answer ids are counted by
+each engine (`KeptPages.lastId`; before this work, a cell per library copy), and in the modes
+`copies`, `sessions` and `tasks` each tab has an engine of its own. After a tab switch the frame
+on screen is the other tab's; its id can name a different page in this tab's engine, which then
+answers it kept, and the host shows the other tab's page. Test 10 of `engine_sessions_test.ts`
+checks the cause: the first page answers of two sessions have one id, and a session answers the
+other's id as kept. This hazard came with stage C, before this work landed, and holds for the
+`copies` mode as well.
+
+`main` `7285ab37` did not build: `SVG.lean` line 3676, an application type mismatch, since commit
+`f957d56f` (issue 1124): in namespace `NativeSVG` the bare name `LinearContour` is not
+`NativeSVGPath.LinearContour`. The branch qualifies the two lines as the rest of the file does
+(commit "Foafnaut SVG.lean: edgeYs takes NativeSVGPath.LinearContour"). The build of `main` for the
+byte comparison has the same two-line change.
+
+Tests and byte comparison of this build: not yet run (both builds are in progress).
+
 Evidence limits: Linux only; no Mac was available, so macOS (the product's main platform) is
 not measured, and the macOS link (the exported symbol list) is not built here. Software Vulkan
 frames dominate the latency numbers. The numbers above are of the library before D12; D12 adds
