@@ -2443,6 +2443,10 @@ L4Factoidal_GpuKernel_E_*  # (c) GPU kernel expressions (GpuKernel/Expr.lean): A
 L4Factoidal_GpuKernel_P_*  # (c) GPU kernel conditions (GpuKernel/Expr.lean): constant ASTs, as E above
 L4Factoidal_GpuKernel_lastWrite  # (s) GpuKernel/Race.lean: the meaning of a write list for applyWrites_apply and the race theorems; the executed path is applyWrites (List.foldl)
 L4Factoidal_JS_Tier1_pureNum  # (c) the number of a nested `+ - * /` operand (tier 1 of BubblePopJS): depth is the fuel it is called with, Tier1.depth = 8, whatever the expression
+L4Factoidal_JS_dstrLower  # (c) lowering of a destructuring pattern holding `yield` (Interp.lean): every call, also each step of an element or property list, spends one unit of the fuel its caller passes, 10000 (dstrLower 10000), so at most 10000 frames; compile-time, once per such pattern
+L4Factoidal_JS_dstrStore  # (c) as dstrLower
+L4Factoidal_JS_dstrElems  # (c) as dstrLower
+L4Factoidal_JS_dstrProps  # (c) as dstrLower
 # --- OWL 2 profiles and the RDF-to-structure reader (2026-11-16) ---
 L4Factoidal_OWL_Profiles_drOk  # (b) nesting of one data range; the loop over operands (drsOk) is a tail call
 L4Factoidal_OWL_Profiles_drsOk  # (b) nesting of one data range; the loop over operands is a tail call
