@@ -362,6 +362,17 @@ def OfflineContext.setBuffer (c : OfflineContext) (id : Nat) (b : Option Buffer.
       else .ok (.buf { cfg with buffer := b } s (set || b.isSome))
     | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
 
+/-- "Acquire the content" of the buffer of an `AudioBufferSourceNode` (`start()`, or the `buffer`
+setter after `start()`): the node takes the samples that the buffer has now. A node whose `buffer`
+was not set to a non-null value is left alone (`InvalidStateError` for a node that is not a buffer
+source). Unlike `setBuffer` it does not refuse a second non-null buffer. -/
+def OfflineContext.acquireBuffer (c : OfflineContext) (id : Nat) (b : Buffer.AudioBuffer) :
+    Except Error OfflineContext :=
+  c.modifyKs id fun ks =>
+    match ks with
+    | .buf cfg s set => .ok (.buf (if set then { cfg with buffer := some b } else cfg) s set)
+    | _ => .error (.invalidState "the node is not an AudioBufferSourceNode")
+
 /-- The `loop` attribute. -/
 def OfflineContext.setLoop (c : OfflineContext) (id : Nat) (loop : Bool) :
     Except Error OfflineContext :=

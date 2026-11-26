@@ -89,8 +89,9 @@ of `WebApi.lean`; -28 to -30 are new.
     a `ChannelSplitterNode` and the offline destination refuse a change of count, mode or
     interpretation (-29, except where the value is the one it has); a `StereoPanner` count above
     2 and the mode `max` are -23. An unknown name or enum value is -20.
-  * 184 `setBuffer(ctx, node, channels, length, sampleRate, data)`: the `buffer` setter of an
-    `AudioBufferSourceNode`; `channels` "" sets null; `data` is `channels * length` binary32
+  * 184 `setBuffer(ctx, node, channels, length, sampleRate, data, [acquire])`: the `buffer` setter of an
+    `AudioBufferSourceNode`; with `acquire` "1" the node takes the content again (`start()`, or the
+    setter after `start()`: no error for a second non-null buffer, the buffer must have been set); `channels` "" sets null; `data` is `channels * length` binary32
     values. -29 when a non-null buffer was set before; -20 when the byte count does not match;
     -23 buffer values out of range (`AudioBuffer.create`).
   * 185 `setPeriodicWave(ctx, node, real, imag, disableNormalization)`: `setPeriodicWave` of an
@@ -658,7 +659,10 @@ def setBufferOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteAr
   withCtx s fs fun c => do
     let id ← natArg fs 1
     let b ← bufferArgs fs 2
-    let c' ← lift (c.setBuffer id b)
+    -- field 6 "1": acquire the content (`Context.acquireBuffer`); the page sends it at `start()`
+    let c' ← match strArg fs 6, b with
+      | "1", some buf => lift (c.acquireBuffer id buf)
+      | _, _ => lift (c.setBuffer id b)
     pure (c', ByteArray.empty)
 
 def waveOf (fs : Array ByteArray) (i : Nat) : Except Int Oscillator.PeriodicWave := do
