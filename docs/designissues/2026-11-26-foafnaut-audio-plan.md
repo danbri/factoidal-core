@@ -160,8 +160,8 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 | `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`): shape and state theorems, 67 `#guard`; fractional delay by linear interpolation (the specification names none) |
 | `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | in progress |
 | `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | in progress |
-| `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | in progress |
-| `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | in progress |
+| `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | on `main`: frame, shape and graph theorems; Oscillator, BiquadFilter and AudioBufferSource output silence until their kernels land |
+| `Context.lean` | `BaseAudioContext` state, `OfflineAudioContext.startRendering` (render N frames into an `AudioBuffer`) | on `main`: constructor checks, nodes, connections, automation methods, `startRendering`; shape theorems; 62 `#guard` renders |
 
 A block is `Array FloatArray`: one `FloatArray` of `n` frames per channel, `n = 128` (the render
 quantum; Web Audio 1.1's `renderSizeHint` makes it a parameter). Processing is in 64-bit floats;
@@ -180,3 +180,19 @@ LAME delay and padding applied (gapless, as FFmpeg). `Decode.mp3` gives one whol
 to the MP3 module and checks each result. On the three clips the WasmVM output equals the V8 run of
 the same module bit for bit, the lengths equal FFmpeg's, and the samples are within 2 of 32768 of
 FFmpeg's decoder. `decodeAudioData` itself comes with the page interfaces.
+
+## 11. Open defects in the landed engine files (2026-11-26)
+
+Found by the work on `Render.lean`; none blocks the offline renderer.
+
+1. `Graph.lean`: the `delayTime` parameter edge of a `DelayNode` that is split in a cycle goes to
+   the writer step, but the reader step needs `delayTime`. A source of `delayTime` that comes later
+   in the order is not seen by the reader (`Render.lean` uses silence for it). Fix: send the
+   parameter edges of a split delay to its reader step in `dstStep` and `stepEdges`, and order them.
+2. `Graph.lean`: not proved that every node that is not muted appears in the order (it needs "a
+   finite graph with no cycle has a vertex with no incoming edge").
+3. `Mix.lean`: `mixInput` has no shape theorem; `Render.lean` normalizes the shape instead.
+4. `Kernels.lean`: a `DelayNode` with `maxDelayTime` below one render quantum, in a cycle, has a
+   minimum delay above its maximum in `clampDelay`; no test covers it.
+5. `Kernels.lean`: when a delay's input channel count changes, stored samples are not up-mixed or
+   down-mixed as the `DelayNode` section says.
