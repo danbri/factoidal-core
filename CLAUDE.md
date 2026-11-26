@@ -466,6 +466,29 @@ root-level Lake failures.
     the doc update belong together; "fixed it, will document later"
     is how the same failure bills twice.
 
+    Differential tests must join each reference outcome to the same fixture
+    outcome and index used for the implementation. Agreement between two
+    references is insufficient if they can agree on the wrong category or
+    position. On 2026-11-24, review of the Ethereum ordered-list harness found
+    that both references could agree on a rejection index without that index
+    being compared to the native expectation. The recorded cases agreed, but
+    the comparator needed explicit joins and common-mode mutations before
+    publication. A transaction API is also not automatically a block oracle:
+    EthereumJS `runBlock` owns cumulative gas-pool admission outside `runTx`.
+    Record: `docs/20261124-evm-transaction-list.md`.
+
+    Source audits that follow live integration use active manifests. Preserve
+    dated evidence unchanged and review all affected active pins when imports
+    change. On 2026-11-24, the London-fee hosted gate correctly stopped because
+    its dated manifest still pinned the pre-integration root imports; a
+    separate active manifest repaired the gate without rewriting that evidence.
+
+    A JSON file-size cap does not bound parser nesting or numeric exponent
+    work. On 2026-11-24, a 6 MB transaction-list request passed the 16 MiB
+    file cap but aborted standard JSON parsing through deep nesting. The
+    transaction CLIs now check nesting and numeric-token/exponent bounds in
+    Lean before parsing, with a retained crash reproducer and boundary tests.
+
 ## Known sound-but-narrow rewrites
 
 `OWL.QueryRewrite.fst` — N=1 qualified `CE_MaxCardinality` rewrite
@@ -484,6 +507,38 @@ regime suite is at 70 pass, 0 fail (out of 70; re-measured 2026-07-10). Tracked 
 → UNION as documented there before relying on this rewrite for OWL DL
 outside the entailment regime suite (the anchor still MULTIPLIES rows
 per P-edge and drops vacuous-truth individuals).
+
+## Independent Ethereum implementation (2026-11-23)
+
+The Ethereum execution-and-consensus goal is a fresh, independent, pure
+Lean 4 implementation. Protocol logic and the proof engine must stay in
+repository-owned Lean code. Do not introduce an external implementation
+dependency without explicit approval, whether by package import, vendoring,
+copying, translation, wrapping, a transitive package or a separate compiler
+lane. Assistant-written proposals and general continuation instructions do
+not provide that approval.
+
+The unapproved EthLib proposal and dependency PR were withdrawn without
+merging: https://github.com/danbri/factoidal-core/issues/830 and
+https://github.com/danbri/factoidal-core/pull/832. The error was treating a
+separate implementation as an established dependency, then treating the
+assistant's own proposal as authority to adopt it. Do not reopen that path
+or count it as implementation progress.
+
+Normative specifications and published vectors remain reference material.
+Existing reference clients and standard testing tools may be used as test
+oracles; they do not supply the system's runtime answers. Reuse existing
+pure Lean modules within this repository after checking their imports.
+For Ethereum SSZ hashing, the selected source is the pure
+`L4Factoidal.Crypto.SHA2` module, not `SHA2Native` or the broad Factoidal
+root. Keep the compiler/runtime trust boundary and unproved cryptographic
+properties explicit. Existing crypto choices for other products are not
+changed by this Ethereum-specific direction.
+
+[Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
+
+Acceptance: https://github.com/danbri/factoidal-core/issues/725.
+Concrete SSZ byte proofs: https://github.com/danbri/factoidal-core/issues/834.
 
 ## Standing decisions (owner, 2026-08-24)
 
@@ -1229,6 +1284,31 @@ lean-certified we can investigate that."
   conformance or differential test runs it in CI. Plan, with the table of these ties:
   `docs/designissues/2026-11-26-foafnaut-audio-plan.md`. Tracking:
   https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
+
+### Audio: AAC through AudioToolbox, HRTF data, autoplay rule (owner, 2026-11-26)
+
+Owner, 2026-11-26, verbatim, to the three questions of section 7 of
+`docs/designissues/2026-11-26-foafnaut-audio-plan.md` (1. AAC through AudioToolbox, the macOS
+decoder, as Firefox does; 2. later, the HRTF data set for `PannerNode`; 3. may a page start sound
+only after the person has used it, a click or a key, as Chrome and Safari do): "1. yes 2. yes 3. yes
+(but with a Settings or CLI setting --dangerously-permit-audio). In future we may have other
+mechanisms for page trust."
+
+- AAC: AudioToolbox decodes it on macOS (stage H of the plan). Lean reads the MP4 container and
+  checks what the decoder gives back (plan section 4). No AAC code ships.
+- HRTF: `PannerNode`'s `HRTF` model uses the impulse responses that Chromium, WebKit and Firefox
+  use (from the IRCAM Listen database). The licence is reported before the data is used; the data
+  goes in `danbri/factoidal-builds` `third_party/` with provenance, as the decoders do (stage F,
+  after equal-power panning).
+- Autoplay: a real-time `AudioContext` starts `suspended`, and `resume()` waits, until the page has
+  sticky activation. Lean decides which input gives activation (`WebDriver.Input.activates`); no
+  page script can give it. The option `--dangerously-permit-audio` or a switch in Settings turns
+  the rule off; it is a risk token in Lean (`skills/lean-risk-flags`), and the browser warns when it
+  is on. A WPT run passes it and says so in its record, as Chrome's WPT runs pass
+  `--autoplay-policy=no-user-gesture-required`.
+- Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
+  permission for each site) are a later design. One Lean value decides "allowed to start" today, so
+  such a mechanism changes one function.
 
 ### Never report upstream (owner, 2026-11-25)
 

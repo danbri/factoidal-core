@@ -1,0 +1,148 @@
+name: Independent Lean authenticated attester evidence
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-consensus/**'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - '.github/workflows/ethereum-auth-attester.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authenticated-attester:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-consensus
+    env:
+      LEAN_NUM_THREADS: '2'
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-consensus
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Independent fixture and signature oracle
+        run: |
+          set -euo pipefail
+          node scripts/check-auth-attester.mjs --self-test | tee "$RUNNER_TEMP/auth-attester-oracle.log"
+      - name: Audit and compile actual combined module graph
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lean --version | tee "$RUNNER_TEMP/auth-attester-toolchain.log"
+          export LEAN_PATH="$RUNNER_TEMP/auth-attester-build"
+          mkdir -p "$LEAN_PATH"
+          python3 - <<'PY' | tee "$RUNNER_TEMP/auth-attester-build.log"
+          import json, os, pathlib, re, runpy, subprocess
+          p = pathlib.Path.cwd()
+          out = pathlib.Path(os.environ["LEAN_PATH"])
+          temp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          a = runpy.run_path(str(p/"scripts/check-pure-lean-dependencies.py"))
+          a["config_roots"](p)
+          repo = pathlib.Path(subprocess.check_output(["git","rev-parse","--show-toplevel"],text=True).strip())
+          def git(*args): return subprocess.check_output(["git",*args],text=True).strip()
+          pins, graph, ordered, pending = {}, {}, [], set()
+          standalone = {"AuthenticatedAttesterMain","AuthenticatedAttester","BLSVerify","G1PublicKey","G2Signature","PairingTarget","HashToField"}
+          def source(m):
+              base = p.parent if m in a["SHA2_MODULES"] else p
+              return base, a["module_path"](base,m,".lean")
+          def pin(path):
+              rel = str(path.resolve().relative_to(repo))
+              sha = git("hash-object",str(path))
+              assert sha == git("rev-parse","HEAD:"+rel), rel
+              pins[rel] = sha
+          def visit(m):
+              if a["bundled"](m) or m in graph: return
+              assert m in standalone or m.startswith("EthereumConsensus.") or m in a["SHA2_MODULES"],m
+              assert m not in pending,m
+              pending.add(m)
+              base,path=source(m)
+              assert path.resolve()==path and path.is_file(),m
+              code=a["mask_comments_and_strings"](path.read_text())
+              assert not re.search(r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b",code,re.M),m
+              deps=a["direct_imports"](path)
+              assert all(not a["bundled"](d) or d == "Init" for d in deps), (m, deps)
+              for d in sorted(deps): visit(d)
+              pending.remove(m)
+              graph[m]=sorted(deps)
+              ordered.append(m)
+              pin(path)
+          visit("AuthenticatedAttesterMain")
+          for name in ["lean-toolchain","lake-manifest.json","lakefile.toml","../lean-toolchain",
+                       "scripts/check-pure-lean-dependencies.py","scripts/check-validator-registry.py",
+                       "scripts/auth-attester-fixtures.py","scripts/check-auth-attester.mjs",
+                       "../../../.github/workflows/ethereum-auth-attester.yml"]:
+              pin(p/name)
+          evidence={"head":git("rev-parse","HEAD"),"tree":git("rev-parse","HEAD^{tree}"),"source_pins":pins,"graph":graph}
+          (temp/"auth-attester-pins.json").write_text(json.dumps(evidence,sort_keys=True))
+          print(json.dumps(evidence,sort_keys=True),flush=True)
+          cs=[]
+          for m in ordered:
+              base,path=source(m)
+              o=a["module_path"](out,m,".olean")
+              o.parent.mkdir(parents=True,exist_ok=True)
+              c=a["module_path"](out,m,".c")
+              deps=subprocess.check_output(["lean","--root="+str(base),"--deps",str(path)],text=True)
+              (temp/("auth-attester-"+m+"-imports.log")).write_text(deps)
+              toolchain=pathlib.Path(subprocess.check_output(["lean","--print-prefix"],text=True).strip()).resolve()
+              for entry in deps.splitlines():
+                  d=pathlib.Path(entry).resolve()
+                  assert d.is_relative_to(out) or d.is_relative_to(toolchain),entry
+              proc=subprocess.run(["lean","--root="+str(base),"-o",str(o),"-c",str(c),str(path)],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+              (temp/("auth-attester-"+m+"-axioms.log")).write_text(proc.stdout)
+              print(proc.stdout,flush=True)
+              proc.check_returncode()
+              cs.append(str(c))
+          subprocess.run([str(toolchain/"bin/leanc"),"-O2","-o",str(out/"authenticated-attester"),*cs],check=True)
+          print(a["audit_binary"](out/"authenticated-attester",toolchain),flush=True)
+          PY
+      - name: Actual theorem reports and falsification controls
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$RUNNER_TEMP/auth-attester-axiom-audit.log"
+          import os,pathlib,re
+          log=(pathlib.Path(os.environ["RUNNER_TEMP"])/"auth-attester-AuthenticatedAttester-axioms.log").read_text()
+          prefix="EthereumConsensus.SSZ.AuthenticatedAttester."
+          expected={prefix+n for n in ("preparation_error","first_failure","first_mismatch","second_failure","second_mismatch","authenticate_success","state_success","no_eligible")}
+          def audit(s):
+              rows=re.findall(r"'(EthereumConsensus\.SSZ\.AuthenticatedAttester\.\w+)' (?:depends on axioms: \[([^]]*)\]|does not depend on any axioms)",s)
+              if len(rows)!=len(expected) or {n for n,_ in rows}!=expected: raise ValueError("inventory")
+              for n,v in rows:
+                  if not set(filter(None,(x.strip() for x in v.split(",")))) <= {"propext","Classical.choice","Quot.sound"}: raise ValueError(n)
+          audit(log)
+          for bad in ["",log+log,log.replace(prefix+"state_success",prefix+"other"),
+                      re.sub(r"('(EthereumConsensus\.SSZ\.AuthenticatedAttester\.\w+)') (?:depends on axioms: \[[^]]*\]|does not depend on any axioms)",r"\1 depends on axioms: [sorryAx]",log,count=1)]:
+              try: audit(bad)
+              except ValueError: continue
+              raise ValueError("mutation escaped")
+          print("Eight actual theorem reports and four axiom controls passed")
+          PY
+      - name: Native raw attester authentication
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          node scripts/check-auth-attester.mjs "$RUNNER_TEMP/auth-attester-build/authenticated-attester" | tee "$RUNNER_TEMP/auth-attester-native.log"
+      - name: Check static proof-engine linkage after native comparisons
+        run: |
+          set -euo pipefail
+          python3 scripts/test-native-runtime.py
+          python3 scripts/check-native-runtime.py "$RUNNER_TEMP/auth-attester-build/authenticated-attester" --report "$RUNNER_TEMP/auth-attester-runtime.json"
+          python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["runtimeInitializerDefined"] and not r["fullBootstrapDefined"], r' "$RUNNER_TEMP/auth-attester-runtime.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-auth-attester-evidence
+          path: |
+            ${{ runner.temp }}/auth-attester-*.log
+            ${{ runner.temp }}/auth-attester-pins.json
+            ${{ runner.temp }}/auth-attester-runtime.json

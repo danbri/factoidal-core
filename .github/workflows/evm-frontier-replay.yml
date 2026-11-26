@@ -1,0 +1,84 @@
+name: Frontier 46147 authenticated mainnet replay
+
+on:
+  push:
+    branches: ["feat/lean-frontier-state-witness-20261122"]
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-frontier-replay.yml"
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-frontier-replay.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: frontier46147-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  authenticated-mainnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile actual Lean Frontier transition and its proof dependencies
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          axiom-audit: true
+          axiom-audit-root: EVMCleanroom
+      - name: Install pinned EthereumJS 10.1.3 RLP and state trie tools
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          npm install --prefix scripts/eels --ignore-scripts --no-audit --no-fund
+          printf '2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7  scripts/eels/package-lock.json\n' | sha256sum --check
+      - name: Reconstruct real Ethereum mainnet Frontier block 46147 transaction and receipt commitments
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          node scripts/eels/replay-first-mainnet.mjs \
+            --fixture evidence/frontier-mainnet-46147.json \
+            --out .lake/eels/frontier-46147-commitments.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["hardfork"]=="Frontier" and x["block"]=="46147" and x["chargedGas"]=="21000" and x["chargedFeeWei"]=="1050000000000000000" and x["adversarialControlsRejected"]==6 and x["preStateAuthenticated"] is False and x["leanDerivedIntermediateStateRoot"] is None and x["fullMainnetStateReplay"] is False,x'
+      - name: Decode and hash the committed authenticated prestate witness
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          mkdir -p .lake/eels
+          base64 --decode evidence/frontier-mainnet-46146-account-proofs.json.gz.b64 \
+            | gzip -dc > .lake/eels/frontier-real-46146.json
+          printf '9c9286d7c9500aca5426b7bf44bc74b19f84d2b16761dfb10ea7948bbef17924  .lake/eels/frontier-real-46146.json\n' | sha256sum --check
+      - name: REAL mainnet authenticated state replay through Lean and EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          node scripts/eels/verify-frontier-account-witness.mjs \
+            --historical evidence/frontier-mainnet-46147.json \
+            --witness .lake/eels/frontier-real-46146.json \
+            --out .lake/eels/frontier-46147-executable-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="full-historical-three-account-root-replay-pass" and x["derivedIntermediateStateRoot"]=="0x96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["derivedFinalBlockStateRoot"]=="0x0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169" and x["witnessedAccounts"]==3,x'
+      - name: SECOND independent pure Python Keccak/RLP/secure MPT root replay
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 scripts/eels/independent-frontier-trie.py .lake/eels/frontier-real-46146.json \
+            | tee .lake/eels/frontier-46147-independent-replay.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["recipientNonexistentBeforeTransaction"] and x["intermediateRoot"]=="96a8e009d2b88b1483e6941e6812e32263b05683fac202abc622a3e31aed1957" and x["postBlockRoot"]=="0e0df2706b0a4fb8bd08c9246d472abbe850af446405d9eba1db41db18b4a169",x'
+          python3 scripts/eels/frontier-independent-negative.py .lake/eels/frontier-real-46146.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["adversarialControlsRejected"]==6 and x["mainnetReplayVerified"] and x["keccakVectorsChecked"]==24,x'
+      - name: Preserve exact replay roots and artifact witness
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontier-mainnet-authenticated-${{ github.run_id }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: formal/lean4/evm-cleanroom/.lake/eels/frontier-*

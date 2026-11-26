@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "kind": "runtime-pruning-exact-output-parity",
+  "status": "passed",
+  "primitiveAndStateCases": 189,
+  "primitiveComparatorControls": 20,
+  "completeStdoutByteHashesMatched": 189,
+  "orderedLists": 36,
+  "completeListOutcomeHashesMatched": 36,
+  "listControlsMatched": 7,
+  "fullNativeInvocationsAfterPruning": 303,
+  "priorBaselineSha256": "d09ba67cb393c6af338ae0c26872fe0331ff86aeb65d7e8b334d8398b2522fdd",
+  "beforeBinaries": {
+    "proof": "f92022447d5f69b2497839ab8cba09e7c72f2b467d1dc61a73d26322ac37326c",
+    "transactionList": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7"
+  },
+  "afterBinaries": {
+    "proof": "1b346ba5356058e3a013c4e7397882904495db2afca3f9389800628a12c3c2f0",
+    "transactionList": "f2499ce6ea3d4e1562699bf26426b6e6b698d9c2ea63492a9e2d5f1e2b1196ef"
+  },
+  "reportFiles": {
+    "mpt-native-results-before-runtime-pruning.json": "a7ab445b195dcd1b1faf683d186919e79418b714651b96ac397b4cd639e374d7",
+    "mpt-native-results.json": "7662e67037408e09b5be919fc4a49338e5cb34d6cb62acdf3d7861b678180760",
+    "mpt-authenticated-list-results-before-runtime-pruning.json": "8c463ed116ebb096ac13a974452186c18959ba95b14da3a9eb2e9939291eb567",
+    "mpt-authenticated-list-results.json": "98444bf30d0d6e403aa3623fca474e742432b0069067f4b4fe66b87d60cb7ba9"
+  },
+  "scope": "Complete native response bytes for every primitive/state fixture and complete ordered-list outcome hashes match the preserved pre-pruning run. The archived before-pruning executable hashes were checked. The new list run also freshly compares every list with the true base870 binary. This is execution parity evidence, not a proof of compiler or protocol refinement."
+}

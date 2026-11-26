@@ -1,0 +1,10 @@
+test_falsified_contract_root_and_counts_rejected (__main__.ActiveLedgerControls.test_falsified_contract_root_and_counts_rejected) ... ok
+test_missing_theorem_claim_rejected (__main__.ActiveLedgerControls.test_missing_theorem_claim_rejected) ... ok
+test_qualified_theorem_symbol_mismatch_rejected (__main__.ActiveLedgerControls.test_qualified_theorem_symbol_mismatch_rejected) ... ok
+test_selected_inventory_and_theorems (__main__.ActiveLedgerControls.test_selected_inventory_and_theorems) ... ok
+test_tampered_blobs_rejected (__main__.ActiveLedgerControls.test_tampered_blobs_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.101s
+
+OK

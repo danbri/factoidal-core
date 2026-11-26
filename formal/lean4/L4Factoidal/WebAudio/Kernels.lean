@@ -50,16 +50,23 @@ abbrev Block := Array FloatArray
 
 /-- `iter step k i s` applies `step i`, `step (i+1)`, ... `step (i+k-1)` to `s` in order.
 Structural recursion on `k`, a tail call. -/
-def iter {σ : Type} (step : Nat → σ → σ) : Nat → Nat → σ → σ
+@[specialize] def iter {σ : Type} (step : Nat → σ → σ) : Nat → Nat → σ → σ
   | 0, _, s => s
   | k + 1, i, s => iter step k (i + 1) (step i s)
 
+/-- The constant 0 as a binary64 number. A `Float` literal inside an inlined function is
+evaluated by `Float.ofScientific` at every call (about 1 microsecond: it parses a big integer
+literal); a named constant is evaluated once. -/
+@[noinline] def zeroF : Float := 0.0
+
+@[simp] theorem zeroF_eq : zeroF = 0.0 := rfl
+
 /-- Element `i` of `a`, or 0 outside the array. -/
-def getF (a : FloatArray) (i : Nat) : Float :=
-  if i < a.size then a.get! i else 0.0
+@[inline] def getF (a : FloatArray) (i : Nat) : Float :=
+  if i < a.size then a.get! i else zeroF
 
 /-- A channel of `n` frames, frame `i` being `f i`. -/
-def mkChan (n : Nat) (f : Nat → Float) : FloatArray :=
+@[specialize] def mkChan (n : Nat) (f : Nat → Float) : FloatArray :=
   iter (fun i (a : FloatArray) => a.push (f i)) n 0 ⟨#[]⟩
 
 /-- `channels` channels of `n` frames of silence. -/

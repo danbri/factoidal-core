@@ -1,0 +1,37 @@
+
+/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-transaction-list:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000b913a0 <lean_initialize>:
+  b913a0:	50                   	push   %rax
+  b913a1:	bf 01 00 00 00       	mov    $0x1,%edi
+  b913a6:	e8 f5 01 f5 03       	call   4ae15a0 <_ZN4lean15save_stack_infoEb>
+  b913ab:	e8 80 03 00 00       	call   b91730 <_ZN4lean22initialize_util_moduleEv>
+  b913b0:	bf 01 00 00 00       	mov    $0x1,%edi
+  b913b5:	e8 36 c5 ec 03       	call   4a5d8f0 <initialize_Init>
+  b913ba:	48 89 c7             	mov    %rax,%rdi
+  b913bd:	e8 be 00 00 00       	call   b91480 <_ZN4lean17consume_io_resultEP11lean_object>
+  b913c2:	bf 01 00 00 00       	mov    $0x1,%edi
+  b913c7:	e8 54 b0 d7 03       	call   490c420 <initialize_Std>
+  b913cc:	48 89 c7             	mov    %rax,%rdi
+  b913cf:	e8 ac 00 00 00       	call   b91480 <_ZN4lean17consume_io_resultEP11lean_object>
+  b913d4:	bf 01 00 00 00       	mov    $0x1,%edi
+  b913d9:	e8 b2 46 11 01       	call   1ca5a90 <initialize_Lean>
+  b913de:	48 89 c7             	mov    %rax,%rdi
+  b913e1:	e8 9a 00 00 00       	call   b91480 <_ZN4lean17consume_io_resultEP11lean_object>
+  b913e6:	e8 c5 ad 00 00       	call   b9c1b0 <_ZN4lean24initialize_kernel_moduleEv>
+  b913eb:	e8 c0 de 06 00       	call   bff2b0 <_ZN4lean21init_default_print_fnEv>
+  b913f0:	e8 8b f9 06 00       	call   c00d80 <_ZN4lean30initialize_library_core_moduleEv>
+  b913f5:	e8 c6 f9 06 00       	call   c00dc0 <_ZN4lean25initialize_library_moduleEv>
+  b913fa:	58                   	pop    %rax
+  b913fb:	e9 60 10 07 00       	jmp    c02460 <_ZN4lean31initialize_constructions_moduleEv>
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section __lcxx_override:
+
+Disassembly of section .plt:

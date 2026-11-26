@@ -1,0 +1,22 @@
+'EVMCleanroom.World.beginTransaction_identity_warm' does not depend on any axioms
+'EVMCleanroom.World.beginTransaction_ordinary_cold' does not depend on any axioms
+'EVMCleanroom.World.frameInput_address' does not depend on any axioms
+'EVMCleanroom.World.frameInput_chainId' does not depend on any axioms
+'EVMCleanroom.World.frameInput_blobBaseFee' does not depend on any axioms
+'EVMCleanroom.World.frameInput_txBlobHashes' does not depend on any axioms
+'EVMCleanroom.World.frameInput_blockEnvironment' does not depend on any axioms
+'EVMCleanroom.World.frameInput_feeAndRandao' does not depend on any axioms
+'EVMCleanroom.World.frameInput_participants' does not depend on any axioms
+'EVMCleanroom.World.frameInput_balance' does not depend on any axioms
+'EVMCleanroom.World.frameInput_value_zero' does not depend on any axioms
+'EVMCleanroom.World.frameInput_context' does not depend on any axioms
+'EVMCleanroom.World.commitFrame_txBlobHashes' does not depend on any axioms
+'EVMCleanroom.World.commitFrame_other_account' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.commitFrame_own_balance' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.commitFrame_own_nonce' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.commitFrame_own_code' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.commitFrame_original' does not depend on any axioms
+'EVMCleanroom.World.commitFrame_other_warmth' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.runAt_revert_world_unchanged' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.World.runAt_exception_world_unchanged' depends on axioms: [propext, Quot.sound]
+

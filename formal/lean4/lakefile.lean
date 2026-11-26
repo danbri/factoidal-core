@@ -484,6 +484,12 @@ lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
 -- The audio sink and its ring against a WAV file (tests/audio/run.sh).
 lean_exe «audio-sink-test» where root := `Harness.AudioSinkTest
 
+-- Time of one Web Audio render quantum (issue 1169).
+lean_exe «webaudio-bench» where root := `Harness.WebAudioBench
+
+-- Randomized differential test of Automation.fill against fillSpec (issue 1169).
+lean_exe «automation-fill-diff» where root := `Harness.AutomationFillDiff
+
 -- The Web Audio API in Lean (issue 1169; docs/designissues/2026-11-26-foafnaut-audio-plan.md).
 @[default_target] lean_lib WebAudio where
   roots := #[`L4Factoidal.WebAudio]

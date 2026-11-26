@@ -240,8 +240,14 @@ when nothing is connected). -/
 def paramValues (n : Nat) (sampleRate : Float) (frame : Nat) (p : ParamState)
     (inputSum : FloatArray) : FloatArray :=
   let cnt := if p.spec.aRate then n else 1
-  let intr := Automation.fill p.timeline p.spec.defaultValue frame cnt sampleRate
-  ⟨intr.mapIdx fun i v => finalValue p.spec (v + getF inputSum i)⟩
+  match (if inputSum.size == 0 then Automation.fillConst p.timeline p.spec.defaultValue frame sampleRate
+         else none) with
+  -- constant over the quantum and nothing connected: one value (every kernel reads a one-value
+  -- array as constant over the block, `Kernels.paramAt`), not `cnt` equal ones
+  | some v => ⟨#[finalValue p.spec (v + Kernels.zeroF)]⟩
+  | none =>
+    let intr := Automation.fill p.timeline p.spec.defaultValue frame cnt sampleRate
+    ⟨intr.mapIdx fun i v => finalValue p.spec (v + getF inputSum i)⟩
 
 /-- Accumulator over the steps of one quantum. -/
 structure Acc where

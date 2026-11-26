@@ -54,7 +54,7 @@ for audio now.
 | MP3 | minimp3 (CC0-1.0) in WasmVM, module `mp3-wasmvm.wasm` | Lean reads ID3v2 and ID3v1 tags, the frame headers and the Xing/LAME header (encoder delay and padding, for gapless play) and gives one frame a call. MP3 patents ended in 2017: no separate site is needed |
 | Ogg Vorbis, Opus | libvorbis, libopus in WasmVM | as now; the modules of 2026-11-26 add 32-bit float output and every channel (Vorbis: 8 at most) |
 | FLAC | Lean (later) | integer only, and each stream carries the MD5 of its decoded samples, so a decode checks itself; a candidate for a decoder with proofs |
-| AAC (`.m4a`, MP4) | AudioToolbox, the operating system's decoder (later) | needs the owner's yes: decision 2 named the hardware video decoder only |
+| AAC (`.m4a`, MP4) | AudioToolbox, the operating system's decoder (stage H) | approved by the owner, 2026-11-26 (section 7, answer 1) |
 
 The decoder modules, their build chain (Emscripten 6.0.8, source tarballs by SHA-256, flags),
 provenance and licences are in `danbri/factoidal-builds`, `third_party/media-decoders/` (decision
@@ -107,7 +107,7 @@ H.265, AAC) do. What others do:
   decoding. Source: [LibMedia history (mirror)](https://remotebranch.eu/Stowage/ladybird/src/commit/6caa2f99aad7a54acac49c3c93368a18542b9e90/Libraries/LibMedia).
 
 For Foafnaut on the Mac this gives: MP4 read in Lean; H.264 and H.265 by VideoToolbox (decision 2);
-AAC by AudioToolbox if the owner agrees. No H.264 or AAC code ships. A separate site that hands out
+AAC by AudioToolbox (approved 2026-11-26, section 7). No H.264 or AAC code ships. A separate site that hands out
 decoder modules moves the licence question to whoever runs the site; it does not remove it. This is
 not legal advice.
 
@@ -120,18 +120,23 @@ not legal advice.
 | C | `decodeAudioData` for WAV, MP3, Ogg Vorbis and Opus; the MP3 frame reader in Lean | WPT `decodeAudioData` tests; decode time per second of audio |
 | D | Real-time `AudioContext`: the Mac CoreAudio sink, the Linux file sink, the rendering task | output latency, under-runs a minute, CPU per source |
 | E | Jukebox page | time from click to sound; gapless MP3 |
-| F | The other nodes: `Convolver`, `DynamicsCompressor`, `WaveShaper`, `IIRFilter`, `Analyser`, `Panner` (equal-power, then HRTF after the data licence check), `MediaElementAudioSource`; then `AudioWorklet` | WPT `webaudio` |
+| F | The other nodes: `Convolver`, `DynamicsCompressor`, `WaveShaper`, `IIRFilter`, `Analyser`, `Panner` (equal-power, then HRTF: data approved 2026-11-26, licence reported before use), `MediaElementAudioSource`; then `AudioWorklet` | WPT `webaudio` |
 | G | `<audio>` playback on the same pipeline (issue 588, stage 1) | WPT `media-elements` |
-| H | FLAC in Lean; AAC through AudioToolbox if approved | conformance streams |
+| H | FLAC in Lean; AAC through AudioToolbox (approved 2026-11-26) | conformance streams |
 
 After audio: WebXR audio, then the video stages of issue 588 with section 4's rules.
 
-## 7. Questions for the owner
+## 7. Questions for the owner, answered 2026-11-26
 
 1. AAC through AudioToolbox (the macOS decoder), as Firefox does: yes or no?
 2. Later: the HRTF data set for `PannerNode` (its licence will be reported first).
 3. Autoplay (section 13.7): may a page start sound only after the person has used it (clicked,
    typed), as Chrome and Safari do? The default here is yes.
+
+Owner, 2026-11-26, verbatim: "1. yes 2. yes 3. yes (but with a Settings or CLI setting
+--dangerously-permit-audio). In future we may have other mechanisms for page trust." Recorded in
+`CLAUDE.md`, "Audio: AAC through AudioToolbox, HRTF data, autoplay rule". What follows for the
+autoplay rule: section 13.7.
 
 ## 8. Stage A, done 2026-11-26
 
@@ -259,6 +264,45 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   each against `Media/Modules.lean` before use.
 - Measure: `tests/browser-wpt/testharness-run.ts` on the WPT `webaudio` names, with the test files
   fetched by name, before and after each step.
+- The page classes (`prelude.js`, section "webaudio", landed 2026-11-26): the
+  interfaces, attributes, operations, enums and dictionaries come from Lean's table (ops 173 and
+  174); arguments are converted as Web IDL says; Lean's error codes become the named exceptions.
+  Defined and working on ops 175 to 189: `BaseAudioContext`, `OfflineAudioContext` (rendering,
+  then `ended`, the promise with the state `closed`, then `complete`, in the specification's
+  order), `OfflineAudioCompletionEvent`, `AudioProcessingEvent`, `AudioBuffer`, `AudioParam`,
+  `AudioNode`, `AudioScheduledSourceNode`, `AudioDestinationNode`, `GainNode`,
+  `ConstantSourceNode`, `OscillatorNode`, `BiquadFilterNode`, `AudioBufferSourceNode`, `DelayNode`,
+  `StereoPannerNode`, `ChannelSplitterNode`, `ChannelMergerNode`, `PeriodicWave`. Interface objects
+  whose constructors and factory methods throw `NotSupportedError` naming this issue: the nodes the
+  engine cannot render yet (stage F), the MediaStream and MediaElement nodes, `AudioWorklet`,
+  `AudioListener`. `AudioContext` builds graphs on a context that is never rendered until stage D
+  (D2b replaces it by ops 190 to 196).
+- Known gaps, each with its plan: `decodeAudioData` rejects with `NotSupportedError` until ops 194
+  and 195 (stage C, D3); `setValueCurveAtTime` and `cancelAndHoldAtTime` throw until op 179 takes
+  them (D2); an `AudioBufferSourceNode` takes its buffer's samples when `buffer` is set, not at
+  `start()` (a change between the two is not heard; an op that acquires at `start()` replaces op
+  184's copy); no read op for a node's channel settings, `type`, `loop` and loop points (the page
+  keeps the last value Lean accepted); no op that frees a context (256 a page session);
+  `OfflineAudioContext.suspend(time)` needs rendering in steps.
+- AudioWorklet is not faked (coordinator's decision, by the rule "a stated shortfall is a failing
+  test plus an open issue", `CLAUDE.md`): `context.audioWorklet` throws, so the setup of WPT
+  `idlharness` (which adds a worklet module and makes an `AudioWorkletNode`) fails until stage F;
+  idlharness still tests the members of the objects made before that point.
+- WPT `webaudio`, local runner (`tests/browser-wpt/testharness-run.ts`, BubblePopJS, native
+  engine on Linux, the 313 test files of the 2026-11-13 list, WPT master), before and after the
+  page classes (engines built from `main` with and without the section): 702 pass, 1,008 fail
+  (out of 1,710 subtests reported) before; 2,572 pass, 712 fail (out of 3,284 reported) after.
+  More subtests are reported after because the tests run further. Not counted after: 2 files over
+  a limit of 3 minutes each (`sub-sample-buffer-stitching.html`, `retrospective-setTargetAtTime.html`;
+  the renderer was not yet the faster one of section 14), and
+  `audiobuffersource-reverse-long-buffer.html`, which did not finish in 12 minutes (an `AudioBuffer` of 2^23 + 512 frames set as a source's buffer; stage
+  C's worker measures it). Two subtests that passed before fail after: `ctor-iirfilter.html`
+  ("Invalid IIRFilterNode constructor should throw" passed because `IIRFilterNode` did not exist)
+  and `audioparam-nominal-range.html` ("verifyTests" now reaches `context.listener`, which throws
+  until `AudioListener` exists). The largest groups of failures after: nodes not implemented yet
+  (stage F), `AudioContext` state (stage D), and `AudioParam` nominal ranges (a reading of
+  `value` after an out-of-range set is not clamped; `AudioBufferSourceNode.detune`'s range;
+  `BiquadFilterNode.gain.maxValue` is not the single-precision value WPT expects).
 
 ## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
 
@@ -372,9 +416,28 @@ render of the same graph (bit for bit, binary32), and there is no under-run.
 ### 13.7 Autoplay
 
 Chrome and Safari start a context `suspended` when the page has no user activation, and
-`resume()` needs one; Firefox has a setting. Coordinator's default, not the owner's: a new context
-is `running` when the page has sticky activation (HTML "has been activated"), else `suspended`;
-`resume()` is allowed after sticky activation. Question 3 of section 7.
+`resume()` needs one; Firefox has a setting. The rule here (owner, 2026-11-26, section 7 answer 3):
+a new context is `running` when the page has sticky activation (HTML "has been activated"), else
+`suspended`; a `resume()` before it waits (`pendingResume`) and is released by the activation. The
+option `--dangerously-permit-audio`, or a switch in Settings, turns the rule off.
+
+How it is held in place:
+
+1. Lean decides which input gives activation (`WebDriver.Input.activates`, HTML "activation
+   triggering input event"), in `WebScripts.performInput`, the one place where the trusted input
+   state changes. The same step releases the audio rule (`WebAudio.Api.activate`). No page op
+   gives activation: op 196 is not in the page's op table, and a theorem says that no page op
+   changes `activated`. Before this change the prelude decided it in JavaScript and called op 196.
+2. "Permitted with no activation" is a risk token, `Risk.audioWithoutActivation`
+   (`skills/lean-risk-flags`): `WebAudio.Api.State.autoplay` holds an
+   `Option (Risk.Accepted .audioWithoutActivation)`, and the only call of `Risk.dangerouslyAccept`
+   for it is the engine's start request with `dangerouslyPermitAudio: true`, which the host sends
+   only for the command-line option or the Settings switch. A page can not reach it.
+3. The host says when it is on: a warning on standard error at start (the option, or the saved
+   setting), a line in `about:foafnaut`, and the Settings row. A WPT run passes it and its record
+   says so, as Chrome's WPT runs pass `--autoplay-policy=no-user-gesture-required`.
+4. The owner: "In future we may have other mechanisms for page trust." One value decides
+   "allowed to start" (`Api.allowedToStart`), so a permission for each site changes one function.
 
 ### 13.8 Ops 190 to 199
 
@@ -531,3 +594,78 @@ latency. `--perf-summary` gets a block `audio`.
     takes the device's buffer at each callback, so the margin above may be smaller there). The
     rendering cost (above) has not been worked on.
 - Then the owner's check on the Mac, and stage E (the jukebox).
+
+## 14. Render quantum speed (2026-11-26)
+
+Tracking: https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut). Branch
+`wip/1169-render-perf`.
+
+Target: one quantum (128 frames, 48 kHz, budget 2.67 ms) of one sine oscillator under 0.05 ms;
+the graph of `labs/demos/foafnaut/pages/particle-rex.html` under 0.5 ms; same output.
+
+Method. `lake exe webaudio-bench [a|b|c]` (`Harness/WebAudioBench.lean`) builds three graphs with
+the `OfflineContext` functions and renders 300 quanta, 5 runs: (a) one sine oscillator into the
+destination; (b) one `AudioBufferSourceNode` (1 s stereo buffer, looping) through a gain; (c) the
+Particle Rex shape: master gain, feedback delay with a wet gain, a pad of three oscillators
+(sine, sine, triangle) through gains and a lowpass with `setTargetAtTime`, three tone oscillators
+(sine, square, sawtooth) with `setValueAtTime`, exponential and linear ramps and `stop`. It prints
+the median ms per quantum and an FNV-style hash of the output bits (binary32 rounded). Profile:
+`perf record -g --call-graph dwarf` on the bench, `perf report --no-children --sort symbol`. The
+VM has 4 vCPUs shared with other sessions (load average 3.8 to 4.9 while measuring), so a number
+has about 10 % noise.
+
+| graph | before | after | hash |
+|---|---|---|---|
+| a, one oscillator | 0.227 ms | 0.014 ms | equal |
+| b, buffer, gain | 0.132 ms | 0.035 ms | equal |
+| c, Particle Rex shape | 4.03 ms | 0.41 ms | equal |
+
+Where the time was (graph c, before): 80 % of the samples in `Automation.fill` and its callees.
+`fill` called `valueAt` for each frame with exact rationals: `frameTime` made a `Rat` from a
+`Float` (`ofDouble`: `mkRat` with a gcd on 2^60 to 2^70 denominators, so GMP; 50 % of the time),
+and `walk` compared and subtracted rationals (24 %). Float literals above 2^32 and 2^52 inside
+`ofDouble` and `validate` were parsed at each call (`lean_cstr_to_nat`, 5 %).
+
+Changes, each with the output kept:
+
+1. `Automation.fill` computes in binary64 (`fillFast`). `fillSpec` is the old definition and the
+   specification. A stored time is the exact value of a double, so `timeToFloat` recovers it and
+   the order of stored times is the IEEE order; the time of frame `f` is `f / sampleRate` in
+   binary64. The events are converted once per call, the value before each event (`fBefore`) is
+   computed once per call, and a cursor (`advance`) moves forward over the events because the
+   frames increase. A list with a curve event uses `fillSpec`. Not proved (the kernel does not
+   unfold `Float`): 13 `#guard`s compare `fill` and `fillSpec` bit for bit on each event kind,
+   equal times, zero start values, a sample rate of 0 and a curve. No theorem mentions `fill`.
+2. `@[specialize]` on `Kernels.iter` and `Kernels.mkChan`: the closure call and the boxed `Float`
+   for each frame are gone (graph b 0.13 to 0.07 ms).
+3. `@[inline] getF`, with the constant `zeroF` for its 0: an inlined `Float` literal is evaluated
+   by `Float.ofScientific` at each call (it parses a big integer literal, about 1 us) unless it
+   is a top-level constant. Trap: any `Float` literal in a function that is inlined or
+   specialised into a branch of a hot loop has this cost; use a named constant.
+4. `PeriodicWave.realZero` and `partialSumSin`: a wave whose cosine terms are all 0 (the built-in
+   waves) is summed without `acc + 0 * ck` (`acc` is never `-0`, `ck` is finite, so the sum is
+   bit equal). `#guard`s compare it with `partialSum` bit for bit on four waves at 12 phases.
+5. `Automation.fillConst` and a one-value result in `Render.paramValues` for a parameter that is
+   constant over the quantum (empty list, or only non-curve, non-`setTarget` events at or before
+   the first frame) and has no connection. Every kernel reads a one-value array as constant over
+   the block (`Kernels.paramAt`), so the output is the same; the array has 1 value, not `n`.
+   `#guard`s check that `fill` gives that value at every later frame.
+
+Randomized differential check of change 1 (`lake exe automation-fill-diff`, run by
+`tests/audio/run.sh`): 20,000 random timelines from seed 20261126, each built with
+`Automation.insert` from 0 to 9 operations (setValue, linear and exponential ramps, setTarget,
+curves, `cancelScheduledValues`, `cancelAndHold`); times on frame times of the sample rate, one
+ulp above and below them, multiples of 1/8000 and random; start frames 0 to 12,000; quantum 1
+(k-rate), 32, 64, 128, 256 or 500; sample rate 44,100, 48,000, 8,000 or 0; default and event
+values include 0, plus or minus 0.0001 and values below 1e-6. Result: `fill` equals `fillSpec`
+bit for bit in all 20,000 cases (also seeds 1, 2 and 3, 20,000 each; 9.6 s per run). Not
+measured: the power of the test against injected faults beyond the `#guard`s (a wrong cursor
+comparison was caught by the `#guard`s at build time, before this test ran).
+
+Remaining cost (graph c, 0.41 ms): the band-limited oscillator sum is about 30 % (the sawtooth at
+110 Hz sums 217 partials per sample; a bit-exact version cannot skip terms, the recurrence is the
+arithmetic; a wavetable would change the output within the 1e-9 tolerance of the tests), the
+delay kernel 12 %, `fillFast` for the `setTarget` and ramp parameters 10 % (one `Float.exp` per
+frame), allocation of one `FloatArray` per node per quantum about 15 %, input mixing 6 %.
+Not done: the delay kernel and the mixers still go through `mkChan` closures for each channel;
+an instruction-count measurement that does not depend on the load of the machine.

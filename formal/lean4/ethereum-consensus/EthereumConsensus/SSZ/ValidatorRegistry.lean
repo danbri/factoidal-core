@@ -1,0 +1,759 @@
+import EthereumConsensus.SSZ.AttesterSlashing
+
+/-! Validator registry membership conditional on a supplied registry root.
+    Normative pin: ethereum/consensus-specs@d2021d2719235f0df4726a1d330502cb15aa8ea3,
+    specs/phase0/beacon-chain.md, Validator, is_slashable_validator.
+    Not BLS validation, state-root authentication or a state transition. -/
+namespace EthereumConsensus.SSZ
+
+structure RegistryValidator where
+  publicKey : ByteArray
+  withdrawalCredentials : ByteArray
+  effectiveBalance : UInt64
+  slashed : Bool
+  activationEligibilityEpoch : UInt64
+  activationEpoch : UInt64
+  exitEpoch : UInt64
+  withdrawableEpoch : UInt64
+
+inductive RegistryError where
+  | publicKeyWidth
+  | credentialsWidth
+  | basicRoot
+  | registryLength
+  | indexOutside
+  | branchLength
+  | proof (error : ByteProofError)
+  | notCommon
+  deriving BEq, DecidableEq, Repr
+
+def validatorPublicKeyRoot (key : ByteArray) : Except RegistryError Chunk := do
+  if key.size ≠ 48 then throw .publicKeyWidth
+  let left ← (Chunk.ofBytes (key.extract 0 32)).mapError RegistryError.proof
+  let right ← (checkedBasicRoot (key.extract 32 48)).mapError (fun _ => .basicRoot)
+  return hashPair left right
+
+def validatorTree (key credentials balance slashed eligible activation exit withdrawable : Chunk) : Chunk :=
+  hashPair
+    (hashPair (hashPair key credentials) (hashPair balance slashed))
+    (hashPair (hashPair eligible activation) (hashPair exit withdrawable))
+
+def validatorRoot (v : RegistryValidator) : Except RegistryError Chunk := do
+  let key ← validatorPublicKeyRoot v.publicKey
+  let credentials ← (Chunk.ofBytes v.withdrawalCredentials).mapError (fun _ => .credentialsWidth)
+  let balance ← (uint64Root v.effectiveBalance).mapError (fun _ => .basicRoot)
+  let slashed ← (boolRoot v.slashed).mapError (fun _ => .basicRoot)
+  let eligible ← (uint64Root v.activationEligibilityEpoch).mapError (fun _ => .basicRoot)
+  let activation ← (uint64Root v.activationEpoch).mapError (fun _ => .basicRoot)
+  let exit ← (uint64Root v.exitEpoch).mapError (fun _ => .basicRoot)
+  let withdrawable ← (uint64Root v.withdrawableEpoch).mapError (fun _ => .basicRoot)
+  return validatorTree key credentials balance slashed eligible activation exit withdrawable
+
+def validatorRegistryLimit : Nat := 2 ^ 40
+
+def validatorRegistryGindex (index : Nat) : Nat := 2 ^ 41 + index
+
+def verifyValidatorAt (length index : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (registryRoot : ByteArray) :
+    Except RegistryError ByteProofResult :=
+  if length > validatorRegistryLimit then .error .registryLength
+  else if index ≥ length then .error .indexOutside
+  else if siblings.length ≠ 40 then .error .branchLength
+  else
+    match validatorRoot v with
+    | .error e => .error e
+    | .ok leaf =>
+      match uint64Root (UInt64.ofNat length) with
+      | .error _ => .error .basicRoot
+      | .ok lengthChunk =>
+        (verifyByteBranch 41 (validatorRegistryGindex index) leaf.bytes
+          (siblings ++ [lengthChunk.bytes]) registryRoot).mapError RegistryError.proof
+
+def slashableValidatorModel (v : RegistryValidator) (epoch : UInt64) : Prop :=
+  v.slashed = false ∧ v.activationEpoch ≤ epoch ∧ epoch < v.withdrawableEpoch
+
+def isSlashableValidator (v : RegistryValidator) (epoch : UInt64) : Bool :=
+  !v.slashed && decide (v.activationEpoch ≤ epoch) && decide (epoch < v.withdrawableEpoch)
+
+inductive RegistryCandidateVerdict where
+  | rootMismatch
+  | notSlashable
+  | candidateNotAuthenticated
+  deriving BEq, DecidableEq, Repr
+
+/-- Consume the preceding slashing preparation, but never authenticate
+    its aggregate signatures or the supplied state/registry root. -/
+def checkCommonValidator (prepared : PreparedAttesterSlashing) (epoch index : UInt64)
+    (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
+    (registryRoot : ByteArray) : Except RegistryError RegistryCandidateVerdict :=
+  if index ∉ prepared.commonIndices then .error .notCommon
+  else
+    match verifyValidatorAt length index.toNat v siblings registryRoot with
+    | .error e => .error e
+    | .ok result =>
+      if !result.matchesRoot then .ok .rootMismatch
+      else if isSlashableValidator v epoch then .ok .candidateNotAuthenticated
+      else .ok .notSlashable
+
+/-- Kind: admission. Says: lengths above the protocol list limit refuse.
+    Does not say: any admitted length is authentic. -/
+theorem verifyValidatorAt_over_length (length index : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (h : length > validatorRegistryLimit) :
+    verifyValidatorAt length index v siblings root = .error .registryLength := by
+  simp only [verifyValidatorAt, if_pos h]
+
+/-- Kind: admission. Says: padded slots cannot be accepted as validators.
+    Does not say: the supplied length is authentic. -/
+theorem verifyValidatorAt_outside (length index : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray)
+    (hl : ¬ length > validatorRegistryLimit) (hi : index ≥ length) :
+    verifyValidatorAt length index v siblings root = .error .indexOutside := by
+  simp only [verifyValidatorAt, if_neg hl, if_pos hi]
+
+/-- Kind: admission. Says: precisely 40 element siblings are required.
+    Does not say: these siblings belong to an authentic registry. -/
+theorem verifyValidatorAt_bad_branch (length index : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray)
+    (hl : ¬ length > validatorRegistryLimit) (hi : ¬ index ≥ length)
+    (hs : siblings.length ≠ 40) :
+    verifyValidatorAt length index v siblings root = .error .branchLength := by
+  simp only [verifyValidatorAt, if_neg hl, if_neg hi, if_pos hs]
+
+/-- Kind: linkage. Says: the actual verifier appends the locally derived
+    length chunk and uses the fixed registry gindex in the byte verifier.
+    Does not say: this proves SHA-256 collision resistance or state anchoring. -/
+theorem verifyValidatorAt_delegates (length index : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (leaf lenChunk : Chunk)
+    (hl : ¬ length > validatorRegistryLimit) (hi : ¬ index ≥ length)
+    (hs : ¬ siblings.length ≠ 40)
+    (hv : validatorRoot v = .ok leaf)
+    (hc : uint64Root (UInt64.ofNat length) = .ok lenChunk) :
+    verifyValidatorAt length index v siblings root =
+      (verifyByteBranch 41 (validatorRegistryGindex index) leaf.bytes
+        (siblings ++ [lenChunk.bytes]) root).mapError RegistryError.proof := by
+  simp only [verifyValidatorAt, if_neg hl, if_neg hi, if_neg hs, hv, hc]
+
+/-- Kind: refinement. Says: eligibility uses the activation/withdrawable
+    interval and slashed flag, not the exit epoch. Does not say: the validator
+    or epoch is authentic. -/
+theorem isSlashableValidator_iff (v : RegistryValidator) (epoch : UInt64) :
+    isSlashableValidator v epoch = true ↔ slashableValidatorModel v epoch := by
+  simp [isSlashableValidator, slashableValidatorModel, and_assoc]
+
+/-- Kind: admission. Says: no index absent from the common set can become
+    a candidate through this function. Does not say: the set is authenticated. -/
+theorem checkCommonValidator_not_common (p : PreparedAttesterSlashing)
+    (epoch index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (h : index ∉ p.commonIndices) :
+    checkCommonValidator p epoch index length v siblings root = .error .notCommon := by
+  simp only [checkCommonValidator, if_pos h]
+
+/-- Kind: linkage. Says: a mismatching admitted membership proof cannot
+    yield a slashing candidate, even when the validator is eligible.
+    Does not say: the supplied root is authentic. -/
+theorem checkCommonValidator_mismatch (p : PreparedAttesterSlashing)
+    (epoch index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (result : ByteProofResult)
+    (hm : index ∈ p.commonIndices)
+    (hp : verifyValidatorAt length index.toNat v siblings root = .ok result)
+    (hb : result.matchesRoot = false) :
+    checkCommonValidator p epoch index length v siblings root = .ok .rootMismatch := by
+  simp [checkCommonValidator, hm, hp, hb]
+
+/-- Kind: linkage. Says: a common, eligible validator with a matching
+    membership proof yields only an unauthenticated candidate.
+    Does not say: either signature or the BeaconState has been authenticated. -/
+theorem checkCommonValidator_candidate (p : PreparedAttesterSlashing)
+    (epoch index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (root : ByteArray) (result : ByteProofResult)
+    (hm : index ∈ p.commonIndices)
+    (hp : verifyValidatorAt length index.toNat v siblings root = .ok result)
+    (hb : result.matchesRoot = true)
+    (hv : isSlashableValidator v epoch = true) :
+    checkCommonValidator p epoch index length v siblings root = .ok .candidateNotAuthenticated := by
+  simp [checkCommonValidator, hm, hp, hb, hv]
+
+#print axioms EthereumConsensus.SSZ.verifyValidatorAt_over_length
+#print axioms EthereumConsensus.SSZ.verifyValidatorAt_outside
+#print axioms EthereumConsensus.SSZ.verifyValidatorAt_bad_branch
+#print axioms EthereumConsensus.SSZ.verifyValidatorAt_delegates
+#print axioms EthereumConsensus.SSZ.isSlashableValidator_iff
+#print axioms EthereumConsensus.SSZ.checkCommonValidator_not_common
+
+#print axioms EthereumConsensus.SSZ.checkCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkCommonValidator_candidate
+
+
+/-- Explicit BeaconState container layouts, not a fork-choice verdict.
+    Phase0 through Deneb have 32 field positions; Electra and Fulu have 64.
+    The validators field is at zero-based position 11 in both layouts.
+    Spec pin: ethereum/consensus-specs@d2021d2719235f0df4726a1d330502cb15aa8ea3. -/
+inductive RegistryStateLayout where
+  | phase0Deneb
+  | electraFulu
+  deriving BEq, DecidableEq, Repr
+
+def registryStateDepth : RegistryStateLayout → Nat
+  | .phase0Deneb => 5
+  | .electraFulu => 6
+
+def registryStateGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 43
+  | .electraFulu => 75
+
+def verifyRegistryInState (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (stateSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError ByteProofResult :=
+  if stateSiblings.length ≠ registryStateDepth layout then .error .branchLength
+  else (verifyByteBranch (registryStateDepth layout) (registryStateGindex layout)
+    registryRoot stateSiblings stateRoot).mapError RegistryError.proof
+
+inductive StateCandidateVerdict where
+  | stateRootMismatch
+  | registryVerdict (verdict : RegistryCandidateVerdict)
+  deriving BEq, DecidableEq, Repr
+
+/-- Both branches must match before a candidate can be returned. The state
+    root, layout, epoch and prepared signatures are not authenticated here. -/
+def checkStateCommonValidator (layout : RegistryStateLayout)
+    (prepared : PreparedAttesterSlashing) (epoch index : UInt64)
+    (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
+    (registryRoot : ByteArray) (stateSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError StateCandidateVerdict :=
+  match verifyRegistryInState layout registryRoot stateSiblings stateRoot with
+  | .error e => .error e
+  | .ok result =>
+    if result.matchesRoot then
+      match checkCommonValidator prepared epoch index length v siblings registryRoot with
+      | .error e => .error e
+      | .ok verdict => .ok (.registryVerdict verdict)
+    else .ok .stateRootMismatch
+
+/-- Kind: layout. Says: the earlier layout uses position 11 at depth 5.
+    Does not say: the supplied state uses that fork. -/
+theorem registryState_phase0Deneb :
+    registryStateDepth .phase0Deneb = 5 ∧ registryStateGindex .phase0Deneb = 43 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: layout. Says: the later layout uses position 11 at depth 6.
+    Does not say: the supplied state uses that fork. -/
+theorem registryState_electraFulu :
+    registryStateDepth .electraFulu = 6 ∧ registryStateGindex .electraFulu = 75 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: admission. Says: a wrong state-branch count is refused.
+    Does not say: admitted witnesses have correct byte widths. -/
+theorem verifyRegistryInState_bad_branch (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length ≠ registryStateDepth layout) :
+    verifyRegistryInState layout registryRoot siblings stateRoot = .error .branchLength := by
+  simp only [verifyRegistryInState, if_pos h]
+
+/-- Kind: linkage. Says: the actual verifier uses the layout's fixed depth
+    and index with concrete byte proofs. Does not say: the root is authentic. -/
+theorem verifyRegistryInState_delegates (layout : RegistryStateLayout)
+    (registryRoot : ByteArray) (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length = registryStateDepth layout) :
+    verifyRegistryInState layout registryRoot siblings stateRoot =
+      (verifyByteBranch (registryStateDepth layout) (registryStateGindex layout)
+        registryRoot siblings stateRoot).mapError RegistryError.proof := by
+  simp [verifyRegistryInState, h]
+
+/-- Kind: linkage. Says: a mismatching state branch cannot reach a candidate.
+    Does not say: the root itself is authentic. -/
+theorem checkStateCommonValidator_mismatch (layout : RegistryStateLayout)
+    (p : PreparedAttesterSlashing) (epoch index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings : List ByteArray) (stateRoot : ByteArray) (result : ByteProofResult)
+    (hp : verifyRegistryInState layout registryRoot stateSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = false) :
+    checkStateCommonValidator layout p epoch index length v siblings registryRoot stateSiblings stateRoot =
+      .ok .stateRootMismatch := by
+  simp [checkStateCommonValidator, hp, hm]
+
+/-- Kind: linkage. Says: after a matching state proof the existing common
+    validator path decides the outcome. Does not say: signatures are valid. -/
+theorem checkStateCommonValidator_delegates (layout : RegistryStateLayout)
+    (p : PreparedAttesterSlashing) (epoch index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings : List ByteArray) (stateRoot : ByteArray) (result : ByteProofResult)
+    (verdict : RegistryCandidateVerdict)
+    (hp : verifyRegistryInState layout registryRoot stateSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = true)
+    (hc : checkCommonValidator p epoch index length v siblings registryRoot = .ok verdict) :
+    checkStateCommonValidator layout p epoch index length v siblings registryRoot stateSiblings stateRoot =
+      .ok (.registryVerdict verdict) := by
+  simp [checkStateCommonValidator, hp, hm, hc]
+
+#print axioms EthereumConsensus.SSZ.registryState_phase0Deneb
+#print axioms EthereumConsensus.SSZ.registryState_electraFulu
+#print axioms EthereumConsensus.SSZ.verifyRegistryInState_bad_branch
+#print axioms EthereumConsensus.SSZ.verifyRegistryInState_delegates
+#print axioms EthereumConsensus.SSZ.checkStateCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkStateCommonValidator_delegates
+
+
+/-- Mainnet preset and activation boundary, pinned to the consensus-specs
+    revision above (presets/mainnet/phase0.yaml and configs/mainnet.yaml).
+    No caller-supplied epoch or fork layout is used by the new entry point. -/
+def mainnetRegistryEpoch (slot : UInt64) : UInt64 :=
+  UInt64.ofNat (slot.toNat / 32)
+
+def mainnetRegistryLayout (slot : UInt64) : RegistryStateLayout :=
+  if mainnetRegistryEpoch slot < 364032 then .phase0Deneb else .electraFulu
+
+def registrySlotGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 34
+  | .electraFulu => 66
+
+def verifyMainnetStateSlot (slot : UInt64) (siblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError ByteProofResult :=
+  let layout := mainnetRegistryLayout slot
+  if siblings.length ≠ registryStateDepth layout then .error .branchLength
+  else
+    match uint64Root slot with
+    | .error _ => .error .basicRoot
+    | .ok leaf =>
+      (verifyByteBranch (registryStateDepth layout) (registrySlotGindex layout)
+        leaf.bytes siblings stateRoot).mapError RegistryError.proof
+
+inductive MainnetSlotCandidateVerdict where
+  | slotRootMismatch
+  | stateVerdict (verdict : StateCandidateVerdict)
+  deriving BEq, DecidableEq, Repr
+
+/-- Check the slot and registry against one supplied state commitment.
+    This fixes the epoch used in eligibility and the SSZ layout, conditional
+    on that commitment; it does not authenticate the commitment or BLS votes. -/
+def checkMainnetSlotCommonValidator (slot : UInt64)
+    (prepared : PreparedAttesterSlashing) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (siblings : List ByteArray)
+    (registryRoot : ByteArray) (stateSiblings slotSiblings : List ByteArray)
+    (stateRoot : ByteArray) : Except RegistryError MainnetSlotCandidateVerdict :=
+  match verifyMainnetStateSlot slot slotSiblings stateRoot with
+  | .error e => .error e
+  | .ok result =>
+    if result.matchesRoot then
+      match checkStateCommonValidator (mainnetRegistryLayout slot) prepared
+          (mainnetRegistryEpoch slot) index length v siblings registryRoot
+          stateSiblings stateRoot with
+      | .error e => .error e
+      | .ok verdict => .ok (.stateVerdict verdict)
+    else .ok .slotRootMismatch
+
+/-- Kind: layout. Says: the slot field is at position 2 in each layout.
+    Does not say: either supplied state is canonical. -/
+theorem registrySlot_gindices :
+    registrySlotGindex .phase0Deneb = 34 ∧ registrySlotGindex .electraFulu = 66 :=
+  ⟨rfl, rfl⟩
+
+/-- Kind: linkage. Says: the mainnet earlier layout is selected before Electra.
+    Does not say: the slot is authenticated. -/
+theorem mainnetRegistryLayout_before (slot : UInt64)
+    (h : mainnetRegistryEpoch slot < 364032) :
+    mainnetRegistryLayout slot = .phase0Deneb := by
+  simp only [mainnetRegistryLayout, if_pos h]
+
+/-- Kind: linkage. Says: Electra and the later layout are selected at the boundary.
+    Does not say: future layout-changing forks are covered. -/
+theorem mainnetRegistryLayout_after (slot : UInt64)
+    (h : ¬ mainnetRegistryEpoch slot < 364032) :
+    mainnetRegistryLayout slot = .electraFulu := by
+  simp only [mainnetRegistryLayout, if_neg h]
+
+/-- Kind: admission. Says: a wrong slot branch count is refused.
+    Does not say: an admitted branch is valid. -/
+theorem verifyMainnetStateSlot_bad_branch (slot : UInt64)
+    (siblings : List ByteArray) (stateRoot : ByteArray)
+    (h : siblings.length ≠ registryStateDepth (mainnetRegistryLayout slot)) :
+    verifyMainnetStateSlot slot siblings stateRoot = .error .branchLength := by
+  simp only [verifyMainnetStateSlot, if_pos h]
+
+/-- Kind: linkage. Says: the slot proof checks the locally derived uint64 leaf
+    and mainnet layout with concrete SHA-256. Does not say: the root is canonical. -/
+theorem verifyMainnetStateSlot_delegates (slot : UInt64)
+    (siblings : List ByteArray) (stateRoot : ByteArray) (leaf : Chunk)
+    (h : siblings.length = registryStateDepth (mainnetRegistryLayout slot))
+    (hl : uint64Root slot = .ok leaf) :
+    verifyMainnetStateSlot slot siblings stateRoot =
+      (verifyByteBranch (registryStateDepth (mainnetRegistryLayout slot))
+        (registrySlotGindex (mainnetRegistryLayout slot)) leaf.bytes siblings
+        stateRoot).mapError RegistryError.proof := by
+  simp [verifyMainnetStateSlot, h, hl]
+
+/-- Kind: linkage. Says: a mismatching slot proof prevents candidate admission.
+    Does not say: the supplied root is canonical. -/
+theorem checkMainnetSlotCommonValidator_mismatch (slot : UInt64)
+    (p : PreparedAttesterSlashing) (index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings : List ByteArray) (stateRoot : ByteArray)
+    (result : ByteProofResult)
+    (hp : verifyMainnetStateSlot slot slotSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = false) :
+    checkMainnetSlotCommonValidator slot p index length v siblings registryRoot
+      stateSiblings slotSiblings stateRoot = .ok .slotRootMismatch := by
+  simp [checkMainnetSlotCommonValidator, hp, hm]
+
+/-- Kind: linkage. Says: the candidate path receives the derived epoch,
+    layout and identical state root only after the slot branch matches.
+    Does not say: signatures or canonical chain history are authenticated. -/
+theorem checkMainnetSlotCommonValidator_delegates (slot : UInt64)
+    (p : PreparedAttesterSlashing) (index : UInt64) (length : Nat)
+    (v : RegistryValidator) (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings : List ByteArray) (stateRoot : ByteArray)
+    (result : ByteProofResult) (verdict : StateCandidateVerdict)
+    (hp : verifyMainnetStateSlot slot slotSiblings stateRoot = .ok result)
+    (hm : result.matchesRoot = true)
+    (hc : checkStateCommonValidator (mainnetRegistryLayout slot) p
+      (mainnetRegistryEpoch slot) index length v siblings registryRoot
+      stateSiblings stateRoot = .ok verdict) :
+    checkMainnetSlotCommonValidator slot p index length v siblings registryRoot
+      stateSiblings slotSiblings stateRoot = .ok (.stateVerdict verdict) := by
+  simp [checkMainnetSlotCommonValidator, hp, hm, hc]
+
+#print axioms EthereumConsensus.SSZ.registrySlot_gindices
+#print axioms EthereumConsensus.SSZ.mainnetRegistryLayout_before
+#print axioms EthereumConsensus.SSZ.mainnetRegistryLayout_after
+#print axioms EthereumConsensus.SSZ.verifyMainnetStateSlot_bad_branch
+#print axioms EthereumConsensus.SSZ.verifyMainnetStateSlot_delegates
+#print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_mismatch
+#print axioms EthereumConsensus.SSZ.checkMainnetSlotCommonValidator_delegates
+
+
+/-! The Fork and genesis_validators_root are state fields 3 and 1.
+    The context is commitment-bound, not canonical-chain authenticated. -/
+inductive StateSigningError where
+  | forkWidth
+  | basicRoot
+  | branchLength
+  | proof (error : ByteProofError)
+  | forkMismatch
+  | genesisMismatch
+  | preparation (error : SlashingPreparationError)
+  | registry (error : RegistryError)
+
+def stateForkRoot (context : ForkContext) : Except StateSigningError Chunk := do
+  if context.previousVersion.size ≠ 4 ∨ context.currentVersion.size ≠ 4 then
+    throw .forkWidth
+  let prev ← (checkedBasicRoot context.previousVersion).mapError (fun _ => StateSigningError.basicRoot)
+  let curr ← (checkedBasicRoot context.currentVersion).mapError (fun _ => StateSigningError.basicRoot)
+  let ep ← (uint64Root context.activationEpoch).mapError (fun _ => StateSigningError.basicRoot)
+  let zero ← containerZeroRoot.mapError (fun _ => StateSigningError.basicRoot)
+  return hashPair (hashPair prev curr) (hashPair ep zero)
+
+def stateForkGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 35
+  | .electraFulu => 67
+
+def stateGenesisGindex : RegistryStateLayout → Nat
+  | .phase0Deneb => 33
+  | .electraFulu => 65
+
+def verifyStateSigningContext (slot : UInt64) (context : ForkContext)
+    (forkSiblings genesisSiblings : List ByteArray) (stateRoot : ByteArray) :
+    Except StateSigningError Unit :=
+  let layout := mainnetRegistryLayout slot
+  let depth := registryStateDepth layout
+  if forkSiblings.length ≠ depth ∨ genesisSiblings.length ≠ depth then .error .branchLength
+  else
+    match stateForkRoot context with
+    | .error e => .error e
+    | .ok leaf =>
+      match verifyByteBranch depth (stateForkGindex layout) leaf.bytes forkSiblings stateRoot with
+      | .error e => .error (.proof e)
+      | .ok forkResult =>
+        if forkResult.matchesRoot then
+          match verifyByteBranch depth (stateGenesisGindex layout)
+              context.genesisValidatorsRoot genesisSiblings stateRoot with
+          | .error e => .error (.proof e)
+          | .ok genesisResult =>
+            if genesisResult.matchesRoot then .ok () else .error .genesisMismatch
+        else .error .forkMismatch
+
+/-- Actual raw-vote preparation followed by slot/registry verification.
+    The result deliberately contains only unauthenticated candidate evidence. -/
+def checkStateVotes (slot : UInt64) (context : ForkContext) (a b : AttestationData)
+    (left right : List UInt64) (index : UInt64) (length : Nat) (v : RegistryValidator)
+    (siblings : List ByteArray) (registryRoot : ByteArray)
+    (stateSiblings slotSiblings forkSiblings genesisSiblings : List ByteArray)
+    (stateRoot : ByteArray) :
+    Except StateSigningError (PreparedAttesterSlashing × MainnetSlotCandidateVerdict) :=
+  match verifyStateSigningContext slot context forkSiblings genesisSiblings stateRoot with
+  | .error e => .error e
+  | .ok _ =>
+    match prepareAttesterSlashing context a b left right with
+    | .error e => .error (.preparation e)
+    | .ok prepared =>
+      match checkMainnetSlotCommonValidator slot prepared index length v siblings
+          registryRoot stateSiblings slotSiblings stateRoot with
+      | .error e => .error (.registry e)
+      | .ok verdict => .ok (prepared, verdict)
+
+/-- Kind: layout. Says: both context fields occupy their fixed positions.
+    Does not say: the supplied state is canonical. -/
+theorem stateSigning_gindices :
+    stateForkGindex .phase0Deneb = 35 ∧ stateForkGindex .electraFulu = 67 ∧
+    stateGenesisGindex .phase0Deneb = 33 ∧ stateGenesisGindex .electraFulu = 65 :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Kind: admission. Says: a wrong context branch count refuses before hashing.
+    Does not say: well-sized branches are authentic. -/
+theorem verifyStateSigningContext_bad_branch (slot : UInt64) (c : ForkContext)
+    (fs gs : List ByteArray) (root : ByteArray)
+    (h : fs.length ≠ registryStateDepth (mainnetRegistryLayout slot) ∨
+      gs.length ≠ registryStateDepth (mainnetRegistryLayout slot)) :
+    verifyStateSigningContext slot c fs gs root = .error .branchLength := by
+  simp only [verifyStateSigningContext, if_pos h]
+
+/-- Kind: linkage. Says: context failure propagates before vote preparation.
+    Does not say: context success establishes signature validity. -/
+theorem checkStateVotes_bad_context (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : StateSigningError)
+    (h : verifyStateSigningContext slot c fs gs root = .error e) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .error e := by
+  simp only [checkStateVotes, h]
+
+/-- Kind: linkage. Says: actual vote preparation failure prevents candidate checking.
+    Does not say: admitted votes carry valid signatures. -/
+theorem checkStateVotes_bad_preparation (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : SlashingPreparationError)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .error e) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .error (.preparation e) := by
+  simp only [checkStateVotes, hc, hp]
+
+/-- Kind: linkage. Says: success returns the actual prepared signing roots
+    and actual slot/registry verdict under the identical state commitment.
+    Does not say: canonical root, BLS or a state mutation is established. -/
+theorem checkStateVotes_delegates (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (index : UInt64)
+    (length : Nat) (v : RegistryValidator) (ss : List ByteArray)
+    (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (p : PreparedAttesterSlashing) (verdict : MainnetSlotCandidateVerdict)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .ok p)
+    (hv : checkMainnetSlotCommonValidator slot p index length v ss rr rs sl root = .ok verdict) :
+    checkStateVotes slot c a b left right index length v ss rr rs sl fs gs root =
+      .ok (p, verdict) := by
+  simp only [checkStateVotes, hc, hp, hv]
+
+#print axioms EthereumConsensus.SSZ.stateSigning_gindices
+#print axioms EthereumConsensus.SSZ.verifyStateSigningContext_bad_branch
+#print axioms EthereumConsensus.SSZ.checkStateVotes_bad_context
+#print axioms EthereumConsensus.SSZ.checkStateVotes_bad_preparation
+#print axioms EthereumConsensus.SSZ.checkStateVotes_delegates
+
+
+/-! All-signer selection for the actual raw votes, conditional on one
+    supplied BeaconState commitment. No BLS authentication or mutation. -/
+structure SignerWitness where
+  index : UInt64
+  validator : RegistryValidator
+  siblings : List ByteArray
+
+inductive SignerError where
+  | resourceLimit
+  | indexMismatch
+  | rootMismatch
+  | registry (error : RegistryError)
+  | context (error : StateSigningError)
+  | preparation (error : SlashingPreparationError)
+  | slotMismatch
+  | stateMismatch
+
+def verifySignerRow (length : Nat) (root : ByteArray) (w : SignerWitness) :
+    Except SignerError Unit :=
+  match verifyValidatorAt length w.index.toNat w.validator w.siblings root with
+  | .error e => .error (.registry e)
+  | .ok result => if result.matchesRoot then .ok () else .error .rootMismatch
+
+def verifySignerRows (length : Nat) (root : ByteArray) :
+    List SignerWitness → Except SignerError Unit
+  | [] => .ok ()
+  | w :: ws =>
+    match verifySignerRow length root w with
+    | .error e => .error e
+    | .ok _ => verifySignerRows length root ws
+
+def signerIndices (ws : List SignerWitness) : List UInt64 :=
+  ws.map (fun w => w.index)
+
+def signerKeys (ws : List SignerWitness) : List ByteArray :=
+  ws.map (fun w => w.validator.publicKey)
+
+/-- No key is returned until every witness matches the same registry root.
+    The order is the original indexed-attestation order. -/
+def verifySignerList (length : Nat) (root : ByteArray) (indices : List UInt64)
+    (ws : List SignerWitness) : Except SignerError (List ByteArray) :=
+  if indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit then
+    .error .resourceLimit
+  else if signerIndices ws ≠ indices then .error .indexMismatch
+  else
+    match verifySignerRows length root ws with
+    | .error e => .error e
+    | .ok _ => .ok (signerKeys ws)
+
+structure AllSignerSelection where
+  firstKeys : List ByteArray
+  secondKeys : List ByteArray
+  eligibleCommon : List UInt64
+
+def selectSignerLists (length : Nat) (root : ByteArray) (epoch : UInt64)
+    (left right : List UInt64) (lw rw : List SignerWitness) :
+    Except SignerError AllSignerSelection :=
+  match verifySignerList length root left lw with
+  | .error e => .error e
+  | .ok lk =>
+    match verifySignerList length root right rw with
+    | .error e => .error e
+    | .ok rk =>
+      .ok ⟨lk, rk, (lw.filter (fun w =>
+        decide (w.index ∈ right) && isSlashableValidator w.validator epoch)).map (fun w => w.index)⟩
+
+/-- Check the actual raw votes and all four state fields, then the complete
+    ordered signer sets. The empty eligible list is not a successful slash. -/
+def checkAllStateSigners (slot : UInt64) (context : ForkContext) (a b : AttestationData)
+    (left right : List UInt64) (lw rw : List SignerWitness) (length : Nat)
+    (registryRoot : ByteArray) (stateSiblings slotSiblings forkSiblings genesisSiblings : List ByteArray)
+    (stateRoot : ByteArray) :
+    Except SignerError (PreparedAttesterSlashing × AllSignerSelection) :=
+  match verifyStateSigningContext slot context forkSiblings genesisSiblings stateRoot with
+  | .error e => .error (.context e)
+  | .ok _ =>
+    match prepareAttesterSlashing context a b left right with
+    | .error e => .error (.preparation e)
+    | .ok prepared =>
+      match verifyMainnetStateSlot slot slotSiblings stateRoot with
+      | .error e => .error (.registry e)
+      | .ok sr =>
+        if !sr.matchesRoot then .error .slotMismatch
+        else
+          match verifyRegistryInState (mainnetRegistryLayout slot) registryRoot stateSiblings stateRoot with
+          | .error e => .error (.registry e)
+          | .ok rr =>
+            if !rr.matchesRoot then .error .stateMismatch
+            else
+              match selectSignerLists length registryRoot (mainnetRegistryEpoch slot) left right lw rw with
+              | .error e => .error e
+              | .ok selection => .ok (prepared, selection)
+
+/-- Kind: admission. Says: either oversized list refuses before hashing.
+    Does not say: the local limit is an Ethereum protocol limit. -/
+theorem verifySignerList_over_limit (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (h : indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit) :
+    verifySignerList length root indices ws = .error .resourceLimit := by
+  simp only [verifySignerList, if_pos h]
+
+/-- Kind: admission. Says: missing, extra or reordered indices refuse.
+    Does not say: indices alone establish valid public keys. -/
+theorem verifySignerList_wrong_order (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (hl : ¬ (indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit))
+    (hi : signerIndices ws ≠ indices) :
+    verifySignerList length root indices ws = .error .indexMismatch := by
+  simp only [verifySignerList, if_neg hl, if_pos hi]
+
+/-- Kind: linkage. Says: a failed membership verdict refuses that signer.
+    Does not say: the supplied registry is canonical. -/
+theorem verifySignerRow_mismatch (length : Nat) (root : ByteArray)
+    (w : SignerWitness) (r : ByteProofResult)
+    (h : verifyValidatorAt length w.index.toNat w.validator w.siblings root = .ok r)
+    (hm : r.matchesRoot = false) :
+    verifySignerRow length root w = .error .rootMismatch := by
+  simp [verifySignerRow, h, hm]
+
+/-- Kind: linkage. Says: list checking propagates the first failed row.
+    Does not say: subsequent rows have been checked. -/
+theorem verifySignerRows_bad_head (length : Nat) (root : ByteArray)
+    (w : SignerWitness) (ws : List SignerWitness) (e : SignerError)
+    (h : verifySignerRow length root w = .error e) :
+    verifySignerRows length root (w :: ws) = .error e := by
+  simp only [verifySignerRows, h]
+
+/-- Kind: refinement. Says: successful row traversal requires every actual
+    row verifier to succeed. Does not say: SHA-256 collision resistance. -/
+theorem verifySignerRows_all (length : Nat) (root : ByteArray)
+    (ws : List SignerWitness)
+    (h : verifySignerRows length root ws = .ok ()) :
+    ∀ w ∈ ws, verifySignerRow length root w = .ok () := by
+  induction ws with
+  | nil => simp
+  | cons x xs ih =>
+    cases hx : verifySignerRow length root x with
+    | error e => simp [verifySignerRows, hx] at h
+    | ok u =>
+      cases u
+      have ht : verifySignerRows length root xs = .ok () := by
+        simpa only [verifySignerRows, hx] using h
+      intro w hw
+      rcases List.mem_cons.mp hw with he | he
+      · subst w
+        exact hx
+      · exact ih ht w he
+
+/-- Kind: linkage. Says: admitted verified rows produce exactly ordered keys.
+    Does not say: the keys are valid BLS points. -/
+theorem verifySignerList_of_verified (length : Nat) (root : ByteArray)
+    (indices : List UInt64) (ws : List SignerWitness)
+    (hl : ¬ (indices.length > slashingIndexLimit ∨ ws.length > slashingIndexLimit))
+    (hi : signerIndices ws = indices)
+    (hv : verifySignerRows length root ws = .ok ()) :
+    verifySignerList length root indices ws = .ok (signerKeys ws) := by
+  simp [verifySignerList, hl, hi, hv]
+
+/-- Kind: linkage. Says: verified first list cannot hide a failed second.
+    Does not say: either aggregate signature has been verified. -/
+theorem selectSignerLists_bad_right (length : Nat) (root : ByteArray) (epoch : UInt64)
+    (left right : List UInt64) (lw rw : List SignerWitness) (keys : List ByteArray)
+    (e : SignerError) (hl : verifySignerList length root left lw = .ok keys)
+    (hr : verifySignerList length root right rw = .error e) :
+    selectSignerLists length root epoch left right lw rw = .error e := by
+  simp only [selectSignerLists, hl, hr]
+
+/-- Kind: linkage. Says: raw state context failure prevents key selection.
+    Does not say: the root is canonical. -/
+theorem checkAllStateSigners_bad_context (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (lw rw : List SignerWitness)
+    (length : Nat) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (e : StateSigningError) (h : verifyStateSigningContext slot c fs gs root = .error e) :
+    checkAllStateSigners slot c a b left right lw rw length rr rs sl fs gs root =
+      .error (.context e) := by
+  simp only [checkAllStateSigners, h]
+
+/-- Kind: linkage. Says: a mismatching registry state branch prevents key
+    selection, even if every individual validator witness is correct.
+    Does not say: the supplied commitment is authenticated. -/
+theorem checkAllStateSigners_bad_registry (slot : UInt64) (c : ForkContext)
+    (a b : AttestationData) (left right : List UInt64) (lw rw : List SignerWitness)
+    (length : Nat) (rr : ByteArray) (rs sl fs gs : List ByteArray) (root : ByteArray)
+    (p : PreparedAttesterSlashing) (sr r : ByteProofResult)
+    (hc : verifyStateSigningContext slot c fs gs root = .ok ())
+    (hp : prepareAttesterSlashing c a b left right = .ok p)
+    (hs : verifyMainnetStateSlot slot sl root = .ok sr)
+    (hm : sr.matchesRoot = true)
+    (hr : verifyRegistryInState (mainnetRegistryLayout slot) rr rs root = .ok r)
+    (hn : r.matchesRoot = false) :
+    checkAllStateSigners slot c a b left right lw rw length rr rs sl fs gs root =
+      .error .stateMismatch := by
+  simp [checkAllStateSigners, hc, hp, hs, hm, hr, hn]
+
+#print axioms EthereumConsensus.SSZ.verifySignerList_over_limit
+#print axioms EthereumConsensus.SSZ.verifySignerList_wrong_order
+#print axioms EthereumConsensus.SSZ.verifySignerRow_mismatch
+#print axioms EthereumConsensus.SSZ.verifySignerRows_bad_head
+#print axioms EthereumConsensus.SSZ.verifySignerRows_all
+#print axioms EthereumConsensus.SSZ.verifySignerList_of_verified
+#print axioms EthereumConsensus.SSZ.selectSignerLists_bad_right
+#print axioms EthereumConsensus.SSZ.checkAllStateSigners_bad_context
+#print axioms EthereumConsensus.SSZ.checkAllStateSigners_bad_registry
+
+end EthereumConsensus.SSZ

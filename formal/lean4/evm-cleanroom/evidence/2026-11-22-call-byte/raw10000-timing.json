@@ -1,0 +1,116 @@
+{
+  "kind": "paired-native-raw-evm-batch-timing",
+  "units": "nanoseconds per 10000-case batch",
+  "quantiles": "nearest rank",
+  "measured": "child process launch, TSV read, interpretation, JSONL serialization and process exit",
+  "system": {
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "logicalCpus": 9,
+    "python": "3.12.14"
+  },
+  "date": "2026-11-22T13:45:52Z",
+  "engines": {
+    "before": {
+      "executable": "/workspace/scratch/144b70d8ac20/call-data-results/base743-evm-subset",
+      "source": "5f90c3e6f9f42dd51a4c6c0f0a218526ee8be834",
+      "sha256": "3f154eacd5d384eb42b839c04430f2c4c5f08354f7afc2dd764644a27ecef230",
+      "sourceTree": "41da689b75b557064d965a0d8e419daf900593e1"
+    },
+    "after": {
+      "executable": "/workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset",
+      "source": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
+      "sha256": "4af97fa82881c71cc5490daefe19be98147b089badaaa653790c18bd4502aea8",
+      "testedIntegrationCommit": "0573815601f6c0db6833bdf4a2409fab2044b123",
+      "sourceTree": "7d2cbe6bbd1ccf1bb1abd3fb485d415c1f7bf944"
+    }
+  },
+  "casesPerSample": 10000,
+  "measuredPairs": 11,
+  "warmupPairs": 3,
+  "inputSha256": "aa2533e3fa8b1d2907e5c84933956e207a53e2b0a674e1d8bef716b1afc99ea0",
+  "corpusSha256": "610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb",
+  "outputBytes": 2071386,
+  "outputSha256": "86621eeda2458d6f5a8a5aaa157e21a09d188c3f253314ff67af38b33a677a0f",
+  "outputsByteIdentical": true,
+  "samples": [
+    {
+      "first": "before",
+      "before": 161667862,
+      "after": 165230337
+    },
+    {
+      "first": "after",
+      "after": 199808628,
+      "before": 158254584
+    },
+    {
+      "first": "before",
+      "before": 152896080,
+      "after": 177814225
+    },
+    {
+      "first": "after",
+      "after": 163366692,
+      "before": 154793756
+    },
+    {
+      "first": "before",
+      "before": 153578163,
+      "after": 153942081
+    },
+    {
+      "first": "after",
+      "after": 156447346,
+      "before": 152121992
+    },
+    {
+      "first": "before",
+      "before": 162628736,
+      "after": 154133306
+    },
+    {
+      "first": "after",
+      "after": 154510950,
+      "before": 181090648
+    },
+    {
+      "first": "before",
+      "before": 167047154,
+      "after": 186114200
+    },
+    {
+      "first": "after",
+      "after": 173315591,
+      "before": 153228517
+    },
+    {
+      "first": "before",
+      "before": 150491119,
+      "after": 153619256
+    }
+  ],
+  "before": {
+    "p50": 154793756,
+    "p95": 181090648,
+    "p99": 181090648,
+    "min": 150491119,
+    "max": 181090648,
+    "spread": 30599529
+  },
+  "after": {
+    "p50": 163366692,
+    "p95": 199808628,
+    "p99": 199808628,
+    "min": 153619256,
+    "max": 199808628,
+    "spread": 46189372
+  },
+  "pairedAfterMinusBefore": {
+    "p50": 4325354,
+    "p95": 41554044,
+    "p99": 41554044,
+    "min": -26579698,
+    "max": 41554044,
+    "spread": 68133742
+  }
+}

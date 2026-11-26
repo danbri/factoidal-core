@@ -1,0 +1,1 @@
+{"status": "negative-controls-pass", "theorems": 11, "rejected": 6, "controls": ["proof-placeholder", "missing-theorem", "duplicate-theorem", "extra-theorem", "duplicate-axiom", "custom-axiom"]}

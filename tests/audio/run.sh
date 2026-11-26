@@ -11,6 +11,9 @@
 #   3. audio-sink-test  `lake exe audio-sink-test`: refusals, all-or-nothing writes, pause, one second of
 #                    a 440 Hz sine through `wav:PATH` and `null`, bit for bit against the file.
 #
+#   4. automation-fill-diff  `lake exe automation-fill-diff`: 20,000 random AudioParam event lists, `Automation.fill`
+#                    (binary64) against `Automation.fillSpec` (exact rationals), bit for bit.
+#
 # Needs gcc (with libtsan), the Lean toolchain (elan). Exit 0 only when every part passes.
 set -uo pipefail
 export LC_ALL=C
@@ -51,6 +54,11 @@ part "ring trace replay" $rc
 rc=0
 (cd "$LEAN4" && lake build audio-sink-test >/dev/null && AUDIO_TEST_DIR="$TMP" .lake/build/bin/audio-sink-test) || rc=$?
 part "audio-sink-test" $rc
+
+# 4. Automation.fill against fillSpec
+rc=0
+(cd "$LEAN4" && lake build automation-fill-diff >/dev/null && .lake/build/bin/automation-fill-diff) || rc=$?
+part "automation-fill-diff" $rc
 
 if [ $fails -eq 0 ]; then echo "audio: all pass"; exit 0; fi
 echo "audio: $fails part(s) failed"

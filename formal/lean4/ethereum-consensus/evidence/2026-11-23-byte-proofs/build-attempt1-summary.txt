@@ -1,0 +1,3 @@
+Initial clean build attempted all 11 executable targets together with both libraries under an 8 GiB virtual-memory limit, LEAN_NUM_THREADS=2 and LEAN_STACK_SIZE_KB=65536. It exited 1. The last observed build progress was [53/67] ChildMain:c.o (with exports); final output: INTERNAL PANIC: out of memory.
+The complete failed log was overwritten when the serial rebuild started after a failed environment probe; this file records only the observed failure, not a complete trace.
+The retry keeps the memory limit and builds the libraries first, then executable targets one at a time.
