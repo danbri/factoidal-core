@@ -1,0 +1,15 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-raw-signed"
+root = "EVMCleanroom.SignedTransactionCLI"
+
+[[lean_exe]]
+name = "evm-transaction-list"
+root = "EVMCleanroom.TransactionListCLI"

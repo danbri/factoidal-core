@@ -1,0 +1,82 @@
+{
+  "cases": 12,
+  "matched": 12,
+  "rows": [
+    {
+      "id": "ordinary-type0",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "ordinary-type1",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "ordinary-type2",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "revert",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "log",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "exception",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "missing-witness",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "indeterminate"
+    },
+    {
+      "id": "rejected-fee",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "rejected"
+    },
+    {
+      "id": "input-error",
+      "byteIdentical": true,
+      "exitCode": 2,
+      "status": "inputError"
+    },
+    {
+      "id": "blob-executed",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "executed"
+    },
+    {
+      "id": "blob-rejected",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "rejected"
+    },
+    {
+      "id": "blob-missing-witness",
+      "byteIdentical": true,
+      "exitCode": 0,
+      "status": "indeterminate"
+    }
+  ],
+  "binarySha256": {
+    "evm-blob-call": "f580a6df4195472f8d26c0b1b85dd21c3a2f1ee24f0d3f383cb4f02d9e1e2c61",
+    "evm-call-transaction": "5a2077e3c1f4913f87baa589f2a1dda5f024b4b2cbdd24d61a3cae471676b906"
+  }
+}

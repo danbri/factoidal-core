@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "kind": "before-pruning-native-runtime-boundary-audit",
+  "generatedAt": "2026-11-25T15:06:09.474845+00:00",
+  "programs": {
+    "evm-transaction-list": {
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list",
+      "bytes": 121089912,
+      "sha256": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7",
+      "definedSymbolCount": 296555,
+      "symbols": {
+        "LeanElabSymbols": {
+          "count": 24537,
+          "examples": [
+            "00000000017f7d10 T l_Lean_Elab_AutoBoundImplicitContext_push",
+            "00000000044ce250 T l_Lean_Elab_CheckTactic_elabCheckTactic",
+            "00000000044d0790 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure",
+            "00000000044d09d0 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure___boxed",
+            "00000000004a5aa0 r l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__0_value",
+            "0000000004d38b00 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value",
+            "0000000004d38b40 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_0",
+            "0000000004d38b20 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_1"
+          ]
+        },
+        "LeanMetaSymbols": {
+          "count": 20916,
+          "examples": [
+            "000000000382f5b0 T l_Lean_Meta_AC_abstractAtoms",
+            "0000000000440f58 r l_Lean_Meta_AC_abstractAtoms___closed__0_value",
+            "00000000038362e0 T l_Lean_Meta_AC_acNfHypMeta___lam__4",
+            "0000000003836d50 T l_Lean_Meta_AC_acNfHypMeta___lam__4___boxed",
+            "0000000003837270 T l_Lean_Meta_AC_acNfHypTactic___lam__0",
+            "0000000003837760 T l_Lean_Meta_AC_acNfHypTactic___lam__0___boxed",
+            "0000000004cd5ab8 d l_Lean_Meta_AC_acNfTargetTactic___closed__0_value",
+            "0000000003836e20 T l_Lean_Meta_AC_acNfTargetTactic___lam__0"
+          ]
+        },
+        "kernelOrTypeCheckerSymbols": {
+          "count": 414,
+          "examples": [
+            "0000000000bbd9e0 t _ZN4lean12type_checker10eta_expandERKNS_4exprE",
+            "0000000000bb2f50 t _ZN4lean12type_checker10infer_fvarERKNS_4exprE",
+            "0000000000bb5570 t _ZN4lean12type_checker10infer_projERKNS_4exprEb",
+            "0000000000bb61d0 t _ZN4lean12type_checker10infer_typeERKNS_4exprE",
+            "0000000000bb9650 t _ZN4lean12type_checker10reduce_natERKNS_4exprE",
+            "0000000000bb8c50 t _ZN4lean12type_checker10reduce_powERKNS_4exprE",
+            "0000000000bb2e40 t _ZN4lean12type_checker11check_levelERKNS_5levelE",
+            "0000000000bb6260 t _ZN4lean12type_checker11ensure_sortERKNS_4exprES3_"
+          ]
+        },
+        "witnessProofModuleSymbols": {
+          "count": 1,
+          "examples": [
+            "0000000000b8ea20 T initialize_evm__cleanroom_EVMCleanroom_WitnessAdmissionProofs"
+          ]
+        },
+        "mptPathSymbols": {
+          "count": 0,
+          "examples": []
+        }
+      },
+      "dynamicLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "linkResponseSha256": "6cf0c7adb91dd67fc7846de9affec3c7b5a640c3f542d56b1fbe07b8ee4bd68b",
+      "linkResponse": "\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionListCLI.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/MemoryGas.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Memory.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Keccak.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Storage.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Core.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CLIEncoding.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallGas.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Frame.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/World.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Value.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Call.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/ValueCall.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Proofs.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/IdentityPrecompile.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallOpcode.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TxAccounting.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallTransaction.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionTransport.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionCodec.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/HeaderFees.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/HeaderChain.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/HeaderRLP.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/BlobCall.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionList.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CanonicalRLP.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/MPT.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessAdmission.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessAdmissionProofs.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessJSON.c.o.export\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib/lean\"\n\"--sysroot\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib/glibc\"\n\"-lc\"\n\"-lc_nonshared\"\n\"-Wl,--as-needed\"\n\"-l:ld.so\"\n\"-Wl,--no-as-needed\"\n\"-lpthread_nonshared\"\n\"-Wl,--as-needed\"\n\"-Wl,-Bstatic\"\n\"-lgmp\"\n\"-lunwind\"\n\"-luv\"\n\"-lssl\"\n\"-lcrypto\"\n\"-Wl,-Bdynamic\"\n\"-Wl,--no-as-needed\"\n\"-fuse-ld=lld\"\n\"-Wl,--start-group\"\n\"-lleancpp\"\n\"-lLean\"\n\"-Wl,--end-group\"\n\"-lStd\"\n\"-Wl,--start-group\"\n\"-lInit\"\n\"-lleanrt\"\n\"-Wl,--end-group\"\n\"-Wl,-Bstatic\"\n\"-lc++\"\n\"-lc++abi\"\n\"-Wl,-Bdynamic\"\n\"-lLake\"\n\"-Wl,--as-needed\"\n\"-lgmp\"\n\"-luv\"\n\"-lssl\"\n\"-lcrypto\"\n\"-lpthread\"\n\"-ldl\"\n\"-lrt\"\n\"-Wl,--no-as-needed\"\n\"-Wl,--gc-sections\"\n\"-lm\"\n\"-ldl\"\n\"-pthread\"\n"
+    },
+    "evm-witness-proof": {
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-witness-proof",
+      "bytes": 120632352,
+      "sha256": "f92022447d5f69b2497839ab8cba09e7c72f2b467d1dc61a73d26322ac37326c",
+      "definedSymbolCount": 295751,
+      "symbols": {
+        "LeanElabSymbols": {
+          "count": 24537,
+          "examples": [
+            "000000000179c190 T l_Lean_Elab_AutoBoundImplicitContext_push",
+            "00000000044726d0 T l_Lean_Elab_CheckTactic_elabCheckTactic",
+            "0000000004474c10 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure",
+            "0000000004474e50 T l_Lean_Elab_CheckTactic_elabCheckTacticFailure___boxed",
+            "00000000004a2840 r l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__0_value",
+            "0000000004cdbc88 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value",
+            "0000000004cdbcc8 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_0",
+            "0000000004cdbca8 d l_Lean_Elab_CheckTactic_elabCheckTacticFailure___closed__1_value_aux_1"
+          ]
+        },
+        "LeanMetaSymbols": {
+          "count": 20916,
+          "examples": [
+            "00000000037d3a30 T l_Lean_Meta_AC_abstractAtoms",
+            "000000000043dcf8 r l_Lean_Meta_AC_abstractAtoms___closed__0_value",
+            "00000000037da760 T l_Lean_Meta_AC_acNfHypMeta___lam__4",
+            "00000000037db1d0 T l_Lean_Meta_AC_acNfHypMeta___lam__4___boxed",
+            "00000000037db6f0 T l_Lean_Meta_AC_acNfHypTactic___lam__0",
+            "00000000037dbbe0 T l_Lean_Meta_AC_acNfHypTactic___lam__0___boxed",
+            "0000000004c78c40 d l_Lean_Meta_AC_acNfTargetTactic___closed__0_value",
+            "00000000037db2a0 T l_Lean_Meta_AC_acNfTargetTactic___lam__0"
+          ]
+        },
+        "kernelOrTypeCheckerSymbols": {
+          "count": 414,
+          "examples": [
+            "0000000000b61e60 t _ZN4lean12type_checker10eta_expandERKNS_4exprE",
+            "0000000000b573d0 t _ZN4lean12type_checker10infer_fvarERKNS_4exprE",
+            "0000000000b599f0 t _ZN4lean12type_checker10infer_projERKNS_4exprEb",
+            "0000000000b5a650 t _ZN4lean12type_checker10infer_typeERKNS_4exprE",
+            "0000000000b5dad0 t _ZN4lean12type_checker10reduce_natERKNS_4exprE",
+            "0000000000b5d0d0 t _ZN4lean12type_checker10reduce_powERKNS_4exprE",
+            "0000000000b572c0 t _ZN4lean12type_checker11check_levelERKNS_5levelE",
+            "0000000000b5a6e0 t _ZN4lean12type_checker11ensure_sortERKNS_4exprES3_"
+          ]
+        },
+        "witnessProofModuleSymbols": {
+          "count": 0,
+          "examples": []
+        },
+        "mptPathSymbols": {
+          "count": 0,
+          "examples": []
+        }
+      },
+      "dynamicLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "linkResponseSha256": "91fb7606b187ca61da91f3ca14d7c3e540f6ea7651c2bf1dbea2b5f1e8b8a4e1",
+      "linkResponse": "\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessPrimitiveCLI.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CanonicalRLP.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/MemoryGas.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Memory.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Keccak.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/MPT.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Storage.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Core.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CLIEncoding.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallGas.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Frame.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/World.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Value.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Call.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/ValueCall.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/Proofs.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/IdentityPrecompile.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallOpcode.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TxAccounting.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/CallTransaction.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionTransport.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/TransactionCodec.c.o.export\"\n\"/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/ir/EVMCleanroom/WitnessJSON.c.o.export\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib/lean\"\n\"--sysroot\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib\"\n\"-L\"\n\"/workspace/scratch/ecd2d29d4c22/toolchains/lean-4.33.1-linux/lib/glibc\"\n\"-lc\"\n\"-lc_nonshared\"\n\"-Wl,--as-needed\"\n\"-l:ld.so\"\n\"-Wl,--no-as-needed\"\n\"-lpthread_nonshared\"\n\"-Wl,--as-needed\"\n\"-Wl,-Bstatic\"\n\"-lgmp\"\n\"-lunwind\"\n\"-luv\"\n\"-lssl\"\n\"-lcrypto\"\n\"-Wl,-Bdynamic\"\n\"-Wl,--no-as-needed\"\n\"-fuse-ld=lld\"\n\"-Wl,--start-group\"\n\"-lleancpp\"\n\"-lLean\"\n\"-Wl,--end-group\"\n\"-lStd\"\n\"-Wl,--start-group\"\n\"-lInit\"\n\"-lleanrt\"\n\"-Wl,--end-group\"\n\"-Wl,-Bstatic\"\n\"-lc++\"\n\"-lc++abi\"\n\"-Wl,-Bdynamic\"\n\"-lLake\"\n\"-Wl,--as-needed\"\n\"-lgmp\"\n\"-luv\"\n\"-lssl\"\n\"-lcrypto\"\n\"-lpthread\"\n\"-ldl\"\n\"-lrt\"\n\"-Wl,--no-as-needed\"\n\"-Wl,--gc-sections\"\n\"-lm\"\n\"-ldl\"\n\"-pthread\"\n"
+    }
+  },
+  "nativeObservations": [
+    {
+      "label": "state",
+      "command": [
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list",
+        "--dangerously-enable-unverified-keccak",
+        "--state-witness",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/evidence/2026-11-25-mpt-witness/runtime-boundary.state-request.json"
+      ],
+      "exitCode": 0,
+      "status": "authenticated",
+      "requestSha256": "a6c284221d4a473056ece8e1c94a8ffe987a799ec6761ebf6418afebc8b5d385",
+      "outputSha256": "41115a6726b4ae3ef6e439d4cebcffffd22292e58fe53418ae708403825330e8",
+      "stderr": "",
+      "environmentOverrides": {
+        "PATH": "/nonexistent-runtime-boundary",
+        "LEAN_PATH": "",
+        "LEAN_SYSROOT": "",
+        "LEAN_NUM_THREADS": "1",
+        "LEAN_STACK_SIZE_KB": "32768",
+        "MIMALLOC_ARENA_RESERVE": "64M"
+      }
+    },
+    {
+      "label": "authenticated",
+      "command": [
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list",
+        "--dangerously-enable-unverified-keccak",
+        "--authenticated-transaction-list",
+        "/workspace/scratch/ecd2d29d4c22/factoidal-core/formal/lean4/evm-cleanroom/evidence/2026-11-25-mpt-witness/runtime-boundary.authenticated-request.json"
+      ],
+      "exitCode": 0,
+      "status": "executed",
+      "requestSha256": "944a85cb510f89b7afeb888c213aea46f69aea76a7b6e85f0f7df85b7a57c1b0",
+      "outputSha256": "8f05ccbfe37e29b3a636bbbd7520d106b21c904f51943ab02967b10e53badf70",
+      "stderr": "",
+      "environmentOverrides": {
+        "PATH": "/nonexistent-runtime-boundary",
+        "LEAN_PATH": "",
+        "LEAN_SYSROOT": "",
+        "LEAN_NUM_THREADS": "1",
+        "LEAN_STACK_SIZE_KB": "32768",
+        "MIMALLOC_ARENA_RESERVE": "64M"
+      }
+    }
+  ],
+  "sourceHashes": {
+    "TransactionCodec.lean": "55c01d19cbf4f264111828b08c752d93dcfad194c4a24954422d591f365922f6",
+    "WitnessJSON.lean": "ca2be8ab2db0ebbcd314109a3f456a5df081291ad950b30214c7fc697a5770d3",
+    "TransactionListCLI.lean": "43c19d21a572b6c01844050510ac7619f67c071e7e8c94160501d00b98353528",
+    "WitnessAdmission.lean": "219667304d8d6ccdcd1795acd94e894d49dcaf547967445bc969cfa09205cb3c",
+    "WitnessAdmissionProofs.lean": "003adb2986a8e5c358390e05a4882c48b10a96937d9b5a82678c41e6e3a91977",
+    "MPT.lean": "3928589704809fbd38b27e6d179525b208a044eedb759035151a6bc397713620",
+    "CanonicalRLP.lean": "5a5c53a29c04c78f9590d393e4275e0e7f1e0abc6e424c2f9e6e4ceda948bfa8"
+  },
+  "generatedCHashes": {
+    "TransactionCodec.c": "456afe066101dd63c5bab3938b7c7da52aac1f2eb3c34ba8241e226845ba25e6",
+    "WitnessJSON.c": "13d7da1fb320e851ad62f72844f3420c76767b9268cc00392f7ab6e80473bc1d",
+    "TransactionListCLI.c": "3d43607169f98f44498ccd7c5c339043bf96788b7dd0b50f71cc20bf0124dfdd",
+    "WitnessAdmission.c": "5d0e94762c01d23a22c6cbdaf4936cead8c074997ae6288d93d95c87560eb474",
+    "WitnessAdmissionProofs.c": "96a4b3dc5263512c288976de9a20c602c96001cdcf416b13e5c2935eb2115b4b",
+    "MPT.c": "357eb82ec2bf06390c5fd96449ae8aa2b460c053bd44f8c6d90dbe8d13f83236",
+    "CanonicalRLP.c": "0dd7e81c8fa7b06aecb410596e84b6ebfd1b4032c26c2f18a9edc4b921d4165b"
+  },
+  "syscallTracing": {
+    "attempted": true,
+    "availableBinary": "/usr/bin/strace",
+    "succeeded": false,
+    "reason": "strace: test_ptrace_get_syscall_info: PTRACE_TRACEME: Operation not permitted\nstrace: ptrace(PTRACE_TRACEME, ...): Operation not permitted\nstrace: PTRACE_SETOPTIONS: Operation not permitted\nstrace: cleanup: waitpid(-1, __WALL): No child processes\n",
+    "trace": "runtime-boundary.before-pruning.state.strace.txt"
+  },
+  "findings": [
+    "Native request dispatch calls compiled WitnessAdmission.admit/runAuthenticated; these call compiled MPT/RLP/Keccak and the transaction runner.",
+    "MPT Hop generated C stores three runtime data fields; its decoded/selected equality proofs and CheckedNode binding proof are erased.",
+    "No MPT.Path constructor symbol exists in the executable. The WitnessAdmissionProofs module contributes only its initializer; its theorem names are absent.",
+    "The executable does link substantial elaborator/meta/kernel infrastructure. The JSON umbrella initializer directly calls initialize_Lean_Data_Json_Elab and meta_initialize_Lean_Data_Json before request dispatch.",
+    "Generated C uses ordinary Lean runtime allocation/reference counting and task initialization. This is different from elaborating or checking a mathematical proof for each Ethereum request."
+  ],
+  "limits": [
+    "ptrace is unavailable, so no claim of dynamically observed absence of subprocess execs or in-process theorem-checker calls is made.",
+    "Two successful requests with PATH pointing at a nonexistent directory and empty Lean search paths show these requests do not need a Lean command discoverable on PATH; absolute-path helper execution is not excluded by that experiment alone.",
+    "Source/C inspection identifies no proof-search/elaboration/kernel invocation in the new request algorithm, but does not prove the whole executable contains no such machinery. Indeed it contains and initializes some of it."
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "actualAxioms": {
+    "EVMCleanroom.BlobCall.admitted_entry_blobHashes": [],
+    "EVMCleanroom.BlobCall.burn_exact": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.burn_other": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.burn_sender": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.execute_exact": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.funds_refused": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.header_refused": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.prepareWithFees_checked": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.prepare_blobHashes_checked": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.prepared_blobHashes": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.prepared_entry_blobHashes": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.prepared_exact": [
+      "propext"
+    ],
+    "EVMCleanroom.BlobCall.validated_entry_blobHashes": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.CallOpcode.beginCall_entered_txBlobHashes": [
+      "propext"
+    ],
+    "EVMCleanroom.CallOpcode.beginVariant_entered_txBlobHashes": [
+      "propext"
+    ],
+    "EVMCleanroom.CallTransaction.debitSender_blobHashes": [],
+    "EVMCleanroom.CallTransaction.entryFrame_blobHashes": [],
+    "EVMCleanroom.CallTransaction.run_empty_blobHashes": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.World.commitFrame_txBlobHashes": [],
+    "EVMCleanroom.World.frameInput_txBlobHashes": [],
+    "EVMCleanroom.World.pay_txBlobHashes": [],
+    "EVMCleanroom.commit_txBlobHashes": [],
+    "EVMCleanroom.step_blobHash": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_in_range": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_outOfGas": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_out_of_range": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_success": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_underflow": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_blobHash_unknown_fork": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.step_txBlobHashes": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  "allowedFoundations": [
+    "Classical.choice",
+    "Quot.sound",
+    "propext"
+  ],
+  "head": "85da2a6b307c0a0269257344d889051ce6902e82",
+  "requireHead": true,
+  "sourceFiles": 7,
+  "sources": {
+    "EVMCleanroom.lean": "b828e1d8c6b747bc23d3df8c5327f57bf9295f35",
+    "EVMCleanroom/BlobCall.lean": "97f192d8d0465409ec91fda5fdaa8296578b73f5",
+    "EVMCleanroom/BlobCallCLI.lean": "46d9f046773bbb37760a78ff2ca17b4d4980ccb5",
+    "EVMCleanroom/BlobCallProofs.lean": "7083701bb6e737721f1d9c4d7141186f22b59c3e",
+    "EVMCleanroom/BlobHashProofs.lean": "b7890b0496daec19a067e173034b4a530a72b8de",
+    "EVMCleanroom/BlobHashTests.lean": "b2ac2162373af3ec1fdeb4ad537685eca5f41a86",
+    "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
+    "EVMCleanroom/CLITransaction.lean": "e8f63c8fdd655ed31e2edd391465d16b991b3077",
+    "EVMCleanroom/Call.lean": "c7f2f3f581d76d3ca74ea018791ec5b7e61f224d",
+    "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
+    "EVMCleanroom/CallOpcode.lean": "80429a86a5aa0f548d8a565a0e742277b43f447a",
+    "EVMCleanroom/CallTransaction.lean": "c64625a6d8bc8acda7879fca7fd6da98cb57a384",
+    "EVMCleanroom/Core.lean": "e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b",
+    "EVMCleanroom/Frame.lean": "790e09753018170c633e3b3ad604b2b6b3c98244",
+    "EVMCleanroom/HeaderChain.lean": "9f3ce9a1b73a14b409a9858492d58fa79ea51e66",
+    "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
+    "EVMCleanroom/HeaderRLP.lean": "3144954f2fcff97da1ac1e54f7be6b63d6ccb667",
+    "EVMCleanroom/IdentityPrecompile.lean": "f424ce29bfbe9e4fca248a16aa3225a3a978c3fb",
+    "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
+    "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
+    "EVMCleanroom/MemoryGas.lean": "cd52b70946e13e005b1242b8734720eed748f072",
+    "EVMCleanroom/Proofs.lean": "85e56acddd9396be6ff1418400b717150521f9f5",
+    "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
+    "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
+    "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
+    "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
+    "EVMCleanroom/World.lean": "5f8e55b691c81669abc40875c04a5fb337259dcc",
+    "lake-manifest.json": "9c79a0f8a1a5e644a3ecd9acda133dade7416a71",
+    "lakefile-blob-call.toml": "5ba03901414d2da9fa02c84224a1c562c5d62cb5",
+    "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
+    "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
+    "scripts/check-axiom-output.py": "0b34ae2605412df8cf7271b9d7c24311cfeded8a",
+    "scripts/check-blobhash-axioms.py": "cb7e41c48765c315de31af812e471c62e6bffd91",
+    "scripts/differential/blob-call.mjs": "c327d2c0e9604600cdd963eebdcc48fd706f1f3d",
+    "scripts/differential/blobhash-transactions.mjs": "db671648c3f4de03358d476095d15bafd5d297cb",
+    "scripts/differential/geth-byte-oracle.mjs": "d1be6712584c3fcc69ee64d71f19100183170160",
+    "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
+    "scripts/differential/package.json": "2b16a6de6cb14101f65e2f379a7ede78399d6000",
+    "scripts/eels/package.json": "77eb29940be5001f459b9a54aee329b60213cf17"
+  },
+  "status": "actual-lean-axioms-audited",
+  "theorems": 30,
+  "tree": "e1f3e475c367681410573c004a6b9273e00af273"
+}

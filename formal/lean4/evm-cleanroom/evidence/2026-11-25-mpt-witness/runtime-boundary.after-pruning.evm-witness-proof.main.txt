@@ -1,0 +1,87 @@
+
+/workspace/scratch/ecd2d29d4c22/ethereum-mpt-after-pruning/bin/evm-witness-proof:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000ebe70 <main>:
+   ebe70:	55                   	push   %rbp
+   ebe71:	41 56                	push   %r14
+   ebe73:	53                   	push   %rbx
+   ebe74:	89 fd                	mov    %edi,%ebp
+   ebe76:	e8 85 2c 24 00       	call   32eb00 <lean_setup_args>
+   ebe7b:	49 89 c6             	mov    %rax,%r14
+   ebe7e:	31 c0                	xor    %eax,%eax
+   ebe80:	e8 6b 26 22 00       	call   30e4f0 <lean_initialize_runtime_module>
+   ebe85:	bf 01 00 00 00       	mov    $0x1,%edi
+   ebe8a:	e8 31 fd ff ff       	call   ebbc0 <initialize_evm__cleanroom_EVMCleanroom_WitnessPrimitiveCLI>
+   ebe8f:	48 89 c3             	mov    %rax,%rbx
+   ebe92:	e8 d9 39 22 00       	call   30f870 <lean_io_mark_end_initialization>
+   ebe97:	81 7b 04 ff ff ff 00 	cmpl   $0xffffff,0x4(%rbx)
+   ebe9e:	77 24                	ja     ebec4 <main+0x54>
+   ebea0:	8b 03                	mov    (%rbx),%eax
+   ebea2:	83 f8 02             	cmp    $0x2,%eax
+   ebea5:	7c 5f                	jl     ebf06 <main+0x96>
+   ebea7:	ff c8                	dec    %eax
+   ebea9:	89 03                	mov    %eax,(%rbx)
+   ebeab:	e8 a0 bd 1b 00       	call   2a7c50 <lean_init_task_manager>
+   ebeb0:	48 8d 3d 09 ff ff ff 	lea    -0xf7(%rip),%rdi        # ebdc0 <run_main>
+   ebeb7:	89 ee                	mov    %ebp,%esi
+   ebeb9:	4c 89 f2             	mov    %r14,%rdx
+   ebebc:	e8 1f 3b 1b 00       	call   29f9e0 <lean_run_main>
+   ebec1:	48 89 c3             	mov    %rax,%rbx
+   ebec4:	e8 17 be 1b 00       	call   2a7ce0 <lean_finalize_task_manager>
+   ebec9:	81 7b 04 ff ff ff 00 	cmpl   $0xffffff,0x4(%rbx)
+   ebed0:	77 17                	ja     ebee9 <main+0x79>
+   ebed2:	48 8b 43 08          	mov    0x8(%rbx),%rax
+   ebed6:	48 d1 e8             	shr    $1,%rax
+   ebed9:	8b 0b                	mov    (%rbx),%ecx
+   ebedb:	83 f9 02             	cmp    $0x2,%ecx
+   ebede:	7c 34                	jl     ebf14 <main+0xa4>
+   ebee0:	ff c9                	dec    %ecx
+   ebee2:	89 0b                	mov    %ecx,(%rbx)
+   ebee4:	5b                   	pop    %rbx
+   ebee5:	41 5e                	pop    %r14
+   ebee7:	5d                   	pop    %rbp
+   ebee8:	c3                   	ret
+   ebee9:	48 89 df             	mov    %rbx,%rdi
+   ebeec:	e8 ff 37 22 00       	call   30f6f0 <lean_io_result_show_error>
+   ebef1:	8b 0b                	mov    (%rbx),%ecx
+   ebef3:	83 f9 02             	cmp    $0x2,%ecx
+   ebef6:	7c 33                	jl     ebf2b <main+0xbb>
+   ebef8:	ff c9                	dec    %ecx
+   ebefa:	89 0b                	mov    %ecx,(%rbx)
+   ebefc:	b8 01 00 00 00       	mov    $0x1,%eax
+   ebf01:	5b                   	pop    %rbx
+   ebf02:	41 5e                	pop    %r14
+   ebf04:	5d                   	pop    %rbp
+   ebf05:	c3                   	ret
+   ebf06:	85 c0                	test   %eax,%eax
+   ebf08:	74 a1                	je     ebeab <main+0x3b>
+   ebf0a:	48 89 df             	mov    %rbx,%rdi
+   ebf0d:	e8 1e a4 1b 00       	call   2a6330 <lean_dec_ref_cold>
+   ebf12:	eb 97                	jmp    ebeab <main+0x3b>
+   ebf14:	85 c9                	test   %ecx,%ecx
+   ebf16:	74 cc                	je     ebee4 <main+0x74>
+   ebf18:	48 89 df             	mov    %rbx,%rdi
+   ebf1b:	48 89 c3             	mov    %rax,%rbx
+   ebf1e:	e8 0d a4 1b 00       	call   2a6330 <lean_dec_ref_cold>
+   ebf23:	48 89 d8             	mov    %rbx,%rax
+   ebf26:	5b                   	pop    %rbx
+   ebf27:	41 5e                	pop    %r14
+   ebf29:	5d                   	pop    %rbp
+   ebf2a:	c3                   	ret
+   ebf2b:	b8 01 00 00 00       	mov    $0x1,%eax
+   ebf30:	85 c9                	test   %ecx,%ecx
+   ebf32:	74 b0                	je     ebee4 <main+0x74>
+   ebf34:	48 89 df             	mov    %rbx,%rdi
+   ebf37:	e8 f4 a3 1b 00       	call   2a6330 <lean_dec_ref_cold>
+   ebf3c:	eb be                	jmp    ebefc <main+0x8c>
+
+Disassembly of section .init:
+
+Disassembly of section .fini:
+
+Disassembly of section __lcxx_override:
+
+Disassembly of section .plt:

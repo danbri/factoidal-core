@@ -1,0 +1,20 @@
+{
+  "virtualMemoryGiB": 8,
+  "nesting": 100000,
+  "rows": [
+    {
+      "case": "control",
+      "inputBytes": 2,
+      "returncode": 2,
+      "stdout": "{\"keccakOptIn\":true,\"reason\":\"property not found: schemaVersion\",\"schemaVersion\":1,\"status\":\"inputError\"}\n",
+      "stderr": ""
+    },
+    {
+      "case": "nested",
+      "inputBytes": 200034,
+      "returncode": 2,
+      "stdout": "{\"keccakOptIn\":true,\"reason\":\"unexpected field: unexpected\",\"schemaVersion\":1,\"status\":\"inputError\"}\n",
+      "stderr": ""
+    }
+  ]
+}

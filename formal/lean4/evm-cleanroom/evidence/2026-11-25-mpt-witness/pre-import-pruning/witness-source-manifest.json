@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "issue": "https://github.com/danbri/factoidal-core/issues/1043",
+  "retained_claims": 292,
+  "retained_claim_inventory_sha256": "bc5badb53226cc284931c79660b1ba4c6dd2ee16f945c2ff6ec98f5b77461752",
+  "added_claims": 32,
+  "source_roots": [
+    "EVMCleanroom/CanonicalRLP.lean",
+    "EVMCleanroom/MPT.lean",
+    "EVMCleanroom/WitnessAdmissionProofs.lean",
+    "EVMCleanroom/CanonicalRLPTests.lean",
+    "EVMCleanroom/WitnessJSON.lean",
+    "EVMCleanroom/WitnessPrimitiveCLI.lean",
+    "EVMCleanroom/TransactionListCLI.lean"
+  ],
+  "lean_source_closure": [
+    "EVMCleanroom/BlobCall.lean",
+    "EVMCleanroom/CLIEncoding.lean",
+    "EVMCleanroom/Call.lean",
+    "EVMCleanroom/CallGas.lean",
+    "EVMCleanroom/CallOpcode.lean",
+    "EVMCleanroom/CallTransaction.lean",
+    "EVMCleanroom/CanonicalRLP.lean",
+    "EVMCleanroom/CanonicalRLPTests.lean",
+    "EVMCleanroom/Core.lean",
+    "EVMCleanroom/Frame.lean",
+    "EVMCleanroom/HeaderChain.lean",
+    "EVMCleanroom/HeaderFees.lean",
+    "EVMCleanroom/HeaderRLP.lean",
+    "EVMCleanroom/IdentityPrecompile.lean",
+    "EVMCleanroom/Keccak.lean",
+    "EVMCleanroom/MPT.lean",
+    "EVMCleanroom/Memory.lean",
+    "EVMCleanroom/MemoryGas.lean",
+    "EVMCleanroom/Proofs.lean",
+    "EVMCleanroom/Storage.lean",
+    "EVMCleanroom/TransactionCodec.lean",
+    "EVMCleanroom/TransactionList.lean",
+    "EVMCleanroom/TransactionListCLI.lean",
+    "EVMCleanroom/TransactionTransport.lean",
+    "EVMCleanroom/TxAccounting.lean",
+    "EVMCleanroom/Value.lean",
+    "EVMCleanroom/ValueCall.lean",
+    "EVMCleanroom/WitnessAdmission.lean",
+    "EVMCleanroom/WitnessAdmissionProofs.lean",
+    "EVMCleanroom/WitnessJSON.lean",
+    "EVMCleanroom/WitnessPrimitiveCLI.lean",
+    "EVMCleanroom/World.lean"
+  ],
+  "repository_source_blobs": {
+    ".github/workflows/evm-cleanroom.yml": "42af9778bf0b0077d9a8f325cc37857e048bdbe5",
+    ".github/workflows/evm-witness.yml": "7c9e894b4c5b0b8196fa961fbd567a6a7aada918",
+    "tools/lean-tail-recursion-audit.py": "d1c53ce322b491381ea0a7b50bf608ad48035b6e"
+  },
+  "native_targets": {
+    "evm-witness-proof": "EVMCleanroom.WitnessPrimitiveCLI",
+    "evm-transaction-list": "EVMCleanroom.TransactionListCLI"
+  },
+  "scope": "Source and selected-axiom correspondence for canonical RLP, supplied-root MPT lookup, state witness admission and both native transports. Local resource policy is separate from invalid witness data. No canonical-chain, signature, post-state-root, cryptographic-refinement or full-Ethereum claim."
+}

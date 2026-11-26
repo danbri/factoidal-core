@@ -1,0 +1,160 @@
+name: Pure Lean Ethereum state witness admission
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-witness.yml"
+      - ".github/workflows/evm-cleanroom.yml"
+      - "tools/lean-tail-recursion-audit.py"
+  workflow_dispatch:
+
+concurrency:
+  group: evm-witness-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  witness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      LEAN_NUM_THREADS: "1"
+      LEAN_STACK_SIZE_KB: "32768"
+      MIMALLOC_ARENA_RESERVE: "64M"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the pinned Lean toolchain without restoring compiled objects
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: false
+          use-github-cache: false
+      - name: Build proof roots, guards and both native entry points from current source
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          python3 - <<'PY'
+          from pathlib import Path
+          root = Path("evm-cleanroom")
+          assert (root / "lean-toolchain").read_text().strip() == "leanprover/lean4:v4.33.1"
+          source = (root / "lakefile-witness.toml").read_text()
+          assert "moreLeanArgs" not in source
+          (root / "lakefile-witness-ci.toml").write_text(source.replace(
+              'version = "0.1.0"', 'version = "0.1.0"\nmoreLeanArgs = ["-j1", "-M2048", "-s32768"]', 1))
+          PY
+          mkdir -p evm-cleanroom/.lake/witness-evidence
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-witness-ci.toml build \
+            EVMCleanroom.CanonicalRLP EVMCleanroom.MPT EVMCleanroom.WitnessAdmissionProofs \
+            EVMCleanroom.CanonicalRLPTests EVMCleanroom.WitnessJSON \
+            EVMCleanroom.WitnessPrimitiveCLI EVMCleanroom.TransactionListCLI \
+            evm-witness-proof evm-transaction-list 2>&1 | tee evm-cleanroom/.lake/witness-evidence/build.log
+      - name: Preserve the full active ledger and challenge the witness audit
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/check-active-ledger.py | tee .lake/witness-evidence/source-ledger.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==170,x'
+          python3 scripts/test-active-ledger.py
+          python3 scripts/check-witness-axioms.py --selftest | tee .lake/witness-evidence/axiom-controls.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==19 and x["retainedClaims"]==292,x'
+          python3 scripts/check-witness-runtime.py --selftest | tee .lake/witness-evidence/runtime-controls.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==17 and x["positiveProjectSymbolsRequired"] and x["StdSupportAllowed"],x'
+      - name: Re-elaborate every new theorem and record current native/source identity
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          flock /tmp/ethereum-mpt-lean.lock python3 evm-cleanroom/scripts/check-witness-axioms.py \
+            --require-head --out evm-cleanroom/.lake/witness-evidence/axioms.json \
+            --transcripts-dir evm-cleanroom/.lake/witness-evidence/axiom-transcripts \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-witness-axioms-audited" and x["selectedTheorems"]==32 and len(x["actualAxioms"])==32 and x["activeTheorems"]==324 and x["retainedClaims"]==292 and x["leanSourceFiles"]==32 and len(x["nativeBinaries"])==2 and x["requireHead"],x'
+      - name: Reject linked proof engines and require actual native entry symbols
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/check-witness-runtime.py --axiom-report .lake/witness-evidence/axioms.json \
+            --out .lake/witness-evidence/runtime.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="native-runtime-boundary-pass" and len(x["executables"])==2 and all(e["passed"] and not e["missingDefinedSymbols"] and not e["forbiddenLibraries"] and all(f["count"]==0 for f in e["forbiddenSymbols"].values()) for e in x["executables"].values()),x'
+      - name: Audit emitted C for input-sized native recursion
+        run: |
+          set -euo pipefail
+          python3 tools/lean-tail-recursion-audit.py \
+            --ir-dir formal/lean4/evm-cleanroom/.lake/build/ir \
+            --lean-dir formal/lean4/evm-cleanroom \
+            --json formal/lean4/evm-cleanroom/.lake/witness-evidence/tail-audit.json \
+            | tee formal/lean4/evm-cleanroom/.lake/witness-evidence/tail-audit.txt
+          # This package has no csimp replacements. The repository-wide --gate
+          # additionally invokes an inapplicable nonempty-csimp gate; here the
+          # generated-C report must instead contain no recursion at all.
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("formal/lean4/evm-cleanroom/.lake/witness-evidence")
+          audit = json.loads((root / "tail-audit.json").read_text())
+          sources = json.loads((root / "axioms.json").read_text())
+          assert audit["cfiles"] == sources["leanSourceFiles"] == 32
+          assert audit["rows"] == audit["cycles"] == []
+          assert audit["csimp"] == 0 and audit["csimp_unresolved"] == []
+          print("All 32 compiled source modules have no surviving native recursion cycles")
+          PY
+      - name: Install the existing locked independent test oracles
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          npm ls --prefix scripts/differential --depth=0
+      - name: Run all native RLP, trie, state admission and malformed transport fixtures
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          node scripts/witness/run.mjs --proof-bin .lake/build/bin/evm-witness-proof \
+            --list-bin .lake/build/bin/evm-transaction-list --output .lake/witness-evidence/native.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mode"]=="native-cli" and x["generatedCases"]==x["nativeInvocations"]==x["nativePassed"]==189 and x["nativeFailed"]==0 and len(x["comparatorControls"])==20 and x["oracleCounts"]["officialRLP"]==54 and x["oracleCounts"]["officialTrieRoots"]==3,x'
+      - name: Execute every retained ordered-list fixture through proof admission
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          node scripts/witness/transaction-lists.mjs --list-bin .lake/build/bin/evm-transaction-list \
+            --output .lake/witness-evidence/transaction-lists.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["mode"]=="native-cli" and x["generatedLists"]==x["passed"]==36 and x["failed"]==0 and x["nativeInvocations"]==78 and x["exactOriginalExecutionRequests"]==30 and x["allListTransactions"]==344 and len(x["controls"])==7 and sum(c.get("status")=="indeterminate" for c in x["controls"])==6 and x["controls"][-1]=={"id":"retained-evidence-index-and-category-falsification","passed":True},x'
+      - name: Bind native test reports to the audited executables
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path(".lake/witness-evidence")
+          audit = json.loads((root / "axioms.json").read_text())
+          runtime = json.loads((root / "runtime.json").read_text())
+          corpus = json.loads((root / "native.json").read_text())
+          lists = json.loads((root / "transaction-lists.json").read_text())
+          for name in ("evm-witness-proof", "evm-transaction-list"):
+              actual = hashlib.sha256((Path(".lake/build/bin") / name).read_bytes()).hexdigest()
+              assert audit["nativeBinaries"][name]["sha256"] == actual, name
+              assert runtime["executables"][name]["sha256"] == actual, name
+          assert runtime["sourceAxiomReportSha256"] == hashlib.sha256((root / "axioms.json").read_bytes()).hexdigest()
+          assert corpus["binaries"]["proof"]["sha256"] == audit["nativeBinaries"]["evm-witness-proof"]["sha256"]
+          assert corpus["binaries"]["transactionList"]["sha256"] == lists["nativeSha256"] == audit["nativeBinaries"]["evm-transaction-list"]["sha256"]
+          print("Both complete native reports match the source-audited executable hashes")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pure-lean-state-witness-evidence
+          path: formal/lean4/evm-cleanroom/.lake/witness-evidence/

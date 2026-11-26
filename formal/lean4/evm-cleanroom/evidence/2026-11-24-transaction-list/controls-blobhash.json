@@ -1,0 +1,1 @@
+{"controls": ["missing-theorem", "duplicate-wrapped-report", "wrapped-sorryAx", "wrapped-custom-axiom", "duplicate-axiom", "dropped-required-axiom", "extra-theorem", "truncated-wrapped-list"], "rejected": 8, "status": "negative-controls-pass", "wrappedPositiveAccepted": true}

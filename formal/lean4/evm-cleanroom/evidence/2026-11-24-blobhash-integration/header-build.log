@@ -1,0 +1,154 @@
+⚠ [2/22] Replayed EVMCleanroom.HeaderFees
+warning: EVMCleanroom/HeaderFees.lean:155:21: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: EVMCleanroom/HeaderFees.lean:156:18: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  [apply] simp [hfirst, hparent]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+info: EVMCleanroom/HeaderFees.lean:191:0: 'EVMCleanroom.HeaderFees.nextBaseFee_at_target' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:192:0: 'EVMCleanroom.HeaderFees.nextBaseFee_above' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:193:0: 'EVMCleanroom.HeaderFees.nextBaseFee_below' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:194:0: 'EVMCleanroom.HeaderFees.expected_firstLondon' depends on axioms: [propext]
+info: EVMCleanroom/HeaderFees.lean:195:0: 'EVMCleanroom.HeaderFees.checkHeader_sound' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderFees.lean:196:0: 'EVMCleanroom.HeaderFees.missing_parent_refused' depends on axioms: [propext]
+ℹ [3/22] Replayed EVMCleanroom.HeaderChain
+info: EVMCleanroom/HeaderChain.lean:116:0: 'EVMCleanroom.HeaderChain.activation_iff' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderChain.lean:117:0: 'EVMCleanroom.HeaderChain.bounds_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderChain.lean:118:0: 'EVMCleanroom.HeaderChain.earlier_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderChain.lean:119:0: 'EVMCleanroom.HeaderChain.check_sound' depends on axioms: [propext]
+info: EVMCleanroom/HeaderChain.lean:120:0: 'EVMCleanroom.HeaderChain.above_target_increment' depends on axioms: [propext, Quot.sound]
+ℹ [4/22] Replayed EVMCleanroom.MemoryGas
+info: EVMCleanroom/MemoryGas.lean:133:0: 'EVMCleanroom.MemoryGas.ExpansionTrace.final_ge_initial' does not depend on any axioms
+info: EVMCleanroom/MemoryGas.lean:134:0: 'EVMCleanroom.MemoryGas.ExpansionTrace.exact_total' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/MemoryGas.lean:148:0: 'EVMCleanroom.MemoryGas.cost_monotone' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/MemoryGas.lean:149:0: 'EVMCleanroom.MemoryGas.expansion_path_independent' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/MemoryGas.lean:150:0: 'EVMCleanroom.MemoryGas.zero_length_access_free' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: EVMCleanroom/MemoryGas.lean:151:0: 'EVMCleanroom.MemoryGas.previously_allocated_access_free' depends on axioms: [propext]
+info: EVMCleanroom/MemoryGas.lean:152:0: 'EVMCleanroom.MemoryGas.requestedWords_covers' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/MemoryGas.lean:153:0: 'EVMCleanroom.MemoryGas.copyCost_zero' depends on axioms: [propext, Classical.choice, Quot.sound]
+ℹ [5/22] Replayed EVMCleanroom.Memory
+info: EVMCleanroom/Memory.lean:99:0: 'EVMCleanroom.Memory.copyFrom_zero' does not depend on any axioms
+info: EVMCleanroom/Memory.lean:100:0: 'EVMCleanroom.Memory.copyFrom_preserves_words' does not depend on any axioms
+info: EVMCleanroom/Memory.lean:101:0: 'EVMCleanroom.Memory.readByte_copyFrom_inside' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Memory.lean:102:0: 'EVMCleanroom.Memory.readByte_copyFrom_outside' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Memory.lean:136:0: 'EVMCleanroom.Memory.expand_monotone' depends on axioms: [propext]
+info: EVMCleanroom/Memory.lean:137:0: 'EVMCleanroom.Memory.writeByte_preserves_words' does not depend on any axioms
+info: EVMCleanroom/Memory.lean:138:0: 'EVMCleanroom.Memory.readByte_after_write' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Memory.lean:139:0: 'EVMCleanroom.Memory.empty_expand_zero' depends on axioms: [propext]
+info: EVMCleanroom/Memory.lean:172:0: 'EVMCleanroom.Memory.readByte_write_other' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Memory.lean:173:0: 'EVMCleanroom.Memory.writeWord_preserves_words' does not depend on any axioms
+ℹ [6/22] Replayed EVMCleanroom.Keccak
+info: EVMCleanroom/Keccak.lean:189:0: 'EVMCleanroom.Keccak.paddedByte_input' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Keccak.lean:190:0: 'EVMCleanroom.Keccak.paddedByte_combined' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Keccak.lean:191:0: 'EVMCleanroom.Keccak.padded_size_aligned' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Keccak.lean:192:0: 'EVMCleanroom.Keccak.padded_size_bounds' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: EVMCleanroom/Keccak.lean:193:0: 'EVMCleanroom.Keccak.paddedBlocks_paid' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Keccak.lean:194:0: 'EVMCleanroom.Keccak.digest_reads_only_window' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Keccak.lean:195:0: 'EVMCleanroom.Keccak.digest_width' depends on axioms: [propext, Quot.sound]
+ℹ [7/22] Replayed EVMCleanroom.Storage
+info: EVMCleanroom/Storage.lean:140:0: 'EVMCleanroom.Storage.store_read_same' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Storage.lean:141:0: 'EVMCleanroom.Storage.store_read_other' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Storage.lean:142:0: 'EVMCleanroom.Storage.store_original' does not depend on any axioms
+info: EVMCleanroom/Storage.lean:143:0: 'EVMCleanroom.Storage.store_warm_read' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Storage.lean:144:0: 'EVMCleanroom.Storage.touch_warm_read' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Storage.lean:145:0: 'EVMCleanroom.Storage.noop_refund' depends on axioms: [propext, Classical.choice, Quot.sound]
+info: EVMCleanroom/Storage.lean:146:0: 'EVMCleanroom.Storage.store_refund_exact' does not depend on any axioms
+⚠ [8/22] Replayed EVMCleanroom.Core
+warning: EVMCleanroom/Core.lean:331:7: Variable name `hg` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _hg
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+info: EVMCleanroom/Core.lean:791:0: 'EVMCleanroom.step_keccak' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:792:0: 'EVMCleanroom.step_keccak_disabled' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:793:0: 'EVMCleanroom.step_keccak_outOfGas' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:794:0: 'EVMCleanroom.step_keccak_resourceLimit' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:795:0: 'EVMCleanroom.step_log' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:796:0: 'EVMCleanroom.step_log_static' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:797:0: 'EVMCleanroom.step_log_outOfGas' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:798:0: 'EVMCleanroom.step_log_underflow' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1034:0: 'EVMCleanroom.step_blobHash' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1035:0: 'EVMCleanroom.step_blobHash_underflow' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1036:0: 'EVMCleanroom.step_blobHash_unknown_fork' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1059:0: 'EVMCleanroom.step_blobBaseFee_cancun' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1060:0: 'EVMCleanroom.step_blobBaseFee_osaka' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1061:0: 'EVMCleanroom.step_blobBaseFee_unknown_fork' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1081:0: 'EVMCleanroom.step_effectiveGasPrice' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1082:0: 'EVMCleanroom.step_prevRandao' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1083:0: 'EVMCleanroom.step_prevRandao_unknown_fork' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1120:0: 'EVMCleanroom.step_blockCoinbase' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1121:0: 'EVMCleanroom.step_blockTimestamp' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1122:0: 'EVMCleanroom.step_blockNumber' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1123:0: 'EVMCleanroom.step_blockGasLimit' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1124:0: 'EVMCleanroom.step_blockBaseFee' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1125:0: 'EVMCleanroom.step_blockBaseFee_unknown_fork' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1140:0: 'EVMCleanroom.step_chainId' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1141:0: 'EVMCleanroom.step_chainId_unknown_fork' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1187:0: 'EVMCleanroom.Word.modulo_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1188:0: 'EVMCleanroom.Word.powMod_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1189:0: 'EVMCleanroom.expGas_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1190:0: 'EVMCleanroom.step_mod' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1191:0: 'EVMCleanroom.step_exp' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1192:0: 'EVMCleanroom.Word.leadingZeros_le' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1193:0: 'EVMCleanroom.Word.leadingZeros_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1194:0: 'EVMCleanroom.step_origin' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1195:0: 'EVMCleanroom.step_caller' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1196:0: 'EVMCleanroom.step_callDataLoad' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1197:0: 'EVMCleanroom.step_callDataSize' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1198:0: 'EVMCleanroom.step_callDataCopy' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1199:0: 'EVMCleanroom.step_codeSize' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1200:0: 'EVMCleanroom.step_codeCopy' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1201:0: 'EVMCleanroom.step_returnDataSize' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1202:0: 'EVMCleanroom.step_returnDataCopy' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1203:0: 'EVMCleanroom.step_returnDataCopy_outOfBounds' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1204:0: 'EVMCleanroom.step_slt' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1205:0: 'EVMCleanroom.Word.signedGt_dual' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1206:0: 'EVMCleanroom.step_sgt' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1207:0: 'EVMCleanroom.Word.signExtend_large' depends on axioms: [propext]
+info: EVMCleanroom/Core.lean:1208:0: 'EVMCleanroom.step_signExtend' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1209:0: 'EVMCleanroom.Word.signedDivide_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1210:0: 'EVMCleanroom.Word.signedMod_zero' does not depend on any axioms
+info: EVMCleanroom/Core.lean:1211:0: 'EVMCleanroom.Word.shiftArithmetic_large_nonnegative' depends on axioms: [propext]
+info: EVMCleanroom/Core.lean:1212:0: 'EVMCleanroom.Word.shiftArithmetic_large_negative' depends on axioms: [propext]
+info: EVMCleanroom/Core.lean:1213:0: 'EVMCleanroom.step_sdiv' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1214:0: 'EVMCleanroom.step_smod' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1215:0: 'EVMCleanroom.step_sar' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1216:0: 'EVMCleanroom.step_addMod' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1217:0: 'EVMCleanroom.step_mulMod' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1218:0: 'EVMCleanroom.step_slt_underflow' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/Core.lean:1219:0: 'EVMCleanroom.step_callValue_zero' depends on axioms: [propext, Quot.sound]
+ℹ [9/22] Replayed EVMCleanroom.HeaderRLP
+info: EVMCleanroom/HeaderRLP.lean:299:0: 'EVMCleanroom.HeaderRLP.excess_below_target' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:300:0: 'EVMCleanroom.HeaderRLP.excess_above_target' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:301:0: 'EVMCleanroom.HeaderRLP.blob_before_cancun' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:302:0: 'EVMCleanroom.HeaderRLP.blob_check_sound' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:303:0: 'EVMCleanroom.HeaderRLP.blob_pair_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:304:0: 'EVMCleanroom.HeaderRLP.fork_shape_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:305:0: 'EVMCleanroom.HeaderRLP.parent_fee_present' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:306:0: 'EVMCleanroom.HeaderRLP.layout_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:307:0: 'EVMCleanroom.HeaderRLP.shape_refused' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:308:0: 'EVMCleanroom.HeaderRLP.wire_exact' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:309:0: 'EVMCleanroom.HeaderRLP.hash_exact' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:310:0: 'EVMCleanroom.HeaderRLP.parent_refused' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:311:0: 'EVMCleanroom.HeaderRLP.child_refused' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:312:0: 'EVMCleanroom.HeaderRLP.pair_connected' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:427:0: 'EVMCleanroom.HeaderRLP.blob_series_exhausted' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:428:0: 'EVMCleanroom.HeaderRLP.blob_series_zero' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:429:0: 'EVMCleanroom.HeaderRLP.blob_fee_cap' depends on axioms: [propext]
+info: EVMCleanroom/HeaderRLP.lean:430:0: 'EVMCleanroom.HeaderRLP.fee_pair_refused' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:431:0: 'EVMCleanroom.HeaderRLP.fee_pair_exact' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:432:0: 'EVMCleanroom.HeaderRLP.fee_frame_exact' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/HeaderRLP.lean:433:0: 'EVMCleanroom.HeaderRLP.fee_frame_step' depends on axioms: [propext, Quot.sound]
+✔ [20/22] Built EVMCleanroom.HeaderRLPCLI (661ms)
+✔ [21/22] Built EVMCleanroom.HeaderRLPCLI:c.o (274ms)
+✔ [22/22] Built «evm-header-rlp»:exe (271ms)
+Build completed successfully (22 jobs).

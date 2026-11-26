@@ -1,0 +1,8 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+[[lean_lib]]
+name = "EVMCleanroom"
+[[lean_exe]]
+name = "evm-header-chain"
+root = "EVMCleanroom.HeaderChainCLI"
