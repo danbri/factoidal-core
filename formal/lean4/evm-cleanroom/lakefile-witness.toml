@@ -1,0 +1,20 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+# Lean 4.33 selects proof-assistant startup for any runtime Lean.* import.
+# This reviewed closure uses only JSON data routines from Lean.*. Select the
+# ordinary native runtime bootstrap; check-witness-runtime.py gates the image.
+# Re-audit this choice before adding any Lean frontend or metaprogramming API.
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-transaction-list"
+root = "EVMCleanroom.TransactionListCLI"
+
+[[lean_exe]]
+name = "evm-witness-proof"
+root = "EVMCleanroom.WitnessPrimitiveCLI"

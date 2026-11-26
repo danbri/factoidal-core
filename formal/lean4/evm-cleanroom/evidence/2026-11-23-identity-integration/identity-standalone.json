@@ -1,0 +1,1 @@
+{"status": "pass", "leanExecuted": 1056, "oracle": "independent Python stdlib length/gas/bytes", "matched": 1056, "mismatches": 0, "outcomes": {"ok": 528, "exceptional": 176, "indeterminate": 352}, "mutationsRejected": 3, "malformedBatchRejected": true, "inputBytesCompared": 122207, "scope": "direct identity precompile, not CALL dispatch"}

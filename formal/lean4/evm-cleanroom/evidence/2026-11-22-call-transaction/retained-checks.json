@@ -1,0 +1,47 @@
+{
+  "rawBytecode": {
+    "status": "pass",
+    "compared": 10000,
+    "passed": 10000,
+    "mismatches": 0,
+    "oracleErrors": 0,
+    "unsupported": 0,
+    "uniqueExecutionInputs": 9733,
+    "matchedExceptionalCases": 2775,
+    "distinctReferenceOpcodes": 24,
+    "referenceStepEvents": 40289,
+    "corpusSha256": "610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb"
+  },
+  "prague": {
+    "status": "pass",
+    "actualLeanStateTestsExecuted": 6,
+    "passed": 6,
+    "failed": 0,
+    "unsupported": 0,
+    "total": 6,
+    "fixtureSha256": "9afff783c1365a2743662353b88f8938d6171fa764184902053ad20ec3539cd4",
+    "firstFailure": null
+  },
+  "cancun": {
+    "status": "pass",
+    "fixtureCases": 24,
+    "forkCases": 6,
+    "passed": 6,
+    "failed": 0,
+    "unsupported": 0,
+    "otherForkCases": 18,
+    "fixtureSha256": "1eb74ceb4d3a4fefaa93f907e85f4d3632cc3f376448488fe04e84fc5c50cfba",
+    "firstFailure": null
+  },
+  "rawBytecodeNegativeControls": 3,
+  "pragueNegativeControls": 9,
+  "cancunNegativeControls": 4,
+  "activeLedgerWithFreshCancunReplay": {
+    "status": "active-sources-consistent",
+    "files": 101,
+    "selectedTheorems": 172,
+    "currentContractReplayChecked": true
+  },
+  "activeLedgerTestGroupsPassed": 5,
+  "nativeExecutableSha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5"
+}

@@ -1,0 +1,115 @@
+{
+  "status": "pass",
+  "sourceAndBinary": {
+    "before": {
+      "executable": "/workspace/scratch/144b70d8ac20/contract-phase-results/baseline-254c8329-evm-subset",
+      "source": "254c8329a8cd7da95b51901ba2091fa3ce43a97e",
+      "sha256": "64a6f3a563bdec24a7516d5a2a6698891ee193efa843ed68bb9e838fca6aad77"
+    },
+    "after": {
+      "executable": "/workspace/scratch/144b70d8ac20/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-subset",
+      "source": "ff345ca6e922fb2e96394de436804bee6c5b7f77",
+      "sha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5"
+    }
+  },
+  "rawOutputBytes": 2071386,
+  "rawOutputSha256": "86621eeda2458d6f5a8a5aaa157e21a09d188c3f253314ff67af38b33a677a0f",
+  "paths": [
+    {
+      "name": "legacy-frame-call-abi",
+      "pairs": 160,
+      "unit": "ms per process",
+      "before": {
+        "p50": 4.302582,
+        "p95": 6.640111,
+        "p99": 10.432479,
+        "max": 24.782901,
+        "min": 3.892924,
+        "spread": 20.889977
+      },
+      "after": {
+        "p50": 4.392259,
+        "p95": 5.901389,
+        "p99": 10.292013,
+        "max": 15.888931,
+        "min": 4.036323,
+        "spread": 11.852608
+      },
+      "pairedAfterMinusBefore": {
+        "p50": 0.054711,
+        "p95": 1.072498,
+        "p99": 6.302907,
+        "max": 11.523572,
+        "min": -20.605049,
+        "spread": 32.128621
+      },
+      "p50ChangePercent": 2.0842601024222196,
+      "beforeCoefficientOfVariation": 0.388054045222822,
+      "afterCoefficientOfVariation": 0.2556965763140935
+    },
+    {
+      "name": "legacy-zero-window-call-with-storage",
+      "pairs": 160,
+      "unit": "ms per process",
+      "before": {
+        "p50": 4.2746,
+        "p95": 5.311014,
+        "p99": 16.713753,
+        "max": 25.548444,
+        "min": 3.893997,
+        "spread": 21.654447
+      },
+      "after": {
+        "p50": 4.321225,
+        "p95": 6.104227,
+        "p99": 15.060258,
+        "max": 31.009827,
+        "min": 3.941663,
+        "spread": 27.068164
+      },
+      "pairedAfterMinusBefore": {
+        "p50": 0.072207,
+        "p95": 1.228383,
+        "p99": 8.022104,
+        "max": 10.163932,
+        "min": -12.395875,
+        "spread": 22.559807
+      },
+      "p50ChangePercent": 1.0907453328966366,
+      "beforeCoefficientOfVariation": 0.43201004161104484,
+      "afterCoefficientOfVariation": 0.5104366893009546
+    },
+    {
+      "name": "raw-10000-batch",
+      "pairs": 11,
+      "unit": "ms per process",
+      "before": {
+        "p50": 164.644121,
+        "p95": 240.126177,
+        "p99": 240.126177,
+        "min": 152.051436,
+        "max": 240.126177,
+        "spread": 88.074741
+      },
+      "after": {
+        "p50": 174.383882,
+        "p95": 240.266051,
+        "p99": 240.266051,
+        "min": 156.222271,
+        "max": 240.266051,
+        "spread": 84.04378
+      },
+      "pairedAfterMinusBefore": {
+        "p50": 2.533957,
+        "p95": 64.890022,
+        "p99": 64.890022,
+        "min": -2.565602,
+        "max": 64.890022,
+        "spread": 67.455624
+      },
+      "p50ChangePercent": 5.91564456771585,
+      "beforeCoefficientOfVariation": 0.17292334605710896,
+      "afterCoefficientOfVariation": 0.16989188701668229
+    }
+  ]
+}
