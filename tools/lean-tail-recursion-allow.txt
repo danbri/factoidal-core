@@ -2491,3 +2491,6 @@ L4Factoidal_Wikidata_renderQuerySyntax # (c) shared ARQ formatter fuel starts at
 L4Factoidal_Wikidata_renderUnion # (c) shared ARQ formatter fuel starts at 128
 L4Factoidal_Wikidata_tripleSpans # (c) shared ARQ formatter fuel starts at 128
 L4Factoidal_JS_Ryu_pushDigits  # (c) one frame per decimal digit written; every caller passes at most 20 digits (a UInt64 has at most 20), so at most 20 frames; issue 1076
+L4Factoidal_Rendering_CSS_needSimples  # (a) PENDING https://github.com/danbri/factoidal-core/issues/1157 one frame per simple selector of one compound
+L4Factoidal_Rendering_CSS_needChain  # (a) PENDING https://github.com/danbri/factoidal-core/issues/1157 one frame per compound of one complex selector (at most maxCompounds, 1024)
+L4Factoidal_Rendering_CSS_matchSelsA  # (a) PENDING https://github.com/danbri/factoidal-core/issues/1157 one frame per selector of one rule's selector list
