@@ -336,12 +336,21 @@ and canvas fields); its other numbers agreed with the first run.
 
 Reading (tasks against base): memory per extra tab 21 against 101 MB (CV about 0.02), engine
 start 4.2 against 127 ms, tab B input latency p50 371 against 398 ms (CV 0.022 and 0.024) and
-p95 1,059 against 1,324 ms (CV 0.06 and 0.07), new tab first frame p95 874 against 984 ms (CV
-0.045 and 0.02). New tab first frame p50 641 against 746 ms is a gain of about one CV (0.14 and
-0.10): weaker evidence. Frames: status.html p50 677 against 691 ms (CV 0.06 both), Particle
+p95 1,059 against 1,324 ms (CV 0.06 and 0.07). The two new tab first frame rows of the table
+are withdrawn: see the correction below. Frames: status.html p50 677 against 691 ms (CV 0.06 both), Particle
 Rex turns 98 against 99 and canvas present p50 7.3 against 7.1 ms (CV 0.016 and 0.024): no
 change beyond the spread. The call beyond the engine per timer turn falls by 1.8 ms: no worker
 message each way.
+
+Correction, 2026-11-26, found in the confirmation run (section 6a): the two new tab first frame
+rows count only the tabs that drew before the next tab opened, 1 s later. `run_html.ts` times one
+shown tab (`tabShown`); a newer tab replaces it, so a tab slower than about 1 s is not counted.
+Tabs counted in this run: base 19 of 35, copies 20, sessions 24, tasks 27. The rows compare
+different sets of tabs, and the mode with more slow tabs looks faster. Until this correction,
+this section and the first report said "new tab first frame p95 874 against 984 ms" as a gain.
+The count itself is a measure: the new tabs that drew before the next one opened, 1 s later
+(the last tab of a run always counts), 27 of 35 (tasks) against 19 of 35 (base). Section 6a measures every tab (tabs 3 s apart:
+`tabs-spaced` in `engine_sessions_bench.py`).
 
 Checks on the branch library: `engine_sessions_test.ts` 7 of 7 pass and its expected failure
 (https://github.com/danbri/factoidal-core/issues/1135) is recorded; the 28 demo pages of
@@ -353,9 +362,17 @@ tab B was answered in 25 ms while tab A's 1.8 s layout ran (test 5).
 D11. `--engine-mode tasks` is the default for the native engine from 2026-11-26. Rule, from the
 owner's brief for the night of 2026-11-25: "Changing the default from workers to Lean tasks:
 land it as default only if it measures better on tabFirstFrame, memory per tab and tab-B input
-latency with no frame regression; otherwise land it behind a flag and report." It measured
-better on all three, with no frame change beyond the spread. `copies` and `sessions` stay
-selectable, and are the fallbacks: a library with no task sessions or no task manager falls
+latency with no frame regression; otherwise land it behind a flag and report." Against `main`
+`b7286ac7` (section 6a): resident memory per extra tab 17 against 99 MB; tab B input latency
+p95 1,150 against 1,369 ms and p50 377 against 388 ms; new tab first frame, every tab counted, p50
+596 against 631 ms and p95 1,494 against 1,492 ms, and with tabs 1 s apart 15 of 21 tabs drew
+before the next one opened against 11 of 21; no frame change beyond the spread. The p95 of the new tab first
+frame is equal: it is the first `newtab.html` layout after start (about 1.3 s of layout in every
+mode), not an engine start. So `tasks` is better on memory per tab and on tab B input latency,
+and better on the new tab first frame at p50 and in tabs drawn before the next one opened, but
+not at p95. The coordinator
+reads that as better under the rule; `--engine-mode copies` restores the 2026-11-25 behaviour if
+the owner reads it otherwise. `copies` and `sessions` stay selectable, and are the fallbacks: a library with no task sessions or no task manager falls
 back to `sessions`, one with no sessions to `copies`.
 
 D12. The library pins itself (`RTLD_NODELETE`) before its first task session starts
@@ -405,7 +422,37 @@ only. With them sent to the session as well (as the host does: `imageLoad`, `web
 `fontFaces` are remote calls of the tab's engine), all 28 are the same. Window screenshots (`--offscreen --shot`)
 of the 3 pages with images from the host in `tasks` and `copies` mode are the same bytes.
 
-Confirmation measurement against that build: not yet run.
+Confirmation measurement against that build, with the command of section 5: `base` is
+`main` `b7286ac7` with its own host (its default, a worker and a library copy per tab); `copies`
+and `tasks` are the merged build. Median (worst run); 3 runs per mode, and 5 for `tabs-spaced`.
+
+| Number | base | copies | tasks |
+|---|---|---|---|
+| New tab first frame p50, 7 tabs 3 s apart, every tab counted, ms | 631 (700) | 630 (685) | 596 (652) |
+| New tab first frame p95, same, ms | 1,492 (1,744) | 1,602 (1,800) | 1,494 (1,823) |
+| New tabs that drew before the next one opened, 7 tabs 1 s apart, of 21 | 11 | 11 | 15 |
+| Resident memory per extra tab, MB | 99 | 103 | 17 |
+| Engine start per extra engine, ms | 139 (141) | 134 (153) | 4.1 (4.3) |
+| Tab B input latency p50, tab A loading 2.4 MB, ms | 388 (391) | 379 (390) | 377 (377) |
+| Tab B input latency p95, same, ms | 1,369 (1,441) | 1,211 (1,358) | 1,150 (1,162) |
+| Tab B first frame, tab A loading, ms | 1,379 (1,664) | 1,316 (1,427) | 1,553 (1,639) |
+| Frame total p50, status.html resize sweep, ms | 632 (681) | 643 (677) | 656 (676) |
+| Frame total p95, same, ms | 2,722 (2,927) | 2,873 (2,964) | 2,796 (2,810) |
+| Timer turns in 8 s, particle-rex.html | 167 (168) | 170 (170) | 174 (177) |
+| Page canvas present p50 and p95, same, ms | 6.9, 11 | 6.8, 11 | 7.0, 9.1 |
+
+Spread: coefficient of variation of the new tab p50 0.069 (base) and 0.041 (tasks), of the p95
+0.069 and 0.11; of the tab B input p95 0.078 and 0.05; of the status.html p50 0.037 and 0.03; of
+the tab B first frame 0.12 and 0.075. Tab B first frame, tab A loading, over both runs (8 runs a
+mode): median 1,393 ms (base) and 1,392 ms (tasks), the same. The new tab p50 gain (35 ms) is
+smaller than one spread of the base at 5 runs.
+
+Per tab, one run of each mode (`native-html-tab-first-frame`): the first new tab opens the start
+page again (`index.html`, 2,791 primitives, a script session of 539 ms): 1,107 ms (base) and 1,041
+ms (tasks); the second is the first `newtab.html` after start, with 1.27 s of layout: 1,615 and
+1,592 ms; the third to seventh take 553 to 671 ms (base) and 546 to 600 ms (tasks). The p95 of
+every mode is that second tab; why its first layout takes four times the later ones is not known
+(it is not the engine start: a task session starts in 4 ms).
 
 Evidence limits: Linux only; no Mac was available, so macOS (the product's main platform) is
 not measured, and the macOS link (the exported symbol list) is not built here. Software Vulkan

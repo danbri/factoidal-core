@@ -137,7 +137,7 @@ Desktop host (Deno, TypeScript, macOS only):
   `native-html-tab-first-frame`; summary `engineWorkers`, `tabFirstFrame`, `processRssMB`.
 - Engine sessions (`docs/designissues/2026-11-26-foafnaut-engine-sessions.md`): one native
   library holds any number of engine states (`web_session_*` in `web_render_shim.c`).
-  `--engine-mode tasks` (the default since 2026-11-26, measured better on Linux in section 6 of
+  `--engine-mode tasks` (the default since 2026-11-26, measured on Linux in sections 6 and 6a of
   that record): no worker, each tab's session runs on its own Lean dedicated task
   (`WebSession.lean`), called from the main thread through nonblocking FFI
   (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in `native_html_engine.ts`); closing a tab
@@ -492,6 +492,13 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- `tabFirstFrame` counts only the tabs that drew before the next tab was shown: `run_html.ts`
+  times one shown tab (`tabShown`), and a newer tab replaces it. A sweep that opens tabs faster
+  than they draw drops the slow ones, so the mode with more slow tabs reports a better p95.
+  2026-11-26: the first report of the engine sessions work said "new tab first frame p95 874
+  against 984 ms"; with tabs 1 s apart the counted tabs were 27 and 19 of 35. Open tabs far
+  enough apart that each one draws (`engine_sessions_bench.py --scenario tabs-spaced`, 3 s), and
+  report the count next to the percentiles.
 - A native library whose Lean code runs on threads of its own (a task session's dedicated task,
   pool workers with work) must not be unloaded while they run. Deno closes its library handles
   when its runtime ends, and the last `dlclose` unloads the code. 2026-11-26:

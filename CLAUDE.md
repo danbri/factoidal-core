@@ -1106,10 +1106,11 @@ Lean dedicated task in one native library (`--engine-mode tasks`), not a worker 
 library. Rule, owner's brief for the night of 2026-11-25, verbatim: "Changing the default from
 workers to Lean tasks: land it as default only if it measures better on tabFirstFrame, memory per
 tab and tab-B input latency with no frame regression; otherwise land it behind a flag and report."
-Measured on Linux only, medians of 5 runs, against `origin/main` `1553ce0b`: new tab first frame
-p95 874 against 984 ms, resident memory per extra tab 21 against 101 MB, tab B input latency p95
-1,059 against 1,324 ms, no frame change beyond the spread. `--engine-mode copies` (the 2026-11-25
-default) and `sessions` stay selectable. Record and macOS gap:
+Measured on Linux only, against `main` `b7286ac7` (record section 6a): resident memory per extra
+tab 17 against 99 MB; tab B input latency p95 1,150 against 1,369 ms; new tab first frame p50 596
+against 631 ms and p95 1,494 against 1,492 ms (the same: in every mode the p95 is the first
+`newtab.html` layout after start); no frame change beyond the spread. `--engine-mode copies` (the
+2026-11-25 default) and `sessions` stay selectable. Record and macOS gap:
 `docs/designissues/2026-11-26-foafnaut-engine-sessions.md`.
 
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)

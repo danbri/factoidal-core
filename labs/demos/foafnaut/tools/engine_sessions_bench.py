@@ -18,8 +18,12 @@ Scenarios (the steps language of run_html.ts --steps):
           gets 21 keys 300 ms apart, each a key press (kind 5, which the host stamps for input
           latency) and its text (kind 9) into the address field, whose frame tab B's engine
           draws. Input latency (all stamped events), tab B first frame.
-  tabs    seven new tabs, 1 s apart, from the start page: tab first frame, process resident
-          memory at exit, engine start (ms and resident memory, from native-html-engine-worker).
+  tabs    seven new tabs, 1 s apart, from the start page: process resident memory at exit, engine
+          start (ms and resident memory, from native-html-engine-worker). Its tab first frame
+          counts only the tabs that drew before the next tab opened (run_html.ts times one shown
+          tab, `tabShown`): a mode with more slow tabs has fewer counted. Use tabs-spaced for it.
+  tabs-spaced  the same seven new tabs, 3 s apart, so that each tab's first frame is counted:
+          tab first frame (p50, p95, the number of tabs counted).
   one     the start page and no new tab: process resident memory at exit (the base for tabs).
   status  pages/status.html, resize sweep (7 sizes, a Lean frame each): frame total p50 and p95.
   rex     pages/particle-rex.html for 8 s (its title screen animates): timer turns (count, engine
@@ -45,6 +49,7 @@ def scenarios(work):
     steps = {}
     steps["heavy"] = ["now:2:300", f"go:file://{heavy}", "t", "now:42:150"] + [[5, 0, 0], [9, 97, 0]] * 21
     steps["tabs"] = ["now:7:1000"] + ["t"] * 7
+    steps["tabs-spaced"] = ["now:7:3000"] + ["t"] * 7
     files = {}
     for name, value in steps.items():
         f = work / f"steps-{name}.json"
@@ -53,6 +58,7 @@ def scenarios(work):
     return {
         "heavy": ["--html", "pages/index.html", "--steps", str(files["heavy"])],
         "tabs": ["--html", "pages/index.html", "--steps", str(files["tabs"])],
+        "tabs-spaced": ["--html", "pages/index.html", "--steps", str(files["tabs-spaced"])],
         "one": ["--html", "pages/index.html", "--watch-sweep", "4"],
         "status": ["--html", "pages/status.html", "--resize-sweep"],
         "rex": ["--html", "pages/particle-rex.html", "--watch-sweep", "8"],

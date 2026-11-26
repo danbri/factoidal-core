@@ -142,7 +142,7 @@ async function main() {
     else if(arg==="--no-spare-engine-worker")spareWorker=false;
     else if(arg==="--engine-workers"){engineWorkerCap=Number(args.shift());if(!Number.isInteger(engineWorkerCap)||engineWorkerCap<1)throw new Error("--engine-workers needs a whole number of 1 or more");}
     // How each tab holds the native engine (docs/designissues/2026-11-26-foafnaut-engine-sessions.md):
-    // "tasks" (the default since 2026-11-26, measured better in section 6 of that record), no
+    // "tasks" (the default since 2026-11-26, measured in sections 6 and 6a of that record), no
     // worker: an engine session per tab on its own Lean task, called from this thread
     // (native_engine_tasks.ts); "sessions", a worker per tab, each with an engine session of its
     // own in the one library; "copies", a worker per tab, each after the first with its own copy
