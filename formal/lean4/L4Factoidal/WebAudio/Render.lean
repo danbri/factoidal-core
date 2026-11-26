@@ -32,15 +32,20 @@ The `delayRead` step runs the delay kernel on a silent input and keeps only its 
 kernel reads, for a node in a cycle, at least one render quantum back (`minFrames = n`), so
 the samples read are all from earlier quanta and do not depend on the input of this quantum. The
 `delayWrite` step runs the kernel on the real input and keeps only the new state. The
-`delayTime` parameter of a split delay is computed at both steps; at the `delayRead` step, the
-connections from nodes that come later in the order are not yet available and contribute silence.
+`delayTime` parameter of a split delay is used by the `delayRead` step, and `Graph.order` puts
+every source of `delayTime` before that step (`Graph.paramDstStep`), so the reader sees all of
+them (a source that is on a cycle with the reader is muted and contributes silence). The
+`delayWrite` step also computes the parameters; its kernel run does not use them for the new state.
 
-## Places left for other node types
+## Node types with their own kernel file
 
-`Graph.Kind.oscillator`, `.bufferSource`, `.biquad` and `.other` are written by other workers
-(`Oscillator.lean`, `Buffer.lean`, `Filters.lean`). Here, `KState.pending` is their state
-and `runKernel` outputs silence for them (marked `PLACE FOR`). Their `AudioParam`s exist with
-placeholder nominal ranges (`placeholderParam`) so that parameter connections are accepted.
+`Oscillator.lean` (`oscProcess`, `OscState`), `Filters.lean` (`biquadProcess`, `BiquadState`) and
+`Buffer.lean` (`Buffer.process`, `SourceConfig`, `SourceState`) are called by `runKernel` without
+change. Their `AudioParam`s are the rows of `paramSpecs`: OscillatorNode `frequency` (default 440,
+-Nyquist to Nyquist) and `detune` (default 0, plus or minus 1200 log2 of the largest binary32
+value), both a-rate; BiquadFilterNode `frequency` (350, 0 to Nyquist), `detune`, `Q` (1, plus or
+minus the largest binary32), `gain` (0, up to 40 log10 of the largest binary32), all a-rate;
+AudioBufferSourceNode `playbackRate` (1) and `detune` (0), both k-rate.
 
 ## Proved
 
@@ -61,6 +66,9 @@ import L4Factoidal.WebAudio.Mix
 import L4Factoidal.WebAudio.Automation
 import L4Factoidal.WebAudio.Kernels
 import L4Factoidal.WebAudio.Graph
+import L4Factoidal.WebAudio.Oscillator
+import L4Factoidal.WebAudio.Filters
+import L4Factoidal.WebAudio.Buffer
 
 namespace L4Factoidal.WebAudio.Render
 
@@ -103,24 +111,36 @@ structure ParamState where
   spec : ParamSpec
   timeline : Automation.Timeline := ⟨[]⟩
 
-/-- A parameter of a node type whose kernel is written elsewhere. -/
+/-- Nominal range limit of `detune`: `1200 * log2 (most-positive-single-float)` (about 153600). -/
+def detuneMax : Float := 1200.0 * Float.log2 floatMax
+
+/-- Upper nominal bound of the `gain` of a `BiquadFilterNode`:
+`40 * log10 (most-positive-single-float)`. -/
+def biquadGainMax : Float := 40.0 * Float.log10 floatMax
+
+/-- A parameter of a node type of `Kind.other` (no kernel here). -/
 def placeholderParam (d : Float) : ParamSpec := ⟨d, -floatMax, floatMax, true⟩
+
+/-- The normalized built-in sine wave, computed once (the FFT of the normalization). -/
+def sineWave : Oscillator.PeriodicWave := Oscillator.builtinWave .sine
 
 /-- The `AudioParam`s of each node type, in the order of `Graph.Kind.numParams`: Gain `gain`;
 ConstantSource `offset`; Delay `delayTime` (nominal range 0 to `maxDelayTime`); StereoPanner `pan`
-(-1 to 1); all a-rate. One table. -/
-def paramSpecs (k : Graph.Kind) (maxDelayTime : Float) : Array ParamSpec :=
+(-1 to 1); Oscillator, BiquadFilter and AudioBufferSource as in the module comment; all a-rate
+except the two of the AudioBufferSource. One table. `sampleRate` gives the Nyquist frequency. -/
+def paramSpecs (k : Graph.Kind) (maxDelayTime sampleRate : Float) : Array ParamSpec :=
   match k with
   | .gain => #[⟨1.0, -floatMax, floatMax, true⟩]
   | .constantSource => #[⟨1.0, -floatMax, floatMax, true⟩]
   | .delay => #[⟨0.0, 0.0, maxDelayTime, true⟩]
   | .stereoPanner => #[⟨0.0, -1.0, 1.0, true⟩]
-  -- PLACE FOR Oscillator.lean (`frequency`, `detune`), Buffer.lean (`playbackRate`, `detune`) and
-  -- Filters.lean (`frequency`, `detune`, `Q`, `gain`): placeholders with the spec's default values.
-  | .oscillator => #[placeholderParam 440.0, placeholderParam 0.0]
-  | .bufferSource => #[placeholderParam 1.0, placeholderParam 0.0]
-  | .biquad => #[placeholderParam 350.0, placeholderParam 0.0, placeholderParam 1.0,
-                 placeholderParam 0.0]
+  | .oscillator =>
+    #[⟨440.0, -(sampleRate / 2.0), sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩]
+  | .bufferSource =>
+    #[⟨1.0, -floatMax, floatMax, false⟩, ⟨0.0, -detuneMax, detuneMax, false⟩]
+  | .biquad =>
+    #[⟨350.0, 0.0, sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩,
+      ⟨1.0, -floatMax, floatMax, true⟩, ⟨0.0, -floatMax, biquadGainMax, true⟩]
   | .other _ _ _ p => Array.replicate p (placeholderParam 0.0)
   | _ => #[]
 
@@ -131,9 +151,14 @@ inductive KState where
   | const (s : Kernels.ConstState)
   /-- The delay line and `maxDelayTime` (the nominal range of `delayTime`). -/
   | delay (s : Kernels.DelayState) (maxDelayTime : Float)
-  /-- PLACE FOR the state of Oscillator (`Oscillator.lean`), BiquadFilter (`Filters.lean`) and
-  AudioBufferSource (`Buffer.lean`); today a node of these types has no state and outputs silence. -/
-  | pending
+  /-- OscillatorNode (`Oscillator.lean`). -/
+  | osc (s : Oscillator.OscState)
+  /-- BiquadFilterNode (`Filters.lean`). -/
+  | biquad (s : Filters.BiquadState)
+  /-- AudioBufferSourceNode (`Buffer.lean`): the attributes read on each block, the playback state,
+  and whether `buffer` was set to a non-null value (a second non-null value is
+  `InvalidStateError`). -/
+  | buf (cfg : Buffer.SourceConfig) (s : Buffer.SourceState) (bufferSet : Bool)
 
 /-- One node: channel settings, `AudioParam`s, kernel state. -/
 structure Node where
@@ -145,11 +170,13 @@ structure Node where
 def Node.new (k : Graph.Kind) (destChannels : Nat) (sampleRate : Float)
     (maxDelayTime : Float := 1.0) : Node :=
   { chan := chanDefaults destChannels k
-    params := (paramSpecs k maxDelayTime).map (fun s => { spec := s })
+    params := (paramSpecs k maxDelayTime sampleRate).map (fun s => { spec := s })
     ks := match k with
       | .constantSource => .const {}
       | .delay => .delay (Kernels.DelayState.init maxDelayTime sampleRate 1) maxDelayTime
-      | .oscillator | .bufferSource | .biquad => .pending
+      | .oscillator => .osc { sampleRate, type := .sine, wave := sineWave }
+      | .bufferSource => .buf {} { sampleRate } false
+      | .biquad => .biquad { type := .lowpass, sampleRate }
       | _ => .none }
 
 /-! ## State of one context -/
@@ -259,9 +286,16 @@ def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (ks : KState)
   | .splitter m, _ => (ks, (Kernels.splitProcess n m inputs params).2)
   | .merger m, _ => (ks, (Kernels.mergeProcess n m inputs params).2)
   | .destination, _ => (ks, #[])
-  -- PLACE FOR the kernels of Oscillator (`Oscillator.lean`), BiquadFilter (`Filters.lean`) and
-  -- AudioBufferSource (`Buffer.lean`): until they are joined here, these node types output
-  -- silence (one mono channel per output).
+  | .oscillator, .osc s =>
+    let r := Oscillator.oscProcess n { s with frame := frame } inputs params
+    (.osc r.1, r.2)
+  | .biquad, .biquad s =>
+    let r := Filters.biquadProcess n s inputs params
+    (.biquad r.1, r.2)
+  | .bufferSource, .buf cfg s set =>
+    let r := Buffer.process n cfg { s with frame := frame } inputs params
+    (.buf cfg r.1 set, r.2)
+  -- A node type with no kernel (`Kind.other`): one mono channel of silence per output.
   | _, _ => (ks, Array.replicate k.numOutputs (silence 1 n))
 
 /-- Process one step of the ordered list. -/
