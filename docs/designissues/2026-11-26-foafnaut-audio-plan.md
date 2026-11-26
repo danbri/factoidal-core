@@ -423,7 +423,16 @@ latency. `--perf-summary` gets a block `audio`.
   D3 use these.
 - D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
   sessions, so this part is written against Apple's documented C API and is checked by the macOS
-  build of `danbri/factoidal-builds`.
+  build of `danbri/factoidal-builds`. Written 2026-11-26 (`audio_sink.c`, section "The coreaudio
+  consumer"): the default output unit (`kAudioUnitSubType_DefaultOutput`, which follows the
+  output device the person chose), interleaved binary32 input at the context's rate (the unit
+  converts to the device), a render callback that only calls `l4_ring_read`, the unit started at
+  the first write and stopped on pause, the device latency, safety offset and buffer size as the
+  latency, and the device's nominal rate as the preferred rate. `build-web-render.sh` links
+  AudioToolbox and CoreAudio on macOS. Checked here: the branch compiles with gcc and clang,
+  `-Wall -Wextra -Werror`, against declaration stubs written from Apple's documented signatures,
+  and calls exactly nine Apple functions. Not checked: Apple's own headers (the first macOS build
+  does that) and sound on a Mac (the owner).
 - D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
   `AudioContext` in `prelude.js`.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing

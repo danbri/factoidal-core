@@ -240,6 +240,10 @@ if [ "$MODE" = --native ]; then
     OBJECTS+=("$object")
   done
   compile_wait
+  # The audio sink's `coreaudio` consumer (audio_sink.c, built here without L4_AUDIO_NO_DEVICE)
+  # calls AudioToolbox (the default output unit) and CoreAudio (the device's rate and latency).
+  AUDIO_FRAMEWORKS=()
+  [ "$(uname -s)" = Darwin ] && AUDIO_FRAMEWORKS=(-framework AudioToolbox -framework CoreAudio)
   # The audio sink's entry points are in the library's objects (the Lean externs of Sink.lean).
   nm "$BUILD/obj-native/hacl_audio_sink.o" | grep -q ' T _\{0,1\}l4_audio_sink_open$'
   echo "AUDIO_SINK_SYMBOLS: nm shows l4_audio_sink_open in $(basename "$BUILD/obj-native/hacl_audio_sink.o")"
@@ -251,7 +255,7 @@ if [ "$MODE" = --native ]; then
     LEANRT=$(LEANRT_LTO="$NATIVE_LTO" "$LAB/build-leanrt-no-gmp.sh" "$TOOLCHAIN" "$LAB/.build/leanrt-no-gmp" | tail -1)
     "${CC:-cc}" -O3 ${LTO_LINK[@]+"${LTO_LINK[@]}"} -o "$BUILD/web-render-native" "${OBJECTS[@]}" \
       "$LEANLIB/libInit.a" "$LEANLIB/libStd.a" "$LEANLIB/libleancpp.a" "$LEANRT" \
-      -L"$TOOLCHAIN/lib" -luv -lc++ -Wl,-dead_strip 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
+      -L"$TOOLCHAIN/lib" -luv -lc++ ${AUDIO_FRAMEWORKS[@]+"${AUDIO_FRAMEWORKS[@]}"} -Wl,-dead_strip 2>&1 | { grep -v "was built for newer .macOS. version" >&2 || true; }
     assert_no_gmp "$BUILD/web-render-native"
   else
     leanc -O3 -o "$BUILD/web-render-native" "${OBJECTS[@]}"
@@ -264,7 +268,7 @@ if [ "$MODE" = --native ]; then
   case "$(uname -s)" in
     Darwin)
       LIBRARY="$BUILD/engines/libweb-render.dylib"
-      SHARED=(-dynamiclib -Wl,-dead_strip -lc++)
+      SHARED=(-dynamiclib -Wl,-dead_strip -lc++ ${AUDIO_FRAMEWORKS[@]+"${AUDIO_FRAMEWORKS[@]}"})
       # Exports are dead-strip roots. Keep the shim ABI and let ld discard unused engine internals.
       for symbol in "${SHIM_EXPORTS[@]}"; do SHARED+=("-Wl,-exported_symbol,$symbol"); done
       ;;
