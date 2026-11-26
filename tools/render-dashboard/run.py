@@ -484,6 +484,8 @@ def wpt_reason(row):
 def tiny_groups(cases):
     """Every case that is not MATCH in exactly one group: the first cause found."""
     def cause(row):
+        if row['status'] == 'NEEDS_ANIMATION':
+            return 'NEEDS_ANIMATION: first frame only, the suite states no time (counted apart)'
         if row['status'] not in ('MISMATCH', 'CLOSE', 'DRAW'):
             return row['status'] + ': ' + plain_reason(row.get('reason'))
         dropped = row.get('dropped', [])
