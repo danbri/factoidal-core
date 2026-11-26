@@ -54,7 +54,7 @@ for audio now.
 | MP3 | minimp3 (CC0-1.0) in WasmVM, module `mp3-wasmvm.wasm` | Lean reads ID3v2 and ID3v1 tags, the frame headers and the Xing/LAME header (encoder delay and padding, for gapless play) and gives one frame a call. MP3 patents ended in 2017: no separate site is needed |
 | Ogg Vorbis, Opus | libvorbis, libopus in WasmVM | as now; the modules of 2026-11-26 add 32-bit float output and every channel (Vorbis: 8 at most) |
 | FLAC | Lean (later) | integer only, and each stream carries the MD5 of its decoded samples, so a decode checks itself; a candidate for a decoder with proofs |
-| AAC (`.m4a`, MP4) | AudioToolbox, the operating system's decoder (later) | needs the owner's yes: decision 2 named the hardware video decoder only |
+| AAC (`.m4a`, MP4) | AudioToolbox, the operating system's decoder (stage H) | approved by the owner, 2026-11-26 (section 7, answer 1) |
 
 The decoder modules, their build chain (Emscripten 6.0.8, source tarballs by SHA-256, flags),
 provenance and licences are in `danbri/factoidal-builds`, `third_party/media-decoders/` (decision
@@ -107,7 +107,7 @@ H.265, AAC) do. What others do:
   decoding. Source: [LibMedia history (mirror)](https://remotebranch.eu/Stowage/ladybird/src/commit/6caa2f99aad7a54acac49c3c93368a18542b9e90/Libraries/LibMedia).
 
 For Foafnaut on the Mac this gives: MP4 read in Lean; H.264 and H.265 by VideoToolbox (decision 2);
-AAC by AudioToolbox if the owner agrees. No H.264 or AAC code ships. A separate site that hands out
+AAC by AudioToolbox (approved 2026-11-26, section 7). No H.264 or AAC code ships. A separate site that hands out
 decoder modules moves the licence question to whoever runs the site; it does not remove it. This is
 not legal advice.
 
@@ -120,18 +120,23 @@ not legal advice.
 | C | `decodeAudioData` for WAV, MP3, Ogg Vorbis and Opus; the MP3 frame reader in Lean | WPT `decodeAudioData` tests; decode time per second of audio |
 | D | Real-time `AudioContext`: the Mac CoreAudio sink, the Linux file sink, the rendering task | output latency, under-runs a minute, CPU per source |
 | E | Jukebox page | time from click to sound; gapless MP3 |
-| F | The other nodes: `Convolver`, `DynamicsCompressor`, `WaveShaper`, `IIRFilter`, `Analyser`, `Panner` (equal-power, then HRTF after the data licence check), `MediaElementAudioSource`; then `AudioWorklet` | WPT `webaudio` |
+| F | The other nodes: `Convolver`, `DynamicsCompressor`, `WaveShaper`, `IIRFilter`, `Analyser`, `Panner` (equal-power, then HRTF: data approved 2026-11-26, licence reported before use), `MediaElementAudioSource`; then `AudioWorklet` | WPT `webaudio` |
 | G | `<audio>` playback on the same pipeline (issue 588, stage 1) | WPT `media-elements` |
-| H | FLAC in Lean; AAC through AudioToolbox if approved | conformance streams |
+| H | FLAC in Lean; AAC through AudioToolbox (approved 2026-11-26) | conformance streams |
 
 After audio: WebXR audio, then the video stages of issue 588 with section 4's rules.
 
-## 7. Questions for the owner
+## 7. Questions for the owner, answered 2026-11-26
 
 1. AAC through AudioToolbox (the macOS decoder), as Firefox does: yes or no?
 2. Later: the HRTF data set for `PannerNode` (its licence will be reported first).
 3. Autoplay (section 13.7): may a page start sound only after the person has used it (clicked,
    typed), as Chrome and Safari do? The default here is yes.
+
+Owner, 2026-11-26, verbatim: "1. yes 2. yes 3. yes (but with a Settings or CLI setting
+--dangerously-permit-audio). In future we may have other mechanisms for page trust." Recorded in
+`CLAUDE.md`, "Audio: AAC through AudioToolbox, HRTF data, autoplay rule". What follows for the
+autoplay rule: section 13.7.
 
 ## 8. Stage A, done 2026-11-26
 
@@ -411,9 +416,28 @@ render of the same graph (bit for bit, binary32), and there is no under-run.
 ### 13.7 Autoplay
 
 Chrome and Safari start a context `suspended` when the page has no user activation, and
-`resume()` needs one; Firefox has a setting. Coordinator's default, not the owner's: a new context
-is `running` when the page has sticky activation (HTML "has been activated"), else `suspended`;
-`resume()` is allowed after sticky activation. Question 3 of section 7.
+`resume()` needs one; Firefox has a setting. The rule here (owner, 2026-11-26, section 7 answer 3):
+a new context is `running` when the page has sticky activation (HTML "has been activated"), else
+`suspended`; a `resume()` before it waits (`pendingResume`) and is released by the activation. The
+option `--dangerously-permit-audio`, or a switch in Settings, turns the rule off.
+
+How it is held in place:
+
+1. Lean decides which input gives activation (`WebDriver.Input.activates`, HTML "activation
+   triggering input event"), in `WebScripts.performInput`, the one place where the trusted input
+   state changes. The same step releases the audio rule (`WebAudio.Api.activate`). No page op
+   gives activation: op 196 is not in the page's op table, and a theorem says that no page op
+   changes `activated`. Before this change the prelude decided it in JavaScript and called op 196.
+2. "Permitted with no activation" is a risk token, `Risk.audioWithoutActivation`
+   (`skills/lean-risk-flags`): `WebAudio.Api.State.autoplay` holds an
+   `Option (Risk.Accepted .audioWithoutActivation)`, and the only call of `Risk.dangerouslyAccept`
+   for it is the engine's start request with `dangerouslyPermitAudio: true`, which the host sends
+   only for the command-line option or the Settings switch. A page can not reach it.
+3. The host says when it is on: a warning on standard error at start (the option, or the saved
+   setting), a line in `about:foafnaut`, and the Settings row. A WPT run passes it and its record
+   says so, as Chrome's WPT runs pass `--autoplay-policy=no-user-gesture-required`.
+4. The owner: "In future we may have other mechanisms for page trust." One value decides
+   "allowed to start" (`Api.allowedToStart`), so a permission for each site changes one function.
 
 ### 13.8 Ops 190 to 199
 

@@ -1285,6 +1285,31 @@ lean-certified we can investigate that."
   `docs/designissues/2026-11-26-foafnaut-audio-plan.md`. Tracking:
   https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
 
+### Audio: AAC through AudioToolbox, HRTF data, autoplay rule (owner, 2026-11-26)
+
+Owner, 2026-11-26, verbatim, to the three questions of section 7 of
+`docs/designissues/2026-11-26-foafnaut-audio-plan.md` (1. AAC through AudioToolbox, the macOS
+decoder, as Firefox does; 2. later, the HRTF data set for `PannerNode`; 3. may a page start sound
+only after the person has used it, a click or a key, as Chrome and Safari do): "1. yes 2. yes 3. yes
+(but with a Settings or CLI setting --dangerously-permit-audio). In future we may have other
+mechanisms for page trust."
+
+- AAC: AudioToolbox decodes it on macOS (stage H of the plan). Lean reads the MP4 container and
+  checks what the decoder gives back (plan section 4). No AAC code ships.
+- HRTF: `PannerNode`'s `HRTF` model uses the impulse responses that Chromium, WebKit and Firefox
+  use (from the IRCAM Listen database). The licence is reported before the data is used; the data
+  goes in `danbri/factoidal-builds` `third_party/` with provenance, as the decoders do (stage F,
+  after equal-power panning).
+- Autoplay: a real-time `AudioContext` starts `suspended`, and `resume()` waits, until the page has
+  sticky activation. Lean decides which input gives activation (`WebDriver.Input.activates`); no
+  page script can give it. The option `--dangerously-permit-audio` or a switch in Settings turns
+  the rule off; it is a risk token in Lean (`skills/lean-risk-flags`), and the browser warns when it
+  is on. A WPT run passes it and says so in its record, as Chrome's WPT runs pass
+  `--autoplay-policy=no-user-gesture-required`.
+- Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
+  permission for each site) are a later design. One Lean value decides "allowed to start" today, so
+  such a mechanism changes one function.
+
 ### Never report upstream (owner, 2026-11-25)
 
 Owner, 2026-11-25, verbatim: "Nothing upstream. Sites are swamped with sloppy llm tickets. Never
