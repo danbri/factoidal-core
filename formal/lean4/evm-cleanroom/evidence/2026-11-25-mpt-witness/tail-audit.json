@@ -1,0 +1,13 @@
+{
+ "rows": [],
+ "cycles": [],
+ "cfiles": 32,
+ "functions": 1912,
+ "decls": 729,
+ "csimp": 0,
+ "csimp_unresolved": [],
+ "length_aliases": [
+  "EVMCleanroom.HeaderRLP.Fields",
+  "Fields"
+ ]
+}

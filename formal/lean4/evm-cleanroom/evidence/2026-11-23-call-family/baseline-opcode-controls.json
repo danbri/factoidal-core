@@ -1,0 +1,146 @@
+{
+  "kind": "baseline-opcode-controls",
+  "before": {
+    "source": "d1005fb7a009e9c8942f5f74517e068b66fb5f48",
+    "sha256": "3cf7b69691bab210360d8766fc58a9c6cc8d0a133060ab46707051437e6205e5"
+  },
+  "after": {
+    "localSource": "b7e5c44eba09b1df7cfaa3d603c33284039fc764",
+    "sha256": "6be0c30fff023aefe31abc6ba0dae860b0763bfb5eedf872cc09f5b9df22e594"
+  },
+  "sameArguments": true,
+  "controls": [
+    {
+      "opcode": "CALLCODE",
+      "args": [
+        "--call-opcode",
+        "5f5f5f5f5f60c3617530f200",
+        "00",
+        "50000",
+        "100"
+      ],
+      "before": {
+        "status": "indeterminate",
+        "reason": "invalidOpcode"
+      },
+      "after": {
+        "schemaVersion": 2,
+        "status": "stopped",
+        "gasRemaining": "47384",
+        "pc": "12",
+        "stack": [
+          "1"
+        ],
+        "slot0": "0",
+        "parentSlot0": "0",
+        "grandchildSlot0": "0",
+        "parentBalance": "0",
+        "childBalance": "0",
+        "childNonce": "0",
+        "warmAddress": true,
+        "warmSlot": false,
+        "warmGrandchildAddress": false,
+        "warmGrandchildSlot": false,
+        "entryParentWarm": false,
+        "refund": "0",
+        "parentMemoryHex": "",
+        "parentMemorySize": "0",
+        "parentMemoryTruncated": false,
+        "returnDataHex": "",
+        "returnDataSize": "0",
+        "returnDataTruncated": false,
+        "returnBytesHex": "",
+        "returnBytesSize": "0",
+        "returnBytesTruncated": false
+      }
+    },
+    {
+      "opcode": "DELEGATECALL",
+      "args": [
+        "--call-opcode",
+        "5f5f5f5f60c3617530f400",
+        "00",
+        "50000",
+        "100"
+      ],
+      "before": {
+        "status": "indeterminate",
+        "reason": "invalidOpcode"
+      },
+      "after": {
+        "schemaVersion": 2,
+        "status": "stopped",
+        "gasRemaining": "47386",
+        "pc": "11",
+        "stack": [
+          "1"
+        ],
+        "slot0": "0",
+        "parentSlot0": "0",
+        "grandchildSlot0": "0",
+        "parentBalance": "0",
+        "childBalance": "0",
+        "childNonce": "0",
+        "warmAddress": true,
+        "warmSlot": false,
+        "warmGrandchildAddress": false,
+        "warmGrandchildSlot": false,
+        "entryParentWarm": false,
+        "refund": "0",
+        "parentMemoryHex": "",
+        "parentMemorySize": "0",
+        "parentMemoryTruncated": false,
+        "returnDataHex": "",
+        "returnDataSize": "0",
+        "returnDataTruncated": false,
+        "returnBytesHex": "",
+        "returnBytesSize": "0",
+        "returnBytesTruncated": false
+      }
+    },
+    {
+      "opcode": "STATICCALL",
+      "args": [
+        "--call-opcode",
+        "5f5f5f5f60c3617530fa00",
+        "00",
+        "50000",
+        "100"
+      ],
+      "before": {
+        "status": "indeterminate",
+        "reason": "invalidOpcode"
+      },
+      "after": {
+        "schemaVersion": 2,
+        "status": "stopped",
+        "gasRemaining": "47386",
+        "pc": "11",
+        "stack": [
+          "1"
+        ],
+        "slot0": "0",
+        "parentSlot0": "0",
+        "grandchildSlot0": "0",
+        "parentBalance": "0",
+        "childBalance": "0",
+        "childNonce": "0",
+        "warmAddress": true,
+        "warmSlot": false,
+        "warmGrandchildAddress": false,
+        "warmGrandchildSlot": false,
+        "entryParentWarm": false,
+        "refund": "0",
+        "parentMemoryHex": "",
+        "parentMemorySize": "0",
+        "parentMemoryTruncated": false,
+        "returnDataHex": "",
+        "returnDataSize": "0",
+        "returnDataTruncated": false,
+        "returnBytesHex": "",
+        "returnBytesSize": "0",
+        "returnBytesTruncated": false
+      }
+    }
+  ]
+}

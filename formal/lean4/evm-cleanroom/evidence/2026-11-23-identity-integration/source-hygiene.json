@@ -1,0 +1,9 @@
+{
+  "status": "pass",
+  "leanVersion": "4.33.1",
+  "externalLakePackages": 0,
+  "prohibitedSourceDeclarations": 0,
+  "newExecutableGuards": 26,
+  "workflowShellBlocksChecked": 62,
+  "scope": "Lexical source hygiene and declared dependency inventory; not a kernel axiom audit."
+}

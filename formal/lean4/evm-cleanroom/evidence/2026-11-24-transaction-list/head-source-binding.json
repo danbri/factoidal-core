@@ -1,0 +1,10 @@
+{
+  "head": "91cae62479cbd3a13775b3dd15f502646c11db41",
+  "tree": "7d8ef4d75ef64e634574ee4a313294e9072e4f4f",
+  "requireHead": true,
+  "theorems": 46,
+  "sourceFiles": 2,
+  "status": "actual-lean-axioms-audited",
+  "dedicatedClosurePins": 47,
+  "completeReviewedPinsMatchedToHead": 146
+}

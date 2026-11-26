@@ -1,0 +1,33 @@
+{
+  "status": "pass",
+  "runtime": {
+    "head": "0573815601f6c0db6833bdf4a2409fab2044b123",
+    "binarySHA256": "4af97fa82881c71cc5490daefe19be98147b089badaaa653790c18bd4502aea8",
+    "corpusSHA256": "610012bd5b278c5e4d08545560beed11910e01c0233ad8f9c9a4c9a52e0a2efb",
+    "node": "v24.22.3",
+    "publishedImplementationCommit": "f9fec7cbc5213aef53c19b0561efd21abba7db0c",
+    "implementationGitTree": "7d2cbe6bbd1ccf1bb1abd3fb485d415c1f7bf944"
+  },
+  "matchedBySuite": {
+    "storage": 136,
+    "frame": 13,
+    "callSlice": 4,
+    "callBoundary": 102,
+    "osakaClz": 1022,
+    "valueCall": 450,
+    "callContext": 128,
+    "callRepairs": 5,
+    "calldata": 331,
+    "solidityPure": 183,
+    "rpc": 42,
+    "raw": 10000
+  },
+  "rawUniqueExecutionInputs": 9733,
+  "rawMatchedExceptionalCases": 2775,
+  "separateCallRepairsPrecompileRefusals": 1,
+  "solidityForbiddenRefusals": 5,
+  "rawNegativeControls": 3,
+  "calldataNegativeControls": 3,
+  "calldataInputErrors": 8,
+  "calldataFuelLimitChecks": 1
+}

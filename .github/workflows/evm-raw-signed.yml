@@ -1,0 +1,82 @@
+name: EVM raw signed admission
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/evm-cleanroom/**'
+      - '.github/workflows/evm-raw-signed.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LEAN_NUM_THREADS: '1'
+      LEAN_STACK_SIZE_KB: '32768'
+      MIMALLOC_ARENA_RESERVE: '64M'
+    defaults:
+      run:
+        working-directory: formal/lean4/evm-cleanroom
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          auto-config: false
+          use-mathlib-cache: false
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile actual code and report selected proof assumptions
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          mkdir -p .lake/signed-evidence
+          python3 - <<'PY'
+          from pathlib import Path
+          assert Path("lean-toolchain").read_text().strip() == "leanprover/lean4:v4.33.1"
+          s=Path("lakefile-signed.toml").read_text()
+          Path("lakefile-signed-ci.toml").write_text(s.replace('version = "0.1.0"', 'version = "0.1.0"\nmoreLeanArgs = ["-j1", "-M2048", "-s32768"]', 1))
+          PY
+          flock /tmp/ethereum-signed-lean.lock lake -f lakefile-signed-ci.toml build EVMCleanroom.SecpRecovery EVMCleanroom.SignedTransaction evm-raw-signed evm-transaction-list 2>&1 | tee .lake/signed-evidence/build.log
+          for mod in SecpRecovery SignedTransaction; do
+            lake -f lakefile-signed-ci.toml env lean -j1 -M2048 -s32768 EVMCleanroom/$mod.lean 2>&1 | tee .lake/signed-evidence/$mod.log
+          done
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          expected={"refused_bounds","checked_point","recover_checked","call_entry_source","refused_entry","over_limit"}
+          found=set()
+          for p in Path(".lake/signed-evidence").glob("*.log"):
+              if p.name=="build.log": continue
+              for name,body in re.findall(r"'([^']+)' depends on axioms: \[(.*?)\]",p.read_text(),re.S):
+                  short=name.split(".")[-1]
+                  if short in expected:
+                      assert set(re.findall(r"[\w.]+",body)) <= {"propext","Classical.choice","Quot.sound"}, (name,body)
+                      found.add(short)
+              for name in re.findall(r"'([^']+)' does not depend on any axioms",p.read_text()):
+                  if name.split(".")[-1] in expected: found.add(name.split(".")[-1])
+          assert found==expected,(found,expected)
+          print("actual selected axiom reports:",sorted(found))
+          PY
+          git rev-parse HEAD
+          git hash-object EVMCleanroom/{SecpRecovery,SignedTransaction,SignedTransactionCLI}.lean lakefile-signed.toml scripts/witness/raw-signed-lists.mjs
+          sha256sum .lake/build/bin/evm-raw-signed .lake/build/bin/evm-transaction-list | tee .lake/signed-evidence/SHA256SUMS
+      - name: Native proof-engine exclusion gate
+        run: python3 scripts/check-signed-runtime.py
+      - name: Independent retained signed list comparisons
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          node scripts/witness/raw-signed-lists.mjs .lake/build/bin/evm-raw-signed .lake/build/bin/evm-transaction-list | tee .lake/signed-evidence/differential.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: raw-signed-evidence
+          path: formal/lean4/evm-cleanroom/.lake/signed-evidence/

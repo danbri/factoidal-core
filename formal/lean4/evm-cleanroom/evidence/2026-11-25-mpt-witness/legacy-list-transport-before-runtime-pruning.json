@@ -1,0 +1,207 @@
+{
+  "cases": 22,
+  "failures": [],
+  "fixtureSha256": "54a19a00268be07cde0e5ea931b58860933ef83c468e464a3c8df4b4af81b6ff",
+  "matched": 22,
+  "nativeSha256": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7",
+  "rows": [
+    {
+      "exitCode": 0,
+      "id": "single-blob",
+      "index": null,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": null,
+      "status": "executed"
+    },
+    {
+      "exitCode": 0,
+      "id": "empty",
+      "index": null,
+      "inputBytes": 3368,
+      "matched": true,
+      "reason": null,
+      "status": "executed"
+    },
+    {
+      "exitCode": 2,
+      "id": "unknown-top-block",
+      "index": null,
+      "inputBytes": 3771,
+      "matched": true,
+      "reason": "unexpected field: block",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "unknown-top-counter",
+      "index": null,
+      "inputBytes": 3779,
+      "matched": true,
+      "reason": "unexpected field: gasUsedBefore",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "unknown-entry-accounts",
+      "index": null,
+      "inputBytes": 3774,
+      "matched": true,
+      "reason": "unexpected field: accounts",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "unknown-entry-counter",
+      "index": null,
+      "inputBytes": 3778,
+      "matched": true,
+      "reason": "unexpected field: priorBlobGas",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "missing-blob-hashes",
+      "index": null,
+      "inputBytes": 3665,
+      "matched": true,
+      "reason": "blobVersionedHashes and maxFeePerBlobGas must be supplied together",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "missing-blob-cap",
+      "index": null,
+      "inputBytes": 3733,
+      "matched": true,
+      "reason": "blobVersionedHashes and maxFeePerBlobGas must be supplied together",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "null-blob-hashes",
+      "index": null,
+      "inputBytes": 3694,
+      "matched": true,
+      "reason": "array expected",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "schema-version",
+      "index": null,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": "expected transaction-list schema version 1",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "missing-keccak-opt-in",
+      "index": null,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": "usage: evm-transaction-list --dangerously-enable-unverified-keccak --transaction-list|--authenticated-transaction-list|--state-witness FILE",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "invalid-utf8",
+      "index": null,
+      "inputBytes": 1,
+      "matched": true,
+      "reason": "transaction-list input must be UTF-8",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "invalid-json",
+      "index": null,
+      "inputBytes": 1,
+      "matched": true,
+      "reason": "offset 1: unexpected end of input",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "entry-count",
+      "index": null,
+      "inputBytes": 101550,
+      "matched": true,
+      "reason": "too many entries in transactions",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 2,
+      "id": "header-count",
+      "index": null,
+      "inputBytes": 2660,
+      "matched": true,
+      "reason": "header-field-count",
+      "status": "inputError"
+    },
+    {
+      "exitCode": 0,
+      "id": "aggregate-fuel",
+      "index": null,
+      "inputBytes": 3760,
+      "matched": true,
+      "reason": "resourceLimit",
+      "status": "indeterminate"
+    },
+    {
+      "exitCode": 0,
+      "id": "unsupported-kind",
+      "index": 0,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": "unsupported-transaction-type",
+      "status": "indeterminate"
+    },
+    {
+      "exitCode": 0,
+      "id": "ordinary-blob-fields",
+      "index": 0,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": "ordinary-blob-fields",
+      "status": "rejected"
+    },
+    {
+      "exitCode": 0,
+      "id": "incomplete-state",
+      "index": 0,
+      "inputBytes": 3533,
+      "matched": true,
+      "reason": "incompleteState",
+      "status": "indeterminate"
+    },
+    {
+      "exitCode": 0,
+      "id": "wrong-final-gas",
+      "index": null,
+      "inputBytes": 3758,
+      "matched": true,
+      "reason": "execution-gas-total-mismatch",
+      "status": "rejected"
+    },
+    {
+      "exitCode": 0,
+      "id": "input-exact-cap",
+      "index": null,
+      "inputBytes": 16777216,
+      "matched": true,
+      "reason": null,
+      "status": "executed"
+    },
+    {
+      "exitCode": 2,
+      "id": "input-over-cap",
+      "index": null,
+      "inputBytes": 16777217,
+      "matched": true,
+      "reason": "transaction-list input exceeds the byte limit",
+      "status": "inputError"
+    }
+  ]
+}

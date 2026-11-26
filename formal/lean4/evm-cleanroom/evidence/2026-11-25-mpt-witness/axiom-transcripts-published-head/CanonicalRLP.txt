@@ -1,0 +1,9 @@
+'EVMCleanroom.CanonicalRLP.decode_over_limit' depends on axioms: [propext]
+'EVMCleanroom.CanonicalRLP.admitHeader_bounds' does not depend on any axioms
+'EVMCleanroom.CanonicalRLP.readHeader_bounds' does not depend on any axioms
+'EVMCleanroom.CanonicalRLP.validateSegments_zero' does not depend on any axioms
+'EVMCleanroom.CanonicalRLP.decode_input_bound' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.CanonicalRLP.decode_source' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.CanonicalRLP.decode_keeps_encoded' does not depend on any axioms
+'EVMCleanroom.CanonicalRLP.scalar_success' depends on axioms: [propext, Quot.sound]
+

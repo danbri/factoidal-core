@@ -1,0 +1,329 @@
+{
+  "activeTheorems": 324,
+  "actualAxioms": {
+    "EVMCleanroom.CanonicalRLP.admitHeader_bounds": [],
+    "EVMCleanroom.CanonicalRLP.decode_input_bound": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.CanonicalRLP.decode_keeps_encoded": [],
+    "EVMCleanroom.CanonicalRLP.decode_over_limit": [
+      "propext"
+    ],
+    "EVMCleanroom.CanonicalRLP.decode_source": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.CanonicalRLP.readHeader_bounds": [],
+    "EVMCleanroom.CanonicalRLP.scalar_success": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.CanonicalRLP.validateSegments_zero": [],
+    "EVMCleanroom.MPT.checked_hash": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.MPT.checked_inline": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.MPT.lookup_preflight_refused": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.MPT.lookup_success": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.MPT.walk_success": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.MPT.walk_zero": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.absent_storage_zero": [
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.account_count_exhausted": [],
+    "EVMCleanroom.WitnessAdmission.account_lookup_connected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.account_loop_covered": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.account_loop_length": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.admitted_inventory_length": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.admitted_storage_connected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.admitted_witnesses_connected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.authenticated_run_accepted": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.authentication_refused": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.byte_budget_refused": [
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.checked_account_fields": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.preflight_refused": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.present_account_decoded": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.proof_count_refused": [
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.slot_count_exhausted": [],
+    "EVMCleanroom.WitnessAdmission.storage_lookup_connected": [
+      "Quot.sound",
+      "propext"
+    ],
+    "EVMCleanroom.WitnessAdmission.storage_loop_covered": [
+      "Quot.sound",
+      "propext"
+    ]
+  },
+  "allowedFoundations": [
+    "Classical.choice",
+    "Quot.sound",
+    "propext"
+  ],
+  "compiledSources": {
+    "EVMCleanroom/BlobCall.lean": {
+      "cSha256": "29ea4ac28e57ee41f95694d404be7e988a4ae4a7168d095cb42446972c51c7b4",
+      "oleanSha256": "2eb45f8313c81513ef280c75d671d3432b54dfa8043648ad06dca5ead6b95c78"
+    },
+    "EVMCleanroom/CLIEncoding.lean": {
+      "cSha256": "b8cc76046ab812f12cf774478f5093768aab0ed94794d63f579d916894beedfe",
+      "oleanSha256": "6fe3693a411efc67f5c2d0ba1843da6fda3447b4b5c80304929c0195250369e8"
+    },
+    "EVMCleanroom/Call.lean": {
+      "cSha256": "afc2dfffa012617809a65e70462ff91aeb5b66b65d0c943279d76f34e68acc1d",
+      "oleanSha256": "ab63d11d94b49af8acfcf18d1f4ef830449e2ca9765712a92206754598f31526"
+    },
+    "EVMCleanroom/CallGas.lean": {
+      "cSha256": "963d5e0d544b3a1a71f7ddc784e79b6b2b33cac7dabfce4f30c489a7d415dd0d",
+      "oleanSha256": "d43ff869a42e76feb6fdbf93871cdd8dfe7ec15f47d35916563d294d0d0bb66d"
+    },
+    "EVMCleanroom/CallOpcode.lean": {
+      "cSha256": "58c991f1b2f559cf79ce89ccdea77176bd2e44ecbec60ab5bcf3dc2182e163aa",
+      "oleanSha256": "1fdb1f3cb70c4a32988a23cd084775290e744b9e66ac95bcdc0193dfe63f38eb"
+    },
+    "EVMCleanroom/CallTransaction.lean": {
+      "cSha256": "d7ad5b21914c245ebcf76280f75a0a06326c310b0812f68b198a9a76f4178c27",
+      "oleanSha256": "389d63d049a351a1264ecb6d1b800f65682ef43d2d57d1a02ecfb21c8f4c36a4"
+    },
+    "EVMCleanroom/CanonicalRLP.lean": {
+      "cSha256": "0dd7e81c8fa7b06aecb410596e84b6ebfd1b4032c26c2f18a9edc4b921d4165b",
+      "oleanSha256": "0584d744796dc2b58bc2aabe4b656ac57be5e9c6265a5a2b65a9173df4a543b8"
+    },
+    "EVMCleanroom/CanonicalRLPTests.lean": {
+      "cSha256": "c72b9fc53c42771e96b9c45a9853b07041a9e7e9c8cd0533a79e1ff1442ba84c",
+      "oleanSha256": "cbeafea66166451aabed6a119928222f726d0a32a316eda21775a249ecd53da7"
+    },
+    "EVMCleanroom/Core.lean": {
+      "cSha256": "a4883267dcf2819d523e68db4d5c7a6165c72ee417af627788fc3f926bad5fcd",
+      "oleanSha256": "44926f69d7f1f4635d1dcce95e3fcb24b3a1f38950b0add3d08b84d918026872"
+    },
+    "EVMCleanroom/Frame.lean": {
+      "cSha256": "0ebc405bfd3aad4f9fd7c694dac879d7d9d28ae906a4190ae4d2b98570f3d08e",
+      "oleanSha256": "03640e0b89d45a09a4594deb1c2861d4f07024fbc8ef7d9c734ed43529a927cb"
+    },
+    "EVMCleanroom/HeaderChain.lean": {
+      "cSha256": "0c1513ec3dadf0ba097d64f31d02cf59e6ffe32371312818285983be1467cce3",
+      "oleanSha256": "44ac9fdf65d2440db6c0039ac7eae1ee76bc9c0f4265901a4444fa0896f6732d"
+    },
+    "EVMCleanroom/HeaderFees.lean": {
+      "cSha256": "2b786dbdb7ee21f43b8bdded1f9a0c5c767190e00c4e42c408d01e13935687a5",
+      "oleanSha256": "d7fcfcb73201d5b2bef23a8248c3272be06229900801790a159192602f5c0cf6"
+    },
+    "EVMCleanroom/HeaderRLP.lean": {
+      "cSha256": "49592267ec7c281e89703da9d43ea95e3068445e31544fc4b9762c9e3257c2aa",
+      "oleanSha256": "b12264506e7b864725d4371e09611842ce416ce73ae79582e9c50c54060e3314"
+    },
+    "EVMCleanroom/IdentityPrecompile.lean": {
+      "cSha256": "27c54c8fd5fbb82ff0af10316500a85b11c9155faa5ecbb624140d3058a34ec3",
+      "oleanSha256": "18ae274f74bc6768c604f98cd6a3cf37464d4a4db14c60d51219c211bc6a789b"
+    },
+    "EVMCleanroom/Keccak.lean": {
+      "cSha256": "75f01879f5058487868802907d5c19f42cd4f84411d1eb7d5c0722d488b37de3",
+      "oleanSha256": "96cce232baff99d964bfd392db8fe2811aaa429684ea8dde73fa553acf9b8886"
+    },
+    "EVMCleanroom/MPT.lean": {
+      "cSha256": "357eb82ec2bf06390c5fd96449ae8aa2b460c053bd44f8c6d90dbe8d13f83236",
+      "oleanSha256": "79db1303605780d6c92fcf65b88438993a51c4a489926af14c864fd15d666346"
+    },
+    "EVMCleanroom/Memory.lean": {
+      "cSha256": "882520448d9fbe985f6a4e84427021722429c5feaa0c3dc9001e2f5240faad66",
+      "oleanSha256": "1d4064846c617e0da5fb9a64691de2561ceca1a8bbde6d951fb0f44d8644f7a2"
+    },
+    "EVMCleanroom/MemoryGas.lean": {
+      "cSha256": "f5e446d9bf13aee74187e7fb01966ca5a0683ac7010ac0950d5187cf0b0d0582",
+      "oleanSha256": "c6e540a7bccb00bf759f4355969380a5d3c4c455cffea13a6f710ad0173bd3a8"
+    },
+    "EVMCleanroom/Proofs.lean": {
+      "cSha256": "658f94de00ff84e3955f2ab816355919ed409c414ea3daa6ef172488ec805ef2",
+      "oleanSha256": "e809bd73badff81b9479129199a096248f5620c68779fbce1887c082a3c17dc7"
+    },
+    "EVMCleanroom/Storage.lean": {
+      "cSha256": "61afb77de85a827f358c78aec48cc8fd1f8f37aa24501a238aa0e0b611ce6514",
+      "oleanSha256": "aed2e5fd998ce368b229c932baf4ee7613e820615e8f6b20c2ef69cf9af5415e"
+    },
+    "EVMCleanroom/TransactionCodec.lean": {
+      "cSha256": "456afe066101dd63c5bab3938b7c7da52aac1f2eb3c34ba8241e226845ba25e6",
+      "oleanSha256": "1eac0c8cab4e27da4540ff8e110ba65f73abf4bc9ebc61ee8e674f68dd0015af"
+    },
+    "EVMCleanroom/TransactionList.lean": {
+      "cSha256": "7f0a9d2f5863ec85ce8040c79e83f3b6cb2605271c65ba2348d12cfc344fcd2b",
+      "oleanSha256": "a71c4da80e352e11b05e1f5b2f821ac118b9b657451ec8efe3f94dc5919e20d0"
+    },
+    "EVMCleanroom/TransactionListCLI.lean": {
+      "cSha256": "3d43607169f98f44498ccd7c5c339043bf96788b7dd0b50f71cc20bf0124dfdd",
+      "oleanSha256": "f19e5109d75b576d63d188d65d84a9c08c9b06e3edecfc12ab871f4d7fa87b1b"
+    },
+    "EVMCleanroom/TransactionTransport.lean": {
+      "cSha256": "343792638ff55a1e9329f688f8507c778b82f1fcd2336cdd05c16aa2eb7585d1",
+      "oleanSha256": "691d4d1deda2815da1b862c382a50214edebe91fb052b738b3e2e2de8df0ce06"
+    },
+    "EVMCleanroom/TxAccounting.lean": {
+      "cSha256": "d765de9331297a0d86106ad324e2aa394d7cfc28c06268ce32838341b74009cc",
+      "oleanSha256": "d37f933c4597518f61ad5713815746b4de3ac23346e155d42ed468192899ad4e"
+    },
+    "EVMCleanroom/Value.lean": {
+      "cSha256": "48da0cbeab50093e663f13c2557e175fd350c9136f641f2e41408d4cfb8163a1",
+      "oleanSha256": "5099495f01fa8c091a0b5ce0ff8f7dddf0f0f96d219c75b981136b01e3b9cd7e"
+    },
+    "EVMCleanroom/ValueCall.lean": {
+      "cSha256": "aa72c6995541eaf52ad56327298ff87165052f0f07681b1add62a8293ffd051a",
+      "oleanSha256": "6847230287aa38f5a83efdc90bae8aeac778a3227151b02b57cd1815d6541674"
+    },
+    "EVMCleanroom/WitnessAdmission.lean": {
+      "cSha256": "5d0e94762c01d23a22c6cbdaf4936cead8c074997ae6288d93d95c87560eb474",
+      "oleanSha256": "c07701a6cd9db08dbc6367a1d8a684ab2f6dc00cfb104b25baca6a3315eb3ce3"
+    },
+    "EVMCleanroom/WitnessAdmissionProofs.lean": {
+      "cSha256": "96a4b3dc5263512c288976de9a20c602c96001cdcf416b13e5c2935eb2115b4b",
+      "oleanSha256": "fb99faa5ea23e3869ac697de0fbaf16e1b49b21a77d133fd48d7b1b002945f2c"
+    },
+    "EVMCleanroom/WitnessJSON.lean": {
+      "cSha256": "13d7da1fb320e851ad62f72844f3420c76767b9268cc00392f7ab6e80473bc1d",
+      "oleanSha256": "be83f336041491a6be29f135a8a92cb8003167e9786393da9ac992a0abbbc307"
+    },
+    "EVMCleanroom/WitnessPrimitiveCLI.lean": {
+      "cSha256": "01146dce3346bf8d0afd1189d55c7794b89c35983d99ceee05364e34b4adc48d",
+      "oleanSha256": "06523c70ae6d256780289557cdf906f57cb5660190cb82dcdffff6652e4915fb"
+    },
+    "EVMCleanroom/World.lean": {
+      "cSha256": "a1215ffbb3eecbd1382dbb7dc37920d461bac228067ce09c419f9d83378b85bc",
+      "oleanSha256": "87a5f2cab08a8c4a852162598de0c07c5a7d95d2d968f22a3dc8274396137a3e"
+    }
+  },
+  "head": "40c3f0335501677d782df566ef7fd1e8a5cc4ad5",
+  "leanSourceFiles": 32,
+  "leanVersion": "Lean (version 4.33.1, x86_64-unknown-linux-gnu, commit 819816b2e0a3bf405af45ae5c7af2491d8f5bee6, Release)",
+  "nativeBinaries": {
+    "evm-transaction-list": {
+      "root": "EVMCleanroom.TransactionListCLI",
+      "sha256": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7"
+    },
+    "evm-witness-proof": {
+      "root": "EVMCleanroom.WitnessPrimitiveCLI",
+      "sha256": "f92022447d5f69b2497839ab8cba09e7c72f2b467d1dc61a73d26322ac37326c"
+    }
+  },
+  "repositorySources": {
+    ".github/workflows/evm-cleanroom.yml": "42af9778bf0b0077d9a8f325cc37857e048bdbe5",
+    ".github/workflows/evm-witness.yml": "7c9e894b4c5b0b8196fa961fbd567a6a7aada918",
+    "tools/lean-tail-recursion-audit.py": "d1c53ce322b491381ea0a7b50bf608ad48035b6e"
+  },
+  "requireHead": false,
+  "retainedClaims": 292,
+  "selectedTheorems": 32,
+  "sourceFiles": 3,
+  "sources": {
+    "EVMCleanroom/BlobCall.lean": "97f192d8d0465409ec91fda5fdaa8296578b73f5",
+    "EVMCleanroom/CLIEncoding.lean": "a93c3de1056df0e4b23a1d4bed24cd3ea34fdc54",
+    "EVMCleanroom/Call.lean": "c7f2f3f581d76d3ca74ea018791ec5b7e61f224d",
+    "EVMCleanroom/CallGas.lean": "0e389700b3060609ee337eda3676617bc69f6d4c",
+    "EVMCleanroom/CallOpcode.lean": "80429a86a5aa0f548d8a565a0e742277b43f447a",
+    "EVMCleanroom/CallTransaction.lean": "9cd1ae422b84d8d4af04e3164ad4f5f84e0fe2b7",
+    "EVMCleanroom/CanonicalRLP.lean": "973a0360d2806707e828dfaa2af406dbc86b3b95",
+    "EVMCleanroom/CanonicalRLPTests.lean": "0ff14367da267ea241579f0129327bb3193626ba",
+    "EVMCleanroom/Core.lean": "e9f90ee6dc0d1de657c91bba08076eb8ecdfa31b",
+    "EVMCleanroom/Frame.lean": "790e09753018170c633e3b3ad604b2b6b3c98244",
+    "EVMCleanroom/HeaderChain.lean": "9f3ce9a1b73a14b409a9858492d58fa79ea51e66",
+    "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
+    "EVMCleanroom/HeaderRLP.lean": "3144954f2fcff97da1ac1e54f7be6b63d6ccb667",
+    "EVMCleanroom/IdentityPrecompile.lean": "f424ce29bfbe9e4fca248a16aa3225a3a978c3fb",
+    "EVMCleanroom/Keccak.lean": "5e89e0c5b73b2b8900b03fca897a6ef9a1152618",
+    "EVMCleanroom/MPT.lean": "29c7a91e3269243865ac912b9bdb44784caeb915",
+    "EVMCleanroom/Memory.lean": "e04c41302210d6834c4f8fa444166e2240950f9a",
+    "EVMCleanroom/MemoryGas.lean": "cd52b70946e13e005b1242b8734720eed748f072",
+    "EVMCleanroom/Proofs.lean": "85e56acddd9396be6ff1418400b717150521f9f5",
+    "EVMCleanroom/Storage.lean": "8fcb4ffe98c90f7e8456a540ee96bc52480e7d05",
+    "EVMCleanroom/TransactionCodec.lean": "cd1b25c2ac99ab60d78cd5c6d988d5de81d5cc3e",
+    "EVMCleanroom/TransactionList.lean": "f5a78cbea6216c2a543bf7bebfd5fa30faa9e336",
+    "EVMCleanroom/TransactionListCLI.lean": "84312831746c588cceb7c9b0574e6512c4fe97d4",
+    "EVMCleanroom/TransactionTransport.lean": "6b287a981b30fa92275ca9876d903bf342f3a92a",
+    "EVMCleanroom/TxAccounting.lean": "53f4f80178d2dc74ae1bb70d9d51cc6af0d84345",
+    "EVMCleanroom/Value.lean": "e33e27e36c7fed1293f11032438b534343d156b8",
+    "EVMCleanroom/ValueCall.lean": "c96d8c57bdbe6cde79c0d71d37834b9f0a9f67ac",
+    "EVMCleanroom/WitnessAdmission.lean": "8d803c4d3ef2c677a6df26f4f4d851a80f8dada4",
+    "EVMCleanroom/WitnessAdmissionProofs.lean": "17fc82f8ff15fff9a6547dff25748532b118b837",
+    "EVMCleanroom/WitnessJSON.lean": "47cf2ab1d6e8d8d21c281039c6e130c819348f9f",
+    "EVMCleanroom/WitnessPrimitiveCLI.lean": "2a03f61abb4081ff94ae99156fc490927442f034",
+    "EVMCleanroom/World.lean": "5f8e55b691c81669abc40875c04a5fb337259dcc",
+    "evidence/2026-11-24-transaction-list/list-execution.json": "73f0123db40a290545c9b5b4a7f8659405dd4388",
+    "evidence/frontier-mainnet-46146-account-proofs.json.gz.b64": "cfa64d5226ad00240685a2e4b0540e4be3f64717",
+    "evidence/mpt-generated-fixtures.json": "d045177a1b209d4ec5f2344cd7726b03b8df25a4",
+    "evidence/mpt-sources.json": "b606bff196b3647fd4197de63775a5738b37a2f9",
+    "evidence/mpt-upstream-LICENSE.txt": "8433e6f87c909d20b61eb8e3c3c217e12cb7d71b",
+    "evidence/mpt-upstream-rlp-invalid.json": "21d0b2d14332292c9a9bd5becb73ad6a5bacba62",
+    "evidence/mpt-upstream-rlp-valid.json": "cb0d9fd399f140d6bab9d411033f8be131df8df0",
+    "evidence/mpt-upstream-secure-trie.json": "473f96419a49ca6493a1460f93f46b254fb095a7",
+    "evidence/witness-source-manifest.json": "04eb1a086d643f59db794980e2daff97e03e8c8c",
+    "lake-manifest.json": "9c79a0f8a1a5e644a3ecd9acda133dade7416a71",
+    "lakefile-witness.toml": "18ef41fed6232eda3379ff5935651413b5d9da1d",
+    "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
+    "lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473",
+    "scripts/check-active-ledger.py": "ea8de18227f20a2f8013ec42945eaf36fc8fca77",
+    "scripts/check-axiom-output.py": "0b34ae2605412df8cf7271b9d7c24311cfeded8a",
+    "scripts/check-witness-axioms.py": "efb927fb51cc882dc1b0d5f77fde5d7cc31afedc",
+    "scripts/differential/package-lock.json": "5318ca3893d6f4a10add5044de63c289dd48c79f",
+    "scripts/differential/package.json": "2b16a6de6cb14101f65e2f379a7ede78399d6000",
+    "scripts/differential/transaction-list.mjs": "16da3e022e0d14af586fbd56110f26fa1e1b9d32",
+    "scripts/witness/README.md": "3139a47f208b7e13152b7e011151b1037f1fff38",
+    "scripts/witness/bench.mjs": "45e62043adcb12ad8fb02fdf3b1cffa37744dc52",
+    "scripts/witness/corpus.mjs": "ca5f362bdeae00b2155d9d7689c2294a7e03b873",
+    "scripts/witness/oracle.mjs": "8242ed0c5707b841bbaf7c26aac94afefbe5af81",
+    "scripts/witness/run.mjs": "ff826446070653f07b2d6c7987797cf1e8976d37",
+    "scripts/witness/transaction-lists.mjs": "eae966c69c72d1c9369a0edcc654d6fc52484df3"
+  },
+  "status": "actual-lean-witness-axioms-audited",
+  "tree": "0770a1c196dba3d6cf8f98711177fb9cf6e06932"
+}

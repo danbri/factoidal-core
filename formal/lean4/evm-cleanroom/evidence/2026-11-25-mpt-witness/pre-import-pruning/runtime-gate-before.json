@@ -1,0 +1,337 @@
+{
+  "checkerSha256": "6f82dd0a00aee2bcfb1a998eae1692b01a2d6dc2ae022f064562700c50d82b2b",
+  "dynamicExecutionClaim": "None: this gate does not trace calls or syscalls and does not measure runtime overhead.",
+  "executables": {
+    "evm-transaction-list": {
+      "allowedInitMetaTypesConstants": [
+        {
+          "name": "l_Lean_Meta_Simp_defaultMaxSteps",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode_default",
+          "symbolType": "B"
+        }
+      ],
+      "bytes": 121089912,
+      "elf": {
+        "byteOrder": "little",
+        "class": 64,
+        "machine": 62,
+        "type": "DYN"
+      },
+      "forbiddenLibraries": [],
+      "forbiddenSymbols": {
+        "LeanEvaluator": {
+          "count": 1,
+          "examples": [
+            "lean_eval_main"
+          ]
+        },
+        "compiler": {
+          "count": 12117,
+          "examples": [
+            "_init_l_Lean_Compiler_CSimp_add___closed__1",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__0",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__1",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__2",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__3",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__4"
+          ]
+        },
+        "elaborator": {
+          "count": 77459,
+          "examples": [
+            "_init_l_Array_repr___at___00__private_Lean_Elab_PreDefinition_Structural_Main_0__Lean_Elab_Structural_inferRecArgPos_spec__10___closed__5",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_PreDefinition_Structural_Main_0__Lean_Elab_Structural_inferRecArgPos_spec__10___closed__6",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_Structure_0__Lean_Elab_Command_Structure_resolveFieldDefaults_spec__2___closed__2",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_Structure_0__Lean_Elab_Command_Structure_resolveFieldDefaults_spec__2___closed__3",
+            "_init_l_Array_zipWithMAux___at___00__private_Lean_Elab_PreDefinition_Structural_BRecOn_0__Lean_Elab_Structural_replaceRecApps_loop_spec__10___lam__0___closed__1",
+            "_init_l_Array_zipWithMAux___at___00__private_Lean_Elab_PreDefinition_Structural_BRecOn_0__Lean_Elab_Structural_replaceRecApps_loop_spec__10___lam__0___closed__3"
+          ]
+        },
+        "fullLeanBootstrap": {
+          "count": 2,
+          "examples": [
+            "initialize_Lean",
+            "lean_initialize"
+          ]
+        },
+        "jsonElaboratorInitializer": {
+          "count": 1,
+          "examples": [
+            "initialize_Lean_Data_Json_Elab"
+          ]
+        },
+        "kernel": {
+          "count": 258,
+          "examples": [
+            "_init_l_Lean_Kernel_Environment___private__1",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__14",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__15",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__16",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__17",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__18"
+          ]
+        },
+        "metaprogramming": {
+          "count": 68883,
+          "examples": [
+            "_init_l_IO_FS_withIsolatedStreams___at___00__private_Lean_Meta_Basic_0__Lean_Meta_realizeValue_realizeAndReport_spec__2___redArg___closed__0",
+            "_init_l_IO_FS_withIsolatedStreams___at___00__private_Lean_Meta_Basic_0__Lean_Meta_realizeValue_realizeAndReport_spec__2___redArg___closed__4",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__0",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__1",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__2",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_Grind_EMatchTheorem_0__Lean_Meta_Grind_detectOffsets_spec__0___closed__0"
+          ]
+        },
+        "typeChecker": {
+          "count": 68,
+          "examples": [
+            "lean::check_constant_val(lean::environment const&, lean::constant_val const&, lean::type_checker&)",
+            "lean::finalize_type_checker()",
+            "lean::initialize_type_checker()",
+            "lean::type_checker::cache_failure(lean::expr const&, lean::expr const&)",
+            "lean::type_checker::cache_success(lean::expr const&, lean::expr const&)",
+            "lean::type_checker::check(lean::expr const&, lean::list_ref<lean::name> const&)"
+          ]
+        }
+      },
+      "inspectionWarnings": [],
+      "issues": [
+        "forbidden native symbol family: jsonElaboratorInitializer",
+        "forbidden native symbol family: elaborator",
+        "forbidden native symbol family: metaprogramming",
+        "forbidden native symbol family: compiler",
+        "forbidden native symbol family: kernel",
+        "forbidden native symbol family: typeChecker",
+        "forbidden native symbol family: fullLeanBootstrap",
+        "forbidden native symbol family: LeanEvaluator"
+      ],
+      "missingDefinedSymbols": [],
+      "neededLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "nmCommand": [
+        "nm",
+        "--demangle",
+        "--no-sort",
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list"
+      ],
+      "nmOutputSha256": "53c48a5c3eb1ef232a290681bc1437c0305271b382135fed17a280b78bd2e3a8",
+      "passed": false,
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list",
+      "readelfCommand": [
+        "readelf",
+        "--dynamic",
+        "--wide",
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-transaction-list"
+      ],
+      "readelfOutputSha256": "cc0ca9646052c12c82f5968cb2b37298ba3dc3b70a40482a1ed87ad779c01a9d",
+      "requiredDefinedSymbols": [
+        "initialize_evm__cleanroom_EVMCleanroom_TransactionListCLI",
+        "lean_initialize_runtime_module",
+        "lp_evm__cleanroom_EVMCleanroom_CanonicalRLP_decode",
+        "lp_evm__cleanroom_EVMCleanroom_MPT_lookup",
+        "lp_evm__cleanroom_EVMCleanroom_WitnessAdmission_runAuthenticated",
+        "main",
+        "run_main"
+      ],
+      "sha256": "0dca45f4abb441075deafaecae0df6be7bdf48720e505ae6cb6089f8c3556ab7",
+      "symbolCount": 296857
+    },
+    "evm-witness-proof": {
+      "allowedInitMetaTypesConstants": [
+        {
+          "name": "l_Lean_Meta_Simp_defaultMaxSteps",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedEtaStructMode_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedOccurrences_default",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode",
+          "symbolType": "B"
+        },
+        {
+          "name": "l_Lean_Meta_instInhabitedTransparencyMode_default",
+          "symbolType": "B"
+        }
+      ],
+      "bytes": 120632352,
+      "elf": {
+        "byteOrder": "little",
+        "class": 64,
+        "machine": 62,
+        "type": "DYN"
+      },
+      "forbiddenLibraries": [],
+      "forbiddenSymbols": {
+        "LeanEvaluator": {
+          "count": 1,
+          "examples": [
+            "lean_eval_main"
+          ]
+        },
+        "compiler": {
+          "count": 12117,
+          "examples": [
+            "_init_l_Lean_Compiler_CSimp_add___closed__1",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__0",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__1",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__2",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__3",
+            "_init_l_Lean_Compiler_CSimp_instInhabitedState_default___closed__4"
+          ]
+        },
+        "elaborator": {
+          "count": 77459,
+          "examples": [
+            "_init_l_Array_repr___at___00__private_Lean_Elab_PreDefinition_Structural_Main_0__Lean_Elab_Structural_inferRecArgPos_spec__10___closed__5",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_PreDefinition_Structural_Main_0__Lean_Elab_Structural_inferRecArgPos_spec__10___closed__6",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_Structure_0__Lean_Elab_Command_Structure_resolveFieldDefaults_spec__2___closed__2",
+            "_init_l_Array_repr___at___00__private_Lean_Elab_Structure_0__Lean_Elab_Command_Structure_resolveFieldDefaults_spec__2___closed__3",
+            "_init_l_Array_zipWithMAux___at___00__private_Lean_Elab_PreDefinition_Structural_BRecOn_0__Lean_Elab_Structural_replaceRecApps_loop_spec__10___lam__0___closed__1",
+            "_init_l_Array_zipWithMAux___at___00__private_Lean_Elab_PreDefinition_Structural_BRecOn_0__Lean_Elab_Structural_replaceRecApps_loop_spec__10___lam__0___closed__3"
+          ]
+        },
+        "fullLeanBootstrap": {
+          "count": 2,
+          "examples": [
+            "initialize_Lean",
+            "lean_initialize"
+          ]
+        },
+        "jsonElaboratorInitializer": {
+          "count": 1,
+          "examples": [
+            "initialize_Lean_Data_Json_Elab"
+          ]
+        },
+        "kernel": {
+          "count": 258,
+          "examples": [
+            "_init_l_Lean_Kernel_Environment___private__1",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__14",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__15",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__16",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__17",
+            "_init_l_Lean_Kernel_Environment___private__1___closed__18"
+          ]
+        },
+        "metaprogramming": {
+          "count": 68883,
+          "examples": [
+            "_init_l_IO_FS_withIsolatedStreams___at___00__private_Lean_Meta_Basic_0__Lean_Meta_realizeValue_realizeAndReport_spec__2___redArg___closed__0",
+            "_init_l_IO_FS_withIsolatedStreams___at___00__private_Lean_Meta_Basic_0__Lean_Meta_realizeValue_realizeAndReport_spec__2___redArg___closed__4",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__0",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__1",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_FunInd_0__Lean_Tactic_FunInd_elimTypeAnnotations_spec__0___closed__2",
+            "_init_l_Lean_Core_transform___at___00__private_Lean_Meta_Tactic_Grind_EMatchTheorem_0__Lean_Meta_Grind_detectOffsets_spec__0___closed__0"
+          ]
+        },
+        "typeChecker": {
+          "count": 68,
+          "examples": [
+            "lean::check_constant_val(lean::environment const&, lean::constant_val const&, lean::type_checker&)",
+            "lean::finalize_type_checker()",
+            "lean::initialize_type_checker()",
+            "lean::type_checker::cache_failure(lean::expr const&, lean::expr const&)",
+            "lean::type_checker::cache_success(lean::expr const&, lean::expr const&)",
+            "lean::type_checker::check(lean::expr const&, lean::list_ref<lean::name> const&)"
+          ]
+        }
+      },
+      "inspectionWarnings": [],
+      "issues": [
+        "forbidden native symbol family: jsonElaboratorInitializer",
+        "forbidden native symbol family: elaborator",
+        "forbidden native symbol family: metaprogramming",
+        "forbidden native symbol family: compiler",
+        "forbidden native symbol family: kernel",
+        "forbidden native symbol family: typeChecker",
+        "forbidden native symbol family: fullLeanBootstrap",
+        "forbidden native symbol family: LeanEvaluator"
+      ],
+      "missingDefinedSymbols": [],
+      "neededLibraries": [
+        "libc.so.6",
+        "ld-linux-x86-64.so.2",
+        "libpthread.so.0",
+        "libdl.so.2",
+        "librt.so.1",
+        "libm.so.6"
+      ],
+      "nmCommand": [
+        "nm",
+        "--demangle",
+        "--no-sort",
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-witness-proof"
+      ],
+      "nmOutputSha256": "4731f67090e4996881ca0ac5255ce8a8d562e61667343f26cd9d5e3c86356a1a",
+      "passed": false,
+      "path": "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-witness-proof",
+      "readelfCommand": [
+        "readelf",
+        "--dynamic",
+        "--wide",
+        "/workspace/scratch/ecd2d29d4c22/ethereum-mpt-before-pruning/bin/evm-witness-proof"
+      ],
+      "readelfOutputSha256": "d2caa9fa12da09e87695effdee0140d0475b92ad6f739fae30fa4543ea57648d",
+      "requiredDefinedSymbols": [
+        "initialize_evm__cleanroom_EVMCleanroom_WitnessPrimitiveCLI",
+        "lean_initialize_runtime_module",
+        "lp_evm__cleanroom_EVMCleanroom_CanonicalRLP_decode",
+        "lp_evm__cleanroom_EVMCleanroom_MPT_lookup",
+        "main",
+        "run_main"
+      ],
+      "sha256": "f92022447d5f69b2497839ab8cba09e7c72f2b467d1dc61a73d26322ac37326c",
+      "symbolCount": 296053
+    }
+  },
+  "nmVersion": "GNU nm (GNU Binutils for Debian) 2.44",
+  "readelfVersion": "GNU readelf (GNU Binutils for Debian) 2.44",
+  "schemaVersion": 1,
+  "scope": "Static ELF, defined/undefined symbol and direct shared-library inspection. Positive project entry symbols are mandatory. This permits the Lean object runtime and Std data/reflection support, but rejects the selected actual proof-engine/API families and full Lean bootstrap.",
+  "sourceAxiomReportSha256": "05f90af45706f0d408d2213c72943929db7231f4d445b6a144cd6c80e2c31573",
+  "status": "native-runtime-boundary-fail"
+}
