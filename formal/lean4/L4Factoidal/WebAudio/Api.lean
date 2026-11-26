@@ -730,14 +730,16 @@ private def ramped : Option State :=
     (xs.getD 0 9.0 == 0.0, decide ((xs.getD 441 0.0 - 1.0).abs < 1e-6), xs.getD 999 0.0 == 1.0,
      decide ((xs.getD 220 0.0 - 220.0 / 441.0).abs < 1e-5))) == some (true, true, true, true)
 
--- An oscillator: a sine at 440 Hz; frame 0 is 0 and frame 1 follows sin(2 pi 440 / 44100).
+-- An oscillator: a sine at 440 Hz; frame k is sin(2 pi 440 k / 44100) within binary32 rounding
+-- (frame 1: 0.0626483..., frame 100: the value below).
 private def osc : Option State :=
   chain st0 [(176, [n 1, t "oscillator"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
              (181, [n 1, n 1])]
 #guard (osc.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     let xs := samples r 1000
-    (xs.getD 0 9.0 == 0.0, decide ((xs.getD 1 0.0 - 0.0627905195).abs < 1e-3),
-     xs.all (fun x => x.abs ≤ 1.0001))) == some (true, true, true)
+    (xs.getD 0 9.0 == 0.0, decide ((xs.getD 1 0.0 - 0.0626483241787437).abs < 1e-6),
+     decide ((xs.getD 100 0.0 - (-0.0142471037071029)).abs < 1e-6),
+     xs.all (fun x => x.abs ≤ 1.0001))) == some (true, true, true, true)
 -- Frequency set through the parameter: a square wave.
 #guard (do
   let s ← chain st0 [(176, [n 1, t "oscillator"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
