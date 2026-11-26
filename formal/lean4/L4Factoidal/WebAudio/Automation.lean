@@ -371,6 +371,23 @@ def fillFast (es : Array FEvent) (defaultValue : Float) (startFrame n : Nat) (sa
     out := out.push (fValueAt defaultValue es vb j t)
   return out
 
+/-- The value of the parameter at every frame from `startFrame` on, when there is one: the default
+value for an empty list, the value of the last event when no event is a curve or a `setTarget` and
+every event is at or before the time of `startFrame`. Then `fill` gives that value at every frame
+(`fillConst_spec` is a `#guard` battery below). -/
+def fillConst (tl : Timeline) (defaultValue : Float) (startFrame : Nat) (sampleRate : Float) :
+    Option Float :=
+  match tl.events with
+  | [] => some defaultValue
+  | evs =>
+    match evs.mapM FEvent.ofEvent with
+    | none => none
+    | some es =>
+      let t0 := fFrameTime startFrame sampleRate
+      match es.getLast? with
+      | some l => if l.kind != 3 && es.all (fun e => e.time ≤ t0) then some l.value else none
+      | none => some defaultValue
+
 /-- a-rate values for frames `startFrame .. startFrame + n - 1`: the same values as `fillSpec`. -/
 def fill (tl : Timeline) (defaultValue : Float) (startFrame n : Nat) (sampleRate : Float) :
     Array Float :=
@@ -1031,6 +1048,20 @@ private def fillTl : Timeline := ⟨[sv 0 0, lin 1 1]⟩
 #guard fill fillTl 0 2 3 4.0 == #[0.5, 0.75, 1.0]
 #guard (fill fillTl 0 0 100000 48000.0).size == 100000
 #guard (fill fillTl 0 0 3 0.0).size == 3
+
+-- `fillConst`: when it answers, every value of `fill` over later frames is that value (bit equal).
+private def constOk (es : List Event) (d : Float) : Bool :=
+  [0, 10, 300, 5000, 60000].all fun f =>
+    match fillConst ⟨es⟩ d f 48000.0 with
+    | none => true
+    | some v => (fill ⟨es⟩ d f 700 48000.0).all (fun x => x.toBits == v.toBits)
+#guard constOk [] 0.7 && constOk [sv 2 (q 0.001)] 0.7 && constOk [sv 2 (q 0.001), lin 3 (q 0.002)] 0.7
+#guard constOk [tgt 1 0 0.002] 0.25 && constOk [sv 0 0, expo 1 (q 0.01)] 0.0
+#guard constOk [sv 1 (q 0.001), crv #[0, 1, 0, 2] (q 0.002) (q 0.01)] 0.5
+#guard fillConst ⟨[]⟩ 0.7 0 48000.0 == some 0.7
+#guard fillConst ⟨[sv 2 (q 0.001)]⟩ 0.7 0 48000.0 == none
+#guard fillConst ⟨[sv 2 (q 0.001)]⟩ 0.7 5000 48000.0 == some 2.0
+#guard fillConst ⟨[tgt 1 0 0.002]⟩ 0.25 5000 48000.0 == none
 
 -- `fill` against `fillSpec`: every kind of event, empty list, equal times, frames before, inside
 -- and after each event, a sample rate of 0, a curve (which uses `fillSpec`).
