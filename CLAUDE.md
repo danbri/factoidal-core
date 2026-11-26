@@ -1196,6 +1196,15 @@ macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfe
 - No Tor in the Hub (the browser running inside another browser), and none inside pages: Tor runs
   only in the host's worker. Record:
   `docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`, section 17.
+- Settings switch before expert review (owner, 2026-11-26, verbatim, to the question whether
+  Settings may offer Tor before review): "Make them type lol-yolo-i-will-regret-this-folly
+  capitalized in a text field as confirmation". So Settings offers a Tor switch with the
+  experimental code notice. It turns on only when the text field holds exactly
+  `LOL-YOLO-I-WILL-REGRET-THIS-FOLLY` (capital letters, no other characters). Lean decides the
+  match, with a theorem that no other text turns Tor on. Coordinator's choice, not the owner's:
+  the confirmation is asked each time Tor is switched on; the setting then stays on across
+  restarts until it is switched off. The command-line flag
+  `--dangerously-use-unreviewed-tor-transport` stays for tests and scripts.
 
 ### Never report upstream (owner, 2026-11-25)
 
