@@ -512,6 +512,17 @@ Changes, each with the output kept:
    the block (`Kernels.paramAt`), so the output is the same; the array has 1 value, not `n`.
    `#guard`s check that `fill` gives that value at every later frame.
 
+Randomized differential check of change 1 (`lake exe automation-fill-diff`, run by
+`tests/audio/run.sh`): 20,000 random timelines from seed 20261126, each built with
+`Automation.insert` from 0 to 9 operations (setValue, linear and exponential ramps, setTarget,
+curves, `cancelScheduledValues`, `cancelAndHold`); times on frame times of the sample rate, one
+ulp above and below them, multiples of 1/8000 and random; start frames 0 to 12,000; quantum 1
+(k-rate), 32, 64, 128, 256 or 500; sample rate 44,100, 48,000, 8,000 or 0; default and event
+values include 0, plus or minus 0.0001 and values below 1e-6. Result: `fill` equals `fillSpec`
+bit for bit in all 20,000 cases (also seeds 1, 2 and 3, 20,000 each; 9.6 s per run). Not
+measured: the power of the test against injected faults beyond the `#guard`s (a wrong cursor
+comparison was caught by the `#guard`s at build time, before this test ran).
+
 Remaining cost (graph c, 0.41 ms): the band-limited oscillator sum is about 30 % (the sawtooth at
 110 Hz sums 217 partials per sample; a bit-exact version cannot skip terms, the recurrence is the
 arithmetic; a wavetable would change the output within the 1e-9 tolerance of the tests), the
