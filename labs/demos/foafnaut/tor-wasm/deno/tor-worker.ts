@@ -17,14 +17,33 @@ import { isIpLiteral } from "./ip-literal.ts";
 const conns = new Map<number, Deno.TcpConn>();
 let next = 1;
 let dialled = 0;
+// Per-connection trace (op "trace"): times in ms from the worker's start, byte counts, and
+// connect errors. Addresses are not recorded. Used to find where channels stall.
+const t0 = performance.now();
+const ms = () => Math.round(performance.now() - t0);
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
+const traces: ConnTrace[] = [];
+const traceOf = new Map<number, ConnTrace>();
+let tracing = false;
 
 (globalThis as unknown as { torHost: unknown }).torHost = {
   async connect(ip: string, port: number): Promise<number> {
     if (!isIpLiteral(ip)) throw new Error("refused: not an IP literal");
     if (!(port > 0 && port < 65536)) throw new Error("refused: bad port");
     dialled++;
-    const c = await Deno.connect({ hostname: ip, port, transport: "tcp" });
+    const tr: ConnTrace = { h: 0, dial: ms(), inB: 0, outB: 0, reads: 0 };
+    traces.push(tr);
+    let c: Deno.TcpConn;
+    try {
+      c = await Deno.connect({ hostname: ip, port, transport: "tcp" });
+    } catch (e) {
+      tr.err = String((e as Error).name ?? e);
+      tr.closed = ms();
+      throw e;
+    }
     const h = next++;
+    tr.h = h; tr.open = ms();
+    traceOf.set(h, tr);
     conns.set(h, c);
     return h;
   },
@@ -33,6 +52,8 @@ let dialled = 0;
     if (!c) return new Uint8Array(0);
     const b = new Uint8Array(Math.min(max, 65536));
     const n = await c.read(b);
+    const tr = traceOf.get(h);
+    if (tr) { tr.reads++; if (n && tr.firstIn === undefined) tr.firstIn = ms(); tr.inB += n ?? 0; }
     return n === null ? new Uint8Array(0) : b.subarray(0, n);
   },
   async write(h: number, view: Uint8Array): Promise<number> {
@@ -41,12 +62,16 @@ let dialled = 0;
     if (!c) throw new Error("closed");
     let off = 0;
     while (off < data.length) off += await c.write(data.subarray(off));
+    const tr = traceOf.get(h);
+    if (tr) tr.outB += data.length;
     return data.length;
   },
   close(h: number): void {
     const c = conns.get(h);
     if (!c) return;
     conns.delete(h);
+    const tr = traceOf.get(h);
+    if (tr) tr.closed = ms();
     try { c.close(); } catch { /* already closed */ }
   },
 };
@@ -63,7 +88,8 @@ type Msg =
   | { id: number; op: "bootstrap"; timeoutMs: number; config?: string }
   | { id: number; op: "stream"; partition: string; host: string; port: number; request: string; max: number; timeoutMs: number }
   | { id: number; op: "new-identity" }
-  | { id: number; op: "isolated" };
+  | { id: number; op: "isolated" }
+  | { id: number; op: "trace"; on: boolean };
 
 self.onmessage = async (e: MessageEvent<Msg>) => {
   const m = e.data;
@@ -78,6 +104,8 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "stream") result = await tor.stream_request(m.partition, m.host, m.port, m.request, m.max, m.timeoutMs);
   else if (m.op === "new-identity") result = tor.new_identity();
   else if (m.op === "isolated") result = tor.isolated_context();
-  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size });
+  else if (m.op === "trace") { tracing = m.on; result = tracing; }
+  const conn = tracing ? traces.splice(0, traces.length) : undefined;
+  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size, ...(conn ? { conns: conn, at: ms() } : {}) });
 };
 (self as unknown as Worker).postMessage({ ready: true });
