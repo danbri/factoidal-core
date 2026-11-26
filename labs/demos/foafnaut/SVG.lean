@@ -3669,10 +3669,10 @@ theorem cycAll {γ α β : Type} (pts : γ → List α) (f : α → β) : ∀ (c
 
 /-- The local y of each end of each fill edge of `contours`, in the order of
 `NativeSVGPath.edges`: one pass over each contour's points. -/
-def edgeYs (contours : List LinearContour) : Array (Float × Float) :=
+def edgeYs (contours : List NativeSVGPath.LinearContour) : Array (Float × Float) :=
   contours.foldl (fun acc c => cycPairs (·.y) acc c.points) #[]
 
-theorem edgeYs_eq (contours : List LinearContour) :
+theorem edgeYs_eq (contours : List NativeSVGPath.LinearContour) :
     edgeYs contours = ((NativeSVGPath.edges contours).map fun (a,b) => (a.y,b.y)).toArray := by
   unfold edgeYs NativeSVGPath.edges
   rw [cycAll]
