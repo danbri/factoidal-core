@@ -68,6 +68,22 @@ private def localImages (document root : System.FilePath) (source : String) :
       if let some bytes ← localImage root key then found := (key,bytes)::found
   return (found,some url)
 
+/-- The document URL of an HTML page under `root`, and the bytes of each image it names
+(`WebRender.storeKeys`: its `img`, `video` posters and the images of its SVG content) that
+the policy of `localImage` allows. A page outside `root` gets no URL and no image. -/
+private def localHtmlImages (document root : System.FilePath) (source : String) :
+    IO (List (String × ByteArray) × Option String) := do
+  let real ← IO.FS.realPath document
+  let base ← IO.FS.realPath root
+  let prefix_ := base.toString ++ "/"
+  if !real.toString.startsWith prefix_ then return ([],none)
+  let url := resourceOrigin ++ (real.toString.drop prefix_.length).toString
+  let keys := (WebRender.storeKeys (DOM.parseHtmlDocument source) (some url)).toOption.getD []
+  let mut found : List (String × ByteArray) := []
+  for key in keys.eraseDups do
+    if let some bytes ← localImage root key then found := (key,bytes)::found
+  return (found,some url)
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | path::width::height::flags =>
@@ -390,11 +406,19 @@ def main (args : List String) : IO UInt32 := do
       if w > 4096 || h > 4096 then throw (IO.userError "viewport exceeds4096")
       IO.println (← WebDocument.compile {} (← IO.FS.readFile path) (← IO.FS.readFile options) w.toUInt32 h.toUInt32).2
       return 0
+    -- `--resources ROOT` first: the page's URL is under the resource origin and its local
+    -- images under ROOT are read (policy of `localImage`). Not with `--font-data` or `--rdf`.
+    let (flags,htmlResources) := match flags with
+      | "--resources"::root::rest => (rest,some root)
+      | _ => (flags,none)
+    if htmlResources.isSome && flags.any (fun flag => flag != "--pixels") then
+      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT --resources ROOT [--pixels]"
+      return 2
     let fontPath := match flags with
       | ["--font-data",path] | ["--font-data",path,"--pixels"] | ["--pixels","--font-data",path] => some path
       | _ => none
     if fontPath.isNone && (flags.any (fun flag => flag != "--pixels" && flag != "--rdf") || flags.eraseDups.length != flags.length) then
-      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
+      IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | --resources ROOT [--pixels] | [--rdf | --font-data FONT_JSON] [--pixels]]"
       return 2
     let some w := width.toNat? | throw (IO.userError "invalid width")
     let some h := height.toNat? | throw (IO.userError "invalid height")
@@ -417,6 +441,9 @@ def main (args : List String) : IO UInt32 := do
           IO.println (WebRender.errorJSON message)
           return 0
         | .ok (html,_) => pure html
+    let (htmlImages,htmlURL) ← match htmlResources with
+      | some root => localHtmlImages path root source
+      | none => pure ([],none)
     let fontData ← match fontPath with
       | none => pure none
       | some fontPath => some <$> IO.FS.readFile fontPath
@@ -428,7 +455,7 @@ def main (args : List String) : IO UInt32 := do
         | some data => (WebRenderFont.render source data w h).map (fun (scene,_,_) => scene)
         | none => if flags.contains "--rdf" then
             (WebRenderRDF.render source w h).map (fun (scene,_,_) => scene)
-          else (WebRender.render source w h).map (·.1)
+          else (WebRender.renderWith source w h htmlURL htmlImages).map (·.1)
       match result with
       | .error message => IO.println (WebRender.errorJSON message)
       | .ok scene =>
@@ -439,8 +466,8 @@ def main (args : List String) : IO UInt32 := do
       IO.println (match fontData with
         | some data => WebRenderFont.compile source data w.toUInt32 h.toUInt32
         | none => if flags.contains "--rdf" then WebRenderRDF.compile source w.toUInt32 h.toUInt32
-          else WebRender.compile source w.toUInt32 h.toUInt32)
+          else WebRender.compileWith source w.toUInt32 h.toUInt32 htmlURL htmlImages)
     return 0
   | _ =>
-    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | [--rdf | --font-data FONT_JSON] [--pixels]]"
+    IO.eprintln "usage: web-render INPUT WIDTH HEIGHT [--svg [--svg-font SVG_FONT] [--svg-resources ROOT] | --resources ROOT [--pixels] | [--rdf | --font-data FONT_JSON] [--pixels]]"
     return 2

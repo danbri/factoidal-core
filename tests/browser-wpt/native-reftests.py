@@ -32,7 +32,7 @@ def metrics(actual,expected,fuzzy):
  return fuzzy[0][0]<=maximum<=fuzzy[0][1] and fuzzy[1][0]<=different<=fuzzy[1][1],{'maxChannelDifference':maximum,'differentPixels':different}
 native=Path(a.native).resolve(); native_sha=sha(native.read_bytes())
 report={'format':'factoidal-wpt-native-cpu-v1','startedAt':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),'revision':source['revision'],
- 'scope':'All HTML relations in pinned SVG subtree, fresh native Lean CPU pixels, cached independent original-browser oracles; default bitmap-font profile, original source, 800x600 viewport.',
+ 'scope':'All HTML relations in pinned SVG subtree, fresh native Lean CPU pixels, cached independent original-browser oracles; default bitmap-font profile, original source, 800x600 viewport; local images under the corpus root supplied (--resources).',
  'native':{'path':str(native),'sha256':native_sha},'runnerSha256':sha(Path(__file__).read_bytes()),
  'oracle':{'path':str(oracle),'captureSha256':sha((oracle/'capture.json').read_bytes()),'runtime':capture.get('runtime'),'browser':capture.get('browser')},'cases':[]}
 for index,(original,old) in enumerate(zip(inventory['cases'],capture['cases'])):
@@ -42,7 +42,8 @@ for index,(original,old) in enumerate(zip(inventory['cases'],capture['cases'])):
  try:
   fixture(original['test']); row['sourceSha256']=files[original['test']]['sha256']
   if original['kind']!='reftest-static': row['reason']='Dynamic reference requires browser event-loop integration';continue
-  cmd=[str(native),str(corpus/'upstream'/original['test']),'800','600']
+  # The page's local images (img, SVG image) are read under the corpus root, as a browser host supplies them.
+  cmd=[str(native),str(corpus/'upstream'/original['test']),'800','600','--resources',str(corpus/'upstream')]
   result=subprocess.run(cmd,capture_output=True,timeout=a.timeout,env={'PATH':'/nonexistent'})
   if result.returncode:row.update(status='CRASH',reason=result.stderr.decode(errors='replace')[:1000]);continue
   artifact=json.loads(result.stdout)
