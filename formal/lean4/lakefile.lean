@@ -253,6 +253,22 @@ extern_lib libl4blockhost pkg := do
   let name := nameToStaticLib "l4blockhost"
   buildStaticLib (pkg.staticLibDir / name) #[pread]
 
+/-- The audio sink of the web engine (`ffi/audio_sink.c`, `L4Factoidal/WebAudio/Sink.lean`; issue
+    https://github.com/danbri/factoidal-core/issues/1169). Built with no device consumer
+    (`-DL4_AUDIO_NO_DEVICE`: the `null` and `wav` consumers only; the CoreAudio consumer is built
+    by the engine's own macOS build). Not part of the WASM closure: the Wasm build compiles the
+    same file with emcc and its `__EMSCRIPTEN__` branch, which opens nothing. -/
+target audio_sink.o pkg : FilePath := do
+  let oFile := pkg.buildDir / "ffi" / "audio_sink.o"
+  let srcJob ← inputTextFile (pkg.dir / "ffi" / "audio_sink.c")
+  let weakArgs := #["-I", (← getLeanIncludeDir).toString]
+  buildO oFile srcJob weakArgs #["-DL4_AUDIO_NO_DEVICE", "-O2", "-fPIC", "-pthread"] "cc" getLeanTrace
+
+extern_lib libl4audio pkg := do
+  let sink ← audio_sink.o.fetch
+  let name := nameToStaticLib "l4audio"
+  buildStaticLib (pkg.staticLibDir / name) #[sink]
+
 /-- Optional libzstd call-out for the `l4qlvr` measurements
     (https://github.com/danbri/factoidal/issues/778): `Harness/Qlvr.lean`'s
     `@[extern "l4_zstd_decompress"]`. libzstd is loaded with dlopen at run
@@ -464,6 +480,9 @@ lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
 @[default_target] lean_lib Media where
   roots := #[`L4Factoidal.Media]
 lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
+
+-- The audio sink and its ring against a WAV file (tests/audio/run.sh).
+lean_exe «audio-sink-test» where root := `Harness.AudioSinkTest
 
 -- The Web Audio API in Lean (issue 1169; docs/designissues/2026-11-26-foafnaut-audio-plan.md).
 @[default_target] lean_lib WebAudio where
