@@ -18,6 +18,7 @@ import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
 import L4Factoidal.Media.Mp3
+import L4Factoidal.Media.Wav
 import L4Factoidal.Media.Yuv
 
 namespace L4Factoidal.Media.Decode
@@ -277,6 +278,193 @@ def webmAudio (opusWasm vorbisWasm : ByteArray) (r : WebM.Result) : IO Pcm := do
       opus opusWasm h.channels h.preSkip pk total
     else
       vorbis vorbisWasm (← IO.ofExcept (WebM.xiphHeaders t.codecPrivate)) pk none
+
+/-! ## Audio as 32-bit floats (module interface 2)
+
+The float exports `mw_opus_decode_f32`, `mw_vorbis_decode_f32` and `mw_mp3_decode` with
+`mw_pcm_f32` give interleaved little-endian binary32 samples. These paths return planar channels
+of `Float` and make the checks of the record (section 4): samples per call at most the codec's
+maximum, channel count as configured, and a sample that is NaN or infinite replaced by 0 and
+counted (`nanReplaced`). The int16 paths above are unchanged. -/
+
+/-- Decoded audio as planar channels of `Float`. -/
+structure PcmF where
+  rate : Nat
+  channels : Nat
+  /-- One array of `frames` values for each channel. -/
+  samples : Array FloatArray
+  /-- Samples the module gave that were NaN or infinite; each became 0. -/
+  nanReplaced : Nat
+  steps : Nat
+  ns : Nat
+  packets : Nat
+
+def PcmF.frames (p : PcmF) : Nat := (p.samples[0]?.map (·.size)).getD 0
+def PcmF.seconds (p : PcmF) : Float := p.frames.toFloat / p.rate.toFloat
+
+/-- Append `n` interleaved frames of `ch` little-endian binary32 values in `bytes` to the planar
+channels. Returns the channels and the count of non-finite values replaced by 0. -/
+def appendF32 (chans : Array FloatArray) (bytes : ByteArray) (n ch : Nat) : Array FloatArray × Nat := Id.run do
+  let mut chans := chans
+  let mut bad := 0
+  for c in [0:ch] do
+    for i in [0:n] do
+      let x := (Float32.ofBits (Wav.u32 bytes ((i * ch + c) * 4)).toUInt32).toFloat
+      if x.isNaN || x.isInf then
+        bad := bad + 1
+        chans := chans.modify c (·.push 0.0)
+      else
+        chans := chans.modify c (·.push x)
+  return (chans, bad)
+
+/-- Frames `[start, stop)` of each channel (clamped to the length). -/
+def trimF (chans : Array FloatArray) (start stop : Nat) : Array FloatArray :=
+  chans.map fun a => ⟨a.data.extract start stop⟩
+
+def emptyChans (ch : Nat) : Array FloatArray := Array.replicate ch (FloatArray.emptyWithCapacity 0)
+
+/-- The most samples per channel one call of each module can give: Opus 5760 (120 ms at
+48 kHz), Vorbis 8192 (the module's buffer), MP3 the frame's (1152 or 576). -/
+def opusMaxSamples : Nat := 5760
+def vorbisMaxSamples : Nat := 8192
+
+/-- `opus` with float output (`mw_opus_decode_f32`): the same skip and trim rules as `opus`
+(`preSkip` samples dropped, then `total` kept, when given). 1 or 2 channels (the module refuses
+others). Lean checks `0 ≤ n ≤ 5760` for each packet. -/
+def opusF32 (wasm : ByteArray) (channels preSkip : Nat) (packets : Array ByteArray) (total : Option Nat) :
+    IO PcmF := do
+  let mut m ← load wasm
+  let (m', r) ← m.callI32 "mw_opus_init" #[i32 channels]
+  m := m'
+  if r != 0 then throw (IO.userError s!"mw_opus_init: {r}")
+  let (m', pcm) ← m.callI32 "mw_pcm_f32" #[]
+  m := m'
+  let s0 := m.steps
+  let n0 := m.ns
+  let mut out := emptyChans channels
+  let mut bad := 0
+  for p in packets do
+    m ← m.put p
+    let (m', n) ← m.callI32 "mw_opus_decode_f32" #[i32 m.buf, i32 p.size]
+    m := m'
+    if n < 0 then throw (IO.userError s!"mw_opus_decode_f32: {n}")
+    if n.toNat > opusMaxSamples then
+      throw (IO.userError s!"mw_opus_decode_f32: {n} samples from one packet (at most {opusMaxSamples})")
+    let (o, b) := appendF32 out (← m.read pcm.toNat (n.toNat * 4 * channels)) n.toNat channels
+    out := o; bad := bad + b
+  let len := (out[0]?.map (·.size)).getD 0
+  let start := min len preSkip
+  let stop := match total with
+    | some t => min len (start + t)
+    | none => len
+  return { rate := 48000, channels, samples := trimF out start stop, nanReplaced := bad,
+           steps := m.steps - s0, ns := m.ns - n0, packets := packets.size }
+
+/-- `vorbis` with float output (`mw_vorbis_decode_f32`): every channel the stream has (1 to 8;
+more is refused by the module and by Lean), in Vorbis channel order. `total` frames are kept
+from the start, when given. Lean checks the rate is positive, the channel count is 1 to 8, and
+`0 ≤ n ≤ 8192` for each packet. -/
+def vorbisF32 (wasm : ByteArray) (headers packets : Array ByteArray) (total : Option Nat) : IO PcmF := do
+  let mut m ← load wasm
+  for i in [0:3] do
+    let h := headers[i]?.getD .empty
+    m ← m.put h
+    let (m', r) ← m.callI32 "mw_vorbis_header" #[i32 m.buf, i32 h.size, i32 i]
+    m := m'
+    if r != 0 then throw (IO.userError s!"mw_vorbis_header {i}: {r}")
+  let (m', rate) ← m.callI32 "mw_vorbis_rate" #[]
+  let (m', ch) ← m'.callI32 "mw_vorbis_channels" #[]
+  let (m', pcm) ← m'.callI32 "mw_pcm_f32" #[]
+  m := m'
+  if rate ≤ 0 then throw (IO.userError s!"mw_vorbis_rate: {rate}")
+  if ch < 1 || ch > 8 then throw (IO.userError s!"mw_vorbis_channels: {ch} (1 to 8 supported)")
+  let channels := ch.toNat
+  let s0 := m.steps
+  let n0 := m.ns
+  let mut out := emptyChans channels
+  let mut bad := 0
+  for p in packets do
+    m ← m.put p
+    let (m', n) ← m.callI32 "mw_vorbis_decode_f32" #[i32 m.buf, i32 p.size]
+    m := m'
+    if n < 0 then throw (IO.userError s!"mw_vorbis_decode_f32: {n}")
+    if n.toNat > vorbisMaxSamples then
+      throw (IO.userError s!"mw_vorbis_decode_f32: {n} samples from one packet (at most {vorbisMaxSamples})")
+    let (o, b) := appendF32 out (← m.read pcm.toNat (n.toNat * 4 * channels)) n.toNat channels
+    out := o; bad := bad + b
+  let len := (out[0]?.map (·.size)).getD 0
+  let stop := match total with
+    | some t => min len t
+    | none => len
+  return { rate := rate.toNat, channels, samples := trimF out 0 stop, nanReplaced := bad,
+           steps := m.steps - s0, ns := m.ns - n0, packets := packets.size }
+
+/-- `mp3` with float output (`mw_mp3_decode` and `mw_pcm_f32`): the same gapless skip and keep
+as `mp3`. Lean checks at most the frame's samples, and the stream's channel count, in every
+frame. -/
+def mp3F32 (wasm : ByteArray) (file : ByteArray) (s : Mp3.Stream) : IO PcmF := do
+  let mut m ← load wasm
+  let (m', r) ← m.callI32 "mw_mp3_init" #[]
+  m := m'
+  if r != 0 then throw (IO.userError s!"mw_mp3_init: {r}")
+  let (m', pcm) ← m.callI32 "mw_pcm_f32" #[]
+  m := m'
+  let ch := s.header.channels
+  let s0 := m.steps
+  let n0 := m.ns
+  let mut out := emptyChans ch
+  let mut bad := 0
+  for (off, len) in s.frames do
+    let f := file.extract off (off + len)
+    m ← m.put f
+    let (m', n) ← m.callI32 "mw_mp3_decode" #[i32 m.buf, i32 f.size]
+    m := m'
+    if n > 0 then
+      let (m', c) ← m.callI32 "mw_mp3_info" #[i32 1]
+      m := m'
+      if n.toNat > s.header.samples then
+        throw (IO.userError s!"mw_mp3_decode: {n} samples from a frame of {s.header.samples} at offset {off}")
+      if c.toNat != ch then
+        throw (IO.userError s!"mw_mp3_decode: {c} channels in a frame of a {ch}-channel stream at offset {off}")
+      let (o, b) := appendF32 out (← m.read pcm.toNat (n.toNat * 4 * ch)) n.toNat ch
+      out := o; bad := bad + b
+  let len := (out[0]?.map (·.size)).getD 0
+  let start := min len s.skip
+  let stop := match s.keep with
+    | some k => min len (start + k)
+    | none => len
+  return { rate := s.header.rate, channels := ch, samples := trimF out start stop, nanReplaced := bad,
+           steps := m.steps - s0, ns := m.ns - n0, packets := s.frames.size }
+
+/-- `oggAudio` with float output. -/
+def oggAudioF32 (opusWasm vorbisWasm : ByteArray) (file : ByteArray) : IO PcmF := do
+  let r := Ogg.demux file
+  match r.streams.find? (fun s => s.codec == .opus || s.codec == .vorbis) with
+  | none => throw (IO.userError "no Opus or Vorbis stream")
+  | some s =>
+    let pk := s.packets.map (·.data)
+    if s.codec == .opus then
+      let h ← IO.ofExcept (Ogg.opusHead pk[0]!)
+      let total := if s.lastGranule.toNat ≥ h.preSkip then some (s.lastGranule.toNat - h.preSkip) else none
+      opusF32 opusWasm h.channels h.preSkip (pk.extract 2 pk.size) total
+    else
+      vorbisF32 vorbisWasm (pk.extract 0 3) (pk.extract 3 pk.size) (some s.lastGranule.toNat)
+
+/-- `webmAudio` with float output. -/
+def webmAudioF32 (opusWasm vorbisWasm : ByteArray) (r : WebM.Result) : IO PcmF := do
+  match r.tracks.find? (fun t => t.codec == "A_OPUS" || t.codec == "A_VORBIS") with
+  | none => throw (IO.userError "no Opus or Vorbis track")
+  | some t =>
+    let pk := (r.framesOf t.number).map (·.data)
+    if t.codec == "A_OPUS" then
+      let h ← IO.ofExcept (Ogg.opusHead t.codecPrivate)
+      let fs := r.framesOf t.number
+      let discard := fs.foldl (fun n f => n + f.discard * 48000 / 1000000000) 0
+      let decoded := fs.foldl (fun n f => n + opusSamples f.data) 0
+      let total := if discard > 0 && decoded ≥ h.preSkip + discard then some (decoded - h.preSkip - discard) else none
+      opusF32 opusWasm h.channels h.preSkip pk total
+    else
+      vorbisF32 vorbisWasm (← IO.ofExcept (WebM.xiphHeaders t.codecPrivate)) pk none
 
 /-! ## Video -/
 

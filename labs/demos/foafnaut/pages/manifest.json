@@ -409,6 +409,15 @@
    "doesNotShow": "network use other than the Google Fonts sheet (Liberation Mono is the offline face); sound needs Web Audio, and the game runs without it"
   },
   {
+   "page": "jukebox.html",
+   "title": "Jukebox",
+   "generator": "../tools/jukebox-page.py",
+   "needs": "page scripts, the Web Audio API (AudioContext, decodeAudioData, AudioBufferSourceNode, GainNode) and an audio output; the five CC0 clips of third_party/media are in the page as base64, because a file: page reads no other file: URL",
+   "appRefused": "does not execute scripts",
+   "shows": "a playlist of six tracks (MP3 CBR, MP3 VBR, MPEG-2 MP3, Ogg Vorbis, Opus, and a WAV that the page makes): play, pause, next, previous, seek, volume, gapless play of the whole list, files the person opens, the decode time and duration of each track, and the delay from a click to the first frame played (getOutputTimestamp)",
+   "doesNotShow": "the audio element: the page uses the Web Audio API only (issue 1169; the audio element is stage G)"
+  },
+  {
    "page": "spinal-tap-sparql.html",
    "title": "Spın̈al Tap: a SPARQL client for Wikidata",
    "handwritten": true,

@@ -13,6 +13,12 @@ L4Factoidal.Media.Bench: `lake exe media-bench`, from `formal/lean4`
                                             folder and play it with `afplay` (macOS):
                                             the PCM is ours, `afplay` only plays it
 
+    media-bench decode WASMDIR FILE RATE [OUT]  WebAudio.decodeAudioData: sniff, decode to
+                                            floats, resample to RATE Hz ("file": the file's own
+                                            rate), print channels, rate, frames and the first
+                                            samples; OUT gets interleaved 32-bit float samples
+                                            (little-endian, as `ffmpeg -f f32le`)
+
     media-bench check WASMDIR               the pins of `Media.Modules`: size, SHA-256, and
                                             the `mw_abi` version of each module run in WasmVM
 
@@ -24,6 +30,7 @@ WASMDIR holds `opus-wasmvm.wasm`, `vorbis-wasmvm.wasm`, `vp8-wasmvm.wasm` and
 import L4Factoidal.Media.Decode
 import L4Factoidal.Media.Modules
 import L4Factoidal.Media.Tests
+import L4Factoidal.WebAudio.Decode
 
 namespace L4Factoidal.Media.Bench
 open L4Factoidal.Media
@@ -131,18 +138,64 @@ def video (dir : System.FilePath) (file : String) (limit : Option Nat) (out : Op
     IO.println s!"  wrote {o}.ppm and {o}.i420"
   return 0
 
+/-- Interleaved little-endian binary32 samples of a buffer. -/
+def interleaveF32 (b : WebAudio.Buffer.AudioBuffer) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (b.length * b.numberOfChannels * 4)
+  for i in [0:b.length] do
+    for c in [0:b.numberOfChannels] do
+      let bits := (b.data[c]!.get! i).toFloat32.toBits
+      out := out.push bits.toUInt8 |>.push (bits >>> 8).toUInt8 |>.push (bits >>> 16).toUInt8
+        |>.push (bits >>> 24).toUInt8
+  return out
+
+def decodeCmd (dir : System.FilePath) (file rate : String) (out : Option String) : IO UInt32 := do
+  let b ← IO.FS.readBinFile file
+  let mut mods : List (String × ByteArray) := []
+  for p in Modules.pins do
+    if ← (dir / p.file).pathExists then mods := (p.file, ← IO.FS.readBinFile (dir / p.file)) :: mods
+  let modules := fun (n : String) => (mods.find? (·.1 == n)).map (·.2)
+  let ctx ← match rate with
+    | "file" =>
+      match ← WebAudio.Decode.decodeRaw b modules with
+      | .ok r => pure r.rate.toFloat
+      | .error e => IO.println s!"{file}: {e.name}: {e.detail}"; return 1
+    | r => match r.toNat? with
+      | some n => pure n.toFloat
+      | none => IO.eprintln s!"RATE is a number or \"file\": {r}"; return 2
+  let t0 ← IO.monoNanosNow
+  let res ← WebAudio.Decode.decode b ctx modules
+  let t1 ← IO.monoNanosNow
+  match res with
+  | .error e =>
+    IO.println s!"{file}: {e.name}: {e.detail}"
+    return 1
+  | .ok d =>
+    let ab := d.buffer
+    IO.println s!"{file}: {d.format}, file {d.sourceRate} Hz {d.sourceFrames} frames -> buffer {ab.numberOfChannels} channels, {ab.sampleRate} Hz, {ab.length} frames, {fmt2 ab.duration} s; {ms (t1 - t0)} ms; {d.nanReplaced} non-finite samples replaced"
+    let first := (List.range (min 8 ab.length)).map fun i => ab.data[0]!.get! i
+    IO.println s!"  channel 0, first samples: {first}"
+    let mid := ab.length / 2
+    let m := (List.range (min 4 (ab.length - mid))).map fun i => ab.data[0]!.get! (mid + i)
+    IO.println s!"  channel 0 from frame {mid}: {m}"
+    if let some o := out then
+      IO.FS.writeBinFile o (interleaveF32 ab)
+      IO.println s!"  wrote {o} ({ab.length * ab.numberOfChannels * 4} bytes, interleaved f32le)"
+    return 0
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | ["test"] => return (if (← Tests.run) then 0 else 1)
   | ["check", d] => checkPins d
   | ["audio", d, f] => audio d f none
   | ["audio", d, f, o] => audio d f (some o)
+  | ["decode", d, f, r] => decodeCmd d f r none
+  | ["decode", d, f, r, o] => decodeCmd d f r (some o)
   | ["play", d, f] => play d f
   | ["video", d, f] => video d f none none
   | ["video", d, f, n] => video d f n.toNat? none
   | ["video", d, f, n, o] => video d f n.toNat? (some o)
   | _ =>
-    IO.println "usage: media-bench test | check WASMDIR | audio WASMDIR FILE [OUT] | play WASMDIR FILE | video WASMDIR FILE [N] [OUT]"
+    IO.println "usage: media-bench test | check WASMDIR | decode WASMDIR FILE RATE [OUT] | audio WASMDIR FILE [OUT] | play WASMDIR FILE | video WASMDIR FILE [N] [OUT]"
     return 2
 
 end L4Factoidal.Media.Bench

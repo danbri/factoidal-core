@@ -1,3 +1,5 @@
+import L4Factoidal.WebAudio.Mix
+
 /-!
 # Web Audio block kernels
 
@@ -31,12 +33,11 @@ chosen points (cases from the Web Platform Tests are named at each one).
 
 ## Not done in this file
 
-* The up-mix and down-mix of a delay line's stored samples when the input channel count changes
-  (DelayNode section: "they MUST be upmixed or downmixed"): a changed count here keeps the
-  stored channels that still exist and starts new channels silent. The exact mixing is
-  `WebAudio.Mix`.
+* Nothing of the delay line's channel-count change: when the input's count differs, the stored
+  ring is up- or down-mixed with `Mix.apply` (`DelayState.retarget`, `interp` field).
 * `AudioParam` automation and the summing of parameter inputs (the caller supplies `params`).
-* The cycle rule is a field (`minFrames`); the graph module decides when it is `n`.
+* The cycle rule is a field (`minFrames`); the graph module decides when it is `n`. In a cycle the
+  minimum wins over `maxDelayTime` (the ring is sized for it, see `DelayState.init`).
 * The ConstantSource `start`/`stop` control messages: here the frames are given.
 -/
 
@@ -235,8 +236,14 @@ are both held. The sample is written before the read, so delay 0 returns the cur
 
 structure DelayState where
   sampleRate : Float
+  /-- `ceil (maxDelayTime * sampleRate)`: the largest delay in frames when the node is not in a
+  cycle. -/
+  maxFrames : Nat
   /-- Smallest delay in frames: 0, or `n` when the node is in a cycle. -/
   minFrames : Nat
+  /-- `channelInterpretation` of the node: how stored samples are mixed when the input channel
+  count changes. -/
+  interp : Mix.Interpretation := .speakers
   /-- Frames in each channel's ring buffer. -/
   size : Nat
   /-- Index the next input frame is written to. -/
@@ -244,12 +251,17 @@ structure DelayState where
   /-- One ring buffer per channel. -/
   bufs : Array FloatArray
 
-/-- Initial state: `channels` silent ring buffers for `maxDelayTime` seconds. -/
-def DelayState.init (maxDelayTime sampleRate : Float) (channels : Nat) (minFrames : Nat := 0) :
-    DelayState :=
+/-- Initial state: `channels` silent ring buffers. The ring has `max (ceil (maxDelayTime * rate))
+quantum + 1` frames: a delay in a cycle reads at least one render quantum back even when that is
+above `maxDelayTime` (specification: "clamped to a minimum of one render quantum"), so the ring
+must hold `quantum` frames. `Render` passes its quantum; the default 0 gives the plain
+`ceil (maxDelayTime * rate) + 1`. -/
+def DelayState.init (maxDelayTime sampleRate : Float) (channels : Nat) (minFrames : Nat := 0)
+    (quantum : Nat := 0) : DelayState :=
   let mx := frameOfTime maxDelayTime sampleRate
-  { sampleRate, minFrames, size := mx + 1, w := 0
-    bufs := Array.replicate channels (mkChan (mx + 1) (fun _ => 0.0)) }
+  let sz := max mx quantum + 1
+  { sampleRate, maxFrames := mx, minFrames, size := sz, w := 0
+    bufs := Array.replicate channels (mkChan sz (fun _ => 0.0)) }
 
 /-- The invariant: positive size, write index below the size, every buffer of `size` frames. -/
 def DelayState.WF (s : DelayState) : Prop :=
@@ -261,11 +273,11 @@ def clampDelay (d : Float) (lo hi : Nat) : Float :=
   if a ≤ hi.toFloat then a else hi.toFloat
 
 /-- One step of `delayChan`: write input frame `i`, then read the delayed frame. -/
-def delayStep (S w : Nat) (sr : Float) (minF : Nat) (dly inp : FloatArray) (i : Nat)
+def delayStep (S w : Nat) (sr : Float) (minF hiF : Nat) (dly inp : FloatArray) (i : Nat)
     (p : FloatArray × FloatArray) : FloatArray × FloatArray :=
   let pos := (w + i) % S
   let buf1 := p.1.set! pos (getF inp i)
-  let d := clampDelay (paramAt dly i * sr) minF (S - 1)
+  let d := clampDelay (paramAt dly i * sr) minF (min hiF (S - 1))
   let k := d.floor.toUInt64.toNat
   let fr := d - d.floor
   let a := getF buf1 ((pos + S - k) % S)
@@ -274,38 +286,47 @@ def delayStep (S w : Nat) (sr : Float) (minF : Nat) (dly inp : FloatArray) (i : 
 
 /-- One channel of one block. Writes `inp` into the ring `buf` starting at `w` and returns the new
 ring and the output channel. -/
-def delayChan (n S w : Nat) (sr : Float) (minF : Nat) (dly inp buf : FloatArray) :
+def delayChan (n S w : Nat) (sr : Float) (minF hiF : Nat) (dly inp buf : FloatArray) :
     FloatArray × FloatArray :=
-  iter (delayStep S w sr minF dly inp) n 0 (buf, ⟨#[]⟩)
+  iter (delayStep S w sr minF hiF dly inp) n 0 (buf, ⟨#[]⟩)
+
+/-- The ring buffers as `channels` channels. When the count differs from the stored one, the whole
+ring is up- or down-mixed (all `size` frames) by `Mix.apply` with the node's `interp`, so that all
+internal delay-line mixing uses the prevailing channel layout (DelayNode section). -/
+def DelayState.retarget (s : DelayState) (channels : Nat) : Array FloatArray :=
+  if channels == s.bufs.size then s.bufs
+  else Mix.apply (Mix.matrix s.interp s.bufs.size channels) s.bufs s.size
 
 def delayProcess (n : Nat) (s : DelayState) (inputs : Array Block) (params : Array FloatArray) :
     DelayState × Array Block :=
   let inp := inputs.getD 0 #[]
   let dly := params.getD 0 ⟨#[]⟩
+  let bufs := s.retarget (inputs.getD 0 #[]).size
+  let hiF := max s.maxFrames s.minFrames
   let res : Array (FloatArray × FloatArray) := Array.ofFn (n := inp.size) fun c =>
-    delayChan n s.size s.w s.sampleRate s.minFrames dly (inp.getD c.1 ⟨#[]⟩)
-      (s.bufs.getD c.1 (mkChan s.size (fun _ => 0.0)))
+    delayChan n s.size s.w s.sampleRate s.minFrames hiF dly (inp.getD c.1 ⟨#[]⟩)
+      (bufs.getD c.1 (mkChan s.size (fun _ => 0.0)))
   ({ s with w := (s.w + n) % s.size, bufs := res.map Prod.fst }, #[res.map Prod.snd])
 
-theorem delayIter_sizes (S w : Nat) (sr : Float) (minF : Nat) (dly inp : FloatArray)
+theorem delayIter_sizes (S w : Nat) (sr : Float) (minF hiF : Nat) (dly inp : FloatArray)
     (k i : Nat) (p : FloatArray × FloatArray) :
-    (iter (delayStep S w sr minF dly inp) k i p).1.size = p.1.size ∧
-    (iter (delayStep S w sr minF dly inp) k i p).2.size = p.2.size + k := by
+    (iter (delayStep S w sr minF hiF dly inp) k i p).1.size = p.1.size ∧
+    (iter (delayStep S w sr minF hiF dly inp) k i p).2.size = p.2.size + k := by
   induction k generalizing i p with
   | zero => simp [iter]
   | succ k ih =>
     simp only [iter]
-    have h1 : (delayStep S w sr minF dly inp i p).1.size = p.1.size := by
+    have h1 : (delayStep S w sr minF hiF dly inp i p).1.size = p.1.size := by
       simp [delayStep, size_set!]
-    have h2 : (delayStep S w sr minF dly inp i p).2.size = p.2.size + 1 := by
+    have h2 : (delayStep S w sr minF hiF dly inp i p).2.size = p.2.size + 1 := by
       simp [delayStep, size_push]
-    have := ih (i + 1) (delayStep S w sr minF dly inp i p)
+    have := ih (i + 1) (delayStep S w sr minF hiF dly inp i p)
     omega
 
-theorem delayChan_sizes (n S w : Nat) (sr : Float) (minF : Nat) (dly inp buf : FloatArray) :
-    (delayChan n S w sr minF dly inp buf).1.size = buf.size ∧
-    (delayChan n S w sr minF dly inp buf).2.size = n := by
-  have := delayIter_sizes S w sr minF dly inp n 0 (buf, ⟨#[]⟩)
+theorem delayChan_sizes (n S w : Nat) (sr : Float) (minF hiF : Nat) (dly inp buf : FloatArray) :
+    (delayChan n S w sr minF hiF dly inp buf).1.size = buf.size ∧
+    (delayChan n S w sr minF hiF dly inp buf).2.size = n := by
+  have := delayIter_sizes S w sr minF hiF dly inp n 0 (buf, ⟨#[]⟩)
   unfold delayChan
   simp only [FloatArray.size] at this ⊢
   simpa using this
@@ -327,12 +348,18 @@ theorem delay_state_wf (n : Nat) (s : DelayState) (hs : s.WF) (inputs : Array Bl
     obtain ⟨p, ⟨j, rfl⟩, rfl⟩ := hbm
     rw [(delayChan_sizes ..).1]
     show _ = s.size
+    have hr : ∀ x ∈ s.retarget (inputs.getD 0 #[]).size, x.size = s.size := by
+      intro x hx
+      unfold DelayState.retarget at hx
+      split at hx
+      · exact hb x hx
+      · exact Mix.apply_shape _ _ _ x hx
     rw [Array.getD_eq_getD_getElem?]
-    cases h : s.bufs[j.1]? with
+    cases h : (s.retarget (inputs.getD 0 #[]).size)[j.1]? with
     | none => simpa using mkChan_size s.size _
     | some x =>
       simp only [Option.getD_some]
-      exact hb x (Array.mem_of_getElem? h)
+      exact hr x (Array.mem_of_getElem? h)
 
 /-- Says: one output block, with the input's channel count and `n` frames in each channel.
 Does not say: the values. -/
@@ -583,6 +610,30 @@ def dlyCycle : DelayState := DelayState.init 6.0 1.0 1 4
 #guard approxB (delayRun 4 dlyCycle (blk [[1, 0, 0, 0]]) (kr 0.0)).2 [[0, 0, 0, 0]]
 #guard approxB (delayRun 4 (delayRun 4 dlyCycle (blk [[1, 0, 0, 0]]) (kr 0.0)).1
     (blk [[0, 0, 0, 0]]) (kr 0.0)).2 [[1, 0, 0, 0]]
+-- cycle with maxDelayTime (2 frames) below the quantum (4 frames): the minimum wins, so the delay
+-- is 4 frames even though 10 frames are asked for (specification: minimum of one render quantum)
+def dlyTiny : DelayState := DelayState.init 2.0 1.0 1 4 4
+#guard dlyTiny.size == 5 && dlyTiny.maxFrames == 2
+#guard approxB (delayRun 4 dlyTiny (blk [[1, 0, 0, 0]]) (kr 10.0)).2 [[0, 0, 0, 0]]
+#guard approxB (delayRun 4 (delayRun 4 dlyTiny (blk [[1, 0, 0, 0]]) (kr 10.0)).1
+    (blk [[0, 0, 0, 0]]) (kr 10.0)).2 [[1, 0, 0, 0]]
+-- the same node outside a cycle: the maximum (2 frames) still bounds the delay
+#guard approxB (delayRun 4 { dlyTiny with minFrames := 0 } (blk [[1, 0, 0, 0]]) (kr 10.0)).2
+  [[0, 0, 1, 0]]
+-- the input channel count changes: stored samples are mixed to the new layout
+-- mono ring holding an impulse, then a stereo input: speakers up-mix 1 to 2, both channels
+def dlyMono : DelayState :=
+  (delayRun 2 (DelayState.init 4.0 1.0 1) (blk [[1, 0]]) (kr 3.0)).1
+#guard approxB (delayRun 2 dlyMono (blk [[0, 0], [0, 0]]) (kr 3.0)).2 [[0, 1], [0, 1]]
+-- stereo ring holding (1, 3), then a mono input: speakers down-mix averages to 2
+def dlyStereo : DelayState :=
+  (delayRun 2 (DelayState.init 4.0 1.0 2) (blk [[1, 0], [3, 0]]) (kr 3.0)).1
+#guard approxB (delayRun 2 dlyStereo (blk [[0, 0]]) (kr 3.0)).2 [[0, 2]]
+-- discrete 2 to 1 keeps channel 0
+#guard approxB (delayRun 2 { dlyStereo with interp := .discrete } (blk [[0, 0]]) (kr 3.0)).2
+  [[0, 1]]
+-- an unchanged channel count leaves the ring alone
+#guard approxB (delayRun 2 dlyStereo (blk [[0, 0], [0, 0]]) (kr 3.0)).2 [[0, 1], [0, 3]]
 -- output channel count follows the input; channels are independent
 #guard approxB (delayRun 3 (DelayState.init 4.0 1.0 2) (blk [[1, 2, 3], [4, 5, 6]]) (kr 1.0)).2
   [[0, 1, 2], [0, 4, 5]]

@@ -7,6 +7,8 @@ tests; see its README). The expected counts are those of `ffprobe -count_packets
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
 import L4Factoidal.Media.Mp3
+import L4Factoidal.Media.Wav
+import L4Factoidal.Media.Decode
 
 namespace L4Factoidal.Media.Tests
 open L4Factoidal.Media
@@ -137,6 +139,32 @@ def run : IO Bool := do
   | .error e => t ← check t "mp3 after junk" false e
   | .ok r => t ← check t "mp3 after junk: same frames" (r.frames.size == 155 && r.keep == some 176400) s!"{r.frames.size}"
   t ← check t "mp3 refuses bytes that are not MP3" (Mp3.read junk).toOption.isNone
+  -- WAV (Media.Wav): conversions, chunk walking, refusals (more in the `#guard`s of Wav.lean).
+  let w16 := Wav.build 1 2 44100 16 (bytes [0x00, 0x40, 0x00, 0xC0, 0xFF, 0x7F, 0x00, 0x80])
+  match Wav.read w16 with
+  | .error e => t ← check t "wav 16-bit" false e.describe
+  | .ok r =>
+    t ← check t "wav 16-bit stereo: frames, rate, channels"
+      (r.frames == 2 && r.format.rate == 44100 && r.format.channels == 2 && r.format.bits == 16)
+    t ← check t "wav 16-bit: values are sample / 32768"
+      (r.samples[0]!.data.toList == [0.5, 32767.0 / 32768.0] && r.samples[1]!.data.toList == [-0.5, -1.0])
+  -- The writer of Media.Decode and this reader agree: the samples come back as s16 / 32768.
+  let pcm : Decode.Pcm := { rate := 8000, channels := 1, samples := bytes [0x34, 0x12, 0xCB, 0xED], steps := 0, ns := 0, packets := 0 }
+  match Wav.read (Decode.wav pcm) with
+  | .error e => t ← check t "wav written by Decode.wav" false e.describe
+  | .ok r =>
+    let ok := r.samples[0]!.data.toList == [4660.0 / 32768.0, -4661.0 / 32768.0] && r.format.rate == 8000
+    t ← check t "wav written by Decode.wav reads back" ok s!"{r.samples[0]!.data.toList}"
+  t ← check t "wav: a cut file reads the frames before the cut" ((Wav.read (w16.extract 0 (w16.size - 2))).toOption.map (·.frames) == some 1)
+  t ← check t "wav refuses an Ogg file" ((Wav.read opus).toOption.isNone)
+  t ← check t "wav refuses RIFX" ((Wav.read (Wav.ascii "RIFX" ++ Wav.le32 0 ++ Wav.ascii "WAVE")).toOption.isNone)
+  t ← check t "wav: 12 bytes of WAVE without chunks is no fmt" ((Wav.read (Wav.ascii "RIFF" ++ Wav.le32 4 ++ Wav.ascii "WAVE")).toOption.isNone)
+  -- A float WAV with a NaN, an infinity and a normal value: the first two are replaced and counted.
+  match Wav.read (Wav.build 3 1 8000 32 (bytes [0, 0, 0xC0, 0x7F, 0, 0, 0x80, 0xFF, 0, 0, 0, 0x3F])) with
+  | .error e => t ← check t "wav float non-finite" false e.describe
+  | .ok r =>
+    let ok := r.samples[0]!.data.toList == [0.0, 0.0, 0.5] && r.nonFinite == 2
+    t ← check t "wav float: NaN and -infinity become 0, counted" ok
   IO.println s!"media tests: {t.pass} pass, {t.fail} fail"
   return t.fail == 0
 

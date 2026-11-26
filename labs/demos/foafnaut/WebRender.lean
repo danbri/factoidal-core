@@ -7,6 +7,7 @@ import Font
 import L4Factoidal.Rendering.Layout
 import L4Factoidal.Rendering.Links
 import L4Factoidal.HTML.ImageSource
+import L4Factoidal.WHATWG.URL.PercentDecode
 
 /-! HTML source → existing Lean DOM → computed CSS → layout → common scene.
 The bitmap font is an explicit temporary profile, not font-backed shaping. -/
@@ -407,13 +408,88 @@ def alphaFrom (white black : ByteArray) : ByteArray := Id.run do
     out := (((out.push (channel 0).toUInt8).push (channel 1).toUInt8).push (channel 2).toUInt8).push alpha.toUInt8
   return out
 
-/-- An SVG document as a picture: its bitmap and the size of the image in CSS pixels. None
-for bytes that are not an SVG document. -/
-def vectorPicture : NativeImage.VectorReader := fun bytes =>
+/-- The view of an SVG document that an `svgView(...)` fragment names (SVG 2 §16.5, "SVG
+fragment identifiers"): each part present overrides the root element's `viewBox` or
+`preserveAspectRatio`, or applies a `transform` to its content. -/
+structure SvgView where
+  viewBox : Option String := none
+  preserveAspectRatio : Option String := none
+  transform : Option String := none
+  deriving Repr, BEq
+
+/-- One `name(value)` part of an `svgView` specification, spaces around it removed: the
+name before the first `(`, the value up to the last `)`. -/
+private def viewPart (part : String) : Option (String × String) := do
+  let part := part.trimAscii.toString
+  let pieces := part.splitOn "("
+  if pieces.length < 2 || !part.endsWith ")" then none
+  let name := pieces.head!.trimAscii.toString
+  if name.isEmpty then none
+  let value := ((String.intercalate "(" (pieces.drop 1)).dropEnd 1).toString
+  some (name, value.trimAscii.toString)
+
+/-- The view of an image reference's fragment: the fragment is percent-decoded (WHATWG URL
+§1.3), split at `&` (media fragments such as `t=0` are other parts and are left aside), and
+its `svgView(...)` part read. A part with an unknown name, or an `svgView` that does not
+parse, gives no view: the document's own view is kept. `zoomAndPan` changes nothing drawn. -/
+def svgViewOf (key : String) : Option SvgView := do
+  let fragment := (key.splitOn "#").drop 1 |> String.intercalate "#"
+  if fragment.isEmpty then none
+  let fragment ← String.fromUTF8? (WHATWG.URL.percentDecode fragment.toUTF8)
+  let spec ← (fragment.splitOn "&").find? fun p => p.trimAscii.toString.startsWith "svgView("
+  let spec := spec.trimAscii.toString
+  if !spec.endsWith ")" then none
+  let inner := ((spec.drop "svgView(".length).toString.dropEnd 1).toString
+  let parts := (inner.splitOn ";").filter (·.trimAscii.toString != "")
+  if parts.isEmpty then none
+  parts.foldlM (init := ({} : SvgView)) fun view part => do
+    let (name,value) ← viewPart part
+    match name with
+    | "viewBox" => some {view with viewBox := some (value.replace "," " ")}
+    | "preserveAspectRatio" => some {view with preserveAspectRatio := some value}
+    | "transform" => some {view with transform := some value}
+    | "zoomAndPan" => some view
+    | _ => none
+
+-- The forms of the WPT `svg/linking/reftests/svgview-*` tests.
+#guard svgViewOf "http://r.invalid/s.svg#svgView(viewBox(100,0,100,100))" == some {viewBox := some "100 0 100 100"}
+#guard svgViewOf "s.svg#svgView( viewBox(100,0,100,100) )" == some {viewBox := some "100 0 100 100"}
+#guard svgViewOf "s.svg#svgView(%20viewBox(100,0,100,100)%20)" == some {viewBox := some "100 0 100 100"}
+#guard svgViewOf "s.svg#svgView(viewBox(100,0,100,100)%3BpreserveAspectRatio(none))" ==
+  some {viewBox := some "100 0 100 100", preserveAspectRatio := some "none"}
+#guard svgViewOf "s.svg#svgView(preserveAspectRatio(none);viewBox(100,0,100,100))" ==
+  some {viewBox := some "100 0 100 100", preserveAspectRatio := some "none"}
+#guard svgViewOf "s.svg#svgView(viewBox(100,0,100,100) ; preserveAspectRatio(none))" ==
+  some {viewBox := some "100 0 100 100", preserveAspectRatio := some "none"}
+#guard svgViewOf "s.svg#svgView(viewBox(100,0,100,100))&t=0" == some {viewBox := some "100 0 100 100"}
+#guard svgViewOf "s.svg#svgView(viewBox(0,0,200,200);transform(scale(2)))" ==
+  some {viewBox := some "0 0 200 200", transform := some "scale(2)"}
+#guard svgViewOf "s.svg#svgView(unknown(1))" == none
+#guard svgViewOf "s.svg#part" == none
+#guard svgViewOf "s.svg" == none
+
+/-- The root element with the view applied: `viewBox` and `preserveAspectRatio` replaced,
+and its content in a `g` with the view's `transform`. -/
+def applySvgView (view : SvgView) : XML.NamespaceNode → XML.NamespaceNode
+  | .element name attrs children =>
+    let set := fun (attrs : List XML.NamespaceAttribute) (key : String) (value : Option String) =>
+      match value with
+      | some v => (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == key)) ++ [NativeSVGText.mkAttr key v]
+      | none => attrs
+    let attrs := set (set attrs "viewBox" view.viewBox) "preserveAspectRatio" view.preserveAspectRatio
+    let children := match view.transform with
+      | some t => [NativeSVGText.svgElement "g" [NativeSVGText.mkAttr "transform" t] children]
+      | none => children
+    .element name attrs children
+  | node => node
+
+/-- An SVG document as a picture, its root element first changed by `edit`: its bitmap and
+the size of the image in CSS pixels. None for bytes that are not an SVG document. -/
+def vectorPictureOf (edit : XML.NamespaceNode → XML.NamespaceNode) : NativeImage.VectorReader := fun bytes =>
   if !looksLikeSVG bytes then none else some do
     let some xml := String.fromUTF8? bytes | throw "SVG image is not UTF-8 text"
     if xml.length > NativeSVG.maxInputChars then throw "SVG image exceeds 1048576 characters"
-    let root ← XML.parseNamespaceView xml
+    let root := edit (← XML.parseNamespaceView xml)
     let .element _ attrs _ := root | throw "SVG image has no root element"
     let (w,h) := NativeSVGForgiving.imageSize attrs
     let (rw,rh) := NativeSVGForgiving.imageRaster w h
@@ -425,6 +501,14 @@ def vectorPicture : NativeImage.VectorReader := fun bytes =>
       else do pure (alphaFrom white (← draw (some "#000000")))
     if rgba.size != rw*rh*4 then throw "SVG image: the picture drawn has another size than asked"
     return ({width := rw, height := rh, rgba},w,h,NativeSVGForgiving.naturalSize attrs)
+
+/-- An SVG document as a picture: `vectorPictureOf` with the document as it is. -/
+def vectorPicture : NativeImage.VectorReader := vectorPictureOf id
+
+/-- The decoder of an image key whose fragment names an SVG view (`svgViewOf`): the file
+drawn with that view. None for a key with no such view, which the plain decoder reads. -/
+def svgViewDecode (key : String) : Option (ByteArray → NativeImage.Decoded) :=
+  (svgViewOf key).map fun view => NativeImage.decodeWith (vectorPictureOf (applySvgView view))
 
 /-- The natural width, height and ratio of an SVG image file (`NativeSVGForgiving.naturalSize`);
 none for a file that is not SVG or does not read. -/
@@ -467,7 +551,7 @@ def vectorPictureAt (bytes : ByteArray) (tw th : Nat) : Option Rendering.Bitmap 
 /-- The image store of a page: `NativeSVG.imageStoreOf` with SVG files read by
 `vectorPicture`. -/
 def pageStore (keys : List String) (images : List (String × ByteArray)) : NativeImage.Store :=
-  NativeSVG.imageStoreOf keys images vectorPicture
+  NativeSVG.imageStoreOf keys images vectorPicture svgViewDecode
 
 private def storedPicture (store : NativeImage.Store) (key : String) :
     Option (Rendering.Layout.Picture × Option NativeImage.VectorAxes) := do
@@ -625,7 +709,7 @@ def storeIn (kept : StoresKept) (keys : List String) (images : List (String × B
   | some (_,store,_) => (store,none)
   | none =>
     let decs := decodesFor (kept.flatMap (·.2.2)) keys images
-    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images
+    let store := NativeSVG.imageStoreOfWith (memoDecode decs) keys images svgViewDecode
     (store,some ((keys,images),store,decs))
 
 /-- `kept` with `made` last, at most two. -/
@@ -643,8 +727,8 @@ def StoresValid (kept : StoresKept) : Prop :=
 `pageStore`. -/
 theorem imageStoreOfWith_memo (decs : Decodes) (valid : DecodesValid decs) (keys : List String)
     (images : List (String × ByteArray)) :
-    NativeSVG.imageStoreOfWith (memoDecode decs) keys images = pageStore keys images :=
-  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images
+    NativeSVG.imageStoreOfWith (memoDecode decs) keys images svgViewDecode = pageStore keys images :=
+  NativeSVG.imageStoreOfWith_congr _ vectorPicture (memoDecode_eq decs valid) keys images svgViewDecode
 
 /-- Kind: invariant. Says: the decodes of a valid table, all together, are a valid cache. -/
 theorem StoresValid.decodes (kept : StoresKept) (valid : StoresValid kept) :
