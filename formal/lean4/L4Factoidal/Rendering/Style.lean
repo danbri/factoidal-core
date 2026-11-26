@@ -2312,7 +2312,10 @@ def tableDynamic (s : Computed) (d : Declaration) : Option String :=
         else if t == "smaller" then value (px (s.fontSize / 1.2))
         else value t
   | "line-height" =>
-    match tableComputed s.fontSize "line-height" d.value with
+    let computed := (CssValues.specified "line-height" d.value).map fun v =>
+      CssValues.computed {num := {fontSize := tableRat s.fontSize, rootFontSize := tableRat s.rootFontSize}}
+        "line-height" v
+    match computed with
     | none => none
     | some t =>
       match percentOf t with
@@ -3056,7 +3059,8 @@ of the inline containing them. The parent's own display controls propagation. -/
 theorem finishEffects_lineRise_inline (parent s : Computed) (hd : s.display = .inline)
     (hb : s.pos.contents = false) :
     (finishEffects parent s).lineRise = parent.childLineRise + s.numericAlign := by
-  simp [finishEffects, hd, hb]
+  have hi : (s.display == .inline) = true := by rw [hd] <;> rfl
+  simp [finishEffects, hi, hb]
 
 #print axioms finishEffects_lineRise_inline
 
@@ -4126,6 +4130,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         a.top == ua.top && a.right == ua.right && a.bottom == ua.bottom && a.left == ua.left) &&
         ua.top + ua.bottom > 0 then
       result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
+  if n.parent.any (fun p => (dom.get p).type == .document) then
+    result := {result with rootFontSize := result.fontSize}
   if n.ns == some DOM.svgNS then
     result := {result with svgAuthor := chosen.filterMap fun (key,(priority,d)) =>
       let author := (priority[1]?.getD 0) ≥ 2
@@ -4141,8 +4147,6 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
       else if key == "vertical-align" then vertical := some d
       else result := applyWinnerM (memos.get? key) parent initial result d
-  if n.parent.any (fun p => (dom.get p).type == .document) then
-    result := {result with rootFontSize := result.fontSize}
   if let some d := vertical then
     result := applyWinnerM (memos.get? "vertical-align") parent initial result d
   -- A root or body never clips here: the window scrolls instead.

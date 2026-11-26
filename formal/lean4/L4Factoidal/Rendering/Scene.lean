@@ -368,6 +368,9 @@ structure GlyphRun where
   fontSize : Float
   text : String
   glyphs : Array Glyph
+  /-- First source and cluster of this layout line (or an atomic source at its
+  start). Independent of vertical alignment, transforms and device scale. -/
+  lineKey : Option (Nat × Nat) := none
   deriving Repr
 /-- An inline/block link fragment in scene coordinates. Source is the stable
 DOM anchor node, not a paint-list index. The href is data, never navigation. -/

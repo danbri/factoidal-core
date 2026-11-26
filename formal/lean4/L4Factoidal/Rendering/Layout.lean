@@ -1171,6 +1171,9 @@ inductive Inline where
   | atomic (source : Nat) (style : Computed) (width height : Float) (inner : Result)
   /-- Bounds of an `inline-block` in the flat list that `inlineItems` gives. -/
   | openAtomic (source : Nat) (style : Computed)
+  /-- An inline-level formatting context that needs the block/flex/grid layout
+  algorithm. Resolve its size when its containing inline-block width is known. -/
+  | layoutAtomic (source : Nat) (style : Computed)
   | closeAtomic
   /-- A bidi control character that an inline box with `unicode-bidi` adds (CSS
   Writing Modes 3 §2.4.2): no width, no paint. -/
@@ -1412,6 +1415,8 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
     -- as an atomic box on a line of its own, as wide as the line (`AtomicFrame.opened`),
     -- with its background, borders, padding and size. Until 2026-11-23 only its contents
     -- were kept: `<a><div class=votearrow></div></a>` drew nothing (Hacker News).
+    if s.display.isInlineContainer || (s.display == .inlineBlock && blockInside dom styles id) then
+      return #[.layoutAtomic id s]
     let sized := fun (l : CSS.Length) => match l with | .auto => false | _ => true
     -- a block of zero height with no border or padding collapses through (CSS 2.1 §8.3.1): no box
     let collapsing := (match s.height with | .px h => h == 0 | _ => false) && s.padding.top == 0 && s.padding.bottom == 0 &&
@@ -1474,6 +1479,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
   return out
 
 private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
+  | .layoutAtomic .. => throw "inline formatting context has not been laid out"
   | .word _ s text _ => do
     match ← font.word s text rtl with
     | none => return (font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx)*Float.ofNat text.length
@@ -1603,7 +1609,13 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       let (a,d) := font.metricsOf style
       ascent := a*style.fontSize/font.unitsPerEm+leading
       descent := d*style.fontSize/font.unitsPerEm+leading
+  let mut lineKey : Option (Nat × Nat) := none
   for (_,item) in items do
+    if lineKey.isNone then
+      match item with
+      | .word source _ _ start => lineKey := some (source.paint, start)
+      | .atomic id .. => lineKey := some (id, 0)
+      | _ => pure ()
     match item with
     | .word _ s _ _ | .space _ s | .lineBreak s | .blockBreak s =>
       let leading := lineLeading font s
@@ -1613,7 +1625,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
     | .openInline _ s _ =>
       -- A raised inline also contributes its own line-height when its only
       -- content is a child with different font metrics or its own displacement.
-      if lineExists && s.lineRise != 0 then
+      if lineExists then
         let leading := lineLeading font s
         let (a,d) := font.metricsOf s
         ascent := max ascent (a*s.fontSize/font.unitsPerEm+leading+s.lineRise)
@@ -1642,7 +1654,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         descent := max descent (h/2-s.fontSize/4-s.lineRise)
       | .top => tallTop := max tallTop h
       | .bottom => tallBottom := max tallBottom h
-    | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ | .closeInline .. => pure ()
+    | .layoutAtomic .. | .openAtomic _ _ | .closeAtomic | .bidiMark _ | .outOfFlow _ | .closeInline .. => pure ()
   -- A box aligned to the top or bottom of the line makes the line tall enough for it.
   if tallBottom > ascent+descent then ascent := tallBottom-descent
   if tallTop > ascent+descent then descent := tallTop-ascent
@@ -1707,7 +1719,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let advance := font.advance*s.fontSize/font.unitsPerEm+s.letterSpacingPx
         let glyphs := chars.toArray.mapIdx fun i c =>
           ({index := c.toNat, x := x+offset+Float.ofNat i*advance, y := top, advance, clusterStart := start+i, clusterEnd := start+i+1} : Glyph)
-        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs,lineKey⟩
         out := pushInlineBox {out with nodes := out.nodes ++ glyphNodes font run s, runs := out.runs.push run}
           ⟨source.geometry,x+offset,boxTop,advance*Float.ofNat chars.length,s.lineHeight⟩
         extent := some (x+offset,x+offset+advance*Float.ofNat chars.length)
@@ -1716,7 +1728,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         let width := word.advance*s.fontSize/font.unitsPerEm
         let glyphs := word.glyphs.map fun glyph =>
           ({index := glyph.index,x := x+offset+glyph.x*scale,y := top+glyph.y*scale, advance := glyph.advance*scale,clusterStart := start+glyph.clusterStart,clusterEnd := start+glyph.clusterEnd} : Glyph)
-        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs⟩
+        let run : GlyphRun := ⟨source.paint,font.family,s.fontSize,text,glyphs,lineKey⟩
         out := pushInlineBox
           {out with nodes := out.nodes ++ shapedNodes word run s (x+offset) itemBaseline width, runs := out.runs.push run}
           ⟨source.geometry,x+offset,boxTop,width,s.lineHeight⟩
@@ -1751,8 +1763,15 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
         | .top => y
         | .bottom => y+ascent+descent-height
       let moved := shiftResult (x+offset) top inner
+      -- The text of a one-line atomic shares its parent's selection line.
+      -- A multiline atomic keeps the line identities established inside it.
+      let runs := match moved.runs[0]? with
+        | none => moved.runs
+        | some first => if moved.runs.all (fun run => run.lineKey == first.lineKey) then
+            moved.runs.map fun run => {run with lineKey}
+          else moved.runs
       -- `inner` holds the border box of the inline-block first, then its content boxes.
-      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ moved.runs, boxes := out.boxes ++ moved.boxes,
+      out := {out with nodes := out.nodes ++ moved.nodes, runs := out.runs ++ runs, boxes := out.boxes ++ moved.boxes,
                        inlineFlowRight := mergeInlineRight out moved, pending := out.pending ++ moved.pending, work := out.work+moved.work, rough := out.rough || moved.rough}
       extent := some (x+offset,x+offset+width)
     | .outOfFlow source => out := {out with pending := out.pending.push {id := source, x := x+offset, y}}
@@ -1820,7 +1839,7 @@ private def bidiChars : Inline → Array Char
   | .lineBreak _ | .blockBreak _ => #[' ']
   | .replaced .. | .atomic .. => #['￼']
   | .bidiMark c => #[c]
-  | .openAtomic _ _ | .closeAtomic | .outOfFlow _ | .openInline .. | .closeInline .. => #[]
+  | .layoutAtomic .. | .openAtomic _ _ | .closeAtomic | .outOfFlow _ | .openInline .. | .closeInline .. => #[]
 
 /-- A class that makes a block take the bidi path: right-to-left letters, Arabic
 digits and the explicit formatting characters. -/
@@ -2428,11 +2447,16 @@ private def atomicBox (font : FontProfile) (frame : AtomicFrame) (items : Array 
 
 /-- Each matched inline-block becomes one atomic item in its parent's line. The stack
 holds one frame per open bound, limited by the DOM depth budget of `inlineItems`. -/
-def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Except String (Array Inline) := do
+def atomize (font : FontProfile) (items : Array Inline) (available : Float)
+    (layoutAtomic : Nat → Computed → Float → Except String Inline :=
+      fun _ _ _ => throw "inline formatting context needs layout") : Except String (Array Inline) := do
   let mut out : Array Inline := #[]
   let mut frames : List AtomicFrame := []
   for item in items do
     match item with
+    | .layoutAtomic id s =>
+      let room := match frames with | parent :: _ => parent.lineWidth | [] => available
+      out := out.push (← layoutAtomic id s room)
     | .openAtomic id s =>
       let room := match frames with | parent :: _ => parent.lineWidth | [] => available
       frames := AtomicFrame.opened id s out room :: frames
@@ -2445,40 +2469,6 @@ def atomize (font : FontProfile) (items : Array Inline) (available : Float) : Ex
     | other => out := out.push other
   -- Bounds always pair in `inlineItems`; an unpaired open keeps its content inline.
   return frames.foldl (fun rest frame => frame.before ++ rest) out
-
-/-- Regression fixture for two neighbouring glyphs. The first sits inside a span
-or an inline-block. Use the cascade, anonymous text styles, atomisation, line
-measurement, paint and geometry of the ordinary inline path. -/
-private def verticalAlignFixture (style : String) : Option Result := do
-  let dom := DOM.parseHtmlDocument ("<html style='font-size:24px'><body><div style='font-size:20px;line-height:20px'><span style='" ++
-    style ++ "'>X</span>X</div></body></html>")
-  let styles ← (CSS.computeAllWith (fun _ => []) dom).toOption
-  let id ← dom.nodes.findIdx? (fun n => n.lname == "div")
-  let font : FontProfile := {family := "fixture", unitsPerEm := 20, advance := 20, ascent := 16, descent := 4,
-    outline := fun _ => [.rect 0 0 20 20], admits := fun _ => true}
-  let mut items := #[]
-  for child in (dom.get id).kids do
-    items := items ++ (← (inlineItems dom styles (fun _ _ _ _ => pure []) (fun _ => none) 200 8 child).toOption)
-  let items ← (atomize font items 200).toOption
-  (inlineLayout font items 0 0 200 (some styles[id]!)).toOption
-
-private def verticalGeometry (style : String) := (verticalAlignFixture style).map fun r =>
-  (r.height, r.runs.map (fun run => run.glyphs[0]?.map (·.y)), r.boxes.map (·.y))
-
--- Raising just the span raises the common baseline. Its painted glyph, text
--- hit box and enclosing inline fragment remain together at y=0.
-#guard verticalGeometry "vertical-align:96px" ==
-  some (116, #[some 0, some 96], #[0,0,96])
-#guard ((verticalAlignFixture "vertical-align:96px").map fun r =>
-  r.nodes.filterMap fun n => match n with
-    | .paint item => some item.primitive.transform.f
-    | _ => none) == some #[0,96]
--- An inline-block's outer shift is applied once to its complete contents.
-#guard verticalGeometry "vertical-align:-0.25rem;display:inline-block" ==
-  some (26, #[some 6, some 0], #[6,6,0])
--- The first word uses its own font size and line height. Half-leading is 5px.
-#guard verticalGeometry "vertical-align:50%;line-height:30px;font-size:20px" ==
-  some (40, #[some 5, some 20], #[0,5,20])
 
 /-- A wrapper to see through: an inline element (not a link, not replaced, not SVG) with no
 margin, border, padding or background of its own, that has a block-level child in flow.
@@ -2962,7 +2952,7 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
               beside := 0
             widths := (max widths.1 c,widths.2)
             beside := beside+d
-          else if (styles[k]!).display.isBlockLevel || (styles[k]!).display.isInlineContainer then
+          else if (styles[k]!).display.isBlockLevel then
             let (a,b) ← inlineWidths inline minContent indent
             inline := #[]
             minContent := #[]
@@ -2970,15 +2960,15 @@ def intrinsic (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedd
             if (styles[k]!).pos.clear != .none then beside := 0
             let (c,d) ← intrinsic dom styles font embedding pictures fuel (.box k)
             widths := (max widths.1 c,max widths.2 (d+beside))
-          else if (styles[k]!).display == .inlineBlock && blockInside dom styles k then
-            let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box k)
-            -- These items only measure the line. Their widths already include
-            -- margins, so the synthetic boxes cover that full extent.
-            let style := {styles[k]! with margin := {}}
-            minContent := minContent.push (inline.size, .replaced k style lo 0 [])
-            inline := inline.push (.replaced k style hi 0 [])
           else
-            inline := inline ++ (← inlineItems dom styles embedding pictures 0 fuel k)
+            for item in ← inlineItems dom styles embedding pictures 0 fuel k do
+              match item with
+              | .layoutAtomic child cs =>
+                let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
+                let style := {cs with margin := {}}
+                minContent := minContent.push (inline.size, .replaced child style lo 0 [])
+                inline := inline.push (.replaced child style hi 0 [])
+              | _ => inline := inline.push item
       let (a,b) ← inlineWidths inline minContent indent
       return (max widths.1 a,max widths.2 (b+beside))
     let tableWidths (element : Option Nat) (container : Nat) (kids : Array Nat) : Except String (Float × Float) := do
@@ -3176,6 +3166,16 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       | .rough inner => inner
       | other => other
     let sub := fun (t : Task) => if measure then Task.rough t else t
+    let layoutAtomic (child : Nat) (cs : Computed) (width : Float) : Except String Inline := do
+      let edges := cs.margin.left+cs.margin.right
+      let outer ← match CSS.resolve width cs.width with
+        | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
+        | none => do
+          let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
+          pure (shrinkWidth cs.width lo hi width)
+      let r ← layoutTask dom styles font embedding pictures fuel
+        (sub <| .sized child (max 0 (outer-edges)) none) 0 0 width
+      return .atomic child cs outer r.height {r with inlineFlowRight := none}
     -- The flow of `kids` in a block container with style `s`: block-level children
     -- stack, inline children share line boxes, runs of internal table boxes are tables.
     -- `before` is the margin that adjoins the top of the flow (the container's own, when it
@@ -3196,7 +3196,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
         | .run run =>
           if !inline.isEmpty then
             let top := innerY+content.height
-            let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+            let lines ← inlineLayout font (← atomize font inline width layoutAtomic) innerX top width (some s)
               (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
             content := append content lines
             inline := #[]
@@ -3254,7 +3254,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
           else if cs.display.isBlockLevel then
             if !inline.isEmpty then
               let top := innerY+content.height
-              let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+              let lines ← inlineLayout font (← atomize font inline width layoutAtomic) innerX top width (some s)
                 (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
               content := append content lines
               inline := #[]
@@ -3300,25 +3300,11 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
             else
               content := {append content r with height := content.height-overlap+r.height}
               previous := r.marginBottom
-          else if cs.display.isInlineContainer || (cs.display == .inlineBlock && blockInside dom styles child) then
-            -- An inline-level flex or grid container, or an inline-block with blocks inside:
-            -- one atomic box, as wide as its content (shrink-to-fit, CSS 2.1 §10.3.9) unless
-            -- its width is given.
-            let edges := cs.margin.left+cs.margin.right
-            let outer ← match CSS.resolve width cs.width with
-              | some w => pure (clampOpt ((CSS.resolve width cs.minWidth).getD 0) (CSS.resolve width cs.maxWidth) w+horizontalEdges cs)
-              | none => do
-                let (lo,hi) ← intrinsic dom styles font embedding pictures fuel (.box child)
-                pure (shrinkWidth cs.width lo hi width)
-            let r ← layoutTask dom styles font embedding pictures fuel (sub <| .sized child (max 0 (outer-edges)) none) 0 0 width
-            -- This result is a block formatting context, whose boxes are
-            -- measured by its own sizing pass.
-            inline := inline.push (.atomic child cs outer r.height {r with inlineFlowRight := none})
           else
             inline := inline ++ (← inlineItems dom styles embedding pictures width fuel child)
       if !inline.isEmpty then
         let top := innerY+content.height
-        let lines ← inlineLayout font (← atomize font inline width) innerX top width (some s)
+        let lines ← inlineLayout font (← atomize font inline width layoutAtomic) innerX top width (some s)
           (fun dy => floatBand floats innerX width (top+dy) s.lineHeight) (uniformLineBand s floats top)
         content := append content lines
         if lines.height > 0 then previous := 0
@@ -3912,6 +3898,71 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
     | .inner id width => box id (some width) none true
     | .positioned content cx cy cw ch => place content cx cy cw ch true fun _ => none
     | .rough inner => layoutTask dom styles font embedding pictures fuel (.rough inner) x y available
+
+/-- Regression fixture for two neighbouring glyphs. The first sits inside a span
+or an inline-block. Use the cascade, anonymous text styles, atomisation, line
+measurement, paint and geometry of the ordinary inline path. -/
+private def inlineMarkupFixture (markup : String) : Option Result := do
+  let dom := DOM.parseHtmlDocument ("<html style='font-size:24px'><body><div style='font-size:20px;line-height:20px'>" ++
+    markup ++ "</div></body></html>")
+  let styles ← (CSS.computeAllWith (fun _ => []) dom).toOption
+  let id ← dom.nodes.findIdx? (fun n => n.lname == "div")
+  let font : FontProfile := {family := "fixture", unitsPerEm := 20, advance := 20, ascent := 16, descent := 4,
+    outline := fun _ => [.rect 0 0 20 20], admits := fun _ => true}
+  (layoutTask dom styles font (fun _ _ _ _ => pure []) (fun _ => none) 32
+    (.contents id (dom.get id).kids) 0 0 200).toOption
+
+private def verticalAlignFixture (style : String) : Option Result :=
+  inlineMarkupFixture ("<span style='" ++ style ++ "'>X</span>X")
+
+private def verticalGeometry (style : String) := (verticalAlignFixture style).map fun r =>
+  (r.height, r.runs.map (fun run => run.glyphs[0]?.map (·.y)), r.boxes.map (·.y))
+
+-- Raising just the span raises the common baseline. Its painted glyph, text
+-- hit box and enclosing inline fragment remain together at y=0.
+#guard verticalGeometry "vertical-align:96px" ==
+  some (116, #[some 0, some 96], #[0,0,96])
+#guard ((verticalAlignFixture "vertical-align:96px").map fun r =>
+  r.nodes.filterMap fun n => match n with
+    | .paint item => some item.primitive.transform.f
+    | _ => none) == some #[0,96]
+-- An inline-block's outer shift is applied once to its complete contents.
+#guard verticalGeometry "vertical-align:-0.25rem;display:inline-block" ==
+  some (26, #[some 6, some 0], #[6,6,0])
+-- The first word uses its own font size and line height. Half-leading is 5px.
+#guard verticalGeometry "vertical-align:50%;line-height:30px;font-size:20px" ==
+  some (40, #[some 5, some 20], #[0,5,20])
+
+-- The HTML root uses 24px. The child's 2rem line is 48px, so the
+-- second glyph is 24px below the first, including the child's half-leading.
+#guard verticalGeometry "line-height:2rem;vertical-align:50%" ==
+  some (58, #[some 14, some 38], #[0,14,38])
+
+-- The middle inline's displacement is zero after the two offsets cancel.
+-- Its own 100px line-height still contributes even though its text is in a
+-- descendant whose line-height is only 20px.
+#guard ((inlineMarkupFixture ("<span style='vertical-align:10px'><span style='vertical-align:-10px;line-height:100px'>" ++
+  "<span style='line-height:20px'>X</span></span></span>X")).map (·.height)) == some 100
+
+private def nestedAtomicGeometry (display offset : String) : Option (Float × Float) := do
+  let r ← inlineMarkupFixture ("<span><span style='width:60px;grid-template-columns:20px 20px;display:" ++
+    display ++ ";vertical-align:" ++ offset ++ "'><span>X</span><span>Y</span></span></span>Z")
+  let first ← r.runs.find? (fun run => run.text == "X")
+  let second ← r.runs.find? (fun run => run.text == "Y")
+  let sibling ← r.runs.find? (fun run => run.text == "Z")
+  let x ← first.glyphs[0]?
+  let y ← second.glyphs[0]?
+  let z ← sibling.glyphs[0]?
+  -- Both children sit inside the 60px atomic box. Flattening discards its width.
+  if z.x != 60 || x.y != y.y then none else some (z.y-x.y, y.x-x.x)
+
+#guard ["inline-flex","inline-grid"].all (fun d =>
+  match nestedAtomicGeometry d "0", nestedAtomicGeometry d "20px" with
+  | some (before, gap), some (after, gap') => after-before == 20 && gap == 20 && gap' == gap
+  | _, _ => false)
+
+#guard ((verticalAlignFixture "vertical-align:96px").map fun r =>
+  (r.runs[0]?.bind (·.lineKey)).isSome && (r.runs[0]?.bind (·.lineKey)) == (r.runs[1]?.bind (·.lineKey))) == some true
 
 /-- An element's block box: `layoutTask` of `.box id`. -/
 def block (dom : Dom) (styles : Array Computed) (font : FontProfile) (embedding : Embedding)

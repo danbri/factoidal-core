@@ -13,3 +13,11 @@ The candidate accepts signed CSS absolute lengths, em, rem, lh, percentages and 
 The module guards cover positive and negative offsets, physical unit conversion, a root-relative inline-block, a percentage with its own line height, hit boxes, glyph runs and paint coordinates. The two theorems state when an inline adds its numeric displacement and when an inline-block starts an unshifted child context. These statements do not establish end-to-end rendering equivalence.
 
 The selected visual cases use the exact WPT revision from [baseline run 45732559655](https://github.com/danbri/factoidal-builds/actions/runs/45732559655). The eighteen numeric failures include the two ex cases. Three signed-zero controls use the same line-box directory. The adjacent JSON supplies the static inputs to factoidal-builds branch-reftests.yml. Add the candidate build run and full core commit SHA to its inputs. Candidate pass counts, engine sizes, browser timings and a before/after BBC render require runs on the resulting package.
+
+## Review changes
+
+An inline contributes its line height even when two numeric offsets cancel. Nested inline flex and grid containers emit a pending atomic item. Both intrinsic measurement and the containing line resolve that item through the same flex/grid layout path as a direct child, using the enclosing inline-block's available width. Root-relative line-height calculations use the document element's font size before vertical-align resolves a percentage.
+
+Glyph runs carry the first source and cluster of their layout line, or the first atomic box's source. Text selection and Find use that identity across displaced glyphs. Selection rectangles retain the painted positions. Producers without layout line information keep the geometry fallback.
+
+The first [exact build](https://github.com/danbri/factoidal-builds/actions/runs/45749114504) rejected the inline-propagation proof. The revised proof supplies the missing display equality. The new guards exercise cancellation with a 100px inline, nested flex and grid boxes, a 2rem line height under a 24px document element, and adjacent displaced text through copy and Find. The two ex cases depend on [selected-font x-height](https://github.com/danbri/factoidal/issues/1307). Kernel checks, pixel outcomes and timings for this revision await its exact build.

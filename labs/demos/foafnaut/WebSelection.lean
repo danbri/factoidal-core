@@ -17,6 +17,7 @@ structure Cell where
   text : String
   /-- The glyph is in a right-to-left run: its logical end is its left edge. -/
   rtl : Bool := false
+  lineKey : Option (Nat × Nat) := none
   deriving Repr, Inhabited
 
 /-- What a press selects, by its click count (issue 1031): one press selects from caret to
@@ -81,11 +82,11 @@ def cells (runs : Array GlyphRun) : Array Cell := Id.run do
       let text := if last == some g.clusterStart then "" else
         String.ofList (chars.extract (g.clusterStart-base) (g.clusterEnd-base)).toList
       last := some g.clusterStart
-      out := out.push {run:=index,source:=run.source,x:=g.x,y:=g.y,width:=g.advance,height:=run.fontSize,text,rtl}
+      out := out.push {run:=index,source:=run.source,x:=g.x,y:=g.y,width:=g.advance,height:=run.fontSize,text,rtl,lineKey:=run.lineKey}
   return out
 
 -- A base and its mark are one cluster: the text is copied once.
-#guard (cells #[⟨0,"f",16,"n\u0308a",#[⟨1,0,0,8,0,2⟩,⟨2,4,0,0,0,2⟩,⟨3,8,0,8,2,3⟩]⟩]).toList.map (·.text) == ["n\u0308","","a"]
+#guard (cells #[⟨0,"f",16,"n\u0308a",#[⟨1,0,0,8,0,2⟩,⟨2,4,0,0,0,2⟩,⟨3,8,0,8,2,3⟩],none⟩]).toList.map (·.text) == ["n\u0308","","a"]
 
 /-- A glyph is before a point when its line is above the point, or when the
 point is on its line and past the middle of the glyph in the glyph's direction:
@@ -95,13 +96,25 @@ private def Cell.before (c : Cell) (x y : Float) : Bool :=
 
 /-- The caret position of a point: one past the last glyph before the point. -/
 def caret (items : Array Cell) (x y : Float) : Nat :=
-  items.zipIdx.foldl (fun at_ (c,i) => if c.before x y then i+1 else at_) 0
+  Id.run do
+    let mut at_ := 0
+    for (c,i) in items.zipIdx do
+      let before := c.before x y
+      if c.x <= x && x < c.x+c.width && c.y <= y && y < c.y+c.height then
+        return if before then i+1 else i
+      if before then at_ := i+1
+    return at_
 
 /-- White space for find: space, tab, line breaks and no-break space. -/
 def findSpace (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r' || c.toNat == 0xA0
 
-private def sameLine (a b : Cell) : Bool :=
+private def overlapsVertically (a b : Cell) : Bool :=
   a.y < b.y+b.height && b.y < a.y+a.height
+
+private def sameLine (a b : Cell) : Bool :=
+  match a.lineKey, b.lineKey with
+  | some x, some y => x == y
+  | _, _ => overlapsVertically a b
 
 /-! ### Words and lines (double and triple click; issue 1031)
 
@@ -206,7 +219,7 @@ def rangeRects (items : Array Cell) (low high : Nat) : Array (Float × Float × 
   for c in (items.extract low high) do
     match line, out.back? with
     | some first, some (x,y,w,h) =>
-      if sameLine first c then
+      if sameLine first c && overlapsVertically first c then
         let top := min y c.y
         let bottom := max (y+h) (c.y+c.height)
         -- Right-to-left glyphs extend the rectangle to the left.
@@ -516,8 +529,20 @@ theorem reset_eq_normal_text (percent unit : Nat) :
 #guard isClick 10 10 12 8 && !isClick 10 10 14 10
 
 private def sampleRun (source : Nat) (text : String) (x y : Float) (start : Nat := 0) : GlyphRun :=
-  ⟨source,"test",10,text,text.toList.toArray.mapIdx fun i _ =>
-    ({index := 0,x := x+Float.ofNat i*6,y,advance := 6,clusterStart := start+i,clusterEnd := start+i+1} : Glyph)⟩
+  ⟨source,"test",10,text,text.toList.toArray.mapIdx (fun i _ =>
+    ({index := 0,x := x+Float.ofNat i*6,y,advance := 6,clusterStart := start+i,clusterEnd := start+i+1} : Glyph)),none⟩
+-- The two neighbouring words are on one layout line, despite the 96px
+-- gap in painted y. Copy and Find join them. The highlight covers the two
+-- actual glyph fragments, without colouring the space between them.
+private def displacedSample := cells #[
+  {sampleRun 1 "X" 0 0 with lineKey := some (1,0)},
+  {sampleRun 2 "X" 6 96 with lineKey := some (1,0)}]
+#guard text displacedSample .all == "XX"
+#guard findMatches displacedSample "XX" == #[(0,2)]
+#guard lineRects displacedSample .all == #[(0,0,6,10),(6,96,6,10)]
+#guard caret displacedSample 7 100 == 1
+#guard text (cells #[{sampleRun 1 "X" 0 0 with lineKey := some (1,0)},
+  {sampleRun 2 "X" 6 0 with lineKey := some (2,0)}]) .all == "X\nX"
 private def sample := cells #[sampleRun 1 "one" 0 0,sampleRun 1 "two" 24 0 4,sampleRun 1 "three" 0 12 8,sampleRun 2 "four" 0 30]
 #guard text sample .all == "one two three\nfour"
 #guard text sample (.span 7 5 38 5) == "ne tw"
@@ -531,7 +556,7 @@ private def sample := cells #[sampleRun 1 "one" 0 0,sampleRun 1 "two" 24 0 4,sam
 private def rtlRun : GlyphRun := ⟨1,"test",10,"abc",#[
   ({index := 0,x := 0,y := 0,advance := 6,clusterStart := 2,clusterEnd := 3} : Glyph),
   {index := 0,x := 6,y := 0,advance := 6,clusterStart := 1,clusterEnd := 2},
-  {index := 0,x := 12,y := 0,advance := 6,clusterStart := 0,clusterEnd := 1}]⟩
+  {index := 0,x := 12,y := 0,advance := 6,clusterStart := 0,clusterEnd := 1}],none⟩
 #guard text (cells #[rtlRun]) .all == "abc"
 #guard text (cells #[rtlRun]) (.span 18 5 5 5) == "ab"
 #guard (lineRects (cells #[rtlRun]) .all) == #[(0,0,18,10)]
