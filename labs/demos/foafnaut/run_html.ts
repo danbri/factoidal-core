@@ -1,3 +1,4 @@
+import process from "node:process";
 import {loadHTML,type HTMLArtifact,type HTMLLayers,type HistoryAnswer,type ShellEdit,type MenuAction} from "./native_html_engine.ts";
 import {printImages,pdfPageCount,DEFAULT_PAPER} from "./native_print.ts";
 import {clampOffset,keeps} from "./layer_compositor.ts";
@@ -2416,12 +2417,22 @@ async function main() {
         // "go:URL" (a test step): navigate the shown tab, as the address bar would.
         else if(typeof step==="string"&&step.startsWith("go:"))navigate(step.slice(3));
         else if(step==="settle")trace("native-html-paste",{url:document.url,title:document.title});
+        // "mark" (a test step): the process's CPU time so far (user and system) and its resident
+        // memory, so a sweep can measure a window between two marks (engine_sessions_bench.py,
+        // the steady scenarios: idle CPU of the tabs not shown).
+        else if(step==="mark"){const cpu=process.cpuUsage();
+          trace("native-html-mark",{cpuMs:Math.round((cpu.user+cpu.system)/1000),rssMB:Math.round(Deno.memoryUsage().rss/1048576),tabs:tabs.length,active});}
         else if(typeof step==="string"&&/^at(Link|Text):/.test(step)){
           // The first link's centre, or 60 backing pixels right of its end on its row.
-          const [where,kind,flags]=step.split(":"),link=frame.webRender.links[0] as number[];
-          const x=Math.round(where==="atLink"?link[2]+link[4]/2:link[2]+link[4]+60),y=Math.round(windowRow(link[3]+link[5]/2));
-          trace("native-html-test-gesture",{step,x,y});
-          if(!native.testEventFlags(Number(kind),x,y,Number(flags)))native.testEvent(Number(kind),x,y);
+          const [where,kind,flags]=step.split(":"),link=frame.webRender.links?.[0] as number[]|undefined;
+          // A frame with no link (an open context menu is drawn over a page answer with none): the
+          // step is said and skipped, so a sweep goes on.
+          if(!link)trace("native-html-test-gesture",{step,missed:"no link in the frame shown"});
+          else{
+            const x=Math.round(where==="atLink"?link[2]+link[4]/2:link[2]+link[4]+60),y=Math.round(windowRow(link[3]+link[5]/2));
+            trace("native-html-test-gesture",{step,x,y});
+            if(!native.testEventFlags(Number(kind),x,y,Number(flags)))native.testEvent(Number(kind),x,y);
+          }
         }
         else if(step==="hold")stepAt=performance.now()+300;
         else if(step==="press-link"){

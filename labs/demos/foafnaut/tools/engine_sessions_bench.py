@@ -29,6 +29,18 @@ Scenarios (the steps language of run_html.ts --steps):
   rex     pages/particle-rex.html for 8 s (its title screen animates): timer turns (count, engine
           ms per turn, call beyond the engine, wait before the next ask) and page-canvas
           presents (count, ms), frame total.
+  steady5, steady20, steady50
+          N tabs in steady state: from the start page, N-1 new tabs, each then sent to a demo page
+          (tab 2 to particle-rex.html), one at a time; then tab 1 is shown again and the host
+          marks (`mark` step: process CPU time and resident memory), stays idle 10 s, marks, gets
+          3 rounds of the gestures of --gesture-sweep and then 30 scroll steps, and marks. Numbers:
+          resident memory after the tabs loaded and at exit; process CPU in the idle window (per
+          cent of one CPU, and per tab not shown); after the idle window, scroll frame total
+          (`native-html-scroll`), Lean frame total and gesture queuedToActionMs, p50, p95 (and max),
+          each with its count; the
+          engines live and the tabs that share one (the cap, --engine-workers, applies to every
+          mode). Only the shown tab's page gets timer turns, so the pages of the other tabs run
+          no script.
 
 Output: one JSON object, with each run's numbers and, per configuration and scenario, the
 median, the worst and the coefficient of variation of each number
@@ -42,6 +54,38 @@ def heavy_page(path):
                    for i in range(20000))
     path.write_text(f"<!doctype html><title>Heavy</title><table>{rows}</table>")
 
+STEADY = (5, 20, 50)
+
+def demo_pages():
+    """The HTML demo pages that the app does not refuse, particle-rex.html first."""
+    manifest = json.loads((HERE / "pages" / "manifest.json").read_text())
+    pages = sorted(p["page"] for p in manifest["pages"]
+                   if p["page"].endswith(".html") and not p.get("refused") and not p.get("appRefused"))
+    return ["particle-rex.html"] + [p for p in pages if p not in ("particle-rex.html", "index.html")]
+
+# One round of the gestures of --gesture-sweep (run_html.ts): a double and a triple click on text,
+# select all and copy, a right click on the link and on the text. Each context menu is closed with
+# Escape ([5, 53, 0]): the frame with an open menu has no link to aim at. Left out: the sweep's
+# plain click (on index.html the text after the first link is a link, so the click navigates) and
+# its middle click (it opens a tab).
+ESCAPE = [5, 53, 0]
+GESTURE_ROUND = ["atText:2:512", "atText:4:512", "hold", "atText:2:768", "atText:4:768", "hold", "a", "hold", "c", "hold",
+                 "atLink:13:65536", "hold", ESCAPE, "hold", "atText:13:65536", "hold", ESCAPE, "hold"]
+
+def steady_steps(n):
+    pages = demo_pages()
+    steps = []
+    for i in range(1, n):
+        page = pages[(i - 1) % len(pages)]
+        url = f"go:file://{HERE}/pages/{page}"
+        # particle-rex.html animates its title screen, so it does not settle: the step after it
+        # (the next new tab) comes 2 s later instead of after a settled frame.
+        steps += ["t", "now:2:2000", url] if page == "particle-rex.html" else ["t", url]
+    steps += ["1", f"tabs={n}:0", "mark"] + ["hold"] * 33 + ["mark"]
+    # Gestures first, at scroll 0 (the sweep's first link must be on screen), then 30 scroll steps.
+    steps += GESTURE_ROUND * 3 + ["hold"] + [[11, -120, 0]] * 30 + ["hold", "mark"]
+    return steps
+
 def scenarios(work):
     heavy = work / "heavy.html"
     if not heavy.exists():
@@ -50,6 +94,8 @@ def scenarios(work):
     steps["heavy"] = ["now:2:300", f"go:file://{heavy}", "t", "now:42:150"] + [[5, 0, 0], [9, 97, 0]] * 21
     steps["tabs"] = ["now:7:1000"] + ["t"] * 7
     steps["tabs-spaced"] = ["now:7:3000"] + ["t"] * 7
+    for n in STEADY:
+        steps[f"steady{n}"] = steady_steps(n)
     files = {}
     for name, value in steps.items():
         f = work / f"steps-{name}.json"
@@ -59,6 +105,7 @@ def scenarios(work):
         "heavy": ["--html", "pages/index.html", "--steps", str(files["heavy"])],
         "tabs": ["--html", "pages/index.html", "--steps", str(files["tabs"])],
         "tabs-spaced": ["--html", "pages/index.html", "--steps", str(files["tabs-spaced"])],
+        **{f"steady{n}": ["--html", "pages/index.html", "--steps", str(files[f"steady{n}"])] for n in STEADY},
         "one": ["--html", "pages/index.html", "--watch-sweep", "4"],
         "status": ["--html", "pages/status.html", "--resize-sweep"],
         "rex": ["--html", "pages/particle-rex.html", "--watch-sweep", "8"],
@@ -83,6 +130,44 @@ def run_once(lab, engine, mode, args, timeout):
                 pass
     return p.returncode, time.time() - t0, records, p.stderr[-2000:]
 
+def pct(values, q):
+    """Nearest-rank percentile (as the host's `percentile`), or None for no values."""
+    if not values:
+        return None
+    v = sorted(values)
+    return round(v[max(0, min(len(v) - 1, -(-int(q * 1000 * len(v)) // 1000) - 1))], 1)
+
+def steady_numbers(records, summary):
+    """The numbers of a steady scenario, from its three `mark` records (see the module doc)."""
+    out = {}
+    marks = [r for r in records if r.get("type") == "native-html-mark"]
+    if len(marks) < 3:
+        return out
+    m0, m1, m2 = marks[0], marks[1], marks[-1]
+    n = m0.get("tabs") or 0
+    out["steadyTabs"] = n
+    out["rssLoadedMB"] = m0.get("rssMB")
+    idle = m1["t"] - m0["t"]
+    if idle > 0:
+        out["idleCpuPct"] = round(100 * (m1["cpuMs"] - m0["cpuMs"]) / idle, 2)
+        if n > 1:
+            out["idleCpuPctPerHiddenTab"] = round(out["idleCpuPct"] / (n - 1), 3)
+    after = lambda r: r.get("t", 0) > m1["t"]
+    frames = [r["totalMs"] for r in records if r.get("type") == "native-html-frame" and after(r) and isinstance(r.get("totalMs"), (int, float))]
+    gestures = [r["queuedToActionMs"] for r in records if r.get("type") == "native-html-gesture" and after(r)]
+    inputs = [r["ms"] for r in records if r.get("type") == "native-html-input-latency" and after(r) and isinstance(r.get("ms"), (int, float))]
+    scrolls = [r["totalMs"] for r in records if r.get("type") == "native-html-scroll" and after(r) and isinstance(r.get("totalMs"), (int, float))]
+    out["activeFrames"], out["activeFrameP50Ms"], out["activeFrameP95Ms"] = len(frames), pct(frames, 0.5), pct(frames, 0.95)
+    out["scrollFrames"], out["scrollFrameP50Ms"], out["scrollFrameP95Ms"] = len(scrolls), pct(scrolls, 0.5), pct(scrolls, 0.95)
+    out["gestures"], out["gestureP50Ms"], out["gestureP95Ms"] = len(gestures), pct(gestures, 0.5), pct(gestures, 0.95)
+    out["gestureMaxMs"] = max(gestures) if gestures else None
+    out["activeInputs"], out["activeInputP95Ms"] = len(inputs), pct(inputs, 0.95)
+    if m2["t"] > m1["t"]:
+        out["activeCpuPct"] = round(100 * (m2["cpuMs"] - m1["cpuMs"]) / (m2["t"] - m1["t"]), 1)
+    ew = (summary or {}).get("engineWorkers") or {}
+    out["enginesLive"], out["enginesMaxLive"], out["sharedTabs"] = ew.get("live"), ew.get("maxLive"), ew.get("sharedTabs")
+    return out
+
 def numbers(scenario, records):
     """The numbers of one run."""
     out = {}
@@ -104,6 +189,8 @@ def numbers(scenario, records):
         out["canvasPresents"], out["canvasP50Ms"], out["canvasP95Ms"] = pc.get("count"), pc.get("p50Ms"), pc.get("p95Ms")
         ew = summary.get("engineWorkers") or {}
         out["engines"] = ew.get("engines") or ew.get("mode")
+    if scenario.startswith("steady"):
+        out.update(steady_numbers(records, summary))
     starts = [r for r in records if r.get("type") == "native-html-engine-worker" and r.get("state") == "started"]
     later = [s for s in starts if s.get("worker", 0) > 1]
     if later:
