@@ -733,6 +733,7 @@ iterator's own fails. -/
 #guard out "function* g() { const [x = yield] = []; x = 2 } var it = g(); it.next(); try { it.next(1) } catch (e) { print(e.name) }" == ["TypeError"]
 #guard out "var n = 0, it = { [Symbol.iterator]() { return this; }, next() { return { done: false }; }, return() { n++; return {}; } }; function* g() { var a; [a = yield] = it; } var i = g(); i.next(); print(i.return(5).value, n)" == ["5 1"]
 #guard out "async function f() { let {a, b: [c = await 3] = []} = {a: await 1}; return a + c } f().then(print)" == ["4"]
+#guard out "function* g() { var x, s = ''; for ([x = yield] of [[], [2]]) s += x; for (let {a = yield} of [{}]) s += a; for (const [b = yield 'c'] in {q: 1}) s += b; return s } var it = g(); it.next(); it.next(1); print(it.next(3).value)" == ["123q"]
 -- Expected failure, https://github.com/danbri/factoidal-core/issues/1167: a `yield` inside an
 -- optional chain is refused. This guard fails when the case starts to pass: then assert "1".
 #guard out "function* g() { var o = {a: 1}; return o?.[yield]; } var it = g(); try { it.next(); print(it.next('a').value) } catch (e) { print(e.name) }" == ["SyntaxError"]
