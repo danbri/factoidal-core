@@ -3,7 +3,7 @@ L4Factoidal.Media.Bench: `lake exe media-bench`, from `formal/lean4`
 (record: docs/designissues/2026-11-08-media-wasmvm.md).
 
     media-bench test                        container tests (no decoder modules needed)
-    media-bench audio WASMDIR FILE [OUT]    decode the audio of an Ogg or WebM file in
+    media-bench audio WASMDIR FILE [OUT]    decode the audio of an Ogg, WebM or MP3 file in
                                             WasmVM; OUT gets a WAV file and OUT.s16 the
                                             raw samples
     media-bench video WASMDIR FILE [N] [OUT]  decode N VP8 frames (default all) of a
@@ -74,9 +74,11 @@ def checkPins (dir : System.FilePath) : IO UInt32 := do
   return (if bad == 0 then 0 else 1)
 
 def decodeAudio (dir : System.FilePath) (file : String) : IO Decode.Pcm := do
+  let b ← IO.FS.readBinFile file
+  if file.endsWith ".mp3" then
+    return (← Decode.mp3 (← readModule dir "mp3-wasmvm.wasm") b (← IO.ofExcept (Mp3.read b)))
   let opusW ← readModule dir "opus-wasmvm.wasm"
   let vorbisW ← readModule dir "vorbis-wasmvm.wasm"
-  let b ← IO.FS.readBinFile file
   if isWebM b then Decode.webmAudio opusW vorbisW (← IO.ofExcept (WebM.demux b))
   else Decode.oggAudio opusW vorbisW b
 

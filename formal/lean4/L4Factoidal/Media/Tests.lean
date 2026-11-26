@@ -6,6 +6,7 @@ tests; see its README). The expected counts are those of `ffprobe -count_packets
 -/
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
+import L4Factoidal.Media.Mp3
 
 namespace L4Factoidal.Media.Tests
 open L4Factoidal.Media
@@ -113,6 +114,29 @@ def run : IO Bool := do
   match WebM.demux (w.extract 0 (w.size / 2)) with
   | .error e => t ← check t "webm cut short" false e
   | .ok r => t ← check t "webm cut short: some frames" (r.frames.size > 10 && r.frames.size < 149)
+  -- MP3 (Media.Mp3): the three clips of 2026-11-26. The two 44.1 kHz stereo files start with an
+  -- information frame whose LAME header gives delay 576 and padding 1584: 155 audio frames of 1152
+  -- samples, of which 576 + 529 are dropped at the start and 176400 (4 s) kept, as FFmpeg does.
+  for (name, frames, rate, ch, skip, keep) in [("arpeggio-cbr128.mp3", 155, 44100, 2, 1105, some 176400),
+      ("arpeggio-vbr.mp3", 155, 44100, 2, 1105, some 176400),
+      ("arpeggio-mono22.mp3", 156, 22050, 1, 0, none)] do
+    match Mp3.read (← IO.FS.readBinFile (mediaDir / name)) with
+    | .error e => t ← check t s!"mp3 {name}" false e
+    | .ok r =>
+      t ← check t s!"mp3 {name}: frames, rate, channels, gapless"
+        (r.frames.size == frames && r.header.rate == rate && r.header.channels == ch && r.skip == skip && r.keep == keep)
+        s!"{r.frames.size} frames, {r.header.rate} Hz, {r.header.channels} channels, skip {r.skip}, keep {r.keep}, info {repr r.info}"
+  -- A cut file reads the whole frames before the cut.
+  let mp ← IO.FS.readBinFile (mediaDir / "arpeggio-cbr128.mp3")
+  match Mp3.read (mp.extract 0 (mp.size / 2)) with
+  | .error e => t ← check t "mp3 cut short" false e
+  | .ok r => t ← check t "mp3 cut short: some frames" (r.frames.size > 50 && r.frames.size < 100) s!"{r.frames.size}"
+  -- Junk before the first frame is skipped; junk that is not MP3 is refused.
+  let junk := ByteArray.mk (Array.replicate 1000 0x55)
+  match Mp3.read (junk ++ mp) with
+  | .error e => t ← check t "mp3 after junk" false e
+  | .ok r => t ← check t "mp3 after junk: same frames" (r.frames.size == 155 && r.keep == some 176400) s!"{r.frames.size}"
+  t ← check t "mp3 refuses bytes that are not MP3" (Mp3.read junk).toOption.isNone
   IO.println s!"media tests: {t.pass} pass, {t.fail} fail"
   return t.fail == 0
 
