@@ -1201,6 +1201,16 @@ the whole input: here `.modified (fun active rows => let ix := ...; rows.filter 
 function of the row SEQUENCE, so the `let` runs once for each sequence. Read the arity of
 the emitted function in `.lake/build/ir/<Module>.c` before you time.
 
+Third cost, 2026-11-26 (https://github.com/danbri/factoidal-core/issues/1168): a memo of the
+fonts of each `font-family` value was written as `def memoOn (f : String → α) (keys) : String →
+α := let m := keys.foldl ... ; fun v => ...`, with a theorem `memoOn f keys = f`. The theorem
+holds and says nothing of time: each word of the layout built the map again over every computed
+style of the page. The first layout of the real-page set got 1.6 times slower at p50, and three
+pages had no first frame in 240 s. This section was not read before the change. The repair is
+the rule above: `memoTable f keys` (the map, a value made once with `let` at the caller) and
+`memoLookup f table` (`labs/demos/foafnaut/WebDocument.lean`); then the layout total of 17 pages
+fell 19%.
+
 How it was found: a timed `#eval` of the pieces in a scratch file (`lake env lean
 scratch.lean`, `IO.monoMsNow` around the call), at 1,000 and 2,000 rows. Four times the
 time for twice the rows, in a function with one pass over its input, means work done for
