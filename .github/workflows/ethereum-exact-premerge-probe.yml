@@ -1,0 +1,36 @@
+name: Ethereum exact candidate premerge probe
+# One-off hosted test harness, not part of the candidate or a release workflow.
+on:
+  push:
+    branches: [wip/ethereum-exact-premerge-probe-20261126]
+    paths: ['.github/workflows/ethereum-exact-premerge-probe.yml']
+permissions:
+  contents: read
+jobs:
+  premerge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a7dc8a8d2045399cadb1de2adaea16f143a92490
+          persist-credentials: false
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - name: Verify exact candidate and run complete default premerge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = a7dc8a8d2045399cadb1de2adaea16f143a92490
+          test "$(git rev-parse HEAD^{tree})" = 511df5066c3441fa9b5e03e381f8fc5d153ce886
+          test "$(git rev-parse HEAD:tools/premerge.sh)" = a25dc508d881e0671c970b2dc82e56271202bf01
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          deno --version
+          python3 --version
+          cc --version
+          bash tools/premerge.sh 2>&1 | tee "$RUNNER_TEMP/ethereum-premerge.log"
+          grep -E '^premerge summary: 5 checks, 0 failed,' "$RUNNER_TEMP/ethereum-premerge.log"
+          test "$(grep -c '^  ok ' "$RUNNER_TEMP/ethereum-premerge.log")" = 5
+          if grep -E 'NOT RUN|^  skip ' "$RUNNER_TEMP/ethereum-premerge.log"; then exit 1; fi
