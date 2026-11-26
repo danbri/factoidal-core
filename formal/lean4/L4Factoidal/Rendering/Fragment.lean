@@ -318,7 +318,7 @@ def resolvedHeight (dom : Dom) (styles : Array Computed) (id : Nat) : Option Flo
   | _ => none
 
 /-- The length that a `min-height` or `max-height` `l` of `id` resolves to when it is a
-percentage or `stretch` (CSS 2.1 §10.7; CSS Sizing 4 §6.1) and the containing block's
+percentage, a length-percentage calculation or `stretch` (CSS 2.1 §10.7; CSS Sizing 4 §6.1) and the containing block's
 height is definite from the styles (`definiteHeight` of the parent element): the
 percentage of that height, or what fills it inside the box's margins, borders and padding.
 `none` for any other value, when that height depends on content (the limit then does not
@@ -331,7 +331,7 @@ def resolvedLimit (dom : Dom) (styles : Array Computed) (id : Nat) (l : CSS.Leng
     | some parent => if (dom.get parent).type == .element then definiteHeight dom styles parent else none
     | none => none
   match l with
-  | .percent p => (containing ()).map fun h => max 0 (h*p)
+  | .percent _ | .calc _ _ => (containing ()).bind fun h => (CSS.resolve h l).map (max 0)
   | .stretch => (containing ()).map fun h =>
       max 0 (h-s.margin.top-s.margin.bottom-s.borderEdges.top-s.borderEdges.bottom-s.padding.top-s.padding.bottom)
   | _ => none

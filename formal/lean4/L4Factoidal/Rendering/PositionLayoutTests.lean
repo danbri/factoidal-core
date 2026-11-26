@@ -210,6 +210,15 @@ private def ratioBlock := "<div id=a></div>"
 #guard box ratioBlock "#a{aspect-ratio:2;height:20px;width:60%}" "a" == some (0,0,120,20)
 #guard box "<div id=p><div id=a></div></div>"
   "#p{height:60px}#a{aspect-ratio:2;height:50%}" "a" == some (0,0,60,30)
+-- A definite parent resolves the percentage cap after box-sizing subtracts the padding.
+private def ratioInParent := "<div id=p><div id=a></div></div>"
+#guard box ratioInParent
+  "#p{height:100px}#a{aspect-ratio:1;max-height:100%;padding-bottom:20px;box-sizing:border-box}" "a" ==
+  some (0,0,100,100)
+-- An indefinite percentage height uses the ratio; a definite one still takes precedence.
+#guard box ratioInParent "#p{width:100px}#a{aspect-ratio:1;height:100%}" "a" == some (0,0,100,100)
+#guard box ratioInParent "#p{width:100px;height:50px}#a{width:100px;aspect-ratio:1;height:100%}" "a" ==
+  some (0,0,100,50)
 #guard box ratioBlock "#a{aspect-ratio:2;box-sizing:border-box;border:20px solid;height:20px}" "a" ==
   some (0,0,80,40)
 #guard box ratioBlock "#a{aspect-ratio:2;box-sizing:border-box;border:20px solid;max-height:20px}" "a" ==
