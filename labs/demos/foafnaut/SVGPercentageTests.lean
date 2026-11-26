@@ -27,6 +27,12 @@ def run : IO Unit := do
   match cssCascade.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
   | [.rect _ _ w h] => check (w==75 && h==20) "inline CSS rect dimensions outrank stylesheet and attributes"
   | _ => throw (IO.userError "CSS rect cascade primitive")
+  let cssNested ← scene "width='300' height='200'" "<style>rect{x:30px;y:60px;width:120px;height:100px}</style><g><rect/></g>"
+  match cssNested.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
+  | [.rect x y w h] => check (x==30 && y==60 && w==120 && h==100) "CSS rect geometry survives unmatched root and group selectors"
+  | _ => throw (IO.userError "nested CSS rect geometry primitive")
+  check (!(NativeSVG.parse (wrap "width='300' height='200'" "<style>circle{width:20px}</style><circle cx='50' cy='50' r='10'/>")).isOk) "CSS width remains unsupported for circle"
+  check (!(NativeSVG.parse (wrap "width='300' height='200'" "<style>svg{width:100px}</style><rect width='10' height='10'/>")).isOk) "root SVG width validation was bypassed"
   for preserve in ["none", "xMidYMid meet", "xMidYMid slice"] do
     let s ← scene ("width='400' height='100' viewBox='10 20 100 50' preserveAspectRatio='"++preserve++"'") "<g transform='scale(2)' stroke='black' stroke-width='10%'><rect x='10%' y='20%' width='50%' height='50%' stroke-width='inherit'/></g>"
     match s.primitives with
