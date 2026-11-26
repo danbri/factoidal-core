@@ -16,12 +16,17 @@
 //  8. expected failure: a cancel does not stop a layout in progress
 //     (https://github.com/danbri/factoidal-core/issues/1135);
 //  9. a task session's layers answer carries the layout sections (issue 1124 stage B), decoded as
-//     for the engine on this thread: the same boxes, glyph runs, links, pixel data and tile words.
+//     for the engine on this thread: the same boxes, glyph runs, links, pixel data and tile words;
+// 10. page answer ids (`damage.id`, named by `have`, issue 1124 stage C) are counted per session:
+//     the first page answers of two sessions have the same id, and a session answers an id that
+//     another session gave as its own page, kept. So a host names a held page only to the
+//     session that gave it (run_html.ts: only for the document on screen).
 // Needs the native library (`build-web-render.sh --native`); `WEB_RENDER_LIB=` names another.
 // Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
 import {loadHTML,loadHTMLSession} from "./native_html_engine.ts";
 import {loadFontFile,prepareHTML} from "./native_html_document.ts";
+import {heldPageId} from "./native_html_layout.ts";
 import {answersOf} from "./fixtures/engine_sessions_answers.ts";
 
 const lab=new URL("./",import.meta.url).pathname;
@@ -189,4 +194,22 @@ Deno.test({name:"engine sessions: a task session decodes the layout sections of 
     assert.deepEqual([...(b.page.tiles??[]) as Uint32Array],[...(a.page.tiles??[]) as Uint32Array],"tile words");
     assert.deepEqual(b.layers,a.layers,"layer places");
   }finally{direct.endSession();await s.endSession();}
+}});
+
+Deno.test({name:"engine sessions: page answer ids are counted per session, so one id can name two pages",ignore:noLibrary,fn:async()=>{
+  const a=await loadHTML(library,"bytes",{session:true}),b=await loadHTML(library,"bytes",{session:true});
+  try{
+    await loadFontFile(a,font,"Noto Sans");await loadFontFile(b,font,"Noto Sans");
+    const shell={tabs:[{title:"t"}],active:0,address:"https://example.invalid/",cursor:0,focused:false,canBack:false,canForward:false,
+      loading:false,scale:1,theme:"light",pages:1,scroll:0,pressed:""};
+    const docA=await prepareHTML(a,new URL("./pages/status.html",import.meta.url).href);
+    const docB=await prepareHTML(b,new URL("./pages/newtab.html",import.meta.url).href);
+    const oa={...docA.request(1600,1000).options,shell,checks:false},ob={...docB.request(1600,1000).options,shell,checks:false};
+    const ida=heldPageId(a.compileLayers(docA.source,1600,1000,oa).page),idb=heldPageId(b.compileLayers(docB.source,1600,1000,ob).page);
+    assert(ida!==undefined&&idb!==undefined,"the page answers have no damage.id");
+    assert.equal(ida,idb,"the first page answers of two sessions have one id");
+    // The id of a's page, named to b: b takes it as its own page and answers it kept.
+    const again=b.compileLayers(docB.source,1600,1000,{...ob,have:{page:ida}});
+    assert.equal((again.page as unknown as {kept?:number}).kept,ida,"b answered another session's id as kept");
+  }finally{a.endSession();b.endSession();}
 }});

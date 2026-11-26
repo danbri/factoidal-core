@@ -1865,7 +1865,10 @@ async function main() {
       try{
         if(layered){
           // `have` (issue 1124 stage C): the page answer on screen; Lean answers it kept or patched.
-          const held=current?.layers.page,have=heldPageId(held);
+          // Only when that answer is of this document: page answer ids are counted by each engine,
+          // and each tab has an engine of its own (a worker or a session), so the id of another
+          // tab's page can name a different page in this tab's engine, which then answers it kept.
+          const held=current?.document===nextDocument?current.layers.page:undefined,have=heldPageId(held);
           const options=have===undefined?request.options:{...request.options,have:{page:have}};
           if(worker?.alive){({layers:nextLayers,workerMs}=await worker.compileLayers(request.source,sentWidth,sentHeight,options,gesture));bandMs=workerMs;}
           else{where="main";nextLayers=engine.compileLayers(request.source,sentWidth,sentHeight,options);}
