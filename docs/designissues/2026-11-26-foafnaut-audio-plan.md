@@ -378,6 +378,17 @@ is `running` when the page has sticky activation (HTML "has been activated"), el
 
 ### 13.8 Ops 190 to 199
 
+As landed in D2 (`WebAudio/Api.lean`, header). Changes against the text below, and why:
+`newAudioContext` also answers -20 for a bad hint or callback and -23 at 16 live contexts, and
+its first outbox message is `(190, [id, rate (binary64), channels, target])` so the rendering side
+knows its parameters; the `control` call id is answered as decimal text and a `resume` before
+activation waits (`pendingResume`) until op 196; `events` has kind 4 (call rejected); op 195 gives
+a stored error result once and then removes the job, which makes it the one op that changes the
+state while it answers an error (`op_error_state` excludes it); op 196 `activate` is added; ops
+197 to 199 answer -2. Op 179 gains `setValueCurveAtTime(values, startTime, duration)` and
+`cancelAndHoldAtTime(cancelTime)`; a curve of fewer than 2 values answers -29 because
+`Automation.validate` decides so (the specification says InvalidStateError).
+
 - 190 `newAudioContext(latencyHint, sampleRate, callback)`: `latencyHint` is `interactive`,
   `balanced`, `playback` or an 8-byte double; `sampleRate` is a double or ""; `callback` is the
   page callback handle for events. Answers `"ID RATE CHANNELS STATE"`. -23 for a rate outside 3,000
@@ -433,8 +444,13 @@ latency. `--perf-summary` gets a block `audio`.
   `-Wall -Wextra -Werror`, against declaration stubs written from Apple's documented signatures,
   and calls exactly nine Apple functions. Not checked: Apple's own headers (the first macOS build
   does that) and sound on a Mac (the owner).
-- D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
-  `AudioContext` in `prelude.js`.
+- D2: real-time contexts in `Api.lean` (ops 190 to 196, the outbox, the report merge) and
+  `AudioContext` in `prelude.js`. Lean part done 2026-11-26, branch `wip/1169-realtime-api`: the
+  state (`realtime`, `device`, `autoplay`, `activated`, `decodeJobs`, `wakeups`), ops 190 to 196,
+  the outbox in `op`, `applyReport`, `takeOutbox`, `takeDecodeJobs`, `finishDecode`,
+  `takeWakeups`, and the two new `paramCall` methods; theorems `op_outbox`, `applyReport_mono`
+  (and the list and graph-frame forms), `takeOutbox_empty`, `takeOutbox_messages`; routing
+  173 to 199 in `WasmVM/Hosts/WebApi.lean`. Not done: `prelude.js` (`AudioContext`), D3.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
