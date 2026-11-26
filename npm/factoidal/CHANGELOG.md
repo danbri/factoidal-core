@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-## 0.37.3 (2026-11-24)
+## 0.38.0 (2026-11-26)
+
+- First publication of the 0.37.3 changes below: 0.37.3 was prepared on 2026-11-24 and never published (npm had 0.37.2).
+- The Lean engine of core main of 2026-11-26. The package API is the same as 0.37.3.
+
+## 0.37.3 (2026-11-24, not published)
 
 - `parseSparqlStructure(query, options)` returns the query form, projected variables and a property-path-preserving S-expression without evaluating the query. Set `wdqs: true` to enable Wikidata's implicit prefixes. The parser defaults to SPARQL 1.1 and accepts `version: '1.2'` for SPARQL 1.2. Available in Node and browser Wasm.
 - `wikidataRewrite(query, { language })` exposes the experimental Lean Wikidata rewriter in Node and browser Wasm. The pinned oracle audit records supported rewrite cases and migration limits.
