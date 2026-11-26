@@ -7403,7 +7403,7 @@
   // error events, its natural size (Lean's HTML.ImageSize from the file's first bytes, web_api
   // 166). The request starts when the element gets a source (parsed with one, or a script sets
   // src, srcset, sizes, crossorigin or referrerpolicy); a page with no img pays nothing.
-  const imgStates = new Map();   // node -> { gen, complete, w, h, waiters }
+  const imgStates = new Map();   // node -> { gen, complete, decodable, w, h, waiters }
   let imgGen = 0, imgWatching = false;
   // HTML §4.8.4.3: the images of the page's start delay its load event (the window's `load`
   // waits until each has its load or error event)
@@ -7420,12 +7420,13 @@
     const el = wrap(id);
     const gen = ++imgGen;
     const hasSrc = n0.attr(id, 'src'), hasSet = n0.attr(id, 'srcset');
-    const url = typeof hasSrc === 'string' || typeof hasSet === 'string' ? el.currentSrc : '';
+    const selection = typeof hasSrc === 'string' || typeof hasSet === 'string' ? imgSelection(id, true) : null;
+    const url = selection?.url ?? '';
     // a new request ends the old one: its decode() promises reject (HTML §4.8.4.3.6, "decode()"
     // step 2.2: the current request changed)
     const before = imgStates.get(id);
     if (before) for (const [, rej] of before.waiters.splice(0)) rej(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-    const st = { gen, complete: false, w: 0, h: 0, waiters: [] };
+    const st = { gen, complete: false, decodable: false, w: 0, h: 0, waiters: [] };
     imgStates.set(id, st);
     const settle = ok => {
       st.complete = true;
@@ -7449,8 +7450,10 @@
       // the engine answers an image's natural size, never its bytes (Net.Xhr.imageRaw)
       if (r !== null && r.status >= 200 && r.status < 300) for (let i = 0; i < r.bytes.length && i < 32; i++) size += String.fromCharCode(r.bytes[i]);
       if (size === '') { settle(false); return; }
-      const [w, h] = size.split(' ').map(Number);
-      st.w = w; st.h = h;
+      const natural = n.query(id, 195, 'natural\u0000' + size + '\u0000' + selection.density);
+      if (typeof natural !== 'string' || natural === '') { settle(false); return; }
+      [st.w, st.h] = natural.split(' ').map(Number);
+      st.decodable = true;
       settle(true);
     });
   };
@@ -7489,7 +7492,7 @@
       imgTouch(nodeId(this));
       const st = imgStates.get(nodeId(this));
       if (!st) return Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
-      if (st.complete) return st.w > 0 || st.h > 0 ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
+      if (st.complete) return st.decodable ? Promise.resolve() : Promise.reject(new DOMException('The source image cannot be decoded.', 'EncodingError'));
       return new Promise((res, rej) => st.waiters.push([res, rej]));
     });
   }
@@ -18217,9 +18220,8 @@
   // ==== focus: the focused element (HTML §6.6) ============================================
   // Which node `focus()` focuses is Lean's (DOM.Focus, node_query 189: the element when it is
   // a focusable area, else the first focusable area of a shadow tree that delegates focus).
-  // The focused element is the page's state, mirrored into the arena (`Node.states` bit 8) for
-  // `:focus`, `:focus-visible` and `:focus-within`. A page that never calls focus() does
-  // nothing here.
+  // The focused element and its visible indicator are mirrored into the arena
+  // (Node.states bits 8 and 32, respectively).
   const inputValueGetter = Object.getOwnPropertyDescriptor(named.HTMLInputElement.prototype, 'value').get;
   const textareaValueGetter = Object.getOwnPropertyDescriptor(named.HTMLTextAreaElement.prototype, 'value').get;
   const textControlValue = el => {
@@ -18228,13 +18230,25 @@
       return inputValueGetter.call(el);
     return undefined;
   };
-  let focusedId = -1;
-  const focusBit = (id, on) => { const b = n.treeOp(id, 0, 31); if (typeof b !== 'number' || b < 0) return; const nb = on ? b | 8 : b & ~8; if (nb !== b) n.treeOp(id, nb, 30); };
+  let focusedId = -1, focusVisible = false, keyboardFocus = true;
+  const focusBits = (id, focused, visible = false) => {
+    const bits = n.treeOp(id, 0, 31);
+    if (typeof bits !== 'number' || bits < 0) return;
+    const next = (bits & ~(8 | 32)) | (focused ? 8 | (visible ? 32 : 0) : 0);
+    if (next !== bits) n.treeOp(id, next, 30);
+  };
+  const takesTextInput = el =>
+    el instanceof named.HTMLTextAreaElement ||
+    (el instanceof named.HTMLInputElement &&
+      ['text', 'search', 'url', 'tel', 'email', 'password', 'number',
+        'date', 'datetime-local', 'month', 'time', 'week'].includes(typeState(el))) ||
+    (el instanceof HTMLElement && el.isContentEditable === true);
   // the focused node, or -1: an element that left its document no longer has the focus
   const focusCurrent = () => {
     if (focusedId >= 0 && !connectedId(focusedId)) {
-      focusBit(focusedId, false);
+      focusBits(focusedId, false);
       focusedId = -1;
+      focusVisible = false;
       focusedTextEdit = null;
     }
     return focusedId;
@@ -18246,15 +18260,23 @@
   };
   // The focus update steps (HTML §6.6.4): commit changed text before blur and focusout,
   // then fire focus and focusin at the new element (-1: the viewport).
-  const focusMove = to => {
+  const focusMove = (to, visibility) => {
     const from = focusCurrent();
-    if (from === to) return;
+    if (from === to) {
+      if (to >= 0 && visibility !== undefined && visibility !== focusVisible) {
+        focusVisible = visibility;
+        focusBits(to, true, focusVisible);
+      }
+      return;
+    }
     const oldEl = from >= 0 ? wrap(from) : null, newEl = to >= 0 ? wrap(to) : null;
+    const showIndicator = visibility ?? (takesTextInput(newEl) || (from >= 0 ? focusVisible : keyboardFocus));
     if (from >= 0) {
       const edit = focusedTextEdit;
       focusedTextEdit = null;
-      focusBit(from, false);
+      focusBits(from, false);
       focusedId = -1;
+      focusVisible = false;
       if (edit?.edited) {
         const value = textControlValue(oldEl);
         if (value !== undefined && value !== edit.initialValue) fire(oldEl, 'change', { bubbles: true });
@@ -18266,7 +18288,8 @@
       focusedId = to;
       const value = textControlValue(newEl);
       if (value !== undefined) focusedTextEdit = { element: newEl, initialValue: value, edited: false };
-      focusBit(to, true);
+      focusVisible = showIndicator;
+      focusBits(to, true, focusVisible);
       fireFocusEvent(newEl, 'focus', false, oldEl);
       fireFocusEvent(newEl, 'focusin', true, oldEl);
     }
@@ -18274,7 +18297,14 @@
   const focusQuery = (id, q) => { const r = n.query(id, 189, q); return typeof r === 'string' && r !== '' ? Number(r) : -1; };
   for (const C of [HTMLElement, SVGElement, MathMLElement]) {
     // an editing host that takes the focus gets the selection first (node_query 177 "f": a caret at its first caret position unless the selection is in it)
-    define(C.prototype, 'focus', function focus(options = undefined) { const t = focusQuery(nodeId(this), ''); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } });
+    define(C.prototype, 'focus', function focus(options = undefined) {
+      const visibility = options?.focusVisible;
+      const t = focusQuery(nodeId(this), '');
+      if (t >= 0) {
+        n.query(t, 177, 'f');
+        focusMove(t, visibility === undefined ? undefined : Boolean(visibility));
+      }
+    });
     define(C.prototype, 'blur', function blur() { if (focusCurrent() === nodeId(this)) focusMove(-1); });
   }
   // `activeElement` (DOM §4.5, HTML §6.6.6): the focused element retargeted against the
@@ -18292,7 +18322,39 @@
   // A press of the user's pointer on node `id` (Lean asks, after a `mousedown` that no listener
   // canceled: Hosts.PageEvents.lowPointer): the focusable area there takes the focus, else the
   // focused element loses it. Which area is Lean's (DOM.Focus.pressTarget, node_query 189 "p").
-  const pressFocus = id => { const t = focusQuery(id, 'p'); if (t >= 0) { n.query(t, 177, 'f'); focusMove(t); } else focusMove(-1); };
+  const pressFocus = id => {
+    const t = focusQuery(id, 'p');
+    // A press on a plain area can blur, but does not choose a pointer-focused control.
+    if (t >= 0) {
+      keyboardFocus = false;
+      n.query(t, 177, 'f');
+    }
+    focusMove(t, t >= 0 && takesTextInput(wrap(t)));
+  };
+  const noteFocusInput = (type, e) => {
+    if (type !== 'keydown' || e.altKey || e.ctrlKey || e.metaKey || ['Alt', 'Control', 'Meta', 'Shift'].includes(e.key)) return;
+    keyboardFocus = true;
+    const id = focusCurrent();
+    if (id >= 0 && !focusVisible) {
+      focusVisible = true;
+      focusBits(id, true, true);
+    }
+  };
+  // The focused input can start accepting text after its type changes in a click handler.
+  // Preserve an explicit visibility choice when the type already supported text entry.
+  {
+    const setAttr = n.setAttr, removeAttr = n.removeAttr;
+    const focusedType = (id, name) => id === focusedId && String(name).toLowerCase() === 'type';
+    const updateInputType = (id, change) => {
+      const input = wrap(id);
+      const wasNonText = input instanceof named.HTMLInputElement && !takesTextInput(input);
+      const result = change();
+      if (result === 0 && wasNonText && id === focusCurrent() && takesTextInput(input)) focusMove(id, true);
+      return result;
+    };
+    n.setAttr = (id, name, value) => focusedType(id, name) ? updateInputType(id, () => setAttr(id, name, value)) : setAttr(id, name, value);
+    n.removeAttr = (id, name) => focusedType(id, name) ? updateInputType(id, () => removeAttr(id, name)) : removeAttr(id, name);
+  }
   // ==== end focus ==========================================================================
 
   // ==== popover: popovers, dialogs and their invoker buttons (HTML §6.12, §4.11.4, §4.10.6) ====
@@ -18614,14 +18676,21 @@
   // `currentSrc`: the source that Lean selects from `srcset`, `sizes`, `src` and the `source`
   // children of a `picture` (HTML.ImageSource, node_query 195) for the device pixel ratio and
   // the viewport of the element's document, resolved against that document's URL.
-  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', { get() {
-    const id = nodeId(this), d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
+  const imgSelection = (id, request = false) => {
+    const d = info(id, 7), frame = d > 0 ? info(d, 12) : -1;
     let size;
     if (frame >= 0) { const b = layoutOf(wrap(frame)); size = [b[6], b[7]]; } else size = viewport();
-    const r = n.query(id, 195, globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1]);
-    if (typeof r !== 'string' || r === '') return '';
-    return (frame >= 0 ? resolveURL(r.slice(1), docURL(d)) : resolveURL(r.slice(1))) ?? '';
-  }, configurable: true, enumerable: true });
+    const q = globalThis.devicePixelRatio + '\u0000' + size[0] + '\u0000' + size[1];
+    const r = n.query(id, 195, request ? q + '\u0000request' : q);
+    if (typeof r !== 'string' || r === '') return null;
+    const split = request ? r.indexOf('\n') : 0;
+    if (split < 0) return null;
+    const path = r.slice(split + 1);
+    const url = frame >= 0 ? resolveURL(path, docURL(d)) : resolveURL(path);
+    return url == null ? null : { url, density: r.slice(0, split) };
+  };
+  Object.defineProperty(named.HTMLImageElement.prototype, 'currentSrc', {
+    get() { return imgSelection(nodeId(this))?.url ?? ''; }, configurable: true, enumerable: true });
   // HTML dimension attributes: use the rendered content box when present, including
   // a zero-sized box. Otherwise parse the attribute, then fall back to the natural size.
   for (const [k, i, natural] of [['width', 0, 'w'], ['height', 1, 'h']])
@@ -19339,6 +19408,11 @@
     dispatch(target, type, flags) {
       // not an event: the default action of a press, which only Lean asks for
       if (type === '@focus') { pressFocus(target); return ''; }
+      if (type === '@focus-key') {
+        n.query(target, 177, 'f');
+        focusMove(target, true);
+        return '';
+      }
       // Enter in a field of a form with no submit button (HTML §4.10.21.2; Lean decided,
       // DOM.FormControls.implicitSubmission): the form is submitted from itself
       if (type === '@submit') { const f = wrap(target); if (f) submitForm(f, f); return ''; }
@@ -19380,6 +19454,7 @@
       for (const k of ['pageX', 'pageY', 'offsetX', 'offsetY', 'movementX', 'movementY']) if (typeof data[k] === 'number') state(e)[k] = data[k];
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
+      noteFocusInput(type, e);
       // "update the current document readiness" fires readystatechange at the document
       // the document's milestones (Navigation Timing 2 §4: domInteractive, DOMContentLoaded's start)
       if (type === 'DOMContentLoaded' && target === 0) { navNote('domInteractive'); navNote('domContentLoadedEventStart'); }

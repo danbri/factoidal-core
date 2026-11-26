@@ -1270,13 +1270,14 @@ def matchSimple (d : Dom) (scope : Option NodeId) : Nat → NodeId → Simple �
       | "defined" => !(x.ns == some htmlNS && CustomElements.validName x.lname) || x.states / 4 % 2 == 1
       | "popover-open" => x.states % 2 == 1
       | "modal" => x.states / 2 % 2 == 1
-      -- the focused element (`Node.states` bit 8, set by the page's `focus()`); a shadow host
-      -- has the focus when an element of its shadow tree has it (Selectors 4 §9.4), and
-      -- `:focus-within` reads the shadow-including descendants
+      -- Focus and its visible indication are state bits 8 and 32. A shadow host
+      -- reflects focus from its shadow tree (Selectors 4 §9.4).
       | "focus" | "focus-visible" =>
-        x.states / 8 % 2 == 1 ||
+        let showsFocus := fun (states : Nat) =>
+          states / 8 % 2 == 1 && (n == "focus" || states / 32 % 2 == 1)
+        showsFocus x.states ||
           (match x.shadow with
-           | some s => (CustomElements.reach d s).any fun j => (d.get j).states / 8 % 2 == 1
+           | some s => (CustomElements.reach d s).any fun j => showsFocus (d.get j).states
            | none => false)
       | "focus-within" => (CustomElements.reach d k).any fun j => (d.get j).states / 8 % 2 == 1
       | "valid" => FormValidity.selectorValidity d k == some true
