@@ -809,7 +809,9 @@ async function main() {
       ...(turn.startMore?{startMore:true}:{}),...host});
     // A turn that draws a page canvas is activity: no idle check (a Lean frame drawn again
     // with probes, which held up the next turns) while the page animates its canvas.
-    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
+    // A timer turn's canvas replay (decode and texture write) runs in the next task: the loop
+    // asks the page's next turn first, and the replay runs while the engine works (issue 1098).
+    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});if(cause==="timers")setTimeout(gpuFlush,0);else gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)){
       if(page===document)pageChangedNow();
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
