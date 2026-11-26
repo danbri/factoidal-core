@@ -130,6 +130,8 @@ After audio: WebXR audio, then the video stages of issue 588 with section 4's ru
 
 1. AAC through AudioToolbox (the macOS decoder), as Firefox does: yes or no?
 2. Later: the HRTF data set for `PannerNode` (its licence will be reported first).
+3. Autoplay (section 13.7): may a page start sound only after the person has used it (clicked,
+   typed), as Chrome and Safari do? The default here is yes.
 
 ## 8. Stage A, done 2026-11-26
 
@@ -154,10 +156,10 @@ Each file imports `Init` and earlier `WebAudio` files only, so it type-checks al
 
 | File | What | State |
 |---|---|---|
-| `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`) |
+| `Mix.lean` | `computedNumberOfChannels`; up-mix and down-mix matrices (exact `Rat`), their `Float` evaluation; summing connections into an input | on `main` (`5bddeecfc`); tail-recursive loops and shape theorems on `wip/1169-mix-delay` |
 | `Automation.lean` | the `AudioParam` automation event list: insertion, cancellation, the computed value at a time; stored times exact values of binary64 numbers, sums and frame conversion in binary64 (`ceil(t × rate)`, as WPT `audioparam-testing.js`) | on `main` (`cd8ab064f` to `b5bfaa30f`): 7 theorems, 114 `#guard` |
-| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c`, `7cce27238`): no step twice, every connection in processing order, muted nodes lie on cycles; not yet proved: every node that is not muted is in the order |
-| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`): shape and state theorems, 67 `#guard`; fractional delay by linear interpolation (the specification names none) |
+| `Graph.lean` | nodes, connections (node output to node input, node output to `AudioParam`), the ordered list of nodes of "Rendering an audio graph": `DelayNode`s in cycles split into a writer and a reader, cycles with no `DelayNode` muted | on `main` (`7507d103c` to `e9f637920`): no step twice, every connection in processing order, muted nodes lie on cycles, every node that is not muted is in the order (well-formed graphs) |
+| `Kernels.lean` | block kernels as pure functions with explicit state: Gain, ConstantSource, Delay, StereoPanner, ChannelSplitter, ChannelMerger | on `main` (`f1887ceaf`, `059cbe3bb`); cycle minimum and channel-count change on `wip/1169-mix-delay`: shape and state theorems, 75 `#guard`; fractional delay by linear interpolation (the specification names none) |
 | `Filters.lean`, `Oscillator.lean` | BiquadFilter (coefficients of the specification, `getFrequencyResponse`), Oscillator and `PeriodicWave` | on `main` (`531881c86`, `e270b721b`), rendered through `Render` |
 | `Buffer.lean` | `AudioBuffer`: channels of 32-bit floats, `copyFromChannel`, `copyToChannel`, `getChannelData` rules; the `AudioBufferSourceNode` playback algorithm | on `main` (`27c4e37d1`), rendered through `Render` |
 | `Render.lean` | one render quantum: apply control messages, mix each node's inputs, compute its `AudioParam` values (intrinsic value plus the mixed-down inputs, clamped to the nominal range; a-rate or k-rate), run its kernel, in the ordered list | on `main`: frame, shape and graph theorems; Oscillator, BiquadFilter and AudioBufferSource output silence until their kernels land |
@@ -179,7 +181,15 @@ frame headers; the first frame confirmed by the next header; the information fra
 LAME delay and padding applied (gapless, as FFmpeg). `Decode.mp3` gives one whole frame per call
 to the MP3 module and checks each result. On the three clips the WasmVM output equals the V8 run of
 the same module bit for bit, the lengths equal FFmpeg's, and the samples are within 2 of 32768 of
-FFmpeg's decoder. `decodeAudioData` itself comes with the page interfaces.
+FFmpeg's decoder.
+
+Second part (`7599e970a` to `a17dd53f9`): `Media/Wav.lean` (PCM 8 to 32 bits, float 32 and 64,
+A-law, µ-law, extensible; identical to FFmpeg on every WAV tried), float decoder paths for Opus,
+Vorbis (every channel, 8 at most, in Web Audio's channel order) and MP3, and
+`WebAudio/Decode.lean`: `decodeAudioData` (format sniffing, module pin check, decoding, a
+Kaiser-windowed sinc resampler to the context's rate: gain within 1e-4 up to 0.9 of the lower
+Nyquist, -103 dB at 1.1; about 98 dB SNR against FFmpeg's resampler in the interior). Not yet:
+end trimming of Vorbis in WebM; Opus with more than two channels. `media-bench decode` runs it.
 
 ## 11. Open defects in the landed engine files (2026-11-26)
 
@@ -191,21 +201,45 @@ Found by the work on `Render.lean`; none blocks the offline renderer.
    general form over `dstStep` is false once parameter edges go to the reader. Behaviour to check
    against WPT or another engine: a delay whose `delayTime` is driven from inside its own cycle
    leaves that cycle uncut, so the nodes on it are muted (`Graph.lean` guard 23c).
-2. `Graph.lean`: not proved that every node that is not muted appears in the order (it needs "a
-   finite graph with no cycle has a vertex with no incoming edge").
-3. `Mix.lean`: `mixInput` has no shape theorem; `Render.lean` normalizes the shape instead.
-4. `Kernels.lean`: a `DelayNode` with `maxDelayTime` below one render quantum, in a cycle, has a
-   minimum delay above its maximum in `clampDelay`; no test covers it.
-5. `Kernels.lean`: when a delay's input channel count changes, stored samples are not up-mixed or
-   down-mixed as the `DelayNode` section says.
+2. Fixed (`c3f61291b` to `e9f637920`): `order_complete` proves that, in a well-formed graph
+   (every connection's ends are nodes of the graph; `connect`, `connectParam` and `addNode` keep
+   this, `connect_wellFormed` and the others), every step of a node that is not muted is in the
+   order. The proof found a defect: a `DelayNode` whose `delayTime` is fed only through
+   `delayTime` connections between delays (a delay into its own `delayTime`, or two delays into
+   each other's) left a cycle of `DelayReader` steps that the split does not cut and that has no
+   node step to mute, so the delay was neither ordered nor muted. Such a delay is now muted
+   (`mutedIds`; guards 31 and 32), and a muted delay loses both of its steps (`isMuted` by node).
+   So `muted_on_cycle` now says: a muted node is on a node cycle, or its `DelayReader` is on a
+   cycle of the connections that touch no other muted node. The offline renderer computes the
+   order once for each `startRendering` (`Plan.of`); the real-time renderer must compute it again
+   only when the graph changes (section 13).
+3. Fixed (`b867dfc8b` and the commit before it): `Mix.mixInput` and `Mix.apply` are tail-recursive
+   loops (`mixConns`, `addRows`, `addFrames`, `applyRows`, `rowMix`, `scaleAdd`; channels updated
+   in place with `Array.modify` and `set!`). Theorems `Mix.mixInput_shape` (`toCh` channels of
+   `frames` samples for any connections) and `Mix.apply_shape` (every channel has `frames`
+   samples). `Render.normalize` is left as it is.
+4. Fixed (`b867dfc8b`): in a cycle the minimum wins, as the specification says ("clamped to a minimum of
+   one render quantum"): the delay is at least `n` frames even above `maxDelayTime`.
+   `DelayState` has `maxFrames`; the ring has `max maxFrames quantum + 1` frames (`Render` passes
+   its quantum to `DelayState.init`; the default 0 gives `maxFrames + 1`); the upper clamp is
+   `min (max maxFrames minFrames) (size - 1)`, so a quantum larger than the one given at node
+   creation cannot index outside the ring. `#guard`s: 2-frame maximum, cycle, 4-frame quantum
+   delays by 4; outside a cycle by 2.
+5. Fixed (`b867dfc8b`): when the input channel count differs from the stored one, `delayProcess` replaces
+   the whole ring by `Mix.apply (Mix.matrix interp old new) ring size` (`DelayState.retarget`);
+   `interp` is a `DelayState` field that `Render.runKernel` sets from the node's
+   `channelInterpretation`. `delay_state_wf` and `delay_shape` still hold. `#guard`s: mono to
+   stereo (both channels), stereo (1, 3) to mono (2), `discrete` 2 to 1 (channel 0), unchanged count.
 
-## 12. Stage B, last part: the page interfaces (design)
+## 12. Stage B, last part: the page interfaces
 
 How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude.js` calls
 `apiCall(op, args)`; `WasmVM/Hosts/WebApi.lean` routes the op; ops 100 to 119 are WebGL's, 120 to
 139 WebCodecs').
 
-- Ops 170 to 189 are Web Audio's, in a new module `WebAudio/Api.lean`. Its state is a field of
+- Ops 173 to 189 are Web Audio's (170 to 172 were already layout ops), in `WebAudio/Api.lean`
+  (`295173571`; the op table is its header; theorems: no op changes a context it does not name, a
+  failed op leaves the state unchanged). Its state is a field of
   `WebApi.State` (`audio`), so contexts persist between script turns: the contexts by id, each an
   `OfflineContext` for now (a real-time context in stage D).
 - The page builds its classes from the interface table (`WebAudio/Idl.lean`, generated from WPT's
@@ -225,3 +259,161 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   each against `Media/Modules.lean` before use.
 - Measure: `tests/browser-wpt/testharness-run.ts` on the WPT `webaudio` names, with the test files
   fetched by name, before and after each step.
+
+## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
+
+### 13.1 Threads and state
+
+- **Control side.** The page's `WebApi.State.audio`, a pure value, as for offline contexts. A
+  real-time context is the same context state (graph, nodes, automation, sample rate) plus a
+  record of its own: the state (`suspended`, `running`, `closed`), the outbox of control messages,
+  the last report of the rendering side, and the handle of the page callback that takes its
+  events.
+- **Rendering side.** One Lean dedicated task (`Task.Priority.dedicated`, a thread of its own) per
+  real-time context, in the engine library, as the engine sessions of
+  https://github.com/danbri/factoidal-core/issues/1031 (engine per tab). It holds its own copy of
+  the context state. The engine library starts Lean's task manager in native builds
+  (`web_render_shim.c`, `FOAFNAUT_LEAN_THREADS`); with no task manager there is no real-time
+  context.
+- **Output.** C in the engine library, `formal/lean4/ffi/audio_sink.c`: a single-producer,
+  single-consumer ring of binary32 frames, and one consumer of the ring:
+  - `coreaudio` (macOS): the default output unit; its render callback copies frames from the ring
+    and gives silence for what is missing;
+  - `null` (every POSIX system): a thread of the sink takes frames at the sample rate and drops
+    them;
+  - `wav:PATH` (every POSIX system): as `null`, and the frames go to a WAV file (32-bit float),
+    for tests;
+  - none in the Wasm build: `new AudioContext()` answers `NotSupportedError` there (audio in the
+    Hub is not a goal, section 2).
+  `FOAFNAUT_AUDIO_SINK` chooses; the default is `coreaudio` on macOS and `null` elsewhere. The C
+  decides nothing about the audio: it copies frames, counts, and keeps time.
+
+### 13.2 Control messages
+
+Web Audio API, "Control Thread and Rendering Thread": the control thread queues control messages;
+the rendering thread takes the whole queue at the start of a render quantum. Here:
+
+1. Each op 176 to 185 that succeeds on a real-time context appends its op code and fields to the
+   context's outbox. The control side applies the op to its own copy, as for an offline context,
+   and answers the page.
+2. At the end of each page task (each turn of the engine), the engine's IO layer moves each outbox
+   to the inbox of its rendering task, as one batch. So the changes made in one task apply in the
+   same render quantum (Firefox applies them at its "stable state" in the same way).
+3. The rendering task applies each message with the same function as the control side (`Api.op`)
+   to its own copy, before its next quantum. Node ids are given in op order, so both copies give
+   the same ids. A message that fails on the rendering side is not expected (the same function on
+   the same sequence of ops); it is counted and traced as `audio-divergence`.
+4. `start(when)` and the automation times are absolute context times; a time before the
+   rendering side's current time starts or applies at once, which is the specification's rule.
+5. The rendering task computes the processing order (`Plan.of`) again only when a message
+   changes the graph.
+
+### 13.3 From the rendering side to the page
+
+After each batch of quanta, the rendering task publishes a report: frames rendered, the sources
+that ended, the state changes it made (running after `resume`, suspended, closed), and the sink's
+counters (frames played, under-runs, device latency). Before each page task the IO layer copies the
+newest report into the control side:
+
+- `currentTime` is frames rendered divided by the sample rate (the specification's
+  `[[current frame]]` of the rendering thread). The control side keeps the larger of the old and
+  the new value, so `currentTime` never decreases (a theorem of D2).
+- When the report has events, the IO layer queues the context's callback
+  (`EventLoop.queueTask`, as `mapAsync` does for GPU readbacks). The callback reads the events with
+  op 193 and fires `ended` and `statechange`, and resolves the promises of `resume()`,
+  `suspend()` and `close()`.
+- While a context runs, the turn's `nextWake` is at most 25 ms ahead, so that the host gives the
+  turns that deliver the events.
+- When the page session ends (navigation, tab closed), its contexts close: their tasks end and
+  their sinks close.
+
+### 13.4 The rendering task
+
+1. Take the inbox; apply the messages.
+2. If the context is suspended or closed: wait for a message, a `resume` or a `close`.
+3. Read the sink's counters. While frames written minus frames played is below the target: render
+   one quantum (`Render.renderQuantumWith`), convert it to interleaved binary32, write it to the
+   ring.
+4. Publish the report. Sleep until about half of the target has played (at least 1 ms).
+
+Target, from `latencyHint`: `interactive` 1,024 frames, `balanced` 2,048, `playback` 4,096; a
+number of seconds `s` gives `ceil(s × rate)`, from 256 to 16,384. The ring holds 4 times the
+target (at least 8,192 frames). `baseLatency` is the target divided by the rate;
+`outputLatency` is the device latency that the sink reports (CoreAudio: the device latency, the
+safety offset and the buffer size; `null` and `wav`: 0).
+
+### 13.5 The ring as a Lean state machine
+
+`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run count.
+`write k` takes `min k free` frames; `read k` gives `min k available` frames and `k` minus that of
+silence, and counts an under-run when it gives silence. Theorems: in every reachable state, read ≤
+written ≤ read + capacity; each frame is read at most once and in the order written; an under-run
+gives silence. The C ring follows it: the writer copies frames, then stores `written` with release
+order; the reader loads `written` with acquire order, copies, then stores `read` with release
+order; each side writes only its own counter. Tests: a stress test of the C ring under
+ThreadSanitizer (a writer thread and a reader thread, random sizes, every frame value checked),
+and a sequential trace of C ring operations replayed through the Lean model, which must give the
+same results.
+
+### 13.6 Ties to Lean proofs (section 4)
+
+The ring model's theorems; the C ring's tests; the named assumption "CoreAudio plays the frames it
+is given, in order, at the device rate" on every path that uses the macOS sink; `currentTime`
+never decreases. An end-to-end test on Linux: a page plays one second of a 440 Hz
+`OscillatorNode` through the `wav` sink; the file holds the frames of an `OfflineAudioContext`
+render of the same graph (bit for bit, binary32), and there is no under-run.
+
+### 13.7 Autoplay
+
+Chrome and Safari start a context `suspended` when the page has no user activation, and
+`resume()` needs one; Firefox has a setting. Coordinator's default, not the owner's: a new context
+is `running` when the page has sticky activation (HTML "has been activated"), else `suspended`;
+`resume()` is allowed after sticky activation. Question 3 of section 7.
+
+### 13.8 Ops 190 to 199
+
+- 190 `newAudioContext(latencyHint, sampleRate, callback)`: `latencyHint` is `interactive`,
+  `balanced`, `playback` or an 8-byte double; `sampleRate` is a double or ""; `callback` is the
+  page callback handle for events. Answers `"ID RATE CHANNELS STATE"`. -23 for a rate outside 3,000
+  to 768,000 Hz, or when the engine has no sink.
+- 191 `control(ctx, verb)`: `resume`, `suspend` or `close`; the promise resolves on the event.
+- 192 `time(ctx)`: `currentTime`, `baseLatency`, `outputLatency` (doubles), the state (one byte),
+  then `getOutputTimestamp()`'s `contextTime` and `performanceTime` (doubles).
+- 193 `events(ctx)`: the events since the last call: a `u32` count, then for each a kind byte (1
+  source ended, 2 state changed, 3 promise of a `control` call resolved) and a `u32` value.
+- 194 `decodeAudioData(ctx, bytes, callback)`: queues a decode job of `bytes` at the context's
+  sample rate; answers the job id. The job runs on a Lean task, not in the page task: decoding in
+  WasmVM takes about as long as the audio for some formats, and a long file must not stop the page.
+  When the job ends, the engine queues `callback`; the page then calls op 195.
+- 195 `decodeResult(job)`: `u32` channels, `u32` length, the sample rate (double), then the samples
+  as binary32, channel by channel; or -30 (`EncodingError`: a format the engine does not read, or
+  a decoder that refused the data) or -23 (`NotSupportedError`: the decoder module is missing or
+  not pinned). The result is given once.
+- 196 to 199 are kept for Web Audio.
+
+The decoder modules (stage C): the engine reads them, once, from the directory
+`FOAFNAUT_MEDIA_DECODERS`, else `~/.cache/factoidal/media-decoders` (where
+`tools/fetch-media-decoders.sh` puts them), and checks each against `Media/Modules.lean` before
+use. The macOS app carries them and its host sets the variable. A decode job runs only in the
+native engine; the Wasm build answers -23.
+
+### 13.9 Measures
+
+A trace line `native-audio` once a second for each running context: frames rendered and played,
+under-runs, CPU time of rendering per second of audio, frames ahead (least and most), device
+latency. `--perf-summary` gets a block `audio`.
+
+### 13.10 Steps
+
+- D1: `WebAudio/Ring.lean` with its theorems; `ffi/audio_sink.c` (ring, `null`, `wav`, the Wasm
+  build); `WebAudio/Sink.lean` (the externs); Lake and `build-web-render.sh` wiring; the stress
+  test and the trace replay.
+- D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
+  sessions, so this part is written against Apple's documented C API and is checked by the macOS
+  build of `danbri/factoidal-builds`.
+- D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
+  `AudioContext` in `prelude.js`.
+- D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
+  with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
+  test.
+- Then the owner's check on the Mac, and stage E (the jukebox).

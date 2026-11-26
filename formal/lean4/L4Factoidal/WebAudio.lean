@@ -14,7 +14,8 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   rule of scheduled sources.
 - `WebAudio.Graph`: nodes and connections, and the ordered list of nodes of "Rendering an audio
   graph" (`DelayNode`s in cycles split into a writer and a reader; cycles with no `DelayNode`
-  muted). Not yet proved: that every node that is not muted is in the order.
+  muted). Proved: no step twice, topological order, every step of a node that is not muted is in
+  the order (for graphs built by `connect`).
 - `WebAudio.Render`: one render quantum of a context: mixed inputs, `AudioParam` values
   (automation plus connected signals, clamped), kernels in graph order, the destination's block.
 - `WebAudio.Context`: an offline context: constructor checks, nodes, connections, automation,
@@ -26,6 +27,10 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   `OscillatorNode` kernel (band-limited Fourier sum). Called by `Render.runKernel`.
 - `WebAudio.Filters`: `BiquadFilterNode` coefficients for the eight types, the kernel, and
   `getFrequencyResponse`. Called by `Render.runKernel`.
+- `WebAudio.Decode`: `decodeAudioData`: format sniffing, WAV, Opus, Vorbis and MP3 decoding to floats,
+  the windowed-sinc resampler to the context rate, and the `AudioBuffer`.
+- `WebAudio.Api`: the page operations (`web_api` ops 173 to 189) and the contexts kept between
+  script turns; the op table is in its header.
 - `WebAudio.Idl`: the interface table generated from WPT's `interfaces/webaudio.idl` by
   `tools/webaudio-idl-table.py` (interfaces, attributes, operations, enums, dictionaries).
 -/
@@ -39,3 +44,5 @@ import L4Factoidal.WebAudio.Buffer
 import L4Factoidal.WebAudio.Oscillator
 import L4Factoidal.WebAudio.Filters
 import L4Factoidal.WebAudio.Idl
+import L4Factoidal.WebAudio.Decode
+import L4Factoidal.WebAudio.Api

@@ -63,7 +63,7 @@ STRESS_WHY = {
 }
 GROUPS = [
     ('Scripts, WebGPU and WebGL', ['raymarch.html', 'search.html', 'foaf-explorer.html', 'canvas-chart.html', 'timers-and-clicks.html', 'webgpu-triangle.html',
-                                   'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', GAMES_TEST]),
+                                   'webgl-triangle.html', 'wasm-mandelbrot.html', 'showcase-dataviz-script.html', 'shadow-and-frames.html', 'jukebox.html', GAMES_TEST]),
     ('SVG and graphics', ['showcase-lettering.html', 'showcase-textpath.html', 'showcase-tables-svg.html', 'svg-gallery.html',
                           'svg-text-labels.html', 'solving-showcase.html', 'foaf-graph.html', 'svg-affine.html', 'svg-linear-paths.html']),
     ('Text, type and layout', ['showcase-emoji.html', 'typography-lab.xml', 'showcase-tables.html', 'showcase-images.html',
@@ -90,6 +90,7 @@ BLURBS = {
     'foaf-explorer-verified.html': 'The same graph, each frame checked by WebAssembly proved in Lean to compute the overlap certificate.',
     'canvas-chart.html': 'An animated Canvas 2D chart.',
     'timers-and-clicks.html': 'Dots moved by timers, animation frames and buttons.',
+    'jukebox.html': 'A playlist on the Web Audio API: MP3, Ogg Vorbis, Opus and WAV, with gapless play. Needs Web Audio in pages (issue 1169).',
     'webgpu-triangle.html': 'A spinning triangle from navigator.gpu; the browser checks each call.',
     'webgl-triangle.html': 'WebGL 1 and 2 triangles, checked by the browser.',
     'wasm-mandelbrot.html': 'A tiny WebAssembly module, run by the built-in WebAssembly engine, draws the Mandelbrot set.',

@@ -26,6 +26,11 @@ they keep their addresses, so tests and old links that name them still work.
   (corrected 2026-11-09; the field's reason text still says "does not execute scripts").
   `showcase_gaps_test.ts` holds one expected
   failure for each gap these pages show, with its issue.
+- `jukebox.html` comes from `../tools/jukebox-page.py` (Python standard library only; run it
+  again after a change): a playlist on the Web Audio API (issue
+  https://github.com/danbri/factoidal-core/issues/1169, stage E). A `file:` page reads no other
+  `file:` URL, so the five CC0 clips of `third_party/media` are in the page as base64, each with its
+  SHA-256; the page makes a sixth clip (a WAV) itself.
 - `showcase-images.html` (handwritten) shows HTML `img` drawn by Lean. Its pictures,
   `images-landscape.png` and `images-badge.png`, come from `../tools/image-pages.py`
   (Python standard library only); `images-missing.png` does not exist on purpose, so
