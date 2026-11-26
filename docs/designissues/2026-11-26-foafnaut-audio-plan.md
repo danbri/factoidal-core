@@ -207,13 +207,15 @@ Found by the work on `Render.lean`; none blocks the offline renderer.
 5. `Kernels.lean`: when a delay's input channel count changes, stored samples are not up-mixed or
    down-mixed as the `DelayNode` section says.
 
-## 12. Stage B, last part: the page interfaces (design)
+## 12. Stage B, last part: the page interfaces
 
 How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude.js` calls
 `apiCall(op, args)`; `WasmVM/Hosts/WebApi.lean` routes the op; ops 100 to 119 are WebGL's, 120 to
 139 WebCodecs').
 
-- Ops 170 to 189 are Web Audio's, in a new module `WebAudio/Api.lean`. Its state is a field of
+- Ops 173 to 189 are Web Audio's (170 to 172 were already layout ops), in `WebAudio/Api.lean`
+  (`295173571`; the op table is its header; theorems: no op changes a context it does not name, a
+  failed op leaves the state unchanged). Its state is a field of
   `WebApi.State` (`audio`), so contexts persist between script turns: the contexts by id, each an
   `OfflineContext` for now (a real-time context in stage D).
 - The page builds its classes from the interface table (`WebAudio/Idl.lean`, generated from WPT's
