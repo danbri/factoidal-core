@@ -367,6 +367,33 @@ state at the end of `WebSession.serve`) while a Deno thread was in `_dl_close_wo
 pin: 20 of 20 runs exit 0. The worker modes (`copies`, `sessions`) are unchanged: they start no
 task session, so their libraries are not pinned and a closed tab's copy is still unloaded.
 
+### 6a. After the rebase onto `main` `b7286ac7`
+
+71 commits reached `main` during the night. Two of them (issue
+https://github.com/danbri/factoidal-core/issues/1124, stages A and B) changed the state this work
+moves into sessions: a kept page layer has a `layoutOff` flag, `Engine` has kept chrome layers,
+kept answers with no layers and kept layout sections, and a layers answer can carry its boxes,
+glyph runs and links as binary sections. The merge keeps all of these in `Engine` (per session)
+and `Engine.pages` for the kept page layers. In the host, the layout sections of a bytes answer are
+placed by one function (`placedAnswer`) for the engine on this thread and for a task session, and
+`compileLayers` asks for them through the shared `remoteMethods` (`Kernel.layoutSections`).
+
+The merged build: the Lean and C of `wip/engine-sessions` on `b7286ac7`. The build process was
+stopped by a tool time limit after it linked `web-render-native` and before the library; the
+library was then linked by the script's own link command from that build's 665 objects, and the
+script's last two steps ran (`check-budget.mjs`: `default.html` and `status.html` pass;
+`write-witness.py`). Hygiene counts of that build: lab 55 modules, 2 unsafe, 2 implemented_by, 1
+partial def, 0 extern, 1 opaque.
+
+On the merged library: `engine_sessions_test.ts` 9 of 9 on 3 runs, each exit 0 (test 9 is new: a
+task session's layers answer decodes to the same boxes, glyph runs, links, pixel data, tile words
+and layer places as the engine on this thread); `layout_sections_test.ts` (issue 1124) 2 of 2,
+directly and through an engine worker.
+
+Byte comparison of the demo pages against a build of `main` `b7286ac7`: not yet run (that build is in progress).
+
+Confirmation measurement against that build: not yet run.
+
 Evidence limits: Linux only; no Mac was available, so macOS (the product's main platform) is
 not measured, and the macOS link (the exported symbol list) is not built here. Software Vulkan
 frames dominate the latency numbers. The numbers above are of the library before D12; D12 adds
