@@ -369,3 +369,34 @@ default thread pool. The scene hash is the same in every run of every configurat
 Geometric mean: first compile 0.94, relayout 0.92. The python page's first compile is slower; the
 new library at threads 0 gives 344 ms on that page too, so the cost is not the threads alone.
 Open: find it, and the style phase.
+
+## 9. TLS: what we do ourselves and what the host does (2026-11-26)
+
+Owner, 2026-11-26, verbatim, on the Ethereum RPC reads: "yes the intent is for this to be as
+internal to our packages as possible". Then: "Please recap the extent to which we handle TLS, vs
+use it from Deno or elsewhere."
+
+There is no TLS implementation in Lean. Every TLS handshake and record layer today is done by a
+library outside the Lean tree:
+
+| Path | Who does TLS | What Lean decides |
+| --- | --- | --- |
+| Foafnaut page and subresource loads (`native_html_document.ts`, `fetch`) | Deno (rustls, with Deno's root store) | URL, egress and fetch policy (`Net/PageFetch.lean`, `Net/Egress.lean`) |
+| Foafnaut `wss:` sockets (`native_net.ts`, `Deno.startTls`) | Deno (rustls) | WebSocket rules (`Net/WebSocket.lean`) |
+| Tor relay links (`labs/demos/foafnaut/tor-wasm`) | rustls 0.23 inside our Arti wasm module, ring crypto; Deno gives only TCP | SOCKS5 admission (`Net/Socks5.lean`, theorems) |
+| Ethereum RPC capture (`evm-cleanroom/scripts/rpc`) | Node (`node:https`, OpenSSL) | Nothing in the transport; Lean checks the saved replies |
+| XMPP STARTTLS and direct TLS (npm) | Node (`node:tls`, OpenSSL) | The STARTTLS state machine and its theorems |
+| XML Signature certificates (`XML/X509.lean`) | No TLS | DER parsing of X.509 fields; no path or signature check of the certificate |
+
+Notes:
+- The Tor path is the only one where the TLS code ships inside our package (the wasm module).
+  It is still third-party code (rustls, ring), not Lean, and Tor does not use Web PKI: it checks
+  relay identities through the Tor link handshake, not certificate chains.
+- Certificate verification for web pages is Deno's (rustls with its root store); we do not record
+  the chain, cipher suite or verification result yet, which the retrieval-record rule of
+  2026-10-25 asks for (https://github.com/danbri/factoidal/issues/1035).
+- Options to make more of it internal, in order of work: (1) send all host TLS through one
+  module we pin and build (the rustls wasm we already build for Tor), so every path has the same
+  version and can report its handshake details; (2) Lean decides the TLS policy (versions, cipher
+  suites, groups, certificate path and name checks) and the library only does the cryptography;
+  (3) a TLS 1.3 state machine in Lean over HACL* primitives. Only (1) is small. None is started.
