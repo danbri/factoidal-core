@@ -325,9 +325,13 @@ static lean_obj_res float_array(const double *v, size_t n) {
   return a;
 }
 
+/* The ABI of Lean 4.33: a function of type `IO a` takes no world argument and answers a
+ * lean_io_result; a function of type `BaseIO a` takes no world argument and answers the value
+ * itself (`UInt32` unboxed, `Unit` as lean_box(0)). The IR of Harness/AudioSinkTest.lean shows
+ * the same for `lean_io_mono_ms_now`. */
+
 LEAN_EXPORT lean_obj_res l4_audio_sink_open(b_lean_obj_arg spec, double rate, uint32_t channels,
-                                            uint32_t capacity, lean_obj_arg w) {
-  (void)w;
+                                            uint32_t capacity) {
   char err[320];
   err[0] = '\0';
   l4_sink *s = l4_sink_open(lean_string_cstr(spec), rate, channels, capacity, err, sizeof err);
@@ -342,36 +346,30 @@ LEAN_EXPORT lean_obj_res l4_audio_sink_open(b_lean_obj_arg spec, double rate, ui
 
 static l4_sink *sink_of(b_lean_obj_arg o) { return (l4_sink *)lean_get_external_data(o); }
 
-LEAN_EXPORT lean_obj_res l4_audio_sink_write(b_lean_obj_arg sink, b_lean_obj_arg frames, lean_obj_arg w) {
-  (void)w;
-  uint32_t n = l4_sink_write_f64(sink_of(sink), lean_float_array_cptr(frames), lean_sarray_size(frames));
-  return lean_io_result_mk_ok(lean_box_uint32(n));
+LEAN_EXPORT uint32_t l4_audio_sink_write(b_lean_obj_arg sink, b_lean_obj_arg frames) {
+  return l4_sink_write_f64(sink_of(sink), lean_float_array_cptr(frames), lean_sarray_size(frames));
 }
 
-LEAN_EXPORT lean_obj_res l4_audio_sink_counters(b_lean_obj_arg sink, lean_obj_arg w) {
-  (void)w;
+LEAN_EXPORT lean_obj_res l4_audio_sink_counters(b_lean_obj_arg sink) {
   double c[8];
   l4_sink_counters(sink_of(sink), c);
-  return lean_io_result_mk_ok(float_array(c, 8));
+  return float_array(c, 8);
 }
 
-LEAN_EXPORT lean_obj_res l4_audio_sink_pause(b_lean_obj_arg sink, uint8_t paused, lean_obj_arg w) {
-  (void)w;
+LEAN_EXPORT lean_obj_res l4_audio_sink_pause(b_lean_obj_arg sink, uint8_t paused) {
   l4_sink_pause(sink_of(sink), paused);
-  return lean_io_result_mk_ok(lean_box(0));
+  return lean_box(0);
 }
 
-LEAN_EXPORT lean_obj_res l4_audio_sink_close(b_lean_obj_arg sink, lean_obj_arg w) {
-  (void)w;
+LEAN_EXPORT lean_obj_res l4_audio_sink_close(b_lean_obj_arg sink) {
   l4_sink_close(sink_of(sink));
-  return lean_io_result_mk_ok(lean_box(0));
+  return lean_box(0);
 }
 
-LEAN_EXPORT lean_obj_res l4_audio_device_info(b_lean_obj_arg spec, lean_obj_arg w) {
-  (void)w;
+LEAN_EXPORT lean_obj_res l4_audio_device_info(b_lean_obj_arg spec) {
   double v[2];
   l4_audio_device_info_c(lean_string_cstr(spec), v);
-  return lean_io_result_mk_ok(float_array(v, 2));
+  return float_array(v, 2);
 }
 
 #endif /* L4_AUDIO_NO_LEAN */
