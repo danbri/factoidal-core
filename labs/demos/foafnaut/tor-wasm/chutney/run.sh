@@ -41,7 +41,9 @@ deno run --unstable-worker-options --allow-net --allow-read --allow-write --allo
   --dangerously-use-unreviewed-tor-transport --config "$NET/nodes/arti.toml" --timeout 120000 \
   --request siteA@127.0.0.1:4748 --request siteA@127.0.0.1:4748 --request siteB@127.0.0.1:4748 \
   --request NEWID --request siteA@127.0.0.1:4748 --request siteC@"$ONION:5858" \
-  --restart-check --hold 70000 --state-dir "$WORK/tor-state" --debug >"$OUT" 2>&1
+  --request PAR --request p1@127.0.0.1:4748 --request p2@127.0.0.1:4748 --request p3@"$ONION:5858" \
+  --request p4@127.0.0.1:4748 --request p5@"$ONION:5858" --request p6@127.0.0.1:4748 --request END \
+  --restart-check --hold 70000 --state-dir "$WORK/tor-state" --debug --trace-conns >"$OUT" 2>&1
 grep -E '^\{' "$OUT"
 ok=0
 grep -q '"step":"bootstrap","ok":true' "$OUT" && echo "PASS bootstrap" || { echo "FAIL bootstrap"; ok=1; }
@@ -55,6 +57,8 @@ if [[ ${#circs[@]} -eq 4 && "${circs[0]}" == "${circs[1]}" && "${circs[2]}" != "
   echo "PASS isolation (same partition shares, other partition and new identity do not)"
 else echo "FAIL isolation"; ok=1; fi
 grep -q 'onion service target' "$OUT" && echo "PASS onion service request" || { echo "FAIL onion service request"; ok=1; }
+grep -q '"step":"parallel","run":"1","streams":6,"ok":6' "$OUT" && echo "PASS 6 streams at once (4 exit, 2 onion; new partitions, so new circuits)" || { echo "FAIL parallel streams"; ok=1; }
+grep '"step":"loop"' "$OUT" | head -3
 grep -q '"via":"sealed LWS storage".*"sameGuards":true' "$OUT" && echo "PASS same guards after restart, through the sealed store" || { echo "FAIL same guards after restart"; ok=1; }
 grep -q '"filesWithGuardIdsInClearText":0' "$OUT" && echo "PASS no guard identity in clear text on disk" || { echo "FAIL state at rest"; ok=1; }
 echo "logs: $WORK"

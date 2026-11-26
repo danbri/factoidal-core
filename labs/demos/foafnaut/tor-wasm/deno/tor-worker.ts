@@ -25,6 +25,19 @@ type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB
 const traces: ConnTrace[] = [];
 const traceOf = new Map<number, ConnTrace>();
 let tracing = false;
+// Event-loop lag: the module has one thread, so CPU work in it (parsing a consensus, checking
+// signatures) delays every socket read and timer. A tick every 50 ms records how late it ran;
+// runs of more than 1 s are kept with their start time.
+let lagMax = 0;
+const stalls: { at: number; ms: number }[] = [];
+let lastTick = performance.now();
+setInterval(() => {
+  const now = performance.now();
+  const late = now - lastTick - 50;
+  lastTick = now;
+  if (late > lagMax) lagMax = late;
+  if (late > 1000) stalls.push({ at: Math.round(now - t0 - late), ms: Math.round(late) });
+}, 50);
 
 (globalThis as unknown as { torHost: unknown }).torHost = {
   async connect(ip: string, port: number): Promise<number> {
@@ -106,6 +119,8 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "isolated") result = tor.isolated_context();
   else if (m.op === "trace") { tracing = m.on; result = tracing; }
   const conn = tracing ? traces.splice(0, traces.length) : undefined;
-  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size, ...(conn ? { conns: conn, at: ms() } : {}) });
+  const loop = tracing ? { maxLagMs: Math.round(lagMax), stalls: stalls.splice(0, stalls.length) } : undefined;
+  if (tracing) lagMax = 0;
+  (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size, ...(conn ? { conns: conn, at: ms(), loop } : {}) });
 };
 (self as unknown as Worker).postMessage({ ready: true });

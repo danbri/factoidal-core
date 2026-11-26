@@ -6,8 +6,9 @@
 //
 // deno run --unstable-worker-options --allow-net --allow-read [--allow-write --allow-run --allow-env] deno/tor-host.ts \
 //   --dangerously-use-unreviewed-tor-transport [--config arti.toml] [--timeout 60000] \
-//   [--request [PARTITION@]HOST:PORT | NEWID ...] [--debug] [--trace-conns] [--restart-check] [--hold MS] [--state-dir DIR]
-// --trace-conns: after each step, one JSON line per TCP connection of that step (times in ms
+//   [--request [PARTITION@]HOST:PORT | NEWID | PAR | END ...] [--debug] [--trace-conns] [--restart-check] [--hold MS] [--state-dir DIR]
+// --trace-conns: after each step, one JSON line per TCP connection of that step and one "loop"
+// line (worst event-loop lag, and every stall over 1 s: CPU work blocks reads and timers) (times in ms
 // from the worker's start, bytes in and out, connect errors; no addresses), and a summary.
 const args = Deno.args;
 const flag = (n: string) => args.includes(n);
@@ -30,7 +31,7 @@ if (stateDir) {
   else store = opened;
 }
 type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
-type Reply = { result: unknown; dialled: number; open: number; conns?: ConnTrace[]; at?: number };
+type Reply = { result: unknown; dialled: number; open: number; conns?: ConnTrace[]; at?: number; loop?: { maxLagMs: number; stalls: { at: number; ms: number }[] } };
 /** --trace-conns: print the connections a step made, and a summary of where they stopped. */
 function printConns(step: string, r: Reply) {
   if (!r.conns) return;
@@ -42,6 +43,7 @@ function printConns(step: string, r: Reply) {
     sentNothing: n((c) => c.open !== undefined && c.outB === 0),
     sentButNoReply: n((c) => c.outB > 0 && c.inB === 0),
     replied: n((c) => c.inB > 0) }));
+  if (r.loop) console.log(JSON.stringify({ step: "loop", during: step, ...r.loop }));
 }
 
 /** Start the worker with narrow permissions; return a call function and the worker. */
@@ -108,13 +110,9 @@ async function runOnce(label: string, saved?: string): Promise<string> {
   console.log(JSON.stringify({ step: "host", run: label, dialled: b.dialled, open: b.open }));
   printConns("bootstrap", b);
   // --request [PARTITION@]HOST:PORT. Streams of different partitions use different circuits.
-  for (const spec of requests) {
-    if (spec === "NEWID") {
-      // New identity: later streams of every partition use circuits no earlier stream used.
-      const n = await call({ op: "new-identity" });
-      console.log(JSON.stringify({ step: "new-identity", partitionsForgotten: n.result }));
-      continue;
-    }
+  // --request PAR ... --request END: the requests between run at the same time (one promise
+  // each), so several circuits and channels are built at once.
+  const one = async (spec: string) => {
     const atSign = spec.indexOf("@");
     const partition = atSign >= 0 ? spec.slice(0, atSign) : "default";
     const request = atSign >= 0 ? spec.slice(atSign + 1) : spec;
@@ -123,6 +121,26 @@ async function runOnce(label: string, saved?: string): Promise<string> {
     const r = await call({ op: "stream", partition, host, port, request: `GET / HTTP/1.0\r\nHost: ${host}\r\n\r\n`, max: 2048, timeoutMs });
     console.log(String(r.result));
     printConns(`stream ${partition}`, r);
+    return String(r.result);
+  };
+  for (let i = 0; i < requests.length; i++) {
+    const spec = requests[i];
+    if (spec === "NEWID") {
+      // New identity: later streams of every partition use circuits no earlier stream used.
+      const n = await call({ op: "new-identity" });
+      console.log(JSON.stringify({ step: "new-identity", partitionsForgotten: n.result }));
+      continue;
+    }
+    if (spec === "PAR") {
+      const group: string[] = [];
+      while (++i < requests.length && requests[i] !== "END") group.push(requests[i]);
+      const t = performance.now();
+      const out = await Promise.all(group.map(one));
+      const ok = out.filter((o) => /"ok":true/.test(o)).length;
+      console.log(JSON.stringify({ step: "parallel", run: label, streams: group.length, ok, ms: Math.round(performance.now() - t) }));
+      continue;
+    }
+    await one(spec);
   }
   // Arti stores its state every 60 s and when its circuit manager is dropped. --hold waits for
   // the periodic store before the snapshot.
