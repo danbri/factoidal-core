@@ -476,6 +476,15 @@ refused, not passed over as private data (§23.1). XHTML `link` and `meta` are r
 def behaviourNamespaces : List String :=
   ["http://www.w3.org/2001/xml-events","http://www.w3.org/1999/xhtml","http://www.w3.org/1998/Math/MathML"]
 
+/-- SVG Tiny 1.2 §5.1.2 (`zoomAndPan`): `magnify`, the lacuna value, lets the user zoom and
+pan, which the viewer does; the drawing is the same. `disable` asks the viewer to turn zoom and
+pan off, which this viewer does not do, so it is refused. The attribute is removed after the
+check. -/
+def zoomAndPanChecked (attrs : List NamespaceAttribute) : Except String (List NamespaceAttribute) := do
+  if let some value := attr attrs "zoomAndPan" then
+    if trim value != "magnify" then throw s!"zoomAndPan {trim value}: the viewer does not turn off zoom and pan"
+  pure (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == "zoomAndPan"))
+
 /-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
 element name the language version and the profile the author wrote for. They do not change
 how the content is drawn. A known label is checked and then removed, so no later step can
@@ -1359,9 +1368,14 @@ private def readGeometry (lengths : LengthContext) (tag : String) (attrs : List 
     let x2 ← geometryNumber lengths attrs "x2"; let y2 ← geometryNumber lengths attrs "y2"
     return some (.line x1 y1 x2 y2)
   else if tag == "polygon" || tag == "polyline" then
-    let source ← need (attr attrs "points") "polygon requires points"
+    -- SVG Tiny 1.2 §9.6 and §9.7: the lacuna value of `points` is the empty list, which
+    -- disables rendering of the element; an odd number of coordinates is treated as if the
+    -- attribute were not specified.
+    let source := (attr attrs "points").getD ""
+    if (trim source).isEmpty then return none
     let values ← numbers source
-    if values.length < (if tag=="polygon" then 6 else 4) || values.length%2 != 0 || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
+    if values.length%2 != 0 then return none
+    if values.length < (if tag=="polygon" then 6 else 4) || values.length > 128 then throw "polygon/polyline requires 2–64 pairs (polygon at least 3)"
     let pairs := (List.range (values.length/2)).map fun i => Point.mk values[i*2]! values[i*2+1]!
     return if tag=="polygon" then some (.polygon pairs) else some (.path [NativeSVGPath.ofLinear ⟨pairs,false⟩])
   else if tag == "path" then
@@ -1802,7 +1816,9 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
               let _ ← readNode references rules paints fuel
                 {lengths,parent:=cumulative,style:=inherited,path,ancestors:=active,baseURL} child
               pure ()
-            else throw "graphics children unsupported"
+            -- Named, so a refusal says what is missing (SVG Tiny 1.2 §16: animation elements
+            -- such as `set` and `animate` are children of the shape they animate).
+            else throw s!"graphics child unsupported: {n.localPart}"
           | .other (.comment _) => pure ()
           | .other (.text text) | .other (.cdata text) => if !whitespace text then throw "text painting unsupported"
           | _ => throw "processing instruction unsupported"
@@ -2201,6 +2217,27 @@ theorem ReferenceContext.create_existing (context : ReferenceContext) :
 
 #print axioms ReferenceContext.create_existing
 
+/-- SVG Tiny 1.2 §11.11 (`viewport-fill`, `viewport-fill-opacity` on the root `svg`): the whole
+viewport is painted with the colour first. Read as a `rect` with no stroke whose box is the
+viewport in the root's user units: the output pixel (d) of user coordinate (u) is
+(u - minX)·sx + tx, so the viewport [0, viewportWidth] is [minX - tx/sx, minX + (viewportWidth - tx)/sx].
+`none`, and `inherit` (the root inherits the initial value, `none`), paint nothing. -/
+private def viewportFillRect (mapping : Mapping) (attrs : List NamespaceAttribute) : Option NamespaceNode :=
+  match attr attrs "viewport-fill" with
+  | none => none
+  | some fill =>
+    if ["none","inherit"].contains (trim fill) then none else
+    let plain := fun (key value : String) => ({name:={namespace_:=none,localPart:=key},value} : NamespaceAttribute)
+    let opacity := match attr attrs "viewport-fill-opacity" with
+      | none => []
+      | some value => if trim value == "inherit" then [] else [plain "fill-opacity" value]
+    let x := mapping.minX - mapping.tx/mapping.sx
+    let y := mapping.minY - mapping.ty/mapping.sy
+    some (.element {namespace_:=some svgURI,localPart:="rect"}
+      ([plain "x" (toString x),plain "y" (toString y),plain "width" (toString (mapping.viewportWidth/mapping.sx)),
+        plain "height" (toString (mapping.viewportHeight/mapping.sy)),plain "fill" fill,
+        plain "stroke" "none",plain "visibility" "visible"] ++ opacity) [])
+
 /-- SVG 2 §5.1: render an already namespace-expanded SVG fragment, including
     one supplied by an HTML foreign-content parser. The caller owns DOM parsing;
     root validation, SVG style, geometry and viewport semantics remain here. -/
@@ -2211,7 +2248,8 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let .element name attrs children := root | throw "SVG root must be an element"
   if name.namespace_ != some svgURI || name.localPart != "svg" then throw "root must be svg in the SVG namespace"
   let attrs ← profileLabelsRemoved attrs
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","style"]
+  let attrs ← zoomAndPanChecked attrs
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","style","viewport-fill","viewport-fill-opacity"]
   for key in ["width","height"] do
     if let some source := attr attrs key then
       -- `em` and `rem` (BBC News: `width="7em"`) are, like the viewport units, lengths that the
@@ -2247,12 +2285,20 @@ private def parseRootWithContext (root : NamespaceNode) (outputWidth outputHeigh
   let store := images.getD (imageStore context.document (context.initialBaseURL.orElse fun _ => context.documentURL))
   let paints : PaintContext := {references:=context.references,rules,document:=context.document,images:=store,glyphs}
   let attrs ← applyCSS lengths paints rules "svg" attrs
-  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio"]
+  validateAttrs "svg" attrs ["width","height","viewBox","preserveAspectRatio","viewport-fill","viewport-fill-opacity"]
   let inherited ← readStyle lengths paints attrs inheritedStyle
   let ancestors := (List.range (sourcePath.length+1)).map (fun depth => sourcePath.take depth)
   let parsedTree ← readListWith (fun child i => readNode context.references rules paints 33
     {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath ++ [i],ancestors,baseURL:=rootBase} child) children
-  let tree := if displaySuppressed attrs then [] else parsedTree
+  -- The viewport fill is drawn before the content, as the root's own paint (source path of
+  -- the root), so the source paths of the children do not change.
+  let background ← match viewportFillRect mapping attrs with
+    | none => pure []
+    | some rect =>
+      let rootContext : ReadContext :=
+        {lengths,parent:=identityTransform,style:=inherited,path:=sourcePath,ancestors,baseURL:=rootBase}
+      readNode context.references rules paints 33 rootContext rect
+  let tree := if displaySuppressed attrs then [] else background ++ parsedTree
   Scene.make w.ceil.toUInt32.toNat h.ceil.toUInt32.toNat mapping tree
 
 /-- Standalone SVG keeps a local original document and the existing public API.

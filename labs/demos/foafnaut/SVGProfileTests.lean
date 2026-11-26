@@ -58,3 +58,33 @@ private def privateData := "<p:note xmlns:p='urn:example:private'><p:x/><rect wi
 #guard compile (doc "" ("<g font-family='serif' font-size='18' text-anchor='middle' font-weight='bold'>" ++ body1 ++ "</g>")) 480 360 ==
   compile (doc "" ("<g>" ++ body1 ++ "</g>")) 480 360
 #guard (compile (doc "" "<g font-family='serif'><text>x</text></g>") 480 360).startsWith "{\"error\""
+
+/- SVG Tiny 1.2 §11.11: `viewport-fill` paints the whole viewport before the content, also
+   outside the viewBox when the aspect ratio leaves a margin. -/
+private def pixelOf (xml : String) (x y : Nat) : List Nat :=
+  match parse xml 100 50 with
+  | .error _ => []
+  | .ok s => let c := s.samplePixel x y; [c.r,c.g,c.b].map fun f => (f*255).round.toUInt32.toNat
+private def filled (attrs body : String) : String :=
+  "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 50 50' " ++ attrs ++ ">" ++ body ++ "</svg>"
+-- The viewBox is centred: x 25 to 75 of 100. The margin (x 5) is filled too.
+#guard pixelOf (filled "viewport-fill='blue'" "") 5 25 == [0,0,255]
+#guard pixelOf (filled "viewport-fill='blue'" "") 95 25 == [0,0,255]
+-- The content is drawn over it.
+#guard pixelOf (filled "viewport-fill='blue'" "<rect width='50' height='50' fill='lime'/>") 50 25 == [0,255,0]
+-- Half opacity over the white page.
+#guard pixelOf (filled "viewport-fill='blue' viewport-fill-opacity='0.5'" "") 5 25 == [128,128,255] ||
+  pixelOf (filled "viewport-fill='blue' viewport-fill-opacity='0.5'" "") 5 25 == [127,127,255]
+-- none and inherit paint nothing.
+#guard pixelOf (filled "viewport-fill='none'" "") 5 25 == pixelOf (filled "" "") 5 25
+#guard pixelOf (filled "viewport-fill='inherit'" "") 5 25 == pixelOf (filled "" "") 5 25
+
+/- SVG Tiny 1.2 §9.6, §9.7: no `points`, empty `points` or an odd number of coordinates: the
+   element is not drawn. -/
+#guard compile (doc "" "<polygon fill='red'/>") 480 360 == compile (doc "" "") 480 360
+#guard compile (doc "" "<polyline points='' fill='red'/>") 480 360 == compile (doc "" "") 480 360
+#guard compile (doc "" "<polygon points='0,0 10,0 10,10 5' fill='red'/>") 480 360 == compile (doc "" "") 480 360
+
+/- SVG Tiny 1.2 §5.1.2 `zoomAndPan`: magnify (the viewer zooms) is taken; disable is refused. -/
+#guard compile (doc "zoomAndPan='magnify'" body1) 480 360 == compile (doc "" body1) 480 360
+#guard (compile (doc "zoomAndPan='disable'" body1) 480 360).startsWith "{\"error\":\"zoomAndPan disable"
