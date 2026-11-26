@@ -455,3 +455,67 @@ latency. `--perf-summary` gets a block `audio`.
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
 - Then the owner's check on the Mac, and stage E (the jukebox).
+
+## 14. Render quantum speed (2026-11-26)
+
+Tracking: https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut). Branch
+`wip/1169-render-perf`.
+
+Target: one quantum (128 frames, 48 kHz, budget 2.67 ms) of one sine oscillator under 0.05 ms;
+the graph of `labs/demos/foafnaut/pages/particle-rex.html` under 0.5 ms; same output.
+
+Method. `lake exe webaudio-bench [a|b|c]` (`Harness/WebAudioBench.lean`) builds three graphs with
+the `OfflineContext` functions and renders 300 quanta, 5 runs: (a) one sine oscillator into the
+destination; (b) one `AudioBufferSourceNode` (1 s stereo buffer, looping) through a gain; (c) the
+Particle Rex shape: master gain, feedback delay with a wet gain, a pad of three oscillators
+(sine, sine, triangle) through gains and a lowpass with `setTargetAtTime`, three tone oscillators
+(sine, square, sawtooth) with `setValueAtTime`, exponential and linear ramps and `stop`. It prints
+the median ms per quantum and an FNV-style hash of the output bits (binary32 rounded). Profile:
+`perf record -g --call-graph dwarf` on the bench, `perf report --no-children --sort symbol`. The
+VM has 4 vCPUs shared with other sessions (load average 3.8 to 4.9 while measuring), so a number
+has about 10 % noise.
+
+| graph | before | after | hash |
+|---|---|---|---|
+| a, one oscillator | 0.227 ms | 0.014 ms | equal |
+| b, buffer, gain | 0.132 ms | 0.035 ms | equal |
+| c, Particle Rex shape | 4.03 ms | 0.41 ms | equal |
+
+Where the time was (graph c, before): 80 % of the samples in `Automation.fill` and its callees.
+`fill` called `valueAt` for each frame with exact rationals: `frameTime` made a `Rat` from a
+`Float` (`ofDouble`: `mkRat` with a gcd on 2^60 to 2^70 denominators, so GMP; 50 % of the time),
+and `walk` compared and subtracted rationals (24 %). Float literals above 2^32 and 2^52 inside
+`ofDouble` and `validate` were parsed at each call (`lean_cstr_to_nat`, 5 %).
+
+Changes, each with the output kept:
+
+1. `Automation.fill` computes in binary64 (`fillFast`). `fillSpec` is the old definition and the
+   specification. A stored time is the exact value of a double, so `timeToFloat` recovers it and
+   the order of stored times is the IEEE order; the time of frame `f` is `f / sampleRate` in
+   binary64. The events are converted once per call, the value before each event (`fBefore`) is
+   computed once per call, and a cursor (`advance`) moves forward over the events because the
+   frames increase. A list with a curve event uses `fillSpec`. Not proved (the kernel does not
+   unfold `Float`): 13 `#guard`s compare `fill` and `fillSpec` bit for bit on each event kind,
+   equal times, zero start values, a sample rate of 0 and a curve. No theorem mentions `fill`.
+2. `@[specialize]` on `Kernels.iter` and `Kernels.mkChan`: the closure call and the boxed `Float`
+   for each frame are gone (graph b 0.13 to 0.07 ms).
+3. `@[inline] getF`, with the constant `zeroF` for its 0: an inlined `Float` literal is evaluated
+   by `Float.ofScientific` at each call (it parses a big integer literal, about 1 us) unless it
+   is a top-level constant. Trap: any `Float` literal in a function that is inlined or
+   specialised into a branch of a hot loop has this cost; use a named constant.
+4. `PeriodicWave.realZero` and `partialSumSin`: a wave whose cosine terms are all 0 (the built-in
+   waves) is summed without `acc + 0 * ck` (`acc` is never `-0`, `ck` is finite, so the sum is
+   bit equal). `#guard`s compare it with `partialSum` bit for bit on four waves at 12 phases.
+5. `Automation.fillConst` and a one-value result in `Render.paramValues` for a parameter that is
+   constant over the quantum (empty list, or only non-curve, non-`setTarget` events at or before
+   the first frame) and has no connection. Every kernel reads a one-value array as constant over
+   the block (`Kernels.paramAt`), so the output is the same; the array has 1 value, not `n`.
+   `#guard`s check that `fill` gives that value at every later frame.
+
+Remaining cost (graph c, 0.41 ms): the band-limited oscillator sum is about 30 % (the sawtooth at
+110 Hz sums 217 partials per sample; a bit-exact version cannot skip terms, the recurrence is the
+arithmetic; a wavetable would change the output within the 1e-9 tolerance of the tests), the
+delay kernel 12 %, `fillFast` for the `setTarget` and ramp parameters 10 % (one `Float.exp` per
+frame), allocation of one `FloatArray` per node per quantum about 15 %, input mixing 6 %.
+Not done: the delay kernel and the mixers still go through `mkChan` closures for each channel;
+an instruction-count measurement that does not depend on the load of the machine.
