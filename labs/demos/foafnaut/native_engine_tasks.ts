@@ -27,7 +27,7 @@ type Job={op:"call"|"pageFonts"|"serifFont"|"monoFont";name?:RemoteCall;args?:un
 /** A CompileClient whose engine is a task session of the native library at `nativeEngine`.
 Throws when the library has no task sessions; the caller then uses engine workers. */
 export async function startTaskClient(font:{path:string;family:string}|undefined,nativeEngine:string):Promise<CompileClient>{
-  const engine=loadHTMLSession(nativeEngine);
+  const engine=await loadHTMLSession(nativeEngine);
   // The font helpers await each engine answer, so they take the session engine as it is.
   const helperEngine=engine as unknown as HTMLEngine;
   let fallbackFonts:ReturnType<typeof fallbackFontHost>|undefined;

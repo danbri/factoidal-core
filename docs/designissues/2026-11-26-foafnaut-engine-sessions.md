@@ -236,6 +236,45 @@ request, the reading of each answer, and the fallback-font choice of a page with
 above ASCII (`font-coverage.mjs` reads every character of the source). This is measured as
 the main thread's pump gap and as input latency (section 5).
 
+## 4a. Stage 4: stopping a session
+
+Built: `WebWasm.Machine.canceled` (in the engine, `IO.checkCanceled`: the cancellation of the
+Lean task that runs the call; never on a thread that Lean did not start, never in `Id`). A
+render checks it before its layout and again before its paint (`WebDocument.answerWith`), and
+throws "engine call canceled". `WebSession.cancel` (C `web_session_cancel`) closes the session
+and cancels its task (`IO.cancel`); `serve` refuses each call it has not started once its task is
+canceled; when `serve` ends it takes the inbox away (`none`) and refuses what was left in it,
+so no caller waits for good. The task client (`native_engine_tasks.ts`) cancels its session when
+its tab is closed, then frees it when no call is in flight.
+
+What a cancel guarantees, for a task session:
+
+1. No call of the session starts after the cancel: a call not started is answered with an error
+   at once.
+2. The call in progress stops at its next check (before its layout, or after it and before its
+   paint) and answers an error.
+3. Other sessions are not changed: each has its own task, inbox and state.
+4. The session's engine state is dropped (its task ends): a canceled tab needs a new session.
+
+What it does not do:
+
+- Stop a layout in progress: the layout is one pure function, so it runs to its end. Its time
+  is bounded by the page's size and the engine's limits (16 MiB of source, `maxSourceBytes`),
+  not by the cancel. Expected failure and issue:
+  https://github.com/danbri/factoidal-core/issues/1135.
+- Stop a page script within one slice: a BubblePopJS turn is bounded by the step budget the host
+  gives (`sliceSteps`), and the host stops sending turns; the check is between calls.
+- Anything for direct sessions (per-tab workers, `--engine-mode sessions` and `copies`): a
+  worker's call runs to its end, as before; ending the worker frees the session after it.
+
+Script isolation is unchanged: page scripts run in BubblePopJS (a value of the session) or in
+QuickJS-NG inside WasmVM; the Tor client stays in its Deno worker with narrow permissions.
+
+D10. One build carries stages 2 to 4. Each stage is measured by its own mode in one run of one
+build (`copies` is the base behaviour, `sessions` is stage 2, `tasks` is stages 3 and 4), against
+a build of the base. Reason: a native build takes about 20 minutes on this machine, and modes of
+one build compared in one run share every other variable.
+
 ## 5. Measurement method
 
 Command (repeatable, no person needed): `labs/demos/foafnaut/tools/engine_sessions_bench.py`

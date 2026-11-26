@@ -81,7 +81,7 @@ Deno.test({name:"engine sessions: three task sessions at once give the answers o
   await loadFontFile(alone,font,"Noto Sans");
   const want=await answersOf(alone,pagesDir,rounds);
   alone.endSession();
-  const sessions=[0,1,2].map(()=>loadHTMLSession(library));
+  const sessions=await Promise.all([0,1,2].map(()=>loadHTMLSession(library)));
   try{
     // The font helper awaits the answer: it takes a task session as it is.
     for(const s of sessions)assert.deepEqual(await loadFontFile(s as unknown as Parameters<typeof loadFontFile>[0],font,"Noto Sans"),{family:"Noto Sans",glyphs:3884,fonts:1});
@@ -91,7 +91,7 @@ Deno.test({name:"engine sessions: three task sessions at once give the answers o
 }});
 
 Deno.test({name:"engine sessions: a long call on one task session does not hold a short call on another",ignore:noLibrary,fn:async()=>{
-  const a=loadHTMLSession(library),b=loadHTMLSession(library);
+  const a=await loadHTMLSession(library),b=await loadHTMLSession(library);
   try{
     // A table of 6,000 rows (a long layout) on a, then a paragraph on b.
     const rows=Array.from({length:6000},(_,i)=>`<tr><td>${i}</td><td>row ${i} of a long table</td><td>${i*7%13}</td></tr>`).join("");
@@ -108,7 +108,7 @@ Deno.test({name:"engine sessions: a long call on one task session does not hold 
 }});
 
 Deno.test({name:"engine sessions: an ended task session answers its calls and refuses later ones",ignore:noLibrary,fn:async()=>{
-  const s=loadHTMLSession(library);
+  const s=await loadHTMLSession(library);
   const sent=[s.compile("<p>one</p>",100,40,{checks:false}),s.compile("<p>two</p>",100,40,{checks:false})];
   s.close();
   await assert.rejects(()=>s.compile("<p>three</p>",100,40,{checks:false}),/session ended/);
@@ -134,10 +134,10 @@ const xfail=(name:string,issue:string,ignore:boolean,fn:()=>Promise<void>)=>Deno
 Deno.test({name:"engine sessions: a canceled task session refuses the calls it had not started",ignore:!canCancel,fn:async()=>{
   const page=longTable(4000);
   // One long call alone, on a session of its own, for the time it takes.
-  const probe=loadHTMLSession(library);
+  const probe=await loadHTMLSession(library);
   const t0=performance.now();await probe.compile(page,800,600,{checks:false});const oneMs=performance.now()-t0;
   await probe.endSession();
-  const s=loadHTMLSession(library);
+  const s=await loadHTMLSession(library);
   const t1=performance.now();
   const calls=[0,1,2].map(()=>s.compile(page,800,600,{checks:false}));
   await new Promise(r=>setTimeout(r,Math.min(50,oneMs/4)));
@@ -155,7 +155,7 @@ Deno.test({name:"engine sessions: a canceled task session refuses the calls it h
 
 xfail("a cancel stops a layout in progress within 200 ms","https://github.com/danbri/factoidal-core/issues/1135",!canCancel,async()=>{
   const page=longTable(12000);
-  const s=loadHTMLSession(library);
+  const s=await loadHTMLSession(library);
   try{
     const call=s.compile(page,800,600,{checks:false}).catch(()=>undefined);
     await new Promise(r=>setTimeout(r,100));

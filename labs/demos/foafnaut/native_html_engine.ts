@@ -899,10 +899,12 @@ answer, so the calling thread (the window's main thread) never waits for the eng
 runs a session's calls one at a time, in arrival order; calls on two sessions run at the same
 time. The checks before a call and the reading of its answer are those of `loadHTML`
 (remoteMethods). Throws when the library has no task sessions (an engine from before them, or
-FOAFNAUT_LEAN_THREADS=0: no task manager). */
-export function loadHTMLSession(path:string):SessionEngine {
+FOAFNAUT_LEAN_THREADS=0: no task manager). The first session of a process starts the engine's
+runtime (its module initialisers); that call is nonblocking too, so this thread does not wait
+for it. */
+export async function loadHTMLSession(path:string):Promise<SessionEngine> {
   const library=Deno.dlopen(path,{
-    web_session_new_task:{parameters:[],result:"pointer",optional:true},
+    web_session_new_task:{parameters:[],result:"pointer",nonblocking:true,optional:true},
     web_session_close:{parameters:["pointer"],result:"void",optional:true},
     web_session_cancel:{parameters:["pointer"],result:"void",optional:true},
     web_session_free:{parameters:["pointer"],result:"void",optional:true},
@@ -917,7 +919,7 @@ export function loadHTMLSession(path:string):SessionEngine {
   // The library is never closed: its runtime may have started threads that run its code.
   if(!sym.web_session_new_task||!sym.web_session_close||!sym.web_session_free||!sym.call||!sym.callBin||!sym.font||!sym.image)
     throw new Error("this engine has no task sessions (web_session_new_task)");
-  const session=sym.web_session_new_task();
+  const session=await sym.web_session_new_task();
   if(!session)throw new Error("engine task session did not start (no Lean task manager: FOAFNAUT_LEAN_THREADS=0?)");
   let closed=false,ended=false;
   // The calls in flight. Each keeps its argument buffers until it is answered: the native call
