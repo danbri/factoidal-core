@@ -464,6 +464,10 @@ lean_exe «wasmvm-spectest» where root := `L4Factoidal.WasmVM.SpecTest
   roots := #[`L4Factoidal.Media]
 lean_exe «media-bench» where root := `L4Factoidal.Media.Bench
 
+-- The Web Audio API in Lean (issue 1169; docs/designissues/2026-11-26-foafnaut-audio-plan.md).
+@[default_target] lean_lib WebAudio where
+  roots := #[`L4Factoidal.WebAudio]
+
 -- Explicit non-default roots: prototype tests stay outside production imports.
 lean_lib ScopedQueryPrototype where
   roots := #[`Wasm.Ops.ScopedQuery, `Wasm.Ops.ScopedQueryTests]
