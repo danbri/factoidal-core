@@ -56,14 +56,14 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks] [--hidden-tabs stopped|throttled|running] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let windowSize:[number,number]|undefined;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"="copies";
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"="copies",hiddenTabs:"stopped"|"throttled"|"running"="stopped";
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -151,6 +151,7 @@ async function main() {
     // record). A library without task sessions falls back to "sessions", one without sessions
     // to "copies".
     else if(arg==="--engine-mode"){const m=args.shift();if(m!=="copies"&&m!=="sessions"&&m!=="tasks")throw new Error("--engine-mode needs copies, sessions or tasks");engineMode=m;}
+    else if(arg==="--hidden-tabs"){const m=args.shift();if(m!=="stopped"&&m!=="throttled"&&m!=="running")throw new Error("--hidden-tabs needs stopped, throttled or running");hiddenTabs=m;}
     // One Lean frame for each scroll step, as before the two layers (for comparison).
     else if(arg==="--single-frame")layered=false;
     // No press look (no darkening, no :active frame): the behaviour before issue 1268, for comparison.
@@ -420,6 +421,42 @@ async function main() {
   // window session replays them in order and presents the page canvases. Before the session
   // exists they wait here. Declared before the first page, whose scripts start before the window.
   const gpuTurns:{page:number;commands:unknown[]}[]=[];
+  // Tabs not shown (--hidden-tabs; docs/designissues/2026-11-26-foafnaut-engine-sessions.md
+  // section 7). "stopped" (the default): the page of a tab not shown gets no timer turn; its clock
+  // goes on, and its first turn when shown runs what came due meanwhile. "throttled": at most one
+  // timer turn a second (as browsers do for a background tab). "running": turns as for the shown
+  // page (a load for measurement). With either of the two, a hidden page makes no frame and its
+  // canvas commands are held, in order, and replayed when its tab is shown, so nothing is uploaded
+  // while it is hidden; past heldGpuCapBytes of canvas pixels the held commands are replayed at
+  // once (counted as forced).
+  const hiddenBusy=new Set<number>(),hiddenTurnAt=new Map<number,number>();
+  const heldGpu=new WeakMap<object,{turns:{page:number;commands:unknown[]}[];bytes:number}>(),heldGpuCapBytes=64*1048576;
+  const hiddenStats={turns:0,leanMs:[] as number[],held:0,heldBytes:0,coalesced:0,released:0,forced:0};
+  type PixelsCommand={k?:string;g?:unknown[];x?:number;y?:number;w?:number;h?:number};
+  const pixelBytes=(commands:unknown[])=>{let n=0;for(const c of commands as PixelsCommand[])if(c?.k==="pixels")n+=(c.w??0)*(c.h??0)*4;return n;};
+  // A `pixels` command writes the whole of its rectangle of one canvas texture (page-gpu.mjs), so
+  // an earlier one inside a later one's rectangle on the same texture is not needed, when no
+  // command of another kind (a canvas made, a pass that reads it) comes between them.
+  const pixelsOnly=(commands:unknown[])=>(commands as PixelsCommand[]).every(c=>c?.k==="pixels");
+  const covers=(a:PixelsCommand,b:PixelsCommand)=>a.g?.[0]===b.g?.[0]&&a.g?.[1]===b.g?.[1]
+    &&(a.x??0)<=(b.x??0)&&(a.y??0)<=(b.y??0)&&(a.x??0)+(a.w??0)>=(b.x??0)+(b.w??0)&&(a.y??0)+(a.h??0)>=(b.y??0)+(b.h??0);
+  const holdGpu=(page:object,turn:{page:number;commands:unknown[]})=>{
+    const held=heldGpu.get(page)??{turns:[],bytes:0},bytes=pixelBytes(turn.commands);
+    hiddenStats.held++;hiddenStats.heldBytes+=bytes;
+    if(pixelsOnly(turn.commands)){
+      const later=turn.commands as PixelsCommand[];
+      for(let i=held.turns.length-1;i>=0&&pixelsOnly(held.turns[i].commands);i--){const t=held.turns[i];
+        if(t.page===turn.page)t.commands=(t.commands as PixelsCommand[]).filter(c=>!later.some(n=>covers(n,c)));}
+      const before=held.turns.length;held.turns=held.turns.filter(t=>t.commands.length>0);hiddenStats.coalesced+=before-held.turns.length;
+    }
+    held.turns.push(turn);held.bytes=held.turns.reduce((n,t)=>n+pixelBytes(t.commands),0);heldGpu.set(page,held);
+    if(held.bytes>heldGpuCapBytes){hiddenStats.forced+=held.turns.length;releaseGpu(page);}
+  };
+  // The held commands of a page go to the window session, before any later turn of the page.
+  const releaseGpu=(page:object)=>{
+    const held=heldGpu.get(page);if(!held)return;
+    heldGpu.delete(page);gpuTurns.push(...held.turns);setTimeout(gpuFlush,0);
+  };
   // Presents of page canvases with no Lean frame (a turn's replay, blit and composite), and
   // their times, for the exit summary.
   const pageGpuMs:number[]=[];
@@ -840,7 +877,8 @@ async function main() {
     // with probes, which held up the next turns) while the page animates its canvas.
     // A timer turn's canvas replay (decode and texture write) runs in the next task: the loop
     // asks the page's next turn first, and the replay runs while the engine works (issue 1098).
-    if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});if(cause==="timers")setTimeout(gpuFlush,0);else gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
+    if(turn.gpu?.length&&page!==document&&hiddenTabs!=="stopped")holdGpu(page,{page:turn.gpuPage!,commands:turn.gpu});
+    else if(turn.gpu?.length){gpuTurns.push({page:turn.gpuPage!,commands:turn.gpu});if(cause==="timers")setTimeout(gpuFlush,0);else gpuFlush();lastActivity=Math.max(lastActivity,performance.now());}
     if(page.applyTurn(turn)){
       if(page===document)pageChangedNow();
       // What elements made or changed by the turn ask for (a sheet, an image): fetched, then drawn.
@@ -943,6 +981,7 @@ async function main() {
   const showTab=(index:number)=>{
     controller?.abort();candidate=undefined;loading=false;focused=false;active=index;
     ({document,history,scroll}=tabs[index]);field=showURL(document.url);dirty=true;
+    if(heldGpu.has(document)){hiddenStats.released+=heldGpu.get(document)!.turns.length;releaseGpu(document);}
     const id=tabs[index].id;tabShown={id,at:performance.now(),fresh:!worker?.ownWorker(id)};worker?.show(id);
     native?.setHistory(history.canBack,history.canForward);
   };
@@ -1732,6 +1771,8 @@ async function main() {
         maxInFlight:session?.stats.gpu.maxInFlight??0,gateWaits:session?.stats.gpu.waits??0,gateWaitMs:session?.stats.gpu.waitMs??0,blockedMs:session?.stats.gpu.blockedMs??0,maxBlockedMs:session?.stats.gpu.maxBlockedMs??0,maxWaitsBetweenPumps,turnAsks:session?.stats.gpu.turnAsks??0,fallbackAsks:session?.stats.gpu.fallbackAsks??0,submits:session?.stats.gpu.submits??0,guardSlowed:gpuGuard.slowed,guardChanges:gpuGuard.changes},
       logGate:logGate.stats(),pageCanvasPresents:{count:pageGpuMs.length,p50Ms:percentile(pageGpuMs,0.5),p95Ms:percentile(pageGpuMs,0.95),uploadBytesP50:percentile(pageUploadBytes,0.5),uploadBytesP95:percentile(pageUploadBytes,0.95)},
       // Page timer turns (issue 1098): the engine's time, the call beyond it, the wait before the next ask.
+      hiddenTabs:{policy:hiddenTabs,turns:hiddenStats.turns,leanMsP50:percentile(hiddenStats.leanMs,0.5),leanMsP95:percentile(hiddenStats.leanMs,0.95),
+        leanMsTotal:Math.round(hiddenStats.leanMs.reduce((a,b)=>a+b,0)),held:hiddenStats.held,heldMB:Math.round(hiddenStats.heldBytes/104857.6)/10,coalesced:hiddenStats.coalesced,released:hiddenStats.released,forced:hiddenStats.forced},
       timerTurns:{count:timerTurns.leanMs.length,leanMsP50:percentile(timerTurns.leanMs,0.5),leanMsP95:percentile(timerTurns.leanMs,0.95),
         callMsP50:percentile(timerTurns.callMs,0.5),callMsP95:percentile(timerTurns.callMs,0.95),waitMsP50:percentile(timerTurns.waitMs,0.5),waitMsP95:percentile(timerTurns.waitMs,0.95)},
       // Pointer press to the present that shows it: the composite darkening, and the Lean frame of a held press.
@@ -2574,7 +2615,7 @@ async function main() {
         waiting:shifting!==undefined||shiftPending||awaitingShift.length>0||awaitingBand.length>0||(pageChanged!==undefined&&scrollHolds(now))});
       // (the rest of a start in slices waits for the page's first frame: a slice can be one long
       // script, and run before that frame it would hold the engine the frame needs)
-      if(scriptsOn&&script&&!scriptBusy&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil
+      if(scriptsOn&&script&&!scriptBusy&&!hiddenBusy.has(script.session)&&!dirty&&!rendering&&script.turn.nextWake!==null&&now>=gpuHoldUntil
         &&(script.turn.startMore!==true||firstShown.has(document))){
         // While its start is not finished the page's clock moves only by its own steps, as in a
         // start made in one turn: the time the host took to show the page between two slices is
@@ -2596,6 +2637,29 @@ async function main() {
             .finally(()=>{scriptBusy=false;});
         }
       }
+      // The pages of the tabs not shown (--hidden-tabs): a timer turn each when one is due, at
+      // most one a second when throttled, one in flight per page, none while input waits (`held`)
+      // and none for a page whose start is not finished (it goes on when the tab is shown).
+      // tabs[active] is not read: it holds the shown tab as it was when last left.
+      let hiddenWakeIn:number|null=null;
+      if(scriptsOn&&hiddenTabs!=="stopped"){
+        const seen=new Set<number>();
+        tabs.forEach((tab,index)=>{
+          const page=tab.document,s=page.script;
+          if(index===active||page===document||!s||s.turn.nextWake===null||s.turn.startMore===true||seen.has(s.session))return;
+          seen.add(s.session);
+          const epoch=scriptEpochs.get(s.session);if(epoch===undefined)return;
+          const elapsed=now-epoch,last=hiddenTurnAt.get(s.session);
+          const wait=Math.max(s.turn.nextWake-elapsed,hiddenTabs==="throttled"&&last!==undefined?last+1000-now:0);
+          if(wait>0||held||hiddenBusy.has(s.session)||scriptBusy&&script?.session===s.session){
+            if(wait>0)hiddenWakeIn=Math.min(hiddenWakeIn??wait,wait);return;}
+          hiddenBusy.add(s.session);hiddenTurnAt.set(s.session,now);
+          (scriptCall("scriptSession","",{action:"advance",session:s.session,ms:Math.max(0,Math.ceil(elapsed-s.turn.clock)),sliceSteps:turnSliceSteps}) as Promise<ScriptTurn>)
+            .then(turn=>{hiddenStats.turns++;hiddenStats.leanMs.push(turn.ns/1e6);scriptTurn(page,turn,"hidden timers");})
+            .catch(error=>scriptFailed(page,error,"hidden timers"))
+            .finally(()=>{hiddenBusy.delete(s.session);});
+        });
+      }
       // Page requests of any turn (the start turn's too): made here, answered by action `net`.
       for(const {session,wire} of netQueue.splice(0)){
         if(wire.method.startsWith("WEBSOCKET")){netSocket(session,wire);continue;}
@@ -2606,8 +2670,9 @@ async function main() {
       }
       // Wake at least every 8 ms to pump, sooner for the page's next timer or animation frame
       // (a fixed 8 ms paced 16 ms frames at about 21 ms); wake at once when a frame ends.
-      const scriptWakeIn=scriptsOn&&script&&script.turn.nextWake!==null
+      const shownWakeIn=scriptsOn&&script&&script.turn.nextWake!==null
         ?script.turn.nextWake-(performance.now()-(scriptEpochs.get(script.session)??performance.now())):null;
+      const scriptWakeIn=shownWakeIn===null?hiddenWakeIn:hiddenWakeIn===null?shownWakeIn:Math.min(shownWakeIn,hiddenWakeIn);
       const idleMs=running?idleWaitMs(performance.now(),scriptWakeIn):0;
       if(idleMs){
         const start=performance.now();native.waitEvent(idleMs);waited=performance.now()-start;

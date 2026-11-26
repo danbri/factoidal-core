@@ -3,7 +3,10 @@
 one run (issue https://github.com/danbri/factoidal-core/issues/1031;
 docs/designissues/2026-11-26-foafnaut-engine-sessions.md, section 5).
 
-    engine_sessions_bench.py --config NAME=LAB:ENGINE[:MODE] ... [--runs N] [--scenario S ...]
+    engine_sessions_bench.py --config NAME=LAB:ENGINE[:MODE[:FLAGS]] ... [--runs N] [--scenario S ...]
+
+FLAGS: more host flags, comma-separated, each `--flag` or `--flag=value` (for example
+`--hidden-tabs=running,--engine-workers=64`).
                              [--out FILE]
 
 A configuration is a lab directory (its run_html.ts is the host), a native engine library, and
@@ -39,8 +42,10 @@ Scenarios (the steps language of run_html.ts --steps):
           (`native-html-scroll`), Lean frame total and gesture queuedToActionMs, p50, p95 (and max),
           each with its count; the
           engines live and the tabs that share one (the cap, --engine-workers, applies to every
-          mode). Only the shown tab's page gets timer turns, so the pages of the other tabs run
-          no script.
+          mode). With the host's default, --hidden-tabs stopped, only the shown tab's page gets
+          timer turns, so the pages of the other tabs run no script; with --hidden-tabs throttled
+          or running (a FLAGS item) they do, and their turns are counted (hiddenTurnsIdle,
+          hiddenTurnsActive, hiddenLeanMsActive).
 
 Output: one JSON object, with each run's numbers and, per configuration and scenario, the
 median, the worst and the coefficient of variation of each number
@@ -77,10 +82,9 @@ def steady_steps(n):
     steps = []
     for i in range(1, n):
         page = pages[(i - 1) % len(pages)]
-        url = f"go:file://{HERE}/pages/{page}"
-        # particle-rex.html animates its title screen, so it does not settle: the step after it
-        # (the next new tab) comes 2 s later instead of after a settled frame.
-        steps += ["t", "now:2:2000", url] if page == "particle-rex.html" else ["t", url]
+        # The next step waits for a settled frame (no load in progress): a new tab before then
+        # stops the load (showTab), and that tab keeps the new tab page.
+        steps += ["t", f"go:file://{HERE}/pages/{page}"]
     steps += ["1", f"tabs={n}:0", "mark"] + ["hold"] * 33 + ["mark"]
     # Gestures first, at scroll 0 (the sweep's first link must be on screen), then 30 scroll steps.
     steps += GESTURE_ROUND * 3 + ["hold"] + [[11, -120, 0]] * 30 + ["hold", "mark"]
@@ -105,18 +109,26 @@ def scenarios(work):
         "heavy": ["--html", "pages/index.html", "--steps", str(files["heavy"])],
         "tabs": ["--html", "pages/index.html", "--steps", str(files["tabs"])],
         "tabs-spaced": ["--html", "pages/index.html", "--steps", str(files["tabs-spaced"])],
-        **{f"steady{n}": ["--html", "pages/index.html", "--steps", str(files[f"steady{n}"])] for n in STEADY},
+        # --log-all: the log gate holds back no line (the numbers are read from the lines).
+        **{f"steady{n}": ["--html", "pages/index.html", "--log-all", "--steps", str(files[f"steady{n}"])] for n in STEADY},
         "one": ["--html", "pages/index.html", "--watch-sweep", "4"],
         "status": ["--html", "pages/status.html", "--resize-sweep"],
         "rex": ["--html", "pages/particle-rex.html", "--watch-sweep", "8"],
     }
 
-def run_once(lab, engine, mode, args, timeout):
+def host_flags(text):
+    """`--a=1,--b` as ["--a", "1", "--b"]."""
+    out = []
+    for item in filter(None, text.split(",")):
+        out += item.split("=", 1)
+    return out
+
+def run_once(lab, engine, mode, args, timeout, flags=""):
     cmd = ["flock", "/tmp/foafnaut-timing.lock", "xvfb-run", "-a", "-s", "-screen 0 1280x900x24",
            "deno", "run", "--no-check", "--no-config", "--no-npm", "--node-modules-dir=none",
            "--unstable-webgpu", "--unstable-ffi", "-A", "run_html.ts",
            "--native-engine", engine, "--no-splash", "--no-state", "--perf-summary"] + \
-          (["--engine-mode", mode] if mode else []) + args
+          (["--engine-mode", mode] if mode else []) + host_flags(flags) + args
     env = dict(os.environ)
     env.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
     t0 = time.time()
@@ -146,6 +158,8 @@ def steady_numbers(records, summary):
     m0, m1, m2 = marks[0], marks[1], marks[-1]
     n = m0.get("tabs") or 0
     out["steadyTabs"] = n
+    # Pages committed in the new tabs (a history push each): N-1 when every load finished.
+    out["pagesLoaded"] = len([r for r in records if r.get("type") == "native-html-history" and r.get("action") == "push" and r.get("t", 0) <= m0["t"]])
     out["rssLoadedMB"] = m0.get("rssMB")
     idle = m1["t"] - m0["t"]
     if idle > 0:
@@ -166,6 +180,16 @@ def steady_numbers(records, summary):
         out["activeCpuPct"] = round(100 * (m2["cpuMs"] - m1["cpuMs"]) / (m2["t"] - m1["t"]), 1)
     ew = (summary or {}).get("engineWorkers") or {}
     out["enginesLive"], out["enginesMaxLive"], out["sharedTabs"] = ew.get("live"), ew.get("maxLive"), ew.get("sharedTabs")
+    # The timer turns of the tabs not shown (--hidden-tabs), in the window after the idle marks and
+    # in the idle window: count and engine ms.
+    hidden = [r for r in records if r.get("type") == "native-html-script" and r.get("cause") == "hidden timers"]
+    idle_hidden = [r for r in hidden if m0["t"] < r.get("t", 0) <= m1["t"]]
+    out["hiddenTurnsIdle"] = len(idle_hidden)
+    out["hiddenTurnsActive"] = len([r for r in hidden if after(r)])
+    out["hiddenLeanMsActive"] = round(sum(r.get("leanMs", 0) for r in hidden if after(r)), 1)
+    ht = (summary or {}).get("hiddenTabs") or {}
+    out["hiddenHeld"], out["hiddenHeldMB"], out["hiddenForced"] = ht.get("held"), ht.get("heldMB"), ht.get("forced")
+    out["floods"] = len([r for r in records if r.get("type") == "native-html-log-flood"])
     return out
 
 def numbers(scenario, records):
@@ -223,7 +247,7 @@ def main():
     for c in a.config:
         name, rest = c.split("=", 1)
         parts = rest.split(":")
-        configs.append((name, parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+        configs.append((name, parts[0], parts[1], parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else ""))
     work = pathlib.Path(tempfile.gettempdir()) / "engine-sessions-bench"
     work.mkdir(exist_ok=True)
     table = scenarios(work)
@@ -231,8 +255,8 @@ def main():
     runs = []
     for scenario in chosen:
         for i in range(a.runs):
-            for name, lab, engine, mode in configs:
-                rc, secs, records, err = run_once(lab, engine, mode, table[scenario], a.timeout)
+            for name, lab, engine, mode, flags in configs:
+                rc, secs, records, err = run_once(lab, engine, mode, table[scenario], a.timeout, flags)
                 row = {"scenario": scenario, "config": name, "run": i, "rc": rc, "seconds": round(secs, 1),
                        **numbers(scenario, records)}
                 if rc != 0:
