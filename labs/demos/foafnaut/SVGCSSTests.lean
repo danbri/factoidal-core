@@ -17,7 +17,8 @@ private def result (sheet inlineStyle : String) : Except String (List Declaratio
 #guard result "rect,circle { FiLL: /*colour*/ blue; }" "" == .ok [{property:="fill",value:="blue"}]
 #guard result "Rect {fill: blue}" "" == .ok [{property:="fill",value:="red"}]
 #guard !(result "rect { fill: invalid; fill: blue }" "").isOk
-#guard !(result "circle { fill: invalid }" "").isOk
+#guard result "circle { fill: invalid }" "" == .ok [{property:="fill",value:="red"}]
+#guard !(result "rect { fill: invalid }" "").isOk
 #guard !(result "rect {fill: blue !important}" "").isOk
 #guard !(result "rect:hover {fill: blue}" "").isOk
 -- `#id` and `.class` selectors (Selectors 4 §3.1), by specificity then source order
