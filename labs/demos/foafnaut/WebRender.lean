@@ -938,7 +938,6 @@ def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (tree : Bool := true) : Except String String :=
   Prod.fst <$> artifactWith scene boxes font live (if binary then .base64 else .decimal) checks tree
 
-@[export web_render_compile]
 /-- `compile` of `renderWith`: the page with its document URL and supplied images. -/
 def compileWith (html : String) (width height : UInt32) (documentURL : Option String)
     (images : List (String × ByteArray)) : String :=
@@ -946,6 +945,7 @@ def compileWith (html : String) (width height : UInt32) (documentURL : Option St
   | .error message => errorJSON message
   | .ok value => value
 
+@[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=
   match render html width.toNat height.toNat >>= (fun (scene,boxes) => artifact scene boxes) with
   | .error message => errorJSON message
