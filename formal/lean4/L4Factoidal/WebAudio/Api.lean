@@ -1051,6 +1051,106 @@ theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : Byte
     simp [Std.HashMap.getElem?_insert, this, hrt1]
   · simp at h
 
+/-! ## Theorems of the IO-layer functions -/
+
+/-- Says: after `applyReport`, a real-time context's stored frames rendered and frames played are
+at least what they were, so `currentTime` and `contextTime` do not decrease. Does not say: that the
+report is right, or anything about the other fields. -/
+theorem applyReport_mono (s : State) (ctx : Nat) (r : Report) (id : Nat) (rt : Realtime)
+    (h : s.realtime[id]? = some rt) :
+    ∃ rt', (applyReport s ctx r).realtime[id]? = some rt' ∧
+      rt.framesRendered ≤ rt'.framesRendered ∧ rt.framesPlayed ≤ rt'.framesPlayed := by
+  unfold applyReport
+  split
+  · rename_i rt0 c h0 hc
+    by_cases hid : ctx = id
+    · subst hid
+      rw [h0] at h
+      cases h
+      simp
+      exact ⟨Nat.le_max_left _ _, Nat.le_max_left _ _⟩
+    · refine ⟨rt, ?_, Nat.le_refl _, Nat.le_refl _⟩
+      simp [Std.HashMap.getElem?_insert, hid, h]
+  · exact ⟨rt, h, Nat.le_refl _, Nat.le_refl _⟩
+
+/-- Says: after `applyReport`, the frame of a context's graph state (what automation reads as the
+current time) is at least what it was. Does not say: that it equals the frames rendered. -/
+theorem applyReport_frame_mono (s : State) (ctx : Nat) (r : Report) (id : Nat)
+    (c : Context.OfflineContext) (h : s.contexts[id]? = some c) :
+    ∃ c', (applyReport s ctx r).contexts[id]? = some c' ∧ c.state.frame ≤ c'.state.frame := by
+  unfold applyReport
+  split
+  · rename_i rt0 c0 h0 hc
+    by_cases hid : ctx = id
+    · subst hid
+      rw [hc] at h
+      cases h
+      simp
+      exact Nat.le_max_left _ _
+    · refine ⟨c, ?_, Nat.le_refl _⟩
+      simp [Std.HashMap.getElem?_insert, hid, h]
+  · exact ⟨c, h, Nat.le_refl _⟩
+
+/-- Says: under any sequence of reports, a real-time context's frames rendered and frames played
+never decrease. Does not say: anything about the order in which the IO layer applies them. -/
+theorem applyReports_mono (rs : List (Nat × Report)) : ∀ (s : State) (id : Nat) (rt : Realtime),
+    s.realtime[id]? = some rt →
+    ∃ rt', (applyReports s rs).realtime[id]? = some rt' ∧
+      rt.framesRendered ≤ rt'.framesRendered ∧ rt.framesPlayed ≤ rt'.framesPlayed := by
+  induction rs with
+  | nil => intro s id rt h; exact ⟨rt, h, Nat.le_refl _, Nat.le_refl _⟩
+  | cons x xs ih =>
+    intro s id rt h
+    obtain ⟨rt1, h1, a1, b1⟩ := applyReport_mono s x.1 x.2 id rt h
+    obtain ⟨rt2, h2, a2, b2⟩ := ih (applyReport s x.1 x.2) id rt1 h1
+    exact ⟨rt2, h2, Nat.le_trans a1 a2, Nat.le_trans b1 b2⟩
+
+/-- Says: every context's outbox is empty after `takeOutbox`, and the contexts that exist are the
+same. Does not say: what was taken (`takeOutbox_messages`). -/
+theorem takeOutbox_empty (s : State) (id : Nat) :
+    (takeOutbox s).1.realtime[id]?.map (·.outbox) = s.realtime[id]?.map (fun _ => #[]) := by
+  unfold takeOutbox
+  simp only [Std.HashMap.getElem?_map]
+  cases s.realtime[id]? <;> simp
+
+/-- Says: the messages taken are exactly the outboxes' contents: a context with messages appears
+with its whole outbox in order, and every entry taken is the whole non-empty outbox of a context.
+Does not say: the order between contexts. -/
+theorem takeOutbox_messages (s : State) (id : Nat) (msgs : Array (Nat × Array ByteArray)) :
+    (id, msgs) ∈ (takeOutbox s).2 ↔
+      ∃ rt, s.realtime[id]? = some rt ∧ rt.outbox = msgs ∧ msgs ≠ #[] := by
+  unfold takeOutbox
+  simp only [List.mem_toArray, List.mem_filterMap]
+  constructor
+  · rintro ⟨⟨k, rt⟩, hm, hf⟩
+    have hk : s.realtime[k]? = some rt := Std.HashMap.mem_toList_iff_getElem?_eq_some.mp hm
+    by_cases he : rt.outbox.isEmpty
+    · simp [he] at hf
+    · simp [he] at hf
+      obtain ⟨rfl, rfl⟩ := hf
+      refine ⟨rt, hk, rfl, ?_⟩
+      intro e; apply he; simp [e]
+  · rintro ⟨rt, hk, rfl, hne⟩
+    refine ⟨(id, rt), Std.HashMap.mem_toList_iff_getElem?_eq_some.mpr hk, ?_⟩
+    have : ¬ rt.outbox.isEmpty := by
+      intro e; apply hne; exact Array.isEmpty_iff.mp e
+    simp [this]
+
+/-- Says: `takeWakeups` returns the queued handles and then none are queued. Does not say: who
+queued them. -/
+theorem takeWakeups_clear (s : State) :
+    (takeWakeups s).2 = s.wakeups ∧ (takeWakeups s).1.wakeups = #[] := ⟨rfl, rfl⟩
+
+/-- Says: `finishDecode` of a job without a result stores it and queues the job's callback.
+Does not say: what happens to a job that is missing or finished (it is left alone). -/
+theorem finishDecode_stores (s : State) (job : Nat) (j : DecodeJob) (r : Except Int (Nat × Nat × Float × ByteArray))
+    (h : s.decodeJobs[job]? = some j) (hn : j.result = none) :
+    (finishDecode s job r).decodeJobs[job]?.bind (·.result) = some r ∧
+    (finishDecode s job r).wakeups = s.wakeups.push j.callback := by
+  unfold finishDecode
+  rw [h]
+  simp [hn]
+
 /-! ## Tests -/
 
 namespace Tests
@@ -1063,15 +1163,21 @@ private def t (x : String) : ByteArray := ofStr x
 private def chain (s : State) : List (Nat × List ByteArray) → Option State
   | [] => some s
   | (c, a) :: rest =>
-    match run s c a.toArray with
-    | .ok (s', _) => chain s' rest
-    | .error _ => none
+    match op s c a.toArray with
+    | (s', .ok _) => chain s' rest
+    | (_, .error _) => none
 
 private def ans (s : State) (c : Nat) (a : List ByteArray) : Except Int ByteArray :=
-  (run s c a.toArray).map (·.2)
+  (op s c a.toArray).2
+
+/-- One op through `op`: the new state and the answer. -/
+private def step (s : State) (c : Nat) (a : Array ByteArray) : Except Int (State × ByteArray) :=
+  match op s c a with
+  | (s', .ok out) => .ok (s', out)
+  | (_, .error e) => .error e
 
 private def err (s : State) (c : Nat) (a : List ByteArray) : Int :=
-  match run s c a.toArray with | .error e => e | .ok _ => 0
+  match (op s c a.toArray).2 with | .error e => e | .ok _ => 0
 
 private def st0 : State := (chain {} [(175, [n 1, n 1000, d 44100.0])]).getD {}
 
@@ -1108,7 +1214,7 @@ private def constRender : Option State :=
 #guard (ans (constRender.getD {}) 187 [n 1]).toOption.map (fun r => u32At r (8 + 4000)) == some 0
 -- Rendering twice.
 #guard (do let s ← constRender
-           let (s, _) ← (run s 187 #[n 1]).toOption
+           let (s, _) ← (step s 187 #[n 1]).toOption
            pure (err s 187 [n 1])) == some errInvalidState
 
 -- A stopped source ends and is reported by id.
@@ -1331,6 +1437,275 @@ private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
 #guard codeOf (.notSupported "") == -23 && codeOf .indexSize == -28 && codeOf .invalidAccess == -25
 #guard codeOf (.invalidState "") == -29 && codeOf (.range "") == -21 && codeOf (.type "") == -20
 #guard errEncoding == -30
+
+/-! ### Real-time contexts (ops 190 to 196) -/
+
+private def devS : State := { device := some (48000.0, 2) }
+private def rtOf (s : State) (id : Nat) : Realtime := (s.realtime[id]?).getD default
+private def txt (r : Except Int ByteArray) : String := ((r.toOption).map String.fromUTF8!).getD "?"
+private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
+
+-- Making a context: the answer, with and without activation.
+#guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
+#guard txt (ans { devS with autoplay := true } 190 [t "interactive", ByteArray.empty, n 7]) ==
+  "1 48000 2 running"
+#guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
+  "1 44100 2 running"
+-- Refusals: hint, rate, no device, callback, 16 live contexts.
+#guard err devS 190 [t "fast", ByteArray.empty, n 7] == errType
+#guard err devS 190 [d (-1.0), ByteArray.empty, n 7] == errType
+#guard err devS 190 [d (0.0 / 0.0), ByteArray.empty, n 7] == errType
+#guard err devS 190 [t "playback", d 100.0, n 7] == errNotSupported
+#guard err devS 190 [t "playback", d 800000.0, n 7] == errNotSupported
+#guard err devS 190 [t "playback", t "abc", n 7] == errType
+#guard err {} 190 [t "interactive", ByteArray.empty, n 7] == errNotSupported
+#guard err {} 190 [t "interactive", d 44100.0, n 7] == errNotSupported
+#guard err devS 190 [t "interactive", ByteArray.empty, t "x"] == errType
+private def full : State :=
+  (List.range 16).foldl (fun s _ => (op s 190 #[t "interactive", ByteArray.empty, n 1]).1) devS
+#guard full.realtime.size == 16
+#guard err full 190 [t "interactive", ByteArray.empty, n 1] == errNotSupported
+-- Target frames from the hint.
+#guard (rtOf (chain devS [(190, [t "interactive", ByteArray.empty, n 1])]).get! 1).target == 1024
+#guard (rtOf (chain devS [(190, [t "balanced", ByteArray.empty, n 1])]).get! 1).target == 2048
+#guard (rtOf (chain devS [(190, [t "playback", ByteArray.empty, n 1])]).get! 1).target == 4096
+#guard (rtOf (chain devS [(190, [d 0.1, ByteArray.empty, n 1])]).get! 1).target == 4800
+#guard (rtOf (chain devS [(190, [d 0.0, ByteArray.empty, n 1])]).get! 1).target == 256
+#guard (rtOf (chain devS [(190, [d 10.0, ByteArray.empty, n 1])]).get! 1).target == 16384
+-- The graph state: destination of 2 channels, length 0, the device's channel count.
+#guard (do
+  let s ← chain { devS with device := some (48000.0, 6) } [(190, [t "interactive", ByteArray.empty, n 1])]
+  let r ← (ans s 189 [n 1]).toOption
+  pure (Float.ofBits (u64At r 0), u32At r 8, u32At r 12, (rtOf s 1).maxChannels)) ==
+  some (48000.0, 0, 2, 6)
+-- The first message of the outbox.
+#guard (do
+  let s ← chain devS [(190, [t "playback", ByteArray.empty, n 7])]
+  let m := (rtOf s 1).outbox
+  pure (m.size, m[0]!.1, m[0]!.2.size, strArg m[0]!.2 0, Float.ofBits (u64At m[0]!.2[1]! 0),
+        strArg m[0]!.2 2, strArg m[0]!.2 3)) == some (1, 190, 4, "1", 48000.0, "2", "4096")
+
+-- The outbox after a few ops; an offline context beside it is not touched.
+private def rtGraph : Option State :=
+  chain { devS with autoplay := true } [
+    (175, [n 1, n 100, d 44100.0]),                                  -- ctx 1, offline
+    (190, [t "interactive", ByteArray.empty, n 7]),                  -- ctx 2, real-time
+    (176, [n 2, t "oscillator"]), (176, [n 1, t "gain"]),
+    (177, [n 2, n 1, n 0, n 0, n 0, n 0]), (181, [n 2, n 1, d 0.0]),
+    (179, [n 2, n 1, n 0, t "setValueAtTime", d 1.0, d 0.0])]
+#guard (rtGraph.map fun s => ((rtOf s 2).outbox.toList.map (·.1), s.realtime.contains 1)) ==
+  some ([190, 176, 177, 181, 179], false)
+-- A failed op adds nothing; a query adds nothing; 186 and 189 are not sent.
+#guard (rtGraph.map fun s => (op s 176 #[n 2, t "convolver"]).1.realtime[2]?.map (·.outbox.size)) ==
+  some (some 5)
+#guard (rtGraph.map fun s => (op s 189 #[n 2]).1.realtime[2]?.map (·.outbox.size)) == some (some 5)
+#guard (rtGraph.map fun s => (op s 180 #[n 2, n 1, n 0]).1.realtime[2]?.map (·.outbox.size)) ==
+  some (some 5)
+-- The graph state works as for an offline context (ops 180, 189).
+#guard (rtGraph.bind fun s => (ans s 180 [n 2, n 1, n 0]).toOption.map fun r => Float.ofBits (u64At r 0)) ==
+  some 1.0
+-- startRendering on a real-time context.
+#guard (rtGraph.map fun s => err s 187 [n 2]) == some errInvalidState
+-- setValueCurveAtTime and cancelAndHoldAtTime.
+private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32le v) ByteArray.empty
+#guard (chain st0 [(176, [n 1, t "gain"])]).map (fun s =>
+  (err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 1.0],
+   err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0], d 0.0, d 1.0],
+   err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0 / 0.0], d 0.0, d 1.0],
+   err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d (-1.0), d 1.0],
+   err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 0.0],
+   err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d (0.0 / 0.0), d 1.0],
+   err s 179 [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5],
+   err s 179 [n 1, n 1, n 0, t "cancelAndHoldAtTime", d (-1.0)],
+   err s 179 [n 1, n 1, n 0, t "cancelAndHoldAtTime", d (1.0 / 0.0)])) ==
+  some (0, errInvalidState, errType, errRange, errRange, errType, 0, errRange, errType)
+-- A curve overlapping another event.
+#guard (chain st0 [(176, [n 1, t "gain"]),
+                   (179, [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 1.0, d 1.0])]).map
+  (fun s => (err s 179 [n 1, n 1, n 0, t "setValueAtTime", d 0.5, d 1.5],
+             err s 179 [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 1.5, d 1.0])) ==
+  some (errNotSupported, errNotSupported)
+-- The curve changes the rendered gain: constant 1 times a curve 0 to 1 over 441 frames.
+#guard (do
+  let s ← chain st0 [(176, [n 1, t "constantSource"]), (176, [n 1, t "gain"]),
+                     (177, [n 1, n 1, n 0, n 2, n 0, n 0]), (177, [n 1, n 2, n 0, n 0, n 0, n 0]),
+                     (179, [n 1, n 2, n 0, t "setValue", d 0.0]),
+                     (179, [n 1, n 2, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 0.01]),
+                     (181, [n 1, n 1])]
+  let r ← (ans s 187 [n 1]).toOption
+  let xs := samples r 1000
+  pure (xs.getD 0 9.0 == 0.0, decide ((xs.getD 220 0.0 - 220.0 / 441.0).abs < 1e-4),
+        xs.getD 999 0.0 == 1.0)) == some (true, true, true)
+-- cancelAndHold removes later events and holds the value.
+#guard (do
+  let s ← chain st0 [(176, [n 1, t "gain"]),
+                     (179, [n 1, n 1, n 0, t "setValueAtTime", d 0.0, d 0.0]),
+                     (179, [n 1, n 1, n 0, t "linearRampToValueAtTime", d 1.0, d 1.0]),
+                     (179, [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5])]
+  pure (s.contexts[1]?.bind fun c => c.state.nodes[1]?.bind fun nd =>
+    nd.params[0]?.map fun p => p.timeline.events.length)) ==
+  some (some 2)
+-- Both are sent to the rendering side of a real-time context.
+#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+          (176, [n 1, t "gain"]),
+          (179, [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 1.0]),
+          (179, [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5])]).map
+  (fun s => (rtOf s 1).outbox.toList.map (·.1)) == some [190, 176, 179, 179]
+
+-- 191: control calls.
+#guard err devS 191 [n 1, t "resume"] == errType
+#guard err (chain devS [(175, [n 1, n 10, d 44100.0])]).get! 191 [n 1, t "resume"] == errType
+#guard err (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).get! 191 [n 1, t "play"] == errType
+-- With autoplay a resume goes to the outbox at once; the call id is answered.
+#guard (do
+  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let (s, r) ← (step s 191 #[n 1, t "resume"]).toOption
+  let (s, r2) ← (step s 191 #[n 1, t "suspend"]).toOption
+  let rt := rtOf s 1
+  pure (String.fromUTF8! r, String.fromUTF8! r2, rt.outbox.toList.map (·.1),
+        rt.outbox[1]!.2.toList.map (String.fromUTF8! ·), rt.calls.toList.map (·.2),
+        rt.pendingResume.size)) ==
+  some ("1", "2", [190, 191, 191], ["1", "resume", "1"], ["resume", "suspend"], 0)
+-- Without activation a resume waits; 196 releases it into the outbox, once.
+private def waiting : Option State :=
+  chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
+              (191, [n 1, t "suspend"])]
+#guard (waiting.map fun s => ((rtOf s 1).outbox.toList.map (·.1), (rtOf s 1).pendingResume.toList)) ==
+  some ([190, 191], [1])
+#guard (do
+  let s ← waiting
+  let (s, r) ← (step s 196 #[]).toOption
+  let rt := rtOf s 1
+  pure (r.size, s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
+        rt.pendingResume.size, (activate s).realtime[1]?.map (·.outbox.size))) ==
+  some (0, true, [190, 191, 191], ["1", "resume", "1"], 0, some 3)
+-- After activation a new context starts running and a resume is not held.
+#guard (do
+  let s ← waiting
+  let (s, _) ← (step s 196 #[]).toOption
+  let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
+  let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
+  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
+
+-- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
+private def reported : Option State := do
+  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+            (176, [n 1, t "constantSource"]), (191, [n 1, t "resume"])]
+  pure (applyReport s 1 { framesRendered := 24000, framesPlayed := 20000, underruns := 1,
+                          latencyFrames := 480, timeMs := 1234.5, ended := #[1],
+                          stateChanges := #[.running], confirmed := #[1] })
+#guard (reported.map fun s => (s.wakeups.toList, (rtOf s 1).events.toList, (rtOf s 1).calls.size,
+                               (rtOf s 1).state == .running)) ==
+  some ([7], [(1, 1), (2, 1), (3, 1)], 0, true)
+#guard (reported.bind fun s => (ans s 192 [n 1]).toOption.map fun r =>
+    (Float.ofBits (u64At r 0), Float.ofBits (u64At r 8), Float.ofBits (u64At r 16), r.get! 24,
+     Float.ofBits (u64At r 25), Float.ofBits (u64At r 33), r.size)) ==
+  some (0.5, 1024.0 / 48000.0, 0.01, 1, 20000.0 / 48000.0, 1234.5, 41)
+-- Before the first report: zeros.
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).bind (fun s => (ans s 192 [n 1]).toOption.map fun r =>
+    (Float.ofBits (u64At r 0), r.get! 24, Float.ofBits (u64At r 33))) == some (0.0, 0, 0.0)
+-- The graph state's frame follows the report (automation reads at the current time).
+#guard (reported.bind fun s => (ans s 189 [n 1]).toOption.map fun r => u32At r 16) == some 24000
+-- 193 reads the events once and clears them.
+#guard (do
+  let s ← reported
+  let (s, r) ← (step s 193 #[n 1]).toOption
+  let (s, r2) ← (step s 193 #[n 1]).toOption
+  pure (u8s r, u8s r2, s.wakeups.size)) ==
+  some ([3, 0, 0, 0, 1, 1, 0, 0, 0, 2, 1, 0, 0, 0, 3, 1, 0, 0, 0], [0, 0, 0, 0], 1)
+#guard err {} 193 [n 1] == errType
+-- Two reports: frames never go back; a late report with fewer frames changes no frame.
+#guard (do
+  let s ← reported
+  let s := applyReport s 1 { framesRendered := 12000, framesPlayed := 10000 }
+  let s2 := applyReport s 1 { framesRendered := 30000, framesPlayed := 25000 }
+  pure ((rtOf s 1).framesRendered, (rtOf s 1).framesPlayed, (rtOf s2 1).framesRendered,
+        (ans s2 192 [n 1]).toOption.map fun r => Float.ofBits (u64At r 0), s.wakeups.size)) ==
+  some (24000, 20000, 30000, some 0.625, 1)
+-- A report with no events queues no wakeup; a rejected call is an event of kind 4 and a state
+-- change sets the state; a context that is not real-time is not changed.
+#guard (do
+  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+                                                (191, [n 1, t "close"])]
+  let s1 := applyReport s 1 { framesRendered := 5 }
+  let s2 := applyReport s 1 { rejected := #[1], stateChanges := #[.suspended, .closed] }
+  let s3 := applyReport (chain st0 []).get! 1 { framesRendered := 5, ended := #[1] }
+  pure (s1.wakeups.size, (rtOf s2 1).events.toList, (rtOf s2 1).state == .closed, s2.wakeups.toList,
+        s3.wakeups.size)) == some (0, [(2, 0), (2, 2), (4, 1)], true, [7], 0)
+-- A closed context refuses control calls.
+#guard (do
+  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s := applyReport s 1 { stateChanges := #[.closed] }
+  pure (err s 191 [n 1, t "resume"], err s 191 [n 1, t "suspend"], err s 191 [n 1, t "close"],
+        (op s 176 #[n 1, t "gain"]).1.realtime[1]?.map (·.outbox.size),
+        (ans s 176 [n 1, t "gain"]).toOption.map (·.size))) == some (errInvalidState, errInvalidState, errInvalidState, some 1, some 7)
+-- A closed context does not count towards the limit of 16.
+private def fullClosed : State :=
+  (List.range 16).foldl (fun s i =>
+    applyReport (op s 190 #[t "interactive", ByteArray.empty, n 1]).1 (i + 1)
+      { stateChanges := #[.closed] }) { devS with autoplay := true }
+#guard err fullClosed 190 [t "interactive", ByteArray.empty, n 1] == 0
+
+-- takeOutbox: the messages, once, in order; then nothing.
+#guard (do
+  let s ← rtGraph
+  let (s', m) := takeOutbox s
+  let (_, m2) := takeOutbox s'
+  pure (m.size, m[0]!.1, m[0]!.2.toList.map (·.1), m2.size, s'.contexts.size)) ==
+  some (1, 2, [190, 176, 177, 181, 179], 0, 2)
+-- Wakeups.
+#guard (do
+  let s ← reported
+  let (s', w) := takeWakeups s
+  pure (w.toList, s'.wakeups.size, (takeWakeups s').2.size)) == some ([7], 0, 0)
+
+-- 194, 195: a decode job's life.
+private def withJob : Option State :=
+  chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (175, [n 1, n 10, d 22050.0]),
+              (194, [n 2, t "RIFF", n 9])]
+#guard (ans (withJob.get!) 194 [n 1, t "ab", n 8]).toOption.map String.fromUTF8! == some "2"
+#guard (do
+  let s ← withJob
+  pure (err s 195 [n 1], err s 195 [n 5], err s 195 [t "x"], err s 194 [n 9, t "ab", n 8],
+        err s 194 [n 1, t "ab", t "x"])) == some (errInvalidState, errType, errType, errType, errType)
+#guard (do
+  let s ← withJob
+  let (s, jobs) := takeDecodeJobs s
+  let (_, again) := takeDecodeJobs s
+  pure (jobs.size, jobs[0]!.1, jobs[0]!.2.1, jobs[0]!.2.2.toList.length, again.size)) ==
+  some (1, 1, 22050.0, 4, 0)
+#guard (do
+  let s ← withJob
+  let (s, _) := takeDecodeJobs s
+  let samples := f32le 0.5 ++ f32le (-0.5)
+  let s := finishDecode s 1 (.ok (1, 2, 22050.0, samples))
+  let (s, r) := op s 195 #[n 1]
+  let ok := r.toOption.get!
+  pure (s.wakeups.toList, u32At ok 0, u32At ok 4, Float.ofBits (u64At ok 8), ok.size,
+        (Float32.ofBits (u32At ok 16)).toFloat, s.decodeJobs.size,
+        (op s 195 #[n 1]).2.toOption.isNone, (op s 195 #[n 1]).1.decodeJobs.size)) ==
+  some ([9], 1, 2, 22050.0, 24, 0.5, 0, true, 0)
+-- An error result is answered once and the job leaves.
+#guard (do
+  let s ← withJob
+  let s := finishDecode s 1 (.error errEncoding)
+  let (s, r) := op s 195 #[n 1]
+  pure ((match r with | .error e => e | .ok _ => 0), s.decodeJobs.size, err s 195 [n 1])) ==
+  some (errEncoding, 0, errType)
+-- A second result for a finished job, and a result for no job, change nothing.
+#guard (do
+  let s ← withJob
+  let s := finishDecode s 1 (.error errEncoding)
+  let s' := finishDecode s 1 (.error errNotSupported)
+  let s'' := finishDecode s 77 (.error errNotSupported)
+  pure (s'.wakeups.size, s''.wakeups.size)) == some (1, 1)
+-- A job on an offline context takes its rate.
+#guard (do
+  let s ← chain st0 [(194, [n 1, t "ab", n 3])]
+  pure ((takeDecodeJobs s).2[0]!.2.1)) == some 44100.0
+
+-- Ops 197 to 199 are not ops.
+#guard err devS 197 [] == -2 && err devS 199 [] == -2
 
 end Tests
 
