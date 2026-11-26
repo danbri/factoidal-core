@@ -1,3 +1,7 @@
+/* dladdr and Dl_info (glibc declares them only with _GNU_SOURCE). */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <lean/lean.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -10,6 +14,7 @@ extern lean_object *initialize_WebDocument(uint8_t builtin);
 extern lean_object *web_render_compile(lean_object *,uint32_t,uint32_t);
 extern lean_object *web_document_engine_new(lean_object *);
 #ifndef __EMSCRIPTEN__
+#include <dlfcn.h>
 #include <pthread.h>
 #endif
 /* An engine session: the engine's state between calls (WebDocument.Engine; issue 390), an
@@ -137,16 +142,38 @@ web_session *web_session_new(void) {
   if (!ready()) return NULL;
   return session_make();
 }
+#ifndef __EMSCRIPTEN__
+/* Keep this library loaded until the process ends (RTLD_NODELETE), from the first task session
+   on. A session's task runs on a thread of its own, which the host can not stop or wait for, so
+   a dlclose of the last handle would unload code that the thread still runs. Deno closes its
+   handles when its runtime ends (`deno test` does so after the last test, before it exits).
+   Seen 2026-11-26: engine_sessions_test.ts ended with a segmentation fault on every run, a
+   session task thread in lean_dec_ref_cold (freeing its engine state at the end of
+   WebSession.serve) while Deno's runtime teardown was in dlclose. 1 when pinned. */
+static int pinned;
+web_session *web_session_new_task(void);
+static void pin_once(void) {
+  Dl_info info;
+  if (!dladdr((void *)&web_session_new_task,&info) || !info.dli_fname) return;
+  /* RTLD_NOLOAD: this library is loaded already; the handle is never closed. */
+  pinned=dlopen(info.dli_fname,RTLD_LAZY|RTLD_NOLOAD|RTLD_NODELETE)!=NULL;
+}
+#endif
 /* A new engine session on its own Lean task (Task.Priority.dedicated: a thread of its own;
    WebSession.lean): its calls run there, one at a time, in arrival order, and a caller waits
    on its own thread for its answer, so a host calls them from a thread that may wait (Deno:
-   nonblocking FFI). NULL when the runtime did not start, in the Wasm build, or with no task
-   manager (FOAFNAUT_LEAN_THREADS=0), where a task would run on the calling thread. */
+   nonblocking FFI). NULL when the runtime did not start, when this library could not be kept
+   loaded (pin_once), in the Wasm build, or with no task manager (FOAFNAUT_LEAN_THREADS=0), where
+   a task would run on the calling thread. */
 web_session *web_session_new_task(void) {
 #ifdef __EMSCRIPTEN__
   return NULL;
 #else
   if (!ready() || pool_threads==0) return NULL;
+  static pthread_once_t pin=PTHREAD_ONCE_INIT;
+  pthread_once(&pin,pin_once);
+  /* No task session in a library that could be unloaded under its thread. */
+  if (!pinned) return NULL;
   web_session *s=calloc(1,sizeof *s);
   if (!s) return NULL;
   if (pthread_mutex_init(&s->lock,NULL)!=0) { free(s); return NULL; }
