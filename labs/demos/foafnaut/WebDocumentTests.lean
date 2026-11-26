@@ -115,8 +115,11 @@ private def ecmaInspection := WebDocument.inspect
 -- A module script is the script session's to fetch and run (`LeanJSModules`): the page is
 -- accepted, and the host is given no script for it.
 #guard match WebDocument.inspect (DOM.parseHtmlDocument "<script type=' module '>export{}</script>") "https://example.test/" with
-  | .ok value => value.field? "scripts" == some (.array [])
+  | .ok value => value.field? "scripts" == some (.array []) && value.field? "modules" == some (.number "1")
   | .error _ => false
+-- With scripting off there is no module to start a session for (issue 1161)
+#guard (((WebDocument.inspect (DOM.parseHtmlDocument "<p>x</p>") "https://example.test/").toOption.bind
+  (·.field? "modules")) == some (.number "0"))
 #guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<title>  Two\n  words </title>") == "Two words"
 #guard WebDocument.documentTitle (L4Factoidal.DOM.parseHtmlDocument "<p>none</p>") == ""
 
