@@ -103,7 +103,7 @@ for f in "$LAB/.build/web-render/engines/libweb-render.dylib" "$LAB/.build/web-r
 done
 if [ -n "$SESSION_LIB" ]; then
   check "engine_sessions_test.ts" env WEB_RENDER_LIB="$SESSION_LIB" deno test --no-check --no-config --no-npm --node-modules-dir=none \
-    --unstable-ffi --allow-read --allow-ffi --allow-env "$LAB/engine_sessions_test.ts"
+    --unstable-ffi --allow-read --allow-write --allow-ffi --allow-env "$LAB/engine_sessions_test.ts"
 else
   echo 'NOT RUN: engine_sessions_test.ts needs the native library (build-web-render.sh --native)'
 fi
