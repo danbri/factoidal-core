@@ -1,38 +1,38 @@
 {
-  "release": "build-5029cc163906-foafnaut-web",
+  "release": "build-023a9ce1211b-foafnaut-web",
   "repository": "danbri/factoidal-builds",
   "asset": "foafnaut-web.tar.gz",
-  "url": "https://github.com/danbri/factoidal-builds/releases/download/build-5029cc163906-foafnaut-web/foafnaut-web.tar.gz",
-  "commit": "5029cc163906769080a93d7a31c0f91cc62f00d7",
+  "url": "https://github.com/danbri/factoidal-builds/releases/download/build-023a9ce1211b-foafnaut-web/foafnaut-web.tar.gz",
+  "commit": "023a9ce1211bef36b85b6fe97bc3244c1e12f67c",
   "runtimeFormat": "factoidal-html-webgpu-runtime-v1",
   "tarball": {
-    "bytes": 11729622,
-    "sha256": "22ae0e0a1cdf715a89c835fc217f295ce9370ec5e7fdb395828146ea350e648f"
+    "bytes": 13207757,
+    "sha256": "30519fa12ab45d091caee2c32350a210118ba50483c996dcbfb8bcfadfaee261"
   },
   "files": {
     "docs/web/hub/html-webgpu/runtime/web-render.mjs": {
       "name": "web-render.mjs",
-      "bytes": 94671,
-      "sha256": "268c29f7ad889a4b2a8f9bcb17b91d3a78646500a1460ffdfc4ea86ba1039d00"
+      "bytes": 98063,
+      "sha256": "4f968dd16bd41cea316e8783a5021ec2234ea5b4ed7926832e675a837cfdc50a"
     },
     "docs/web/hub/html-webgpu/runtime/web-render.wasm": {
       "name": "web-render.wasm",
-      "bytes": 47689512,
-      "sha256": "1b6356463827045daf8ee2588652290a65074e715f05e7bd95e7c896752fbc9f"
+      "bytes": 54110212,
+      "sha256": "500992007bca94af17d869eba0caa5ef9b4a967abb70f7f403f38ff5ee1da9ad"
     }
   },
   "native": {
     "linux-x86_64": {
-      "release": "build-5029cc163906-foafnaut-linux-x86_64",
-      "url": "https://github.com/danbri/factoidal-builds/releases/download/build-5029cc163906-foafnaut-linux-x86_64/foafnaut-linux-x86_64.tar.gz",
-      "commit": "5029cc163906769080a93d7a31c0f91cc62f00d7",
+      "release": "build-023a9ce1211b-foafnaut-linux-x86_64",
+      "url": "https://github.com/danbri/factoidal-builds/releases/download/build-023a9ce1211b-foafnaut-linux-x86_64/foafnaut-linux-x86_64.tar.gz",
+      "commit": "023a9ce1211bef36b85b6fe97bc3244c1e12f67c",
       "tarball": {
-        "bytes": 21687751,
-        "sha256": "a053a867057869e8956fed4935f0b46bf8a61293cb11b6d1a811457599187cfc"
+        "bytes": 24455891,
+        "sha256": "7fdf24e41b33b945e1f6c621ce0262fdb5d71794bafe5b3bf0a29a4cac844411"
       },
       "file": {
-        "bytes": 68624400,
-        "sha256": "0c4bc577ee4ba6f0b735567d176e9c7670a28b75de7b88a5ce936197f3625a16"
+        "bytes": 77979040,
+        "sha256": "1dbb0d62bb147cabe685d818179873a61991778351714b78beb7dd57e9bea8f3"
       }
     }
   }
