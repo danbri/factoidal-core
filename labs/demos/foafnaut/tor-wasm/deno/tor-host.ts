@@ -6,7 +6,9 @@
 //
 // deno run --unstable-worker-options --allow-net --allow-read [--allow-write --allow-run --allow-env] deno/tor-host.ts \
 //   --dangerously-use-unreviewed-tor-transport [--config arti.toml] [--timeout 60000] \
-//   [--request [PARTITION@]HOST:PORT | NEWID ...] [--debug] [--restart-check] [--hold MS] [--state-dir DIR]
+//   [--request [PARTITION@]HOST:PORT | NEWID ...] [--debug] [--trace-conns] [--restart-check] [--hold MS] [--state-dir DIR]
+// --trace-conns: after each step, one JSON line per TCP connection of that step (times in ms
+// from the worker's start, bytes in and out, connect errors; no addresses), and a summary.
 const args = Deno.args;
 const flag = (n: string) => args.includes(n);
 const opt = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
@@ -27,7 +29,20 @@ if (stateDir) {
   if (typeof opened === "string") console.log(JSON.stringify({ step: "tor-state", saved: false, why: opened }));
   else store = opened;
 }
-type Reply = { result: unknown; dialled: number; open: number };
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
+type Reply = { result: unknown; dialled: number; open: number; conns?: ConnTrace[]; at?: number };
+/** --trace-conns: print the connections a step made, and a summary of where they stopped. */
+function printConns(step: string, r: Reply) {
+  if (!r.conns) return;
+  for (const c of r.conns) console.log(JSON.stringify({ step: "conn", during: step, ...c }));
+  const cs = r.conns;
+  const n = (f: (c: ConnTrace) => boolean) => cs.filter(f).length;
+  console.log(JSON.stringify({ step: "conns", during: step, at: r.at, made: cs.length,
+    connectFailed: n((c) => c.err !== undefined), opened: n((c) => c.open !== undefined),
+    sentNothing: n((c) => c.open !== undefined && c.outB === 0),
+    sentButNoReply: n((c) => c.outB > 0 && c.inB === 0),
+    replied: n((c) => c.inB > 0) }));
+}
 
 /** Start the worker with narrow permissions; return a call function and the worker. */
 async function startWorker() {
@@ -62,6 +77,7 @@ async function startWorker() {
 async function runOnce(label: string, saved?: string): Promise<string> {
   const { worker, call } = await startWorker();
   if (flag("--debug")) await call({ op: "debug", on: true });
+  if (flag("--trace-conns")) await call({ op: "trace", on: true });
   if (store) {
     const fromStore = await store.load();
     if (fromStore !== undefined) saved = fromStore;
@@ -90,6 +106,7 @@ async function runOnce(label: string, saved?: string): Promise<string> {
   const b = await call({ op: "bootstrap", timeoutMs, config });
   for (const l of String(b.result).trim().split("\n")) console.log(l);
   console.log(JSON.stringify({ step: "host", run: label, dialled: b.dialled, open: b.open }));
+  printConns("bootstrap", b);
   // --request [PARTITION@]HOST:PORT. Streams of different partitions use different circuits.
   for (const spec of requests) {
     if (spec === "NEWID") {
@@ -105,6 +122,7 @@ async function runOnce(label: string, saved?: string): Promise<string> {
     const host = request.slice(0, at), port = Number(request.slice(at + 1));
     const r = await call({ op: "stream", partition, host, port, request: `GET / HTTP/1.0\r\nHost: ${host}\r\n\r\n`, max: 2048, timeoutMs });
     console.log(String(r.result));
+    printConns(`stream ${partition}`, r);
   }
   // Arti stores its state every 60 s and when its circuit manager is dropped. --hold waits for
   // the periodic store before the snapshot.
