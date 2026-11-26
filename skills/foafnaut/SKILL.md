@@ -160,6 +160,10 @@ Desktop host (Deno, TypeScript, macOS only):
   CLOCK_REALTIME` and `LAB/tools/perf_window_report.py` (the steps start with `mark`). On this
   VM `/usr/bin/perf` fails for its kernel: use `/usr/lib/linux-tools-6.8.0-151/perf` with `-e
   cpu-clock`. Whether a WebGPU device can go to another worker: `LAB/tools/webgpu_share_check.ts`.
+- Which subsystem the engine time of a page went to (BubblePopJS, canvas raster, page paint,
+  fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
+  in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
+  `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
