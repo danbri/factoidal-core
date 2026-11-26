@@ -259,6 +259,45 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   each against `Media/Modules.lean` before use.
 - Measure: `tests/browser-wpt/testharness-run.ts` on the WPT `webaudio` names, with the test files
   fetched by name, before and after each step.
+- The page classes (`prelude.js`, section "webaudio", landed 2026-11-26): the
+  interfaces, attributes, operations, enums and dictionaries come from Lean's table (ops 173 and
+  174); arguments are converted as Web IDL says; Lean's error codes become the named exceptions.
+  Defined and working on ops 175 to 189: `BaseAudioContext`, `OfflineAudioContext` (rendering,
+  then `ended`, the promise with the state `closed`, then `complete`, in the specification's
+  order), `OfflineAudioCompletionEvent`, `AudioProcessingEvent`, `AudioBuffer`, `AudioParam`,
+  `AudioNode`, `AudioScheduledSourceNode`, `AudioDestinationNode`, `GainNode`,
+  `ConstantSourceNode`, `OscillatorNode`, `BiquadFilterNode`, `AudioBufferSourceNode`, `DelayNode`,
+  `StereoPannerNode`, `ChannelSplitterNode`, `ChannelMergerNode`, `PeriodicWave`. Interface objects
+  whose constructors and factory methods throw `NotSupportedError` naming this issue: the nodes the
+  engine cannot render yet (stage F), the MediaStream and MediaElement nodes, `AudioWorklet`,
+  `AudioListener`. `AudioContext` builds graphs on a context that is never rendered until stage D
+  (D2b replaces it by ops 190 to 196).
+- Known gaps, each with its plan: `decodeAudioData` rejects with `NotSupportedError` until ops 194
+  and 195 (stage C, D3); `setValueCurveAtTime` and `cancelAndHoldAtTime` throw until op 179 takes
+  them (D2); an `AudioBufferSourceNode` takes its buffer's samples when `buffer` is set, not at
+  `start()` (a change between the two is not heard; an op that acquires at `start()` replaces op
+  184's copy); no read op for a node's channel settings, `type`, `loop` and loop points (the page
+  keeps the last value Lean accepted); no op that frees a context (256 a page session);
+  `OfflineAudioContext.suspend(time)` needs rendering in steps.
+- AudioWorklet is not faked (coordinator's decision, by the rule "a stated shortfall is a failing
+  test plus an open issue", `CLAUDE.md`): `context.audioWorklet` throws, so the setup of WPT
+  `idlharness` (which adds a worklet module and makes an `AudioWorkletNode`) fails until stage F;
+  idlharness still tests the members of the objects made before that point.
+- WPT `webaudio`, local runner (`tests/browser-wpt/testharness-run.ts`, BubblePopJS, native
+  engine on Linux, the 313 test files of the 2026-11-13 list, WPT master), before and after the
+  page classes (engines built from `main` with and without the section): 702 pass, 1,008 fail
+  (out of 1,710 subtests reported) before; 2,572 pass, 712 fail (out of 3,284 reported) after.
+  More subtests are reported after because the tests run further. Not counted after: 2 files over
+  a limit of 3 minutes each (`sub-sample-buffer-stitching.html`, `retrospective-setTargetAtTime.html`;
+  the renderer was not yet the faster one of section 14), and
+  `audiobuffersource-reverse-long-buffer.html`, which did not finish in 12 minutes (an `AudioBuffer` of 2^23 + 512 frames set as a source's buffer; stage
+  C's worker measures it). Two subtests that passed before fail after: `ctor-iirfilter.html`
+  ("Invalid IIRFilterNode constructor should throw" passed because `IIRFilterNode` did not exist)
+  and `audioparam-nominal-range.html` ("verifyTests" now reaches `context.listener`, which throws
+  until `AudioListener` exists). The largest groups of failures after: nodes not implemented yet
+  (stage F), `AudioContext` state (stage D), and `AudioParam` nominal ranges (a reading of
+  `value` after an out-of-range set is not clamped; `AudioBufferSourceNode.detune`'s range;
+  `BiquadFilterNode.gain.maxValue` is not the single-precision value WPT expects).
 
 ## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
 
