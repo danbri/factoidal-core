@@ -944,12 +944,13 @@ def takeOutbox (s : State) : State × Array (Nat × Array (Nat × Array ByteArra
       if rt.outbox.isEmpty then none else some (id, rt.outbox)).toArray)
 
 /-- The decode jobs not yet taken: (job id, sample rate, bytes), in job order. They are marked
-taken. -/
+taken. The order is `List.mergeSort`'s (a loop through its `@[csimp]` form; `Array.qsort` recursed
+once per job in its worst case, `tools/lean-tail-recursion-audit.py`). -/
 def takeDecodeJobs (s : State) : State × Array (Nat × Float × ByteArray) :=
   let l := s.decodeJobs.toList.filter fun (_, j) => !j.taken && j.result.isNone
-  let l := l.toArray.qsort (fun a b => a.1 < b.1)
+  let l := l.mergeSort (fun a b => a.1 ≤ b.1)
   ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true } },
-   l.map fun (id, j) => (id, j.rate, j.bytes))
+   (l.map fun (id, j) => (id, j.rate, j.bytes)).toArray)
 
 /-- Store the result of decode job `job` and queue its callback. A job that does not exist, or
 that has a result, is left alone. -/

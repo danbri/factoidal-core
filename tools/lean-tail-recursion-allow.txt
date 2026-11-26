@@ -2501,3 +2501,5 @@ L4Factoidal_WebAudio_Idl_ancestors_go  # (c) the parent chain of an IDL interfac
 L4Factoidal_WebAudio_Mix_sumTo  # (s) the entry of a matrix product (mulMat), only in theorems of Mix.lean
 L4Factoidal_WebAudio_Oscillator_maxDiff  # (s) test helper of the #guard lines in Oscillator.lean
 L4Factoidal_WebAudio_Oscillator_renderBlocks  # (s) test helper of the #guard lines in Oscillator.lean (render)
+L4Factoidal_WebAudio_RenderSide_quanta  # (s) the quanta of a fill as a list, only in the theorem fill_frames; the engine's task runs fill, a tail call
+L4Factoidal_WebAudio_Ring_run  # (s) the ring model over a list of operations, only in the theorems of Ring.lean; the C ring (ffi/audio_ring.h) is the executed path
