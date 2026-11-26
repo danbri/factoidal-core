@@ -19,6 +19,12 @@ def run : IO Unit := do
   match cssLengths.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
   | [.rect x y w h] => check (x==30 && y==60 && w==120 && h==100) "CSS rect pixel geometry properties"
   | _ => throw (IO.userError "CSS rect pixel geometry primitive")
+  let cssViewBox ← scene "width='300' height='200' viewBox='600 700 150 100'" "<style>rect{x:615px;y:730px;width:60px;height:50px}</style><rect/>"
+  match cssViewBox.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
+  | [.rect x y w h] => check (x==615 && y==730 && w==60 && h==50) "CSS rect dimensions with a viewBox"
+  | _ => throw (IO.userError "CSS rect viewBox geometry primitive")
+  let cssZero ← scene "width='300' height='200'" "<style>rect{width:0;height:50px}</style><rect/>"
+  check cssZero.primitives.isEmpty "zero CSS rect width has no paint"
   let cssPercent ← scene "width='300' height='200'" "<style>rect{x:10%;y:30%;width:40%;height:50%}</style><rect/>"
   match cssPercent.primitives.map (fun (p : NativeSVG.Primitive) => p.geometry) with
   | [.rect x y w h] => check (x==30 && y==60 && w==120 && h==100) "CSS rect percentage geometry axes"
