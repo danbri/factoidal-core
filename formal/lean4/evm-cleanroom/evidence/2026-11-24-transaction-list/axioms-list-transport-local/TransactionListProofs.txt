@@ -1,0 +1,30 @@
+'EVMCleanroom.TransactionList.witnessWorld_fresh' does not depend on any axioms
+'EVMCleanroom.TransactionList.witnessWorld_fresh_warmth' does not depend on any axioms
+'EVMCleanroom.TransactionList.finish_cumulativeGasUsed' does not depend on any axioms
+'EVMCleanroom.TransactionList.settleFrame_cumulativeGasUsed' does not depend on any axioms
+'EVMCleanroom.TransactionList.runAdmitted_cumulativeGasUsed' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.runWithBlobHashes_cumulativeGasUsed' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.refreshWitness_projection' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.refreshWitness_listed_storage' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionList.refreshWitnesses_inventory' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.refreshWitnesses_find' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.refreshed_request_coverage' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.refreshed_request_original' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionList.countFits_iff' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.preflight_bounded' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.preflight_too_many' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.preflight_aggregate_limit' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.advance_observation_limit' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.advance_exact' depends on axioms: [propext]
+'EVMCleanroom.TransactionList.advance_checked' does not depend on any axioms
+'EVMCleanroom.TransactionList.runEntry_cumulativeGasUsed' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.loop_receipt_trace' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.loop_order' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.loop_accounting' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.loop_entry_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.loop_advance_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.finish_checked' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionList.run_accepted' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.TransactionList.run_preflight_refused' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.TransactionList.blob_position_refused' does not depend on any axioms
+

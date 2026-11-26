@@ -1,0 +1,12 @@
+'EVMCleanroom.CallTransaction.runFrame_identity_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.CallTransaction.runFrame_identity_outOfGas' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.CallTransaction.runFrame_identity_resourceLimit' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+'EVMCleanroom.CallTransaction.settleFrame_identity_outOfGas' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EVMCleanroom.CallTransaction.runFrame_identity_fuel' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.CallTransaction.runFrame_ordinary' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.CallTransaction.run_empty_blobHashes' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.CallTransaction.debitSender_blobHashes' does not depend on any axioms
+'EVMCleanroom.CallTransaction.entryFrame_blobHashes' does not depend on any axioms
+

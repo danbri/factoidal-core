@@ -1,0 +1,41 @@
+{
+  "network": "op-sepolia",
+  "chainId": "0xaa37dc",
+  "address": "0x1111111111111111111111111111111111111111",
+  "data": "0x12345678",
+  "code": "0x60003560005260206000f3",
+  "returnData": "0x1234567800000000000000000000000000000000000000000000000000000000",
+  "block": {
+    "number": "0x123",
+    "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "parentHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "stateRoot": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "withdrawalsRoot": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "transactions": ["0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]
+  },
+  "parent": {
+    "number": "0x122",
+    "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "parentHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "stateRoot": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "transactions": []
+  },
+  "transaction": {
+    "hash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "blockHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "blockNumber": "0x123",
+    "transactionIndex": "0x0",
+    "type": "0x7e",
+    "sourceHash": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "mint": "0x42"
+  },
+  "receipt": {
+    "transactionHash": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "blockHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "blockNumber": "0x123",
+    "transactionIndex": "0x0",
+    "depositNonce": "0x2",
+    "depositReceiptVersion": "0x1",
+    "l1Fee": "0x0"
+  }
+}

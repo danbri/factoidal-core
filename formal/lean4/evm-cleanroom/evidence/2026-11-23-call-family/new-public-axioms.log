@@ -1,0 +1,15 @@
+Actual Lean 4.33.1 output for local implementation d1b975eab963c119e53ef3275a4d1a30d8148da6.
+CallOpcode.lean is unchanged in the later CLI/harness/evidence commits.
+
+info: EVMCleanroom/CallOpcode.lean:936:0: 'EVMCleanroom.CallOpcode.decodeVariant_zero_stackValue' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:937:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_operands' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:939:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_code' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/CallOpcode.lean:940:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_context' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:941:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_journal' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:942:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_no_transfer' depends on axioms: [propext, Quot.sound]
+info: EVMCleanroom/CallOpcode.lean:943:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_depth' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:944:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_output_paid' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:945:0: 'EVMCleanroom.CallOpcode.beginVariant_entered_input_byte' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:946:0: 'EVMCleanroom.CallOpcode.beginVariant_missing_code' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:947:0: 'EVMCleanroom.CallOpcode.beginVariant_missing_execution_account' depends on axioms: [propext]
+info: EVMCleanroom/CallOpcode.lean:950:0: 'EVMCleanroom.CallOpcode.execute_missing_variant_code' depends on axioms: [propext, Classical.choice, Quot.sound]

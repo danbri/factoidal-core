@@ -1,0 +1,18 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-subset"
+root = "EVMCleanroom.CLI"
+
+[[lean_exe]]
+name = "evm-call-transaction"
+root = "EVMCleanroom.CLITransaction"
+
+[[lean_exe]]
+name = "evm-header-fees"
+root = "EVMCleanroom.HeaderFeeCLI"
