@@ -221,6 +221,9 @@ def numbers(scenario, records):
         out["engines"] = ew.get("engines") or ew.get("mode")
     if scenario.startswith("steady"):
         out.update(steady_numbers(records, summary))
+    # Spares taken by a new tab, and spares passed over while warming (--warming-spare new).
+    out["sparesTaken"] = len([r for r in records if r.get("type") == "native-html-engine-worker" and r.get("state") == "spare-taken"])
+    out["sparesWarming"] = len([r for r in records if r.get("type") == "native-html-engine-worker" and r.get("state") == "spare-warming"])
     starts = [r for r in records if r.get("type") == "native-html-engine-worker" and r.get("state") == "started"]
     later = [s for s in starts if s.get("worker", 0) > 1]
     if later:
