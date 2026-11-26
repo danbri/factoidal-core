@@ -38,9 +38,11 @@ private def withId (key : String) : String :=
   "<rect " ++ key ++ "='r' width='50' height='40' fill='url(#g)'/></defs><use href='#r' x='20' y='30'/>"
 #guard compile (doc "" (withId "xml:id")) 480 360 == compile (doc "" (withId "id")) 480 360
 #guard !((compile (doc "" (withId "xml:id")) 480 360).startsWith "{\"error\"")
--- The same value twice is one identifier; two values are refused with a named reason.
-#guard compile (doc "" "<rect id='a' xml:id='a' width='5' height='5'/>") 480 360 == compile (doc "" "<rect id='a' width='5' height='5'/>") 480 360
-#guard compile (doc "" "<rect id='a' xml:id='b' width='5' height='5'/>") 480 360 == "{\"error\":\"id and xml:id differ on rect\"}"
+-- With two values, xml:id names the element and id is not used.
+#guard compile (doc "" "<defs><rect id='a' xml:id='b' width='5' height='5'/></defs><use href='#b'/>") 480 360 ==
+  compile (doc "" "<g><rect width='5' height='5'/></g>") 480 360
+#guard compile (doc "" "<defs><rect id='a' xml:id='b' width='5' height='5'/></defs><use href='#a'/>") 480 360 ==
+  compile (doc "" "") 480 360
 
 /- SVG Tiny 1.2 §23.1: an element in an unknown namespace is private data, not rendered, with
    its subtree (the W3C suite's own `SVGTestCase` description, editor data). -/
@@ -50,3 +52,9 @@ private def privateData := "<p:note xmlns:p='urn:example:private'><p:x/><rect wi
 #guard (compile (doc "" "<rect xmlns='' width='1' height='1'/>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
 #guard (compile (doc "" "<ev:listener xmlns:ev='http://www.w3.org/2001/xml-events' event='click'/>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
 #guard (compile (doc "" "<h:p xmlns:h='http://www.w3.org/1999/xhtml'>x</h:p>") 480 360).startsWith "{\"error\":\"foreign/non-SVG element"
+
+/- SVG Tiny 1.2 §10.10: font and text properties are read only by `text` and `textArea`. On a
+   group of shapes they change nothing; `text` itself stays refused by this reader. -/
+#guard compile (doc "" ("<g font-family='serif' font-size='18' text-anchor='middle' font-weight='bold'>" ++ body1 ++ "</g>")) 480 360 ==
+  compile (doc "" ("<g>" ++ body1 ++ "</g>")) 480 360
+#guard (compile (doc "" "<g font-family='serif'><text>x</text></g>") 480 360).startsWith "{\"error\""

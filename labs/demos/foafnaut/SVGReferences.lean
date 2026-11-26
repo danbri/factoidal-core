@@ -20,13 +20,14 @@ private def attr (attrs : List NamespaceAttribute) (key : String) : Option Strin
   (attrs.find? (fun a => a.name.namespace_.isNone && a.name.localPart == key)).map (·.value)
 
 /-- SVG Tiny 1.2 §5.10.2 (`id` and `xml:id`): both give an element its identifier (XML ID 1.0
-for `xml:id`). The plain `id` is read first; `xml:id` when there is no `id`. Two different values
-on one element are refused by the SVG compiler's attribute check (`NativeSVG.validateAttrs`). -/
+for `xml:id`). When an element has both with different values, `xml:id` is the identifier and
+`id` is not used (W3C SVG Tiny 1.2 test animate-elem-218-t: "id is skipped and only xml:id has
+to be choosen"). -/
 def elementId (attrs : List NamespaceAttribute) : Option String :=
-  match attr attrs "id" with
-  | some id => some id
-  | none => (attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" &&
-      a.name.localPart == "id")).map (·.value)
+  match attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" &&
+      a.name.localPart == "id") with
+  | some a => some a.value
+  | none => attr attrs "id"
 
 /-- Resolve xml:base in the original source element's context. Shadow instances
     preserve this context instead of rebasing references against the use host. -/

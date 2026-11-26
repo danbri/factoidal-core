@@ -423,13 +423,21 @@ private def relativeLength (source : String) (base : Float) : Except String Floa
     pure ((← number (String.ofList (s.toList.take (s.length-1))))/100*base)
   else lengthNumber s
 
+/-- SVG Tiny 1.2 §10.10 to §10.12 and §10.11.4 (property index, appendix C): the text and font
+properties. They are inherited, and only `text` and `textArea` read them. This reader draws
+neither (both are refused as unsupported elements), so on any other element these properties
+change no pixel: they are read past. The W3C Tiny suite writes them on the `g` around each test's
+label text. -/
+private def textProperties := ["font-family","font-size","font-style","font-variant","font-weight",
+  "text-anchor","display-align","line-increment","text-align"]
 /-- The presentation attributes every drawing element may carry. `clip-rule` (SVG 2 §14.3.7)
 matters only for a shape inside a `clipPath`; this reader takes it and clips with the
 nonzero rule. Icon sets write it on every path (`fill-rule="evenodd" clip-rule="evenodd"`:
 GitHub's icons), and refusing it refused the whole drawing. -/
 private def common := ["id","fill","stroke","color","fill-opacity","stroke-opacity","stroke-width",
   "stroke-linecap","stroke-linejoin","stroke-miterlimit","fill-rule","stroke-dasharray","stroke-dashoffset",
-  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"]
+  "display","visibility","stop-color","stop-opacity","solid-color","solid-opacity","pointer-events","clip-rule"] ++
+  textProperties
 /-- SVG Tiny 1.2 §11.13 and §11.16: elements that define a paint and draw nothing. -/
 private def paintServers := ["linearGradient","radialGradient","solidColor"]
 /-- Attributes that say nothing about what is drawn, and that HTML pages put on inline SVG:
@@ -453,17 +461,7 @@ private def skipAttribute (tag : String) (a : NamespaceAttribute) : Bool :=
   a.name.namespace_.isNone &&
     ((tag == "svg" && ["category", "icon"].contains a.name.localPart) || inertAttribute a.name.localPart)
 
-/-- SVG Tiny 1.2 §5.10.2: `id` and `xml:id` on one element must name the same identifier
-(`NativeSVGReferences.elementId` reads either); two values are refused. -/
-private def xmlIdValue (attrs : List NamespaceAttribute) : Option String :=
-  (attrs.find? (fun a => a.name.namespace_ == some "http://www.w3.org/XML/1998/namespace" && a.name.localPart == "id")).map (·.value)
-private def idsAgree (tag : String) (attrs : List NamespaceAttribute) : Except String Unit :=
-  match attr attrs "id", xmlIdValue attrs with
-  | some plain, some xml => if plain != xml then throw s!"id and xml:id differ on {tag}" else pure ()
-  | _, _ => pure ()
-
 private def validateAttrs (tag : String) (attrs : List NamespaceAttribute) (extra : List String) : Except String Unit := do
-  idsAgree tag attrs
   for a in attrs do
     -- Inline icons may carry application metadata on the svg element (BBC News).
     if skipAttribute tag a then continue
@@ -530,11 +528,7 @@ private theorem validateAttrs_svg_metadata (key value : String) (attrs : List Na
       extra = validateAttrs "svg" attrs extra := by
   have skip : skipAttribute "svg" { name := { namespace_ := none, localPart := key }, value } = true := by
     rcases metadata with rfl | rfl <;> simp [skipAttribute]
-  have notId : key ≠ "id" := by rcases metadata with rfl | rfl <;> decide
-  have same : idsAgree "svg" ({ name := { namespace_ := none, localPart := key }, value } :: attrs) =
-      idsAgree "svg" attrs := by
-    simp [idsAgree, attr, xmlIdValue, List.find?_cons, notId]
-  simp [validateAttrs, List.forIn_cons, skip, same]
+  simp [validateAttrs, List.forIn_cons, skip]
 
 #print axioms validateAttrs_svg_metadata
 
