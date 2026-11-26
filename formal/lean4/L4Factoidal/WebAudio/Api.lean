@@ -6,8 +6,9 @@ design: docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 12).
 ## Op numbers
 
 The plan named ops 170 to 189. Ops 170, 171 and 172 of `WasmVM/Hosts/WebApi.lean` are the
-layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 189**
-(17 ops). Routing: `173 ≤ code < 190`.
+layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 196**
+(173 to 189: contexts, nodes, rendering; 190 to 196: real-time contexts and decoding, step D2 of
+the plan). Routing: `173 ≤ code < 200` (197 to 199 answer -2).
 
 ## Argument and answer conventions
 
@@ -66,7 +67,11 @@ of `WebApi.lean`; -28 to -30 are new.
   * 179 `paramCall(ctx, node, param, method, args...)`: `method` is `setValueAtTime(value, time)`,
     `linearRampToValueAtTime(value, time)`, `exponentialRampToValueAtTime(value, time)`,
     `setTargetAtTime(target, start, timeConstant)`, `setValue(value)` (the `value` setter),
-    `cancelScheduledValues(time)` or `setAutomationRate(name)` ("a-rate" or "k-rate"; the
+    `setValueCurveAtTime(values, startTime, duration)` (`values`: binary32 array, the times
+    doubles: -20 a non-finite value or time, -29 fewer than 2 values (as `Automation.validate`
+    decides; the coordinator's brief said TypeError), -21 a negative start or a duration that is
+    not above 0, -23 an overlap), `cancelAndHoldAtTime(cancelTime)` (double: -20 non-finite, -21
+    negative), `cancelScheduledValues(time)` or `setAutomationRate(name)` ("a-rate" or "k-rate"; the
     parameters of an `AudioBufferSourceNode` are fixed k-rate: -29 for "a-rate"). The reals are
     8-byte doubles. Errors: -20 non-finite; -21 RangeError; -23 NotSupportedError; -29
     InvalidStateError (automation rules of `Automation.insert`); -28 no such parameter.
@@ -102,8 +107,42 @@ of `WebApi.lean`; -28 to -30 are new.
   * 189 `info(ctx)`: the double `sampleRate`, then `u32` length, channels, current frame, render
     quantum size, number of nodes, and one byte 1 when `startRendering` has run.
 
+Real-time contexts (plan section 13). `contexts` holds the graph state of every context, offline
+and real-time, so ops 176 to 188 work on both (187 on a real-time context answers -29). A
+real-time context also has a `Realtime` record in `realtime`: its state, the outbox of the
+messages for its rendering side, its unconfirmed control calls, its events for the page and the
+last report of the rendering side. The IO layer (step D3) moves the outboxes (`takeOutbox`),
+merges the reports (`applyReport`), takes decode jobs and wakeups; this file has no IO.
+
+  * 190 `newAudioContext(latencyHint, sampleRate, callback)`: `latencyHint` is `interactive`,
+    `balanced`, `playback` (else -20) or an 8-byte double of seconds (non-finite or negative: -20);
+    `sampleRate` "" is the device rate, else a double from 3000 to 768000 (else -23); `callback` is
+    the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
+    or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
+    the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
+    state (`suspended`, `running`, `closed`). The state is `running` when `autoplay` or `activated`.
+    The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET])`, the target
+    in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to 16384).
+  * 191 `control(ctx, verb)`: `resume`, `suspend`, `close` (else -20); -20 for a context that is
+    not real-time; -29 when the context is closed. Answers the call id (decimal) and appends
+    `(191, [ctx, verb, callId])` to the outbox; the promise resolves when an event of kind 3 (or
+    rejects: kind 4) names the call id. A `resume` before `autoplay` or `activated` waits in
+    `pendingResume`; op 196 releases it.
+  * 192 `time(ctx)`: doubles `currentTime`, `baseLatency`, `outputLatency`, one state byte (0
+    suspended, 1 running, 2 closed), doubles `contextTime` and `performanceTime` (of
+    `getOutputTimestamp()`; the page-clock ms of the last report, 0 before the first).
+  * 193 `events(ctx)`: `u32` count, then each event as a kind byte and a `u32` value; clears them.
+    Kind 1 source ended (node id), 2 state changed (0, 1, 2 as above), 3 control call resolved
+    (call id), 4 control call rejected (call id).
+  * 194 `decodeAudioData(ctx, bytes, callback)`: any context; queues a job; answers the job id.
+  * 195 `decodeResult(job)`: `u32` channels, `u32` length, the rate (double), the samples as
+    binary32 channel by channel; or the error the decoder gave (-30, -23). The job is removed
+    when the result is given, and also when it is an error (so 195 is the one op that changes the
+    state while it answers an error). -29 while the job is pending; -20 for no such job.
+  * 196 `activate()`: the page's sticky activation; releases the pending `resume` calls.
+
 No op changes a context other than the one it names (`withCtx_other`), and an op that fails
-changes nothing (`op_error_state`).
+changes nothing (`op_error_state`; op 195 with a stored error result excepted).
 -/
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
@@ -123,10 +162,90 @@ def maxSamples : Nat := 33554432
 /-- Largest number of nodes of one context. -/
 def maxNodes : Nat := 65536
 
+/-- The state of a real-time context (IDL `AudioContextState`). -/
+inductive RtState where
+  | suspended | running | closed
+  deriving DecidableEq, Inhabited, Repr
+
+def RtState.code : RtState → Nat
+  | .suspended => 0 | .running => 1 | .closed => 2
+
+def RtState.text : RtState → String
+  | .suspended => "suspended" | .running => "running" | .closed => "closed"
+
+/-- What the control side keeps of a real-time context besides its graph state (which is in
+`State.contexts`). Plan section 13.1. -/
+structure Realtime where
+  state : RtState := .suspended
+  /-- The device's channel count: `maxChannelCount`. -/
+  maxChannels : Nat := 2
+  /-- Frames the rendering side keeps ahead of the output (plan 13.4). -/
+  target : Nat := 1024
+  /-- The page callback handle that takes the events. -/
+  callback : Nat := 0
+  /-- Control messages (op code, fields) for the rendering side, in order. -/
+  outbox : Array (Nat × Array ByteArray) := #[]
+  /-- Control calls (call id, verb) not yet confirmed or rejected. -/
+  calls : Array (Nat × String) := #[]
+  /-- Call ids of `resume` calls waiting for activation. -/
+  pendingResume : Array Nat := #[]
+  /-- Events for the page: kind 1 source ended (node), 2 state changed, 3 call resolved, 4 call
+  rejected. -/
+  events : Array (UInt8 × Nat) := #[]
+  framesRendered : Nat := 0
+  framesPlayed : Nat := 0
+  underruns : Nat := 0
+  latencyFrames : Nat := 0
+  /-- The page-clock time of the last report, in ms. -/
+  reportMs : Float := 0.0
+  deriving Inhabited
+
+/-- What a rendering side tells the control side (plan 13.3). -/
+structure Report where
+  framesRendered : Nat := 0
+  framesPlayed : Nat := 0
+  underruns : Nat := 0
+  latencyFrames : Nat := 0
+  timeMs : Float := 0.0
+  /-- Ids of the source nodes that ended. -/
+  ended : Array Nat := #[]
+  /-- State changes the rendering side made, in order. -/
+  stateChanges : Array RtState := #[]
+  /-- Control calls it carried out. -/
+  confirmed : Array Nat := #[]
+  /-- Control calls it refused. -/
+  rejected : Array Nat := #[]
+  deriving Inhabited
+
+/-- A `decodeAudioData` job. `result` is (channels, length, sample rate, samples as binary32
+channel by channel) or the error code. -/
+structure DecodeJob where
+  rate : Float
+  bytes : ByteArray
+  callback : Nat
+  taken : Bool := false
+  result : Option (Except Int (Nat × Nat × Float × ByteArray)) := none
+
+instance : Inhabited DecodeJob := ⟨{ rate := 0.0, bytes := ByteArray.empty, callback := 0 }⟩
+
 /-- What the session keeps for Web Audio between calls. -/
 structure State where
   contexts : Std.HashMap Nat Context.OfflineContext := {}
   next : Nat := 1
+  /-- The real-time contexts (their ids are also in `contexts`). -/
+  realtime : Std.HashMap Nat Realtime := {}
+  /-- The output's preferred sample rate and channel count, set by the engine; `none`: no audio
+  output (op 190 answers -23). -/
+  device : Option (Float × Nat) := none
+  /-- True: no activation is needed (the WPT runner and tests). -/
+  autoplay : Bool := false
+  /-- The page's sticky activation (op 196). -/
+  activated : Bool := false
+  nextCall : Nat := 1
+  decodeJobs : Std.HashMap Nat DecodeJob := {}
+  nextJob : Nat := 1
+  /-- Page callback handles the engine queues as tasks (`takeWakeups`). -/
+  wakeups : Array Nat := #[]
   deriving Inhabited
 
 /-! ## Error codes -/
@@ -385,6 +504,10 @@ def paramCallOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteAr
         do lift (c.setTargetAtTime id p (← f64Arg fs 4) (← f64Arg fs 5) (← f64Arg fs 6))
       | "setValue" => do lift (c.setParamValue id p (← f64Arg fs 4))
       | "cancelScheduledValues" => do lift (c.cancelScheduledValues id p (← f64Arg fs 4))
+      | "cancelAndHoldAtTime" => do lift (c.cancelAndHoldAtTime id p (← f64Arg fs 4))
+      | "setValueCurveAtTime" => do
+        let vs ← f32s (fs.getD 4 ByteArray.empty)
+        lift (c.setValueCurveAtTime id p vs.data (← f64Arg fs 5) (← f64Arg fs 6))
       | "setAutomationRate" =>
         match strArg fs 4 with
         | "a-rate" =>
@@ -602,6 +725,191 @@ def infoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) 
       u32le c.currentFrame ++ u32le c.state.quantum ++ u32le c.state.nodes.size ++
       ⟨#[if c.rendered then 1 else 0]⟩)
 
+
+/-! ## 190 to 196: real-time contexts, decoding -/
+
+/-- Decimal text of a count, as bytes. -/
+def dec (k : Nat) : ByteArray := ofStr (toString k)
+
+/-- A sample rate as text: an integer when it is one. -/
+def rateText (r : Float) : String :=
+  if r == r.floor && r < 1e9 then toString r.toUInt64.toNat else toString r
+
+/-- Real-time contexts that are not closed. -/
+def liveRealtime (s : State) : Nat :=
+  s.realtime.fold (fun n _ rt => if rt.state == .closed then n else n + 1) 0
+
+def maxLiveRealtime : Nat := 16
+
+/-- The latency hint: a fixed number of frames, or seconds. -/
+inductive Hint where
+  | frames (n : Nat)
+  | seconds (x : Float)
+
+def parseHint (b : ByteArray) : Except Int Hint :=
+  if b == "interactive".toUTF8 then .ok (.frames 1024)
+  else if b == "balanced".toUTF8 then .ok (.frames 2048)
+  else if b == "playback".toUTF8 then .ok (.frames 4096)
+  else if b.size == 8 then
+    let x := Float.ofBits (u64At b 0)
+    if x.isFinite && x ≥ 0.0 then .ok (.seconds x) else .error errType
+  else .error errType
+
+/-- Target frames (plan 13.4): the hint's, seconds rounded up and kept within 256 to 16384. -/
+def targetFrames (h : Hint) (rate : Float) : Nat :=
+  match h with
+  | .frames n => n
+  | .seconds x => min 16384 (max 256 (x * rate).ceil.toUInt64.toNat)
+
+def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let hint ← parseHint (fs.getD 0 ByteArray.empty)
+  let cb ← natArg fs 2
+  let rateField := fs.getD 1 ByteArray.empty
+  let (devRate, devCh) := s.device.getD (0.0, 0)
+  let rate ← if rateField.size == 0 then pure devRate else f64Arg fs 1
+  if !(rate ≥ 3000.0 && rate ≤ 768000.0) then throw errNotSupported
+  if s.device.isNone || liveRealtime s ≥ maxLiveRealtime || s.contexts.size ≥ maxContexts then
+    throw errNotSupported
+  let c0 ← lift (Context.OfflineContext.new 2 1 rate)
+  let c := { c0 with length := 0 }
+  let id := s.next
+  let target := targetFrames hint rate
+  let rt : Realtime :=
+    { state := if s.autoplay || s.activated then .running else .suspended
+      maxChannels := devCh, target, callback := cb
+      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target])] }
+  pure ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt,
+                 next := id + 1 },
+        ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
+
+def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let id ← natArg fs 0
+  let rt ← match s.realtime[id]? with | some rt => pure rt | none => throw errType
+  let verb := strArg fs 1
+  if !(verb == "resume" || verb == "suspend" || verb == "close") then throw errType
+  if rt.state == .closed then throw errInvalidState
+  let call := s.nextCall
+  let wait := verb == "resume" && !(s.autoplay || s.activated)
+  let rt' : Realtime :=
+    { rt with calls := rt.calls.push (call, verb)
+              pendingResume := if wait then rt.pendingResume.push call else rt.pendingResume
+              outbox := if wait then rt.outbox
+                        else rt.outbox.push (191, #[dec id, ofStr verb, dec call]) }
+  pure ({ s with realtime := s.realtime.insert id rt', nextCall := call + 1 }, dec call)
+
+def timeOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let id ← natArg fs 0
+  let rt ← match s.realtime[id]? with | some rt => pure rt | none => throw errType
+  let c ← match s.contexts[id]? with | some c => pure c | none => throw errType
+  let r := c.sampleRate
+  let sec (n : Nat) : Float := Float.ofNat n / r
+  pure (s, f64le (sec rt.framesRendered) ++ f64le (sec rt.target) ++ f64le (sec rt.latencyFrames) ++
+    ⟨#[rt.state.code.toUInt8]⟩ ++ f64le (sec rt.framesPlayed) ++ f64le rt.reportMs)
+
+def eventsOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let id ← natArg fs 0
+  let rt ← match s.realtime[id]? with | some rt => pure rt | none => throw errType
+  let out := rt.events.foldl (fun acc (k, v) => acc ++ ⟨#[k]⟩ ++ u32le v) (u32le rt.events.size)
+  pure ({ s with realtime := s.realtime.insert id { rt with events := #[] } }, out)
+
+def decodeAudioDataOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let id ← natArg fs 0
+  let c ← match s.contexts[id]? with | some c => pure c | none => throw errType
+  let cb ← natArg fs 2
+  let job := s.nextJob
+  pure ({ s with decodeJobs := s.decodeJobs.insert job
+                   { rate := c.sampleRate, bytes := fs.getD 1 ByteArray.empty, callback := cb }
+                 nextJob := job + 1 }, dec job)
+
+/-- The result of a finished job as the bytes of op 195. -/
+def decodeAnswer (r : Nat × Nat × Float × ByteArray) : ByteArray :=
+  u32le r.1 ++ u32le r.2.1 ++ f64le r.2.2.1 ++ r.2.2.2
+
+/-- Op 195. The job leaves the table when its result is given, error results included. -/
+def decodeResultOp (s : State) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  match natArg fs 0 with
+  | .error e => (s, .error e)
+  | .ok job =>
+    match s.decodeJobs[job]? with
+    | none => (s, .error errType)
+    | some j =>
+      match j.result with
+      | none => (s, .error errInvalidState)
+      | some r => ({ s with decodeJobs := s.decodeJobs.erase job }, r.map decodeAnswer)
+
+/-- Op 196: sticky activation. Each pending `resume` call goes to its context's outbox. -/
+def activate (s : State) : State :=
+  { s with activated := true
+           realtime := s.realtime.map fun id rt =>
+             if rt.pendingResume.isEmpty then rt
+             else { rt with pendingResume := #[]
+                            outbox := rt.pendingResume.foldl
+                              (fun o call => o.push (191, #[dec id, ofStr "resume", dec call]))
+                              rt.outbox } }
+
+/-! ## What the IO layer of step D3 calls -/
+
+/-- Merge a report of the rendering side of context `ctx`. Frames rendered and played become the
+larger of the old and the new value (also in the graph state's `frame`, which automation reads at
+the current time); ended sources, state changes and the control calls carried out or refused
+become events; the context's callback is queued once when any event was added. A context that is
+not real-time is not changed. -/
+def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
+  match s.realtime[ctx]?, s.contexts[ctx]? with
+  | some rt, some c =>
+    let evs : Array (UInt8 × Nat) :=
+      r.ended.map (fun i => ((1 : UInt8), i)) ++
+      r.stateChanges.map (fun st => ((2 : UInt8), st.code)) ++
+      r.confirmed.map (fun i => ((3 : UInt8), i)) ++
+      r.rejected.map (fun i => ((4 : UInt8), i))
+    let done (i : Nat) : Bool := r.confirmed.contains i || r.rejected.contains i
+    let fr := max rt.framesRendered r.framesRendered
+    let rt' : Realtime :=
+      { rt with state := r.stateChanges.back?.getD rt.state
+                framesRendered := fr
+                framesPlayed := max rt.framesPlayed r.framesPlayed
+                underruns := max rt.underruns r.underruns
+                latencyFrames := r.latencyFrames
+                reportMs := r.timeMs
+                calls := rt.calls.filter (fun (i, _) => !done i)
+                events := rt.events ++ evs }
+    let c' := { c with state := { c.state with frame := max c.state.frame fr } }
+    { s with realtime := s.realtime.insert ctx rt', contexts := s.contexts.insert ctx c'
+             wakeups := if evs.isEmpty then s.wakeups else s.wakeups.push rt.callback }
+  | _, _ => s
+
+/-- A sequence of reports, in order. -/
+def applyReports (s : State) (rs : List (Nat × Report)) : State :=
+  rs.foldl (fun s (c, r) => applyReport s c r) s
+
+/-- All outboxes, emptied: the contexts that have messages, each with its messages in order. -/
+def takeOutbox (s : State) : State × Array (Nat × Array (Nat × Array ByteArray)) :=
+  ({ s with realtime := s.realtime.map fun _ rt => { rt with outbox := #[] } },
+   (s.realtime.toList.filterMap fun (id, rt) =>
+      if rt.outbox.isEmpty then none else some (id, rt.outbox)).toArray)
+
+/-- The decode jobs not yet taken: (job id, sample rate, bytes), in job order. They are marked
+taken. -/
+def takeDecodeJobs (s : State) : State × Array (Nat × Float × ByteArray) :=
+  let l := s.decodeJobs.toList.filter fun (_, j) => !j.taken && j.result.isNone
+  let l := l.toArray.qsort (fun a b => a.1 < b.1)
+  ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true } },
+   l.map fun (id, j) => (id, j.rate, j.bytes))
+
+/-- Store the result of decode job `job` and queue its callback. A job that does not exist, or
+that has a result, is left alone. -/
+def finishDecode (s : State) (job : Nat) (result : Except Int (Nat × Nat × Float × ByteArray)) :
+    State :=
+  match s.decodeJobs[job]? with
+  | some j =>
+    if j.result.isNone then
+      { s with decodeJobs := s.decodeJobs.insert job { j with taken := true, result := some result }
+               wakeups := s.wakeups.push j.callback }
+    else s
+  | none => s
+
+def takeWakeups (s : State) : State × Array Nat := ({ s with wakeups := #[] }, s.wakeups)
+
 /-! ## The dispatch -/
 
 def run (s : State) (code : Nat) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
@@ -620,34 +928,128 @@ def run (s : State) (code : Nat) (fs : Array ByteArray) : Except Int (State × B
   | 184 => setBufferOp s fs
   | 185 => setPeriodicWaveOp s fs
   | 186 => (checkOp fs).map (s, ·)
-  | 187 => startRenderingOp s fs
+  | 187 =>
+    match natArg fs 0 with
+    | .ok id => if s.realtime.contains id then .error errInvalidState else startRenderingOp s fs
+    | .error _ => startRenderingOp s fs
   | 188 => frequencyResponseOp s fs
   | 189 => infoOp s fs
+  | 190 => newAudioContextOp s fs
+  | 191 => controlOp s fs
+  | 192 => timeOp s fs
+  | 193 => eventsOp s fs
+  | 194 => decodeAudioDataOp s fs
+  | 196 => pure (activate s, ByteArray.empty)
   | _ => .error (-2)
 
-/-- The operations 173 to 189. A failed op leaves the state as it was; the answer is the error
-code (negative) or the bytes. -/
-def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
-  match run s code fs with
-  | .ok (s', out) => (s', .ok out)
-  | .error e => (s, .error e)
+/-- The ops whose success is also sent to the rendering side of a real-time context. -/
+def outboxCode (code : Nat) : Bool :=
+  (176 ≤ code && code ≤ 179) || (181 ≤ code && code ≤ 185)
 
-/-- Says: an op that answers an error returns the state it was given. Does not say: that an op
-that succeeds changes the state (a query does not). -/
+/-- Append `(code, fs)` to the outbox of the real-time context named by field 0, if it is not
+closed. -/
+def pushOutbox (s : State) (code : Nat) (fs : Array ByteArray) : State :=
+  match natArg fs 0 with
+  | .ok id =>
+    match s.realtime[id]? with
+    | some rt =>
+      if rt.state == .closed then s
+      else { s with realtime := s.realtime.insert id { rt with outbox := rt.outbox.push (code, fs) } }
+    | none => s
+  | .error _ => s
+
+/-- The operations 173 to 196. A failed op leaves the state as it was (except 195 with a stored
+error result); the answer is the error code (negative) or the bytes. -/
+def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  if code = 195 then decodeResultOp s fs
+  else
+    match run s code fs with
+    | .ok (s', out) => ((if outboxCode code then pushOutbox s' code fs else s'), .ok out)
+    | .error e => (s, .error e)
+
+/-- Says: an op other than 195 that answers an error returns the state it was given. Does not
+say: that an op that succeeds changes the state (a query does not); nor anything about 195, which
+removes a job whose stored result is an error. -/
 theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
-    (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
+    (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
   unfold op at *
+  simp only [hc, if_false] at *
   split at h <;> simp_all
 
-/-- Says: a code outside 173 to 189 answers -2 and leaves the state alone. Does not say: anything
+/-- Says: a code outside 173 to 196 answers -2 and leaves the state alone. Does not say: anything
 about the codes inside the range. -/
-theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 189 < code) :
+theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 196 < code) :
     op s code fs = (s, .error (-2)) := by
   have hr : run s code fs = .error (-2) := by
     unfold run
     split <;> first | omega | rfl
+  have hc : code ≠ 195 := by omega
   unfold op
-  rw [hr]
+  rw [if_neg hc, hr]
+
+/-- Says: `withCtx` changes only `contexts`. Does not say: which context. -/
+theorem withCtx_fields (s s' : State) (fs : Array ByteArray) (out : ByteArray)
+    (f : Context.OfflineContext → Except Int (Context.OfflineContext × ByteArray))
+    (h : withCtx s fs f = .ok (s', out)) : ∃ m, s' = { s with contexts := m } := by
+  unfold withCtx at h
+  generalize hn : natArg fs 0 = n at h
+  match n, h with
+  | .error _, h => simp [bind, Except.bind] at h
+  | .ok id, h =>
+    simp only [bind, Except.bind] at h
+    split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · simp [pure, Except.pure] at h
+        exact ⟨_, h.1.symm⟩
+
+/-- Says: a successful op of the outbox codes leaves `realtime` as it was. Does not say: that the
+outbox is not appended to by `op` (it is, see `op_outbox`). -/
+theorem run_realtime (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+    (hc : outboxCode code = true) (h : run s code fs = .ok (s', out)) :
+    s'.realtime = s.realtime := by
+  have hc' : code = 176 ∨ code = 177 ∨ code = 178 ∨ code = 179 ∨ code = 181 ∨ code = 182 ∨
+      code = 183 ∨ code = 184 ∨ code = 185 := by
+    unfold outboxCode at hc; simp at hc; omega
+  have key : ∀ f, withCtx s fs f = .ok (s', out) → s'.realtime = s.realtime := by
+    intro f hw
+    obtain ⟨m, rfl⟩ := withCtx_fields s s' fs out f hw
+    rfl
+  rcases hc' with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    first
+    | exact key _ h
+    | (simp only [run] at h; exact key _ h)
+
+/-- Says: a successful op 176 to 179 or 181 to 185 on a real-time context that is not closed
+appends exactly `(code, fs)` to its outbox, and changes no other context's record. Does not say:
+what happens to the graph state (`withCtx_other`), or for a closed context. -/
+theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+    (id : Nat) (rt : Realtime) (hc : outboxCode code = true) (hid : natArg fs 0 = .ok id)
+    (hrt : s.realtime[id]? = some rt) (hopen : rt.state ≠ .closed)
+    (h : op s code fs = (s', .ok out)) :
+    s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
+    ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
+  have hn : code ≠ 195 := by unfold outboxCode at hc; simp at hc; omega
+  unfold op at h
+  rw [if_neg hn] at h
+  split at h
+  · rename_i s1 o1 hr
+    have hrt1 := run_realtime s s1 code fs o1 hc hr
+    simp only [hc, if_true, Prod.mk.injEq] at h
+    obtain ⟨rfl, -⟩ := h
+    have hrt' : s1.realtime[id]? = some rt := by rw [hrt1]; exact hrt
+    unfold pushOutbox
+    rw [hid]
+    simp only [hrt']
+    have hb : (rt.state == RtState.closed) = false := by
+      cases hs : rt.state <;> simp_all
+    simp only [hb]
+    refine ⟨by simp, ?_⟩
+    intro id' hne
+    have : id ≠ id' := fun e => hne e.symm
+    simp [Std.HashMap.getElem?_insert, this, hrt1]
+  · simp at h
 
 /-! ## Tests -/
 
