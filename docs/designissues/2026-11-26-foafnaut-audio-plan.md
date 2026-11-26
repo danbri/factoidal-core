@@ -411,9 +411,16 @@ latency. `--perf-summary` gets a block `audio`.
 
 ### 13.10 Steps
 
-- D1: `WebAudio/Ring.lean` with its theorems; `ffi/audio_sink.c` (ring, `null`, `wav`, the Wasm
-  build); `WebAudio/Sink.lean` (the externs); Lake and `build-web-render.sh` wiring; the stress
-  test and the trace replay.
+- D1 (done 2026-11-26, branch `wip/1169-audio-ring`): `WebAudio/Ring.lean` with its theorems
+  (invariant, frames in order and once, silence and under-run count, all-or-nothing write, no
+  overwrite; no `sorry`, axioms only `propext`, `Classical.choice`, `Quot.sound`);
+  `ffi/audio_sink.c` and `ffi/audio_ring.h` (ring, `null`, `wav`, the Wasm stub; the consumer
+  takes nothing before the first write); `WebAudio/Sink.lean` (the externs; not imported by the
+  umbrella); Lake (`libl4audio`, `audio-sink-test`) and `build-web-render.sh` wiring; `tests/audio/run.sh`
+  (ThreadSanitizer stress, trace replay through the Lean model, WAV check). The Lean 4.33 ABI
+  gives an `IO a` extern no world argument and a `BaseIO a` extern the plain value (no
+  `lean_io_result`); `audio_sink.c` records it. Still to do in D1: nothing; D1m (CoreAudio) and
+  D3 use these.
 - D1m: the `coreaudio` consumer and the macOS link flags. No macOS compiler is in the cloud
   sessions, so this part is written against Apple's documented C API and is checked by the macOS
   build of `danbri/factoidal-builds`.

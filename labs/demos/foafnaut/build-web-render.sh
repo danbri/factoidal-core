@@ -166,6 +166,11 @@ while IFS= read -r file; do SOURCES+=("$file"); done < "$BUILD/core-c-files.txt"
 # Portable C only: no Vale assembly, no vector units, so native and Wasm are the same code.
 HACL="$ROOT/third_party/hacl"
 HACL_SOURCES=("$PROJECT/ffi/hacl_webcrypto.c")
+# The audio sink (formal/lean4/ffi/audio_sink.c, L4Factoidal/WebAudio/Sink.lean; issue 1169, plan
+# docs/designissues/2026-11-26-foafnaut-audio-plan.md section 13): a ring and a consumer thread. It
+# is built with the same flags as the HACL* units; the native build adds -pthread, the Wasm build
+# takes its `__EMSCRIPTEN__` branch (every open fails, no thread symbol). No CoreAudio consumer yet.
+HACL_SOURCES+=("$PROJECT/ffi/audio_sink.c")
 for unit in Hacl_Hash_SHA1 Hacl_Hash_SHA2 Hacl_Hash_SHA3 Hacl_HMAC Hacl_Hash_Blake2s Hacl_Hash_Blake2b Hacl_Hash_MD5 Hacl_Ed25519 \
   Hacl_Curve25519_51 Hacl_P256 Hacl_AEAD_Chacha20Poly1305 Hacl_Chacha20 Hacl_MAC_Poly1305 Hacl_Bignum Hacl_Bignum64 Hacl_RSAPSS Lib_Memzero0; do
   HACL_SOURCES+=("$HACL/src/$unit.c")
@@ -231,10 +236,13 @@ if [ "$MODE" = --native ]; then
     # -fPIC: these objects also go into the Linux shared library, and Hacl_RSAPSS.c and
     # Hacl_Hash_SHA3.c name `stderr` (KaRaMeL's error print), which a shared object must reach
     # through the GOT ("relocation R_X86_64_PC32 cannot be used against symbol 'stderr'").
-    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} "${CC:-cc}" -O3 -DNDEBUG -fPIC -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
+    compile_bg ${LAUNCH[@]+"${LAUNCH[@]}"} "${CC:-cc}" -O3 -DNDEBUG -fPIC -pthread -I "$HACL/include" -I "$TOOLCHAIN/include" -c "$source" -o "$object"
     OBJECTS+=("$object")
   done
   compile_wait
+  # The audio sink's entry points are in the library's objects (the Lean externs of Sink.lean).
+  nm "$BUILD/obj-native/hacl_audio_sink.o" | grep -q ' T _\{0,1\}l4_audio_sink_open$'
+  echo "AUDIO_SINK_SYMBOLS: nm shows l4_audio_sink_open in $(basename "$BUILD/obj-native/hacl_audio_sink.o")"
   LEANLIB="$TOOLCHAIN/lib/lean"
   # Native macOS builds link Lean's runtime without GNU MP (issue 393): see
   # build-leanrt-no-gmp.sh. The Linux library does too (below); the Linux web-render-native
