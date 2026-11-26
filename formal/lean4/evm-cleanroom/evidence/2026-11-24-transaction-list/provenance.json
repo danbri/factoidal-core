@@ -1,0 +1,698 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "publishedCommit": "91cae62479cbd3a13775b3dd15f502646c11db41",
+    "tree": "7d8ef4d75ef64e634574ee4a313294e9072e4f4f",
+    "priorHead": "2e8a64e86b1578017cc96bcc4045d801ed6319c9",
+    "priorTree": "f171826b8b9f2071347b0666f3856a295ce7012a",
+    "changedGitBlobs": 30,
+    "toolchain": "leanprover/lean4:v4.33.1",
+    "compilerCommit": "819816b2e0a3bf405af45ae5c7af2491d8f5bee6c",
+    "compilerArchiveSha256": "890afd185370f85666025b883914ab4f4b339136f8c96167b69cfb62aecaf235",
+    "eelsReferenceCommit": "391d8a05d5cb182542ac7e7330c858b6ee03f990",
+    "eelsCancunForkGitBlob": "50a6524a09c33a1576ec7cd6f6acae59abcdd432"
+  },
+  "aggregateEvidence": {
+    "compiledJobs": {
+      "rootAndOrdinary": 84,
+      "blobCall": 50,
+      "transactionList": 52,
+      "headerFees": 6
+    },
+    "activeAxiomAudit": {
+      "selectedTheorems": 292,
+      "theoremSourceFiles": 27,
+      "activeSourceClosurePins": 146,
+      "allowedAxioms": [
+        "Classical.choice",
+        "Quot.sound",
+        "propext"
+      ]
+    },
+    "dedicatedListAndTransportAudit": {
+      "theorems": 46,
+      "listTheorems": 29,
+      "transportTheorems": 17,
+      "theoremFiles": 2,
+      "sourceClosurePins": 47,
+      "actualAxiomSetCounts": {
+        "none": 7,
+        "propext": 8,
+        "Quot.sound,propext": 22,
+        "Classical.choice,Quot.sound,propext": 9
+      },
+      "localRequireHead": false
+    },
+    "retainedProofAudits": {
+      "blobhash": {
+        "theorems": 30,
+        "theoremFiles": 7,
+        "sourceClosurePins": 41
+      },
+      "identity": {
+        "theorems": 11
+      },
+      "london": {
+        "theorems": 6,
+        "sourceBlobs": 6
+      }
+    },
+    "auditControls": {
+      "active": 5,
+      "listAndTransport": 9,
+      "blobhash": 8,
+      "identity": 6,
+      "london": 4,
+      "ledgerTestGroups": 5
+    },
+    "newLeanExecutableGuards": {
+      "transactionList": 36,
+      "transactionTransport": 44
+    },
+    "newSignedListMatrix": {
+      "cases": 36,
+      "passed": 36,
+      "failed": 0,
+      "clientAgreement": 36,
+      "executionMatches": 30,
+      "admissionRefusals": 5,
+      "rejectedAdmissions": 5,
+      "indeterminateAdmissions": 0,
+      "localBoundaries": 1,
+      "allListTransactions": 344,
+      "acceptedListTransactions": 327,
+      "successfulReceipts": 321,
+      "intentionalFailedReceipts": 6,
+      "uniqueSignedByteStrings": 308,
+      "nativeInvocations": 52,
+      "primaryNativeInvocations": 36,
+      "controlNativeInvocations": 16,
+      "localResourceLists": 2,
+      "localResourceTransactions": 512,
+      "kzgOperations": 0,
+      "bindingAndComparatorControls": 25,
+      "localControls": 16
+    },
+    "newSignedListLocalControlStatusCounts": {
+      "rejected": 7,
+      "inputError": 1,
+      "indeterminate": 7,
+      "executed": 1
+    },
+    "newTransport": {
+      "schemaCases": 22,
+      "schemaMatches": 22,
+      "existingCodecParityCases": 12,
+      "existingCodecParityMatches": 12
+    },
+    "lexicalTransport": {
+      "guardedCases": 90,
+      "matched": 90,
+      "exactLexicalRefusals": 42,
+      "guardedRowStatusCounts": {
+        "executed": 30,
+        "inputError": 60
+      },
+      "casesPerExecutable": 30,
+      "safeOldNewSpellingCases": 9,
+      "safeOldNewAcceptedCases": 6,
+      "safeOldNewRejectedCases": 3,
+      "guardedInvocations": 90,
+      "baselineInvocations": 9,
+      "limits": {
+        "depth": 64,
+        "exponentMagnitude": 78,
+        "numberTokenBytes": 96,
+        "stackBytes": 67108864,
+        "timeoutSeconds": 30,
+        "virtualMemoryBytes": 8589934592
+      }
+    },
+    "retainedExecution": {
+      "ordinary": {
+        "matches": 60,
+        "receiptAndStateRootMatches": 60,
+        "independentAdmissionRejections": 8,
+        "preSerializationRejections": 1,
+        "localBoundaryRefusals": 11,
+        "mutationControls": 3
+      },
+      "identity": {
+        "cases": 84,
+        "matches": 84,
+        "nested": 57,
+        "direct": 27,
+        "mutationControls": 4,
+        "missingWitnessRefused": true
+      },
+      "blobhash": {
+        "cases": 179,
+        "matches": 179,
+        "standalone": 173,
+        "realPrefixTransactions": 6,
+        "transactionTypeCounts": {
+          "0": 6,
+          "1": 6,
+          "2": 6,
+          "3": 161
+        },
+        "mutationControls": 13,
+        "missingWitnessRefused": true,
+        "kzgOperations": 0
+      },
+      "blobCall": {
+        "cases": 200,
+        "matches": 200,
+        "outcomes": {
+          "executed": 180,
+          "rejected": 8,
+          "indeterminate": 12
+        },
+        "mutationControls": 7,
+        "malformedRequestsRejected": 9,
+        "missingOptInRejected": true,
+        "signedTransactionOracle": false
+      },
+      "london": {
+        "cases": 1555,
+        "mismatches": 0,
+        "mutationControls": 3,
+        "notRun": 0,
+        "seed": 1559,
+        "status": "native-oracle-match",
+        "malformedExitCode": 2
+      }
+    },
+    "publishedHeadAudit": {
+      "selectedTheorems": 46,
+      "theoremFiles": 2,
+      "sourceClosurePins": 47,
+      "requireHead": true,
+      "head": "91cae62479cbd3a13775b3dd15f502646c11db41",
+      "tree": "7d8ef4d75ef64e634574ee4a313294e9072e4f4f",
+      "status": "actual-lean-axioms-audited"
+    },
+    "publishedHeadSourceBinding": {
+      "head": "91cae62479cbd3a13775b3dd15f502646c11db41",
+      "tree": "7d8ef4d75ef64e634574ee4a313294e9072e4f4f",
+      "requireHead": true,
+      "theorems": 46,
+      "sourceFiles": 2,
+      "status": "actual-lean-axioms-audited",
+      "dedicatedClosurePins": 47,
+      "completeReviewedPinsMatchedToHead": 146
+    },
+    "timings": {
+      "kind": "paired-unchanged-transaction-cli-timing",
+      "units": "nanoseconds",
+      "quantiles": "nearest rank",
+      "measured": "process launch, file/JSON input, execution, JSON output and exit",
+      "date": "2026-11-24T04:41:26.357Z",
+      "warmupPairs": 12,
+      "measuredPairs": 160,
+      "system": {
+        "os": "linux",
+        "release": "6.18.57",
+        "arch": "x64",
+        "cpu": "AMD EPYC 9V74 80-Core Processor",
+        "logicalCpus": 9,
+        "node": "v24.22.3"
+      },
+      "limitation": "Two synthetic process-inclusive paths; not whole-list throughput or a latency guarantee.",
+      "paths": [
+        {
+          "name": "ordinary-cancun-call",
+          "before": {
+            "executable": "/workspace/scratch/9833f7e76cdb/baseline-blobhash-source/formal/lean4/evm-cleanroom/.lake/build/bin/evm-call-transaction",
+            "source": "85da2a6b307c0a0269257344d889051ce6902e82",
+            "sha256": "7a7c99e7e9957596f1cb8298cf2eaa0425aa1cb896eab3c0ebc5b4f46f98f9cd"
+          },
+          "after": {
+            "executable": "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-call-transaction",
+            "source": "91cae62479cbd3a13775b3dd15f502646c11db41",
+            "sha256": "5a2077e3c1f4913f87baa589f2a1dda5f024b4b2cbdd24d61a3cae471676b906"
+          },
+          "requestSha256": "3b2865888cf53246e55856caffd31bdb80f8c944f11548bbdd4f0c28aa9b787f",
+          "outputSha256": "937f0490ab54ed54f4a6d728621b20789990073ab7c7417d2b978a2365e6792e",
+          "beforeDistribution": {
+            "p50": 31838898,
+            "p95": 41421578,
+            "p99": 53575686,
+            "min": 28653419,
+            "max": 60397326,
+            "spread": 31743907
+          },
+          "afterDistribution": {
+            "p50": 33374714,
+            "p95": 47186641,
+            "p99": 82802366,
+            "min": 29620232,
+            "max": 114707517,
+            "spread": 85087285
+          },
+          "pairedAfterMinusBefore": {
+            "p50": 1653650,
+            "p95": 15806181,
+            "p99": 46058940,
+            "min": -25094830,
+            "max": 84642595,
+            "spread": 109737425
+          }
+        },
+        {
+          "name": "blob-cancun-call",
+          "before": {
+            "executable": "/workspace/scratch/9833f7e76cdb/baseline-blobhash-source/formal/lean4/evm-cleanroom/.lake/build/bin/evm-blob-call",
+            "source": "85da2a6b307c0a0269257344d889051ce6902e82",
+            "sha256": "fc33d369b084791173ec178c100fce347acf24af52efb7f0b1d64c554587f510"
+          },
+          "after": {
+            "executable": "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-blob-call",
+            "source": "91cae62479cbd3a13775b3dd15f502646c11db41",
+            "sha256": "f580a6df4195472f8d26c0b1b85dd21c3a2f1ee24f0d3f383cb4f02d9e1e2c61"
+          },
+          "requestSha256": "133e6a9a93428c4525bcd52012be644042d524c211a6cfa8100ba37f63aac7f0",
+          "outputSha256": "5f5ae0e073f9293a49939a717d9bb9c255729999617435222263ac179f43281b",
+          "beforeDistribution": {
+            "p50": 31216936,
+            "p95": 39100748,
+            "p99": 74503455,
+            "min": 28411763,
+            "max": 94100822,
+            "spread": 65689059
+          },
+          "afterDistribution": {
+            "p50": 32290222,
+            "p95": 41662125,
+            "p99": 61775782,
+            "min": 29407107,
+            "max": 89038916,
+            "spread": 59631809
+          },
+          "pairedAfterMinusBefore": {
+            "p50": 728961,
+            "p95": 7386055,
+            "p99": 22503218,
+            "min": -52343081,
+            "max": 54413394,
+            "spread": 106756475
+          }
+        }
+      ],
+      "recordedPairSamples": 320
+    }
+  },
+  "nativeIdentities": {
+    "guarded": {
+      "evm-blob-call": "f580a6df4195472f8d26c0b1b85dd21c3a2f1ee24f0d3f383cb4f02d9e1e2c61",
+      "evm-call-transaction": "5a2077e3c1f4913f87baa589f2a1dda5f024b4b2cbdd24d61a3cae471676b906",
+      "evm-transaction-list": "d09ba67cb393c6af338ae0c26872fe0331ff86aeb65d7e8b334d8398b2522fdd"
+    },
+    "preGuardSpellingBaseline": {
+      "evm-blob-call": "d0bd393cac666a7ee604ebebc9b2994cbec15383958ca07bbd0e0a439e57627b",
+      "evm-call-transaction": "4ab5e4eade5072d6aa5d468a4ca0cc1dee18ec5026f819536aa13df0a85d894d",
+      "evm-transaction-list": "cc25ca4880b764bc15b2c5d65d35af8702c32207080949f5f9b07988afe96a03"
+    },
+    "headerFees": "567392ad6ca1f50ed4a453acf97824a8ccbd42c1a56780cc6f3a3d9fcbb43fe5",
+    "geth": {
+      "version": "evm version 1.17.10-stable-1df30b18",
+      "sourceCommit": "1df30b18d9ed35ee9d28ffd4648442c2204554ad",
+      "sha256": "d8cfddad15a8c601e7b069bc5973ad073dbc2d632b8c5ab50e513ef27c53d6da"
+    },
+    "ethereumJS": "@ethereumjs/vm@10.1.3",
+    "transportFixtureSha256": "54a19a00268be07cde0e5ea931b58860933ef83c468e464a3c8df4b4af81b6ff",
+    "timingEngines": [
+      {
+        "name": "ordinary-cancun-call",
+        "before": {
+          "executable": "/workspace/scratch/9833f7e76cdb/baseline-blobhash-source/formal/lean4/evm-cleanroom/.lake/build/bin/evm-call-transaction",
+          "source": "85da2a6b307c0a0269257344d889051ce6902e82",
+          "sha256": "7a7c99e7e9957596f1cb8298cf2eaa0425aa1cb896eab3c0ebc5b4f46f98f9cd"
+        },
+        "after": {
+          "executable": "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-call-transaction",
+          "source": "91cae62479cbd3a13775b3dd15f502646c11db41",
+          "sha256": "5a2077e3c1f4913f87baa589f2a1dda5f024b4b2cbdd24d61a3cae471676b906"
+        }
+      },
+      {
+        "name": "blob-cancun-call",
+        "before": {
+          "executable": "/workspace/scratch/9833f7e76cdb/baseline-blobhash-source/formal/lean4/evm-cleanroom/.lake/build/bin/evm-blob-call",
+          "source": "85da2a6b307c0a0269257344d889051ce6902e82",
+          "sha256": "fc33d369b084791173ec178c100fce347acf24af52efb7f0b1d64c554587f510"
+        },
+        "after": {
+          "executable": "/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/.lake/build/bin/evm-blob-call",
+          "source": "91cae62479cbd3a13775b3dd15f502646c11db41",
+          "sha256": "f580a6df4195472f8d26c0b1b85dd21c3a2f1ee24f0d3f383cb4f02d9e1e2c61"
+        }
+      }
+    ],
+    "unchangedSubset": "0fcf78570a399f9941063ec1419fd62b14dfeb956a3f1af9bcce1d36e670758e"
+  },
+  "notes": [
+    "The 292 active claims include the dedicated 46, blob 30, identity 11 and London six; these audit subsets must not be added together as independent theorem totals.",
+    "The 36 main lists comprise 30 full execution matches, five independently matched admission refusals and one explicit native unsupported boundary. The 25 binding/comparator mutations and 16 local controls are separate counts.",
+    "The two local resource lists contain 512 reference transactions in total. The exact 16 MiB case also matches native execution; 16 MiB + 1 is an explicit native refusal at index 255, not a native execution match.",
+    "The 90 lexical cases contain 42 exact scanner refusals and 48 other controls; nine old/new spelling comparisons are additional invocations. Do not add the duplicate CI-only 90-case report as another distinct corpus.",
+    "The preserved parser crash report has exact input size/nesting/return code/stderr but does not itself contain binary SHA256 or process-limit metadata. Related pre-guard binary hashes are listed separately without asserting an intrinsic binding absent from that report.",
+    "Pre-guard spelling baselines are distinct from the older ordinary/blob binaries used for the completed unchanged-path timings. The timing report carries its own source commits and native hashes.",
+    "The ordinary retained report and 200-case blob-frame report do not embed their native SHA256. Their final guarded-run provenance is supplied by the final build/context; the hashes in nativeIdentities are independently present in the signed identity/blobhash and lexical reports.",
+    "Local dedicated audit reports retain requireHead=false and record the pre-publication HEAD. Their complete source pins were checked; published-HEAD binding is separately archived as a completed result, not inferred from local success.",
+    "The active source-consistency report says currentContractReplayChecked=false. It is evidence for the selected source closure, not replay of unrelated Ethereum contracts.",
+    "The 17 scanner claims establish scanner counter bounds and source-level continuation selection. They do not prove JSON grammar, compiler evaluation strategy or a general parser allocation bound. Error retention does not mean that the outer finite fold stops traversing bytes.",
+    "Signed differential claims use decoded Lean requests and complete synthetic witnesses, with host signature recovery and receipt/trie encoding. They do not establish authenticated header commitments, KZG sidecars, nonempty withdrawals, deployed beacon-root code, chain membership or full Ethereum conformance.",
+    "All underlying source, fixtures, checkers and workflows are reproducible from the published Git tree. This manifest maps existing scratch evidence into a suggested bundle; it does not copy or publish that evidence.",
+    "The exact-HEAD dedicated audit and full 146-pin HEAD comparison both completed after publication of 91cae62479cbd3a13775b3dd15f502646c11db41. Their artifacts are separate from the preserved local reports.",
+    "The separate default-CI JSON report repeats the same 90 guarded cases with no baseline invocations. It is included to reproduce the actual CI invocation and is not a further distinct corpus.",
+    "The pre-guard control report includes the minimal object and a non-crashing 100000-level document under the same development experiment. It is retained beside the 3000000-level crash, not counted as guarded coverage.",
+    "The 60-case retained ordinary transaction lane uses the unchanged evm-subset binary. The shared ordinary CLI is exercised by the 84-case signed identity suite, BLOBHASH ordinary cases, codec parity and lexical controls.",
+    "Timing records two unchanged process-inclusive CLI paths on the same host, not transaction-list throughput. Both median increases and observed tails are retained; no component attribution or speedup claim is made.",
+    "An independent read-only review compared the scanner with the pinned Lean JSON/Parsec implementation and all three callsites and found no concrete depth or exponent bypass. This is source review, not a parser-refinement or runtime memory-safety theorem.",
+    "The baseline observations were captured in this development session before codec extraction. Their original report does not embed a baseline native hash or source commit. The final guarded parity report separately identifies both compared current executables. The independent paired timing report binds its own retained predecessor builds to a published source; do not infer that metadata into this older capture."
+  ],
+  "crashSessionProvenance": {
+    "rawRecord": "parser-crash-before.json",
+    "recordedBy": "Root agent execution in this development session; reported directly to inventory agent",
+    "developmentBinary": "/workspace/scratch/9833f7e76cdb/pre-json-guard-bin/evm-transaction-list",
+    "developmentBinarySha256": "cc25ca4880b764bc15b2c5d65d35af8702c32207080949f5f9b07988afe96a03",
+    "virtualMemoryBytes": 8589934592,
+    "stackBytes": 67108864,
+    "qualification": "These are session provenance facts supplied by the root executor, not embedded fields in the raw crash JSON and not a claim of an independently reproduced published-source build. The unguarded attack was not rerun."
+  },
+  "kind": "ordered-cancun-transaction-list-local-evidence",
+  "dependencies": {
+    "externalLakePackages": [],
+    "differentialPackageLockSha256": "cc95a62e125486d2de9a28cb5fc61c098b955aa22c2dd0b3dc0b19f2df770425",
+    "eelsPackageLockSha256": "2f5caf7dd31ee1d2b36290788e509110955005c28302ed0f038dadbc2bf6c6c7",
+    "gethArchiveSha256": "f991c32e5b7bb68db97a1b06d50c7c06f6aa9ae84d8f6f9b2301dc02cad2a7cf"
+  },
+  "processEnvironment": {
+    "virtualMemoryBytes": 8589934592,
+    "LEAN_NUM_THREADS": "1",
+    "LEAN_STACK_SIZE_KB": "65536",
+    "MIMALLOC_ARENA_RESERVE": "67108864",
+    "compilerLock": "/tmp/factoidal-lean-9833.lock",
+    "timingLock": "/tmp/foafnaut-timing.lock"
+  },
+  "hostedCI": "pending at evidence publication; current outcome belongs to tracking issue 867 and the draft PR",
+  "files": {
+    "audit-active-local.json": {
+      "bytes": 152,
+      "sha256": "bf11d023f2ad273d75994da4e20fc9c61a8f510c7fdd74cdf4a87834c593b753",
+      "purpose": "Actual compiler audit of all 292 selected claims in 27 theorem files."
+    },
+    "audit-active-source-closure-local.json": {
+      "bytes": 118,
+      "sha256": "991217dc4f73d74ec64a19b79a050026004a161041322ed7e4ac0942d211c56c",
+      "purpose": "All 146 active source pins; local source consistency, not published HEAD binding."
+    },
+    "audit-blobhash-local.json": {
+      "bytes": 5928,
+      "sha256": "ba3d6da7bd2d67a28b82d0b1017c4d83e539d9fd68d815262d2799a36202e02e",
+      "purpose": "Retained actual 30-theorem / 7-file blob audit with 41 source closure pins; requireHead=false."
+    },
+    "audit-identity-local.json": {
+      "bytes": 680,
+      "sha256": "283f47b8ba506bc3b71da1a2aae1d0198aabc44b4ff9ea67d8ef672d4950f03b",
+      "purpose": "Retained actual identity-precompile audit of 11 claims."
+    },
+    "audit-list-transport-local.json": {
+      "bytes": 8768,
+      "sha256": "63c2555d762b9c1c1717eea1d8aec3c1725da0b0a530994d582293b5f03f6b59",
+      "purpose": "Actual 46-theorem / 2-file dedicated audit with 47 source closure pins; requireHead=false."
+    },
+    "audit-list-transport-published-head.json": {
+      "bytes": 8767,
+      "sha256": "c1dc4abbb8280435ef6fbb6e76b6762f9295a5a170bfc2008fa733c12947f79f",
+      "purpose": "Completed the exact-published-HEAD dedicated audit; requireHead must be true and head must match the published source commit."
+    },
+    "audit-london.json": {
+      "bytes": 84,
+      "sha256": "5e01340e1019f924237f0aec2163b615ee157d21f4ab069a59ef6316cb099ab6",
+      "purpose": "Retained source-pinned six-claim London audit."
+    },
+    "axioms-blobhash-local/BlobCall.txt": {
+      "bytes": 561,
+      "sha256": "7239173f6bfe44c09f33fcec9f9134d4adb0661c45476b30f218ddf71a65671c",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/BlobCallProofs.txt": {
+      "bytes": 421,
+      "sha256": "2c41e5acbce538978b58bc07a509ea59837b786ec1afef84bb85ba1ae73aab43",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/BlobHashProofs.txt": {
+      "bytes": 527,
+      "sha256": "f4b66b947749f4a0b944216c066cb82b6c0355069637ad2da91fd9d2d0c8d672",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/CallOpcode.txt": {
+      "bytes": 5609,
+      "sha256": "7ddf515fb7506ad2f8ce85b91ff3834f140e93792b915302e3bc50c49670150e",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/CallTransaction.txt": {
+      "bytes": 921,
+      "sha256": "7c3cb26140deb4411518c8688cd26e145965279972a7a47c296c86244c10a19c",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/Core.txt": {
+      "bytes": 4626,
+      "sha256": "68f1d47f9aa8232388477d67d035633dbf3d316191f845b667d50f35289a0190",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-blobhash-local/World.txt": {
+      "bytes": 1657,
+      "sha256": "9eadaa7d176cf4ffa418684435e95d1d223b6b4d310a1379047c48f6f14b78c5",
+      "purpose": "Raw direct Lean output from the final retained blob audit."
+    },
+    "axioms-list-transport-local/TransactionListProofs.txt": {
+      "bytes": 2666,
+      "sha256": "c18a371d81c71d795eed67afed178cd6636689184e6855181ccd551359e2c30f",
+      "purpose": "Raw direct Lean output from the final local dedicated list/transport audit."
+    },
+    "axioms-list-transport-local/TransactionTransportProofs.txt": {
+      "bytes": 1663,
+      "sha256": "a3725ef48c2775f88be576c4e60178fdc4c83bcc9c2d0e8e1659994f29db53e1",
+      "purpose": "Raw direct Lean output from the final local dedicated list/transport audit."
+    },
+    "axioms-list-transport-published-head/TransactionListProofs.txt": {
+      "bytes": 2666,
+      "sha256": "c18a371d81c71d795eed67afed178cd6636689184e6855181ccd551359e2c30f",
+      "purpose": "Raw direct Lean output from the completed exact-published-HEAD list/transport audit."
+    },
+    "axioms-list-transport-published-head/TransactionTransportProofs.txt": {
+      "bytes": 1663,
+      "sha256": "a3725ef48c2775f88be576c4e60178fdc4c83bcc9c2d0e8e1659994f29db53e1",
+      "purpose": "Raw direct Lean output from the completed exact-published-HEAD list/transport audit."
+    },
+    "axioms-london.txt": {
+      "bytes": 1004,
+      "sha256": "a4906311810ee4a2181249447deacec19fa8538b543e4b1af8edcfb1aba86f99",
+      "purpose": "Direct Lean output for six source-pinned London claims."
+    },
+    "baseline-clis-build.log": {
+      "bytes": 71630,
+      "sha256": "797b14490421b25ca3962d06273198bbdcfb0cd682e129aabb040029e51b4c18",
+      "purpose": "Successful isolated retained ordinary/blob CLI builds used for before/after timing; not a failed intermediate."
+    },
+    "blob-call-build.log": {
+      "bytes": 37708,
+      "sha256": "869e9ad1e939035e3d0c2f2fb8fe0866bbfaa6c154595f9141a6f5f57feb5d64",
+      "purpose": "Final guarded blob-call native target; 50 jobs."
+    },
+    "cli-timings.json": {
+      "bytes": 19796,
+      "sha256": "d32979afa956da1df91a16d9155aa3971116e19ad043a4f9b9920dc6d8dba15a",
+      "purpose": "Completed paired unchanged ordinary/blob CLI process-inclusive timings, exact before/after source and binary identities, distributions and raw samples."
+    },
+    "codec-existing-path-parity.json": {
+      "bytes": 1688,
+      "sha256": "2290c8039875d7bedc65fc5c1040ad3f5932b9a7aa5728cb783349f1727704cf",
+      "purpose": "12 byte-identical existing ordinary/blob CLI compatibility cases after codec extraction and JSON admission."
+    },
+    "controls-active.json": {
+      "bytes": 52,
+      "sha256": "fe29d418647786b40e116d5caae11940667174f81e59e9cef8224c8e3ed21f16",
+      "purpose": "Five active-axiom negative controls."
+    },
+    "controls-blobhash.json": {
+      "bytes": 277,
+      "sha256": "39493632612d9af1c70176a13a6f2d919890860ffe9c101b06f21143c36a84be",
+      "purpose": "Eight retained blob audit controls."
+    },
+    "controls-identity.json": {
+      "bytes": 195,
+      "sha256": "5b3b1af230e75da6dc5b4862570b453f9ea5c46d1688d86246d59ad93df9c163",
+      "purpose": "Six retained identity audit controls."
+    },
+    "controls-ledger.log": {
+      "bytes": 103,
+      "sha256": "e264896aab5b827af1171d11ac316f26785c248f93b6a1152192c525016d3655",
+      "purpose": "Five selected-claim ledger test groups with no skips."
+    },
+    "controls-list-transport.json": {
+      "bytes": 333,
+      "sha256": "81e377f9638740d6d4d9f2a3cefcd7f94c9da3e1e7a2ee59e3a2cd03bddb0968",
+      "purpose": "Nine dedicated controls including source drift and wrapped transcript handling."
+    },
+    "controls-london.json": {
+      "bytes": 81,
+      "sha256": "d8c386ded2d0a7dd4dfcdc89e7f630bd3a8361337470143866e646a83ed91486",
+      "purpose": "Four retained London audit controls including source drift."
+    },
+    "head-source-binding.json": {
+      "bytes": 288,
+      "sha256": "1ee6c2f3dab32b69e8295f2f1cc686fca9ce7085a74ad54d93652b335cf704a5",
+      "purpose": "Completed comparison of all 146 active source pins against the published HEAD, independently of local-file consistency."
+    },
+    "header-fees-build.log": {
+      "bytes": 1462,
+      "sha256": "89c1734a3671b566c0626e312f9f36df1e9dbf3f7cb6b069c719e63434064eb6",
+      "purpose": "Retained standalone London header-fee target; 6 jobs."
+    },
+    "json-resource-guards-and-baseline-parity.json": {
+      "bytes": 35163,
+      "sha256": "aa0be89bc7e794cba8699fb6bb127e25e73717448e7d5378798df816e2b2e576",
+      "purpose": "90 guarded cases across all three CLIs, 42 exact lexical refusals, and nine safe old/new spelling comparisons."
+    },
+    "json-resource-guards-ci-default.json": {
+      "bytes": 33278,
+      "sha256": "220f783f6c628d58fcf6adeb2f6d8c5a4f1e474a23ecdaf84d56af073e86c6b9",
+      "purpose": "Default CI mode of the 90-case guard suite."
+    },
+    "list-execution.json": {
+      "bytes": 233326,
+      "sha256": "ff3e56deaec8c8ff4cb99725f8d8283565a0e0fcf1c4fed175596faba5a3f484",
+      "purpose": "Final signed whole-list EthereumJS runBlock / Geth t8n comparisons on the guarded list binary, plus binding/comparison and local controls."
+    },
+    "london-expected.jsonl": {
+      "bytes": 88982,
+      "sha256": "16b5d5494463b4f3fb2cd156876df2ca08dd7155d9b7d5f0584b2c215e66dd46",
+      "purpose": "Complete independent expected London results."
+    },
+    "london-generation.json": {
+      "bytes": 388,
+      "sha256": "412e59004ad50f31eab5a6da4eaeae75c8bf8ba60b3af5b0e2c862f78eb1a942",
+      "purpose": "Deterministic London corpus generation counts and seed 1559."
+    },
+    "london-input.tsv": {
+      "bytes": 110463,
+      "sha256": "301dca3f1e445ce2047c25d34cb36567e537e52ef798f2c0b65e37d9b45f9271",
+      "purpose": "Complete 1,555-row London batch input."
+    },
+    "london-malformed.json": {
+      "bytes": 182,
+      "sha256": "686c09de38fa064a63dedd4b39dd432fd8a475cc85d4c6231e53d1646da8534c",
+      "purpose": "Exit-code-2 malformed-input result with header-fee native hash."
+    },
+    "london-malformed.tsv": {
+      "bytes": 59,
+      "sha256": "a40adca7d19f21f7e5b778517a3c2c3c8826e6f34c9cf74aaa1812fbeb190308",
+      "purpose": "Exact retained malformed standalone transport input."
+    },
+    "london-observed.jsonl": {
+      "bytes": 84317,
+      "sha256": "f66096917e22c5c72e6ad514128a570ab08590974296bc3f3e8476541564172a",
+      "purpose": "Complete native observed London results."
+    },
+    "london-results.json": {
+      "bytes": 116,
+      "sha256": "ced2e6af977d83b04745a258cb5318623c25f74442b48da065da7a50216e96e2",
+      "purpose": "1,555 native London matches, zero mismatches/not-run, three semantic mutations."
+    },
+    "parser-before-control-and-smaller-depth.json": {
+      "bytes": 548,
+      "sha256": "aceadd97807f92efcb388405bd51dd617e6aba57e51561998bf3ddf9e0be9270",
+      "purpose": "Pre-guard minimal and smaller-depth controls from the deliberate crash investigation."
+    },
+    "parser-crash-before.json": {
+      "bytes": 140,
+      "sha256": "c2987e4a75be147d1f5ea7b3e08567ef90d80d66e112f31671da9e067799ef80",
+      "purpose": "Deliberately preserved pre-fix parser crash: 3,000,000 nesting levels, 6,000,034 bytes, SIGABRT and stack-overflow stderr."
+    },
+    "proof-list-guards-build.log": {
+      "bytes": 43623,
+      "sha256": "1687f9572301aee0ae018cda24cf68b0c56f4f112526d57eb666e7843fb02dc1",
+      "purpose": "Successful final 29-theorem / 36-guard list proof build referenced by the authoring inventory."
+    },
+    "proof-transport-build.log": {
+      "bytes": 35079,
+      "sha256": "9b9e0d0d3a63e8a8058ba63df72e3a9ede975eb45ea36e19630cd5ac8c6a628e",
+      "purpose": "Successful fresh 17-theorem scanner compilation referenced by the authoring inventory."
+    },
+    "proof-transport-guards-build.log": {
+      "bytes": 35139,
+      "sha256": "e760c98fd63be344eac5c1452663c0535151335e3b18c16162b6d16d9f65262c",
+      "purpose": "Successful scanner proof/44-guard build on frozen source."
+    },
+    "retained-blob-call.json": {
+      "bytes": 264,
+      "sha256": "2689b9210f77857044cf21493f460635ff2490b0e8853869f138272ed24215e3",
+      "purpose": "200 retained blob-frame cases; this lane is not a signed transaction oracle."
+    },
+    "retained-blobhash.json": {
+      "bytes": 369650,
+      "sha256": "275dd192b74bd0297c09ef6b60bb4aef954e771ea6a213ce77400ce3aeba2cf0",
+      "purpose": "179 retained signed BLOBHASH transactions checked against EthereumJS and Geth, including six real-prefix transactions."
+    },
+    "retained-identity.json": {
+      "bytes": 105599,
+      "sha256": "f33e59d5635d1ac1000aecc8e1f6b887d1cb567231c4e583434ef85d93800e3d",
+      "purpose": "84 retained signed identity cases checked against EthereumJS and Geth."
+    },
+    "retained-ordinary.json": {
+      "bytes": 66883,
+      "sha256": "33425affdb3a0435ee137c8140974ecd94941811af0bb0a74d630af9684b00cb",
+      "purpose": "60 signed ordinary matches, eight independent admission rejections, one pre-serialization rejection and 11 explicit local boundaries."
+    },
+    "root-build.log": {
+      "bytes": 55170,
+      "sha256": "46e0f9543f1a8bc39604f3211a60cf5366b349f2a47d212deff12ecb44df4a13",
+      "purpose": "Final guarded normal root plus ordinary native target; 84 jobs."
+    },
+    "source-publish.json": {
+      "bytes": 6704,
+      "sha256": "976b151ecf0db5acb43754cffe938e566ca26e87c8fb37da54e1ccac4308ea08",
+      "purpose": "Published source commit, exact tree and 30 changed Git blobs."
+    },
+    "theorem-additions-list.json": {
+      "bytes": 25790,
+      "sha256": "750be60077fbdac610becbb6999002e37c35884165e0d63aff6481ed78440f39",
+      "purpose": "29 authored list theorem scopes and measured axiom sets with original successful compiler provenance."
+    },
+    "theorem-additions-transport.json": {
+      "bytes": 14975,
+      "sha256": "9451ad9431ea46d41a185705a6067ed573b9211d24ac1c6d6d02880ee02f8c35",
+      "purpose": "17 authored scanner theorem scopes and measured axiom sets with original successful compiler provenance."
+    },
+    "timing-blob-request.json": {
+      "bytes": 4975,
+      "sha256": "7eb9fb2075803b98051ad1ac560f79970b3ee04654540ccd0578ff6361ab6692",
+      "purpose": "Exact base request supplied to the paired unchanged-path timing script; script derives the ordinary request deterministically."
+    },
+    "transaction-list-build.log": {
+      "bytes": 37708,
+      "sha256": "7ac83dc7551e732228ab8bc2851910eebe73572c926d2635dda7c9811fea4e75",
+      "purpose": "Final guarded ordered-list native target; 52 jobs."
+    },
+    "transport-schema.json": {
+      "bytes": 3792,
+      "sha256": "18234686d03ace4b08b58f108df65225b763854dfc13cc49b489c3b401de5637",
+      "purpose": "22 ordered-list native transport/schema controls on the guarded binary."
+    },
+    "codec-parity-fixtures-and-before.json": {
+      "bytes": 66111,
+      "sha256": "1211efe6642f4e737dd38c1ad8daea8e5f0be4918f0bc62fb234277738c1cad2",
+      "purpose": "Complete twelve parity inputs and exact baseline stdout/exit/stderr captures, with original stdout hashes checked."
+    },
+    "README.md": {
+      "bytes": 9462,
+      "sha256": "c54ebe8f77e8e33800988ca493a80eb063722b6218ad9e51e90cc9074d5744bf",
+      "purpose": "Evidence index, scope and reproduction commands."
+    }
+  },
+  "archivedReports": 58
+}

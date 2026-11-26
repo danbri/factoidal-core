@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "algorithm": {
+    "name": "Ethereum Keccak-256",
+    "rateBits": 1088,
+    "capacityBits": 512,
+    "delimitedSuffix": "0x01",
+    "outputBytes": 32
+  },
+  "reference": {
+    "name": "XKCP CompactFIPS202 Python",
+    "sourceUrl": "https://github.com/XKCP/XKCP/blob/master/Standalone/CompactFIPS202/Python/CompactFIPS202.py",
+    "sourceGitBlob": "0b9608fc01852ea94182139890beca21b61b677a",
+    "sourceSha256": "0b731097a4dfcf33fdaf395ac0bee81c6a6ebff2975590c35ad8cd8d6f3c204f",
+    "call": "Keccak(1088, 512, inputBytes, 0x01, 32)"
+  },
+  "patterns": {
+    "ascii-a": "Repeat the byte 0x61 for the stated length.",
+    "byte-ramp": "For each zero-based byte index i, use i modulo 256."
+  },
+  "vectors": [
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 0,
+      "digestHex": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 1,
+      "digestHex": "3ac225168df54212a25c1c01fd35bebfea408fdac2e31ddd6f80a4bbf9a5f1cb"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 134,
+      "digestHex": "e5de5653994e2fa6729d329b65b5f332dee942a7ea54515e173824c232a4ff91"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 135,
+      "digestHex": "34367dc248bbd832f4e3e69dfaac2f92638bd0bbd18f2912ba4ef454919cf446"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 136,
+      "digestHex": "a6c4d403279fe3e0af03729caada8374b5ca54d8065329a3ebcaeb4b60aa386e"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 137,
+      "digestHex": "d869f639c7046b4929fc92a4d988a8b22c55fbadb802c0c66ebcd484f1915f39"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 270,
+      "digestHex": "cfecd7939f149ad981c5672b3a7c4fe8b584b6b3dbe899b2575c8a92e77f8f28"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 271,
+      "digestHex": "132f47effd6c8b1b299efa53fe68aece77ec8ae4eb2e294f668eec94f76001e1"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 272,
+      "digestHex": "cf7fcd4f705ee749930d19ca84561a9bf62516bd90a471545fa2f49fdc7e63c8"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 273,
+      "digestHex": "5a7b8187d2778e614097fac3097573de1fee4d972304d3360796a857029bb176"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 407,
+      "digestHex": "73c267c603b2e9c9d572afa045ccd787f5828029ecfa74295c193ba15dacd6c4"
+    },
+    {
+      "pattern": "ascii-a",
+      "inputLengthBytes": 408,
+      "digestHex": "f763fe56a104e5c3ec0e4f311124923905d7f8e1dd03bdc91f2e6845ea523677"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 0,
+      "digestHex": "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 1,
+      "digestHex": "bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 134,
+      "digestHex": "861e165162f806cd361c4421a48f205820ddf4deb02db9f041f48e179ddada97"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 135,
+      "digestHex": "cbdfd9dee5faad3818d6b06f95a219fd290b0e1706f6a82e5a595b9ce9faca62"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 136,
+      "digestHex": "7ce759f1ab7f9ce437719970c26b0a66ff11fe3e38e17df89cf5d29c7d7f807e"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 137,
+      "digestHex": "ac73d4fae68b8453f764007c1a20ce95994187861f0c3227a3a8e99a73a3b1db"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 270,
+      "digestHex": "ab6cf59e344ec536f58f12d17acd9ef2cf2001e6af1fb00754fcc13fe62f3b22"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 271,
+      "digestHex": "7c974895b2a88303ff2dc6b58f438ceb0b298cac91099ac0539cc0f477506191"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 272,
+      "digestHex": "fdf2ec49e749960d3c8521a0219af8d03e30e2b3bf19bd16150ee0eaf133d66e"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 273,
+      "digestHex": "4f707289a9c3ccd0c4a51f2f17339f5dd171d371c04ff7783b735b5b22682eaf"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 407,
+      "digestHex": "c2cf727c5f0699cf15e6f77663dcab48d640afd571abbed9cd29f459b50410d6"
+    },
+    {
+      "pattern": "byte-ramp",
+      "inputLengthBytes": 408,
+      "digestHex": "4deeaefc26bf0becc5bf9603551584ca1d514238f2f84d0b6adb4bebde86ce61"
+    }
+  ]
+}

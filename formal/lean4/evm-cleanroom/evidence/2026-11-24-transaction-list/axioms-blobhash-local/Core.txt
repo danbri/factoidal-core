@@ -1,0 +1,65 @@
+/workspace/scratch/9833f7e76cdb/factoidal-core/formal/lean4/evm-cleanroom/EVMCleanroom/Core.lean:331:7: warning: Variable name `hg` is not explicitly referenced.
+
+Hint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:
+  [apply] _hg
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+'EVMCleanroom.step_keccak' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_keccak_disabled' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_keccak_outOfGas' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_keccak_resourceLimit' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_log' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_log_static' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_log_outOfGas' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_log_underflow' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash_underflow' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash_unknown_fork' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobBaseFee_cancun' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobBaseFee_osaka' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobBaseFee_unknown_fork' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_effectiveGasPrice' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_prevRandao' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_prevRandao_unknown_fork' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockCoinbase' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockTimestamp' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockNumber' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockGasLimit' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockBaseFee' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blockBaseFee_unknown_fork' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_chainId' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_chainId_unknown_fork' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.modulo_zero' does not depend on any axioms
+'EVMCleanroom.Word.powMod_zero' does not depend on any axioms
+'EVMCleanroom.expGas_zero' does not depend on any axioms
+'EVMCleanroom.step_mod' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_exp' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.leadingZeros_le' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.leadingZeros_zero' does not depend on any axioms
+'EVMCleanroom.step_origin' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_caller' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_callDataLoad' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_callDataSize' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_callDataCopy' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_codeSize' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_codeCopy' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_returnDataSize' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_returnDataCopy' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_returnDataCopy_outOfBounds' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_slt' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.signedGt_dual' does not depend on any axioms
+'EVMCleanroom.step_sgt' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.signExtend_large' depends on axioms: [propext]
+'EVMCleanroom.step_signExtend' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.Word.signedDivide_zero' does not depend on any axioms
+'EVMCleanroom.Word.signedMod_zero' does not depend on any axioms
+'EVMCleanroom.Word.shiftArithmetic_large_nonnegative' depends on axioms: [propext]
+'EVMCleanroom.Word.shiftArithmetic_large_negative' depends on axioms: [propext]
+'EVMCleanroom.step_sdiv' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_smod' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_sar' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_addMod' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_mulMod' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_slt_underflow' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_callValue_zero' depends on axioms: [propext, Quot.sound]
+

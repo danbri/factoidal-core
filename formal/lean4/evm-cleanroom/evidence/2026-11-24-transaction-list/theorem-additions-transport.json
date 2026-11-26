@@ -1,0 +1,274 @@
+[
+  {
+    "name": "EVMCleanroom.TransactionTransport.structural_bounded",
+    "source_symbol": "EVMCleanroom.TransactionTransport.structural_bounded",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable structural-step invariant. Says: every successful structural step preserves the nesting bound and resets numeric counters to zero or a one-byte numeric start. Does not say: that opening and closing delimiters form valid JSON.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_bounded",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_bounded",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable lexical-step invariant. Says: every successful byte step preserves all three scanner bounds, including quoted, escaped and numeric bytes. Does not say: that arbitrary unbounded caller-created states are safe.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.feed_error",
+    "source_symbol": "EVMCleanroom.TransactionTransport.feed_error",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [],
+    "scope": "Kind: executable error persistence. Says: once the scanner has refused, feeding any further byte preserves the exact error without invoking the lexical step. Does not say: that the finite outer fold stops traversing its input.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.feed_bounded",
+    "source_symbol": "EVMCleanroom.TransactionTransport.feed_bounded",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable fold-step invariant. Says: feeding a bounded successful state or any prior refusal can only yield another bounded successful state or a refusal. Does not say: that every input byte can be accepted.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.scan_bounded",
+    "source_symbol": "EVMCleanroom.TransactionTransport.scan_bounded",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: actual scanner resource invariant. Says: scanning any finite byte array from the real empty initial state can return only depths at most 64, numeric spans at most 96 bytes and exponent magnitudes at most 78. Does not say: that successful scanning establishes JSON grammar validity or a complete runtime memory bound.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_depth_limit",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_depth_limit",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: exact nesting refusal. Says: an unquoted array or object opener at the depth limit is rejected by the actual byte step before the JSON parser is selected. Does not say: that mismatched delimiters are accepted by JSON parsing.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_number_limit",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_number_limit",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: exact numeric-token refusal. Says: another numeric byte at the token-span limit produces the token refusal, independently of whether that spelling would be valid JSON. Does not say: that quoted decimal strings have this numeric-token limit.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_exponent_limit",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_exponent_limit",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: exact exponent refusal. Says: an exponent digit whose updated magnitude exceeds 78 produces the exponent refusal when the token itself still fits its byte allowance. Does not say: that malformed numeric spelling passes the JSON grammar.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_exponent_exact",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_exponent_exact",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: exact accepted exponent step. Says: a digit within both numeric bounds updates the actual scanner's magnitude and byte count exactly, retaining the structural state. Does not say: that a complete valid JSON number has been parsed.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_quoted_escaped",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_quoted_escaped",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: quoted-byte correspondence. Says: an escaped byte inside a string clears only the escape flag, even when that byte is a quote, bracket, slash or digit. Does not say: that every escape spelling is valid JSON.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_quoted_escape",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_quoted_escape",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: quoted-byte correspondence. Says: an unescaped backslash in a string sets the actual scanner's escape flag without changing depth or numeric counters. Does not say: which following escape spellings the JSON parser accepts.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_quoted_close",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_quoted_close",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: quoted-byte correspondence. Says: an unescaped closing quote leaves string mode and preserves all structural and numeric counters. Does not say: that the enclosing JSON document is complete.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.step_quoted_literal",
+    "source_symbol": "EVMCleanroom.TransactionTransport.step_quoted_literal",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext"
+    ],
+    "scope": "Kind: quoted-byte correspondence. Says: other unescaped string bytes leave the scanner state unchanged; string-contained openers and exponent digits cannot consume those limits. Does not say: that control characters are valid unescaped JSON characters.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.parseWith_refused",
+    "source_symbol": "EVMCleanroom.TransactionTransport.parseWith_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable parser-continuation refusal. Says: any continuation, of any result type, receives the same scanner refusal; the executable match selects its error branch before the parser. Does not say: that the compiler/runtime's evaluation strategy is proved.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.parseWith_checked",
+    "source_symbol": "EVMCleanroom.TransactionTransport.parseWith_checked",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Quot.sound"
+    ],
+    "scope": "Kind: executable parser continuation. Says: after successful resource admission, the actual helper returns exactly the supplied parser's result, retaining its grammar decisions. Does not say: that resource admission itself establishes valid JSON.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.parseJSON_scan_refused",
+    "source_symbol": "EVMCleanroom.TransactionTransport.parseJSON_scan_refused",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: shared native-codec refusal boundary. Says: the public parseJSON used by all three transaction CLIs returns the actual byte-scanner refusal before selecting Lean.Json.parse. Does not say: that the standard parser itself is resource-verified.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  },
+  {
+    "name": "EVMCleanroom.TransactionTransport.parseJSON_checked",
+    "source_symbol": "EVMCleanroom.TransactionTransport.parseJSON_checked",
+    "source": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+    "axioms_printed": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Kind: shared native-codec correspondence. Says: safe input reaches exactly the original Lean.Json.parse, including its normal decimal/exponent spellings and malformed-input errors. Does not say: that any particular input satisfies the later schema.",
+    "provenance": {
+      "toolchain": "Lean 4.33.1",
+      "transcript": "/workspace/scratch/9833f7e76cdb/transaction-transport-proof-build-3.log",
+      "source_sha256": "30db882d1177e68dc148ab62224c353541c4a3f89593de0c55822adc7a76152c",
+      "source_git_blob": "b3696ee6afb178673c5ddd88428caacb908577e1"
+    }
+  }
+]

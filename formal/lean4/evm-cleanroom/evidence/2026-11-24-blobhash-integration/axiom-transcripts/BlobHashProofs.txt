@@ -1,0 +1,8 @@
+'EVMCleanroom.World.pay_txBlobHashes' does not depend on any axioms
+'EVMCleanroom.step_blobHash_success' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash_in_range' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash_out_of_range' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.step_blobHash_outOfGas' depends on axioms: [propext, Quot.sound]
+'EVMCleanroom.commit_txBlobHashes' does not depend on any axioms
+'EVMCleanroom.step_txBlobHashes' depends on axioms: [propext, Quot.sound]
+

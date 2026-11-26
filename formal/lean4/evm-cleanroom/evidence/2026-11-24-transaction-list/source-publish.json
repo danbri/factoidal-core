@@ -1,0 +1,218 @@
+{
+  "head": "2e8a64e86b1578017cc96bcc4045d801ed6319c9",
+  "baseTree": "f171826b8b9f2071347b0666f3856a295ce7012a",
+  "tree": "7d8ef4d75ef64e634574ee4a313294e9072e4f4f",
+  "files": [
+    {
+      "path": ".github/workflows/evm-blob-call.yml",
+      "sha": "6ae4151d177b6e20ffc73df1977eaa4ed4ad4c60",
+      "mode": "100644",
+      "characters": 13921,
+      "bytes": 13921
+    },
+    {
+      "path": ".github/workflows/evm-cleanroom.yml",
+      "sha": "9cc219f14640b730b00fe2cabaf872f8d8d7b8b3",
+      "mode": "100644",
+      "characters": 49688,
+      "bytes": 49688
+    },
+    {
+      "path": ".github/workflows/evm-identity-precompile.yml",
+      "sha": "7457dcf9cd80a49767f23d41ca38d3f3ead64665",
+      "mode": "100644",
+      "characters": 3715,
+      "bytes": 3715
+    },
+    {
+      "path": ".github/workflows/evm-london-header.yml",
+      "sha": "c6bdbe563bbe8e3ca32bcbaf4c5a7abe5c7ff445",
+      "mode": "100644",
+      "characters": 4874,
+      "bytes": 4874
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha": "3dfc2cd2534fbc2efde94a8d4108a1d4f4dcd25e",
+      "mode": "100644",
+      "characters": 115461,
+      "bytes": 115846
+    },
+    {
+      "path": "docs/20261124-evm-transaction-list.md",
+      "sha": "029364ff312267f0c494a56feddf34209646a1e0",
+      "mode": "100644",
+      "characters": 15707,
+      "bytes": 15707
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom.lean",
+      "sha": "4b006a6bf0764471af5a86895a2cc5fbb3b49611",
+      "mode": "100644",
+      "characters": 1486,
+      "bytes": 1486
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/BlobCallCLI.lean",
+      "sha": "8801705739269cf700dc4323adc740466da973c0",
+      "mode": "100644",
+      "characters": 2623,
+      "bytes": 2648
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/CLITransaction.lean",
+      "sha": "ced4997fca759c16bb8a48616a8c25650ce4c228",
+      "mode": "100644",
+      "characters": 2249,
+      "bytes": 2258
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/CallTransaction.lean",
+      "sha": "9cd1ae422b84d8d4af04e3164ad4f5f84e0fe2b7",
+      "mode": "100644",
+      "characters": 20280,
+      "bytes": 20358
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionCodec.lean",
+      "sha": "cd1b25c2ac99ab60d78cd5c6d988d5de81d5cc3e",
+      "mode": "100644",
+      "characters": 8816,
+      "bytes": 8931
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionList.lean",
+      "sha": "f5a78cbea6216c2a543bf7bebfd5fa30faa9e336",
+      "mode": "100644",
+      "characters": 11384,
+      "bytes": 11404
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListCLI.lean",
+      "sha": "026730665f08f42765aaa95cdd161487b8e31089",
+      "mode": "100644",
+      "characters": 6171,
+      "bytes": 6214
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListProofs.lean",
+      "sha": "3e8e228d335849cae72acf66f5365f6aa116f6fa",
+      "mode": "100644",
+      "characters": 31520,
+      "bytes": 31866
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionListTests.lean",
+      "sha": "84e5661d8b6b3b9b32d96c1601e4566390f0ee0f",
+      "mode": "100644",
+      "characters": 12830,
+      "bytes": 12845
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransport.lean",
+      "sha": "6b287a981b30fa92275ca9876d903bf342f3a92a",
+      "mode": "100644",
+      "characters": 3708,
+      "bytes": 3719
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportProofs.lean",
+      "sha": "b3696ee6afb178673c5ddd88428caacb908577e1",
+      "mode": "100644",
+      "characters": 13381,
+      "bytes": 13580
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/EVMCleanroom/TransactionTransportTests.lean",
+      "sha": "226e739168fc17df4991b11da303d0cf3f34d015",
+      "mode": "100644",
+      "characters": 5224,
+      "bytes": 5226
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/README.md",
+      "sha": "78b3931afefc77f00cb53b8da9d6838cb77cb942",
+      "mode": "100644",
+      "characters": 24861,
+      "bytes": 24895
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/SOUNDNESS.md",
+      "sha": "6e751b3413efc1e655c4f81a63b392273e5c2482",
+      "mode": "100644",
+      "characters": 20444,
+      "bytes": 20455
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/evidence/active-claim-manifest-v2.json",
+      "sha": "f9616fdbe708bf319366645df4561396a6bb0d87",
+      "mode": "100644",
+      "characters": 280727,
+      "bytes": 280727
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/evidence/active-london-claims.json",
+      "sha": "e4cc502481594eca10853e5c87bf43a20062e77d",
+      "mode": "100644",
+      "characters": 2914,
+      "bytes": 2914
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/lakefile-transaction-list.toml",
+      "sha": "06c7546da8fb974004f5ddfe9172f5b21fe1d0ac",
+      "mode": "100644",
+      "characters": 196,
+      "bytes": 196
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/check-london-claims.py",
+      "sha": "2d94b953a5def39e2e0084591366911d9643d9e8",
+      "mode": "100644",
+      "characters": 5329,
+      "bytes": 5329
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/check-transaction-json-guard.py",
+      "sha": "8dfbd45fbe08337cc908360ae5dfc27c69b51b5a",
+      "mode": "100644",
+      "characters": 13542,
+      "bytes": 13542
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/check-transaction-list-axioms.py",
+      "sha": "9bdb4d69aaa25cc53c8698e6b512c96432e581c7",
+      "mode": "100644",
+      "characters": 10769,
+      "bytes": 10769
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/check-transaction-list-transport.py",
+      "sha": "caa65fcb6bfa5581dc01dd1aee514cfa2fcedf24",
+      "mode": "100644",
+      "characters": 6847,
+      "bytes": 6847
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/differential/transaction-cli-timing.mjs",
+      "sha": "0c03e21cdf9709edb77360aa770ebba30761fb67",
+      "mode": "100644",
+      "characters": 4126,
+      "bytes": 4126
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/differential/transaction-list.mjs",
+      "sha": "16da3e022e0d14af586fbd56110f26fa1e1b9d32",
+      "mode": "100644",
+      "characters": 46769,
+      "bytes": 46769
+    },
+    {
+      "path": "formal/lean4/evm-cleanroom/scripts/fixtures/transaction-list-transport.json",
+      "sha": "6d97439f9614a435eb01b60bcdd88a62faf8386d",
+      "mode": "100644",
+      "characters": 8194,
+      "bytes": 8194
+    }
+  ],
+  "publishedSourceCommit": "91cae62479cbd3a13775b3dd15f502646c11db41"
+}
