@@ -61,3 +61,16 @@ list with that face; a name that asks for the held fonts (`sans-serif`, a held f
 with nothing. The engine finds the page's faces at the start of its script session
 (`canvasFaceFonts`) and keeps them as `canvasFaces`: one engine worker holds one tab.
 Fonts are the pinned OFL set; the font policy (`FontPolicy`) checked each one when it was loaded.
+
+## 4. Keys go to the page before their scroll command (issue 1139)
+
+https://github.com/danbri/factoidal-core/issues/1139 (Particle Rex went blank on Space on the Hub).
+The Hub host looked up Lean's key table (`WebHistory.keyTable`) first and ran the command
+(Space pages down), so the page never had the key. Now a key with no Command or Control goes to
+the page first as the `key` action (`pageKey` in `browser-worker.mjs`), with `phase` when the
+engine has `keyPhases`; the table's command runs as the default action only when the turn's
+`keyDefault` (Lean, `PageEvents.key`: the keydown was not cancelled and did not edit) is not
+false. A page with no script session takes the command at once. The key's release goes to the
+page too. The window host (`run_html.ts`) already worked this way: `scriptKey` runs the command
+after `keyDefault`. Check: `node labs/demos/foafnaut/hub_keys_check.mjs [--runtime DIR]`
+(headless Chromium, the Hub's CPU drawing path).

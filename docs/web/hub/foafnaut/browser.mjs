@@ -66,6 +66,8 @@ const point=event=>({x:Math.round(event.clientX*scale()),y:Math.round(event.clie
 const edits={Backspace:51,Delete:117,ArrowLeft:123,ArrowRight:124,ArrowUp:126,ArrowDown:125,Home:115,End:119,Enter:36,Escape:53};
 // Modifier bits as the window library sends them: 1 Shift, 2 Command, 4 Option.
 const modifiers=event=>(event.shiftKey?1:0)|(event.metaKey?2:0)|(event.altKey?4:0);
+// The modifier bits of a page key (WebDriver.HostKeys: 1 Shift, 2 Command, 4 Option, 8 Control).
+const pageModifiers=event=>modifiers(event)|(event.ctrlKey?8:0);
 // Input carries the time it happened, in epoch milliseconds, which both threads can read.
 const now=()=>performance.timeOrigin+performance.now();
 const send=message=>worker.postMessage(message.type==='start'||message.type==='hello'?message:{...message,t:now()});
@@ -462,10 +464,24 @@ addEventListener('keydown',event=>{
   // most browsers) never reach a page.
   const primary=mac?event.metaKey:event.ctrlKey;
   const entry=primary||!focused?keyTable.find(row=>row.modifier===modifierName(event)&&row.key===keyName(event)):undefined;
+  // Issue 1139: a key with no Command or Control goes to the page first (UI Events); the table's
+  // command (Space and the arrows scroll) is its default action, which the worker runs only when
+  // Lean says the page left the key alone (keyDefault). The host browser does nothing with it.
+  if(!focused&&!event.metaKey&&!event.ctrlKey&&event.key!=='Unidentified'&&!event.isComposing){
+    event.preventDefault();
+    const command=entry&&entry.command!==14?entry.command:event.key==='/'?9:undefined;
+    send({type:'pageKey',key:event.key,modifiers:pageModifiers(event),phase:'down',...(command!==undefined?{command}:{})});
+    return;
+  }
   if(entry&&entry.command!==14){event.preventDefault();send({type:'command',command:entry.command});return;}
   if(focused&&edits[event.key]){event.preventDefault();send({type:'key',key:edits[event.key],modifiers:modifiers(event)});return;}
   if((event.metaKey||event.ctrlKey)&&event.key==='u'){event.preventDefault();send({type:'command',command:13});return;}
   if(!focused&&event.key==='/'){event.preventDefault();send({type:'command',command:9});return;}
+});
+// The key's release goes to the page too, so a held key is held (issue 1074).
+addEventListener('keyup',event=>{
+  if(!focused&&!event.metaKey&&!event.ctrlKey&&event.key!=='Unidentified'&&!event.isComposing)
+    send({type:'pageKey',key:event.key,modifiers:pageModifiers(event),phase:'up'});
 });
 // Paste: the clipboard text goes to Lean, which puts it in the address bar (issue 1268).
 addEventListener('paste',event=>{
