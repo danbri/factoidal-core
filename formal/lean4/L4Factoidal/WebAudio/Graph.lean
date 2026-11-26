@@ -26,7 +26,8 @@ Stage B of https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafna
   1. a `DelayNode` that is part of a cycle of the graph (audio and parameter connections both
      count) is a cycle breaker. It becomes two steps. `delayWrite` has the input connections of
      the delay, `delayRead` has its output connections (`DelayWriter` and `DelayReader` of
-     section 1.18.4). No connection joins the two.
+     section 1.18.4). No connection joins the two. A connection to the `delayTime` parameter
+     of a split delay ends at its `delayRead` (`paramDstStep`), the step that uses `delayTime`.
   2. a node that lies on a cycle of the graph so obtained is muted: it is left out of the steps
      and listed in `muted`.
   3. the remaining steps are put in an order in which every step comes after all the steps that
@@ -40,11 +41,11 @@ Stage B of https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafna
 ## What is proved (all over the actual definitions, no hypothesis restates a conclusion)
 
 * `order_nodup`: no step is listed twice.
-* `order_topological`, `order_topological_edge`, `order_topological_param`: if a connection
+* `order_topological_step`, `order_topological_edge`, `order_topological_param`: if a connection
   joins two nodes that are not muted, and the two steps that stand for its ends are in the
   list, the step at the source end comes first. For a delay in a cycle the source end is its
-  `delayRead` and the destination end is its `delayWrite`, so the cut at the split needs no
-  exception.
+  `delayRead`; the destination end of an audio connection is its `delayWrite` and that of a
+  parameter connection its `delayRead`, so the cut at the split needs no exception.
 * `muted_on_cycle`, `muted_on_graph_cycle`: a muted node lies on a cycle of the split graph,
   and then on a cycle of the original graph.
 * `connect_idempotent`, `connectParam_idempotent`: connecting the same termini twice gives the
@@ -355,9 +356,22 @@ def srcStep (g : Graph) (a : NodeId) : Step :=
 def dstStep (g : Graph) (b : NodeId) : Step :=
   if isCycleDelay g b then .delayWrite b else .node b
 
-/-- The dependency edges between steps, after the split of the cycle breakers. -/
+/-- The step that stands for the destination end of a connection to an `AudioParam` of `b`: the
+`DelayReader` if `b` is a cycle breaker, else the node. The only `AudioParam` of a `DelayNode`,
+`delayTime`, is used where the delay line is read (`DelayReader`), so a connection to it must be
+processed before the reader, not before the writer. -/
+def paramDstStep (g : Graph) (b : NodeId) : Step :=
+  if isCycleDelay g b then .delayRead b else .node b
+
+/-- The dependency edges between steps, after the split of the cycle breakers: an audio connection
+ends at `dstStep` (the writer of a split delay), a parameter connection at `paramDstStep` (the
+reader of a split delay). Order for a split delay `d` whose `delayTime` is fed by `s`: `s`, then
+`delayRead d`; `delayWrite d` is ordered after the nodes that feed its input. A node `s` that
+is reached from `delayRead d` and feeds `delayTime` of `d` is on a cycle that the split does not
+cut, so it is muted. -/
 def stepEdges (g : Graph) : List (Step × Step) :=
-  (depEdges g).map (fun p => (srcStep g p.1, dstStep g p.2))
+  g.edges.map (fun e => (srcStep g e.src, dstStep g e.dst)) ++
+  g.paramEdges.map (fun e => (srcStep g e.src, paramDstStep g e.dst))
 
 /-- All vertices after the split: a cycle breaker gives two, any other node one. -/
 def nodeSteps (g : Graph) : List Step :=
@@ -481,27 +495,31 @@ theorem nodeId_srcStep (g : Graph) (a : NodeId) : (srcStep g a).nodeId = a := by
 theorem nodeId_dstStep (g : Graph) (b : NodeId) : (dstStep g b).nodeId = b := by
   unfold dstStep; split <;> rfl
 
+theorem nodeId_paramDstStep (g : Graph) (b : NodeId) : (paramDstStep g b).nodeId = b := by
+  unfold paramDstStep; split <;> rfl
+
+/-- An edge of the split graph gives an edge of the original graph between the same nodes. -/
+theorem stepEdge_project (g : Graph) {x y : Step} (hm : (x, y) ∈ stepEdges g) :
+    (x.nodeId, y.nodeId) ∈ depEdges g := by
+  simp only [stepEdges, depEdges, List.mem_append, List.mem_map] at hm ⊢
+  rcases hm with ⟨e, he, h⟩ | ⟨e, he, h⟩
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨h1, h2⟩ := h
+    subst h1; subst h2
+    rw [nodeId_srcStep, nodeId_dstStep]
+    exact Or.inl ⟨e, he, rfl⟩
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨h1, h2⟩ := h
+    subst h1; subst h2
+    rw [nodeId_srcStep, nodeId_paramDstStep]
+    exact Or.inr ⟨e, he, rfl⟩
+
 /-- A path in the split graph gives a path in the original graph between the same nodes. -/
 theorem path_project (g : Graph) {x y : Step} (h : Path (stepEdges g) x y) :
     Path (depEdges g) x.nodeId y.nodeId := by
   induction h with
-  | edge hm =>
-    simp only [stepEdges, List.mem_map] at hm
-    obtain ⟨⟨a, b⟩, hab, he⟩ := hm
-    simp only [Prod.mk.injEq] at he
-    obtain ⟨h1, h2⟩ := he
-    subst h1; subst h2
-    rw [nodeId_srcStep, nodeId_dstStep]
-    exact Path.edge hab
-  | step hm _ ih =>
-    simp only [stepEdges, List.mem_map] at hm
-    obtain ⟨⟨a, b⟩, hab, he⟩ := hm
-    simp only [Prod.mk.injEq] at he
-    obtain ⟨h1, h2⟩ := he
-    subst h1; subst h2
-    rw [nodeId_srcStep]
-    rw [nodeId_dstStep] at ih
-    exact Path.step hab ih
+  | edge hm => exact Path.edge (stepEdge_project g hm)
+  | step hm _ ih => exact Path.step (stepEdge_project g hm) ih
 
 /-- Says: a node listed in `muted` has a path of one or more connections back to itself in the
 graph after the `DelayNode`s that are in cycles have been split (`stepEdges`). Does not say: that
@@ -611,26 +629,24 @@ private theorem isMuted_dstStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g)
   · rfl
   · simpa [isMuted] using ha
 
-/-- Says: take a connection from `a` to `b` (an audio or parameter connection, as an element of
-`depEdges`), neither node muted. Let the source end be `srcStep g a` (the node, or its
-`DelayReader` if it is a `DelayNode` on a cycle) and the destination end be `dstStep g b` (the
-node, or its `DelayWriter`). If the source end is at index `i` and the destination end at index
-`j` of the steps, then `i < j`. Does not say: that both ends are in the list (see
-`orderComplete`); anything about a connection with a muted end; anything about the order of two
-steps that no connection relates. -/
-theorem order_topological (g : Graph) {a b : NodeId} (hab : (a, b) ∈ depEdges g)
-    (ha : a ∉ (order g).muted) (hb : b ∉ (order g).muted) {i j : Nat}
-    (hi : (order g).steps[i]? = some (srcStep g a))
-    (hj : (order g).steps[j]? = some (dstStep g b)) : i < j := by
-  have ha' : a ∉ mutedIds g := ha
-  have hb' : b ∉ mutedIds g := hb
-  have hmem : (srcStep g a, dstStep g b) ∈ liveEdges (mutedIds g) (stepEdges g) := by
-    simp only [liveEdges, List.mem_filter, stepEdges, List.mem_map]
-    refine ⟨⟨(a, b), hab, rfl⟩, ?_⟩
-    simp [isMuted_srcStep g ha', isMuted_dstStep g hb']
-  have hp : srcStep g a ∈ predsOf (liveEdges (mutedIds g) (stepEdges g)) (dstStep g b) := by
+private theorem isMuted_paramDstStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
+    isMuted (mutedIds g) (paramDstStep g a) = false := by
+  unfold paramDstStep
+  split
+  · rfl
+  · simpa [isMuted] using ha
+
+/-- If `(x, y)` is an edge of the split graph, neither end a muted node, then `x` comes before `y`
+in the steps (when both are listed). -/
+theorem order_topological_step (g : Graph) {x y : Step} (hxy : (x, y) ∈ stepEdges g)
+    (hx : isMuted (mutedIds g) x = false) (hy : isMuted (mutedIds g) y = false) {i j : Nat}
+    (hi : (order g).steps[i]? = some x) (hj : (order g).steps[j]? = some y) : i < j := by
+  have hmem : (x, y) ∈ liveEdges (mutedIds g) (stepEdges g) := by
+    simp only [liveEdges, List.mem_filter]
+    exact ⟨hxy, by simp [hx, hy]⟩
+  have hp : x ∈ predsOf (liveEdges (mutedIds g) (stepEdges g)) y := by
     simp only [predsOf, List.mem_map, List.mem_filter]
-    exact ⟨(srcStep g a, dstStep g b), ⟨hmem, by simp⟩, rfl⟩
+    exact ⟨(x, y), ⟨hmem, by simp⟩, rfl⟩
   have hg := order_good g
   unfold Good at hg
   obtain ⟨i', hi', hi'e⟩ := hg j _ hj _ hp
@@ -638,22 +654,33 @@ theorem order_topological (g : Graph) {a b : NodeId} (hab : (a, b) ∈ depEdges 
   have : i = i' := (List.getElem?_inj hil (order_nodup g)).mp (by rw [hi, hi'e])
   omega
 
-/-- `order_topological` for an audio connection of the graph. -/
+/-- Says: take an audio connection from `e.src` to `e.dst`, neither node muted. Let the source end
+be `srcStep g e.src` (the node, or its `DelayReader` if it is a `DelayNode` on a cycle) and the
+destination end be `dstStep g e.dst` (the node, or its `DelayWriter`). If the source end is at index
+`i` and the destination end at index `j` of the steps, then `i < j`. Does not say: that both ends
+are in the list (see `orderComplete`); anything about a connection with a muted end; anything
+about the order of two steps that no connection relates. -/
 theorem order_topological_edge (g : Graph) {e : Edge} (he : e ∈ g.edges)
     (ha : e.src ∉ (order g).muted) (hb : e.dst ∉ (order g).muted) {i j : Nat}
     (hi : (order g).steps[i]? = some (srcStep g e.src))
     (hj : (order g).steps[j]? = some (dstStep g e.dst)) : i < j :=
-  order_topological g (by simp only [depEdges, List.mem_append, List.mem_map]
-                          exact Or.inl ⟨e, he, rfl⟩) ha hb hi hj
+  order_topological_step g
+    (by simp only [stepEdges, List.mem_append, List.mem_map]
+        exact Or.inl ⟨e, he, rfl⟩)
+    (isMuted_srcStep g ha) (isMuted_dstStep g hb) hi hj
 
-/-- `order_topological` for a parameter connection of the graph: the node that feeds an
-`AudioParam` comes before the node that owns it. -/
+/-- Says: the same for a parameter connection, whose destination end is `paramDstStep g e.dst`:
+the node itself, or the `DelayReader` of a `DelayNode` on a cycle (where `delayTime` is used). The
+node that feeds an `AudioParam` comes before the step that uses the parameter. Does not say: that
+both ends are listed, or that the source comes before the `DelayWriter` of the same delay. -/
 theorem order_topological_param (g : Graph) {e : ParamEdge} (he : e ∈ g.paramEdges)
     (ha : e.src ∉ (order g).muted) (hb : e.dst ∉ (order g).muted) {i j : Nat}
     (hi : (order g).steps[i]? = some (srcStep g e.src))
-    (hj : (order g).steps[j]? = some (dstStep g e.dst)) : i < j :=
-  order_topological g (by simp only [depEdges, List.mem_append, List.mem_map]
-                          exact Or.inr ⟨e, he, rfl⟩) ha hb hi hj
+    (hj : (order g).steps[j]? = some (paramDstStep g e.dst)) : i < j :=
+  order_topological_step g
+    (by simp only [stepEdges, List.mem_append, List.mem_map]
+        exact Or.inr ⟨e, he, rfl⟩)
+    (isMuted_srcStep g ha) (isMuted_paramDstStep g hb) hi hj
 
 /-! ### Connecting twice -/
 
@@ -819,6 +846,23 @@ open Step Kind
   (order ring).muted == [] && orderComplete ring && (order ring).steps.length == n + 1
     && (order ring).steps.head? == some (delayRead (n - 1))
     && (order ring).steps.getLast? == some (delayWrite (n - 1))
+
+-- 23b. Parameter edge into a split delay goes to the reader. The cycle: delay 1 -> gain 0 ->
+-- delay 1 (input). Source 3 (a constant source numbered after the delay) feeds `delayTime` of 1.
+-- Order: 3, delayRead 1, node 0, delayWrite 1, node 2. Before the fix, 3 was ordered after the
+-- reader only by number, and the reader did not wait for it.
+#guard
+  let g := mk [gain, delay, destination, constantSource] [(0,0,1,0), (1,0,0,0), (0,0,2,0)]
+    [(3,0,1,0)]
+  (order g).muted == [] && (order g).steps == [node 3, delayRead 1, node 0, delayWrite 1, node 2]
+    && before g (node 3) (delayRead 1)
+-- 23c. A node of the cycle that feeds `delayTime` of its own delay: the loop delay-out -> gain ->
+-- delayTime is not cut by the split (the reader needs the gain, the gain needs the reader), so the
+-- gain is muted and its edges are dropped; no step precedes the writer or the reader, so they
+-- keep the order of `nodeSteps` (writer, reader).
+#guard
+  let g := mk [gain, delay, destination] [(0,0,1,0), (1,0,0,0), (0,0,2,0)] [(0,0,1,0)]
+  (order g).muted == [0] && (order g).steps == [delayWrite 1, delayRead 1, node 2]
 
 -- Connections.
 -- 24. connect: a good connection, a repeated connection, bad indices, unknown node.
