@@ -2496,7 +2496,6 @@ L4Factoidal_JS_Ryu_pushDigits  # (c) one frame per decimal digit written; every 
 L4Factoidal_Net_Socks5_padZip  # (s) (c) the pairs diffFold reads, the specification of its refinement theorem (Socks5Theorems.lean); the lists are RFC 1929 passwords, at most 255 bytes, so at most 255 frames
 L4Factoidal_Net_Socks5_Host_textBytes_groups  # (c) the groups of an IPv6 address: 16 bytes, so at most 8 frames
 L4Factoidal_Net_Socks5_hostRun  # (s) a list of host messages run in order, only in #guard lines and theorems (Socks5Theorems.lean); the worker steps one message at a time (hostStep)
-L4Factoidal_WebAudio_Automation_insertAfterEqual  # (a) PENDING 1172 one frame per event already on the AudioParam timeline
 L4Factoidal_WebAudio_Idl_ancestors_go  # (c) the parent chain of an IDL interface, fuel 8 (the deepest chain has three)
 L4Factoidal_WebAudio_Mix_sumTo  # (s) the entry of a matrix product (mulMat), only in theorems of Mix.lean
 L4Factoidal_WebAudio_Oscillator_maxDiff  # (s) test helper of the #guard lines in Oscillator.lean

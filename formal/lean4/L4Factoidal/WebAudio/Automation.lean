@@ -276,6 +276,28 @@ def insertAfterEqual (es : List Event) (e : Event) : List Event :=
   | [] => [e]
   | x :: xs => if e.time < x.time then e :: x :: xs else x :: insertAfterEqual xs e
 
+/-- `insertAfterEqual` as a loop: the events kept before `e`, in reverse order, in `acc`.
+    One stack frame for any number of events on the timeline (issue 1172). -/
+def insertAfterEqualGo (e : Event) : List Event → List Event → List Event
+  | [], acc => acc.reverseAux [e]
+  | x :: xs, acc => if e.time < x.time then acc.reverseAux (e :: x :: xs) else insertAfterEqualGo e xs (x :: acc)
+
+theorem insertAfterEqualGo_eq (e : Event) :
+    ∀ (es acc : List Event), insertAfterEqualGo e es acc = acc.reverse ++ insertAfterEqual es e
+  | [], acc => by simp [insertAfterEqualGo, insertAfterEqual, List.reverseAux_eq]
+  | x :: xs, acc => by
+    by_cases h : e.time < x.time
+    · simp [insertAfterEqualGo, insertAfterEqual, h, List.reverseAux_eq]
+    · simp [insertAfterEqualGo, insertAfterEqual, h, insertAfterEqualGo_eq e xs]
+
+/-- `insertAfterEqual` through the loop (`insertAfterEqual_eq_loop` is the `@[csimp]` equation). -/
+def insertAfterEqualLoop (es : List Event) (e : Event) : List Event := insertAfterEqualGo e es []
+
+/-- Kind: equivalence. Says: the compiled code runs the loop, which gives the same list as
+    `insertAfterEqual` for every timeline and event. Does not say: anything about time cost. -/
+@[csimp] theorem insertAfterEqual_eq_loop : @insertAfterEqual = @insertAfterEqualLoop := by
+  funext es e; simp [insertAfterEqualLoop, insertAfterEqualGo_eq]
+
 /-- The argument checks of the five methods. `none` when the event is valid.
     - negative time: RangeError (non-finite times are rejected by `eventTime`);
     - non-finite value, target, time constant or curve element: TypeError;
