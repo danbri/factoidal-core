@@ -408,6 +408,293 @@ proved). -/
 def orderComplete (g : Graph) : Bool :=
   (order g).steps.length == (liveVerts (mutedIds g) (nodeSteps g)).length
 
+/-! ## Theorems -/
+
+section Proofs
+
+variable {α : Type} [DecidableEq α]
+
+omit [DecidableEq α] in
+/-- Paths join. -/
+theorem Path.trans {es : List (α × α)} {a b c : α} (h1 : Path es a b) (h2 : Path es b c) :
+    Path es a c := by
+  induction h1 with
+  | edge h => exact Path.step h h2
+  | step h _ ih => exact Path.step h (ih h2)
+
+/-- A target found by `expand` is the target of an edge from a vertex of the frontier. -/
+theorem mem_expand {es : List (α × α)} {fr : List α} {x : α} (h : x ∈ expand es fr) :
+    ∃ a, a ∈ fr ∧ (a, x) ∈ es := by
+  simp only [expand, List.mem_filterMap] at h
+  obtain ⟨⟨a, b⟩, hmem, hx⟩ := h
+  by_cases ha : a ∈ fr
+  · simp only [ha, if_true, Option.some.injEq] at hx
+    exact ⟨a, ha, hx ▸ hmem⟩
+  · simp [ha] at hx
+
+omit [DecidableEq α] in
+private theorem ext_path {es : List (α × α)} {v a b : α} (h : a = v ∨ Path es v a)
+    (hab : (a, b) ∈ es) : Path es v b := by
+  rcases h with rfl | h
+  · exact Path.edge hab
+  · exact h.trans (Path.edge hab)
+
+private theorem reachAux_sound (es : List (α × α)) (v : α) :
+    ∀ (f : Nat) (fr seen : List α), (∀ x ∈ fr, x = v ∨ Path es v x) →
+      (∀ x ∈ seen, Path es v x) → ∀ x ∈ reachAux es f fr seen, Path es v x := by
+  intro f
+  induction f with
+  | zero => intro fr seen _ hs x hx; exact hs x (by simpa [reachAux] using hx)
+  | succ f ih =>
+    intro fr seen hf hs x hx
+    simp only [reachAux] at hx
+    by_cases hne : ((expand es fr).filter (fun x => decide (x ∉ seen))).isEmpty
+    · simp only [hne, if_true] at hx
+      exact hs x hx
+    · simp only [hne] at hx
+      have hnew : ∀ y ∈ (expand es fr).filter (fun x => decide (x ∉ seen)), Path es v y := by
+        intro y hy
+        obtain ⟨a, ha, hae⟩ := mem_expand (List.mem_filter.mp hy).1
+        exact ext_path (hf a ha) hae
+      refine ih _ _ (fun y hy => Or.inr (hnew y hy)) ?_ x hx
+      intro y hy
+      rcases List.mem_append.mp hy with h | h
+      · exact hs y h
+      · exact hnew y h
+
+/-- Soundness of the search. Says: every vertex that `reach es v` returns is joined to `v` by a
+path of one or more edges of `es`. Does not say: that the search finds every such vertex (the
+fuel `es.length + 1` is tested, not proved, to be enough). -/
+theorem reach_sound (es : List (α × α)) (v x : α) (h : x ∈ reach es v) : Path es v x :=
+  reachAux_sound es v _ [v] [] (fun y hy => Or.inl (by simpa using hy)) (by simp) x h
+
+/-- Says: if `onCycle es v` is true, there is a path of one or more edges from `v` to `v`.
+Does not say: the converse (see `reach_sound`). -/
+theorem onCycle_sound {es : List (α × α)} {v : α} (h : onCycle es v = true) : Path es v v :=
+  reach_sound es v v (by simpa [onCycle] using h)
+
+/-! ### Muted nodes lie on cycles -/
+
+theorem nodeId_srcStep (g : Graph) (a : NodeId) : (srcStep g a).nodeId = a := by
+  unfold srcStep; split <;> rfl
+
+theorem nodeId_dstStep (g : Graph) (b : NodeId) : (dstStep g b).nodeId = b := by
+  unfold dstStep; split <;> rfl
+
+/-- A path in the split graph gives a path in the original graph between the same nodes. -/
+theorem path_project (g : Graph) {x y : Step} (h : Path (stepEdges g) x y) :
+    Path (depEdges g) x.nodeId y.nodeId := by
+  induction h with
+  | edge hm =>
+    simp only [stepEdges, List.mem_map] at hm
+    obtain ⟨⟨a, b⟩, hab, he⟩ := hm
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨h1, h2⟩ := he
+    subst h1; subst h2
+    rw [nodeId_srcStep, nodeId_dstStep]
+    exact Path.edge hab
+  | step hm _ ih =>
+    simp only [stepEdges, List.mem_map] at hm
+    obtain ⟨⟨a, b⟩, hab, he⟩ := hm
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨h1, h2⟩ := he
+    subst h1; subst h2
+    rw [nodeId_srcStep]
+    rw [nodeId_dstStep] at ih
+    exact Path.step hab ih
+
+/-- Says: a node listed in `muted` has a path of one or more connections back to itself in the
+graph after the `DelayNode`s that are in cycles have been split (`stepEdges`). Does not say: that
+every node on such a cycle is listed (that is the definition of `mutedIds`, and the fuel of the
+search is tested); and nothing about a node that only receives from a muted node, which is not
+muted. -/
+theorem muted_on_cycle (g : Graph) {i : NodeId} (h : i ∈ (order g).muted) :
+    Path (stepEdges g) (Step.node i) (Step.node i) := by
+  simp only [order, mutedIds, List.mem_filter] at h
+  exact onCycle_sound h.2
+
+/-- Says: a node listed in `muted` is on a cycle of the graph as the author connected it (audio and
+parameter connections both count). Does not say: the converse. A node on a cycle that passes
+through a `DelayNode` is not muted, because the split cuts that cycle. -/
+theorem muted_on_graph_cycle (g : Graph) {i : NodeId} (h : i ∈ (order g).muted) :
+    Path (depEdges g) i i := by
+  have := path_project g (muted_on_cycle g h)
+  simpa [Step.nodeId] using this
+
+end Proofs
+
+/-! ### Properties of Kahn's algorithm -/
+
+/-- `Good preds l`: every entry of `l` has all of its feeding steps (`preds`) earlier in `l`. -/
+def Good (preds : Step → List Step) (l : List Step) : Prop :=
+  ∀ (j : Nat) (v : Step), l[j]? = some v → ∀ p ∈ preds v, ∃ i : Nat, i < j ∧ l[i]? = some p
+
+theorem good_nil (preds : Step → List Step) : Good preds [] := by
+  intro j v h; simp at h
+
+theorem good_snoc (preds : Step → List Step) {acc : List Step} (hg : Good preds acc) (v : Step)
+    (hp : ∀ p ∈ preds v, p ∈ acc) : Good preds (acc ++ [v]) := by
+  intro j w hw p hpw
+  by_cases hj : j < acc.length
+  · rw [List.getElem?_append_left hj] at hw
+    obtain ⟨i, hi, hip⟩ := hg j w hw p hpw
+    have hi' : i < acc.length := Nat.lt_trans hi hj
+    exact ⟨i, hi, by rw [List.getElem?_append_left hi']; exact hip⟩
+  · have hj' : j = acc.length := by
+      have h1 := (List.getElem?_eq_some_iff.mp hw).1
+      simp at h1
+      omega
+    subst hj'
+    have hwv : w = v := by simpa using hw.symm
+    subst hwv
+    obtain ⟨i, hi⟩ := List.mem_iff_getElem?.mp (hp p hpw)
+    have hil : i < acc.length := (List.getElem?_eq_some_iff.mp hi).1
+    exact ⟨i, hil, by rw [List.getElem?_append_left hil]; exact hi⟩
+
+theorem kahn_good (preds : Step → List Step) :
+    ∀ (f : Nat) (rem acc : List Step), Good preds acc → Good preds (kahn preds f rem acc) := by
+  intro f
+  induction f with
+  | zero => intro rem acc h; simpa [kahn] using h
+  | succ f ih =>
+    intro rem acc h
+    simp only [kahn]
+    split
+    · exact h
+    · rename_i v hv
+      have hsome := List.find?_some hv
+      simp only [Bool.and_eq_true, List.all_eq_true, List.contains_iff_mem] at hsome
+      exact ih _ _ (good_snoc preds h v hsome.2)
+
+theorem kahn_nodup (preds : Step → List Step) :
+    ∀ (f : Nat) (rem acc : List Step), acc.Nodup → (kahn preds f rem acc).Nodup := by
+  intro f
+  induction f with
+  | zero => intro rem acc h; simpa [kahn] using h
+  | succ f ih =>
+    intro rem acc h
+    simp only [kahn]
+    split
+    · exact h
+    · rename_i v hv
+      have hsome := List.find?_some hv
+      have hv : v ∉ acc := (by simpa using hsome : v ∉ acc ∧ ∀ x ∈ preds v, x ∈ acc).1
+      refine ih _ _ ?_
+      rw [List.nodup_append]
+      refine ⟨h, List.nodup_cons.mpr ⟨by simp, List.nodup_nil⟩, ?_⟩
+      intro a ha b hb
+      simp only [List.mem_singleton] at hb
+      subst hb
+      intro hab
+      exact hv (hab ▸ ha)
+
+/-- Says: no step is listed twice. Does not say: that every vertex is listed (see
+`orderComplete`). -/
+theorem order_nodup (g : Graph) : (order g).steps.Nodup :=
+  kahn_nodup _ _ _ _ List.nodup_nil
+
+theorem order_good (g : Graph) :
+    Good (predsOf (liveEdges (mutedIds g) (stepEdges g))) (order g).steps :=
+  kahn_good _ _ _ _ (good_nil _)
+
+private theorem isMuted_srcStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
+    isMuted (mutedIds g) (srcStep g a) = false := by
+  unfold srcStep
+  split
+  · rfl
+  · simpa [isMuted] using ha
+
+private theorem isMuted_dstStep (g : Graph) {a : NodeId} (ha : a ∉ mutedIds g) :
+    isMuted (mutedIds g) (dstStep g a) = false := by
+  unfold dstStep
+  split
+  · rfl
+  · simpa [isMuted] using ha
+
+/-- Says: take a connection from `a` to `b` (an audio or parameter connection, as an element of
+`depEdges`), neither node muted. Let the source end be `srcStep g a` (the node, or its
+`DelayReader` if it is a `DelayNode` on a cycle) and the destination end be `dstStep g b` (the
+node, or its `DelayWriter`). If the source end is at index `i` and the destination end at index
+`j` of the steps, then `i < j`. Does not say: that both ends are in the list (see
+`orderComplete`); anything about a connection with a muted end; anything about the order of two
+steps that no connection relates. -/
+theorem order_topological (g : Graph) {a b : NodeId} (hab : (a, b) ∈ depEdges g)
+    (ha : a ∉ (order g).muted) (hb : b ∉ (order g).muted) {i j : Nat}
+    (hi : (order g).steps[i]? = some (srcStep g a))
+    (hj : (order g).steps[j]? = some (dstStep g b)) : i < j := by
+  have ha' : a ∉ mutedIds g := ha
+  have hb' : b ∉ mutedIds g := hb
+  have hmem : (srcStep g a, dstStep g b) ∈ liveEdges (mutedIds g) (stepEdges g) := by
+    simp only [liveEdges, List.mem_filter, stepEdges, List.mem_map]
+    refine ⟨⟨(a, b), hab, rfl⟩, ?_⟩
+    simp [isMuted_srcStep g ha', isMuted_dstStep g hb']
+  have hp : srcStep g a ∈ predsOf (liveEdges (mutedIds g) (stepEdges g)) (dstStep g b) := by
+    simp only [predsOf, List.mem_map, List.mem_filter]
+    exact ⟨(srcStep g a, dstStep g b), ⟨hmem, by simp⟩, rfl⟩
+  have hg := order_good g
+  unfold Good at hg
+  obtain ⟨i', hi', hi'e⟩ := hg j _ hj _ hp
+  have hil : i < (order g).steps.length := (List.getElem?_eq_some_iff.mp hi).1
+  have : i = i' := (List.getElem?_inj hil (order_nodup g)).mp (by rw [hi, hi'e])
+  omega
+
+/-- `order_topological` for an audio connection of the graph. -/
+theorem order_topological_edge (g : Graph) {e : Edge} (he : e ∈ g.edges)
+    (ha : e.src ∉ (order g).muted) (hb : e.dst ∉ (order g).muted) {i j : Nat}
+    (hi : (order g).steps[i]? = some (srcStep g e.src))
+    (hj : (order g).steps[j]? = some (dstStep g e.dst)) : i < j :=
+  order_topological g (by simp only [depEdges, List.mem_append, List.mem_map]
+                          exact Or.inl ⟨e, he, rfl⟩) ha hb hi hj
+
+/-- `order_topological` for a parameter connection of the graph: the node that feeds an
+`AudioParam` comes before the node that owns it. -/
+theorem order_topological_param (g : Graph) {e : ParamEdge} (he : e ∈ g.paramEdges)
+    (ha : e.src ∉ (order g).muted) (hb : e.dst ∉ (order g).muted) {i j : Nat}
+    (hi : (order g).steps[i]? = some (srcStep g e.src))
+    (hj : (order g).steps[j]? = some (dstStep g e.dst)) : i < j :=
+  order_topological g (by simp only [depEdges, List.mem_append, List.mem_map]
+                          exact Or.inr ⟨e, he, rfl⟩) ha hb hi hj
+
+/-! ### Connecting twice -/
+
+/-- Says: if `connect g a o b i` succeeds with result `g'`, connecting the same output to the same
+input in `g'` succeeds and gives `g'` again (the specification: "Multiple connections with the
+same termini are ignored"). Does not say: that two different connect calls commute. -/
+theorem connect_idempotent {g g' : Graph} {a o b i : Nat} (h : connect g a o b i = .ok g') :
+    connect g' a o b i = .ok g' := by
+  unfold connect at h ⊢
+  split at h
+  · rename_i ks kd hks hkd
+    by_cases hb : o < ks.numOutputs ∧ i < kd.numInputs
+    · simp only [hb, and_self, if_true] at h
+      by_cases hm : (⟨a, o, b, i⟩ : Edge) ∈ g.edges
+      · simp only [hm, if_true] at h
+        cases h
+        simp [hks, hkd, hb, hm]
+      · simp only [hm, if_false] at h
+        cases h
+        simp [hks, hkd, hb]
+    · simp [hb] at h
+  · simp at h
+
+/-- Says: the same for `connectParam`. Does not say: anything about parameters of other nodes. -/
+theorem connectParam_idempotent {g g' : Graph} {a o b p : Nat}
+    (h : connectParam g a o b p = .ok g') : connectParam g' a o b p = .ok g' := by
+  unfold connectParam at h ⊢
+  split at h
+  · rename_i ks kd hks hkd
+    by_cases hb : o < ks.numOutputs ∧ p < kd.numParams
+    · simp only [hb, and_self, if_true] at h
+      by_cases hm : (⟨a, o, b, p⟩ : ParamEdge) ∈ g.paramEdges
+      · simp only [hm, if_true] at h
+        cases h
+        simp [hks, hkd, hb, hm]
+      · simp only [hm, if_false] at h
+        cases h
+        simp [hks, hkd, hb]
+    · simp [hb] at h
+  · simp at h
+
 /-! ## Tests -/
 
 namespace Tests
