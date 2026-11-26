@@ -3952,7 +3952,7 @@ private def verticalGeometry (style : String) := (verticalAlignFixture style).ma
   let delta := (y.y+b.fontSize*0.8)-(x.y+a.fontSize*0.8)
   return a.fontSize == 24 && (delta-24).abs < 0.001) == some true
 
-#guard ((inlineMarkupFixture "<ol><li>Alpha</li></ol>").bind fun r => do
+#guard ((inlineMarkupFixture "<ol><li style='display:list-item'>Alpha</li></ol>").bind fun r => do
   let marker ← r.runs.find? (fun run => run.text == "1.")
   let label ← r.runs.find? (fun run => run.text == "Alpha")
   return label.lineKey.isSome && marker.lineKey == label.lineKey) == some true
