@@ -634,3 +634,19 @@ depend on it.
   fetches of `native_html_document.ts` and `run_html.ts` use one `torHttpClient` per top-level
   site; WebSocket refused at first; new identity control; no local name lookup in the Lean
   egress policy.
+
+## 19. Public-network failure on the owner's Mac (2026-11-26): cause open
+
+- Run with `--trace-conns`, Tailscale reported off: 158 TCP dials, 2 opened (both completed the
+  TLS and Tor handshakes, about 4.4 KB in each), 113 connect failures (about 70 TimedOut after
+  the 75 s macOS connect timeout), worst event-loop lag 38 ms with no stall. `nc` to a directory
+  authority on 443 timed out in the same state of the Mac.
+- Correction: the message of commit e33848e6b says "The network path drops TCP to Tor relays;
+  not the transport". That is not established. An OONI Probe Tor test from the same Mac and
+  network at 16:59 UTC reached all 10 directory authorities
+  (https://explorer.ooni.org/measurement/20261126170052.206194_GB_tor_46e6945a9999a913). The
+  likely difference is the state of the Mac (Tailscale still partly active). What the trace
+  does establish: CPU work in the module did not block the event loop, and the connections
+  that opened worked.
+- Deciding run: `tailscale status`, `nc`, C tor and `--trace-conns` back to back. If `nc` and C
+  tor connect and our client does not, the fault is in our transport.
