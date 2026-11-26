@@ -17,6 +17,17 @@ if [[ ! -f .work/arti/.patched ]]; then
   git -C .work/arti apply --whitespace=nowarn "$PWD/arti-2.8.0-wasm.patch"
   touch .work/arti/.patched
 fi
+# ring (rustls) compiles C for wasm32. Apple's clang has no wasm32 target, so on macOS use
+# Homebrew's LLVM (brew install llvm) unless CC_wasm32_unknown_unknown is already set.
+if [[ "$(uname)" == Darwin && -z "${CC_wasm32_unknown_unknown:-}" ]]; then
+  llvm=""
+  for d in "$(brew --prefix llvm 2>/dev/null || true)" /opt/homebrew/opt/llvm /usr/local/opt/llvm; do
+    [[ -n "$d" && -x "$d/bin/clang" ]] && { llvm=$d; break; }
+  done
+  [[ -n "$llvm" ]] || { echo "build.sh: Apple clang cannot build C for wasm32 (ring). Run: brew install llvm" >&2; exit 1; }
+  export CC_wasm32_unknown_unknown="$llvm/bin/clang" AR_wasm32_unknown_unknown="$llvm/bin/llvm-ar"
+  echo "build.sh: C for wasm32 with $CC_wasm32_unknown_unknown"
+fi
 cargo build --release --target wasm32-unknown-unknown
 # Two glue files: no-modules for the Foafnaut page, web (ES module) for the Deno worker.
 wasm-bindgen --target no-modules --no-typescript --out-dir .build \

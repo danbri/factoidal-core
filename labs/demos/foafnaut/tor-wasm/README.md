@@ -19,7 +19,7 @@ record (build, every change to Arti, measurements, security review, open risks):
 
 ## Files
 
-- `build.sh`: clone the tag, check its commit, apply `arti-2.8.0-wasm.patch`, build, generate
+- `build.sh` (on macOS it needs `brew install llvm`: Apple clang has no wasm32 target, and ring compiles C): clone the tag, check its commit, apply `arti-2.8.0-wasm.patch`, build, generate
   the wasm-bindgen glue and the test page into `.build/`.
 - `arti-2.8.0-wasm.patch`: the changes to Arti (all wasm-only; see the record, 10.2 and 12.2).
 - `src/lib.rs`: the wasm runtime for Arti and the exported functions.
