@@ -133,7 +133,9 @@ def bench (name : String) (mk : IO Context.OfflineContext) (quanta : Nat) : IO U
     h := h'
   IO.println s!"{name}: {median ts} ms/quantum (median of 5, {quanta} quanta) checksum {h}"
 
-def main : IO Unit := do
-  bench "a oscillator" graphA 300
-  bench "b buffer-gain" graphB 300
-  bench "c particle-rex" graphC 300
+/-- `webaudio-bench [a|b|c ...]`: the named graphs, or all. -/
+def main (args : List String) : IO Unit := do
+  let want (x : String) := args.isEmpty || args.contains x
+  if want "a" then bench "a oscillator" graphA 300
+  if want "b" then bench "b buffer-gain" graphB 300
+  if want "c" then bench "c particle-rex" graphC 300
