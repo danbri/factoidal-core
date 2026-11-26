@@ -5,9 +5,10 @@ docs/designissues/2026-11-26-foafnaut-engine-sessions.md, section 6).
 
     engine_sessions_report.py RESULT.json
 
-For each configuration: median over the runs, with the worst run in brackets. Resident memory
-per extra tab is (median of `tabs` - median of `one`) / 7: `tabs` opens seven tabs on the start
-page, `one` keeps the start page only."""
+For each configuration: median over the runs, with the worst run in brackets (the largest value).
+Resident memory per extra tab is (median of `tabs` - median of `one`) / 7: `tabs` opens seven
+tabs on the start page, `one` keeps the start page only. Lines are printed only for the scenarios
+in the result; the steady scenarios have their own lines."""
 import json, statistics, sys
 
 def med(rows, key):
@@ -25,7 +26,10 @@ def main():
     def rows(scenario, config):
         return [r for r in runs if r["scenario"] == scenario and r["config"] == config]
     lines = []
+    present = {r["scenario"] for r in runs}
     def line(label, scenario, key, unit="ms"):
+        if scenario not in present:
+            return
         parts = []
         for c in configs:
             m, worst, n = med(rows(scenario, c), key)
@@ -46,11 +50,12 @@ def main():
     line("Process resident memory at exit, 8 tabs", "tabs", "processRssMB", "MB")
     line("Process resident memory at exit, 1 tab", "one", "processRssMB", "MB")
     per = []
-    for c in configs:
+    for c in configs if {"tabs", "one"} <= present else []:
         t, _, _ = med(rows("tabs", c), "processRssMB")
         o, _, _ = med(rows("one", c), "processRssMB")
         per.append(f"{c} {fmt((t - o) / 7) if t is not None and o is not None else '-'}")
-    lines.append("Resident memory per extra tab, MB, (tabs - one) / 7 of medians: " + "; ".join(per))
+    if per:
+        lines.append("Resident memory per extra tab, MB, (tabs - one) / 7 of medians: " + "; ".join(per))
     line("Frame total p50, status.html resize sweep", "status", "frameP50Ms")
     line("Frame total p95, status.html resize sweep", "status", "frameP95Ms")
     line("Frame total p50, particle-rex.html 8 s", "rex", "frameP50Ms")
@@ -63,6 +68,30 @@ def main():
     line("Page canvas present p50, particle-rex.html", "rex", "canvasP50Ms")
     line("Page canvas present p95, particle-rex.html", "rex", "canvasP95Ms")
     line("Main thread pump gap p95, particle-rex.html", "rex", "pumpGapP95Ms")
+    # The steady scenarios (N tabs, each after its page loaded; engine_sessions_bench.py).
+    for scenario in sorted((x for x in present if x.startswith("steady")), key=lambda x: int(x[6:])):
+        n = scenario[6:]
+        line(f"{n} tabs: pages loaded in the new tabs", scenario, "pagesLoaded", "pages")
+        line(f"{n} tabs: resident memory after the loads", scenario, "rssLoadedMB", "MB")
+        line(f"{n} tabs: resident memory at exit", scenario, "processRssMB", "MB")
+        line(f"{n} tabs: process CPU in 10 s idle, per cent of one CPU", scenario, "idleCpuPct", "%")
+        line(f"{n} tabs: idle CPU per tab not shown", scenario, "idleCpuPctPerHiddenTab", "%")
+        line(f"{n} tabs: hidden tab turns in the 10 s idle", scenario, "hiddenTurnsIdle", "turns")
+        line(f"{n} tabs: scroll steps presented (count)", scenario, "scrollFrames", "frames")
+        line(f"{n} tabs: scroll present total p50", scenario, "scrollFrameP50Ms")
+        line(f"{n} tabs: scroll present total p95", scenario, "scrollFrameP95Ms")
+        line(f"{n} tabs: Lean frames after the idle window (count)", scenario, "activeFrames", "frames")
+        line(f"{n} tabs: Lean frame total p50", scenario, "activeFrameP50Ms")
+        line(f"{n} tabs: Lean frame total p95", scenario, "activeFrameP95Ms")
+        line(f"{n} tabs: gestures (count)", scenario, "gestures", "gestures")
+        line(f"{n} tabs: gesture queuedToActionMs p50", scenario, "gestureP50Ms")
+        line(f"{n} tabs: gesture queuedToActionMs p95", scenario, "gestureP95Ms")
+        line(f"{n} tabs: gesture queuedToActionMs max", scenario, "gestureMaxMs")
+        line(f"{n} tabs: process CPU in the gesture and scroll window, per cent of one CPU", scenario, "activeCpuPct", "%")
+        line(f"{n} tabs: hidden tab turns in that window", scenario, "hiddenTurnsActive", "turns")
+        line(f"{n} tabs: engine ms of those turns", scenario, "hiddenLeanMsActive")
+        line(f"{n} tabs: engines live at most", scenario, "enginesMaxLive", "engines")
+        line(f"{n} tabs: tabs that shared an engine", scenario, "sharedTabs", "tabs")
     print("\n".join(lines))
     if failed:
         print(f"Failed runs: {len(failed)}: " + ", ".join(f"{r['scenario']}/{r['config']}/{r['run']} rc {r['rc']}" for r in failed))
