@@ -13,6 +13,7 @@ L4Factoidal.PageCanvas.Raster: coverage and compositing for Canvas 2D
   clip region decides where the result replaces the destination.
 -/
 import L4Factoidal.PageCanvas.Paint
+import L4Factoidal.Prim.Bytes
 
 namespace L4Factoidal.PageCanvas
 
@@ -519,57 +520,72 @@ def rowConstant : Ready → Bool
 /-- Pixels a solid draw must cover before `overTable` is made for it. -/
 def tableMin : Nat := 2048
 
+/-- Byte `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
+@[inline] def byteAt (a : ByteArray) (i : USize) : UInt8 :=
+  if h : i < a.usize then a.uget i (Prim.Bytes.usize_lt_size h) else 0
+
+theorem floatArray_usize_lt_size {a : FloatArray} {i : USize} (h : i < a.usize) : i.toNat < a.size := by
+  have h1 := USize.lt_iff_toNat_lt.mp h
+  simp only [FloatArray.usize, USize.toNat_ofNat', Nat.toUSize] at h1
+  have := Nat.mod_le a.size (2 ^ System.Platform.numBits)
+  omega
+
+/-- Value `i` of `a`, or 0 outside it (as `a[i]!`), with the test on `USize`. -/
+@[inline] def floatAt (a : FloatArray) (i : USize) : Float :=
+  if h : i < a.usize then a.uget i (floatArray_usize_lt_size h) else 0
+
+/-- `n` pixels of one row of `compositeOver`: column `x`, mask index `idx` (the pixel's
+index in the canvas), coverage index `ci`. A tail call on `USize` indices: as a `for` loop
+over `Nat` each pixel paid `Nat` arithmetic and a bounds closure per byte (issue 1098). -/
+def overSpan (dr : Draw) (y : Nat) (fixed opaqueRow useTable : Bool) (s : Px)
+    (b0 b1 b2 b3 : UInt8) (table : ByteArray) : Nat → Nat → USize → USize → ByteArray → ByteArray
+  | 0, _, _, _, out => out
+  | n+1, x, idx, ci, out =>
+    let mb : UInt8 := match dr.clip with
+      | none => 255
+      | some b => byteAt b idx
+    let c := floatAt dr.cov.cov ci
+    if mb == 0 || c <= 0 then overSpan dr y fixed opaqueRow useTable s b0 b1 b2 b3 table n (x + 1) (idx + 1) (ci + 1) out else
+    let w := c * dr.alpha
+    let k := idx * 4
+    let out :=
+      if mb == 255 && w == 1 && opaqueRow then
+        Prim.Bytes.setU8 (Prim.Bytes.setU8 (Prim.Bytes.setU8 (Prim.Bytes.setU8 out k b0) (k+1) b1) (k+2) b2) (k+3) b3
+      else if mb == 255 && useTable && c == 1 then
+        let out := Prim.Bytes.setU8 out k (byteAt table (byteAt out k).toUSize)
+        let out := Prim.Bytes.setU8 out (k+1) (byteAt table (256 + (byteAt out (k+1)).toUSize))
+        let out := Prim.Bytes.setU8 out (k+2) (byteAt table (512 + (byteAt out (k+2)).toUSize))
+        Prim.Bytes.setU8 out (k+3) (byteAt table (768 + (byteAt out (k+3)).toUSize))
+      else
+        let p := if fixed then s else dr.ready.at x y
+        let m := mb.toFloat / 255
+        let sa := p.a * w
+        let out := Prim.Bytes.setU8 out k (toByte (overChannel p.r w sa m ((byteAt out k).toFloat / 255)))
+        let out := Prim.Bytes.setU8 out (k+1) (toByte (overChannel p.g w sa m ((byteAt out (k+1)).toFloat / 255)))
+        let out := Prim.Bytes.setU8 out (k+2) (toByte (overChannel p.b w sa m ((byteAt out (k+2)).toFloat / 255)))
+        Prim.Bytes.setU8 out (k+3) (toByte (overChannel p.a w sa m ((byteAt out (k+3)).toFloat / 255)))
+    overSpan dr y fixed opaqueRow useTable s b0 b1 b2 b3 table n (x + 1) (idx + 1) (ci + 1) out
+
 /-- `compositeRef` for a bounded draw with source-over, with no `Px` built for most pixels
 (see the section comment). -/
 def compositeOver (W : Nat) (bm : ByteArray) (dr : Draw) : ByteArray := Id.run do
   let mut out := bm
   let box := dr.cov.box
-  let alpha := dr.alpha
   let (solid, sp) := match dr.ready with
     | .solid p => (true, p)
     | _ => (false, Px.zero)
   let rowConst := rowConstant dr.ready
   let fixed := solid || rowConst
   let useTable := solid && box.w * box.h >= tableMin
-  let table := if useTable then overTable sp alpha else ByteArray.empty
+  let table := if useTable then overTable sp dr.alpha else ByteArray.empty
   for j in [0:box.h] do
     let y := box.y + j
     let (lo, hi) := dr.cov.spans.getD j (0, box.w)
     if lo >= hi then continue
     let s := if solid then sp else if rowConst then dr.ready.at (box.x + lo) y else Px.zero
     let opaqueRow := fixed && s.a == 1
-    let (b0, b1, b2, b3) := (toByte s.r, toByte s.g, toByte s.b, toByte s.a)
-    let rowBase := y * W
-    let covBase := j * box.w
-    for i in [lo:hi] do
-      let x := box.x + i
-      let idx := rowBase + x
-      let mb : UInt8 := match dr.clip with
-        | none => 255
-        | some b => b[idx]!
-      if mb == 0 then continue
-      let c := dr.cov.cov[covBase + i]!
-      if c <= 0 then continue
-      let w := c * alpha
-      let k := idx * 4
-      if mb == 255 && w == 1 && opaqueRow then
-        out := out.set! k b0
-        out := out.set! (k+1) b1
-        out := out.set! (k+2) b2
-        out := out.set! (k+3) b3
-      else if mb == 255 && useTable && c == 1 then
-        out := out.set! k table[out[k]!.toNat]!
-        out := out.set! (k+1) table[256 + out[k+1]!.toNat]!
-        out := out.set! (k+2) table[512 + out[k+2]!.toNat]!
-        out := out.set! (k+3) table[768 + out[k+3]!.toNat]!
-      else
-        let p := if fixed then s else dr.ready.at x y
-        let m := mb.toFloat / 255
-        let sa := p.a * w
-        out := out.set! k (toByte (overChannel p.r w sa m (out[k]!.toFloat / 255)))
-        out := out.set! (k+1) (toByte (overChannel p.g w sa m (out[k+1]!.toFloat / 255)))
-        out := out.set! (k+2) (toByte (overChannel p.b w sa m (out[k+2]!.toFloat / 255)))
-        out := out.set! (k+3) (toByte (overChannel p.a w sa m (out[k+3]!.toFloat / 255)))
+    out := overSpan dr y fixed opaqueRow useTable s (toByte s.r) (toByte s.g) (toByte s.b) (toByte s.a) table
+      (hi - lo) (box.x + lo) (y * W + box.x + lo).toUSize (j * box.w + lo).toUSize out
   return out
 
 /-- Composite one draw into `bm` (`W × H`): `compositeOver` for source-over, else
