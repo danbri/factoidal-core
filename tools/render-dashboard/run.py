@@ -150,7 +150,7 @@ class Run:
         self.records.append({'format': 'factoidal-render-score-v1', 'suite': suite, 'title': title, 'origin': 'measured',
                              'runner': runner, 'input': pin, 'denominator': denominator, 'commit': self.commit,
                              'date': time.strftime('%Y-%m-%d', time.gmtime()), 'counts': counts,
-                             'groups': groups or [], 'host': 'Apple M1, macOS', **extra,
+                             'groups': groups or [], 'host': self.a.host, **extra,
                              **({'dirty': self.dirty} if self.dirty else {})})
 
     # Suites. Each one calls add() once for each score it gives.
@@ -251,9 +251,19 @@ class Run:
                  {'name': 'WPT SVG subtree', 'pin': WPT_PIN}, report['total'], counts,
                  groups_of(bad, wpt_reason, lambda r: r['test'], top=20),
                  static=report['static'], matches=sorted(row['test'] for row in rows if row['status'] == 'match'),
-                 controls=report.get('controls', {}).get('counts'), harnessPatches=[note for note, _, _ in CORPUS_PATCHES],
+                 controls=report.get('controls', {}).get('counts'), harnessPatches=[note for note, _, _ in self.corpus_patches()],
                  notes='The harness of 2 November is patched at run time for the current engine: see harnessPatches. Fixtures and limits are unchanged.')
         self.oracle = out / 'capture'
+
+    def corpus_patches(self):
+        """CORPUS_PATCHES, and one that gives Chrome the --chrome-arg flags (a Linux host
+        without a GPU needs --enable-unsafe-webgpu for a WebGPU adapter)."""
+        patches = list(CORPUS_PATCHES)
+        if self.a.chrome_arg:
+            launch = "chromium.launch({executablePath:resolve(chrome),headless:true})"
+            patches.append(('Chrome is started with ' + ' '.join(self.a.chrome_arg), launch,
+                            launch[:-1] + ',args:' + json.dumps(self.a.chrome_arg) + '})'))
+        return patches
 
     def patched_corpus(self, corpus):
         """A copy of the corpus scripts in the run directory, with CORPUS_PATCHES. Data are links."""
@@ -266,7 +276,7 @@ class Run:
             elif item.name != '__pycache__':
                 (here / item.name).symlink_to(item)
         text = (here / 'capture.mjs').read_text()
-        for _, old, new in CORPUS_PATCHES:
+        for _, old, new in self.corpus_patches():
             assert text.count(old) == 1, 'The corpus harness changed: ' + old
             text = text.replace(old, new)
         (here / 'capture.mjs').write_text(text)
@@ -513,6 +523,8 @@ def main():
     p.add_argument('--oracle', help='directory of an earlier capture, for wpt-images-native alone')
     p.add_argument('--tiny-archive', default=DEPMAP / 'cache/svg-tiny/W3C_SVG_12_TinyTestSuite.tar.gz')
     p.add_argument('--harfbuzz', default=DEPMAP / 'cache/render-metrics/harfbuzz-15.0.0', help='HarfBuzz 15.0.0 source tree')
+    p.add_argument('--host', default='Apple M1, macOS', help='the machine, as the record names it')
+    p.add_argument('--chrome-arg', action='append', default=[], help='a flag for Chrome in the wpt-images-wasm suite')
     p.add_argument('--chrome', default='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     p.add_argument('--playwright', default=DEPMAP / 'cache/browser-check/node_modules/playwright-core/index.mjs')
     p.add_argument('--record-font', action='append', default=[
