@@ -279,4 +279,13 @@ def uploads (w h : Nat) (batches : List (List Cmd)) : Bool × Nat := Id.run do
 -- A batch that draws nothing sends nothing.
 #guard uploads 20 10 [[.fillColor "#0f0", .fillRect 0 0 20 10], [.fillColor "#f00"]] == (true, 200)
 
+-- The run scan reads two pixels at a time: runs of odd and even length, a run that ends one
+-- pixel before the range, and a run cut by the end of a row (8 x 3 canvas, rect 1..7).
+#guard (uploads 8 3 [[.fillColor "#0f0", .fillRect 0 0 8 3], [.fillColor "#f00", .fillRect 1 0 5 1, .fillRect 2 1 2 1, .fillRect 1 2 6 1]]).1
+#guard (uploads 9 2 [[.fillColor "#00f", .fillRect 0 0 7 2], [.fillColor "#ff0", .fillRect 0 0 1 2, .fillRect 8 1 1 1]]).1
+#guard unrleBytes (rleRect ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩ 6 0 0 6 1) 6 ==
+  ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩
+#guard rleRect ⟨#[1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 1,2,3,255, 9,9,9,255]⟩ 6 0 0 6 1 ==
+  ⟨#[5, 0, 0, 0, 1, 2, 3, 255, 1, 0, 0, 128, 9, 9, 9, 255]⟩
+
 end L4Factoidal.PageCanvas.Tests

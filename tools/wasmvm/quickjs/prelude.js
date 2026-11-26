@@ -2959,7 +2959,7 @@
     const nums = r => r === '' ? [] : r.split(' ').map(Number);
     const need = (got, k, name) => { if (got < k) throw new TypeError("Failed to execute '" + (name) + "': " + (k) + ' arguments required, but only ' + (got) + ' present.'); };
     const dbl = (x, name) => { x = +x; if (!Number.isFinite(x)) throw new TypeError("Failed to execute '" + (name) + "': the provided double value is non-finite."); return x; };
-    const self = o => { const s = o?.[K]; if (!s || s.kind !== 'ctx') throw new TypeError('Illegal invocation'); return s; };
+    const self = o => { const s = o == null ? undefined : o[K]; if (!s || s.kind !== 'ctx') throw new TypeError('Illegal invocation'); return s; };
     const ruleOf = (r, name) => { if (r === undefined || r === 'nonzero') return 0; if (r === 'evenodd') return 1;
       throw new TypeError("Failed to execute '" + (name) + "': The provided value '" + (r) + "' is not a valid enum value of type CanvasFillRule."); };
 
@@ -3068,7 +3068,7 @@
       Object.defineProperty(P, name, { configurable: true, enumerable: true,
         get() { const s = self(this); const r = ask([1, s.id, 0], [name]); return t === 'n' ? Number(r) : t === 'b' ? r === '1' : r; },
         set(v) {
-          const s = this?.[K];
+          const s = (this == null ? undefined : this[K]);
           if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
           if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
           if (!queued) { queued = true; Promise.resolve().then(flush); }
@@ -3080,7 +3080,7 @@
         get() { const s = self(this); const r = ask([1, s.id, 0], [name]);
           return r.charCodeAt(0) === 1 ? objs.get(Number(r.slice(2))) ?? null : r; },
         set(v) {
-          const s = this?.[K];
+          const s = (this == null ? undefined : this[K]);
           if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
           if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
           if (!queued) { queued = true; Promise.resolve().then(flush); }
@@ -3100,7 +3100,7 @@
         else q.push(op, +a, +b, +c, +d, +e, +f);
       });
     const rectOp = (op, name) => function (x, y, w, h) {
-      const s = this?.[K];
+      const s = (this == null ? undefined : this[K]);
       if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
       if (arguments.length < 4) need(arguments.length, 4, name);
       if (selected !== s.id) { q.push(1, s.id); selected = s.id; }
@@ -3149,7 +3149,7 @@
     // moveTo and lineTo, written out for the same reason.
     for (const [name, op] of [['moveTo', 52], ['lineTo', 53]])
       define(P, name, function (x, y) {
-        const s = this?.[K];
+        const s = (this == null ? undefined : this[K]);
         if (s === undefined || s.kind !== 'ctx') throw new TypeError('Illegal invocation');
         if (arguments.length < 2) need(arguments.length, 2, name);
         if (selected !== s.id) { q.push(1, s.id); selected = s.id; }

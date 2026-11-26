@@ -24,6 +24,7 @@ host gets pixels of exactly the canvas's size; `save`/`restore` is a stack
 import L4Factoidal.PageCanvas.Text
 import L4Factoidal.PageCanvas.Png
 import L4Factoidal.JS.Number
+import L4Factoidal.Prim.Bytes
 import Std.Data.HashSet
 
 namespace L4Factoidal.PageCanvas
@@ -1298,7 +1299,11 @@ def rleRangeInto (out : ByteArray) (d : ByteArray) (start n : Nat) : ByteArray :
   let mut lit := start
   while i < stop do
     let v := wordAt d i
+    let v2 : UInt64 := v.toUInt64 ||| (v.toUInt64 <<< 32)
     let mut j := i + 1
+    -- the run's end: two pixels at a time (one 8-byte load, `Prim.Bytes.ldU64LE`), then one
+    -- at a time; the same end as one at a time (a pair goes on only when both pixels are `v`)
+    while j + 2 ≤ stop && L4Factoidal.Prim.Bytes.ldU64LE d (4 * j).toUSize == v2 do j := j + 2
     while j < stop && wordAt d j == v do j := j + 1
     if j - i >= 3 then
       if lit < i then
