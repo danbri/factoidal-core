@@ -146,6 +146,19 @@ Desktop host (Deno, TypeScript, macOS only):
   that record). Tests: `engine_sessions_test.ts`;
   measurement: `LAB/tools/engine_sessions_bench.py` (Linux rig). The remote engine calls are
   written once over a kernel (`remoteMethods`), for the engine on this thread and the session.
+  `pooled` (a prototype, record section 7): the sessions of `tasks`, served by one or two host
+  workers (`--host-workers 1|2`, `LAB/native_engine_pool.ts`) that make the requests and read
+  the answers; the main thread keeps each tab's lanes (`laneClient`, `native_engine_tasks.ts`).
+- Tabs not shown (`--hidden-tabs`, record section 7): `stopped` (the default) gives their pages
+  no timer turn; `throttled` at most one a second; `running` as the shown page (a load for
+  measurement). With the last two a hidden page's canvas commands are held and replayed when its
+  tab is shown, coalesced by rectangle. Summary `hiddenTabs`.
+- Steady state with many tabs: `engine_sessions_bench.py --scenario steady5|steady20|steady50`
+  (configurations take more host flags: `NAME=LAB:ENGINE:MODE:--hidden-tabs=running`), read with
+  `LAB/tools/engine_sessions_report.py`. Where the CPU of a window went: `perf record -k
+  CLOCK_REALTIME` and `LAB/tools/perf_window_report.py` (the steps start with `mark`). On this
+  VM `/usr/bin/perf` fails for its kernel: use `/usr/lib/linux-tools-6.8.0-151/perf` with `-e
+  cpu-clock`. Whether a WebGPU device can go to another worker: `LAB/tools/webgpu_share_check.ts`.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
@@ -498,6 +511,31 @@ Several sessions work on the owner's laptop at once.
   engine and the QuickJS guest from one release.
 
 ## Traps, each with its cost
+
+- A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps (`--gesture-sweep`,
+  `--scroll-sweep`, `--command-sweep` and the others that set `commands`) sets `everyFrame` in
+  `run_html.ts` (`--watch-sweep` does not): every frame asks Lean for CPU probes
+  (`Scene.checks`, the scene drawn on the CPU at six points). A window in use asks for none in an
+  interactive frame (`checks:false`) and for one probe frame once it is idle. So the frame times
+  of such a run are not those of the window in use. 2026-11-26, 5 tabs, `tasks`, one run each:
+  Lean frame p50 591 ms with the probes, 70 ms with `--idle-checks-only`; new tab first frame
+  p50 1,300 and 299 ms. In a profile of a tab's first frame, 95% of the spare engine's samples
+  were in `Scene.checks`. The first-frame numbers on which D11 of the engine sessions record was
+  decided include the probes. Measure frames of the window in use with `--idle-checks-only`; keep
+  the probes for correctness runs.
+
+- A new tab (`showTab`) stops the load in progress in the tab that was shown, and that tab keeps
+  its old page. 2026-11-26: the first steady-state trial opened the next tab 2 s after sending
+  tab 2 to `particle-rex.html`, which needs about 3.7 s; tab 2 kept the new tab page, so the "load
+  in one background tab" ran no script. Let each step wait for a settled frame, and check
+  `pagesLoaded` in the bench output.
+- In Deno 2.9.4, `structuredClone` or `postMessage` of a `GPUDevice`, `GPUBuffer` or `GPUTexture`
+  does not fail: it gives an empty object with no methods. A check that only looks for an error
+  reads this as a device that moved. `tools/webgpu_share_check.ts` checks the prototype and a
+  call on the copy.
+- `--engine-mode copies` loads each engine from a copy of the library and deletes the file, so
+  `perf` names none of the engine's functions in those workers (`[unknown]`). Make the script with
+  `--show-mmap-events` and give `perf_window_report.py --library` the original.
 
 - `tabFirstFrame` counts only the tabs that drew before the next tab was shown: `run_html.ts`
   times one shown tab (`tabShown`), and a newer tab replaces it. A sweep that opens tabs faster

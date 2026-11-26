@@ -56,7 +56,8 @@ export type TabWorkers=CompileClient&{
   stats():TabWorkerStats;
 };
 type Slot={serial:number;client?:CompileClient;ready:Promise<CompileClient>;tabs:Set<number>;
-  sessions:Map<number,number>;fontSources:Set<string>;ended:boolean};
+  sessions:Map<number,number>;fontSources:Set<string>;ended:boolean;
+  /** A spare's warm-up layout is done (or it had none). */warmed?:boolean};
 export type TabWorkerOptions={
   perTab:boolean;cap:number;
   /** Start one worker; `engineCopy` is the library path for this worker, undefined for Wasm. */
@@ -74,6 +75,10 @@ export type TabWorkerOptions={
   spare?:boolean;
   /** Lay out a page on a spare worker, so its engine is warm. */
   warm?:(client:CompileClient)=>Promise<unknown>;
+  /** With task sessions (tasks, pooled): "new" gives a new tab a new session when the spare has
+  not finished its warm-up; "take" (the default) makes the tab take it and wait for the warm-up,
+  as with workers. Workers always take the spare. */
+  warmingSpare?:"take"|"new";
 };
 const rssMB=()=>{try{return Math.round(Deno.memoryUsage().rss/1048576*10)/10;}catch{return -1;}};
 const round=(ms:number)=>Math.round(ms*10)/10;
@@ -122,6 +127,7 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
       // A spare lays out a page before a tab takes it (calls of a tab that takes it meanwhile wait behind it).
       let warmMs:number|undefined;
       if(tab<0&&options.warm){const w0=performance.now();await options.warm(client).catch(()=>{});warmMs=round(performance.now()-w0);}
+      slot.warmed=true;
       const record:WorkerStart={tab,...(warmMs!==undefined?{warmMs}:{}),worker:slot.serial,ms:round(performance.now()-t0),rssBeforeMB:rss0,rssAfterMB:rssMB(),copyMs:round(copyMs),shared:false,
         ...(client.session?{session:true}:{}),...(client.kind==="task"||client.kind==="pooled"?{kind:client.kind}:{})};
       starts.push(record);
@@ -146,7 +152,15 @@ export async function startTabWorkers(options:TabWorkerOptions):Promise<TabWorke
     if(have&&!have.ended)return have;
     let slot:Slot;
     const running=live();
-    if(spare&&!spare.ended){
+    // A task session starts in about 5 ms, and a spare still in its warm-up layout would make the
+    // tab wait for that layout (record section 7, the profile of a tab's first frame): with task
+    // sessions such a tab gets a session of its own while there is room, and the spare stays.
+    const skipSpare=!!spare&&!spare.ended&&!spare.warmed&&tasksWork!==false&&options.warmingSpare==="new"&&running.length<cap;
+    if(skipSpare){
+      slot=startSlot(tab,false);
+      options.log({type:"native-html-engine-worker",state:"spare-warming",tab,worker:spare!.serial,live:running.length+1});
+    }
+    else if(spare&&!spare.ended){
       slot=spare;spare=undefined;slot.tabs.add(tab);sparesTaken++;
       options.log({type:"native-html-engine-worker",state:"spare-taken",tab,worker:slot.serial,live:running.length});
       clearTimeout(spareTimer);spareTimer=setTimeout(prewarm,2000);

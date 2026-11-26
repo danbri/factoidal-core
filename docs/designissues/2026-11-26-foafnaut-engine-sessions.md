@@ -541,3 +541,148 @@ Wasm engine (Emscripten), the macOS window library or `lake build frame-cost-cas
 the browser with no `--engine-mode` option per scenario (tabs, heavy, rex), with the library of
 D12, while `tasks` was the default (before D11 was changed, section 6b): each exits 0 in mode
 `tasks`.
+
+## 7. Steady state, tabs not shown, and a pooled host (2026-11-26, after the owner's input)
+
+Owner input, as written in the status note "Foafnaut engine per tab: status and proposals" and
+recorded in `CLAUDE.md` (commit `48aa98e6`): "The Linux tests had no GPU." "A Deno per tab is too
+costly if it is used only for host work and WebGPU. Can we pool and reuse one or two Denos?" "New
+tab first frame matters, but steady speed and memory use may matter more." The coordinator session
+(release manager of 0.38.0) asked for four steps on Linux: a steady-state scenario with 5, 20 and
+50 tabs; a profile of tab B's first frame in `tasks` mode; a prototype of the pooled shape behind
+a flag, with a check whether two Deno workers can share one WebGPU device; and this record. The
+default stays `copies`; this section ends with a question to the owner.
+
+### 7a. What was built (on `main`, each behind an option)
+
+- Scenarios `steady5`, `steady20` and `steady50` in `engine_sessions_bench.py` (commits `cbb2db23`,
+  `547af47f`): from the start page, N-1 new tabs, each sent to a demo page (tab 2 to
+  `particle-rex.html`) after the last load settled; tab 1 is shown again; the host marks (step
+  `mark`: process CPU time and resident memory), stays idle 10 s, marks, gets 3 rounds of the
+  desktop gestures (double and triple click, select all, copy, two context menus) and 30 scroll
+  steps, and marks. Report lines: `engine_sessions_report.py`.
+- `--hidden-tabs stopped|throttled|running` (`run_html.ts`, `547af47f`). `stopped`, the default and
+  the behaviour before: the page of a tab not shown gets no timer turn. `throttled`: at most one
+  timer turn a second. `running`: turns as for the shown page; it is the load "other tabs run
+  scripts" of the coordinator's step 1. With `throttled` and `running` a hidden page's canvas
+  commands are held and replayed when its tab is shown.
+- `--engine-mode pooled --host-workers 1|2` (`native_engine_pool.ts`,
+  `native_engine_pool_worker.ts`, `ae56565a`): each tab's engine is a session on its own Lean task,
+  as in `tasks`; one or two Deno workers hold the sessions of every tab, make the request text,
+  call the session through nonblocking FFI and read the answer; each request names its tab. The
+  main thread keeps the window, input, the GPU and each tab's lanes (`laneClient`, shared with
+  `tasks`).
+- `--warming-spare take|new` (`native_html_tabs.ts`): with task sessions, `new` gives a tab opened
+  while the spare engine is still in its warm-up layout a session of its own.
+- `tools/perf_window_report.py`: perf samples of the window of a trace record, per thread,
+  library and function; it names frames of the deleted library copies of `copies` mode from the
+  original library. `tools/webgpu_share_check.ts`: the WebGPU check of 7e.
+
+D14. Tabs not shown: `stopped` stays the default; `throttled` and `running` are for measurement.
+Reason: what the product should do is not measured yet. Browsers throttle timers of hidden tabs
+(about once a second) and run no animation frames for a hidden document (HTML, "update the
+rendering": a document with no rendering opportunity). `throttled` here runs at most one turn a
+second, and that turn runs one animation frame if one is due, because `PageEvents.advance` has no
+input for "no rendering opportunity"; skipping them needs a change in the Lean event loop.
+
+D15. A hidden page's canvas commands are held, in order, and replayed when its tab is shown.
+A held `pixels` command that a later one covers (same texture, its rectangle inside the later
+one's, no command of another kind between them) is dropped. Past 64 MB of held pixels the held
+commands are replayed at once and counted (`forced`). Reason: the owner's shape says background
+tabs upload nothing, and the canvas must still be right when shown. Measured on a trial with
+Particle Rex hidden and `running` (one run each, 5 tabs, the library of section 6b): 863 turns
+held, 861 dropped by the rule, 0 forced; resident memory grew 45 MB in the 10 s idle window,
+against 273 MB without the rule (829 held, 784 forced).
+
+D16. One GPU owner: the main thread (7e).
+
+D17. The pooled host workers do not run the engine. Reason: a pool worker that ran engine calls
+on its own thread would hold every tab it serves while one page lays out (the shape of
+`--one-engine-worker`). The engine stays on each session's Lean task; a host worker only makes
+requests and reads answers, and calls of several tabs are in flight on it at once. A tab goes to
+the host worker with the fewest tabs.
+
+### 7b. Frames of a run with steps carry CPU probes (a measurement error, found 2026-11-26)
+
+A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps sets `everyFrame` in
+`run_html.ts`: every frame asks Lean for CPU probes (`NativeSVG.Scene.checks`: the scene drawn
+on the CPU at six points, for the check of the GPU frame). A window in use asks for none in an
+interactive frame (`checks:false`) and for one probe frame once it is idle. `--watch-sweep` sets
+neither. So the scenarios `heavy`, `tabs`, `tabs-spaced` and `status` of sections 6 to 6b, and the
+first steady runs of 7d, measured frames with work the window in use does not do. The modes did
+the same work, so the comparisons between modes stand; the times do not describe the window in
+use. D11 was decided on first-frame numbers that include the probes.
+
+One run of each, `tasks` mode, `main` `48aa98e6`, with the probes and with `--idle-checks-only`:
+
+| Number | with probes | `--idle-checks-only` |
+|---|---|---|
+| 5 tabs: new tab first frame p50 (5 tabs), ms | 1,300 | 299 |
+| 5 tabs: Lean frame total p50 and p95 after the idle window, ms | 591, 673 | 70, 377 |
+| 5 tabs: scroll present total p95, ms | 57 | 10 |
+| 5 tabs: input latency p50 and p95, ms | 622, 1,530 | 306, 544 |
+| 5 tabs: gesture queuedToActionMs p95, ms | 25.6 | 24.7 |
+| heavy: tab B first frame, ms | 1,612 | 1,222 |
+| heavy: tab B input latency p50 and p95, ms | 402, 1,176 | 15, 995 |
+
+From commit `727da360` the steady scenarios run with `--idle-checks-only`; the trap is in
+`skills/foafnaut` and `CLAUDE.md` says so where it quotes the numbers of D11.
+
+### 7c. Profile of tab B's first frame (coordinator's step 2)
+
+Method: scenario `heavy` (tab A loads a 2 MB table; 300 ms later tab B opens), `perf record -e
+cpu-clock -F 999 -g -k CLOCK_REALTIME` (`/usr/lib/linux-tools-6.8.0-151/perf`; `/usr/bin/perf`
+fails for this kernel), `deno --v8-flags=--perf-basic-prof`, cut to the window from tab B shown
+to its first frame with `tools/perf_window_report.py`. One sample is about 1 ms of one CPU. Six
+runs with the probes (3 a mode), one with DWARF stacks (`--call-graph dwarf`, 199 Hz, `tasks`),
+four without the probes (2 a mode).
+
+With the probes, tab B's first frame took 1,500 to 2,586 ms, and the state of the spare engine
+decided most of it in both modes: taken while still in its warm-up layout, copies 2,586 and 2,414
+ms, tasks 2,326 and 2,065 ms; a fresh engine, copies 1,795 ms, tasks 1,500 ms. The DWARF stacks
+name the warm-up's work: 345 of the 364 samples of the spare's thread in the window (95%) were in
+`NativeSVG.Scene.checks`, the probes of 7b: 344 through the page layer (`WebDocument.layersJSON`,
+`pageArtifactImpl`, `WebRender.artifactWith`, `Scene.jsonWith`), 1 through the chrome; below it
+`adaptiveSampleAt`, `coverageLocal` and `NativeGraphics.Expr.evalFast`, the coverage interpreter.
+
+Without the probes, tab B's first frame took 453 and 587 ms (`tasks`) and 500 and 542 ms
+(`copies`). The costs in that window, by measurement:
+
+1. The software GPU. Mesa llvmpipe drew the frames on the CPU: 561 to 800 samples. The frame record
+   gives draw 88 to 92 ms; the main thread waited about 150 ms just before the frame started (a pump
+   gap with no frame in progress and few samples on that thread). On the Mac this is GPU work; not
+   measured here.
+2. Tab A's page load, which ran at the same time on its own engine: 374 to 458 samples (HTML parse,
+   DOM, inspection). A change that would lower it: a lower OS priority for the engine thread of a
+   tab not shown (not built).
+3. V8 background threads: 404 to 724 samples, in both modes. Not garbage collection (3 scavenges,
+   13.7 ms of pause in the window, `--trace-gc`) and not JIT compilation (9 optimisations, 6 ms,
+   `--trace-opt`); not identified (the `deno` binary has no symbols).
+4. Tab B's own engine: 56 to 175 samples; layout 45 to 212 ms in the frame record.
+5. Allocation and release (mimalloc, Lean reference counts) are 34 to 46% of the engine threads'
+   samples in every run, in both modes. A cost of the engine's code, not of the mode: no mode
+   change removes it.
+6. Runtime start: a task session starts in about 5 ms (section 4); nothing in the profile. The
+   kernel zeroes more pages with library copies (`clear_page_erms`, 92 to 95 samples in `copies`,
+   11 to 36 in `tasks`).
+7. The main thread's own work: 17 to 43 samples. It is not the bottleneck in either mode, so a
+   pool of host workers (7a, `pooled`) has little to take from it in this window.
+
+`--warming-spare new` (7a) removes the wait for a spare still in its warm-up in the task modes;
+measured in 7d.
+
+### 7d. Steady state with 5, 20 and 50 tabs
+
+The runs of this section are in progress on the Linux rig (with `--idle-checks-only`, 7b); the
+tables follow here when they end.
+
+### 7e. Can two Deno workers share one WebGPU device?
+
+No. `tools/webgpu_share_check.ts`, Deno 2.9.4, the llvmpipe software adapter (Mesa, LLVM 20.1.2):
+`structuredClone` and `postMessage` of a `GPUDevice`, a `GPUBuffer` and a `GPUTexture` do not
+fail, but they give an empty object with no methods (`Object.keys` empty, `createBuffer` not a
+function, `instanceof GPUDevice` false). A device in each of two workers on the same adapter works
+(a compute pass doubles a buffer in each, one after the other and both at once), at about 30 ms
+and 17 MB of resident memory per device. Objects of one device can not be used on another, so a
+frame made from two devices needs copies through the CPU. Decision D16: the main thread stays the
+one GPU owner; host workers do no GPU work. Not checked here: Metal on the Mac.

@@ -7,11 +7,17 @@ Record (the real-time clock, so samples and trace share a clock; the run's steps
 
   perf record -e cpu-clock -F 999 -g -k CLOCK_REALTIME -o run.data -- \\
     deno run --v8-flags=--perf-basic-prof ... run_html.ts ... --steps STEPS > trace.log
-  perf script -i run.data -F comm,pid,tid,time,ip,sym,dso > run.script
+  perf script -i run.data --show-mmap-events -F comm,pid,tid,time,ip,sym,dso > run.script
 
 Report:
 
   perf_window_report.py --trace trace.log --script run.script [--window tab-first-frame:1]
+      [--library libweb-render.so]
+
+--library: the native library that the engine's copies were made from (--engine-mode copies
+loads a copy per worker and deletes the file, so perf can not read its symbols): frames in a
+file named foafnaut-engine-*.so are named from this library's symbol table, through the copy's
+memory map (the run.script must have --show-mmap-events).
 
 Windows: `tab-first-frame:N` is the N-th native-html-tab-first-frame record (from the tab shown
 to its first frame; 0 is the first); `marks:A:B` is from the A-th to the B-th native-html-mark.
@@ -19,7 +25,7 @@ For each window: samples per thread (main is the thread whose id is the process 
 library, the leaf functions (self) and the functions on any frame of the stack (inclusive), with
 the share of the window's samples. One sample is about 1 ms of one CPU (at -F 999).
 """
-import argparse, collections, json, re, sys
+import argparse, bisect, collections, json, re, subprocess, sys
 
 def trace_records(path):
     out = []
@@ -32,12 +38,40 @@ def trace_records(path):
     return out
 
 HEADER = re.compile(r"^\s*(?P<comm>.+?)\s+(?P<pid>\d+)/(?P<tid>\d+)\s+(?P<time>\d+\.\d+):")
-FRAME = re.compile(r"^\s+[0-9a-f]+\s+(?P<sym>.*?)\s+\((?P<dso>[^()]*)\)\s*$")
+FRAME = re.compile(r"^\s+(?P<ip>[0-9a-f]+)\s+(?P<sym>.*?)\s+\((?P<dso>[^()]*)\)\s*$")
+MMAP = re.compile(r"\[0x(?P<start>[0-9a-f]+)\(0x(?P<len>[0-9a-f]+)\) @ 0x(?P<pgoff>[0-9a-f]+) .*\]: r-xp (?P<path>\S+)")
+COPY = re.compile(r"foafnaut-engine-[0-9]+-[0-9]+\.(so|dylib)$")
 
-def samples(path):
+class Symbols:
+    """The text symbols of a library, to name an address of a copy of it."""
+    def __init__(self, library):
+        out = subprocess.run(["nm", "-n", "--defined-only", library], capture_output=True, text=True, check=True).stdout
+        self.addrs, self.names = [], []
+        for line in out.splitlines():
+            parts = line.split(" ", 2)
+            if len(parts) == 3 and parts[1] in "tTwW":
+                self.addrs.append(int(parts[0], 16)); self.names.append(parts[2])
+        # The executable segment's address minus its file offset (readelf -l).
+        self.delta = 0
+        for line in subprocess.run(["readelf", "-lW", library], capture_output=True, text=True, check=True).stdout.splitlines():
+            # LOAD offset vaddr paddr filesz memsz flags... align; the flags of the code are "R E".
+            f = line.split()
+            if len(f) >= 8 and f[0] == "LOAD" and "E" in f[6:-1]:
+                self.delta = int(f[2], 16) - int(f[1], 16)
+    def name(self, vaddr):
+        i = bisect.bisect_right(self.addrs, vaddr) - 1
+        return self.names[i] if i >= 0 else "[unknown]"
+
+def samples(path, symbols=None):
     """(time s, comm, pid, tid, [(sym, dso), ...] leaf first) per sample of `perf script`."""
     cur = None
+    maps = {}
     for line in open(path, errors="replace"):
+        if "PERF_RECORD_MMAP" in line:
+            m = MMAP.search(line)
+            if m and COPY.search(m["path"]):
+                maps[m["path"].rsplit("/", 1)[-1]] = (int(m["start"], 16), int(m["pgoff"], 16))
+            continue
         if not line.strip():
             if cur:
                 yield cur
@@ -53,6 +87,10 @@ def samples(path):
         if f and cur:
             sym = re.sub(r"\+0x[0-9a-f]+$", "", f["sym"])
             dso = f["dso"].rsplit("/", 1)[-1]
+            if symbols and sym == "[unknown]" and dso in maps:
+                start, pgoff = maps[dso]
+                sym = symbols.name(int(f["ip"], 16) - start + pgoff + symbols.delta)
+                dso = "libweb-render.so (copy)"
             cur[4].append((sym, dso))
     if cur:
         yield cur
@@ -88,6 +126,7 @@ def main():
     ap.add_argument("--window", action="append", default=[])
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--json")
+    ap.add_argument("--library", help="the library the engine copies were made from")
     a = ap.parse_args()
     records = trace_records(a.trace)
     marks = [r for r in records if r.get("type") == "native-html-mark" and "epochMs" in r]
@@ -107,7 +146,7 @@ def main():
             windows.append((w, wall(marks[int(arg[0])]["t"]), wall(marks[int(arg[1])]["t"])))
         else:
             sys.exit(f"unknown window {w}")
-    all_samples = list(samples(a.script))
+    all_samples = list(samples(a.script, Symbols(a.library) if a.library else None))
     out = []
     for name, start, end in windows:
         picked = [s for s in all_samples if start <= s[0] <= end]

@@ -11,7 +11,8 @@ import {startTabWorkers} from "./native_html_tabs.ts";
 import type {CompileClient} from "./native_html_compile.ts";
 
 type Fake={id:number;engine:string|undefined;calls:[string,unknown[]][];terminated:boolean;sessions:number};
-const fakes=()=>{
+// kind "task": stand-ins for task sessions (native_engine_tasks.ts), which start at once.
+const fakes=(kind?:"task")=>{
   const made:Fake[]=[];
   const start=async(engine:string|undefined)=>{
     if(engine)assert((await Deno.stat(engine)).isFile,"the library copy exists while the worker starts");
@@ -23,6 +24,7 @@ const fakes=()=>{
       return {value:f.id,workerMs:0};
     };
     const client={
+      ...(kind?{kind,session:true}:{}),
       get alive(){return !f.terminated;},pending:0,inFlight:0,
       call:async(name:string,...args:unknown[])=>answer(name,args),
       inputCall:async(name:string,...args:unknown[])=>answer(name,args),
@@ -131,6 +133,35 @@ Deno.test({name:"each worker after the first loads its own copy of the native li
   pool.terminate();
   await Deno.remove(dir,{recursive:true});
 }});
+
+Deno.test("with task sessions a tab opened while the spare warms gets a new session (warmingSpare new); take waits for the spare", async () => {
+  for(const rule of ["new","take"] as const){
+    const {made,start}=fakes("task");
+    let release!:()=>void;
+    const warming=new Promise<void>(resolve=>{release=resolve;});
+    const log:Record<string,unknown>[]=[];
+    const pool=await startTabWorkers({perTab:true,cap:4,start,spare:true,warmingSpare:rule,log:record=>log.push(record),
+      warm:async()=>{await warming;}});
+    pool.prewarm();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    assertEquals(made.length,2,"the first engine and the spare");
+    pool.show(1);
+    const answer=pool.call("inspect","x");
+    if(rule==="new"){
+      assertEquals((await answer).value,2,"the tab has a new session, not the warming spare");
+      assert(log.some(r=>r.state==="spare-warming"),"the skip is said");
+      release();
+      await new Promise(resolve=>setTimeout(resolve,0));
+      pool.show(2);
+      assertEquals((await pool.call("inspect","y")).value,1,"the next tab takes the spare, now warm");
+    }else{
+      release();
+      assertEquals((await answer).value,1,"the tab took the spare and waited for its warm-up");
+      assertEquals(made.length,2);
+    }
+    pool.terminate();
+  }
+});
 
 Deno.test("a warmed spare worker is taken by the next new tab; it counts toward the cap", async () => {
   const {made,start}=fakes();

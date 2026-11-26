@@ -45,7 +45,10 @@ Scenarios (the steps language of run_html.ts --steps):
           mode). With the host's default, --hidden-tabs stopped, only the shown tab's page gets
           timer turns, so the pages of the other tabs run no script; with --hidden-tabs throttled
           or running (a FLAGS item) they do, and their turns are counted (hiddenTurnsIdle,
-          hiddenTurnsActive, hiddenLeanMsActive).
+          hiddenTurnsActive, hiddenLeanMsActive). Run with --idle-checks-only (since 2026-11-26
+          09:30 UTC). The scenarios heavy, tabs, tabs-spaced and status (--steps, --resize-sweep)
+          ask Lean for CPU probes in every frame, which an interactive frame of the window in use
+          does not do (add --idle-checks-only as a FLAGS item); one and rex (--watch-sweep) do not.
 
 Output: one JSON object, with each run's numbers and, per configuration and scenario, the
 median, the worst and the coefficient of variation of each number
@@ -110,7 +113,10 @@ def scenarios(work):
         "tabs": ["--html", "pages/index.html", "--steps", str(files["tabs"])],
         "tabs-spaced": ["--html", "pages/index.html", "--steps", str(files["tabs-spaced"])],
         # --log-all: the log gate holds back no line (the numbers are read from the lines).
-        **{f"steady{n}": ["--html", "pages/index.html", "--log-all", "--steps", str(files[f"steady{n}"])] for n in STEADY},
+        # --idle-checks-only: a run with --steps asks Lean for CPU probes in every frame
+        # (`everyFrame` in run_html.ts); a window in use asks for none in an interactive frame and
+        # one probe frame after it is idle. Frame times here are those of the window in use.
+        **{f"steady{n}": ["--html", "pages/index.html", "--log-all", "--idle-checks-only", "--steps", str(files[f"steady{n}"])] for n in STEADY},
         "one": ["--html", "pages/index.html", "--watch-sweep", "4"],
         "status": ["--html", "pages/status.html", "--resize-sweep"],
         "rex": ["--html", "pages/particle-rex.html", "--watch-sweep", "8"],
