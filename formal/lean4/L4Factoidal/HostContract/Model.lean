@@ -128,6 +128,8 @@ def ops : List OpSpec :=
     ⟨"keyTable", .query, [.keyboard]⟩, ⟨"findEdit", .query, [.keyboard]⟩,
     -- counters and host facts
     ⟨"frameWork", .counter, []⟩, ⟨"imageInfo", .counter, []⟩, ⟨"cpuInfo", .counter, []⟩,
+    -- the real-time Web Audio runs and their measures (`WebAudioRun.runsAnswer`)
+    ⟨"audioRuns", .counter, []⟩,
     ⟨"aboutPage", .hostFact, []⟩, ⟨"engineBuild", .hostFact, []⟩ ]
 
 def opSpec? (name : String) : Option OpSpec := ops.find? (·.name == name)
@@ -140,7 +142,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 75
+#guard opNames.length == 76
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

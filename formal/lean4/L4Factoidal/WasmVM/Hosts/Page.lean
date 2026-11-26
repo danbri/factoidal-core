@@ -462,6 +462,12 @@ structure Limits where
   syncOk : Bool := false
   /-- The page's scripts may make a sync request in a later action (`Net.Xhr.State.mayBlock`). -/
   mayBlock : Bool := false
+  /-- The engine's audio output for Web Audio's real-time contexts: the device's sample rate and
+  channel count, or none (then `new AudioContext()` answers `NotSupportedError`). Set by the
+  engine (`labs/demos/foafnaut/WebAudioRun.lean`), never by a page (`WebAudio.Api.State.device`). -/
+  audioDevice : Option (Float × Nat) := none
+  /-- A real-time context runs with no user activation (`WebAudio.Api.State.autoplay`). -/
+  autoplay : Bool := false
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -2445,6 +2451,8 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
       encoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding
       policies := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta } }
   let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
+  -- the engine's audio output and autoplay setting (`Limits.audioDevice`, `autoplay`)
+  let web := { web with audio := { web.audio with device := s.limits.audioDevice, autoplay := s.limits.autoplay } }
   let s := { s with host := { s.host with web } }
   let d0 := Id.run do
     let mut d0 := d0

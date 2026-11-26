@@ -121,8 +121,11 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
     state (`suspended`, `running`, `closed`). The state is `running` when `autoplay` or `activated`.
-    The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET])`, the target
-    in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to 16384).
+    The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET, STATE])`,
+    the target in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to
+    16384) and STATE the initial state's code (`RtState.code`: 0 suspended, 1 running), so that
+    the rendering side starts as the control side did. Both sides make the graph state with
+    `rtContext` (`newAudioContextOp_context`).
   * 191 `control(ctx, verb)`: `resume`, `suspend`, `close` (else -20); -20 for a context that is
     not real-time; -29 when the context is closed. Answers the call id (decimal) and appends
     `(191, [ctx, verb, callId])` to the outbox; the promise resolves when an event of kind 3 (or
@@ -143,6 +146,10 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
 
 No op changes a context other than the one it names (`withCtx_other`), and an op that fails
 changes nothing (`op_error_state`; op 195 with a stored error result excepted).
+
+`needsTurns`: the page has a real-time context that is running or that has a control call the
+rendering side has not answered (one waiting for activation excepted). The engine then asks the
+host for a turn at most 25 ms ahead (`nextWake`, plan 13.3), so the events are delivered.
 -/
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
@@ -761,7 +768,19 @@ def targetFrames (h : Hint) (rate : Float) : Nat :=
   | .frames n => n
   | .seconds x => min 16384 (max 256 (x * rate).ceil.toUInt64.toNat)
 
-def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+/-- The graph state of a real-time context of sample rate `rate`: a destination of 2 channels,
+length 0 (it is never rendered whole). The control side (op 190) and the rendering side
+(`RenderSide.ofOpen`) both make it with this function. -/
+def rtContext (rate : Float) : Except Int Context.OfflineContext := do
+  let c0 ← lift (Context.OfflineContext.new 2 1 rate)
+  pure { c0 with length := 0 }
+
+/-- The state a new real-time context starts in: running when no activation is needed. -/
+def initialState (s : State) : RtState := if s.autoplay || s.activated then .running else .suspended
+
+/-- The checks of op 190, in order: the hint, the callback, the rate, the device and the limit of
+live contexts. Answers the rate, the device's channel count, the target frames and the callback. -/
+def openArgs (s : State) (fs : Array ByteArray) : Except Int (Float × Nat × Nat × Nat) := do
   let hint ← parseHint (fs.getD 0 ByteArray.empty)
   let cb ← natArg fs 2
   let rateField := fs.getD 1 ByteArray.empty
@@ -770,17 +789,45 @@ def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × 
   if !(rate ≥ 3000.0 && rate ≤ 768000.0) then throw errNotSupported
   if s.device.isNone || liveRealtime s ≥ maxLiveRealtime || s.contexts.size ≥ maxContexts then
     throw errNotSupported
-  let c0 ← lift (Context.OfflineContext.new 2 1 rate)
-  let c := { c0 with length := 0 }
+  pure (rate, devCh, targetFrames hint rate, cb)
+
+/-- A new real-time context with graph state `c`, under the next id: its record, with the first
+message for its rendering side, and the answer of op 190. -/
+def addRealtime (s : State) (rate : Float) (devCh target cb : Nat) (c : Context.OfflineContext) :
+    State × ByteArray :=
   let id := s.next
-  let target := targetFrames hint rate
+  let st := initialState s
   let rt : Realtime :=
-    { state := if s.autoplay || s.activated then .running else .suspended
-      maxChannels := devCh, target, callback := cb
-      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target])] }
-  pure ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt,
-                 next := id + 1 },
-        ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
+    { state := st, maxChannels := devCh, target, callback := cb
+      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target, dec st.code])] }
+  ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt, next := id + 1 },
+   ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
+
+def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let (rate, devCh, target, cb) ← openArgs s fs
+  let c ← rtContext rate
+  pure (addRealtime s rate devCh target cb c)
+
+/-- Says: a real-time context made by op 190 holds the graph state `rtContext` gives for some
+rate, the state the rendering side also starts from (`RenderSide.ofOpen`, with the rate it reads
+from the first message). Does not say: that the two rates are the same number (the first message
+carries the rate as the 8 bytes of a binary64; `#guard`s below). -/
+theorem newAudioContextOp_context (s s' : State) (fs : Array ByteArray) (out : ByteArray)
+    (h : newAudioContextOp s fs = .ok (s', out)) :
+    ∃ rate c, rtContext rate = .ok c ∧ s'.contexts[s.next]? = some c := by
+  unfold newAudioContextOp at h
+  cases ha : openArgs s fs with
+  | error e => simp [ha, bind, Except.bind] at h
+  | ok args =>
+    obtain ⟨rate, devCh, target, cb⟩ := args
+    cases hc : rtContext rate with
+    | error e => simp [ha, hc, bind, Except.bind] at h
+    | ok c =>
+      simp only [ha, hc, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+      refine ⟨rate, c, hc, ?_⟩
+      have h1 : (addRealtime s rate devCh target cb c).1 = s' := by rw [h]
+      rw [← h1]
+      simp [addRealtime]
 
 def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let id ← natArg fs 0
@@ -877,6 +924,14 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
     { s with realtime := s.realtime.insert ctx rt', contexts := s.contexts.insert ctx c'
              wakeups := if evs.isEmpty then s.wakeups else s.wakeups.push rt.callback }
   | _, _ => s
+
+/-- Plan 13.3: the page has a real-time context that is running, or one with a control call the
+rendering side has not answered (other than a `resume` that waits for activation). While this
+holds the engine asks for a turn at most 25 ms ahead, so the host gives the turns that deliver
+the events. -/
+def needsTurns (s : State) : Bool :=
+  s.realtime.fold (fun b _ rt => b || rt.state == .running ||
+    rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false
 
 /-- A sequence of reports, in order. -/
 def applyReports (s : State) (rs : List (Nat × Report)) : State :=
@@ -1483,7 +1538,22 @@ private def full : State :=
   let s ← chain devS [(190, [t "playback", ByteArray.empty, n 7])]
   let m := (rtOf s 1).outbox
   pure (m.size, m[0]!.1, m[0]!.2.size, strArg m[0]!.2 0, Float.ofBits (u64At m[0]!.2[1]! 0),
-        strArg m[0]!.2 2, strArg m[0]!.2 3)) == some (1, 190, 4, "1", 48000.0, "2", "4096")
+        strArg m[0]!.2 2, strArg m[0]!.2 3, strArg m[0]!.2 4)) ==
+  some (1, 190, 5, "1", 48000.0, "2", "4096", "0")
+-- The initial state in the first message: running with autoplay.
+#guard ((chain { devS with autoplay := true } [(190, [t "playback", ByteArray.empty, n 7])]).map fun s =>
+  strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
+-- The rate's 8 bytes give the rate back (the rendering side reads them, `RenderSide.ofOpen`).
+#guard [48000.0, 44100.0, 3000.0, 768000.0, 22050.5].all fun r => Float.ofBits (u64At (f64le r) 0) == r
+-- needsTurns: a running context; a suspended one with no call; a resume waiting for activation;
+-- a suspend not yet answered; a closed context.
+#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some false
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"])]).map needsTurns == some false
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "suspend"])]).map needsTurns == some true
+#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]).map
+  (fun s => needsTurns (applyReport s 1 { stateChanges := #[.closed] })) == some false
+#guard needsTurns {} == false
 
 -- The outbox after a few ops; an offline context beside it is not touched.
 private def rtGraph : Option State :=
