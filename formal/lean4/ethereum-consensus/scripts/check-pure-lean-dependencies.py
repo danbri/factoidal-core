@@ -83,8 +83,12 @@ def config_roots(package: Path) -> set[str]:
     roots = {CONSENSUS}
     targets = set(by_name)
     for executable in config.get("lean_exe", []):
-        require_keys(executable, {"name", "root"}, "lean_exe")
         target = executable.get("name")
+        is_byte_proof = target == "ssz-byte-proofs" and executable.get("root") == "ByteProofMain"
+        require_keys(executable, {"name", "root", "moreLeancArgs"} if is_byte_proof else {"name", "root"}, "lean_exe")
+        if is_byte_proof:
+            require(executable.get("moreLeancArgs") == ["-Dlean_initialize=lean_initialize_runtime_module"],
+                    "ssz-byte-proofs must use the exact reviewed runtime initializer flag")
         require(isinstance(target, str) and target not in targets, f"invalid executable target {target!r}")
         targets.add(target)
         root = executable.get("root", "")
@@ -156,6 +160,9 @@ def source_graph(package: Path, roots: set[str]) -> dict[str, set[str]]:
         path = module_path(base, module, ".lean")
         require(path.resolve() == path, f"Lean source resolves outside its declared path: {path}")
         imports = direct_imports(path)
+        if module == "ByteProofMain":
+            require(imports == {"EthereumConsensus.SSZ.ByteProof", "Lean.Data.Json.Parser",
+                                "Lean.Data.Json.FromToJson.Basic"}, "ByteProofMain imports changed")
         if parent_source:
             expected = set() if module == SHA2 else {SHA2}
             require(imports == expected, f"{module} imports changed: {sorted(imports)}")
@@ -190,6 +197,11 @@ def check_negative_controls(package: Path, graph: dict[str, set[str]]) -> None:
         (toolchain, lambda _: "leanprover/lean4:v4.34.0\n", "must select"),
         (config, lambda text: text + '\n[[require]]\nname = "foreign"\n', "unreviewed settings: require"),
         (config, lambda text: 'moreLinkArgs = ["-lcrypto"]\n' + text, "unreviewed settings: moreLinkArgs"),
+        (config, lambda text: text.replace('moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]', ''),
+         "exact reviewed runtime initializer flag"),
+        (config, lambda text: text.replace('root = "Main"', 'root = "Main"\nmoreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]'),
+         "unreviewed settings: moreLeancArgs"),
+        (Path("ByteProofMain.lean"), lambda text: "import Lean\n" + text, "ByteProofMain imports changed"),
         (manifest, lambda text: json.dumps(dict(json.loads(text), packages=[{"name": "foreign"}])),
          "Lake manifest packages must be empty"),
         (root_module, lambda text: f"import {SHA2}Native\n" + text, "outside the allowed module graph"),

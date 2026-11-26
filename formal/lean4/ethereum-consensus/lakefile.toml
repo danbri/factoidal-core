@@ -53,6 +53,7 @@ root = "MultiProofMain"
 [[lean_exe]]
 name = "ssz-byte-proofs"
 root = "ByteProofMain"
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
 
 [[lean_exe]]
 name = "ssz-basic-types"

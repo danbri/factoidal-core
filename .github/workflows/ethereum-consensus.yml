@@ -84,7 +84,7 @@ jobs:
             check_lean EthereumConsensus/SSZ/ByteProofTheorems.lean
           } | tee "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
           python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
-            ethereum-consensus/evidence/2026-11-25-byte-proof-runtime-import-claim-ledger.json \
+            ethereum-consensus/evidence/2026-11-26-byte-proof-json-runtime-claim-ledger.json \
             "$RUNNER_TEMP/ethereum-byte-proof-axioms.log"
       - name: Compile and inspect the native SSZ byte-proof executable
         run: |
@@ -97,6 +97,17 @@ jobs:
             --binary ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
             --link-log "$RUNNER_TEMP/ethereum-byte-proof-build.log" \
             --report "$RUNNER_TEMP/ethereum-byte-proof-dependencies.json"
+      - name: Audit native SSZ byte-proof runtime boundary
+        run: |
+          set -euo pipefail
+          python3 ethereum-consensus/scripts/check-native-runtime.py \
+            ethereum-consensus/.lake/build/bin/ssz-byte-proofs \
+            --report "$RUNNER_TEMP/ethereum-byte-proof-runtime.json"
+          python3 - "$RUNNER_TEMP/ethereum-byte-proof-runtime.json" <<'PY'
+          import json, sys
+          report = json.load(open(sys.argv[1]))
+          assert report["passed"] and report["runtimeInitializerDefined"] and not report["fullBootstrapDefined"]
+          PY
       - name: Check native SSZ byte proofs against the independent reference
         run: |
           python3 ethereum-consensus/scripts/check-byte-proofs.py \
@@ -110,7 +121,7 @@ jobs:
           lake -d ethereum-consensus env lean "$PWD/ethereum-consensus/EthereumConsensus/SSZ/BasicTypes.lean" |
             tee "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
           python3 ethereum-consensus/scripts/check-byte-proof-axioms.py \
-            ethereum-consensus/evidence/2026-11-25-basic-type-runtime-import-claim-ledger.json \
+            ethereum-consensus/evidence/2026-11-26-basic-type-json-runtime-claim-ledger.json \
             "$RUNNER_TEMP/ethereum-ssz-basic-axioms.log"
           python3 ethereum-consensus/scripts/check-basic-types.py \
             ethereum-consensus/.lake/build/bin/ssz-basic-types \
@@ -230,6 +241,7 @@ jobs:
             ${{ runner.temp }}/ethereum-byte-proof-axioms.log
             ${{ runner.temp }}/ethereum-byte-proof-build.log
             ${{ runner.temp }}/ethereum-byte-proof-dependencies.json
+            ${{ runner.temp }}/ethereum-byte-proof-runtime.json
             ${{ runner.temp }}/ethereum-byte-proof-report.json
             ${{ runner.temp }}/ethereum-ssz-basic-axioms.log
             ${{ runner.temp }}/ethereum-ssz-basic-results.json

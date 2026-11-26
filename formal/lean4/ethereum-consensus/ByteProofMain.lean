@@ -1,4 +1,6 @@
 import EthereumConsensus.SSZ.ByteProof
+import Lean.Data.Json.Parser
+import Lean.Data.Json.FromToJson.Basic
 
 /-! JSON Lines driver for the concrete SSZ proof and SHA-256 test interface. -/
 
