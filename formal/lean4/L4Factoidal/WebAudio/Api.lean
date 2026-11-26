@@ -77,7 +77,7 @@ of `WebApi.lean`; -28 to -30 are new.
     InvalidStateError (automation rules of `Automation.insert`); -28 no such parameter.
   * 180 `paramInfo(ctx, node, param)`: 4 doubles (`value`, `defaultValue`, `minValue`,
     `maxValue`) then one byte: 1 a-rate, 0 k-rate. `value` is the automation value at the current
-    time.
+    time, clamped to the nominal range (`Render.finalValue`).
   * 181 `start(ctx, node, [when], [offset], [duration])`: reals; an absent `when` is 0.
     `offset` and `duration` are for an `AudioBufferSourceNode`. -29 started before; -21; -20.
   * 182 `stop(ctx, node, [when])`: -29 not started; -21; -20.
@@ -529,7 +529,7 @@ def paramInfoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteAr
       | none => throw errIndexSize
       | some ps =>
         let now := Automation.frameTime c.state.frame c.sampleRate
-        let v := Automation.valueAt ps.timeline ps.spec.defaultValue now
+        let v := Render.finalValue ps.spec (Automation.valueAt ps.timeline ps.spec.defaultValue now)
         let out := f64le v ++ f64le ps.spec.defaultValue ++ f64le ps.spec.minValue ++
           f64le ps.spec.maxValue ++ ⟨#[if ps.spec.aRate then 1 else 0]⟩
         pure (c, out)

@@ -45,7 +45,8 @@ change. Their `AudioParam`s are the rows of `paramSpecs`: OscillatorNode `freque
 -Nyquist to Nyquist) and `detune` (default 0, plus or minus 1200 log2 of the largest binary32
 value), both a-rate; BiquadFilterNode `frequency` (350, 0 to Nyquist), `detune`, `Q` (1, plus or
 minus the largest binary32), `gain` (0, up to 40 log10 of the largest binary32), all a-rate;
-AudioBufferSourceNode `playbackRate` (1) and `detune` (0), both k-rate.
+AudioBufferSourceNode `playbackRate` (1) and `detune` (0), both k-rate, both with the nominal range
+of the largest binary32 value in each direction (Web Audio API 1.1; WPT `audioparam-nominal-range.html`).
 
 ## Proved
 
@@ -114,9 +115,14 @@ structure ParamState where
 /-- Nominal range limit of `detune`: `1200 * log2 (most-positive-single-float)` (about 153600). -/
 def detuneMax : Float := 1200.0 * Float.log2 floatMax
 
-/-- Upper nominal bound of the `gain` of a `BiquadFilterNode`:
-`40 * log10 (most-positive-single-float)`. -/
-def biquadGainMax : Float := 40.0 * Float.log10 floatMax
+/-- Upper nominal bound of the `gain` of a `BiquadFilterNode`: `40 * log10 (most-positive-single-float)`
+evaluated in single precision, as WPT `audioparam-nominal-range.html` states it
+(`fround (40 * fround (log10 FLT_MAX))`): `log10 FLT_MAX` is rounded to binary32 first, then the
+product is. The result is 1541.273681640625. -/
+def biquadGainMax : Float :=
+  (40.0 * (Float.log10 floatMax).toFloat32.toFloat).toFloat32.toFloat
+
+#guard biquadGainMax == 1541.273681640625
 
 /-- A parameter of a node type of `Kind.other` (no kernel here). -/
 def placeholderParam (d : Float) : ParamSpec := ⟨d, -floatMax, floatMax, true⟩
@@ -137,7 +143,7 @@ def paramSpecs (k : Graph.Kind) (maxDelayTime sampleRate : Float) : Array ParamS
   | .oscillator =>
     #[⟨440.0, -(sampleRate / 2.0), sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩]
   | .bufferSource =>
-    #[⟨1.0, -floatMax, floatMax, false⟩, ⟨0.0, -detuneMax, detuneMax, false⟩]
+    #[⟨1.0, -floatMax, floatMax, false⟩, ⟨0.0, -floatMax, floatMax, false⟩]
   | .biquad =>
     #[⟨350.0, 0.0, sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩,
       ⟨1.0, -floatMax, floatMax, true⟩, ⟨0.0, -floatMax, biquadGainMax, true⟩]
