@@ -8,7 +8,8 @@ Tracking: https://github.com/danbri/factoidal-core/issues/471. The method and th
 
 ## What changed
 
-`formal/lean4/lakefile.lean`, on x86-64 Linux, with `lake build -K leanjsLto=on`:
+`formal/lean4/lakefile.lean`, on x86-64 Linux, with `lake build -R -K leanjsLto=on` (see the trap
+below for `-R`):
 
 - The C of the `JS` library's modules (`L4Factoidal.JS.*`, the engine) is compiled with
   `-flto=thin -ffat-lto-objects`: each object holds machine code and ThinLTO bitcode.
@@ -125,3 +126,43 @@ Then, in core, after a builds run with that change is green: `leanjsLto` in
 `formal/lean4/lakefile.lean` becomes `get_config? leanjsLto != some "off" && <x86-64 Linux>`, and this
 record's "Landing state" is updated. Order matters: if core changes first, the Linux `leanjs` step
 stops with the message of `ffi/leanrt-lto.sh`.
+
+## Trap: `-K` without `-R` builds without LTO, with no message (2026-11-26)
+
+In a workspace that Lake had configured before, `lake build -K leanjsLto=on leanjs` gave a `leanjs`
+byte-identical to the plain build (16,751,936 bytes, no job rebuilt): Lake kept the configuration of
+the earlier run. `lake build -R -K leanjsLto=on leanjs` rebuilt 199 jobs and gave the LTO program
+(17,083,720 bytes). Cost: one build of about 25 minutes on the 4-vCPU VM, and a measurement that
+would have compared a program with itself. Rule: give `-R` with every `-K`, and check that the
+program's size changed. A default in the
+lakefile (the change requested above) does not depend on `-K`.
+
+## Measured again on main `b629c2b71` (2026-11-26)
+
+Same Linux 4-vCPU VM, Lean 4.33.1, both programs built from the same worktree of `b629c2b71` (the
+LTO one with `-R`). Size: plain 16,751,936 bytes, LTO 17,083,720 bytes (+1.98%). Every run gave the
+reference answer.
+
+Instructions (`valgrind --tool=callgrind`, size N):
+
+| Workload | plain | LTO | ratio |
+|---|---|---|---|
+| acorn (N=1) | 2,320,309,403 | 2,199,721,485 | 0.948 |
+| immutable (N=1000) | 2,217,261,084 | 2,114,886,174 | 0.954 |
+| lodash (N=1000) | 1,549,818,980 | 1,477,441,507 | 0.953 |
+| marked (N=6) | 491,894,546 | 463,279,097 | 0.942 |
+| pako (N=32) | 4,059,592,302 | 3,882,221,798 | 0.956 |
+| geometric mean | | | **0.951** |
+
+CPU time (`realworld.py --runs 5`, least of 5, ms; run at 4N less the load):
+
+| Workload | plain load | LTO load | plain run | LTO run | run ratio |
+|---|---|---|---|---|---|
+| acorn | 45.4 | 41.5 | 795.3 | 736.8 | 0.93 |
+| immutable | 40.5 | 35.0 | 785.3 | 728.4 | 0.93 |
+| lodash | 58.0 | 51.7 | 339.3 | 334.7 | 0.99 |
+| marked | 29.2 | 25.5 | 87.0 | 80.2 | 0.92 |
+| pako | 34.8 | 33.7 | 862.3 | 854.5 | 0.99 |
+
+The instruction ratio (0.951) is smaller than the 0.931 of 2026-11-25 on main `100307076`; the
+programs differ (PRs since then), and the cause of the difference was not measured.

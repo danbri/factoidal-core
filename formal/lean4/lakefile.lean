@@ -294,7 +294,8 @@ extern_lib libl4hostread pkg := do
   buildStaticLib (pkg.staticLibDir / name) #[hr]
 
 /-- True when `leanjs` is linked with link-time optimisation (see `lean_lib JS` below): on
-x86-64 Linux with `-K leanjsLto=on`. Opt-in until the factoidal-builds Linux image installs
+x86-64 Linux with `-R -K leanjsLto=on` (without `-R`, a workspace configured before keeps
+its old value of the option and builds without LTO, with no message). Opt-in until the factoidal-builds Linux image installs
 libc++, libc++abi and gmp headers and the leanjs size budget allows +2.2 % (issue 471). The
 macOS linker reads only its own compiler's bitcode, so other hosts build without it. -/
 def leanjsLto : Bool :=
