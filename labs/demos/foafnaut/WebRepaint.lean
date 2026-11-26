@@ -52,9 +52,21 @@ private def cornerLengthsEq (a b : CSS.CornerLengths) : Bool :=
   pairEq a.topLeft b.topLeft && pairEq a.topRight b.topRight &&
     pairEq a.bottomRight b.bottomRight && pairEq a.bottomLeft b.bottomLeft
 
-/-- Every field of `Computed` but the colours is equal, and a background, a border and
-an underline are there in both or in neither: the two styles lay out the same and make
-the same paints. The anonymous constructor names every field in order, so a field added
+/-- Outline paints carry no DOM source, so recoloring cannot change their ink. -/
+private def outlineEq (a b : CSS.Outline) (textA textB : Color) : Bool :=
+  let sameDimensions := a.width == b.width && a.offset == b.offset
+  match a.style, b.style with
+  | .line .none, .line .none => true
+  | .line left, .line right =>
+    left == right && sameDimensions &&
+      optEq colorEq ((a.color.getD .current).resolve textA) ((b.color.getD .current).resolve textB)
+  | .auto, .auto =>
+    sameDimensions && optEq (fun left right => optEq colorEq (left.resolve textA) (right.resolve textB)) a.color b.color
+  | _, _ => false
+
+/-- The computed style is unchanged except for colours that the repaint path can map.
+Backgrounds, borders and underlines must be present or absent on both sides, so the
+two styles lay out the same and emit the same paints. The anonymous constructor names every field in order, so a field added
 to `Computed` stops this from compiling until it is sorted here. The custom properties
 (`vars`) are not compared: they act only through the other fields of this element and of
 its descendants, each of which is compared itself. -/
@@ -62,7 +74,7 @@ def sameShape (a b : Computed) : Bool :=
   match a with
   | ⟨display,width,height,margin,padding,_color,background,backgroundGradient,columnCount,columnWidth,fontSize,fontFamily,lineHeight,
     lineHeightFactor,visible,clipOverflow,overflowClipOnly,underline,decorationColor,preformatted,preserveSegmentBreaks,borderWidth,borderStyles,
-    borderColors,cornerLengths,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
+    borderColors,cornerLengths,outline,borderSpacingX,borderSpacingY,borderCollapse,captionBottom,verticalAlign,tableFixed,
     minWidth,maxWidth,minHeight,maxHeight,objectFit,objectPosition,textAlign,balanceText,balanceWrap,letterSpacing,wordSpacing,textIndent,direction,unicodeBidi,autoMarginLeft,autoMarginRight,
     autoMarginTop,autoMarginBottom,align,flex,pos,_vars,grid,fontWeight,inheritedWeight,oblique,
     masked,shift,rise,centerBlocks,clipRectEmpty,clipPathEmpty,clipHidden,_opacityZero,transparent,backgroundImage,_backgroundBitmap,_backgroundNatural,_backgroundSize,_backgroundRepeat,
@@ -83,6 +95,7 @@ def sameShape (a b : Computed) : Bool :=
   decorationColor.isSome == b.decorationColor.isSome && preformatted == b.preformatted &&
   preserveSegmentBreaks == b.preserveSegmentBreaks &&
   edgesEq borderWidth b.borderWidth && optEq cornerLengthsEq cornerLengths b.cornerLengths &&
+  outlineEq outline b.outline a.color b.color &&
   -- each side's style, and whether its colour is drawn
   (borderStyles.toList.zip b.borderStyles.toList).all (fun (x,y) => x == y) &&
   (borderColors.toList.zip b.borderColors.toList).all (fun (x,y) => (x.resolve a.color).isSome == (y.resolve b.color).isSome) &&
@@ -113,6 +126,13 @@ def sameShape (a b : Computed) : Bool :=
 #guard !sameShape {} {cornerLengths := some {topLeft := (.px 10,.px 12)}}
 #guard !sameShape {cornerLengths := some {topLeft := (.px 10,.px 12)}}
   {cornerLengths := some {topLeft := (.px 10,.px 13)}}
+#guard !sameShape {} {outline := {style := .auto}}
+#guard !sameShape {outline := {style := .auto}} {outline := {style := .auto, offset := 2}}
+#guard !sameShape {outline := {style := .line .solid}}
+  {outline := {style := .line .solid}, color := ⟨1,0,0⟩}
+#guard sameShape {outline := {style := .auto}} {outline := {style := .auto}, color := ⟨1,0,0⟩}
+#guard !sameShape {outline := {style := .auto, color := some .current}}
+  {outline := {style := .auto, color := some .current}, color := ⟨1,0,0⟩}
 
 /-- The same style, colours included. -/
 def same (a b : Computed) : Bool :=

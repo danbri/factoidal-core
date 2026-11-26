@@ -197,6 +197,18 @@ structure CornerLengths where
   bottomLeft : Length × Length := (.px 0,.px 0)
   deriving Inhabited, Repr
 
+inductive OutlineStyle where
+  | auto
+  | line (style : BorderStyle)
+  deriving Repr
+
+structure Outline where
+  style : OutlineStyle := .line .none
+  width : Float := 3
+  color : Option BorderColor := none
+  offset : Float := 0
+  deriving Repr
+
 structure Computed where
   display : Display := .inline
   width : Length := .auto
@@ -236,6 +248,8 @@ structure Computed where
   /-- `border-*-color`, one for each side. -/
   borderColors : Sides BorderColor := .all .current
   cornerLengths : Option CornerLengths := none
+  /-- Paint only. Outline dimensions do not enter the box model. -/
+  outline : Outline := {}
   /-- `border-spacing`, horizontal and vertical (inherited). -/
   borderSpacingX : Float := 0
   borderSpacingY : Float := 0
@@ -813,7 +827,9 @@ def sidesOf (property : String) : List String :=
   else if property == "inset" then ["top","right","bottom","left"]
   else if property == "background-position" then ["background-position-x","background-position-y"]
   else if property == "text-wrap" then ["text-wrap-mode","text-wrap-style"]
+  else if property == "white-space" then ["white-space-collapse","text-wrap-mode"]
   else if property == "border-radius" then radiusNames
+  else if property == "outline" then ["outline-width", "outline-style", "outline-color"]
   else match CssValues.Logical.pair property with
     | some (a, b) => [a, b]
     | none => []
@@ -829,9 +845,10 @@ def expandSides (property value : String) (important : Bool) : List Declaration 
     else
       (radiusNames.zip ((specifiedRadii value).getD [])).map fun (name,(x,y)) =>
         ⟨name,if x == y then x else x ++ " " ++ y,important⟩
-  else if property == "background-position" || property == "text-wrap" then
+  else if ["background-position","text-wrap","white-space","outline"].contains property then
+    let names := sidesOf property
     ((CssValues.expand property value).getD []).filterMap fun (name, v) =>
-      if name == property then none else some ⟨name,v,important⟩
+      if names.contains name then some ⟨name,v,important⟩ else none
   else
     let names := sidesOf property
     let each := match names.length, SheetReader.splitWords value with
@@ -958,8 +975,11 @@ def declarationsOf (ds : List SheetReader.Decl) : List Declaration :=
       | none => acc else
     if key == "border" && !CssVars.mentions d.value then
       (borderImageInitial.map fun (k,v) => (⟨k,v,d.important⟩ : Declaration)) ++ (whole :: acc) else
-    if (key == "background-position" || key == "text-wrap" || key == "border-radius") && !CssVars.mentions d.value then
+    if ["background-position","text-wrap","white-space","border-radius","outline"].contains key &&
+        !CssVars.mentions d.value then
       expandSides key d.value d.important ++ acc else
+    if ["outline-width", "outline-style", "outline-color", "outline-offset"].contains key &&
+        (CssValues.specified key d.value).isNone then acc else
     -- a side's border shorthand as that side's width, style and colour (CSS Backgrounds 3 §4.4)
     if ["border-top", "border-right", "border-bottom", "border-left"].contains key && !CssVars.mentions d.value then
       match CssValues.expand key d.value with
@@ -1995,7 +2015,9 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | none => throw "invalid text-wrap-style"
   | "text-wrap-mode" =>
     match CssValues.specified d.property d.value with
-    | some value => return {s with balanceWrap := value != "nowrap"}
+    | some value =>
+      let nowrap := value == "nowrap"
+      return {s with balanceWrap := !nowrap, pos := {s.pos with nowrap}}
     | none => throw "invalid text-wrap-mode"
   | "white-space" | "white-space-collapse" =>
     let nowrap := d.property != "white-space" && s.pos.nowrap
@@ -2057,6 +2079,22 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     let side := ((d.property.drop 7).takeWhile (· != '-')).toString
     return {s with borderColors := s.borderColors.set side (← borderPaint d.value)}
   | "border-width" => return {s with borderWidth := ← borderEdges s.fontSize d.value}
+  | "outline-style" =>
+    match d.value with
+    | "none" => return {s with outline := {s.outline with style := .line .none}}
+    | _ =>
+      let style ← if (trim d.value).toLower == "auto" then pure OutlineStyle.auto
+        else OutlineStyle.line <$> borderStyle d.value
+      return {s with outline := {s.outline with style}}
+  | "outline-width" =>
+    return {s with outline := {s.outline with width := ← borderWidthPx s.fontSize d.value}}
+  | "outline-color" =>
+    let value := (trim d.value).toLower
+    let paint ← if value == "auto" then pure none else some <$> borderPaint value
+    return {s with outline := {s.outline with color := paint}}
+  | "outline-offset" =>
+    let some value := tableComputed s.fontSize d.property d.value | throw "invalid outline offset"
+    return {s with outline := {s.outline with offset := ← pixels value}}
   | "border-color" =>
     match Sides.ofList (← (topWords d.value).mapM borderPaint) with
     | some c => return {s with borderColors := c}
@@ -2390,6 +2428,7 @@ def ownProperties : List String :=
    "border-top-style","border-right-style","border-bottom-style","border-left-style",
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
+   "outline-width","outline-style","outline-color","outline-offset",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","object-position","font-weight","font-style",
    "font-family","letter-spacing","word-spacing","text-indent","background-image","background-clip","background-size","background-repeat",
    "background-position-x","background-position-y","border-image","border-image-source","border-image-slice","border-image-width","border-image-outset","border-image-repeat","column-count","column-width","columns","mask-image","mask","-webkit-mask-image","-webkit-mask","clip","clip-path","-webkit-clip-path"]
@@ -2554,7 +2593,8 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "visibility" => some {s with visible := source.visible}
   | "opacity" => some {s with opacityZero := source.opacityZero}
   | "text-wrap-style" => some {s with balanceText := source.balanceText}
-  | "text-wrap-mode" => some {s with balanceWrap := source.balanceWrap}
+  | "text-wrap-mode" =>
+    some {s with balanceWrap := source.balanceWrap, pos := {s.pos with nowrap := source.pos.nowrap}}
   | "white-space" | "white-space-collapse" =>
     let nowrap := if property == "white-space" then source.pos.nowrap else s.pos.nowrap
     some {s with preformatted := source.preformatted, preserveSegmentBreaks := source.preserveSegmentBreaks,
@@ -2563,6 +2603,10 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
                                pos := {s.pos with scrolls := source.pos.scrolls}}
   | "text-decoration" | "text-decoration-line" => some {s with underline := source.underline}
   | "border-width" => some {s with borderWidth := source.borderWidth}
+  | "outline-style" => some {s with outline := {s.outline with style := source.outline.style}}
+  | "outline-width" => some {s with outline := {s.outline with width := source.outline.width}}
+  | "outline-color" => some {s with outline := {s.outline with color := source.outline.color}}
+  | "outline-offset" => some {s with outline := {s.outline with offset := source.outline.offset}}
   | "border-style" => some {s with borderStyles := source.borderStyles}
   | "border-color" => some {s with borderColors := source.borderColors}
   | "border" => some {s with borderWidth := source.borderWidth, borderStyles := source.borderStyles, borderColors := source.borderColors,
@@ -2641,6 +2685,21 @@ private theorem applyWinnerM_make_eq (parent start s : Computed) (d d0 : Declara
   cases wideSource parent start d with
   | some source => rfl
   | none => exact applyOrKeepM_make_eq s d d0 hp hv
+
+/-- The declaration that suppresses the focus indicator changes only its outline style. -/
+theorem applyWinner_outlineStyle_none (parent start s : Computed) :
+    applyWinner parent start s ⟨"outline-style", "none", false⟩ =
+      {s with outline := {s.outline with style := .line .none}} := by
+  have wide : wideSource parent start ⟨"outline-style", "none", false⟩ = none := by
+    have spelling : (trim "none").toLower = "none" := by cbv
+    simp [wideSource, spelling]
+  have supported : appliedName "outline-style" = true := by simp [appliedName, ownProperties]
+  have value : apply s ⟨"outline-style", "none", false⟩ =
+      .ok {s with outline := {s.outline with style := .line .none}} := by
+    first | rfl | simp [apply]
+  simp only [applyWinner, wide, applyOrKeep, supported, if_true, applyOrKeepSlow, value]
+
+#print axioms applyWinner_outlineStyle_none
 
 /-- The ordinary winning-declaration path sets a zero pixel line height and
 clears the inherited unitless factor, preserving the remaining style fields. -/
@@ -3271,6 +3330,7 @@ def userAgentSheet : String :=
   -- `:link,:visited` in HTML; one `:any-link` rule, so that the `:visited` colour rule stays colour only.
   ":any-link{text-decoration:underline}" ++
   ":link:active,:visited:active{color:#ff0000}" ++
+  ":focus-visible{outline:2px auto}" ++
   "button{display:inline-block;box-sizing:border-box;padding:1px 6px;border:2px outset #767676;background-color:#efefef;color:#000000}" ++
   "button:hover{background-color:#e5e5e5}" ++
   "button:active{border-style:inset;background-color:#c8c8c8}" ++
@@ -4128,6 +4188,7 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
     margin := {}, padding := {}, background := none, backgroundGradient := none, borderImage := {}, clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current, cornerLengths := none,
+    outline := {},
     autoMarginLeft := false, autoMarginRight := false, unicodeBidi := .normal,
     autoMarginTop := false, autoMarginBottom := false, align := {}, flex := {},
         -- a text node keeps what its text is set by
