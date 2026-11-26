@@ -380,7 +380,8 @@ is `running` when the page has sticky activation (HTML "has been activated"), el
 
 As landed in D2 (`WebAudio/Api.lean`, header). Changes against the text below, and why:
 `newAudioContext` also answers -20 for a bad hint or callback and -23 at 16 live contexts, and
-its first outbox message is `(190, [id, rate (binary64), channels, target])` so the rendering side
+its first outbox message is `(190, [id, rate (binary64), channels, target, state])` (the state field
+added in D3, so the rendering side starts as the control side did) so the rendering side
 knows its parameters; the `control` call id is answered as decimal text and a `resume` before
 activation waits (`pendingResume`) until op 196; `events` has kind 4 (call rejected); op 195 gives
 a stored error result once and then removes the job, which makes it the one op that changes the
@@ -454,4 +455,79 @@ latency. `--perf-summary` gets a block `audio`.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
+- D3, first part (2026-11-26, branch `wip/1169-realtime-run`, commits 67b8651af, ea290dd28,
+  97a489f29 and 7cf6c0772): `new AudioContext()` in a page plays through the engine's audio
+  output.
+  - `WebAudio/RenderSide.lean` (pure): the rendering side's own copy of the graph state, made with
+    `Api.rtContext` as op 190 makes the control side's (`ofOpen_context`,
+    `Api.newAudioContextOp_context`); the messages applied in order with `Api.op` on a state that
+    holds only this context (a failure is counted as `divergence`); the control calls
+    (`control_closed`, `applyBatch_closed`); the quanta for the output, mixed by the speaker rule
+    to the device's channels and interleaved (`fill_frames`: the frames written are the rendered
+    quanta in order; `fill_frame`, `fill_size`); the quanta that bring the frames ahead to the
+    target (`quantaFor_bounds`); the reports and their merge (`mergeReport_events`). Its
+    `#guard`s check 256 frames of a 440 Hz oscillator against an `OfflineContext` render of the
+    same graph, bit for bit after binary32 rounding.
+  - `labs/demos/foafnaut/WebAudioRun.lean`: one dedicated Lean task per context (the loop of
+    13.4; the sink is opened by the task, paused while suspended, closed on close); the registry
+    in `WebDocument.Engine.audio`; the steps before and after each `scriptSession` call
+    (`WebDocument.answerAudio`, around `answerIn` in `compile` and `compileBin`); the document op
+    `audioRuns` (the measures). Whether Lean's task manager runs is asked of Lean
+    (`taskManagerRuns`: a dedicated task runs on another thread only then), not of
+    `web_render_shim.c`: the render command line (`WebRenderCLI`) links these modules without the
+    shim. A new session takes the output from `Page.Limits.audioDevice` and `autoplay`
+    (`FOAFNAUT_AUTOPLAY=allow`, or `autoplay:true` in `start`); the session of an `iframe` gets
+    none (`WebScripts.frameLimits`: the engine does not take a frame's outbox).
+    `nextWake` is at most 25 ms ahead while `Api.needsTurns`. The runs end with their page
+    session (`close`, a new `start`), and with their engine session: `web_session_free` and the
+    end of a task session (`WebDocument.engineEnd`), and the document op `audioEnd`, which the tab
+    worker sends before it closes (its default session is never freed).
+  - `prelude.js`: `AudioContext` on ops 190 to 196 (state, `currentTime`, `baseLatency`,
+    `outputLatency`, `getOutputTimestamp()`, `resume()`, `suspend()`, `close()`, `ended`,
+    `statechange` after the promise as the specification orders it), `setValueCurveAtTime` and
+    `cancelAndHoldAtTime` on op 179, and the page's sticky activation (op 196 on the first trusted
+    activation-triggering input event). The context's event callback is kept across tasks
+    (`kept`): the host releases a callback after a task that runs it (`Page.lean`, the task branch
+    of the event loop's run; `PageEvents.lean`), which deleted this one after its first delivery,
+    so later events (`resume()` after `suspend()`, `close()` after `ended`) did not reach the page.
+  - The opening message has a fifth field, the initial state (13.8).
+  - Writes (13.4, step 3): once the output takes frames, the task writes each quantum when it is
+    rendered. The first write after the sink opens, or after a `resume()` (the sink stays paused
+    until then), holds the quanta up to the target in one write, because the `null` and `wav`
+    consumers take 256 frames at their first period. Two other forms failed the 440 Hz test on
+    this machine: all the quanta of a turn in one write (1 to 5 under-runs a second: the output
+    waited for up to 8 quanta of work) and one quantum from the start (1 under-run of 128 frames at
+    the start).
+  - Measures at 97a489f29, `labs/demos/foafnaut/webaudio_realtime_test.ts` (Linux cloud VM, 4 vCPUs, no sound
+    device, `wav` sink, 48 kHz, target 1,024 frames; another Lean build ran on the machine, load
+    average 3.4), three runs:
+    - 440 Hz `OscillatorNode` for 1 s: the WAV file holds the `OfflineAudioContext` render (the
+      second and 2,048 frames of silence, 50,048 frames, 2 channels) bit for bit after binary32
+      rounding, from its first frame; 0 under-runs; 53 `currentTime` samples, none smaller than
+      the one before; `close()` closes the sink, the task ends, its thread is gone.
+    - CPU time of the rendering thread (`/proc/self/task/TID/schedstat`): 223, 237 and 336 ms
+      per second of audio; rendering and writing (`renderNs`): 229, 232 and 333 ms, that is 0.61
+      to 0.89 ms per render quantum of 128 frames for one oscillator.
+    - Frames ahead of the output when the task looked: least 256, most 1,024 (all three runs).
+      With the `ConstantSourceNode` page of the suspend test the least was 0 once in three runs
+      (the ring was empty when the task looked), with no under-run: on a loaded machine the
+      `interactive` target leaves little room.
+    - `suspend()` then 600 ms: no frame taken, no under-run counted; after `resume()`, 0
+      under-runs. With no autoplay, `resume()` waits until a trusted mouse press (pointer down and
+      up) activates the page, then resolves before `statechange` fires.
+    - A run ends, and its thread is gone, on `audioEnd` and when its engine session ends with no
+      `close` of the page.
+    - Three more runs at 7cf6c0772 (the same loop), load average 6.7: CPU time 213,
+      216 and 229 ms per second of audio, rendering and writing 228 to 241 ms; least frames ahead
+      256, 0 and 0, most 1,024; no under-run, bit for bit.
+    - Build, `build-web-render.sh --native`: 302 to 437 s, with a local reuse of this worktree's
+      earlier outputs (not committed). A clean build was not timed.
+  - Not done: the decode jobs of ops 194 and 195 (stage C); the `native-audio` trace line and the
+    `--perf-summary` block (13.9); `autoplay` is not in `HostContract.relaxFields` (a host that
+    sets it relaxes the autoplay policy); a host that drops an engine with none of the end steps
+    above leaves its runs playing, and if the library is then unloaded a run's thread runs
+    unloaded code (task sessions pin the library, real-time runs do not); the Wasm build was not
+    run (no `emcc` here); the owner's check on a Mac (the `coreaudio` consumer
+    takes the device's buffer at each callback, so the margin above may be smaller there). The
+    rendering cost (above) has not been worked on.
 - Then the owner's check on the Mac, and stage E (the jukebox).
