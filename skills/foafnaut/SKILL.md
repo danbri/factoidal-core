@@ -403,6 +403,10 @@ bash labs/demos/foafnaut/build-web-render.sh --native
   checkout.
   `perf` on this kind of VM has only `-e cpu-clock` (no hardware counters); the binary is
   `/usr/lib/linux-tools/*/perf`.
+- Canvas 2D cost: µs per canvas call and pixel bytes uploaded per frame,
+  `labs/demos/foafnaut/canvas_cost_bench.ts` (header has the command); Particle Rex in play on
+  the rig with `--steps fixtures/particle-rex-play.json`. How the pixels reach the GPU and what
+  each call costs: [docs/designissues/2026-11-26-canvas-upload-and-call-cost.md](../../docs/designissues/2026-11-26-canvas-upload-and-call-cost.md).
 - Real-world libraries on each engine (right answer, CPU time, memory), under a memory
   watchdog: `labs/demos/foafnaut/bubblepop_perf/realworld.py`. Run every BubblePopJS test of
   unknown code under a memory limit: `new Array(4294967295)` takes all memory, and on
