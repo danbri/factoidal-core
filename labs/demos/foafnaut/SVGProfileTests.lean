@@ -1,4 +1,5 @@
 import SVG
+import SVGText
 
 /- SVG Tiny 1.2 §5.1.2: `version` and `baseProfile` on the `svg` element name a language version
    and a profile; they do not change the drawing. Each check compiles one drawing with and without
@@ -88,3 +89,15 @@ private def filled (attrs body : String) : String :=
 /- SVG Tiny 1.2 §5.1.2 `zoomAndPan`: magnify (the viewer zooms) is taken; disable is refused. -/
 #guard compile (doc "zoomAndPan='magnify'" body1) 480 360 == compile (doc "" body1) 480 360
 #guard (compile (doc "zoomAndPan='disable'" body1) 480 360).startsWith "{\"error\":\"zoomAndPan disable"
+
+/- An animation in `defs` acts on the document (it targets by `xlink:href`); this reader runs
+   no animation, so it refuses it there as elsewhere. -/
+#guard (compile (doc "" "<defs><set attributeName='fill' to='red' begin='0s'/></defs>") 480 360).startsWith
+  "{\"error\":\"element in defs unsupported: set"
+#guard !((compile (doc "" "<defs><rect id='r' width='5' height='5'/></defs><use href='#r'/>") 480 360).startsWith "{\"error\"")
+
+/- The strict text path refuses a document that defines an SVG font: its text would be drawn
+   with another font. -/
+#guard (NativeSVGText.compileWithFonts #[] (doc "" "<defs><font horiz-adv-x='500'><font-face font-family='F'/></font></defs>") 480 360).startsWith
+  "{\"error\":\"SVG font element in the document"
+#guard NativeSVGText.compileWithFonts #[] (doc "" body1) 480 360 == compile (doc "" body1) 480 360

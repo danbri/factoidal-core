@@ -485,6 +485,22 @@ def zoomAndPanChecked (attrs : List NamespaceAttribute) : Except String (List Na
     if trim value != "magnify" then throw s!"zoomAndPan {trim value}: the viewer does not turn off zoom and pan"
   pure (attrs.filter fun a => !(a.name.namespace_.isNone && a.name.localPart == "zoomAndPan"))
 
+/-- SVG Tiny 1.2 §16 (animation), §15 (scripting and `handler`), §12 (`audio`, `video`,
+`animation`): elements whose effect is in time or in script. -/
+def timedElements : List String :=
+  ["set","animate","animateColor","animateMotion","animateTransform","discard","script","handler",
+   "audio","video","animation","listener"]
+
+/-- The first timed or scripted element at or under `node` (SVG namespace, or the XML Events
+`listener`), to a depth of `fuel`; a deeper subtree counts as one. -/
+def timedElementIn : Nat → NamespaceNode → Option String
+  | 0,_ => some "nesting deeper than the check reads"
+  | _,.other _ => none
+  | fuel+1,.element name _ children =>
+    if (name.namespace_ == some svgURI || name.namespace_ == some "http://www.w3.org/2001/xml-events") &&
+        timedElements.contains name.localPart then some name.localPart
+    else children.findSome? (timedElementIn fuel)
+
 /-- SVG Tiny 1.2 §5.1.2 (and SVG 1.1 §5.1.2): `version` and `baseProfile` on an `svg`
 element name the language version and the profile the author wrote for. They do not change
 how the content is drawn. A known label is checked and then removed, so no later step can
@@ -1700,6 +1716,11 @@ private def readNode (references : NativeSVGReferences.Index) (rules : List Nati
           throw s!"foreign/non-SVG element: {name.localPart}"
         return []
       let tag := name.localPart
+      -- Content that is not drawn where it stands. A timed or scripted element in it still
+      -- acts on the document (SVG Tiny 1.2 §16.2: an animation targets any element by
+      -- `xlink:href`), and this reader runs neither, so it refuses it as it does elsewhere.
+      if tag == "defs" then
+        if let some timed := timedElementIn 32 node then throw s!"element in defs unsupported: {timed}"
       if ["style","metadata","defs","stop"].contains tag || paintServers.contains tag ||
           (tag == "symbol" && !instanceRoot) then return []
       let attrs ← applyCSS lengths paints rules tag rawAttrs true

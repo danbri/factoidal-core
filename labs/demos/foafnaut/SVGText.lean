@@ -975,6 +975,13 @@ def lowerDocumentGlyphs (fonts : Array Font) (root : NamespaceNode) :
   let (node,log,table,_) := lowerDocumentGlyphsIn {} fonts root
   (node,log,table)
 
+/-- Whether an SVG `font` element is at or under `node`, to a depth of `fuel` (deeper: yes). -/
+def svgFontIn : Nat → NamespaceNode → Bool
+  | 0,_ => true
+  | _,.other _ => false
+  | fuel+1,.element name _ children =>
+    (name.namespace_ == some svgURI && name.localPart == "font") || children.any (svgFontIn fuel)
+
 /-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
 `fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
 reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
@@ -982,6 +989,11 @@ here the first entry refuses the document, with its text as the reason. -/
 def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
     (documentURL : Option String := none) : Except String NativeSVG.Scene := do
   let root ← NativeSVG.checkedRoot xml
+  -- An SVG font in the document (SVG Tiny 1.2 §11.7) is not drawn by the SFNT lowering: its
+  -- text would come out in the wrong font, so the document is refused. (A `font-face` whose
+  -- `font-face-uri` names another document is a font that is not loaded here; the text falls
+  -- back to the next family, as for a web font that fails to load.)
+  if svgFontIn maxTreeDepth root then throw "SVG font element in the document: not drawn by the SFNT text lowering"
   let (tree,log,glyphs) := lowerDocumentGlyphs fonts root
   if let some first := log.head? then throw s!"text lowering: {first}"
   let context ← NativeSVG.ReferenceContext.create tree documentURL
