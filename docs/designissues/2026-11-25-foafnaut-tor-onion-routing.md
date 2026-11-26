@@ -552,3 +552,8 @@ periodic saves. `node --test xfail.test.cjs`: 7 pass, 0 fail (out of 7).
 Not done: the Foafnaut side that gives each page's top-level site as the partition, and a
 "new identity" control in the browser. Both need the page transport
 (https://github.com/danbri/factoidal-core/issues/1060).
+
+Fix in the same step: the worker's IPv6 check tested only the characters used, so `a:b` and `:::`
+passed it and could have reached Deno's resolver as names. `deno/ip-literal.ts` now accepts IPv4
+with no leading zeros and IPv6 only when the WHATWG URL parser accepts it in brackets; no zone id.
+`deno/ip-literal.test.ts`: 2 pass, 0 fail (out of 2 groups, 28 cases); the old check fails it.

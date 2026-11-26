@@ -12,8 +12,7 @@
 // Record: docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md, section 12.
 import init, * as tor from "../.build/web/foafnaut_tor_wasm.js";
 
-const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
-const isIpLiteral = (s: string) => IPV4.test(s) || (/^[0-9a-fA-F:.]+$/.test(s) && s.includes(":"));
+import { isIpLiteral } from "./ip-literal.ts";
 
 const conns = new Map<number, Deno.TcpConn>();
 let next = 1;
