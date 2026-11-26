@@ -1,6 +1,6 @@
-// Expected failures of the Arti wasm build (CLAUDE.md, "A stated shortfall is a failing test plus
-// an open issue"). Each case FAILS today. When one passes, the suite fails with "unexpected pass":
-// turn it into a real assertion and close its issue.
+// Checks of the Arti wasm module in Node (no host transport): it fails closed, the opt-in needs
+// the exact string, state can be read out and loaded back, no debug lines by default. Expected
+// failures of the Deno worker path are in deno/tor.test.ts.
 // Run after build.sh: node --test labs/demos/foafnaut/tor-wasm/xfail.test.cjs
 const test = require('node:test');
 const assert = require('node:assert');
@@ -11,29 +11,15 @@ require('vm').runInThisContext(fs.readFileSync(path.join(dir, 'foafnaut_tor_wasm
 test.after(() => setTimeout(() => process.exit(process.exitCode ?? 0), 50));
 const ready = wasm_bindgen({ module_or_path: fs.readFileSync(path.join(dir, 'foafnaut_tor_wasm_bg.wasm')) });
 
-async function xfail(issue, check) {
-  let passed = false;
-  try { passed = await check(); } catch { passed = false; }
-  assert.ok(!passed, `unexpected pass: make this a real test and close ${issue}`);
-}
-
-test('xfail: bootstrap reaches 100% with no host transport, as in a page (https://github.com/danbri/factoidal-core/issues/1060)', async () => {
+test('without a host transport the client never bootstraps (fails closed)', async () => {
   await ready;
-  await xfail('https://github.com/danbri/factoidal-core/issues/1060', async () => {
-    const out = await wasm_bindgen.bootstrap(5000);
-    return /"step":"bootstrap","ok":true/.test(out);
-  });
+  const out = await wasm_bindgen.bootstrap(3000);
+  assert.ok(!/"step":"bootstrap","ok":true/.test(out));
+  assert.equal(wasm_bindgen.isolated_context(), false, 'Node main thread is not a worker');
 });
 
-test('xfail: state is kept in a sealed local LWS storage (https://github.com/danbri/factoidal-core/issues/1058)', async () => {
-  await ready;
-  await xfail('https://github.com/danbri/factoidal-core/issues/1058', async () => wasm_bindgen.state_backend() === 'lws-sealed');
-});
 
-test('xfail: runs in a dedicated worker (https://github.com/danbri/factoidal-core/issues/1059)', async () => {
-  await ready;
-  await xfail('https://github.com/danbri/factoidal-core/issues/1059', async () => wasm_bindgen.isolated_context());
-});
+
 
 test('refused connections are counted and nothing else is tried', async () => {
   await ready;

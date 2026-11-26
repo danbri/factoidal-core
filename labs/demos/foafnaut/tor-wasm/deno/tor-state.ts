@@ -24,6 +24,13 @@ export type TorStateStore = {
 };
 
 const STATE_PATH = "tor/state.json";
+
+/** Where the storage key comes from. Owner, 2026-11-26: the macOS Keychain. Today: the
+ *  environment (FOAFNAUT_TOR_STATE_KEY). Expected failure in deno/tor.test.ts names
+ *  https://github.com/danbri/factoidal-core/issues/1058. */
+export function keySource(): "environment" | "macos-keychain" {
+  return "environment";
+}
 const exists = async (p: string) => { try { await Deno.stat(p); return true; } catch { return false; } };
 
 /** The @factoidal/core package: FACTOIDAL_CORE_DIR, or this checkout's npm/factoidal. */

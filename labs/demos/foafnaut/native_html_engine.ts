@@ -1,9 +1,14 @@
 // Byte/JSON transport for the published Lean HTML engine. No host markup parser.
 import type {NetWire} from "./native_net.ts";
 import {allFinite} from "./finite_floats.ts";
-// This ignored runtime is installed only after checking the Builds manifest.
-// @ts-ignore generated release module
-import createModule from "./.build/native-html/runtime/web-render.mjs";
+// The Wasm runtime (installed only after checking the Builds manifest) is imported when the Wasm
+// backend is used, not at load: a host with the native library alone (the macOS CI job, a native
+// engine session) does not need it.
+async function createModule():Promise<unknown>{
+  // @ts-ignore generated release module
+  const runtime=await import("./.build/native-html/runtime/web-render.mjs");
+  return await runtime.default();
+}
 import {bytesLine,documentLine,traceBackends} from "../../../docs/web/hub/foafnaut/host-trace.mjs";
 import {attachLayout} from "./native_html_layout.ts";
 

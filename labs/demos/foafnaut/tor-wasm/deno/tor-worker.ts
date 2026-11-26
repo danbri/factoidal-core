@@ -62,7 +62,8 @@ type Msg =
   | { id: number; op: "load"; state: string }
   | { id: number; op: "bootstrap"; timeoutMs: number; config?: string }
   | { id: number; op: "stream"; partition: string; host: string; port: number; request: string; max: number; timeoutMs: number }
-  | { id: number; op: "new-identity" };
+  | { id: number; op: "new-identity" }
+  | { id: number; op: "isolated" };
 
 self.onmessage = async (e: MessageEvent<Msg>) => {
   const m = e.data;
@@ -76,6 +77,7 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "bootstrap") result = await tor.bootstrap(m.timeoutMs, m.config);
   else if (m.op === "stream") result = await tor.stream_request(m.partition, m.host, m.port, m.request, m.max, m.timeoutMs);
   else if (m.op === "new-identity") result = tor.new_identity();
+  else if (m.op === "isolated") result = tor.isolated_context();
   (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size });
 };
 (self as unknown as Worker).postMessage({ ready: true });

@@ -23,5 +23,4 @@ wasm-bindgen --target no-modules --no-typescript --out-dir .build \
   target/wasm32-unknown-unknown/release/foafnaut_tor_wasm.wasm
 wasm-bindgen --target web --no-typescript --out-dir .build/web \
   target/wasm32-unknown-unknown/release/foafnaut_tor_wasm.wasm
-python3 pages.py .build "${TIMEOUT_MS:-15000}"
 ls -l .build
