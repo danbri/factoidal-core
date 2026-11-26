@@ -1302,11 +1302,12 @@ private def bufTo (c : OfflineContext) : Except Error (OfflineContext × Nat) :=
 #guard chk (go 1 8 fun c => do
     let (c, _) ← bufTo c
     pure c) [zeros 8]
--- 23. playbackRate 0.5: linear interpolation; the last half frame mixes the last sample with 0.
+-- 23. playbackRate 0.5: linear interpolation; the value at frame 3.5 is the buffer
+-- continued along its last two frames: 4 + 0.5 * (4 - 3) = 4.5.
 #guard chk (go 1 12 fun c => do
     let (c, s) ← bufTo c
     let c ← c.setValueAtTime s 0 0.5 0.0
-    c.start s) [[1, 1.5, 2, 2.5, 3, 3.5, 4, 2] ++ zeros 4]
+    c.start s) [[1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5] ++ zeros 4]
 -- 24. detune 1200 cents doubles the rate (k-rate).
 #guard chk (go 1 8 fun c => do
     let (c, s) ← bufTo c

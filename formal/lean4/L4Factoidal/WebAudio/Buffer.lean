@@ -602,7 +602,9 @@ def stepFrame (c : Ctx) (cf : Nat) (st : SourceState) : SourceState × Emit :=
               if d > 0.0 then d else 0.0
             else 0.0
           | none => 0.0
-        { st with offsetF := o2, bufferFrame := o2 + sub * c.dp, started := true }
+        -- the part of the `duration` before the first frame played is spent (WPT
+        -- sub-sample-scheduling.html, "sub-sample-grain": the grain ends at the exact time)
+        { st with offsetF := o2, bufferFrame := o2 + sub * c.dp, elapsed := sub * c.dp, started := true }
     let entered :=
       c.loopActive &&
         (st1.enteredLoop || (st1.offsetF < c.le && st1.bufferFrame ≥ c.ls) ||
@@ -611,7 +613,8 @@ def stepFrame (c : Ctx) (cf : Nat) (st : SourceState) : SourceState × Emit :=
     let e : Emit := if bt ≥ 0.0 && bt < c.len then some (bt, entered) else none
     ({ st1 with bufferFrame := bt + c.dp, elapsed := st1.elapsed + c.dp, enteredLoop := entered }, e)
 
-/-- Linear interpolation of one channel at buffer position `x` (in frames). `wrap` is
+/-- Linear interpolation of one channel at buffer position `x` (in frames); between the last frame and
+the end of the buffer it extrapolates linearly from the last two frames. `wrap` is
 `some (loopStartIndex, loopEnd)` when the playhead is in the loop. -/
 def interp (ch : FloatArray) (len : Nat) (x : Float) (wrap : Option (Nat × Float)) : Float :=
   let x := snapFrames x
@@ -624,7 +627,12 @@ def interp (ch : FloatArray) (len : Nat) (x : Float) (wrap : Option (Nat × Floa
     let v1 :=
       match wrap with
       | some (w, le) => if (i + 1).toFloat ≥ le then getF ch w else getF ch (i + 1)
-      | none => if i + 1 < len then getF ch (i + 1) else 0.0
+      | none =>
+        if i + 1 < len then getF ch (i + 1)
+        -- Past the last frame the signal is continued along the last two frames (a buffer of one
+        -- frame holds its value): WPT buffer-resampling.html, "extrapolation at end of AudioBuffer".
+        else if 1 ≤ i then 2.0 * v0 - getF ch (i - 1)
+        else v0
     v0 * (1.0 - fr) + v1 * fr
 
 /-- The output value of one channel on one frame. -/
@@ -1133,15 +1141,20 @@ private def s0 : SourceState := started 8000.0
 #guard (let b := bufOf 8192.0 [rampL 64 5.0]
         let o := play (cfgOf b) (started 8192.0 (27.3 / 8192.0)) 40 0.0
         o.take 28 == List.replicate 28 0.0 && (o.drop 28).all (· == 5.0))
+-- a grain that starts at frame 1.5 and lasts 3 frames ends at frame 4.5: frames 2, 3 and 4 play
+#guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]))
+    (started 8000.0 (1.5 / 8000.0) 0.0 (some (3.0 / 8000.0))) 8)
+  [0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0]
 -- sub-sample start with rate 1: the playhead is half a frame on at the first frame played
 #guard approxL (play (cfgOf ramp8) (started 8000.0 (0.5 / 8000.0)) 4) [0.0, 1.5, 2.5, 3.5]
 #guard approxL (play (cfgOf ramp8) (started 8000.0 (3.25 / 8000.0)) 6)
   [0.0, 0.0, 0.0, 0.0, 1.75, 2.75]
 
 -- buffer-resampling.html idea: a buffer at 22050 Hz in a 44100 Hz context plays at half speed,
--- every other output frame interpolated; the frame after the last is silence (no loop)
+-- every other output frame interpolated; the frame between the last and the end is continued along
+-- the last two frames (3.5, not the 1.5 of a zero after the end), then silence (no loop)
 #guard approxL (play (cfgOf (bufOf 22050.0 [[0.0, 1.0, 2.0, 3.0]])) (started 44100.0) 9)
-  [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 1.5, 0.0]
+  [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 0.0]
 -- the same buffer at 44100 Hz in a 22050 Hz context plays at double speed
 #guard approxL (play (cfgOf (bufOf 44100.0 [[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]])) (started 22050.0) 4)
   [0.0, 2.0, 4.0, 0.0]

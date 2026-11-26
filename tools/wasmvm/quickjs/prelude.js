@@ -6055,7 +6055,8 @@
         catch (e) { s.queue.shift(); head.reject(e); continue; }
         head.have += r.buffer.length;
         head.parts.push(r.buffer.data);
-        head.ended = r.ended;
+        // `ended` of each source that finished in this step, as a task now: a handler sees the time of the step.
+        for (const id of r.ended) if (!(s.endedFired ??= new Set()).has(id)) { s.endedFired.add(id); task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); }); }
         if (head.have < head.frames) continue;
         s.queue.shift();
         const nch = r.buffer.numberOfChannels;
@@ -6066,9 +6067,8 @@
         });
         const out = wrapBuffer({ iface: 'AudioBuffer', numberOfChannels: nch, length: head.have, sampleRate: s.sampleRate, data });
         const finished = s.length !== null && ctxInfo(s).frame >= s.length;
-        // The specification's order: `ended` of each source that finished, then the promise; the context
-        // closes after its last chunk (the state is `running` while that promise resolves), then `complete`.
-        for (const id of head.ended) if (!(s.endedFired ??= new Set()).has(id)) { s.endedFired.add(id); task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); }); }
+        // The promise after the `ended` tasks of the step; the context closes after its last chunk (the
+        // state is `running` while that promise resolves), then `complete`.
         task(() => {
           head.resolve(out);
           if (finished && s.state !== 'closed') {
