@@ -496,7 +496,7 @@ private def svgImgDrawn := WebDocument.compileText svgImgPage ("{\"op\":\"render
 #guard !contains svgImgDrawn "\"error\"" && !contains svgImgDrawn "[Logo]"
 #guard contains (WebDocument.compileText svgImgPage "{\"op\":\"render\",\"url\":\"https://e.test/p/\"}" 40 40) "\"text\":\"[Logo]\""
 private def svgPicture := (WebRender.vectorPicture svgFile.toUTF8).bind (·.toOption)
-#guard svgPicture.map (fun (b,w,h) => (b.width,b.height,b.rgba.size,w,h)) == some (40,20,40*20*4,20,10)
+#guard svgPicture.map (fun (b,w,h,_) => (b.width,b.height,b.rgba.size,w,h)) == some (40,20,40*20*4,20,10)
 -- the left half is the red rectangle, opaque; the right half is not painted: alpha 0
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+10)*4) ((10*40+10)*4+4)).toList) == some [255,0,0,255]
 #guard svgPicture.map (fun (b,_,_) => (b.rgba.extract ((10*40+30)*4) ((10*40+30)*4+4)).toList) == some [0,0,0,0]
