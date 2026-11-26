@@ -26,6 +26,8 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   `OscillatorNode` kernel (band-limited Fourier sum). Called by `Render.runKernel`.
 - `WebAudio.Filters`: `BiquadFilterNode` coefficients for the eight types, the kernel, and
   `getFrequencyResponse`. Called by `Render.runKernel`.
+- `WebAudio.Api`: the page operations (`web_api` ops 173 to 189) and the contexts kept between
+  script turns; the op table is in its header.
 - `WebAudio.Idl`: the interface table generated from WPT's `interfaces/webaudio.idl` by
   `tools/webaudio-idl-table.py` (interfaces, attributes, operations, enums, dictionaries).
 -/
@@ -39,3 +41,4 @@ import L4Factoidal.WebAudio.Buffer
 import L4Factoidal.WebAudio.Oscillator
 import L4Factoidal.WebAudio.Filters
 import L4Factoidal.WebAudio.Idl
+import L4Factoidal.WebAudio.Api
