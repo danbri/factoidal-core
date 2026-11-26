@@ -5534,6 +5534,721 @@
     return r;
   };
   // ==== end webcodecs section ====
+  // ==== Web Audio API (docs/designissues/2026-11-26-foafnaut-audio-plan.md, sections 2, 4 and 12) ==== begin webaudio section ====
+  // Page-facing objects only. Every decision is Lean's (L4Factoidal.WebAudio.Api, web_api ops 173 to
+  // 189): the interface table (names, `length`s, attributes, operations, enums, dictionary members
+  // and defaults), the argument checks of each operation, the graph, the AudioParam automation and
+  // the rendering. This section converts arguments as Web IDL says, keeps the page's objects (a
+  // node, a parameter, an AudioBuffer with its Float32Arrays, a PeriodicWave), turns an error code
+  // of Lean into the named DOMException, and queues the events of the specification. An engine
+  // without the operations leaves the interfaces undefined. Stage B of
+  // https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
+  //
+  // What this section does not do, each with the issue that tracks it:
+  //  - AudioContext does not play. It builds graphs on a Lean context that is never rendered, so
+  //    currentTime stays 0 and no sound is made. Real-time output is stage D.
+  //  - The nodes that the engine cannot render (Analyser, Convolver, DynamicsCompressor, IIRFilter,
+  //    Panner, WaveShaper, ScriptProcessor, the MediaElement and MediaStream nodes, AudioWorklet and
+  //    AudioListener) exist as interface objects; their constructors and factory methods throw
+  //    NotSupportedError. Nothing here fakes their behaviour.
+  //  - decodeAudioData() rejects with NotSupportedError: the ops have no decoder entry yet (stage C).
+  //  - The ops have no read of a node's channelCount, channelCountMode, channelInterpretation, type,
+  //    loop, loopStart or loopEnd, and no read of a context's state. The page keeps the value of the
+  //    last set that Lean accepted, and the defaults of Render.chanDefaults.
+  //  - The ops have no setValueCurveAtTime, cancelAndHoldAtTime, OfflineAudioContext.suspend(time)
+  //    or a way to free a context.
+  //  - AudioBufferSourceNode takes the buffer's samples when `buffer` is set (op 184), not at start()
+  //    as the specification's "acquire the content" says: a change to the samples between the set
+  //    and start() is not heard.
+  //  - AudioWorklet is not faked: context.audioWorklet throws, so WPT idlharness's setup (which adds
+  //    a worklet module) fails until AudioWorklet exists (stage F).
+  const webAudioNames = ['BaseAudioContext', 'AudioContext', 'AudioSinkInfo', 'OfflineAudioContext', 'OfflineAudioCompletionEvent',
+    'AudioBuffer', 'AudioNode', 'AudioParam', 'AudioScheduledSourceNode', 'AnalyserNode', 'AudioBufferSourceNode',
+    'AudioDestinationNode', 'AudioListener', 'AudioProcessingEvent', 'BiquadFilterNode', 'ChannelMergerNode',
+    'ChannelSplitterNode', 'ConstantSourceNode', 'ConvolverNode', 'DelayNode', 'DynamicsCompressorNode', 'GainNode',
+    'IIRFilterNode', 'MediaElementAudioSourceNode', 'MediaStreamAudioDestinationNode', 'MediaStreamAudioSourceNode',
+    'MediaStreamTrackAudioSourceNode', 'OscillatorNode', 'PannerNode', 'PeriodicWave', 'ScriptProcessorNode',
+    'StereoPannerNode', 'WaveShaperNode', 'AudioWorklet', 'AudioParamMap', 'AudioWorkletNode', 'AudioPlaybackStats'];
+  const makeWebAudio = () => {
+    const ISSUE = 'https://github.com/danbri/factoidal-core/issues/1169';
+    const NL = String.fromCharCode(10), TAB = String.fromCharCode(9);
+    const probe = apiCall(173, ['']);
+    if (typeof probe !== 'string' || probe === '') return undefined;
+    const SECRET = Symbol('webaudio');
+    // The state of every page object is here, never on the object (Web IDL brand check). A state
+    // has `iface`, the interface it was made for.
+    const K = new WeakMap();
+    const dom = (name, what) => new DOMException(what, name);
+    const unsup = what => dom('NotSupportedError', what + ' is not supported yet: ' + ISSUE);
+    // An error code of Lean's (WebAudio.Api, "Error codes") as the exception of the specification.
+    const errOf = (code, what) => {
+      switch (code) {
+        case -20: return new TypeError(what);
+        case -21: return new RangeError(what);
+        case -23: return dom('NotSupportedError', what);
+        case -25: return dom('InvalidAccessError', what);
+        case -28: return dom('IndexSizeError', what);
+        case -29: return dom('InvalidStateError', what);
+        case -30: return dom('EncodingError', what);
+        case -5: return dom('NotSupportedError', what + ' (over a limit of this engine)');
+        default: return dom('NotSupportedError', what + ' (this engine has no such operation)');
+      }
+    };
+    const ask = (op, args, what, bytes = false) => {
+      const r = apiCall(op, args.map(a => typeof a === 'number' ? String(a) : a), 0, bytes);
+      if (typeof r === 'number') throw errOf(r, what);
+      return r;
+    };
+    const need = (have, k, what) => { if (have < k) throw new TypeError(`Failed to execute '${what}': ${k} argument${k === 1 ? '' : 's'} required, but only ${have} present.`); };
+    const needNew = (have, k, what) => { if (have < k) throw new TypeError(`Failed to construct '${what}': ${k} argument${k === 1 ? '' : 's'} required, but only ${have} present.`); };
+    // ---- Web IDL conversions ----
+    const toDouble = (v, what) => { const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`${what}: The provided double value is non-finite.`); return x; };
+    const toFloat = (v, what) => {
+      const x = Number(v); if (!Number.isFinite(x)) throw new TypeError(`${what}: The provided float value is non-finite.`);
+      const y = Math.fround(x); if (!Number.isFinite(y)) throw new TypeError(`${what}: The provided float value is out of range.`);
+      return y;
+    };
+    const toUL = v => { let x = Number(v); if (!Number.isFinite(x)) return 0; x = Math.trunc(x) % 4294967296; return x < 0 ? x + 4294967296 : x + 0; };
+    const f64 = x => new Uint8Array(new Float64Array([x]).buffer);
+    const u8 = a => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const isObj = v => (typeof v === 'object' && v !== null) || typeof v === 'function';
+    // ---- the interface table (op 173) and the enums and dictionaries (op 174), read once each ----
+    const ifaces = {}, parentOf = {};
+    for (const name of probe.split(NL)) {
+      const text = apiCall(173, [name]);
+      if (typeof text !== 'string') continue;
+      const info = { name, parent: '', ext: '', ctor: null, attrs: [], ops: [] };
+      for (const line of text.split(NL)) {
+        const f = line.split(TAB);
+        if (f[0] === 'i') { info.parent = f[2]; info.ext = f[3]; }
+        else if (f[0] === 'k') info.ctor = { minArgs: Number(f[1]) };
+        else if (f[0] === 'a') info.attrs.push({ name: f[1], readOnly: f[2] === '1', type: f[3] });
+        else if (f[0] === 'o') info.ops.push({ name: f[1], minArgs: Number(f[2]) });
+      }
+      ifaces[name] = info; parentOf[name] = info.parent;
+    }
+    const isa = (x, y) => { for (let c = x, i = 0; c && i < 8; c = parentOf[c], i++) if (c === y) return true; return false; };
+    const enumCache = new Map(), dictCache = new Map();
+    const enumValues = n => {
+      if (!enumCache.has(n)) { const r = apiCall(174, ['enum', n]); enumCache.set(n, typeof r === 'string' ? r.split(NL) : null); }
+      return enumCache.get(n);
+    };
+    // The members of a dictionary in the order of Web IDL: inherited dictionaries first, each in
+    // code unit order of the names. A parent Lean does not know (EventInit) adds none.
+    const dictMembers = n => {
+      if (!dictCache.has(n)) {
+        const r = apiCall(174, ['dict', n]);
+        let out = null;
+        if (typeof r === 'string') {
+          const lines = r.split(NL).map(l => l.split(TAB));
+          const own = lines.filter(f => f[0] === 'm').map(f => ({ name: f[1], type: f[2], required: f[3] === '1', def: f[4] ?? '' }));
+          own.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+          const parent = (lines.find(f => f[0] === 'p') ?? ['p', ''])[1];
+          out = (parent ? dictMembers(parent) ?? [] : []).concat(own);
+        }
+        dictCache.set(n, out);
+      }
+      return dictCache.get(n);
+    };
+    const defaultOf = m => {
+      if (m.def === '') return undefined;
+      if (m.def === 'null') return null;
+      if (m.def === 'true') return true;
+      if (m.def === 'false') return false;
+      if (m.def[0] === '"') return m.def.slice(1, -1);
+      return Number(m.def);
+    };
+    const brandOf = (o, name) => { const s = isObj(o) ? K.get(o) : undefined; return s !== undefined && isa(s.iface, name) ? s : undefined; };
+    const convTy = (ty, v, what) => {
+      if (ty.endsWith('?')) return v === null || v === undefined ? null : convTy(ty.slice(0, -1), v, what);
+      switch (ty) {
+        case 'float': return toFloat(v, what);
+        case 'double': return toDouble(v, what);
+        case 'unsigned long': return toUL(v);
+        case 'boolean': return !!v;
+        case 'DOMString': return String(v);
+        case 'object': if (!isObj(v)) throw new TypeError(`${what}: The provided value is not an object.`); return v;
+      }
+      if (ty.startsWith('sequence<')) {
+        const el = ty.slice(9, -1);
+        if (!isObj(v) || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: The provided value cannot be converted to a sequence.`);
+        return Array.from(v, x => convTy(el, x, what));
+      }
+      if (ty.startsWith('record<')) { if (!isObj(v)) throw new TypeError(`${what}: The provided value is not an object.`); return v; }
+      if (ty[0] === '(') {
+        const parts = ty.slice(1, -1).split(' or ');
+        const numeric = parts.find(p => p === 'float' || p === 'double' || p === 'unsigned long');
+        const en = parts.find(p => enumValues(p) !== null), dict = parts.find(p => dictMembers(p) !== null);
+        if (isObj(v) && dict) return dictConv(dict, v, what);
+        if (typeof v === 'number' && numeric) return convTy(numeric, v, what);
+        if (en) return convTy(en, v, what);
+        if (parts.includes('DOMString')) return String(v);
+        if (numeric) return convTy(numeric, v, what);
+        throw new TypeError(`${what}: The provided value is not valid.`);
+      }
+      const ev = enumValues(ty);
+      if (ev !== null) { const s = String(v); if (!ev.includes(s)) throw new TypeError(`${what}: The provided value '${s}' is not a valid enum value of type ${ty}.`); return s; }
+      if (ifaces[ty]) {
+        if (brandOf(v, ty) === undefined) throw new TypeError(`${what}: The provided value is not of type '${ty}'.`);
+        return v;
+      }
+      const C = globalThis[ty];
+      if (typeof C === 'function' && !(v instanceof C)) throw new TypeError(`${what}: The provided value is not of type '${ty}'.`);
+      return v;
+    };
+    // A dictionary argument: absent or null is the empty dictionary; a member that is undefined is
+    // its default, or a TypeError when it is required.
+    const dictConv = (name, v, what) => {
+      if (v !== undefined && v !== null && !isObj(v)) throw new TypeError(`${what}: The provided value is not of type '${name}'.`);
+      const out = {};
+      for (const m of dictMembers(name) ?? []) {
+        const raw = v === undefined || v === null ? undefined : v[m.name];
+        if (raw === undefined) {
+          if (m.required) throw new TypeError(`${what}: required member ${m.name} is undefined.`);
+          const d = defaultOf(m); if (d !== undefined) out[m.name] = d;
+          continue;
+        }
+        out[m.name] = convTy(m.type, raw, `${what}: member ${m.name}`);
+      }
+      return out;
+    };
+    const dictDefault = (dict, member) => { const m = (dictMembers(dict) ?? []).find(x => x.name === member); return m ? defaultOf(m) : undefined; };
+    const seqFloats = (v, what) => {
+      if (!isObj(v) || typeof v[Symbol.iterator] !== 'function') throw new TypeError(`${what}: The provided value cannot be converted to a sequence.`);
+      return Float32Array.from(Array.from(v, x => toFloat(x, what)));
+    };
+    // ---- states ----
+    const ctxOf = (o, what) => {
+      const s = brandOf(o, 'BaseAudioContext');
+      if (s === undefined) throw new TypeError(`${what}: parameter 1 is not of type 'BaseAudioContext'.`);
+      return s;
+    };
+    const task = f => { setTimeout(f, 0); };
+    const ctxInfo = cs => {
+      const dv = new DataView(ask(189, [cs.id], 'BaseAudioContext', true));
+      return { length: dv.getUint32(8, true), channels: dv.getUint32(12, true), frame: dv.getUint32(16, true), quantum: dv.getUint32(20, true), rendered: dv.getUint8(28) === 1 };
+    };
+    // The channel defaults of Render.chanDefaults (no read op for them: see the section's header).
+    const chanDefaults = (kind, cs, createArgs) => {
+      switch (kind) {
+        case 'destination': return { count: cs.channels, mode: 'explicit', interp: 'speakers' };
+        case 'stereoPanner': return { count: 2, mode: 'clamped-max', interp: 'speakers' };
+        case 'channelSplitter': return { count: Number(createArgs[0] ?? 6), mode: 'explicit', interp: 'discrete' };
+        case 'channelMerger': return { count: 1, mode: 'explicit', interp: 'speakers' };
+        default: return { count: 2, mode: 'max', interp: 'speakers' };
+      }
+    };
+    const paramNames = iface => ifaces[iface].attrs.filter(a => a.type === 'AudioParam').map(a => a.name);
+    const classes = {};
+    // A node of Lean's: op 176, then the page's parameter objects.
+    const createNode = (cs, iface, kind, createArgs) => {
+      const r = ask(176, [cs.id, kind].concat(createArgs), iface).split(' ').map(Number);
+      const st = { iface, cs, id: r[0], nIn: r[1], nOut: r[2], chan: chanDefaults(kind, cs, createArgs), self: null, params: [],
+        kind, type: undefined, loop: false, loopStart: 0, loopEnd: 0, buffer: null };
+      paramNames(iface).forEach((name, index) => { st.params.push(new classes.AudioParam(SECRET, { iface: 'AudioParam', node: st, index, name })); });
+      return st;
+    };
+    const setChan = (st, name, value) => {
+      ask(183, [st.cs.id, st.id, name, String(value)], `AudioNode.${name}`);
+      st.chan[name === 'channelCount' ? 'count' : name === 'channelCountMode' ? 'mode' : 'interp'] = value;
+    };
+    const paramSet = (st, index, value, dflt) => {
+      if (value === undefined || Object.is(value, dflt)) return;
+      ask(179, [st.cs.id, st.id, index, 'setValue', f64(value)], 'AudioParam.value');
+    };
+    const bufferData = b => {
+      const data = new Float32Array(b.numberOfChannels * b.length);
+      b.data.forEach((c, i) => data.set(c, i * b.length));
+      return u8(data);
+    };
+    const attrSet = (st, name, value) => { ask(183, [st.cs.id, st.id, name, value], 'AudioNode.' + name); };
+    const setBufferOf = (st, b) => {
+      if (b === null) ask(184, [st.cs.id, st.id, '', '', '', ''], 'AudioBufferSourceNode.buffer');
+      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b)], 'AudioBufferSourceNode.buffer');
+      st.buffer = b;
+    };
+    const waveBytes = w => [w.real === null ? '-' : u8(w.real), w.imag === null ? '-' : u8(w.imag), w.disable ? '1' : '0'];
+    const setWave = (st, wave) => {
+      const w = brandOf(wave, 'PeriodicWave');
+      ask(185, [st.cs.id, st.id].concat(waveBytes(w)), 'OscillatorNode.setPeriodicWave');
+      st.type = 'custom';
+    };
+    // ---- the page objects ----
+    class BaseAudioContext extends EventTarget {
+      constructor(token, st) {
+        if (token !== SECRET) throw new TypeError('Illegal constructor');
+        super(); st.self = this; K.set(this, st);
+      }
+    }
+    const makeContext = (iface, channels, length, sampleRate, quantum) => {
+      const id = ask(175, [channels, length, f64(sampleRate)].concat(quantum === undefined ? [] : [quantum]), iface);
+      return { iface, id: Number(id), sampleRate, channels, length, state: 'suspended', nodes: new Map(), destination: null, self: null, started: false,
+        offline: iface === 'OfflineAudioContext' };
+    };
+    const quantumOf = h => (typeof h === 'number' ? h : undefined);
+    class OfflineAudioContext extends BaseAudioContext {
+      constructor(...args) {
+        needNew(args.length, 1, 'OfflineAudioContext');
+        let cs;
+        if (args.length === 1) {
+          const o = dictConv('OfflineAudioContextOptions', args[0], "Failed to construct 'OfflineAudioContext'");
+          cs = makeContext('OfflineAudioContext', o.numberOfChannels, o.length === null || o.length === undefined ? '' : o.length, o.sampleRate, quantumOf(o.renderSizeHint));
+        } else if (args.length >= 3) {
+          const what = "Failed to construct 'OfflineAudioContext'";
+          cs = makeContext('OfflineAudioContext', toUL(args[0]), toUL(args[1]), toFloat(args[2], what));
+        } else throw new TypeError("Failed to construct 'OfflineAudioContext': the arguments match no overload.");
+        super(SECRET, cs);
+        cs.self = this;
+        cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
+          self: null, params: [], kind: 'destination', maxChannelCount: cs.channels });
+      }
+    }
+    // A real-time context. It builds graphs on a Lean context of two channels that is never rendered:
+    // no sound is made and currentTime stays 0 (stage D, issue 1169).
+    class AudioContext extends BaseAudioContext {
+      constructor(options = undefined) {
+        const o = dictConv('AudioContextOptions', options, "Failed to construct 'AudioContext'");
+        const cs = makeContext('AudioContext', 2, 1048576, o.sampleRate === undefined ? 44100 : o.sampleRate, quantumOf(o.renderSizeHint));
+        super(SECRET, cs);
+        cs.self = this;
+        cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
+          self: null, params: [], kind: 'destination', maxChannelCount: 2 });
+      }
+    }
+    class OfflineAudioCompletionEvent extends Event {
+      constructor(type, init) {
+        needNew(arguments.length, 2, 'OfflineAudioCompletionEvent');
+        const d = dictConv('OfflineAudioCompletionEventInit', init, "Failed to construct 'OfflineAudioCompletionEvent'");
+        super(type, init);
+        K.set(this, { iface: 'OfflineAudioCompletionEvent', renderedBuffer: d.renderedBuffer });
+      }
+    }
+    class AudioProcessingEvent extends Event {
+      constructor(type, init) {
+        needNew(arguments.length, 2, 'AudioProcessingEvent');
+        const d = dictConv('AudioProcessingEventInit', init, "Failed to construct 'AudioProcessingEvent'");
+        super(type, init);
+        K.set(this, { iface: 'AudioProcessingEvent', playbackTime: d.playbackTime, inputBuffer: d.inputBuffer, outputBuffer: d.outputBuffer });
+      }
+    }
+    const newBuffer = (nch, length, sampleRate, what) => {
+      ask(186, ['buffer', nch, length, f64(sampleRate)], what);
+      return { iface: 'AudioBuffer', numberOfChannels: nch, length, sampleRate, data: Array.from({ length: nch }, () => new Float32Array(length)) };
+    };
+    class AudioBuffer {
+      constructor(...args) {
+        if (args[0] === SECRET) { args[1].self = this; K.set(this, args[1]); return; }
+        needNew(args.length, 1, 'AudioBuffer');
+        const o = dictConv('AudioBufferOptions', args[0], "Failed to construct 'AudioBuffer'");
+        const st = newBuffer(o.numberOfChannels, o.length, o.sampleRate, "Failed to construct 'AudioBuffer'");
+        st.self = this; K.set(this, st);
+      }
+    }
+    class AudioParam {
+      constructor(token, st) { if (token !== SECRET) throw new TypeError('Illegal constructor'); K.set(this, st); }
+    }
+    class AudioNode extends EventTarget {
+      constructor(token, st) {
+        if (token !== SECRET) throw new TypeError('Illegal constructor');
+        super(); st.self = this; K.set(this, st); st.cs.nodes.set(st.id, this);
+      }
+    }
+    class AudioScheduledSourceNode extends AudioNode {
+      constructor(token, st) { super(token, st); }
+    }
+    class AudioDestinationNode extends AudioNode {
+      constructor(token, st) { super(token, st); }
+    }
+    // The constructor of a node: the context, the options dictionary, Lean's node, the options of
+    // AudioNodeOptions (channelCount, channelCountMode, channelInterpretation, in that order), then
+    // the options of the node. `o`: { dict, kind, create(opts), init(st, opts) }.
+    const nodeState = (iface, args, o) => {
+      needNew(args.length, 1, iface);
+      const what = `Failed to construct '${iface}'`;
+      const cs = ctxOf(args[0], what);
+      const opts = dictConv(o.dict, args[1], what);
+      const st = createNode(cs, iface, o.kind, o.create ? o.create(opts) : []);
+      if (opts.channelCount !== undefined) setChan(st, 'channelCount', opts.channelCount);
+      if (opts.channelCountMode !== undefined) setChan(st, 'channelCountMode', opts.channelCountMode);
+      if (opts.channelInterpretation !== undefined) setChan(st, 'channelInterpretation', opts.channelInterpretation);
+      if (o.init) o.init(st, opts);
+      return st;
+    };
+    const paramOpts = (st, opts, dict, names) => names.forEach((n, i) => paramSet(st, i, opts[n], dictDefault(dict, n)));
+    class GainNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('GainNode', args, { dict: 'GainOptions', kind: 'gain', init: (st, o) => paramOpts(st, o, 'GainOptions', ['gain']) }));
+      }
+    }
+    class ConstantSourceNode extends AudioScheduledSourceNode {
+      constructor(...args) {
+        super(SECRET, nodeState('ConstantSourceNode', args, { dict: 'ConstantSourceOptions', kind: 'constantSource', init: (st, o) => paramOpts(st, o, 'ConstantSourceOptions', ['offset']) }));
+      }
+    }
+    class OscillatorNode extends AudioScheduledSourceNode {
+      constructor(...args) {
+        super(SECRET, nodeState('OscillatorNode', args, { dict: 'OscillatorOptions', kind: 'oscillator', init: (st, o) => {
+          paramOpts(st, o, 'OscillatorOptions', ['frequency', 'detune']);
+          st.type = 'sine';
+          if (o.periodicWave !== undefined) setWave(st, o.periodicWave);
+          else if (o.type !== 'sine') { attrSet(st, 'type', o.type); st.type = o.type; }
+        } }));
+      }
+    }
+    class BiquadFilterNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('BiquadFilterNode', args, { dict: 'BiquadFilterOptions', kind: 'biquadFilter', init: (st, o) => {
+          paramOpts(st, o, 'BiquadFilterOptions', ['frequency', 'detune', 'Q', 'gain']);
+          st.type = 'lowpass';
+          if (o.type !== 'lowpass') { attrSet(st, 'type', o.type); st.type = o.type; }
+        } }));
+      }
+    }
+    class AudioBufferSourceNode extends AudioScheduledSourceNode {
+      constructor(...args) {
+        super(SECRET, nodeState('AudioBufferSourceNode', args, { dict: 'AudioBufferSourceOptions', kind: 'bufferSource', init: (st, o) => {
+          paramOpts(st, o, 'AudioBufferSourceOptions', ['playbackRate', 'detune']);
+          if (o.loop) { attrSet(st, 'loop', '1'); st.loop = true; }
+          if (o.loopStart !== 0) { ask(183, [st.cs.id, st.id, 'loopStart', f64(o.loopStart)], 'AudioBufferSourceNode.loopStart'); st.loopStart = o.loopStart; }
+          if (o.loopEnd !== 0) { ask(183, [st.cs.id, st.id, 'loopEnd', f64(o.loopEnd)], 'AudioBufferSourceNode.loopEnd'); st.loopEnd = o.loopEnd; }
+          if (o.buffer !== null && o.buffer !== undefined) setBufferOf(st, brandOf(o.buffer, 'AudioBuffer'));
+        } }));
+      }
+    }
+    class DelayNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('DelayNode', args, { dict: 'DelayOptions', kind: 'delay', create: o => [f64(o.maxDelayTime)],
+          init: (st, o) => paramOpts(st, o, 'DelayOptions', ['delayTime']) }));
+      }
+    }
+    class StereoPannerNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('StereoPannerNode', args, { dict: 'StereoPannerOptions', kind: 'stereoPanner', init: (st, o) => paramOpts(st, o, 'StereoPannerOptions', ['pan']) }));
+      }
+    }
+    class ChannelSplitterNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('ChannelSplitterNode', args, { dict: 'ChannelSplitterOptions', kind: 'channelSplitter', create: o => [String(o.numberOfOutputs)] }));
+      }
+    }
+    class ChannelMergerNode extends AudioNode {
+      constructor(...args) {
+        super(SECRET, nodeState('ChannelMergerNode', args, { dict: 'ChannelMergerOptions', kind: 'channelMerger', create: o => [String(o.numberOfInputs)] }));
+      }
+    }
+    class PeriodicWave {
+      constructor(...args) {
+        if (args[0] === SECRET) { K.set(this, args[1]); return; }
+        needNew(args.length, 1, 'PeriodicWave');
+        const what = "Failed to construct 'PeriodicWave'";
+        ctxOf(args[0], what);
+        const o = dictConv('PeriodicWaveOptions', args[1], what);
+        const w = { iface: 'PeriodicWave', real: o.real === undefined ? null : Float32Array.from(o.real), imag: o.imag === undefined ? null : Float32Array.from(o.imag), disable: !!o.disableNormalization };
+        ask(186, ['wave'].concat(waveBytes(w)), what);
+        K.set(this, w);
+      }
+    }
+    Object.assign(classes, { BaseAudioContext, AudioContext, OfflineAudioContext, OfflineAudioCompletionEvent, AudioProcessingEvent, AudioBuffer, AudioParam,
+      AudioNode, AudioScheduledSourceNode, AudioDestinationNode, GainNode, ConstantSourceNode, OscillatorNode, BiquadFilterNode,
+      AudioBufferSourceNode, DelayNode, StereoPannerNode, ChannelSplitterNode, ChannelMergerNode, PeriodicWave });
+    // The interfaces the engine cannot render (header of this section): the interface object, and a
+    // constructor that throws.
+    const parentClass = name => { const p = ifaces[name].parent; return p === '' ? null : classes[p] ?? (p === 'Worklet' ? globalThis.Worklet : undefined) ?? null; };
+    for (const name of webAudioNames) {
+      if (classes[name] || !ifaces[name]) continue;
+      const Parent = parentClass(name), info = ifaces[name];
+      const body = { [name]: class extends (Parent ?? Object) {
+        constructor(...args) {
+          if (!info.ctor) throw new TypeError('Illegal constructor');
+          needNew(args.length, info.ctor.minArgs, name);
+          throw unsup(`new ${name}()`);
+        }
+      } };
+      classes[name] = body[name];
+    }
+    // ---- attributes ----
+    const handlerGet = type => function () { return handlerOf(this, type); };
+    const A = {
+      'BaseAudioContext.destination': { get: s => s.destination },
+      'BaseAudioContext.sampleRate': { get: s => Math.fround(s.sampleRate) },
+      'BaseAudioContext.currentTime': { get: s => ctxInfo(s).frame / s.sampleRate },
+      'BaseAudioContext.listener': { get: () => { throw unsup('BaseAudioContext.listener (AudioListener)'); } },
+      'BaseAudioContext.state': { get: s => s.state },
+      'BaseAudioContext.renderQuantumSize': { get: s => ctxInfo(s).quantum },
+      'BaseAudioContext.audioWorklet': { get: () => { throw unsup('BaseAudioContext.audioWorklet (AudioWorklet)'); } },
+      // No output device yet (stage D, issue 1169): the latencies are 0 and the sink is the default one.
+      'AudioContext.baseLatency': { get: () => 0 },
+      'AudioContext.outputLatency': { get: () => 0 },
+      'AudioContext.sinkId': { get: () => '' },
+      'AudioContext.playbackStats': { get: () => { throw unsup('AudioContext.playbackStats'); } },
+      'OfflineAudioContext.length': { get: s => s.length },
+      'OfflineAudioCompletionEvent.renderedBuffer': { get: s => s.renderedBuffer },
+      'AudioProcessingEvent.playbackTime': { get: s => s.playbackTime },
+      'AudioProcessingEvent.inputBuffer': { get: s => s.inputBuffer },
+      'AudioProcessingEvent.outputBuffer': { get: s => s.outputBuffer },
+      'AudioBuffer.sampleRate': { get: s => Math.fround(s.sampleRate) },
+      'AudioBuffer.length': { get: s => s.length },
+      'AudioBuffer.duration': { get: s => s.length / Math.fround(s.sampleRate) },
+      'AudioBuffer.numberOfChannels': { get: s => s.numberOfChannels },
+      'AudioNode.context': { get: s => s.cs.self },
+      'AudioNode.numberOfInputs': { get: s => s.nIn },
+      'AudioNode.numberOfOutputs': { get: s => s.nOut },
+      'AudioNode.channelCount': { get: s => s.chan.count, set: (s, v) => { setChan(s, 'channelCount', toUL(v)); } },
+      'AudioNode.channelCountMode': { get: s => s.chan.mode, set: (s, v) => { const m = String(v); if (enumValues('ChannelCountMode').includes(m)) setChan(s, 'channelCountMode', m); } },
+      'AudioNode.channelInterpretation': { get: s => s.chan.interp, set: (s, v) => { const m = String(v); if (enumValues('ChannelInterpretation').includes(m)) setChan(s, 'channelInterpretation', m); } },
+      'AudioDestinationNode.maxChannelCount': { get: s => s.maxChannelCount },
+      'AudioParam.value': { get: s => Math.fround(paramInfo(s).value), set: (s, v) => { ask(179, [s.node.cs.id, s.node.id, s.index, 'setValue', f64(toFloat(v, 'AudioParam.value'))], 'AudioParam.value'); } },
+      'AudioParam.defaultValue': { get: s => Math.fround(paramInfo(s).defaultValue) },
+      'AudioParam.minValue': { get: s => Math.fround(paramInfo(s).minValue) },
+      'AudioParam.maxValue': { get: s => Math.fround(paramInfo(s).maxValue) },
+      'AudioParam.automationRate': { get: s => (paramInfo(s).aRate ? 'a-rate' : 'k-rate'),
+        set: (s, v) => { const m = String(v); if (enumValues('AutomationRate').includes(m)) ask(179, [s.node.cs.id, s.node.id, s.index, 'setAutomationRate', m], 'AudioParam.automationRate'); } },
+      'AudioBufferSourceNode.buffer': { get: s => s.buffer === null ? null : s.buffer.self, set: (s, v) => {
+        const b = v === null || v === undefined ? null : brandOf(v, 'AudioBuffer');
+        if (b === undefined) throw new TypeError("Failed to set the 'buffer' property on 'AudioBufferSourceNode': The provided value is not of type 'AudioBuffer'.");
+        setBufferOf(s, b);
+      } },
+      'AudioBufferSourceNode.loop': { get: s => s.loop, set: (s, v) => { attrSet(s, 'loop', v ? '1' : '0'); s.loop = !!v; } },
+      'AudioBufferSourceNode.loopStart': { get: s => s.loopStart, set: (s, v) => { const x = toDouble(v, 'loopStart'); ask(183, [s.cs.id, s.id, 'loopStart', f64(x)], 'AudioBufferSourceNode.loopStart'); s.loopStart = x; } },
+      'AudioBufferSourceNode.loopEnd': { get: s => s.loopEnd, set: (s, v) => { const x = toDouble(v, 'loopEnd'); ask(183, [s.cs.id, s.id, 'loopEnd', f64(x)], 'AudioBufferSourceNode.loopEnd'); s.loopEnd = x; } },
+      'OscillatorNode.type': { get: s => s.type, set: (s, v) => { const m = String(v); if (enumValues('OscillatorType').includes(m)) { attrSet(s, 'type', m); s.type = m; } } },
+      'BiquadFilterNode.type': { get: s => s.type, set: (s, v) => { const m = String(v); if (enumValues('BiquadFilterType').includes(m)) { attrSet(s, 'type', m); s.type = m; } } },
+    };
+    function paramInfo(s) {
+      const dv = new DataView(ask(180, [s.node.cs.id, s.node.id, s.index], 'AudioParam', true));
+      return { value: dv.getFloat64(0, true), defaultValue: dv.getFloat64(8, true), minValue: dv.getFloat64(16, true), maxValue: dv.getFloat64(24, true), aRate: dv.getUint8(32) === 1 };
+    }
+    // ---- operations ----
+    const pendingState = (cs, to) => { cs.state = to; task(() => { fire(cs.self, 'statechange'); }); };
+    const rejected = e => Promise.reject(e);
+    const brandBuffer = (b, what) => { const s = brandOf(b, 'AudioBuffer'); if (s === undefined) throw new TypeError(what); return s; };
+    const asF32 = (v, what) => { if (!(v instanceof Float32Array)) throw new TypeError(`${what}: The provided value is not of type 'Float32Array'.`); return v; };
+    // The AudioBuffer a Lean render answers (op 187): `u32 channels, u32 length, samples, u32 K, K ids`.
+    const renderResult = (cs, ab) => {
+      const dv = new DataView(ab), nch = dv.getUint32(0, true), len = dv.getUint32(4, true);
+      const data = Array.from({ length: nch }, (_, c) => new Float32Array(ab, 8 + 4 * len * c, len));
+      const off = 8 + 4 * nch * len, count = dv.getUint32(off, true);
+      const ended = Array.from({ length: count }, (_, i) => dv.getUint32(off + 4 + 4 * i, true));
+      return { buffer: { iface: 'AudioBuffer', numberOfChannels: nch, length: len, sampleRate: cs.sampleRate, data }, ended };
+    };
+    const wrapBuffer = b => new AudioBuffer(SECRET, b);
+    const M = {
+      'BaseAudioContext.createBuffer': (s, a, self) => {
+        const what = "Failed to execute 'createBuffer' on 'BaseAudioContext'";
+        const b = newBuffer(toUL(a[0]), toUL(a[1]), toFloat(a[2], what), what);
+        return wrapBuffer(b);
+      },
+      'BaseAudioContext.createBufferSource': (s, a, self) => new AudioBufferSourceNode(self),
+      'BaseAudioContext.createChannelMerger': (s, a, self) => new ChannelMergerNode(self, { numberOfInputs: a[0] }),
+      'BaseAudioContext.createChannelSplitter': (s, a, self) => new ChannelSplitterNode(self, { numberOfOutputs: a[0] }),
+      'BaseAudioContext.createConstantSource': (s, a, self) => new ConstantSourceNode(self),
+      'BaseAudioContext.createDelay': (s, a, self) => new DelayNode(self, { maxDelayTime: a[0] }),
+      'BaseAudioContext.createGain': (s, a, self) => new GainNode(self),
+      'BaseAudioContext.createOscillator': (s, a, self) => new OscillatorNode(self),
+      'BaseAudioContext.createStereoPanner': (s, a, self) => new StereoPannerNode(self),
+      'BaseAudioContext.createBiquadFilter': (s, a, self) => new BiquadFilterNode(self),
+      'BaseAudioContext.createPeriodicWave': (s, a, self) => {
+        const what = "Failed to execute 'createPeriodicWave' on 'BaseAudioContext'";
+        const real = seqFloats(a[0], what), imag = seqFloats(a[1], what);
+        const c = dictConv('PeriodicWaveConstraints', a[2], what);
+        return new PeriodicWave(self, { real, imag, disableNormalization: c.disableNormalization });
+      },
+      // Stage C of issue 1169: the ops have no decoder entry yet.
+      'BaseAudioContext.decodeAudioData': (s, a) => {
+        const what = "Failed to execute 'decodeAudioData' on 'BaseAudioContext'";
+        if (!(a[0] instanceof ArrayBuffer)) throw new TypeError(`${what}: parameter 1 is not of type 'ArrayBuffer'.`);
+        for (const cb of [a[1], a[2]]) if (cb !== undefined && cb !== null && typeof cb !== 'function') throw new TypeError(`${what}: The callback provided is not a function.`);
+        const e = unsup('BaseAudioContext.decodeAudioData');
+        task(() => { if (typeof a[2] === 'function') { try { a[2].call(undefined, e); } catch (x) { report(x); } } });
+        return rejected(e);
+      },
+      'AudioContext.getOutputTimestamp': (s) => ({ contextTime: ctxInfo(s).frame / s.sampleRate, performanceTime: 0 }),
+      'AudioContext.resume': (s) => {
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed"));
+        if (s.state !== 'running') pendingState(s, 'running');
+        return Promise.resolve();
+      },
+      'AudioContext.suspend': (s) => {
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed"));
+        if (s.state !== 'suspended') pendingState(s, 'suspended');
+        return Promise.resolve();
+      },
+      'AudioContext.close': (s) => {
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'close' on 'AudioContext': Cannot close a context that is already closed"));
+        pendingState(s, 'closed');
+        return Promise.resolve();
+      },
+      'AudioContext.setSinkId': () => rejected(unsup('AudioContext.setSinkId')),
+      'OfflineAudioContext.startRendering': (s) => {
+        const ab = ask(187, [s.id], "Failed to execute 'startRendering' on 'OfflineAudioContext'", true);
+        const r = renderResult(s, ab);
+        s.started = true;
+        pendingState(s, 'running');
+        return new Promise(resolve => {
+          const out = wrapBuffer(r.buffer);
+          // The specification's order: `ended` of each source that finished, then the promise
+          // (and the context's state `closed`), then the event `complete`.
+          for (const id of r.ended) task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); });
+          task(() => {
+            s.state = 'closed';
+            fire(s.self, 'statechange');
+            resolve(out);
+            task(() => {
+              const ev = new OfflineAudioCompletionEvent('complete', { renderedBuffer: out });
+              state(ev).trusted = true; dispatch(s.self, ev);
+            });
+          });
+        });
+      },
+      'OfflineAudioContext.resume': (s) => {
+        if (!s.started || s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'OfflineAudioContext': the context is not suspended"));
+        return Promise.resolve();
+      },
+      // The ops render the whole length at once: no suspension at a render quantum (issue 1169).
+      'OfflineAudioContext.suspend': (s, a) => { toDouble(a[0], "Failed to execute 'suspend' on 'OfflineAudioContext'"); return rejected(unsup('OfflineAudioContext.suspend')); },
+      'OfflineAudioContext.close': () => rejected(dom('InvalidStateError', "Failed to execute 'close' on 'OfflineAudioContext': an OfflineAudioContext cannot be closed")),
+      'AudioBuffer.getChannelData': (s, a) => {
+        const c = toUL(a[0]);
+        if (c >= s.numberOfChannels) throw dom('IndexSizeError', "Failed to execute 'getChannelData' on 'AudioBuffer': channel index (" + c + ') exceeds number of channels (' + s.numberOfChannels + ')');
+        return s.data[c];
+      },
+      'AudioBuffer.copyFromChannel': (s, a) => {
+        const what = "Failed to execute 'copyFromChannel' on 'AudioBuffer'";
+        const dst = asF32(a[0], what), c = toUL(a[1]), off = a[2] === undefined ? 0 : toUL(a[2]);
+        if (c >= s.numberOfChannels) throw dom('IndexSizeError', `${what}: channelNumber provided (${c}) is outside the range [0, ${s.numberOfChannels})`);
+        if (off < s.length) dst.set(s.data[c].subarray(off, off + Math.min(dst.length, s.length - off)));
+      },
+      'AudioBuffer.copyToChannel': (s, a) => {
+        const what = "Failed to execute 'copyToChannel' on 'AudioBuffer'";
+        const src = asF32(a[0], what), c = toUL(a[1]), off = a[2] === undefined ? 0 : toUL(a[2]);
+        if (c >= s.numberOfChannels) throw dom('IndexSizeError', `${what}: channelNumber provided (${c}) is outside the range [0, ${s.numberOfChannels})`);
+        if (off < s.length) s.data[c].set(src.subarray(0, Math.min(src.length, s.length - off)), off);
+      },
+      'AudioNode.connect': (s, a) => {
+        const what = "Failed to execute 'connect' on 'AudioNode'";
+        const d = isObj(a[0]) ? K.get(a[0]) : undefined;
+        if (d !== undefined && isa(d.iface, 'AudioNode')) {
+          const out = a[1] === undefined ? 0 : toUL(a[1]), inp = a[2] === undefined ? 0 : toUL(a[2]);
+          if (d.cs !== s.cs) throw dom('InvalidAccessError', `${what}: cannot connect to a destination belonging to a different audio context.`);
+          ask(177, [s.cs.id, s.id, out, d.id, inp, ''], what);
+          return a[0];
+        }
+        if (d !== undefined && d.iface === 'AudioParam') {
+          const out = a[1] === undefined ? 0 : toUL(a[1]);
+          if (d.node.cs !== s.cs) throw dom('InvalidAccessError', `${what}: cannot connect to a destination belonging to a different audio context.`);
+          ask(177, [s.cs.id, s.id, out, d.node.id, d.index, '1'], what);
+          return undefined;
+        }
+        throw new TypeError(`${what}: Overload resolution failed.`);
+      },
+      'AudioNode.disconnect': (s, a) => {
+        const what = "Failed to execute 'disconnect' on 'AudioNode'";
+        const d = a.length > 0 && isObj(a[0]) ? K.get(a[0]) : undefined;
+        let dst = '', out = '', inp = '', toParam = '';
+        const same = o => { if (o.cs !== s.cs) throw dom('InvalidAccessError', `${what}: the destination belongs to a different audio context.`); };
+        if (a.length === 0) { /* every connection */ }
+        else if (d !== undefined && isa(d.iface, 'AudioNode')) {
+          same(d); dst = d.id;
+          if (a.length >= 2) out = toUL(a[1]);
+          if (a.length >= 3) inp = toUL(a[2]);
+        } else if (d !== undefined && d.iface === 'AudioParam') {
+          same(d.node); dst = d.node.id; inp = d.index; toParam = '1';
+          if (a.length >= 2) out = toUL(a[1]);
+        } else if (a.length === 1) out = toUL(a[0]);
+        else throw new TypeError(`${what}: Overload resolution failed.`);
+        ask(178, [s.cs.id, s.id, dst, out, inp, toParam], what);
+      },
+      'AudioScheduledSourceNode.start': (s, a) => {
+        const what = "Failed to execute 'start' on 'AudioScheduledSourceNode'";
+        const w = a[0] === undefined ? 0 : toDouble(a[0], what);
+        if (s.kind === 'bufferSource') {
+          const o = a[1] === undefined ? '' : f64(toDouble(a[1], what)), d = a[2] === undefined ? '' : f64(toDouble(a[2], what));
+          ask(181, [s.cs.id, s.id, f64(w), o, d], what);
+        } else ask(181, [s.cs.id, s.id, f64(w)], what);
+      },
+      'AudioScheduledSourceNode.stop': (s, a) => {
+        const what = "Failed to execute 'stop' on 'AudioScheduledSourceNode'";
+        ask(182, [s.cs.id, s.id, f64(a[0] === undefined ? 0 : toDouble(a[0], what))], what);
+      },
+      'BiquadFilterNode.getFrequencyResponse': (s, a) => {
+        const what = "Failed to execute 'getFrequencyResponse' on 'BiquadFilterNode'";
+        const f = asF32(a[0], what), mag = asF32(a[1], what), phase = asF32(a[2], what);
+        const ab = ask(188, [s.cs.id, s.id, u8(f), String(mag.length), String(phase.length)], what, true);
+        mag.set(new Float32Array(ab, 0, mag.length));
+        phase.set(new Float32Array(ab, 4 * mag.length, phase.length));
+      },
+      'OscillatorNode.setPeriodicWave': (s, a) => {
+        if (brandOf(a[0], 'PeriodicWave') === undefined) throw new TypeError("Failed to execute 'setPeriodicWave' on 'OscillatorNode': parameter 1 is not of type 'PeriodicWave'.");
+        setWave(s, a[0]);
+      },
+    };
+    // The AudioParam methods: the page converts (float, double), Lean checks (RangeError,
+    // InvalidStateError, NotSupportedError) and answers; each returns the parameter.
+    const paramMethod = (name, kinds) => function (s, a, self) {
+      const what = `Failed to execute '${name}' on 'AudioParam'`;
+      const args = kinds.map((k, i) => (k === 'f' ? f64(toFloat(a[i], what)) : f64(toDouble(a[i], what))));
+      ask(179, [s.node.cs.id, s.node.id, s.index, name].concat(args), what);
+      return self;
+    };
+    M['AudioBufferSourceNode.start'] = M['AudioScheduledSourceNode.start'];
+    M['AudioParam.setValueAtTime'] = paramMethod('setValueAtTime', ['f', 'd']);
+    M['AudioParam.linearRampToValueAtTime'] = paramMethod('linearRampToValueAtTime', ['f', 'd']);
+    M['AudioParam.exponentialRampToValueAtTime'] = paramMethod('exponentialRampToValueAtTime', ['f', 'd']);
+    M['AudioParam.setTargetAtTime'] = paramMethod('setTargetAtTime', ['f', 'd', 'f']);
+    M['AudioParam.cancelScheduledValues'] = paramMethod('cancelScheduledValues', ['d']);
+    // Not in the ops (issue 1169): the arguments are converted, then the call is refused.
+    M['AudioParam.setValueCurveAtTime'] = (s, a) => {
+      const what = "Failed to execute 'setValueCurveAtTime' on 'AudioParam'";
+      seqFloats(a[0], what); toDouble(a[1], what); toDouble(a[2], what);
+      throw unsup('AudioParam.setValueCurveAtTime');
+    };
+    M['AudioParam.cancelAndHoldAtTime'] = (s, a) => { toDouble(a[0], "Failed to execute 'cancelAndHoldAtTime' on 'AudioParam'"); throw unsup('AudioParam.cancelAndHoldAtTime'); };
+    const PROMISES = new Set(['BaseAudioContext.decodeAudioData', 'AudioContext.resume', 'AudioContext.suspend', 'AudioContext.close', 'AudioContext.setSinkId',
+      'OfflineAudioContext.startRendering', 'OfflineAudioContext.resume', 'OfflineAudioContext.suspend', 'OfflineAudioContext.close']);
+    // ---- the interface objects: members from Lean's table ----
+    const hidden = (o, k, value) => Object.defineProperty(o, k, { value, writable: false, enumerable: false, configurable: true });
+    for (const name of webAudioNames) {
+      const ii = ifaces[name], C = classes[name];
+      if (!ii || !C) continue;
+      const P = C.prototype;
+      hidden(C, 'length', ii.ctor ? ii.ctor.minArgs : 0);
+      Object.defineProperty(P, Symbol.toStringTag, { value: name, configurable: true });
+      const illegal = () => new TypeError('Illegal invocation');
+      let pi = 0;
+      for (const at of ii.attrs) {
+        const key = name + '.' + at.name, idx = at.type === 'AudioParam' ? pi++ : -1;
+        let h = A[key];
+        if (idx >= 0) h = { get: s => s.params[idx] };
+        else if (!h && at.type === 'EventHandler') {
+          const t = at.name.slice(2);
+          h = { get() { return handlerOf(this, t); }, set(s, v) { setHandler(this, t, v); } };
+        } else if (!h) h = { get: () => { throw unsup(key); } };
+        const get = function () { const s = isObj(this) ? K.get(this) : undefined; if (s === undefined || !isa(s.iface, name)) throw illegal(); return h.get.call(this, s); };
+        hidden(get, 'name', 'get ' + at.name);
+        let set;
+        if (!at.readOnly) {
+          set = function (v) { const s = isObj(this) ? K.get(this) : undefined; if (s === undefined || !isa(s.iface, name)) throw illegal(); if (h.set) h.set.call(this, s, v); };
+          hidden(set, 'name', 'set ' + at.name);
+        }
+        Object.defineProperty(P, at.name, { get, set, enumerable: true, configurable: true });
+      }
+      for (const op of ii.ops) {
+        const key = name + '.' + op.name, h = M[key] ?? (() => { throw unsup(key); }), promise = PROMISES.has(key);
+        const call = function (...args) {
+          const s = isObj(this) ? K.get(this) : undefined;
+          if (s === undefined || !isa(s.iface, name)) throw illegal();
+          need(args.length, op.minArgs, `${op.name}' on '${name}`);
+          return h(s, args, this);
+        };
+        const f = promise ? function (...args) { try { return call.apply(this, args); } catch (e) { return Promise.reject(e); } } : call;
+        hidden(f, 'name', op.name); hidden(f, 'length', op.minArgs);
+        Object.defineProperty(P, op.name, { value: f, writable: true, enumerable: true, configurable: true });
+      }
+    }
+    return classes;
+  };
+  lazyGroup(webAudioNames, makeWebAudio);
+  // ==== end webaudio section ====
   const apiError = (r, what) => {
     switch (r) {
       case -3: throw new DOMException(what, 'InvalidCharacterError');
