@@ -10,8 +10,8 @@ has two parts:
             module imports no Lean module outside Lean.Data. Proof tactics (Lean.Elab, Lean.Meta)
             belong in modules that only proofs import.
   check     (on built binaries; build-web-render.sh and the CI lean job run it): each binary
-            carries no Lean.Elab / Lean.Meta symbol, and is at most `tolerance` (2 %) above its
-            recorded size in tools/binary-budget.json for this platform. A binary with no
+            carries no Lean.Elab / Lean.Meta symbol. Raw sizes use `tolerance` (2 %); compressed
+            `web-render.wasm.br` uses its explicit per-artifact allowance from the JSON file. A binary with no
             recorded size on this platform is reported, not failed. A binary well below its
             budget is reported so the budget can be lowered: `--update` writes measured sizes that
             are new or smaller (the ratchet only moves down; raise a budget by hand, saying why).
@@ -148,7 +148,7 @@ def cmd_check(args):
                       f'(tools/binary-budget.json, issue 551)')
                 failed = True
             else:
-                hint = ' (tools/binary-budget.py check --update)' if size < budget else ''
+                hint = ' (tools/binary-budget.py check --update)' if ratio < -tol else ''
                 print(f'ok {n}: {receipt} remaining_bytes={ceiling - size}{hint}')
     if update and not failed:
         for n, size in measured.items():
