@@ -20,7 +20,10 @@
 // 10. page answer ids (`damage.id`, named by `have`, issue 1124 stage C) are counted per session:
 //     the first page answers of two sessions have the same id, and a session answers an id that
 //     another session gave as its own page, kept. So a host names a held page only to the
-//     session that gave it (run_html.ts: only for the document on screen).
+//     session that gave it (run_html.ts: only for the document on screen);
+// 11. expected failure, Linux only: ten copies of the library load in one process, as
+//     `--engine-mode copies` loads one per worker; the 9th fails today ("cannot allocate memory in
+//     static TLS block", https://github.com/danbri/factoidal-core/issues/1160).
 // Needs the native library (`build-web-render.sh --native`); `WEB_RENDER_LIB=` names another.
 // Run with --allow-read --allow-ffi --allow-env.
 import {strict as assert} from "node:assert";
@@ -212,4 +215,28 @@ Deno.test({name:"engine sessions: page answer ids are counted per session, so on
     const again=b.compileLayers(docB.source,1600,1000,{...ob,have:{page:ida}});
     assert.equal((again.page as unknown as {kept?:number}).kept,ida,"b answered another session's id as kept");
   }finally{a.endSession();b.endSession();}
+}});
+
+// Its own form of expected failure: only the static TLS refusal is the shortfall; any other error
+// (a missing --allow-write, a full disk) fails the test.
+Deno.test({name:"xfail: ten copies of the library load in one process (Linux) (https://github.com/danbri/factoidal-core/issues/1160)",
+  ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
+  const dir=await Deno.makeTempDir({prefix:"foafnaut-copies-"});
+  const opened:Deno.DynamicLibrary<{web_render_free:{parameters:["pointer"];result:"void"}}>[]=[];
+  let refused:string|undefined;
+  try{
+    for(let i=0;i<10&&refused===undefined;i++){
+      const copy=`${dir}/copy-${i}.so`;
+      await Deno.copyFile(library,copy);
+      try{opened.push(Deno.dlopen(copy,{web_render_free:{parameters:["pointer"],result:"void"}}));}
+      catch(error){if(!/static TLS/.test(String(error)))throw error;refused=`copy ${i+1} of 10 did not load: ${String(error).split("\n")[0]}`;}
+      finally{await Deno.remove(copy);}
+    }
+  }finally{
+    // No call went into a copy, so no thread runs its code: closing them is safe.
+    for(const l of opened)l.close();
+    await Deno.remove(dir,{recursive:true});
+  }
+  if(refused===undefined)throw new Error("unexpected pass: flip to an assertion and close https://github.com/danbri/factoidal-core/issues/1160");
+  console.log(`xfail ten copies (https://github.com/danbri/factoidal-core/issues/1160): ${refused}`);
 }});

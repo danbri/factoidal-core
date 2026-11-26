@@ -141,9 +141,10 @@ Desktop host (Deno, TypeScript, macOS only):
   `sessions`: a worker per tab with a session in the one library. `tasks`: no worker, each tab's
   session runs on its own Lean dedicated task (`WebSession.lean`), called from the main thread
   through nonblocking FFI (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in
-  `native_html_engine.ts`); closing a tab cancels its session. `tasks` uses about a fifth of the
-  memory per tab but gave later first frames of a tab on Linux, so it is not the default (D11 of
-  that record). Tests: `engine_sessions_test.ts`;
+  `native_html_engine.ts`); closing a tab cancels its session. `tasks` uses less memory (31 to 34%
+  less than `copies` with 5 to 50 tabs) and, measured without per-frame probes, gives earlier first
+  frames on Linux; it is not the default: that is a question for the owner (record 7f; D11 rested on
+  numbers with the probes). Tests: `engine_sessions_test.ts`;
   measurement: `LAB/tools/engine_sessions_bench.py` (Linux rig). The remote engine calls are
   written once over a kernel (`remoteMethods`), for the engine on this thread and the session.
   `pooled` (a prototype, record section 7): the sessions of `tasks`, served by one or two host
