@@ -8,7 +8,7 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem genUnwind_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem genUnwind_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : List GFrame) (a1 : GCompl) :
     Le (genUnwind (H := H) (md := t1) (n + 1) a0 a1) (genUnwind (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (genUnwind.eq_def (md := t1) _ _ _) (genUnwind.eq_def (md := t2) _ _ _) ?_

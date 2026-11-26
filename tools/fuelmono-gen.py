@@ -73,18 +73,19 @@ def walk(name):
     return f'  fuel_walk {SPLIT_CAP[name]} ih\n' if name in SPLIT_CAP else '  fuel_walk ih\n'
 
 
-# The goals a walk leaves at the sites of tier 1 (`Le.withFast`, JS/FuelMono.lean): that the left
+# The goals a walk leaves at the sites of tiers 1 and 2 (`Le.withFast`, JS/FuelMono.lean): that the left
 # run has the tier on only if the right has, and each fast path's soundness against the arm's own
-# code (JS/Tier1Proofs.lean). `ihs` is the hypothesis at every smaller fuel of the left run.
+# code (JS/Tier1Proofs.lean, JS/Tier2Proofs.lean). `ihs` is the hypothesis at every smaller fuel of the left run.
 SITES = {
-    'evalExpr': ['exact hb', 'exact Tier1Proofs.binary_site _ _ _ _ _ _', 'exact Tier1Proofs.update_site _ _ _ _ _ _ _ _',
+    'evalExpr': ['exact hb.1', 'exact Tier1Proofs.binary_site _ _ _ _ _ _', 'exact Tier1Proofs.update_site _ _ _ _ _ _ _ _',
                  'exact Tier1Proofs.setLocal_site _ _ _ _ _ _ _'],
-    'evalStmt': ['exact hb', 'exact Tier1Proofs.block_site _ _ _ _ _ _ (fun j hj => (ihs j hj).h_evalStmts _ _)'],
+    'vmLoop': ['exact hb.2', 'exact Tier2Proofs.getMember_site _ _ _ _ _ _ (fun v => ih.h_vmLoop _ _ _ _ _ _ _) _'],
+    'evalStmt': ['exact hb.1', 'exact Tier1Proofs.block_site _ _ _ _ _ _ (fun j hj => (ihs j hj).h_evalStmts _ _)'],
 }
 
 
 def step(name, args):
-    out = [f'theorem {name}_step {{H : Type}} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)',
+    out = [f'theorem {name}_step {{H : Type}} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)',
            f'    (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) {binders(args)} :',
            f'    Le ({name} (H := H) (md := t1) (n + 1) {apps(args)}) ({name} (md := t2) (m + 1) {apps(args)}) := by',
            f'  refine Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) ({name}.eq_def (md := t2) _ {holes(args)}) ?_']
@@ -154,7 +155,7 @@ if not only:
             w(f'  h_{name} := {lam}Le.unfold ({name}.eq_def (md := t1) _ {holes(args)}) rfl (Le.fuel _)')
     w('')
     w('/-- Fuel monotonicity of the whole block: every function at fuel `n` against every `m ≥ n`. -/')
-    w('theorem IH_all {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) :')
+    w('theorem IH_all {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) :')
     w('    (m n : Nat) → n ≤ m → IH H t1 t2 n m')
     w('  | m, 0, _ => IH_zero t1 t2 m')
     w('  | 0, _ + 1, h => absurd h (by omega)')
@@ -171,42 +172,42 @@ host call receives the steps left, so it sees the same count at every call). -/
 theorem evalStmts_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (ctx : Ctx) (ss : List Stmt)
     (s : HeapOf H) (hn : ¬ Out (evalStmts (md := t) n ctx ss s)) :
     evalStmts (md := t) m ctx ss s = evalStmts (md := t) n ctx ss s :=
-  ((IH_all t t id m n h).h_evalStmts ctx ss).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_evalStmts ctx ss).eq_of_not_out s hn
 
 /-- The same for a call of a function value. -/
 theorem callV_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (f thisV : Value) (args : Array Value)
     (s : HeapOf H) (hn : ¬ Out (callV (md := t) n f thisV args s)) :
     callV (md := t) m f thisV args s = callV (md := t) n f thisV args s :=
-  ((IH_all t t id m n h).h_callV f thisV args).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_callV f thisV args).eq_of_not_out s hn
 
 /-- The same for an expression. -/
 theorem evalExpr_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e : Expr)
     (s : HeapOf H) (hn : ¬ Out (evalExpr (md := t) n ctx e s)) :
     evalExpr (md := t) m ctx e s = evalExpr (md := t) n ctx e s :=
-  ((IH_all t t id m n h).h_evalExpr ctx e).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_evalExpr ctx e).eq_of_not_out s hn
 
-/-- **Tier 1 composes.** For every host, heap `s`, context and statement list: if the reference
-(`Mode.ref`, the evaluator with no tier on) at fuel `n` ends with anything but `halt "fuel"`,
-then the engine with tier 1 on (`Mode.engine`) ends at every fuel `m ≥ n` with the same result:
+/-- **Tiers 1 and 2 compose.** For every host, heap `s`, context and statement list: if the
+reference (`Mode.ref`, the evaluator with no tier on) at fuel `n` ends with anything but
+`halt "fuel"`, then the engine with tiers 1 and 2 on (`Mode.engine`) ends at every fuel `m ≥ n` with the same result:
 the same value or completion and the same heap, so the same output, jobs, host state and steps
 left at every host call. The two runs start from the same heap: the mode is a parameter of the
 evaluator, not a field of the heap, and the function bodies in the heap are the same. -/
 theorem tier1_evalStmts_refines {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (ss : List Stmt)
     (s : HeapOf H) (hn : ¬ Out (evalStmts (md := Mode.ref) n ctx ss s)) :
     evalStmts (md := Mode.engine) m ctx ss s = evalStmts (md := Mode.ref) n ctx ss s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_evalStmts ctx ss).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_evalStmts ctx ss).eq_of_not_out s hn
 
 /-- The same for a call of a function value. -/
 theorem tier1_callV_refines {H : Type} {n m : Nat} (h : n ≤ m) (f thisV : Value) (args : Array Value)
     (s : HeapOf H) (hn : ¬ Out (callV (md := Mode.ref) n f thisV args s)) :
     callV (md := Mode.engine) m f thisV args s = callV (md := Mode.ref) n f thisV args s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_callV f thisV args).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_callV f thisV args).eq_of_not_out s hn
 
 /-- The same for an expression. -/
 theorem tier1_evalExpr_refines {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e : Expr)
     (s : HeapOf H) (hn : ¬ Out (evalExpr (md := Mode.ref) n ctx e s)) :
     evalExpr (md := Mode.engine) m ctx e s = evalExpr (md := Mode.ref) n ctx e s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_evalExpr ctx e).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_evalExpr ctx e).eq_of_not_out s hn
 
 #print axioms IH_all
 #print axioms evalStmts_fuel_mono
@@ -237,7 +238,7 @@ else:
     hdr_end = text.index('\ntheorem ') + 1
     ih_part = text[:hdr_end].rstrip() + '\n\nend L4Factoidal.JS.FuelMono\n'
     # the steps of the block's wrappers use the built-ins' lemmas (`JS/FuelMonoNatives*.lean`)
-    ih_part = ih_part.replace('import L4Factoidal.JS.FuelMono\n', 'import L4Factoidal.JS.FuelMonoNatives_callNative\nimport L4Factoidal.JS.Tier1Proofs\n', 1)
+    ih_part = ih_part.replace('import L4Factoidal.JS.FuelMono\n', 'import L4Factoidal.JS.FuelMonoNatives_callNative\nimport L4Factoidal.JS.Tier1Proofs\nimport L4Factoidal.JS.Tier2Proofs\n', 1)
     open(f'{d}/FuelMonoIH.lean', 'w').write(ih_part)
     known = {name: args for name, args in fns}
     prev = 'L4Factoidal.JS.FuelMonoIH'

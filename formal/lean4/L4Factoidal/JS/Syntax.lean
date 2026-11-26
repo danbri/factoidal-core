@@ -59,6 +59,9 @@ U+10FFFE. Two classes with the same private name share it (record, section 5). A
 value never becomes such a key: `strKey` puts a mark before a string that starts with one of
 the three reserved characters. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
+/-- Slots of the inline cache (`HeapOf.icache`); a site's number is taken modulo this. -/
+def icSize : Nat := 4096
+
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
 /-! ### Property keys of String values
@@ -171,7 +174,8 @@ inductive Instr where
   /-- A variable `hops` environments above the function's closure environment. -/
   | getUp (dst hops idx : Nat) (name : String)
   | setUp (src hops idx : Nat) (name : String)
-  | getMember (dst o : Nat) (key : String)
+  /-- `dst = o.key`; `site` numbers a slot of the inline cache (`HeapOf.icache`, tier 2). -/
+  | getMember (dst o : Nat) (key : String) (site : Nat)
   | setMember (o : Nat) (key : String) (src : Nat)
   | getIndex (dst o i : Nat)
   | setIndex (o i src : Nat)

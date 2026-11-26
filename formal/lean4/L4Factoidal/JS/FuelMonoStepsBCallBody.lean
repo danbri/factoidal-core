@@ -8,7 +8,7 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem callBody_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem callBody_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : FunDef) (a1 : Nat) (a2 : Value) (a3 : Value) (a4 : Value) (a5 : Value) (a6 : Value) (a7 : Value) (a8 : Array Value) (a9 : Nat) (a10 : FunInfo) (a11 : Nat) :
     Le (callBody (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11) (callBody (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11) := by
   refine Le.unfold (callBody.eq_def (md := t1) _ _ _ _ _ _ _ _ _ _ _ _ _) (callBody.eq_def (md := t2) _ _ _ _ _ _ _ _ _ _ _ _ _) ?_

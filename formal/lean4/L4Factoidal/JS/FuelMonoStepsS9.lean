@@ -8,25 +8,25 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem jsonSer_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem jsonSer_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Option (Array String)) (a2 : String) (a3 : String) (a4 : Array Nat) (a5 : Value) (a6 : String) :
     Le (jsonSer (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6) (jsonSer (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
   refine Le.unfold (jsonSer.eq_def (md := t1) _ _ _ _ _ _ _ _) (jsonSer.eq_def (md := t2) _ _ _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem arraySpliceGeneric_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem arraySpliceGeneric_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Array Value) :
     Le (arraySpliceGeneric (H := H) (md := t1) (n + 1) a0 a1) (arraySpliceGeneric (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (arraySpliceGeneric.eq_def (md := t1) _ _ _) (arraySpliceGeneric.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem deleteProp_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem deleteProp_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (deleteProp (H := H) (md := t1) (n + 1) a0 a1) (deleteProp (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (deleteProp.eq_def (md := t1) _ _ _) (deleteProp.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem jsonRevive_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem jsonRevive_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Array (Nat × String × String × Value)) (a1 : Value) (a2 : Value) (a3 : String) (a4 : Nat) :
     Le (jsonRevive (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (jsonRevive (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
   refine Le.unfold (jsonRevive.eq_def (md := t1) _ _ _ _ _ _) (jsonRevive.eq_def (md := t2) _ _ _ _ _ _) ?_

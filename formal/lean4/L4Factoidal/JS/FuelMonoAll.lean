@@ -134,7 +134,7 @@ theorem IH_zero {H : Type} (t1 t2 : Mode) (m : Nat) : IH H t1 t2 0 m where
   h_moreNative := fun a0 a1 a2 a3 => Le.unfold (moreNative.eq_def (md := t1) _ _ _ _ _) rfl (Le.fuel _)
 
 /-- Fuel monotonicity of the whole block: every function at fuel `n` against every `m ≥ n`. -/
-theorem IH_all {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) :
+theorem IH_all {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) :
     (m n : Nat) → n ≤ m → IH H t1 t2 n m
   | m, 0, _ => IH_zero t1 t2 m
   | 0, _ + 1, h => absurd h (by omega)
@@ -276,42 +276,42 @@ host call receives the steps left, so it sees the same count at every call). -/
 theorem evalStmts_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (ctx : Ctx) (ss : List Stmt)
     (s : HeapOf H) (hn : ¬ Out (evalStmts (md := t) n ctx ss s)) :
     evalStmts (md := t) m ctx ss s = evalStmts (md := t) n ctx ss s :=
-  ((IH_all t t id m n h).h_evalStmts ctx ss).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_evalStmts ctx ss).eq_of_not_out s hn
 
 /-- The same for a call of a function value. -/
 theorem callV_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (f thisV : Value) (args : Array Value)
     (s : HeapOf H) (hn : ¬ Out (callV (md := t) n f thisV args s)) :
     callV (md := t) m f thisV args s = callV (md := t) n f thisV args s :=
-  ((IH_all t t id m n h).h_callV f thisV args).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_callV f thisV args).eq_of_not_out s hn
 
 /-- The same for an expression. -/
 theorem evalExpr_fuel_mono {H : Type} (t : Mode) {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e : Expr)
     (s : HeapOf H) (hn : ¬ Out (evalExpr (md := t) n ctx e s)) :
     evalExpr (md := t) m ctx e s = evalExpr (md := t) n ctx e s :=
-  ((IH_all t t id m n h).h_evalExpr ctx e).eq_of_not_out s hn
+  ((IH_all t t (Mode.Sub.refl t) m n h).h_evalExpr ctx e).eq_of_not_out s hn
 
-/-- **Tier 1 composes.** For every host, heap `s`, context and statement list: if the reference
-(`Mode.ref`, the evaluator with no tier on) at fuel `n` ends with anything but `halt "fuel"`,
-then the engine with tier 1 on (`Mode.engine`) ends at every fuel `m ≥ n` with the same result:
+/-- **Tiers 1 and 2 compose.** For every host, heap `s`, context and statement list: if the
+reference (`Mode.ref`, the evaluator with no tier on) at fuel `n` ends with anything but
+`halt "fuel"`, then the engine with tiers 1 and 2 on (`Mode.engine`) ends at every fuel `m ≥ n` with the same result:
 the same value or completion and the same heap, so the same output, jobs, host state and steps
 left at every host call. The two runs start from the same heap: the mode is a parameter of the
 evaluator, not a field of the heap, and the function bodies in the heap are the same. -/
 theorem tier1_evalStmts_refines {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (ss : List Stmt)
     (s : HeapOf H) (hn : ¬ Out (evalStmts (md := Mode.ref) n ctx ss s)) :
     evalStmts (md := Mode.engine) m ctx ss s = evalStmts (md := Mode.ref) n ctx ss s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_evalStmts ctx ss).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_evalStmts ctx ss).eq_of_not_out s hn
 
 /-- The same for a call of a function value. -/
 theorem tier1_callV_refines {H : Type} {n m : Nat} (h : n ≤ m) (f thisV : Value) (args : Array Value)
     (s : HeapOf H) (hn : ¬ Out (callV (md := Mode.ref) n f thisV args s)) :
     callV (md := Mode.engine) m f thisV args s = callV (md := Mode.ref) n f thisV args s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_callV f thisV args).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_callV f thisV args).eq_of_not_out s hn
 
 /-- The same for an expression. -/
 theorem tier1_evalExpr_refines {H : Type} {n m : Nat} (h : n ≤ m) (ctx : Ctx) (e : Expr)
     (s : HeapOf H) (hn : ¬ Out (evalExpr (md := Mode.ref) n ctx e s)) :
     evalExpr (md := Mode.engine) m ctx e s = evalExpr (md := Mode.ref) n ctx e s :=
-  ((IH_all Mode.ref Mode.engine (fun h => Bool.noConfusion h) m n h).h_evalExpr ctx e).eq_of_not_out s hn
+  ((IH_all Mode.ref Mode.engine Mode.Sub.ref_engine m n h).h_evalExpr ctx e).eq_of_not_out s hn
 
 #print axioms IH_all
 #print axioms evalStmts_fuel_mono

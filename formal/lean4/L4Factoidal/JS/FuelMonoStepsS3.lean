@@ -8,91 +8,91 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem declareLexical_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem declareLexical_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Stmt) :
     Le (declareLexical (H := H) (md := t1) (n + 1) a0 a1) (declareLexical (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (declareLexical.eq_def (md := t1) _ _ _) (declareLexical.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem evalStmts_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalStmts_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Stmt) :
     Le (evalStmts (H := H) (md := t1) (n + 1) a0 a1) (evalStmts (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (evalStmts.eq_def (md := t1) _ _ _) (evalStmts.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem evalBlock_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalBlock_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Stmt) :
     Le (evalBlock (H := H) (md := t1) (n + 1) a0 a1) (evalBlock (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (evalBlock.eq_def (md := t1) _ _ _) (evalBlock.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem assignName_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem assignName_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : String) (a2 : Value) :
     Le (assignName (H := H) (md := t1) (n + 1) a0 a1 a2) (assignName (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (assignName.eq_def (md := t1) _ _ _ _) (assignName.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem lookupLocal_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem lookupLocal_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : String) (a2 : Nat) (a3 : Nat) :
     Le (lookupLocal (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (lookupLocal (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (lookupLocal.eq_def (md := t1) _ _ _ _ _) (lookupLocal.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem assignLocal_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem assignLocal_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : String) (a2 : Nat) (a3 : Nat) (a4 : Value) :
     Le (assignLocal (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (assignLocal (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
   refine Le.unfold (assignLocal.eq_def (md := t1) _ _ _ _ _ _) (assignLocal.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem namedGlobal_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem namedGlobal_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : String) :
     Le (namedGlobal (H := H) (md := t1) (n + 1) a0) (namedGlobal (md := t2) (m + 1) a0) := by
   refine Le.unfold (namedGlobal.eq_def (md := t1) _ _) (namedGlobal.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem lookup_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem lookup_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : String) :
     Le (lookup (H := H) (md := t1) (n + 1) a0 a1) (lookup (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (lookup.eq_def (md := t1) _ _ _) (lookup.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem putTarget_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem putTarget_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) (a2 : Option Value) (a3 : Option String) (a4 : Value) :
     Le (putTarget (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4) (putTarget (md := t2) (m + 1) a0 a1 a2 a3 a4) := by
   refine Le.unfold (putTarget.eq_def (md := t1) _ _ _ _ _ _) (putTarget.eq_def (md := t2) _ _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem evalRef_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalRef_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) :
     Le (evalRef (H := H) (md := t1) (n + 1) a0 a1) (evalRef (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (evalRef.eq_def (md := t1) _ _ _) (evalRef.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem getRef_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem getRef_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) (a2 : Option Value) (a3 : Option String) :
     Le (getRef (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (getRef (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (getRef.eq_def (md := t1) _ _ _ _ _) (getRef.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem evalArgs_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalArgs_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List Expr) (a2 : Array Value) :
     Le (evalArgs (H := H) (md := t1) (n + 1) a0 a1 a2) (evalArgs (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (evalArgs.eq_def (md := t1) _ _ _ _) (evalArgs.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem evalArg_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalArg_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Expr) (a2 : List Expr) (a3 : Array Value) :
     Le (evalArg (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (evalArg (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (evalArg.eq_def (md := t1) _ _ _ _ _) (evalArg.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem evalProps_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem evalProps_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : Nat) (a2 : List PropDef) :
     Le (evalProps (H := H) (md := t1) (n + 1) a0 a1 a2) (evalProps (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (evalProps.eq_def (md := t1) _ _ _ _) (evalProps.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem whileLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem whileLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Ctx) (a1 : List String) (a2 : Expr) (a3 : Stmt) :
     Le (whileLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (whileLoop (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (whileLoop.eq_def (md := t1) _ _ _ _ _) (whileLoop.eq_def (md := t2) _ _ _ _ _) ?_

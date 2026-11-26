@@ -681,6 +681,21 @@ inductive HostArg where
   | bytes (b : ByteArray)
   deriving Inhabited
 
+/-- An entry of the inline cache for property reads (tier 2, issue 471): what a read of `key` found
+the last time, as the key arrays of the objects it looked in. An object whose own key array is equal
+to `ks` (the same keys in the same slots) has the key in slot `slot` (`own`), or does not have it
+(`proto`), and then its prototype's key array `pks` has it in slot `slot`. The proofs are part of the
+entry, so every entry in every heap satisfies them; they are erased in the compiled program. -/
+inductive IC where
+  | none
+  | own (key : String) (ks : Array String) (slot : Nat)
+      (hs : PropMap.scan ks key 0 = slot) (hl : slot < ks.size) (hn : (key == "length") = false)
+  | proto (key : String) (ks pks : Array String) (slot : Nat)
+      (h0 : PropMap.scan ks key 0 = ks.size) (hs : PropMap.scan pks key 0 = slot) (hl : slot < pks.size)
+      (hp : isPrivKey key = false) (hn : (key == "length") = false)
+
+instance : Inhabited IC := ⟨.none⟩
+
 /-- The fields of the heap that change rarely. They live apart from the hot fields of
 `HeapOf`, so that a change of a hot field (the step count on every call and loop iteration,
 the environment and object arrays) copies a small record, not all of these. -/
@@ -759,6 +774,9 @@ structure HeapOf (H : Type) extends ColdHeap H where
   /-- The slot of a name in the global object's property map, by a hash of the name; checked
   at each use (the name in that slot). Starts out empty. -/
   globalCache : Array Nat := Array.replicate 1024 0
+  /-- The inline cache for property reads (tier 2), by site (`Instr.getMember`). The register
+  machine fills it in every mode, the same way; only tier 2 reads it (`HeapOf.icGet`). -/
+  icache : Array IC := Array.replicate icSize .none
   /-- Steps left before the script is stopped (an interrupt, not an exception). -/
   steps : UInt64 := 1000000000
   depth : UInt32 := 0
@@ -861,12 +879,25 @@ and the reference run start from the same heap and can end in the same heap
 class Mode where
   /-- Tier 1 (`Tier1` in `JS/Interp.lean`): guarded fast paths inside the evaluator's arms. -/
   tier1 : Bool
+  /-- Tier 2: the register machine's property reads answered from the inline cache
+  (`HeapOf.icGet`). -/
+  tier2 : Bool
 
 /-- The engine: every tier on. The instance a caller gets when it names none. -/
-instance (priority := low) Mode.engine : Mode := ⟨true⟩
+instance (priority := low) Mode.engine : Mode := ⟨true, true⟩
 
 /-- The reference: the evaluator with no tier on. -/
-@[reducible] def Mode.ref : Mode := ⟨false⟩
+@[reducible] def Mode.ref : Mode := ⟨false, false⟩
+
+/-- Every tier on in `t1` is on in `t2`: the condition between the two runs of the refinement
+theorems (`JS/FuelMonoAll.lean`). -/
+def Mode.Sub (t1 t2 : Mode) : Prop :=
+  (t1.tier1 = true → t2.tier1 = true) ∧ (t1.tier2 = true → t2.tier2 = true)
+
+theorem Mode.Sub.refl (t : Mode) : t.Sub t := ⟨id, id⟩
+
+theorem Mode.Sub.ref_engine : Mode.ref.Sub Mode.engine :=
+  ⟨fun h => Bool.noConfusion h, fun h => Bool.noConfusion h⟩
 
 /-- Statement completions (§6.2.4) other than throw. -/
 inductive Compl where
@@ -1195,6 +1226,90 @@ def HeapOf.strLength (h : HeapOf H) (s : String) : Nat :=
     else if key.front.isDigit then .hole
     else h.fastGet h.realm.stringProto key 1000
   | _ => .hole
+
+/-! ## Tier 2: the inline cache for property reads -/
+
+/-- The kinds of object whose properties are all in `props` (`fastGet`'s `kindOk` is true for every
+key): not a Proxy, a typed array, a primitive wrapper or an Array. -/
+@[inline] def Kind.icOk : Kind → Bool
+  | .proxy .. | .typed .. | .prim _ | .array _ => false
+  | _ => true
+
+/-- `a == b` on key arrays, with the answer `true` at once when both are the same array in memory
+(`withPtrEq`); the logical value is `a == b`. -/
+@[inline] def sameKeys (a b : Array String) : Bool :=
+  withPtrEq a b (fun _ => a == b) (fun h => by subst h; exact beq_self_eq_true a)
+
+/-- The value the entry `e` gives for a read of `k` on `b`, or `Value.hole` when the entry does not
+apply (another key, another key array, a big map, a kind with exotic properties, an accessor). No
+scan of the keys: the entry's proof says where the key is. Equal to `fastGetV` when it is not
+`.hole` (`icGet_sound`, `JS/Tier2Proofs.lean`). -/
+@[inline] def HeapOf.icGet (h : HeapOf H) (e : IC) (b : Value) (k : String) : Value :=
+  match b with
+  | .obj id =>
+    match e with
+    | .own key ks slot .. =>
+      if key == k then
+        let o := h.objs.getD id default
+        if o.kind.icOk && o.props.big.isNone && sameKeys o.props.ks ks then
+          match o.props.vs[slot]? with
+          | some (.data v ..) => v
+          | _ => .hole
+        else .hole
+      else .hole
+    | .proto key ks pks slot .. =>
+      if key == k then
+        let o := h.objs.getD id default
+        if o.kind.icOk && o.props.big.isNone && sameKeys o.props.ks ks then
+          match o.proto with
+          | .obj p =>
+            let po := h.objs.getD p default
+            if po.kind.icOk && po.props.big.isNone && sameKeys po.props.ks pks then
+              match po.props.vs[slot]? with
+              | some (.data v ..) => v
+              | _ => .hole
+            else .hole
+          | _ => .hole
+        else .hole
+      else .hole
+    | .none => .hole
+  | _ => .hole
+
+/-- The entry for a read of `k` on `b` in heap `h`: the key arrays and the slot that `fastGet` uses,
+when the key is in the object's own small map or in its prototype's; `IC.none` otherwise. -/
+def HeapOf.icMake (h : HeapOf H) (b : Value) (k : String) : IC :=
+  match b with
+  | .obj id =>
+    if hn : (k == "length") = false then
+      let o := h.objs.getD id default
+      if o.kind.icOk && o.props.big.isNone then
+        let ks := o.props.ks
+        if hl : PropMap.scan ks k 0 < ks.size then .own k ks _ rfl hl hn
+        else if hp : isPrivKey k = false then
+          match o.proto with
+          | .obj p =>
+            let po := h.objs.getD p default
+            if po.kind.icOk && po.props.big.isNone then
+              let pks := po.props.ks
+              if hj : PropMap.scan pks k 0 < pks.size then
+                .proto k ks pks _ (PropMap.scan_eq_size_of_not_lt ks k hl) rfl hj hp hn
+              else .none
+            else .none
+          | _ => .none
+        else .none
+      else .none
+    else .none
+  | _ => .none
+
+/-- Write entry `e` in slot `site` of the inline cache. The array is taken out of the heap while
+it is written, so it is changed in place (`icSet_eq`). -/
+@[inline] def HeapOf.icSet (h : HeapOf H) (site : Nat) (e : IC) : HeapOf H :=
+  let c := h.icache
+  let h := { h with icache := #[] }
+  { h with icache := c.setIfInBounds site e }
+
+theorem HeapOf.icSet_eq (h : HeapOf H) (site : Nat) (e : IC) :
+    h.icSet site e = { h with icache := h.icache.setIfInBounds site e } := rfl
 
 /-- `@@unscopables` of a `with` object names `name` with a true data value. -/
 def HeapOf.unscopable (h : HeapOf H) (o : Nat) (name : String) : Bool :=

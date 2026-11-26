@@ -661,7 +661,8 @@ elab "fuel_late_lemmas" : tactic => do
   let t ← instantiateMVars (← g.getType)
   let args := t.getAppArgs
   let mut names := [`L4Factoidal.JS.FuelMono.Le.inRealm, `L4Factoidal.JS.FuelMono.Le.withFast,
-    `L4Factoidal.JS.FuelMono.Le.binaryGen, `L4Factoidal.JS.FuelMono.Le.updateGen]
+    `L4Factoidal.JS.FuelMono.Le.binaryGen, `L4Factoidal.JS.FuelMono.Le.updateGen,
+    `L4Factoidal.JS.FuelMono.Le.memberGen]
   -- a built-in `Natives.f core …`: its lemma is `natives_f_mono`
   if t.isAppOf ``Le && args.size ≥ 4 then
     if args[2]!.isAppOf ``L4Factoidal.JS.setGeneralArrayLength then
@@ -819,6 +820,14 @@ theorem Le.updateGen {look1 look2 : JSM H Value} {asg1 asg2 : Value → JSM H Un
     (hnum : ∀ v, Le (num1 v) (num2 v)) (pre inc : Bool) :
     Le (Tier1.updateGen look1 asg1 prim1 num1 pre inc) (Tier1.updateGen look2 asg2 prim2 num2 pre inc) := by
   delta Tier1.updateGen
+  fuel_walk
+
+/-- The arm of `getMember` in the register machine (`Tier2.memberGen`): the read, the fill of the
+inline cache, then the slow path or the continuation. -/
+theorem Le.memberGen {α : Type} {slow1 slow2 : JSM H α} {c1 c2 : Value → JSM H α}
+    (hs : Le slow1 slow2) (hc : ∀ v, Le (c1 v) (c2 v)) (site : Nat) (b : Value) (k : String) :
+    Le (Tier2.memberGen site b k slow1 c1) (Tier2.memberGen site b k slow2 c2) := by
+  delta Tier2.memberGen
   fuel_walk
 
 /-- At fuel 0 `iterCloseAbrupt` is out of fuel, as every function of the block is. It threw its

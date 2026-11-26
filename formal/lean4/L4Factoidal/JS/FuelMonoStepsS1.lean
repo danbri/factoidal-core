@@ -8,91 +8,91 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem getV_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem getV_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (getV (H := H) (md := t1) (n + 1) a0 a1) (getV (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (getV.eq_def (md := t1) _ _ _) (getV.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem getProto_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem getProto_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : String) (a2 : Value) :
     Le (getProto (H := H) (md := t1) (n + 1) a0 a1 a2) (getProto (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (getProto.eq_def (md := t1) _ _ _ _) (getProto.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem proxyTrap_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem proxyTrap_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (proxyTrap (H := H) (md := t1) (n + 1) a0 a1) (proxyTrap (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (proxyTrap.eq_def (md := t1) _ _ _) (proxyTrap.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem hasProp_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem hasProp_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : String) :
     Le (hasProp (H := H) (md := t1) (n + 1) a0 a1) (hasProp (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (hasProp.eq_def (md := t1) _ _ _) (hasProp.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem getRecv_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem getRecv_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : String) (a2 : Value) :
     Le (getRecv (H := H) (md := t1) (n + 1) a0 a1 a2) (getRecv (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (getRecv.eq_def (md := t1) _ _ _ _) (getRecv.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem ownKeysOf_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem ownKeysOf_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) :
     Le (ownKeysOf (H := H) (md := t1) (n + 1) a0) (ownKeysOf (md := t2) (m + 1) a0) := by
   refine Le.unfold (ownKeysOf.eq_def (md := t1) _ _) (ownKeysOf.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem ownDesc_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem ownDesc_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : String) :
     Le (ownDesc (H := H) (md := t1) (n + 1) a0 a1) (ownDesc (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (ownDesc.eq_def (md := t1) _ _ _) (ownDesc.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem putV_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem putV_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) (a2 : Value) (a3 : Bool) :
     Le (putV (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (putV (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (putV.eq_def (md := t1) _ _ _ _ _) (putV.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem toPrim_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem toPrim_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (toPrim (H := H) (md := t1) (n + 1) a0 a1) (toPrim (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (toPrim.eq_def (md := t1) _ _ _) (toPrim.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem tryMethods_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem tryMethods_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : List String) :
     Le (tryMethods (H := H) (md := t1) (n + 1) a0 a1) (tryMethods (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (tryMethods.eq_def (md := t1) _ _ _) (tryMethods.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem toNum_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem toNum_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (toNum (H := H) (md := t1) (n + 1) a0) (toNum (md := t2) (m + 1) a0) := by
   refine Le.unfold (toNum.eq_def (md := t1) _ _) (toNum.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem toBigInt_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem toBigInt_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (toBigInt (H := H) (md := t1) (n + 1) a0) (toBigInt (md := t2) (m + 1) a0) := by
   refine Le.unfold (toBigInt.eq_def (md := t1) _ _) (toBigInt.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem typedConv_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem typedConv_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Nat) (a1 : Value) :
     Le (typedConv (H := H) (md := t1) (n + 1) a0 a1) (typedConv (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (typedConv.eq_def (md := t1) _ _ _) (typedConv.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem toStr_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem toStr_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (toStr (H := H) (md := t1) (n + 1) a0) (toStr (md := t2) (m + 1) a0) := by
   refine Le.unfold (toStr.eq_def (md := t1) _ _) (toStr.eq_def (md := t2) _ _) ?_
   fuel_walk ih
 
-theorem toKey_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem toKey_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) :
     Le (toKey (H := H) (md := t1) (n + 1) a0) (toKey (md := t2) (m + 1) a0) := by
   refine Le.unfold (toKey.eq_def (md := t1) _ _) (toKey.eq_def (md := t2) _ _) ?_

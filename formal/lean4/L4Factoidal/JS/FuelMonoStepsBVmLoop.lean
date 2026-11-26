@@ -8,10 +8,13 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem vmLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem vmLoop_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Code) (a1 : Nat) (a2 : Nat) (a3 : Nat) (a4 : List VFrame) (a5 : Array Value) (a6 : FloatArray) :
     Le (vmLoop (H := H) (md := t1) (n + 1) a0 a1 a2 a3 a4 a5 a6) (vmLoop (md := t2) (m + 1) a0 a1 a2 a3 a4 a5 a6) := by
   refine Le.unfold (vmLoop.eq_def (md := t1) _ _ _ _ _ _ _ _) (vmLoop.eq_def (md := t2) _ _ _ _ _ _ _ _) ?_
   fuel_walk ih
+  all_goals first
+    | exact hb.2
+    | exact Tier2Proofs.getMember_site _ _ _ _ _ _ (fun v => ih.h_vmLoop _ _ _ _ _ _ _) _
 
 end L4Factoidal.JS.FuelMono

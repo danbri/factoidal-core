@@ -187,7 +187,8 @@ def main (args : List String) : IO UInt32 := do
   let vm := (← IO.getEnv "BUBBLEPOP_VM") != some "off"
   let fresh : Heap := { freshHeap with useVm := vm }
   -- `BUBBLEPOP_TIER1=off`: the reference run, the evaluator with tier 1 off (`Mode.ref`)
-  let md : Mode := ⟨(← IO.getEnv "BUBBLEPOP_TIER1") != some "off"⟩
+  -- `BUBBLEPOP_TIER2=off`: the inline caches for property reads are filled and not used
+  let md : Mode := ⟨(← IO.getEnv "BUBBLEPOP_TIER1") != some "off", (← IO.getEnv "BUBBLEPOP_TIER2") != some "off"⟩
   match args with
   | ["run", file] =>
     let (o, h) := runScript fresh (← IO.FS.readFile file)
@@ -231,7 +232,7 @@ def main (args : List String) : IO UInt32 := do
     timeIt "loop" loopSrc
     pure 0
   | _ =>
-    IO.eprintln "usage: [BUBBLEPOP_VM=off] [BUBBLEPOP_TIER1=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench | numfmt-diff N SEED [OUT] | numfmt-bench"
+    IO.eprintln "usage: [BUBBLEPOP_VM=off] [BUBBLEPOP_TIER1=off] [BUBBLEPOP_TIER2=off] leanjs run FILE | eval SRC | test262 ROOT DIR... [--list OUT] | test262-files ROOT LIST | bench | numfmt-diff N SEED [OUT] | numfmt-bench"
     pure 64
 
 end L4Factoidal.JS.Main

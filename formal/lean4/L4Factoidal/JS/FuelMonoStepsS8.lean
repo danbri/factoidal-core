@@ -8,43 +8,43 @@ open L4Factoidal.JS
 set_option maxHeartbeats 0
 set_option linter.unusedVariables false
 
-theorem regexExec_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem regexExec_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (regexExec (H := H) (md := t1) (n + 1) a0 a1) (regexExec (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (regexExec.eq_def (md := t1) _ _ _) (regexExec.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem regExpExecG_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem regExpExecG_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : String) :
     Le (regExpExecG (H := H) (md := t1) (n + 1) a0 a1) (regExpExecG (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (regExpExecG.eq_def (md := t1) _ _ _) (regExpExecG.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem speciesCtor_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem speciesCtor_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Value) (a1 : Value) :
     Le (speciesCtor (H := H) (md := t1) (n + 1) a0 a1) (speciesCtor (md := t2) (m + 1) a0 a1) := by
   refine Le.unfold (speciesCtor.eq_def (md := t1) _ _ _) (speciesCtor.eq_def (md := t2) _ _ _) ?_
   fuel_walk ih
 
-theorem matchArray_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem matchArray_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Re.Compiled) (a1 : String) (a2 : Array (Option (Nat × Nat))) :
     Le (matchArray (H := H) (md := t1) (n + 1) a0 a1 a2) (matchArray (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (matchArray.eq_def (md := t1) _ _ _ _) (matchArray.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem stringSymDispatch_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem stringSymDispatch_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Native) (a1 : Value) (a2 : Array Value) :
     Le (stringSymDispatch (H := H) (md := t1) (n + 1) a0 a1 a2) (stringSymDispatch (md := t2) (m + 1) a0 a1 a2) := by
   refine Le.unfold (stringSymDispatch.eq_def (md := t1) _ _ _ _) (stringSymDispatch.eq_def (md := t2) _ _ _ _) ?_
   fuel_walk ih
 
-theorem extraNative_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem extraNative_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Native) (a1 : Value) (a2 : Array Value) (a3 : Option Value) :
     Le (extraNative (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (extraNative (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (extraNative.eq_def (md := t1) _ _ _ _ _) (extraNative.eq_def (md := t2) _ _ _ _ _) ?_
   fuel_walk ih
 
-theorem moreNative_step {H : Type} (t1 t2 : Mode) (hb : t1.tier1 = true → t2.tier1 = true) (n m : Nat)
+theorem moreNative_step {H : Type} (t1 t2 : Mode) (hb : t1.Sub t2) (n m : Nat)
     (ih : IH H t1 t2 n m) (ihs : ∀ k, k ≤ n → IH H t1 t2 k m) (a0 : Native) (a1 : Value) (a2 : Array Value) (a3 : Option Value) :
     Le (moreNative (H := H) (md := t1) (n + 1) a0 a1 a2 a3) (moreNative (md := t2) (m + 1) a0 a1 a2 a3) := by
   refine Le.unfold (moreNative.eq_def (md := t1) _ _ _ _ _) (moreNative.eq_def (md := t2) _ _ _ _ _) ?_

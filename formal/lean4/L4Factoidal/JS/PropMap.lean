@@ -208,6 +208,18 @@ A cache that remembers the slot of a key (the register machine's global name cac
 `vmGlobalHit`; an inline cache for property reads) reads `vs[i]` where `get?` would look the key
 up. These say when that is the same answer. -/
 
+/-- `scan` never answers past the end. -/
+theorem scan_le (ks : Array String) (k : String) (i : Nat) : scan ks k i ≤ ks.size := by
+  fun_induction scan ks k i with
+  | case1 i h _ => omega
+  | case2 i h _ ih => exact ih
+  | case3 i h => exact Nat.le_refl _
+
+/-- So an answer that is not a slot is the size. -/
+theorem scan_eq_size_of_not_lt (ks : Array String) (k : String) (h : ¬ scan ks k 0 < ks.size) :
+    scan ks k 0 = ks.size :=
+  Nat.le_antisymm (scan_le ks k 0) (Nat.not_lt.mp h)
+
 /-- `scan` from `s` stops at `i` when `ks[i]` is `k` and no slot from `s` to `i` before it is. -/
 theorem scan_eq_first (ks : Array String) (k : String) (i : Nat) (hi : i < ks.size)
     (hk : ks[i] = k) (hfirst : ∀ j (hj : j < i), ks[j]'(by omega) ≠ k) :

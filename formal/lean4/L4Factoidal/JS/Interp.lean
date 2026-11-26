@@ -8418,6 +8418,48 @@ number operands of the common operations are combined with no call. -/
 
 end Tier1
 
+/-! ## Tier 2: inline caches for property reads (issue 471)
+
+The register machine's `getMember` fills the inline cache (`HeapOf.icache`) in every mode, the
+same way: after a read that `fastGetV` answers, the site's entry is the one `HeapOf.icMake` makes
+from the heap. With tier 2 on, the arm first asks the cache (`Tier2.getMember?`, through
+`Tier1.withFast`): a hit answers with no scan of the keys and no change to the heap. A hit is the
+answer `fastGetV` gives, and the entry the fill would write is the one already there
+(`JS/Tier2Proofs.lean`), so the run with tier 2 on ends as the reference does. -/
+namespace Tier2
+
+/-- The registers after register `i` gets `v`: a Number goes to the float registers. -/
+@[inline] def putR (regs : Array Value) (i : Nat) (v : Value) : Array Value :=
+  match v with
+  | .num _ => regs.set! i .fl
+  | w => regs.set! i w
+
+/-- The float registers after register `i` gets `v`. -/
+@[inline] def putF (fregs : FloatArray) (i : Nat) (v : Value) : FloatArray :=
+  match v with
+  | .num x => fregs.set! i x
+  | _ => fregs
+
+/-- Tier 2's fast path for `getMember`: the value of the site's cache entry, with no change to
+the heap; `none` when the entry does not apply. -/
+@[inline] def getMember? (site : Nat) (b : Value) (k : String) : M (Option Value) := do
+  let h ← get
+  match h.icGet h.icache[site]! b k with
+  | .hole => pure none
+  | v => pure (some v)
+
+/-- The arm's own code of `getMember`, in every mode: the read by `fastGetV`; when it answers,
+fill the site's cache entry and continue with `c`; otherwise the general path `slow`. -/
+@[inline] def memberGen {α : Type} (site : Nat) (b : Value) (k : String) (slow : M α)
+    (c : Value → M α) : M α := do
+  match (← get).fastGetV b k with
+  | .hole => slow
+  | v =>
+    modify fun h => h.icSet site (h.icMake b k)
+    c v
+
+end Tier2
+
 -- Helpers of the block that call none of its functions: defined before it, so that they do not
 -- take the run's `Mode` (a section variable of the block would be added to each).
 /-- Environment `e` is the scope of the own name `x` of a function expression (§15.2.5; made by
@@ -11933,19 +11975,17 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
         assignName n { env, thisV := .undef, strict := code.strict } x v
         let (regs, fregs) ← vmTake
         vmLoop n code (pc + 1) bp env fr regs fregs
-    | .getMember dst o k =>
+    | .getMember dst o k site =>
       let b := vmRd regs fregs (bp + o)
-      match (← get).fastGetV b k with
-      | .hole =>
-        vmStash regs fregs (bp + code.nregs)
-        let v ← getV n b k
-        let (regs, fregs) ← vmTake
-        match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
-      | v => match (v) with
-          | .num x => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) .fl) (fregs.set! (bp + dst) x)
-          | wv => vmLoop n code (pc + 1) bp env fr (regs.set! (bp + dst) wv) fregs
+      Tier1.withFast md.tier2 (Tier2.getMember? site b k)
+        (fun v => vmLoop n code (pc + 1) bp env fr (Tier2.putR regs (bp + dst) v) (Tier2.putF fregs (bp + dst) v))
+        (Tier2.memberGen site b k
+          (do
+            vmStash regs fregs (bp + code.nregs)
+            let v ← getV n b k
+            let (regs, fregs) ← vmTake
+            vmLoop n code (pc + 1) bp env fr (Tier2.putR regs (bp + dst) v) (Tier2.putF fregs (bp + dst) v))
+          (fun v => vmLoop n code (pc + 1) bp env fr (Tier2.putR regs (bp + dst) v) (Tier2.putF fregs (bp + dst) v)))
     | .setMember o k src =>
       let b := vmRd regs fregs (bp + o)
       let v := vmRd regs fregs (bp + src)

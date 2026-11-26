@@ -1,5 +1,6 @@
 import L4Factoidal.JS.FuelMonoNatives_callNative
 import L4Factoidal.JS.Tier1Proofs
+import L4Factoidal.JS.Tier2Proofs
 
 /-! # Fuel monotonicity of the evaluator's mutual block
 

@@ -74,6 +74,13 @@ def emit (i : Instr) : C Nat := modifyGet fun s => (s.code.size, { s with code :
 
 def here : C Nat := do pure (← get).code.size
 
+/-- `dst = o.k`, with the site's slot of the inline cache: from the key and the position in the
+code, so two reads of one key in a function get different slots. Two sites that share a slot
+only make each other miss. -/
+def emitGetMember (dst o : Nat) (k : String) : C Unit := do
+  let pc ← here
+  discard <| emit (.getMember dst o k ((mixHash (hash k) pc.toUInt64).toNat % icSize))
+
 def patch (at_ t : Nat) : C Unit :=
   modify fun s => { s with code := s.code.modify at_ fun i =>
     match i with
@@ -371,7 +378,7 @@ def cE : Nat → Expr → Nat → C Unit
         if isPrivKey k then fail
         let ro ← operand n o (writes n v)
         let old ← fresh
-        discard <| emit (.getMember old ro k)
+        emitGetMember old ro k
         let rv ← operand n v false
         discard <| emit (opInstr op dst old rv)
         discard <| emit (.setMember ro k dst)
@@ -424,7 +431,7 @@ def cE : Nat → Expr → Nat → C Unit
           -- a private name resolves through the class scope (`privRk`): the evaluator runs it
           if isPrivKey k then fail
           cE n o thisR
-          discard <| emit (.getMember f thisR k)
+          emitGetMember f thisR k
           pure true
         | .index o k =>
           cE n o thisR
@@ -452,7 +459,7 @@ def cE : Nat → Expr → Nat → C Unit
       if isPrivKey k then fail
       let base := (← get).next
       let ro ← operand n o false
-      discard <| emit (.getMember dst ro k)
+      emitGetMember dst ro k
       release base
     | .index o k =>
       let base := (← get).next
