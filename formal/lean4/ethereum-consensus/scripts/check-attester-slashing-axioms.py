@@ -12,7 +12,7 @@ def git(*args):
 
 pins={
     "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean": "b878ce9d43eeeb77f06598fd55d9c01d9c62597c",
-    "formal/lean4/ethereum-consensus/scripts/check-pure-lean-dependencies.py": "746a8fd4f8f16c4d474655e0f3ac3747d9723e64",
+    "formal/lean4/ethereum-consensus/scripts/check-pure-lean-dependencies.py": "8e139edcf5646b489f9bf688c40b49ed87933755",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/AttesterSlashing.lean": "33a09146651425b78a5f9d860d58704fe0520d8b",
     "formal/lean4/ethereum-consensus/scripts/check-attester-slashing.py": "fde24107d399fe4a0e3efdc84ce7090624e49c17",
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/ByteProofTheorems.lean": "2fd9c36db65c98f6e7895696762cab3856bc7d53",
@@ -28,7 +28,7 @@ pins={
     "formal/lean4/ethereum-consensus/EthereumConsensus/SSZ/GIndex.lean": "68292f05814e61ed0ad6007f155ddc9303c73f2d",
     "formal/lean4/L4Factoidal/Crypto/SHA2.lean": "92737f4d83035745dba29ef2c3867b01b8dfa50f",
     "formal/lean4/ethereum-consensus/scripts/check-attestation-data.py": "c80f83a57d5088bc4b7668d28acb1a001e063755",
-    "formal/lean4/ethereum-consensus/lakefile.toml": "b08203129886735a8fbfc2c31fb7027024665d1f",
+    "formal/lean4/ethereum-consensus/lakefile.toml": "8a2b555f336f8899c9b66f87920824164632fda5",
     "formal/lean4/ethereum-consensus/lake-manifest.json": "15728fe01a01ed2369565ec5be9afdf6abcf2f91",
     "formal/lean4/ethereum-consensus/lean-toolchain": "a8afa7d1b02d96f0671eba854a8dc4b416beb473"
 }
