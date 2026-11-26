@@ -295,25 +295,36 @@ theorem roundtrip_discrete (s : Rat) (f t : Nat) (h : f ≤ t) (i j : Nat) (hi :
 /-- A rational as a `Float` (numerator and denominator converted, then divided). -/
 def ratToFloat (q : Rat) : Float := Float.ofInt q.num / Float.ofNat q.den
 
+/-- `ch[i] := ch[i] + k * src[i]` for the `n` frames `i, i+1, ...`. In place when `ch` is not shared. -/
+def scaleAdd (k : Float) (src : FloatArray) : Nat → Nat → FloatArray → FloatArray
+  | 0, _, ch => ch
+  | n + 1, i, ch => scaleAdd k src n (i + 1) (ch.set! i (ch.get! i + k * src.get! i))
+
+/-- Add `row[c] * block[c]` to `ch` for the `n` input channels `c, c+1, ...`; a zero coefficient
+skips its channel. -/
+def rowMix (row : Array Float) (block : Array FloatArray) (frames : Nat) :
+    Nat → Nat → FloatArray → FloatArray
+  | 0, _, ch => ch
+  | n + 1, c, ch =>
+    rowMix row block frames n (c + 1)
+      (if row[c]! != 0.0 then scaleAdd row[c]! block[c]! frames 0 ch else ch)
+
+/-- Output channels `r, r+1, ...` (`n` of them), pushed onto `out`. -/
+def applyRows (coefs : Array (Array Float)) (block : Array FloatArray) (frames : Nat) :
+    Nat → Nat → Array FloatArray → Array FloatArray
+  | 0, _, out => out
+  | n + 1, r, out =>
+    applyRows coefs block frames n (r + 1)
+      (out.push (rowMix coefs[r]! block frames coefs[r]!.size 0 ⟨Array.replicate frames 0.0⟩))
+
 /-- Apply a mixing matrix to a block: `block[c][i]` is channel `c`, frame `i`; the result has one
-`FloatArray` of `frames` samples per row. Coefficients are converted once. A zero coefficient
-skips its channel (so a NaN in a channel that has coefficient 0 does not spread; the spec
-defines no value for non-finite samples, section 5.2). Channels of `block` shorter than
-`frames` read as 0.0. Loops over the frames, one stack frame in total. -/
+`FloatArray` of `frames` samples per row (`apply_shape`). Coefficients are converted once. A zero
+coefficient skips its channel (so a NaN in a channel that has coefficient 0 does not spread; the
+spec defines no value for non-finite samples, section 5.2). Channels of `block` shorter than
+`frames` read as 0.0. Tail-recursive loops (`applyRows`, `rowMix`, `scaleAdd`). -/
 def apply (m : Array (Array Rat)) (block : Array FloatArray) (frames : Nat) : Array FloatArray :=
-  Id.run do
-    let coefs := m.map (·.map ratToFloat)
-    let mut out : Array FloatArray := Array.mkEmpty coefs.size
-    for row in coefs do
-      let mut ch : FloatArray := ⟨Array.replicate frames 0.0⟩
-      for c in [0:row.size] do
-        let k := row[c]!
-        if k != 0.0 then
-          let src := block[c]!
-          for i in [0:frames] do
-            ch := ch.set! i (ch.get! i + k * src.get! i)
-      out := out.push ch
-    return out
+  let coefs := m.map (·.map ratToFloat)
+  applyRows coefs block frames coefs.size 0 (Array.mkEmpty coefs.size)
 
 /-- `s[i] := s[i] + b[i]` for the `k` frames `i, i+1, ...`. In place when `s` is not shared. -/
 def addFrames (b : FloatArray) : Nat → Nat → FloatArray → FloatArray
@@ -347,6 +358,41 @@ def mixInput (interp : Interpretation) (toCh : Nat) (connections : List (Array F
 private theorem fa_size_set! (a : FloatArray) (i : Nat) (x : Float) :
     (a.set! i x).size = a.size := by
   cases a; simp [FloatArray.set!, FloatArray.size]
+
+private theorem scaleAdd_size (k : Float) (src : FloatArray) (n i : Nat) (ch : FloatArray) :
+    (scaleAdd k src n i ch).size = ch.size := by
+  induction n generalizing i ch with
+  | zero => rfl
+  | succ n ih => simp only [scaleAdd, ih, fa_size_set!]
+
+private theorem rowMix_size (row : Array Float) (block : Array FloatArray) (frames n c : Nat)
+    (ch : FloatArray) : (rowMix row block frames n c ch).size = ch.size := by
+  induction n generalizing c ch with
+  | zero => rfl
+  | succ n ih =>
+    simp only [rowMix, ih]
+    split <;> simp [scaleAdd_size]
+
+private theorem applyRows_shape (coefs : Array (Array Float)) (block : Array FloatArray)
+    (frames n r : Nat) (out : Array FloatArray) (h : ∀ b ∈ out, b.size = frames) :
+    ∀ b ∈ applyRows coefs block frames n r out, b.size = frames := by
+  induction n generalizing r out with
+  | zero => exact h
+  | succ n ih =>
+    simp only [applyRows]
+    apply ih
+    intro b hb
+    rw [Array.mem_push] at hb
+    rcases hb with hb | rfl
+    · exact h b hb
+    · rw [rowMix_size]; simp [FloatArray.size]
+
+/-- Says: every channel of `apply m block frames` has exactly `frames` samples, whatever `m` and
+`block` are. Does not say: how many channels the result has relative to `m` (one per row; not
+needed here), or anything about the values. -/
+theorem apply_shape (m : Array (Array Rat)) (block : Array FloatArray) (frames : Nat) :
+    ∀ b ∈ apply m block frames, b.size = frames :=
+  applyRows_shape _ _ _ _ _ _ (by intro b hb; simp at hb)
 
 private theorem addFrames_size (b : FloatArray) (k i : Nat) (s : FloatArray) :
     (addFrames b k i s).size = s.size := by

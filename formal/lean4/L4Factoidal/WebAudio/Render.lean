@@ -168,12 +168,12 @@ structure Node where
 
 /-- A new node of type `k`. `maxDelayTime` is used by a `delay` only. -/
 def Node.new (k : Graph.Kind) (destChannels : Nat) (sampleRate : Float)
-    (maxDelayTime : Float := 1.0) : Node :=
+    (maxDelayTime : Float := 1.0) (quantum : Nat := 0) : Node :=
   { chan := chanDefaults destChannels k
     params := (paramSpecs k maxDelayTime sampleRate).map (fun s => { spec := s })
     ks := match k with
       | .constantSource => .const {}
-      | .delay => .delay (Kernels.DelayState.init maxDelayTime sampleRate 1) maxDelayTime
+      | .delay => .delay (Kernels.DelayState.init maxDelayTime sampleRate 1 0 quantum) maxDelayTime
       | .oscillator => .osc { sampleRate, type := .sine, wave := sineWave }
       | .bufferSource => .buf {} { sampleRate } false
       | .biquad => .biquad { type := .lowpass, sampleRate }
@@ -202,7 +202,7 @@ def State.init (sampleRate : Float) (destChannels : Nat) (quantum : Nat := 128) 
 def State.addNode (st : State) (k : Graph.Kind) (maxDelayTime : Float := 1.0) : State × Nat :=
   let (g, id) := st.graph.addNode k
   let dc := (st.nodes[st.dest]?.map (·.chan.count)).getD 1
-  ({ st with graph := g, nodes := st.nodes.push (Node.new k dc st.sampleRate maxDelayTime) }, id)
+  ({ st with graph := g, nodes := st.nodes.push (Node.new k dc st.sampleRate maxDelayTime st.quantum) }, id)
 
 /-- Number of channels of the destination (the channel count of the output of a quantum). -/
 def destChannels (st : State) : Nat := (st.nodes[st.dest]?.map (·.chan.count)).getD 0
@@ -272,7 +272,8 @@ def nodeInputs (st : State) (acc : Acc) (id : Nat) (node : Node) (numInputs : Na
 
 /-- Run the kernel of a node type. `cyc`: the node is a delay in a cycle, so its minimum delay is
 one render quantum. Returns the new state and the output blocks (one per output). -/
-def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (ks : KState)
+def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (interp : Mix.Interpretation)
+    (ks : KState)
     (inputs : Array Block) (params : Array FloatArray) : KState × Array Block :=
   match k, ks with
   | .gain, _ => (ks, (Kernels.gainProcess n () inputs params).2)
@@ -280,7 +281,7 @@ def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (ks : KState)
     let r := Kernels.constProcess n { s with frame := frame } inputs params
     (.const r.1, r.2)
   | .delay, .delay s md =>
-    let r := Kernels.delayProcess n { s with minFrames := if cyc then n else 0 } inputs params
+    let r := Kernels.delayProcess n { s with minFrames := if cyc then n else 0, interp } inputs params
     (.delay r.1 md, r.2)
   | .stereoPanner, _ => (ks, (Kernels.panProcess n () inputs params).2)
   | .splitter m, _ => (ks, (Kernels.splitProcess n m inputs params).2)
@@ -306,7 +307,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       let inputs := nodeInputs st acc id node k.numInputs
       let params := nodeParams st acc id node
       let cyc := pl.cycleDelay.getD id false
-      let r := runKernel st.quantum st.frame k cyc node.ks inputs params
+      let r := runKernel st.quantum st.frame k cyc node.chan.interp node.ks inputs params
       let acc' := if id == st.dest then { acc with destIn := inputs.getD 0 #[] } else acc
       { acc' with nodes := acc'.nodes.set! id { node with ks := r.1 }
                   outs := acc'.outs.set! id r.2 }
@@ -317,7 +318,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       match node.ks with
       | .delay s _ =>
         let silent : Array Block := #[silence s.bufs.size st.quantum]
-        let r := runKernel st.quantum st.frame k true node.ks silent (nodeParams st acc id node)
+        let r := runKernel st.quantum st.frame k true node.chan.interp node.ks silent (nodeParams st acc id node)
         { acc with outs := acc.outs.set! id r.2 }
       | _ => acc
     | _, _ => acc
@@ -325,7 +326,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
     match acc.nodes[id]?, st.graph.kinds[id]? with
     | some node, some k =>
       let inputs := nodeInputs st acc id node k.numInputs
-      let r := runKernel st.quantum st.frame k true node.ks inputs (nodeParams st acc id node)
+      let r := runKernel st.quantum st.frame k true node.chan.interp node.ks inputs (nodeParams st acc id node)
       { acc with nodes := acc.nodes.set! id { node with ks := r.1 } }
     | _, _ => acc
 
