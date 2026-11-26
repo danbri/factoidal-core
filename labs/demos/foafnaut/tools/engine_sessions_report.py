@@ -3,12 +3,13 @@
 https://github.com/danbri/factoidal-core/issues/1031; record
 docs/designissues/2026-11-26-foafnaut-engine-sessions.md, section 6).
 
-    engine_sessions_report.py RESULT.json
+    engine_sessions_report.py RESULT.json [--markdown]
 
 For each configuration: median over the runs, with the worst run in brackets (the largest value).
 Resident memory per extra tab is (median of `tabs` - median of `one`) / 7: `tabs` opens seven
 tabs on the start page, `one` keeps the start page only. Lines are printed only for the scenarios
-in the result; the steady scenarios have their own lines."""
+in the result; the steady scenarios have their own lines. --markdown: a table per steady
+scenario instead."""
 import json, statistics, sys
 
 def med(rows, key):
@@ -16,9 +17,49 @@ def med(rows, key):
     return (statistics.median(v), max(v), len(v)) if v else (None, None, 0)
 
 def fmt(x):
-    return "-" if x is None else (f"{x:.0f}" if abs(x) >= 10 else f"{x:.1f}")
+    if x is None:
+        return "-"
+    return f"{x:.0f}" if abs(x) >= 10 else f"{x:.1f}" if abs(x) >= 1 or x == 0 else f"{x:.2f}"
+
+STEADY_TABLE = [
+    ("Pages loaded in the new tabs", "pagesLoaded"),
+    ("Resident memory after the loads, MB", "rssLoadedMB"),
+    ("Process CPU, 10 s idle, % of one CPU", "idleCpuPct"),
+    ("Idle CPU per tab not shown, %", "idleCpuPctPerHiddenTab"),
+    ("Hidden tab turns in the 10 s idle", "hiddenTurnsIdle"),
+    ("Lean frames after the idle window", "activeFrames"),
+    ("Lean frame total p50, ms", "activeFrameP50Ms"),
+    ("Lean frame total p95, ms", "activeFrameP95Ms"),
+    ("Scroll present total p95, ms", "scrollFrameP95Ms"),
+    ("Gestures", "gestures"),
+    ("Gesture queuedToActionMs p50, ms", "gestureP50Ms"),
+    ("Gesture queuedToActionMs p95 (the largest of 15), ms", "gestureP95Ms"),
+    ("Process CPU, gesture and scroll window, %", "activeCpuPct"),
+    ("Hidden tab turns in that window", "hiddenTurnsActive"),
+    ("Engines live at most", "enginesMaxLive"),
+    ("Tabs that shared an engine", "sharedTabs"),
+]
+
+def tables(result):
+    """Markdown tables of the steady scenarios: median (largest) of the runs per configuration."""
+    runs = [r for r in result["runs"] if r.get("rc") == 0]
+    configs = list(dict.fromkeys(r["config"] for r in result["runs"]))
+    for scenario in sorted({r["scenario"] for r in runs if r["scenario"].startswith("steady")}, key=lambda x: int(x[6:])):
+        counts = ", ".join(f"{c} {len([r for r in runs if r['scenario'] == scenario and r['config'] == c])}" for c in configs)
+        print(f"\n{scenario[6:]} tabs, median (largest) of the runs (runs: {counts}):\n")
+        print("| Number | " + " | ".join(configs) + " |")
+        print("|---|" + "---|" * len(configs))
+        for label, key in STEADY_TABLE:
+            cells = []
+            for c in configs:
+                m, worst, k = med([r for r in runs if r["scenario"] == scenario and r["config"] == c], key)
+                cells.append("-" if m is None else f"{fmt(m)} ({fmt(worst)})")
+            print(f"| {label} | " + " | ".join(cells) + " |")
 
 def main():
+    if "--markdown" in sys.argv:
+        tables(json.load(open([a for a in sys.argv[1:] if a != "--markdown"][0])))
+        return
     result = json.load(open(sys.argv[1]))
     runs = [r for r in result["runs"] if r.get("rc") == 0]
     failed = [r for r in result["runs"] if r.get("rc") != 0]
