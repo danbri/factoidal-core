@@ -716,6 +716,26 @@ iterator's own fails. -/
 -- `for-in` with `await` in its body or in its object, in an async function (the generator
 -- machine had no `for-in`: "yield in this position is not supported")
 #guard out "async function f() { var o = { a: 1, b: 2 }, s = ''; for (var k in o) { s += k + (await o[k]); } for (var j in await o) s += j; return s; } f().then(function (v) { print(v); })" == ["a1b2ab"]
+
+-- `await` in a destructuring assignment, a tagged template, `++`, `super[...]`
+-- and `||=`, `&&=`, `??=` (issue 1161: the Hub conformance page's `[D, H] = await
+-- Promise.all(...)` was "yield in this position is not supported")
+#guard out "async function f() { let D, H; [D, H] = await Promise.all([1, 2]); ({a: D} = await {a: D + H}); return D; } f().then(function (v) { print(v); })" == ["3"]
+#guard out "function* g() { let a, b; [a, b] = yield 1; return a + b; } var it = g(); it.next(); print(it.next([4, 5]).value)" == ["9"]
+#guard out "async function f() { var t = (s, x) => s.join('|') + x; var o = [0]; o[await 0]++; return t`a${await 7}b` + o[0]; } f().then(function (v) { print(v); })" == ["a|b71"]
+#guard out "class A { get k() { return 'K'; } } class C extends A { async m() { return super[await 'k']; } } new C().m().then(function (v) { print(v); })" == ["K"]
+#guard out "async function f() { var o = { a: 0, b: 1, c: null }, n = 0; var g = async () => { n++; return 9; }; o.a ||= await g(); o.b ||= await g(); o.b &&= await g(); o.c ??= await g(); var z = 0; z ||= await 4; return [o.a, o.b, o.c, n, z].join(); } f().then(function (v) { print(v); })" == ["9,9,9,3,4"]
+-- `yield` and `await` inside the pattern of a destructuring assignment or declaration: the
+-- pattern's steps are lowered to statements (`dstrLower`), in the order of §13.15.5.5 and
+-- §13.15.5.6, with the iterator closed after a throw or a `return`
+#guard out "function* g() { var x, o = {p: 0}, r, y, z; r = [x = yield 1, , ...o[yield 2]] = [undefined, 0, 7, 8]; ({a: o.b = yield 3, [yield 4]: y, ...z} = {a: undefined, k: 5, m: 6}); return [x, o.p.join(), o.b, y, JSON.stringify(z), r.length].join('|'); } var it = g(); print(it.next().value, it.next(9).value, it.next('p').value, it.next('B').value); print(it.next('k').value)" == ["1 2 3 4", "9|7,8|B|5|{\"m\":6}|4"]
+#guard out "function* g() { let [a = yield 1] = []; const {b = yield 2, c = b, f = function(){}} = {}; var [d = yield 3] = []; let e = yield 4, h = yield 5; return [a, b, c, d, e, h, f.name].join(); } var it = g(); it.next(); it.next(1); it.next(2); it.next(3); it.next(4); print(it.next(5).value)" == ["1,2,2,3,4,5,f"]
+#guard out "function* g() { const [x = yield] = []; x = 2 } var it = g(); it.next(); try { it.next(1) } catch (e) { print(e.name) }" == ["TypeError"]
+#guard out "var n = 0, it = { [Symbol.iterator]() { return this; }, next() { return { done: false }; }, return() { n++; return {}; } }; function* g() { var a; [a = yield] = it; } var i = g(); i.next(); print(i.return(5).value, n)" == ["5 1"]
+#guard out "async function f() { let {a, b: [c = await 3] = []} = {a: await 1}; return a + c } f().then(print)" == ["4"]
+-- Expected failure, https://github.com/danbri/factoidal-core/issues/1167: a `yield` inside an
+-- optional chain is refused. This guard fails when the case starts to pass: then assert "1".
+#guard out "function* g() { var o = {a: 1}; return o?.[yield]; } var it = g(); try { it.next(); print(it.next('a').value) } catch (e) { print(e.name) }" == ["SyntaxError"]
 /-! ## RegExp: Unicode properties, code points with `u`, modifiers, `v` class sets, `d`
 
 Test262 (built-ins/RegExp, 2026-11-15) found these: Script_Extensions, Script long names, the
