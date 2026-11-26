@@ -100,6 +100,9 @@ def ops : List OpSpec :=
     ⟨"historyPush", .state, []⟩, ⟨"gesture", .state, [.pointer]⟩,
     ⟨"graphStart", .state, []⟩, ⟨"graphEvent", .state, []⟩, ⟨"wasmRun", .state, []⟩,
     ⟨"command", .state, []⟩,
+    -- the real-time Web Audio runs end (`WebAudioRun.endAll`): a host that drops an engine it
+    -- does not free
+    ⟨"audioEnd", .state, []⟩,
     -- page answers
     ⟨"render", .query, []⟩, ⟨"inspect", .query, []⟩, ⟨"decode", .query, []⟩,
     ⟨"epubReader", .query, []⟩,
@@ -142,7 +145,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 76
+#guard opNames.length == 77
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state

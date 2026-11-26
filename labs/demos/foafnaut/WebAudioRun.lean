@@ -29,6 +29,10 @@ through the engine's audio output (`L4Factoidal.WebAudio.Sink`, `formal/lean4/ff
 - **`after`** (after it): the runs of a page session that is gone end (their sinks close, the
   engine waits for their tasks); the page's outboxes (`Api.takeOutbox`) go to the runs, a new run
   for each context whose first message is its opening (190), and the task is woken.
+- **`endAll`**: when the engine session ends, every run ends (`WebDocument.engineEnd`: the C
+  shim's `web_session_free`, the end of a session's task in `WebSession.serve`, and the document
+  op `audioEnd`, which a host sends before it drops an engine it does not free, such as the
+  default session of a tab worker's own copy of the library).
 
 What crosses threads: the messages (op codes and their fields), the reports and the measures,
 through `Shared`'s refs, each used with `modify` and `modifyGet` only
@@ -45,8 +49,10 @@ Measures (plan 13.9): `Stats`, read by the document op `audioRuns`.
 
 ## Not done
 
-- A run ends when its page session ends through the engine (`close`, or a new `start`). A host
-  that drops the engine with no `close` leaves the run playing until the process ends.
+- A host that drops an engine with none of the steps of `endAll` (no `close`, no session end, no
+  `audioEnd`) leaves its runs playing until the process ends; if the library is then unloaded
+  (`dlclose`), a run's thread runs unloaded code. Task sessions pin the library
+  (`web_render_shim.c`); real-time runs do not.
 - The decode jobs of ops 194 and 195 (stage C), the `native-audio` trace line and the
   `--perf-summary` block of plan 13.9 (host work).
 -/
@@ -308,6 +314,12 @@ def post (r : Run) (ms : Array (Nat × Array ByteArray)) : BaseIO Bool := do
 def endRun (r : Run) : BaseIO Unit := do
   let _ ← post r #[(0, #[])]
   let _ ← IO.wait r.task
+
+/-- End every run (their sinks close) and wait for their tasks: the engine session ends
+(`WebDocument.engineEnd`). -/
+def endAll (reg : Registry) : BaseIO Registry := do
+  for r in reg.runs do endRun r
+  return { reg with runs := #[] }
 
 /-! ## The engine's steps around a page task -/
 

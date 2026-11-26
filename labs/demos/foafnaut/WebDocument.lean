@@ -4562,12 +4562,16 @@ the contexts with events queued (`WebAudioRun.before`); after it the page's cont
 the tasks (`WebAudioRun.after`). The steps are here and not inside `answerWith`, which is generic
 in its monad (the logical model `Id` has no audio output: `new AudioContext()` answers
 `NotSupportedError` there, as in the Wasm build). Op `audioRuns` answers the runs and their
-measures (`WebAudioRun.runsAnswer`). -/
+measures (`WebAudioRun.runsAnswer`); op `audioEnd` ends them all first (`WebAudioRun.endAll`), for a
+host that drops an engine it does not free (a tab worker's default session). -/
 def answerAudio (e : Engine) (bytes : Bool) (html : String) (request : JSON.Json) (width height : Nat) :
     BaseIO (Engine × Except String (String × Array ByteArray)) := do
   match request.field? "op" with
   | some (.string "audioRuns") =>
     let (reg, _) ← WebAudioRun.probe e.audio
+    return ({ e with audio := reg }, .ok (← WebAudioRun.runsAnswer reg, #[]))
+  | some (.string "audioEnd") =>
+    let reg ← WebAudioRun.endAll e.audio
     return ({ e with audio := reg }, .ok (← WebAudioRun.runsAnswer reg, #[]))
   | some (.string "scriptSession") =>
     let held := e.scripts
@@ -4678,6 +4682,13 @@ def compileText (html request : String) (width height : UInt32) : String :=
 /-- A new engine, with nothing held: the shim makes one when it starts. -/
 @[export web_document_engine_new]
 def engineNew (_ : Unit) : Engine := {}
+
+/-- The end of an engine session: its real-time audio runs end (their sinks close) and the
+engine waits for their tasks (`WebAudioRun.endAll`), before the shim frees the state
+(`web_session_free`) or a session's task ends (`WebSession.serve`). -/
+@[export web_document_end]
+def engineEnd (e : Engine) : BaseIO Unit := do
+  let _ ← WebAudioRun.endAll e.audio
 
 /-- `fontLoad` with the font file as bytes, with no Base64 and no JSON around it.
 A host copies the file into engine memory, so a font is not limited by the call stack,

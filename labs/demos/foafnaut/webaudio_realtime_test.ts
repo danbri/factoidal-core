@@ -18,6 +18,8 @@
 //  2. with no autoplay the context starts suspended, resume() waits; a press of the user's mouse
 //     (pointer down and up, trusted) activates the page; resume() resolves, then statechange fires.
 //  3. suspend() then resume(): no under-run and no silent frame is counted while suspended.
+//  4. a run ends, and its thread is gone, on the document op audioEnd and when its engine session
+//     ends with no close of the page (web_session_free).
 // Run: deno test --no-check --unstable-ffi -A webaudio_realtime_test.ts (Deno reads /proc of its own process
 // only with all permissions: the rendering thread's CPU time is /proc/<pid>/task/<tid>/schedstat).
 import {strict as assert} from "node:assert";
@@ -242,5 +244,33 @@ Deno.test({name:"real-time audio: no under-run is counted while a context is sus
   }finally{
     engine.scriptSession("",{action:"close"});
     engine.endSession?.();
+  }
+}});
+
+Deno.test({name:"real-time audio: a context's run ends on audioEnd, and with its engine session",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
+  const env={FOAFNAUT_AUDIO_SINK:"null",FOAFNAUT_AUTOPLAY:"allow"};
+  const runningTid=async(engine:HTMLEngine,session:number,logs:string[])=>{
+    await turnsUntil(engine,session,logs,()=>onlyRun(engine).items.some(r=>r.tid>0&&r.quanta>0),2000);
+    return onlyRun(engine).items[0].tid;
+  };
+  const gone=async(tid:number)=>{for(let i=0;i<50&&threadAlive(tid);i++)await sleep(10);return !threadAlive(tid);};
+  // audioEnd (a host that drops an engine it does not free): the runs end, their threads are gone.
+  {
+    const {engine,turn}=await startPage(env,suspendPage);
+    try{
+      const tid=await runningTid(engine,turn.session,[...turn.logs]);
+      assert.equal(engine.audioEnd()?.runs,0);
+      assert.ok(await gone(tid),"the rendering thread is still there after audioEnd");
+    }finally{
+      engine.scriptSession("",{action:"close"});
+      engine.endSession?.();
+    }
+  }
+  // The engine session ends with no close of the page (a tab closed): web_session_free ends the runs.
+  {
+    const {engine,turn}=await startPage(env,suspendPage);
+    const tid=await runningTid(engine,turn.session,[...turn.logs]);
+    engine.endSession?.();
+    assert.ok(await gone(tid),"the rendering thread is still there after its engine session ended");
   }
 }});

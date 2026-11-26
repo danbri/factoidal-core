@@ -579,6 +579,10 @@ export type RemoteEngine={
   /** The engine's real-time Web Audio runs and their measures (`WebAudioRun.runsAnswer`); undefined
   from an engine without them. */
   audioRuns():AudioRuns|undefined;
+  /** End the engine's real-time Web Audio runs (their sinks close; `WebAudioRun.endAll`), before
+  a host drops an engine that it does not free (the default session of a tab worker's library
+  copy). A freed session ends them itself (`web_session_free`, `WebSession.serve`). */
+  audioEnd():AudioRuns|undefined;
   /** Bytes of JSON request this host sent to Lean for renders. */
   requestBytes():{renders:number;lastRenderBytes:number;maxRenderBytes:number};
   compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact;
@@ -652,6 +656,7 @@ function remoteMethods(k:Kernel):RemoteEngine {
     imageDrop:()=>doc("",{op:"imageDrop"}),
     frameWork:(reset=false)=>orUndefined(()=>doc("",{op:"frameWork",...(reset?{reset:true}:{})})),
     audioRuns:()=>orUndefined(()=>doc("",{op:"audioRuns"})),
+    audioEnd:()=>orUndefined(()=>doc("",{op:"audioEnd"})),
     requestBytes:()=>({...k.sent}),
     compile:(source,width,height,options)=>then(render(source,{binary:true,...options,op:"render"},width,height),(r:Answer)=>sceneOf(r,width,height)),
     compileLayers:(source,width,height,options)=>then(render(source,{binary:true,layoutSections:k.layoutSections,...options,layers:true,op:"render"},width,height),(r:Answer)=>layersOf(r,width)),
