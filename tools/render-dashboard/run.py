@@ -59,6 +59,8 @@ CORPUS_PATCHES = [
      "const webNames=['web-render/engine.mjs',", "const webNames=['web-render/engine.mjs','web-render/engine-worker.mjs','web-render/engine-core.mjs',"),
     ('The magenta control shader also reads the tiles binding, which the engine now has',
      "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001;", "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001+vec4f(f32(tiles[0])*0.0);"),
+    ('Serve finite_floats.ts: render_plan.ts now imports it',
+     "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts',", "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts','finite_floats.ts',"),
 ]
 
 
