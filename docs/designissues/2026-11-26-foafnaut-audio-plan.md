@@ -381,7 +381,21 @@ is `running` when the page has sticky activation (HTML "has been activated"), el
   then `getOutputTimestamp()`'s `contextTime` and `performanceTime` (doubles).
 - 193 `events(ctx)`: the events since the last call: a `u32` count, then for each a kind byte (1
   source ended, 2 state changed, 3 promise of a `control` call resolved) and a `u32` value.
-- 194 `decodeAudioData` (stage C). 195 to 199 are kept for Web Audio.
+- 194 `decodeAudioData(ctx, bytes, callback)`: queues a decode job of `bytes` at the context's
+  sample rate; answers the job id. The job runs on a Lean task, not in the page task: decoding in
+  WasmVM takes about as long as the audio for some formats, and a long file must not stop the page.
+  When the job ends, the engine queues `callback`; the page then calls op 195.
+- 195 `decodeResult(job)`: `u32` channels, `u32` length, the sample rate (double), then the samples
+  as binary32, channel by channel; or -30 (`EncodingError`: a format the engine does not read, or
+  a decoder that refused the data) or -23 (`NotSupportedError`: the decoder module is missing or
+  not pinned). The result is given once.
+- 196 to 199 are kept for Web Audio.
+
+The decoder modules (stage C): the engine reads them, once, from the directory
+`FOAFNAUT_MEDIA_DECODERS`, else `~/.cache/factoidal/media-decoders` (where
+`tools/fetch-media-decoders.sh` puts them), and checks each against `Media/Modules.lean` before
+use. The macOS app carries them and its host sets the variable. A decode job runs only in the
+native engine; the Wasm build answers -23.
 
 ### 13.9 Measures
 
@@ -400,5 +414,6 @@ latency. `--perf-summary` gets a block `audio`.
 - D2: real-time contexts in `Api.lean` (ops 190 to 193, the outbox, the report merge) and
   `AudioContext` in `prelude.js`.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
-  with the page), the trace lines, the end-to-end test.
+  with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
+  test.
 - Then the owner's check on the Mac, and stage E (the jukebox).
