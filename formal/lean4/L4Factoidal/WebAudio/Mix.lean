@@ -315,24 +315,93 @@ def apply (m : Array (Array Rat)) (block : Array FloatArray) (frames : Nat) : Ar
       out := out.push ch
     return out
 
+/-- `s[i] := s[i] + b[i]` for the `k` frames `i, i+1, ...`. In place when `s` is not shared. -/
+def addFrames (b : FloatArray) : Nat → Nat → FloatArray → FloatArray
+  | 0, _, s => s
+  | k + 1, i, s => addFrames b k (i + 1) (s.set! i (s.get! i + b.get! i))
+
+/-- Add row `r` of `mixed` to channel `r` of `acc`, for the `k` rows `r, r+1, ...`. `Array.modify`
+takes the channel out of `acc` while it is changed, so the channel is updated in place. -/
+def addRows (mixed : Array FloatArray) (frames : Nat) : Nat → Nat → Array FloatArray →
+    Array FloatArray
+  | 0, _, acc => acc
+  | k + 1, r, acc => addRows mixed frames k (r + 1) (acc.modify r (addFrames mixed[r]! frames 0))
+
+/-- Mix each connection to `toCh` channels by the rule of `interp` and add it to `acc`. -/
+def mixConns (interp : Interpretation) (toCh frames : Nat) :
+    List (Array FloatArray) → Array FloatArray → Array FloatArray
+  | [], acc => acc
+  | conn :: rest, acc =>
+    mixConns interp toCh frames rest
+      (addRows (apply (matrix interp conn.size toCh) conn frames) frames toCh 0 acc)
+
 /-- Section 4, the algorithm: each connection is up- or down-mixed to `toCh` channels by the
 rule of `interp`, then the results are summed channel by channel. An input with no
-connections gives `toCh` channels of silence. -/
+connections gives `toCh` channels of silence. Tail-recursive loops (`mixConns`, `addRows`,
+`addFrames`), so the shape theorem `mixInput_shape` is proved by induction. -/
 def mixInput (interp : Interpretation) (toCh : Nat) (connections : List (Array FloatArray))
     (frames : Nat) : Array FloatArray :=
-  Id.run do
-    let mut acc : Array FloatArray :=
-      Array.replicate toCh ⟨Array.replicate frames 0.0⟩
-    for conn in connections do
-      let mixed := apply (matrix interp conn.size toCh) conn frames
-      for r in [0:toCh] do
-        let a := acc[r]!
-        let b := mixed[r]!
-        let mut s := a
-        for i in [0:frames] do
-          s := s.set! i (a.get! i + b.get! i)
-        acc := acc.set! r s
-    return acc
+  mixConns interp toCh frames connections
+    (Array.replicate toCh ⟨Array.replicate frames 0.0⟩)
+
+private theorem fa_size_set! (a : FloatArray) (i : Nat) (x : Float) :
+    (a.set! i x).size = a.size := by
+  cases a; simp [FloatArray.set!, FloatArray.size]
+
+private theorem addFrames_size (b : FloatArray) (k i : Nat) (s : FloatArray) :
+    (addFrames b k i s).size = s.size := by
+  induction k generalizing i s with
+  | zero => rfl
+  | succ k ih => simp only [addFrames, ih, fa_size_set!]
+
+/-- Every channel of `acc` has `frames` samples. -/
+private def ChansOk (frames : Nat) (acc : Array FloatArray) : Prop :=
+  ∀ (j : Nat) (h : j < acc.size), acc[j].size = frames
+
+private theorem addRows_ok (mixed : Array FloatArray) (frames : Nat) (k r : Nat)
+    (acc : Array FloatArray) (h : ChansOk frames acc) :
+    (addRows mixed frames k r acc).size = acc.size ∧ ChansOk frames (addRows mixed frames k r acc) := by
+  induction k generalizing r acc with
+  | zero => exact ⟨rfl, h⟩
+  | succ k ih =>
+    simp only [addRows]
+    have hok : ChansOk frames (acc.modify r (addFrames mixed[r]! frames 0)) := by
+      intro j hj
+      rw [Array.size_modify] at hj
+      rw [Array.getElem_modify]
+      by_cases hr : r = j
+      · subst hr; simp [addFrames_size]; exact h _ hj
+      · simp [hr]; exact h j hj
+    have := ih (r + 1) _ hok
+    exact ⟨this.1.trans Array.size_modify .., this.2⟩
+
+private theorem mixConns_ok (interp : Interpretation) (toCh frames : Nat)
+    (conns : List (Array FloatArray)) (acc : Array FloatArray) (h : ChansOk frames acc) :
+    (mixConns interp toCh frames conns acc).size = acc.size ∧
+      ChansOk frames (mixConns interp toCh frames conns acc) := by
+  induction conns generalizing acc with
+  | nil => exact ⟨rfl, h⟩
+  | cons c rest ih =>
+    simp only [mixConns]
+    have h1 := addRows_ok (apply (matrix interp c.size toCh) c frames) frames toCh 0 acc h
+    have h2 := ih _ h1.2
+    exact ⟨h2.1.trans h1.1, h2.2⟩
+
+/-- Says: for any connections, `mixInput interp toCh connections frames` has exactly `toCh`
+channels and every channel has exactly `frames` samples. Does not say: anything about the sample
+values, nor that the connections themselves have `frames` samples (a shorter connection channel
+reads as 0.0), nor that `Render.normalize` is unnecessary on other paths. -/
+theorem mixInput_shape (interp : Interpretation) (toCh : Nat) (connections : List (Array FloatArray))
+    (frames : Nat) :
+    (mixInput interp toCh connections frames).size = toCh ∧
+      ∀ ch ∈ mixInput interp toCh connections frames, ch.size = frames := by
+  have h0 : ChansOk frames (Array.replicate toCh (⟨Array.replicate frames 0.0⟩ : FloatArray)) := by
+    intro j hj; simp [FloatArray.size]
+  have := mixConns_ok interp toCh frames connections _ h0
+  refine ⟨by simpa [mixInput] using this.1, ?_⟩
+  intro ch hch
+  obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hch
+  exact this.2 j hj
 
 /-! ## Tests -/
 
