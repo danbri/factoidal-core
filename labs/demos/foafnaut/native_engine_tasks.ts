@@ -24,6 +24,20 @@ type Reply={value:unknown;ms:number;dropped?:boolean};
 type Job={op:"call"|"pageFonts"|"serifFont"|"monoFont";name?:RemoteCall;args?:unknown[];input?:boolean;low?:boolean;gesture?:boolean;
   source?:string;path?:string;family?:string;resolve:(reply:Reply)=>void;reject:(error:Error)=>void};
 
+/** What runs one call of a tab's session: here (startTaskClient), or in a host worker of the
+pooled mode (native_engine_pool.ts). Each is called with at most one call of the session in
+flight. */
+export type SessionBackend={
+  kind:"task"|"pooled";
+  call(name:RemoteCall,args:unknown[]):Promise<unknown>;
+  pageFonts(source:string):Promise<unknown>;
+  face(op:"serifFont"|"monoFont",path:string,family:string):Promise<unknown>;
+  /** Stop the session's task at its next check; the calls not started fail. */
+  cancel():void;
+  /** Free the session once the call in progress is done. */
+  end():Promise<void>;
+};
+
 /** A CompileClient whose engine is a task session of the native library at `nativeEngine`.
 Throws when the library has no task sessions; the caller then uses engine workers. */
 export async function startTaskClient(font:{path:string;family:string}|undefined,nativeEngine:string):Promise<CompileClient>{
@@ -36,6 +50,24 @@ export async function startTaskClient(font:{path:string;family:string}|undefined
     if(font&&typeof (await loadFontFile(helperEngine,font.path,font.family))?.fonts==="number")
       fallbackFonts=fallbackFontHost(fonts=>loadFallbackFonts(helperEngine,fonts));
   }catch(error){await engine.endSession().catch(()=>{});throw error;}
+  return laneClient({
+    kind:"task",
+    async pageFonts(source){
+      if(!fallbackFonts)throw new Error("this engine has no first font, or holds one font: no fallback fonts");
+      return await fallbackFonts.page(source);
+    },
+    face:(op,path,family)=>loadFontFile(helperEngine,path,family,"bytes",op==="serifFont"?"serif":"mono"),
+    async call(name,args){
+      if(!(REMOTE_CALLS as readonly string[]).includes(name))throw new Error(`Engine call ${name} is not available in a session`);
+      return await (engine as unknown as Record<string,(...a:unknown[])=>Promise<unknown>>)[name](...args);
+    },
+    cancel:()=>engine.cancel(),
+    end:()=>engine.endSession(),
+  });
+}
+
+/** The lanes of one tab's session over `backend`: a CompileClient. */
+export function laneClient(backend:SessionBackend):CompileClient{
   const queue=htmlQueue<Job>();
   // Jobs sent and not answered (in the lanes, or running).
   let alive=true,busy=false,ordinary=0,open=0;
@@ -43,15 +75,9 @@ export async function startTaskClient(font:{path:string;family:string}|undefined
     const start=performance.now();
     try{
       let value:unknown;
-      if(job.op==="pageFonts"){
-        if(!fallbackFonts)throw new Error("this engine has no first font, or holds one font: no fallback fonts");
-        value=await fallbackFonts.page(job.source!);
-      }else if(job.op==="serifFont"||job.op==="monoFont")
-        value=await loadFontFile(helperEngine,job.path!,job.family!,"bytes",job.op==="serifFont"?"serif":"mono");
-      else{
-        if(!(REMOTE_CALLS as readonly string[]).includes(job.name!))throw new Error(`Engine call ${job.name} is not available in a session`);
-        value=await (engine as unknown as Record<string,(...a:unknown[])=>Promise<unknown>>)[job.name!](...job.args!);
-      }
+      if(job.op==="pageFonts")value=await backend.pageFonts(job.source!);
+      else if(job.op==="serifFont"||job.op==="monoFont")value=await backend.face(job.op,job.path!,job.family!);
+      else value=await backend.call(job.name!,job.args!);
       job.resolve({value,ms:performance.now()-start});
     }catch(error){job.reject(error instanceof Error?error:new Error(String(error)));}
     finally{open--;}
@@ -87,7 +113,7 @@ export async function startTaskClient(font:{path:string;family:string}|undefined
   const engineCalls=Object.fromEntries(REMOTE_CALLS.map(name=>[name,async(...args:unknown[])=>(await call(name,...args)).value])) as CompileClient["engine"];
   return {
     session:true,
-    kind:"task",
+    kind:backend.kind,
     get alive(){return alive;},
     get pending(){return ordinary;},
     get inFlight(){return open;},
@@ -122,8 +148,8 @@ export async function startTaskClient(font:{path:string;family:string}|undefined
       alive=false;
       const ended=new Error("engine session ended");
       for(const job of queue.drain()){open--;job.reject(ended);}
-      engine.cancel();
-      engine.endSession().catch(()=>{});
+      backend.cancel();
+      backend.end().catch(()=>{});
     },
   };
 }

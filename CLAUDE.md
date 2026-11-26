@@ -1136,6 +1136,16 @@ first report that night said `tasks` was better on the new tab first frame; its 
 only the tabs that drew within 1 s, and they are withdrawn. Record (D11, sections 6 to 6b) and
 macOS gap: `docs/designissues/2026-11-26-foafnaut-engine-sessions.md`.
 
+Owner input, 2026-11-26, as written in the status note "Foafnaut engine per tab: status and
+proposals": "The Linux tests had no GPU." "A Deno per tab is too costly if it is used only for
+host work and WebGPU. Can we pool and reuse one or two Denos?" "New tab first frame matters, but
+steady speed and memory use may matter more." So a change of the engine-mode default is judged on
+steady state with 5, 20 and 50 tabs (resident memory, idle CPU per background tab, frame time p95
+and `queuedToActionMs` of the tab on screen while other tabs run scripts, GPU memory per tab on the
+Mac), with new tab first frame as a guard. The shape to test (not decided): every tab's engine a
+Lean task in one library, one GPU owner, a pool of 1 or 2 Deno workers for host I/O, background
+tabs make no frames. Work: https://github.com/danbri/factoidal-core/issues/1031.
+
 ### Theorems from any contributor; a theorem is not a design rule (owner, 2026-11-10)
 
 Owner, verbatim: "a proof is a proof is a proof and once any model - however useless in general -

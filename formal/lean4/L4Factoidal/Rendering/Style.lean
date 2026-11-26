@@ -1250,6 +1250,67 @@ def needChain : List (Char × List DOM.Selectors.Simple) → List Nat
        | (_, c) :: _ => needSimples c ++ needChain rest)
     else []
 
+/-- `needSimples` in reverse order onto `acc`, as a loop: one frame for any number of simple
+selectors. -/
+def needSimplesRev : List DOM.Selectors.Simple → List Nat → List Nat
+  | [], acc => acc
+  | .cls v :: r, acc => needSimplesRev r (ancBit v :: acc)
+  | .id v :: r, acc => needSimplesRev r (ancBit v :: acc)
+  | .type _ (some n) :: r, acc =>
+    if DOM.Selectors.lowerAscii n == n then needSimplesRev r (ancBit n :: acc) else needSimplesRev r acc
+  | _ :: r, acc => needSimplesRev r acc
+
+theorem needSimplesRev_eq : ∀ (xs : List DOM.Selectors.Simple) (acc : List Nat),
+    needSimplesRev xs acc = (needSimples xs).reverse ++ acc
+  | [], _ => rfl
+  | s :: r, acc => by
+    have ih := needSimplesRev_eq r
+    cases s
+    case type ns o =>
+      cases o with
+      | none => simp [needSimplesRev, needSimples, ih]
+      | some n =>
+        by_cases h : DOM.Selectors.lowerAscii n == n <;> simp [needSimplesRev, needSimples, h, ih]
+    all_goals simp [needSimplesRev, needSimples, ih]
+
+/-- `needSimples` as a loop (`needSimples_eq_loop` is the `@[csimp]` equation). -/
+def needSimplesLoop (xs : List DOM.Selectors.Simple) : List Nat := (needSimplesRev xs []).reverse
+
+@[csimp] theorem needSimples_eq_loop : @needSimples = @needSimplesLoop := by
+  funext xs; simp [needSimplesLoop, needSimplesRev_eq]
+
+/-- `needChain` in reverse order onto `acc`, as a loop: one frame for any number of compounds. -/
+def needChainRev : List (Char × List DOM.Selectors.Simple) → List Nat → List Nat
+  | [], acc => acc
+  | (comb, _) :: rest, acc =>
+    if comb == ' ' || comb == '>' then
+      match rest with
+      | [] => acc
+      | (_, c) :: _ => needChainRev rest (needSimplesRev c acc)
+    else acc
+
+theorem needChainRev_eq : ∀ (ps : List (Char × List DOM.Selectors.Simple)) (acc : List Nat),
+    needChainRev ps acc = (needChain ps).reverse ++ acc
+  | [], _ => rfl
+  | (comb, _) :: rest, acc => by
+    have ih := needChainRev_eq rest
+    by_cases h : (comb == ' ' || comb == '>') = true
+    · cases rest with
+      | nil => simp [needChainRev, needChain, h]
+      | cons p r =>
+        obtain ⟨c0, c⟩ := p
+        rw [needChainRev.eq_def, needChain.eq_def]
+        simp only [h, if_true]
+        rw [ih, needSimplesRev_eq]
+        simp
+    · simp [needChainRev, needChain, h]
+
+/-- `needChain` as a loop (`needChain_eq_loop` is the `@[csimp]` equation). -/
+def needChainLoop (ps : List (Char × List DOM.Selectors.Simple)) : List Nat := (needChainRev ps []).reverse
+
+@[csimp] theorem needChain_eq_loop : @needChain = @needChainLoop := by
+  funext ps; simp [needChainLoop, needChainRev_eq]
+
 /-- The keys that a selector requires of the ancestors of the element it matches. -/
 def Selector.need (sel : Selector) : List Nat :=
   match sel.complex with
@@ -3845,6 +3906,37 @@ def matchSelsA (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementS
     if ancAdmits anc n && selectorMatchesK keys dom id s state then s :: matchSelsA keys dom id state anc ss ns
     else matchSelsA keys dom id state anc ss ns
   | _, _ => []
+
+/-- `matchSelsA` in reverse order onto `acc`, as a loop: one frame for any number of
+selectors in a rule's selector list. -/
+def matchSelsARev (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (anc : Array Nat) :
+    List Selector → List (List Nat) → List Selector → List Selector
+  | s :: ss, n :: ns, acc =>
+    if ancAdmits anc n && selectorMatchesK keys dom id s state then matchSelsARev keys dom id state anc ss ns (s :: acc)
+    else matchSelsARev keys dom id state anc ss ns acc
+  | _, _, acc => acc
+
+theorem matchSelsARev_eq (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (anc : Array Nat) :
+    ∀ (sels : List Selector) (needs : List (List Nat)) (acc : List Selector),
+      matchSelsARev keys dom id state anc sels needs acc =
+        (matchSelsA keys dom id state anc sels needs).reverse ++ acc
+  | [], _, _ => by simp [matchSelsARev, matchSelsA]
+  | _ :: _, [], _ => by simp [matchSelsARev, matchSelsA]
+  | s :: ss, n :: ns, acc => by
+    have ih := matchSelsARev_eq keys dom id state anc ss ns
+    by_cases h : (ancAdmits anc n && selectorMatchesK keys dom id s state) = true
+    · simp [matchSelsARev, matchSelsA, h, ih]
+    · simp only [Bool.not_eq_true] at h
+      simp [matchSelsARev, matchSelsA, h, ih]
+
+/-- `matchSelsA` as a loop (`matchSelsA_eq_loop` is the `@[csimp]` equation). -/
+def matchSelsALoop (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (anc : Array Nat)
+    (sels : List Selector) (needs : List (List Nat)) : List Selector :=
+  (matchSelsARev keys dom id state anc sels needs []).reverse
+
+@[csimp] theorem matchSelsA_eq_loop : @matchSelsA = @matchSelsALoop := by
+  funext keys dom id state anc sels needs
+  simp [matchSelsALoop, matchSelsARev_eq]
 
 /-- `matchEntry` with the ancestor filter: `needs` are the `Selector.need` of its selectors. -/
 def matchEntryA (keys : Nat → ElemKey) (dom : Dom) (id : Nat) (state : ElementState) (e : Nat × Rule)

@@ -403,6 +403,7 @@
         "labs/demos/foafnaut/WebRenderScript*.lean",
         "labs/demos/foafnaut/WebRoute.lean",
         "labs/demos/foafnaut/WebScripts.lean",
+        "labs/demos/foafnaut/WebSession.lean",
         "labs/demos/foafnaut/WebShell.lean",
         "labs/demos/foafnaut/WebSparql*.lean",
         "labs/demos/foafnaut/WebState*.lean",

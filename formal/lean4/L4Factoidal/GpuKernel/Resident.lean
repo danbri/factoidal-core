@@ -38,6 +38,37 @@ def fit : Nat → List Entry → List Entry
   | _, [] => []
   | b, e :: es => if e.bytes ≤ b then e :: fit (b - e.bytes) es else fit b es
 
+/-- `total` as a loop with an accumulator: one frame for any number of entries. -/
+def totalGo : List Entry → Nat → Nat
+  | [], a => a
+  | e :: es, a => totalGo es (a + e.bytes)
+
+theorem totalGo_eq : ∀ (es : List Entry) (a : Nat), totalGo es a = a + total es
+  | [], a => by simp [totalGo, total]
+  | e :: es, a => by simp [totalGo, total, totalGo_eq es]; omega
+
+/-- `total` as a loop (`total_eq_loop` is the `@[csimp]` equation). -/
+def totalLoop (es : List Entry) : Nat := totalGo es 0
+
+@[csimp] theorem total_eq_loop : @total = @totalLoop := by
+  funext es; simp [totalLoop, totalGo_eq]
+
+/-- `fit` in reverse order onto `acc`, as a loop: one frame for any number of entries. -/
+def fitRev : Nat → List Entry → List Entry → List Entry
+  | _, [], acc => acc
+  | b, e :: es, acc => if e.bytes ≤ b then fitRev (b - e.bytes) es (e :: acc) else fitRev b es acc
+
+theorem fitRev_eq : ∀ (b : Nat) (es acc : List Entry), fitRev b es acc = (fit b es).reverse ++ acc
+  | _, [], _ => rfl
+  | b, e :: es, acc => by
+    by_cases h : e.bytes ≤ b <;> simp [fitRev, fit, h, fitRev_eq]
+
+/-- `fit` as a loop (`fit_eq_loop` is the `@[csimp]` equation). -/
+def fitLoop (b : Nat) (es : List Entry) : List Entry := (fitRev b es []).reverse
+
+@[csimp] theorem fit_eq_loop : @fit = @fitLoop := by
+  funext b es; simp [fitLoop, fitRev_eq]
+
 /-- One frame: what to upload, and the new resident set (needs first, then the rest of the
 old set that the frame did not name, most recent first, while they fit). -/
 def plan (budget : Nat) (resident need : List Entry) : List Entry × List Entry :=
