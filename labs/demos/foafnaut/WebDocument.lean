@@ -1940,8 +1940,13 @@ def patchJSON (base : Nat) (ranges : Array (Nat × Nat)) (size : Nat) : String :
 The second result says the page is kept. -/
 def pageForHost (text : String) (sections : Array ByteArray) (held : Option (Nat × ByteArray × ByteArray)) :
     (String × Array ByteArray) × Bool :=
-  match held,pageAnswerId text with
-  | some (h,data,tiles),some id =>
+  -- `held` first: with nothing held the page text is not read.
+  match held with
+  | none => ((text,sections),false)
+  | some (h,data,tiles) =>
+  match pageAnswerId text with
+  | none => ((text,sections),false)
+  | some id =>
     if h == id then (("{\"kept\":" ++ toString h ++ "}",sections.map fun _ => ByteArray.empty),true)
     else match sections with
       | #[newData,newTiles] =>
@@ -1953,7 +1958,6 @@ def pageForHost (text : String) (sections : Array ByteArray) (held : Option (Nat
         (((text.dropEnd 1).toString ++ ",\"dataPatch\":" ++ patchJSON h dr newData.size ++
           ",\"tilesPatch\":" ++ patchJSON h tr newTiles.size ++ "}",#[rangeBytes newData dr,rangeBytes newTiles tr]),false)
       | _ => ((text,sections),false)
-  | _,_ => ((text,sections),false)
 
 /-- The view under the chrome and the band of the page layer of a layers answer. A chrome that
 may fold: the band covers the view under the strip, the most it shows, so a change of
@@ -1993,7 +1997,10 @@ def layersJSON (shell : WebShell.Shell) (page : Rendering.Scene) (extra : List R
     | _ => 0
   -- `held` (issue 1124, stage C): the page answer the host holds (`pageForHost`). The second
   -- result is this frame's page answer whole (its id and sections), for the engine to keep.
-  let sent : Option (Nat × ByteArray × ByteArray) := match pageAnswerId pageText,pageSections with
+  -- Only for a host with layout sections (the one that sends `have`): `pageAnswerId` reads the
+  -- page text, which without them holds the boxes, glyph runs and links (about 400 KB).
+  let sent : Option (Nat × ByteArray × ByteArray) := if layout.isNone then none else
+    match pageAnswerId pageText,pageSections with
     | some id,#[data,tiles] => some (id,data,tiles)
     | _,_ => none
   let ((pageText,pageSections),keptPage) := pageForHost pageText pageSections held

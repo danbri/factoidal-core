@@ -177,9 +177,21 @@ frames on these pages); that is style invalidation and incremental layout, item 
 briefing, not the display list. Each new layout also has a new serial, so its layout sections are
 sent again (704,622 of the 782,064 bytes).
 
-## 6. What remains
+## 6. Band change: first step
 
-- Scroll-band change: 654 M instructions on index.html (section 2). The retained compile does not
+`edgesMeeting` (the fill edges of a row band of a tile) made `Array.range` of all edges for each
+band. `edgesMeetingLoop` pushes the indices in one tail-recursive loop (`filterRangeGo`,
+specialised on the test); `filterRangeGo_range` proves it is `(Array.range n).filter p`, and
+`@[csimp] edgesMeeting_eq_loop` makes the compiler use it. Also: the page text is read for its
+`damage.id` (`pageAnswerId`) only for a request with layout sections, and `pageForHost` reads it
+only when the host holds a page (a match on a pair evaluated both). Band change on index.html,
+callgrind per frame: 691.6 M before, 606.6 M after; answers byte-equal over 4 pages and 3
+sequences.
+
+## 7. What remains
+
+- Scroll-band change: 607 M instructions on index.html after section 6 (654 M at the base of
+  section 2, 692 M at main b8dca504). The retained compile does not
   serve it, and a translation of the band changes every record and tile listing by floating-point
   arithmetic, so equal bytes need the work again. Measured parts to make cheaper with the same
   output: tile listing (48%; `edgesMeeting` allocates `Array.range` per band, `NativeSVGPath.edges`
@@ -193,7 +205,7 @@ sent again (704,622 of the 782,064 bytes).
   serial).
 - The Hub does not send `layoutSections` or `have`.
 
-## 7. How to measure
+## 8. How to measure
 
 ```sh
 # from labs/demos/foafnaut, after bash build-web-render.sh --native
