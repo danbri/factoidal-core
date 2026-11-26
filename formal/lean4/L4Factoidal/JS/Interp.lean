@@ -684,6 +684,41 @@ def clampByte (x : Float) : Nat :=
   let g := if r < 0.5 then f else if r > 0.5 then f + 1 else if f.toUInt64.toNat % 2 == 0 then f else f + 1
   g.toUInt64.toNat
 
+/-- `n` zero bytes (a new ArrayBuffer's data block, §25.1.3.1 CreateByteDataBlock), as
+`ByteArray.mk (Array.replicate n 0)` writes it: an array of `n` boxed values, then a copy.
+The compiled program runs `zeroBytesFast` (`zeroBytes_eq_fast`). -/
+def zeroBytes (n : Nat) : ByteArray := ⟨Array.replicate n 0⟩
+
+/-- Append `k` zero bytes. -/
+def pushZeroBytes : Nat → ByteArray → ByteArray
+  | 0, b => b
+  | k + 1, b => pushZeroBytes k (b.push 0)
+
+/-- `n` zero bytes pushed into one array of capacity `n`: no boxed array and no copy. The
+Canvas 2D prelude makes an ArrayBuffer for each batch; the boxed form took 8 bytes of fresh
+memory per byte, and the kernel's zeroing of it was 8 % of a frame (issue 1098). -/
+def zeroBytesFast (n : Nat) : ByteArray := pushZeroBytes n (ByteArray.emptyWithCapacity n)
+
+theorem push0_toList (b : ByteArray) : (b.push 0).data.toList = b.data.toList ++ [0] := by
+  simp [ByteArray.push]
+
+theorem pushZeroBytes_toList (k : Nat) (b : ByteArray) :
+    (pushZeroBytes k b).data.toList = b.data.toList ++ List.replicate k 0 := by
+  induction k generalizing b with
+  | zero => simp [pushZeroBytes]
+  | succ k ih =>
+    simp only [pushZeroBytes, ih, push0_toList, List.append_assoc]
+    rw [List.singleton_append, ← List.replicate_succ]
+
+/-- **Kind: refinement.** Says the pushed zeros are the reference's `n` zero bytes. Does not
+say anything about speed. -/
+@[csimp] theorem zeroBytes_eq_fast : @zeroBytes = @zeroBytesFast := by
+  funext n
+  apply ByteArray.ext
+  apply Array.ext'
+  simp only [zeroBytesFast, pushZeroBytes_toList, zeroBytes, Array.toList_replicate]
+  rfl
+
 /-- The bytes of a number stored as element type `ty` (§25.1.3.17 NumericToRawBytes). -/
 def typedBytes (ty : Nat) (x : Float) : ByteArray :=
   let le := fun (v : Nat) (w : Nat) => ByteArray.mk ((List.range w).toArray.map fun k => (v / 2 ^ (8 * k) % 256).toUInt8)
@@ -2494,7 +2529,7 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
           pure (some m)
       | _ => pure none
     let resized (bytes : ByteArray) (l : Nat) : ByteArray :=
-      if l ≤ bytes.size then bytes.extract 0 l else bytes ++ ByteArray.mk (Array.replicate (l - bytes.size) 0)
+      if l ≤ bytes.size then bytes.extract 0 l else bytes ++ zeroBytes (l - bytes.size)
     match id with
     | (.x (.dataViewGetter which)) =>
       -- §25.3.4.1 buffer, .2 byteLength, .3 byteOffset: a TypeError on a detached or
@@ -2558,7 +2593,7 @@ def moreNativeBuffers (core : CoreFn H) (r : Realm) (id : Native) (thisV : Value
         if len > m then throwErr .range "byteLength exceeds maxByteLength"
       let p ← core.getV nt "prototype"
       let sid ← alloc { proto := (← protoOr p nt (·.sharedBufferProto)),
-                        kind := .buffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0)) }
+                        kind := .buffer (zeroBytes (len.toUInt64.toNat)) }
       defineOwn sid bufSharedKey (.data (.bool true) true false false)
       if let some m := max then defineOwn sid bufMaxKey (.data (.num m) true false false)
       pure (.obj sid)
@@ -2914,7 +2949,7 @@ def moreNativeTypedMethod (core : CoreFn H) (r : Realm) (id : Native) (thisV : V
       pure (ty, b, off, ← liveLen ty b off len)
     -- a new typed array of type `ty` holding these (already converted) values
     let fresh (ty : Nat) (xs : Array Value) : M Value := do
-      let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * elemSize ty) 0))
+      let buf ← newBuffer (zeroBytes (xs.size * elemSize ty))
       let .obj bid := buf | pure buf
       for i in [0:xs.size] do typedWriteV ty bid 0 i xs[i]!
       newTyped ty bid 0 xs.size
@@ -5614,7 +5649,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
         | _ => pure none
       if let some m := max then
         if len > m then throwErr .range "byteLength exceeds maxByteLength"
-      let buf ← newBuffer (ByteArray.mk (Array.replicate len.toUInt64.toNat 0))
+      let buf ← newBuffer (zeroBytes (len.toUInt64.toNat))
       if let (.obj bid, some m) := (buf, max) then
         defineOwn bid bufMaxKey (.data (.num m) true false false)
       -- the prototype is the new target's (OrdinaryCreateFromConstructor)
@@ -5646,7 +5681,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
       needNew ((typedNames[ty]?.map (·.1)).getD "TypedArray")
       let es := elemSize ty
       let fromList (xs : Array Value) : M Value := do
-        let buf ← newBuffer (ByteArray.mk (Array.replicate (xs.size * es) 0))
+        let buf ← newBuffer (zeroBytes (xs.size * es))
         let .obj bid := buf | pure buf
         for i in [0:xs.size] do typedWriteV ty bid 0 i (← core.typedConv ty xs[i]!)
         newTyped ty bid 0 xs.size
@@ -5684,7 +5719,7 @@ def extraNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Va
       | v =>
         let len := toIntegerOrInf (← core.toNum v)
         if len < 0 || len > 268435456 then throwErr .range "Invalid typed array length"
-        let buf ← newBuffer (ByteArray.mk (Array.replicate (len.toUInt64.toNat * es) 0))
+        let buf ← newBuffer (zeroBytes (len.toUInt64.toNat * es))
         let .obj bid := buf | pure buf
         newTyped ty bid 0 len.toUInt64.toNat
     | .dataViewCtor =>
