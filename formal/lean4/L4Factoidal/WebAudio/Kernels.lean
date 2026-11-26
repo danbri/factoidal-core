@@ -480,4 +480,167 @@ theorem split_merge_roundtrip (n N : Nat) (inp : Block) (hN : inp.size = N)
     have hk' : k < inp.size := by omega
     simp [chanOr, hk, hk']
 
+
+/-! ## Tests on values
+
+Each `#guard` evaluates the kernel on a small block and compares with the value the specification
+gives. `approxB` compares to 1e-9. -/
+
+section Tests
+
+def L (a : FloatArray) : List Float := a.data.toList
+def approxL (xs ys : List Float) : Bool :=
+  xs.length == ys.length && (List.zip xs ys).all fun (x, y) => (x - y).abs < 1e-9
+def blk (cs : List (List Float)) : Block := (cs.map fun c => FloatArray.mk c.toArray).toArray
+def approxB (b : Block) (cs : List (List Float)) : Bool :=
+  b.size == cs.length && (List.zip b.toList cs).all fun (x, y) => approxL (L x) y
+def kr (v : Float) : FloatArray := ⟨#[v]⟩
+def ar (xs : List Float) : FloatArray := ⟨xs.toArray⟩
+
+def gainOut (n : Nat) (inp : Block) (g : FloatArray) : Block :=
+  (gainProcess n () #[inp] #[g]).2[0]!
+
+-- GainNode (WPT the-gainnode-interface/gain.html: output is input times gain).
+#guard approxB (gainOut 4 (blk [[1, 2, 3, 4]]) (kr 2.0)) [[2, 4, 6, 8]]
+#guard approxB (gainOut 4 (blk [[1, 1, 1, 1]]) (ar [0, 1, 2, 3])) [[0, 1, 2, 3]]
+#guard approxB (gainOut 3 (blk [[1, 2, 3], [4, 5, 6]]) (kr 0.5)) [[0.5, 1, 1.5], [2, 2.5, 3]]
+#guard approxB (gainOut 3 (blk [[1, 2, 3]]) (kr 0.0)) [[0, 0, 0]]
+#guard approxB (gainOut 3 (blk [[1, 2, 3]]) (kr (-1.0))) [[-1, -2, -3]]
+#guard approxB (gainOut 2 (blk []) (kr 1.0)) []
+
+-- paramAt, silence
+#guard paramAt (kr 7.0) 3 == 7.0
+#guard paramAt (ar [1, 2, 3]) 2 == 3.0
+#guard approxB (silence 2 3) [[0, 0, 0], [0, 0, 0]]
+
+-- Scheduled sources: frameOfTime (frame f has time f / sampleRate; first frame at or after t).
+#guard frameOfTime 0.5 4.0 == 2
+#guard frameOfTime 0.3 10.0 == 3
+#guard frameOfTime 0.0 44100.0 == 0
+#guard frameOfTime (-1.0) 44100.0 == 0
+#guard frameOfTime 0.26 10.0 == 3
+
+#guard active (some 2) (some 5) 1 == false
+#guard active (some 2) (some 5) 2 == true
+#guard active (some 2) (some 5) 4 == true
+#guard active (some 2) (some 5) 5 == false
+#guard active none none 100 == false
+#guard active (some 2) none 1000 == true
+
+-- ConstantSourceNode (WPT the-constantsourcenode-interface).
+def constOut (n : Nat) (s : ConstState) (off : FloatArray) : ConstState × Block :=
+  let r := constProcess n s #[] #[off]
+  (r.1, r.2[0]!)
+
+-- starts and stops inside one block
+#guard approxB (constOut 4 { startFrame := some 1, stopFrame := some 3 } (kr 5.0)).2 [[0, 5, 5, 0]]
+-- a-rate offset
+#guard approxB (constOut 4 { startFrame := some 0 } (ar [1, 2, 3, 4])).2 [[1, 2, 3, 4]]
+-- never started
+#guard approxB (constOut 4 {} (kr 5.0)).2 [[0, 0, 0, 0]]
+-- start in the second block; the frame counter carries over
+#guard (constOut 4 { startFrame := some 6 } (kr 1.0)).1.frame == 4
+#guard approxB (constOut 4 (constOut 4 { startFrame := some 6 } (kr 1.0)).1 (kr 1.0)).2
+  [[0, 0, 1, 1]]
+-- stop in the second block
+#guard approxB (constOut 4 { startFrame := some 0, stopFrame := some 5, frame := 4 } (kr 2.0)).2
+  [[2, 0, 0, 0]]
+
+-- DelayNode: sample rate 1, so delayTime in seconds equals frames. Maximum delay 4 frames.
+def dly0 : DelayState := DelayState.init 4.0 1.0 1
+def delayRun (n : Nat) (s : DelayState) (inp : Block) (d : FloatArray) : DelayState × Block :=
+  let r := delayProcess n s #[inp] #[d]
+  (r.1, r.2[0]!)
+def impulse8 : Block := blk [[1, 0, 0, 0, 0, 0, 0, 0]]
+
+#guard dly0.size == 5
+#guard (DelayState.init 1.0 44100.0 2).size == 44101
+#guard (DelayState.init 1.0 44100.0 2).bufs.size == 2
+-- delay 0 gives the current input
+#guard approxB (delayRun 8 dly0 impulse8 (kr 0.0)).2 [[1, 0, 0, 0, 0, 0, 0, 0]]
+-- delay 1
+#guard approxB (delayRun 8 dly0 impulse8 (kr 1.0)).2 [[0, 1, 0, 0, 0, 0, 0, 0]]
+-- delay 2
+#guard approxB (delayRun 8 dly0 impulse8 (kr 2.0)).2 [[0, 0, 1, 0, 0, 0, 0, 0]]
+-- fractional delay 0.5: linear interpolation
+#guard approxB (delayRun 8 dly0 impulse8 (kr 0.5)).2 [[0.5, 0.5, 0, 0, 0, 0, 0, 0]]
+#guard approxB (delayRun 8 dly0 impulse8 (kr 1.25)).2 [[0, 0.75, 0.25, 0, 0, 0, 0, 0]]
+-- maximum delay
+#guard approxB (delayRun 8 dly0 impulse8 (kr 4.0)).2 [[0, 0, 0, 0, 1, 0, 0, 0]]
+-- above the maximum is clamped to it; negative is clamped to 0
+#guard approxB (delayRun 8 dly0 impulse8 (kr 10.0)).2 [[0, 0, 0, 0, 1, 0, 0, 0]]
+#guard approxB (delayRun 8 dly0 impulse8 (kr (-3.0))).2 [[1, 0, 0, 0, 0, 0, 0, 0]]
+-- a-rate delay time
+#guard approxB (delayRun 4 dly0 (blk [[1, 2, 3, 4]]) (ar [0, 1, 1, 2])).2 [[1, 1, 2, 2]]
+-- state across blocks: ring of 7 frames wraps (write index 0, 4, 1)
+def dly6 : DelayState := DelayState.init 6.0 1.0 1
+#guard approxB (delayRun 4 (delayRun 4 dly6 (blk [[1, 0, 0, 0]]) (kr 5.0)).1
+    (blk [[0, 0, 0, 0]]) (kr 5.0)).2 [[0, 1, 0, 0]]
+#guard (delayRun 4 (delayRun 4 dly6 (blk [[1, 0, 0, 0]]) (kr 5.0)).1
+    (blk [[0, 0, 0, 0]]) (kr 5.0)).1.w == 1
+-- in a cycle the delay is at least one render quantum (4 frames here)
+def dlyCycle : DelayState := DelayState.init 6.0 1.0 1 4
+#guard approxB (delayRun 4 dlyCycle (blk [[1, 0, 0, 0]]) (kr 0.0)).2 [[0, 0, 0, 0]]
+#guard approxB (delayRun 4 (delayRun 4 dlyCycle (blk [[1, 0, 0, 0]]) (kr 0.0)).1
+    (blk [[0, 0, 0, 0]]) (kr 0.0)).2 [[1, 0, 0, 0]]
+-- output channel count follows the input; channels are independent
+#guard approxB (delayRun 3 (DelayState.init 4.0 1.0 2) (blk [[1, 2, 3], [4, 5, 6]]) (kr 1.0)).2
+  [[0, 1, 2], [0, 4, 5]]
+-- the delay line keeps its tail when the input is silent afterwards
+#guard approxB (delayRun 2 (delayRun 2 dly0 (blk [[7, 8]]) (kr 3.0)).1 (blk [[0, 0]]) (kr 3.0)).2
+  [[0, 7]]
+
+-- StereoPannerNode (WPT stereopanner-testing.js getChannelGain: same formulas).
+def panOut (n : Nat) (inp : Block) (p : FloatArray) : Block :=
+  (panProcess n () #[inp] #[p]).2[0]!
+def sq : Float := 0.7071067811865476
+-- mono input of 1.0: left gain cos, right gain sin
+#guard approxB (panOut 1 (blk [[1]]) (kr (-1.0))) [[1], [0]]
+#guard approxB (panOut 1 (blk [[1]]) (kr 0.0)) [[sq], [sq]]
+#guard approxB (panOut 1 (blk [[1]]) (kr 1.0)) [[0], [1]]
+-- pan beyond the range is clamped
+#guard approxB (panOut 1 (blk [[1]]) (kr (-3.0))) [[1], [0]]
+#guard approxB (panOut 1 (blk [[1]]) (kr 7.0)) [[0], [1]]
+-- stereo input of (1, 1): pan <= 0 gives L = 1 + cos, R = sin
+#guard approxB (panOut 1 (blk [[1], [1]]) (kr (-1.0))) [[2], [0]]
+#guard approxB (panOut 1 (blk [[1], [1]]) (kr 0.0)) [[1], [1]]
+#guard approxB (panOut 1 (blk [[1], [1]]) (kr 1.0)) [[0], [2]]
+-- stereo input (1, 0) panned right: L = in L * cos, R = inR + inL * sin
+#guard approxB (panOut 1 (blk [[1], [0]]) (kr 0.5)) [[0.7071067811865476], [0.7071067811865476]]
+-- a-rate pan over three frames
+#guard approxB (panOut 3 (blk [[1, 1, 1]]) (ar [-1, 0, 1])) [[1, sq, 0], [0, sq, 1]]
+
+-- ChannelSplitterNode.
+def splitOut (n outputs : Nat) (inp : Block) : Array Block :=
+  (splitProcess n outputs #[inp] #[]).2
+def twoCh : Block := blk [[1, 2], [3, 4]]
+#guard (splitOut 2 3 twoCh).size == 3
+#guard approxB (splitOut 2 3 twoCh)[0]! [[1, 2]]
+#guard approxB (splitOut 2 3 twoCh)[1]! [[3, 4]]
+-- more outputs than channels: the extra output is silent
+#guard approxB (splitOut 2 3 twoCh)[2]! [[0, 0]]
+-- fewer outputs than channels: the extra channels are dropped
+#guard (splitOut 2 1 twoCh).size == 1
+#guard approxB (splitOut 2 1 twoCh)[0]! [[1, 2]]
+#guard (splitOut 2 0 twoCh).size == 0
+
+-- ChannelMergerNode.
+def mergeOut (n inputsN : Nat) (ins : Array Block) : Block :=
+  (mergeProcess n inputsN ins #[]).2[0]!
+#guard approxB (mergeOut 2 2 #[blk [[1, 2]], blk [[3, 4]]]) [[1, 2], [3, 4]]
+-- an unconnected input (no channels) gives silence
+#guard approxB (mergeOut 2 3 #[blk [[1, 2]], blk [], blk [[5, 6]]]) [[1, 2], [0, 0], [5, 6]]
+-- more inputs than the node has: the extra inputs are ignored
+#guard approxB (mergeOut 2 1 #[blk [[1, 2]], blk [[3, 4]]]) [[1, 2]]
+-- more node inputs than supplied blocks: silent channels
+#guard approxB (mergeOut 2 3 #[blk [[1, 2]]]) [[1, 2], [0, 0], [0, 0]]
+
+-- Splitter then merger returns the input (value form of `split_merge_roundtrip`).
+#guard approxB (mergeProcess 2 2 (splitProcess 2 2 #[twoCh] #[]).2 #[]).2[0]! [[1, 2], [3, 4]]
+-- with a mono input and 3 outputs and 3 inputs: channel 0 is kept, the others silent
+#guard approxB (mergeProcess 2 3 (splitProcess 2 3 #[blk [[9, 8]]] #[]).2 #[]).2[0]!
+  [[9, 8], [0, 0], [0, 0]]
+
+end Tests
+
 end L4Factoidal.WebAudio.Kernels
