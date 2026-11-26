@@ -139,15 +139,16 @@ def cmd_check(args):
                 print(f'note {n}: measured_bytes={size} status=no-budget platform={key}')
                 continue
             ratio = size / budget - 1
-            ceiling = int(budget * (1 + tol))
+            allowance = data.get('allowances_bytes', {}).get(n)
+            ceiling = budget + allowance if allowance is not None else int(budget * (1 + tol))
             receipt = (f'measured_bytes={size} baseline_bytes={budget} ceiling_bytes={ceiling} '
-                       f'change={ratio:+.2%}')
+                       f'allowed_growth_bytes={ceiling - budget} change={ratio:+.2%}')
             if size > ceiling:
                 print(f'FAIL {n}: {receipt} over_bytes={size - ceiling} '
                       f'(tools/binary-budget.json, issue 551)')
                 failed = True
             else:
-                hint = ' (tools/binary-budget.py check --update)' if ratio < -tol else ''
+                hint = ' (tools/binary-budget.py check --update)' if size < budget else ''
                 print(f'ok {n}: {receipt} remaining_bytes={ceiling - size}{hint}')
     if update and not failed:
         for n, size in measured.items():
