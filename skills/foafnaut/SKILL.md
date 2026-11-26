@@ -164,6 +164,11 @@ Desktop host (Deno, TypeScript, macOS only):
   fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
   in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
   `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
+- Audio and video: no playback in pages, no `AudioContext`, no audio output in the Mac host, no
+  hardware video decode. What exists (decoders in WasmVM, Ogg and WebM in Lean, WebCodecs object
+  model) and the owner's open decisions:
+  `docs/designissues/2026-11-26-foafnaut-audio-video-status.md`; plan
+  https://github.com/danbri/factoidal-core/issues/588.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
 - `LAB/native_html_session.ts`, `LAB/layer_compositor.ts`, `LAB/scroll_prefetch.ts`,
   `LAB/gpu_transport.ts`, `LAB/render_plan.ts`: GPU. The two-layer scroll and the prefetch
