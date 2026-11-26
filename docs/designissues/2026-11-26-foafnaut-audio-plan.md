@@ -344,11 +344,17 @@ safety offset and the buffer size; `null` and `wav`: 0).
 
 ### 13.5 The ring as a Lean state machine
 
-`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run count.
-`write k` takes `min k free` frames; `read k` gives `min k available` frames and `k` minus that of
-silence, and counts an under-run when it gives silence. Theorems: in every reachable state, read ≤
-written ≤ read + capacity; each frame is read at most once and in the order written; an under-run
-gives silence. The C ring follows it: the writer copies frames, then stores `written` with release
+`WebAudio/Ring.lean`: the state is the capacity, frames written, frames read, the under-run
+count and the frames of silence given. `write k` is all or nothing: it takes `k` frames when `k`
+is at most the free space and none otherwise (the rendering task writes whole render quanta).
+`read k` gives `min k available` frames and `k` minus that of silence, and counts one under-run
+event when it gives any silence. Theorems: in every reachable state, read ≤ written ≤ read +
+capacity; the non-silent frames given by any sequence of reads are `0, 1, 2, ...` in order with
+none twice; an under-run gives silence for exactly the frames not taken; an accepted write never
+reuses the slot of a frame not yet read. The model has no time. Rule of the consumers (C only):
+a consumer takes nothing and counts no under-run before the first write (it waits until
+`written > 0` and starts its period clock then; CoreAudio starts the output unit at the first
+write), nor while paused, so the measure "under-runs a minute" starts at 0. The C ring follows it: the writer copies frames, then stores `written` with release
 order; the reader loads `written` with acquire order, copies, then stores `read` with release
 order; each side writes only its own counter. Tests: a stress test of the C ring under
 ThreadSanitizer (a writer thread and a reader thread, random sizes, every frame value checked),
