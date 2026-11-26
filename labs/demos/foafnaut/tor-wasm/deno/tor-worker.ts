@@ -62,7 +62,8 @@ type Msg =
   | { id: number; op: "store"; kind: string }
   | { id: number; op: "load"; state: string }
   | { id: number; op: "bootstrap"; timeoutMs: number; config?: string }
-  | { id: number; op: "stream"; host: string; port: number; request: string; max: number; timeoutMs: number };
+  | { id: number; op: "stream"; partition: string; host: string; port: number; request: string; max: number; timeoutMs: number }
+  | { id: number; op: "new-identity" };
 
 self.onmessage = async (e: MessageEvent<Msg>) => {
   const m = e.data;
@@ -74,7 +75,8 @@ self.onmessage = async (e: MessageEvent<Msg>) => {
   else if (m.op === "store") result = tor.set_state_store(m.kind);
   else if (m.op === "load") result = tor.state_load(m.state);
   else if (m.op === "bootstrap") result = await tor.bootstrap(m.timeoutMs, m.config);
-  else if (m.op === "stream") result = await tor.stream_request(m.host, m.port, m.request, m.max, m.timeoutMs);
+  else if (m.op === "stream") result = await tor.stream_request(m.partition, m.host, m.port, m.request, m.max, m.timeoutMs);
+  else if (m.op === "new-identity") result = tor.new_identity();
   (self as unknown as Worker).postMessage({ id: m.id, result, dialled, open: conns.size });
 };
 (self as unknown as Worker).postMessage({ ready: true });

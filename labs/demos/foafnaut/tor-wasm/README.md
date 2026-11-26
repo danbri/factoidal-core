@@ -7,7 +7,8 @@ in a Foafnaut page on the built-in engines (BubblePopWASM runs the module, Bubbl
 In a Foafnaut page it has no network transport: it starts, looks for a consensus, and every
 connection is refused. In a Deno worker (`deno/`) it has a transport: TCP through `Deno.connect`
 and TLS inside the module. There it bootstraps on a private Tor network and reaches an exit and
-an onion service (`chutney/run.sh`).
+an onion service (`chutney/run.sh`), with one circuit set per partition (top-level site), a
+new identity operation, and state kept in a sealed local LWS storage (`deno/tor-state.ts`).
 
 EXPERIMENTAL UNDER-REVIEWED CODE - USE WITH CARE - DO NOT CREATE PUBLIC SERVICES USING THIS
 WITHOUT CAREFUL INDEPENDENT EXPERT REVIEW. The transport is not trusted for real users: it runs

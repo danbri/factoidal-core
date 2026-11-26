@@ -526,3 +526,29 @@ Limits:
   fetched by its tag.
 - Pages: no change. https://github.com/danbri/factoidal-core/issues/1058 stays open for the page
   path; its expected failure (`state_backend()` is "lws-sealed") still fails there.
+
+## 16. Stream isolation, new identity, periodic save, memory quota (2026-11-26)
+
+Owner, 2026-11-26, verbatim: "keep improving Tor if there is more to do".
+
+- Stream isolation: `stream_request(partition, ...)` uses one Arti `isolated_client()` per
+  partition (for a browser, the top-level site). Streams of the same partition may share a
+  circuit; streams of different partitions never do. An empty partition is refused, so no caller
+  shares circuits by accident. Host syntax: `--request PARTITION@HOST:PORT`.
+- New identity: `new_identity()` forgets every partition's isolation, so later streams use
+  circuits that no earlier stream used. Host: `--request NEWID`.
+- Periodic save: with `--state-dir`, the host saves the state every 60 s during a run, and at the
+  end.
+- Memory quota: 256 MiB (`MEMORY_QUOTA_BYTES`) unless the configuration sets `[system.memory]`.
+  On wasm Arti cannot read the machine's memory and used a constant 1 GiB (section 10.4 item 8).
+
+Test (`chutney/run.sh`, private network): exit streams siteA, siteA, siteB, new identity, siteA
+used circuits `Circ 2.0, 2.0, 2.1, 2.2`: PASS "isolation (same partition shares, other partition
+and new identity do not)". The check reads Arti's debug lines ("Got a circuit for ... tunnel_id"),
+because Arti keeps a stream's circuit private; debug is on only in this test (section 12.4). All
+six checks pass. Arti logged "Memory quota tracking initialised max=256 MiB"; the host made two
+periodic saves. `node --test xfail.test.cjs`: 7 pass, 0 fail (out of 7).
+
+Not done: the Foafnaut side that gives each page's top-level site as the partition, and a
+"new identity" control in the browser. Both need the page transport
+(https://github.com/danbri/factoidal-core/issues/1060).

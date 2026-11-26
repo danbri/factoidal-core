@@ -6,7 +6,7 @@
 //
 // deno run --unstable-worker-options --allow-net --allow-read [--allow-write --allow-run --allow-env] deno/tor-host.ts \
 //   --dangerously-use-unreviewed-tor-transport [--config arti.toml] [--timeout 60000] \
-//   [--request HOST:PORT ...] [--debug] [--restart-check] [--hold MS] [--state-dir DIR]
+//   [--request [PARTITION@]HOST:PORT | NEWID ...] [--debug] [--restart-check] [--hold MS] [--state-dir DIR]
 const args = Deno.args;
 const flag = (n: string) => args.includes(n);
 const opt = (n: string) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
@@ -73,19 +73,45 @@ async function runOnce(label: string, saved?: string): Promise<string> {
   }
   const en = await call({ op: "enable", ack });
   console.log(JSON.stringify({ step: "transport", run: label, enabled: en.result }));
+  // Save the state every 60 s while the client runs (Arti stores its own state every 60 s), so a
+  // crash loses at most about two minutes of it.
+  let saving = false;
+  const saver = store ? setInterval(async () => {
+    if (saving) return;
+    saving = true;
+    try {
+      const snap = String((await call({ op: "snapshot" })).result);
+      if (snap !== "{}") await store!.save(snap);
+      console.log(JSON.stringify({ step: "tor-state", run: label, periodicSave: true }));
+    } catch (e) {
+      console.log(JSON.stringify({ step: "tor-state", run: label, periodicSave: false, error: String((e as Error).message) }));
+    } finally { saving = false; }
+  }, 60000) : undefined;
   const b = await call({ op: "bootstrap", timeoutMs, config });
   for (const l of String(b.result).trim().split("\n")) console.log(l);
   console.log(JSON.stringify({ step: "host", run: label, dialled: b.dialled, open: b.open }));
-  for (const request of requests) {
+  // --request [PARTITION@]HOST:PORT. Streams of different partitions use different circuits.
+  for (const spec of requests) {
+    if (spec === "NEWID") {
+      // New identity: later streams of every partition use circuits no earlier stream used.
+      const n = await call({ op: "new-identity" });
+      console.log(JSON.stringify({ step: "new-identity", partitionsForgotten: n.result }));
+      continue;
+    }
+    const atSign = spec.indexOf("@");
+    const partition = atSign >= 0 ? spec.slice(0, atSign) : "default";
+    const request = atSign >= 0 ? spec.slice(atSign + 1) : spec;
     const at = request.lastIndexOf(":");
     const host = request.slice(0, at), port = Number(request.slice(at + 1));
-    const r = await call({ op: "stream", host, port, request: `GET / HTTP/1.0\r\nHost: ${host}\r\n\r\n`, max: 2048, timeoutMs });
+    const r = await call({ op: "stream", partition, host, port, request: `GET / HTTP/1.0\r\nHost: ${host}\r\n\r\n`, max: 2048, timeoutMs });
     console.log(String(r.result));
   }
   // Arti stores its state every 60 s and when its circuit manager is dropped. --hold waits for
   // the periodic store before the snapshot.
   const hold = Number(opt("--hold") ?? 0);
   if (hold > 0) await new Promise((r) => setTimeout(r, hold));
+  if (saver !== undefined) clearInterval(saver);
+  while (saving) await new Promise((r) => setTimeout(r, 50));
   await call({ op: "close" });
   await new Promise((r) => setTimeout(r, 200));
   const snap = String((await call({ op: "snapshot" })).result);

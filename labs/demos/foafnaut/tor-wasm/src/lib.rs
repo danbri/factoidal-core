@@ -46,6 +46,9 @@ extern "C" {
     fn log(s: &str);
 }
 
+/// Arti's memory quota in this build: 256 MiB (reclamation starts above it).
+const MEMORY_QUOTA_BYTES: usize = 256 * 1024 * 1024;
+
 /// 2024-01-01T00:00:00Z. A wall clock earlier than this is not a real clock (a Foafnaut page
 /// clock starts near 1970), and Tor must not run on it: consensus validity, certificate
 /// lifetimes and onion service time periods all depend on the real date.
@@ -536,6 +539,11 @@ pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
     b.storage()
         .cache_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/cache"))
         .state_dir(arti_client::config::CfgPath::new_literal("/arti-wasm/state"));
+    // Memory quota: on wasm Arti cannot read the machine's memory size and uses 1 GiB. Set a
+    // fixed limit unless the configuration gave one, so a hostile peer cannot grow buffers to it.
+    if config_toml.as_deref().is_none_or(|t| !t.contains("[system.memory]")) {
+        b.system().memory().max(MEMORY_QUOTA_BYTES);
+    }
     // Keys (onion service client keys included) stay in memory: nothing is written anywhere.
     b.storage()
         .keystore()
@@ -591,6 +599,32 @@ pub async fn bootstrap(timeout_ms: u32, config_toml: Option<String>) -> String {
 
 thread_local! {
     static CLIENT: std::cell::RefCell<Option<std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> = const { std::cell::RefCell::new(None) };
+    /// One isolated client per network partition (for a browser: the top-level site). Streams of
+    /// two partitions never share a circuit (Arti `isolated_client`).
+    static PARTITIONS: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<arti_client::TorClient<WasmRuntime>>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The client for `partition`: a new isolated client the first time a partition is seen.
+/// An empty partition name is refused, so no caller can share a circuit by accident.
+fn client_for(partition: &str) -> Result<std::sync::Arc<arti_client::TorClient<WasmRuntime>>, String> {
+    if partition.is_empty() {
+        return Err("no partition: every stream must name its partition (for a browser, the top-level site)".into());
+    }
+    let base = CLIENT.with(|c| c.borrow().clone()).ok_or("no client: run bootstrap first")?;
+    Ok(PARTITIONS.with(|m| m.borrow_mut().entry(partition.to_string()).or_insert_with(|| base.isolated_client()).clone()))
+}
+
+/// New identity: forget every partition's isolation, so later streams use new circuits that no
+/// earlier stream used. Returns the number of partitions forgotten.
+#[wasm_bindgen]
+pub fn new_identity() -> u32 {
+    PARTITIONS.with(|m| {
+        let mut m = m.borrow_mut();
+        let n = m.len() as u32;
+        m.clear();
+        n
+    })
 }
 
 /// Drop the client of the last `bootstrap`. Arti flushes its state when its circuit manager
@@ -600,14 +634,15 @@ pub fn close() -> bool {
     CLIENT.with(|c| c.borrow_mut().take()).is_some()
 }
 
-/// Through the client of the last `bootstrap`, open a stream to `host:port` (the exit resolves
+/// Through the isolated client of `partition`, open a stream to `host:port` (the exit resolves
 /// the name; nothing is resolved here), send `request` and return up to `max` bytes of reply.
 #[wasm_bindgen]
-pub async fn stream_request(host: String, port: u16, request: String, max: u32, timeout_ms: u32) -> String {
+pub async fn stream_request(partition: String, host: String, port: u16, request: String, max: u32, timeout_ms: u32) -> String {
     use futures::{AsyncReadExt, AsyncWriteExt};
     use tor_rtcompat::SleepProviderExt;
-    let Some(client) = CLIENT.with(|c| c.borrow().clone()) else {
-        return r#"{"step":"stream","ok":false,"error":"no client: run bootstrap first"}"#.into();
+    let client = match client_for(&partition) {
+        Ok(c) => c,
+        Err(e) => return format!(r#"{{"step":"stream","ok":false,"error":{e:?}}}"#),
     };
     let rt = WasmRuntime::default();
     let work = async {
