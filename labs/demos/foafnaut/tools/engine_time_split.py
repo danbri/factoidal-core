@@ -14,10 +14,12 @@ copies; the engine code is the same in every mode):
 Report:
 
   engine_time_split.py --trace trace.log --script run.script --library libweb-render.so \\
-      [--window timers|all] [--json out.json]
+      [--window timers|all|load|first-layout] [--json out.json]
 
 Window: `timers` (default) is from 0.5 s after the first timer turn to the last one (an animating
-page); `all` is the whole run (page load and script start included). The trace's times are
+page); `all` is the whole run (page load and script start included); `load` is from the start of
+the first page load (native-html-load-phases) to the end of the first frame's engine layout;
+`first-layout` is that layout only (native-html-frame 1, its layoutMs). The trace's times are
 performance.now() of the main thread; their origin is taken as the process's first sample, and
 the report gives the difference between the quit record and the main thread's last sample as a
 check of that (a few tens of ms is good enough for windows of seconds).
@@ -92,7 +94,7 @@ def main():
     ap.add_argument("--trace", required=True)
     ap.add_argument("--script", required=True)
     ap.add_argument("--library", required=True)
-    ap.add_argument("--window", choices=("timers", "all"), default="timers")
+    ap.add_argument("--window", choices=("timers", "all", "load", "first-layout"), default="timers")
     ap.add_argument("--hz", type=float, default=199)
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--json")
@@ -110,6 +112,15 @@ def main():
         if len(turns) < 5:
             sys.exit(f"{len(turns)} timer turns: use --window all")
         t0, t1 = turns[0]["t"] + 500, turns[-1]["t"]
+    elif a.window in ("load", "first-layout"):
+        loads = [r for r in recs if r.get("type") == "native-html-load-phases" and "newtab" not in r.get("url", "")]
+        frames = [r for r in recs if r.get("type") == "native-html-frame" and r.get("frame") == 1]
+        if not loads or not frames:
+            sys.exit("no native-html-load-phases or first native-html-frame in the trace")
+        f = frames[0]
+        f0 = f["t"] - f["totalMs"]
+        t0 = loads[0]["t"] - loads[0]["totalMs"] if a.window == "load" else f0
+        t1 = f0 + f["layoutMs"]
     else:
         t0, t1 = 0, (last_main - origin) * 1000
     s0, s1 = origin + t0 / 1000, origin + t1 / 1000
@@ -123,6 +134,17 @@ def main():
                 else s[1]] += 1
     by = collections.Counter(charge(s[4]) for s in engine)
     rt = collections.Counter(charge(s[4]) for s in engine if s[4] and runtime_leaf(s[4]))
+    # Self: the nearest frame of a named engine function (generic List, Array and Std frames go
+    # to it). Inclusive: every engine function on the stack, once per sample.
+    def fname(sym):
+        return re.sub(r"^.*?L4Factoidal_", "", sym).split("___at___")[0][:90]
+    lean_fn, lean_incl = collections.Counter(), collections.Counter()
+    for s in engine:
+        names = [fname(sym) for sym, _ in s[4] if "L4Factoidal_" in sym]
+        if names:
+            lean_fn[names[0]] += 1
+            for n in set(names):
+                lean_incl[n] += 1
     js_fn = collections.Counter()
     for s in engine:
         if charge(s[4]) == JS:
@@ -145,6 +167,8 @@ def main():
         "subsystems": [{"name": n, "samples": c, "share": round(c / max(1, len(engine)), 3), "runtimeLeaf": rt.get(n, 0)}
                        for n, c in by.most_common()],
         "bubblepopFunctions": js_fn.most_common(a.top),
+        "leanFunctions": lean_fn.most_common(a.top),
+        "leanFunctionsInclusive": lean_incl.most_common(a.top),
     }
     print(f"window {a.window}: {out['windowS']} s, origin check {out['originCheckMs']} ms; engine CPU {out['engineCpuS']} s "
           f"({len(engine)} samples); timer turns {out['timerTurns']}, engine p50 {out['turnEngineMsP50']} ms, "
@@ -153,6 +177,11 @@ def main():
     for s in out["subsystems"]:
         print(f"  {100 * s['share']:5.1f}%  {s['samples']:5d}  {s['name']}  (runtime leaf {s['runtimeLeaf']})")
     print("BubblePopJS functions: " + ", ".join(f"{k} {v}" for k, v in out["bubblepopFunctions"]))
+    for title, key in (("engine functions, self (nearest named engine frame):", "leanFunctions"),
+                       ("engine functions, inclusive:", "leanFunctionsInclusive")):
+        print(title)
+        for k, v in out[key]:
+            print(f"  {100 * v / max(1, len(engine)):5.1f}%  {v:5d}  {k}")
     if a.json:
         json.dump(out, open(a.json, "w"), indent=1)
 

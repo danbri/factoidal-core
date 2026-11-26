@@ -22,6 +22,8 @@ p.add_argument('--archive', required=True, type=Path)
 p.add_argument('--output', required=True, type=Path)
 p.add_argument('--lean', default='lean')
 p.add_argument('--timeout', type=int, default=180)
+p.add_argument('--font', type=Path, default=Path(__file__).resolve().parents[2] / 'third_party/fonts/noto-sans/NotoSans-Regular.ttf',
+               help='SFNT font that draws SVG text (lowered to glyph paths in Lean)')
 a = p.parse_args()
 root = Path(__file__).resolve().parents[2]
 formal = root / 'formal/lean4'
@@ -52,7 +54,7 @@ assert len(cases) == 496 and all(row['approved'] for row in cases), 'Official in
 driver = Path(__file__).with_name('SvgTinyProbe.lean')
 cache_roots = [lab / '.build/web-render/olean', formal / '.lake/build/lib/lean']
 cache = {str(path): sha(path.read_bytes()) for base in cache_roots for path in base.rglob('*.olean')}
-command = [a.lean, '--run', str(driver), *(str(corpus / row['file']) for row in cases)]
+command = [a.lean, '--run', str(driver), str(a.font.resolve()), *(str(corpus / row['file']) for row in cases)]
 result = subprocess.run(command, cwd=formal, env={**os.environ, 'LEAN_PATH': ':'.join(map(str, cache_roots))},
                         capture_output=True, timeout=a.timeout)
 (out / 'lean.log').write_bytes(result.stderr)
@@ -69,6 +71,7 @@ for path, value in cache.items():
 report = {'format': 'factoidal-svg-tiny-admission-v1', 'scope': 'Lean interpreter admission; visual conformance NOT_RUN',
           'archiveURL': ARCHIVE_URL, 'archiveSha256': ARCHIVE_SHA256,
           'runnerSha256': sha(Path(__file__).read_bytes()), 'driverSha256': sha(driver.read_bytes()),
+          'font': str(a.font), 'fontSha256': sha(a.font.read_bytes()),
           'cache': cache, 'cases': cases,
           'approvedCounts': dict(Counter(row['admission'] for row in cases if row['approved'])),
           'allCounts': dict(Counter(row['admission'] for row in cases)),

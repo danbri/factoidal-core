@@ -748,6 +748,9 @@ the `v` flag's class sets, match indices (`d`) and duplicate group names were no
 #guard out "try { new RegExp('\\\\p{ASCII=Y}', 'u'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "print(/^.$/u.test('\\u{1F600}'), /^.$/.test('\\u{1F600}'), /^\\p{Script=Toto}$/u.test('\\u{1E290}'), '\\u{1F600}x'.match(/./gu).length)" == ["true false true 2"]
 #guard out "print(/\\udf06/u.exec('\\ud834\\udf06'), /^[\\u{1F600}-\\u{1F64F}]$/u.test('\\u{1F610}'))" == ["null true"]
+-- Annex B legacy octal escapes at the end of a class range (Observable Plot's
+-- `[\240-\377]`; issue 1161: the Hub's Rendering scores page did not load its modules)
+#guard out "print(/[\\240-\\377]/.test('\\u00e9'), /[a-\\377]/.test('b'), /[\\240-\\250]/.test('\\u00b0'), /[\\1-\\7]/.test('\\u0003'))" == ["true true false true"]
 #guard out "print(/(?i:a)b/.test('Ab'), /(?i:a)b/.test('AB'), /(?-i:a)b/i.test('aB'), /(?-i:a)b/i.test('AB'))" == ["true false true false"]
 #guard out "try { new RegExp('(?ii:a)'); print('no') } catch (e) { print(e.name) }" == ["SyntaxError"]
 #guard out "print(/\\u212a/iu.test('k'), /\\u212a/i.test('k'), /\\w/iu.test('\\u017f'), /[a-z]/i.test('\\u212a'))" == ["true false true false"]

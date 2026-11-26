@@ -34,7 +34,7 @@ if (stateDir) {
   if (typeof opened === "string") console.log(JSON.stringify({ step: "tor-state", saved: false, why: opened }));
   else store = opened;
 }
-type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string };
+type ConnTrace = { h: number; dial: number; open?: number; firstIn?: number; inB: number; outB: number; reads: number; closed?: number; err?: string; msg?: string; v6?: boolean };
 type Reply = { result: unknown; dialled: number; open: number; socks?: unknown[]; streamsOpen?: number; conns?: ConnTrace[]; at?: number; loop?: { maxLagMs: number; stalls: { at: number; ms: number }[] } };
 /** --trace-conns: print the connections a step made, and a summary of where they stopped. */
 function printConns(step: string, r: Reply) {
@@ -43,7 +43,9 @@ function printConns(step: string, r: Reply) {
   const cs = r.conns;
   const n = (f: (c: ConnTrace) => boolean) => cs.filter(f).length;
   console.log(JSON.stringify({ step: "conns", during: step, at: r.at, made: cs.length,
-    connectFailed: n((c) => c.err !== undefined), opened: n((c) => c.open !== undefined),
+    connectFailed: n((c) => c.err !== undefined), connectTimedOut: n((c) => c.err === "TimedOut"),
+    stillConnecting: n((c) => c.err === undefined && c.open === undefined), ipv6Dials: n((c) => c.v6 === true),
+    ipv6Failed: n((c) => c.v6 === true && c.err !== undefined), opened: n((c) => c.open !== undefined),
     sentNothing: n((c) => c.open !== undefined && c.outB === 0),
     sentButNoReply: n((c) => c.outB > 0 && c.inB === 0),
     replied: n((c) => c.inB > 0) }));
