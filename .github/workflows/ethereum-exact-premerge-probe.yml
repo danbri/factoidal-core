@@ -18,19 +18,33 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.9.4
+      - name: Install the already required pinned WABT assembler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 2 --output wabt.tar.gz https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-x64.tar.gz
+          echo '84895407a6bbb80e918f33b16b2fb2206021c150b6bc9ff6f761263a745ab131  wabt.tar.gz' | sha256sum -c -
+          mkdir -p wabt-pinned
+          tar -xzf wabt.tar.gz -C wabt-pinned
+          mapfile -t tools < <(find "$RUNNER_TEMP/wabt-pinned" -type f -name wat2wasm)
+          test "${#tools[@]}" = 1
+          test "$("${tools[0]}" --version)" = 1.0.42
+          dirname "${tools[0]}" >> "$GITHUB_PATH"
       - name: Verify exact candidate and run complete default premerge
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = a7dc8a8d2045399cadb1de2adaea16f143a92490
-          test "$(git rev-parse HEAD^{tree})" = 511df5066c3441fa9b5e03e381f8fc5d153ce886
+          test "$(git rev-parse HEAD^{tree})" = 611df5066c3441fa9b5e03e381f8fc5d153ce886
           test "$(git rev-parse HEAD:tools/premerge.sh)" = a25dc508d881e0671c970b2dc82e56271202bf01
           test -z "$(git status --porcelain)"
           git log -1 --format='%H %T %P'
+          test "$(wat2wasm --version)" = 1.0.42
           deno --version
           python3 --version
           cc --version
           bash tools/premerge.sh 2>&1 | tee "$RUNNER_TEMP/ethereum-premerge.log"
-          grep -E '^premerge summary: 5 checks, 0 failed,' "$RUNNER_TEMP/ethereum-premerge.log"
+          grep -E '^premerge summary: 6 checks, 0 failed,' "$RUNNER_TEMP/ethereum-premerge.log"
           test "$(grep -c '^  ok ' "$RUNNER_TEMP/ethereum-premerge.log")" = 5
           if grep -E 'NOT RUN|^  skip ' "$RUNNER_TEMP/ethereum-premerge.log"; then exit 1; fi
