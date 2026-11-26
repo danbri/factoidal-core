@@ -89,7 +89,40 @@ file went from pass to fail. The 24 files of
 `expressions/assignment/dstr/*-yield-expr.js` and `*-rtrn-close*.js` that failed before
 pass.
 
-## 3. How to see a Hub page as Foafnaut sees it, on Linux
+### For-of and for-in targets
+
+`for ([x = yield] of xs)` and `for (let {a = yield} of xs)`: `forTargetTemp` binds each value to
+a temporary of the loop (a `let`, so a binding of each iteration) and makes the target the
+first statement of the body, a destructuring assignment or declaration as above. Test262, same
+method: 22,800 pass before, 22,824 after (the 24 files of `statements/for-of/dstr/*yield*` and
+`*rtrn-close*`).
+
+## 3. The pages on a native engine of this checkout, against Chrome
+
+Engine: `build-web-render.sh --native` at `3f52b2c0` with the `inspect` change (landed as
+`529ff0f2`). Chrome: headless Chromium (Playwright), `document.body.innerText`. Measure: of
+the words of 4 or more letters in Chrome's text, the share that Textnaut's `--dump` text also
+has (`tools/hub-text-compare.py CHROME.txt TEXTNAUT.txt`).
+
+| Page | Released engine (`4a81bddc`) | This checkout |
+|---|---|---|
+| Conformance | 6.5% ("Loading the recorded runs…") | 98.6% |
+| Data and documents | 37.5% ("Loading the recorded runs…") | 100% |
+| Rendering scores | 96.6% (Plot module: regex SyntaxError) | 96.7% (Plot module: no `Intl`) |
+| Hub home | 98.0% (same) | 98.0% (same) |
+| Home | 98.5% | 98.5% |
+
+What is still different, each with its issue and its expected failure:
+
+- The Conformance map stays at "Loading the map…": the page's `import()` of d3 is refused.
+  https://github.com/danbri/factoidal-core/issues/1170 (`dynImport` in
+  `WasmVM/Tests/LeanJSNet.lean`).
+- Rendering scores and the Hub home load no Observable Plot module: Plot calls
+  `new Intl.NumberFormat("en-US")` at module load, and the page realm has no `Intl`.
+  https://github.com/danbri/factoidal-core/issues/505 (`noIntl` in the same file). On the Hub
+  home this is the notebook cells' controls (Edit, Remove, Make, ...).
+
+## 4. How to see a Hub page as Foafnaut sees it, on Linux
 
 From `labs/demos/foafnaut`, with a native engine (`TEXTNAUT_NATIVE`, a `libweb-render.so`
 from this checkout's `build-web-render.sh --native`, or the release set
