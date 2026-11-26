@@ -2,8 +2,9 @@
 L4Factoidal.Media.Decode: audio and video decoders, compiled to WebAssembly, run in
 the Lean WasmVM engine (record: docs/designissues/2026-11-08-media-wasmvm.md).
 
-The modules come from `tools/wasmvm/build-media.sh` (libopus, libvorbis, libvpx's VP8
-decoder; not in the repository). Their entry points are in `tools/wasmvm/media/`.
+The modules (libopus, libvorbis, libvpx's VP8 decoder, minimp3) and their build chain are
+in `danbri/factoidal-builds`, `third_party/media-decoders`; `Media.Modules` pins their SHA-256
+and `tools/fetch-media-decoders.sh` fetches them.
 The containers are read in Lean (`Media.Ogg`, `Media.WebM`); a module gets one packet
 or frame per call and gives PCM samples or a picture. The host browser's decoders
 are not used.
@@ -16,6 +17,7 @@ import L4Factoidal.WasmVM.WasiIO
 import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
+import L4Factoidal.Media.Mp3
 import L4Factoidal.Media.Yuv
 
 namespace L4Factoidal.Media.Decode
@@ -151,6 +153,42 @@ def opus (wasm : ByteArray) (channels preSkip : Nat) (packets : Array ByteArray)
     | none => out.size
   return { rate := 48000, channels, samples := out.extract start stop, steps := m.steps - s0,
            ns := m.ns - n0, packets := packets.size }
+
+/-- Decode an MP3 stream read by `Mp3.read`: one whole frame per call to `mp3-wasmvm.wasm`
+(minimp3). Lean checks what comes back: at most the frame's samples, and the stream's channel
+count in every frame. `skip` samples are dropped at the start and `keep` kept (the LAME header's
+delay and padding, for gapless playback); without a LAME header nothing is dropped. -/
+def mp3 (wasm : ByteArray) (file : ByteArray) (s : Mp3.Stream) : IO Pcm := do
+  let mut m ← load wasm
+  let (m', r) ← m.callI32 "mw_mp3_init" #[]
+  m := m'
+  if r != 0 then throw (IO.userError s!"mw_mp3_init: {r}")
+  let (m', pcm) ← m.callI32 "mw_pcm" #[]
+  m := m'
+  let ch := s.header.channels
+  let s0 := m.steps
+  let n0 := m.ns
+  let mut out := ByteArray.emptyWithCapacity (s.frames.size * s.header.samples * 2 * ch)
+  for (off, len) in s.frames do
+    let f := file.extract off (off + len)
+    m ← m.put f
+    let (m', n) ← m.callI32 "mw_mp3_decode" #[i32 m.buf, i32 f.size]
+    m := m'
+    if n > 0 then
+      let (m', c) ← m.callI32 "mw_mp3_info" #[i32 1]
+      m := m'
+      if n.toNat > s.header.samples then
+        throw (IO.userError s!"mw_mp3_decode: {n} samples from a frame of {s.header.samples} at offset {off}")
+      if c.toNat != ch then
+        throw (IO.userError s!"mw_mp3_decode: {c} channels in a frame of a {ch}-channel stream at offset {off}")
+      out := out ++ (← m.read pcm.toNat (n.toNat * 2 * ch))
+  let frame := 2 * ch
+  let start := min out.size (s.skip * frame)
+  let stop := match s.keep with
+    | some k => min out.size (start + k * frame)
+    | none => out.size
+  return { rate := s.header.rate, channels := ch, samples := out.extract start stop,
+           steps := m.steps - s0, ns := m.ns - n0, packets := s.frames.size }
 
 /-- Decode Vorbis: three header packets, then audio packets. Two channels at most
 are kept. -/

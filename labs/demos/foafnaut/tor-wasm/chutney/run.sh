@@ -63,6 +63,8 @@ grep -q '"step":"parallel","run":"1","streams":6,"ok":6' "$OUT" && echo "PASS 6 
 grep -q '"step":"proxy-check","run":"1","ok":true' "$OUT" && echo "PASS start-up check: loopback, private and reserved names all reach the proxy (NO_PROXY cleared)" || { echo "FAIL proxy check"; ok=1; }
 grep -qE '"step":"socks","run":"1","fetches":5,"ok":5,"ms":[0-9]+,"streamsOpenAfter":0,"events":5' "$OUT" && echo "PASS 5 fetches at once through the SOCKS5 server, all 5 seen by it (Deno fetch, socks5h; 2 exit, 3 onion)" || { echo "FAIL SOCKS5 fetches"; ok=1; }
 grep -E '"step":"(socks|socks-fetch)","run":"1"' "$OUT" | cut -c1-200
+n=$(grep -E '^arti ' "$OUT" | grep -cE '127\.0\.0\.1|\[::1\]' || true)
+[ "$n" = 0 ] && [ "$(grep -cE '^arti .*DEBUG' "$OUT")" -gt 0 ] && echo "PASS no relay address in Arti's debug lines (--debug on)" || { echo "FAIL relay addresses in $n Arti lines"; ok=1; }
 grep '"step":"loop"' "$OUT" | head -3
 grep -q '"via":"sealed LWS storage".*"sameGuards":true' "$OUT" && echo "PASS same guards after restart, through the sealed store" || { echo "FAIL same guards after restart"; ok=1; }
 grep -q '"filesWithGuardIdsInClearText":0' "$OUT" && echo "PASS no guard identity in clear text on disk" || { echo "FAIL state at rest"; ok=1; }

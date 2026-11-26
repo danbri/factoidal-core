@@ -1251,6 +1251,39 @@ macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfe
 - No Tor in the Hub (the browser running inside another browser), and none inside pages: Tor runs
   only in the host's worker. Record:
   `docs/designissues/2026-11-25-foafnaut-tor-onion-routing.md`, section 17.
+- Settings switch before expert review (owner, 2026-11-26, verbatim, to the question whether
+  Settings may offer Tor before review): "Make them type lol-yolo-i-will-regret-this-folly
+  capitalized in a text field as confirmation". So Settings offers a Tor switch with the
+  experimental code notice. It turns on only when the text field holds exactly
+  `LOL-YOLO-I-WILL-REGRET-THIS-FOLLY` (capital letters, no other characters). Lean decides the
+  match, with a theorem that no other text turns Tor on. Coordinator's choice, not the owner's:
+  the confirmation is asked each time Tor is switched on; the setting then stays on across
+  restarts until it is switched off. The command-line flag
+  `--dangerously-use-unreviewed-tor-transport` stays for tests and scripts.
+
+### Media: audio first; decoders vendored in factoidal-builds; OS video decoders (owner, 2026-11-26)
+
+Owner, 2026-11-26, verbatim, to the three questions of
+`docs/designissues/2026-11-26-foafnaut-audio-video-status.md` section 3: "1. vendor them into
+factoidal-builds/ repo third_party/ with provenance version and license info. Include wasm and
+build chain." "2. Yes. Think about how to tie all this in with Lean proofs to avoid weird weak
+links." (question 2: may the Mac host use the operating system's hardware video decoder,
+VideoToolbox?) "3. Yep, let's get Audio working decently before getting bogged down in the endless
+woes around video, codecs etc. For audio we should be able to fully support the WebAudio API (and
+eventually its use in WebXR). And we should be able to make a simple web jukebox (ideally mp3
+covered too). If we need an arms length friendly site with the wasm plugins for mp3 mp4
+lean-certified we can investigate that."
+
+- Decoder Wasm modules, their build chain (Emscripten 6.0.8, source tarballs by SHA-256, flags),
+  provenance and licences live in `danbri/factoidal-builds`, `third_party/media-decoders`, not
+  here. `formal/lean4/L4Factoidal/Media/Modules.lean` pins each module's SHA-256 and interface
+  version; `tools/fetch-media-decoders.sh` fetches them. A rebuilt module is taken on purpose.
+- Audio first: the whole Web Audio API (WebXR later) and a jukebox page with MP3. Video waits.
+- The Mac host may use VideoToolbox. Every part that is not Lean has a contract in Lean, Lean
+  checks its inputs and outputs, it is a named assumption of the paths that use it, and a
+  conformance or differential test runs it in CI. Plan, with the table of these ties:
+  `docs/designissues/2026-11-26-foafnaut-audio-plan.md`. Tracking:
+  https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
 
 ### Never report upstream (owner, 2026-11-25)
 

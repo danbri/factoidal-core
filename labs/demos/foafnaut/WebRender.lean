@@ -802,11 +802,22 @@ def makeEmbedding (dom : DOM.Dom) (documentURL : Option String := none)
     Except String Rendering.Layout.Embedding :=
   Prod.fst <$> makeReplaced dom documentURL images fonts
 
-def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
+/-- A page with its document URL and the bytes of the images it names (keys of
+`storeKeys`), as a host supplies them. With no URL and no images it is `render`. -/
+def renderWith (html : String) (width height : Nat) (documentURL : Option String)
+    (images : List (String × ByteArray)) : Except String (Rendering.Scene × Array Rendering.Layout.Box) := do
   if html.length > maxSourceBytes then throw s!"unsupported HTML input exceeding {maxSourceBytes} characters"
   let dom := DOM.parseHtmlDocument html
-  let (embedding,pictures) ← makeReplaced dom
+  let (embedding,pictures) ← makeReplaced dom documentURL images
   renderDOM dom width height embedding pictures
+
+def render (html : String) (width height : Nat) : Except String (Rendering.Scene × Array Rendering.Layout.Box) :=
+  renderWith html width height none []
+
+/-- Kind: refinement. Says: `render` is `renderWith` with no document URL and no images.
+Does not say: anything about a page whose images are supplied. -/
+theorem render_eq_renderWith (html : String) (width height : Nat) :
+    render html width height = renderWith html width height none [] := rfl
 
 private def array (xs : List String) := "[" ++ String.intercalate "," xs ++ "]"
 private def runJSON (r : Rendering.GlyphRun) : String :=
@@ -926,6 +937,13 @@ def artifact (scene : Rendering.Scene) (boxes : Array Rendering.Layout.Box)
     (font : Option Rendering.FontProvider.Face := none) (live binary : Bool := false) (checks : Bool := true)
     (tree : Bool := true) : Except String String :=
   Prod.fst <$> artifactWith scene boxes font live (if binary then .base64 else .decimal) checks tree
+
+/-- `compile` of `renderWith`: the page with its document URL and supplied images. -/
+def compileWith (html : String) (width height : UInt32) (documentURL : Option String)
+    (images : List (String × ByteArray)) : String :=
+  match renderWith html width.toNat height.toNat documentURL images >>= (fun (scene,boxes) => artifact scene boxes) with
+  | .error message => errorJSON message
+  | .ok value => value
 
 @[export web_render_compile]
 def compile (html : String) (width height : UInt32) : String :=

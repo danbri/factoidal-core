@@ -764,6 +764,64 @@ pub fn streams_open() -> u32 {
     r.union(&w).count() as u32
 }
 
+/// Replace IP addresses in a log line with "[scrubbed]". Arti's safe logging redacts addresses
+/// it wraps as sensitive, but some debug lines print relay addresses directly (measured
+/// 2026-11-26: "starting Tor handshake with Direct([<IPv4>:443, [<IPv6>]:443])"). A guard's
+/// address identifies the client across sessions, so no line leaves the module with one.
+/// Rules: a run of digits and dots with exactly three dots (IPv4); a run of hex digits, colons
+/// and dots with at least two colons (IPv6, with or without brackets and port).
+pub fn redact_addrs(line: &str) -> String {
+    let b = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c.is_ascii_hexdigit() || c == b':' {
+            let mut j = i;
+            while j < b.len() && (b[j].is_ascii_hexdigit() || b[j] == b':' || b[j] == b'.') {
+                j += 1;
+            }
+            let tok = &line[i..j];
+            let colons = tok.bytes().filter(|&x| x == b':').count();
+            let dots = tok.bytes().filter(|&x| x == b'.').count();
+            let v4 = dots == 3 && tok.bytes().all(|x| x.is_ascii_digit() || x == b'.' || x == b':');
+            // Word boundary on the left: a token inside a longer identifier is left alone.
+            let left_ok = i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_');
+            if left_ok && (colons >= 2 || v4) {
+                out.push_str("[scrubbed]");
+                i = j;
+                continue;
+            }
+            out.push_str(tok);
+            i = j;
+            continue;
+        }
+        out.push(c as char);
+        i += 1;
+    }
+    // Multi-byte characters: the loop above pushed bytes as chars; rebuild from the original
+    // when no change was made, so non-ASCII text is never altered.
+    if !out.contains("[scrubbed]") { return line.to_string(); }
+    out
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_addrs;
+    #[test]
+    fn scrubs() {
+        let l = "starting Tor handshake with Direct([5.45.111.149:443, [2a03:4000:6:2388:df98:15f9:b34d:443]:443]) stream_id=Chan 0";
+        let r = redact_addrs(l);
+        assert!(!r.contains("5.45"), "{r}");
+        assert!(!r.contains("2a03"), "{r}");
+        assert!(r.contains("stream_id=Chan 0"), "{r}");
+        assert_eq!(redact_addrs("Got a circuit for [scrubbed]:80 tunnel_id=Circ 2.0"), "Got a circuit for [scrubbed]:80 tunnel_id=Circ 2.0");
+        assert_eq!(redact_addrs("arti 2.8.0 memquota 256 MiB"), "arti 2.8.0 memquota 256 MiB");
+        assert!(!redact_addrs("to 127.0.0.1:5100 ok").contains("127.0"));
+        assert!(!redact_addrs("peer ::1 port").contains("::1"));
+    }
+}
+
 static LOG_DEBUG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Show Arti's debug lines too (safe logging stays on).
@@ -784,7 +842,7 @@ pub fn start() {
             let t = s.trim_start();
             let debug = t.starts_with("DEBUG") || t.starts_with("TRACE");
             if !s.is_empty() && (!debug || LOG_DEBUG.load(std::sync::atomic::Ordering::SeqCst)) {
-                log(&format!("arti {s}"));
+                log(&format!("arti {}", redact_addrs(s)));
             }
             Ok(b.len())
         }

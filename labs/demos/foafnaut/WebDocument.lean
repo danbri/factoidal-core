@@ -854,13 +854,18 @@ def inspectIn (m : WebAccept.Mode) (dom : DOM.Dom) (url : String) (scripting : B
       if fetch then
         sheets := .object [("nodeId",.number (toString id)),("href",.string (attr n "href")),
           ("url",.string (Syntax.resolveIri base (attr n "href")))]::sheets
-  let (scripts,d) ← classicScriptsIn m scripting (WebRenderScript.scriptRecords dom)
+  let records := WebRenderScript.scriptRecords dom
+  let (scripts,d) ← classicScriptsIn m scripting records
+  -- Module scripts: the script session fetches them (`LeanJSModules`), so they are not in
+  -- `scripts`; their count tells the host to start a session at load (issue 1161: a page whose
+  -- only script was a module ran it only after the first press).
+  let modules := if scripting then (records.filter (fun s => str s "kind" == "module")).length else 0
   let scripts := scripts.map fun script =>
     match script with
     | .object fields => .object (fields ++ [("url",.string (Syntax.resolveIri base (str script "src")))])
     | other => other
   return (.object [("nodes",(snapshot.field? "nodes").getD (.array [])),
-    ("scripts",.array scripts),
+    ("scripts",.array scripts),("modules",.number (toString modules)),
     -- An event handler content attribute (HTML §8.1.8.1) is page script too: `<body onload>`
     -- runs with no script element, so the host starts a script session for it.
     ("handlers",.bool (scripting && hasHandlerAttributes dom)),

@@ -642,6 +642,16 @@ Several sessions work on the owner's laptop at once.
 - A speed result for BubblePopJS names the branch and commit it was measured on. On 2026-11-09
   `main`, `wip/bpperf` (stage A) and `wip/bpperf-vm` (stage B) took 926, 267 and 81 ms for one
   loop (`for (let ...)` in a function), and six operations are quadratic on `main` only.
+- `inspect`'s `scripts` lists the classic scripts only: the script session fetches module scripts
+  itself. A host that starts a session only when `scripts` is not empty never runs a page whose
+  only script is a module (the Hub's Conformance and Data and documents pages): in the window it
+  ran at the first press (`startScripts`), in Textnaut never. Use `modules` (their number) too.
+  Found 2026-11-26 (https://github.com/danbri/factoidal-core/issues/1161). To see whether a
+  page's scripts run at all, `textnaut.ts --dump --verbose`: no `settle:` line means no session.
+- A command run in the background of a cloud session is stopped after 30 minutes unless its own
+  limit is longer: give `build-web-render.sh --native` (16 to 40 minutes) a limit of 2 hours.
+  A stopped build leaves `.build/web-render/lock`; remove it after checking that no build runs.
+  Cost, 2026-11-26: one native build stopped at its link step, and the next one refused to start.
 
 ## The Hub and other sites
 

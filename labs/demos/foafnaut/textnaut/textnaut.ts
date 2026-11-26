@@ -89,6 +89,15 @@ function note(turn: ScriptTurn, options: Options) {
   for (const line of [...turn.logs, ...turn.errors]) console.error(`page: ${sanitizeText(line)}`);
 }
 
+/** `--verbose`: one line for each script turn of `settle`: what the page asks of the network
+(requests, script fetches) and its next timer. */
+function trace(kind: string, turn: ScriptTurn, options: Options) {
+  if (!options.verbose) return;
+  const urls = (turn.netRequests ?? []).map((r) => sanitizeText(String((r as { url?: string }).url ?? "?")));
+  const fetches = (turn.fetches ?? []).map((f) => sanitizeText(String((f as { url?: string }).url ?? "?")));
+  console.error(`settle: ${kind} net=[${urls.join(" ")}] fetches=[${fetches.join(" ")}] nextWake=${turn.nextWake}`);
+}
+
 /** A bounded run of the page after its start. What the page waits for from the network is
 answered first, at most 64 answers (its requests, `netRequests`; the scripts of its workers,
 `fetches`); then its timers run, up to 8 turns and 1 second of page time. */
@@ -97,7 +106,10 @@ async function settle(engine: HTMLEngine, doc: Doc, options: Options) {
   if (!script) return;
   let turn = script.turn, budget = 1000, timers = 0;
   const requests: NetWire[] = [], answered = new Set<number>();
-  const take = (next: ScriptTurn) => { turn = next; note(next, options); doc.applyTurn(next); requests.push(...(next.netRequests ?? [])); };
+  const take = (next: ScriptTurn) => {
+    turn = next; note(next, options); trace("turn", next, options); doc.applyTurn(next); requests.push(...(next.netRequests ?? []));
+  };
+  trace("start", turn, options);
   requests.push(...(turn.netRequests ?? []));
   for (let answers = 0; answers < 64;) {
     const wanted = (turn.fetches ?? []).filter((f) => !answered.has(f.id));

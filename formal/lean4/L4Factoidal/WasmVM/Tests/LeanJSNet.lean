@@ -172,4 +172,24 @@ def off : Except String (List String) := do
 
 #guard off == .ok ["undefined"]
 
+-- Expected failure, https://github.com/danbri/factoidal-core/issues/1170: a page's `import()`
+-- is refused (only the Test262 runner serves the import queue). When the page host serves it,
+-- this guard fails: then answer the module request and assert its namespace.
+def dynImport : Except String (List String) := do
+  let s ← startPage "import('/m.mjs').then(m => console.log('ok'), e => console.log(e.name + ': ' + e.message));"
+  let s := answerAll s fun _ => { status := 200, headers := [("Content-Type", "text/javascript")], body := "export const x = 1;".toUTF8 }
+  return logOf s
+
+#guard dynImport == .ok ["TypeError: import() is not supported in this script"]
+
+-- Expected failure, https://github.com/danbri/factoidal-core/issues/505 (Intl): the page realm
+-- has no `Intl`. Observable Plot calls `new Intl.NumberFormat("en-US")` when its module loads,
+-- so the Hub's Rendering scores page and Hub home load no Plot module
+-- (https://github.com/danbri/factoidal-core/issues/1161).
+def noIntl : Except String (List String) := do
+  let s ← startPage "console.log(typeof Intl);"
+  return logOf s
+
+#guard noIntl == .ok ["undefined"]
+
 end L4Factoidal.WasmVM.Tests.LeanJSNet

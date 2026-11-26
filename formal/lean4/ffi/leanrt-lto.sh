@@ -19,7 +19,8 @@
 # LEAN_USE_GMP as the release builds define it, so object.cpp agrees with the toolchain's
 # mpz.cpp about how a big number is stored. Needs clang++ with libc++ headers (Debian/Ubuntu:
 # libc++-dev libc++abi-dev) and gmp.h (libgmp-dev, GMP 6.x as the toolchain's libgmp.a).
-# It runs only with `lake build -K leanjsLto=on leanjs`.
+# It runs only with `lake build -R -K leanjsLto=on leanjs` (`-R`: Lake otherwise keeps the option's
+# value from the last configuration, and builds without LTO with no message).
 set -euo pipefail
 OUT=${1:?usage: leanrt-lto.sh OUT_DIR [TOOLCHAIN_PREFIX]}
 mkdir -p "$OUT"
