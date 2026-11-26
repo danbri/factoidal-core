@@ -359,21 +359,21 @@ scrolled frame, both layers, and the page layer kept for a chrome-only frame, 16
 text 150 percent), with equal `frameWork` counts (28 pages made, 28 kept). A short call on
 tab B was answered in 25 ms while tab A's 1.8 s layout ran (test 5).
 
-D11. `--engine-mode tasks` is the default for the native engine from 2026-11-26. Rule, from the
-owner's brief for the night of 2026-11-25: "Changing the default from workers to Lean tasks:
-land it as default only if it measures better on tabFirstFrame, memory per tab and tab-B input
-latency with no frame regression; otherwise land it behind a flag and report." Against `main`
-`b7286ac7` (section 6a): resident memory per extra tab 17 against 99 MB; tab B input latency
-p95 1,150 against 1,369 ms and p50 377 against 388 ms; new tab first frame, every tab counted, p50
-596 against 631 ms and p95 1,494 against 1,492 ms, and with tabs 1 s apart 15 of 21 tabs drew
-before the next one opened against 11 of 21; no frame change beyond the spread. The p95 of the new tab first
-frame is equal: it is the first `newtab.html` layout after start (about 1.3 s of layout in every
-mode), not an engine start. So `tasks` is better on memory per tab and on tab B input latency,
-and better on the new tab first frame at p50 and in tabs drawn before the next one opened, but
-not at p95. The coordinator
-reads that as better under the rule; `--engine-mode copies` restores the 2026-11-25 behaviour if
-the owner reads it otherwise. `copies` and `sessions` stay selectable, and are the fallbacks: a library with no task sessions or no task manager falls
-back to `sessions`, one with no sessions to `copies`.
+D11. The default stays `--engine-mode copies` (a worker and a library copy per tab); `tasks` and
+`sessions` are options. Rule, from the owner's brief for the night of 2026-11-25: "Changing the
+default from workers to Lean tasks: land it as default only if it measures better on
+tabFirstFrame, memory per tab and tab-B input latency with no frame regression; otherwise land it
+behind a flag and report." Against the `main` it lands on (`7285ab37`, section 6b), `tasks` is
+better on memory per tab (23 against 109 MB) and engine start (4.5 against 165 ms), but not on
+the first frame of a tab: with every new tab counted, p50 565 against 560 ms and p95 1,369
+against 1,269 ms (worse in each of 3 runs), and the first frame of tab B while tab A loads a large
+page 1,424 against 1,122 ms; tab B input latency p50 360 against 372 ms but p95 1,187 against
+1,135 ms. History of this decision: on 2026-11-26 it first said `tasks` was the default, on the
+numbers of section 6, whose new tab rows counted only fast tabs (withdrawn, see the correction
+there); section 6a (against `b7286ac7`) showed the new tab gain only at p50; section 6b shows
+none, against a `main` whose own frames had become faster. Why `tasks` gives later first frames
+is not known; a check with a larger Lean task pool (6 threads; the sessions share one pool, a
+library copy has its own) did not remove it (section 6b).
 
 D12. The library pins itself (`RTLD_NODELETE`) before its first task session starts
 (`pin_once` in `web_render_shim.c`), and makes no task session when it can not. Reason: a
@@ -479,7 +479,42 @@ other's id as kept. This hazard came with stage C, before this work landed, and 
 (commit "Foafnaut SVG.lean: edgeYs takes NativeSVGPath.LinearContour"). The build of `main` for the
 byte comparison has the same two-line change.
 
-Tests and byte comparison of this build: not yet run (both builds are in progress).
+Tests of this build (the Lean and C of the branch on `7285ab37`, with the two `SVG.lean` lines):
+`engine_sessions_test.ts` 10 of 10 on 3 runs, each exit 0; `layout_sections_test.ts` 3 of 3
+(its stage C test: kept and patched page answers made whole equal the whole answers);
+`test.sh --skip-build` 13 checks, 10 passed, 54 of 54 demo pages, the 3 failed as in section 6
+(engine modules that need Emscripten, IPv6); the 26 pure test files one at a time, 19 passed, 7
+can not load an engine module, none failed. Byte comparison as in section 6a against the build
+of `main` `7285ab37`: `main` against the merged library 28 of 28 the same, the merged library on
+this thread against a task session 28 of 28 the same, equal `frameWork` counts. Tab switch in the
+host (three tabs: the start page, the start page again, the new tab page; then back to the first;
+`main`, merged `tasks`, merged `copies`): each showed the start page again (2,791 primitives). The
+ids did not meet in these runs, so the hazard of D13 was not seen end to end; test 10 shows it in
+the engine.
+
+Confirmation against the build of `main` `7285ab37` (with the two `SVG.lean` lines), 3 runs a
+mode, median (worst): base is `main` with its own host (`copies`), tasks is the merged build.
+
+| Number | base | tasks |
+|---|---|---|
+| New tab first frame p50, 7 tabs 3 s apart, every tab counted, ms | 560 (586) | 565 (574) |
+| New tab first frame p95, same, ms | 1,269 (1,304) | 1,369 (1,447) |
+| Tab B first frame, tab A loading 2.4 MB, ms | 1,122 (1,373) | 1,424 (2,052) |
+| Tab B input latency p50, same, ms | 372 (376) | 360 (367) |
+| Tab B input latency p95, same, ms | 1,135 (1,335) | 1,187 (2,072) |
+| Resident memory per extra tab, MB | 109 | 23 |
+| Engine start per extra engine, ms | 165 (170) | 4.5 (6.0) |
+| Frame total p50, status.html resize sweep, ms | 611 (614) | 631 (636) |
+| Timer turns in 8 s, particle-rex.html | 233 (236) | 246 (252) |
+| Page canvas present p50 and p95, particle-rex.html, ms | 5.5, 7.0 | 5.5, 7.0 |
+
+Single runs: new tab p95 base 1,235, 1,269 and 1,304 ms, tasks 1,341, 1,369 and 1,447 ms; tab B
+first frame base 1,083, 1,122 and 1,373 ms, tasks 1,140, 1,424 and 2,052 ms. Against `b7286ac7`
+(section 6a) `main` gave 1,492 ms new tab p95 and 1,379 ms tab B first frame: `main`'s own
+frames became faster between the two, `tasks`' less. A check of the shared Lean task pool
+(`tasks` with `FOAFNAUT_LEAN_THREADS=6`, 3 runs): tab B first frame 989, 1,548 and 1,589 ms, new
+tab p95 1,312, 1,351 and 1,413 ms, so a larger pool did not bring them to `main`'s. These numbers
+decide D11.
 
 Evidence limits: Linux only; no Mac was available, so macOS (the product's main platform) is
 not measured, and the macOS link (the exported symbol list) is not built here. Software Vulkan
@@ -503,5 +538,6 @@ pure test files pass on the branch and on the base; the other 7 can not load an 
 this work changed. `deno check` of `run_html.ts`, the changed modules, `engine_sessions_test.ts`
 and the 19 files passes. NOT RUN here: `native_html_test.ts` and the other tests that need the
 Wasm engine (Emscripten), the macOS window library or `lake build frame-cost-cases`. One run of
-the browser with no `--engine-mode` option (the default) per scenario (tabs, heavy, rex), with
-the library of D12: each exits 0 in mode `tasks`.
+the browser with no `--engine-mode` option per scenario (tabs, heavy, rex), with the library of
+D12, while `tasks` was the default (before D11 was changed, section 6b): each exits 0 in mode
+`tasks`.

@@ -137,12 +137,13 @@ Desktop host (Deno, TypeScript, macOS only):
   `native-html-tab-first-frame`; summary `engineWorkers`, `tabFirstFrame`, `processRssMB`.
 - Engine sessions (`docs/designissues/2026-11-26-foafnaut-engine-sessions.md`): one native
   library holds any number of engine states (`web_session_*` in `web_render_shim.c`).
-  `--engine-mode tasks` (the default since 2026-11-26, measured on Linux in sections 6 and 6a of
-  that record): no worker, each tab's session runs on its own Lean dedicated task
-  (`WebSession.lean`), called from the main thread through nonblocking FFI
-  (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in `native_html_engine.ts`); closing a tab
-  cancels its session. `sessions`: a worker per tab with a session in the one library. `copies`:
-  a worker per tab with its own copy of the library (the default of 2026-11-25). Tests: `engine_sessions_test.ts`;
+  `--engine-mode copies` (the default): a worker per tab with its own copy of the library.
+  `sessions`: a worker per tab with a session in the one library. `tasks`: no worker, each tab's
+  session runs on its own Lean dedicated task (`WebSession.lean`), called from the main thread
+  through nonblocking FFI (`LAB/native_engine_tasks.ts`, `loadHTMLSession` in
+  `native_html_engine.ts`); closing a tab cancels its session. `tasks` uses about a fifth of the
+  memory per tab but gave later first frames of a tab on Linux, so it is not the default (D11 of
+  that record). Tests: `engine_sessions_test.ts`;
   measurement: `LAB/tools/engine_sessions_bench.py` (Linux rig). The remote engine calls are
   written once over a kernel (`remoteMethods`), for the engine on this thread and the session.
 - `LAB/native_html_engine.ts`, `LAB/native_html_document.ts`: engine ABI and page loading.
