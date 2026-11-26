@@ -496,12 +496,31 @@ render and `numberOfChannels` channels of `length` frames (binary32 values). `In
 when the context was already rendered. -/
 def OfflineContext.startRendering (c : OfflineContext) :
     Except Error (OfflineContext × Array FloatArray) :=
-  if c.rendered then .error (.invalidState "rendering already started")
+  if c.rendered ∨ 0 < c.state.frame then .error (.invalidState "rendering already started")
   else
     let q := c.state.quantum
     let r := renderLoop ((c.length + q - 1) / q) c.state (Render.Plan.of c.state.graph) #[]
     .ok ({ c with state := r.1, rendered := true },
          assemble c.numberOfChannels c.length q r.2)
+
+/-- Rendering in steps (`suspend`, `resume`, `startRendering(chunkSize)`): renders at most `quanta`
+render quanta from the current frame and returns the context after them with `numberOfChannels`
+channels of the frames of those quanta (binary32 values). The last chunk of the context is cut at
+`length`: the number of frames is `min (k * n) (length - frame)` for the `k` quanta rendered, and
+`k` is `quanta` or fewer when `length` comes first. `InvalidStateError` when the context has
+already reached its `length`. The context is `rendered` once `frame ≥ length`. The graph is
+planned again at each step, so a step sees the changes that the page made after the one before. -/
+def OfflineContext.renderChunk (c : OfflineContext) (quanta : Nat) :
+    Except Error (OfflineContext × Array FloatArray) :=
+  if c.length ≤ c.state.frame then .error (.invalidState "rendering finished")
+  else
+    let q := c.state.quantum
+    let left := (c.length - c.state.frame + q - 1) / q
+    let k := if quanta < left then quanta else left
+    let frames := if k * q < c.length - c.state.frame then k * q else c.length - c.state.frame
+    let r := renderLoop k c.state (Render.Plan.of c.state.graph) #[]
+    .ok ({ c with state := r.1, rendered := c.length ≤ r.1.frame },
+         assemble c.numberOfChannels frames q r.2)
 
 /-! ## Theorems -/
 
@@ -606,6 +625,37 @@ theorem startRendering_twice (c c' : OfflineContext) (out : Array FloatArray)
   · cases h
     simp [OfflineContext.startRendering]
 
+/-- Says: a step returns exactly `numberOfChannels` channels, all of one length. Does not say: the
+values, or how long the length is. -/
+theorem renderChunk_shape (c c' : OfflineContext) (quanta : Nat) (out : Array FloatArray)
+    (h : c.renderChunk quanta = .ok (c', out)) :
+    out.size = c.numberOfChannels ∧ ∃ n, ∀ ch ∈ out, ch.size = n := by
+  unfold OfflineContext.renderChunk at h
+  split at h
+  · cases h
+  · cases h
+    exact ⟨(assemble_shape _ _ _ _).1, _, (assemble_shape _ _ _ _).2⟩
+
+/-- Says: a step does not change the graph. -/
+theorem renderChunk_graph (c c' : OfflineContext) (quanta : Nat) (out : Array FloatArray)
+    (h : c.renderChunk quanta = .ok (c', out)) : c'.state.graph = c.state.graph := by
+  unfold OfflineContext.renderChunk at h
+  split at h
+  · cases h
+  · cases h
+    exact renderLoop_graph _ _ _ _
+
+/-- Says: a step from the start of a context advances the frame by whole quanta, so that a step
+ends at a quantum boundary. -/
+theorem renderChunk_frame (c c' : OfflineContext) (quanta : Nat) (out : Array FloatArray)
+    (h : c.renderChunk quanta = .ok (c', out)) :
+    ∃ k, c'.state.frame = c.state.frame + k * c.state.quantum := by
+  unfold OfflineContext.renderChunk at h
+  split at h
+  · cases h
+  · cases h
+    exact ⟨_, (renderLoop_frame _ _ _ _).1⟩
+
 /-! ## Tests -/
 
 section Tests
@@ -656,6 +706,26 @@ private def zeros (k : Nat) : List Float := List.replicate k 0.0
 #guard (OfflineContext.new 1 1 768000.0).toOption.isSome
 #guard (match OfflineContext.new 1 1 8000.0 0 with | .error (.notSupported _) => true | _ => false)
 #guard (match OfflineContext.new 1 1 3000.0 18001 with | .error (.notSupported _) => true | _ => false)
+
+-- Rendering in steps: length 10, quanta of 4, a source starting at frame 5. One quantum gives 4
+-- frames, the next step is cut at the length (6 frames, not 8), and a third step is refused.
+private def stepped : Except Error (Array FloatArray × Array FloatArray × Bool) := do
+  let c ← OfflineContext.new 1 10 4096.0 4
+  let (c, s) ← c.createConstantSource
+  let c ← c.connect s 0 0 0
+  let c ← c.start s (fr 5)
+  let (c, a) ← c.renderChunk 1
+  let (c, b) ← c.renderChunk 5
+  pure (a, b, (c.renderChunk 1).toOption.isNone && c.rendered)
+#guard (match stepped with
+  | .ok (a, b, ok) => approxL a[0]!.data.toList (zeros 4) && approxL b[0]!.data.toList [0.0, 1.0, 1.0, 1.0, 1.0, 1.0] && ok
+  | .error _ => false)
+-- The same graph rendered at once, and a whole render after a step, which is refused.
+#guard (match (do
+    let c ← OfflineContext.new 1 10 4096.0 4
+    let (c, _) ← c.renderChunk 1
+    c.startRendering : Except Error _) with
+  | .error (.invalidState _) => true | _ => false)
 
 -- A ConstantSource to the destination (default offset 1), length 10, quanta of 4 (not a
 -- multiple).

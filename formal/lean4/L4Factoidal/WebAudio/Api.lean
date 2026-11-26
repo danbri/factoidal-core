@@ -51,7 +51,8 @@ of `WebApi.lean`; -28 to -30 are new.
     `m NAME TYPE REQUIRED(1/0) DEFAULT`, tab-separated; "callback": `r RETURN ARGS`. -20 for an
     unknown name or kind.
   * 175 `newContext(numberOfChannels, length, sampleRate, [renderQuantumSize])`:
-    `OfflineContext.new`; answers the new context's id. -23 for what the constructor refuses, and
+    `OfflineContext.new`; answers the new context's id. An empty `length` is a context of length
+    `null`: the length is `maxSamples / numberOfChannels` frames, which the page does not show. -23 for what the constructor refuses, and
     for `numberOfChannels * length` above 2^25 (a bound of this engine).
   * 176 `createNode(ctx, kind, [option])`: `kind` is `gain`, `constantSource`, `stereoPanner`,
     `oscillator`, `biquadFilter`, `bufferSource`, `delay` (option: `maxDelayTime`, real),
@@ -97,10 +98,13 @@ of `WebApi.lean`; -28 to -30 are new.
   * 186 `check(kind, args...)`: `kind` "buffer" (`channels`, `length`, `sampleRate`: the
     `createBuffer` checks, -23) or "wave" (`real`, `imag`, `disableNormalization`: the
     `createPeriodicWave` checks, -28, -20). Answers "".
-  * 187 `startRendering(ctx)`: renders the whole length. Answer: `u32` channels, `u32` length,
-    the samples as binary32 channel by channel (`channels * length` values), `u32` count K, then K
-    `u32` ids of the source nodes (constant, oscillator, buffer source) that have ended, in
-    ascending node id. -29 when it ran before.
+  * 187 `startRendering(ctx, [quanta])`: without `quanta` renders the whole length. Answer: `u32`
+    channels, `u32` length, the samples as binary32 channel by channel (`channels * length`
+    values), `u32` count K, then K `u32` ids of the source nodes (constant, oscillator, buffer
+    source) that have ended, in ascending node id. -29 when it ran before (or after a step). With
+    `quanta` (decimal text): one step of `Context.renderChunk`, at most that many render quanta from
+    the current frame, cut at the length; the answer has the same form, `length` is the frames of
+    the step and the ids are those ended so far. -29 when the length is reached.
   * 188 `frequencyResponse(ctx, node, frequencyHz, magLength, phaseLength)`: `frequencyHz` is a
     binary32 array. Answer: `magLength` binary32 values then `phaseLength` values. -25 when a
     length differs from that of `frequencyHz`; -29 for a node that is not a `BiquadFilterNode`.
@@ -415,7 +419,9 @@ def idlOp (fs : Array ByteArray) : Except Int ByteArray :=
 
 def newContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let nch ← natArg fs 0
-  let len ← natArg fs 1
+  -- An absent length is a context whose length is `null`: it renders in steps and has no end. This
+  -- engine gives it the most frames that `maxSamples` allows; the page shows `length` as null.
+  let len ← (fun l => l.getD (maxSamples / max nch 1)) <$> optNatArg fs 1
   let sr ← f64Arg fs 2
   let q ← optNatArg fs 3
   if nch * len > maxSamples || s.contexts.size ≥ maxContexts then .error errNotSupported
@@ -691,11 +697,14 @@ def endedIds (c : Context.OfflineContext) : List Nat :=
 
 def startRenderingOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
-    let (c', chans) ← lift c.startRendering
+    let quanta ← optNatArg fs 1
+    let (c', chans) ← match quanta with
+      | none => lift c.startRendering
+      | some k => lift (c.renderChunk k)
     let ended := endedIds c'
     let samples := chans.foldl (fun acc ch => acc ++ f32sBytes ch) ByteArray.empty
     let tail := ended.foldl (fun acc i => acc ++ u32le i) (u32le ended.length)
-    pure (c', u32le c.numberOfChannels ++ u32le c.length ++ samples ++ tail)
+    pure (c', u32le c.numberOfChannels ++ u32le (chans.getD 0 ⟨#[]⟩).size ++ samples ++ tail)
 
 def frequencyResponseOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do

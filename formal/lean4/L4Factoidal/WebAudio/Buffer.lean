@@ -546,14 +546,18 @@ def wrapLoop (bt ls le : Float) : Float :=
     else bt
   if r ≥ le then r - l else if r < ls then r + l else r
 
-/-- Loop points in buffer frames: `(actualLoopStart, actualLoopEnd)` of the pseudocode. The loop is
-the whole buffer when the attributes do not give `0 <= loopStart < loopEnd`, and when, after
-`loopEnd` is clamped to the duration, the start is not before the end. -/
+/-- Loop points in buffer frames: `(actualLoopStart, actualLoopEnd)` of the pseudocode. A negative
+`loopStart` is read as 0 (the text of the `loopStart` attribute: "If loopStart is less than 0,
+looping will begin at 0"; WPT `audiobuffersource-playbackrate-negative.html`, "clamped loopStart";
+the pseudocode of the specification gives the whole buffer for it). The loop is the whole buffer
+when `loopEnd` is not above 0, and when, after `loopEnd` is clamped to the duration, the start is
+not before the end. -/
 def loopPoints (cfg : SourceConfig) (b : AudioBuffer) : Float × Float :=
   let len := b.length.toFloat
+  let ls := if cfg.loopStart < 0.0 then 0.0 else cfg.loopStart
   let r :=
-    if cfg.loopStart ≥ 0.0 && cfg.loopEnd > 0.0 && cfg.loopStart < cfg.loopEnd then
-      (snapFrames (cfg.loopStart * b.sampleRate),
+    if cfg.loopEnd > 0.0 && ls < cfg.loopEnd then
+      (snapFrames (ls * b.sampleRate),
        min (snapFrames (cfg.loopEnd * b.sampleRate)) len)
     else (0.0, len)
   if r.1 < r.2 then r else (0.0, len)
@@ -1059,13 +1063,18 @@ private def s0 : SourceState := started 8000.0
 -- loopEnd after the end of the buffer: the end of the buffer
 #guard approxL (play (cfgOf ramp8 true (4.0 / 8000.0) 100.0) s0 12)
   [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 5.0, 6.0, 7.0, 8.0]
--- loopStart after the duration (reversed loop), loopEnd <= 0, loopStart < 0: the whole buffer
+-- loopStart after the duration (reversed loop), loopEnd <= 0: the whole buffer; loopStart < 0 is 0
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true 1.0 2.0) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true (1.0 / 8000.0) 0.0) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true (-1.0) (2.0 / 8000.0)) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
+-- loopStart < 0 is read as 0 (WPT audiobuffersource-playbackrate-negative.html): rate -1, offset 3,
+-- loop [0, 2): 4 3 2 1 then 2 1 2 1
+#guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0, 3.0, 4.0]]) true (-1.0 / 8000.0) (2.0 / 8000.0))
+    (started 8000.0 0.0 (3.0 / 8000.0)) 8 (-1.0))
+  [4.0, 3.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0]
 -- no loop attribute: the loop points are ignored
 #guard approxL (play (cfgOf ramp8 false (2.0 / 8000.0) (4.0 / 8000.0)) s0 10)
   (rampL 8 1.0 ++ [0.0, 0.0])

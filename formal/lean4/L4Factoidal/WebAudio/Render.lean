@@ -307,7 +307,9 @@ def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (interp : Mix.Interp
     (.biquad r.1, r.2)
   | .bufferSource, .buf cfg s set =>
     let r := Buffer.process n cfg { s with frame := frame } inputs params
-    (.buf cfg r.1 set, r.2)
+    -- A node that has not played in this quantum is not actively processing: one channel of
+    -- silence (Web Audio API 1.1, "actively processing"; WPT audiobuffersource-output-channel-count).
+    (.buf cfg r.1 set, if r.1.started then r.2 else #[silence 1 n])
   -- A node type with no kernel (`Kind.other`): one mono channel of silence per output.
   | _, _ => (ks, Array.replicate k.numOutputs (silence 1 n))
 

@@ -5799,6 +5799,8 @@
         } else throw new TypeError("Failed to construct 'OfflineAudioContext': the arguments match no overload.");
         super(SECRET, cs);
         cs.self = this;
+        if (cs.length === '') cs.length = null;
+        cs.queue = []; cs.suspends = new Map(); cs.committed = 0; cs.parked = false;
         cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
           self: null, params: [], kind: 'destination', maxChannelCount: cs.channels });
       }
@@ -6032,6 +6034,53 @@
       return { buffer: { iface: 'AudioBuffer', numberOfChannels: nch, length: len, sampleRate: cs.sampleRate, data }, ended };
     };
     const wrapBuffer = b => new AudioBuffer(SECRET, b);
+    // The render loop of an OfflineAudioContext (see 'OfflineAudioContext.startRendering').
+    const offlinePump = s => { if (!s.pumping) { s.pumping = true; task(() => { s.pumping = false; offlineRun(s); }); } };
+    const offlineRun = s => {
+      const q = ctxInfo(s).quantum;
+      while (s.state !== 'closed' && !s.parked && s.queue.length > 0) {
+        const head = s.queue[0], cur = ctxInfo(s).frame;
+        const here = s.suspends?.get(cur);
+        if (here !== undefined) {
+          s.suspends.delete(cur);
+          s.parked = true;
+          pendingState(s, 'suspended');
+          here.resolve();
+          return;
+        }
+        let k = Math.ceil((head.frames - head.have) / q);
+        for (const f of s.suspends?.keys() ?? []) if (f > cur) k = Math.min(k, (f - cur) / q);
+        let r;
+        try { r = renderResult(s, ask(187, [s.id, k], "Failed to execute 'startRendering' on 'OfflineAudioContext'", true)); }
+        catch (e) { s.queue.shift(); head.reject(e); continue; }
+        head.have += r.buffer.length;
+        head.parts.push(r.buffer.data);
+        head.ended = r.ended;
+        if (head.have < head.frames) continue;
+        s.queue.shift();
+        const nch = r.buffer.numberOfChannels;
+        const data = head.parts.length === 1 ? head.parts[0] : Array.from({ length: nch }, (_, c) => {
+          const out = new Float32Array(head.have); let at = 0;
+          for (const p of head.parts) { out.set(p[c], at); at += p[c].length; }
+          return out;
+        });
+        const out = wrapBuffer({ iface: 'AudioBuffer', numberOfChannels: nch, length: head.have, sampleRate: s.sampleRate, data });
+        const finished = s.length !== null && ctxInfo(s).frame >= s.length;
+        // The specification's order: `ended` of each source that finished, then the promise; the context
+        // closes after its last chunk (the state is `running` while that promise resolves), then `complete`.
+        for (const id of head.ended) if (!(s.endedFired ??= new Set()).has(id)) { s.endedFired.add(id); task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); }); }
+        task(() => {
+          head.resolve(out);
+          if (finished && s.state !== 'closed') {
+            pendingState(s, 'closed');
+            task(() => {
+              const ev = new OfflineAudioCompletionEvent('complete', { renderedBuffer: out });
+              state(ev).trusted = true; dispatch(s.self, ev);
+            });
+          }
+        });
+      }
+    };
     const M = {
       'BaseAudioContext.createBuffer': (s, a, self) => {
         const what = "Failed to execute 'createBuffer' on 'BaseAudioContext'";
@@ -6079,34 +6128,60 @@
         return Promise.resolve();
       },
       'AudioContext.setSinkId': () => rejected(unsup('AudioContext.setSinkId')),
-      'OfflineAudioContext.startRendering': (s) => {
-        const ab = ask(187, [s.id], "Failed to execute 'startRendering' on 'OfflineAudioContext'", true);
-        const r = renderResult(s, ab);
+      // Offline rendering in steps (Web Audio API 1.1, incremental rendering): the page keeps the queue of
+      // the chunks that `startRendering(chunkSize)` asked for and the scheduled suspensions; Lean renders
+      // a number of render quanta at a time (op 187 with a count) and decides every sample. The render
+      // runs in a task after the call, so `close()` called at once aborts it.
+      'OfflineAudioContext.startRendering': (s, a) => {
+        const what = "Failed to execute 'startRendering' on 'OfflineAudioContext'";
+        const chunk = a[0] === undefined || a[0] === null ? null : toUL(a[0]);
+        if (chunk === 0) return rejected(new RangeError(`${what}: chunkSize must be above 0.`));
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is closed`));
+        const q = ctxInfo(s).quantum, left = s.length === null ? Infinity : s.length - (s.committed ?? 0);
+        if (left <= 0) return rejected(dom('InvalidStateError', `${what}: every frame of the context is already being rendered`));
+        const want = chunk === null ? (s.length === null ? q : left) : Math.ceil(chunk / q) * q;
+        const frames = Math.min(want, left);
+        s.committed = (s.committed ?? 0) + frames;
         s.started = true;
-        pendingState(s, 'running');
-        return new Promise(resolve => {
-          const out = wrapBuffer(r.buffer);
-          // The specification's order: `ended` of each source that finished, then the promise
-          // (and the context's state `closed`), then the event `complete`.
-          for (const id of r.ended) task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); });
-          task(() => {
-            s.state = 'closed';
-            fire(s.self, 'statechange');
-            resolve(out);
-            task(() => {
-              const ev = new OfflineAudioCompletionEvent('complete', { renderedBuffer: out });
-              state(ev).trusted = true; dispatch(s.self, ev);
-            });
-          });
+        if (!s.parked && s.state !== 'running') pendingState(s, 'running');
+        return new Promise((resolve, reject) => {
+          (s.queue ??= []).push({ frames, have: 0, parts: [], resolve, reject });
+          offlinePump(s);
         });
       },
       'OfflineAudioContext.resume': (s) => {
-        if (!s.started || s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'OfflineAudioContext': the context is not suspended"));
+        const what = "Failed to execute 'resume' on 'OfflineAudioContext'";
+        if (!s.started || s.state === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is not suspended`));
+        if (s.parked) { s.parked = false; pendingState(s, 'running'); offlinePump(s); }
         return Promise.resolve();
       },
-      // The ops render the whole length at once: no suspension at a render quantum (issue 1169).
-      'OfflineAudioContext.suspend': (s, a) => { toDouble(a[0], "Failed to execute 'suspend' on 'OfflineAudioContext'"); return rejected(unsup('OfflineAudioContext.suspend')); },
-      'OfflineAudioContext.close': () => rejected(dom('InvalidStateError', "Failed to execute 'close' on 'OfflineAudioContext': an OfflineAudioContext cannot be closed")),
+      // A suspension at `suspendTime`, rounded up to a render quantum boundary. InvalidStateError for a
+      // closed context, a negative or past time, a time at or after the length, and a second one at the
+      // same frame (the specification does not give a code to the negative time).
+      'OfflineAudioContext.suspend': (s, a) => {
+        const what = "Failed to execute 'suspend' on 'OfflineAudioContext'";
+        const time = toDouble(a[0], what);
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is closed`));
+        const info = ctxInfo(s), q = info.quantum;
+        if (time < 0) return rejected(dom('InvalidStateError', `${what}: negative suspend time`));
+        const frame = Math.ceil(Math.ceil(time * s.sampleRate) / q) * q;
+        if (s.length !== null && frame >= s.length) return rejected(dom('InvalidStateError', `${what}: the time is at or after the end of the rendering`));
+        if (frame < info.frame) return rejected(dom('InvalidStateError', `${what}: the time is before the current time`));
+        s.suspends ??= new Map();
+        if (s.suspends.has(frame)) return rejected(dom('InvalidStateError', `${what}: a suspension is already scheduled at that time`));
+        return new Promise((resolve, reject) => { s.suspends.set(frame, { resolve, reject }); });
+      },
+      'OfflineAudioContext.close': (s) => {
+        const what = "Failed to execute 'close' on 'OfflineAudioContext'";
+        if (s.state === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is already closed`));
+        s.parked = false;
+        pendingState(s, 'closed');
+        for (const j of s.queue ?? []) j.reject(dom('AbortError', 'The rendering was stopped because the context was closed'));
+        s.queue = [];
+        for (const sp of (s.suspends ?? new Map()).values()) sp.reject(dom('InvalidStateError', 'The suspension was cancelled because the context was closed'));
+        s.suspends = new Map();
+        return Promise.resolve();
+      },
       'AudioBuffer.getChannelData': (s, a) => {
         const c = toUL(a[0]);
         if (c >= s.numberOfChannels) throw dom('IndexSizeError', "Failed to execute 'getChannelData' on 'AudioBuffer': channel index (" + c + ') exceeds number of channels (' + s.numberOfChannels + ')');
