@@ -417,12 +417,8 @@ def benchEpoch (o : Options) (path : System.FilePath) : IO UInt32 := do
     let t0 ← IO.monoNanosNow
     match step state with
     | .ok next =>
-      -- Force the fields the steps write before reading the clock.
-      let witness := next.balances.size + next.validators.size + next.inactivityScores.size +
-        next.currentEpochParticipation.size + next.proposerLookahead.foldl (· + ·) 0 +
-        (next.balances.foldl (· + ·) 0) % 2 + (next.validators.foldl (fun acc v => acc + v.effectiveBalance) 0) % 2
       let t1 ← IO.monoNanosNow
-      IO.println s!"  {name}: {(t1 - t0) / 1000} us (witness {witness % 10})"
+      IO.println s!"  {name}: {(t1 - t0) / 1000} us (registry {next.validators.size})"
       total := total + (t1 - t0) / 1000
       state := next
     | .error e =>

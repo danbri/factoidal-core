@@ -110,6 +110,48 @@ roots, SHA-256 values, all BLS arithmetic, the Snappy reader, `shuffleList`, the
 penalty, churn and withdrawal computation. The Lean compiler and runtime, the C toolchain and the host are
 trusted.
 
+## Measured (GitHub-hosted Linux runner, 4 workers)
+
+Run 45930370360 on commit `e619b1431`. Signatures were really checked in every case whose metadata allows it
+(all but the three `bls_setting: 2` cases per preset; `ssz_static` and `rewards` have no signatures).
+
+| Preset | Suite | Cases | Pass | Fail | Unsupported | BLS required (pass) | BLS off (pass) | unmarked (pass) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| minimal | `ssz_static` | 7,257 | 7,257 | 0 | 0 | 0 | 0 | 7,257 (7,257) |
+| minimal | `epoch_processing` | 157 | 157 | 0 | 0 | 15 (15) | 0 | 142 (142) |
+| minimal | `rewards` | 34 | 34 | 0 | 0 | 0 | 0 | 34 (34) |
+| minimal | `operations` | 378 | 378 | 0 | 0 | 68 (68) | 3 (3) | 307 (307) |
+| minimal | `sanity` | 107 | 107 | 0 | 0 | 5 (5) | 0 | 102 (102) |
+| minimal | `finality` | 5 | 5 | 0 | 0 | 0 | 0 | 5 (5) |
+| minimal | `random` | 16 | 16 | 0 | 0 | 16 (16) | 0 | 0 |
+| mainnet | `ssz_static` | 295 | 295 | 0 | 0 | 0 | 0 | 295 (295) |
+| mainnet | `epoch_processing` | 142 | 142 | 0 | 0 | 10 (10) | 0 | 132 (132) |
+| mainnet | `rewards` | 34 | 34 | 0 | 0 | 0 | 0 | 34 (34) |
+| mainnet | `operations` | 342 | 342 | 0 | 0 | 62 (62) | 3 (3) | 277 (277) |
+| mainnet | `sanity` | 95 | 95 | 0 | 0 | 5 (5) | 0 | 90 (90) |
+| mainnet | `finality` | 5 | 5 | 0 | 0 | 0 | 0 | 5 (5) |
+| mainnet | `random` | 16 | 16 | 0 | 0 | 16 (16) | 0 | 0 |
+
+Totals: minimal 7,954 of 7,954 in 35 min 53 s, peak memory 46 MB; mainnet 929 of 929 in 1 h 20 min, peak
+memory 134 MB. Per-handler counts are the committed ratchet baseline
+(`formal/lean4/ethereum-beacon/evidence/beacon-spec-tests-baseline.json`); p50 / p95 / max per handler are in
+each run's job summary. Transition time on the mainnet preset, per case, with signature checks (about 3.4 s
+each on that runner) included: epoch sub-steps p50 at most 0.3 ms except `proposer_lookahead` (761 ms) and
+`historical_summaries_update` (97 ms), max 3.6 s (`pending_deposits` with a deposit signature);
+`sanity/slots` p50 3.9 s, max 425 s (8,192 slots); `sanity/blocks` p50 9.1 s, max 433 s; `finality` max 1,610 s.
+
+The mainnet-preset vectors have small registries (256 to 2,048 validators). For scale, the runner's
+`--bench-epoch` mode grows a vector's registry to a chosen size and times each epoch sub-step once (run
+45928096381, commit `ea503d6ea`; the step times there include a pass over the registry made by the benchmark):
+
+| Registry | Epoch sub-steps, total | of which `proposer_lookahead` | `hash_tree_root(state)` plain | from the cache after one slot's changes | Peak memory |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 100,000 | 0.62 s | 0.55 s | 4.7 s | 0.12 s | 71 MB |
+| 1,000,000 | 1.35 s | 0.58 s | 44.5 s | 1.03 s | 358 MB |
+
+Each registry-sized step is linear in the registry (0.41 s for rewards and penalties at one million); proposer
+selection does not grow with it. One run each, so no spread is claimed.
+
 ## Open
 
 - No fork choice link, no execution engine link, no networking, no genesis or fork-upgrade functions; the
