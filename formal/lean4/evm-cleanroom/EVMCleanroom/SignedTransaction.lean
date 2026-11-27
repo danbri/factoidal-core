@@ -368,7 +368,8 @@ theorem admit_call (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     admitEntry a c raw = callEntry a c d raw.fuel := by
       simp only [admitEntry, hd, executionEntry, ht]
     _ = .ok (entryFor d sender dest raw.fuel) := by
-      simp only [callEntry, hr, ht]
+      delta callEntry
+      simp only [hr, ht]
 
 /-- Kind: executable refusal. Failed creation recovery cannot yield an entry. -/
 theorem admit_creation_refused (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
