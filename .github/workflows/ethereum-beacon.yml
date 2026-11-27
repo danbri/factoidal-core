@@ -90,7 +90,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/vectors
-          key: consensus-spec-tests-${{ env.SPEC_RELEASE }}-${{ matrix.preset }}-fulu-${{ matrix.preset == 'minimal' && env.MINIMAL_SHA256 || env.MAINNET_SHA256 }}
+          key: consensus-spec-tests-${{ env.SPEC_RELEASE }}-${{ matrix.preset }}-fulu-7suites-${{ matrix.preset == 'minimal' && env.MINIMAL_SHA256 || env.MAINNET_SHA256 }}
       - name: Download and verify the pinned vectors
         if: steps.vectors.outputs.cache-hit != 'true'
         env:
@@ -104,7 +104,8 @@ jobs:
           echo "$DIGEST  $RUNNER_TEMP/download/$PRESET.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/download/$PRESET.tar.gz" -C "$RUNNER_TEMP/vectors" \
             "tests/$PRESET/fulu/ssz_static" "tests/$PRESET/fulu/epoch_processing" \
-            "tests/$PRESET/fulu/operations" "tests/$PRESET/fulu/sanity"
+            "tests/$PRESET/fulu/operations" "tests/$PRESET/fulu/sanity" \
+            "tests/$PRESET/fulu/rewards" "tests/$PRESET/fulu/finality" "tests/$PRESET/fulu/random"
       - name: Build the runner and check the theorems
         run: |
           set -euo pipefail

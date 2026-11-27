@@ -97,6 +97,49 @@ def processRewardsAndPenalties (p : Preset) (s : BeaconState) : BeaconState :=
         / effectiveBalanceIncrement
     { s with balances := s.balances.mapIdx (rewardedBalance p s leak perIncrement activeIncrements flagIncrements) }
 
+/-- `get_flag_index_deltas`: rewards and penalties of one participation
+    flag, one entry per validator (the form the `rewards` vectors record).
+    `processRewardsAndPenalties` applies the same amounts through
+    `rewardedBalance`; the runner checks that the two agree. -/
+def flagIndexDeltas (p : Preset) (s : BeaconState) (flag : Nat) : Array Nat × Array Nat :=
+  let total := totalActiveBalance p s
+  let activeIncrements := total / effectiveBalanceIncrement
+  let perIncrement := baseRewardPerIncrement total
+  let leak := isInInactivityLeak p s
+  let weight := flagWeight flag
+  let participatingIncrements :=
+    max effectiveBalanceIncrement
+      ((Array.range s.validators.size).foldl
+        (fun acc i =>
+          if unslashedParticipatingPrevious p s flag i then acc + s.validators[i]!.effectiveBalance else acc) 0)
+      / effectiveBalanceIncrement
+  let entry (i : Nat) : Nat × Nat :=
+    let v := s.validators[i]!
+    if !isEligibleValidator p s v then (0, 0)
+    else
+      let base := v.effectiveBalance / effectiveBalanceIncrement * perIncrement
+      if unslashedParticipatingPrevious p s flag i then
+        if !leak then (base * weight * participatingIncrements / (activeIncrements * weightDenominator), 0)
+        else (0, 0)
+      else if flag != timelyHeadFlagIndex then (0, base * weight / weightDenominator)
+      else (0, 0)
+  ((Array.range s.validators.size).map fun i => (entry i).1,
+   (Array.range s.validators.size).map fun i => (entry i).2)
+
+/-- `get_inactivity_penalty_deltas`. -/
+def inactivityPenaltyDeltas (p : Preset) (s : BeaconState) : Array Nat × Array Nat :=
+  ((Array.range s.validators.size).map fun _ => 0,
+   (Array.range s.validators.size).map fun i =>
+    let v := s.validators[i]!
+    if isEligibleValidator p s v && !unslashedParticipatingPrevious p s timelyTargetFlagIndex i then
+      v.effectiveBalance * s.inactivityScores[i]! / (inactivityScoreBias * inactivityPenaltyQuotientBellatrix)
+    else 0)
+
+/-- Balances after applying delta sets in order, each as the specification
+    does: add the reward, then subtract the penalty stopping at zero. -/
+def applyDeltas (balances : Array Nat) (deltas : List (Array Nat × Array Nat)) : Array Nat :=
+  deltas.foldl (fun balances d => balances.mapIdx fun i b => b + d.1[i]! - d.2[i]!) balances
+
 /-- One validator of `process_registry_updates`. -/
 def registryStep (p : Preset) (churn current finalized : Nat) (s : BeaconState) (i : Nat) : BeaconState :=
   let v := s.validators[i]!

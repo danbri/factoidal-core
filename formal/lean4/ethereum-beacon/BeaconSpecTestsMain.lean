@@ -113,10 +113,12 @@ def sszStaticCodec (p : Preset) (name : String) : Option (ByteArray → ByteArra
   | "WithdrawalRequest" => some (sszCheck WithdrawalRequest.codec p)
   | _ => none
 
-/-- One case: returns status and detail. -/
-abbrev CaseFn := System.FilePath → IO (Status × String × Nat × Bool)
+/-- One case: returns status, detail and BLS class. A case may write the
+    time of the transition alone (microseconds) to the reference; otherwise
+    the whole case is timed. -/
+abbrev CaseFn := System.FilePath → IO.Ref Nat → IO (Status × String × Nat × Bool)
 
-def sszStaticCase (o : Options) (handler : String) : CaseFn := fun dir => do
+def sszStaticCase (o : Options) (handler : String) : CaseFn := fun dir timer => do
   match sszStaticCodec o.preset handler with
   | none => return (.unsupported, s!"container {handler} is not implemented", 0, false)
   | some check =>
@@ -174,7 +176,7 @@ abbrev Transition := Ctx → BeaconState → Except String BeaconState
 
 /-- Run `step` on `pre.ssz_snappy` and compare with `post.ssz_snappy`; a
     case without a post-state passes exactly when the step is refused. -/
-def transitionCase (o : Options) (dir : System.FilePath) (extraCtx : Ctx → Ctx)
+def transitionCase (o : Options) (dir : System.FilePath) (timer : IO.Ref Nat) (extraCtx : Ctx → Ctx)
     (load : IO (Except String Transition)) : IO (Status × String × Nat × Bool) := do
   let p := o.preset
   let metaText ← readText (dir / "meta.yaml")
@@ -185,10 +187,13 @@ def transitionCase (o : Options) (dir : System.FilePath) (extraCtx : Ctx → Ctx
     | .ok s => pure s
     | .error e => return (.fail, s!"pre-state does not decode: {e}", bls, verify)
   let post ← readOptional (dir / "post.ssz_snappy")
-  let outcome := match ← load with
+  let loaded ← load
+  let t0 ← IO.monoNanosNow
+  let outcome ← IO.lazyPure fun _ => match loaded with
     | .error e => Except.error s!"input does not decode: {e}"
     | .ok step => (step c pre).bind fun s =>
         if s.inRange then .ok s else .error "a uint64 field left its range"
+  timer.set (((← IO.monoNanosNow) - t0) / 1000 + 1)
   match outcome, post with
   | .error _, none => return (.pass, "", bls, verify)
   | .ok _, none => return (.fail, "accepted an input the vector marks invalid", bls, verify)
@@ -230,7 +235,7 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
   let p := o.preset
   let simple {α : Type} (codec : Codec α) (file : String)
       (f : Ctx → BeaconState → α → Except String BeaconState) : Option CaseFn :=
-    some fun dir => transitionCase o dir id (withOp codec p (dir / file) f)
+    some fun dir timer => transitionCase o dir timer id (withOp codec p (dir / file) f)
   match handler with
   | "attestation" => simple Attestation.codec "attestation.ssz_snappy" processAttestation
   | "attester_slashing" => simple AttesterSlashing.codec "attester_slashing.ssz_snappy" processAttesterSlashing
@@ -249,45 +254,71 @@ def operationCase (o : Options) (handler : String) : Option CaseFn :=
       fun c s r => .ok (processWithdrawalRequest c.p s r)
   | "withdrawals" => simple ExecutionPayload.codec "execution_payload.ssz_snappy"
       fun c s payload => processWithdrawals c.p s payload
-  | "execution_payload" => some fun dir => do
+  | "execution_payload" => some fun dir timer => do
       let valid := (yamlBool (← readText (dir / "execution.yaml")) "execution_valid").getD true
-      transitionCase o dir (fun c => { c with executionValid := valid })
+      transitionCase o dir timer (fun c => { c with executionValid := valid })
         (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") processExecutionPayload)
   | _ => none
 
 def sanityCase (o : Options) (handler : String) : Option CaseFn :=
   let p := o.preset
   match handler with
-  | "slots" => some fun dir => do
+  | "slots" => some fun dir timer => do
       let some n := firstNat (← readText (dir / "slots.yaml"))
         | return (.fail, "slots.yaml has no slot count", 0, false)
-      transitionCase o dir id (pure (.ok fun c s => processSlots c s (s.slot + n)))
-  | "blocks" => some fun dir => do
+      transitionCase o dir timer id (pure (.ok fun c s => processSlots c s (s.slot + n)))
+  | "blocks" => some fun dir timer => do
       let some n := yamlNat (← readText (dir / "meta.yaml")) "blocks_count"
         | return (.fail, "meta.yaml has no blocks_count", 0, false)
       let mut raw : Array ByteArray := #[]
       for i in [0:n] do
         raw := raw.push (← readSnappy (dir / s!"blocks_{i}.ssz_snappy"))
-      transitionCase o dir id (pure (.ok fun c s =>
+      transitionCase o dir timer id (pure (.ok fun c s =>
         raw.foldlM (fun s bytes =>
           match SignedBeaconBlock.codec.decode p bytes with
           | .ok block => stateTransition c s block
           | .error e => .error s!"block does not decode: {e}") s))
   | _ => none
 
+/-- `rewards` vectors: the four delta sets of the pre-state, and agreement
+    of the fused balance update with the delta form. -/
+def rewardsCase (o : Options) : CaseFn := fun dir timer => do
+  let p := o.preset
+  let s ← match BeaconState.codec.decode p (← readSnappy (dir / "pre.ssz_snappy")) with
+    | .ok s => pure s
+    | .error e => return (.fail, s!"pre-state does not decode: {e}", 0, false)
+  let sets : List (String × (Array Nat × Array Nat)) := [
+    ("source_deltas", flagIndexDeltas p s timelySourceFlagIndex),
+    ("target_deltas", flagIndexDeltas p s timelyTargetFlagIndex),
+    ("head_deltas", flagIndexDeltas p s timelyHeadFlagIndex),
+    ("inactivity_penalty_deltas", inactivityPenaltyDeltas p s)]
+  for (name, deltas) in sets do
+    let expected ← readSnappy (dir / s!"{name}.ssz_snappy")
+    if Deltas.codec.encode p ⟨deltas.1, deltas.2⟩ != expected then
+      return (.fail, s!"{name} differ from the vector", 0, false)
+  if currentEpoch p s != genesisEpoch then
+    if (processRewardsAndPenalties p s).balances != applyDeltas s.balances (sets.map (·.2)) then
+      return (.fail, "process_rewards_and_penalties differs from applying the delta sets", 0, false)
+  return (.pass, "", 0, false)
+
 def caseFnFor (o : Options) (runner handler : String) : Option CaseFn :=
   match runner with
   | "ssz_static" => some (sszStaticCase o handler)
-  | "epoch_processing" => (epochStep handler).map fun step dir => transitionCase o dir id (pure (.ok step))
+  | "epoch_processing" => (epochStep handler).map fun step dir timer => transitionCase o dir timer id (pure (.ok step))
   | "operations" => operationCase o handler
   | "sanity" => sanityCase o handler
+  | "finality" => sanityCase o "blocks"
+  | "random" => sanityCase o "blocks"
+  | "rewards" => some (rewardsCase o)
   | _ => none
 
 def runCase (fn : CaseFn) (name : String) (dir : System.FilePath) : IO CaseResult := do
+  let timer ← IO.mkRef 0
   let t0 ← IO.monoNanosNow
-  let outcome ← (fn dir).toBaseIO
+  let outcome ← (fn dir timer).toBaseIO
   let t1 ← IO.monoNanosNow
-  let micros := (t1 - t0) / 1000
+  let own ← timer.get
+  let micros := if own != 0 then own else (t1 - t0) / 1000
   match outcome with
   | .ok (status, detail, bls, verified) =>
     return { name, status, detail, blsSetting := bls, blsVerified := verified, micros }
@@ -424,7 +455,7 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln e; return 2
   if let some path := o.benchState then return ← benchEpoch o path
   let base := o.vectors / "tests" / o.preset.name / o.fork
-  let runners := if o.runners.isEmpty then ["ssz_static", "epoch_processing", "operations", "sanity"] else o.runners
+  let runners := if o.runners.isEmpty then ["ssz_static", "epoch_processing", "rewards", "operations", "sanity", "finality", "random"] else o.runners
   let mut summaries : Array HandlerSummary := #[]
   for runner in runners do
     for handler in ← sortedDir (base / runner) do

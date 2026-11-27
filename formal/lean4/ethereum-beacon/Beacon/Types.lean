@@ -295,6 +295,11 @@ ssz_container BeaconState where
   pendingConsolidations : Array PendingConsolidation := list PendingConsolidation.codec (fun p => p.pendingConsolidationsLimit),
   proposerLookahead : Array Nat := vec u64 (fun p => (minSeedLookahead + 1) * p.slotsPerEpoch)
 
+/-! The `Deltas` container of the `rewards` vectors. -/
+ssz_container Deltas where
+  rewards : Array Nat := list u64 (fun _ => validatorRegistryLimit),
+  penalties : Array Nat := list u64 (fun _ => validatorRegistryLimit)
+
 /-! Containers outside the state transition, covered by `ssz_static`. -/
 
 ssz_container AggregateAndProof where
