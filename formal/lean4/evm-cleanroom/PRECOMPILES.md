@@ -1,6 +1,6 @@
 # Precompiled contracts
 
-Addresses 0x01 to 0x11 are implemented in repository-owned Lean and are reached through
+Addresses 0x01 to 0x11 and 0x100 are implemented in repository-owned Lean and are reached through
 the actual CALL family and the transaction frame. No other Ethereum implementation is
 imported, copied, translated or wrapped; published vectors and the Python standard library
 are used only as test oracles in CI.
@@ -21,6 +21,7 @@ are used only as test oracles in CI.
 | 0x09 | BLAKE2b F | [`Blake2f`](EVMCleanroom/Precompiles/Blake2f.lean) | 1 per round | EIP-152, RFC 7693 |
 | 0x0a | KZG point evaluation | [`KZG`](EVMCleanroom/Precompiles/KZG.lean) | 50000 | EIP-4844 |
 | 0x0b–0x11 | BLS12-381 G1 add, G1 MSM, G2 add, G2 MSM, pairing check, map Fp to G1, map Fp2 to G2 | [`BLS12381`](EVMCleanroom/Precompiles/BLS12381.lean) | 375; discounted 12000 per item; 600; discounted 22500 per item; 37700 + 32600 per pair; 5500; 23800 | EIP-2537, RFC 9380 |
+| 0x100 | P256VERIFY | [`P256`](EVMCleanroom/Precompiles/P256.lean) | 6900 | EIP-7951 |
 
 [`Precompiles.run`](EVMCleanroom/Precompiles.lean) is the single entry. `CallOpcode.precompileStep`
 (CALL, CALLCODE, DELEGATECALL, STATICCALL) and `CallTransaction.runFrame` call it for every
@@ -31,9 +32,8 @@ Fork gating follows the opcode profiles of `Core`, which are coarser than forks:
 - `preShanghai` and `shanghaiPlus` execute 0x01–0x09. `shanghaiPlus` cannot tell Shanghai from
   later forks, so 0x0a–0x11 stay refused there (`unsupportedFork`, an indeterminate result), as before.
 - `cancunPlus` adds 0x0a.
-- `osaka` adds 0x0b–0x11 and prices MODEXP by EIP-7883 with the EIP-7823 length bound. There
-  is no separate Prague profile, so the EIP-2537 set is reachable only under `osaka`.
-- 0x100 (P256VERIFY, EIP-7951) is not implemented and stays refused.
+- `osaka` adds 0x0b–0x11 and 0x100, and prices MODEXP by EIP-7883 with the EIP-7823 length bound.
+  There is no separate Prague profile, so the EIP-2537 set is reachable only under `osaka`.
 
 Three outcomes are kept apart: success (output and unspent gas), exceptional halt (too little
 gas or input the specification rejects: the caller loses the forwarded gas), and refusal (a
@@ -59,7 +59,7 @@ Every loop runs on a count that is fixed by the input length or proved bounded.
 ## Proved, and only tested
 
 Proved (no `sorry`, no user axioms, `native_decide`, `unsafe`, `implemented_by` or `partial`; CI
-reads the actual `#print axioms` output of 16 modules and admits only `propext`, `Classical.choice`
+reads the actual `#print axioms` output of 17 modules and admits only `propext`, `Classical.choice`
 and `Quot.sound`):
 
 - MODEXP computes the modular power: for a non-zero modulus and lengths within the local bounds
@@ -91,16 +91,16 @@ Nothing is constant-time: the precompiles handle public data only.
 [`scripts/precompiles/run-vectors.py`](scripts/precompiles/run-vectors.py) runs the compiled
 `evm-precompile` binary (the router, with no `Lean.*` import) and compares exact output and exact gas.
 
-- 28 published vector files of go-ethereum v1.16.7, pinned by commit and SHA-256 in
+- 29 published vector files of go-ethereum v1.16.7, pinned by commit and SHA-256 in
   [`sources.json`](scripts/precompiles/sources.json), downloaded at test time and not vendored;
 - 122 `verify_kzg_proof` cases of the consensus specification tests, vendored with provenance under
   [`third_party/ethereum-kzg-vectors`](../../../third_party/ethereum-kzg-vectors/PROVENANCE.md),
   turned into point-evaluation calls (54 valid, 68 invalid or rejected);
 - 3000 generated cases for SHA-256, RIPEMD-160, BLAKE2f and MODEXP against the Python standard library.
 
-In total 2351 published cases and 3000 generated ones. Negative controls: every priced vector is
-re-run with one gas unit less and must fail (2574 cases), one expected output per file is altered and
-the comparison must report it (19 of 19), every valid KZG case is re-run with a wrong version byte,
+In total 3915 published cases (1564 of them P256VERIFY) and 3000 generated ones. Negative controls:
+every priced vector is re-run with one gas unit less and must fail (3356 cases), one expected output
+per file is altered and the comparison must report it (20 of 20), every valid KZG case is re-run with a wrong version byte,
 and the published failure files (malformed lengths, non-canonical coordinates, points off the curve
 or outside the subgroup) must fail.
 
@@ -128,6 +128,7 @@ artefact. Clients that execute about 100 million gas per second spend about 10 n
 | BLS12-381 pairing | 50 ms | 200 ms | 213 ms | 696 |
 | map Fp to G1 | 1.5 ms | 1.5 ms | 1.5 ms | 269 |
 | map Fp2 to G2 | 20 ms | 21 ms | 216 ms | 840 |
+| P256VERIFY (valid signature, 50 calls) | 2.4 ms | 2.5 ms | 4.5 ms | 350 |
 
 The hashes are within an order of magnitude of the gas ballpark. Everything built on 256-bit and
 381-bit field arithmetic is 30 to 130 times slower than it: each field operation is a general
@@ -166,7 +167,6 @@ The library root and the reviewed lakefiles are unchanged; the runner has its ow
 
 ## Open
 
-- P256VERIFY (0x100, EIP-7951) is not implemented.
 - A Prague profile, so that 0x0b–0x11 are reachable without the Osaka MODEXP price.
 - EIP-198 pricing is implemented and tested but no profile selects it (the profiles start at Berlin rules).
 - The official state-test fixtures for precompiles run through the scoreboard, not here.

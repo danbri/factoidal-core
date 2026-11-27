@@ -200,6 +200,13 @@
    "address": 17,
    "profile": "osaka",
    "kind": "fail"
+  },
+  {
+   "file": "p256Verify.json",
+   "sha256": "72be71957c3e4292d874b3e2a6a2fc2142524433b01cb9a9552b9bb2528c214d",
+   "address": 256,
+   "profile": "osaka",
+   "kind": "ok"
   }
  ],
  "kzgVectorsSha256": "1ce1b1d2dda4eb2d158f793c66f13925e1e126d550ea1ae69ba34a8bc4b593a0",

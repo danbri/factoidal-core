@@ -15,6 +15,7 @@
   "EVMCleanroom/Precompiles/BN254.lean",
   "EVMCleanroom/Precompiles/BLS12381.lean",
   "EVMCleanroom/Precompiles/KZG.lean",
+  "EVMCleanroom/Precompiles/P256.lean",
   "EVMCleanroom/Precompiles.lean"
  ]
 }

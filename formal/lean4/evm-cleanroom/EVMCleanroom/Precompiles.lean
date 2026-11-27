@@ -7,6 +7,7 @@ import EVMCleanroom.Precompiles.Ecrecover
 import EVMCleanroom.Precompiles.BN254
 import EVMCleanroom.Precompiles.BLS12381
 import EVMCleanroom.Precompiles.KZG
+import EVMCleanroom.Precompiles.P256
 
 /-!
 # Precompiled contracts: fork gating and the single entry used by CALL
@@ -22,8 +23,8 @@ forks:
   for 0x05, EIP-1108 for 0x06–0x08). `shanghaiPlus` cannot tell Shanghai from
   later forks, so 0x0a–0x11 stay refused there, as before;
 * `cancunPlus`: adds 0x0a (EIP-4844);
-* `osaka`: adds 0x0b–0x11 (EIP-2537) and prices 0x05 by EIP-7883 with the
-  EIP-7823 length bound. 0x100 (P256VERIFY) is not implemented and stays refused.
+* `osaka`: adds 0x0b–0x11 (EIP-2537) and 0x100 (P256VERIFY, EIP-7951), and prices
+  0x05 by EIP-7883 with the EIP-7823 length bound.
   There is no separate Prague profile, so the EIP-2537 set is reachable only here.
 
 An address that is reserved in a profile but not implemented here is refused
@@ -41,7 +42,7 @@ def maxInputBytes : Nat := 1_048_576
 
 /-- Precompile addresses with an implementation in this module. -/
 def implemented (address : Nat) : Bool :=
-  address == 1 || address == 2 || address == 3 || (5 ≤ address && address ≤ 0x11)
+  address == 1 || address == 2 || address == 3 || (5 ≤ address && address ≤ 0x11) || address == 0x100
 
 /-- Highest precompile address a profile executes. -/
 def lastAddress : Profile → Nat
@@ -52,7 +53,8 @@ def lastAddress : Profile → Nat
 
 /-- Does this profile execute `address` through `run`? -/
 def active (profile : Profile) (address : Nat) : Bool :=
-  implemented address && decide (address ≤ lastAddress profile)
+  implemented address &&
+    (decide (address ≤ lastAddress profile) || (address == 0x100 && profile == .osaka))
 
 def modexpRule : Profile → ModExp.Rule
   | .osaka => .eip7883
@@ -102,6 +104,7 @@ def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address ga
   | 0x0f => some (BLS12381.runPairing gas input)
   | 0x10 => some (BLS12381.runMapG1 gas input)
   | 0x11 => some (BLS12381.runMapG2 gas input)
+  | 0x100 => some (P256.run gas input)
   | _ => none
 
 /-- Run a precompile on a call's input view with the forwarded gas.
@@ -137,11 +140,12 @@ theorem run_oversize (profile : Profile) (keccak : Option Keccak.Acceptance) (ad
   simp [run, hActive, h]
 
 /-- Kind: fork gating.
-    Says: no profile executes an address above 0x11 or address zero through this entry,
-    and the pre-Cancun profiles execute nothing above 0x09.
+    Says: no profile executes address zero or an address above 0x11 through this entry,
+    except 0x100 under `osaka`; the pre-Cancun profiles execute nothing above 0x09 and
+    `cancunPlus` nothing above 0x0a.
     Does not say: the lower addresses are all implemented (`implemented` lists them). -/
 theorem active_range (profile : Profile) (address : Nat) (h : active profile address = true) :
-    1 ≤ address ∧ address ≤ 0x11 ∧
+    1 ≤ address ∧ (address ≤ 0x11 ∨ (address = 0x100 ∧ profile = .osaka)) ∧
       ((profile = .preShanghai ∨ profile = .shanghaiPlus) → address ≤ 0x09) ∧
       (profile = .cancunPlus → address ≤ 0x0a) := by
   simp only [active, implemented, Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq] at h
@@ -184,12 +188,14 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
         · have := BLS12381.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := (BLS12381.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
         · have := (BLS12381.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
+        · have := P256.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · cases hDispatch
       · cases h
       · cases h
 
 #guard active .shanghaiPlus 1 && active .shanghaiPlus 9 && !active .shanghaiPlus 4
-#guard !active .shanghaiPlus 0x0a && !active .preShanghai 0x0a && !active .osaka 0x100
+#guard !active .shanghaiPlus 0x0a && !active .preShanghai 0x0a && active .osaka 0x100
+#guard !active .cancunPlus 0x100 && !active .shanghaiPlus 0x100 && !active .osaka 0x101
 #guard !active .shanghaiPlus 0 && !active .osaka 0x12
 #guard (match run .shanghaiPlus none 2 60 {} with | .ok (out, 0) => out.size == 32 | _ => false)
 #guard (match run .shanghaiPlus none 2 59 {} with | .error .outOfGas => true | _ => false)

@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 SOURCES = json.loads((HERE / "sources.json").read_text())
 NAMES = {1: "ecrecover", 2: "sha256", 3: "ripemd160", 5: "modexp", 6: "bn254-add", 7: "bn254-mul",
          8: "bn254-pairing", 9: "blake2f", 10: "kzg-point-evaluation", 11: "bls-g1add", 12: "bls-g1msm",
-         13: "bls-g2add", 14: "bls-g2msm", 15: "bls-pairing", 16: "bls-map-fp-to-g1", 17: "bls-map-fp2-to-g2"}
+         13: "bls-g2add", 14: "bls-g2msm", 15: "bls-pairing", 16: "bls-map-fp-to-g1", 17: "bls-map-fp2-to-g2", 256: "p256verify"}
 REFERENCE_NS_PER_GAS = 10.0
 
 
