@@ -2458,6 +2458,30 @@ structure VFrame where
   dst : Nat
   depth : Nat
 
+/-- The compiled code of a call's callee: the `Option` of its function record, or `none`. -/
+@[inline] def vmCallCode (h : HeapOf H) (fv : Value) : Option Code :=
+  match fv with
+  | .obj id => match (h.obj id).kind with
+    | .closure fd _ _ _ _ _ => fd.info.code
+    | _ => none
+  | _ => none
+
+/-- The environment a closure captured (0 for any other value). -/
+@[inline] def vmCallEnv (h : HeapOf H) (fv : Value) : Nat :=
+  match fv with
+  | .obj id => match (h.obj id).kind with
+    | .closure _ cenv _ _ _ _ => cenv
+    | _ => 0
+  | _ => 0
+
+/-- The `this` a closure captured (`undefined` for any other value). -/
+@[inline] def vmCallThis (h : HeapOf H) (fv : Value) : Value :=
+  match fv with
+  | .obj id => match (h.obj id).kind with
+    | .closure _ _ capThis _ _ _ => capThis
+    | _ => .undef
+  | _ => .undef
+
 /-- `tryCatch` for the completions of the language: the handler sees thrown values and the
 evaluator's own `Abrupt` values, but never a halt (out of fuel, out of steps, a full heap, a
 failed check): a halt is an interrupt and passes through every handler unchanged. Optional
@@ -12052,22 +12076,20 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       let fv := vmRd regs fregs (bp + f)
       let thisV := if thisR == noReg then Value.undef else vmRd regs fregs (bp + thisR)
       let h ← get
-      let callee := match fv with
-        | .obj id => match (h.obj id).kind with
-          | .closure fd cenv capThis _ _ _ => match fd.info.code with
-            | some c => some (c, cenv, capThis)
-            | none => none
-          | _ => none
-        | _ => none
+      -- the callee's code is the `Option` already in its record: no tuple is made for a call
+      -- (three cells a call, 2026-11-27); its environment and captured `this` are read apart
+      let callee := vmCallCode h fv
       -- a primitive `this` for a sloppy function needs an object made: the general path
       let primThis := match thisV with | .undef | .null | .obj _ => false | _ => true
       -- with more than one realm, every call takes the general path (`callClosure` changes realm)
       let callee := match callee with
-        | some (c, cenv, capThis) =>
-          if (primThis && !c.isArrow && !c.strict) || !h.realms.isEmpty then none else some (c, cenv, capThis)
+        | some c =>
+          if (primThis && !c.isArrow && !c.strict) || !h.realms.isEmpty then none else callee
         | none => none
       match callee with
-      | some (c, cenv, capThis) =>
+      | some c =>
+        let cenv := vmCallEnv h fv
+        let capThis := vmCallThis h fv
         tickCall
         let depth := (match fr with | f0 :: _ => f0.depth + 1 | [] => 1)
         if depth > vmMaxDepth then

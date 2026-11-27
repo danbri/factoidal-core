@@ -794,8 +794,20 @@ def numericSign (pos : Nat) : List Char → String × Nat × List Char
   | '-' :: r => ("-", pos + 1, r)
   | cs       => ("", pos, cs)
 
+/-- After the optional sign, [19] INTEGER, [20] DECIMAL and [21] DOUBLE
+start with a digit or with `.`. -/
+def startsWithDigit : List Char → Bool
+  | d :: _ => isDigitChar d
+  | [] => false
+
 /-- [16] NumericLiteral with the collector fuel supplied by the caller.
-Port of `parse_numeric_literal`. -/
+Port of `parse_numeric_literal`.
+
+The digit check of the second branch (`startsWithDigit`): until 2026-11-27 an
+input that starts with `e` or `E` and a digit, such as the prefixed name `e2:c`
+in object position, was collected as the DOUBLE `e2`, and the reader then
+stopped at the `:`. Found by the random Turtle campaign of
+https://github.com/danbri/factoidal-core/issues/1184 (Oxigraph reads it). -/
 def readNumericLiteralWith (fuel pos : Nat) (cs : List Char) :
     Except ParseError ((String × WfIri) × Nat × List Char) :=
   let (signStr, pos0, cs0) := numericSign pos cs
@@ -810,7 +822,7 @@ def readNumericLiteralWith (fuel pos : Nat) (cs : List Char) :
       | [] => .error ⟨"expected digit after '.'", pos0⟩
   | _ =>
       let (acc, hasDot, hasE, pos', rest') := collectNum fuel pos0 cs0 [] false false
-      if acc.isEmpty then .error ⟨"expected numeric literal", pos⟩
+      if acc.isEmpty || !startsWithDigit cs0 then .error ⟨"expected numeric literal", pos⟩
       else
         let dt := if hasE then xsdDouble else if hasDot then xsdDecimal else xsdInteger
         .ok ((signStr ++ String.ofList acc, dt), pos', rest')

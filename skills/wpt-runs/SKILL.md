@@ -21,6 +21,14 @@ is too uncertain to plan from.
 - **Two numbers, always together**: the share, and the share without `encoding/`. `encoding/` is half the
   denominator: one subtest per character of five legacy East Asian encodings. A headline without the
   second number misleads.
+- **WebDriver classic (`webdriver/`)**: the full runs of main run the wdspec files of
+  `webdriver/tests/classic/` since 2026-11-27 (`release-tests.yml` passes `--webdriver`; before then every
+  one was SKIP and scored 0). The headline counts the group whole, as it always did (its subtests were in
+  the denominator). The run's job summary and `meta.json` (`webdriver`) give the share without
+  `webdriver/` beside it, so a rise caused by the new tests is visible; `runs.csv` has no column for it
+  (it is never rewritten). The group is 3,904 subtests of about 2.27 million, so 889 passes move the
+  headline by about 0.04 points. The same new-group rule as `encoding/`: headline first, the share
+  without the group beside it (`skills/scope-and-sequencing`).
 - **Engine**: page scripts on BubblePopJS. A number with no engine named means BubblePopJS. QuickJS runs
   are a differential check only: run them on request, mark them `differential`, never show them as the
   browser's score.
@@ -227,7 +235,15 @@ gh run download --repo danbri/factoidal-builds RUN_ID -n branch-wpt-results -D o
   (`webdriver/tests/classic/`) against the engine's WebDriver endpoint. The runner gets
   `--dangerously-enable-webdriver-endpoint`: the engine decides whether the endpoint starts (loopback
   only, a secret in every request path), and `tests/browser-wpt/wdspec-run.py` drives it with pytest
-  from the WPT tree. Without it, and in the full runs of main, every wdspec name is SKIP.
+  from the WPT tree (no package is installed: the job needs only python3 and the WPT tree, which
+  `wpt-score.py tree` fetches with `tools/`). Without it every wdspec name is SKIP. The workflow passes
+  the input to `release-tests.py wpt-shard --webdriver` (builds commit `82a9f491`). First run,
+  2026-11-27, `names=/webdriver/tests/classic/` on main `b45f02cbd`: 254 of 254 wdspec files ran (every
+  file `OK`), 889 passed, 1,982 failed, 1,033 errored, 0 skipped, out of 3,904 Chrome subtests
+  (https://github.com/danbri/factoidal-builds/actions/runs/45934172247, WebDriver classic wiring run).
+  Main causes: `unsupported operation (500): this command is not supported yet` (about 1,140 subtests
+  plus its setup and teardown errors), `assert 500 == 400` and `500 == 404` (the endpoint answers 500
+  where WebDriver requires a 400 or 404 error code), and `unknown command (404)`.
 - The baseline is the valid full run of the newest scored main commit that your ref contains (same
   names), so the difference is what your ref adds to that commit: your work, and any main commits
   after it that have no score yet. The plan's summary says when that is not main's newest

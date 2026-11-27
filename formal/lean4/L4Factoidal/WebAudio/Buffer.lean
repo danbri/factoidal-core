@@ -58,15 +58,19 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   interpolation" in the specification). A value within 1e-9 frames of a whole frame is taken to
   be that frame (`snapFrames`), so that 3 x (1/44100) x 44100 reads frame 3 and not frame
   2.9999999999999996; the specification requires an exact frame to return that frame.
-* Interpolation is linear. The frame after the last frame of the buffer is silence when the
-  source does not loop, and the frame at the (floored) loop start when playback is inside the
+* Interpolation is linear. The frame after the last frame of the buffer is the last two frames
+  continued linearly when the source does not loop (a one-frame buffer holds its value; WPT
+  `buffer-resampling.html`, "extrapolation at end of AudioBuffer"; the specification leaves the
+  value open), and the frame at the (floored) loop start when playback is inside the
   loop and the next frame is at or after the loop end ("as if the looped audio occurred in
   sequential regions", the specification's looping section).
 * The reversed loop of the pseudocode (`loopStart` at or after the buffer duration while
   `loopEnd` is after `loopStart`) would make the `while` loops of the pseudocode run for ever.
   The looping section says "If any of these constraints are violated, the loop is considered to
   include the entire buffer contents", so after clamping `loopEnd` to the duration a loop with
-  start not before end is the whole buffer.
+  start not before end is the whole buffer. A negative `loopStart` is 0 (the attribute's text:
+  "If loopStart is less than 0, looping will begin at 0"; WPT
+  `audiobuffersource-playbackrate-negative.html`; the pseudocode says the whole buffer).
 * The pseudocode's `while` loops that wrap the playhead are computed by division, with one
   correction step; for a finite playhead the result is the pseudocode's result up to rounding.
 * A sub-sample start time: the pseudocode starts playback at the first frame `f` with
@@ -75,6 +79,8 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   advanced by `(f - start * sampleRate)` frames of playback (`< 1` context frame): the signal is
   what it would have been, had playback begun at the exact `start` time. For `playbackRate` 0 the
   advance is 0 (WPT `audiobuffersource-playbackrate-zero.html`, second case).
+* A `duration` counts from the exact start time: the part of a context frame before the first frame
+  played is spent from it (WPT `sub-sample-scheduling.html`, "sub-sample-grain").
 * `start`, `stop` and the sample rate bounds: see `AudioBuffer.create` and `SourceState.start`.
   The sample rate range 3000 to 768000 Hz and the limit of 32 channels are the ones in the task
   description; the specification (section "Supported Sample Rates") requires only 8000 to 96000
@@ -93,7 +99,7 @@ sample rate conversion, binary32 rounding. Cases are named after the Web Platfor
   false clears the "entered loop" flag, a change of the loop points leaves the playhead where it
   is.
 * The setter of `buffer` (`InvalidStateError` for a second non-null buffer) and the "acquire the
-  content" snapshot: the caller holds `SourceConfig.buffer`.
+  content" snapshot: the caller holds `SourceConfig.buffer` (`Context.acquireBuffer` replaces it).
 * `ended` events and the cleanup of the node after playback: `SourceState.finished` is the
   flag; the graph module acts on it.
 * `createBuffer`'s `NaN` and infinite arguments (`TypeError` by WebIDL): `create` refuses a
@@ -547,14 +553,18 @@ def wrapLoop (bt ls le : Float) : Float :=
     else bt
   if r ≥ le then r - l else if r < ls then r + l else r
 
-/-- Loop points in buffer frames: `(actualLoopStart, actualLoopEnd)` of the pseudocode. The loop is
-the whole buffer when the attributes do not give `0 <= loopStart < loopEnd`, and when, after
-`loopEnd` is clamped to the duration, the start is not before the end. -/
+/-- Loop points in buffer frames: `(actualLoopStart, actualLoopEnd)` of the pseudocode. A negative
+`loopStart` is read as 0 (the text of the `loopStart` attribute: "If loopStart is less than 0,
+looping will begin at 0"; WPT `audiobuffersource-playbackrate-negative.html`, "clamped loopStart";
+the pseudocode of the specification gives the whole buffer for it). The loop is the whole buffer
+when `loopEnd` is not above 0, and when, after `loopEnd` is clamped to the duration, the start is
+not before the end. -/
 def loopPoints (cfg : SourceConfig) (b : AudioBuffer) : Float × Float :=
   let len := b.length.toFloat
+  let ls := if cfg.loopStart < 0.0 then 0.0 else cfg.loopStart
   let r :=
-    if cfg.loopStart ≥ 0.0 && cfg.loopEnd > 0.0 && cfg.loopStart < cfg.loopEnd then
-      (snapFrames (cfg.loopStart * b.sampleRate),
+    if cfg.loopEnd > 0.0 && ls < cfg.loopEnd then
+      (snapFrames (ls * b.sampleRate),
        min (snapFrames (cfg.loopEnd * b.sampleRate)) len)
     else (0.0, len)
   if r.1 < r.2 then r else (0.0, len)
@@ -599,7 +609,9 @@ def stepFrame (c : Ctx) (cf : Nat) (st : SourceState) : SourceState × Emit :=
               if d > 0.0 then d else 0.0
             else 0.0
           | none => 0.0
-        { st with offsetF := o2, bufferFrame := o2 + sub * c.dp, started := true }
+        -- the part of the `duration` before the first frame played is spent (WPT
+        -- sub-sample-scheduling.html, "sub-sample-grain": the grain ends at the exact time)
+        { st with offsetF := o2, bufferFrame := o2 + sub * c.dp, elapsed := sub * c.dp, started := true }
     let entered :=
       c.loopActive &&
         (st1.enteredLoop || (st1.offsetF < c.le && st1.bufferFrame ≥ c.ls) ||
@@ -608,7 +620,8 @@ def stepFrame (c : Ctx) (cf : Nat) (st : SourceState) : SourceState × Emit :=
     let e : Emit := if bt ≥ 0.0 && bt < c.len then some (bt, entered) else none
     ({ st1 with bufferFrame := bt + c.dp, elapsed := st1.elapsed + c.dp, enteredLoop := entered }, e)
 
-/-- Linear interpolation of one channel at buffer position `x` (in frames). `wrap` is
+/-- Linear interpolation of one channel at buffer position `x` (in frames); between the last frame and
+the end of the buffer it extrapolates linearly from the last two frames. `wrap` is
 `some (loopStartIndex, loopEnd)` when the playhead is in the loop. -/
 def interp (ch : FloatArray) (len : Nat) (x : Float) (wrap : Option (Nat × Float)) : Float :=
   let x := snapFrames x
@@ -621,7 +634,12 @@ def interp (ch : FloatArray) (len : Nat) (x : Float) (wrap : Option (Nat × Floa
     let v1 :=
       match wrap with
       | some (w, le) => if (i + 1).toFloat ≥ le then getF ch w else getF ch (i + 1)
-      | none => if i + 1 < len then getF ch (i + 1) else 0.0
+      | none =>
+        if i + 1 < len then getF ch (i + 1)
+        -- Past the last frame the signal is continued along the last two frames (a buffer of one
+        -- frame holds its value): WPT buffer-resampling.html, "extrapolation at end of AudioBuffer".
+        else if 1 ≤ i then 2.0 * v0 - getF ch (i - 1)
+        else v0
     v0 * (1.0 - fr) + v1 * fr
 
 /-- The output value of one channel on one frame. -/
@@ -1060,13 +1078,18 @@ private def s0 : SourceState := started 8000.0
 -- loopEnd after the end of the buffer: the end of the buffer
 #guard approxL (play (cfgOf ramp8 true (4.0 / 8000.0) 100.0) s0 12)
   [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 5.0, 6.0, 7.0, 8.0]
--- loopStart after the duration (reversed loop), loopEnd <= 0, loopStart < 0: the whole buffer
+-- loopStart after the duration (reversed loop), loopEnd <= 0: the whole buffer; loopStart < 0 is 0
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true 1.0 2.0) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true (1.0 / 8000.0) 0.0) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
 #guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0]]) true (-1.0) (2.0 / 8000.0)) s0 5)
   [1.0, 2.0, 1.0, 2.0, 1.0]
+-- loopStart < 0 is read as 0 (WPT audiobuffersource-playbackrate-negative.html): rate -1, offset 3,
+-- loop [0, 2): 4 3 2 1 then 2 1 2 1
+#guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 2.0, 3.0, 4.0]]) true (-1.0 / 8000.0) (2.0 / 8000.0))
+    (started 8000.0 0.0 (3.0 / 8000.0)) 8 (-1.0))
+  [4.0, 3.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0]
 -- no loop attribute: the loop points are ignored
 #guard approxL (play (cfgOf ramp8 false (2.0 / 8000.0) (4.0 / 8000.0)) s0 10)
   (rampL 8 1.0 ++ [0.0, 0.0])
@@ -1125,15 +1148,20 @@ private def s0 : SourceState := started 8000.0
 #guard (let b := bufOf 8192.0 [rampL 64 5.0]
         let o := play (cfgOf b) (started 8192.0 (27.3 / 8192.0)) 40 0.0
         o.take 28 == List.replicate 28 0.0 && (o.drop 28).all (· == 5.0))
+-- a grain that starts at frame 1.5 and lasts 3 frames ends at frame 4.5: frames 2, 3 and 4 play
+#guard approxL (play (cfgOf (bufOf 8000.0 [[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]]))
+    (started 8000.0 (1.5 / 8000.0) 0.0 (some (3.0 / 8000.0))) 8)
+  [0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0]
 -- sub-sample start with rate 1: the playhead is half a frame on at the first frame played
 #guard approxL (play (cfgOf ramp8) (started 8000.0 (0.5 / 8000.0)) 4) [0.0, 1.5, 2.5, 3.5]
 #guard approxL (play (cfgOf ramp8) (started 8000.0 (3.25 / 8000.0)) 6)
   [0.0, 0.0, 0.0, 0.0, 1.75, 2.75]
 
 -- buffer-resampling.html idea: a buffer at 22050 Hz in a 44100 Hz context plays at half speed,
--- every other output frame interpolated; the frame after the last is silence (no loop)
+-- every other output frame interpolated; the frame between the last and the end is continued along
+-- the last two frames (3.5, not the 1.5 of a zero after the end), then silence (no loop)
 #guard approxL (play (cfgOf (bufOf 22050.0 [[0.0, 1.0, 2.0, 3.0]])) (started 44100.0) 9)
-  [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 1.5, 0.0]
+  [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 0.0]
 -- the same buffer at 44100 Hz in a 22050 Hz context plays at double speed
 #guard approxL (play (cfgOf (bufOf 44100.0 [[0.0, 1.0, 2.0, 3.0, 4.0, 5.0]])) (started 22050.0) 4)
   [0.0, 2.0, 4.0, 0.0]

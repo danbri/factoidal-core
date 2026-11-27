@@ -51,7 +51,8 @@ of `WebApi.lean`; -28 to -30 are new.
     `m NAME TYPE REQUIRED(1/0) DEFAULT`, tab-separated; "callback": `r RETURN ARGS`. -20 for an
     unknown name or kind.
   * 175 `newContext(numberOfChannels, length, sampleRate, [renderQuantumSize])`:
-    `OfflineContext.new`; answers the new context's id. -23 for what the constructor refuses, and
+    `OfflineContext.new`; answers the new context's id. An empty `length` is a context of length
+    `null`: the length is `maxSamples / numberOfChannels` frames, which the page does not show. -23 for what the constructor refuses, and
     for `numberOfChannels * length` above 2^25 (a bound of this engine).
   * 176 `createNode(ctx, kind, [option])`: `kind` is `gain`, `constantSource`, `stereoPanner`,
     `oscillator`, `biquadFilter`, `bufferSource`, `delay` (option: `maxDelayTime`, real),
@@ -77,7 +78,7 @@ of `WebApi.lean`; -28 to -30 are new.
     InvalidStateError (automation rules of `Automation.insert`); -28 no such parameter.
   * 180 `paramInfo(ctx, node, param)`: 4 doubles (`value`, `defaultValue`, `minValue`,
     `maxValue`) then one byte: 1 a-rate, 0 k-rate. `value` is the automation value at the current
-    time.
+    time, clamped to the nominal range (`Render.finalValue`).
   * 181 `start(ctx, node, [when], [offset], [duration])`: reals; an absent `when` is 0.
     `offset` and `duration` are for an `AudioBufferSourceNode`. -29 started before; -21; -20.
   * 182 `stop(ctx, node, [when])`: -29 not started; -21; -20.
@@ -88,19 +89,26 @@ of `WebApi.lean`; -28 to -30 are new.
     a `ChannelSplitterNode` and the offline destination refuse a change of count, mode or
     interpretation (-29, except where the value is the one it has); a `StereoPanner` count above
     2 and the mode `max` are -23. An unknown name or enum value is -20.
-  * 184 `setBuffer(ctx, node, channels, length, sampleRate, data)`: the `buffer` setter of an
-    `AudioBufferSourceNode`; `channels` "" sets null; `data` is `channels * length` binary32
-    values, in one argument or in one argument for each channel (joined in order). -29 when a non-null buffer was set before; -20 when the byte count does not match;
+  * 184 `setBuffer(ctx, node, mode, channels, length, sampleRate, data...)`: the `buffer` setter of
+    an `AudioBufferSourceNode`. `mode` "" sets the buffer; "2" sets one of the given dimensions with
+    no samples (the setter before `start()`: the samples come at `start()`); "1" acquires the
+    content (`start()`, or the setter after `start()`: no error for a second non-null buffer, the
+    buffer must have been set). `channels` "" sets null; `data` is `channels * length` binary32
+    values, in one argument or in one argument for each channel (joined in order; none with mode
+    "2"). -29 when a non-null buffer was set before; -20 when the byte count does not match;
     -23 buffer values out of range (`AudioBuffer.create`).
   * 185 `setPeriodicWave(ctx, node, real, imag, disableNormalization)`: `setPeriodicWave` of an
     oscillator; `real` and `imag` are binary32 arrays or "-". -28, -20 as `createPeriodicWave`.
   * 186 `check(kind, args...)`: `kind` "buffer" (`channels`, `length`, `sampleRate`: the
     `createBuffer` checks, -23) or "wave" (`real`, `imag`, `disableNormalization`: the
     `createPeriodicWave` checks, -28, -20). Answers "".
-  * 187 `startRendering(ctx)`: renders the whole length. Answer: `u32` channels, `u32` length,
-    the samples as binary32 channel by channel (`channels * length` values), `u32` count K, then K
-    `u32` ids of the source nodes (constant, oscillator, buffer source) that have ended, in
-    ascending node id. -29 when it ran before.
+  * 187 `startRendering(ctx, [quanta])`: without `quanta` renders the whole length. Answer: `u32`
+    channels, `u32` length, the samples as binary32 channel by channel (`channels * length`
+    values), `u32` count K, then K `u32` ids of the source nodes (constant, oscillator, buffer
+    source) that have ended, in ascending node id. -29 when it ran before (or after a step). With
+    `quanta` (decimal text): one step of `Context.renderChunk`, at most that many render quanta from
+    the current frame, cut at the length; the answer has the same form, `length` is the frames of
+    the step and the ids are those ended so far. -29 when the length is reached.
   * 188 `frequencyResponse(ctx, node, frequencyHz, magLength, phaseLength)`: `frequencyHz` is a
     binary32 array. Answer: `magLength` binary32 values then `phaseLength` values. -25 when a
     length differs from that of `frequencyHz`; -29 for a node that is not a `BiquadFilterNode`.
@@ -463,7 +471,9 @@ def idlOp (fs : Array ByteArray) : Except Int ByteArray :=
 
 def newContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let nch ← natArg fs 0
-  let len ← natArg fs 1
+  -- An absent length is a context whose length is `null`: it renders in steps and has no end. This
+  -- engine gives it the most frames that `maxSamples` allows; the page shows `length` as null.
+  let len ← (fun l => l.getD (maxSamples / max nch 1)) <$> optNatArg fs 1
   let sr ← f64Arg fs 2
   let q ← optNatArg fs 3
   if nch * len > maxSamples || s.contexts.size ≥ maxContexts then .error errNotSupported
@@ -577,7 +587,7 @@ def paramInfoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteAr
       | none => throw errIndexSize
       | some ps =>
         let now := Automation.frameTime c.state.frame c.sampleRate
-        let v := Automation.valueAt ps.timeline ps.spec.defaultValue now
+        let v := Render.finalValue ps.spec (Automation.valueAt ps.timeline ps.spec.defaultValue now)
         let out := f64le v ++ f64le ps.spec.defaultValue ++ f64le ps.spec.minValue ++
           f64le ps.spec.maxValue ++ ⟨#[if ps.spec.aRate then 1 else 0]⟩
         pure (c, out)
@@ -678,9 +688,9 @@ def setAttrOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
       | _ => throw errType
     pure (c', ByteArray.empty)
 
-/-- A buffer from the fields `channels, length, sampleRate, data`; `none` for null (`channels`
-""). -/
-def bufferArgs (fs : Array ByteArray) (i : Nat) :
+/-- A buffer from the fields `channels, length, sampleRate, data...` from field `i`; `none` for null
+(`channels` ""). `placeholder`: only the dimensions, checked, with silent channels. -/
+def bufferArgs (fs : Array ByteArray) (i : Nat) (placeholder : Bool := false) :
     Except Int (Option Buffer.AudioBuffer) := do
   match ← optNatArg fs i with
   | none => pure none
@@ -691,6 +701,9 @@ def bufferArgs (fs : Array ByteArray) (i : Nat) :
     -- not copy the channels into one array: `TypedArray.prototype.set` costs 0.7 microseconds a value)
     let data := (fs.extract (i + 3) fs.size).foldl (· ++ ·) ByteArray.empty
     if nch * len > maxSamples then throw errNotSupported
+    if placeholder then
+      -- the dimensions are checked and the buffer is silent; the samples come at `start()`
+      return some (← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer))
     -- `create` with one frame decides what `create` with `len` frames decides (its test reads the
     -- length only as `1 ≤ length`), and makes no zero channels that the next lines throw away
     let b ← lift (Buffer.AudioBuffer.create nch (min len 1) sr |>.mapError Context.Error.ofBuffer)
@@ -701,8 +714,12 @@ def bufferArgs (fs : Array ByteArray) (i : Nat) :
 def setBufferOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
     let id ← natArg fs 1
-    let b ← bufferArgs fs 2
-    let c' ← lift (c.setBuffer id b)
+    let mode := strArg fs 2
+    let b ← bufferArgs fs 3 (mode == "2")
+    -- mode "1": acquire the content (`Context.acquireBuffer`); the page sends it at `start()`
+    let c' ← match mode, b with
+      | "1", some buf => lift (c.acquireBuffer id buf)
+      | _, _ => lift (c.setBuffer id b)
     pure (c', ByteArray.empty)
 
 def waveOf (fs : Array ByteArray) (i : Nat) : Except Int Oscillator.PeriodicWave := do
@@ -741,11 +758,14 @@ def endedIds (c : Context.OfflineContext) : List Nat :=
 
 def startRenderingOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
-    let (c', chans) ← lift c.startRendering
+    let quanta ← optNatArg fs 1
+    let (c', chans) ← match quanta with
+      | none => lift c.startRendering
+      | some k => lift (c.renderChunk k)
     let ended := endedIds c'
     let samples := channelsBytes chans
     let tail := ended.foldl (fun acc i => acc ++ u32le i) (u32le ended.length)
-    pure (c', u32le c.numberOfChannels ++ u32le c.length ++ samples ++ tail)
+    pure (c', u32le c.numberOfChannels ++ u32le (chans.getD 0 ⟨#[]⟩).size ++ samples ++ tail)
 
 def frequencyResponseOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
@@ -1416,19 +1436,19 @@ private def osc : Option State :=
 private def bufBytes : ByteArray := f32le 0.5 ++ f32le (-0.25) ++ f32le 0.125 ++ f32le 1.0
 private def bufRender : Option State :=
   chain st0 [(176, [n 1, t "bufferSource"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
-             (184, [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]), (181, [n 1, n 1])]
+             (184, [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]), (181, [n 1, n 1])]
 #guard (bufRender.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     ((samples r 6).take 6, u32At r (8 + 4000))) == some ([0.5, -0.25, 0.125, 1.0, 0.0, 0.0], 1)
 -- A second non-null buffer is refused; null is accepted.
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty]) == some 0
+#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
+#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, ByteArray.empty]) == some 0
 -- Wrong byte count; out of range sample rate; a node that is not a buffer source.
 #guard (chain st0 [(176, [n 1, t "bufferSource"])]).map
-  (fun s => (err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes.extract 0 8],
-             err s 184 [n 1, n 1, n 1, n 4, d 10.0, bufBytes])) == some (errType, errNotSupported)
-#guard err st0 184 [n 1, n 0, n 1, n 4, d 44100.0, bufBytes] == errInvalidState
+  (fun s => (err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes.extract 0 8],
+             err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 10.0, bufBytes])) == some (errType, errNotSupported)
+#guard err st0 184 [n 1, n 0, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes] == errInvalidState
 #guard (chain st0 [(176, [n 1, t "gain"])]).map
-  (fun s => err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
+  (fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
 
 -- Connect and disconnect.
 #guard (chain st0 [(176, [n 1, t "gain"])]).map
