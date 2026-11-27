@@ -135,7 +135,8 @@ add('invalid-seven-blob-aggregate', [blob(hashes.slice(0, 4)), blob(hashes.slice
   { category: 'admission', rejectIndex: 1, reason: 'declared-gas-total-exceeded',
     declaredBlobGas: 6n * unit })
 add('unsupported-middle-frame', [tx(), tx(2, { to: unsupported }), tx()],
-  { category: 'local-boundary', rejectIndex: 1, nativeStatus: 'indeterminate', reason: 'invalidOpcode' })
+  { category: 'local-boundary', rejectIndex: 1, nativeStatus: 'indeterminate', reason: 'invalidOpcode',
+    unsupportedCode: '5f0c00' }) // BLOCKHASH (5f40) is executable; 0x0c is undefined
 assert.equal(cases.length, 36, 'fixed whole-list inventory')
 assert.equal(cases.filter(test => test.category === 'execution').length, 30)
 assert.equal(new Set(cases.map(test => test.id)).size, cases.length)
@@ -149,7 +150,7 @@ function initialAccounts(test) {
   put(record(child, { balance: 100, code: test.childCode ?? '', storage: slots }))
   put(record(reverter, { balance: 100, code: effects('fd'), storage: slots }))
   put(record(invalid, { balance: 100, code: effects('fe'), storage: slots }))
-  put(record(unsupported, { balance: 100, code: '5f0c00', storage: slots }))
+  put(record(unsupported, { balance: 100, code: test.unsupportedCode ?? '5f4000', storage: slots }))
   const coinbase = test.coinbase ?? beneficiary
   if (!accounts.has(dec(coinbase))) put(record(coinbase, { balance: 11 }))
   return [...accounts.values()]

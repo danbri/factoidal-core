@@ -18,7 +18,7 @@ const snapshotPath = new URL('../../evidence/2026-11-24-transaction-list/list-ex
 const sourcePath = new URL('../differential/transaction-list.mjs', import.meta.url)
 const snapshotBytes = readFileSync(snapshotPath)
 assert.equal(digest(snapshotBytes), 'ff3e56deaec8c8ff4cb99725f8d8283565a0e0fcf1c4fed175596faba5a3f484', 'dated reference evidence pin')
-assert.equal(digest(readFileSync(sourcePath)), 'e0b16b7754b89be10f680da23f59b287b0e0bc7c9ce8007a5b93585700c0e768', 'fixture preparation source pin')
+assert.equal(digest(readFileSync(sourcePath)), '0df3036a231c6a7d80fa9065d4b75db11e3b32de2d949cbf09f82b6173f80493', 'fixture preparation source pin')
 const snapshot = JSON.parse(snapshotBytes)
 assert.equal(snapshot.rows.length, 36); assert.equal(snapshot.failed, 0)
 const scalar = value => bytesToBigInt(value), decimal = value => BigInt(value).toString()
@@ -61,6 +61,9 @@ const effects = ending => '5f49805f555f52610abc60205fa160205f' + (ending ?? 'f3'
 const hashReturn = '5f495f5260205ff3', slots = [['0', '7'], ['1', '9'], ['2', '0'], ['3', '0']]
 function fixtureOptions(id) {
   const out = { code: '00', coinbase: beneficiary, secondBalance: 10n ** 15n, blockGas: 30_000_000n, excess: 0n }
+  // The retained requests bind BLOCKHASH (5f4000) at the never-called account; BLOCKHASH is executable
+  // now, so only the list that calls it uses an undefined opcode (0x0c) for its unsupported frame.
+  out.unsupportedCode = id === 'unsupported-middle-frame' ? '5f0c00' : '5f4000'
   if (['single-blobhash', 'hash-context-reset', 'revert-middle-keeps-blob-burn', 'exception-middle-keeps-blob-burn',
     'sender-is-beneficiary', 'recipient-is-beneficiary', 'six-blob-aggregate', 'failed-receipt-still-counts-three-blobs',
     'nonzero-blob-price-across-failures'].includes(id)) out.code = effects()
@@ -98,7 +101,7 @@ function initialAccounts(options) {
   record(child, { balance: 100n, code: options.childCode ?? '', storage: slots })
   record(reverter, { balance: 100n, code: effects('fd'), storage: slots })
   record(invalid, { balance: 100n, code: effects('fe'), storage: slots })
-  record(unsupported, { balance: 100n, code: '5f0c00', storage: slots })
+  record(unsupported, { balance: 100n, code: options.unsupportedCode, storage: slots })
   if (!rows.has(decimal(options.coinbase))) record(options.coinbase, { balance: 11n })
   return [...rows.values()]
 }
