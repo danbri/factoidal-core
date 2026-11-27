@@ -30,6 +30,10 @@ jobs:
     timeout-minutes: 45
     env:
       LEAN_NUM_THREADS: '2'
+      # The vector tool hashes typed-data values and personal_sign messages with the pure
+      # Lean Keccak-256 (timing depends on the data; digests tested, not proved). It runs
+      # those cases only under this flag (skills/lean-risk-flags).
+      RISK: '--dangerously-enable-pure-keccak-on-messages'
     defaults:
       run:
         working-directory: formal/lean4/ethereum-wallet
@@ -87,11 +91,19 @@ jobs:
           if grep -E ' [Tt] (l_Lean_Elab_|l_Lean_Meta_|l_Lean_Kernel_|l_Lean_Compiler_|lean_initialize$)' .lake/abi-evidence/symbols.txt; then
             echo "proof-assistant symbols in the tool"; exit 1
           fi
+      - name: The tool refuses to hash message data without the risk flag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if .lake/build/bin/wallet-abi-vectors builtin; then echo "ran without the risk flag"; exit 1; fi
+          # The risk is accepted in exactly one place: the test tool, under the flag.
+          test "$(grep -rn --include='*.lean' --exclude-dir=.lake 'HashRisk.dangerouslyAccept \.' . | wc -l)" = "1"
+          grep -q 'HashRisk.dangerouslyAccept \.' AbiVectorsMain.lean
       - name: Built-in vectors and negative controls (Solidity ABI spec, EIP-712 Mail, EIP-55, EIP-1014, published selectors and topics)
         shell: bash
         run: |
           set -euo pipefail
-          .lake/build/bin/wallet-abi-vectors builtin | tee .lake/abi-evidence/builtin.json
+          .lake/build/bin/wallet-abi-vectors builtin $RISK | tee .lake/abi-evidence/builtin.json
           python3 -c 'import json; x=json.load(open(".lake/abi-evidence/builtin.json")); g=x["groups"]; assert x["failed"]==0 and x["vectors"]>=235 and g["decoder-negative-controls"]>=33 and g["solidity-abi-spec"]>=10 and g["eip712-eip191-json"]>=42, x'
       - name: Differential against ethers and viem (test oracles only), three seeds
         shell: bash
@@ -100,7 +112,7 @@ jobs:
           npm ci --prefix scripts/abi-oracle --ignore-scripts --no-audit --no-fund
           for seed in 20261127 1 "$GITHUB_RUN_ID"; do
             node scripts/abi-oracle/gen.mjs "$seed" > "/tmp/abi-cases-$seed.jsonl"
-            .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-cases-$seed.jsonl" | tee ".lake/abi-evidence/oracle-$seed.json"
+            .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-cases-$seed.jsonl" $RISK | tee ".lake/abi-evidence/oracle-$seed.json"
             python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); k=x["byKind"]; assert x["failed"]==0 and x["unknownKind"]==0 and x["passed"]==760 and k=={"encode":400,"selector":60,"topic":20,"eip712":120,"personal":40,"create":40,"create2":40,"checksum":40}, x' ".lake/abi-evidence/oracle-$seed.json"
           done
       - name: A wrong expected byte is reported (negative control of the runner)
@@ -116,7 +128,7 @@ jobs:
               open(f"/tmp/abi-wrong-{kind}.jsonl", "w").write(json.dumps(case) + "\n")
           PY
           for kind in encode eip712 create2; do
-            if .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-wrong-$kind.jsonl"; then
+            if .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-wrong-$kind.jsonl" $RISK; then
               echo "a wrong $kind case was accepted"; exit 1
             fi
           done

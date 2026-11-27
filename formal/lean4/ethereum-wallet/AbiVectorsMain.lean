@@ -10,6 +10,12 @@ import EthereumWallet.AbiVectors
   reference library is a test oracle only.
 * `wallet-abi-vectors bench <iterations>` reports timings.
 
+The first two hash typed-data values and `personal_sign` messages with the pure
+Lean Keccak-256, whose timing depends on the bytes hashed. They run only with
+`--dangerously-enable-pure-keccak-on-messages`; that flag is the one place the
+risk `HashRisk.pureKeccakOnMessages` is accepted (owner decision pending for
+any other caller; see `skills/lean-risk-flags`).
+
 Test tool only: it reads local files and prints. No network code.
 -/
 
@@ -57,7 +63,7 @@ def hexIs (bytes : List UInt8) (expect : Option String) : Bool :=
 def natOfKey (j : Json) (key : String) : Option Nat := (j.get? key).bind natOfJson
 
 /-- One differential case. `some true` passed, `some false` failed, `none` unknown kind. -/
-def runCase (j : Json) : Option Bool :=
+def runCase (risk : MessageHashing) (j : Json) : Option Bool :=
   match strOf j "kind" with
   | some "encode" =>
     match j.get? "types", j.get? "values" with
@@ -89,7 +95,7 @@ def runCase (j : Json) : Option Bool :=
       match TypedData.ofJson data with
       | .error _ => some false
       | .ok td =>
-        match hashTypedData td with
+        match hashTypedData risk td with
         | .error _ => some false
         | .ok r =>
           some (hexIs r.digest (strOf j "digest")
@@ -97,7 +103,7 @@ def runCase (j : Json) : Option Bool :=
     | none => some false
   | some "personal" =>
     match (strOf j "message").bind hexBytes with
-    | some msg => some (hexIs (personalSignDigest msg) (strOf j "digest"))
+    | some msg => some (hexIs (personalSignDigest risk msg) (strOf j "digest"))
     | none => some false
   | some "create" =>
     match natOfKey j "sender", natOfKey j "nonce" with
@@ -126,14 +132,14 @@ def bump (l : List (String × Nat)) (k : String) : List (String × Nat) :=
   | some n => (k, n + 1) :: l.filter (·.1 != k)
   | none => (k, 1) :: l
 
-def tallyLine (t : Tally) (line : String) : Tally :=
+def tallyLine (risk : MessageHashing) (t : Tally) (line : String) : Tally :=
   if line.trimAscii.isEmpty then t
   else
     match parseJson line with
     | .error _ => { t with failed := t.failed + 1, firstFailures := (line.take 200).toString :: t.firstFailures }
     | .ok j =>
       let kind := (strOf j "kind").getD "?"
-      match runCase j with
+      match runCase risk j with
       | some true => { t with passed := t.passed + 1, byKind := bump t.byKind kind }
       | some false =>
         { t with failed := t.failed + 1
@@ -145,26 +151,28 @@ def tallyLine (t : Tally) (line : String) : Tally :=
 def jsonCounts (l : List (String × Nat)) : String :=
   "{" ++ ",".intercalate (l.map fun kv => "\"" ++ kv.1 ++ "\":" ++ toString kv.2) ++ "}"
 
-def runBuiltin : IO UInt32 := do
+def riskFlag : String := "--dangerously-enable-pure-keccak-on-messages"
+
+def runBuiltin (risk : MessageHashing) : IO UInt32 := do
   let mut failed := 0
   let mut total := 0
   let mut groups : List (String × Nat) := []
-  for (group, cases) in EthereumWallet.AbiVectors.all do
+  for (group, cases) in EthereumWallet.AbiVectors.all risk do
     groups := groups ++ [(group, cases.length)]
     for (name, ok) in cases do
       total := total + 1
       if !ok then
         failed := failed + 1
         IO.eprintln s!"FAIL [{group}] {name}"
-  IO.println s!"\{\"vectors\":{total},\"failed\":{failed},\"groups\":{jsonCounts groups}}"
+  IO.println s!"\{\"vectors\":{total},\"failed\":{failed},\"risk\":\"pure-keccak-on-messages\",\"groups\":{jsonCounts groups}}"
   return if failed == 0 then 0 else 1
 
-def runOracle (path : String) : IO UInt32 := do
+def runOracle (risk : MessageHashing) (path : String) : IO UInt32 := do
   let text ← IO.FS.readFile path
-  let t := (text.splitOn "\n").foldl tallyLine {}
+  let t := (text.splitOn "\n").foldl (tallyLine risk) {}
   for f in t.firstFailures do
     IO.eprintln s!"FAIL {f}"
-  IO.println s!"\{\"passed\":{t.passed},\"failed\":{t.failed},\"unknownKind\":{t.unknown},\"byKind\":{jsonCounts t.byKind}}"
+  IO.println s!"\{\"passed\":{t.passed},\"failed\":{t.failed},\"unknownKind\":{t.unknown},\"risk\":\"pure-keccak-on-messages\",\"byKind\":{jsonCounts t.byKind}}"
   return if t.failed == 0 && t.unknown == 0 && t.passed != 0 then 0 else 1
 
 /-! ## Timings -/
@@ -241,11 +249,23 @@ def runBench (iterations : Nat) : IO UInt32 := do
   IO.println s!"\{\"case\":\"linearity\",\"decode_ps_per_byte\":{perByte.toList},\"ratio_max_over_min_x100\":{if lo == 0 then 0 else hi * 100 / lo}}"
   return 0
 
-def main (args : List String) : IO UInt32 :=
-  match args with
-  | ["builtin"] => runBuiltin
-  | ["oracle", path] => runOracle path
+def usage : IO UInt32 := do
+  IO.eprintln s!"usage: wallet-abi-vectors builtin {riskFlag} | oracle <file.jsonl> {riskFlag} | bench <iterations>"
+  return 2
+
+def main (args : List String) : IO UInt32 := do
+  let flagged := args.contains riskFlag
+  match args.filter (· != riskFlag) with
   | ["bench", n] => runBench (n.toNat?.getD 1000)
-  | _ => do
-    IO.eprintln "usage: wallet-abi-vectors builtin | oracle <file.jsonl> | bench <iterations>"
-    return 2
+  | rest =>
+    if !flagged then
+      IO.eprintln s!"refused: this command hashes message data with the pure Lean Keccak-256; pass {riskFlag} to accept that"
+      usage
+    else
+      IO.eprintln "warning: pure Lean Keccak-256 on message data (timing depends on the data; digests tested, not proved)"
+      -- The only acceptance of this risk: a test tool, under a flag a person types.
+      let risk := HashRisk.dangerouslyAccept .pureKeccakOnMessages
+      match rest with
+      | ["builtin"] => runBuiltin risk
+      | ["oracle", path] => runOracle risk path
+      | _ => usage

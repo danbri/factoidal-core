@@ -133,10 +133,17 @@ def wordToInt (w : Nat) : Int :=
   if w < two255 then Int.ofNat w else Int.negSucc (two256 - w - 1)
 
 mutual
-/-- `t.check v`: the value `v` has type `t`. -/
+/-- `t.check v`: the value `v` has type `t`. A width over 256 bits has no values, and is
+    refused before any power of two is computed. -/
 def AbiType.check : AbiType → AbiValue → Bool
-  | .uint bits, v => match v with | .uint n => decide (n < 2 ^ bits) | _ => false
-  | .int bits, v => match v with | .int i => intInRange bits i | _ => false
+  | .uint bits, v =>
+    match v with
+    | .uint n => decide (bits ≤ 256) && decide (n < 2 ^ bits)
+    | _ => false
+  | .int bits, v =>
+    match v with
+    | .int i => decide (bits ≤ 256) && intInRange bits i
+    | _ => false
   | .address, v => match v with | .address a => decide (a < 2 ^ 160) | _ => false
   | .bool, v => match v with | .bool _ => true | _ => false
   | .fixedBytes k, v => match v with | .bytes b => decide (b.length = k) | _ => false

@@ -276,6 +276,14 @@ def negativeControls : List (String × Bool) := [
       (word 0x20 ++ word 3 ++ word 0x60 ++ word 0x60 ++ word 0x60 ++ word 1 ++ word 7) .badOffset),
   ("inner offset pointing at the outer array refused (cycle)",
     refuses ["uint256[][]"] (word 0x20 ++ word 1 ++ word 0) .badOffset),
+  ("width over 256 bits refused by the single pass, with no power computed",
+    isErr ((AbiType.uint 1000000000000).decodeAt (toBytes (word 1)) 0) .badType),
+  ("int width over 256 bits refused by the single pass",
+    isErr ((AbiType.int 1000000000000).decodeAt (toBytes (word 1)) 0) .badType),
+  ("bytes<M> over 32 refused by the single pass, with no allocation",
+    isErr ((AbiType.fixedBytes 1000000000000).decodeAt (toBytes (word 1)) 0) .badType),
+  ("a value of an over-wide type is not well typed",
+    !(AbiType.uint 1000000000000).check (.uint 1)),
   ("types nested beyond the bound refused before reading",
     isErr (decodeArgsAt [(List.range 40).foldl (fun t _ => .array t) (.uint 256)] (toBytes []) 0)
       .badType),
@@ -362,13 +370,13 @@ def mailTypes : List TypeDef := [
   ⟨"Person", [("name", "string"), ("wallet", "address")]⟩,
   ⟨"Mail", [("from", "Person"), ("to", "Person"), ("contents", "string")]⟩ ]
 
-def typedDataVectors : List (String × Bool) :=
-  let mail := signRequestOfJson mailJson
+def typedDataVectors (risk : MessageHashing) : List (String × Bool) :=
+  let mail := signRequestOfJson risk mailJson
   let field (r : Except Err712 SignRequest) (f : SignRequest → List UInt8) : String :=
     match r with
     | .ok x => hexOf (f x)
     | .error _ => "error"
-  let refused (s : String) (e : Err712) : Bool := isErr712 (signRequestOfJson s) e
+  let refused (s : String) (e : Err712) : Bool := isErr712 (signRequestOfJson risk s) e
   let nest (n : Nat) : String := rep n "{\"next\":[" ++ "{\"next\":[]}" ++ rep n "]}"
   [ ("EIP-712 Mail encodeType",
       encodeType mailTypes ⟨"Mail", [("from", "Person"), ("to", "Person"), ("contents", "string")]⟩
@@ -388,16 +396,17 @@ def typedDataVectors : List (String × Bool) :=
       (mail.toOption.bind (·.verifyingContract?))
         == some 0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC),
     ("EIP-712 control: small document accepted",
-      isOk (signRequestOfJson (smallTyped (fld "a" "uint8") "{\"a\":255}"))),
+      isOk (signRequestOfJson risk (smallTyped (fld "a" "uint8") "{\"a\":255}"))),
     ("EIP-712 number as decimal string and as hex string agree",
-      field (signRequestOfJson (smallTyped (fld "a" "uint256") "{\"a\":\"255\"}")) (·.digest)
-        == field (signRequestOfJson (smallTyped (fld "a" "uint256") "{\"a\":\"0xff\"}")) (·.digest)),
+      field (signRequestOfJson risk (smallTyped (fld "a" "uint256") "{\"a\":\"255\"}")) (·.digest)
+        == field (signRequestOfJson risk (smallTyped (fld "a" "uint256") "{\"a\":\"0xff\"}"))
+            (·.digest)),
     ("EIP-712 uint8 256 refused",
       refused (smallTyped (fld "a" "uint8") "{\"a\":256}") (.badValue "a")),
     ("EIP-712 negative uint refused",
       refused (smallTyped (fld "a" "uint8") "{\"a\":-1}") (.badValue "a")),
     ("EIP-712 int8 -128 accepted",
-      isOk (signRequestOfJson (smallTyped (fld "a" "int8") "{\"a\":-128}"))),
+      isOk (signRequestOfJson risk (smallTyped (fld "a" "int8") "{\"a\":-128}"))),
     ("EIP-712 fraction refused",
       refused (smallTyped (fld "a" "uint256") "{\"a\":1.5}") (.badValue "a")),
     ("EIP-712 exponent refused",
@@ -405,7 +414,8 @@ def typedDataVectors : List (String × Bool) :=
     ("EIP-712 JSON number above 2^53 - 1 refused",
       refused (smallTyped (fld "a" "uint256") "{\"a\":9007199254740992}") (.badValue "a")),
     ("EIP-712 same number as a string accepted",
-      isOk (signRequestOfJson (smallTyped (fld "a" "uint256") "{\"a\":\"9007199254740992\"}"))),
+      isOk (signRequestOfJson risk
+        (smallTyped (fld "a" "uint256") "{\"a\":\"9007199254740992\"}"))),
     ("EIP-712 extra member refused",
       refused (smallTyped (fld "a" "uint8") "{\"a\":1,\"b\":2}") .extraField),
     ("EIP-712 missing member refused",
@@ -426,19 +436,23 @@ def typedDataVectors : List (String × Bool) :=
     ("EIP-712 fixed array of the wrong length refused",
       refused (smallTyped (fld "a" "uint8[2]") "{\"a\":[1,2,3]}") (.badValue "a")),
     ("EIP-712 domain with an unknown field refused",
-      isErr712 (signRequestOfJson
+      isErr712 (signRequestOfJson risk
         "{\"types\":{\"EIP712Domain\":[{\"name\":\"owner\",\"type\":\"address\"}],\"T\":[]},\"primaryType\":\"T\",\"domain\":{},\"message\":{}}")
         (.badType "EIP712Domain")),
+    ("EIP-712 domain fields out of the standard order refused",
+      isErr712 (signRequestOfJson risk
+        "{\"types\":{\"EIP712Domain\":[{\"name\":\"chainId\",\"type\":\"uint256\"},{\"name\":\"name\",\"type\":\"string\"}],\"T\":[]},\"primaryType\":\"T\",\"domain\":{\"chainId\":1,\"name\":\"x\"},\"message\":{}}")
+        (.badType "EIP712Domain")),
     ("EIP-712 primary type EIP712Domain refused",
-      isErr712 (signRequestOfJson
+      isErr712 (signRequestOfJson risk
         "{\"types\":{\"EIP712Domain\":[]},\"primaryType\":\"EIP712Domain\",\"domain\":{},\"message\":{}}")
         (.badType "EIP712Domain")),
     ("EIP-712 struct type named as an elementary type refused",
-      isErr712 (signRequestOfJson
+      isErr712 (signRequestOfJson risk
         "{\"types\":{\"EIP712Domain\":[],\"uint256\":[]},\"primaryType\":\"uint256\",\"domain\":{},\"message\":{}}")
         (.badType "types")),
     ("EIP-712 recursive type, data 10 deep accepted",
-      isOk (signRequestOfJson (smallTyped (fld "next" "T[]") (nest 10)))),
+      isOk (signRequestOfJson risk (smallTyped (fld "next" "T[]") (nest 10)))),
     ("EIP-712 recursive type, data 20 deep refused",
       refused (smallTyped (fld "next" "T[]") (nest 20)) .dataTooDeep),
     ("JSON nested 70 deep refused",
@@ -460,10 +474,10 @@ def typedDataVectors : List (String × Bool) :=
       isErr712 (parseJson ("{" ++ ",".intercalate ((List.range 300).map fun i =>
         "\"k" ++ toString i ++ "\":1") ++ "}")) .tooManyMembers),
     ("personal_sign hello world",
-      hexOf (personalSignDigest (utf8 "hello world"))
+      hexOf (personalSignDigest risk (utf8 "hello world"))
         == "d9eba16ed0ecae432b71fe008c98cc872bb4cc214d3220a36f365326cf807d68"),
     ("personal_sign Hello World",
-      hexOf (personalSignDigest (utf8 "Hello World"))
+      hexOf (personalSignDigest risk (utf8 "Hello World"))
         == "a1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2") ]
 
 def usdc : Nat := 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48
@@ -483,13 +497,13 @@ def permitJson (value deadline : String) : String :=
 
 def maxStr : String := toString maxUint256
 
-def callVectors : List (String × Bool) :=
+def callVectors (risk : MessageHashing) : List (String × Bool) :=
   let d (to value : Nat) (kind : TokenKind) (data : List UInt8) : CallSummary :=
     describeCall me to value kind (toBytes data)
   let has (s : CallSummary) (w : Warning) : Bool := s.warnings.contains w
   let swap := d router 0 .unknown sampleSwapCall
   let permit2 (p : PermitSingle) (chain : Nat) : Option SignSummary :=
-    (permit2Request 1 p).toOption.map (describeTypedData chain)
+    (permit2Request risk 1 p).toOption.map (describeTypedData chain)
   let p2 : PermitSingle :=
     { token := usdc, amount := 1000, expiration := 1800000000, nonce := 0, spender := router,
       sigDeadline := 1800000000 }
@@ -498,7 +512,7 @@ def callVectors : List (String × Bool) :=
     | some x => x.warnings.contains w
     | none => false
   let permit (value deadline : String) : Option SignSummary :=
-    (signRequestOfJson (permitJson value deadline)).toOption.map (describeTypedData 1)
+    (signRequestOfJson risk (permitJson value deadline)).toOption.map (describeTypedData 1)
   let p2Table := (buildTable permit2Types).toOption.getD []
   let typeHashOf (n : String) : String :=
     match p2Table.find? (·.name == n) with
@@ -576,6 +590,36 @@ def callVectors : List (String × Bool) :=
         | _ => false)),
     ("describe: nested multicall is not decoded and is flagged",
       has (d router 0 .unknown (swapWithDeadline 1 [swapWithDeadline 2 []])) .innerCallNotDecoded),
+    ("describe: approval of 2^200 is flagged as very large",
+      has (d usdc 0 .erc20 (erc20Approve router (2 ^ 200))) .veryLargeApproval),
+    ("chain: approval to the pinned router raises no unknown-spender warning",
+      !(describeTx mainnet me usdc 0 .erc20 (toBytes (erc20Approve router 5))).warnings.contains
+        .unknownSpender),
+    ("chain: approval to an unpinned spender is flagged",
+      (describeTx mainnet me usdc 0 .erc20 (toBytes (erc20Approve addr2 5))).warnings.contains
+        .unknownSpender),
+    ("chain: the mainnet router address is unknown on Sepolia",
+      (describeTx sepolia me usdc 0 .erc20 (toBytes (erc20Approve router 5))).warnings.contains
+        .unknownSpender),
+    ("chain: setApprovalForAll to an unpinned operator is flagged",
+      (describeTx mainnet me addr1 0 .erc721
+        (toBytes (erc721SetApprovalForAll addr2 true))).warnings.contains .unknownSpender),
+    ("chain: swap on the pinned router is not flagged",
+      (describeTx mainnet me router 0 .unknown (toBytes sampleSwapCall)).warnings.isEmpty),
+    ("chain: the same swap on another address is flagged",
+      (describeTx mainnet me addr2 0 .unknown (toBytes sampleSwapCall)).warnings
+        == [.unverifiedTarget]),
+    ("chain: deposit() on an address that is not WETH9 is flagged",
+      (describeTx mainnet me addr2 7 .unknown (toBytes wethDeposit)).warnings
+        == [.unverifiedTarget]),
+    ("chain: deposit() on WETH9 is not flagged",
+      (describeTx mainnet me weth 7 .erc20 (toBytes wethDeposit)).warnings.isEmpty),
+    ("chain: Permit2 to the pinned router has a known spender",
+      !hasS (permit2 p2 1) .unknownSpender),
+    ("chain: Permit2 to an unpinned spender is flagged",
+      hasS (permit2 { p2 with spender := addr2 } 1) .unknownSpender),
+    ("chain: EIP-2612 permit to an unpinned spender is flagged",
+      hasS (permit "1000" "1800000000") .unknownSpender),
     ("slippage: 50 bp below 2000", minOutForSlippage 2000 50 == 1990),
     ("slippage: 50 bp above 2000", maxInForSlippage 2000 50 == 2010),
     ("slippage: rounding goes against the trader's counterparty, never past the quote",
@@ -585,7 +629,7 @@ def callVectors : List (String × Bool) :=
     ("Permit2 PermitSingle type hash", typeHashOf "PermitSingle"
       == "f3841cd1ff0085026a6327b620b67997ce40f282c88a8e905a7a5626e310f3d0"),
     ("Permit2 mainnet domain separator",
-      ((permit2Request 1 p2).toOption.map fun r => hexOf r.domainSeparator)
+      ((permit2Request risk 1 p2).toOption.map fun r => hexOf r.domainSeparator)
         == some "866a5aba21966af95d6c7ab78eb2b2fc913915c28be3b9aa07cc04ff903e3f28"),
     ("Permit2 PermitSingle is read back as an approval by signature",
       (match permit2 p2 1 with
@@ -608,17 +652,17 @@ def callVectors : List (String × Bool) :=
     ("EIP-2612 unlimited permit with no expiry is flagged",
       hasS (permit maxStr maxStr) .unlimitedAmount && hasS (permit maxStr maxStr) .noExpiry),
     ("unrecognised typed data is flagged",
-      hasS ((signRequestOfJson mailJson).toOption.map (describeTypedData 1))
+      hasS ((signRequestOfJson risk mailJson).toOption.map (describeTypedData 1))
         .unrecognisedTypedData),
     ("typed data with no verifying contract is flagged",
-      hasS ((signRequestOfJson (smallTyped (fld "a" "uint8") "{\"a\":1}")).toOption.map
+      hasS ((signRequestOfJson risk (smallTyped (fld "a" "uint8") "{\"a\":1}")).toOption.map
         (describeTypedData 1)) .noVerifyingContract),
-    ("personal_sign text shown", (describePersonalSign (utf8 "hello")).text == some "hello"
-      && (describePersonalSign (utf8 "hello")).warnings.isEmpty),
+    ("personal_sign text shown", (describePersonalSign risk (utf8 "hello")).text == some "hello"
+      && (describePersonalSign risk (utf8 "hello")).warnings.isEmpty),
     ("personal_sign 32 opaque bytes flagged",
-      (describePersonalSign (keccak256 [])).warnings.contains .opaqueHash),
+      (describePersonalSign risk (keccak256 [])).warnings.contains .opaqueHash),
     ("personal_sign direction override flagged",
-      (describePersonalSign (utf8 ("pay " ++ String.ofList [Char.ofNat 0x202e] ++ "x"))).warnings
+      (describePersonalSign risk (utf8 ("pay " ++ String.ofList [Char.ofNat 0x202e] ++ "x"))).warnings
         == [.hiddenCharacters]),
     ("EIP-7702 delegation always warns of full control",
       (describeAuthorization 1 [] ⟨1, addr1, 0⟩).warnings
@@ -676,15 +720,17 @@ def deployVectors : List (String × Bool) :=
         | .ok [.address a, .bytes s] => a == addr1 && s == utf8 "Token"
         | _ => false)) ]
 
-def all : List (String × List (String × Bool)) := [
+/-- All groups. The typed-data and signing groups hash message content, so the caller passes
+    the risk token; the executable makes one only under its `--dangerously-…` flag. -/
+def all (risk : MessageHashing) : List (String × List (String × Bool)) := [
   ("solidity-abi-spec", specVectors),
   ("selectors-and-topics", selectorVectors),
   ("type-grammar", typeVectors),
   ("round-trips", roundTripVectors),
   ("decoder-negative-controls", negativeControls),
   ("events-and-returns", eventVectors),
-  ("eip712-eip191-json", typedDataVectors),
-  ("calls-and-summaries", callVectors),
+  ("eip712-eip191-json", typedDataVectors risk),
+  ("calls-and-summaries", callVectors risk),
   ("deployment", deployVectors)
 ]
 

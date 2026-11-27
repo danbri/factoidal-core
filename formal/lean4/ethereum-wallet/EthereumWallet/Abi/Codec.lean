@@ -13,7 +13,8 @@ untrusted byte array:
 * a dynamic value's offset must be exactly where the canonical encoding puts
   it (the end of the previous tail), so no byte is decoded twice and two
   offsets cannot share or overlap a tail;
-* bits outside a value's width and nonzero padding are refused.
+* bits outside a value's width and nonzero padding are refused;
+* a width over 256 bits or over 32 bytes is refused before it is used as a size.
 
 The loop over fields (`runFields`) is tail-recursive. The decoder recurses
 only through the type, so its depth is the type's nesting depth.
@@ -129,12 +130,18 @@ def AbiType.decodeAt : AbiType → ByteArray → Nat → Except Err (AbiValue ×
   | .uint bits, d, p =>
     match readWord d p with
     | .error e => .error e
-    | .ok w => if w < 2 ^ bits then .ok (.uint w, 32) else .error .dirtyPadding
+    | .ok w =>
+      if bits ≤ 256 then
+        if w < 2 ^ bits then .ok (.uint w, 32) else .error .dirtyPadding
+      else .error .badType
   | .int bits, d, p =>
     match readWord d p with
     | .error e => .error e
     | .ok w =>
-      if intInRange bits (wordToInt w) then .ok (.int (wordToInt w), 32) else .error .dirtyPadding
+      if bits ≤ 256 then
+        if intInRange bits (wordToInt w) then .ok (.int (wordToInt w), 32)
+        else .error .dirtyPadding
+      else .error .badType
   | .address, d, p =>
     match readWord d p with
     | .error e => .error e
@@ -147,10 +154,12 @@ def AbiType.decodeAt : AbiType → ByteArray → Nat → Except Err (AbiValue ×
       else if w = 1 then .ok (.bool true, 32)
       else .error .dirtyPadding
   | .fixedBytes k, d, p =>
-    if p + 32 ≤ d.size then
-      if allZero d (p + k) (32 - k) then .ok (.bytes (takeBytes d p k), 32)
-      else .error .dirtyPadding
-    else .error .outOfBounds
+    if k ≤ 32 then
+      if p + 32 ≤ d.size then
+        if allZero d (p + k) (32 - k) then .ok (.bytes (takeBytes d p k), 32)
+        else .error .dirtyPadding
+      else .error .outOfBounds
+    else .error .badType
   | .bytes, d, p => decBytes d p
   | .string, d, p => decBytes d p
   | .array t, d, p =>

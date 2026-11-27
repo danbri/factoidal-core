@@ -23,7 +23,7 @@ Stricter than common wallets, each a defined refusal:
 * a JSON number must be a whole number of at most 2^53 - 1 (larger values lose
   precision in other readers; send them as strings);
 * `EIP712Domain` may only have the five standard fields with their standard
-  types, and may not be the primary type;
+  types, in the standard order, and may not be the primary type;
 * at most `maxTypes` types, `maxFields` fields per type, and data nested at
   most `maxDataDepth` deep (`dataTooDeep`). Struct types may refer to
   themselves; the depth limit is on the data.
@@ -32,6 +32,25 @@ Stricter than common wallets, each a defined refusal:
 namespace EthereumWallet.Eip712
 
 open EthereumWallet.Abi
+
+/-- Risks of the typed-data and message hashing code. -/
+inductive HashRisk where
+  /-- The Keccak-256 used here is pure Lean. Its running time and allocation depend on the
+      bytes hashed, and its digest values are tested against vectors, not proved. Typed-data
+      values and `personal_sign` messages can be private, so hashing them is a choice the
+      caller makes by name. (Selectors, topics, type strings, `CREATE` preimages and addresses
+      are public by the protocol's definition and need no token.) -/
+  | pureKeccakOnMessages
+  deriving DecidableEq, Repr
+
+/-- Evidence that a caller accepted risk `r`; only `HashRisk.dangerouslyAccept` makes one. -/
+structure HashRisk.Accepted (r : HashRisk) : Type where
+  private mk ::
+
+def HashRisk.dangerouslyAccept (r : HashRisk) : HashRisk.Accepted r := ⟨⟩
+
+/-- The token every function that hashes message content takes. -/
+abbrev MessageHashing := HashRisk.Accepted .pureKeccakOnMessages
 
 def maxTypes : Nat := 128
 def maxFields : Nat := 256
@@ -150,9 +169,20 @@ def domainFieldOk (f : String × String) : Bool :=
   f == ("name", "string") || f == ("version", "string") || f == ("chainId", "uint256")
     || f == ("verifyingContract", "address") || f == ("salt", "bytes32")
 
+/-- Position of a domain field in the standard order. -/
+def domainRank (name : String) : Nat :=
+  if name == "name" then 0 else if name == "version" then 1 else if name == "chainId" then 2
+  else if name == "verifyingContract" then 3 else 4
+
+def increasing : List Nat → Bool
+  | a :: b :: rest => decide (a < b) && increasing (b :: rest)
+  | _ => true
+
+/-- `EIP712Domain` is declared, has only standard fields, and has them in the standard order
+    (readers disagree on the hash of a reordered domain type). -/
 def domainOk (types : List TypeDef) : Bool :=
   match types.find? (·.name == "EIP712Domain") with
-  | some td => td.fields.all domainFieldOk
+  | some td => td.fields.all domainFieldOk && increasing (td.fields.map fun f => domainRank f.1)
   | none => false
 
 def buildEntry (types : List TypeDef) (names : List String) (td : TypeDef) :
@@ -275,7 +305,7 @@ instance : Inhabited Shown := ⟨.bytes []⟩
 
 /-- `encodeData` for one field: its 32 bytes and what to show for it. The fuel is the nesting
     depth allowed; each struct or array level uses one. -/
-def encodeField (table : TypeTable) : Nat → FieldType → String → Json →
+def encodeField (risk : MessageHashing) (table : TypeTable) : Nat → FieldType → String → Json →
     Except Err712 (List UInt8 × Shown)
   | 0, _, _, _ => .error .dataTooDeep
   | fuel + 1, ft, fname, j =>
@@ -301,7 +331,7 @@ def encodeField (table : TypeTable) : Nat → FieldType → String → Json →
         if (match len with | some n => items.length != n | none => false) then
           .error (.badValue fname)
         else
-          match items.mapM (encodeField table fuel elem fname) with
+          match items.mapM (encodeField risk table fuel elem fname) with
           | .error e => .error e
           | .ok rs => .ok (keccak256 (rs.flatMap (·.1)), .array (rs.map (·.2)))
       | _ => .error (.badValue fname)
@@ -316,7 +346,7 @@ def encodeField (table : TypeTable) : Nat → FieldType → String → Json →
             match te.fields.mapM (fun (f : String × FieldType) =>
                 match members.lookup f.1 with
                 | none => (Except.error (Err712.missingField f.1) : Except Err712 (List UInt8 × Shown))
-                | some jv => encodeField table fuel f.2 f.1 jv) with
+                | some jv => encodeField risk table fuel f.2 f.1 jv) with
             | .error e => .error e
             | .ok rs =>
               .ok (keccak256 (te.typeHash ++ rs.flatMap (·.1)),
@@ -325,8 +355,9 @@ def encodeField (table : TypeTable) : Nat → FieldType → String → Json →
 
 /-- Kind: refusal at the bound. Says: with no depth left, the walk refuses.
     Does not say: how deep a given document is. -/
-theorem encodeField_depth_refused (table : TypeTable) (ft : FieldType) (fname : String) (j : Json) :
-    encodeField table 0 ft fname j = .error .dataTooDeep := rfl
+theorem encodeField_depth_refused (risk : MessageHashing) (table : TypeTable) (ft : FieldType)
+    (fname : String) (j : Json) :
+    encodeField risk table 0 ft fname j = .error .dataTooDeep := rfl
 
 /-! ## The request -/
 
@@ -391,21 +422,22 @@ theorem finishRequest_digest (p : String) (d m : Except Err712 (List UInt8 × Sh
       simp only [finishRequest, Except.ok.injEq] at h
       rw [← h]
 
-def hashTypedData (td : TypedData) : Except Err712 SignRequest :=
+def hashTypedData (risk : MessageHashing) (td : TypedData) : Except Err712 SignRequest :=
   if td.primaryType == "EIP712Domain" then .error (.badType "EIP712Domain")
   else
     match buildTable td.types with
     | .error e => .error e
     | .ok table =>
       finishRequest td.primaryType
-        (encodeField table (maxDataDepth + 1) (.struct "EIP712Domain") "domain" td.domain)
-        (encodeField table (maxDataDepth + 1) (.struct td.primaryType) "message" td.message)
+        (encodeField risk table (maxDataDepth + 1) (.struct "EIP712Domain") "domain" td.domain)
+        (encodeField risk table (maxDataDepth + 1) (.struct td.primaryType) "message" td.message)
 
 /-- Kind: definition check. Says: the digest of an accepted request is
     `keccak256(0x19 0x01 ‖ domainSeparator ‖ messageHash)` of the two hashes it reports.
     Does not say: that those hashes follow EIP-712 (tested against the specification's vectors
     and other implementations), or that `keccak256` is Keccak-256. -/
-theorem hashTypedData_digest (td : TypedData) (r : SignRequest) (h : hashTypedData td = .ok r) :
+theorem hashTypedData_digest (risk : MessageHashing) (td : TypedData) (r : SignRequest)
+    (h : hashTypedData risk td = .ok r) :
     r.digest = typedDataDigest r.domainSeparator r.messageHash := by
   simp only [hashTypedData] at h
   split at h
@@ -415,13 +447,13 @@ theorem hashTypedData_digest (td : TypedData) (r : SignRequest) (h : hashTypedDa
     · exact finishRequest_digest _ _ _ r h
 
 /-- Parse typed-data JSON and hash it. -/
-def signRequestOfJson (s : String) : Except Err712 SignRequest :=
+def signRequestOfJson (risk : MessageHashing) (s : String) : Except Err712 SignRequest :=
   match parseJson s with
   | .error e => .error e
   | .ok j =>
     match TypedData.ofJson j with
     | .error e => .error e
-    | .ok td => hashTypedData td
+    | .ok td => hashTypedData risk td
 
 def Shown.field? (s : Shown) (name : String) : Option Shown :=
   match s with
@@ -457,14 +489,14 @@ def SignRequest.verifyingContract? (r : SignRequest) : Option Nat :=
 /-! ## EIP-191 `personal_sign` -/
 
 /-- `keccak256("\x19Ethereum Signed Message:\n" ‖ decimal length ‖ message)`. -/
-def personalSignDigest (msg : List UInt8) : List UInt8 :=
+def personalSignDigest (_ : MessageHashing) (msg : List UInt8) : List UInt8 :=
   keccak256 (0x19 :: (utf8 "Ethereum Signed Message:\n" ++ utf8 (toString msg.length) ++ msg))
 
 /-- Kind: definition check. Says: the `personal_sign` digest is the hash of the EIP-191
     version-0x45 prefix, the decimal byte length and the message.
     Does not say: that `keccak256` is Keccak-256. -/
-theorem personalSignDigest_eq (msg : List UInt8) :
-    personalSignDigest msg
+theorem personalSignDigest_eq (risk : MessageHashing) (msg : List UInt8) :
+    personalSignDigest risk msg
       = keccak256 (0x19 :: (utf8 "Ethereum Signed Message:\n" ++ utf8 (toString msg.length) ++ msg)) :=
   rfl
 

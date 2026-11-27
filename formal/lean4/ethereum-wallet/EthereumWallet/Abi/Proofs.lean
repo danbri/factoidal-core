@@ -412,23 +412,23 @@ mutual
 theorem decodeAt_enc : ∀ (t : AbiType) (d : ByteArray) (v : AbiValue) (p : Nat),
     t.wf = true → t.check v = true → (t.enc v).length < two256 → Window d p (t.enc v) →
     t.decodeAt d p = .ok (v, (t.enc v).length)
-  | .uint bits, d, v, p, hwf, hc, _, hw => by
+  | .uint bits, d, v, p, _, hc, _, hw => by
     cases v with
     | uint n =>
-      simp only [AbiType.check, decide_eq_true_eq] at hc
-      simp only [AbiType.wf, decide_eq_true_eq] at hwf
+      simp only [AbiType.check, Bool.and_eq_true, decide_eq_true_eq] at hc
       simp only [AbiType.enc] at hw ⊢
-      have hn : n < two256 := Nat.lt_of_lt_of_le hc (pow_le_two256 bits hwf.2.1)
-      simp only [AbiType.decodeAt, readWord_of_window d p n hn hw, hc, if_true, word_length]
+      have hn : n < two256 := Nat.lt_of_lt_of_le hc.2 (pow_le_two256 bits hc.1)
+      simp only [AbiType.decodeAt, readWord_of_window d p n hn hw, hc.1, hc.2, if_true,
+        word_length]
     | _ => simp [AbiType.check] at hc
   | .int bits, d, v, p, hwf, hc, _, hw => by
     cases v with
     | int i =>
-      simp only [AbiType.check] at hc
+      simp only [AbiType.check, Bool.and_eq_true, decide_eq_true_eq] at hc
       simp only [AbiType.wf, decide_eq_true_eq] at hwf
       simp only [AbiType.enc] at hw ⊢
-      have hrt := wordToInt_intToWord bits i ⟨by omega, hwf.2.1⟩ hc
-      simp only [AbiType.decodeAt, readWord_of_window d p _ hrt.2 hw, hrt.1, hc, if_true,
+      have hrt := wordToInt_intToWord bits i ⟨by omega, hwf.2.1⟩ hc.2
+      simp only [AbiType.decodeAt, readWord_of_window d p _ hrt.2 hw, hrt.1, hc.1, hc.2, if_true,
         word_length]
     | _ => simp [AbiType.check] at hc
   | .address, d, v, p, _, hc, _, hw => by
@@ -469,7 +469,7 @@ theorem decodeAt_enc : ∀ (t : AbiType) (d : ByteArray) (v : AbiValue) (p : Nat
         rw [hc] at this
         exact allZero_of_window d _ _ this
       simp only [AbiType.decodeAt, hz, hb, if_true]
-      rw [if_pos (by omega)]
+      rw [if_pos hwf.2, if_pos (by omega)]
       congr 2
       omega
     | _ => simp [AbiType.check] at hc

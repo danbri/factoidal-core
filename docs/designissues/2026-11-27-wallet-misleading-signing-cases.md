@@ -32,6 +32,9 @@ JSON for display.
 | Case | Why it misleads | Flag |
 | --- | --- | --- |
 | Unlimited ERC-20 approval | `approve(spender, 2^256 - 1)` looks like one harmless step of a swap; the spender can take the whole balance at any later time | `Warning.unlimitedApproval` (theorem `describeArgs_unlimited`) |
+| Approval that is unlimited in effect | An allowance of `2^128` or more is past any balance, but is not the one value people know to look for | `Warning.veryLargeApproval` |
+| Approval to an unknown spender | The call is an ordinary `approve` or `setApprovalForAll`; what matters is who is approved | `Warning.unknownSpender` from `describeTx` when the spender or operator is not a contract pinned for the chain; `SignWarning.unknownSpender` for permits |
+| A known function on the wrong contract | `deposit()`, `exactInputSingle(...)` or `multicall(...)` on an address that only imitates WETH9 or the router | `Warning.unverifiedTarget` from `describeTx` when the target is not the pinned deployment on that chain |
 | `approve` and `transferFrom` on an unknown token | ERC-20 and ERC-721 share the selectors; the number is an amount in one and a token id in the other | `Warning.amountOrTokenId` unless the wallet knows the token's kind |
 | `setApprovalForAll(operator, true)` | One call hands over every token of a collection, present and future; it carries no amount to look at | `Warning.approvalForAll` (theorem `describeArgs_approvalForAll`); revoking is not flagged |
 | EIP-2612 `Permit` and DAI-style permit | An off-chain signature that costs no gas and looks like a login, but is an approval anyone can submit | `SignWarning.approvalBySignature`, plus `unlimitedAmount` and `noExpiry` when the value or deadline is the largest possible |
@@ -48,6 +51,10 @@ JSON for display.
 | Ether attached to undecoded calldata, or to a call that takes none | The value is easy to overlook next to the call | `Warning.valueWithUnknownCall`, `Warning.unexpectedValue` |
 | Multicall hiding an inner call | Only the outer function is recognised | inner calls are decoded one level down; any that is not is `Warning.innerCallNotDecoded` |
 
+`describeCall` needs no chain; `describeTx` adds the warnings that depend on
+which contracts are pinned for a chain and keeps all the others
+(`describeTx_keeps`). A confirmation screen should use `describeTx`.
+
 ## Bounds on untrusted input
 
 | Input | Bound | At the bound |
@@ -55,6 +62,7 @@ JSON for display.
 | ABI data, any read | within the array (`readWord`) | `Err.outOfBounds` (`readWord_out_of_bounds`) |
 | Array count | `count * headSize ≤ bytes left`, tested before the element decoders are built | `Err.lengthOutOfBounds` (`decodeAt_array_count_refused`, `decodeAt_array_length_le`) |
 | Dynamic offset | must equal the end of the previous tail | `Err.badOffset` (`runFields_bad_offset`) |
+| ABI type widths | at most 256 bits, at most 32 bytes | `Err.badType`, before the width is used as a size |
 | ABI type nesting | `maxTypeDepth` = 32; no zero-size element type | `Err.badType` (`decodeArgsAt_bad_type`, `parseType_ok`) |
 | Type string | `maxSigChars` = 2048 | `Err.badType` (`parseType_too_long`) |
 | Typed-data JSON | 1 MiB, nesting 64, 256 members per object, no repeated key | `jsonTooLong` (`parseJson_too_long`), `jsonTooDeep`, `tooManyMembers`, `duplicateKey` |
@@ -79,6 +87,13 @@ its canonical encoding is exactly the input bytes.
   drop them silently. If real sites need it, the alternative is to ignore
   and flag them; they never reach the digest either way.
 - `fixed`, `ufixed` and `function` ABI types are not accepted yet.
+- Open risk, flagged: typed-data values and `personal_sign` messages are
+  hashed by the pure Lean Keccak-256, whose timing depends on the data and
+  whose digests are tested, not proved. Every function that does so takes the
+  token `HashRisk.pureKeccakOnMessages`; only the test tool accepts it, under
+  `--dangerously-enable-pure-keccak-on-messages`. A wallet entry point that
+  signs real messages needs the owner's decision or a verified Keccak-256
+  (register: `skills/lean-risk-flags/SKILL.md`).
 - Proved: round trip, canonical form, injectivity of the encoding, the
   refusals above. Tested only: that the encoding is Solidity's (specification
   examples and differential runs against ethers and viem in CI), that the

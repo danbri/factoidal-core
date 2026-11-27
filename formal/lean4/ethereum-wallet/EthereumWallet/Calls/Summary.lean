@@ -38,6 +38,14 @@ inductive Warning where
   | unlimitedApproval
   /-- `setApprovalForAll(operator, true)`: the operator can move every token of the collection. -/
   | approvalForAll
+  /-- An ERC-20 allowance of `2^128` or more: beyond any balance, so unlimited in effect. -/
+  | veryLargeApproval
+  /-- The spender or operator being approved is not a contract this wallet has pinned for the
+      chain. Approvals to unknown spenders are how most token thefts start. -/
+  | unknownSpender
+  /-- A function of a known protocol (WETH9, SwapRouter02) called on an address that is not
+      that protocol's pinned deployment on the chain. -/
+  | unverifiedTarget
   /-- The token kind is not known, so the number may be an amount or a token id. -/
   | amountOrTokenId
   /-- A swap with no minimum output (or no maximum input): any price is accepted. -/
@@ -125,6 +133,7 @@ def describeArgs (sender to value : Nat) (kind : TokenKind) (inMulticall : Bool)
   | "approve", [.address spender, .uint n] =>
     ⟨.approve to spender n,
       when (kind != .erc721 && n == maxUint256) .unlimitedApproval
+        ++ when (kind != .erc721 && n != maxUint256 && n ≥ 2 ^ 128) .veryLargeApproval
         ++ when (kind == .unknown) .amountOrTokenId ++ noValue⟩
   | "transferFrom", [.address src, .address dst, .uint n] =>
     ⟨.transferFrom to src dst n,
@@ -204,6 +213,47 @@ def describeCall (sender to value : Nat) (kind : TokenKind) (data : ByteArray) :
     else describeLeaf sender to value kind false data
   | none => describeLeaf sender to value kind false data
 
+/-- Contracts pinned for a chain, by address. -/
+def pinnedName? (chainId addr : Nat) : Option String :=
+  (pinned.find? fun p => p.chainId == chainId && addrOfHex p.address == addr).map (·.name)
+
+def isPinned (chainId : Nat) (name : String) (addr : Nat) : Bool :=
+  pinnedAddress? name chainId == some addr
+
+/-- Warnings that need the chain: a protocol function on an address that is not the pinned
+    deployment, and an approval to a spender that is not pinned. -/
+def chainWarnings (chainId to : Nat) : Action → List Warning
+  | .approve _ spender _ => when (pinnedName? chainId spender).isNone .unknownSpender
+  | .setApprovalForAll _ operator approved =>
+    when (approved && (pinnedName? chainId operator).isNone) .unknownSpender
+  | .wethDeposit _ _ => when (!isPinned chainId "WETH9" to) .unverifiedTarget
+  | .wethWithdraw _ _ => when (!isPinned chainId "WETH9" to) .unverifiedTarget
+  | .swapExactInput _ _ => when (!isPinned chainId "UniswapV3SwapRouter02" to) .unverifiedTarget
+  | .swapExactOutput _ _ => when (!isPinned chainId "UniswapV3SwapRouter02" to) .unverifiedTarget
+  | .unwrapWETH9 _ _ => when (!isPinned chainId "UniswapV3SwapRouter02" to) .unverifiedTarget
+  | .refundETH => when (!isPinned chainId "UniswapV3SwapRouter02" to) .unverifiedTarget
+  | .multicall _ _ => when (!isPinned chainId "UniswapV3SwapRouter02" to) .unverifiedTarget
+  | _ => []
+
+/-- `describeCall` for a transaction on a known chain: the same action, with the warnings that
+    depend on which contracts are pinned for that chain. -/
+def describeTx (chainId sender to value : Nat) (kind : TokenKind) (data : ByteArray) :
+    CallSummary :=
+  let s := describeCall sender to value kind data
+  ⟨s.action, s.warnings ++ chainWarnings chainId to s.action⟩
+
+/-- Kind: display rule. Says: `describeTx` shows the same action as `describeCall` and keeps
+    every one of its warnings.
+    Does not say: that a pinned contract is safe to approve. -/
+theorem describeTx_keeps (chainId sender to value : Nat) (kind : TokenKind) (data : ByteArray) :
+    (describeTx chainId sender to value kind data).action
+        = (describeCall sender to value kind data).action
+      ∧ ∀ w, w ∈ (describeCall sender to value kind data).warnings →
+          w ∈ (describeTx chainId sender to value kind data).warnings := by
+  refine ⟨rfl, fun w hw => ?_⟩
+  simp only [describeTx, List.mem_append]
+  exact Or.inl hw
+
 /-! ## Signing requests -/
 
 inductive SignWarning where
@@ -216,6 +266,8 @@ inductive SignWarning where
   | noExpiry
   /-- A Permit2 message whose verifying contract is not the Permit2 deployment. -/
   | notCanonicalPermit2
+  /-- The spender is not a contract this wallet has pinned for the chain. -/
+  | unknownSpender
   /-- The domain names a chain other than the active one. -/
   | chainMismatch
   /-- The domain names no chain: the signature is not bound to one. -/
@@ -293,12 +345,23 @@ def classifyTypedData (r : SignRequest) : SignAction × List SignWarning :=
 /-- What signing this typed-data request does. `activeChainId` is the wallet's current chain. -/
 def describeTypedData (activeChainId : Nat) (r : SignRequest) : SignSummary :=
   let c := classifyTypedData r
+  let spender? : Option Nat :=
+    match c.1 with
+    | .permit _ _ spender _ _ _ => some spender
+    | .permitAllowed _ _ spender _ _ _ => some spender
+    | .permit2Single _ _ _ _ spender _ => some spender
+    | _ => none
+  let spenderWarn : List SignWarning :=
+    match spender? with
+    | some spender => signWhen (pinnedName? activeChainId spender).isNone .unknownSpender
+    | none => []
   let chainWarn : List SignWarning :=
     match r.chainId? with
     | some id => signWhen (id != activeChainId) .chainMismatch
     | none => [.noChainBinding]
   { action := c.1
-    warnings := c.2 ++ chainWarn ++ signWhen r.verifyingContract?.isNone .noVerifyingContract
+    warnings := c.2 ++ spenderWarn ++ chainWarn
+      ++ signWhen r.verifyingContract?.isNone .noVerifyingContract
     chainId := r.chainId?
     verifyingContract := r.verifyingContract? }
 
@@ -318,7 +381,7 @@ structure PersonalSummary where
   warnings : List SignWarning
 
 /-- What a `personal_sign` request shows. -/
-def describePersonalSign (msg : List UInt8) : PersonalSummary :=
+def describePersonalSign (risk : MessageHashing) (msg : List UInt8) : PersonalSummary :=
   let text := String.fromUTF8? (toBytes msg)
   let hidden : Bool :=
     match text with
@@ -326,7 +389,7 @@ def describePersonalSign (msg : List UInt8) : PersonalSummary :=
     | none => false
   { text := text
     hex := "0x" ++ hexOf msg
-    digest := personalSignDigest msg
+    digest := personalSignDigest risk msg
     warnings := signWhen text.isNone .notText
       ++ signWhen (msg.length == 32 && (text.isNone || hidden)) .opaqueHash
       ++ signWhen hidden .hiddenCharacters }
@@ -451,7 +514,8 @@ def permit2TypedData (chainId : Nat) (p : PermitSingle) : TypedData :=
 
 /-- The signing request for a Permit2 `PermitSingle`, through the same typed-data path as any
     other request. -/
-def permit2Request (chainId : Nat) (p : PermitSingle) : Except Err712 SignRequest :=
-  hashTypedData (permit2TypedData chainId p)
+def permit2Request (risk : MessageHashing) (chainId : Nat) (p : PermitSingle) :
+    Except Err712 SignRequest :=
+  hashTypedData risk (permit2TypedData chainId p)
 
 end EthereumWallet.Calls
