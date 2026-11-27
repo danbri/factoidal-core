@@ -454,6 +454,12 @@ the shipped engine. CONSTRUCT, DESCRIBE and the OWL and RIF regimes take the
 same path in both modes. -/
 initialize shippedEngine : IO.Ref Bool ← IO.mkRef false
 
+/-- Under `--engine=shipped`: the SELECT and ASK queries answered by the shipped
+evaluator, and how many of them have no FROM clause, so that `shippedRun` takes
+its backend path (`backendSelect?`/`backendAsk?`). `Main` prints both, so a
+score with no difference can be checked for reach (anti-pattern 28). -/
+initialize shippedCounts : IO.Ref (Nat × Nat) ← IO.mkRef (0, 0)
+
 /-- The answer of the shipped evaluator, built as the wasm op builds it: the
 dataset as a set, its indexed backend, and `env.dataset` set (section 18.6:
 the backend runners read EXISTS from the environment, as
@@ -564,6 +570,11 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   let ordered := q.modifier.orderBy.isSome
   let shipped ← shippedEngine.get
+  if shipped && !owlRegime then
+    match q.form with
+    | .select _ | .ask =>
+        shippedCounts.modify fun (n, b) => (n + 1, if q.dataset.isEmpty then b + 1 else b)
+    | _ => pure ()
   -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
   -- query fail, and a QueryEvaluationTest names a result, so the test
   -- fails with the library's error (`Query.serviceFailure`).

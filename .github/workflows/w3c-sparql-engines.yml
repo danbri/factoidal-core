@@ -53,7 +53,8 @@ jobs:
         shell: bash
         run: |
           RC=0; lake exe l4w3c --quiet --engine=shipped ../../third_party/testing/w3c/sparql/sparql11/manifest-all.ttl > "$RUNNER_TEMP/shipped.log" 2>&1 || RC=$?
-          echo "exit $RC"; grep -E '^TOTAL' "$RUNNER_TEMP/shipped.log" | sed 's/^/shipped: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "exit $RC"; grep -E '^TOTAL|^engine:' "$RUNNER_TEMP/shipped.log" | sed 's/^/shipped: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -qE '^engine: shipped; [1-9]' "$RUNNER_TEMP/shipped.log" || { echo "::error::the shipped engine answered no query"; exit 1; }
           grep -qE '^TOTAL' "$RUNNER_TEMP/shipped.log"
       - name: Tests whose outcome differs between the two
         shell: bash
