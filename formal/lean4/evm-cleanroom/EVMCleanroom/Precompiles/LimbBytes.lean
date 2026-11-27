@@ -15,7 +15,7 @@ Proved here: output lengths. The values are tested against `beNat` and
 namespace EVMCleanroom.Precompiles
 
 /-- Eight bytes at `off` as one big-endian limb. -/
-@[inline] def be64 (b : ByteArray) (off : Nat) : UInt64 :=
+def be64 (b : ByteArray) (off : Nat) : UInt64 :=
   ((byteAt b off).toUInt64 <<< 56) ||| ((byteAt b (off + 1)).toUInt64 <<< 48) |||
   ((byteAt b (off + 2)).toUInt64 <<< 40) ||| ((byteAt b (off + 3)).toUInt64 <<< 32) |||
   ((byteAt b (off + 4)).toUInt64 <<< 24) ||| ((byteAt b (off + 5)).toUInt64 <<< 16) |||
@@ -34,11 +34,11 @@ theorem pushBE64_size (acc : ByteArray) (x : UInt64) : (pushBE64 acc x).size = a
   simp only [pushBE64, ByteArray.size_push] <;> omega
 
 /-- 32 big-endian bytes at `off` as four limbs. -/
-@[inline] def U256.ofBE (b : ByteArray) (off : Nat) : U256 :=
+def U256.ofBE (b : ByteArray) (off : Nat) : U256 :=
   ⟨be64 b (off + 24), be64 b (off + 16), be64 b (off + 8), be64 b off⟩
 
 /-- 48 big-endian bytes at `off` as six limbs. -/
-@[inline] def U384.ofBE (b : ByteArray) (off : Nat) : U384 :=
+def U384.ofBE (b : ByteArray) (off : Nat) : U384 :=
   ⟨be64 b (off + 40), be64 b (off + 32), be64 b (off + 24), be64 b (off + 16), be64 b (off + 8), be64 b off⟩
 
 /-- Append four limbs as 32 big-endian bytes. -/

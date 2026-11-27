@@ -77,8 +77,33 @@ namespace EVMCleanroom.Precompiles.BLS12381.Fast
 
 /-- The base field in Montgomery form. -/
 def M : Mont384 := BLS12381.baseField
-def fp : FieldOps U384 := Mont384.ops BLS12381.baseField
-def fp2 : FieldOps (Q2 U384) := Q2.ops (Mont384.ops BLS12381.baseField)
+
+/-! The field operations as plain functions. The Montgomery routines of `Montgomery.lean`
+are marked for inlining; here each is instantiated once for this modulus, and the curve
+code calls these (inlining them at every use made the compiler exceed its step limit). -/
+
+def fmul (a b : U384) : U384 := BLS12381.baseField.mul a b
+def fsqr (a : U384) : U384 := BLS12381.baseField.sqr a
+def fadd (a b : U384) : U384 := BLS12381.baseField.add a b
+def fsub (a b : U384) : U384 := BLS12381.baseField.sub a b
+def fneg (a : U384) : U384 := BLS12381.baseField.neg a
+def finv (a : U384) : U384 := BLS12381.baseField.inv a
+def toMont (a : U384) : U384 := BLS12381.baseField.toMont a
+def fromMont (a : U384) : U384 := BLS12381.baseField.fromMont a
+
+def fp : FieldOps U384 where
+  zero := U384.zero
+  one := BLS12381.baseField.one
+  add := fadd
+  sub := fsub
+  mul := fmul
+  sqr := fsqr
+  neg := fneg
+  inv := finv
+  isZero := U384.isZero
+  eq := U384.beq
+
+def fp2 : FieldOps (Q2 U384) := Q2.ops fp
 
 abbrev G1Affine := U384 × U384
 abbrev G2Affine := Q2 U384 × Q2 U384
@@ -98,7 +123,7 @@ def decodeFp (data : ByteArray) (off : Nat) : Option U384 :=
   if be64 data off != 0 || be64 data (off + 8) != 0 then none
   else
     let value := U384.ofBE data (off + 16)
-    if U384.lt value M.n then some (M.toMont value) else none
+    if U384.lt value M.n then some (toMont value) else none
 
 def decodeFp2 (data : ByteArray) (off : Nat) : Option (Q2 U384) :=
   match decodeFp data off, decodeFp data (off + 64) with
@@ -106,7 +131,7 @@ def decodeFp2 (data : ByteArray) (off : Nat) : Option (Q2 U384) :=
   | _, _ => none
 
 @[inline] def onCurve1 (x y : U384) : Bool :=
-  U384.beq (M.sqr y) (M.add (M.mul (M.sqr x) x) four)
+  U384.beq (fsqr y) (fadd (fmul (fsqr x) x) four)
 
 @[inline] def onCurve2 (x y : Q2 U384) : Bool :=
   Q2.eq fp (Q2.sqr fp y) (Q2.add fp (Q2.mul fp (Q2.sqr fp x) x) twistB)
@@ -149,8 +174,8 @@ def inSubgroup1 (x y : U384) : Bool :=
   let q := mulParameter1 (mulParameter1 (Curve.ofAffine fp x y))
   if U384.isZero q.z then false
   else
-    let zz := M.sqr q.z
-    U384.beq q.x (M.mul (M.mul beta x) zz) && U384.beq (M.neg q.y) (M.mul y (M.mul zz q.z))
+    let zz := fsqr q.z
+    U384.beq q.x (fmul (fmul beta x) zz) && U384.beq (fneg q.y) (fmul y (fmul zz q.z))
 
 /-- `ψ` on an affine point of the twist. -/
 def psi (x y : Q2 U384) : G2Affine := (Q2.mul fp (Q2.conj fp x) psiX, Q2.mul fp (Q2.conj fp y) psiY)
@@ -188,11 +213,15 @@ def decodeG2 (data : ByteArray) (off : Nat) (subgroup : Bool) : Option (Option G
     else some (some (x, y))
   | _, _ => none
 
+/- The proofs below and in the modules that use the decoders treat decoding as opaque;
+   unfolding it would expose the limb arithmetic. -/
+attribute [irreducible] decodeFp decodeFp2 decodeG1 decodeG2
+
 /-! ### Encoding -/
 
 /-- Append a field element as 64 bytes: 16 zero bytes and the canonical value. -/
 def pushFp (acc : ByteArray) (a : U384) : ByteArray :=
-  U384.pushBE (pushBE64 (pushBE64 acc 0) 0) (M.fromMont a)
+  U384.pushBE (pushBE64 (pushBE64 acc 0) 0) (fromMont a)
 
 theorem pushFp_size (acc : ByteArray) (a : U384) : (pushFp acc a).size = acc.size + 64 := by
   simp only [pushFp, U384.pushBE_size, pushBE64_size] <;> omega
@@ -347,6 +376,8 @@ private def order23 : Fp2 × Fp2 := multiple2 (h2 * r / 529) out2
 
 -- The Montgomery parameters belong to the modulus of the definition.
 #guard M.n.toNat == p && M.toNat four == 4 && M.toNat M.one == 1
+#guard M.toNat (fmul (M.ofNat (p - 5)) (M.ofNat (p - 7))) == 35 && M.toNat (finv (M.ofNat 7)) == Fp.inv p 7 &&
+  M.toNat (fsub (M.ofNat 3) (M.ofNat 5)) == p - 2 && (fromMont (toMont (U384.ofNat 12345))).toNat == 12345
 -- Numeric facts behind the subgroup criteria.
 #guard betaNat ^ 3 % p == 1 && betaNat != 1 && (betaNat ^ 2 + betaNat + 1) % p == 0
 #guard r == parameter ^ 4 - parameter ^ 2 + 1 && (parameter + 1) ^ 2 % 3 == 0 && p + parameter == h1 * r

@@ -4,7 +4,7 @@
 set -uo pipefail
 status=0
 # Every module on its own, so one run reports the errors of all of them.
-for module in LimbBytes Fp2Limb CurveFast BN254Fast BLS12381Fast BLS12381Msm; do
+for module in LimbBytes Fp2Limb CurveFast BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
   start=$(date +%s)
   lake -f lakefile-fieldperf.toml build "EVMCleanroom.Precompiles.$module" || status=1
   echo "RESULT build $module: $(( $(date +%s) - start )) s, status so far $status"
@@ -12,7 +12,7 @@ done
 [ "$status" = 0 ] || { echo "RESULT blsops: module build FAILURES"; exit 1; }
 set -e
 lake -f lakefile-fieldperf.toml build evm-blsops
-for f in CurveFast BN254Fast BLS12381Fast BLS12381Msm; do
+for f in CurveFast BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
   c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
   echo "$f.c: closure calls $(grep -c 'lean_apply_' "$c" || true), constructor allocations $(grep -c 'lean_alloc_ctor' "$c" || true)"
 done

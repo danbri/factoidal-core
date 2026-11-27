@@ -36,7 +36,31 @@ namespace EVMCleanroom.Precompiles.BN254.Fast
 
 /-- The base field in Montgomery form. -/
 def M : Mont256 := BN254.baseField
-def ops : FieldOps U256 := Mont256.ops BN254.baseField
+
+/-! The field operations as plain functions. The Montgomery routines of `Montgomery.lean`
+are marked for inlining; here each is instantiated once for this modulus, and the curve
+code calls these (inlining them at every use made the compiler exceed its step limit). -/
+
+def fmul (a b : U256) : U256 := BN254.baseField.mul a b
+def fsqr (a : U256) : U256 := BN254.baseField.sqr a
+def fadd (a b : U256) : U256 := BN254.baseField.add a b
+def fsub (a b : U256) : U256 := BN254.baseField.sub a b
+def fneg (a : U256) : U256 := BN254.baseField.neg a
+def finv (a : U256) : U256 := BN254.baseField.inv a
+def toMont (a : U256) : U256 := BN254.baseField.toMont a
+def fromMont (a : U256) : U256 := BN254.baseField.fromMont a
+
+def ops : FieldOps U256 where
+  zero := U256.zero
+  one := BN254.baseField.one
+  add := fadd
+  sub := fsub
+  mul := fmul
+  sqr := fsqr
+  neg := fneg
+  inv := finv
+  isZero := U256.isZero
+  eq := U256.beq
 
 /-- The curve coefficient 3 in Montgomery form. -/
 def three : U256 := M.ofNat 3
@@ -45,7 +69,7 @@ def three : U256 := M.ofNat 3
 abbrev Affine := Option (U256 × U256)
 
 @[inline] def onCurve (x y : U256) : Bool :=
-  U256.beq (M.sqr y) (M.add (M.mul (M.sqr x) x) three)
+  U256.beq (fsqr y) (fadd (fmul (fsqr x) x) three)
 
 /-- Decode a `G1` point at `off`; the outer `none` is invalid input. -/
 def decodeG1 (data : ByteArray) (off : Nat) : Option Affine :=
@@ -54,9 +78,12 @@ def decodeG1 (data : ByteArray) (off : Nat) : Option Affine :=
   if !(U256.lt x M.n && U256.lt y M.n) then none
   else if x.isZero && y.isZero then some none
   else
-    let xm := M.toMont x
-    let ym := M.toMont y
+    let xm := toMont x
+    let ym := toMont y
     if onCurve xm ym then some (some (xm, ym)) else none
+
+/- The proofs below treat decoding as opaque; unfolding it would expose the limb arithmetic. -/
+attribute [irreducible] decodeG1
 
 def toJacobian : Affine → JPoint U256
   | none => Curve.infinity ops
@@ -65,7 +92,7 @@ def toJacobian : Affine → JPoint U256
 def encodeG1 (point : JPoint U256) : ByteArray :=
   match Curve.toAffineFast ops point with
   | none => natToBE 64 0
-  | some (x, y) => U256.pushBE (U256.pushBE ByteArray.empty (M.fromMont x)) (M.fromMont y)
+  | some (x, y) => U256.pushBE (U256.pushBE ByteArray.empty (fromMont x)) (fromMont y)
 
 theorem encodeG1_size (point : JPoint U256) : (encodeG1 point).size = 64 := by
   unfold encodeG1
@@ -100,13 +127,18 @@ def runAdd (gas : Nat) (input : ByteArray) : Result :=
 def runMul (gas : Nat) (input : ByteArray) : Result :=
   charge gas 6000 fun _ => mulBody (readPadded input 0 96)
 
+/-- Shared shape of the two operations: success has the exact price and the body's bytes. -/
+theorem charged_success (price gas : Nat) (out : ByteArray) (left : Nat) (body : Body)
+    (h : charge gas price (fun _ => body) = .success out left) : body = .output out ∧ left + price = gas :=
+  charge_success _ _ _ _ _ h
+
 /-- Kind: output contract and accounting.
     Says: a successful addition on limbs costs exactly 150 gas and returns exactly 64 bytes.
     Does not say: the bytes encode the group sum, or equal those of `BN254.runAdd`
     (differential runs and vectors, not proved). -/
 theorem runAdd_success (gas : Nat) (input out : ByteArray) (left : Nat)
     (h : runAdd gas input = .success out left) : out.size = 64 ∧ left + 150 = gas := by
-  have ⟨hBody, hGas⟩ := charge_success _ _ _ _ _ h
+  have ⟨hBody, hGas⟩ := charged_success 150 gas out left (addBody (readPadded input 0 128)) h
   refine ⟨?_, hGas⟩
   simp only [addBody] at hBody
   split at hBody
@@ -119,7 +151,7 @@ theorem runAdd_success (gas : Nat) (input out : ByteArray) (left : Nat)
     (differential runs and vectors, not proved). -/
 theorem runMul_success (gas : Nat) (input out : ByteArray) (left : Nat)
     (h : runMul gas input = .success out left) : out.size = 64 ∧ left + 6000 = gas := by
-  have ⟨hBody, hGas⟩ := charge_success _ _ _ _ _ h
+  have ⟨hBody, hGas⟩ := charged_success 6000 gas out left (mulBody (readPadded input 0 96)) h
   refine ⟨?_, hGas⟩
   simp only [mulBody] at hBody
   split at hBody
@@ -167,6 +199,8 @@ private def p7 : Nat × Nat := multiple 7
 
 -- The Montgomery parameters belong to the modulus of the definition.
 #guard M.n.toNat == p && M.toNat three == 3 && M.toNat M.one == 1
+#guard M.toNat (fmul (M.ofNat (p - 5)) (M.ofNat (p - 7))) == 35 && M.toNat (finv (M.ofNat 7)) == Fp.inv p 7 &&
+  M.toNat (fsub (M.ofNat 3) (M.ofNat 5)) == p - 2 && (fromMont (toMont (U256.ofNat 12345))).toNat == 12345
 -- Addition: generic, doubling, inverse points, infinity on either side and on both.
 #guard addAgrees (addInput p5 p7) && addAgrees (addInput p5 p5) && addAgrees (addInput g g)
 #guard addAgrees (addInput p5 (p5.1, p - p5.2)) && addAgrees (addInput (0, 0) p7) &&
@@ -192,6 +226,7 @@ private def p7 : Nat × Nat := multiple 7
 #guard (match runMul 5999 (mulInput g 2) with | .failure => true | _ => false)
 
 #print axioms encodeG1_size
+#print axioms charged_success
 #print axioms runAdd_success
 #print axioms runMul_success
 #print axioms run_reads_prefix
