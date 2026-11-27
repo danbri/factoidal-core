@@ -11,7 +11,7 @@ operation on stored limbs is proved against the `Nat` definitions of
 
 * `mul`, `sqr` against `Fp.mul`; `add`, `sub`, `neg` against `Fp.add`, `Fp.sub`, `Fp.neg`;
 * `ofNat x` has value `x mod N`; the stored one has value `1 mod N`; zero has value 0;
-* `inv` has value `Fp.inv` of the value (it is defined through `Fp.inv`);
+* `inv` has value `Fp.inv` of the value (it is defined through `Fp.inv`); `pow` has value `Fp.pow`;
 * results are canonical (limbs below the modulus); `toNat` is always below the modulus;
 * `isZero` and `beq` on canonical limbs decide zero and equality of values.
 
@@ -20,7 +20,8 @@ against `Fp.ops N`.
 
 Proved for all inputs satisfying the stated hypotheses. Not proved (here or
 anywhere in the package): that a modulus is prime, that `Fp.inv` is an inverse,
-field laws beyond what the refinement transports. `pow` is not covered. Nothing
+field laws beyond what the refinement transports, that `Fp.pow` is the mathematical
+power. Nothing
 is said about timing; these routines branch on data.
 -/
 
@@ -47,7 +48,6 @@ structure FieldRefines {F : Type} (O : FieldOps F) (p : Nat) (C : F → Prop) (v
   eq : ∀ a b, C a → C b → (O.eq a b = true ↔ v a = v b)
   lt : ∀ a, v a < p
 
-variable [LimbB.MacOK]
 
 /-! ### 4 limbs -/
 
@@ -237,6 +237,47 @@ theorem inv_spec (hV : M.Valid) (a : U256) :
   obtain ⟨h1, h2⟩ := ofNat_spec hV (Fp.inv M.n.toNat (M.toNat a))
   rw [Nat.mod_eq_of_lt (Fp.inv_lt M.n.toNat (M.toNat a) (pos hV))] at h2
   exact ⟨h1, h2⟩
+
+/-- Kind: refinement (the exponentiation loop).
+    Says: from a canonical accumulator, `k` steps of square-and-multiply on limbs stay canonical
+    and have the value of the same `k` steps of `Fp.powLoop` on the values.
+    Does not say: that either loop computes a power (not proved for `Fp.powLoop`), or anything about timing. -/
+theorem powLoop_spec (hV : M.Valid) (base : U256) (e : Nat) (k : Nat) (acc : U256)
+    (hacc : acc.toNat < M.n.toNat) :
+    (M.powLoop base e k acc).toNat < M.n.toNat ∧
+      M.toNat (M.powLoop base e k acc) =
+        Fp.powLoop M.n.toNat (M.toNat base) e k (M.toNat acc) := by
+  induction k generalizing acc with
+  | zero => exact ⟨hacc, rfl⟩
+  | succ k ih =>
+    obtain ⟨hs1, hs2⟩ := sqr_spec hV acc hacc
+    obtain ⟨hm1, hm2⟩ := mul_spec hV (M.sqr acc) base hs1
+    show (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)).toNat <
+        M.n.toNat ∧
+      M.toNat (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)) =
+        Fp.powLoop M.n.toNat (M.toNat base) e k
+          (if e.testBit k then M.toNat acc * M.toNat acc % M.n.toNat * M.toNat base % M.n.toNat
+            else M.toNat acc * M.toNat acc % M.n.toNat)
+    by_cases hb : e.testBit k = true
+    · rw [if_pos hb, if_pos hb]
+      have h := ih (M.mul (M.sqr acc) base) hm1
+      rw [hm2, hs2] at h
+      exact h
+    · rw [if_neg hb, if_neg hb]
+      have h := ih (M.sqr acc) hs1
+      rw [hs2] at h
+      exact h
+
+/-- Kind: refinement (exponentiation).
+    Says: `pow base e` is canonical and its value is `Fp.pow` of the value of `base`, for every `base` and `e`.
+    Does not say: that `Fp.pow` is the mathematical power (not proved in `Field.lean`), or anything about timing. -/
+theorem pow_spec (hV : M.Valid) (base : U256) (e : Nat) :
+    (M.pow base e).toNat < M.n.toNat ∧
+      M.toNat (M.pow base e) = Fp.pow M.n.toNat (M.toNat base) e := by
+  obtain ⟨h1, h2⟩ := one_spec hV
+  have h := powLoop_spec hV base e (Nat.log2 e + 1) M.one h1
+  rw [h2] at h
+  exact h
 
 /-- Kind: refinement (zero test).
     Says: on a canonical stored value the limb zero test holds exactly when the value is zero.
@@ -466,6 +507,47 @@ theorem inv_spec (hV : M.Valid) (a : U384) :
   rw [Nat.mod_eq_of_lt (Fp.inv_lt M.n.toNat (M.toNat a) (pos hV))] at h2
   exact ⟨h1, h2⟩
 
+/-- Kind: refinement (the exponentiation loop).
+    Says: from a canonical accumulator, `k` steps of square-and-multiply on limbs stay canonical
+    and have the value of the same `k` steps of `Fp.powLoop` on the values.
+    Does not say: that either loop computes a power (not proved for `Fp.powLoop`), or anything about timing. -/
+theorem powLoop_spec (hV : M.Valid) (base : U384) (e : Nat) (k : Nat) (acc : U384)
+    (hacc : acc.toNat < M.n.toNat) :
+    (M.powLoop base e k acc).toNat < M.n.toNat ∧
+      M.toNat (M.powLoop base e k acc) =
+        Fp.powLoop M.n.toNat (M.toNat base) e k (M.toNat acc) := by
+  induction k generalizing acc with
+  | zero => exact ⟨hacc, rfl⟩
+  | succ k ih =>
+    obtain ⟨hs1, hs2⟩ := sqr_spec hV acc hacc
+    obtain ⟨hm1, hm2⟩ := mul_spec hV (M.sqr acc) base hs1
+    show (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)).toNat <
+        M.n.toNat ∧
+      M.toNat (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)) =
+        Fp.powLoop M.n.toNat (M.toNat base) e k
+          (if e.testBit k then M.toNat acc * M.toNat acc % M.n.toNat * M.toNat base % M.n.toNat
+            else M.toNat acc * M.toNat acc % M.n.toNat)
+    by_cases hb : e.testBit k = true
+    · rw [if_pos hb, if_pos hb]
+      have h := ih (M.mul (M.sqr acc) base) hm1
+      rw [hm2, hs2] at h
+      exact h
+    · rw [if_neg hb, if_neg hb]
+      have h := ih (M.sqr acc) hs1
+      rw [hs2] at h
+      exact h
+
+/-- Kind: refinement (exponentiation).
+    Says: `pow base e` is canonical and its value is `Fp.pow` of the value of `base`, for every `base` and `e`.
+    Does not say: that `Fp.pow` is the mathematical power (not proved in `Field.lean`), or anything about timing. -/
+theorem pow_spec (hV : M.Valid) (base : U384) (e : Nat) :
+    (M.pow base e).toNat < M.n.toNat ∧
+      M.toNat (M.pow base e) = Fp.pow M.n.toNat (M.toNat base) e := by
+  obtain ⟨h1, h2⟩ := one_spec hV
+  have h := powLoop_spec hV base e (Nat.log2 e + 1) M.one h1
+  rw [h2] at h
+  exact h
+
 /-- Kind: refinement (zero test).
     Says: on a canonical stored value the limb zero test holds exactly when the value is zero.
     Does not say: anything for a non-canonical argument. -/
@@ -520,6 +602,8 @@ end Mont384
 #print axioms Mont256.one_spec
 #print axioms Mont256.zero_spec
 #print axioms Mont256.inv_spec
+#print axioms Mont256.powLoop_spec
+#print axioms Mont256.pow_spec
 #print axioms Mont256.isZero_spec
 #print axioms Mont256.beq_spec
 #print axioms Mont256.ops_refines
@@ -538,6 +622,8 @@ end Mont384
 #print axioms Mont384.one_spec
 #print axioms Mont384.zero_spec
 #print axioms Mont384.inv_spec
+#print axioms Mont384.powLoop_spec
+#print axioms Mont384.pow_spec
 #print axioms Mont384.isZero_spec
 #print axioms Mont384.beq_spec
 #print axioms Mont384.ops_refines

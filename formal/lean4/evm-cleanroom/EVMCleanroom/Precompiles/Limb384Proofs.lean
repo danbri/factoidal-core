@@ -1,4 +1,4 @@
-import EVMCleanroom.Precompiles.LimbSpecsB
+import EVMCleanroom.Precompiles.LimbProofs
 import EVMCleanroom.Precompiles.MontgomeryMath
 
 /-!
@@ -24,7 +24,7 @@ set_option exponentiation.threshold 1024
 
 namespace EVMCleanroom.Precompiles.U384
 
-open Limb LimbB
+open Limb
 
 private theorem zero_toNat : (0 : UInt64).toNat = 0 := rfl
 
@@ -388,7 +388,6 @@ theorem negMod_spec (N a : U384) (ha : a.toNat < N.toNat) :
     rw [if_neg hz, if_neg hne]
     exact negMod_nat N.toNat a.toNat _ _ hs (toNat_lt _) ha (toNat_lt N) hne
 
-variable [LimbB.MacOK]
 
 /-- Kind: functional correctness (full product).
     Says: for all inputs the 12 limbs of `mulWide a b` are exactly the product of the two

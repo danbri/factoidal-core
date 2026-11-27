@@ -1,4 +1,4 @@
-import EVMCleanroom.Precompiles.Limb256B
+import EVMCleanroom.Precompiles.LimbU256Proofs
 import EVMCleanroom.Precompiles.Limb384Proofs
 
 /-!
@@ -25,14 +25,22 @@ set_option exponentiation.threshold 1024
 
 namespace EVMCleanroom.Precompiles
 
-open Limb LimbB
+open Limb
 
 private theorem zero_toNat' : (0 : UInt64).toNat = 0 := rfl
+
+private theorem low_nat4 (a0 a1 a2 a3 : Nat) (h0 : a0 < 2 ^ 64) :
+    (a0 + a1 * 2 ^ 64 + a2 * 2 ^ 128 + a3 * 2 ^ 192) % 2 ^ 64 = a0 := by omega
+
+/-- Kind: representation.
+    Says: the low 64 bits of a 4-limb value are its first limb.
+    Does not say: anything about the other limbs. -/
+theorem U256.toNat_mod (a : U256) : a.toNat % 2 ^ 64 = a.l0.toNat :=
+  low_nat4 a.l0.toNat a.l1.toNat a.l2.toNat a.l3.toNat (UInt64.toNat_lt a.l0)
 
 -- The rows are matched as written; nothing below looks inside the primitives.
 attribute [local irreducible] Limb.mac Limb.adc
 
-variable [LimbB.MacOK]
 
 /-- Kind: functional correctness (one row of Montgomery reduction on 4 limbs).
     Says: given the equations of the row's `mac` steps and its final `adc`, with the multiplier
@@ -294,6 +302,7 @@ theorem U384.redc_spec (N : U384) (inv : UInt64) (t : U768)
   rw [hval]
   exact MontMath.redc_mod N.toNat (2 ^ 384) t.toNat M (e.toNat * 2 ^ 384 + q.toNat) hC
 
+#print axioms U256.toNat_mod
 #print axioms U256.redc_row
 #print axioms U256.redc_rows
 #print axioms U256.redc_spec

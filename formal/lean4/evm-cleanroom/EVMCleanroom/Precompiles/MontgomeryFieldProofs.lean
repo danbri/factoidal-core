@@ -24,7 +24,6 @@ set_option exponentiation.threshold 1024
 
 namespace EVMCleanroom.Precompiles
 
-variable [LimbB.MacOK]
 
 /-- Kind: parameter check (closed terms, by the kernel).
     Says: the literals of the secp256k1 scalar field (integers modulo the group order) are a valid Montgomery parameter set.
