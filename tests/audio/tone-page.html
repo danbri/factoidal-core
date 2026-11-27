@@ -4,7 +4,7 @@
 <body>
 <p>The page of tests/audio/page_tone.sh (issue https://github.com/danbri/factoidal-core/issues/1169).
 A key press starts a real-time AudioContext: a 440 Hz sine OscillatorNode into the destination, from
-0 s to 1 s; at its ended event the page closes the context. At start the page renders the same graph
+0 s to 1 s; 300 ms after its ended event the page closes the context. At start the page renders the same graph
 with an OfflineAudioContext and logs a hash of its frames.</p>
 <script>
 (() => {
@@ -40,7 +40,9 @@ with an OfflineAudioContext and logs a hash of its frames.</p>
       const osc = graph(ctx);
       osc.addEventListener('ended', () => {
         console.log('ended at ' + ctx.currentTime);
-        ctx.close().then(() => console.log('closed ' + ctx.state), e => console.log('close-error ' + e.message));
+        // close() stops the output at once (frames still in the ring are not played), so the page
+        // waits until the frames rendered before the stop have played.
+        setTimeout(() => ctx.close().then(() => console.log('closed ' + ctx.state), e => console.log('close-error ' + e.message)), 300);
       });
     } catch (e) { console.log('error ' + e.name + ' ' + e.message); }
   });

@@ -10,7 +10,8 @@
 # engine's audio sink is `wav:FILE` (FOAFNAUT_AUDIO_SINK). Checks: the first 48,000 frames of the
 # file hash to the page's own OfflineAudioContext render of the same graph (FNV-1a over the binary32
 # bits, frame by frame); the frames after them are 0; no under-run; the page saw `ended`, then
-# `closed`. Prints the trace measures (render time, first sound).
+# `closed`. The page sees the states of the Web Audio API constructor: `suspended` at once, then
+# `statechange` to `running`. Prints the trace measures (render time, first sound).
 #
 # Needs .build/web-render/web-render-native (labs/demos/foafnaut/build-web-render.sh --native).
 set -uo pipefail
@@ -41,7 +42,7 @@ print('page logs:', logs)
 fails = []
 offline = [l for l in logs if l.startswith('offline-hash ')]
 if not offline: fails.append('no offline-hash log')
-for need in ('created running', 'ended at', 'closed closed'):
+for need in ('created suspended', 'statechange running', 'ended at', 'statechange closed', 'closed closed'):
     if not any(l.startswith(need) for l in logs): fails.append(f'no log "{need}"')
 import os
 data = open(wav, "rb").read() if os.path.exists(wav) else b""
