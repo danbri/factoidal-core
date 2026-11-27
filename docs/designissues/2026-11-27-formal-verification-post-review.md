@@ -178,3 +178,28 @@ Errors of this work, recorded per iron rule 14: the first campaign comparer trea
 a total order (skills/test-suites, "Random differential campaigns"); a workflow with a YAML error
 was pushed because its check was on a separate line (hazard 47); the shared declaration reader
 did not end at `partial def` (hazard 48).
+
+## 7. Reader campaigns: results and third-party defects (2026-11-27)
+
+Workflow `differential-sparql.yml`, 5,000 random documents per format, Factoidal (npm latest
+and the newest web build of `main`) against pyoxigraph 0.5.13; comparison by RDFC-1.0 canonical
+form.
+
+- Turtle and TriG: the first runs agreed on 1,988 and 1,895 of 5,000. Every non-agreement
+  came from one Factoidal defect: a prefixed name with prefix `e` and digits (`e2:c`) in object
+  position was read as the number `e2`. Fixed by https://github.com/danbri/factoidal-core/pull/1204;
+  the W3C Turtle suite has no case for it (313 of 313 pass with and without the fix).
+- RDF/XML (run https://github.com/danbri/factoidal-core/actions/runs/45941688425): agrees on
+  3,900 of 5,000; 1,100 the same up to the namespace declarations inside `rdf:XMLLiteral`
+  values; 0 other differences.
+
+Third-party behaviour found (owner rule: recorded here, not reported upstream):
+
+- pyoxigraph 0.5.13 refuses `xml:lang=""` in RDF/XML ("A subtag should not be empty"). RDF/XML
+  permits it: an empty `xml:lang` removes the language in scope. Workaround: the generator does
+  not write it.
+- pyoxigraph 0.5.13 writes every in-scope namespace declaration into an `rdf:XMLLiteral` from
+  `rdf:parseType="Literal"`. My reading of RDF 1.1 XML Syntax (section 7.2.17) is that the value
+  is the exclusive canonical form, which keeps only the visibly used declarations, as Factoidal
+  does. To check against the W3C `rdfms-xml-literal-namespaces` tests. Workaround: the comparer
+  counts these documents apart.
