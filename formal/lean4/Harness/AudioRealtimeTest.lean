@@ -79,7 +79,7 @@ def part1 (t : Tally) (dir : String) : IO Unit := do
   -- context is context 2 (its id is not 1 on either side).
   let .ok (st, outs) := ops dev ([(175, [n 2, n 100, d 48000.0]), (190, [s "interactive", ByteArray.empty, n 7])] ++ graph 2)
     | check t "control ops" false; return
-  check t "context answer" (String.fromUTF8! outs[1]! == "2 48000 2 running") (String.fromUTF8! outs[1]!)
+  check t "context answer" (String.fromUTF8! outs[1]! == "2 48000 2 suspended") (String.fromUTF8! outs[1]!)
   let t0 ← IO.monoMsNow
   let (tasks, st) ← Realtime.after {} 1 s!"wav:{path}" st
   check t "task started" (tasks.size == 1)

@@ -139,12 +139,12 @@ structure Local where
   aheadMax : Nat := 0
 
 /-- Apply one batch of messages. 191 is the task's own: `resume`, `suspend`, `close`. Answers the
-new local state, the state changes and the control calls carried out. -/
+new local state and the events, in order: for each call a state change (kind 2) when the state
+changes, then the call carried out (kind 3). -/
 def applyBatch (p : Params) (sink : Sink.Sink) (on : Bool) (l : Local) (msgs : Array (Nat × Array ByteArray)) :
-    BaseIO (Local × Array Api.RtState × Array Nat) := do
+    BaseIO (Local × Array (UInt8 × Nat)) := do
   let mut l := l
-  let mut changes : Array Api.RtState := #[]
-  let mut confirmed : Array Nat := #[]
+  let mut evs : Array (UInt8 × Nat) := #[]
   let mut graph := false
   for (code, fs) in msgs do
     if code == 190 then continue
@@ -155,10 +155,10 @@ def applyBatch (p : Params) (sink : Sink.Sink) (on : Bool) (l : Local) (msgs : A
         if verb == "resume" then .running else if verb == "suspend" then .suspended else .closed
       if l.state != .closed then
         if next != l.state then
-          changes := changes.push next
+          evs := evs.push (2, next.code)
           l := { l with state := next }
           Sink.pause sink (next != .running)
-      confirmed := confirmed.push call
+      evs := evs.push (3, call)
     else
       let (s', r) := Api.op l.st code fs
       match r with
@@ -170,7 +170,7 @@ def applyBatch (p : Params) (sink : Sink.Sink) (on : Bool) (l : Local) (msgs : A
     match l.st.contexts[p.id]? with
     | some c => l := { l with plan := Render.Plan.of c.state.graph }
     | none => pure ()
-  return (l, changes, confirmed)
+  return (l, evs)
 
 /-- Render quanta while the ring holds fewer than the target, at most `quantaPerBatch`. Answers the
 new local state, the source ids that ended, and whether an audible frame was written. -/
@@ -202,15 +202,14 @@ def fill (p : Params) (sink : Sink.Sink) (l : Local) : BaseIO (Local × Array Na
   return ({ l with st, reported, renderNs := l.renderNs + (t1 - t0) }, ended.toArray, heard)
 
 /-- Publish the counters and add the events to the report. -/
-def publish (sh : Shared) (sink : Sink.Sink) (l : Local) (p : Params) (ended : Array Nat)
-    (changes : Array Api.RtState) (confirmed : Array Nat) : BaseIO Unit := do
+def publish (sh : Shared) (sink : Sink.Sink) (l : Local) (p : Params) (evs : Array (UInt8 × Nat)) :
+    BaseIO Unit := do
   let cnt ← Sink.counters sink
   let rendered := match l.st.contexts[p.id]? with | some c => c.state.frame | none => 0
   sh.report.modify fun r =>
     { r with framesRendered := rendered, framesPlayed := cnt[1]!.toUInt64.toNat,
              underruns := cnt[2]!.toUInt64.toNat, latencyFrames := cnt[4]!.toUInt64.toNat,
-             ended := r.ended ++ ended, stateChanges := r.stateChanges ++ changes,
-             confirmed := r.confirmed ++ confirmed }
+             events := r.events ++ evs }
 
 /-- The loop of a rendering task. Ends when the context is closed (a `close()` message) or when the
 engine stops it (`stop`): an outside event, so a `repeat` loop (`CLAUDE.md`, "Loops yes, new partial
@@ -220,19 +219,20 @@ def serveWith (sh : Shared) (p : Params) (on : Bool) (sink : Sink.Sink) (c0 : Co
   let start : Api.RtState := if p.running then .running else .suspended
   Sink.pause sink (!p.running)
   let mut l : Local := { st, plan := Render.Plan.of c0.state.graph, state := start, lastTrace := ← IO.monoMsNow }
-  if p.running then sh.report.modify fun r => { r with stateChanges := r.stateChanges.push .running }
+  if p.running then sh.report.modify fun r => { r with events := r.events.push (2, Api.RtState.running.code) }
   repeat
     let msgs ← sh.inbox.modifyGet fun m => (m, #[])
-    let (l1, changes, confirmed) ← applyBatch p sink on l msgs
+    let (l1, evs) ← applyBatch p sink on l msgs
     l := l1
     let stop ← sh.stopping.modifyGet fun b => (b, b)
     if stop && l.state != .closed then
       l := { l with state := .closed }
       trace on [("type", "\"native-audio-stop\""), ("ctx", num p.id), ("why", "\"engine stopped the task: page session gone\"")]
-    if changes.contains .closed then
+    let closedNow := evs.contains (2, Api.RtState.closed.code)
+    if closedNow then
       trace on [("type", "\"native-audio-stop\""), ("ctx", num p.id), ("why", "\"close() message\"")]
     if l.state == .closed then
-      publish sh sink l p #[] (if changes.contains .closed then changes else changes.push .closed) confirmed
+      publish sh sink l p (if closedNow then evs else evs.push (2, Api.RtState.closed.code))
       break
     let mut ended := #[]
     if l.state == .running then
@@ -245,7 +245,7 @@ def serveWith (sh : Shared) (p : Params) (on : Bool) (sink : Sink.Sink) (c0 : Co
           let now ← IO.monoNanosNow
           trace on [("type", "\"native-audio-first-sound\""), ("ctx", num p.id),
                     ("handoverToRingMs", flo ((now - s).toFloat / 1e6))]
-    publish sh sink l p ended changes confirmed
+    publish sh sink l p (evs ++ ended.map fun i => ((1 : UInt8), i))
     let now ← IO.monoMsNow
     if l.state == .running && now - l.lastTrace ≥ 1000 then
       let cnt ← Sink.counters sink
@@ -275,7 +275,7 @@ def serve (sh : Shared) (p : Params) (spec : String) : BaseIO Unit := do
   let on ← traceOn
   let fail := fun (why : String) => do
     trace on [("type", "\"native-audio-end\""), ("ctx", num p.id), ("error", quote why)]
-    sh.report.modify fun r => { r with stateChanges := r.stateChanges.push .closed }
+    sh.report.modify fun r => { r with events := r.events.push (2, Api.RtState.closed.code) }
     sh.ended.modify fun _ => true
   match Context.OfflineContext.new 2 1 p.rate with
   | .error _ => fail "context"
@@ -308,7 +308,7 @@ def give (h : Handle) (msgs : Array (Nat × Array ByteArray)) : BaseIO Unit := d
 /-- The report since the last call; its events are taken. -/
 def takeReport (h : Handle) : BaseIO Api.Report :=
   h.shared.report.modifyGet fun r =>
-    (r, { r with ended := #[], stateChanges := #[], confirmed := #[], rejected := #[] })
+    (r, { r with ended := #[], stateChanges := #[], confirmed := #[], rejected := #[], events := #[] })
 
 /-- Ask the task to close its context and end. -/
 def stop (h : Handle) : BaseIO Unit := h.shared.stopping.modify fun _ => true
@@ -338,10 +338,11 @@ def before (tasks : Tasks) (sid : Nat) (audio : Api.State) (nowMs : Nat) : BaseI
   for ((s, ctx), h) in tasks.toList do
     if s != sid then continue
     let r ← takeReport h
-    let evs := r.ended.size + r.stateChanges.size + r.confirmed.size + r.rejected.size
+    let evs := r.ended.size + r.stateChanges.size + r.confirmed.size + r.rejected.size + r.events.size
     if evs > 0 then
       trace on [("type", "\"native-audio-report\""), ("session", num sid), ("ctx", num ctx), ("events", num evs),
-                ("ended", num r.ended.size), ("stateChanges", num r.stateChanges.size), ("confirmed", num r.confirmed.size),
+                ("ended", num (r.events.filter (·.1 == 1)).size), ("stateChanges", num (r.events.filter (·.1 == 2)).size),
+                ("confirmed", num (r.events.filter (·.1 == 3)).size),
                 ("known", toString (audio.realtime.contains ctx))]
     audio := Api.applyReport audio ctx { r with timeMs := nowMs.toFloat }
     if ← hasEnded h then tasks := tasks.erase (s, ctx)
