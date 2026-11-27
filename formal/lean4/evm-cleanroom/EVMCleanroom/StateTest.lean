@@ -111,6 +111,9 @@ private def hexDigit (n : Nat) : Char := "0123456789abcdef".toList.getD n '0'
 
 def byteHex (n : Nat) : String := String.ofList [hexDigit (n / 16 % 16), hexDigit (n % 16)]
 
+/-- Hex of a precompile address (one or two bytes). -/
+def precompileHex (n : Nat) : String := if n < 256 then byteHex n else byteHex (n / 256) ++ byteHex n
+
 /-- A reason for an instruction the interpreter stopped at. -/
 def opcodeReason (op : Nat) : String :=
   match opcodeName op with
@@ -164,14 +167,18 @@ def ensureSlot (ws : List WitnessAccount) (address key : Nat) : Option (List Wit
 def forkOf : String → Option Fork
   | "Shanghai" => some .shanghai
   | "Cancun" => some .cancun
+  | "Prague" => some .prague
+  | "Osaka" => some .osaka
   | _ => none
 
 def blockOf (fork : Fork) (env : Env) : Except String BlockContext := do
   let blobFee ← match fork with
     | .shanghai => pure 0
-    | .cancun => match env.excessBlobGas with
+    | .cancun | .prague | .osaka => match env.excessBlobGas with
       | none => throw "env-missing-excess-blob-gas"
-      | some excess => match HeaderRLP.boundedBlobFee excess 3338477 with
+      | some excess =>
+        -- EIP-4844 and EIP-7691 update fractions.
+        match HeaderRLP.boundedBlobFee excess (if fork = .cancun then 3338477 else 5007716) with
         | none => throw "blob-fee-local-resource-limit"
         | some fee => pure fee
   return { chainId := env.chainId, coinbase := env.coinbase, number := env.number
@@ -210,6 +217,24 @@ def attempt (fork : Fork) (env : Env) (block : BlockContext) (fuel : Nat) (tx : 
 
 def maxExpansions : Nat := 512
 
+/-- EIP-2537 precompile addresses, executable from Prague. -/
+def blsAddress (address : Nat) : Bool := decide (0x0b ≤ address ∧ address ≤ 0x11)
+
+/-- Precompile addresses this runner has no implementation for, beyond the
+    Cancun set that the call dispatcher already refuses. -/
+def laterPrecompile (fork : Fork) (address : Nat) : Bool :=
+  match fork with
+  | .prague => blsAddress address
+  | .osaka => blsAddress address || address == 0x100
+  | _ => false
+
+/-- Forks with EIP-7702 delegations. -/
+def hasDelegations (fork : Fork) : Bool := fork = .prague || fork = .osaka
+
+/-- EIP-7702 delegation designator prefix 0xef0100. -/
+def delegated (code : Array UInt8) : Bool :=
+  code.size == 23 && code[0]? == some 0xef && code[1]? == some 0x01 && code[2]? == some 0x00
+
 /-- Run with inventory expansion. Returns the final outcome and inventory. -/
 def runExpanding (fork : Fork) (env : Env) (block : BlockContext) (fuel : Nat) (tx : Envelope)
     (blob : Option TransactionList.BlobFields) (a : Keccak.Acceptance) :
@@ -218,7 +243,9 @@ def runExpanding (fork : Fork) (env : Env) (block : BlockContext) (fuel : Nat) (
   | budget + 1, used, ws =>
     match attempt fork env block fuel tx blob ws a with
     | .done (.indeterminate (.frame (.incompleteState address none))) =>
-      if ws.any (·.address == address) then
+      if laterPrecompile fork address then
+        (.done (.indeterminate (.unsupported ("missing-precompile:0x" ++ precompileHex address))), ws, used)
+      else if ws.any (·.address == address) then
         (.done (.indeterminate (.unsupported "witness-domain-loop")), ws, used)
       else runExpanding fork env block fuel tx blob a budget (used + 1) (ensureAccount ws address)
     | .done (.indeterminate (.frame (.incompleteState address (some key)))) =>
@@ -283,6 +310,10 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
   | none => unsupportedReport ("fork-not-implemented:" ++ c.fork)
   | some fork =>
   if c.pre.any PreAccount.empty then unsupportedReport "pre-state-empty-account"
+  else if hasDelegations fork && c.pre.any (fun p => delegated p.code) then
+    unsupportedReport "eip7702-delegation-in-pre-state"
+  else if c.pre.any (fun p => laterPrecompile fork p.address) then
+    unsupportedReport "pre-state-account-at-unimplemented-precompile"
   else if !(decide ((c.pre.map (·.address)).Nodup)) then unsupportedReport "pre-state-duplicate-address"
   else match blockOf fork c.env with
   | .error why => unsupportedReport why
@@ -296,7 +327,7 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
   | .error .invalidSignature => rejectedReport a c "invalid-signature"
   | .error (.malformed why) => rejectedReport a c ("signed-envelope:" ++ why)
   | .ok d =>
-  if d.kind == 3 && fork != .cancun then unsupportedReport "tx-type-3-outside-cancun"
+  if d.kind == 3 && fork != .cancun then unsupportedReport ("tx-type-3-not-implemented:" ++ c.fork)
   else
   match SignedTransaction.recover a s d with
   | .error .invalidSignature => rejectedReport a c "invalid-signature"
@@ -305,6 +336,9 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
   match d.to with
   | none => unsupportedReport "contract-creation-transaction"
   | some dest =>
+    if laterPrecompile fork dest then
+      unsupportedReport ("missing-precompile:0x" ++ precompileHex dest)
+    else
     let tx : Envelope := {
       kind := d.kind, signedChainId := d.chain, sender, to := dest, nonce := d.nonce
       value := d.value, gasLimit := d.gasLimit, gasPriceCap := d.gasPriceCap
@@ -316,7 +350,12 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
     | .refusedBlob (.indeterminate why) => unsupportedReport ("blob:" ++ why)
     | .done (.rejected why) => rejectedReport a c why
     | .done (.indeterminate why) =>
-      { unsupportedReport (unavailableReason why) with expansions := used }
+      let reason := match why with
+        | .frame .unsupportedFork =>
+          if (1 ≤ dest ∧ dest ≤ 0x11) ∨ dest = 0x100 then "missing-precompile:0x" ++ precompileHex dest
+          else unavailableReason why
+        | _ => unavailableReason why
+      { unsupportedReport reason with expansions := used }
     | .done (.executed result) =>
       judge c (.executed result.receiptStatus result.charge.used)
         (StateRoot.stateRoot a (postAccounts result.world ws))
@@ -363,6 +402,20 @@ theorem ensureAccount_keeps (ws : List WitnessAccount) (address : Nat) (w : Witn
     (h : w ∈ ws) : w ∈ ensureAccount ws address := by
   unfold ensureAccount; split <;> simp [h]
 
+/-- Kind: resource bound.
+    Says: a frame whose memory expansion fits within the local transaction
+    gas cap `CallTransaction.maxGas` has at most 369,960 words (11.3 MiB).
+    Does not say: how many frames are live at once (the call depth bounds it). -/
+theorem memory_words_bounded (w : Nat) (h : MemoryGas.cost w ≤ CallTransaction.maxGas) :
+    w ≤ 369960 := by
+  apply Classical.byContradiction
+  intro hw
+  have hm : MemoryGas.cost 369961 ≤ MemoryGas.cost w := MemoryGas.cost_monotone (by omega)
+  have hc : CallTransaction.maxGas < MemoryGas.cost 369961 := by
+    unfold CallTransaction.maxGas MemoryGas.cost; decide
+  omega
+
+#print axioms memory_words_bounded
 #print axioms evaluate_unknown_fork
 #print axioms judge_pass_sound
 #print axioms judge_exception_executed

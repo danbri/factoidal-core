@@ -138,7 +138,8 @@ theorem charge_bounded (budget : Budget) (remaining : Nat) (counter : Int) :
     (charge budget remaining counter).refund ≤ (charge budget remaining counter).beforeRefund / 5 ∧
     (charge budget remaining counter).used ≤ budget.gasLimit := by
   unfold charge
-  exact ⟨Nat.min_le_left _ _, Nat.min_le_right _ _, Nat.le_trans (Nat.sub_le _ _) (Nat.sub_le _ _)⟩
+  exact ⟨Nat.min_le_left _ _, Nat.min_le_right _ _,
+    Nat.max_le.2 ⟨Nat.le_trans (Nat.sub_le _ _) (Nat.sub_le _ _), Nat.min_le_right _ _⟩⟩
 
 /-- Kind: accounting.
     Says: the amount returned to the sender, the beneficiary tip, and the
