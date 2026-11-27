@@ -39,3 +39,43 @@ pure Lean Keccak-256 (see `skills/lean-risk-flags`). Differential cases come
 from `scripts/abi-oracle` (ethers and viem, test oracles only; CI runs them).
 Design note and the list of warnings:
 `docs/designissues/2026-11-27-wallet-misleading-signing-cases.md`.
+
+## Transactions and signing
+
+| Module | What |
+|---|---|
+| `Tx.lean` | unsigned transactions of kinds 0 to 4, RLP encoding, signing payload and hash, signed envelope, EIP-7702 authorization hash, admission rules |
+| `SignSecp.lean` | secret-scalar base multiplication on the shared secp256k1 arithmetic, verification, addresses, the timing risk token |
+| `SignRfc6979.lean` | RFC 6979 nonces on HMAC-SHA-256 |
+| `Sign.lean` | `signHash`: ECDSA, low `s`, recovery self-check |
+| `TxDecode.lean` | reading a signed transaction back through the admission decoder |
+| `TxSign.lean` | `signTransaction`, `signAuthorization`, round-trip theorems |
+| `SignTests.lean` | build-time `#guard` tests |
+| `SignMain.lean` | the `eth-wallet-sign` tool: sign JSON with a test key, vector suites, timing |
+
+Signing is **not constant-time**; callers pass `Risk.Accepted .variableTimeSigning`.
+What is proved, what is tested, and the timing analysis:
+[design record](../../../docs/designissues/2026-11-27-ethereum-wallet-signing.md).
+
+Reused in place (see `lakefile.toml`): `EVMCleanroom.CanonicalRLP`, `Keccak`,
+`SignedTransaction`, `Precompiles.Secp256k1` from `../evm-cleanroom`;
+`L4Factoidal.Crypto.SHA2` and `Hmac`.
+
+```sh
+lake build EthereumWallet eth-wallet-sign
+R=--dangerously-enable-variable-time-signing
+# The key below is the published EIP-155 example key. Never use a key that holds funds.
+.lake/build/bin/eth-wallet-sign sign $R --test-key-hex 4646464646464646464646464646464646464646464646464646464646464646 tx.json
+.lake/build/bin/eth-wallet-sign tx-vectors $R vectors/eest-prague-signing.json --affine 25
+.lake/build/bin/eth-wallet-sign rfc6979-vectors $R ../../../third_party/bitcoinjs-lib-fixtures/ecdsa.json
+.lake/build/bin/eth-wallet-sign wycheproof ../../../third_party/wycheproof/ecdsa_secp256k1_sha256_p1363_test.json
+.lake/build/bin/eth-wallet-sign bench $R 300
+```
+
+`tx.json` uses the JSON-RPC field names: `type`, `chainId`, `nonce`, `gasPrice`
+or `maxFeePerGas` and `maxPriorityFeePerGas`, `gas`, `to`, `value`, `input`,
+`accessList`, `maxFeePerBlobGas`, `blobVersionedHashes`, `authorizationList`.
+
+CI: `.github/workflows/ethereum-wallet.yml`. Each area lists its theorems in
+`scripts/theorems/<area>.txt` for the axiom audit and adds its steps in its
+own block of the workflow.

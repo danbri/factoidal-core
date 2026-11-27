@@ -1,0 +1,184 @@
+name: Ethereum wallet
+# One job for the stand-alone package formal/lean4/ethereum-wallet. The first
+# steps build the whole library once (theorems and #guard tests of every
+# area) and audit axioms; each area then has its own block of steps:
+# signing and transactions (below), keys, ABI. To add an area's steps, put
+# them in that area's block so that edits from different branches do not
+# touch the same lines, and list the area's theorems in
+# formal/lean4/ethereum-wallet/scripts/theorems/<area>.txt.
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-wallet/**'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Precompiles/**'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Keccak.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/CanonicalRLP.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/SignedTransaction.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/SecpRecovery.lean'
+      - 'formal/lean4/evm-cleanroom/scripts/check-witness-runtime.py'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - 'formal/lean4/L4Factoidal/Crypto/Hmac.lean'
+      - 'third_party/wycheproof/**'
+      - 'third_party/bitcoinjs-lib-fixtures/**'
+      - '.github/workflows/ethereum-wallet.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wallet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEAN_NUM_THREADS: '2'
+      FIXTURE_RELEASE: 'ethereum/execution-specs tests@v21.0.3'
+      FIXTURE_URL: 'https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.3/fixtures.tar.gz'
+      FIXTURE_SHA256: '46bd48fb71a23da084218fe856fe442ab0c8d00c85c1c1aead0d2a965804fd24'
+      RISK: '--dangerously-enable-variable-time-signing'
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-wallet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-wallet
+          auto-config: false
+          use-mathlib-cache: false
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ---- whole package: build, #guard tests, axioms, hygiene -----------------
+      - name: Build the library (theorems and #guard tests of every area)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat lean-toolchain)" = "leanprover/lean4:v4.33.1"
+          mkdir -p .lake/wallet-evidence
+          lake build EthereumWallet 2>&1 | tee .lake/wallet-evidence/build.log
+      - name: Axiom audit (propext, Classical.choice, Quot.sound only)
+        run: python3 scripts/check-axioms.py .lake/wallet-evidence/build.log --out .lake/wallet-evidence/axioms.json
+      - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/lean-hygiene-audit.py --build-log formal/lean4/ethereum-wallet/.lake/wallet-evidence/build.log
+
+      # ---- signing and transactions (eth-wallet-sign) ---------------------------
+      - name: 'sign: build the tool'
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake build eth-wallet-sign 2>&1 | tee .lake/wallet-evidence/build-sign.log
+          sha256sum .lake/build/bin/eth-wallet-sign | tee .lake/wallet-evidence/SHA256SUMS
+      - name: 'sign: no proof assistant in the executable'
+        run: python3 scripts/check-runtime.py eth-wallet-sign --out .lake/wallet-evidence/runtime-sign.json
+      - name: 'sign: the tool refuses without the risk flag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '{"type":"0x0","chainId":1,"nonce":9,"gasPrice":"20000000000","gas":21000,"to":"0x3535353535353535353535353535353535353535","value":"1000000000000000000"}' > /tmp/eip155.json
+          # The EIP-155 specification example key (published).
+          if .lake/build/bin/eth-wallet-sign sign --test-key-hex 4646464646464646464646464646464646464646464646464646464646464646 /tmp/eip155.json; then
+            echo "signed without the risk flag"; exit 1
+          fi
+          .lake/build/bin/eth-wallet-sign sign $RISK --test-key-hex 4646464646464646464646464646464646464646464646464646464646464646 /tmp/eip155.json \
+            | grep -q '"raw":"0xf86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a76400008025a028ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276a067cbe9d8997f761aecb703304b3800ccf555c9f3dc64214b297fb1966a3b6d83"'
+      - name: 'sign: RFC 6979 vectors (bitcoinjs fixture, RFC 6979 A.2.5 nonces)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "63475f7539040d41760619ade10e4000794b12ffea2f7c4165d026cc37ca1f3f  ../../../third_party/bitcoinjs-lib-fixtures/ecdsa.json" | sha256sum --check
+          .lake/build/bin/eth-wallet-sign rfc6979-vectors $RISK ../../../third_party/bitcoinjs-lib-fixtures/ecdsa.json \
+            | tee .lake/wallet-evidence/rfc6979.json
+          python3 -c 'import json,sys; x=json.load(open(".lake/wallet-evidence/rfc6979.json")); assert x["failed"]==0 and x["signatureVectors"]==7 and x["nonceCandidates"]==32 and x["controls"]>=9, x'
+      - name: 'sign: Wycheproof ECDSA secp256k1 verification vectors'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "7a339efc7134fb2495cd32afdbd692e0f86427d3c24e9073f6a7d858bb8788d2  ../../../third_party/wycheproof/ecdsa_secp256k1_sha256_p1363_test.json" | sha256sum --check
+          .lake/build/bin/eth-wallet-sign wycheproof ../../../third_party/wycheproof/ecdsa_secp256k1_sha256_p1363_test.json \
+            | tee .lake/wallet-evidence/wycheproof.json
+          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/wycheproof.json")); assert x=={"failed":0,"invalidRefused":85,"validAccepted":167}, x'
+      - name: 'sign: committed execution-specs signing vectors (500), affine recovery on 25'
+        shell: bash
+        run: |
+          set -euo pipefail
+          .lake/build/bin/eth-wallet-sign tx-vectors $RISK vectors/eest-prague-signing.json --affine 25 \
+            | tee .lake/wallet-evidence/tx-vectors.json
+          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/tx-vectors.json")); assert x["failed"]==0 and x["vectors"]==500 and x["matched"]>=498 and x["matched"]+x["refusedAsFixtureExpects"]==500 and x["affineRecoveryChecked"]==25, x'
+      - name: 'sign: a wrong expected byte is reported (negative control of the runner)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          d = json.load(open("vectors/eest-prague-signing.json"))
+          keep = [v for v in d["vectors"] if not v["fixtureExpectsException"]][:5]
+          flipped = dict(keep[0]); flipped["raw"] = keep[0]["raw"][:-1] + ("0" if keep[0]["raw"][-1] != "0" else "1")
+          marked = dict(keep[1]); marked["raw"] = marked["raw"][:-2] + "00"; marked["expect"] = "mismatch"
+          json.dump({"vectors": [flipped]}, open("/tmp/wrong.json", "w"))
+          json.dump({"vectors": [marked] + keep[2:]}, open("/tmp/marked.json", "w"))
+          PY
+          if .lake/build/bin/eth-wallet-sign tx-vectors $RISK /tmp/wrong.json; then echo "wrong bytes accepted"; exit 1; fi
+          .lake/build/bin/eth-wallet-sign tx-vectors $RISK /tmp/marked.json | grep -q '"controlVectors":1,"failed":0,"matched":3'
+      - name: 'sign: fetch the execution-specs fixtures'
+        id: fixtures
+        uses: actions/cache@v4
+        with:
+          path: /tmp/eels/fixtures.tar.gz
+          key: eels-fixtures-46bd48fb71a23da084218fe856fe442ab0c8d00c85c1c1aead0d2a965804fd24
+      - name: 'sign: every Prague state-test transaction of the fixtures (about 12,900 distinct)'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/eels
+          if [ ! -f /tmp/eels/fixtures.tar.gz ]; then
+            curl --fail --location --silent --show-error --retry 3 -o /tmp/eels/fixtures.tar.gz "$FIXTURE_URL"
+          fi
+          echo "$FIXTURE_SHA256  /tmp/eels/fixtures.tar.gz" | sha256sum --check
+          tar -xzf /tmp/eels/fixtures.tar.gz -C /tmp/eels fixtures/state_tests/for_prague
+          python3 scripts/eest-sign-vectors.py /tmp/eels/fixtures/state_tests/for_prague /tmp/eels/prague-signing.json
+          # The committed subset is reproduced from the same release.
+          python3 scripts/eest-sign-vectors.py /tmp/eels/fixtures/state_tests/for_prague /tmp/eels/subset.json --per-kind 100 --max-raw 420
+          cmp /tmp/eels/subset.json vectors/eest-prague-signing.json
+          .lake/build/bin/eth-wallet-sign tx-vectors $RISK /tmp/eels/prague-signing.json --affine 40 \
+            | tee .lake/wallet-evidence/tx-vectors-all.json
+          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/tx-vectors-all.json")); assert x["failed"]==0 and x["vectors"]>=12000 and x["matched"]>=12000 and x["matched"]+x["refusedAsFixtureExpects"]==x["vectors"] and x["refusedAsFixtureExpects"]<=30, x'
+      - name: 'sign: differential against EthereumJS (test oracle only), fresh keys'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          node scripts/differential/sign-differential.mjs .lake/build/bin/eth-wallet-sign 60 \
+            | tee .lake/wallet-evidence/differential.json
+          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/differential.json")); assert all(x["matched"][k]==60 for k in "01234") and x["authorizationsMatched"]>=60 and x["controls"]>=53, x'
+      - name: 'sign: timing (reported, not gated)'
+        run: .lake/build/bin/eth-wallet-sign bench $RISK 300 | tee .lake/wallet-evidence/bench-sign.json
+      - name: 'sign: no input-sized native recursion in the emitted C'
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/lean-tail-recursion-audit.py \
+            --ir-dir formal/lean4/ethereum-wallet/.lake/build/ir \
+            --lean-dir formal/lean4/ethereum-wallet \
+            --json formal/lean4/ethereum-wallet/.lake/wallet-evidence/tail-audit.json \
+            | tee formal/lean4/ethereum-wallet/.lake/wallet-evidence/tail-audit.txt
+          # Every loop in the wallet and in the modules it reuses compiles to a jump.
+          python3 -c 'import json; a=json.load(open("formal/lean4/ethereum-wallet/.lake/wallet-evidence/tail-audit.json")); assert a["rows"]==[] and a["cycles"]==[] and a["csimp_unresolved"]==[] and a["cfiles"]>=30, a'
+
+      # ---- keys (eth-wallet-keys): add steps here --------------------------------
+
+      # ---- ABI, EIP-712, contract calls (eth-wallet-abi): add steps here ---------
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ethereum-wallet-evidence
+          path: formal/lean4/ethereum-wallet/.lake/wallet-evidence/

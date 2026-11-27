@@ -32,3 +32,10 @@ roots = ["L4Factoidal.Crypto"]
 [[lean_exe]]
 name = "wallet-abi-vectors"
 root = "AbiVectorsMain"
+
+# Test and development tool: sign a JSON transaction with a test key, run the
+# vector suites, measure. JSON data routines only; plain runtime initializer.
+[[lean_exe]]
+name = "eth-wallet-sign"
+root = "SignMain"
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
