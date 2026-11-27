@@ -26,6 +26,13 @@ name = "WalletFactoidalCrypto"
 srcDir = ".."
 roots = ["L4Factoidal.Crypto"]
 
+# Test tool for the ABI, typed-data and call code: built-in vectors and negative
+# controls, differential cases from a reference library (CI only), timings.
+# It imports nothing from Lean.*, so it starts with the plain runtime initializer.
+[[lean_exe]]
+name = "wallet-abi-vectors"
+root = "AbiVectorsMain"
+
 # Test and development tool: sign a JSON transaction with a test key, run the
 # vector suites, measure. JSON data routines only; plain runtime initializer.
 [[lean_exe]]

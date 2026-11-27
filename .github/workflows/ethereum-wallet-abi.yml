@@ -1,0 +1,169 @@
+name: Ethereum wallet ABI
+# ABI codec, EIP-712/EIP-191, contract-call builders and summaries, CREATE and
+# CREATE2 prediction, in the stand-alone package formal/lean4/ethereum-wallet.
+# A separate file from ethereum-wallet.yml so that the wallet areas, written on
+# different branches, never edit the same lines. The steps can move into that
+# file's "ABI" block once both are on main.
+#
+# ethers and viem are used here as test oracles only: they encode random inputs
+# in CI and the Lean code must give the same bytes. They are not dependencies
+# of the wallet and none of their code is in it.
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-wallet/**'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Keccak.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Memory.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/MemoryGas.lean'
+      - 'formal/lean4/evm-cleanroom/scripts/check-witness-runtime.py'
+      - 'tools/lean-tail-recursion-audit.py'
+      - '.github/workflows/ethereum-wallet-abi.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ethereum-wallet-abi-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      LEAN_NUM_THREADS: '2'
+      # The vector tool hashes typed-data values and personal_sign messages with the pure
+      # Lean Keccak-256 (timing depends on the data; digests tested, not proved). It runs
+      # those cases only under this flag (skills/lean-risk-flags).
+      RISK: '--dangerously-enable-pure-keccak-on-messages'
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-wallet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-wallet
+          auto-config: false
+          use-mathlib-cache: false
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the ABI modules and their theorems
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat lean-toolchain)" = "leanprover/lean4:v4.33.1"
+          mkdir -p .lake/abi-evidence
+          lake build EthereumWallet.AbiAxioms 2>&1 | tee .lake/abi-evidence/build.log
+      - name: Axiom audit (every listed theorem; propext, Classical.choice, Quot.sound only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check-abi-axioms.py .lake/abi-evidence/build.log --out .lake/abi-evidence/axioms.json \
+            | tee .lake/abi-evidence/axioms-summary.json
+          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/axioms-summary.json")); assert x["passed"] and x["expected"]>=122 and x["reported"]==x["expected"], x'
+      - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
+        working-directory: .
+        run: python3 tools/lean-hygiene-audit.py --build-log formal/lean4/ethereum-wallet/.lake/abi-evidence/build.log
+      - name: No import from Lean.* in the ABI modules (no proof assistant at run time)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nE '^import Lean(\.|$)' AbiVectorsMain.lean EthereumWallet/AbiVectors.lean EthereumWallet/AbiAxioms.lean \
+               $(find EthereumWallet/Abi EthereumWallet/Eip712 EthereumWallet/Calls -name '*.lean'); then
+            echo "an ABI module imports the Lean frontend"; exit 1
+          fi
+      - name: Build the vector tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          lake build wallet-abi-vectors 2>&1 | tee .lake/abi-evidence/build-tool.log
+          sha256sum .lake/build/bin/wallet-abi-vectors | tee .lake/abi-evidence/SHA256SUMS
+      - name: The tool starts with the plain runtime initializer and links no elaborator
+        shell: bash
+        run: |
+          set -euo pipefail
+          nm .lake/build/bin/wallet-abi-vectors > .lake/abi-evidence/symbols.txt
+          grep -q 'lean_initialize_runtime_module' .lake/abi-evidence/symbols.txt
+          if grep -E ' [Tt] (l_Lean_Elab_|l_Lean_Meta_|l_Lean_Kernel_|l_Lean_Compiler_|lean_initialize$)' .lake/abi-evidence/symbols.txt; then
+            echo "proof-assistant symbols in the tool"; exit 1
+          fi
+      - name: The tool refuses to hash message data without the risk flag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if .lake/build/bin/wallet-abi-vectors builtin; then echo "ran without the risk flag"; exit 1; fi
+          # The risk is accepted in exactly one place: the test tool, under the flag.
+          test "$(grep -rn --include='*.lean' --exclude-dir=.lake 'HashRisk.dangerouslyAccept \.' . | wc -l)" = "1"
+          grep -q 'HashRisk.dangerouslyAccept \.' AbiVectorsMain.lean
+      - name: Built-in vectors and negative controls (Solidity ABI spec, EIP-712 Mail, EIP-55, EIP-1014, published selectors and topics)
+        shell: bash
+        run: |
+          set -euo pipefail
+          .lake/build/bin/wallet-abi-vectors builtin $RISK | tee .lake/abi-evidence/builtin.json
+          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/builtin.json")); g=x["groups"]; assert x["failed"]==0 and x["vectors"]>=252 and g["decoder-negative-controls"]>=37 and g["solidity-abi-spec"]>=10 and g["eip712-eip191-json"]>=43 and g["calls-and-summaries"]>=57, x'
+      - name: Differential against ethers and viem (test oracles only), three seeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/abi-oracle --ignore-scripts --no-audit --no-fund
+          for seed in 20261127 1 "$GITHUB_RUN_ID"; do
+            node scripts/abi-oracle/gen.mjs "$seed" > "/tmp/abi-cases-$seed.jsonl"
+            .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-cases-$seed.jsonl" $RISK | tee ".lake/abi-evidence/oracle-$seed.json"
+            python3 -c 'import json,sys; x=json.load(open(sys.argv[1])); k=x["byKind"]; assert x["failed"]==0 and x["unknownKind"]==0 and x["passed"]==760 and k=={"encode":400,"selector":60,"topic":20,"eip712":120,"personal":40,"create":40,"create2":40,"checksum":40}, x' ".lake/abi-evidence/oracle-$seed.json"
+          done
+      - name: A wrong expected byte is reported (negative control of the runner)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          lines = open("/tmp/abi-cases-1.jsonl").read().splitlines()
+          for kind, field in (("encode", "hex"), ("eip712", "digest"), ("create2", "address")):
+              case = next(json.loads(l) for l in lines if json.loads(l)["kind"] == kind and len(json.loads(l)[field]) > 4)
+              case[field] = case[field][:-1] + ("0" if case[field][-1] != "0" else "1")
+              open(f"/tmp/abi-wrong-{kind}.jsonl", "w").write(json.dumps(case) + "\n")
+          PY
+          for kind in encode eip712 create2; do
+            if .lake/build/bin/wallet-abi-vectors oracle "/tmp/abi-wrong-$kind.jsonl" $RISK; then
+              echo "a wrong $kind case was accepted"; exit 1
+            fi
+          done
+      - name: Timings (reported; decode cost per byte must stay flat as the input grows)
+        shell: bash
+        run: |
+          set -euo pipefail
+          .lake/build/bin/wallet-abi-vectors bench 2000 | tee .lake/abi-evidence/bench.jsonl
+          python3 - <<'PY'
+          import json
+          rows = [json.loads(l) for l in open(".lake/abi-evidence/bench.jsonl")]
+          lin = next(r for r in rows if r["case"] == "linearity")
+          # 8x more input may cost at most 2.5x more per byte (shared runners are noisy;
+          # quadratic decoding would show about 8x).
+          assert 0 < lin["ratio_max_over_min_x100"] <= 250, lin
+          PY
+      - name: Recursion in the emitted C (reported with bounds; none may follow an input length)
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The audit tool knows the main library's symbol prefix; audit a copy with this
+          # package's prefix rewritten to it.
+          src=formal/lean4/ethereum-wallet/.lake/build/ir
+          dst=/tmp/abi-ir
+          rm -rf "$dst"
+          (cd "$src" && find AbiVectorsMain.c EthereumWallet/Abi EthereumWallet/Eip712 EthereumWallet/Calls EthereumWallet/AbiVectors.c -name '*.c') \
+            | while read -r f; do mkdir -p "$dst/$(dirname "$f")"; sed 's/lp_ethereum__wallet_/lp_l4factoidal_/g' "$src/$f" > "$dst/$f"; done
+          python3 tools/lean-tail-recursion-audit.py --ir-dir "$dst" --lean-dir formal/lean4/ethereum-wallet --top 80 \
+            --json formal/lean4/ethereum-wallet/.lake/abi-evidence/tail-audit.json \
+            | tee formal/lean4/ethereum-wallet/.lake/abi-evidence/tail-audit.txt
+          python3 formal/lean4/ethereum-wallet/scripts/check-abi-recursion.py \
+            formal/lean4/ethereum-wallet/.lake/abi-evidence/tail-audit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ethereum-wallet-abi-evidence
+          path: formal/lean4/ethereum-wallet/.lake/abi-evidence/
