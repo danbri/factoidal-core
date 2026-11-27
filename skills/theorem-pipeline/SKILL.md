@@ -54,6 +54,18 @@ Every result records:
 - The item issue and PR, the next obligation, and an updated pipeline state. Keep a partial lemma marked
   partial progress; it does not close an end-to-end statement.
 
+Public claims and counts (batch https://github.com/danbri/factoidal-core/issues/1189):
+
+- "Proved" in a release note, hub page or README is for an entry of `foundation/claims.toml` only
+  (https://github.com/danbri/factoidal-core/issues/1178). To add a claim: write the entry with its
+  says, does-not-say and assumptions, run `python3 -I tools/claims-gate.py --record ID`, and leave
+  `status = "proposed"` for the owner. A changed statement of a claim fails `tools/claims-gate.py`
+  until the register is edited in the same commit
+  (https://github.com/danbri/factoidal-core/issues/1179).
+- A theorem count gives general theorems and closed-value tests apart: `python3 -I
+  tools/theorem-count.py` (https://github.com/danbri/factoidal-core/issues/1186). 2026-11-27:
+  16,392 theorems, 15,441 general, 951 closed-value tests.
+
 ## Standing proofs that CI checks: fuel monotonicity of BubblePopJS
 
 `IH_all` and `evalStmts_fuel_mono`, `callV_fuel_mono`, `evalExpr_fuel_mono`
