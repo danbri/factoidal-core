@@ -1,4 +1,4 @@
-name: Differential SPARQL, Turtle and TriG (Factoidal against Oxigraph)
+name: Differential SPARQL, Turtle, TriG and RDF/XML (Factoidal against Oxigraph)
 
 # P7 of batch https://github.com/danbri/factoidal-core/issues/1189:
 # https://github.com/danbri/factoidal-core/issues/1184 (random differential campaigns).
@@ -99,7 +99,7 @@ jobs:
         run: |
           python3 -m pip install --quiet pyoxigraph
           mkdir -p "$RUNNER_TEMP/fd" && cd "$RUNNER_TEMP/fd" && npm init -y >/dev/null && npm install --silent @factoidal/core@latest
-      - name: Generate, read, compare (Turtle and TriG)
+      - name: Generate, read, compare (Turtle, TriG, RDF/XML)
         env:
           N: ${{ github.event.inputs.n || '5000' }}
           SEED: ${{ github.event.inputs.seed || github.run_number }}
@@ -107,8 +107,12 @@ jobs:
           set -o pipefail
           T="$RUNNER_TEMP"
           MAIN_OK=0; GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1 && MAIN_OK=1
-          for fmt in turtle trig; do
-            python3 tools/diffcampaign/turtle.py gen --seed "$SEED" --n "$N" --format "$fmt" --out "$T/$fmt-cases.jsonl"
+          for fmt in turtle trig rdfxml; do
+            if [ "$fmt" = rdfxml ]; then
+              python3 tools/diffcampaign/rdfxml.py --seed "$SEED" --n "$N" --out "$T/$fmt-cases.jsonl"
+            else
+              python3 tools/diffcampaign/turtle.py gen --seed "$SEED" --n "$N" --format "$fmt" --out "$T/$fmt-cases.jsonl"
+            fi
             python3 tools/diffcampaign/turtle.py oxigraph "$T/$fmt-cases.jsonl" --out "$T/$fmt-ox.jsonl"
             echo "npm @factoidal/core (latest), $fmt:" | tee -a "$GITHUB_STEP_SUMMARY"
             node tools/diffcampaign/turtle-factoidal.mjs "$T/$fmt-cases.jsonl" "$T/$fmt-ox.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs" --keep "$T/turtle-disagreements/$fmt" --json "$T/turtle-summary-$fmt.json" | tee -a "$GITHUB_STEP_SUMMARY"

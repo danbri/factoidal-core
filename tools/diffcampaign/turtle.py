@@ -182,7 +182,7 @@ def run_oxigraph(cases, out):
         for line in fin:
             c = json.loads(line)
             try:
-                fmt = ox.RdfFormat.TRIG if c.get("format") == "trig" else ox.RdfFormat.TURTLE
+                fmt = {"trig": ox.RdfFormat.TRIG, "rdfxml": ox.RdfFormat.RDF_XML}.get(c.get("format"), ox.RdfFormat.TURTLE)
                 quads = list(ox.parse(c["data"].encode(), format=fmt,
                                       base_iri="http://example.org/base/"))
                 nq = ox.serialize(quads, format=ox.RdfFormat.N_QUADS).decode()
