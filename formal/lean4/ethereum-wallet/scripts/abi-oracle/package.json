@@ -1,0 +1,14 @@
+{
+  "name": "ethereum-wallet-abi-oracle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Test oracle only: ethers and viem encode random inputs and the wallet's Lean code must give the same bytes. Never a runtime dependency.",
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ethers": "6.17.0",
+    "viem": "2.58.8"
+  }
+}

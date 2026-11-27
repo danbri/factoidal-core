@@ -179,10 +179,13 @@ def describeLeaf (sender to value : Nat) (kind : TokenKind) (inMulticall : Bool)
         | .error _ => ⟨.malformed k.tag, [.malformedCalldata]⟩
         | .ok args => describeArgs sender to value kind inMulticall k.tag args
 
-def innerBytes : List AbiValue → Option (List (List UInt8))
-  | [] => some []
-  | .bytes b :: rest => (innerBytes rest).map (b :: ·)
-  | _ :: _ => none
+/-- The calls inside a multicall, when every element is a byte string. A loop, not a
+    recursion: the number of elements comes from the calldata. -/
+def innerBytes (inner : List AbiValue) : Option (List (List UInt8)) :=
+  inner.mapM fun v =>
+    match v with
+    | .bytes b => some b
+    | _ => none
 
 /-- What a transaction from `sender` to `to` with `value` wei and calldata `data` does.
     `kind` is what the wallet knows about `to` as a token. -/

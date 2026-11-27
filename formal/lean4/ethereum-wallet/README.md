@@ -11,7 +11,7 @@ Goal and constraints: [issue 725](https://github.com/danbri/factoidal-core/issue
 |---|---|
 | Transactions and signing | `EthereumWallet/Tx*`, `EthereumWallet/Sign*` |
 | Keys (BIP-39, BIP-32, keystore) | `EthereumWallet/Keys*` |
-| ABI, EIP-712, contract calls | `EthereumWallet/Abi*`, `EthereumWallet/Eip712*` |
+| ABI, EIP-712, contract calls | `EthereumWallet/Abi*`, `EthereumWallet/Eip712*`, `EthereumWallet/Calls*` |
 
 No network code here: RPC goes through the shared host network path
 ([issue 1176](https://github.com/danbri/factoidal-core/issues/1176)) when it lands.

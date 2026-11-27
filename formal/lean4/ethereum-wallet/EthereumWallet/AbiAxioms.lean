@@ -1,0 +1,104 @@
+import EthereumWallet.AbiVectors
+
+/-!
+# Axiom reports for the ABI, typed-data and call theorems
+
+One `#print axioms` per theorem, read from the build log by CI. The names are also
+listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
+`Quot.sound` may appear.
+-/
+
+#print axioms EthereumWallet.Abi.two256_eq
+#print axioms EthereumWallet.Abi.Window.left
+#print axioms EthereumWallet.Abi.Window.right
+#print axioms EthereumWallet.Abi.Window.size
+#print axioms EthereumWallet.Abi.toBytes_size
+#print axioms EthereumWallet.Abi.rd_toBytes
+#print axioms EthereumWallet.Abi.window_toBytes
+#print axioms EthereumWallet.Abi.windowLoop_spec
+#print axioms EthereumWallet.Abi.windowLoop_complete
+#print axioms EthereumWallet.Abi.windowB_iff
+#print axioms EthereumWallet.Abi.beAcc_eq
+#print axioms EthereumWallet.Abi.beBytes_succ
+#print axioms EthereumWallet.Abi.beBytes_length
+#print axioms EthereumWallet.Abi.beNat_of_window
+#print axioms EthereumWallet.Abi.word_length
+#print axioms EthereumWallet.Abi.readWord_out_of_bounds
+#print axioms EthereumWallet.Abi.readWord_of_window
+#print axioms EthereumWallet.Abi.takeLoop_eq
+#print axioms EthereumWallet.Abi.takeBytes_of_window
+#print axioms EthereumWallet.Abi.allZero_of_window
+#print axioms EthereumWallet.Abi.topic0_eq
+#print axioms EthereumWallet.Abi.decodeEvent_too_many_topics
+#print axioms EthereumWallet.Abi.keccak256_length
+#print axioms EthereumWallet.Abi.headTotal_fold
+#print axioms EthereumWallet.Abi.headTotal_cons
+#print axioms EthereumWallet.Abi.headsLoop_acc
+#print axioms EthereumWallet.Abi.heads_nil
+#print axioms EthereumWallet.Abi.tails_nil
+#print axioms EthereumWallet.Abi.heads_cons_dyn
+#print axioms EthereumWallet.Abi.heads_cons_static
+#print axioms EthereumWallet.Abi.tails_cons_dyn
+#print axioms EthereumWallet.Abi.tails_cons_static
+#print axioms EthereumWallet.Abi.heads_length
+#print axioms EthereumWallet.Abi.encSeq_length
+#print axioms EthereumWallet.Abi.runFields_ok
+#print axioms EthereumWallet.Abi.headSize_dyn
+#print axioms EthereumWallet.Abi.headSize_ge
+#print axioms EthereumWallet.Abi.headSizeL_ge
+#print axioms EthereumWallet.Abi.tails_map_static
+#print axioms EthereumWallet.Abi.tails_encL_static
+#print axioms EthereumWallet.Abi.headTotal_map
+#print axioms EthereumWallet.Abi.padLen_le
+#print axioms EthereumWallet.Abi.enc_length_static
+#print axioms EthereumWallet.Abi.headTotal_encL
+#print axioms EthereumWallet.Abi.pow_le_two256
+#print axioms EthereumWallet.Abi.wordToInt_intToWord
+#print axioms EthereumWallet.Abi.decBytes_ok
+#print axioms EthereumWallet.Abi.fieldsOk_replicate
+#print axioms EthereumWallet.Abi.runFields_rep
+#print axioms EthereumWallet.Abi.decodeAt_enc
+#print axioms EthereumWallet.Abi.fieldsOk_tuple
+#print axioms EthereumWallet.Abi.runFields_tuple
+#print axioms EthereumWallet.Abi.parseType_ok
+#print axioms EthereumWallet.Abi.parseType_too_long
+#print axioms EthereumWallet.Abi.selector_eq
+#print axioms EthereumWallet.Abi.selector_length
+#print axioms EthereumWallet.Abi.parseSignature_ok
+#print axioms EthereumWallet.Abi.decodeCall_encodeCall
+#print axioms EthereumWallet.Abi.decodeCall_sound
+#print axioms EthereumWallet.Abi.decodeArgsAt_sound
+#print axioms EthereumWallet.Abi.decodeArgsAt_complete
+#print axioms EthereumWallet.Abi.decodeArgs_encodeArgs
+#print axioms EthereumWallet.Abi.encodeArgs_injective
+#print axioms EthereumWallet.Abi.decodeArgsAt_bad_type
+#print axioms EthereumWallet.Abi.countOk_le
+#print axioms EthereumWallet.Abi.decodeAt_array_count_refused
+#print axioms EthereumWallet.Abi.decodeAt_fixedArray_count_refused
+#print axioms EthereumWallet.Abi.runFields_bad_offset
+#print axioms EthereumWallet.Abi.runFields_length
+#print axioms EthereumWallet.Abi.decodeAt_array_length_le
+#print axioms EthereumWallet.Calls.creationData_args
+#print axioms EthereumWallet.Calls.createAddress_eq
+#print axioms EthereumWallet.Calls.natOfBytes_fold_lt
+#print axioms EthereumWallet.Calls.natOfBytes_lt
+#print axioms EthereumWallet.Calls.low20_lt
+#print axioms EthereumWallet.Calls.createAddress_lt
+#print axioms EthereumWallet.Calls.create2Address_eq
+#print axioms EthereumWallet.Calls.create2Preimage_length
+#print axioms EthereumWallet.Calls.create2Address_lt
+#print axioms EthereumWallet.Calls.minOutForSlippage_le
+#print axioms EthereumWallet.Calls.minOutForSlippage_tight
+#print axioms EthereumWallet.Calls.le_maxInForSlippage
+#print axioms EthereumWallet.Calls.describeAuthorization_warns
+#print axioms EthereumWallet.Calls.describeArgs_unlimited
+#print axioms EthereumWallet.Calls.describeArgs_approvalForAll
+#print axioms EthereumWallet.Calls.describeArgs_noSlippage
+#print axioms EthereumWallet.Eip712.parseJson_too_long
+#print axioms EthereumWallet.Eip712.parseValue_array_too_deep
+#print axioms EthereumWallet.Eip712.parseValue_object_too_deep
+#print axioms EthereumWallet.Eip712.parseAtom_check
+#print axioms EthereumWallet.Eip712.encodeField_depth_refused
+#print axioms EthereumWallet.Eip712.finishRequest_digest
+#print axioms EthereumWallet.Eip712.hashTypedData_digest
+#print axioms EthereumWallet.Eip712.personalSignDigest_eq
