@@ -23,9 +23,13 @@ def Fork.profile : Fork → Profile
   | .shanghai => .shanghaiPlus
   | .cancun => .cancunPlus
 
-def Fork.precompileLimit : Fork → Nat
-  | .shanghai => 0x09
-  | .cancun => 0x0a
+/-- The fork's active precompiles: the precompile part of the EIP-2929
+    initial access set, from the single definition in `World.PrecompileSet`. -/
+def Fork.precompiles : Fork → PrecompileSet
+  | .shanghai => .berlin
+  | .cancun => .cancun
+
+def Fork.precompileLimit (fork : Fork) : Nat := fork.precompiles.limit
 
 structure Access where
   address : Nat
@@ -199,7 +203,7 @@ def witnessWorld (p : Request) : TxWorld :=
       account := fun address => (find address).isSome
       slot := fun address key => (find address).any (fun item => item.storage.any (fun slot => slot.key == key)) }
     warmAddresses := fun address => address == p.tx.sender || address == p.tx.to ||
-      address == p.block.coinbase || decide (1 ≤ address ∧ address ≤ p.fork.precompileLimit) ||
+      address == p.block.coinbase || p.fork.precompiles.active address ||
       p.tx.accessList.any (fun entry => entry.address == address)
     warmSlots := fun address key => p.tx.accessList.any (fun entry =>
       entry.address == address && entry.storageKeys.contains key)

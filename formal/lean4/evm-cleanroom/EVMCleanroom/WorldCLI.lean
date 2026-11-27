@@ -145,7 +145,11 @@ def runCase (acceptance : Option Keccak.Acceptance) (args : List String) : Strin
       else
         let accounts : Nat → Account := fun address =>
           ((specs.find? (·.address == address)).map (·.account)).getD {}
-        let base := beginTransaction accounts
+        let precompiles : PrecompileSet := match profile with
+          | .osaka => .osaka
+          | .cancunPlus => .cancun
+          | _ => .berlin
+        let base := beginTransactionWith precompiles accounts
         let world : TxWorld := { base with
           keccakAcceptance := acceptance
           blockNumber := number

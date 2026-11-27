@@ -26,6 +26,10 @@ require = ACTIVE.require
 P, C, Q = "propext", "Classical.choice", "Quot.sound"
 # file -> {theorem: recorded axiom set}
 INVENTORY = {
+    "EVMCleanroom/World.lean": {
+        "EVMCleanroom.World.beginTransactionWith_warm": [],
+        "EVMCleanroom.World.precompileSet_members": [],
+    },
     "EVMCleanroom/Core.lean": {
         "EVMCleanroom.step_tload": [P, Q],
         "EVMCleanroom.step_tstore": [P, Q],
@@ -131,6 +135,9 @@ INVENTORY = {
         "EVMCleanroom.CallTransaction.settleFrame_success_destroys": [P, Q],
     },
     "EVMCleanroom/AccountTransientProofs.lean": {
+        "EVMCleanroom.AccountTransient.witnessWorld_warm_exact": [],
+        "EVMCleanroom.AccountTransient.pay_warmAddresses": [],
+        "EVMCleanroom.AccountTransient.entry_precompiles_warm": [P],
         "EVMCleanroom.AccountTransient.witnessWorld_transient_empty": [],
         "EVMCleanroom.AccountTransient.debitSender_transient": [],
         "EVMCleanroom.AccountTransient.pay_transient": [],

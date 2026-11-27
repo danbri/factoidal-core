@@ -508,6 +508,13 @@ handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths
 the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`,
 `CREATE` and `CREATE2`, and `SELFDESTRUCT` (EIP-6780).
 
+The EIP-2929 initial access set is built from one definition,
+`World.PrecompileSet` (Berlin–Shanghai 1–9, Cancun 1–0x0a, Prague 1–0x11,
+Osaka adds P256VERIFY at 0x100), selected per fork by
+`CallTransaction.Fork.precompiles`; the transaction entry adds the sender,
+recipient, coinbase (EIP-3651) and access list
+(`AccountTransient.witnessWorld_warm_exact`, `entry_precompiles_warm`).
+
 The account instructions charge EIP-2929 warm/cold access (100/2600 gas) and
 warm their target in the checkpointed world, so a failed child's warm-ups are
 discarded. `EXTCODEHASH` returns zero for an empty account and needs the

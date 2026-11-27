@@ -68,7 +68,7 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-opcode-axioms.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==6,x'
-          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==116 and x["sources"]==9,x'
+          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==121 and x["sources"]==10,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -246,7 +246,7 @@ jobs:
           set -euo pipefail
           mkdir -p .lake/differential
           node --check scripts/differential/account-transient.mjs
-          node scripts/differential/account-transient.mjs .lake/build/bin/evm-subset | tee .lake/differential/account-transient.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==117 and x["mismatches"]==0 and x["gasBoundaryPairs"]==10 and x["independentGas"] and all(x["negativeControls"].values()) and not x["firstFailures"],x'
+          node scripts/differential/account-transient.mjs .lake/build/bin/evm-subset | tee .lake/differential/account-transient.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==125 and x["mismatches"]==0 and x["gasBoundaryPairs"]==10 and x["independentGas"] and all(x["negativeControls"].values()) and not x["firstFailures"],x'
       - name: Compare world-aware CREATE and CREATE2 against EthereumJS Shanghai, Cancun and Osaka
         timeout-minutes: 5
         working-directory: formal/lean4/evm-cleanroom

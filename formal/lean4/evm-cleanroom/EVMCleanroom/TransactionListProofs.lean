@@ -34,7 +34,7 @@ theorem witnessWorld_fresh (p : CallTransaction.Request) :
 theorem witnessWorld_fresh_warmth (p : CallTransaction.Request) (address key : Nat) :
     (CallTransaction.witnessWorld p).warmAddresses address =
       (address == p.tx.sender || address == p.tx.to || address == p.block.coinbase ||
-        decide (1 ≤ address ∧ address ≤ p.fork.precompileLimit) ||
+        p.fork.precompiles.active address ||
         p.tx.accessList.any (fun entry => entry.address == address)) ∧
     (CallTransaction.witnessWorld p).warmSlots address key =
       p.tx.accessList.any (fun entry =>

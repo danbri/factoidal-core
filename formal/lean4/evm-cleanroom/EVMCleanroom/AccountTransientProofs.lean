@@ -86,6 +86,52 @@ theorem commitFrame_transient (w : TxWorld) (address : Nat) (out : State) (other
 #print axioms frameInput_transient
 #print axioms commitFrame_transient
 
+/-- Kind: transaction boundary (EIP-2929, EIP-3651).
+    Says: the initial access set of every admitted transaction is exactly the
+    sender, the recipient, the coinbase, the fork's active precompiles
+    (`Fork.precompiles`, the single definition) and the access-list addresses.
+    Does not say: that the access list was validated. -/
+theorem witnessWorld_warm_exact (p : Request) (hashes : Array Word) (address : Nat) :
+    ({ witnessWorld p with txBlobHashes := hashes } : TxWorld).warmAddresses address =
+      (address == p.tx.sender || address == p.tx.to || address == p.block.coinbase ||
+        p.fork.precompiles.active address ||
+        p.tx.accessList.any (fun entry => entry.address == address)) := rfl
+
+/-- Kind: preservation.
+    Says: a successful value transfer leaves the warm address set unchanged.
+    Does not say: the transfer succeeds. -/
+theorem pay_warmAddresses {w out : TxWorld} {sender recipient amount : Nat}
+    (h : pay w sender recipient amount = .ok out) : out.warmAddresses = w.warmAddresses := by
+  unfold pay at h
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  split at h <;> try contradiction
+  · cases h
+    rfl
+  · split at h <;> try contradiction
+    cases h
+    rfl
+
+/-- Kind: transaction boundary (EIP-2929), executable correspondence.
+    Says: every active precompile of the transaction's fork is warm in the
+    world the top-level frame starts in, after fee escrow and value transfer.
+    Does not say: that the precompile is implemented (others refuse first). -/
+theorem entry_precompiles_warm (p : Request) (hashes : Array Word) (budget : Budget)
+    (entered : TxWorld)
+    (hPay : pay (debitSender { witnessWorld p with txBlobHashes := hashes } p.tx.sender budget)
+      p.tx.sender p.tx.to p.tx.value = .ok entered) (address : Nat)
+    (hActive : p.fork.precompiles.active address = true) :
+    entered.warmAddresses address = true := by
+  rw [pay_warmAddresses hPay]
+  show ({ witnessWorld p with txBlobHashes := hashes } : TxWorld).warmAddresses address = true
+  rw [witnessWorld_warm_exact]
+  simp [hActive]
+
+#print axioms witnessWorld_warm_exact
+#print axioms pay_warmAddresses
+#print axioms entry_precompiles_warm
+
 /-! ## Executable checks through the actual dispatcher (tests) -/
 
 private def bytes (xs : List Nat) : Array UInt8 := (xs.map UInt8.ofNat).toArray

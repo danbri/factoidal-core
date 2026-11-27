@@ -47,6 +47,10 @@ for (const [op, name] of [['31', 'balance'], ['3b', 'extcodesize'], ['3f', 'extc
   add(`${name}:child-success-keeps-warmth`, call('call', B) + '50' + push(C) + op + '00',
     {accounts: [{address: B, code: ok}, {address: C, balance: 5, code: '00'}]})
 }
+// EIP-2929 initial access set: exactly the fork's active precompiles are warm.
+for (const [profile, target] of [['cancunPlus', 0x0a], ['cancunPlus', 0x0b], ['osaka', 0x0b], ['osaka', 0x11],
+  ['osaka', 0x100], ['osaka', 0x12], ['shanghaiPlus', 0x0a], ['shanghaiPlus', 0x09]])
+  add(`balance:precompile-warmth:${profile}:${target.toString(16)}`, push(target) + '3100', {profile, observe: [A]})
 // EXTCODECOPY windows, padding and expansion.
 const xcopy = (target, mem, codeOff, size) => push(size) + push(codeOff) + push(mem) + push(target) + '3c'
 for (const [label, target, mem, off, size] of [
