@@ -11,21 +11,34 @@ defaultTargets = ["EthereumWallet"]
 [[lean_lib]]
 name = "EthereumWallet"
 
-# Keys (EthereumWallet/Keys/*): pure SHA-2 and HMAC from L4Factoidal.Crypto
-# (import closure: SHA2 imports nothing, Hmac imports SHA2).
+# Modules reused from the sibling trees, selected in place by srcDir (a root is a prefix).
+# Never build these two libs as targets: `lake build EthereumWallet` compiles only what is
+# imported. Keys import L4Factoidal.Crypto.SHA2 and Hmac (pure) and, behind the one-file
+# interfaces Keys/Hash.lean and Keys/Curve.lean, EVMCleanroom.Keccak and SecpRecovery.
+[[lean_lib]]
+name = "WalletEvmCleanroom"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom"]
+
 [[lean_lib]]
 name = "WalletFactoidalCrypto"
 srcDir = ".."
-roots = ["L4Factoidal.Crypto.SHA2", "L4Factoidal.Crypto.Hmac"]
+roots = ["L4Factoidal.Crypto"]
 
-[[lean_lib]]
-name = "EVMCleanroomKeccak"
-srcDir = "../evm-cleanroom"
-roots = ["EVMCleanroom.MemoryGas", "EVMCleanroom.Memory", "EVMCleanroom.Keccak"]
+# Keys, keystore half: scrypt, AES-128-CTR, keystore v3 and its JSON reader.
+[[lean_exe]]
+name = "wallet-keystore-tests"
+root = "EthereumWallet.Keys.KeystoreTestMain"
 
-# Keys: secret-to-public derivation, behind EthereumWallet/Keys/Curve.lean only,
-# until the shared secp256k1 module lands (closure: SecpRecovery, Keccak).
-[[lean_lib]]
-name = "EVMCleanroomSecpRecovery"
-srcDir = "../evm-cleanroom"
-roots = ["EVMCleanroom.SecpRecovery"]
+[[lean_exe]]
+name = "wallet-keystore-bench"
+root = "EthereumWallet.Keys.KeystoreBenchMain"
+
+# Keys: BIP-39, BIP-32/44, Base58Check, ERC-55 addresses.
+[[lean_exe]]
+name = "wallet-keys-tests"
+root = "EthereumWallet.Keys.KeysTestMain"
+
+[[lean_exe]]
+name = "wallet-keys-bench"
+root = "EthereumWallet.Keys.KeysBenchMain"
