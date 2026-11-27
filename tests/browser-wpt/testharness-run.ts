@@ -669,7 +669,9 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
         if(bytes)try{engine.imageLoad(bytes,key,key);}catch{/* refused */}
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
-    let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
+    // Web Audio: the autoplay rule is off, as Chrome's WPT runs pass --autoplay-policy=no-user-gesture-required
+    // (plan 13.7 of docs/designissues/2026-11-26-foafnaut-audio-plan.md).
+    let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,dangerouslyPermitAudio:true,...(encoding?{encoding}:{}),
       navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(pageCsp?{csp:pageCsp}:{}),...(pageCspReportOnly?{cspReportOnly:pageCspReportOnly}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
