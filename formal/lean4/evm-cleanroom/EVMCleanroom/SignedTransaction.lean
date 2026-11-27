@@ -6,7 +6,7 @@ import EVMCleanroom.WitnessAdmission
 EIP-155, EIP-2718, EIP-2930, EIP-1559, EIP-4844 and EIP-2.
 Raw bytes are the sole authority for transaction fields and sender. The
 parent header is still a supplied anchor, not authenticated chain membership.
-Blob sidecars, transaction trie, system prelude and creation remain open.
+Blob sidecars, transaction trie, system prelude and poststate commitments remain open.
 -/
 namespace EVMCleanroom.SignedTransaction
 
@@ -213,6 +213,24 @@ def callEntry (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     | none => .error (.unsupported "contract-creation")
     | some dest => .ok (entryFor d sender dest fuel)
 
+/-- Reuse the actual creation constructor; no supplied target or sender. -/
+def creationEntryFor (a : Keccak.Acceptance) (d : Decoded)
+    (sender fuel : Nat) : TransactionList.Entry :=
+  let entry := entryFor d sender 0 fuel
+  { entry with tx := CallTransaction.Envelope.creation (some a) entry.tx }
+
+/-- An empty destination is creation; a present zero address is a call. -/
+def executionEntry (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
+    (d : Decoded) (fuel : Nat) : Except Failure TransactionList.Entry :=
+  match d.to with
+  | some _ => callEntry a c d fuel
+  | none =>
+    match recover a c d with
+    | .error e => .error e
+    | .ok sender =>
+      if d.kind ≤ 2 then .ok (creationEntryFor a d sender fuel)
+      else .error (.malformed "blob-creation")
+
 structure RawEntry where
   raw : Array UInt8
   fuel : Nat
@@ -221,7 +239,7 @@ def admitEntry (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
     (entry : RawEntry) : Except Failure TransactionList.Entry :=
   match decode entry.raw with
   | .error e => .error e
-  | .ok d => callEntry a c d entry.fuel
+  | .ok d => executionEntry a c d entry.fuel
 
 def failure : Failure → TransactionList.Failure
   | .resourceLimit => .indeterminate (.frame .resourceLimit)
@@ -321,6 +339,45 @@ theorem over_limit (raw : Array UInt8) (h : raw.size > maxRawBytes) :
     decode raw = .error .resourceLimit := by
   simp only [decode, if_pos h]
 
+/-- Kind: executable linkage. Successful raw creation admission uses the
+existing creation constructor on the recovered sender, not a supplied target.
+This is conditional on decoder and recovery results, not cryptographic refinement. -/
+theorem admit_creation (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
+    (raw : RawEntry) (d : Decoded) (sender : Nat)
+    (hd : decode raw.raw = .ok d) (ht : d.to = none) (hk : d.kind ≤ 2)
+    (hr : recover a c d = .ok sender) :
+    admitEntry a c raw = .ok (creationEntryFor a d sender raw.fuel) := by
+  simp only [admitEntry, hd, executionEntry, ht, hr, if_pos hk]
+
+/-- Kind: executable linkage. Creation sets the flag, preserves the recovered
+sender, and derives the destination from the same sender and nonce. -/
+theorem creation_entry_fields (a : Keccak.Acceptance) (d : Decoded) (sender fuel : Nat) :
+    (creationEntryFor a d sender fuel).tx.create = true ∧
+    (creationEntryFor a d sender fuel).tx.sender = sender ∧
+    (creationEntryFor a d sender fuel).tx.to = Create.createAddress a sender d.nonce := by
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- Kind: executable linkage. A present destination, including zero, retains
+the ordinary call path. -/
+theorem admit_call (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
+    (raw : RawEntry) (d : Decoded) (sender dest : Nat)
+    (hd : decode raw.raw = .ok d) (ht : d.to = some dest)
+    (hr : recover a c d = .ok sender) :
+    admitEntry a c raw = .ok (entryFor d sender dest raw.fuel) := by
+  simp only [admitEntry, hd, executionEntry, ht, callEntry, hr]
+
+/-- Kind: executable refusal. Failed creation recovery cannot yield an entry. -/
+theorem admit_creation_refused (a : Keccak.Acceptance) (c : SecpRecovery.Acceptance)
+    (raw : RawEntry) (d : Decoded) (e : Failure)
+    (hd : decode raw.raw = .ok d) (ht : d.to = none)
+    (hr : recover a c d = .error e) :
+    admitEntry a c raw = .error e := by
+  simp only [admitEntry, hd, executionEntry, ht, hr]
+
+#print axioms admit_creation
+#print axioms creation_entry_fields
+#print axioms admit_call
+#print axioms admit_creation_refused
 #print axioms call_entry_source
 #print axioms refused_entry
 #print axioms over_limit
