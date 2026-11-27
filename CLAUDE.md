@@ -1290,6 +1290,20 @@ macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfe
   restarts until it is switched off. The command-line flag
   `--dangerously-use-unreviewed-tor-transport` stays for tests and scripts.
 
+### One host runtime: Deno; XMPP must not break (owner, 2026-11-26 and 2026-11-27)
+
+Owner, verbatim: "yes the intent is for this to be as internal to our packages as possible";
+"Seeing some use node, some use deno, feels off."; then, to the proposal that Deno be the single
+host runtime for our CLIs, servers, tests and scripts while the npm library stays usable from
+Node and browsers: "ok procede cautiously, and without breaking our xmpp".
+
+- Move one component at a time. Each move runs its suites under Node and under Deno; a move
+  lands only when the Deno run passes what the Node run passes. XMPP moves last, after the two
+  Deno differences in its suites are fixed or explained.
+- The npm library (`import '@factoidal/core'`) keeps working in Node and browsers.
+- Open question for the owner: does `npx factoidal` keep running under Node?
+- Baseline and plan: https://github.com/danbri/factoidal-core/issues/1176.
+
 ### Media: audio first; decoders vendored in factoidal-builds; OS video decoders (owner, 2026-11-26)
 
 Owner, 2026-11-26, verbatim, to the three questions of
