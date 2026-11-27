@@ -34,6 +34,22 @@
     "EVMCleanroom/MPT.lean",
     "EVMCleanroom/Memory.lean",
     "EVMCleanroom/MemoryGas.lean",
+    "EVMCleanroom/Precompiles.lean",
+    "EVMCleanroom/Precompiles/BLS12381.lean",
+    "EVMCleanroom/Precompiles/BN254.lean",
+    "EVMCleanroom/Precompiles/Basic.lean",
+    "EVMCleanroom/Precompiles/Blake2f.lean",
+    "EVMCleanroom/Precompiles/Curve.lean",
+    "EVMCleanroom/Precompiles/Ecrecover.lean",
+    "EVMCleanroom/Precompiles/Field.lean",
+    "EVMCleanroom/Precompiles/KZG.lean",
+    "EVMCleanroom/Precompiles/ModExp.lean",
+    "EVMCleanroom/Precompiles/P256.lean",
+    "EVMCleanroom/Precompiles/Pairing.lean",
+    "EVMCleanroom/Precompiles/Ripemd160.lean",
+    "EVMCleanroom/Precompiles/Secp256k1.lean",
+    "EVMCleanroom/Precompiles/Sha256.lean",
+    "EVMCleanroom/Precompiles/Tower.lean",
     "EVMCleanroom/Proofs.lean",
     "EVMCleanroom/SelfDestruct.lean",
     "EVMCleanroom/Storage.lean",
@@ -51,8 +67,8 @@
     "EVMCleanroom/World.lean"
   ],
   "repository_source_blobs": {
-    ".github/workflows/evm-cleanroom.yml": "b6c48700a1cfc38ed9edc8eb2db18500f57f0ea2",
-    ".github/workflows/evm-witness.yml": "0f36c368abcd4ad3dfb221439889450276b8949b",
+    ".github/workflows/evm-cleanroom.yml": "08a784b2c14886ac4d90be196f185888a9f7f8da",
+    ".github/workflows/evm-witness.yml": "04937c3563d77fd5d6a04a150f2c7db68707f349",
     "tools/lean-tail-recursion-audit.py": "d1c53ce322b491381ea0a7b50bf608ad48035b6e"
   },
   "native_targets": {

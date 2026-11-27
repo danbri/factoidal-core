@@ -154,6 +154,14 @@ type LinkPicker=(text:string,width:number,height:number,x:number,y:number)=>stri
 type Backends={text:DocumentBackend;bytes:BytesBackend;font:FontBackend;image?:ImageBackend;decode?:DecodeBackend;hit?:LinkPicker};
 /** The answer of `imageInfo`: the engine holds images (WebDocument, issue 1292). */
 export type ImageInfo={engine:string;ops:string[];maxImages:number;maxBytes:number;held:number;layoutSlots:number};
+/** One real-time Web Audio run (`WebAudioRun.Stats`): its thread, quanta written, rendering time,
+frames ahead of the output (least and most), refused writes, the sink's counters, the rendering
+side's state (`Api.RtState.code`) and the events it published and the engine took. */
+export type AudioRun={page:number;ctx:number;tid:number;quanta:number;renderNs:number;aheadMin:number;aheadMax:number;
+  looks:number;refused:number;divergence:number;written:number;read:number;underruns:number;silent:number;
+  sinkError:string;finished:boolean;state:number;eventsOut:number;eventsIn:number};
+/** The answer of `audioRuns`: the runs, the audio output (null: none) and the sink spec. */
+export type AudioRuns={runs:number;items:AudioRun[];device:{rate:number;channels:number}|null;spec:string};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
 export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number;paintOnly?:number;recompiled?:number;reused?:number;moved?:number};
 /** An engine session of the native library (web_session_new; docs/designissues/2026-11-26-foafnaut-engine-sessions.md):
@@ -568,6 +576,13 @@ export type RemoteEngine={
   imageDrop():{held:number};
   /** Lean's count of its frame work; undefined for an engine without it. */
   frameWork(reset?:boolean):FrameWork|undefined;
+  /** The engine's real-time Web Audio runs and their measures (`WebAudioRun.runsAnswer`); undefined
+  from an engine without them. */
+  audioRuns():AudioRuns|undefined;
+  /** End the engine's real-time Web Audio runs (their sinks close; `WebAudioRun.endAll`), before
+  a host drops an engine that it does not free (the default session of a tab worker's library
+  copy). A freed session ends them itself (`web_session_free`, `WebSession.serve`). */
+  audioEnd():AudioRuns|undefined;
   /** Bytes of JSON request this host sent to Lean for renders. */
   requestBytes():{renders:number;lastRenderBytes:number;maxRenderBytes:number};
   compile(source:string,width:number,height:number,options:Record<string,unknown>):HTMLArtifact;
@@ -640,6 +655,8 @@ function remoteMethods(k:Kernel):RemoteEngine {
     },
     imageDrop:()=>doc("",{op:"imageDrop"}),
     frameWork:(reset=false)=>orUndefined(()=>doc("",{op:"frameWork",...(reset?{reset:true}:{})})),
+    audioRuns:()=>orUndefined(()=>doc("",{op:"audioRuns"})),
+    audioEnd:()=>orUndefined(()=>doc("",{op:"audioEnd"})),
     requestBytes:()=>({...k.sent}),
     compile:(source,width,height,options)=>then(render(source,{binary:true,...options,op:"render"},width,height),(r:Answer)=>sceneOf(r,width,height)),
     compileLayers:(source,width,height,options)=>then(render(source,{binary:true,layoutSections:k.layoutSections,...options,layers:true,op:"render"},width,height),(r:Answer)=>layersOf(r,width)),

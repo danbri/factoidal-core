@@ -28,6 +28,7 @@ WASMDIR holds `opus-wasmvm.wasm`, `vorbis-wasmvm.wasm`, `vp8-wasmvm.wasm` and
 `MEDIA_ANY_MODULE=1` uses it with a warning (to compare a rebuild, never for a result).
 -/
 import L4Factoidal.Media.Decode
+import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.Media.Modules
 import L4Factoidal.Media.Tests
 import L4Factoidal.WebAudio.Decode
@@ -123,7 +124,10 @@ def video (dir : System.FilePath) (file : String) (limit : Option Nat) (out : Op
   let some t := r.tracks.find? (·.codec == "V_VP8") | IO.println "no VP8 track"; return 1
   let fs := r.framesOf t.number
   let n := limit.getD fs.size
-  let v ← Decode.vp8 w fs n out.isSome
+  -- With `WASMVM_PROFILE` set, the decode runs through the instruction sampler
+  let sampler : Option Decode.Sampler :=
+    if ← WasmVM.Bench.Sample.enabled then some (fun st fa args b h => WasmVM.Bench.Sample.runIO st fa args b h) else none
+  let v ← Decode.vp8 w fs n out.isSome sampler
   let k := v.pictures.size
   let fps := fun (ns : Nat) => if ns == 0 then 0 else k.toFloat * 1e9 / ns.toFloat
   IO.println s!"{file}: VP8 {t.width}x{t.height}, {fs.size} frames; {k} pictures decoded"

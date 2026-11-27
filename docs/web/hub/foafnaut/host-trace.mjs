@@ -13,7 +13,7 @@
 // labs/demos/foafnaut/host_contract_check.ts.
 
 /** The request fields with which a host relaxes an engine policy (HostContract.relaxFields). */
-export const RELAX_FIELDS=['hostCors','address','network','navigations','liberal','scripting'];
+export const RELAX_FIELDS=['hostCors','address','network','navigations','liberal','scripting','dangerouslyPermitAudio'];
 
 /** Top-level answer fields that are measurements (HostContract.measureFields): an answer is
 digested without them. host_contract_check.ts fails when the engine's list differs from this. */

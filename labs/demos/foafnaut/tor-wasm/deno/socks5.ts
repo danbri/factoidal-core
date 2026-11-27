@@ -203,3 +203,17 @@ export async function proxyCheck(port: number, password: string, seen: () => str
     return !forms.some((f) => got.has(`${f}:${x.port || "80"}`));
   });
 }
+
+/** The Tor route of the page host (native_net.ts `TorRoute`): one torHttpClient per partition,
+ *  made on first use and kept until `close`. */
+export function torRoute(port: number, password: string, make = torHttpClient): { client(partition: string): Deno.HttpClient; close(): void } {
+  const clients = new Map<string, Deno.HttpClient>();
+  return {
+    client(partition: string) {
+      let c = clients.get(partition);
+      if (!c) { c = make(port, partition, password); clients.set(partition, c); }
+      return c;
+    },
+    close() { for (const c of clients.values()) try { c.close(); } catch { /* closed */ } clients.clear(); },
+  };
+}

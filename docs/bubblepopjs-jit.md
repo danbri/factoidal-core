@@ -1,5 +1,11 @@
 # BubblePopJS JIT: proven equivalent to the interpreter
 
+**Ruling of 2026-11-27 (owner, CLAUDE.md "No V8, no engine of another browser").** Tier 3 below
+names "the host's engine" that runs a generated module (V8 on the Hub and in the Deno host). That
+route is withdrawn for the browser: generated code runs on our own engines only (BubblePopWASM, or
+machine code from our own templates). The host-engine text is kept below as the record of the
+earlier design.
+
 Copied to `main` on 2026-11-27 from branch `wip/jit-c` (PR 486,
 https://github.com/danbri/factoidal-core/pull/486), unchanged below this note, so that its
 measurements stay findable when PRs 475, 476 and 486 are closed. Since then, tier 1 landed as the

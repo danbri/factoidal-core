@@ -31,6 +31,7 @@ import ImageJPEG
 import ImageGIF
 import ImageData
 import SVG
+import SVGAnimate
 import SVGRaster
 import SVGText
 import SVGScript
@@ -59,6 +60,7 @@ import WebWasmSample
 import WebWasm
 import WebEventLoop
 import WebScripts
+import WebAudioRun
 import WebState
 import WebSparql
 import WebRepaint
@@ -187,8 +189,17 @@ having RSA or SHA-3. -/
 -- `Codec.Zstd.bitsAt`, which reads words through the C primitives of `Prim.Bytes`; each has a
 -- Lean reference body and the differential test `tests/prim/run.sh` (CLAUDE.md, "Support library").
 -- The primitives are not new: the lab's import closure now reaches five more `extern` declarations.
+-- formal extern 32 → 38 and opaque 1 → 2 (2026-11-26, branch wip/1169-realtime-run; approved by
+-- the owner, 2026-11-27, verbatim: "ok", to the question "may I raise the lab hygiene count for
+-- the audio output?"): the engine plays real-time Web
+-- Audio (`WebAudioRun`, step D3 of docs/designissues/2026-11-26-foafnaut-audio-plan.md), so the
+-- lab's import closure reaches `WebAudio/Sink.lean` (step D1): six `@[extern]` entry points of
+-- `ffi/audio_sink.c` (open, write, counters, pause, close, deviceInfo) and its opaque type
+-- `SinkPointed`. The C copies frames, counts and keeps time; it decides nothing about the audio
+-- (plan 13.1). The lab itself adds no `extern`: whether Lean's task manager runs is asked of Lean
+-- (`WebAudioRun.taskManagerRuns`).
 def baseline : Counts :=
-  ⟨⟨50, 2, 2, 1, 0, 1⟩, ⟨369, 0, 0, 153, 32, 1⟩⟩
+  ⟨⟨50, 2, 2, 1, 0, 1⟩, ⟨369, 0, 0, 153, 38, 2⟩⟩
 
 /-- Fails to compile when a count rises above `baseline`, or when either part read fewer
 modules than the baseline says (an empty walk does not pass). -/

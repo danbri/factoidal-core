@@ -2,6 +2,7 @@ import EVMCleanroom.Call
 import EVMCleanroom.ValueCall
 import EVMCleanroom.Proofs
 import EVMCleanroom.IdentityPrecompile
+import EVMCleanroom.Precompiles
 import EVMCleanroom.AccountOpcode
 import EVMCleanroom.Create
 import EVMCleanroom.SelfDestruct
@@ -204,10 +205,11 @@ def stepError (e : Error) : RawOutcome :=
 /-- Entry depth 0 allows child depths through 1024, as in EELS. -/
 def maxDepth : Nat := 1024
 
-/-- Only identity (0x04) is currently executable in the actual world-aware
-    CALL family. All other reserved precompile addresses still refuse. -/
+/-- Identity (0x04) and the addresses `Precompiles.active` lists for the
+    profile are executable in the actual world-aware CALL family. Every other
+    reserved precompile address still refuses. -/
 def unimplementedPrecompile (profile : Profile) (target : Nat) : Bool :=
-  WorldCall.unsupportedPrecompile profile target && target != 4
+  WorldCall.unsupportedPrecompile profile target && target != 4 && !Precompiles.active profile target
 
 /-- A local memory policy, not a fork rule or transaction-validity limit. -/
 def maxIdentityCallBytes : Nat := 1_048_576
@@ -569,6 +571,12 @@ private def precompileStep (child : ActiveFrame) (k : Continuation) : Option Cal
   if k.codeTarget == 4 then
     some (match IdentityPrecompile.executeView maxIdentityCallBytes k.budget.childGas
         child.state.callData with
+      | .ok (data, remaining) => resumeCall k child.world remaining data true
+      | .error .outOfGas => resumeCall k k.checkpoint 0 {} false
+      | .error reason => .indeterminate reason)
+  else if Precompiles.active child.state.profile k.codeTarget then
+    some (match Precompiles.run child.state.profile child.state.keccakAcceptance k.codeTarget
+        k.budget.childGas child.state.callData with
       | .ok (data, remaining) => resumeCall k child.world remaining data true
       | .error .outOfGas => resumeCall k k.checkpoint 0 {} false
       | .error reason => .indeterminate reason)
@@ -1250,10 +1258,12 @@ private theorem executeLoop_enters_child (fuel : Nat) (active child : ActiveFram
     (callers : List Continuation) (k : Continuation) (hRunning : active.state.halted = false)
     (hOpcode : byteAt active.state active.state.pc = 0xf1)
     (hEntry : beginCall active = .ok (.entered child k))
-    (hOrdinary : k.codeTarget ≠ 4) :
+    (hOrdinary : k.codeTarget ≠ 4)
+    (hNotNative : Precompiles.active child.state.profile k.codeTarget = false) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, hRunning, hOpcode, hEntry, hOrdinary]
+  simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, hRunning, hOpcode, hEntry, hOrdinary,
+    hNotNative]
 
 /-- Kind: correspondence.
     Says: all three new opcode bytes enter the same continuation loop as CALL.
@@ -1263,11 +1273,12 @@ private theorem executeLoop_enters_variant (fuel : Nat) (active child : ActiveFr
     (hRunning : active.state.halted = false)
     (hOpcode : byteAt active.state active.state.pc = kind.opcode)
     (hEntry : beginVariant active kind = .ok (.entered child k))
-    (hOrdinary : k.codeTarget ≠ 4) :
+    (hOrdinary : k.codeTarget ≠ 4)
+    (hNotNative : Precompiles.active child.state.profile k.codeTarget = false) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  cases kind <;> simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, CallVariant.opcode, hRunning, hOpcode, hEntry,
-    hOrdinary]
+  cases kind <;> simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, CallVariant.opcode, hRunning,
+    hOpcode, hEntry, hOrdinary, hNotNative]
 
 /-- Kind: boundary.
     Says: the public dispatcher propagates missing code coverage as an
@@ -2375,5 +2386,84 @@ theorem settle_failure_registration (entry : TxWorld) (initial : State) (raw : R
 #print axioms executeLoop_selfDestruct_child
 #print axioms resumeChild_failure_registration
 #print axioms settle_failure_registration
+
+/-- Kind: public adapter correspondence.
+    Says: a CALL that enters an active native precompile other than identity returns the
+    router's output and unspent gas to the caller, keeps the value transfer, and reports
+    success. The forwarded-gas check of `resumeCall` cannot fail (`Precompiles.run_gas_le`).
+    Does not say: the router's output is the specified function (per-module theorems and vectors). -/
+theorem callStep_native_success (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation) (data : ByteView) (remaining : Nat)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget ≠ 4)
+    (hActive : Precompiles.active child.state.profile k.codeTarget = true)
+    (hRun : Precompiles.run child.state.profile child.state.keccakAcceptance k.codeTarget
+      k.budget.childGas child.state.callData = .ok (data, remaining)) :
+    callStep fuel world address parent =
+      finishCall k.address (applyOutput k.parent k.ranges data) k.rest child.world
+        (k.budget.reserve + remaining) true := by
+  have hLe := Precompiles.run_gas_le _ _ _ _ _ _ _ hRun
+  simp [callStep, hEntry, precompileStep, hTarget, hActive, hRun, resumeCall, hLe]
+
+/-- Kind: failure contract.
+    Says: an exceptional halt in a native precompile (too little forwarded gas or input the
+    specification rejects) restores the caller's checkpoint, returns no gas and no data,
+    and reports failure; the instruction fuel is not consulted.
+    Does not say: which inputs are rejected. -/
+theorem callStep_native_failure (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget ≠ 4)
+    (hActive : Precompiles.active child.state.profile k.codeTarget = true)
+    (hRun : Precompiles.run child.state.profile child.state.keccakAcceptance k.codeTarget
+      k.budget.childGas child.state.callData = .error .outOfGas) :
+    callStep fuel world address parent = resumeCall k k.checkpoint 0 {} false := by
+  simp [callStep, hEntry, precompileStep, hTarget, hActive, hRun]
+
+/-- Kind: refusal boundary.
+    Says: a local resource refusal of a native precompile is an indeterminate result of the
+    whole execution, never a failure bit or a receipt.
+    Does not say: Ethereum has these limits. -/
+theorem callStep_native_refusal (fuel : Nat) (world : TxWorld) (address : Nat)
+    (parent : State) (child : ActiveFrame) (k : Continuation)
+    (hEntry : beginCall ⟨world, address, 0, parent⟩ = .ok (.entered child k))
+    (hTarget : k.codeTarget ≠ 4)
+    (hActive : Precompiles.active child.state.profile k.codeTarget = true)
+    (hRun : Precompiles.run child.state.profile child.state.keccakAcceptance k.codeTarget
+      k.budget.childGas child.state.callData = .error .resourceLimit) :
+    callStep fuel world address parent = .indeterminate .resourceLimit := by
+  simp [callStep, hEntry, precompileStep, hTarget, hActive, hRun]
+
+/-- Kind: opcode dispatcher correspondence.
+    Says: the dispatcher shared by CALL, CALLCODE, DELEGATECALL and STATICCALL resolves an
+    active native precompile in the same step: it never enters a child frame, so account
+    code at that address is not run and no instruction fuel is used.
+    Does not say: anything about the precompile's output. -/
+theorem dispatchCall_native (child : ActiveFrame) (k : Continuation)
+    (hTarget : k.codeTarget ≠ 4)
+    (hActive : Precompiles.active child.state.profile k.codeTarget = true) :
+    dispatchCall (.ok (.entered child k)) =
+      afterCall k (match Precompiles.run child.state.profile child.state.keccakAcceptance
+          k.codeTarget k.budget.childGas child.state.callData with
+        | .ok (data, remaining) => resumeCall k child.world remaining data true
+        | .error .outOfGas => resumeCall k k.checkpoint 0 {} false
+        | .error reason => .indeterminate reason) := by
+  simp [dispatchCall, precompileStep, hTarget, hActive]
+
+/-- Kind: refusal boundary.
+    Says: an address that a profile reserves for a precompile but that is neither identity
+    nor active in the router is still refused before any child is entered.
+    Does not say: which addresses those are (see `Precompiles.active`). -/
+theorem unimplementedPrecompile_iff (profile : Profile) (target : Nat) :
+    unimplementedPrecompile profile target = true ↔
+      (WorldCall.unsupportedPrecompile profile target = true ∧ target ≠ 4 ∧
+        Precompiles.active profile target = false) := by
+  simp [unimplementedPrecompile, and_assoc]
+
+#print axioms callStep_native_success
+#print axioms callStep_native_failure
+#print axioms callStep_native_refusal
+#print axioms dispatchCall_native
+#print axioms unimplementedPrecompile_iff
 
 end EVMCleanroom.CallOpcode

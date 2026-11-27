@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # host-purity-lint.sh — a host carries bytes and makes no decision the
-# specification reserves for the engine (CLAUDE.md iron rule 7). Four groups
-# of host files, four rules, one method (group 3 is at the end).
+# specification reserves for the engine (CLAUDE.md iron rule 7). Five groups
+# of host files (group 3 near the end; group 5, the Foafnaut host, is a
+# counted ratchet, tools/foafnaut-host-policy-audit.py).
 #
 # GROUP 1, the LWS, Solid and SPARQL endpoint hosts: no PROTOCOL decision. This lint fails
 # when one of those files contains
@@ -226,6 +227,17 @@ scan_rdf () {
 }
 
 for f in "${rdf_files[@]}"; do scan_rdf "$f"; done
+
+# GROUP 5, the Foafnaut host (https://github.com/danbri/factoidal-core/issues/1188):
+# its policy sites (numeric constants, defaults, thresholds, clamps) are counted
+# per file and held by foundation/foafnaut-host-policy.txt, a ratchet with a
+# reason per file. A new host decision changes that file in the same commit.
+total=$((total + 1))
+if python3 -I "$root/tools/foafnaut-host-policy-audit.py"; then
+  echo "ok   foafnaut host policy (foundation/foafnaut-host-policy.txt)"
+else
+  echo "FAIL foafnaut host policy (foundation/foafnaut-host-policy.txt)"; fail=1
+fi
 
 if [ "$fail" -eq 0 ]; then
   echo "host-purity-lint: $total pass, 0 fail (out of $total)"

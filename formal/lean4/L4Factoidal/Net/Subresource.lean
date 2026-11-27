@@ -349,7 +349,7 @@ theorem start_mixed (tab : Table) (page : Page) (kind url referrer : String) (po
   refine ⟨u, hu, ?_⟩
   unfold mayConnect at hc
   simp only [hs, Bool.not_true, Bool.false_or, Bool.and_eq_true, beq_iff_eq] at hc
-  exact hc.2
+  exact hc.1.2
 
 /-- Kind: security theorem (HTML §4.6.7.2, Fetch §4.1). Says: a style sheet the host is told
 to use is `text/css`, or of the page's own origin and not sent with `nosniff`. -/

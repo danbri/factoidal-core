@@ -66,13 +66,91 @@ structure CS where
   loops : List Loop := []
   thisReg : Option Nat := none
 
-abbrev C := StateT CS (Except Unit)
+abbrev C := StateT CS (Except String)
 
-def fail {α} : C α := throw ()
+/-- The compiler does not take this function; `why` says what it met (`leanjs compile-stats`). -/
+def fail {α} : C α := throw "construct"
+
+/-- `fail`, with what it met. -/
+def failWith {α} (why : String) : C α := throw why
+
+/-- The constructor of an expression, for the reasons of `compileE`. -/
+def exprKind : Expr → String
+  | .num .. => "num"
+  | .bigint .. => "bigint"
+  | .str .. => "str"
+  | .bool .. => "bool"
+  | .null .. => "null"
+  | .ident .. => "ident"
+  | .lit .. => "lit"
+  | .local .. => "local"
+  | .this .. => "this"
+  | .array .. => "array"
+  | .object .. => "object"
+  | .func .. => "func"
+  | .unary .. => "unary"
+  | .binary .. => "binary"
+  | .logical .. => "logical"
+  | .assign .. => "assign"
+  | .logAssign .. => "logAssign"
+  | .assignPat .. => "assignPat"
+  | .update .. => "update"
+  | .cond .. => "cond"
+  | .call .. => "call"
+  | .new .. => "new"
+  | .member .. => "member"
+  | .index .. => "index"
+  | .seq .. => "seq"
+  | .spread .. => "spread"
+  | .template .. => "template"
+  | .tagged .. => "tagged"
+  | .classE .. => "classE"
+  | .superCall .. => "superCall"
+  | .superMember .. => "superMember"
+  | .superIndex .. => "superIndex"
+  | .newTarget .. => "newTarget"
+  | .argCount .. => "argCount"
+  | .yieldE .. => "yieldE"
+  | .regex .. => "regex"
+  | .chain .. => "chain"
+  | .optBase .. => "optBase"
+  | .optCallee .. => "optCallee"
+
+/-- The constructor of a statement, for the reasons of `compileE`. -/
+def stmtKind : Stmt → String
+  | .expr .. => "expr"
+  | .decl .. => "decl"
+  | .funDecl .. => "funDecl"
+  | .classDecl .. => "classDecl"
+  | .ret .. => "ret"
+  | .ifS .. => "ifS"
+  | .whileS .. => "whileS"
+  | .doWhile .. => "doWhile"
+  | .forS .. => "forS"
+  | .forIn .. => "forIn"
+  | .forOf .. => "forOf"
+  | .block .. => "block"
+  | .blockF .. => "blockF"
+  | .compiled .. => "compiled"
+  | .throwS .. => "throwS"
+  | .tryS .. => "tryS"
+  | .brk .. => "brk"
+  | .cont .. => "cont"
+  | .labeled .. => "labeled"
+  | .switchS .. => "switchS"
+  | .withS .. => "withS"
+  | .empty .. => "empty"
 
 def emit (i : Instr) : C Nat := modifyGet fun s => (s.code.size, { s with code := s.code.push i })
 
 def here : C Nat := do pure (← get).code.size
+
+/-- The global name cache's slot of the next instruction, for the name `x`: from the name and the
+position in the code, so that reads of one name in different functions keep their own scope
+chains (`HeapOf.globalChain`). Two sites that share a slot only make each other miss. -/
+def globalSite (x : String) : C Nat := do
+  let pc ← here
+  pure ((mixHash (hash x) pc.toUInt64).toNat % globalCacheSize)
 
 def patch (at_ t : Nat) : C Unit :=
   modify fun s => { s with code := s.code.modify at_ fun i =>
@@ -186,14 +264,14 @@ def readTarget (x : String) (t : Target) (dst : Nat) : C Unit :=
   match t with
   | .reg r => discard <| emit (.move dst r)
   | .up h i => discard <| emit (.getUp dst h i x)
-  | .global => discard <| emit (.getGlobal dst x ((hash x).toNat % 1024))
+  | .global => do discard <| emit (.getGlobal dst x (← globalSite x))
 
 /-- Write register `src` to a target. -/
 def writeTarget (x : String) (t : Target) (src : Nat) : C Unit :=
   match t with
   | .reg r => discard <| emit (.move r src)
   | .up h i => discard <| emit (.setUp src h i x)
-  | .global => discard <| emit (.setGlobal src x ((hash x).toNat % 1024))
+  | .global => do discard <| emit (.setGlobal src x (← globalSite x))
 
 /-- The instruction of a binary operator. -/
 def opInstr (op : BinOp) (dst a b : Nat) : Instr :=
@@ -241,7 +319,7 @@ def cE : Nat → Expr → Nat → C Unit
       | some (_, v) =>
         if !v.ready then discard <| emit (.checkInit v.reg x)
         if v.reg != dst then discard <| emit (.move dst v.reg)
-      | none => discard <| emit (.getGlobal dst x ((hash x).toNat % 1024))
+      | none => discard <| emit (.getGlobal dst x (← globalSite x))
     | .this =>
       let s ← get
       let r ← match s.thisReg with
@@ -292,7 +370,7 @@ def cE : Nat → Expr → Nat → C Unit
       patch jend (← here)
     | .unary op a =>
       match op, a with
-      | .delete, _ => fail
+      | .delete, _ => failWith "delete"
       | .typeof, .ident x =>
         match findVar x (← get).scopes with
         | some (_, v) =>
@@ -346,10 +424,10 @@ def cE : Nat → Expr → Nat → C Unit
           if vr.reg != dst then discard <| emit (.move vr.reg dst)
         | none =>
           cE n v dst
-          discard <| emit (.setGlobal dst x ((hash x).toNat % 1024))
+          discard <| emit (.setGlobal dst x (← globalSite x))
       | .member o k =>
         -- a private name resolves through the class scope (`privRk`): the evaluator runs it
-        if isPrivKey k then fail
+        if isPrivKey k then failWith "private name"
         let base := (← get).next
         let ro ← operand n o (writes n v)
         cE n v dst
@@ -362,13 +440,13 @@ def cE : Nat → Expr → Nat → C Unit
         cE n v dst
         discard <| emit (.setIndex ro rk dst)
         release base
-      | _ => fail
+      | t => failWith ("assignment target " ++ exprKind t)
     | .assign (some op) t v =>
       let base := (← get).next
       match t with
       | .member o k =>
         -- a private name resolves through the class scope (`privRk`): the evaluator runs it
-        if isPrivKey k then fail
+        if isPrivKey k then failWith "private name"
         let ro ← operand n o (writes n v)
         let old ← fresh
         discard <| emit (.getMember old ro k)
@@ -422,7 +500,7 @@ def cE : Nat → Expr → Nat → C Unit
       let useThis ← match callee with
         | .member o k =>
           -- a private name resolves through the class scope (`privRk`): the evaluator runs it
-          if isPrivKey k then fail
+          if isPrivKey k then failWith "private name"
           cE n o thisR
           discard <| emit (.getMember f thisR k)
           pure true
@@ -431,7 +509,7 @@ def cE : Nat → Expr → Nat → C Unit
           let rk ← operand n k false
           discard <| emit (.getIndex f thisR rk)
           pure true
-        | .ident "eval" => fail
+        | .ident "eval" => failWith "direct eval call"
         | c =>
           cE n c f
           pure false
@@ -449,7 +527,7 @@ def cE : Nat → Expr → Nat → C Unit
       release base
     | .member o k =>
       -- a private name resolves through the class scope (`privRk`): the evaluator runs it
-      if isPrivKey k then fail
+      if isPrivKey k then failWith "private name"
       let base := (← get).next
       let ro ← operand n o false
       discard <| emit (.getMember dst ro k)
@@ -473,7 +551,7 @@ def cE : Nat → Expr → Nat → C Unit
       cProps n ps o
       discard <| emit (.move dst o)
       release base
-    | _ => fail
+    | other => failWith ("expression " ++ exprKind other)
 
 /-- A register holding the value of `e`: a local variable's own register when `copy` is false
 and it needs no check, otherwise a temporary. -/
@@ -504,7 +582,7 @@ def cArgs : Nat → List Expr → C Nat
     let mut k := 0
     for e in es do
       match e with
-      | .spread _ | .ident "" => fail
+      | .spread _ | .ident "" => failWith "spread or hole"
       | _ => pure ()
       let t ← fresh
       cE n e t
@@ -519,13 +597,13 @@ def cProps : Nat → List PropDef → Nat → C Unit
       | .init (.lit k) v =>
         if k == "__proto__" then fail
         match v with
-        | .func _ | .classE _ => fail
+        | .func _ | .classE _ => failWith "function or class in an object literal"
         | _ => pure ()
         let base := (← get).next
         let r ← operand n v false
         discard <| emit (.defProp o k r)
         release base
-      | _ => fail
+      | _ => failWith "object literal property"
 
 /-- The false-exit jumps of a condition (patched by the caller). -/
 def cCond : Nat → Expr → C (List Nat)
@@ -580,7 +658,7 @@ def cDecls : Nat → DeclKind → List Decl → C Unit
       | .mk p i =>
       let x ← match p with
         | .id x => pure x
-        | _ => fail
+        | _ => failWith "declaration pattern"
       match k with
       | .var =>
         match i with
@@ -590,7 +668,7 @@ def cDecls : Nat → DeclKind → List Decl → C Unit
           cE n e t
           match findVar x (← get).scopes with
           | some (_, v) => discard <| emit (.move v.reg t)
-          | none => discard <| emit (.setGlobal t x ((hash x).toNat % 1024))  -- a top-level `var`: an ordinary assignment
+          | none => discard <| emit (.setGlobal t x (← globalSite x))  -- a top-level `var`: an ordinary assignment
           release base
         | none => pure ()
       | _ =>
@@ -752,7 +830,7 @@ def cS : Nat → Stmt → C Unit
       | l :: ls => modify fun s => { s with loops := { l with conts := l.conts.push j } :: ls }
       | [] => fail
     | .empty => pure ()
-    | _ => fail
+    | other => failWith ("statement " ++ stmtKind other)
 
 def cLoopBody : Nat → Stmt → C Unit
   | 0, _ => fail
@@ -782,14 +860,25 @@ end
 of statements or arguments do not use it up. -/
 def fuel : Nat := 500
 
-/-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
-Parameters take the first registers (the arguments of a call are already there), then the
-`var`s, then `this`, then the block scopes and temporaries. -/
-def compile (f : FunDef) : Option Code :=
+/-- Why `compile` gives no code for a function, for `leanjs compile-stats`: the first test of
+`compile` that fails, or the body. -/
+def compileWhy (f : FunDef) : String :=
   let info := f.info
-  if !(info.plain && info.frameLocal) || f.gen || f.async || f.usesArgs then none else
+  if !info.plain then "parameters not plain (defaults, patterns, rest, repeated names)"
+  else if f.gen then "generator"
+  else if f.async then "async"
+  else if !info.frameLocal then "makes a closure (its frame is not local)"
+  else if f.usesArgs then "uses arguments"
+  else match f.kind with
+    | .ctor true => "derived class constructor"
+    | _ => "body"
+
+/-- `compile`, with the reason when there is no code (`compileWhy`, or what the body met). -/
+def compileE (f : FunDef) : Except String Code :=
+  let info := f.info
+  if !(info.plain && info.frameLocal) || f.gen || f.async || f.usesArgs then .error (compileWhy f) else
   match f.kind with
-  | .ctor true => none
+  | .ctor true => .error (compileWhy f)
   | _ =>
   let scope : Scope :=
     (info.layout.zipIdx).foldl (fun m (x, i) => m.insert x { reg := i }) {}
@@ -803,11 +892,16 @@ def compile (f : FunDef) : Option Code :=
     discard <| emit (.ret noReg)
   match run.run st0 with
   | .ok (_, s) =>
-    some { instrs := s.code, nregs := s.maxReg + 1, nparams := info.nParams,
+    .ok { instrs := s.code, nregs := s.maxReg + 1, nparams := info.nParams,
            nvars := info.layout.size + 1,
            thisReg := some info.layout.size, strict := f.strict, isArrow := f.arrow,
            name := f.name.getD "" }
-  | .error _ => none
+  | .error why => .error ("body: " ++ why)
+
+/-- Code for a function, or `none` when it is not compilable (`FunInfo` is already filled).
+Parameters take the first registers (the arguments of a call are already there), then the
+`var`s, then `this`, then the block scopes and temporaries. -/
+def compile (f : FunDef) : Option Code := (compileE f).toOption
 
 /-- Code for a top-level loop of a script: no parameters, its block and loop scopes are its
 frames (the resolver saw no frames around it). Any name not in those scopes goes through the

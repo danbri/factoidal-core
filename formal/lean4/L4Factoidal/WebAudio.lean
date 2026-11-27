@@ -19,7 +19,8 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
 - `WebAudio.Render`: one render quantum of a context: mixed inputs, `AudioParam` values
   (automation plus connected signals, clamped), kernels in graph order, the destination's block.
 - `WebAudio.Context`: an offline context: constructor checks, nodes, connections, automation,
-  `startRendering` (whole quanta, then `length` frames rounded to binary32).
+  `startRendering` (whole quanta, then `length` frames rounded to binary32) and `renderChunk`
+  (some quanta at a time, for `suspend`, `resume` and `startRendering(chunkSize)`).
 - `WebAudio.Buffer`: `AudioBuffer` (channels of binary32 values; copy rules) and the
   `AudioBufferSourceNode` playback algorithm (rate, detune, loops, offset, duration, sub-sample
   start, sample-rate conversion). Called by `Render.runKernel`.
@@ -31,6 +32,10 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   the windowed-sinc resampler to the context rate, and the `AudioBuffer`.
 - `WebAudio.Api`: the page operations (`web_api` ops 173 to 196) and the contexts kept between
   script turns; the op table is in its header.
+- `WebAudio.RenderSide`: the rendering side of a real-time context as pure functions: its own copy
+  of the graph state, the control messages applied in order, the quanta it renders for the output
+  (in order, `fill_frames`) and the reports. The engine's task that runs it is
+  `labs/demos/foafnaut/WebAudioRun.lean`.
 - `WebAudio.Ring`: the ring between the real-time rendering task and the audio consumer as a state
   machine (all-or-nothing write, read with silence and under-run count), with its theorems. The
   externs of the C sink are `WebAudio.Sink`, which this file does not import (it links C).
@@ -50,3 +55,4 @@ import L4Factoidal.WebAudio.Idl
 import L4Factoidal.WebAudio.Decode
 import L4Factoidal.WebAudio.Ring
 import L4Factoidal.WebAudio.Api
+import L4Factoidal.WebAudio.RenderSide
