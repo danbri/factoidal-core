@@ -223,23 +223,23 @@ class Run:
                  audit['documents'], {'agree': audit['equal'], 'differ': audit['different']},
                  [{'reason': name.replace('_', ' '), 'count': n, 'examples': []} for name, n in buckets])
 
-    def svg_tiny_admission(self):
+    def svg_tiny_acceptance(self):
         archive = self.tiny_archive()
         self.need(LAB / '.build/web-render/olean', 'The lab Lean modules')
         self.native()
-        out = self.dir / 'tiny-admission'
-        self.call('tiny-admission', [sys.executable, 'tests/browser-wpt/svg-tiny-admission.py', '--archive', archive,
+        out = self.dir / 'tiny-acceptance'
+        self.call('tiny-acceptance', [sys.executable, 'tests/browser-wpt/svg-tiny-acceptance.py', '--archive', archive,
                                      '--output', out, '--timeout', 900], 1200, cwd=ROOT)
-        path = out / 'svg-tiny-admission.json'
+        path = out / 'svg-tiny-acceptance.json'
         if not path.exists():
-            raise NotRun(f'svg-tiny-admission.py wrote no report, see {self.dir}/tiny-admission.log')
+            raise NotRun(f'svg-tiny-acceptance.py wrote no report, see {self.dir}/tiny-acceptance.log')
         report = json.loads(path.read_text())
-        rows = [row for row in report['cases'] if row['admission'] != 'ADMITTED']
+        rows = [row for row in report['cases'] if row['acceptance'] != 'ACCEPTED']
         counts = {k.lower(): v for k, v in report['allCounts'].items()}
-        self.add('svg-tiny-admission', 'W3C SVG Tiny 1.2, strict Lean SVG compiler admission', 'tests/browser-wpt/svg-tiny-admission.py',
+        self.add('svg-tiny-acceptance', 'W3C SVG Tiny 1.2, files accepted by the strict Lean SVG reader', 'tests/browser-wpt/svg-tiny-acceptance.py',
                  {'name': 'W3C SVG Tiny 1.2 archive', 'pin': TINY_SHA}, len(report['cases']), counts,
                  groups_of(rows, lambda r: plain_reason(r['error']), lambda r: r['file']),
-                 notes='Admission only. Visual conformance is NOT_RUN here.')
+                 notes='Accepted means the strict reader read the file with no refusal. It is not a pixel pass: see svg-tiny-pixels.')
 
     def tiny_archive(self):
         archive = self.need(self.a.tiny_archive, 'The W3C SVG Tiny archive')
@@ -532,7 +532,7 @@ def tiny_groups(cases):
     return groups_of([row for row in cases if row['status'] != 'MATCH'], cause, lambda r: r['file'])
 
 
-SUITES = {'html-parser': Run.html_parser, 'svg-tiny-admission': Run.svg_tiny_admission, 'svg-tiny-pixels': Run.svg_tiny_pixels,
+SUITES = {'html-parser': Run.html_parser, 'svg-tiny-acceptance': Run.svg_tiny_acceptance, 'svg-tiny-pixels': Run.svg_tiny_pixels,
           'wpt-images-wasm': Run.wpt_images_wasm, 'wpt-images-native': Run.wpt_images_native, 'wpt-scripts': Run.wpt_scripts,
           'harfbuzz': Run.harfbuzz, 'font-records': Run.font_records, 'font-coverage': Run.font_coverage, 'old-web': Run.old_web,
           'wpt-tables': Run.wpt_tables, 'demo-pages': Run.demo_pages, 'lab-suite': Run.lab_suite}

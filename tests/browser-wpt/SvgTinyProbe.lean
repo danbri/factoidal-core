@@ -5,7 +5,7 @@ import L4Factoidal.JSON.Serialize
 
 open L4Factoidal.JSON
 
-/-- Admission only: render the unchanged original SVG through the Lean SVG
+/-- Acceptance only: render the unchanged original SVG through the Lean SVG
 frontend. A compiled scene is not a visual-conformance pass.
 
 The first argument is the SFNT font file that draws SVG text (the font of HTML text in
@@ -24,7 +24,7 @@ def main (args : List String) : IO UInt32 := do
     let .ok source := source | do
       IO.println (Json.object [
         ("file", .string ((System.FilePath.mk path).fileName.getD path)),
-        ("admission", .string "UNAVAILABLE"),
+        ("acceptance", .string "UNAVAILABLE"),
         ("error", .string "Input cannot enter the UTF-8 String API; XML byte decoding is not wired"),
         ("visualConformance", .string "NOT_RUN")]).toString
       continue
@@ -33,7 +33,7 @@ def main (args : List String) : IO UInt32 := do
     let error := result.field? "error"
     IO.println (Json.object [
       ("file", .string ((System.FilePath.mk path).fileName.getD path)),
-      ("admission", .string (if error.isSome then "UNSUPPORTED" else "ADMITTED")),
+      ("acceptance", .string (if error.isSome then "REFUSED" else "ACCEPTED")),
       ("error", error.getD .null),
       ("visualConformance", .string "NOT_RUN")]).toString
   return 0

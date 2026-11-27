@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory every original W3C SVG Tiny 1.2 case and measure Lean admission.
+"""Inventory every original W3C SVG Tiny 1.2 case and measure which ones the strict Lean SVG reader accepts.
 
 This deliberately makes no pixel or visual-conformance claim. Fixtures are
 unaltered original svg/ files, including their labels and metadata.
@@ -58,9 +58,9 @@ command = [a.lean, '--run', str(driver), str(a.font.resolve()), *(str(corpus / r
 result = subprocess.run(command, cwd=formal, env={**os.environ, 'LEAN_PATH': ':'.join(map(str, cache_roots))},
                         capture_output=True, timeout=a.timeout)
 (out / 'lean.log').write_bytes(result.stderr)
-(out / 'admission.jsonl').write_bytes(result.stdout)
+(out / 'acceptance.jsonl').write_bytes(result.stdout)
 if result.returncode:
-    raise SystemExit('Lean admission driver failed; see ' + str(out / 'lean.log'))
+    raise SystemExit('Lean acceptance driver failed; see ' + str(out / 'lean.log'))
 actual = [json.loads(line) for line in result.stdout.splitlines()]
 assert [row['file'] for row in actual] == [row['file'] for row in cases], 'Incomplete or reordered results'
 for expected, row in zip(cases, actual):
@@ -68,14 +68,14 @@ for expected, row in zip(cases, actual):
     assert sha((corpus / row['file']).read_bytes()) == expected['sha256'], 'Fixture modified during run'
 for path, value in cache.items():
     assert sha(Path(path).read_bytes()) == value, 'Lean cache changed during run'
-report = {'format': 'factoidal-svg-tiny-admission-v1', 'scope': 'Lean interpreter admission; visual conformance NOT_RUN',
+report = {'format': 'factoidal-svg-tiny-acceptance-v1', 'scope': 'Strict Lean SVG reader acceptance; visual conformance NOT_RUN',
           'archiveURL': ARCHIVE_URL, 'archiveSha256': ARCHIVE_SHA256,
           'runnerSha256': sha(Path(__file__).read_bytes()), 'driverSha256': sha(driver.read_bytes()),
           'font': str(a.font), 'fontSha256': sha(a.font.read_bytes()),
           'cache': cache, 'cases': cases,
-          'approvedCounts': dict(Counter(row['admission'] for row in cases if row['approved'])),
-          'allCounts': dict(Counter(row['admission'] for row in cases)),
+          'approvedCounts': dict(Counter(row['acceptance'] for row in cases if row['approved'])),
+          'allCounts': dict(Counter(row['acceptance'] for row in cases)),
           'errors': dict(Counter(row['error'] for row in cases if row['error']))}
-(out / 'svg-tiny-admission.json').write_text(json.dumps(report, indent=2) + '\n')
+(out / 'svg-tiny-acceptance.json').write_text(json.dumps(report, indent=2) + '\n')
 print(json.dumps({key: report[key] for key in ['scope', 'approvedCounts', 'allCounts', 'errors']}))
-raise SystemExit(1 if any(row['admission'] != 'ADMITTED' for row in cases) else 0)
+raise SystemExit(1 if any(row['acceptance'] != 'ACCEPTED' for row in cases) else 0)
