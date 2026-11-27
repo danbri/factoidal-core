@@ -100,6 +100,8 @@ inductive SideColor where
   | current
   | transparent
   | color (c : Color)
+  /-- A colour with an alpha between 0 and 1 (CSS Color 4 §4.2). -/
+  | alpha (c : Color) (a : Float)
   deriving Repr
 /-- One value for each side of a box, in the order top, right, bottom, left. -/
 structure Sides (α : Type) where
@@ -222,6 +224,17 @@ structure Computed where
   /-- `font-style: italic` or `oblique` (inherited): drawn with the oblique face the engine
   makes. -/
   oblique : Bool := false
+  /-- The alpha of `color` (CSS Color 4 §4.2; inherited with it). -/
+  colorAlpha : Float := 1
+  /-- The alpha of `background-color`. -/
+  backgroundAlpha : Float := 1
+  /-- `opacity` (CSS Color 4 §5.1), 0 to 1. -/
+  opacity : Float := 1
+  /-- The product of `opacity` over this box and its ancestors: what each of its paints is
+  multiplied by. CSS draws an element with `opacity` as a group made opaque and then
+  faded; here each paint is faded alone, which differs only where the element's own paints
+  overlap. -/
+  paintOpacity : Float := 1
   deriving Repr
 instance : Inhabited Computed := ⟨{}⟩
 
@@ -1006,6 +1019,36 @@ private def color (source : String) : Except String Color := do
     | [r,g,b] => return ⟨← channel r,← channel g,← channel b⟩
     | _ => throw s!"unsupported CSS color: {source}"
   throw s!"unsupported CSS color: {source}"
+/-- A colour with its alpha, from the property table's computed `rgb()` or `rgba()` (CSS
+Color 4: any syntax the table reads, `hsl()`, `#rrggbbaa`, named colours, `transparent`);
+none for a value that is not a colour or is `currentcolor`. Channels are whole numbers
+0 to 255, as `colorHex` takes them; the alpha is kept to a thousandth. -/
+def colorAlphaOf (value : String) : Option (Color × Float) := do
+  let spec ← CssValues.specified "color" value
+  match CssValues.stripWs (CssValues.CV.parse (CssValues.computed {} "color" spec)) with
+  | [.fn name args] =>
+    let nums := (CssValues.stripWs args).filterMap fun cv => match cv with
+      | .tok (.num v _) => some v
+      | _ => none
+    let ch := fun (v : Rat) => Float.ofNat (min 255 v.floor.toNat)/255
+    let al := fun (v : Rat) => Float.ofNat (min 1000 (v*1000).floor.toNat)/1000
+    match name, nums with
+    | "rgb", [r, g, b] => some (⟨ch r,ch g,ch b⟩,1)
+    | "rgba", [r, g, b, a] => some (⟨ch r,ch g,ch b⟩,al a)
+    | _, _ => none
+  | _ => none
+/-- A colour and its alpha: the profile's own reading (opaque), else the table's. -/
+private def colorWithAlpha (source : String) : Except String (Color × Float) :=
+  match color source with
+  | .ok c => .ok (c,1)
+  | .error e => match colorAlphaOf source with
+    | some ca => .ok ca
+    | none => .error e
+/-- `opacity` (CSS Color 4 §5.1): a number or a percentage, clamped to 0 to 1. -/
+private def opacityValue (source : String) : Except String Float := do
+  let v := (trim source)
+  let x ← if v.endsWith "%" then (fun n => n/100) <$> number (v.dropEnd 1).toString else number v
+  return max 0 (min 1 x)
 private def edgeValues (s : String) : Except String Edges := do
   let vals ← (words s).mapM pixels
   if vals.any (· < 0) then throw "negative edges outside first CSS profile"
@@ -1076,7 +1119,9 @@ private def sideColor (source : String) : Except String SideColor := do
   match (trim source).toLower with
   | "currentcolor" => return .current
   | "transparent" => return .transparent
-  | _ => return .color (← color source)
+  | _ =>
+    let (c,a) ← colorWithAlpha source
+    return if a <= 0 then .transparent else if a >= 1 then .color c else .alpha c a
 /-- One to four values for the four sides, as the box edge shorthands give them
 (CSS Backgrounds 3 §4: top, right, bottom, left; a missing side takes the opposite one). -/
 private def sideValues (read : String → Except String α) (source : String) : Except String (Sides α) := do
@@ -1242,10 +1287,15 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
   | "padding-left" =>
     let (px,of) ← paddingParts d.value
     return {s with padding := {s.padding with left := px}, pos := s.pos.withPaddingOf 3 of}
-  | "color" => return {s with color := ← color d.value}
+  | "color" =>
+    let (c,a) ← colorWithAlpha d.value
+    return {s with color := c, colorAlpha := a}
   | "background" | "background-color" =>
-    let bg ← if d.value == "transparent" then pure none else some <$> color d.value
-    return {s with background := bg}
+    if d.value == "transparent" then return {s with background := none, backgroundAlpha := 1}
+    let (c,a) ← colorWithAlpha d.value
+    return if a <= 0 then {s with background := none, backgroundAlpha := 1}
+      else {s with background := some c, backgroundAlpha := a}
+  | "opacity" => return {s with opacity := ← opacityValue d.value}
   | "column-count" =>
     let v := (trim d.value).toLower
     if v == "auto" then return {s with columnCount := none}
@@ -1425,7 +1475,12 @@ def colorHex (value : String) : Option String :=
         | _ => none
       match name, nums with
       | "rgb", [r, g, b] => some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
-      | "rgba", [r, g, b, a] => if a == 0 then some "transparent" else some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
+      | "rgba", [r, g, b, a] =>
+        if a == 0 then some "transparent"
+        else if a >= 1 then some ("#" ++ hex2 r ++ hex2 g ++ hex2 b)
+        -- the alpha kept, in a form with no spaces (a border shorthand is read word by word)
+        else some ("rgba(" ++ toString (min 255 r.floor.toNat) ++ "," ++ toString (min 255 g.floor.toNat) ++ "," ++
+          toString (min 255 b.floor.toNat) ++ "," ++ toString (Float.ofNat (min 1000 (a*1000).floor.toNat)/1000) ++ ")")
       | _, _ => none
     | _ => none
 
@@ -1569,7 +1624,7 @@ def ownProperties : List String :=
    "border-top-color","border-right-color","border-bottom-color","border-left-color",
    "border-width","border-color","border","border-spacing","border-collapse","caption-side","table-layout",
    "vertical-align","min-width","max-width","min-height","max-height","object-fit","font-weight","font-style",
-   "font-family","background-image","column-count","column-width","columns"]
+   "font-family","background-image","column-count","column-width","columns","opacity"]
 
 /-- A property `apply` may read: its own arms (`ownProperties`), the names the flex,
 alignment, position and grid readers take, `content`, and the prefixed names those readers
@@ -1661,8 +1716,9 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "padding-right" => some {s with padding := {s.padding with right := source.padding.right}}
   | "padding-bottom" => some {s with padding := {s.padding with bottom := source.padding.bottom}}
   | "padding-left" => some {s with padding := {s.padding with left := source.padding.left}}
-  | "color" => some {s with color := source.color}
-  | "background" | "background-color" => some {s with background := source.background}
+  | "color" => some {s with color := source.color, colorAlpha := source.colorAlpha}
+  | "opacity" => some {s with opacity := source.opacity}
+  | "background" | "background-color" => some {s with background := source.background, backgroundAlpha := source.backgroundAlpha}
   | "background-image" => some {s with backgroundGradient := source.backgroundGradient}
   | "column-count" => some {s with columnCount := source.columnCount}
   | "column-width" => some {s with columnWidth := source.columnWidth}
@@ -2712,7 +2768,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   let mut initial : Computed := {
     fontWeight, inheritedWeight := parent.fontWeight,
     oblique := parent.oblique || (html && FontSynthesis.italicTags.contains n.lname),
-    color := parent.color,
+    color := parent.color, colorAlpha := parent.colorAlpha,
     clipOverflow := svgViewport && svgOverflow != "visible", fontSize,
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
@@ -2833,7 +2889,8 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
   -- CSS 2.1 §9.7: an absolutely positioned or floated box is a block.
   if result.pos.isAbsolute || result.pos.float != .none then result := {result with display := result.display.blockified}
   let decoration := parent.decorationColor.orElse (fun _ => if result.underline then some result.color else none)
-  return {result with underline := decoration.isSome, decorationColor := decoration}
+  return {result with underline := decoration.isSome, decorationColor := decoration,
+                      paintOpacity := parent.paintOpacity*result.opacity}
 
 /-- The style of element `id` with every rule tried (`matchedRules`): the reference. -/
 def computed (dom : Dom) (id : Nat) (rules : List Rule) (parent : Computed)

@@ -206,6 +206,17 @@ private def paddingOf (html css : String) : Option (List Float) :=
 -- a :has() that nothing in the document can satisfy drops the selector before matching
 #guard (CSS.parse "main:has(nonexistent) span { color: red } main:has(span) span { color: blue }").toOption.map
   (fun rs => (pruneHas (DOM.parseHtmlDocument "<main><span></span></main>") rs).length) == some 1
+-- colours with alpha (CSS Color 4 §4.2) and `opacity` (§5.1)
+#guard (styleAt pageT "#t { background: rgba(0,0,0,0.1) }").map (fun s => (s.background.isSome, s.backgroundAlpha)) == some (true, 0.1)
+#guard (styleAt pageT "#t { background-color: transparent }").map (fun s => s.background.isNone) == some true
+#guard (styleAt pageT "#t { color: rgb(0 0 255 / 50%) }").map (fun s => (s.color.b, s.colorAlpha)) == some (1, 0.5)
+#guard (styleAt pageT "#t { color: #0000ff80 }").map (·.colorAlpha) == some 0.501
+#guard (styleAt pageT "#t { color: red }").map (·.colorAlpha) == some 1
+#guard (styleAt pageT ".a { color: rgba(0,0,0,0.5) }").map (·.colorAlpha) == some 0.5
+#guard (styleAt pageT ".a { opacity: 0.5 } #t { opacity: 50% }").map (fun s => (s.opacity, s.paintOpacity)) == some (0.5, 0.25)
+#guard (styleAt pageT "#t { opacity: 2 }").map (·.opacity) == some 1
+#guard (styleAt pageT "#t { border: 1px solid rgba(255,0,0,0.5) }").map (fun s =>
+  match s.borderColor.top with | .alpha c a => c.r == 1 && a == 0.5 | _ => false) == some true
 -- one side's border
 #guard (styleAt pageT "#t { border-bottom: 1px solid #ccc }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (0, 1)
 #guard (styleAt pageT "#t { border: 2px solid red; border-bottom: none }").map (fun s => let e := s.borderEdges; (e.top, e.bottom)) == some (2, 0)

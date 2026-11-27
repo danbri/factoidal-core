@@ -203,15 +203,43 @@ def gradientPaint (g : CSS.BackgroundGradient) (x y w h : Float) : Paint :=
   .gradient {shape := .linear (cx-dx*length/2) (cy-dy*length/2) (cx+dx*length/2) (cy+dy*length/2),
              boundingBoxUnits := false,stops}
 
+/-- A paint faded by `k` (an alpha or an opacity, CSS Color 4 §4.2 and §5.1): its opacity
+times `k`. With `k` of 1 or more the paint is as it was. -/
+def fadePaint (k : Float) : Node → Node
+  | .paint item => if k >= 1 then .paint item else .paint {item with primitive := {item.primitive with opacity := item.primitive.opacity*k}}
+  | other => other
+
+/-- Paints, groups and clipped groups faded by `k`, to `depth` levels of groups: the
+content of a replaced element or an embedded SVG under an `opacity`. Deeper groups stay as
+they are (the bound keeps the walk short on any scene). -/
+def fadeNodes (k : Float) : Nat → Node → Node
+  | 0, n => n
+  | depth+1, n => if k >= 1 then n else match n with
+    | .paint _ => fadePaint k n
+    | .group id t children => .group id t (children.map (fadeNodes k depth))
+    | .clipped id t c children => .clipped id t c (children.map (fadeNodes k depth))
+
+/-- Kind: equivalence. Says: with nothing to fade (`k` of 1 or more) a scene is unchanged,
+so a page with no alpha and no `opacity` paints as before. Does not say: how the raster
+blends a faded paint. -/
+theorem fadeNodes_opaque (k : Float) (h : k >= 1) (depth : Nat) (n : Node) : fadeNodes k depth n = n := by
+  cases depth with
+  | zero => rfl
+  | succ d => simp [fadeNodes, h]
+
+/-- Kind: equivalence. Says: a paint faded by 1 or more is the same paint. -/
+theorem fadePaint_opaque (k : Float) (h : k >= 1) (n : Node) : fadePaint k n = n := by
+  cases n <;> simp [fadePaint, h]
+
 private def background (id : Nat) (s : Computed) (x y w h : Float) : Array Node :=
   if !s.visible || w <= 0 || h <= 0 then #[] else
   let colour := match s.background with
     | none => #[]
-    | some c => #[.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
+    | some c => #[fadePaint (s.backgroundAlpha*s.paintOpacity) (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩)]
   -- CSS Backgrounds 3 §3.2: the image over the colour
   match s.backgroundGradient with
   | none => colour
-  | some g => colour.push (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩)
+  | some g => colour.push (fadePaint s.paintOpacity (.paint ⟨some id,{geometry := .rect x y w h,style := {fill := gradientPaint g x y w h}}⟩))
 
 /-- The two colours of a 3D border (CSS Backgrounds 3 §4.2 leaves them to the user
 agent): the colour moved 60% of the way to white, and 60% of the colour. -/
@@ -220,9 +248,16 @@ def darker (c : Color) : Color := ⟨c.r*0.6,c.g*0.6,c.b*0.6⟩
 
 /-- The colour a side's border is painted with; none when it is transparent. -/
 def sidePaint (s : Computed) : SideColor → Option Color
-  | .current => some s.color
+  | .current => if s.colorAlpha <= 0 then none else some s.color
   | .transparent => none
   | .color c => some c
+  | .alpha c _ => some c
+
+/-- The alpha a side's border is painted with (its colour's, times the element's opacity). -/
+def sideAlpha (s : Computed) : SideColor → Float
+  | .current => s.colorAlpha*s.paintOpacity
+  | .alpha _ a => a*s.paintOpacity
+  | _ => s.paintOpacity
 
 /-- Two colours that paint the same pixels. -/
 def sameColour (a b : Color) : Bool := a.r == b.r && a.g == b.g && a.b == b.b
@@ -283,20 +318,20 @@ dashes (dots: circles when the side is 3 px wide or more) along the side. -/
 def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.run do
   let b := s.borderEdges
   if !s.visible || w <= 0 || h <= 0 || !s.hasBorder then return #[]
-  let sides : List (String × Float × BorderStyle × Option Color) :=
-    [("top",b.top,s.borderStyle.top,sidePaint s s.borderColor.top),
-     ("right",b.right,s.borderStyle.right,sidePaint s s.borderColor.right),
-     ("bottom",b.bottom,s.borderStyle.bottom,sidePaint s s.borderColor.bottom),
-     ("left",b.left,s.borderStyle.left,sidePaint s s.borderColor.left)]
-  let painted := sides.filter fun (_,width,st,_) => width > 0 && st != .none
+  let sides : List (String × Float × BorderStyle × Option Color × Float) :=
+    [("top",b.top,s.borderStyle.top,sidePaint s s.borderColor.top,sideAlpha s s.borderColor.top),
+     ("right",b.right,s.borderStyle.right,sidePaint s s.borderColor.right,sideAlpha s s.borderColor.right),
+     ("bottom",b.bottom,s.borderStyle.bottom,sidePaint s s.borderColor.bottom,sideAlpha s s.borderColor.bottom),
+     ("left",b.left,s.borderStyle.left,sidePaint s s.borderColor.left,sideAlpha s s.borderColor.left)]
+  let painted := sides.filter fun (_,width,st,_,_) => width > 0 && st != .none
   let rect := fun (c : Color) (x y w h : Float) =>
     if w <= 0 || h <= 0 then #[] else #[Node.paint ⟨some id,{geometry := .rect x y w h,style := {fill := .solid c}}⟩]
   -- one colour and one of the plain styles: the four rectangles
   match painted with
   | [] => return #[]
-  | (_,_,st0,c0) :: rest =>
+  | (_,_,st0,c0,a0) :: rest =>
     let plain := st0 == .solid || st0 == .inset || st0 == .outset
-    let alike := rest.all fun (_,_,st,c) => st == st0 && match c, c0 with
+    let alike := rest.all fun (_,_,st,c,a) => st == st0 && a == a0 && match c, c0 with
       | some a, some b => sameColour a b
       | none, none => true
       | _, _ => false
@@ -308,8 +343,8 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
           | .outset => (lighter c,darker c)
           | .inset => (darker c,lighter c)
           | _ => (c,c)
-        return rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
-          rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)
+        return (rect near x y w b.top ++ rect far x (y+h-b.bottom) w b.bottom ++
+          rect near x (y+b.top) b.left (h-b.top-b.bottom) ++ rect far (x+w-b.right) (y+b.top) b.right (h-b.top-b.bottom)).map (fadePaint a0)
     -- side by side
     let poly := fun (c : Color) (points : List Point) =>
       Node.paint ⟨some id,{geometry := .polygon points,style := {fill := .solid c}}⟩
@@ -325,8 +360,9 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
       let (b0,b1) := at_ f1
       [a0,a1,b1,b0]
     let mut out : Array Node := #[]
-    for (side,width,st,colour) in painted do
+    for (side,width,st,colour,alpha) in painted do
       let some c := colour | continue
+      let first := out.size
       let near := side == "top" || side == "left"
       match st with
       | .double =>
@@ -361,6 +397,7 @@ def borderNodes (id : Nat) (s : Computed) (x y w h : Float) : Array Node := Id.r
       | _ =>
         let (tone,_) := sideTones st near c
         out := out.push (poly tone (band side 0 1))
+      if alpha < 1 then out := out.mapIdx fun i n => if i < first then n else fadePaint alpha n
     return out
 
 /-- Background, then border, of a border box. -/
@@ -540,7 +577,7 @@ def pictureNodes (id : Nat) (s : Computed) (picture : Picture) (x y w h : Float)
     | none => (1,1)
   let map : Transform := ⟨kx/sx,0,0,ky/sy,-dx*kx/sx,-dy*ky/sy⟩
   let paint : Paint := .image ⟨map,picture.id,picture.bitmap⟩
-  [Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩]
+  [fadePaint s.paintOpacity (Node.paint ⟨some id,{geometry := .rect left top (right-left) (bottom-top),style := {fill := paint}}⟩)]
 
 /-- A replaced element's margin box at the origin, for content `w` by `h`: its outer
 width and height, and its background, border and content. `content` paints the
@@ -695,8 +732,8 @@ private def altItems (id : Nat) (s : Computed) (n : DOM.Node) : Array Inline :=
 /-- An inline element's background goes behind its text (CSS 2.1 §14.2). Text has no
 background of its own, so its words and spaces take the element's. -/
 private def withBackground (s : Computed) : Inline → Inline
-  | .word id t text start => if t.background.isNone then .word id {t with background := s.background} text start else .word id t text start
-  | .space id t => if t.background.isNone then .space id {t with background := s.background} else .space id t
+  | .word id t text start => if t.background.isNone then .word id {t with background := s.background, backgroundAlpha := s.backgroundAlpha} text start else .word id t text start
+  | .space id t => if t.background.isNone then .space id {t with background := s.background, backgroundAlpha := s.backgroundAlpha} else .space id t
   | other => other
 
 /-- CSS Writing Modes 3 §2.4.2: the bidi control characters at the start of an
@@ -756,7 +793,7 @@ def inlineItems (dom : Dom) (styles : Array Computed) (embedding : Embedding) (p
       let inner ← embedding id s width height
       -- The SVG producer paints the root's background itself.
       let (ow,oh,nodes) := replacedBox id {s with background := none} width height
-        (fun x y => [.group none ⟨1,0,0,1,x,y⟩ inner])
+        (fun x y => [fadeNodes s.paintOpacity 64 (.group none ⟨1,0,0,1,x,y⟩ inner)])
       return #[.replaced id s ow oh nodes]
     -- A block inside an inline (old pages often have one) breaks the line around it.
     -- An inline-block is one atomic box: `atomize` lays out what is between its bounds.
@@ -780,8 +817,9 @@ font size; `scale` is px to the glyph's unit). Other text is painted as before. 
 def glyphStyle (s : Computed) (fontSize scale : Float) : Rendering.Style :=
   if FontSynthesis.isBold s.fontWeight && scale > 0 then
     let width := Float.ofNat (FontSynthesis.embolden (fontSize*64).round.toUInt32.toNat)/64
-    {fill := .solid s.color, stroke := .solid s.color, strokeWidth := width/scale}
-  else {fill := .solid s.color}
+    {fill := .solid s.color, stroke := .solid s.color, strokeWidth := width/scale,
+     fillOpacity := s.colorAlpha*s.paintOpacity, strokeOpacity := s.colorAlpha*s.paintOpacity}
+  else {fill := .solid s.color, fillOpacity := s.colorAlpha*s.paintOpacity}
 
 /-- The place of a glyph of text in style `s`: its outline scaled and moved to `(x,y)`, the
 top of its line; for slanted text (`font-style: italic` or `oblique`) also sheared about
@@ -808,7 +846,7 @@ private def glyphNodes (font : FontProfile) (run : GlyphRun) (s : Computed) : Ar
     let width := run.glyphs.foldl (fun w g => w+g.advance) 0
     let thickness := max 1 (run.fontSize/14)
     let baseline := top+font.ascent*scale
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness,style := {fill := .solid (s.decorationColor.getD s.color), fillOpacity := s.colorAlpha*s.paintOpacity}}⟩)
   return out
 
 private def itemWidth (font : FontProfile) (rtl : Option Bool := none) : Inline → Except String Float
@@ -853,7 +891,7 @@ private def shapedNodes (word : FontProvider.Word) (run : GlyphRun) (s : Compute
       out := out.push (.paint ⟨some run.source,{geometry,style := glyphStyle s run.fontSize scale,transform := place}⟩)
   if s.underline && width > 0 then
     let thickness := max 1 (run.fontSize/14)
-    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)
+    out := out.push (.paint ⟨some run.source,{geometry := .rect left (baseline+thickness) width thickness, style := {fill := .solid (s.decorationColor.getD s.color), fillOpacity := s.colorAlpha*s.paintOpacity}}⟩)
   return out
 
 /-- A laid-out box moved by `(dx,dy)`: its paint in a translated group, its boxes and
@@ -881,7 +919,7 @@ private def textBackground (font : FontProfile) (source : Nat) (s : Computed) (x
   match s.background with
   | some c =>
     if !s.visible || width <= 0 then #[] else
-    #[.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩]
+    #[fadePaint (s.backgroundAlpha*s.paintOpacity) (.paint ⟨some source,{geometry := .rect x top width ((font.ascent+font.descent)*s.fontSize/font.unitsPerEm),style := {fill := .solid c}}⟩)]
   | none => #[]
 
 /-- All inline participants share the line baseline, computed before any glyph
@@ -994,7 +1032,7 @@ private def lineLayout (font : FontProfile) (items : Array (Float × Inline))
       extent := some (x+offset,x+offset+advance)
       if s.underline && s.visible then
         let thickness := max 1 (s.fontSize/14)
-        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color)}}⟩)}
+        out := {out with nodes := out.nodes.push (.paint ⟨some source,{geometry := .rect (x+offset) (y+ascent+thickness) advance thickness,style := {fill := .solid (s.decorationColor.getD s.color), fillOpacity := s.colorAlpha*s.paintOpacity}}⟩)}
     | .replaced source s width height nodes =>
       let top := match s.verticalAlign with
         | .baseline => y+ascent-height
@@ -2485,7 +2523,7 @@ def layoutTask (dom : Dom) (styles : Array Computed) (font : FontProfile) (embed
       if n.ns == some DOM.svgNS then
         let (sw,sh) ← svgSize n sized available
         let nodes ← embedding id s sw sh
-        return replaced sw sh (fun cx cy => [.group none (translate cx cy) nodes]) {s with background := none}
+        return replaced sw sh (fun cx cy => [fadeNodes s.paintOpacity 64 (.group none (translate cx cy) nodes)]) {s with background := none}
       -- A list item's marker (CSS Lists 3 §3): the first thing in the first line with
       -- `list-style-position: inside`, else outside the box beside that line (below).
       let markerItems := if n.lname == "li" then (textItems id s (listMarker dom font s.pos.listStyle id)).toArray else #[]
