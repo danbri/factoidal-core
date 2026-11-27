@@ -28,10 +28,19 @@ structure Input where
   senderNonce : Nat
   executionUsed : Nat
   feeMarket : Bool
+  /-- The initcode length in bytes for a contract-creation transaction
+      (destination absent); `none` for a call. -/
+  initCodeBytes : Option Nat := none
+
+/-- Contract creation adds 32000 gas and, from Shanghai (EIP-3860), 2 gas
+    per 32-byte word of initcode. A call adds nothing. -/
+def creationGas : Option Nat → Nat
+  | none => 0
+  | some bytes => 32000 + 2 * ((bytes + 31) / 32)
 
 def intrinsicGas (p : Input) : Nat :=
   21000 + 4 * p.zeros + 16 * p.nonzeros +
-    2400 * p.accessAddresses + 1900 * p.accessKeys
+    2400 * p.accessAddresses + 1900 * p.accessKeys + creationGas p.initCodeBytes
 
 def floorGas (p : Input) : Nat :=
   21000 + 10 * (p.zeros + 4 * p.nonzeros)

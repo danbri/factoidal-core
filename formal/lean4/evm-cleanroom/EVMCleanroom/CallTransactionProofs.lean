@@ -24,6 +24,9 @@ theorem admit_checked (tx : Envelope) (block : BlockContext) (account : Account)
       decide (tx.value ≥ modulus) || decide (tx.gasPriceCap ≥ modulus) || decide (tx.priorityFeeCap ≥ modulus)) = true
   · simp [hRange] at h
   simp only [hRange] at h
+  by_cases hInit : (tx.create && decide (tx.data.size > Create.maxInitCodeSize)) = true
+  · simp [hInit] at h
+  simp only [hInit] at h
   by_cases hNoChain : (tx.signedChainId.isNone && tx.kind != 0) = true
   · simp [hNoChain] at h
   simp only [hNoChain] at h
@@ -105,6 +108,10 @@ theorem run_executed_admitted (p : Request) (result : Result) (h : run p = .exec
   | some address => simp only [hMissing] at h; cases h
   | none =>
     simp only [hMissing] at h
+    cases hCreation : p.creationRefusal with
+    | some reason => simp only [hCreation] at h; cases h
+    | none =>
+    simp only [hCreation] at h
     by_cases hPrecompile : CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to = true
     · rw [if_pos hPrecompile] at h
       cases h

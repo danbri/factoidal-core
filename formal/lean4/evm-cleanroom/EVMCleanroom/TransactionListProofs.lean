@@ -93,8 +93,15 @@ theorem runAdmitted_cumulativeGasUsed (p : CallTransaction.Request) (world : TxW
   unfold CallTransaction.runAdmitted at h
   dsimp only at h
   split at h
-  · cases h
-  · exact settleFrame_cumulativeGasUsed _ _ _ _ _ _ _ h
+  · unfold CallTransaction.runCreation at h
+    split at h
+    · exact settleFrame_cumulativeGasUsed _ _ _ _ _ _ _ h
+    · split at h
+      · cases h
+      · exact settleFrame_cumulativeGasUsed _ _ _ _ _ _ _ h
+  · split at h
+    · cases h
+    · exact settleFrame_cumulativeGasUsed _ _ _ _ _ _ _ h
 
 /-- Kind: public execution accounting.
     Says: every actual result of the shared ordinary/blob execution entry
@@ -106,6 +113,8 @@ theorem runWithBlobHashes_cumulativeGasUsed (p : CallTransaction.Request)
     result.cumulativeGasUsed = p.block.gasUsedBefore + result.charge.used := by
   unfold CallTransaction.runWithBlobHashes at h
   dsimp only at h
+  split at h
+  · cases h
   split at h
   · cases h
   split at h

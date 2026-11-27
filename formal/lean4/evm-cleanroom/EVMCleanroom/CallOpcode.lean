@@ -433,6 +433,15 @@ def createContinuation (active : ActiveFrame) (ops : CreateOperands) (checkpoint
 def createBudget (remaining : Nat) : Budget :=
   ⟨Create.childGas remaining, remaining - Create.childGas remaining⟩
 
+/-- The frame that runs initcode at a new address: the prepared account's
+    (empty) storage and its balance after the endowment, the initcode as code,
+    no calldata. Shared by the CREATE opcodes and creation transactions. -/
+def createFrame (childWorld : TxWorld) (new gas : Nat) (profile : Profile)
+    (origin creator value : Nat) (initCode : ByteView) : State :=
+  { frameInput childWorld new gas false profile origin creator with
+    code := Create.materialize initCode
+    callValue := value }
+
 /-- After the charge and the soft checks: derive and warm the address, test
     for a collision, raise the creator's nonce (the checkpoint) and build the
     child. A collision keeps the nonce and consumes the child gas. -/
@@ -452,10 +461,8 @@ def enterCreate (active : ActiveFrame) (ops : CreateOperands) (budget : Budget)
       match Create.enter checkpoint active.address new ops.value with
       | .error _ => .error .unsupportedFork
       | .ok childWorld =>
-        let child := { frameInput childWorld new budget.childGas false parent.profile
-            parent.txOrigin active.address with
-          code := Create.materialize initCode
-          callValue := ops.value }
+        let child := createFrame childWorld new budget.childGas parent.profile
+          parent.txOrigin active.address ops.value initCode
         .ok (.entered ⟨childWorld, new, active.depth + 1, child⟩
           (createContinuation active ops checkpoint budget (.create new)))
 
@@ -509,6 +516,27 @@ def resumeCreate (k : Continuation) (new : Nat) : RawOutcome → CallStep
   | .reverted s => resumeCall k k.checkpoint s.gas s.outputData false
   | .exceptional _ => resumeCall k k.checkpoint 0 {} false
   | .indeterminate reason => .indeterminate reason
+
+/-- Why a deposit failed, in the order of EELS `process_create_message`:
+    the EIP-3541 prefix is tested first, then the gas and the size. -/
+def depositError (output : ByteView) : Error :=
+  if output.size != 0 && output.readByte 0 == 0xEF then .invalidContractPrefix else .outOfGas
+
+/-- The code deposit of a creation that has no suspended creator: the entry
+    frame of a contract-creation transaction. It applies the same
+    `Create.deposit` rules and `Create.setCode` as `finishCreate`. A deposit
+    failure is an exceptional halt, which the settlement turns into a rollback
+    with no gas left. REVERT, exceptional and indeterminate outcomes pass through. -/
+def depositOutcome (new : Nat) : RawOutcome → RawOutcome
+  | .stopped world s =>
+    match Create.deposit s.gas {} with
+    | none => .exceptional (depositError {})
+    | some (code, remaining) => .stopped (Create.setCode world new code) { s with gas := remaining }
+  | .returned world s =>
+    match Create.deposit s.gas s.outputData with
+    | none => .exceptional (depositError s.outputData)
+    | some (code, remaining) => .returned (Create.setCode world new code) { s with gas := remaining }
+  | raw => raw
 
 /-- Resume the suspended frame according to what it was waiting for. -/
 def resumeAny (k : Continuation) (raw : RawOutcome) : CallStep :=

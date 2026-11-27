@@ -41,6 +41,8 @@ def errorCode : EVMCleanroom.Error → String
   | .framePolicyViolation _ => "framePolicyViolation"
   | .stepLimit => "stepLimit"
   | .missingBlockHash _ => "missingBlockHash"
+  | .addressCollision => "addressCollision"
+  | .invalidContractPrefix => "invalidContractPrefix"
 
 def hexDigit (n : Nat) : Char :=
   Char.ofNat (if n < 10 then 48 + n else 87 + n)

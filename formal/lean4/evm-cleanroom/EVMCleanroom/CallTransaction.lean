@@ -43,6 +43,11 @@ structure Envelope where
   priorityFeeCap : Nat
   data : Array UInt8
   accessList : List Access
+  /-- A contract-creation transaction: the signed destination is absent and
+      `data` is the initcode. `to` then holds the address of the new account,
+      which `runWithBlobHashes` recomputes from the sender and the nonce and
+      refuses if it differs; `Envelope.creation` fills it in. -/
+  create : Bool := false
 
 structure BlockContext where
   chainId : Nat
@@ -141,7 +146,8 @@ def accountingInput (tx : Envelope) (block : BlockContext) (sender : Account) : 
     accessKeys := tx.accessList.foldl (fun n e => n + e.storageKeys.length) 0
     gasLimit := tx.gasLimit, gasPriceCap := tx.gasPriceCap, priorityCap := tx.priorityFeeCap
     baseFee := block.baseFee, senderBalance := sender.balance, senderNonce := sender.nonce
-    executionUsed := 0, feeMarket := tx.kind == 2 }
+    executionUsed := 0, feeMarket := tx.kind == 2
+    initCodeBytes := if tx.create then some tx.data.size else none }
 
 structure Budget where
   intrinsic : Nat
@@ -162,6 +168,7 @@ def admit (tx : Envelope) (block : BlockContext) (sender : Account) : Except Str
   if tx.kind > 2 then .error "unsupported-transaction-type"
   else if tx.sender ≥ addressBound || tx.to ≥ addressBound || tx.value ≥ modulus ||
       tx.gasPriceCap ≥ modulus || tx.priorityFeeCap ≥ modulus then .error "envelope-out-of-range"
+  else if tx.create && tx.data.size > Create.maxInitCodeSize then .error "initcode-too-large"
   else if tx.signedChainId.isNone && tx.kind != 0 then .error "missing-chain-id"
   else if tx.signedChainId.any (fun id => id != block.chainId) then .error "chain-id-mismatch"
   else if tx.nonce != sender.nonce || tx.nonce ≥ nonceBound - 1 then .error "invalid-sender-nonce"
@@ -387,16 +394,77 @@ def entryFrame (p : Request) (entered : TxWorld) (budget : Budget) : State :=
   { frameInput entered p.tx.to budget.frameGas false p.fork.profile p.tx.sender p.tx.sender with
     callData := ByteView.ofArray p.tx.data, callValue := p.tx.value }
 
+/-- The top-level frame of a contract-creation transaction: the frame the
+    CREATE opcodes build for their child, with the transaction's execution gas
+    (no EIP-150 reduction), the sender as origin and creator, the transaction
+    data as initcode and empty calldata. -/
+def creationFrame (p : Request) (entered : TxWorld) (budget : Budget) : State :=
+  CallOpcode.createFrame entered p.tx.to budget.frameGas p.fork.profile p.tx.sender p.tx.sender
+    p.tx.value (ByteView.ofArray p.tx.data)
+
+/-- A contract-creation transaction after admission and fee escrow, as in
+    EELS `process_message_call` and `process_create_message`. `p.tx.to` is the
+    new address (checked by the caller). A collision is a failed receipt that
+    uses all the gas. Otherwise the account is prepared and endowed
+    (`Create.enter`, as for the opcodes), the initcode runs in the ordinary
+    dispatcher at depth 0, and `CallOpcode.depositOutcome` applies the deposit
+    rules. Every failure settles on the escrow world, in which the sender has
+    paid and its nonce is incremented. -/
+def runCreation (p : Request) (escrow : TxWorld) (budget : Budget) : Outcome :=
+  if Create.collides (escrow.accounts p.tx.to) then
+    settleFrame p.tx p.block budget escrow (creationFrame p escrow budget)
+      (.exceptional .addressCollision)
+  else
+    match Create.enter escrow p.tx.sender p.tx.to p.tx.value with
+    | .error _ => .indeterminate (.unsupported "value-transfer-unavailable")
+    | .ok entered =>
+      let frame := creationFrame p entered budget
+      settleFrame p.tx p.block budget escrow frame
+        (CallOpcode.depositOutcome p.tx.to (CallOpcode.execute p.fuel entered p.tx.to frame))
+
 /-- Lower-level execution after admission. The public transaction entries
     construct the world and budget only after their checks; this helper does
     not itself authenticate or admit caller-supplied values. -/
 def runAdmitted (p : Request) (w : TxWorld) (budget : Budget) : Outcome :=
   let escrow := debitSender w p.tx.sender budget
-  match pay escrow p.tx.sender p.tx.to p.tx.value with
-  | .error _ => .indeterminate (.unsupported "value-transfer-unavailable")
-  | .ok entered =>
-    let frame := entryFrame p entered budget
-    settleFrame p.tx p.block budget escrow frame (runFrame p.fuel entered p.tx.to frame)
+  if p.tx.create then runCreation p escrow budget
+  else
+    match pay escrow p.tx.sender p.tx.to p.tx.value with
+    | .error _ => .indeterminate (.unsupported "value-transfer-unavailable")
+    | .ok entered =>
+      let frame := entryFrame p entered budget
+      settleFrame p.tx p.block budget escrow frame (runFrame p.fuel entered p.tx.to frame)
+
+/-- The address of the account a creation transaction creates: the low 160
+    bits of the hash of `rlp([sender, nonce])`, with the nonce the sender has
+    before this transaction increments it (admission requires the envelope's
+    nonce to be that nonce). -/
+def creationAddress (acceptance : Keccak.Acceptance) (tx : Envelope) : Nat :=
+  Create.createAddress acceptance tx.sender tx.nonce
+
+/-- Mark an envelope as a creation and fill in its target. Without the
+    Keccak opt-in the target cannot be derived and the run refuses. -/
+def Envelope.creation (acceptance : Option Keccak.Acceptance) (tx : Envelope) : Envelope :=
+  { tx with create := true, to := (acceptance.map (creationAddress · tx)).getD 0 }
+
+/-- Why a creation envelope cannot be run: the address needs the
+    experimental Keccak opt-in, and the envelope's target must be the derived
+    address. A nonce that admission rejects anyway is not hashed. A call
+    envelope is never refused here. -/
+def Request.creationRefusal (p : Request) : Option Unavailable :=
+  if !p.tx.create || p.tx.nonce ≥ nonceBound then none
+  else
+    match p.keccakAcceptance with
+    | none => some (.frame .unsupportedFork)
+    | some acceptance =>
+      if p.tx.to == creationAddress acceptance p.tx then none
+      else some (.unsupported "creation-target-mismatch")
+
+/-- The created address of an executed creation transaction, or none for a
+    call and for a failed creation (collision, revert, exceptional halt or
+    failed code deposit: then no account was created). -/
+def createdAddress (tx : Envelope) (result : Result) : Option Nat :=
+  if tx.create && result.receiptStatus then some tx.to else none
 
 /-- Shared execution entry for an explicit transaction context. `BlobCall.run`
     supplies only its admitted Cancun hash list, while the ordinary public
@@ -414,11 +482,14 @@ def runWithBlobHashes (p : Request) (hashes : Array Word) : Outcome :=
     match [p.tx.sender, p.tx.to, p.block.coinbase].find? (fun address => !w.hasAccount address) with
     | some address => .indeterminate (.frame (.incompleteState address none))
     | none =>
-      if CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
-      else
-        match admit p.tx p.block (w.accounts p.tx.sender) with
-        | .error reason => .rejected reason
-        | .ok budget => runAdmitted p w budget
+      match p.creationRefusal with
+      | some reason => .indeterminate reason
+      | none =>
+        if CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
+        else
+          match admit p.tx p.block (w.accounts p.tx.sender) with
+          | .error reason => .rejected reason
+          | .ok budget => runAdmitted p w budget
 
 /-- Execute a decoded, externally authenticated ordinary contract transaction
     in the admitted Shanghai or Cancun slice. Every call starts with an empty

@@ -227,6 +227,12 @@ inductive Error where
   /-- BLOCKHASH asked for a block inside the 256-block window whose hash the
       host did not supply. This is an incomplete input, not an EVM failure. -/
   | missingBlockHash (number : Nat)
+  /-- A creation transaction's target already has code, a nonce or storage
+      (EIP-684, EIP-7610). A real failure: all execution gas is consumed. -/
+  | addressCollision
+  /-- A creation transaction's initcode returned code starting with 0xEF
+      (EIP-3541). A real failure: all execution gas is consumed. -/
+  | invalidContractPrefix
   deriving Repr, DecidableEq
 
 /-- The bounds check is part of the constructor, not an assumed theorem. -/
