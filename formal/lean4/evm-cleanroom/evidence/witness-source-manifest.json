@@ -50,7 +50,7 @@
   ],
   "repository_source_blobs": {
     ".github/workflows/evm-cleanroom.yml": "2116dc5fcc5cbed98272f599e886b9679aacb16f",
-    ".github/workflows/evm-witness.yml": "c16a83f5d2761f8e08e97b9c995d2fdc063fe616",
+    ".github/workflows/evm-witness.yml": "4e180f78502bef1b443d66f37cdf991e25ce208f",
     "tools/lean-tail-recursion-audit.py": "d1c53ce322b491381ea0a7b50bf608ad48035b6e"
   },
   "native_targets": {

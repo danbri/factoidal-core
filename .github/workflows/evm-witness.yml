@@ -82,7 +82,7 @@ jobs:
           flock /tmp/ethereum-mpt-lean.lock python3 evm-cleanroom/scripts/check-witness-axioms.py \
             --require-head --out evm-cleanroom/.lake/witness-evidence/axioms.json \
             --transcripts-dir evm-cleanroom/.lake/witness-evidence/axiom-transcripts \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-witness-axioms-audited" and x["selectedTheorems"]==32 and len(x["actualAxioms"])==32 and x["activeTheorems"]==324 and x["retainedClaims"]==292 and x["leanSourceFiles"]==32 and len(x["nativeBinaries"])==2 and x["requireHead"],x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-witness-axioms-audited" and x["selectedTheorems"]==32 and len(x["actualAxioms"])==32 and x["activeTheorems"]==324 and x["retainedClaims"]==292 and x["leanSourceFiles"]==33 and len(x["nativeBinaries"])==2 and x["requireHead"],x'
       - name: Reject linked proof engines and require actual native entry symbols
         working-directory: formal/lean4/evm-cleanroom
         run: |
