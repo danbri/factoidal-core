@@ -192,6 +192,8 @@ try{
   b.getChannelData(1)[8999999]=0.5;
   const src=new AudioBufferSourceNode(ctx);
   src.buffer=b;
+  // start() acquires the content: the 18 million samples go to the engine in this call (op 184 mode "1")
+  src.connect(ctx.destination);src.start();
   console.log('big ok '+src.buffer.length+' '+src.buffer.getChannelData(1)[8999999]);
 }catch(e){console.log('big refused '+(e&&e.name)+' '+(e&&e.message));}
 </script>`;
