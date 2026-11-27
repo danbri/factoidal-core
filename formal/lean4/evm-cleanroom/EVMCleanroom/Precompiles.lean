@@ -4,6 +4,7 @@ import EVMCleanroom.Precompiles.Ripemd160
 import EVMCleanroom.Precompiles.Blake2f
 import EVMCleanroom.Precompiles.ModExp
 import EVMCleanroom.Precompiles.Secp256k1
+import EVMCleanroom.Precompiles.BN254
 
 /-!
 # Precompiled contracts: fork gating and the single entry used by CALL
@@ -37,7 +38,7 @@ def maxInputBytes : Nat := 1_048_576
 
 /-- Precompile addresses with an implementation in this module. -/
 def implemented (address : Nat) : Bool :=
-  address == 1 || address == 2 || address == 3 || address == 5 || address == 9
+  address == 1 || address == 2 || address == 3 || (5 ≤ address && address ≤ 9)
 
 /-- Highest precompile address a profile executes. -/
 def lastAddress : Profile → Nat
@@ -86,6 +87,9 @@ def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address ga
   | 2 => some (Sha256.run gas input)
   | 3 => some (Ripemd160.run gas input)
   | 5 => some (ModExp.run (modexpRule profile) gas input)
+  | 6 => some (BN254.runAdd gas input)
+  | 7 => some (BN254.runMul gas input)
+  | 8 => some (BN254.runPairing gas input)
   | 9 => some (Blake2f.run gas input)
   | _ => none
 
@@ -157,6 +161,9 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
         · have := Sha256.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := Ripemd160.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := ModExp.run_success _ _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BN254.runAdd_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BN254.runMul_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BN254.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := Blake2f.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · cases hDispatch
       · cases h

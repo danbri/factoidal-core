@@ -60,8 +60,8 @@ private def isSuccess (fuel : Nat) : Bool :=
   | .indeterminate (.frame (.incompleteState 4 none)) => true
   | _ => false
 #guard let request := identityRequest 21022 #[0]
-  let witnesses := request.witnesses.map (fun a => if a.address == 4 then { a with address := 0x0a } else a)
-  match run { request with tx := { request.tx with to := 0x0a }, witnesses } with
+  let witnesses := request.witnesses.map (fun a => if a.address == 4 then { a with address := 1 } else a)
+  match run { request with tx := { request.tx with to := 1 }, witnesses } with
   | .indeterminate (.frame .unsupportedFork) => true
   | _ => false
 #guard let frame : State := { code := #[], gas := 0, callData := { size := CallOpcode.maxIdentityCallBytes + 1 } }

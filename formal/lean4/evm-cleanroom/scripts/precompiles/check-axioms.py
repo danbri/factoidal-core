@@ -17,8 +17,7 @@ STANDARD = {"propext", "Classical.choice", "Quot.sound"}
 FORBIDDEN = re.compile(r"\b(sorry|native_decide|unsafe|implemented_by|partial\s+def|axiom|extern|opaque)\b")
 PRINTED = re.compile(r"'([^']+)' (depends on axioms: \[([^\]]*)\]|does not depend on any axioms)")
 ALLOWED_IMPORTS = re.compile(
-    r"^import (Init|EVMCleanroom\.Precompiles(\.[A-Za-z0-9]+)?|EVMCleanroom\.(Keccak|Core)|"
-    r"L4Factoidal\.Crypto\.(SHA2|SHA2Theorems))$")
+    r"^import (EVMCleanroom\.Precompiles(\.[A-Za-z0-9]+)?|EVMCleanroom\.(Keccak|Core))$")
 
 
 def strip_comments(text):
@@ -37,7 +36,7 @@ def audit(module):
     if hit:
         raise SystemExit("forbidden construct in %s: %s" % (module, hit.group(0)))
     declared = re.findall(r"^(?:private\s+)?theorem\s+([A-Za-z0-9_.']+)", code, flags=re.M)
-    done = subprocess.run(["lake", "env", "lean", module], cwd=ROOT, capture_output=True, text=True)
+    done = subprocess.run(["lake", "-f", "lakefile-precompiles.toml", "env", "lean", module], cwd=ROOT, capture_output=True, text=True)
     if done.returncode != 0:
         raise SystemExit("Lean failed on %s:\n%s" % (module, (done.stdout + done.stderr)[-2000:]))
     printed = {}

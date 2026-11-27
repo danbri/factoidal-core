@@ -42,5 +42,3 @@ import EVMCleanroom.TransactionListProofs
 import EVMCleanroom.TransactionListTests
 import EVMCleanroom.TransactionTransportProofs
 import EVMCleanroom.TransactionTransportTests
-import EVMCleanroom.Precompiles
-import EVMCleanroom.PrecompileCallTests

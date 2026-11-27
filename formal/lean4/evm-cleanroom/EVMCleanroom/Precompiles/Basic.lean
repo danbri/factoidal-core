@@ -1,5 +1,3 @@
-import Init
-
 /-!
 # Precompiled contracts: shared byte helpers and the result contract
 
@@ -12,9 +10,9 @@ the complete input bytes to a `Result`. The three outcomes are kept apart:
 * `refusal`: a local resource bound of this implementation was reached. This
   is never reported as an Ethereum result.
 
-The modules under `Precompiles/` import only `Init` (and, for SHA-256, the
-repository's pure `L4Factoidal.Crypto.SHA2`), so they can be reused by other
-packages without importing the EVM.
+The modules under `Precompiles/` import only each other (the field, curve and
+pairing modules nothing else at all), so another package can reuse them by
+source without importing the EVM.
 
 Normative sources: Ethereum Yellow Paper appendix E, the EIPs named in each
 module, and the execution-specs (EELS) precompile modules as the comparison

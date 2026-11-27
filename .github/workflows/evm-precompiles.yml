@@ -4,8 +4,6 @@ on:
   pull_request:
     paths:
       - "formal/lean4/evm-cleanroom/**"
-      - "formal/lean4/L4Factoidal/Crypto/SHA2.lean"
-      - "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean"
       - ".github/workflows/evm-precompiles.yml"
   workflow_dispatch:
 
@@ -31,6 +29,9 @@ jobs:
           lake-package-directory: formal/lean4/evm-cleanroom
           build: true
           auto-config: false
+      - name: Compile the routing tests and build the native precompile runner
+        working-directory: formal/lean4/evm-cleanroom
+        run: lake -f lakefile-precompiles.toml build EVMCleanroom.PrecompileCallTests evm-precompile
       - name: Check the package has no external Lean dependency
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -49,10 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/precompiles/check-axioms.py | tee .lake/precompile-axioms.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=9 and x["theorems"]>=58, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
-      - name: Build the native precompile runner
-        working-directory: formal/lean4/evm-cleanroom
-        run: lake build evm-precompile
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=12 and x["theorems"]>=60, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
       - name: Keep proof-assistant startup out of the precompile runner's imports
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -64,7 +62,7 @@ jobs:
           set -euo pipefail
           python3 scripts/precompiles/run-vectors.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors \
             | tee .lake/precompile-vectors.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=6 and x["publishedCases"]>=224 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=5 and x["gasShortfallControls"]>=1600, x; print({k: x[k] for k in ("files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=9 and x["publishedCases"]>=322 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=8 and x["gasShortfallControls"]>=1650, x; print({k: x[k] for k in ("files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
       - name: Check directly invoked calls and refusals
         working-directory: formal/lean4/evm-cleanroom
         run: |
