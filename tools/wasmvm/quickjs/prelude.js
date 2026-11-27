@@ -5545,8 +5545,8 @@
   // https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
   //
   // What this section does not do, each with the issue that tracks it:
-  //  - AudioContext does not play. It builds graphs on a Lean context that is never rendered, so
-  //    currentTime stays 0 and no sound is made. Real-time output is stage D.
+  //  - AudioContext plays through the engine's rendering task and audio sink (ops 190 to 193, plan
+  //    section 13). An engine with no audio output (the Wasm build) answers NotSupportedError.
   //  - The nodes that the engine cannot render (Analyser, Convolver, DynamicsCompressor, IIRFilter,
   //    Panner, WaveShaper, ScriptProcessor, the MediaElement and MediaStream nodes, AudioWorklet and
   //    AudioListener) exist as interface objects; their constructors and factory methods throw
@@ -5803,18 +5803,64 @@
           self: null, params: [], kind: 'destination', maxChannelCount: cs.channels });
       }
     }
-    // A real-time context. It builds graphs on a Lean context of two channels that is never rendered:
-    // no sound is made and currentTime stays 0 (stage D, issue 1169).
+    // A real-time context (plan section 13, ops 190 to 193). Lean decides the state, the sample rate,
+    // the latency target and the autoplay rule (op 190); the engine's rendering task plays the graph
+    // and its reports come back as events (op 193) through `cs.cb`, a callback the engine queues as a
+    // task. An engine with no audio output answers -23: NotSupportedError.
+    const latencyOf = (o, what) => {
+      const v = isObj(o) ? o.latencyHint : undefined;
+      if (v === undefined) return 'interactive';
+      if (typeof v === 'number') return f64(toDouble(v, `${what}: member latencyHint`));
+      const m = String(v);
+      if (!enumValues('AudioContextLatencyCategory').includes(m)) throw new TypeError(`${what}: The provided value '${m}' is not a valid enum value of type AudioContextLatencyCategory.`);
+      return m;
+    };
     class AudioContext extends BaseAudioContext {
       constructor(options = undefined) {
-        const o = dictConv('AudioContextOptions', options, "Failed to construct 'AudioContext'");
-        const cs = makeContext('AudioContext', 2, 1048576, o.sampleRate === undefined ? 44100 : o.sampleRate, quantumOf(o.renderSizeHint));
+        const what = "Failed to construct 'AudioContext'";
+        const o = dictConv('AudioContextOptions', isObj(options) ? Object.assign({}, options, { latencyHint: undefined }) : options, what);
+        const hint = latencyOf(options, what);
+        const cs = { iface: 'AudioContext', id: 0, sampleRate: 0, channels: 2, length: 0, state: 'suspended', nodes: new Map(), destination: null,
+          self: null, started: true, offline: false, realtime: true, calls: new Map(), cb: 0 };
+        cs.cb = register(() => rtEvents(cs));
+        let r;
+        try { r = ask(190, [hint, o.sampleRate === undefined ? '' : f64(o.sampleRate), cs.cb], what).split(' '); }
+        catch (e) { callbacks.delete(cs.cb); throw e; }
+        cs.id = Number(r[0]); cs.sampleRate = Number(r[1]); cs.state = r[3];
         super(SECRET, cs);
         cs.self = this;
         cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
-          self: null, params: [], kind: 'destination', maxChannelCount: 2 });
+          self: null, params: [], kind: 'destination', maxChannelCount: Number(r[2]) });
       }
     }
+    // Op 192: currentTime, baseLatency, outputLatency, the state, and getOutputTimestamp().
+    const rtTime = cs => {
+      const dv = new DataView(ask(192, [cs.id], 'AudioContext', true));
+      return { currentTime: dv.getFloat64(0, true), baseLatency: dv.getFloat64(8, true), outputLatency: dv.getFloat64(16, true),
+        contextTime: dv.getFloat64(25, true), performanceTime: dv.getFloat64(33, true) };
+    };
+    const STATES = ['suspended', 'running', 'closed'];
+    // The events of the rendering side, in the order Lean gives them (op 193): 1 a source ended,
+    // 2 the state changed, 3 a control call was carried out, 4 one was refused.
+    const rtEvents = cs => {
+      const ab = ask(193, [cs.id], 'AudioContext', true);
+      const dv = new DataView(ab), count = dv.getUint32(0, true);
+      for (let i = 0; i < count; i++) {
+        const kind = dv.getUint8(4 + 5 * i), v = dv.getUint32(5 + 5 * i, true);
+        if (kind === 1) { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); }
+        else if (kind === 2) { cs.state = STATES[v] ?? cs.state; fire(cs.self, 'statechange'); }
+        else if (kind === 3 || kind === 4) {
+          const c = cs.calls.get(v); cs.calls.delete(v);
+          if (c) { if (kind === 3) c.resolve(); else c.reject(dom('InvalidStateError', `Failed to execute '${c.verb}' on 'AudioContext': the context is closed`)); }
+        }
+      }
+      if (cs.state === 'closed' && cs.calls.size === 0) callbacks.delete(cs.cb);
+    };
+    // Op 191: the promise is settled by an event of kind 3 or 4.
+    const rtControl = (cs, verb) => {
+      const call = ask(191, [cs.id, verb], `Failed to execute '${verb}' on 'AudioContext'`);
+      return new Promise((resolve, reject) => { cs.calls.set(Number(call), { verb, resolve, reject }); });
+    };
     class OfflineAudioCompletionEvent extends Event {
       constructor(type, init) {
         needNew(arguments.length, 2, 'OfflineAudioCompletionEvent');
@@ -5971,14 +6017,14 @@
     const A = {
       'BaseAudioContext.destination': { get: s => s.destination },
       'BaseAudioContext.sampleRate': { get: s => Math.fround(s.sampleRate) },
-      'BaseAudioContext.currentTime': { get: s => ctxInfo(s).frame / s.sampleRate },
+      'BaseAudioContext.currentTime': { get: s => s.realtime ? rtTime(s).currentTime : ctxInfo(s).frame / s.sampleRate },
       'BaseAudioContext.listener': { get: () => { throw unsup('BaseAudioContext.listener (AudioListener)'); } },
       'BaseAudioContext.state': { get: s => s.state },
       'BaseAudioContext.renderQuantumSize': { get: s => ctxInfo(s).quantum },
       'BaseAudioContext.audioWorklet': { get: () => { throw unsup('BaseAudioContext.audioWorklet (AudioWorklet)'); } },
       // No output device yet (stage D, issue 1169): the latencies are 0 and the sink is the default one.
-      'AudioContext.baseLatency': { get: () => 0 },
-      'AudioContext.outputLatency': { get: () => 0 },
+      'AudioContext.baseLatency': { get: s => rtTime(s).baseLatency },
+      'AudioContext.outputLatency': { get: s => rtTime(s).outputLatency },
       'AudioContext.sinkId': { get: () => '' },
       'AudioContext.playbackStats': { get: () => { throw unsup('AudioContext.playbackStats'); } },
       'OfflineAudioContext.length': { get: s => s.length },
@@ -6062,21 +6108,18 @@
         task(() => { if (typeof a[2] === 'function') { try { a[2].call(undefined, e); } catch (x) { report(x); } } });
         return rejected(e);
       },
-      'AudioContext.getOutputTimestamp': (s) => ({ contextTime: ctxInfo(s).frame / s.sampleRate, performanceTime: 0 }),
+      'AudioContext.getOutputTimestamp': (s) => { const t = rtTime(s); return { contextTime: t.contextTime, performanceTime: t.performanceTime }; },
       'AudioContext.resume': (s) => {
         if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed"));
-        if (s.state !== 'running') pendingState(s, 'running');
-        return Promise.resolve();
+        return rtControl(s, 'resume');
       },
       'AudioContext.suspend': (s) => {
         if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed"));
-        if (s.state !== 'suspended') pendingState(s, 'suspended');
-        return Promise.resolve();
+        return rtControl(s, 'suspend');
       },
       'AudioContext.close': (s) => {
         if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'close' on 'AudioContext': Cannot close a context that is already closed"));
-        pendingState(s, 'closed');
-        return Promise.resolve();
+        return rtControl(s, 'close');
       },
       'AudioContext.setSinkId': () => rejected(unsup('AudioContext.setSinkId')),
       'OfflineAudioContext.startRendering': (s) => {

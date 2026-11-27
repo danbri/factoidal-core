@@ -264,6 +264,41 @@ def main (args : List String) : IO UInt32 := do
     -- A sequence of requests (a JSON array in OPTIONS): call `i` sends element `i` mod its
     -- length, as packed bytes, after the font is loaded and a first call with element 0. Times
     -- as `--document-bin`. For hover, `:active` and scroll band frames (issue 1124).
+    -- A real-time script session (tests/audio/page_tone.sh, issue 1169): the requests of the JSON
+    -- array OPTIONS in order, each answered as JSON text, one line each in OUT. An entry
+    -- `{"sleepMs":N}` waits N ms (the host's waiting time, in real time); an entry with
+    -- `"repeat":K` and `"everyMs":M` is sent K times, M ms apart. At the end the engine's audio
+    -- rendering tasks are stopped and waited for, so their sinks are closed (a `wav` file gets its
+    -- final header).
+    if let ["--script-seq",options,out] := flags then
+      let some w := width.toNat? | throw (IO.userError "invalid width")
+      let some h := height.toNat? | throw (IO.userError "invalid height")
+      let html ← IO.FS.readFile path
+      let .ok (.array requests,_) := JSON.parseJsonText (← IO.FS.readFile options) | throw (IO.userError "OPTIONS must be a JSON array")
+      let mut e : WebDocument.Engine := {}
+      let mut lines : Array String := #[]
+      let numOf := fun (j : JSON.Json) (k : String) => match j.field? k with
+        | some (.number t) => t.toNat?
+        | _ => none
+      for r in requests do
+        if let some ms := numOf r "sleepMs" then
+          IO.sleep ms.toUInt32
+          continue
+        let times := (numOf r "repeat").getD 1
+        let every := (numOf r "everyMs").getD 0
+        let body := match r with
+          | .object fs => JSON.Json.object (fs.filter fun (k,_) => k != "repeat" && k != "everyMs")
+          | j => j
+        for _ in [0:times] do
+          let (e',a) ← WebDocument.compile e html body.toString w.toUInt32 h.toUInt32
+          e := e'
+          lines := lines.push a
+          if every > 0 then IO.sleep every.toUInt32
+      for (_,task) in e.audioTasks.toList do
+        L4Factoidal.WebAudio.Realtime.stop task
+        let _ ← IO.wait task.task
+      IO.FS.writeFile out ("\n".intercalate lines.toList ++ "\n")
+      return 0
     if let ["--document-bin-seq",options,font,out,count] := flags then
       let some w := width.toNat? | throw (IO.userError "invalid width")
       let some h := height.toNat? | throw (IO.userError "invalid height")

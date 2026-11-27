@@ -418,6 +418,17 @@
    "doesNotShow": "the audio element: the page uses the Web Audio API only (issue 1169; the audio element is stage G)"
   },
   {
+   "page": "tone.html",
+   "title": "Tone: a 440 Hz sine through Web Audio",
+   "handwritten": true,
+   "size": [
+    900,
+    700
+   ],
+   "shows": "a real-time AudioContext: an OscillatorNode (440 Hz sine) into the destination, started by a button after the person used the page (autoplay rule), stopped by another; state and currentTime shown",
+   "doesNotShow": "decoded audio files (the jukebox page does that)"
+  },
+  {
    "page": "spinal-tap-sparql.html",
    "title": "Spın̈al Tap: a SPARQL client for Wikidata",
    "handwritten": true,

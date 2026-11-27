@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Tone test</title></head>
+<body>
+<p>The page of tests/audio/page_tone.sh (issue https://github.com/danbri/factoidal-core/issues/1169).
+A key press starts a real-time AudioContext: a 440 Hz sine OscillatorNode into the destination, from
+0 s to 1 s; at its ended event the page closes the context. At start the page renders the same graph
+with an OfflineAudioContext and logs a hash of its frames.</p>
+<script>
+(() => {
+  // FNV-1a over the binary32 bits of the frames, frame by frame, channel by channel (the order of
+  // an interleaved WAV file).
+  const fnv = chans => {
+    let h = 2166136261 >>> 0;
+    const u = chans.map(c => new Uint32Array(c.buffer, c.byteOffset, c.length));
+    const n = u[0].length;
+    for (let i = 0; i < n; i++) for (let c = 0; c < u.length; c++) h = Math.imul(h ^ u[c][i], 16777619) >>> 0;
+    return h;
+  };
+  const graph = ctx => {
+    const osc = ctx.createOscillator();
+    osc.connect(ctx.destination);
+    osc.start(0);
+    osc.stop(1);
+    return osc;
+  };
+  const off = new OfflineAudioContext(2, 48000, 48000);
+  graph(off);
+  off.startRendering().then(b => {
+    console.log('offline-hash ' + fnv([b.getChannelData(0), b.getChannelData(1)]));
+  }, e => console.log('offline-error ' + e.message));
+  console.log('AudioContext ' + typeof AudioContext);
+  let ctx = null;
+  document.addEventListener('keydown', () => {
+    if (ctx) return;
+    try {
+      ctx = new AudioContext();
+      console.log('created ' + ctx.state + ' ' + ctx.sampleRate);
+      ctx.addEventListener('statechange', () => console.log('statechange ' + ctx.state));
+      const osc = graph(ctx);
+      osc.addEventListener('ended', () => {
+        console.log('ended at ' + ctx.currentTime);
+        ctx.close().then(() => console.log('closed ' + ctx.state), e => console.log('close-error ' + e.message));
+      });
+    } catch (e) { console.log('error ' + e.name + ' ' + e.message); }
+  });
+})();
+</script>
+</body>
+</html>

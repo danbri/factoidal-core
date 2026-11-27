@@ -31,6 +31,15 @@ inductive Risk where
   https://github.com/danbri/factoidal/issues/1227: "off by default and make user pass in a
   \"dangerously_and_regrettsbly_.... \" symbol". -/
   | rsa1024Verify
+  /-- A real-time `AudioContext` that starts, or resumes, with no user activation of the page
+  (`WebAudio.Api.State.autoplay`). Not shown: that the person wants the sound a page makes before
+  they used the page. Chrome and Safari refuse it by default; Chrome's WPT runs turn the rule off
+  (`--autoplay-policy=no-user-gesture-required`). Owner, 2026-11-26, to the question whether a page
+  may start sound only after the person has used it: "yes (but with a Settings or CLI setting
+  --dangerously-permit-audio)". The engine accepts it only for the start request member
+  `dangerouslyPermitAudio: true`, which a host sends only for that option or that Settings switch
+  (plan section 13.7, https://github.com/danbri/factoidal-core/issues/1169). -/
+  | audioWithoutActivation
   deriving DecidableEq, Repr
 
 /-- Evidence that a caller accepted risk `r`. The constructor is private: the only way to
