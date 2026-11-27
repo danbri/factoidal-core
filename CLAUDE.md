@@ -1064,6 +1064,13 @@ JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
 - QuickJS stays in the tree and selectable. Do not delete it.
 - VerifiedJS has no licence file. The owner is asking its authors. Until they answer
   it is fetched at a pinned commit and none of its source is committed here.
+- SVG Tiny 1.2 is implemented in full (owner, 2026-11-27, verbatim, on the admission count of
+  https://github.com/danbri/factoidal-core/issues/1166: "It still sounds like you're giving yourself
+  a pass instead of getting the full thing properly implemented."). The target is all 496 files of
+  the W3C suite admitted and drawn correctly, every feature group included: animation, SVG fonts,
+  `textArea`, scripts and handlers, external references, media. The admission check only stops
+  wrong drawing; a refusal is a gap to implement, never a place to stop. Report admitted and pixel
+  counts together.
 - A node of the FOAF graph may not cover another: `WebGraph.keepApart` holds the
   layout policy on each step. Owner, verbatim: "this version of the foafy svg
   doesn't come with the inability for a node to occlude another". Cost of the
