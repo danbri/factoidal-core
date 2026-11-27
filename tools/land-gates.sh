@@ -20,6 +20,7 @@ mkdir -p "${LAND_LOG_DIR:-/tmp}" || { echo "LAND GATES FAILED: cannot create LAN
 FAILED=""
 gate() { local name="$1" rc="$2"; echo "$name=$rc"; [ "$rc" = 0 ] || FAILED="$FAILED $name"; }
 cd $R/formal/lean4 && { RC=0; timeout 3000 lake build > "${LAND_LOG_DIR:-/tmp}"/lp0-build.log 2>&1 || RC=$?; gate build $RC; }
+cd $R && { RC=0; python3 -I tools/lean-panic-sites.py > "${LAND_LOG_DIR:-/tmp}"/lp0-panic.log 2>&1 || RC=$?; gate panic-sites $RC; tail -1 "${LAND_LOG_DIR:-/tmp}"/lp0-panic.log; }
 cd $R && { RC=0; python3 -I tools/claims-gate.py > "${LAND_LOG_DIR:-/tmp}"/lp0-claims.log 2>&1 || RC=$?; gate claims $RC; tail -1 "${LAND_LOG_DIR:-/tmp}"/lp0-claims.log; }
 cd $R && { RC=0; python3 tools/lean-unbuilt-modules.py --gate > "${LAND_LOG_DIR:-/tmp}"/lp0-unbuilt.log 2>&1 || RC=$?; gate unbuilt $RC; }
 cd $R && { RC=0; python3 tools/lean-tail-recursion-audit.py --gate > "${LAND_LOG_DIR:-/tmp}"/lp0-tail.log 2>&1 || RC=$?; gate tail-recursion $RC; }

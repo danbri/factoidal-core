@@ -3,7 +3,7 @@ name: Assurance registers (claims, host policy)
 # Fast checks with no Lean build (batch https://github.com/danbri/factoidal-core/issues/1189):
 # the claims register and statement freeze (issues 1178 and 1179), the Foafnaut host
 # policy ratchet (issue 1188) with the rest of the host purity lint, the theorem count
-# (issue 1186), and the tests of each tool. The `#print axioms` check of each claim needs
+# (issue 1186), the panic-site ratchet (issue 1181), and the tests of each tool. The `#print axioms` check of each claim needs
 # the Lean build and runs in verify-lean4.yml.
 on:
   pull_request:
@@ -32,9 +32,12 @@ jobs:
           python3 -I tests/foundation/test_claims_gate.py
           python3 -I tests/foundation/test_theorem_count.py
           python3 -I tests/foundation/test_foafnaut_host_policy.py
+          python3 -I tests/foundation/test_lean_panic_sites.py
       - name: Claims register and statement freeze
         run: python3 -I tools/claims-gate.py
       - name: Host purity lint, Foafnaut host policy ratchet included
         run: bash tools/host-purity-lint.sh
+      - name: Panic sites reached from the wasm ops (ratchet, issue 1181)
+        run: python3 -I tools/lean-panic-sites.py
       - name: Theorem count (report)
         run: python3 -I tools/theorem-count.py | tee -a "$GITHUB_STEP_SUMMARY"

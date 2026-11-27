@@ -138,7 +138,7 @@ def declarations(path):
         m = DECL.match(line)
         if m:
             starts.append((idx, m))
-    boundary = re.compile(r"^(?:@\[|private |protected |noncomputable |theorem |lemma |def |abbrev |instance |structure |inductive |class |example |opaque |axiom |namespace |section |end\b|open |variable |set_option |attribute |#)")
+    boundary = re.compile(r"^(?:@\[|private |protected |noncomputable |partial |unsafe |theorem |lemma |def |abbrev |instance |structure |inductive |class |example |opaque |axiom |mutual\b|macro|syntax |notation|infix|prefix|postfix|elab |deriving |namespace |section |end\b|open |variable |universe |set_option |attribute |#)")
     out = {}
     for k, (idx, m) in enumerate(starts):
         j = idx + 1
