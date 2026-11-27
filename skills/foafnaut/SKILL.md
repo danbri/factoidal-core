@@ -230,6 +230,13 @@ Other programs in `LAB`, older than the browser: `run_ui.ts` (springs, layout, v
 FOAF graph as a window), `run_lean.ts`, `run_svg.ts`, `web-render/server.mjs` (a local lab
 server with its own QuickJS worker path), `browser-webgpu/`. `LAB/README.md` covers them.
 
+## Rule: our own engines only
+
+Owner, 2026-11-27: Foafnaut is a full independent web browser. Page JavaScript and WebAssembly run on
+BubblePopJS and BubblePopWASM (and the JIT stages that generate code for them), never on V8 or on
+another browser's engine; V8, QuickJS-NG and JavaScriptCore are measurement references only.
+CLAUDE.md, "No V8, no engine of another browser".
+
 ## Build
 
 Toolchain pins: `LAB/toolchain-versions.env`. `test.sh` and `build-executables.sh` stop

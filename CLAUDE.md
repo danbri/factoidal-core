@@ -1137,6 +1137,31 @@ Owner, 2026-11-27, verbatim: "next: 1. then 2 then3 then 4. Close 475. Your advi
 PR 475 is closed (replaced by PR 557). PRs 476 and 486 wait for the owner after the coordinator's
 advice. Their measurements are in `docs/bubblepopjs-jit.md`, copied to `main`.
 
+Owner, 2026-11-27, verbatim, on stages E and F of the plan (generated code), which were design only:
+"ensure we get to these!" Goal of the same day: "performant JIT JS improving our ux": each step is
+judged on page script time (start turn and timer turns of Particle Rex on the Linux rig) as well as
+on the corpus.
+
+### No V8, no engine of another browser (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Please ensure in CLAUDE.md and elsewhere that we never slip into
+using V8. The hub thing is a cute demo, our main mission is a full independent web browser. Not
+something that runs inside someone else's browser, js or wasm implementation." Said after a session
+had written stage E as "generated WebAssembly run by the host's WebAssembly engine" (V8 on the
+desktop): that wording came from the plan's Hub text and was carried to the native browser without
+a check.
+
+- Page JavaScript and page WebAssembly run on our own engines only: BubblePopJS, BubblePopWASM
+  (WasmVM), and the code generators of the JIT stages. No JIT stage hands code to V8, to the Deno
+  host's WebAssembly engine, or to any engine of another browser.
+- Stage E is code that we generate and our own engine runs (WebAssembly run by BubblePopWASM's own
+  compiled path, or Lean-compiled code); stage F is machine code from our own templates (its trusted
+  primitive, "run bytes as code", still needs its own decision). `WasmVM.Aot`'s hand-off to the
+  host's engine is a Hub demonstration, not a route for the browser.
+- V8, QuickJS-NG and JavaScriptCore stay as measurement references and differential oracles in
+  benchmarks and tests, never as the path that runs a page.
+- Cost of not having this rule: on 2026-11-27 issue 471 was planned with V8 inside stage E.
+
 ### SVG Tiny pixel harness: frame border out; fonts in (owner, 2026-11-27)
 
 Owner, 2026-11-27, verbatim: ""can the harness exclude the 3-pixel frame border from the
