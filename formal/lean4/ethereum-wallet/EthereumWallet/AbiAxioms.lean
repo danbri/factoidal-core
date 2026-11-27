@@ -117,6 +117,7 @@ listed in `scripts/theorems/abi.txt`. Only `propext`, `Classical.choice` and
 #print axioms EthereumWallet.Calls.minOutForSlippage_le
 #print axioms EthereumWallet.Calls.minOutForSlippage_tight
 #print axioms EthereumWallet.Calls.le_maxInForSlippage
+#print axioms EthereumWallet.Calls.describeTx_keeps
 #print axioms EthereumWallet.Calls.describeAuthorization_warns
 #print axioms EthereumWallet.Calls.describeArgs_unlimited
 #print axioms EthereumWallet.Calls.describeArgs_approvalForAll

@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
           python3 scripts/check-abi-axioms.py .lake/abi-evidence/build.log --out .lake/abi-evidence/axioms.json \
             | tee .lake/abi-evidence/axioms-summary.json
-          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/axioms-summary.json")); assert x["passed"] and x["expected"]>=118 and x["reported"]==x["expected"], x'
+          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/axioms-summary.json")); assert x["passed"] and x["expected"]>=122 and x["reported"]==x["expected"], x'
       - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
         working-directory: .
         run: python3 tools/lean-hygiene-audit.py --build-log formal/lean4/ethereum-wallet/.lake/abi-evidence/build.log
@@ -104,7 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           .lake/build/bin/wallet-abi-vectors builtin $RISK | tee .lake/abi-evidence/builtin.json
-          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/builtin.json")); g=x["groups"]; assert x["failed"]==0 and x["vectors"]>=235 and g["decoder-negative-controls"]>=33 and g["solidity-abi-spec"]>=10 and g["eip712-eip191-json"]>=42, x'
+          python3 -c 'import json; x=json.load(open(".lake/abi-evidence/builtin.json")); g=x["groups"]; assert x["failed"]==0 and x["vectors"]>=252 and g["decoder-negative-controls"]>=37 and g["solidity-abi-spec"]>=10 and g["eip712-eip191-json"]>=43 and g["calls-and-summaries"]>=57, x'
       - name: Differential against ethers and viem (test oracles only), three seeds
         shell: bash
         run: |

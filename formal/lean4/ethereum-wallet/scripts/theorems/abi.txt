@@ -108,6 +108,7 @@ EthereumWallet.Calls.callWith_eq
 EthereumWallet.Calls.minOutForSlippage_le
 EthereumWallet.Calls.minOutForSlippage_tight
 EthereumWallet.Calls.le_maxInForSlippage
+EthereumWallet.Calls.describeTx_keeps
 EthereumWallet.Calls.describeAuthorization_warns
 EthereumWallet.Calls.describeArgs_unlimited
 EthereumWallet.Calls.describeArgs_approvalForAll
