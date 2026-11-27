@@ -62,6 +62,7 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.OWL.QueryEval
 import L4Factoidal.RIF.Saturate
+import L4Factoidal.Dataflow.Evaluator
 
 open L4Factoidal.RDF
 open L4Factoidal.RDF.Canonical
@@ -443,6 +444,26 @@ def rifSaturateDataset (tc : TestCase) (ds : Dataset) :
   | some graph => return .ok { ds with default := graph }
   | none => return .error (.unsupported saturated.diagnostic)
 
+/-- The evaluation path of the W3C query tests
+(https://github.com/danbri/factoidal-core/issues/1183). `false` (the default):
+SELECT and ASK run the reference definitions `evalSelect` and `evalAsk`, so the
+score is that of the specification definitions. `true` (`l4w3c
+--engine=shipped`): they run `Dataflow.shippedEvaluator`, the evaluator of the
+wasm query op, with the indexed backend of the dataset, so the score is that of
+the shipped engine. CONSTRUCT, DESCRIBE and the OWL and RIF regimes take the
+same path in both modes. -/
+initialize shippedEngine : IO.Ref Bool ← IO.mkRef false
+
+/-- The answer of the shipped evaluator, built as the wasm op builds it: the
+dataset as a set, its indexed backend, and `env.dataset` set (section 18.6:
+the backend runners read EXISTS from the environment, as
+`Wasm/Ops/Query.lean` `queryParsedDatasetWith` explains). -/
+def shippedAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.Answer :=
+  let d := ds.toSet
+  L4Factoidal.Dataflow.shippedEvaluator.run
+    { env := { env with dataset := some d }, ds := d,
+      backend := some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d), query := q }
+
 /-- One `QueryEvaluationTest` / `CSVResultFormatTest`. `mode` is the
 suite's RDF version; a `.rdf12` suite parses its queries with the
 SPARQL 1.2 grammar. -/
@@ -542,6 +563,7 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   -- install the query's dataset in the environment themselves.
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   let ordered := q.modifier.orderBy.isSome
+  let shipped ← shippedEngine.get
   -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
   -- query fail, and a QueryEvaluationTest names a result, so the test
   -- fails with the library's error (`Query.serviceFailure`).
@@ -552,6 +574,10 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   | .select _, .rows erows csv eordered =>
       let arows := if owlRegime then
                      (L4Factoidal.OWL.QueryEval.evalSelectOwl env ds q).filter rowAllowed
+                   else if shipped then
+                     (match shippedAnswer env ds q with
+                      | .select _ rows => rows
+                      | _ => [])
                    else (evalSelect env ds q).2
       let n := erows.length + arows.length
       return (match compareSelectRows (ordered && eordered) csv erows arows with
@@ -561,7 +587,12 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
             { outcome := .fail s!"solution-bijection budget exceeded ({erows.length} expected rows, {arows.length} actual)",
               budgetExceeded := true, rowsCompared := n })
   | .ask, .boolean b =>
+      -- An answer of the wrong form under --engine=shipped is `!b`, so it fails.
       let a := if owlRegime then L4Factoidal.OWL.QueryEval.evalAskOwl env ds q
+               else if shipped then
+                 (match shippedAnswer env ds q with
+                  | .ask x => x
+                  | _ => !b)
                else evalAsk env ds q
       return (if a == b then { outcome := .pass, rowsCompared := 1 }
               else { outcome := .fail s!"ASK boolean mismatch: expected {b}, got {a}", rowsCompared := 1 })

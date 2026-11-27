@@ -140,9 +140,12 @@ def main (args : List String) : IO UInt32 := do
   -- `--lenient`: the Turtle, TriG, N-Triples and N-Quads syntax tests in
   -- lenient (recovery) mode (`Harness/LenientRun.lean`); other tests skip.
   let lenient := args.contains "--lenient"
+  -- `--engine=shipped`: SELECT and ASK through the shipped evaluator
+  -- (`shippedEngine`, Harness/Run.lean; issue 1183). Default: the reference.
+  if args.contains "--engine=shipped" then shippedEngine.set true
   let manifests := args.filter (fun a => !a.startsWith "--")
   if manifests.isEmpty then
-    IO.eprintln "usage: l4w3c [--quiet] [--lenient] <manifest.ttl>..."
+    IO.eprintln "usage: l4w3c [--quiet] [--lenient] [--engine=shipped] <manifest.ttl>..."
     IO.eprintln "  e.g. lake exe l4w3c ../../third_party/testing/w3c/rdf/rdf11/rdf-turtle/manifest.ttl"
     IO.eprintln "       lake exe l4w3c ../../third_party/testing/w3c/sparql/sparql11/manifest-all.ttl"
     return 2

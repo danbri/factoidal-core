@@ -1,0 +1,72 @@
+name: W3C SPARQL 1.1, reference definitions and shipped engine
+
+# P6 of batch https://github.com/danbri/factoidal-core/issues/1189:
+# https://github.com/danbri/factoidal-core/issues/1183. `l4w3c` scores the
+# reference definitions (evalSelect, evalAsk); `l4w3c --engine=shipped` runs
+# SELECT and ASK through Dataflow.shippedEvaluator with the indexed backend,
+# the evaluator of the wasm query op. Both scores go in the summary. The job
+# fails only when the harness does not run; a score is the measurement.
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '41 4 * * *'
+  pull_request:
+    paths:
+      - 'formal/lean4/Harness/Run.lean'
+      - 'formal/lean4/Harness/Main.lean'
+      - '.github/workflows/w3c-sparql-engines.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: w3c-sparql-engines-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sparql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: W3C test files
+        run: git submodule update --init --depth 1 third_party/testing/w3c
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          lake-package-directory: formal/lean4
+      - name: Build l4w3c
+        working-directory: formal/lean4
+        run: lake build l4w3c
+      - name: Reference definitions
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          RC=0; lake exe l4w3c --quiet ../../third_party/testing/w3c/sparql/sparql11/manifest-all.ttl > "$RUNNER_TEMP/ref.log" 2>&1 || RC=$?
+          echo "exit $RC"; grep -E '^TOTAL' "$RUNNER_TEMP/ref.log" | sed 's/^/reference: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -qE '^TOTAL' "$RUNNER_TEMP/ref.log"
+      - name: Shipped engine
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          RC=0; lake exe l4w3c --quiet --engine=shipped ../../third_party/testing/w3c/sparql/sparql11/manifest-all.ttl > "$RUNNER_TEMP/shipped.log" 2>&1 || RC=$?
+          echo "exit $RC"; grep -E '^TOTAL' "$RUNNER_TEMP/shipped.log" | sed 's/^/shipped: /' | tee -a "$GITHUB_STEP_SUMMARY"
+          grep -qE '^TOTAL' "$RUNNER_TEMP/shipped.log"
+      - name: Tests whose outcome differs between the two
+        shell: bash
+        run: |
+          grep -E '^(FAIL|XFAIL|PASS)' "$RUNNER_TEMP/ref.log" | sort > "$RUNNER_TEMP/ref.out" || true
+          grep -E '^(FAIL|XFAIL|PASS)' "$RUNNER_TEMP/shipped.log" | sort > "$RUNNER_TEMP/shipped.out" || true
+          diff "$RUNNER_TEMP/ref.out" "$RUNNER_TEMP/shipped.out" | head -200 | tee "$RUNNER_TEMP/engine-diff.txt" || true
+          echo "lines that differ: $(grep -c '^[<>]' "$RUNNER_TEMP/engine-diff.txt")" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: w3c-sparql-engines
+          path: |
+            ${{ runner.temp }}/ref.log
+            ${{ runner.temp }}/shipped.log
+            ${{ runner.temp }}/engine-diff.txt
