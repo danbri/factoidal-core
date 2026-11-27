@@ -181,10 +181,11 @@ def blsP : Nat := 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0
   | 0, _, acc => acc
   | n+1, x, acc => loopNatMulOnly y n x (acc ^^^ (x * y))
 
+@[noinline] def force (run : Unit → Nat) : IO Nat := pure (run () % 1000003)
+
 def timeIt (label : String) (count : Nat) (run : Unit → Nat) : IO Unit := do
   let start ← IO.monoNanosNow
-  let value := run ()
-  let digest := value % 1000003
+  let digest ← force run
   let stop ← IO.monoNanosNow
   IO.println s!"{label}: {(stop - start) / count} ns/op (check {digest})"
 
