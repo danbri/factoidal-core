@@ -37,6 +37,13 @@ cases = []
 with tarfile.open(a.archive) as archive:
     for member in sorted(archive.getmembers(), key=lambda item: item.name):
         name = PurePosixPath(member.name)
+        if member.isfile() and name.parts[0] == 'images' and '..' not in name.parts:
+            # Resources that the tests name by ../images/ (external scripts): the probe reads
+            # one only under this output directory (SvgTinyProbe.lean, `scriptText`).
+            target = out.joinpath(*name.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(archive.extractfile(member).read())
+            continue
         if not (member.isfile() and name.parts[0] == 'svg' and name.suffix == '.svg'):
             continue
         assert len(name.parts) == 2 and name.name not in ('.', '..'), 'Unexpected archive path'
