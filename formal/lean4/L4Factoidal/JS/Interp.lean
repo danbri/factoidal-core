@@ -8475,9 +8475,7 @@ def loopNext (labels : List String) : Compl → Option Compl
 /-- A global name read through the cache: the value, or `Value.hole` when the general path
 must look (not a plain writable data property, or a lexical binding may shadow it). -/
 def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
-  match h.findEnv x 100000 env with
-  | some _ => .hole
-  | none =>
+  if !h.chainHit env x site then .hole else
     let g := h.obj h.realm.globalObj
     let slot := h.globalCache[site]!
     -- after `delete` the name may still be in a big map's keys as a tombstone (`PropMap.liveAt`)
@@ -8489,7 +8487,7 @@ def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
 cached slot holds this name as a plain writable data property; `false` otherwise. -/
 def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
   let h ← get
-  if (h.findEnv x 100000 env).isSome then return false
+  if !h.chainHit env x site then return false
   let gid := h.realm.globalObj
   let slot := h.globalCache[site]!
   let g := h.obj gid
@@ -11460,15 +11458,12 @@ termination_by structural n _ _ _ _ => n
 
 
 /-- The slow path of a global name: the lookup, and the cache learns the slot. -/
+@[noinline]
 def vmGlobalMiss : Nat → Nat → String → Nat → Bool → M Value
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, env, x, site, strict => do
     let v ← lookup n { env, thisV := .undef, strict } x
-    let h ← get
-    if (h.findEnv x 100000 env).isNone then
-      match (h.obj h.realm.globalObj).props.slot? x with
-      | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
-      | none => pure ()
+    modify fun h => h.globalLearn site env x
     pure v
 termination_by structural n _ _ _ _ => n
 
@@ -11877,11 +11872,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       else
         vmStash regs fregs (bp + code.nregs)
         assignName n { env, thisV := .undef, strict := code.strict } x v
-        let h ← get
-        if (h.findEnv x 100000 env).isNone then
-          match (h.obj h.realm.globalObj).props.slot? x with
-          | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
-          | none => pure ()
+        modify fun h => h.globalLearn site env x
         let (regs, fregs) ← vmTake
         vmLoop n code (pc + 1) bp env fr regs fregs
     | .typeofGlobal dst x =>

@@ -529,6 +529,30 @@ def Env.get? (e : Env) (x : String) : Option Binding :=
     | v => some { v, mutable := e.mutableAt i, init := true }
   | none => none
 
+/-! ### The scope chain of a global name, as the global name cache keeps it -/
+
+/-- One environment of a scope chain: the two fields `Env.slotN` reads. -/
+structure GHop where
+  names : Array String
+  index : Option (Std.HashMap String Nat)
+
+/-- `Env.slotN` of an environment with these names and this index. -/
+def GHop.slotN (p : GHop) (x : String) : Nat :=
+  match p.index with
+  | some m => (m.get? x).getD p.names.size
+  | none => Env.scan p.names x 0
+
+/-- A hop where the name is absent (its proof is erased in the compiled program). -/
+abbrev GHopOk (x : String) := { p : GHop // p.slotN x = p.names.size }
+
+/-- An entry of `HeapOf.globalChain`: the scope chain a read of the global name `x` walked,
+from the site's environment to environment 0, with the name absent from each. -/
+inductive GEntry where
+  | none
+  | chain (x : String) (hops : List (GHopOk x))
+
+instance : Inhabited GEntry := ⟨.none⟩
+
 /-- Records with more names than this keep an index (`Env.index`). -/
 def envIndexed : Nat := 24
 
@@ -685,6 +709,11 @@ inductive HostArg where
 `HeapOf`, so that a change of a hot field (the step count on every call and loop iteration,
 the environment and object arrays) copies a small record, not all of these. -/
 structure ColdHeap (H : Type) where
+  /-- The scope chain of each site of the global name cache, checked at each use against the
+  environments (`HeapOf.chainHit`): with it, a read does not walk the environments by name. In
+  the cold record: it changes only when a site misses, and a field of the hot record is copied at
+  every change of the heap. -/
+  globalChain : Array GEntry := Array.replicate globalCacheSize .none
   out : Array String := #[]
   /-- The last string decoded for a regular expression, and its units (`cachedChars`). -/
   reCache : Option (String × Array Char) := none
@@ -758,7 +787,7 @@ structure HeapOf (H : Type) extends ColdHeap H where
   vmTop : Nat := 0
   /-- The slot of a name in the global object's property map, by a hash of the name; checked
   at each use (the name in that slot). Starts out empty. -/
-  globalCache : Array Nat := Array.replicate 1024 0
+  globalCache : Array Nat := Array.replicate globalCacheSize 0
   /-- Steps left before the script is stopped (an interrupt, not an exception). -/
   steps : UInt64 := 1000000000
   depth : UInt32 := 0
@@ -1217,6 +1246,72 @@ def HeapOf.findEnv (h : HeapOf H) (name : String) : Nat → Nat → Option Nat
         if (h.findProp o name 1000).isSome && !h.unscopable o name then some e
         else if e == 0 then none else h.findEnv name fuel env.parent
       | none => if e == 0 then none else h.findEnv name fuel env.parent
+
+/-- `a == b` on key arrays, `true` at once when both are the same array in memory
+(`withPtrEq`); the logical value is `a == b`. -/
+@[inline] def sameKeys (a b : Array String) : Bool :=
+  withPtrEq a b (fun _ => a == b) (fun h => by subst h; exact beq_self_eq_true a)
+
+/-- Two environment indexes with the same entries, in the same order. -/
+def idxEq : Option (Std.HashMap String Nat) → Option (Std.HashMap String Nat) → Bool
+  | none, none => true
+  | some a, some b => a.toList == b.toList
+  | _, _ => false
+
+theorem idxEq_refl (a : Option (Std.HashMap String Nat)) : idxEq a a = true := by
+  cases a <;> simp [idxEq]
+
+/-- `idxEq`, with the answer `true` at once when both are the same object in memory. -/
+@[inline] def sameIdx (a b : Option (Std.HashMap String Nat)) : Bool :=
+  withPtrEq a b (fun _ => idxEq a b) (fun h => by subst h; exact idxEq_refl a)
+
+/-- Every environment from `e` outward to environment 0 has the names and index of the next hop,
+no binding object (`with`), and so not the name. -/
+def HeapOf.chainOk (h : HeapOf H) (x : String) : List (GHopOk x) → Nat → Bool
+  | [], _ => false
+  | p :: ps, e =>
+    let env := h.envs.getD e default
+    env.withObj.isNone && sameKeys env.names p.1.names && sameIdx env.index p.1.index &&
+      (e == 0 || h.chainOk x ps env.parent)
+
+/-- The site's scope chain holds for a read of `x` from environment `env`. -/
+@[inline] def HeapOf.chainHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Bool :=
+  match h.globalChain[site]! with
+  | .chain y hops => y == x && decide (hops.length < 100000) && h.chainOk y hops env
+  | .none => false
+
+/-- The scope chain from `e` to environment 0, when the name is absent from every environment on
+it and none is a `with` object's; `none` otherwise or past `fuel` environments. -/
+def HeapOf.mkChainGo (h : HeapOf H) (x : String) : Nat → Nat → List (GHopOk x) → Option (List (GHopOk x))
+  | 0, _, _ => none
+  | fuel + 1, e, acc =>
+    let env := h.envs.getD e default
+    if env.withObj.isSome then none else
+    let p : GHop := ⟨env.names, env.index⟩
+    if hp : p.slotN x = p.names.size then
+      if e == 0 then some (⟨p, hp⟩ :: acc).reverse
+      else h.mkChainGo x fuel env.parent (⟨p, hp⟩ :: acc)
+    else none
+
+/-- `mkChainGo` from no hops: a loop with the hops so far, in a fixed number of frames. -/
+def HeapOf.mkChain (h : HeapOf H) (x : String) (fuel e : Nat) : Option (List (GHopOk x)) :=
+  h.mkChainGo x fuel e []
+
+/-- After the general path read or wrote the global name `x` at a site: when no environment from
+`env` outward has the name, the cache learns its slot in the global object and the scope chain. -/
+def HeapOf.globalLearn (h : HeapOf H) (site env : Nat) (x : String) : HeapOf H :=
+  if (h.findEnv x 100000 env).isNone then
+    match (h.obj h.realm.globalObj).props.slot? x with
+    | some slot =>
+      let e : GEntry := match h.mkChain x 64 env with
+        | some hops => .chain x hops
+        | none => .none
+      let gc := h.globalCache
+      let gh := h.globalChain
+      let h := { h with globalCache := #[], globalChain := #[] }
+      { h with globalCache := gc.setIfInBounds site slot, globalChain := gh.setIfInBounds site e }
+    | none => h
+  else h
 
 /-- The environment `hops` up from `e`. -/
 def HeapOf.envUp (h : HeapOf H) : Nat → Nat → Nat

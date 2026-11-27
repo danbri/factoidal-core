@@ -1142,6 +1142,9 @@ Owner, 2026-11-27, verbatim, on stages E and F of the plan (generated code), whi
 judged on page script time (start turn and timer turns of Particle Rex on the Linux rig) as well as
 on the corpus.
 
+A new heap field that changes rarely goes in `ColdHeap`, not in `HeapOf`: the hot record is rebuilt
+at every change of the heap. Cost: `docs/designissues/2026-11-27-global-name-scope-chains.md`, trap.
+
 ### No V8, no engine of another browser (owner, 2026-11-27)
 
 Owner, 2026-11-27, verbatim: "Please ensure in CLAUDE.md and elsewhere that we never slip into

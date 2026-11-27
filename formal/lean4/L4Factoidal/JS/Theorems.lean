@@ -1052,6 +1052,82 @@ end Weak
 section GlobalCache
 variable {H : Type}
 
+theorem sameKeys_eq {a b : Array String} (h : sameKeys a b = true) : a = b := by
+  unfold sameKeys at h
+  rw [withPtrEq] at h
+  exact beq_iff_eq.mp h
+
+/-- An environment whose names and index pass the check of a hop gives the hop's `slotN`. -/
+theorem Env.slotN_of_hop (env : Env) (p : GHop) (x : String) (hn : sameKeys env.names p.names = true)
+    (hi : sameIdx env.index p.index = true) : env.slotN x = p.slotN x := by
+  have hn' := sameKeys_eq hn
+  unfold sameIdx at hi
+  rw [withPtrEq] at hi
+  unfold Env.slotN GHop.slotN
+  rw [hn']
+  have key : ∀ a b : Option (Std.HashMap String Nat), idxEq a b = true →
+      (match a with | some m => (m.get? x).getD p.names.size | none => Env.scan p.names x 0) =
+      (match b with | some m => (m.get? x).getD p.names.size | none => Env.scan p.names x 0) := by
+    intro a b h
+    match a, b, h with
+    | none, none, _ => rfl
+    | none, some _, h => simp [idxEq] at h
+    | some _, none, h => simp [idxEq] at h
+    | some m, some m', h =>
+      simp only [idxEq] at h
+      have hl : m.toList = m'.toList := beq_iff_eq.mp h
+      have hg : m.get? x = m'.get? x := by
+        apply Option.ext
+        intro v
+        rw [Std.HashMap.get?_eq_getElem?, Std.HashMap.get?_eq_getElem?,
+          ← Std.HashMap.mem_toList_iff_getElem?_eq_some, ← Std.HashMap.mem_toList_iff_getElem?_eq_some, hl]
+      simp only [hg]
+  exact key _ _ hi
+
+/-- **Kind: soundness of a cache guard.** When the scope chain of an entry passes `chainOk` from
+`e`, no environment from `e` outward binds `x`: `findEnv` answers `none`, with any fuel of at
+least the chain's length.
+
+Does not say: that an entry is ever filled, or how often the check passes. -/
+theorem chainOk_findEnv (h : HeapOf H) (x : String) :
+    ∀ (hops : List (GHopOk x)) (e fuel : Nat), h.chainOk x hops e = true → hops.length ≤ fuel →
+      h.findEnv x fuel e = none := by
+  intro hops
+  induction hops with
+  | nil => intro e fuel hc; simp [HeapOf.chainOk] at hc
+  | cons p ps ih =>
+    intro e fuel hc hl
+    obtain ⟨k, rfl⟩ : ∃ k, fuel = k + 1 := ⟨fuel - 1, by simp at hl; omega⟩
+    unfold HeapOf.chainOk at hc
+    simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq] at hc
+    obtain ⟨⟨⟨hw, hn⟩, hi⟩, hrest⟩ := hc
+    have hs := Env.slotN_of_hop _ _ x hn hi
+    have hn' := sameKeys_eq hn
+    have hhas : (h.envs.getD e default).has x = false := by
+      unfold Env.has; rw [hs, p.2, hn']; simp
+    rw [HeapOf.findEnv]
+    simp only [hhas, Bool.false_eq_true, ↓reduceIte]
+    have hw' : (h.envs.getD e default).withObj = none := Option.isNone_iff_eq_none.mp hw
+    rw [hw']
+    rcases hrest with h0 | hr
+    · simp [h0]
+    · by_cases h0 : e = 0
+      · simp [h0]
+      · simp only [beq_iff_eq, h0, ↓reduceIte]
+        exact ih _ k hr (by simp at hl; omega)
+
+/-- A passing `chainHit` at a site: `findEnv` from `env` answers `none`. -/
+theorem chainHit_findEnv (h : HeapOf H) (env : Nat) (x : String) (site : Nat)
+    (hc : h.chainHit env x site = true) : h.findEnv x 100000 env = none := by
+  unfold HeapOf.chainHit at hc
+  split at hc
+  · rename_i y hops _
+    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hc
+    obtain ⟨⟨hy, hlen⟩, hok⟩ := hc
+    subst hy
+    exact chainOk_findEnv h y hops env 100000 hok (by omega)
+  · contradiction
+
 /-- **Kind: soundness of a cache guard.**
 
 Says: when `vmGlobalHit` answers a value (not `Value.hole`), no environment from `env` outward
@@ -1068,14 +1144,14 @@ theorem vmGlobalHit_sound (h : HeapOf H) (env : Nat) (x : String) (site : Nat) (
     h.findEnv x 100000 env = none ∧
       ∃ w e c, (h.obj h.realm.globalObj).props.get? x = some (.data v w e c) := by
   unfold vmGlobalHit at hv
-  cases hfe : h.findEnv x 100000 env with
-  | some _ =>
-    rw [hfe] at hv
+  cases hch : h.chainHit env x site with
+  | false =>
+    rw [hch] at hv
     exact absurd hv.symm hh
-  | none =>
-    rw [hfe] at hv
-    refine ⟨rfl, ?_⟩
-    simp only at hv
+  | true =>
+    rw [hch] at hv
+    refine ⟨chainHit_findEnv h env x site hch, ?_⟩
+    simp only [Bool.not_true, Bool.false_eq_true, ↓reduceIte] at hv
     split at hv
     · rename_i k w0 w e c hks hvs
       split at hv
@@ -1089,6 +1165,7 @@ theorem vmGlobalHit_sound (h : HeapOf H) (env : Nat) (x : String) (site : Nat) (
       · exact absurd hv.symm hh
     · exact absurd hv.symm hh
 
+#print axioms chainOk_findEnv
 #print axioms vmGlobalHit_sound
 
 end GlobalCache
