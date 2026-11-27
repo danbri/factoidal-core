@@ -1,0 +1,15 @@
+{
+ "description": "Published precompile test vectors used as a test oracle only. Files are downloaded at test time from the pinned commit and checked against these SHA-256 digests; they are not vendored. The repository they come from is licensed LGPL-3.0-or-later (library) and GPL-3.0-or-later (commands); these are its unmodified test data files.",
+ "repository": "https://github.com/ethereum/go-ethereum",
+ "commit": "b9f3a3d964ed3d31e710ec7dd66da9181477ecb2",
+ "tag": "v1.16.7",
+ "base": "https://raw.githubusercontent.com/ethereum/go-ethereum/b9f3a3d964ed3d31e710ec7dd66da9181477ecb2/core/vm/testdata/precompiles/",
+ "files": [
+  {"file": "ecRecover.json", "sha256": "58c02c28fbe2739e13d77444fa6cd44b1109b3eed6a92926681bcbf032576e7d", "address": 1, "profile": "shanghaiPlus", "kind": "ok"},
+  {"file": "modexp.json", "sha256": "4f7e9a14b39ffdaafcd2ad4b3cca38f45fccfc192bd29eff1e48f6db2eb93902", "address": 5, "profile": "shanghaiPlus", "kind": "output-only"},
+  {"file": "modexp_eip2565.json", "sha256": "efc968652f64694616969a4d136f5c5d050fc754cb2d8aeb8b98601be136ea96", "address": 5, "profile": "shanghaiPlus", "kind": "ok"},
+  {"file": "modexp_eip7883.json", "sha256": "b66970a383617ebbd036460547e555967b1ce953e3d2a2f5969d5fdff1719983", "address": 5, "profile": "osaka", "kind": "ok"},
+  {"file": "blake2F.json", "sha256": "1a53af443a6312e1d5ffb4f6185de8a80ba090aca00f154b6cabea74ee1c1f69", "address": 9, "profile": "shanghaiPlus", "kind": "ok"},
+  {"file": "fail-blake2f.json", "sha256": "a0c8bd027888d6e3a098c1c4b98483ae26e5480e93011337add3ad2370abcb70", "address": 9, "profile": "shanghaiPlus", "kind": "fail"}
+ ]
+}

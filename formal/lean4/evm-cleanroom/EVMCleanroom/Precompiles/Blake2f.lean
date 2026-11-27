@@ -247,5 +247,6 @@ private def outHex (gas : Nat) (input : ByteArray) : String :=
 #print axioms roundField_bound
 #print axioms run_success
 #print axioms run_refuses_over_bound
+#print axioms beLoop_bound
 
 end EVMCleanroom.Precompiles.Blake2f

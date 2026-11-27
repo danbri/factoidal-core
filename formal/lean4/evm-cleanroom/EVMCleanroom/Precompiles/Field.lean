@@ -215,5 +215,11 @@ private def p13 : Nat := 13
 #print axioms Fp.add_neg
 #print axioms Fp2.mul_canonical
 #print axioms Fp2.inv_canonical
+#print axioms Fp.add_lt
+#print axioms Fp.sub_lt
+#print axioms Fp.mul_lt
+#print axioms Fp.neg_lt
+#print axioms Fp2.add_canonical
+#print axioms Fp2.sub_canonical
 
 end EVMCleanroom.Precompiles

@@ -190,5 +190,6 @@ private def hexOf (s : String) : String := toHex (digest s.toUTF8)
 #print axioms digest_size
 #print axioms run_success
 #print axioms run_total
+#print axioms putWord_size
 
 end EVMCleanroom.Precompiles.Ripemd160

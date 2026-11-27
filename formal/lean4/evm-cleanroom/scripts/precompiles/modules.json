@@ -1,0 +1,13 @@
+{
+ "modules": [
+  "EVMCleanroom/Precompiles/Basic.lean",
+  "EVMCleanroom/Precompiles/Sha256.lean",
+  "EVMCleanroom/Precompiles/Ripemd160.lean",
+  "EVMCleanroom/Precompiles/Blake2f.lean",
+  "EVMCleanroom/Precompiles/ModExp.lean",
+  "EVMCleanroom/Precompiles/Field.lean",
+  "EVMCleanroom/Precompiles/Curve.lean",
+  "EVMCleanroom/Precompiles/Secp256k1.lean",
+  "EVMCleanroom/Precompiles.lean"
+ ]
+}

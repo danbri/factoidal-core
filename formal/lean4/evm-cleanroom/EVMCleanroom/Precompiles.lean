@@ -182,5 +182,6 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
 #print axioms run_oversize
 #print axioms active_range
 #print axioms run_gas_le
+#print axioms materializeLoop_size
 
 end EVMCleanroom.Precompiles

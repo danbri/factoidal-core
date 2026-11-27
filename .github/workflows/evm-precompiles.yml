@@ -1,0 +1,94 @@
+name: Independent Lean EVM precompiles
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2.lean"
+      - "formal/lean4/L4Factoidal/Crypto/SHA2Theorems.lean"
+      - ".github/workflows/evm-precompiles.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evm-precompiles-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  precompiles:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the Lean library, its theorems and build-time guards
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: true
+          auto-config: false
+      - name: Check the package has no external Lean dependency
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for config in Path(".").glob("lakefile*.toml"):
+              text = config.read_text()
+              assert "[[require]]" not in text and "EthLib" not in text, config
+          import json
+          assert json.loads(Path("lake-manifest.json").read_text())["packages"] == []
+          assert Path("lean-toolchain").read_text().strip() == "leanprover/lean4:v4.33.1"
+          PY
+      - name: Audit imports, escape hatches and actual kernel axioms of the precompile modules
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/precompiles/check-axioms.py | tee .lake/precompile-axioms.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=9 and x["theorems"]>=58, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
+      - name: Build the native precompile runner
+        working-directory: formal/lean4/evm-cleanroom
+        run: lake build evm-precompile
+      - name: Keep proof-assistant startup out of the precompile runner's imports
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          ! grep -rn '^import Lean' EVMCleanroom/Precompiles EVMCleanroom/Precompiles.lean EVMCleanroom/PrecompileCLI.lean
+      - name: Compare with published vectors and independent oracles, with negative controls
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/precompiles/run-vectors.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors \
+            | tee .lake/precompile-vectors.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=6 and x["publishedCases"]>=224 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=5 and x["gasShortfallControls"]>=1600, x; print({k: x[k] for k in ("files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
+      - name: Check directly invoked calls and refusals
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          run=.lake/build/bin/evm-precompile
+          test "$($run --run shanghaiPlus 2 72 616263)" = "ok 72 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+          test "$($run --run shanghaiPlus 2 71 616263)" = "fail"
+          test "$($run --run shanghaiPlus 3 720 616263)" = "ok 720 0000000000000000000000008eb208f7e05d987a9b044a8e98c6b087f15a0bfc"
+          test "$($run --run shanghaiPlus 1 3000 -)" = "refuse unavailable"
+          test "$($run --dangerously-enable-unverified-keccak --run shanghaiPlus 1 3000 -)" = "ok 3000 "
+          test "$($run --run shanghaiPlus 10 100000 -)" = "refuse unavailable"
+          test "$($run --run osaka 5 499 -)" = "fail"
+          test "$($run --run osaka 5 500 -)" = "ok 500 "
+      - name: Report time per call against the gas price (not a gate)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 5 \
+            | tee .lake/precompile-timings.json
+      - name: Keep the audit, vector and timing reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-precompile-evidence
+          path: |
+            formal/lean4/evm-cleanroom/.lake/precompile-axioms.json
+            formal/lean4/evm-cleanroom/.lake/precompile-vectors.json
+            formal/lean4/evm-cleanroom/.lake/precompile-timings.json

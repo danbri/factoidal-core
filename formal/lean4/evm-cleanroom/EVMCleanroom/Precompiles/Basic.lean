@@ -201,5 +201,8 @@ def toHex (b : ByteArray) : String :=
 #print axioms readPadded_size
 #print axioms natToBE_size
 #print axioms natToLE_size
+#print axioms readLoop_size
+#print axioms beOutLoop_size
+#print axioms leOutLoop_size
 
 end EVMCleanroom.Precompiles
