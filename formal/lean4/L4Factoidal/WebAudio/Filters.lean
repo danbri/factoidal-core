@@ -18,9 +18,9 @@ https://github.com/danbri/factoidal-core/issues/1169; structure in
   `params[0..3]` are `frequency`, `detune`, `Q`, `gain` (all a-rate; an array of one value is
   read as constant over the block, see `paramAt`). The filter is the difference equation of the
   specification, `a0 y(n) + a1 y(n-1) + a2 y(n-2) = b0 x(n) + b1 x(n-1) + b2 x(n-2)`, computed in
-  transposed direct form II (two stored values per channel, `BiquadChan.z1`, `.z2`), which is
-  algebraically equal to the direct form for fixed coefficients and stays well defined when the
-  coefficients change at every frame.
+  direct form I (four stored values per channel: the last two inputs and outputs), with the
+  coefficients of each frame. (Transposed direct form II is equal for fixed coefficients and
+  differs when they change; WPT `biquad-automation.html` computes direct form I.)
 * `getFrequencyResponse`: magnitude and phase at given frequencies, `H(e^{i omega})` with
   `omega = pi f / Nyquist`, NaN outside `[0, Nyquist]`.
 
@@ -35,7 +35,7 @@ reads as 0), and `Q <= 0` for the filters whose `Q` is linear (bandpass, peaking
 
 ## What is proved
 
-Output shapes; the filter state keeps one `BiquadChan` (two values) for each input channel;
+Output shapes; the filter state keeps one `BiquadChan` (four values) for each input channel;
 `getFrequencyResponse` returns arrays of the length of `frequencyHz` and fails with
 `InvalidAccessError` exactly when an output array has another length.
 
@@ -175,10 +175,13 @@ def coefsAt (t : BiquadType) (sampleRate frequency detune q gain : Float) : Biqu
 
 /-! ## The block kernel -/
 
-/-- The two stored values of one channel (transposed direct form II). -/
+/-- The four stored values of one channel (direct form I): the last two inputs and the last two
+outputs. -/
 structure BiquadChan where
-  z1 : Float := 0.0
-  z2 : Float := 0.0
+  x1 : Float := 0.0
+  x2 : Float := 0.0
+  y1 : Float := 0.0
+  y2 : Float := 0.0
 
 structure BiquadState where
   type : BiquadType
@@ -203,13 +206,17 @@ def blockCoefs (n : Nat) (t : BiquadType) (sampleRate : Float) (params : Array F
 def coefOf (cs : Array BiquadCoef) (i : Nat) : BiquadCoef :=
   if cs.size = 1 then cs.getD 0 BiquadCoef.wire else cs.getD i BiquadCoef.wire
 
-/-- One frame of one channel: `y = b0 x + z1`, `z1' = b1 x - a1 y + z2`, `z2' = b2 x - a2 y`. -/
+/-- One frame of one channel, direct form I: `y = (b0 x + b1 x1 + b2 x2) - (a1 y1 + a2 y2)`. With a
+coefficient that changes at every frame this is the difference equation of the specification with
+the coefficients of the frame, which is what the Web Platform Tests (`biquad-automation.html`,
+`no-dezippering.html`) compute as the reference. -/
 def biquadStep (cs : Array BiquadCoef) (inp : FloatArray) (i : Nat)
     (p : BiquadChan × FloatArray) : BiquadChan × FloatArray :=
   let c := coefOf cs i
   let x := getF inp i
-  let y := c.b0 * x + p.1.z1
-  (⟨c.b1 * x - c.a1 * y + p.1.z2, c.b2 * x - c.a2 * y⟩, p.2.push y)
+  let z := p.1
+  let y := (c.b0 * x + c.b1 * z.x1 + c.b2 * z.x2) - (c.a1 * z.y1 + c.a2 * z.y2)
+  (⟨x, z.x1, y, z.y1⟩, p.2.push y)
 
 def biquadChan (n : Nat) (cs : Array BiquadCoef) (inp : FloatArray) (z : BiquadChan) :
     BiquadChan × FloatArray :=
@@ -260,7 +267,7 @@ theorem biquad_shape (n : Nat) (s : BiquadState) (inputs : Array Block)
   obtain ⟨p, ⟨j, rfl⟩, rfl⟩ := hc
   exact biquadChan_size n _ _ _
 
-/-- Says: after a block the state holds one `BiquadChan` (two values, `z1` and `z2`) for each
+/-- Says: after a block the state holds one `BiquadChan` (four values) for each
 channel of the input, so a node whose input keeps its channel count keeps the size of its state
 across blocks; the type and the sample rate are unchanged. Does not say: that the stored values
 are the right ones (tested with `#guard`), or what happens to the stored values of a channel when
@@ -454,7 +461,7 @@ def runTwoBlocks : List Float :=
   let s : BiquadState := { type := .lowpass, sampleRate := 2.0 }
   let ins : Array Block := #[#[mkChan 4 (fun _ => 1.0), mkChan 4 (fun _ => 0.0)]]
   let (s1, o) := biquadProcess 4 s ins #[⟨#[0.25]⟩, ⟨#[0.0]⟩, ⟨#[1.0]⟩, ⟨#[1.0]⟩]
-  s1.chans.size == 2 && (o.getD 0 #[]).size == 2 && near (s1.chans.getD 1 {}).z1 0.0 && near (s1.chans.getD 1 {}).z2 0.0
+  s1.chans.size == 2 && (o.getD 0 #[]).size == 2 && near (s1.chans.getD 1 {}).y1 0.0 && near (s1.chans.getD 1 {}).y2 0.0
 
 -- a-rate frequency: the coefficients change at every frame (frequency ramps 0.2 to 0.5)
 #guard

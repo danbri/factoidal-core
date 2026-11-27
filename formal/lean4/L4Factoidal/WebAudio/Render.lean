@@ -45,7 +45,8 @@ change. Their `AudioParam`s are the rows of `paramSpecs`: OscillatorNode `freque
 -Nyquist to Nyquist) and `detune` (default 0, plus or minus 1200 log2 of the largest binary32
 value), both a-rate; BiquadFilterNode `frequency` (350, 0 to Nyquist), `detune`, `Q` (1, plus or
 minus the largest binary32), `gain` (0, up to 40 log10 of the largest binary32), all a-rate;
-AudioBufferSourceNode `playbackRate` (1) and `detune` (0), both k-rate.
+AudioBufferSourceNode `playbackRate` (1) and `detune` (0), both k-rate, both with the nominal range
+of the largest binary32 value in each direction (Web Audio API 1.1; WPT `audioparam-nominal-range.html`).
 
 ## Proved
 
@@ -114,9 +115,14 @@ structure ParamState where
 /-- Nominal range limit of `detune`: `1200 * log2 (most-positive-single-float)` (about 153600). -/
 def detuneMax : Float := 1200.0 * Float.log2 floatMax
 
-/-- Upper nominal bound of the `gain` of a `BiquadFilterNode`:
-`40 * log10 (most-positive-single-float)`. -/
-def biquadGainMax : Float := 40.0 * Float.log10 floatMax
+/-- Upper nominal bound of the `gain` of a `BiquadFilterNode`: `40 * log10 (most-positive-single-float)`
+evaluated in single precision, as WPT `audioparam-nominal-range.html` states it
+(`fround (40 * fround (log10 FLT_MAX))`): `log10 FLT_MAX` is rounded to binary32 first, then the
+product is. The result is 1541.273681640625. -/
+def biquadGainMax : Float :=
+  (40.0 * (Float.log10 floatMax).toFloat32.toFloat).toFloat32.toFloat
+
+#guard biquadGainMax == 1541.273681640625
 
 /-- A parameter of a node type of `Kind.other` (no kernel here). -/
 def placeholderParam (d : Float) : ParamSpec := ⟨d, -floatMax, floatMax, true⟩
@@ -137,7 +143,7 @@ def paramSpecs (k : Graph.Kind) (maxDelayTime sampleRate : Float) : Array ParamS
   | .oscillator =>
     #[⟨440.0, -(sampleRate / 2.0), sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩]
   | .bufferSource =>
-    #[⟨1.0, -floatMax, floatMax, false⟩, ⟨0.0, -detuneMax, detuneMax, false⟩]
+    #[⟨1.0, -floatMax, floatMax, false⟩, ⟨0.0, -floatMax, floatMax, false⟩]
   | .biquad =>
     #[⟨350.0, 0.0, sampleRate / 2.0, true⟩, ⟨0.0, -detuneMax, detuneMax, true⟩,
       ⟨1.0, -floatMax, floatMax, true⟩, ⟨0.0, -floatMax, biquadGainMax, true⟩]
@@ -226,8 +232,11 @@ def Plan.of (g : Graph.Graph) : Plan :=
 /-- `paramComputedValue`: NaN is replaced by the default value, then the value is clamped to the
 nominal range. -/
 def finalValue (s : ParamSpec) (x : Float) : Float :=
-  let y := if x ≠ x then s.defaultValue else x
-  if y < s.minValue then s.minValue else if y > s.maxValue then s.maxValue else y
+  let y := if x.isNaN then s.defaultValue else x
+  let z := if y < s.minValue then s.minValue else if y > s.maxValue then s.maxValue else y
+  -- the computed value of a parameter is a binary32 value (WPT k-rate-audiobuffersource-connections.html
+  -- compares an automation with a connected signal exactly)
+  z.toFloat32.toFloat
 
 /-- The block of output `out` of node `src`, or one mono channel of silence when the node has not
 produced it (a muted node, or a node that comes later in the order). -/
@@ -301,9 +310,18 @@ def runKernel (n frame : Nat) (k : Graph.Kind) (cyc : Bool) (interp : Mix.Interp
     (.biquad r.1, r.2)
   | .bufferSource, .buf cfg s set =>
     let r := Buffer.process n cfg { s with frame := frame } inputs params
-    (.buf cfg r.1 set, r.2)
+    -- A node that has not played in this quantum is not actively processing: one channel of
+    -- silence (Web Audio API 1.1, "actively processing"; WPT audiobuffersource-output-channel-count).
+    (.buf cfg r.1 set, if r.1.started then r.2 else #[silence 1 n])
   -- A node type with no kernel (`Kind.other`): one mono channel of silence per output.
   | _, _ => (ks, Array.replicate k.numOutputs (silence 1 n))
+
+/-- The output of a node is binary32 data: each sample is rounded to the nearest binary32 value, so
+that an overflow is an infinity at the node that overflows (and `inf - inf` is NaN where two such
+outputs meet), as in a single-precision engine. The kernels compute in binary64. Specification:
+"AudioBuffer ... 32-bit floating-point"; WPT `nan-param.html` needs this. -/
+def roundOut (bs : Array Block) : Array Block :=
+  bs.map fun b => b.map fun c => mkChan c.size fun i => (getF c i).toFloat32.toFloat
 
 /-- Process one step of the ordered list. -/
 def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
@@ -316,7 +334,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       let r := runKernel st.quantum st.frame k cyc node.chan.interp node.ks inputs params
       let acc' := if id == st.dest then { acc with destIn := inputs.getD 0 #[] } else acc
       { acc' with nodes := acc'.nodes.set! id { node with ks := r.1 }
-                  outs := acc'.outs.set! id r.2 }
+                  outs := acc'.outs.set! id (roundOut r.2) }
     | _, _ => acc
   | .delayRead id =>
     match acc.nodes[id]?, st.graph.kinds[id]? with
@@ -325,7 +343,7 @@ def runStep (st : State) (pl : Plan) (acc : Acc) : Graph.Step → Acc
       | .delay s _ =>
         let silent : Array Block := #[silence s.bufs.size st.quantum]
         let r := runKernel st.quantum st.frame k true node.chan.interp node.ks silent (nodeParams st acc id node)
-        { acc with outs := acc.outs.set! id r.2 }
+        { acc with outs := acc.outs.set! id (roundOut r.2) }
       | _ => acc
     | _, _ => acc
   | .delayWrite id =>
