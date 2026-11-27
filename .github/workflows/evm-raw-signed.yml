@@ -51,7 +51,7 @@ jobs:
           python3 - <<'PY'
           import re
           from pathlib import Path
-          expected={"refused_bounds","checked_point","recover_checked","call_entry_source","refused_entry","over_limit"}
+          expected={"refused_bounds","checked_point","recover_checked","call_entry_source","refused_entry","over_limit","admit_creation","creation_entry_fields","admit_call","admit_creation_refused"}
           found=set()
           for p in Path(".lake/signed-evidence").glob("*.log"):
               if p.name=="build.log": continue

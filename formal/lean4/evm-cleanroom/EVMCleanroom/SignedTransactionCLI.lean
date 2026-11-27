@@ -36,7 +36,7 @@ private def receiptJSON (receipt : TransactionList.Receipt) : Json :=
     ("logs", .arr (receipt.logs.map transactionLogJSON).toArray),
     ("blobGasUsed", decimal receipt.blobGasUsed),
     ("blobFeeBurn", decimal receipt.blobFeeBurn)
-  ] ++ frameError)
+  ] ++ frameError ++ (receipt.createdAddress.map fun new => [("createdAddress", decimal new)]).getD [])
 
 private def report (status : String) (fields : List (String × Json)) (optIn : Bool := true)
     (schemaVersion : Nat := 1) : Json :=
