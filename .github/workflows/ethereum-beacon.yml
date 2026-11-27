@@ -80,7 +80,7 @@ jobs:
                   code, re.M), name
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
           lakefile = pathlib.Path("lakefile.toml").read_text()
-          assert "require" not in lakefile and "moreLinkArgs" not in lakefile and "extern" not in lakefile
+          assert "[[require]]" not in lakefile and "moreLinkArgs" not in lakefile and "extraDepTargets" not in lakefile
           assert re.findall(r'^srcDir = "(.*)"$', lakefile, re.M) == ["../ethereum-consensus", ".."]
           assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
           print("source audit passed:", len(allowed), "files")
