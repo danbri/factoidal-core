@@ -8,4 +8,4 @@ for f in .lake/build/ir/EVMCleanroom/FieldPerf/Exp.c .lake/build/ir/EVMCleanroom
 done
 grep -n 'loopDoubleDict\|loopDoubleClass' .lake/build/ir/EVMCleanroom/FieldPerf/Exp.c | head -20 || true
 .lake/build/bin/evm-fieldperf-exp 2000000
-.lake/build/bin/evm-fieldperf-exp 2000000 | grep ns/op
+
