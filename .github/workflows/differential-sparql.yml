@@ -1,0 +1,69 @@
+name: Differential SPARQL (Factoidal against Oxigraph)
+
+# P7 of batch https://github.com/danbri/factoidal-core/issues/1189:
+# https://github.com/danbri/factoidal-core/issues/1184 (random differential campaigns).
+# Seeded random graphs and SELECT/ASK queries; the published @factoidal/core
+# (latest) and pyoxigraph answer each one; the summary states "agrees on N of M".
+# Disagreements are uploaded as cases to keep. The job fails only when the
+# harness fails, not on a disagreement: the rate is the measurement.
+on:
+  workflow_dispatch:
+    inputs:
+      n:
+        description: number of cases
+        default: '2000'
+      seed:
+        description: generator seed (default: the run number)
+        default: ''
+  schedule:
+    - cron: '17 3 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/diffcampaign/**'
+      - '.github/workflows/differential-sparql.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: differential-sparql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  campaign:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Engines
+        run: |
+          python3 -m pip install --quiet pyoxigraph
+          mkdir -p "$RUNNER_TEMP/fd" && cd "$RUNNER_TEMP/fd" && npm init -y >/dev/null && npm install --silent @factoidal/core@latest
+          node -e 'console.log("factoidal", require(process.argv[1]+"/node_modules/@factoidal/core/package.json").version)' "$RUNNER_TEMP/fd" | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 -c 'import pyoxigraph; print("pyoxigraph", pyoxigraph.__version__)' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Generate, answer, compare
+        env:
+          N: ${{ github.event.inputs.n || '2000' }}
+          SEED: ${{ github.event.inputs.seed || github.run_number }}
+        run: |
+          set -o pipefail
+          T="$RUNNER_TEMP"
+          python3 tools/diffcampaign/sparql.py gen --seed "$SEED" --n "$N" --out "$T/cases.jsonl"
+          python3 tools/diffcampaign/sparql.py oxigraph "$T/cases.jsonl" --out "$T/ox.jsonl"
+          node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fd.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs"
+          python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fd.jsonl" --keep "$T/disagreements" --json "$T/summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sparql-differential
+          path: |
+            ${{ runner.temp }}/summary.json
+            ${{ runner.temp }}/disagreements
