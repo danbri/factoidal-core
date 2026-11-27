@@ -5,7 +5,10 @@ Reads the JSON written by `beacon-spec-tests --json` and compares it, handler
 by handler, with the committed baseline for the same preset. The run fails
 when a handler is missing, its case count differs from the baseline (cases
 may not silently disappear), its pass count is lower, or its fail or
-unsupported count is higher, or fewer cases ran with real signature checks.
+unsupported count is higher, or fewer cases ran in signature-verification mode.
+Reject duplicate handlers, inconsistent count partitions, wrong fork metadata
+and BLS class drift. The signatures_checked field is a case-mode flag, not
+a count of actual cryptographic calls.
 `--update` rewrites the baseline entry from the run (only ever done by hand,
 in a commit that says why).
 
@@ -21,8 +24,42 @@ KEYS = ("total", "pass", "fail", "unsupported", "bls_required", "bls_required_pa
         "bls_off", "bls_off_pass", "bls_optional", "bls_optional_pass", "signatures_checked")
 
 
+BLS_CLASSES = ("bls_required", "bls_off", "bls_optional")
+
+
+def validate_counts(name, h):
+    if any(type(h[k]) is not int or h[k] < 0 for k in KEYS):
+        raise ValueError(f"{name}: nonnegative integer counts required")
+    if h["total"] != h["pass"] + h["fail"] + h["unsupported"]:
+        raise ValueError(f"{name}: inconsistent status counts")
+    if h["total"] != sum(h[k] for k in BLS_CLASSES):
+        raise ValueError(f"{name}: inconsistent BLS class counts")
+    if h["pass"] != sum(h[k + "_pass"] for k in BLS_CLASSES):
+        raise ValueError(f"{name}: inconsistent BLS pass counts")
+    if any(h[k + "_pass"] > h[k] for k in BLS_CLASSES):
+        raise ValueError(f"{name}: BLS pass count exceeds class count")
+    if h["signatures_checked"] > h["total"] - h["bls_off"]:
+        raise ValueError(f"{name}: verification-mode count exceeds eligible cases")
+
+
 def summarise(run):
-    return {f'{h["runner"]}/{h["handler"]}': {k: h[k] for k in KEYS} for h in run["handlers"]}
+    if (run["fork"] != "fulu" or run["preset"] not in ("minimal", "mainnet")
+            or type(run["optional_bls_verified"]) is not bool):
+        raise ValueError("unexpected fork, preset or BLS verification mode")
+    current = {}
+    for h in run["handlers"]:
+        if any(not isinstance(h[k], str) or not h[k] or "/" in h[k]
+               for k in ("runner", "handler")):
+            raise ValueError("invalid handler identity")
+        name = f'{h["runner"]}/{h["handler"]}'
+        if name in current:
+            raise ValueError(f"{name}: duplicate handler")
+        counts = {k: h[k] for k in KEYS}
+        validate_counts(name, counts)
+        current[name] = counts
+    if not current:
+        raise ValueError("empty handler inventory")
+    return current
 
 
 def table(run):
@@ -48,6 +85,8 @@ def compare(current, baseline):
         if got is None:
             problems.append(f"{name}: handler missing from the run")
             continue
+        validate_counts(name, want)
+        validate_counts(name, got)
         if got["total"] != want["total"]:
             problems.append(f'{name}: {got["total"]} cases, baseline has {want["total"]}')
         if got["pass"] < want["pass"]:
@@ -59,6 +98,11 @@ def compare(current, baseline):
         if got["signatures_checked"] < want["signatures_checked"]:
             problems.append(f'{name}: signatures checked in {got["signatures_checked"]} cases, '
                             f'baseline {want["signatures_checked"]}')
+        for key in BLS_CLASSES:
+            if got[key] != want[key]:
+                problems.append(f"{name}: {key} count differs from baseline")
+            if got[key + "_pass"] < want[key + "_pass"]:
+                problems.append(f"{name}: {key} pass count below baseline")
     for name in current:
         if name not in baseline:
             problems.append(f"{name}: handler not in the baseline (add it with --update)")
@@ -66,17 +110,49 @@ def compare(current, baseline):
 
 
 def self_test():
-    base = {"a/b": dict.fromkeys(KEYS, 0) | {"total": 3, "pass": 3, "signatures_checked": 3}}
-    same = json.loads(json.dumps(base))
-    assert compare(same, base) == []
-    for key, value in (("pass", 2), ("fail", 1), ("unsupported", 1), ("total", 2), ("signatures_checked", 0)):
-        bad = json.loads(json.dumps(base))
-        bad["a/b"][key] = value
-        assert compare(bad, base), key
+    import copy
+    row = dict.fromkeys(KEYS, 0) | {"runner": "a", "handler": "b", "total": 3, "pass": 3,
+                                    "bls_required": 2, "bls_required_pass": 2,
+                                    "bls_optional": 1, "bls_optional_pass": 1,
+                                    "signatures_checked": 3}
+    run = {"fork": "fulu", "preset": "minimal", "optional_bls_verified": True, "handlers": [row]}
+    base = summarise(run)
+    assert compare(base, base) == []
+    controls = 0
+    for changes in ({"pass": 2, "fail": 1, "bls_required_pass": 1},
+                    {"pass": 2, "unsupported": 1, "bls_required_pass": 1},
+                    {"total": 2, "pass": 2, "bls_required": 1, "bls_required_pass": 1, "signatures_checked": 2},
+                    {"signatures_checked": 0},
+                    {"bls_required": 1, "bls_required_pass": 1, "bls_optional": 2, "bls_optional_pass": 2}):
+        bad = copy.deepcopy(run)
+        bad["handlers"][0].update(changes)
+        assert compare(summarise(bad), base), changes
+        controls += 1
+    # Same total and total passes, but passing BLS-required cases decline.
+    partial = copy.deepcopy(run)
+    partial["handlers"][0].update({"pass": 2, "fail": 1, "bls_optional_pass": 0})
+    shifted = copy.deepcopy(partial)
+    shifted["handlers"][0].update({"bls_optional_pass": 1, "bls_required_pass": 1})
+    assert compare(summarise(shifted), summarise(partial))
+    controls += 1
     assert compare({}, base)
     assert compare(base | {"c/d": base["a/b"]}, base)
-    print("ratchet self-test: 8 controls behaved")
-
+    controls += 2
+    malformed = [run | {"handlers": [row, row]}, run | {"handlers": []},
+                 run | {"fork": "deneb"}, run | {"preset": "other"},
+                 run | {"optional_bls_verified": 1}]
+    for changes in ({"total": True}, {"fail": -1}, {"pass": 2}, {"bls_off": 1},
+                    {"bls_optional_pass": 0}, {"bls_optional_pass": 2, "bls_required_pass": 1},
+                    {"signatures_checked": 4}, {"handler": "b/c"}):
+        malformed.append(run | {"handlers": [row | changes]})
+    for bad in malformed:
+        try:
+            summarise(bad)
+        except ValueError:
+            controls += 1
+        else:
+            raise AssertionError(f"malformed evidence accepted: {bad}")
+    print(f"ratchet self-test: {controls} negative controls behaved")
 
 def main():
     ap = argparse.ArgumentParser()

@@ -1,0 +1,52 @@
+name: Native Fulu beacon runtime boundary
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-beacon/**'
+      - 'formal/lean4/ethereum-consensus/**'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - 'formal/lean4/evm-cleanroom/scripts/check-witness-runtime.py'
+      - '.github/workflows/ethereum-beacon-native-boundary.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-beacon
+    env:
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-beacon
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Build the actual vector runner
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          git rev-parse HEAD
+          git rev-parse HEAD^{tree}
+          lean --version
+          lake build beacon-spec-tests Beacon.Theorems 2>&1 | tee "$RUNNER_TEMP/beacon-native-build.log"
+      - name: Inspect native symbols, libraries and binary identity
+        run: |
+          set -euo pipefail
+          python3 scripts/check-beacon-native-boundary.py --binary .lake/build/bin/beacon-spec-tests --out "$RUNNER_TEMP/beacon-native-boundary.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beacon-native-boundary-evidence
+          path: |
+            ${{ runner.temp }}/beacon-native-build.log
+            ${{ runner.temp }}/beacon-native-boundary.json
