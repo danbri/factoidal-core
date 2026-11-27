@@ -52,6 +52,26 @@ git -C "$top" fetch -q --depth 1 origin "$base" \
   && python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 3 --max-cases-per-file 12 > /tmp/bench-old.json \
   || echo "RESULT base router not built: bench.py rows below are for the new router only"
 cd "$here"
+# Process start: the limb modules add constants that are built when a program starts (Montgomery forms of the
+# curve and isogeny constants); the fixed-base tables of the KZG helpers must not be among them.
+python3 - <<'PY'
+import os, subprocess, time
+def start_ms(binary):
+    if not os.path.exists(binary):
+        return None
+    times = []
+    for _ in range(40):
+        begin = time.perf_counter()
+        subprocess.run([binary, "--run", "shanghaiPlus", "2", "72", "616263"], capture_output=True)
+        times.append(time.perf_counter() - begin)
+    return round(sorted(times)[len(times) // 2] * 1000, 3)
+new = start_ms(".lake/build/bin/evm-precompile")
+old = start_ms("/tmp/fp-base/formal/lean4/evm-cleanroom/.lake/build/bin/evm-precompile")
+print("TIMING process start (one SHA-256 call, median of 40, ms): old %s, new %s" % (old, new))
+if old is not None and new is not None and new > old + 3.0:
+    print("RESULT blsops: process start grew by more than 3 ms, FAILURES")
+    raise SystemExit(1)
+PY
 python3 - <<'PY'
 import json, os
 new = {r["address"]: r for r in json.load(open("/tmp/bench-new.json"))["rows"]}

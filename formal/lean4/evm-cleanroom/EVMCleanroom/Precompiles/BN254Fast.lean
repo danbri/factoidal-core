@@ -13,7 +13,8 @@ EIP-1108), computed on the four-limb Montgomery field `BN254.baseField`:
 
 * coordinates are read straight into limbs and compared with `p` by a borrow;
 * the curve equation is checked in Montgomery form;
-* the addition is one mixed Jacobian addition; the multiplication reduces
+* the addition is the affine chord-and-tangent rule (one inversion, three
+  multiplications); the multiplication reduces
   the scalar (given up to `2^256 − 1`) modulo the group order, splits it along
   the endomorphism `φ(x, y) = (βx, y)` into two parts of about 127 bits and
   runs one doubling chain of that length with two tables of sixteen multiples
@@ -104,9 +105,10 @@ theorem encodeG1_size (point : JPoint U256) : (encodeG1 point).size = 64 := by
   · simp [U256.pushBE_size]
 
 def addPoints (a b : Affine) : JPoint U256 :=
-  match b with
-  | none => toJacobian a
-  | some (x, y) => Curve.addMixed ops (toJacobian a) x y
+  match a, b with
+  | none, _ => toJacobian b
+  | _, none => toJacobian a
+  | some first, some second => Curve.addAffine ops first.1 first.2 second.1 second.2
 
 /-! ### Scalar multiplication with the endomorphism
 

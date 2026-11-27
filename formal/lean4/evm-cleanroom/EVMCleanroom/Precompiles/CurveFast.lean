@@ -11,6 +11,8 @@ calls.
 
 * `toAffineFast`: as `Curve.toAffine`, without the inversion when `Z = 1`.
 * `addMixed`: Jacobian plus affine (the textbook chord rule with `Z₂ = 1`).
+* `addAffine`: affine plus affine with one inversion, for a single addition
+  whose result is wanted in affine form anyway.
 * `windowMul`: one scalar multiple with a table of the multiples `0 … 15` and
   four doublings per four scalar bits.
 * `straus`: a sum of scalar multiples with one shared doubling chain and one
@@ -65,6 +67,21 @@ variable {F : Type}
       let x3 := O.sub (O.sub (O.sqr r) hhh) (O.add v v)
       let y3 := O.sub (O.mul r (O.sub v x3)) (O.mul p.y hhh)
       ⟨x3, y3, O.mul h p.z⟩
+
+/-- The sum of two affine points, neither at infinity, by the affine chord-and-tangent rule:
+    one field inversion, and the result already has `Z = 1` (or is the point at infinity). -/
+@[specialize] def addAffine (O : FieldOps F) (x1 y1 x2 y2 : F) : JPoint F :=
+  if O.eq x1 x2 then
+    if O.eq y1 y2 && !O.isZero y1 then
+      let xx := O.sqr x1
+      let slope := O.mul (O.add (O.add xx xx) xx) (O.inv (O.add y1 y1))
+      let x3 := O.sub (O.sub (O.sqr slope) x1) x1
+      ⟨x3, O.sub (O.mul slope (O.sub x1 x3)) y1, O.one⟩
+    else infinity O
+  else
+    let slope := O.mul (O.sub y2 y1) (O.inv (O.sub x2 x1))
+    let x3 := O.sub (O.sub (O.sqr slope) x1) x2
+    ⟨x3, O.sub (O.mul slope (O.sub x1 x3)) y1, O.one⟩
 
 /-- `count` doublings. -/
 @[specialize] def doubleN (O : FieldOps F) : Nat → JPoint F → JPoint F
@@ -256,6 +273,15 @@ private def items (count seed : Nat) : Array (MsmItem Nat) :=
   (toAffineFast small (addMixed small (ofAffine small point.1 point.2) point.1 point.2)) ==
     (toAffine small (mul small 2 (ofAffine small point.1 point.2))) &&
   (toAffineFast small (addMixed small (ofAffine small point.1 point.2) point.1 (Fp.neg 10007 point.2))).isNone
+
+-- The affine sum against the Jacobian one: all pairs of 40 points (equal points included), inverse points,
+-- and points of order two when the curve has them.
+#guard (smallPoints.extract 0 40).all fun a => (smallPoints.extract 0 40).all fun b =>
+  toAffineFast small (addAffine small a.1 a.2 b.1 b.2) ==
+    toAffine small (add small (ofAffine small a.1 a.2) (ofAffine small b.1 b.2)) &&
+  (toAffineFast small (addAffine small a.1 a.2 a.1 (Fp.neg 10007 a.2))).isNone
+#guard (smallPoints.filter fun point => point.2 == 0).all fun a =>
+  (toAffineFast small (addAffine small a.1 a.2 a.1 a.2)).isNone
 
 #print axioms passes_le
 #print axioms passes_cover

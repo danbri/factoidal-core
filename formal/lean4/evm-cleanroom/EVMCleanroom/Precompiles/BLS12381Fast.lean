@@ -264,14 +264,16 @@ theorem encodeG2_size (point : JPoint (Q2 U384)) : (encodeG2 point).size = 256 :
 /-! ### Addition -/
 
 def add1 (a b : Option G1Affine) : JPoint U384 :=
-  match b with
-  | none => jacobian1 a
-  | some (x, y) => Curve.addMixed fp (jacobian1 a) x y
+  match a, b with
+  | none, _ => jacobian1 b
+  | _, none => jacobian1 a
+  | some first, some second => Curve.addAffine fp first.1 first.2 second.1 second.2
 
 def add2 (a b : Option G2Affine) : JPoint (Q2 U384) :=
-  match b with
-  | none => jacobian2 a
-  | some (x, y) => Curve.addMixed fp2 (jacobian2 a) x y
+  match a, b with
+  | none, _ => jacobian2 b
+  | _, none => jacobian2 a
+  | some first, some second => Curve.addAffine fp2 first.1 first.2 second.1 second.2
 
 def g1AddBody (data : ByteArray) : Body :=
   match decodeG1 data 0 false, decodeG1 data 128 false with
