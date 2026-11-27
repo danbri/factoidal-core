@@ -283,13 +283,17 @@ structure PathState where
   lastC : Option (Float × Float) := none
   lastQ : Option (Float × Float) := none
 
+/-- Read `k` numbers, consed onto `acc` in reverse; a tail call, so one stack frame for any `k`
+(tail-recursion gate, `tools/lean-tail-recursion-audit.py`). -/
+def numbersGo : Nat → List Char → List Float → Option (List Float × List Char)
+  | 0, cs, acc => some (acc.reverse, cs)
+  | k + 1, cs, acc =>
+    match pathNumber cs with
+    | none => none
+    | some (x, cs) => numbersGo k cs (x :: acc)
+
 /-- Read `k` numbers. -/
-def numbers : Nat → List Char → Option (List Float × List Char)
-  | 0, cs => some ([], cs)
-  | k + 1, cs => do
-    let (x, cs) ← pathNumber cs
-    let (xs, cs) ← numbers k cs
-    pure (x :: xs, cs)
+def numbers (k : Nat) (cs : List Char) : Option (List Float × List Char) := numbersGo k cs []
 
 def isCmd (c : Char) : Bool := "MmLlHhVvCcSsQqTtZz".toList.contains c
 

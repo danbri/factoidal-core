@@ -72,8 +72,11 @@ done
 # Fresh RDF/Turtle/JSON closure for the FOAF view. No JavaScript RDF parser.
 # Prim/FloatOfNat first: SVG.lean imports it (its csimp theorems make Float conversions the fast twins).
 # Par/Chunked: SVG.lean lists tiles in parallel chunks with it (issue 398).
+# WHATWG/Encoding/Data and Core: SVG.lean decodes paint fragment IDs with utf8DecodeWithoutBOM (2adea3fd9).
+# Every L4Factoidal module the lab imports must be in this list: once .build/olean/L4Factoidal exists,
+# Lean looks for every L4Factoidal module there and not in .lake (foafnaut-engines failed on 2026-11-27).
 WEBP_MODULES=(Codec/WebP Codec/VP8LPrefix Codec/VP8LPlane Codec/VP8LDecode Codec/VP8Tables Codec/VP8Control Codec/VP8Transform Codec/VP8Intra Codec/VP8Filter Codec/VP8Color Codec/VP8Alpha)
-CORE_MODULES=(Prim/FloatOfNat Par/Chunked Codec/Crc32 Codec/Inflate "${WEBP_MODULES[@]}" WHATWG/URL/PercentDecode RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
+CORE_MODULES=(Prim/FloatOfNat Par/Chunked Codec/Crc32 Codec/Inflate "${WEBP_MODULES[@]}" WHATWG/URL/PercentDecode WHATWG/Encoding/Data WHATWG/Encoding/Core RDF/XmlCanon RDF/Core RDF/Graph Encoding/Hex Syntax/Lexing
   Syntax/NTriples Syntax/IriResolve RDF/IriSyntax NatBounds Syntax/Turtle
   JSON/Value JSON/Parser JSON/Serialize UI/Geometry UI/LayoutPolicy UI/PolicyProtocol UI/Presentation Math/Affine Tdb2/Format Rendering/FloatFormat Rendering/Path Rendering/Scene)
 CLOSURE=lean-4.33.1
@@ -169,7 +172,7 @@ webp_objects=()
 for module in "${WEBP_MODULES[@]}"; do
   webp_objects+=("$BUILD/obj/Core_${module//\//_}.o")
 done
-link_engine svg-engine _svg_call,_svg_call_url,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/GraphicsPrepared.o" "$BUILD/obj/SVG.o" "$BUILD/obj/SVGCSS.o" "$BUILD/obj/SVGDash.o" "$BUILD/obj/SVGDashUnits.o" "$BUILD/obj/SVGStroke.o" "$BUILD/obj/ImagePNG.o" "$BUILD/obj/ImageJPEG.o" "$BUILD/obj/ImageGIF.o" "$BUILD/obj/ImageData.o" "$BUILD/obj/Core_Prim_FloatOfNat.o" "$BUILD/obj/Core_Par_Chunked.o" "$BUILD/obj/Core_Codec_Crc32.o" "$BUILD/obj/Core_Codec_Inflate.o" "$BUILD/obj/Core_WHATWG_URL_PercentDecode.o" "${webp_objects[@]}" "$BUILD/obj/SVGPath.o" "$BUILD/obj/SVGPathData.o" "$BUILD/obj/SVGCurves.o" "$BUILD/obj/SVGReferences.o" "$BUILD/obj/Core_Math_Affine.o" "$BUILD/obj/Core_Tdb2_Format.o" "$BUILD/obj/Core_Rendering_FloatFormat.o" "$BUILD/obj/Core_Rendering_Path.o" "$BUILD/obj/Core_Rendering_Scene.o" "$BUILD/obj/Core_Syntax_IriResolve.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
+link_engine svg-engine _svg_call,_svg_call_url,_svg_pixel,_svg_free "$BUILD/obj/Graphics.o" "$BUILD/obj/GraphicsPrepared.o" "$BUILD/obj/SVG.o" "$BUILD/obj/SVGCSS.o" "$BUILD/obj/SVGDash.o" "$BUILD/obj/SVGDashUnits.o" "$BUILD/obj/SVGStroke.o" "$BUILD/obj/ImagePNG.o" "$BUILD/obj/ImageJPEG.o" "$BUILD/obj/ImageGIF.o" "$BUILD/obj/ImageData.o" "$BUILD/obj/Core_Prim_FloatOfNat.o" "$BUILD/obj/Core_Par_Chunked.o" "$BUILD/obj/Core_Codec_Crc32.o" "$BUILD/obj/Core_Codec_Inflate.o" "$BUILD/obj/Core_WHATWG_URL_PercentDecode.o" "$BUILD/obj/Core_WHATWG_Encoding_Data.o" "$BUILD/obj/Core_WHATWG_Encoding_Core.o" "${webp_objects[@]}" "$BUILD/obj/SVGPath.o" "$BUILD/obj/SVGPathData.o" "$BUILD/obj/SVGCurves.o" "$BUILD/obj/SVGReferences.o" "$BUILD/obj/Core_Math_Affine.o" "$BUILD/obj/Core_Tdb2_Format.o" "$BUILD/obj/Core_Rendering_FloatFormat.o" "$BUILD/obj/Core_Rendering_Path.o" "$BUILD/obj/Core_Rendering_Scene.o" "$BUILD/obj/Core_Syntax_IriResolve.o" "$BUILD/obj/svg_shim.o" "$BUILD/obj/"XML_*.o
 link_engine render-plan _render_plan,_render_plan_free "$BUILD/obj/RenderPlan.o" "$BUILD/obj/render_plan_shim.o"
 link_engine layout-policy-engine _layout_policy,_layout_policy_free "$BUILD/obj/PolicyBridge.o" "$BUILD/obj/policy_shim.o" "$BUILD/obj/"Core_*.o
 link_engine foafnaut-engine _foafnaut_init,_foafnaut_init_policy,_foafnaut_step,_foafnaut_picture,_foafnaut_picture_checked,_foafnaut_export_svg,_foafnaut_text,_foafnaut_free,_foafnaut_live_start,_foafnaut_live_event,_foafnaut_live_text,_foafnaut_live_tick,_foafnaut_live_acknowledge,_foafnaut_live_export_svg,_foafnaut_live_dispose \
