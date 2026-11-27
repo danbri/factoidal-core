@@ -50,34 +50,36 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fd" && cd "$RUNNER_TEMP/fd" && npm init -y >/dev/null && npm install --silent @factoidal/core@latest
           node -e 'console.log("factoidal", require(process.argv[1]+"/node_modules/@factoidal/core/package.json").version)' "$RUNNER_TEMP/fd" | tee -a "$GITHUB_STEP_SUMMARY"
           python3 -c 'import pyoxigraph; print("pyoxigraph", pyoxigraph.__version__)' | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Generate, answer, compare
+      - name: Generate, answer, compare (profiles base and ext)
         env:
           N: ${{ github.event.inputs.n || '5000' }}
           SEED: ${{ github.event.inputs.seed || github.run_number }}
         run: |
           set -o pipefail
           T="$RUNNER_TEMP"
-          python3 tools/diffcampaign/sparql.py gen --seed "$SEED" --n "$N" --out "$T/cases.jsonl"
-          python3 tools/diffcampaign/sparql.py oxigraph "$T/cases.jsonl" --out "$T/ox.jsonl"
-          node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fd.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs"
-          echo "npm @factoidal/core (latest):" | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fd.jsonl" --keep "$T/disagreements" --json "$T/summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
-          # The newest web build of a main ancestor (danbri/factoidal-builds), so a fix shows
-          # before it is released. A missing build is reported, not a failure.
-          if GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1; then
-            echo "web build of main ($(grep -oE 'build-[0-9a-f]{12}-web' "$T/fetch.log" | head -1)):" | tee -a "$GITHUB_STEP_SUMMARY"
-            node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fdm.jsonl" "$PWD/npm/factoidal/index.mjs"
-            python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fdm.jsonl" --keep "$T/disagreements-main" | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            echo "no web build of main fetched" | tee -a "$GITHUB_STEP_SUMMARY"; tail -5 "$T/fetch.log"
-          fi
+          for PROFILE in base ext; do
+            python3 tools/diffcampaign/sparql.py gen --seed "$SEED" --n "$N" --profile "$PROFILE" --out "$T/cases.jsonl"
+            python3 tools/diffcampaign/sparql.py oxigraph "$T/cases.jsonl" --out "$T/ox.jsonl"
+            node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fd.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs"
+            echo "npm @factoidal/core (latest), profile $PROFILE:" | tee -a "$GITHUB_STEP_SUMMARY"
+            python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fd.jsonl" --keep "$T/disagreements/$PROFILE" --json "$T/summary-$PROFILE.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
+            # The newest web build of a main ancestor (danbri/factoidal-builds), so a fix shows
+            # before it is released. A missing build is reported, not a failure.
+            if GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1; then
+              echo "web build of main ($(grep -oE 'build-[0-9a-f]{12}-web' "$T/fetch.log" | head -1)):" | tee -a "$GITHUB_STEP_SUMMARY"
+              node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fdm.jsonl" "$PWD/npm/factoidal/index.mjs"
+              python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fdm.jsonl" --keep "$T/disagreements-main/$PROFILE" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              echo "no web build of main fetched" | tee -a "$GITHUB_STEP_SUMMARY"; tail -5 "$T/fetch.log"
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sparql-differential
           path: |
-            ${{ runner.temp }}/summary.json
+            ${{ runner.temp }}/summary-*.json
             ${{ runner.temp }}/disagreements
             ${{ runner.temp }}/disagreements-main
             ${{ runner.temp }}/both-refused
