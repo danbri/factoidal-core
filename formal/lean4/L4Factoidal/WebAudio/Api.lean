@@ -128,7 +128,8 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
-    state (`suspended`, `running`, `closed`). The state is `running` when `allowedToStart`.
+    state, which is `suspended` (the Web Audio API constructor). When `allowedToStart`, the
+    rendering side starts at once and reports `running` (field 4 of the first message is 1).
     The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET, STATE])`,
     the target in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to
     16384) and STATE the initial state's code (`RtState.code`: 0 suspended, 1 running), so that
@@ -227,6 +228,9 @@ structure Realtime where
   latencyFrames : Nat := 0
   /-- The page-clock time of the last report, in ms. -/
   reportMs : Float := 0.0
+  /-- Made allowed to start, with no state change reported yet: the rendering side starts it and
+  reports `running`; the engine asks for turns until then (`needsTurns`). -/
+  starting : Bool := false
   deriving Inhabited
 
 /-- What a rendering side tells the control side (plan 13.3). -/
@@ -866,8 +870,12 @@ def addRealtime (s : State) (rate : Float) (devCh target cb : Nat) (c : Context.
     State × ByteArray :=
   let id := s.next
   let st := initialState s
+  -- Web Audio API, the AudioContext constructor: the control thread state is `suspended` at
+  -- first, also when the context is allowed to start. The rendering side starts in `st` (field 4
+  -- of the first message) and reports `running`; the page sees `statechange` then (WPT
+  -- constructor-allowed-to-start.html).
   let rt : Realtime :=
-    { state := st, maxChannels := devCh, target, callback := cb
+    { state := .suspended, starting := st == .running, maxChannels := devCh, target, callback := cb
       outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target, dec st.code])] }
   ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt, next := id + 1 },
    ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
@@ -983,6 +991,7 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
     let fr := max rt.framesRendered r.framesRendered
     let rt' : Realtime :=
       { rt with state := r.stateChanges.back?.getD rt.state
+                starting := rt.starting && r.stateChanges.isEmpty
                 framesRendered := fr
                 framesPlayed := max rt.framesPlayed r.framesPlayed
                 underruns := max rt.underruns r.underruns
@@ -1002,7 +1011,7 @@ While this
 holds the engine asks for a turn at most 25 ms ahead, so the host gives the turns that deliver
 the events. -/
 def needsTurns (s : State) : Bool :=
-  s.realtime.fold (fun b _ rt => b || rt.state == .running ||
+  s.realtime.fold (fun b _ rt => b || rt.state == .running || rt.starting ||
     rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false ||
   s.decodeJobs.fold (fun b _ j => b || j.result.isNone) false
 
@@ -1328,6 +1337,8 @@ theorem finishDecode_stores (s : State) (job : Nat) (j : DecodeJob) (r : Except 
 /-! ## Tests -/
 
 namespace Tests
+-- The constants of these tests are functions of `Unit`: a constant is computed when the module
+-- starts, and these rendered audio graphs in every engine at library load (issue 471).
 
 private def d (x : Float) : ByteArray := f64le x
 private def n (k : Nat) : ByteArray := ofStr (toString k)
@@ -1353,7 +1364,7 @@ private def step (s : State) (c : Nat) (a : Array ByteArray) : Except Int (State
 private def err (s : State) (c : Nat) (a : List ByteArray) : Int :=
   match (op s c a.toArray).2 with | .error e => e | .ok _ => 0
 
-private def st0 : State := (chain {} [(175, [n 1, n 1000, d 44100.0])]).getD {}
+private def st0 (_ : Unit := ()) : State := (chain {} [(175, [n 1, n 1000, d 44100.0])]).getD {}
 
 /-- The samples of a rendering answer (after the 8-byte header). -/
 private def samples (r : ByteArray) (count : Nat) : List Float :=
@@ -1375,52 +1386,52 @@ private def okBytes (r : Except Int ByteArray) : ByteArray := (r.toOption).getD 
 #guard err {} 999 [] == -2
 
 -- A constant source of 1 straight to the destination: the bytes of the first samples.
-private def constRender : Option State :=
+private def constRender (_ : Unit := ()) : Option State :=
   chain st0 [(176, [n 1, t "constantSource"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
              (181, [n 1, n 1, d 0.0])]
 
-#guard (ans (constRender.getD {}) 176 [n 1, t "gain"]).toOption == some (t "2 1 1 1")
-#guard ((ans (constRender.getD {}) 187 [n 1]).toOption.map (·.size)) == some (8 + 4000 + 4)
-#guard (ans (constRender.getD {}) 187 [n 1]).toOption.map (fun r => (r.extract 8 12).toList) ==
+#guard (ans ((constRender ()).getD {}) 176 [n 1, t "gain"]).toOption == some (t "2 1 1 1")
+#guard ((ans ((constRender ()).getD {}) 187 [n 1]).toOption.map (·.size)) == some (8 + 4000 + 4)
+#guard (ans ((constRender ()).getD {}) 187 [n 1]).toOption.map (fun r => (r.extract 8 12).toList) ==
   some [0x00, 0x00, 0x80, 0x3F]
-#guard (ans (constRender.getD {}) 187 [n 1]).toOption.map (fun r => (r.extract 0 8).toList) ==
+#guard (ans ((constRender ()).getD {}) 187 [n 1]).toOption.map (fun r => (r.extract 0 8).toList) ==
   some [1, 0, 0, 0, 0xE8, 0x03, 0, 0]
-#guard (ans (constRender.getD {}) 187 [n 1]).toOption.map (fun r => samples r 1000 |>.all (· == 1.0)) ==
+#guard (ans ((constRender ()).getD {}) 187 [n 1]).toOption.map (fun r => samples r 1000 |>.all (· == 1.0)) ==
   some true
 -- Not stopped: the source has not ended, so the ended list is empty.
-#guard (ans (constRender.getD {}) 187 [n 1]).toOption.map (fun r => u32At r (8 + 4000)) == some 0
+#guard (ans ((constRender ()).getD {}) 187 [n 1]).toOption.map (fun r => u32At r (8 + 4000)) == some 0
 -- Rendering twice.
 #guard (do let s ← constRender
            let (s, _) ← (step s 187 #[n 1]).toOption
            pure (err s 187 [n 1])) == some errInvalidState
 
 -- A stopped source ends and is reported by id.
-private def stopped : Option State :=
+private def stopped (_ : Unit := ()) : Option State :=
   chain st0 [(176, [n 1, t "constantSource"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
              (181, [n 1, n 1, d 0.0]), (182, [n 1, n 1, d 0.001])]
-#guard (stopped.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
+#guard ((stopped ()).bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     (u32At r (8 + 4000), u32At r (8 + 4000 + 4),
      (samples r 1000).getD 44 9.0, (samples r 1000).getD 45 9.0)) ==
   some (1, 1, 1.0, 0.0)
 
 -- Gain with automation: constant 1 * gain ramping 0 to 1 over 0.01 s (441 frames).
-private def ramped : Option State :=
+private def ramped (_ : Unit := ()) : Option State :=
   chain st0 [(176, [n 1, t "constantSource"]), (176, [n 1, t "gain"]),
              (177, [n 1, n 1, n 0, n 2, n 0, n 0]), (177, [n 1, n 2, n 0, n 0, n 0, n 0]),
              (179, [n 1, n 2, n 0, t "setValueAtTime", d 0.0, d 0.0]),
              (179, [n 1, n 2, n 0, t "linearRampToValueAtTime", d 1.0, d 0.01]),
              (181, [n 1, n 1])]
-#guard (ramped.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
+#guard ((ramped ()).bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     let xs := samples r 1000
     (xs.getD 0 9.0 == 0.0, decide ((xs.getD 441 0.0 - 1.0).abs < 1e-6), xs.getD 999 0.0 == 1.0,
      decide ((xs.getD 220 0.0 - 220.0 / 441.0).abs < 1e-5))) == some (true, true, true, true)
 
 -- An oscillator: a sine at 440 Hz; frame k is sin(2 pi 440 k / 44100) within binary32 rounding
 -- (frame 1: 0.0626483..., frame 100: the value below).
-private def osc : Option State :=
+private def osc (_ : Unit := ()) : Option State :=
   chain st0 [(176, [n 1, t "oscillator"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
              (181, [n 1, n 1])]
-#guard (osc.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
+#guard ((osc ()).bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     let xs := samples r 1000
     (xs.getD 0 9.0 == 0.0, decide ((xs.getD 1 0.0 - 0.0626483241787437).abs < 1e-6),
      decide ((xs.getD 100 0.0 - (-0.0142471037071029)).abs < 1e-6),
@@ -1433,18 +1444,18 @@ private def osc : Option State :=
   pure ((samples r 1000).any (· > 0.5))) == some true
 
 -- A buffer source with a buffer given as bytes.
-private def bufBytes : ByteArray := f32le 0.5 ++ f32le (-0.25) ++ f32le 0.125 ++ f32le 1.0
-private def bufRender : Option State :=
+private def bufBytes (_ : Unit := ()) : ByteArray := f32le 0.5 ++ f32le (-0.25) ++ f32le 0.125 ++ f32le 1.0
+private def bufRender (_ : Unit := ()) : Option State :=
   chain st0 [(176, [n 1, t "bufferSource"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
              (184, [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]), (181, [n 1, n 1])]
-#guard (bufRender.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
+#guard ((bufRender ()).bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     ((samples r 6).take 6, u32At r (8 + 4000))) == some ([0.5, -0.25, 0.125, 1.0, 0.0, 0.0], 1)
 -- A second non-null buffer is refused; null is accepted.
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, ByteArray.empty]) == some 0
+#guard ((bufRender ()).map fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
+#guard ((bufRender ()).map fun s => err s 184 [n 1, n 1, ByteArray.empty, ByteArray.empty]) == some 0
 -- Wrong byte count; out of range sample rate; a node that is not a buffer source.
 #guard (chain st0 [(176, [n 1, t "bufferSource"])]).map
-  (fun s => (err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes.extract 0 8],
+  (fun s => (err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, (bufBytes ()).extract 0 8],
              err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 10.0, bufBytes])) == some (errType, errNotSupported)
 #guard err st0 184 [n 1, n 0, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes] == errInvalidState
 #guard (chain st0 [(176, [n 1, t "gain"])]).map
@@ -1526,8 +1537,8 @@ private def bufRender : Option State :=
   some (errInvalidState, errType, 0, errInvalidState, errInvalidState, errNotSupported,
         errNotSupported, errNotSupported, errInvalidState, 0)
 -- A periodic wave.
-private def sq : ByteArray := f32le 0.0 ++ f32le 0.0
-private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
+private def sq (_ : Unit := ()) : ByteArray := f32le 0.0 ++ f32le 0.0
+private def sn (_ : Unit := ()) : ByteArray := f32le 0.0 ++ f32le 1.0
 #guard (chain st0 [(176, [n 1, t "oscillator"])]).map
   (fun s => (err s 185 [n 1, n 1, sq, sn, t "0"], err s 185 [n 1, n 1, sq, f32le 0.0, t "0"],
              err s 185 [n 1, n 1, f32le 0.0, f32le 0.0, t "0"],
@@ -1617,10 +1628,10 @@ private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
 
 /-! ### Real-time contexts (ops 190 to 195) -/
 
-private def devS : State := { device := some (48000.0, 2) }
+private def devS (_ : Unit := ()) : State := { device := some (48000.0, 2) }
 /-- A device and the permission to start with no activation. The tests' own acceptance of
 `Risk.audioWithoutActivation` (skills/lean-risk-flags §5). -/
-private def permitted : State := { devS with autoplay := some (Risk.dangerouslyAccept .audioWithoutActivation) }
+private def permitted (_ : Unit := ()) : State := { devS with autoplay := some (Risk.dangerouslyAccept .audioWithoutActivation) }
 private def rtOf (s : State) (id : Nat) : Realtime := (s.realtime[id]?).getD default
 private def txt (r : Except Int ByteArray) : String := ((r.toOption).map String.fromUTF8!).getD "?"
 private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
@@ -1628,9 +1639,9 @@ private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
 #guard txt (ans permitted 190 [t "interactive", ByteArray.empty, n 7]) ==
-  "1 48000 2 running"
+  "1 48000 2 suspended"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
-  "1 44100 2 running"
+  "1 44100 2 suspended"
 -- Refusals: hint, rate, no device, callback, 16 live contexts.
 #guard err devS 190 [t "fast", ByteArray.empty, n 7] == errType
 #guard err devS 190 [d (-1.0), ByteArray.empty, n 7] == errType
@@ -1641,9 +1652,9 @@ private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 #guard err {} 190 [t "interactive", ByteArray.empty, n 7] == errNotSupported
 #guard err {} 190 [t "interactive", d 44100.0, n 7] == errNotSupported
 #guard err devS 190 [t "interactive", ByteArray.empty, t "x"] == errType
-private def full : State :=
+private def full (_ : Unit := ()) : State :=
   (List.range 16).foldl (fun s _ => (op s 190 #[t "interactive", ByteArray.empty, n 1]).1) devS
-#guard full.realtime.size == 16
+#guard (full ()).realtime.size == 16
 #guard err full 190 [t "interactive", ByteArray.empty, n 1] == errNotSupported
 -- Target frames from the hint.
 #guard (rtOf (chain devS [(190, [t "interactive", ByteArray.empty, n 1])]).get! 1).target == 1024
@@ -1670,7 +1681,7 @@ private def full : State :=
   strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
 -- The rate's 8 bytes give the rate back (the rendering side reads them, `RenderSide.ofOpen`).
 #guard [48000.0, 44100.0, 3000.0, 768000.0, 22050.5].all fun r => Float.ofBits (u64At (f64le r) 0) == r
--- needsTurns: a running context; a suspended one with no call; a resume waiting for activation;
+-- needsTurns: a context starting (allowed, before its running report); a suspended one with no call; a resume waiting for activation;
 -- a suspend not yet answered; a closed context.
 #guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some false
@@ -1681,26 +1692,26 @@ private def full : State :=
 #guard needsTurns {} == false
 
 -- The outbox after a few ops; an offline context beside it is not touched.
-private def rtGraph : Option State :=
+private def rtGraph (_ : Unit := ()) : Option State :=
   chain permitted [
     (175, [n 1, n 100, d 44100.0]),                                  -- ctx 1, offline
     (190, [t "interactive", ByteArray.empty, n 7]),                  -- ctx 2, real-time
     (176, [n 2, t "oscillator"]), (176, [n 1, t "gain"]),
     (177, [n 2, n 1, n 0, n 0, n 0, n 0]), (181, [n 2, n 1, d 0.0]),
     (179, [n 2, n 1, n 0, t "setValueAtTime", d 1.0, d 0.0])]
-#guard (rtGraph.map fun s => ((rtOf s 2).outbox.toList.map (·.1), s.realtime.contains 1)) ==
+#guard ((rtGraph ()).map fun s => ((rtOf s 2).outbox.toList.map (·.1), s.realtime.contains 1)) ==
   some ([190, 176, 177, 181, 179], false)
 -- A failed op adds nothing; a query adds nothing; 186 and 189 are not sent.
-#guard (rtGraph.map fun s => (op s 176 #[n 2, t "convolver"]).1.realtime[2]?.map (·.outbox.size)) ==
+#guard ((rtGraph ()).map fun s => (op s 176 #[n 2, t "convolver"]).1.realtime[2]?.map (·.outbox.size)) ==
   some (some 5)
-#guard (rtGraph.map fun s => (op s 189 #[n 2]).1.realtime[2]?.map (·.outbox.size)) == some (some 5)
-#guard (rtGraph.map fun s => (op s 180 #[n 2, n 1, n 0]).1.realtime[2]?.map (·.outbox.size)) ==
+#guard ((rtGraph ()).map fun s => (op s 189 #[n 2]).1.realtime[2]?.map (·.outbox.size)) == some (some 5)
+#guard ((rtGraph ()).map fun s => (op s 180 #[n 2, n 1, n 0]).1.realtime[2]?.map (·.outbox.size)) ==
   some (some 5)
 -- The graph state works as for an offline context (ops 180, 189).
-#guard (rtGraph.bind fun s => (ans s 180 [n 2, n 1, n 0]).toOption.map fun r => Float.ofBits (u64At r 0)) ==
+#guard ((rtGraph ()).bind fun s => (ans s 180 [n 2, n 1, n 0]).toOption.map fun r => Float.ofBits (u64At r 0)) ==
   some 1.0
 -- startRendering on a real-time context.
-#guard (rtGraph.map fun s => err s 187 [n 2]) == some errInvalidState
+#guard ((rtGraph ()).map fun s => err s 187 [n 2]) == some errInvalidState
 -- setValueCurveAtTime and cancelAndHoldAtTime.
 private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32le v) ByteArray.empty
 #guard (chain st0 [(176, [n 1, t "gain"])]).map (fun s =>
@@ -1763,10 +1774,10 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
   some ("1", "2", [190, 191, 191], ["1", "resume", "1"], ["resume", "suspend"], 0)
 -- Without activation a resume waits; `activate` (the host's trusted input) releases it into the
 -- outbox, once.
-private def waiting : Option State :=
+private def waiting (_ : Unit := ()) : Option State :=
   chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
               (191, [n 1, t "suspend"])]
-#guard (waiting.map fun s => ((rtOf s 1).outbox.toList.map (·.1), (rtOf s 1).pendingResume.toList)) ==
+#guard ((waiting ()).map fun s => ((rtOf s 1).outbox.toList.map (·.1), (rtOf s 1).pendingResume.toList)) ==
   some ([190, 191], [1])
 #guard (do
   let s ← waiting
@@ -1793,19 +1804,19 @@ private def waiting : Option State :=
   let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
-  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
+  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 suspended", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
-private def reported : Option State := do
+private def reported (_ : Unit := ()) : Option State := do
   let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
             (176, [n 1, t "constantSource"]), (191, [n 1, t "resume"])]
   pure (applyReport s 1 { framesRendered := 24000, framesPlayed := 20000, underruns := 1,
                           latencyFrames := 480, timeMs := 1234.5, ended := #[1],
                           stateChanges := #[.running], confirmed := #[1] })
-#guard (reported.map fun s => (s.wakeups.toList, (rtOf s 1).events.toList, (rtOf s 1).calls.size,
+#guard ((reported ()).map fun s => (s.wakeups.toList, (rtOf s 1).events.toList, (rtOf s 1).calls.size,
                                (rtOf s 1).state == .running)) ==
   some ([7], [(1, 1), (2, 1), (3, 1)], 0, true)
-#guard (reported.bind fun s => (ans s 192 [n 1]).toOption.map fun r =>
+#guard ((reported ()).bind fun s => (ans s 192 [n 1]).toOption.map fun r =>
     (Float.ofBits (u64At r 0), Float.ofBits (u64At r 8), Float.ofBits (u64At r 16), r.get! 24,
      Float.ofBits (u64At r 25), Float.ofBits (u64At r 33), r.size)) ==
   some (0.5, 1024.0 / 48000.0, 0.01, 1, 20000.0 / 48000.0, 1234.5, 41)
@@ -1813,7 +1824,7 @@ private def reported : Option State := do
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).bind (fun s => (ans s 192 [n 1]).toOption.map fun r =>
     (Float.ofBits (u64At r 0), r.get! 24, Float.ofBits (u64At r 33))) == some (0.0, 0, 0.0)
 -- The graph state's frame follows the report (automation reads at the current time).
-#guard (reported.bind fun s => (ans s 189 [n 1]).toOption.map fun r => u32At r 16) == some 24000
+#guard ((reported ()).bind fun s => (ans s 189 [n 1]).toOption.map fun r => u32At r 16) == some 24000
 -- 193 reads the events once and clears them.
 #guard (do
   let s ← reported
@@ -1848,7 +1859,7 @@ private def reported : Option State := do
         (op s 176 #[n 1, t "gain"]).1.realtime[1]?.map (·.outbox.size),
         (ans s 176 [n 1, t "gain"]).toOption.map (·.size))) == some (errInvalidState, errInvalidState, errInvalidState, some 1, some 7)
 -- A closed context does not count towards the limit of 16.
-private def fullClosed : State :=
+private def fullClosed (_ : Unit := ()) : State :=
   (List.range 16).foldl (fun s i =>
     applyReport (op s 190 #[t "interactive", ByteArray.empty, n 1]).1 (i + 1)
       { stateChanges := #[.closed] }) permitted
@@ -1868,10 +1879,10 @@ private def fullClosed : State :=
   pure (w.toList, s'.wakeups.size, (takeWakeups s').2.size)) == some ([7], 0, 0)
 
 -- 194, 195: a decode job's life.
-private def withJob : Option State :=
+private def withJob (_ : Unit := ()) : Option State :=
   chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (175, [n 1, n 10, d 22050.0]),
               (194, [n 2, t "RIFF", n 9])]
-#guard (ans (withJob.get!) 194 [n 1, t "ab", n 8]).toOption.map String.fromUTF8! == some "2"
+#guard (ans ((withJob ()).get!) 194 [n 1, t "ab", n 8]).toOption.map String.fromUTF8! == some "2"
 #guard (do
   let s ← withJob
   pure (err s 195 [n 1], err s 195 [n 5], err s 195 [t "x"], err s 194 [n 9, t "ab", n 8],
@@ -1925,14 +1936,14 @@ private def withJob : Option State :=
   pure (jobs[0]!.2.2.size, s1.decodeJobs[1]!.bytes.size)) == some (4, 0)
 
 -- The one-pass binary32 readers and writers equal the definitions they replace.
-private def f32Samples : FloatArray :=
+private def f32Samples (_ : Unit := ()) : FloatArray :=
   ⟨#[0.0, -0.0, 1.0, -0.25, 0.1, 3.4028234663852886e38, 1.0e-45, 1.0 / 0.0, -1.0 / 0.0, 0.0 / 0.0, 123456.789]⟩
-#guard f32sBytes f32Samples == f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
+#guard f32sBytes f32Samples == (f32Samples ()).data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
 #guard channelsBytes #[f32Samples, ⟨#[0.5]⟩] ==
-  f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty ++ f32le 0.5
+  (f32Samples ()).data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty ++ f32le 0.5
 #guard (f32s (f32sBytes f32Samples)).toOption.map (·.size) == some 11
 #guard (f32s (f32sBytes f32Samples)).toOption.map (fun a => a.data.map fun x => x.toFloat32.toBits) ==
-  some (f32Samples.data.map fun x => x.toFloat32.toBits)
+  some ((f32Samples ()).data.map fun x => x.toFloat32.toBits)
 #guard (f32sFrom (f32sBytes f32Samples) 8 3).data ==
   (Array.range 3).map fun i => (Float32.ofBits (u32At (f32sBytes f32Samples) (8 + 4 * i))).toFloat
 #guard (f32s ⟨#[1, 2, 3]⟩).toOption.isNone

@@ -86,7 +86,10 @@ those, or a rate `Api.rtContext` refuses. -/
 def ofOpen (fs : Array ByteArray) : Option State := do
   let (ctx, rate, channels, target, state) ← openFields fs
   let c ← (Api.rtContext rate).toOption
-  pure { ctx, c, plan := Render.Plan.of c.state.graph, state, rate, channels, target }
+  -- A context that starts running reports it in its first report: the control side answered
+  -- `suspended` (Web Audio API, the constructor), and the page's `statechange` comes from this.
+  pure { ctx, c, plan := Render.Plan.of c.state.graph, state, rate, channels, target,
+         pending := { stateChanges := if state == .running then #[.running] else #[] } }
 
 /-- Says: the graph state of an opened rendering side is `Api.rtContext` of the rate it read, the
 function op 190 used on the control side (`Api.newAudioContextOp_context`). Does not say: that
@@ -395,18 +398,18 @@ private def offline : Option (Array FloatArray) := do
 
 -- Control calls: resume on a running context is confirmed with no state change; suspend changes
 -- the state; close confirms and closes; a call after the close is refused, and an op after it
--- changes nothing.
+-- changes nothing. The first report starts with the state `running` of the context's start.
 #guard with1 #[(191, #[n 1, t "resume", n 4]), (191, #[n 1, t "suspend", n 5]),
                (191, #[n 1, t "close", n 6]), (191, #[n 1, t "resume", n 7]), (176, #[n 1, t "gain"])]
   (fun rs => (rs.state == .closed, rs.pending.confirmed.toList, rs.pending.rejected.toList, rs.c.state.nodes.size,
               rs.pending.stateChanges.toList.map Api.RtState.code)) ==
-  some (true, [4, 5, 6], [7], 1, [0, 2])
+  some (true, [4, 5, 6], [7], 1, [1, 0, 2])
 #guard with1 #[(191, #[n 1, t "play", n 3])] (·.pending.rejected.toList) == some [3]
 -- With no output, a resume is refused and a suspend is confirmed.
 #guard with1 #[(191, #[n 1, t "resume", n 3]), (191, #[n 1, t "suspend", n 4])]
   (fun rs => (rs.pending.rejected.toList, rs.pending.confirmed.toList)) (noOutput := true) == some ([3], [4])
--- The page is gone: closed, with no event.
-#guard with1 #[(0, #[])] (fun rs => (rs.state == .closed, rs.pending.stateChanges.isEmpty)) == some (true, true)
+-- The page is gone: closed, with no event after the start's `running`.
+#guard with1 #[(0, #[])] (fun rs => (rs.state == .closed, rs.pending.stateChanges.toList.map Api.RtState.code)) == some (true, [1])
 
 -- A device of 6 channels: the stereo destination up-mixed by the speaker rule (L and R to the first
 -- two; the others silent).

@@ -127,8 +127,9 @@ def biquadGainMax : Float :=
 /-- A parameter of a node type of `Kind.other` (no kernel here). -/
 def placeholderParam (d : Float) : ParamSpec := ⟨d, -floatMax, floatMax, true⟩
 
-/-- The normalized built-in sine wave, computed once (the FFT of the normalization). -/
-def sineWave : Oscillator.PeriodicWave := Oscillator.builtinWave .sine
+/-- The normalized built-in sine wave, computed once, at its first use (the FFT of the
+normalization; `Oscillator.builtinWaveCached`). -/
+def sineWave (_ : Unit := ()) : Oscillator.PeriodicWave := Oscillator.builtinWaveCached .sine
 
 /-- The `AudioParam`s of each node type, in the order of `Graph.Kind.numParams`: Gain `gain`;
 ConstantSource `offset`; Delay `delayTime` (nominal range 0 to `maxDelayTime`); StereoPanner `pan`
@@ -180,7 +181,7 @@ def Node.new (k : Graph.Kind) (destChannels : Nat) (sampleRate : Float)
     ks := match k with
       | .constantSource => .const {}
       | .delay => .delay (Kernels.DelayState.init maxDelayTime sampleRate 1 0 quantum) maxDelayTime
-      | .oscillator => .osc { sampleRate, type := .sine, wave := sineWave }
+      | .oscillator => .osc { sampleRate, type := .sine, wave := sineWave () }
       | .bufferSource => .buf {} { sampleRate } false
       | .biquad => .biquad { type := .lowpass, sampleRate }
       | _ => .none }

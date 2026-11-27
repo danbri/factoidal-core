@@ -1270,7 +1270,7 @@ run alone (same state, same parameter values). -/
 /-- The oscillator kernel alone: `k` blocks of 4 frames of a sine of frequency `f`. -/
 private def oscRef (f : Float) (k : Nat) : List Block :=
   let s0 : Oscillator.OscState :=
-    { sampleRate := 4096.0, type := .sine, wave := Render.sineWave, startFrame := some 0 }
+    { sampleRate := 4096.0, type := .sine, wave := Render.sineWave (), startFrame := some 0 }
   (List.range k).foldl (init := ([], s0)) (fun (acc : List Block × Oscillator.OscState) _ =>
       let r := Oscillator.oscProcess 4 acc.2 #[] #[⟨#[f]⟩, ⟨#[0.0]⟩]
       (acc.1 ++ [r.2.getD 0 #[]], r.1)) |>.1

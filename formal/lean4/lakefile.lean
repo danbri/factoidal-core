@@ -1115,3 +1115,6 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 
 -- Lean shaping font adapter (https://github.com/danbri/factoidal/issues/1233). Not a default target.
 lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape
+
+-- Time of BubblePopJS's realm snapshot decode, the first start turn of every engine (issue 471).
+lean_exe «realm-decode-bench» where root := `Harness.RealmDecodeBench

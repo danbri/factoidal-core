@@ -222,8 +222,11 @@ structure FunInfo where
   /-- Nothing made during a call can hold its environment afterwards (no closure, class,
   generator, direct `eval`): the environment's slot is reused when the call returns. -/
   frameLocal : Bool := false
-  /-- The function's code for the register machine, when it can be compiled. -/
-  code : Option Code := none
+  /-- The function's code for the register machine, when it can be compiled. A `Thunk`: the
+  code is made at the first call, not when the script is resolved or the realm decoded (most
+  functions of the prelude and of a page never run; compiling them all cost the start turn of
+  every page, issue 471). -/
+  code : Thunk (Option Code) := Thunk.pure none
   /-- Name to slot for a layout with many names (`FunInfo.indexOf`): every environment of the
   function shares it, so a name that the layout does not have is found absent with one hash
   and not with a comparison for each name. -/
