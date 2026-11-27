@@ -134,13 +134,19 @@ def main():
                 else s[1]] += 1
     by = collections.Counter(charge(s[4]) for s in engine)
     rt = collections.Counter(charge(s[4]) for s in engine if s[4] and runtime_leaf(s[4]))
-    # Self: the nearest frame of a named engine function (generic List, Array and Std frames go
-    # to it). Inclusive: every engine function on the stack, once per sample.
+    # Self: the nearest frame of a named engine function (generic List, Array and Std frames and
+    # the runtime go to it). Inclusive: every engine function on the stack, once per sample.
+    # The lab's own modules (NativeSVG, NativeGraphics, WebRender, ...) have no L4Factoidal
+    # prefix: a filter on that prefix charged the CPU raster's NativeSVG.edgeUpAt to
+    # Par.mapChunks (2026-11-26, MDN page, 61% of a first layout under the wrong name).
     def fname(sym):
-        return re.sub(r"^.*?L4Factoidal_", "", sym).split("___at___")[0][:90]
+        return re.sub(r"^l_+(private_)?", "", re.sub(r"^.*?L4Factoidal_", "", sym)).split("___at___")[0][:90]
+    def named(sym, dso):
+        return ("libweb-render" in dso and not re.search(r"^(l_+)?(__private_)?(Init_|List_|Array_|Std_|String_|Nat_|WellFounded|lean_|mi_)", sym)
+                and not sym.startswith(("lean_", "mi_", "_", "0x")) and "::" not in sym)
     lean_fn, lean_incl = collections.Counter(), collections.Counter()
     for s in engine:
-        names = [fname(sym) for sym, _ in s[4] if "L4Factoidal_" in sym]
+        names = [fname(sym) for sym, dso in s[4] if named(sym, dso)]
         if names:
             lean_fn[names[0]] += 1
             for n in set(names):

@@ -522,6 +522,15 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A profile of the engine by function must name the lab's own modules (`NativeSVG`, `NativeGraphics`,
+  `WebRender`, `NativeImage`): their C symbols have no `L4Factoidal_` prefix. On 2026-11-26 a list
+  filtered on that prefix put 61% of MDN's first layout under `Par.mapChunks` (the task helper); the
+  real cost was the CPU raster of SVG images (`WebRender.vectorPicture`, `NativeSVG.edgeUpAt`).
+  `tools/engine_time_split.py` now lists every named function of the library. A real-page profile:
+  `--window load` or `--window first-layout` against a run with the `native-html-load-phases`
+  line (https://github.com/danbri/factoidal-core/issues/1168, Real pages: load time and first paint).
+- The engine library's file name must contain `libweb-render` for `engine_time_split.py` to count
+  its samples: a copy saved as `base.so` gave 0 engine samples (2026-11-26).
 - A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps (`--gesture-sweep`,
   `--scroll-sweep`, `--command-sweep` and the others that set `commands`) sets `everyFrame` in
   `run_html.ts` (`--watch-sweep` does not): every frame asks Lean for CPU probes
