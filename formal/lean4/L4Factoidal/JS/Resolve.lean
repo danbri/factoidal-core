@@ -43,6 +43,8 @@ structure St where
   /-- Functions seen and functions compiled (coverage statistics). -/
   funs : Nat := 0
   compiled : Nat := 0
+  /-- For each function with no code, why (`Compile.compileWhy`): read by `leanjs compile-stats`. -/
+  whys : Array String := #[]
   /-- `arguments` of the function being resolved: reads of `arguments.length` made
   `Expr.argCount`, and whether `arguments` is used in any other way (also any use inside an
   arrow function, whose `arguments` is this function's). -/
@@ -279,8 +281,11 @@ def rFunAs : Nat → Frames → Bool → Bool → FunDef → R (FunDef × St)
           plain := plainParams f
           frameLocal := !inner.closure && !inner.dynamic && !gen && !async }
       let fd : FunDef := .mk name params' rest' body' vars usesArgs strict kind gen async info
-      let code := if inner.dynamic then none else Compile.compile fd
-      if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
+      let res : Except String Code := if inner.dynamic then .error "direct eval or with" else Compile.compileE fd
+      let code := res.toOption
+      match res with
+      | .ok _ => modify fun s => { s with compiled := s.compiled + 1 }
+      | .error why => modify fun s => { s with whys := s.whys.push why }
       let info := { info with code }
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info, inner)
 
@@ -431,9 +436,9 @@ list (statements, arguments, elements) costs one unit of nesting, not one per el
 def fuel : Nat := 1000
 
 /-- Functions seen and compiled in a parsed script (a coverage figure for tools). -/
-def stats (s : Script) : Nat × Nat :=
+def stats (s : Script) : Nat × Nat × Array String :=
   let (_, st) := (rSs fuel [] s.body).run {}
-  (st.funs, st.compiled)
+  (st.funs, st.compiled, st.whys)
 
 /-- Resolve a whole script: its functions and its top-level statements. Top-level `let`,
 `const` and classes are bindings of the global environment, in the global record; names

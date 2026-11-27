@@ -1,4 +1,5 @@
 import L4Factoidal.WebAudio.Mix
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # Web Audio block kernels

@@ -33,7 +33,9 @@ anti-pattern 30). Exit 1 when any of these fails:
     theorem. A witness instantiates the claim at concrete arguments and proves
     every hypothesis there, so Lean (in CI) checks that the hypotheses can
     hold at the same time. A claim whose hypotheses are contradictory has no
-    witness.
+    witness. An entry with assumptions has a `witness` or a `witness_none`
+    reason; the number of `witness_none` entries is `max-unwitnessed` exactly
+    (a ratchet that only goes down).
 
 Modes:
   python3 -I tools/claims-gate.py               check, exit 0 or 1
@@ -331,6 +333,10 @@ def check():
             if got and got != spec.get("sha256"):
                 errors.append(f"{cid}: specification definition {spec['name']} changed (sha256 {got}); review it and update its sha256 in the same commit")
         w = c.get("witness")
+        if c.get("assumptions") and not w and not c.get("witness_none"):
+            errors.append(f"{cid}: has assumptions but no `witness` and no `witness_none` reason (P3)")
+        if w and c.get("witness_none"):
+            errors.append(f"{cid}: has both `witness` and `witness_none`")
         if w:
             path = os.path.join(ROOT, w.get("file", c["file"]))
             if not os.path.exists(path):
@@ -346,12 +352,20 @@ def check():
                     errors.append(f"{cid}: witness {w['name']} does not apply {c['theorem']} (its body must instantiate the claim, so Lean checks that the hypotheses hold together)")
                 elif module_of(os.path.relpath(path, ROOT)) not in reach:
                     errors.append(f"{cid}: witness module is reached by no build root")
+    unwitnessed = sum(1 for c in claims if c.get("witness_none"))
+    maxu = meta.get("max-unwitnessed")
+    if unwitnessed and maxu is None:
+        errors.append("[meta] max-unwitnessed is missing")
+    elif maxu is not None and unwitnessed > maxu:
+        errors.append(f"{unwitnessed} entries without a witness, more than max-unwitnessed {maxu}")
+    elif maxu is not None and unwitnessed < maxu:
+        errors.append(f"{unwitnessed} entries without a witness, fewer than max-unwitnessed {maxu} (lower it: it only goes down)")
     for e in errors:
         print("claims-gate: FAIL " + e)
     reviewed = sum(1 for c in claims if c.get("status") == "reviewed")
     witnessed = sum(1 for c in claims if c.get("witness"))
     print(f"claims-gate: {len(claims)} claims ({reviewed} reviewed, {len(claims) - reviewed} proposed), "
-          f"{witnessed} with a hypothesis witness, {len(errors)} errors")
+          f"{witnessed} with a hypothesis witness, {unwitnessed} with assumptions and no witness, {len(errors)} errors")
     return 1 if errors else 0
 
 

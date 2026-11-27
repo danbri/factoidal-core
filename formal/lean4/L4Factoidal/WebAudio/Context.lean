@@ -59,6 +59,7 @@ import L4Factoidal.WebAudio.Render
 import L4Factoidal.WebAudio.Oscillator
 import L4Factoidal.WebAudio.Filters
 import L4Factoidal.WebAudio.Buffer
+import L4Factoidal.Prim.FloatOfNat
 
 namespace L4Factoidal.WebAudio.Context
 

@@ -164,6 +164,7 @@ import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
 import L4Factoidal.Risk
 import Std.Data.HashMap
+import L4Factoidal.Prim.FloatOfNat
 
 namespace L4Factoidal.WebAudio.Api
 

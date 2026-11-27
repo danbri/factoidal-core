@@ -443,6 +443,9 @@ structure Limits where
   /-- The address the embedder loaded the page from, when it knows it: a special-purpose one
   makes the page local (`Net.PageFetch.Page.ofUrl`). -/
   pageAddress : String := ""
+  /-- Tor mode: the page's requests go through the host's Tor client (`tor:true` of `start`,
+  `Net.PageFetch.Page.tor`). -/
+  tor : Bool := false
   /-- The `Referrer-Policy` field of the page's response, when the embedder gave it (several
   fields joined with commas); "" for none: the default policy (`Net.Xhr.policyOfHeader`). -/
   referrerPolicy : String := ""
@@ -2452,7 +2455,7 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
       aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
       encoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding
       policies := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta } }
-  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
+  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress s.limits.tor, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
   -- the engine's audio output and autoplay setting (`Limits.audioDevice`, `autoplay`)
   let web := { web with audio := { web.audio with device := s.limits.audioDevice, autoplay := s.limits.autoplay } }
   let s := { s with host := { s.host with web } }

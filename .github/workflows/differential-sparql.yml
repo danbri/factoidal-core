@@ -1,4 +1,4 @@
-name: Differential SPARQL (Factoidal against Oxigraph)
+name: Differential SPARQL and Turtle (Factoidal against Oxigraph)
 
 # P7 of batch https://github.com/danbri/factoidal-core/issues/1189:
 # https://github.com/danbri/factoidal-core/issues/1184 (random differential campaigns).
@@ -68,3 +68,37 @@ jobs:
             ${{ runner.temp }}/summary.json
             ${{ runner.temp }}/disagreements
             ${{ runner.temp }}/both-refused
+
+  turtle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Readers
+        run: |
+          python3 -m pip install --quiet pyoxigraph
+          mkdir -p "$RUNNER_TEMP/fd" && cd "$RUNNER_TEMP/fd" && npm init -y >/dev/null && npm install --silent @factoidal/core@latest
+      - name: Generate, read, compare
+        env:
+          N: ${{ github.event.inputs.n || '5000' }}
+          SEED: ${{ github.event.inputs.seed || github.run_number }}
+        run: |
+          set -o pipefail
+          T="$RUNNER_TEMP"
+          python3 tools/diffcampaign/turtle.py gen --seed "$SEED" --n "$N" --out "$T/tcases.jsonl"
+          python3 tools/diffcampaign/turtle.py oxigraph "$T/tcases.jsonl" --out "$T/tox.jsonl"
+          node tools/diffcampaign/turtle-factoidal.mjs "$T/tcases.jsonl" "$T/tox.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs" --keep "$T/turtle-disagreements" --json "$T/turtle-summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: turtle-differential
+          path: |
+            ${{ runner.temp }}/turtle-summary.json
+            ${{ runner.temp }}/turtle-disagreements

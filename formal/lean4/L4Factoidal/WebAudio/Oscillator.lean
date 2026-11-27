@@ -1,4 +1,5 @@
 import L4Factoidal.WebAudio.Kernels
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # Web Audio: PeriodicWave and OscillatorNode

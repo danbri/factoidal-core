@@ -92,11 +92,9 @@ Owner, verbatim: "can we use HACL* for bigint work then?"
   forms) and inversion modulo a prime. Constant time is with respect to the values, not the length.
 - What it does not give: a general replacement for Lean `Nat`. It has no arbitrary-length values and
   no general division. For public data, Lean `Nat` stays the right tool.
-- Curves: HACL\* upstream has secp256k1 ECDSA (`Hacl_K256_ECDSA`); it is not vendored here. HACL\*
+- Curves: HACL\* has secp256k1 ECDSA (`Hacl_K256_ECDSA`, vendored 2026-11-27, section 7). HACL\*
   has no BLS12-381.
-- Ethereum: CLAUDE.md requires repository-owned Lean for Ethereum protocol logic, with no external
-  implementation unless the owner approves it. A HACL\* secp256k1 signer for Ethereum needs that
-  approval.
+- Ethereum: the owner approved HACL\* for Ethereum the same day (section 7).
 
 ## 6. Checking constant time from Lean (owner question, 2026-11-27)
 
@@ -124,3 +122,63 @@ tree already proves noninterference theorems of this form (`PageCanvas/Theorems.
    https://github.com/danbri/factoidal/issues/777.
 
 HACL\* has the same limit as layer 2: it trusts the C compiler.
+
+## 7. What landed (2026-11-27)
+
+Owner, verbatim: "Yes, start both" (layers 1 and 3), then "HACL* is both approved and PREFERED over
+our own (crazy yolo roll your own etc.) Lean hackery." and, on the secp256k1 signer, "Do it."
+
+Consequence for layer 1: we write no constant-time arithmetic in Lean. A secret is an opaque type
+that only HACL\* calls use.
+
+- **secp256k1 over HACL\*.** `third_party/hacl` gains `Hacl_K256_ECDSA.c`, `Hacl_EC_K256.c`,
+  `Hacl_HMAC_DRBG.c` and their headers, unchanged, from the pinned commit. `ffi/hacl_k256.c` signs a
+  hash with the RFC 6979 nonce (HACL\* HMAC-DRBG, RFC 6979 section 3.3), normalises to low S, and
+  takes the recovery id from y(R), with R from HACL\*'s constant-time point multiplication.
+  `L4Factoidal/Crypto/K256Native.lean` gives `SecretKey`, `signHash`, `verifyLowS` and the Ethereum
+  `v` values.
+- **Layer 1.** `SecretKey` has a private constructor and field. `#check_failure` lines fail the
+  build if it gets equality, `BEq`, `ToString`, `Repr`, `Hashable` or `Ord`.
+  `tools/secret-type-gate.py` checks the same rules from source, with a self-test of five mutants.
+- **Layer 3.** `tests/ct/ct_valgrind.c` marks the key undefined and counts memcheck errors in each
+  case. Two controls must leak: HACL\* `mod_exp_vartime`, and a textbook square-and-multiply. CI runs
+  it with gcc and clang (`.github/workflows/check-k256-ct.yml`).
+
+Measured on macOS arm64 before the push (no Valgrind on that host): `tests/ct/run.sh`, 8 pass, 0
+fail; the probe, linked by hand outside Lake, `k256: 13 pass, 0 fail (out of 13)`. Both include the
+EIP-155 example (r, s and v = 37 as published). Valgrind results: section 8.
+
+Not done: Ethereum transaction signing in `evm-cleanroom` does not call this yet (that package
+imports no FFI); a Valgrind run of Lean-compiled code (the Lean runtime on `Nat`, as a third
+control); the wasm build is wired but not built here.
+
+## 8. First Valgrind run: clang x86-64 breaks HACL\* `mod_exp_consttime`
+
+CI run https://github.com/danbri/factoidal-core/actions/runs/45930142123 (Ubuntu x86-64), memcheck
+errors with the secret marked undefined:
+
+| Case | gcc -O2 | clang -O2 |
+|---|---|---|
+| secp256k1 sign, EIP-155 key secret | 0 | 0 |
+| secp256k1 `secret_to_public` | 0 | 0 |
+| HACL\* `Hacl_Bignum64_mod_exp_consttime` | 0 | **316** |
+| control: HACL\* `mod_exp_vartime` (must leak) | 2,176 | 192 |
+| control: textbook square-and-multiply (must leak) | 106 | 129 |
+
+All 316 errors are at `Hacl_Bignum.c:1322`, the mask select `(m & tmp[i]) | (~m & res[i])` at the end
+of `Hacl_Bignum_AlmostMontgomery_bn_almost_mont_reduction_u64`. clang's x86-64 output has
+`testq %r8, %r8; je` in that loop, `%r8` being the reduction carry: a jump on whether the extra
+reduction happens. The RSA private operation (`Crypto/RsaOaep.lean`) calls this function. Apple
+clang 17 for arm64 compiles the same function with `cmeq` and `csel` and no branch (assembly read
+for this one function only). Issue, exposure and options:
+https://github.com/danbri/factoidal-core/issues/1200 (clang x86-64 branch in HACL\*
+`mod_exp_consttime`). The harness records it as an expected failure that turns the run red if the
+leak disappears.
+
+This is the case of section 1 item 4 (the compiler can turn branch-free code into a branch),
+measured. It is why layer 3 runs on compiled code, with each compiler that builds HACL\*.
+
+**Error in our method, 2026-11-27.** The first workflow piped each Valgrind step into `tee` with no
+`pipefail`, so the job was green although the clang step printed `FAIL ct_valgrind: 1 failures`.
+Found by reading the log, not from the status. Repair: the job's shell has `-euo pipefail`. Rule:
+a CI step that pipes into `tee` sets `pipefail` (`shell: bash` does; the default shell does not).
