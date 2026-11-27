@@ -10,3 +10,10 @@ defaultTargets = ["EthereumWallet"]
 
 [[lean_lib]]
 name = "EthereumWallet"
+
+# Keccak-256 from evm-cleanroom, selected in place. Import closure checked
+# 2026-11-27: EVMCleanroom.Keccak, EVMCleanroom.Memory, EVMCleanroom.MemoryGas, Std.
+[[lean_lib]]
+name = "EVMCleanroomKeccak"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom.Keccak"]
