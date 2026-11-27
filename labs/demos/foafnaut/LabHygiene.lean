@@ -188,8 +188,9 @@ having RSA or SHA-3. -/
 -- `Codec.Zstd.bitsAt`, which reads words through the C primitives of `Prim.Bytes`; each has a
 -- Lean reference body and the differential test `tests/prim/run.sh` (CLAUDE.md, "Support library").
 -- The primitives are not new: the lab's import closure now reaches five more `extern` declarations.
--- formal extern 32 → 38 and opaque 1 → 2 (2026-11-27, branch wip/1169-realtime-d3; raised only
--- with the owner's approval before it lands on main): the engine plays real-time Web Audio
+-- formal extern 32 → 38 and opaque 1 → 2 (2026-11-27). Owner, 2026-11-27, verbatim, to the
+-- question "Raise the lab hygiene baseline to extern 38, opaque 2 for the audio output?": "yes".
+-- The engine plays real-time Web Audio
 -- (`WebAudio.Realtime`, issue 1169), so its import closure now reaches `WebAudio.Sink`: six
 -- `extern` functions of `ffi/audio_sink.c` (open, write, counters, pause, close, device info) and
 -- the opaque type of a sink. They are not new: D1 landed them with the ring model
