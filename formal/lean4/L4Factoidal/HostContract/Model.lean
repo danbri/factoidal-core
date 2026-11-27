@@ -103,6 +103,7 @@ def ops : List OpSpec :=
     -- the real-time Web Audio runs end (`WebAudioRun.endAll`): a host that drops an engine it
     -- does not free
     ⟨"audioEnd", .state, []⟩,
+    ⟨"navigation", .state, [.network]⟩,
     -- page answers
     ⟨"render", .query, []⟩, ⟨"inspect", .query, []⟩, ⟨"decode", .query, []⟩,
     ⟨"epubReader", .query, []⟩,
@@ -145,7 +146,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 77
+#guard opNames.length == 78
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state
@@ -161,6 +162,11 @@ theorem cookies_contract : kindOf "cookies" = .query ∧ needsOf "cookies" = [] 
 /-- Page-commit focus is a pure answer to the navigation state; it needs no shell capability. -/
 theorem shellCommitFocus_contract : kindOf "shellCommitFocus" = .query ∧ needsOf "shellCommitFocus" = [] := by decide
 
+/-- Kind: contract classification. Says: navigation changes the table of in-flight
+requests and requires the network capability. Does not say: which requests the engine permits. -/
+theorem navigation_contract : kindOf "navigation" = .state ∧ needsOf "navigation" = [.network] := by decide
+
+#print axioms navigation_contract
 #print axioms cookies_contract
 #print axioms shellCommitFocus_contract
 

@@ -13,3 +13,7 @@ The [build of core 51bcef8c8cb2](https://github.com/danbri/factoidal-builds/acti
 The [candidate build](https://github.com/danbri/factoidal-builds/actions/runs/46041505276/job/140650234378) linked the renderer and measured 56,085,800 bytes raw and 6,694,464 bytes Brotli. This is 4.41% and 4.20% above the previous references. It includes the accumulated Web Audio, SVG and navigation work since those references. The size contribution of each change was not measured.
 
 The release uses the measured candidate as the new reference for those two files. The existing raw 2% tolerance and compressed 200,000-byte allowance still apply. The native size references are unchanged. Further size work is tracked in the [engine size budget issue](https://github.com/danbri/factoidal-core/issues/551).
+
+## Browser host gates
+
+The [candidate host run](https://github.com/danbri/factoidal-builds/actions/runs/46065325016/job/140747072811) found four failures in the pure tests and one in the page byte comparison. Register `navigation` as a state operation that needs network access. The theorem `HostContract.navigation_contract` states both checks. Run the two native AudioContext test files from the native test group with their existing fixture checks and Deno permissions. Mark the tone demo as requiring scripts so the manifest gives the still-image host its expected refusal. Check that the percent-encoded SVG reference resolves to the gradient, as implemented in the [SVG URL change](https://github.com/danbri/factoidal-core/pull/1107).

@@ -421,6 +421,7 @@
    "page": "tone.html",
    "title": "Tone: a 440 Hz sine through Web Audio",
    "handwritten": true,
+   "appRefused": "does not execute scripts",
    "size": [
     900,
     700

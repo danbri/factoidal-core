@@ -232,9 +232,10 @@ Deno.test("SVG non-rendering metadata and missing local paint fallback follow up
  const hidden=wrap('<metadata><rect width="64" height="64" fill="red"/><data xmlns="urn:private">opaque</data></metadata>');
  equal(e.sample(hidden,5,5),[255,255,255]);
  equal(e.sample(wrap('<g fill="url(#missing) currentColor" color="red"><rect width="20" height="20" color="green"/></g>'),5,5),[0,128,0]);
+ // The SVG reader decodes a local fragment before looking up its paint.
+ equal(e.sample(wrap('<defs><linearGradient id="x"><stop stop-color="red"/></linearGradient></defs><rect width="20" height="20" fill="url(#%78) green"/>'),5,5),[255,0,0]);
  for(const body of ['<h:link xmlns:h="http://www.w3.org/1999/xhtml" rel="stylesheet" href="x.css"/>',
   '<rect width="20" height="20" fill="url(other.svg#x) green"/>',
-  '<rect id="x" width="20" height="20" fill="url(#%78) green"/>',
   '<rect width="20" height="20" fill="url(#bad id) green"/>'])rejects(()=>e.compile(wrap(body)),"unsupported");
 });
 
