@@ -30,20 +30,20 @@ def fromRLP {α : Type} : Except CanonicalRLP.Error α → Except Error α
 
 /-- Internal payloads are bounded by two node-size limits, hence at most
 two length octets. The outer node is separately checked before hashing. -/
-private def prefix (shortBase longBase n : Nat) : Array UInt8 :=
+private def lengthPrefix (shortBase longBase n : Nat) : Array UInt8 :=
   if n ≤ 55 then #[UInt8.ofNat (shortBase + n)]
   else if n < 256 then #[UInt8.ofNat (longBase + 1), UInt8.ofNat n]
   else #[UInt8.ofNat (longBase + 2), UInt8.ofNat (n / 256), UInt8.ofNat (n % 256)]
 
 def encodeBytes (bytes : Array UInt8) : Array UInt8 :=
   if bytes.size == 1 && (bytes[0]?).getD 0 < 128 then bytes
-  else prefix 128 183 bytes.size ++ bytes
+  else lengthPrefix 128 183 bytes.size ++ bytes
 
 def encodeFields (fields : Array (Array UInt8)) : Except Error (Array UInt8) := do
   let n := fields.foldl (fun acc bytes => acc + bytes.size) 0
   if n > MPT.maxNodeBytes then throw .resourceLimit
   let payload := fields.foldl (fun acc bytes => acc ++ bytes) #[]
-  let encoded := prefix 192 247 n ++ payload
+  let encoded := lengthPrefix 192 247 n ++ payload
   if encoded.size > MPT.maxNodeBytes then throw .resourceLimit
   return encoded
 
@@ -103,10 +103,33 @@ structure Rebuilt where
   nodes : Array (Array UInt8)
 
 def liftParent (a : Keccak.Acceptance) (state : Rebuilt) (parent : Parent) :
-    Except Error Rebuilt := do
-  if parent.index ≥ parent.fields.size then throw (.internal "parent-index")
-  let encoded ← encodeFields (splice parent.fields parent.index (childItem a state.encoded))
-  return { encoded, nodes := state.nodes.push encoded }
+    Except Error Rebuilt :=
+  if parent.index ≥ parent.fields.size then .error (.internal "parent-index")
+  else
+    match encodeFields (splice parent.fields parent.index (childItem a state.encoded)) with
+    | .error e => .error e
+    | .ok encoded => .ok { encoded, nodes := state.nodes.push encoded }
+
+/-- Kind: executable source preservation.
+Says: a successful ancestor rebuild encodes the exact original prefix and
+suffix, changing only the selected child; it also appends that exact node.
+Does not say: every possible ancestor is globally canonical. -/
+theorem liftParent_source (a : Keccak.Acceptance) (state out : Rebuilt) (parent : Parent)
+    (h : liftParent a state parent = .ok out) :
+    parent.index < parent.fields.size ∧
+    encodeFields (parent.fields.extract 0 parent.index ++ #[childItem a state.encoded] ++
+      parent.fields.extract (parent.index+1) parent.fields.size) = .ok out.encoded ∧
+    out.nodes = state.nodes.push out.encoded := by
+  unfold liftParent at h
+  split at h
+  next _ => cases h
+  next hi =>
+    cases enc : encodeFields (splice parent.fields parent.index (childItem a state.encoded)) with
+    | error e => simp only [enc] at h; cases h
+    | ok encoded =>
+      simp only [enc] at h
+      cases h
+      exact ⟨by omega, by simpa only [splice] using enc, rfl⟩
 
 structure Projection where
   root : Array UInt8
@@ -172,6 +195,7 @@ theorem collect_zero (a : Keccak.Acceptance) (db : MPT.Database a)
     collect a db 0 ref key parents = .error .resourceLimit := rfl
 
 #print axioms splice_preserves
+#print axioms liftParent_source
 #print axioms replace_checked
 #print axioms collect_zero
 
