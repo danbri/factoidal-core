@@ -19,6 +19,9 @@
 #     definition the statement uses. tools/claims-gate.py fails when one
 #     changes and the register does not change in the same commit. A frozen
 #     definition's text is frozen, not the definitions it calls in turn.
+#   * `stages` names the dataflow stages (docs/dataflow-inventory.md) the claim
+#     is about; a release counts the entry points it covers through them
+#     (tools/assurance-manifest.py). Claude-inferred 2026-11-27, to review.
 #   * Every entry with hypotheses gets a `witness` (P3,
 #     https://github.com/danbri/factoidal-core/issues/1180): an `example` that
 #     satisfies all the hypotheses at once.
@@ -63,6 +66,7 @@ assumptions = [
   "h: the reader accepts the document (a case split, not an assumption)",
 ]
 status = "proposed"
+stages = ["shippedEvaluator"]
 statement_sha256 = "b911f5027b8152cf0c430797fbef280eee0e1aea5f7a5582910c87875ab76b02"
 spec_defs = [
   { name = "L4Factoidal.Dataflow.BackendOutsideFragmentAgrees", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "e09931f3046776ad15efb15b7c6102806c5eaae5801a37817463ae050cf47aef" },
@@ -128,6 +132,7 @@ assumptions = [
   "hG: G is membership in g",
 ]
 status = "proposed"
+stages = ["Storage.BackendRefinement.backendBgpStage"]
 statement_sha256 = "6e4a2ea83e696886a6928f25caf6e6e65811d244ded6ecdde7224f5b18eaf011"
 spec_defs = [
   { name = "L4Factoidal.SPARQL.StoreBackend.BackendExact", file = "formal/lean4/L4Factoidal/SPARQL/StoreBackendDenotation.lean", sha256 = "6d46f506d765c79a3cd319ce22a7b8cb2768ca2f1bfcb021804c57819ddad2ab" },
@@ -142,6 +147,7 @@ says = """For every dataset that is a set and is in the writer's domain, if the 
 does_not_say = """It does not say the parser accepts every N-Quads document the W3C grammar accepts, or refuses every one it refuses: that is the W3C syntax suite. Isomorphism is up to blank node labels."""
 assumptions = []
 status = "proposed"
+stages = ["nquadsDocumentWriter"]
 statement_sha256 = "878715d5069504abcc227591e9671658dd5c1a1adba291f6bca4ce9469788388"
 spec_defs = [
   { name = "L4Factoidal.Dataflow.WriterRoundTrip", file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean", sha256 = "bd965b5e23d2e50a84ed7a586051923ee5eed96a99ba0f3963130e985c5d83d1" },
@@ -156,6 +162,7 @@ says = """As nquads-writer-round-trip, for N-Triples (the default graph)."""
 does_not_say = """As nquads-writer-round-trip."""
 assumptions = []
 status = "proposed"
+stages = ["ntriplesDocumentWriter"]
 statement_sha256 = "451a9c64ba70526f616555695f915eb2cb9c6368df08a67ac29ef7dadc00c5e3"
 spec_defs = [
   { name = "L4Factoidal.Dataflow.WriterRoundTrip", file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean", sha256 = "bd965b5e23d2e50a84ed7a586051923ee5eed96a99ba0f3963130e985c5d83d1" },
@@ -201,6 +208,7 @@ assumptions = [
   "prims: the signature primitives (outside Lean; io:Ed25519Correct, io:Sha256Agrees in foundation/assumptions.txt)",
 ]
 status = "proposed"
+stages = ["vcVerifyStage"]
 statement_sha256 = "d022acadcd686cef67b958538a2a93f2d59829c25b42f0e3d1a45f82a400b5f9"
 spec_defs = [
   { name = "L4Factoidal.RDF.Canonical.RelabellingInvariance", file = "formal/lean4/L4Factoidal/RDF/CanonicalTheorems.lean", sha256 = "cc28c93f54ddb687166201d0d9bd52d2b8f10d67049f3a11ce348fd4b3febbc6" },
@@ -215,6 +223,7 @@ says = """When the checker reports a bundle valid, its conclusion is derivable f
 does_not_say = """valid alone does not say the conclusion is foundational: a reader must read the reported assumptions, frontier and foundationalOnly (Proof/Syntax.lean, Derives)."""
 assumptions = []
 status = "proposed"
+stages = ["proofCheckStage"]
 statement_sha256 = "7fb309f4c092e73de74526a95c89465f819f3715281eec706ef8d872b9cdebc8"
 spec_defs = [
   { name = "L4Factoidal.FPP0.Derives", file = "formal/lean4/L4Factoidal/Proof/Syntax.lean", sha256 = "69688f55d09ed6a091dfff694e1835f16da2bbc7961a41c749f67f791e078030" },

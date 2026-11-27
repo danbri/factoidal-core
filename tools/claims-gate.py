@@ -24,6 +24,10 @@ anti-pattern 30). Exit 1 when any of these fails:
     one. A change of a statement or of a specification definition therefore
     needs an edit of the register entry in the same commit, where a reviewer
     sees it. Proofs are free to change.
+  * a name in `stages` is not a stage (or area) of docs/dataflow-inventory.md.
+    `stages` says which dataflow stages the claim is about; it is how a release
+    counts the entry points a claim covers (tools/assurance-manifest.py). It is
+    an explicit decision, never a name match (anti-pattern 31).
   * P3, hypothesis witness: an entry with `witness` names a theorem that does
     not exist in the named file, or whose proof does not apply the claim's
     theorem. A witness instantiates the claim at concrete arguments and proves
@@ -215,6 +219,21 @@ def closure():
     return seen
 
 
+def inventory_stages():
+    """The `stage` and `area` cells of docs/dataflow-inventory.md."""
+    names = set()
+    path = os.path.join(ROOT, "docs", "dataflow-inventory.md")
+    if not os.path.exists(path):
+        return names
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("| ") and not line.startswith(("| area", "|---")):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) > 2:
+                names.add(cells[2].strip("`"))
+                names.add(cells[0])
+    return names
+
+
 def load():
     with open(REGISTER, "rb") as f:
         data = tomllib.load(f)
@@ -273,6 +292,7 @@ def check():
     if not claims:
         errors.append("the register has no entries")
     reach = closure()
+    stages = inventory_stages()
     cache, ids = {}, set()
     for c in claims:
         cid = c.get("id", "<no id>")
@@ -288,6 +308,9 @@ def check():
             errors.append(f"{cid}: status {c.get('status')!r} is not one of {sorted(STATUSES)}")
         if c.get("status") == "reviewed" and not c.get("reviewed"):
             errors.append(f"{cid}: status reviewed needs a `reviewed` field (who, date, words)")
+        for st in c.get("stages", []):
+            if st not in stages:
+                errors.append(f"{cid}: stage {st!r} is not a stage of docs/dataflow-inventory.md")
         if "theorem" not in c or "file" not in c:
             continue
         hit, err = find(c, cache)

@@ -41,3 +41,11 @@ jobs:
         run: python3 -I tools/lean-panic-sites.py
       - name: Theorem count (report)
         run: python3 -I tools/theorem-count.py | tee -a "$GITHUB_STEP_SUMMARY"
+      # Core side of issue 1182 (P5). The release sets of danbri/factoidal-builds
+      # are to run the same command with --axioms-log and ship the file.
+      - name: Assurance manifest (no axioms log here)
+        run: python3 -I tools/assurance-manifest.py --out "$RUNNER_TEMP/assurance.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assurance-json
+          path: ${{ runner.temp }}/assurance.json
