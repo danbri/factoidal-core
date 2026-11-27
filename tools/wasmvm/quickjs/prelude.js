@@ -5843,24 +5843,27 @@
     // The events of the rendering side, in the order Lean gives them (op 193): 1 a source ended,
     // 2 the state changed, 3 a control call was carried out, 4 one was refused.
     // The engine runs a queued callback once and then releases it (as a timer's), so each read
-    // gives Lean the callback for the next events.
+    // gives Lean the callback for the next events. Each event runs in a task of its own, in
+    // Lean's order (Web Audio API: the rendering thread queues one media element task for each
+    // control message, so a call's promise reactions run before the next call's state change; WPT
+    // suspend-after-construct.html). A state change sets the state attribute in its task and
+    // fires `statechange` in a later one, after the reactions of the call it answers.
+    const rtEvent = (cs, kind, v) => {
+      if (kind === 1) { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); }
+      else if (kind === 2) { cs.state = STATES[v] ?? cs.state; task(() => fire(cs.self, 'statechange')); }
+      else if (kind === 3 || kind === 4) {
+        const c = cs.calls.get(v); cs.calls.delete(v);
+        if (c) { if (kind === 3) c.resolve(); else c.reject(dom('InvalidStateError', `Failed to execute '${c.verb}' on 'AudioContext': the context is closed`)); }
+      }
+    };
     const rtEvents = cs => {
       cs.cb = register(() => rtEvents(cs));
       const ab = ask(193, [cs.id, cs.cb], 'AudioContext', true);
       const dv = new DataView(ab), count = dv.getUint32(0, true);
       for (let i = 0; i < count; i++) {
         const kind = dv.getUint8(4 + 5 * i), v = dv.getUint32(5 + 5 * i, true);
-        if (kind === 1) { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); }
-        // The state attribute changes now and the promises of the calls settle in this task;
-        // `statechange` fires in a later task, so a call's promise reactions run before it (WPT
-        // suspend-after-construct.html, audiocontext-suspend-resume-close.html).
-        else if (kind === 2) { cs.state = STATES[v] ?? cs.state; task(() => fire(cs.self, 'statechange')); }
-        else if (kind === 3 || kind === 4) {
-          const c = cs.calls.get(v); cs.calls.delete(v);
-          if (c) { if (kind === 3) c.resolve(); else c.reject(dom('InvalidStateError', `Failed to execute '${c.verb}' on 'AudioContext': the context is closed`)); }
-        }
+        task(() => rtEvent(cs, kind, v));
       }
-      if (cs.state === 'closed' && cs.calls.size === 0) callbacks.delete(cs.cb);
     };
     // Op 191: the promise is settled by an event of kind 3 or 4.
     const rtControl = (cs, verb) => {
