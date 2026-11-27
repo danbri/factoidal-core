@@ -1271,6 +1271,35 @@ def hostKeyOf (request : JSON.Json) : Option WebDriver.HostKeys.HostKey :=
   | _, _, some (.string k) => some (.dom k bits)
   | _, _, _ => none
 
+/-- The first user activation releases Web Audio's autoplay rule (`WebAudio.Api.activate`: a
+context may start, and the `resume()` calls that waited go on). A later one changes nothing there:
+once `activated` holds, a `resume()` does not wait. -/
+def audioActivated (h : Page.Host) : Page.Host :=
+  if h.web.audio.activated then h
+  else { h with web := { h.web with audio := WebAudio.Api.activate h.web.audio } }
+
+/-- User activation of a BubblePopJS page from the host's trusted input, before the event is
+dispatched (HTML §6.4.1, "activation notification"): its time in the trusted input state, and
+`audioActivated`. -/
+def activateLean (a : LeanJSWorkers.Agents) (clock : Nat) : LeanJSWorkers.Agents :=
+  let page := a.page.setTrusted { a.page.trusted with activated := some clock }
+  let page := if page.heap.host.isNone then page else page.setHost (audioActivated page.host)
+  { a with page }
+
+/-- User activation of a page of the QuickJS engine (`Page.Session`), which has no trusted input
+state of its own: `audioActivated`. -/
+def activatePage (s : Page.Session) : Page.Session := { s with host := audioActivated s.host }
+
+/-- Whether a host's pointer event (action `pointer`: `kind`, and `pointerType` "mouse", "pen" or
+"touch", default "mouse") gives user activation: the rule of WebDriver's pointer actions,
+`WebDriver.Input.pointerActivates`. -/
+def hostPointerActivates (kind : Page.PointerKind) (request : JSON.Json) : Bool :=
+  let phase : WebDriver.Actions.Phase := match kind with
+    | .down => .down | .up => .up | .move => .move | .cancel => .cancel
+  let type : WebDriver.Actions.PointerType := match str request "pointerType" "mouse" with
+    | "pen" => .pen | "touch" => .touch | _ => .mouse
+  WebDriver.Input.pointerActivates phase type
+
 /-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
 Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
 trusted input state changes. An event that gives user activation (`WebDriver.Input.activates`)
@@ -1280,17 +1309,11 @@ def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a :
     LeanJSWorkers.Agents :=
   let e := LeanJSWorkers.engine
   let base := e.inputDriver refNode
+  -- HTML §6.4.1: the activation notification comes before the event is dispatched, so the
+  -- event's own listeners see the activation (a `resume()` in a pointerdown listener goes on).
   let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
-    let a := base.dispatch a low
-    if WebDriver.Input.activates low then
-      let page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock }
-      let h := page.host
-      -- The first activation releases Web Audio's autoplay rule. A later one changes nothing
-      -- there: once `activated` holds, a `resume()` does not wait.
-      let page := if h.web.audio.activated || page.heap.host.isNone then page
-        else page.setHost { h with web := { h.web with audio := WebAudio.Api.activate h.web.audio } }
-      { a with page }
-    else a
+    if WebDriver.Input.activates low then base.dispatch (activateLean a (e.loop a).clock) low
+    else base.dispatch a low
   let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
   let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
   let r := WebDriver.Actions.perform d start sources
@@ -1515,13 +1538,17 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   let runAll := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) => runRest fun a => (f (started a), none)
   let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, undoEnd s, marks) }, Except.error msg)
   match action with
+  -- The person's click or pointer event in a host: trusted input. A click, and a pointer event
+  -- that `hostPointerActivates` names, give user activation before the events are dispatched.
   | "click" =>
     match natField request "node" with
-    | some node => run (e.click · node)
+    | some node => run fun a => e.click (activateLean a (e.loop a).clock) node
     | none => keep "scriptSession: click needs node"
   | "pointer" =>
     match pointerKind (str request "kind"), natField request "node" with
-    | some kind, some node => run (e.pointer · kind node (pointerInit request))
+    | some kind, some node => run fun a =>
+        let a := if hostPointerActivates kind request then activateLean a (e.loop a).clock else a
+        e.pointer a kind node (pointerInit request)
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
   | "key" =>
     -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
@@ -1840,11 +1867,12 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       match action with
       | "click" =>
         match natField request "node" with
-        | some node => run (·.clickP node)
+        | some node => run fun s => (activatePage s).clickP node
         | none => return ({ held with session := some (id, s, marks) }, .error "scriptSession: click needs node")
       | "pointer" =>
         match pointerKind (str request "kind"), natField request "node" with
-        | some kind, some node => run (·.pointerP kind node (pointerInit request))
+        | some kind, some node => run fun s =>
+            (if hostPointerActivates kind request then activatePage s else s).pointerP kind node (pointerInit request)
         | _, _ => return ({ held with session := some (id, s, marks) }, .error "scriptSession: pointer needs kind (down, move, up, cancel) and node")
       | "resize" =>
         match viewport request with
