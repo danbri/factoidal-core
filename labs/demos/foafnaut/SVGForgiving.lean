@@ -213,11 +213,44 @@ private def arabicForms (chars : Array Char) : Array (Option String) := Id.run d
     before := arabicDual c
   return forms
 
+/-- The names of a `font-family` value, without quotes. -/
+private def familyNames (family : String) : List String :=
+  (family.splitOn ",").map (fun n => (n.trimAscii.toString.replace "'" "").replace "\"" "")
+
+/-- CSS Fonts: the first named family with a font of the wanted variant. -/
+private def namedFont (fonts : List SVGFont) (family variant : String) : Option SVGFont :=
+  (familyNames family).findSome? (fun name => fonts.find? (fun f => f.family == name && f.variant == variant))
+
 /-- CSS Fonts: the first named family with a font of the wanted variant, else the
     default font. -/
 private def chooseFont (fonts : List SVGFont) (family variant : String) : Option SVGFont :=
-  let names := (family.splitOn ",").map (fun n => (n.trimAscii.toString.replace "'" "").replace "\"" "")
-  (names.findSome? (fun name => fonts.find? (fun f => f.family == name && f.variant == variant))).orElse (fun _ => fonts.getLast?)
+  (namedFont fonts family variant).orElse (fun _ => fonts.getLast?)
+
+/-- One SFNT font has a family that `family` names (ASCII case-insensitive, as
+    `NativeSVGText.familyOrder` matches). -/
+private def sfntNamed (sfnt : Array NativeSVGText.Font) (family : String) : Bool :=
+  (familyNames family).any fun name => sfnt.any (·.family.toLower == name.toLower)
+
+/-- The characters of the character data under `nodes`, in document order. A loop over
+    a work list of at most `NativeSVGText.maxNodes` nodes. -/
+private def textChars (nodes : List NamespaceNode) : Array Char := Id.run do
+  let mut pending := nodes
+  let mut found : Array Char := #[]
+  for _ in [:NativeSVGText.maxNodes] do
+    match pending with
+    | [] => break
+    | node::rest =>
+      pending := rest
+      match node with
+      | .element _ _ children => pending := children ++ pending
+      | .other (.text t) | .other (.cdata t) => found := found ++ t.toList.toArray
+      | _ => pure ()
+  return found
+
+/-- A character of the text that `font` has no glyph for. White space and the no-break
+    space do not count: `SVGFont.glyph` draws them with the space or advances. -/
+private def uncovered (font : SVGFont) (children : List NamespaceNode) : Bool :=
+  (textChars children).any fun c => !c.isWhitespace && c != '\u00A0' && !font.glyphs.contains c
 
 /-- One glyph of a text, in logical order. -/
 private structure Placed where
@@ -809,6 +842,17 @@ private def normalise (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (
     else if !conditionsPass fonts attrs then (none,[])
     else if name.localPart == "text" && !fonts.isEmpty then
       let inner := state.read attrs
+      let named := namedFont fonts inner.family inner.variant
+      -- CSS Fonts 4 §5: a family that no SVG font has, but an SFNT font has, is drawn with
+      -- the SFNT fonts; so is a text with a character that the SVG font has no glyph for
+      -- (the SFNT fallback list covers it, as for HTML text). Approximation: the whole
+      -- `text` changes font, not only that character.
+      let toSfnt := !sfnt.isEmpty && ((named.isNone && sfntNamed sfnt inner.family) ||
+        ((named.orElse fun _ => fonts.getLast?).map (uncovered · children)).getD true)
+      if toSfnt then
+        let (node,log) := lowerSfnt sfnt targets.get? state attrs children
+        (some node,log)
+      else
       match chooseFont fonts inner.family inner.variant with
       | some font => let (node,log) := lowerText font fonts.getLast? state attrs children; (some node,log)
       | none => (none,["element: text"])

@@ -91,10 +91,17 @@ def main (args : List String) : IO UInt32 := do
     let (flags,cpuOut) := match flags.reverse with
       | file::"--cpu-out"::rest => (rest.reverse,some file)
       | _ => (flags,none)
-    -- `--svg-sfnt FILE` last: text that has no SVG font is drawn with this SFNT font.
-    let (flags,sfntFile) := match flags.reverse with
-      | file::"--svg-sfnt"::rest => (rest.reverse,some file)
-      | _ => (flags,none)
+    -- `--svg-sfnt [FAMILY=]FILE`, one or more, last: text that no SVG font draws is drawn
+    -- with these SFNT fonts, the first being the primary font. FAMILY (default: the file
+    -- stem) is the name that `font-family` matches, for example `serif` or `monospace`.
+    let (flags,sfntFiles) := Id.run do
+      let mut rest := flags.reverse
+      let mut files : List String := []
+      for _ in [:flags.length] do
+        match rest with
+        | file::"--svg-sfnt"::more => files := file::files; rest := more
+        | _ => break
+      return (rest.reverse,files)
     let (svgFont,resources,svgRun) := match flags with
       | ["--svg"] => (none,none,true)
       | ["--svg","--svg-font",font] => (some font,none,true)
@@ -143,13 +150,14 @@ def main (args : List String) : IO UInt32 := do
       let (images,documentURL) ← match resources with
         | some root => localImages path root source
         | none => pure ([],none)
-      let sfnt ← match sfntFile with
-        | none => pure #[]
-        | some file =>
-          let bytes ← IO.FS.readBinFile file
-          match Rendering.SfntProfile.Font.read bytes ((System.FilePath.mk file).fileStem.getD "font") "cli" with
-          | .ok f => pure #[f]
-          | .error e => throw (IO.userError s!"SFNT font refused: {e}")
+      let sfnt ← sfntFiles.toArray.mapM fun spec => do
+        let (family,file) := match spec.splitOn "=" with
+          | [family,file] => (family,file)
+          | _ => ((System.FilePath.mk spec).fileStem.getD "font",spec)
+        let bytes ← IO.FS.readBinFile file
+        match Rendering.SfntProfile.Font.read bytes family "cli" with
+        | .ok f => pure f
+        | .error e => throw (IO.userError s!"SFNT font refused: {file}: {e}")
       IO.println (svgArtifact source w h font images documentURL sfnt)
       if let some out := cpuOut then
         let parsed := do
