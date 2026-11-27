@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/check-active-ledger.py | tee .lake/witness-evidence/source-ledger.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==186,x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==196,x'
           python3 scripts/test-active-ledger.py
           python3 scripts/check-witness-axioms.py --selftest | tee .lake/witness-evidence/axiom-controls.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==19 and x["retainedClaims"]==292,x'
@@ -82,7 +82,7 @@ jobs:
           flock /tmp/ethereum-mpt-lean.lock python3 evm-cleanroom/scripts/check-witness-axioms.py \
             --require-head --out evm-cleanroom/.lake/witness-evidence/axioms.json \
             --transcripts-dir evm-cleanroom/.lake/witness-evidence/axiom-transcripts \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-witness-axioms-audited" and x["selectedTheorems"]==32 and len(x["actualAxioms"])==32 and x["activeTheorems"]==324 and x["retainedClaims"]==292 and x["leanSourceFiles"]==48 and len(x["nativeBinaries"])==2 and x["requireHead"],x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-witness-axioms-audited" and x["selectedTheorems"]==32 and len(x["actualAxioms"])==32 and x["activeTheorems"]==324 and x["retainedClaims"]==292 and x["leanSourceFiles"]==58 and len(x["nativeBinaries"])==2 and x["requireHead"],x'
       - name: Reject linked proof engines and require actual native entry symbols
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -107,10 +107,10 @@ jobs:
           root = Path("formal/lean4/evm-cleanroom/.lake/witness-evidence")
           audit = json.loads((root / "tail-audit.json").read_text())
           sources = json.loads((root / "axioms.json").read_text())
-          assert audit["cfiles"] == sources["leanSourceFiles"] == 48
+          assert audit["cfiles"] == sources["leanSourceFiles"] == 58
           assert audit["rows"] == audit["cycles"] == []
           assert audit["csimp"] == 0 and audit["csimp_unresolved"] == []
-          print("All 48 compiled source modules have no surviving native recursion cycles")
+          print("All 58 compiled source modules have no surviving native recursion cycles")
           PY
       - name: Install the existing locked independent test oracles
         working-directory: formal/lean4/evm-cleanroom

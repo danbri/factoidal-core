@@ -1,0 +1,26 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+# Differential guard and timing of the limb fields, and the precompile runner
+# for the vector runs of the fast paths. Its own configuration, so the reviewed
+# ones stay unchanged.
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-fieldperf"
+root = "EVMCleanroom.FieldPerf.Main"
+moreLeancArgs = ["-O3"]
+
+[[lean_exe]]
+name = "evm-precompile"
+root = "EVMCleanroom.PrecompileCLI"
+moreLeancArgs = ["-O3"]
+
+# Differential check and timing of the pairing checks on the limb tower, and
+# the old path in the format of `evm-precompile --bench`.
+[[lean_exe]]
+name = "evm-pairingperf"
+root = "EVMCleanroom.PairingPerf.Main"
+moreLeancArgs = ["-O3"]
