@@ -391,6 +391,20 @@ def decoderDir : BaseIO String := do
     | some h => pure (h ++ "/.cache/factoidal/media-decoders")
     | none => pure ""
 
+/-- Read at most the pin's size plus one byte, so an oversized decoder is refused by the
+size check. Read through a handle because `readBinFile` requires libuv file metadata,
+which the browser Wasm runtime does not link. -/
+private def readDecoder (path : System.FilePath) (size : Nat) : IO ByteArray := do
+  let handle ← IO.FS.Handle.mk path .read
+  let mut bytes := ByteArray.empty
+  for _ in [:size + 1] do
+    let remaining := size + 1 - bytes.size
+    if remaining == 0 then break
+    let chunk ← handle.read remaining.toUSize
+    if chunk.isEmpty then break
+    bytes := bytes ++ chunk
+  return bytes
+
 /-- Read the pinned modules from `decoderDir`; each is kept only when it has its pin's size and
 SHA-256 (`L4Factoidal.Media.Modules.check`). -/
 def loadDecoders : BaseIO Decoders := do
@@ -398,7 +412,7 @@ def loadDecoders : BaseIO Decoders := do
   let mut mods : Array (String × ByteArray) := #[]
   let mut missing : Array String := #[]
   for p in L4Factoidal.Media.Modules.pins do
-    match ← (IO.FS.readBinFile (dir ++ "/" ++ p.file)).toBaseIO with
+    match ← (readDecoder (dir ++ "/" ++ p.file) p.bytes).toBaseIO with
     | .ok b =>
       match L4Factoidal.Media.Modules.check p.file b with
       | .ok _ => mods := mods.push (p.file, b)

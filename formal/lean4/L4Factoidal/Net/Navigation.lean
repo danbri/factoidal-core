@@ -90,6 +90,31 @@ inductive Out where
   | fail (id : Nat) (why : String)
   deriving Inhabited
 
+/-- The response status classes used by the document loader. -/
+def statusClass (status : Nat) : String :=
+  if 200 ≤ status ∧ status < 300 then "ok"
+  else if 400 ≤ status then "error-page"
+  else "other"
+
+/-- Characterisation.
+Says: only HTTP success statuses are classified as successful.
+Does not say: whether the response body can be rendered. -/
+theorem statusClass_ok_iff (status : Nat) :
+    statusClass status = "ok" ↔ 200 ≤ status ∧ status < 300 := by
+  by_cases h : 200 ≤ status ∧ status < 300
+  · simp [statusClass, h]
+  · by_cases e : 400 ≤ status <;> simp [statusClass, h, e]
+
+/-- Characterisation.
+Says: classification as an error page requires a status of at least 400.
+Does not say: whether the user requested the server's error page. -/
+theorem statusClass_error_page_iff (status : Nat) :
+    statusClass status = "error-page" ↔ 400 ≤ status := by
+  by_cases h : 200 ≤ status ∧ status < 300
+  · have e : ¬ 400 ≤ status := by omega
+    simp [statusClass, h, e]
+  · by_cases e : 400 ≤ status <;> simp [statusClass, h, e]
+
 /-- The URL parses and is `http` or `https`. -/
 def httpUrl (url : String) : Bool :=
   match URL.parseUrl url with

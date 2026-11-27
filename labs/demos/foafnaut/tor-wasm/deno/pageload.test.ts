@@ -57,7 +57,7 @@ function fakeEngine(seen: Record<string, unknown>[]) {
     const a = request.answer as { status?: number; headers?: [string, string][] };
     if (!a?.status) return { id: 1, fail: "network error" };
     const type = (a.headers ?? []).find(([k]) => k.toLowerCase() === "content-type")?.[1] ?? "";
-    return { id: 1, done: { status: a.status, type, url: String(seen.find((r) => r.action === "start")!.url) } };
+    return { id: 1, done: { status: a.status, statusClass: "ok", type, url: String(seen.find((r) => r.action === "start")!.url) } };
   };
   return { navigation: op, subresource: op };
 }

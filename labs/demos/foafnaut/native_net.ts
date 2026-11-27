@@ -48,6 +48,7 @@ export type NetWire={id:number;method:string;url:string;headers:[string,string][
 export type NetAnswer={id:number;status?:number;statusText?:string;headers?:[string,string][];bodyBase64?:string;addresses?:string[]};
 
 const MAX_BODY=67108864;
+const DEFAULT_HTTP_TIMEOUT_MS=300000;
 
 /** Extra trust roots (tests only: a local TLS server's certificate). */
 export type NetOptions={caCerts?:string[];timeoutMs?:number;
@@ -152,7 +153,7 @@ function tunnelClient(target:string,address:string,port:number,opts:NetOptions,p
   const bridge=async(conn:Deno.Conn)=>{
     let upstream:Deno.Conn|undefined;
     connections.add(conn);
-    const timer=setTimeout(()=>closeConnection(conn),opts.timeoutMs??300000);
+    const timer=setTimeout(()=>closeConnection(conn),opts.timeoutMs??DEFAULT_HTTP_TIMEOUT_MS);
     try{
       const buf=new Uint8Array(4096);let head="";
       while(!head.includes("\r\n\r\n")){
@@ -178,7 +179,7 @@ function tunnelClient(target:string,address:string,port:number,opts:NetOptions,p
   };
   // A reusable listener may need to reconnect even after an earlier request
   // timed out. Its batch owns it. Each request and handshake have their own deadline.
-  const timer=reusable?undefined:setTimeout(stopListening,opts.timeoutMs??300000);
+  const timer=reusable?undefined:setTimeout(stopListening,opts.timeoutMs??DEFAULT_HTTP_TIMEOUT_MS);
   let client:Deno.HttpClient;
   try{
     client=Deno.createHttpClient({proxy:{transport:"http",url:`http://127.0.0.1:${listener.addr.port}`,
@@ -324,7 +325,7 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Pro
     }catch{return {id:w.id,addresses:[]};}
   }
   let client:Deno.HttpClient|undefined,lease:Lease|undefined,done:(()=>void)|undefined;
-  const timeout=AbortSignal.timeout(opts.timeoutMs??300000);
+  const timeout=AbortSignal.timeout(opts.timeoutMs??DEFAULT_HTTP_TIMEOUT_MS);
   try{
     if(w.address){
       const u=new URL(w.url);
@@ -361,7 +362,7 @@ async function torAnswer(w:NetWire,opts:NetOptions):Promise<NetAnswer>{
     const client=opts.tor!.client(w.partition!);
     const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
     const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",client,
-      signal:AbortSignal.timeout(opts.timeoutMs??300000)} as RequestInit);
+      signal:AbortSignal.timeout(opts.timeoutMs??DEFAULT_HTTP_TIMEOUT_MS)} as RequestInit);
     const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
     for(;reader;){const {done:end,value}=await reader.read();if(end)break;total+=value.length;if(total>MAX_BODY){await reader.cancel();return failed;}parts.push(value);}
     const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}

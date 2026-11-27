@@ -6,7 +6,7 @@
 # decision moved into Lean lowers a count. max-total may only go down.
 # Reasons are a Claude session's reading of 2026-11-27, not owner decisions.
 # "inventory 2026-11-27" means: counted, not yet reviewed for a move to Lean.
-# max-total: 690
+# max-total: 689
 labs/demos/foafnaut/browser-webgpu/app.mjs sites=1  # inventory 2026-11-27
 labs/demos/foafnaut/browser-webgpu/server.mjs sites=2  # inventory 2026-11-27
 labs/demos/foafnaut/browser-webgpu/shader-editor.mjs sites=5  # inventory 2026-11-27
@@ -31,12 +31,12 @@ labs/demos/foafnaut/linux_keys.ts sites=1  # inventory 2026-11-27
 labs/demos/foafnaut/native_console.ts sites=1  # inventory 2026-11-27
 labs/demos/foafnaut/native_engine_pool.ts sites=2  # inventory 2026-11-27
 labs/demos/foafnaut/native_html_compile.ts sites=1  # inventory 2026-11-27
-labs/demos/foafnaut/native_html_document.ts sites=17  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_document.ts sites=18  # includes the host cancellation guard for engine navigation; response status classes come from Lean
 labs/demos/foafnaut/native_html_engine.ts sites=21  # inventory 2026-11-27
 labs/demos/foafnaut/native_html_http_fixture.mjs sites=2  # inventory 2026-11-27
 labs/demos/foafnaut/native_html_session.ts sites=8  # inventory 2026-11-27
 labs/demos/foafnaut/native_html_tabs.ts sites=6  # inventory 2026-11-27
-labs/demos/foafnaut/native_net.ts sites=17  # fetch limits (body 64 MiB, 300 s), DNS cache 60 s and 256 entries, pool sizes, default ports; candidate for Lean (Net) with the HttpConnections contract
+labs/demos/foafnaut/native_net.ts sites=15  # fetch limits (body 64 MiB, 300 s), DNS cache 60 s and 256 entries, pool sizes, default ports; candidate for Lean (Net) with the HttpConnections contract
 labs/demos/foafnaut/native_press.ts sites=1  # inventory 2026-11-27
 labs/demos/foafnaut/native_print.ts sites=5  # inventory 2026-11-27
 labs/demos/foafnaut/native_state.ts sites=2  # inventory 2026-11-27

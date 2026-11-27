@@ -4206,7 +4206,7 @@ def navigationJson : Net.Navigation.Out → JSON.Json
   | .wire id w => .object [("id", WebScripts.num id), ("wire", WebScripts.wireJson w)]
   | .done id st ty u n =>
     .object [("id", WebScripts.num id), ("done", .object [("status", WebScripts.num st), ("type", .string ty),
-      ("url", .string u), ("redirects", WebScripts.num n)])]
+      ("url", .string u), ("redirects", WebScripts.num n), ("statusClass", .string (Net.Navigation.statusClass st))])]
   | .fail id why => .object [("id", WebScripts.num id), ("fail", .string why)]
 
 /-- Op `navigation` (Net.Navigation): a top-level navigation with its redirects, one step a call

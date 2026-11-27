@@ -50,12 +50,12 @@ function bytesBase64(bytes:Uint8Array):string{let s="";for(let i=0;i<bytes.lengt
 decides each request and redirect; this host sends each wire with `opts` and gives the answer
 back. The answer is the last response: its status, type, final URL, header fields and bytes. */
 async function navigateThrough(step:NetStep,opts:NetOptions,start:Record<string,unknown>,signal?:AbortSignal)
-  :Promise<{url:string;status:number;contentType:string;headers:[string,string][];bytes:Uint8Array}>{
-  let answer=await step({action:"start",...start}) as {id?:number;wire?:NetWire;done?:{status:number;type:string;url:string};fail?:string}|undefined;
+  :Promise<{url:string;status:number;statusClass:string;contentType:string;headers:[string,string][];bytes:Uint8Array}>{
+  let answer=await step({action:"start",...start}) as {id?:number;wire?:NetWire;done?:{status:number;statusClass:string;type:string;url:string};fail?:string}|undefined;
   let headers:[string,string][]=[],body="";
   // 20 redirects at most (Net.PageFetch.maxRedirects), each one request: under 64 steps.
   for(let steps=0;steps<64;steps++){
-    if(answer?.done)return {url:answer.done.url,status:answer.done.status,contentType:answer.done.type??"",headers,bytes:base64Bytes(body)};
+    if(answer?.done)return {url:answer.done.url,status:answer.done.status,statusClass:answer.done.statusClass,contentType:answer.done.type??"",headers,bytes:base64Bytes(body)};
     if(!answer?.wire)throw new Error(String(answer?.fail??"navigation refused"));
     if(signal?.aborted){await step({action:"cancel",id:answer.id});signal.throwIfAborted();}
     const {bodyBase64,...head}=await netAnswer(answer.wire,opts);
@@ -114,8 +114,8 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
     abort();
     const field=(name:string)=>got.headers.find(([k])=>k.toLowerCase()===name)?.[1]??"";
     finalURL=inputURL(got.url);contentType=got.contentType||field("content-type");contentTypeOptions=field("x-content-type-options");
-    const ok=got.status>=200&&got.status<300;
-    if(!ok&&!(request.errorPages&&got.status>=400&&got.bytes.length))throw new Error(`HTTP ${got.status}: ${url}`);
+    const ok=got.statusClass==="ok";
+    if(!ok&&!(request.errorPages&&got.statusClass==="error-page"&&got.bytes.length))throw new Error(`HTTP ${got.status}: ${url}`);
     if(!ok)status=got.status;
     const decided=request.decide&&ok?await request.decide({contentType,disposition:field("content-disposition"),url:finalURL}):undefined;
     if(decided?.action==="save"&&decided.name&&request.downloads){

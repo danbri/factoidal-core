@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.38.1 (2026-11-27)
+
+- XMPP server startup checks the TLS certificate and key before listening, on Node and Deno.
+- Updated the bundled Lean engine and added differential regression cases for RDF parsing and SPARQL.
+
+Claims: 13 in foundation/claims.toml (0 reviewed by the owner). `python3 -I tools/claims-gate.py` exit 0.
+Defects found by proof since the last release: 0 (label found-by-proof in danbri/factoidal-core and danbri/factoidal).
+
 ## 0.38.0 (2026-11-26)
 
 - First publication of the 0.37.3 changes below: 0.37.3 was prepared on 2026-11-24 and never published (npm had 0.37.2).
