@@ -281,9 +281,10 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   and 195 (stage C, D3); `setValueCurveAtTime` and `cancelAndHoldAtTime` throw until op 179 takes
   them (D2); an `AudioBufferSourceNode` takes its buffer's samples when `buffer` is set, not at
   `start()` (a change between the two is not heard; an op that acquires at `start()` replaces op
-  184's copy); no read op for a node's channel settings, `type`, `loop` and loop points (the page
-  keeps the last value Lean accepted); no op that frees a context (256 a page session);
-  `OfflineAudioContext.suspend(time)` needs rendering in steps.
+  184's copy; done in round 1 of section 12a); no read op for a node's channel settings, `type`,
+  `loop` and loop points (the page keeps the last value Lean accepted); no op that frees a context
+  (256 a page session); `OfflineAudioContext.suspend(time)` needs rendering in steps (done in round 1
+  of section 12a).
 - AudioWorklet is not faked (coordinator's decision, by the rule "a stated shortfall is a failing
   test plus an open issue", `CLAUDE.md`): `context.audioWorklet` throws, so the setup of WPT
   `idlharness` (which adds a worklet module and makes an `AudioWorkletNode`) fails until stage F;
@@ -303,6 +304,76 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   (stage F), `AudioContext` state (stage D), and `AudioParam` nominal ranges (a reading of
   `value` after an out-of-range set is not clamped; `AudioBufferSourceNode.detune`'s range;
   `BiquadFilterNode.gain.maxValue` is not the single-precision value WPT expects).
+
+## 12a. WPT webaudio, round 1 of fixes (2026-11-27, branch `wip/1169-wpt-round1`)
+
+Same runner, list and WPT root as section 12; engine built from the branch. Subtests passing: 2,572
+of 3,284 reported before, 2,702 of 3,285 after (+130; 1 subtest lost, below). The run did not
+count `sub-sample-buffer-stitching.html` and `retrospective-setTargetAtTime.html` (over 3 minutes
+each, as before) or `audiobuffersource-reverse-long-buffer.html`. Per directory (pass of reported):
+the-audiobuffer 131 to 133 of 136; the-audiobuffersourcenode 306 to 316 of 318; the-audionode 252 to
+261 of 265; the-audioparam 681 to 709 of 810 (817 before); the-biquadfilternode 262 to 285 of 288;
+the-channelmergernode 29 to 30 of 32; the-constantsourcenode 64 to 67 of 67; the-delaynode 126 to 131
+of 136; the-gainnode 12 to 15 of 15; the-offlineaudiocontext 58 to 82 of 87; the-stereopanner 99 to 121
+of 121; the others unchanged.
+
+Clusters, by root cause:
+
+| cause | change | subtests |
+|---|---|---|
+| `OfflineAudioContext.suspend`, `resume`, `close`, `startRendering(chunkSize)`, `length` null | op 187 takes a quantum count (`Context.renderChunk`, theorems `renderChunk_shape`, `_graph`, `_frame`); the page keeps the chunk queue and the suspensions (`offlineRun` in the prelude, checked with a mock of op 187 and 189 first) | about 60 (no-dezippering of gain, delay, biquad and stereo panner, disconnect-audioparam, merger disconnect, adding-events, incremental-rendering, close) |
+| `AudioParam` ranges | `value` reads clamped (`Render.finalValue`, the computed value, now binary32); `AudioBufferSourceNode.detune` is plus or minus most-positive-single-float; `BiquadFilterNode.gain` maximum is 1541.273681640625, which is `fround (40 * fround (log10 FLT_MAX))` as WPT writes it | about 25 in audioparam-nominal-range |
+| node outputs were binary64 | `Render.roundOut` rounds each node's output to binary32 (an overflow is an infinity, `inf - inf` is NaN); constant-source-output and nan-param need it | 3 |
+| NaN test was wrong | in Lean `x != x` is false for NaN (`Float` equality is decided on the bits): `finalValue` and `clampPan` used it, so NaN was never replaced by the default; now `isNaN` | 1 |
+| biquad form | the kernel is direct form I; transposed form II differs when the coefficients change at each frame, and biquad-automation compares with direct form I | 11 |
+| buffer source | one channel of silence while not playing (output-channel-count); a negative `loopStart` is 0 (the attribute's text; the pseudocode says the whole buffer: WPT sides with the text); linear extrapolation past the last frame (buffer-resampling; the specification leaves it open); the `duration` of a grain counts from the exact start time (sub-sample-scheduling); `ended` fires at the render step, not after the whole render (start-null-buffer) | 9 |
+| acquire the content | op 184 flag "1" re-sends the samples at `start()`; before it the setter sends only the dimensions (flag "2"). The arrays given out before are not detached, although the specification says so: no-dezippering of the delay reads its ramp through such an array after `start()` and acquire-the-content only needs the next `getChannelData()` to return the new copy. Not measured (written after the last run) | 2 and 15 |
+
+A subtest lost: `k-rate-audiobuffersource-connections.html`, playbackRate: it compares, with
+tolerance 0, an automation ramp with a ramp that comes through a connected signal; the values now
+differ by one binary32 unit at one frame (0.37482002 against 0.37481999) because parameter values
+are rounded to binary32 after the double computation, where the engine had compared two binary64
+values that happened to agree. Not fixed.
+
+Remaining, in scope and not done: `delaynode-channel-count-1.html` (the output channel count of a
+`DelayNode` follows the channels of the data read from its history, specification section 4.3; the
+engine follows the input); `biquad-automation.html` "modulation" (frequency driven by a connected
+signal, threshold 3.9787e-5; not diagnosed); `audioparam-nominal-range.html` for the nodes of stage F
+and `AudioListener`. Out of scope and visible in the run: `setValueCurveAtTime` and
+`cancelAndHoldAtTime` (branch `wip/1169-realtime-run`), `AudioContext`, `destination.html` and
+`audionode.html` (AudioContext destination), `decodeAudioData`, `fetch` and shared
+`WebAssembly.Memory` missing from the script engine (`idlharness`, `audiobuffersource-multi-channels`,
+`audiobuffer-copy-channel`). The speed of the engine (section 14) is not worse: `webaudio-bench`
+a, b, c: 0.025, 0.039, 0.438 ms per quantum (the section 14 figures were 0.014, 0.035, 0.41; the
+extra cost is the binary32 rounding of each output).
+
+### 12b. After the merges of 2026-11-27 (`main` at 1d07850f5)
+
+Round 1 was merged with the real-time contexts (step D3), `decodeAudioData` in pages and the larger
+limits. Op 184 is now `setBuffer(ctx, node, mode, channels, length, sampleRate, data...)`: the
+decode work's samples, one argument a channel, and round 1's modes ("" set, "2" the dimensions
+before `start()`, "1" acquire at `start()`).
+
+WPT run of 2026-11-27, local runner, BubblePopJS, native engine of 1d07850f5's tree, with
+`--dangerously-permit-audio` (as Chrome's WPT runs pass `--autoplay-policy=no-user-gesture-required`),
+the same list and exclusions as section 12 (`audiobuffersource-reverse-long-buffer.html`, and
+`sub-sample-buffer-stitching.html` and `retrospective-setTargetAtTime.html`, each over 3 minutes):
+**2,780 of 3,298 subtests pass** (2,572 of 3,284 in section 12, 2,702 of 3,285 in round 1 alone).
+16 subtests that passed in section 12 fail now; none comes from round 1 except the last:
+
+- 14 of `audiocontext-rendersizehint.html`: the real-time context ignores `renderSizeHint`,
+  https://github.com/danbri/factoidal-core/issues/1206 (real-time AudioContext ignores renderSizeHint);
+- 1 of `audiocontext-suspend-resume.html`, and 12 files that now time out or end in an error
+  (`AudioContext` and `AudioWorklet` tests): the runner's virtual clock against the context's
+  wall time, https://github.com/danbri/factoidal-core/issues/1207 (real-time contexts time out in
+  the WPT runner);
+- `k-rate-audiobuffersource-connections.html` playbackRate: one binary32 unit at one frame
+  (round 1 rounds parameter values to binary32, section 12a).
+
+Also now a timeout: `decodeAudioData-oversized-resample.html` (an unsupported FLAC stream of 44
+million samples), https://github.com/danbri/factoidal-core/issues/1208 (decodeAudioData of a large
+unsupported file times out). Files: `/home/user/media-build/wpt-merge.jsonl` on the cloud VM (not
+committed), compared with `wpt-after.jsonl` by the scratch script `wpt_compare.py`.
 
 ## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
 
@@ -443,7 +514,8 @@ How it is held in place:
 
 As landed in D2 (`WebAudio/Api.lean`, header). Changes against the text below, and why:
 `newAudioContext` also answers -20 for a bad hint or callback and -23 at 16 live contexts, and
-its first outbox message is `(190, [id, rate (binary64), channels, target])` so the rendering side
+its first outbox message is `(190, [id, rate (binary64), channels, target, state])` (the state field
+added in D3, so the rendering side starts as the control side did) so the rendering side
 knows its parameters; the `control` call id is answered as decimal text and a `resume` before
 activation waits (`pendingResume`) until op 196; `events` has kind 4 (call rejected); op 195 gives
 a stored error result once and then removes the job, which makes it the one op that changes the
@@ -517,6 +589,157 @@ latency. `--perf-summary` gets a block `audio`.
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
+- D3, first part (2026-11-26, branch `wip/1169-realtime-run`, commits 67b8651af, ea290dd28,
+  97a489f29 and 7cf6c0772): `new AudioContext()` in a page plays through the engine's audio
+  output.
+  - `WebAudio/RenderSide.lean` (pure): the rendering side's own copy of the graph state, made with
+    `Api.rtContext` as op 190 makes the control side's (`ofOpen_context`,
+    `Api.newAudioContextOp_context`); the messages applied in order with `Api.op` on a state that
+    holds only this context (a failure is counted as `divergence`); the control calls
+    (`control_closed`, `applyBatch_closed`); the quanta for the output, mixed by the speaker rule
+    to the device's channels and interleaved (`fill_frames`: the frames written are the rendered
+    quanta in order; `fill_frame`, `fill_size`); the quanta that bring the frames ahead to the
+    target (`quantaFor_bounds`); the reports and their merge (`mergeReport_events`). Its
+    `#guard`s check 256 frames of a 440 Hz oscillator against an `OfflineContext` render of the
+    same graph, bit for bit after binary32 rounding.
+  - `labs/demos/foafnaut/WebAudioRun.lean`: one dedicated Lean task per context (the loop of
+    13.4; the sink is opened by the task, paused while suspended, closed on close); the registry
+    in `WebDocument.Engine.audio`; the steps before and after each `scriptSession` call
+    (`WebDocument.answerAudio`, around `answerIn` in `compile` and `compileBin`); the document op
+    `audioRuns` (the measures). Whether Lean's task manager runs is asked of Lean
+    (`taskManagerRuns`: a dedicated task runs on another thread only then), not of
+    `web_render_shim.c`: the render command line (`WebRenderCLI`) links these modules without the
+    shim. A new session takes the output from `Page.Limits.audioDevice` and `autoplay`
+    (`FOAFNAUT_AUTOPLAY=allow`, or `autoplay:true` in `start`); the session of an `iframe` gets
+    none (`WebScripts.frameLimits`: the engine does not take a frame's outbox).
+    `nextWake` is at most 25 ms ahead while `Api.needsTurns`. The runs end with their page
+    session (`close`, a new `start`), and with their engine session: `web_session_free` and the
+    end of a task session (`WebDocument.engineEnd`), and the document op `audioEnd`, which the tab
+    worker sends before it closes (its default session is never freed).
+  - `prelude.js`: `AudioContext` on ops 190 to 196 (state, `currentTime`, `baseLatency`,
+    `outputLatency`, `getOutputTimestamp()`, `resume()`, `suspend()`, `close()`, `ended`,
+    `statechange` after the promise as the specification orders it), `setValueCurveAtTime` and
+    `cancelAndHoldAtTime` on op 179, and the page's sticky activation (op 196 on the first trusted
+    activation-triggering input event). The context's event callback is kept across tasks
+    (`kept`): the host releases a callback after a task that runs it (`Page.lean`, the task branch
+    of the event loop's run; `PageEvents.lean`), which deleted this one after its first delivery,
+    so later events (`resume()` after `suspend()`, `close()` after `ended`) did not reach the page.
+  - The opening message has a fifth field, the initial state (13.8).
+  - Writes (13.4, step 3): once the output takes frames, the task writes each quantum when it is
+    rendered. The first write after the sink opens, or after a `resume()` (the sink stays paused
+    until then), holds the quanta up to the target in one write, because the `null` and `wav`
+    consumers take 256 frames at their first period. Two other forms failed the 440 Hz test on
+    this machine: all the quanta of a turn in one write (1 to 5 under-runs a second: the output
+    waited for up to 8 quanta of work) and one quantum from the start (1 under-run of 128 frames at
+    the start).
+  - Measures at 97a489f29, `labs/demos/foafnaut/webaudio_realtime_test.ts` (Linux cloud VM, 4 vCPUs, no sound
+    device, `wav` sink, 48 kHz, target 1,024 frames; another Lean build ran on the machine, load
+    average 3.4), three runs:
+    - 440 Hz `OscillatorNode` for 1 s: the WAV file holds the `OfflineAudioContext` render (the
+      second and 2,048 frames of silence, 50,048 frames, 2 channels) bit for bit after binary32
+      rounding, from its first frame; 0 under-runs; 53 `currentTime` samples, none smaller than
+      the one before; `close()` closes the sink, the task ends, its thread is gone.
+    - CPU time of the rendering thread (`/proc/self/task/TID/schedstat`): 223, 237 and 336 ms
+      per second of audio; rendering and writing (`renderNs`): 229, 232 and 333 ms, that is 0.61
+      to 0.89 ms per render quantum of 128 frames for one oscillator.
+    - Frames ahead of the output when the task looked: least 256, most 1,024 (all three runs).
+      With the `ConstantSourceNode` page of the suspend test the least was 0 once in three runs
+      (the ring was empty when the task looked), with no under-run: on a loaded machine the
+      `interactive` target leaves little room.
+    - `suspend()` then 600 ms: no frame taken, no under-run counted; after `resume()`, 0
+      under-runs. With no autoplay, `resume()` waits until a trusted mouse press (pointer down and
+      up) activates the page, then resolves before `statechange` fires.
+    - A run ends, and its thread is gone, on `audioEnd` and when its engine session ends with no
+      `close` of the page.
+    - Three more runs at 7cf6c0772 (the same loop), load average 6.7: CPU time 213,
+      216 and 229 ms per second of audio, rendering and writing 228 to 241 ms; least frames ahead
+      256, 0 and 0, most 1,024; no under-run, bit for bit.
+    - Build, `build-web-render.sh --native`: 302 to 437 s, with a local reuse of this worktree's
+      earlier outputs (not committed). A clean build was not timed.
+  - Not done: the decode jobs of ops 194 and 195 (stage C); the `native-audio` trace line and the
+    `--perf-summary` block (13.9); `autoplay` is not in `HostContract.relaxFields` (a host that
+    sets it relaxes the autoplay policy); a host that drops an engine with none of the end steps
+    above leaves its runs playing, and if the library is then unloaded a run's thread runs
+    unloaded code (task sessions pin the library, real-time runs do not); the Wasm build was not
+    run (no `emcc` here); the owner's check on a Mac (the `coreaudio` consumer
+    takes the device's buffer at each callback, so the margin above may be smaller there). The
+    rendering cost (above) has not been worked on.
+- The autoplay rule as the owner decided it (13.7; branch `wip/1169-autoplay`, which holds D3's
+  branch merged with `main`): `Risk.audioWithoutActivation`; `Api.State.autoplay` holds the token,
+  made only by `WebScripts.audioLimits` from the start request's `dangerouslyPermitAudio`;
+  `Api.op` gives back `autoplay` and `activated` (`op_gate`), code 196 answers -2;
+  `WebScripts.performInput` calls `Api.activate` at the first input that gives activation; the
+  prelude's own activation code is gone; the environment variable `FOAFNAUT_AUTOPLAY` is gone;
+  `dangerouslyPermitAudio` is in `HostContract.relaxFields` (and in `host-trace.mjs`). The window:
+  `--dangerously-permit-audio`, a warning on standard error and a `native-html-permit-audio`
+  trace line, the Settings switch "Let pages start sound before I use them" (saved as
+  `WebState.Settings.permitAudio`; command `permit-audio`, Settings-only by
+  `WebRoute.settingsOnly`, theorem `settings_only_from_settings` now over every such command, and
+  `link-route.mjs` the same), a row in `about:foafnaut`. The WPT runner: the same option, written
+  in its report (`dangerouslyPermitAudio`). The Hub's Settings page says it has no audio output.
+- D3, second part (2026-11-27, branch `wip/1169-page-decode`): decode jobs in pages, and large buffers.
+  - `WebAudioRun.lean`: in `after`, each job of `Api.takeDecodeJobs` starts a task of the task pool
+    (`BaseIO.asTask`, default priority) that runs `WebAudio.Decode.decodeAudioData` and packs the
+    samples (`Api.channelsBytes`); finished tasks give their result to the page (`Api.finishDecode`) in
+    `before`, and in `after` for a task that finished at once (no task manager: `asTask` runs on the
+    calling thread, correct and only slower). `Api.needsTurns` is true while a job has no result. The
+    decoder modules are read once per engine from `FOAFNAUT_MEDIA_DECODERS`, else
+    `~/.cache/factoidal/media-decoders`, each checked with `Media.Modules.check`; a file that needs a
+    missing module answers -23 (`NotSupportedError`, the message names `tools/fetch-media-decoders.sh`);
+    other failures -30 (`EncodingError`). `build-web-render.sh` builds `L4Factoidal.WebAudio.Decode`
+    into the library.
+  - `prelude.js`: `decodeAudioData(arrayBuffer, success, error)` on ops 194 and 195: argument checks,
+    `DataCloneError` for a detached buffer, `ArrayBuffer.prototype.transfer()` detaches the page's
+    buffer (BubblePopJS has it), the promise resolves and then the success callback is called in the
+    same task (the specification's order); the error path rejects with the named `DOMException` and then
+    calls the error callback. The samples are `Float32Array` views of the op 195 answer, with no copy.
+    Works on `AudioContext` and `OfflineAudioContext`.
+  - Hygiene: importing `Media.Decode` brought `WasmVM.Bench.Sample` (its `initialize prof` is one more
+    opaque) into the lab's closure. `Media.Decode.Module` now has an optional `sampler`
+    (`WasmVM.Bench.Sample.runIO`, passed by `media-bench video` when `WASMVM_PROFILE` is set), so the
+    import is gone: 38 externs, 2 opaques, as before. Side effect: `WASMVM_PROFILE` now samples only
+    `media-bench video`, not `media-bench audio`.
+  - Large buffers. Cause: `bufferArgs` read each value with `all.data[i]!` on a `FloatArray`; `.data` of a
+    `FloatArray` copies the whole array, so setting a buffer was quadratic. Fixed (one pass,
+    `Api.f32sFrom`), and the other loops of the same kind (`f32sBytes`, `Decode`'s rounding) are one pass
+    now. Also: `checkOp` and `bufferArgs` no longer allocate a zero buffer of the full length to
+    validate it, and the page passes each channel as its own argument instead of copying the channels
+    into one array (`TypedArray.prototype.set` costs 0.7 microseconds a value in BubblePopJS; 2.5 s for
+    one 2^22 channel). Host-timed page turns (`webaudio_bigbuffer_bench.ts`, Linux, 4 vCPUs, another
+    build running):
+
+    | frames | new AudioBuffer before / after | set `buffer` before / after | render answer into JS before / after |
+    |---|---|---|---|
+    | 2^12 | 9 ms | 121 ms | |
+    | 2^14 | 14 ms | 1,980 ms | |
+    | 2^15 | 20 ms | 8,259 ms | |
+    | 2^16 | 50 / 6 ms | (about 33 s) / 4 ms | 22 / 15 ms |
+    | 2^18 | 133 / 8 ms | (about 9 min) / 7 ms | 68 / 46 ms |
+    | 2^20 | 464 / 16 ms | | 257 / 194 ms |
+    | 2^22 | 1,986 / 43 ms | | 1,038 / 651 ms |
+
+    Setting `buffer`: 2^22 118 ms, 2^23 (+512) 323 ms (target 2 s). Before, time grew by 4 for each doubling
+    (quadratic; 2^23 extrapolates to about 150 hours). The 2^16 and 2^18 "before" values in
+    parentheses are extrapolated from 2^15, not measured.
+  - Findings inside BubblePopJS, not changed: `TypedArray.prototype.set` of another typed array is
+    about 0.7 microseconds a value (2^22: 2.5 s); the `apiCall` block is limited to 64 MiB
+    (`LeanJS.outCap`) in both directions, so a buffer or a decode answer above 16.7 million
+    samples (a 3-minute stereo song at 48 kHz is 17.3 million) is refused with -5. Chunked transfer
+    would need ops of its own and a contiguous `Float32Array` made without `set`. Issue
+    https://github.com/danbri/factoidal-core/issues/1177 (one page call carried at most 64 MiB).
+    Owner, 2026-11-27, verbatim, on that issue: "maybe our rules are too uptight?". The
+    coordinator's answer, not the owner's words: the 64 MiB was the QuickJS build's `read_bytes`
+    limit, copied into BubblePopJS, whose call memory is sparse; so on a 64-bit host `LeanJS.outCap`
+    is 1 GiB and `Api.maxSamples` is 2^27 (a stereo recording of 23 minutes at 48 kHz; 512 MiB as
+    binary32, 1 GiB as the engine's binary64). The Wasm build (32-bit) keeps 64 MiB and 2^25, and
+    the QuickJS build keeps its 64 MiB. `webaudio_decode_test.ts` sets an 18-million-sample buffer.
+  - Tests: `webaudio_decode_test.ts` (the five clips equal `lake exe media-bench decode` bit for bit at
+    44.1 kHz; detach, order of callbacks, `EncodingError`, `DataCloneError`, `TypeError`, no modules
+    gives `NotSupportedError`), `webaudio_jukebox_test.ts` (Decode all gives "Decoded 6 of 6 tracks.",
+    Play: the WAV holds the first track bit for bit times 0.8, 0 under-runs; "From the last click to the
+    first frame played" 121 to 135 ms; Decode all of 6 tracks about 7.4 s in this build).
+    The jukebox test clicks by a message that makes the page call `click()`: the engine's hit test reads
+    the page's static layout, which the page's own script changes.
 - Then the owner's check on the Mac, and stage E (the jukebox).
 
 ## 14. Render quantum speed (2026-11-26)
@@ -593,3 +816,33 @@ delay kernel 12 %, `fillFast` for the `setTarget` and ramp parameters 10 % (one 
 frame), allocation of one `FloatArray` per node per quantum about 15 %, input mixing 6 %.
 Not done: the delay kernel and the mixers still go through `mkChan` closures for each channel;
 an instruction-count measurement that does not depend on the load of the machine.
+
+## 15. The HRTF data set: what its licence is known to be (2026-11-27)
+
+Owner, 2026-11-26 (section 7, answer 2): yes to the HRTF data set for `PannerNode`, after its
+licence is reported. Chromium (`third_party/blink/renderer/platform/audio/resources/`), WebKit
+(`Source/WebCore/platform/audio/resources/`) and Firefox (`dom/media/webaudio/blink/`) ship the
+same impulse responses, `IRC_Composite_C_R0195_T*_P*.wav` joined into one file (`Composite.wav`,
+FLAC in Chromium). They come from the IRCAM LISTEN HRTF database.
+
+What the sources say, read on 2026-11-27:
+
+- Debian's copyright file of libmysofa, which ships one LISTEN subject as test data
+  ([copyright file](https://metadata.ftp-master.debian.org/changelogs//main/libm/libmysofa/libmysofa_0.6~dfsg0-3+deb10u1_copyright)),
+  records "Copyright: 2002, IRCAM" and licence `listen-ircam`, verbatim: "The Listen database is
+  public and available for any use. We would however appreciate an acknowledgment of the database
+  somewhere in the description of your work (e.g. paper) or in your development."
+- Chromium's README for the files gives no licence; it points to
+  [WebKit bug 98294](https://bugs.webkit.org/show_bug.cgi?id=98294), which is about the order of
+  the elevations and gives no licence either. A W3C list message
+  ([public-audio, 2013-01-24](https://lists.w3.org/Archives/Public/public-audio/2013JanMar/0210.html))
+  says only that WebKit's set is derived from LISTEN.
+- IRCAM's own LISTEN page (`recherche.ircam.fr/equipes/salles/listen/`) answered HTTP 503 twice,
+  so IRCAM's text was not read.
+
+Reading, not legal advice: the terms Debian records allow any use and ask for an acknowledgment.
+Not shown: IRCAM's own text today, and whether the composite files of the browsers carry the same
+terms (no file says). Before the data is vendored (in `danbri/factoidal-builds`, `third_party/`,
+with provenance, as for the decoders), IRCAM's page is read again and quoted in the provenance
+file, and the acknowledgment goes in the provenance file and in `about:foafnaut`. Equal-power
+panning, which needs no data, comes first (stage F).

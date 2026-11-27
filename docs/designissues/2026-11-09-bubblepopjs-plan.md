@@ -17,6 +17,11 @@ Machine: one Linux x86_64 cloud VM (4 virtual CPUs). Nothing here was measured o
 Hub, or in a page. The JIT stages (section 8, stages E and F) rest on designs and on records of
 other work in this repository, not on a measurement of a BubblePopJS JIT: none exists.
 
+**Ruling of 2026-11-27 (owner, CLAUDE.md "No V8, no engine of another browser").** Decision 3
+below and stage F routed generated code to "the host's WebAssembly engine" through `WasmVM.Aot`.
+For the browser that route is withdrawn: generated code runs on our own engines only. V8 and
+QuickJS-NG stay in this record as measurement references.
+
 ## 1. Decisions for the owner
 
 1. Approve, change or refuse the key results of section 9 as an OKR batch for BubblePopJS

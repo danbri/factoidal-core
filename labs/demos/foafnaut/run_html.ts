@@ -57,14 +57,14 @@ async function main() {
     return;
   }
   if(args.includes("--help")){
-    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks|pooled [--host-workers 1|2] [--warming-spare take|new]] [--hidden-tabs stopped|throttled|running] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
+    console.log("Native HTML: --html FILE | --url HTTP_OR_HTTPS_URL [--font FONT_FILE] [--bitmap-font] [--follow-links] [--check-engine] [--trace-input] [--resize-sweep] [--command-sweep] [--history-sweep] [--back-sweep] [--graph-sweep] [--edit-sweep] [--shortcut-sweep] [--print-pdf FILE] [--scroll-sweep] [--watch-sweep SECONDS] [--single-frame] [--offscreen] [--window-size WIDTHxHEIGHT] [--check-pixels] [--perf-summary] [--log-all] [--fail-on-flood] [--shot FILE [--shot-at-end]] [--liberal-report json] [--idle-checks-only] [--native-engine DYLIB | --wasm-engine] [--one-engine-worker | --engine-workers N] [--engine-mode copies|sessions|tasks|pooled [--host-workers 1|2] [--warming-spare take|new]] [--hidden-tabs stopped|throttled|running] [--no-spare-engine-worker] [--no-state] [--state-dir DIR] [--restore-session] [--dangerously-permit-audio] [--quickjs-wasm FILE | --no-scripts] [--strict | --be-liberal-in-what-we-accept] [--no-splash | --splash] [--find-sweep]\nCommand-Q quits; Command-R and R reload; Command-T, Command-W and Shift-Command-T open, close and reopen tabs; Command-1 to 9, Control-Tab and Shift-Command-[ ] change tab; Space, Page Up, Page Down, Home, End and arrows scroll; Escape stops loading; Command-Left and Command-[ go back; Command-Right and Command-] go forward; Command-= and Command-- zoom text; Command-0 resets; drag selects; Command-A, Command-C, Command-X, Command-V and Command-Z edit the address bar when it has the focus, else select and copy page text; Command-P prints; Command-F finds in the page, Command-G and Shift-Command-G go to the next and previous match, Escape closes find; Command-O opens a file and Command-S saves the page as fetched; Option-Command-J opens the console tab (foafnaut:console). A splash with the release shows over the first page in a window; --no-splash leaves it out (it is always off screen off, and in sweeps and checks). By default the browser draws a page without what the built-in engine may skip (module scripts, media conditions it can not read, stylesheets not fetched, scripts when they are off, inline SVG it can not draw) and lists each skip in the console; --strict refuses such a page. HTML/CSS/layout/link picking run in published Lean WASM. Page scripts run in QuickJS-NG inside Lean's WasmVM, with Lean's DOM and event loop, when the guest module is found (--quickjs-wasm FILE, default ~/working/qjs-wasm/qjs-wasmvm.wasm); else a page with scripts is refused. No WebView.");return;
   }
   let pollIdle=false,prefetchHoldOn=true,scrollFirstOn=true,inputFirstOn=true,startSlicesOn=true,scrollSweep=false,watchSeconds=0,framesInFlight=1,splashArg:"on"|"off"|undefined;
   let shotAtEnd=false,logAll=false,failOnFlood=false;
   let shotFile:string|undefined,shotSize:[number,number,number]=[800,500,2],textSize=100;
   let windowSize:[number,number]|undefined;
   let accessibilityOn=false;
-  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"|"pooled"="copies",hostWorkers=1,warmingSpare:"take"|"new"="take",hiddenTabs:"stopped"|"throttled"|"running"="stopped";
+  let downloadsArg:string|undefined,cookieFileArg:string|undefined,url:string|undefined,follow=false,check=false,traceInput=false,sweep:number[][]|undefined,commands:(string|number[])[]|undefined,pasted:string|undefined,quickjsWasm:string|undefined,scriptsOff=false,bitmapFont=false,fontFile:string|undefined,checkAll=false,idleChecksOnly=false,perfSummary=false,pipeTraceFile:string|undefined,gateTraceFile:string|undefined,nativeEngine:string|undefined,wasmEngine=false,layered=true,pressLook=true,printPDF:string|undefined,stateDir:string|undefined,stateOff=false,restoreSession=false,offscreen=false,swipeSweep=false,cliLiberal=false,cliStrict=false,cliPermitAudio=false,oneEngineWorker=false,engineWorkerCap=8,spareWorker=true,engineMode:"copies"|"sessions"|"tasks"|"pooled"="copies",hostWorkers=1,warmingSpare:"take"|"new"="take",hiddenTabs:"stopped"|"throttled"|"running"="stopped";
   while(args.length){const arg=args.shift();
     if(arg==="--html"||arg==="--url"){
       const value=args.shift();if(!value||url)throw new Error("Supply exactly one --html FILE or --url URL");
@@ -170,6 +170,10 @@ async function main() {
     else if(arg==="--no-scripts")scriptsOff=true;
     // Liberal mode (WebAccept.lean): Lean skips what it may skip and says so in the console.
     else if(arg==="--be-liberal-in-what-we-accept")cliLiberal=true;
+    // Pages may start sound before the person has used them: Web Audio's autoplay rule is off
+    // (Lean's Risk.audioWithoutActivation; owner, 2026-11-26: "with a Settings or CLI setting
+    // --dangerously-permit-audio"). The window warns at start; the Settings switch does the same.
+    else if(arg==="--dangerously-permit-audio")cliPermitAudio=true;
     // Strict mode: a page with a feature the built-in engine may skip is refused. Tests,
     // sweeps and WPT runs give it, so their results do not depend on the default.
     else if(arg==="--strict")cliStrict=true;
@@ -279,7 +283,10 @@ async function main() {
         console.log(JSON.stringify({type:"native-html-slow-call",t:Math.round(performance.now()),call:name,ms:Math.round(took*10)/10}));}
       return result;
     }])) as T;
-  const engine=timed(await loadHTML());
+  // The main-thread engine: the native library when there is one, in an engine session of its
+  // own (its state is not the worker's), else Wasm. Wasm here cost 475 to 620 ms of the main
+  // thread at start on the Linux rig, and V8 compile work on other threads (issue 1168).
+  const engine=timed(await loadHTML(nativeEngine,"bytes",{session:!!nativeEngine}));
   const linuxKeys=Deno.build.os==="linux"
     ?new Map(engine.keyTable("other").map(row=>[row.modifier+"/"+row.key,row.command])):undefined;
   // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
@@ -301,10 +308,11 @@ async function main() {
   const prepareHTML:typeof prepareDocument=(reader,url,signal,inline,accept)=>
     prepareDocument(reader,url,signal,inline,{...accept,epubReader:engine.epubReader});
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
-  // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
+  // worker, or on the main thread, which uses the native library too when there is one). Said at
+  // start and in the summary.
   let engineRan="wasm";
   const sayEngine=(where:string)=>{
-    engineRan=worker&&nativeEngine?`native ${nativeEngine}`:"wasm";
+    engineRan=nativeEngine?`native ${nativeEngine}`:"wasm";
     console.log(`engine: ${engineRan}`);
     console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
   };
@@ -622,7 +630,8 @@ async function main() {
           // The start in slices (page-load.mjs startSliceSteps): the page is shown after its classic
           // scripts and the first slice of the rest; the timer turns go on with the start.
           ...(startSlicesOn?{sliceSteps:startSliceSteps}:{}),
-          ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{})});
+          ...(scriptOps.includes("net")?{network:true}:{}),...(gpuReplay?{gpuReplay:true}:{}),
+          ...(permitAudio?{dangerouslyPermitAudio:true}:{})});
         const turn=await syncAnswers(first,pageURL) as ScriptTurn;
         netQueue.push(...(turn.netRequests??[]).map(wire=>({session:turn.session,wire})));
         scriptEpochs.set(turn.session,performance.now()-turn.clock);sessionEngines.set(turn.session,plan.engine);
@@ -646,6 +655,16 @@ async function main() {
   if(cliLiberal&&cliStrict)throw new Error("Use one of --strict and --be-liberal-in-what-we-accept");
   if(shotAtEnd&&!shotFile)throw new Error("--shot-at-end needs --shot FILE");
   let liberal=!cliStrict;
+  // Sound before a page is used: the command line, else the saved Settings switch (read when the
+  // window opens). Off by default: a real-time AudioContext starts suspended, and its resume()
+  // waits, until the person clicks or types in the page (Lean decides which input counts). On, each
+  // page started after it gets dangerouslyPermitAudio in its start request (WebScripts.audioLimits).
+  let permitAudio=cliPermitAudio;
+  const permitAudioOn=(source:string)=>{
+    console.error(`Warning: ${source} is on: pages may start sound before you click or type in them (the Web Audio autoplay rule is off).`);
+    console.log(JSON.stringify({type:"native-html-permit-audio",on:true,source}));
+  };
+  if(permitAudio)permitAudioOn("--dangerously-permit-audio");
   // The start page has a script. A host that can run no page script (the Wasm engine with no
   // QuickJS guest module) refuses it; then the window opens the demo index, which has none.
   // The browser's cookies for page loads (WebDocument op `cookies`, Net.Cookies): the engine
@@ -1137,6 +1156,7 @@ async function main() {
       ...(library.sha256?[["Engine library sha256",library.sha256] as [string,string]]:[]),
       ["Page scripts",planFor(scriptSetting)?.name??"none"],
       ["Liberal mode",liberal?"on":"off"],
+      ["Sound before a page is used",permitAudio?(cliPermitAudio?"permitted (--dangerously-permit-audio)":"permitted (Settings)"):"off (a page starts sound after you click or type in it)"],
       ["Platform",`${Deno.build.os} ${Deno.build.arch}`],
       ["Runtime",`Deno ${Deno.version.deno}, V8 ${Deno.version.v8}`]];
     return await lean.aboutPage({rows,...(info.commit?{version:info.version,commit:info.commit}:{})});
@@ -1417,6 +1437,12 @@ async function main() {
     const size=textZoom();
     // A ticked box is filled (boxon), as WebRenderScript.choicesHTML does for the script rows.
     const box=`<span class="box${liberal?" boxon":""}"></span>`;
+    // Sound before a page is used: the switch of --dangerously-permit-audio, a settings-only
+    // command (WebRoute.settingsOnly), so a link on another page can not turn it on.
+    const audioBox=`<span class="box${permitAudio?" boxon":""}"></span>`;
+    source=source.replace("<!--foafnaut:permit-audio-->",`<p class="check"><a href="foafnaut:permit-audio/${permitAudio?"off":"on"}">${audioBox} Let pages start sound before I use them</a></p>`+
+      "<p>Off (the default): a page plays sound only after you click or type in it, as in Chrome and Safari. On: any page may start sound as it loads. The same as starting the browser with --dangerously-permit-audio. Pages opened after the change use it."+
+      (cliPermitAudio?" This window was started with --dangerously-permit-audio, so it is on until the browser is started without it.":"")+"</p>");
     return source.replace("<!--foafnaut:liberal-->",`<p class="check"><a href="foafnaut:liberal/${liberal?"off":"on"}">${box} Be liberal in what we accept</a></p>`+
       "<p>On (the default): a page with a feature this browser does not support is drawn without it (a module script, a stylesheet that did not load, a media condition or inline SVG it can not read), and the console (Option-Command-J) lists what was skipped. Off: strict, such a page is refused.</p>")
       .replace("<!--foafnaut:text-size-->",size
@@ -1446,6 +1472,17 @@ async function main() {
       // The Settings checkbox: foafnaut:liberal/on, /off, or a toggle. Pages load in the new mode from now on.
       liberal=argument==="on"?true:argument==="off"?false:!liberal;
       browserState?.settings({liberal});trace("native-html-liberal",{liberal});
+      if(document.url===settingsURL)navigate(settingsURL,false);
+    }
+    else if(name==="permit-audio"){
+      // The Settings switch of --dangerously-permit-audio: foafnaut:permit-audio/on, /off, or a
+      // toggle; only the Settings page or the address bar gives it (WebRoute.settingsOnly). Pages
+      // started after it use it. With the command-line option it stays on for this run.
+      const next=cliPermitAudio||(argument==="on"?true:argument==="off"?false:!permitAudio);
+      if(next&&!permitAudio)permitAudioOn("the Settings switch \"Let pages start sound before I use them\"");
+      permitAudio=next;
+      if(!cliPermitAudio)browserState?.settings({permitAudio});
+      trace("native-html-permit-audio",{on:permitAudio});
       if(document.url===settingsURL)navigate(settingsURL,false);
     }
     else if(name==="encoding"){
@@ -1849,6 +1886,7 @@ async function main() {
     // Saved settings (theme, text zoom), and with --restore-session the tabs of the last run.
     browserState?.read().then(saved=>{
       if(saved.settings){theme=saved.settings.theme;view.textScalePercent=saved.settings.textZoom;dirty=true;
+        if(!cliPermitAudio&&saved.settings.permitAudio===true){permitAudio=true;permitAudioOn("the saved Settings switch \"Let pages start sound before I use them\"");}
         if(typeof saved.settings.scripts==="string")scriptSetting=saved.settings.scripts;
         if(!cliLiberal&&!cliStrict&&typeof saved.settings.liberal==="boolean"&&saved.settings.liberal!==liberal){
           liberal=saved.settings.liberal;if(liberal&&document.title==="Page refused")navigate(document.url,false);}

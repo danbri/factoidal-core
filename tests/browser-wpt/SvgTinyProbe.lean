@@ -7,7 +7,7 @@ import L4Factoidal.JSON.Serialize
 
 open L4Factoidal.JSON
 
-/-- Acceptance only: render the unchanged original SVG through the Lean SVG
+/-! Acceptance only: render the unchanged original SVG through the Lean SVG
 frontend. A compiled scene is not a visual-conformance pass.
 
 The first argument is the SFNT font file that draws SVG text (the font of HTML text in

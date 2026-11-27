@@ -14,8 +14,12 @@ def run : IO Unit := do
   check (sample "<g fill='green'><rect width='20' height='20' style='fill:inherit'/></g>" == green) "inline inherit"
   check (sample "<style type='text/css' media='all'><![CDATA[rect {fill:red}]]></style><rect width='20' height='20'/>" == red) "type/media/CDATA"
   check (sample "<rect width='20' height='20' style='fill:red;opacity:1'/>" == red) "shape CSS opacity"
-  for body in ["<style media='screen'>rect {fill:red}</style>","<style type='text/plain'>rect {fill:red}</style>","<style>rect {fill:red !important}</style>","<style>rect {fill:invalid;fill:green}</style>","<g style='opacity:0.5'><rect width='20' height='20'/></g>"] do
+  for body in ["<style media='screen'>rect {fill:red}</style>","<style type='text/plain'>rect {fill:red}</style>","<style>rect {fill:red !important}</style>","<g style='opacity:0.5'><rect width='20' height='20'/></g>"] do
     check (!(NativeSVG.parse (wrap body)).isOk) "unsupported CSS silently admitted"
+  check ((NativeSVG.parse (wrap "<style>rect {fill:invalid;fill:green}</style><circle r='4'/>")).isOk)
+    "unmatched invalid CSS rule must not affect or reject another element"
+  check (!(NativeSVG.parse (wrap "<style>rect {fill:invalid;fill:green}</style><rect width='20' height='20'/>")).isOk)
+    "matched invalid CSS declaration must be refused by the strict SVG profile"
   for file in ["percentage.svg", "percentage-attribute.svg"] do
     let xml ← IO.FS.readFile ("../../tests/external/svg/upstream/svg/painting/reftests/"++file)
     match NativeSVG.parse xml 800 600 with

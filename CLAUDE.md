@@ -535,6 +535,23 @@ root. Keep the compiler/runtime trust boundary and unproved cryptographic
 properties explicit. Existing crypto choices for other products are not
 changed by this Ethereum-specific direction.
 
+### HACL\* is preferred; secp256k1 signer approved (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "HACL* is both approved and PREFERED over our own
+(crazy yolo roll your own etc.) Lean hackery." Then, to the statement that a
+HACL\* secp256k1 signer for Ethereum needed approval: "Do it."
+
+- For every cryptographic operation, Ethereum included, HACL\* is the source.
+  Pure Lean crypto is a specification or a differential oracle, never the
+  run-time path for secret data. The Ethereum independence rule above does not
+  apply to HACL\*.
+- A secret key is an opaque Lean type that only HACL\* calls can use
+  (`tools/secret-type-gate.py`). Constant time is checked on the compiled code
+  by Valgrind with leaking controls (`tests/ct/run.sh valgrind`).
+- First instance: `L4Factoidal/Crypto/K256Native.lean` over HACL\*
+  `Hacl_K256_ECDSA.c` (RFC 6979 nonce, low-S, recovery id), workflow
+  `check-k256-ct.yml`. Record: `docs/designissues/2026-11-27-bignum-timing-and-aes.md`.
+
 [Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
 
 Acceptance: https://github.com/danbri/factoidal-core/issues/725.
@@ -1137,6 +1154,34 @@ Owner, 2026-11-27, verbatim: "next: 1. then 2 then3 then 4. Close 475. Your advi
 PR 475 is closed (replaced by PR 557). PRs 476 and 486 wait for the owner after the coordinator's
 advice. Their measurements are in `docs/bubblepopjs-jit.md`, copied to `main`.
 
+Owner, 2026-11-27, verbatim, on stages E and F of the plan (generated code), which were design only:
+"ensure we get to these!" Goal of the same day: "performant JIT JS improving our ux": each step is
+judged on page script time (start turn and timer turns of Particle Rex on the Linux rig) as well as
+on the corpus.
+
+A new heap field that changes rarely goes in `ColdHeap`, not in `HeapOf`: the hot record is rebuilt
+at every change of the heap. Cost: `docs/designissues/2026-11-27-global-name-scope-chains.md`, trap.
+
+### No V8, no engine of another browser (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Please ensure in CLAUDE.md and elsewhere that we never slip into
+using V8. The hub thing is a cute demo, our main mission is a full independent web browser. Not
+something that runs inside someone else's browser, js or wasm implementation." Said after a session
+had written stage E as "generated WebAssembly run by the host's WebAssembly engine" (V8 on the
+desktop): that wording came from the plan's Hub text and was carried to the native browser without
+a check.
+
+- Page JavaScript and page WebAssembly run on our own engines only: BubblePopJS, BubblePopWASM
+  (WasmVM), and the code generators of the JIT stages. No JIT stage hands code to V8, to the Deno
+  host's WebAssembly engine, or to any engine of another browser.
+- Stage E is code that we generate and our own engine runs (WebAssembly run by BubblePopWASM's own
+  compiled path, or Lean-compiled code); stage F is machine code from our own templates (its trusted
+  primitive, "run bytes as code", still needs its own decision). `WasmVM.Aot`'s hand-off to the
+  host's engine is a Hub demonstration, not a route for the browser.
+- V8, QuickJS-NG and JavaScriptCore stay as measurement references and differential oracles in
+  benchmarks and tests, never as the path that runs a page.
+- Cost of not having this rule: on 2026-11-27 issue 471 was planned with V8 inside stage E.
+
 ### SVG Tiny pixel harness: frame border out; fonts in (owner, 2026-11-27)
 
 Owner, 2026-11-27, verbatim: ""can the harness exclude the 3-pixel frame border from the
@@ -1305,8 +1350,8 @@ host runtime for our CLIs, servers, tests and scripts while the npm library stay
 Node and browsers: "ok procede cautiously, and without breaking our xmpp".
 
 - Move one component at a time. Each move runs its suites under Node and under Deno; a move
-  lands only when the Deno run passes what the Node run passes. XMPP moves last, after the two
-  Deno differences in its suites are fixed or explained.
+  lands only when the Deno run passes what the Node run passes. XMPP moves last. Its two Deno
+  differences are fixed (2026-11-27): all 20 XMPP test files pass under Node and Deno.
 - The npm library (`import '@factoidal/core'`) keeps working in Node and browsers.
 - `npx factoidal` keeps running under Node. Owner, 2026-11-27, verbatim: "keep running - yes
   pls"; then "yes, re deno" (go on with the move), and: "we don't want to be too tied to any of
@@ -1364,6 +1409,42 @@ mechanisms for page trust."
 - Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
   permission for each site) are a later design. One Lean value decides "allowed to start" today, so
   such a mechanism changes one function.
+- Owner, 2026-11-27, verbatim: "ok", to the question "may I raise the lab hygiene count for the
+  audio output?" (`labs/demos/foafnaut/LabHygiene.lean`: formal `extern` 32 to 38 and `opaque` 1
+  to 2, the six C functions of `formal/lean4/ffi/audio_sink.c` and its handle type).
+
+### Formal-verification batch approved; claims register first (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "file them all!", then "Approve, start P1", then "keep working on
+this all night". Batch: https://github.com/danbri/factoidal-core/issues/1189 (OKR batch,
+formal-verification discipline after https://www.anthropic.com/research/formal-verification);
+record `docs/designissues/2026-11-27-formal-verification-post-review.md`.
+
+- P1 first: `foundation/claims.toml`
+  (https://github.com/danbri/factoidal-core/issues/1178, claims register). The word "proved" in
+  a release note, hub page or README is for a register entry only. The owner reviews the register;
+  entries are Claude proposals until the owner marks them reviewed.
+
+### Foafnaut timelines, remote debugging and WebDriver scores (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Do items 1 and 2" and "Yes to a and b", to these proposals
+(session on https://github.com/danbri/factoidal-core/issues/1168, real-page load time):
+
+1. Write the host's trace records (`native-html-load-phases`, `native-html-frame`,
+   `native-html-script`, engine-worker records) as a Trace Event Format file, so that a run's
+   timeline opens in Perfetto (https://ui.perfetto.dev) or the Chrome DevTools Performance panel.
+2. Live remote debugging, WebDriver BiDi first, then a part of the Chrome DevTools Protocol only
+   where Chrome's own panels need it. Tracking https://github.com/danbri/factoidal-core/issues/372.
+   A debug port is a security surface: the experimental code notice, a `--dangerously-` option, the
+   invariants of https://github.com/danbri/factoidal/issues/1120.
+   (a) `branch-wpt.yml` in `danbri/factoidal-builds` gets the input
+   `dangerously_enable_webdriver_endpoint` that `skills/wpt-runs` described but that never existed;
+   one branch run of `webdriver/tests/classic/` gives the first WebDriver numbers.
+   (b) Full runs report the classic wdspec tests.
+
+Context for the owner's question "Can chrome/firefox do that remotely??" (coordinator's answer, not
+the owner's words): Chrome DevTools attaches to any Chrome DevTools Protocol server over WebSocket;
+Firefox's remote debugger speaks its own protocol, not Chrome's, and supports WebDriver BiDi.
 
 ### Never report upstream (owner, 2026-11-25)
 

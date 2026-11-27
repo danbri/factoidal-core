@@ -6,9 +6,9 @@ design: docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 12).
 ## Op numbers
 
 The plan named ops 170 to 189. Ops 170, 171 and 172 of `WasmVM/Hosts/WebApi.lean` are the
-layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 196**
-(173 to 189: contexts, nodes, rendering; 190 to 196: real-time contexts and decoding, step D2 of
-the plan). Routing: `173 ≤ code < 200` (197 to 199 answer -2).
+layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 195**
+(173 to 189: contexts, nodes, rendering; 190 to 195: real-time contexts and decoding, step D2 of
+the plan). Routing: `173 ≤ code < 200` (196 to 199 answer -2).
 
 ## Argument and answer conventions
 
@@ -51,7 +51,8 @@ of `WebApi.lean`; -28 to -30 are new.
     `m NAME TYPE REQUIRED(1/0) DEFAULT`, tab-separated; "callback": `r RETURN ARGS`. -20 for an
     unknown name or kind.
   * 175 `newContext(numberOfChannels, length, sampleRate, [renderQuantumSize])`:
-    `OfflineContext.new`; answers the new context's id. -23 for what the constructor refuses, and
+    `OfflineContext.new`; answers the new context's id. An empty `length` is a context of length
+    `null`: the length is `maxSamples / numberOfChannels` frames, which the page does not show. -23 for what the constructor refuses, and
     for `numberOfChannels * length` above 2^25 (a bound of this engine).
   * 176 `createNode(ctx, kind, [option])`: `kind` is `gain`, `constantSource`, `stereoPanner`,
     `oscillator`, `biquadFilter`, `bufferSource`, `delay` (option: `maxDelayTime`, real),
@@ -77,7 +78,7 @@ of `WebApi.lean`; -28 to -30 are new.
     InvalidStateError (automation rules of `Automation.insert`); -28 no such parameter.
   * 180 `paramInfo(ctx, node, param)`: 4 doubles (`value`, `defaultValue`, `minValue`,
     `maxValue`) then one byte: 1 a-rate, 0 k-rate. `value` is the automation value at the current
-    time.
+    time, clamped to the nominal range (`Render.finalValue`).
   * 181 `start(ctx, node, [when], [offset], [duration])`: reals; an absent `when` is 0.
     `offset` and `duration` are for an `AudioBufferSourceNode`. -29 started before; -21; -20.
   * 182 `stop(ctx, node, [when])`: -29 not started; -21; -20.
@@ -88,19 +89,26 @@ of `WebApi.lean`; -28 to -30 are new.
     a `ChannelSplitterNode` and the offline destination refuse a change of count, mode or
     interpretation (-29, except where the value is the one it has); a `StereoPanner` count above
     2 and the mode `max` are -23. An unknown name or enum value is -20.
-  * 184 `setBuffer(ctx, node, channels, length, sampleRate, data)`: the `buffer` setter of an
-    `AudioBufferSourceNode`; `channels` "" sets null; `data` is `channels * length` binary32
-    values. -29 when a non-null buffer was set before; -20 when the byte count does not match;
+  * 184 `setBuffer(ctx, node, mode, channels, length, sampleRate, data...)`: the `buffer` setter of
+    an `AudioBufferSourceNode`. `mode` "" sets the buffer; "2" sets one of the given dimensions with
+    no samples (the setter before `start()`: the samples come at `start()`); "1" acquires the
+    content (`start()`, or the setter after `start()`: no error for a second non-null buffer, the
+    buffer must have been set). `channels` "" sets null; `data` is `channels * length` binary32
+    values, in one argument or in one argument for each channel (joined in order; none with mode
+    "2"). -29 when a non-null buffer was set before; -20 when the byte count does not match;
     -23 buffer values out of range (`AudioBuffer.create`).
   * 185 `setPeriodicWave(ctx, node, real, imag, disableNormalization)`: `setPeriodicWave` of an
     oscillator; `real` and `imag` are binary32 arrays or "-". -28, -20 as `createPeriodicWave`.
   * 186 `check(kind, args...)`: `kind` "buffer" (`channels`, `length`, `sampleRate`: the
     `createBuffer` checks, -23) or "wave" (`real`, `imag`, `disableNormalization`: the
     `createPeriodicWave` checks, -28, -20). Answers "".
-  * 187 `startRendering(ctx)`: renders the whole length. Answer: `u32` channels, `u32` length,
-    the samples as binary32 channel by channel (`channels * length` values), `u32` count K, then K
-    `u32` ids of the source nodes (constant, oscillator, buffer source) that have ended, in
-    ascending node id. -29 when it ran before.
+  * 187 `startRendering(ctx, [quanta])`: without `quanta` renders the whole length. Answer: `u32`
+    channels, `u32` length, the samples as binary32 channel by channel (`channels * length`
+    values), `u32` count K, then K `u32` ids of the source nodes (constant, oscillator, buffer
+    source) that have ended, in ascending node id. -29 when it ran before (or after a step). With
+    `quanta` (decimal text): one step of `Context.renderChunk`, at most that many render quanta from
+    the current frame, cut at the length; the answer has the same form, `length` is the frames of
+    the step and the ids are those ended so far. -29 when the length is reached.
   * 188 `frequencyResponse(ctx, node, frequencyHz, magLength, phaseLength)`: `frequencyHz` is a
     binary32 array. Answer: `magLength` binary32 values then `phaseLength` values. -25 when a
     length differs from that of `frequencyHz`; -29 for a node that is not a `BiquadFilterNode`.
@@ -120,14 +128,17 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
-    state (`suspended`, `running`, `closed`). The state is `running` when `autoplay` or `activated`.
-    The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET])`, the target
-    in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to 16384).
+    state (`suspended`, `running`, `closed`). The state is `running` when `allowedToStart`.
+    The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET, STATE])`,
+    the target in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to
+    16384) and STATE the initial state's code (`RtState.code`: 0 suspended, 1 running), so that
+    the rendering side starts as the control side did. Both sides make the graph state with
+    `rtContext` (`newAudioContextOp_context`).
   * 191 `control(ctx, verb)`: `resume`, `suspend`, `close` (else -20); -20 for a context that is
     not real-time; -29 when the context is closed. Answers the call id (decimal) and appends
     `(191, [ctx, verb, callId])` to the outbox; the promise resolves when an event of kind 3 (or
-    rejects: kind 4) names the call id. A `resume` before `autoplay` or `activated` waits in
-    `pendingResume`; op 196 releases it.
+    rejects: kind 4) names the call id. A `resume` that is not `allowedToStart` waits in
+    `pendingResume`; `activate` releases it.
   * 192 `time(ctx)`: doubles `currentTime`, `baseLatency`, `outputLatency`, one state byte (0
     suspended, 1 running, 2 closed), doubles `contextTime` and `performanceTime` (of
     `getOutputTimestamp()`; the page-clock ms of the last report, 0 before the first).
@@ -139,14 +150,29 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     binary32 channel by channel; or the error the decoder gave (-30, -23). The job is removed
     when the result is given, and also when it is an error (so 195 is the one op that changes the
     state while it answers an error). -29 while the job is pending; -20 for no such job.
-  * 196 `activate()`: the page's sticky activation; releases the pending `resume` calls.
+
+The autoplay rule (Web Audio API 1.1 "allowed to start"; owner, 2026-11-26, CLAUDE.md "Audio: AAC
+through AudioToolbox, HRTF data, autoplay rule"): a context may start when `allowedToStart`, that
+is when the page has sticky activation (`activated`) or the engine holds the risk token
+`Risk.audioWithoutActivation` (`autoplay`). Neither is an op: `op` gives back `autoplay` and
+`activated` as it found them, whatever the op (`op_gate`), so no page script can give itself
+either. The host sets `activated` with `activate` when its trusted input gives activation
+(`labs/demos/foafnaut/WebScripts.lean`, `performInput`; Lean decides which input does,
+`WebDriver.Input.activates`), and `autoplay` from the engine's limits (`Page.Limits.autoplay`).
+Code 196, `activate()` until 2026-11-27, answers -2.
 
 No op changes a context other than the one it names (`withCtx_other`), and an op that fails
 changes nothing (`op_error_state`; op 195 with a stored error result excepted).
+
+`needsTurns`: the page has a real-time context that is running or that has a control call the
+rendering side has not answered (one waiting for activation excepted). The engine then asks the
+host for a turn at most 25 ms ahead (`nextWake`, plan 13.3), so the events are delivered.
 -/
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
+import L4Factoidal.Risk
 import Std.Data.HashMap
+import L4Factoidal.Prim.FloatOfNat
 
 namespace L4Factoidal.WebAudio.Api
 
@@ -156,8 +182,11 @@ open L4Factoidal.WebAudio
 def maxContexts : Nat := 256
 
 /-- Largest `numberOfChannels * length` of a context or buffer: the rendered result is that many
-binary32 values. -/
-def maxSamples : Nat := 33554432
+binary32 values. 2^27 on a 64-bit host (512 MiB as binary32: a stereo recording of 23 minutes at
+48 kHz), 2^25 on a 32-bit host (the Wasm build). It was 2^25 everywhere until 2026-11-27 (a stereo
+song of 5.8 minutes at 48 kHz; https://github.com/danbri/factoidal-core/issues/1177). The engine
+keeps samples as binary64 (`Buffer.AudioBuffer`), so the largest buffer is 1 GiB there. -/
+def maxSamples : Nat := if System.Platform.numBits == 64 then 1 <<< 27 else 1 <<< 25
 
 /-- Largest number of nodes of one context. -/
 def maxNodes : Nat := 65536
@@ -237,9 +266,11 @@ structure State where
   /-- The output's preferred sample rate and channel count, set by the engine; `none`: no audio
   output (op 190 answers -23). -/
   device : Option (Float × Nat) := none
-  /-- True: no activation is needed (the WPT runner and tests). -/
-  autoplay : Bool := false
-  /-- The page's sticky activation (op 196). -/
+  /-- Present: a real-time context may start with no user activation. Set from the engine's
+  limits (`Page.Limits.autoplay`); no op changes it (`op_gate`). -/
+  autoplay : Option (Risk.Accepted .audioWithoutActivation) := none
+  /-- The page's sticky activation (HTML "has been activated"). Set by `activate`, which the host
+  calls when its trusted input gives activation; no op changes it (`op_gate`). -/
   activated : Bool := false
   nextCall : Nat := 1
   decodeJobs : Std.HashMap Nat DecodeJob := {}
@@ -313,13 +344,38 @@ def optF64Arg (fs : Array ByteArray) (i : Nat) : Except Int (Option Float) :=
   | none => .ok none
   | some b => if b.size == 0 then .ok none else (f64Arg fs i).map some
 
+/-- `n` binary32 values of `b`, from byte `off`, as one `FloatArray` made in one pass. The reads are
+`u32At`, which gives 0 past the end of `b`; callers check the size first. -/
+def f32sFrom (b : ByteArray) (off n : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity n
+  for i in [0:n] do
+    out := out.push (Float32.ofBits (u32At b (off + 4 * i))).toFloat
+  return out
+
 /-- A binary32 array. -/
 def f32s (b : ByteArray) : Except Int FloatArray :=
   if b.size % 4 != 0 then .error errType
-  else .ok ⟨(Array.range (b.size / 4)).map fun i => (Float32.ofBits (u32At b (4 * i))).toFloat⟩
+  else .ok (f32sFrom b 0 (b.size / 4))
+
+/-- The binary32 bytes of `a`, appended to `out`: four bytes for each value, little-endian, in one
+pass (the values are rounded to binary32 as `f32le` does). -/
+def pushF32s (out : ByteArray) (a : FloatArray) : ByteArray := Id.run do
+  let mut out := out
+  for i in [0:a.size] do
+    let v := (a.get! i).toFloat32.toBits
+    out := out.push v.toUInt8
+    out := out.push (v >>> 8).toUInt8
+    out := out.push (v >>> 16).toUInt8
+    out := out.push (v >>> 24).toUInt8
+  return out
 
 def f32sBytes (a : FloatArray) : ByteArray :=
-  a.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
+  pushF32s (ByteArray.emptyWithCapacity (4 * a.size)) a
+
+/-- The binary32 bytes of every channel, channel by channel (the samples of ops 187 and 195). -/
+def channelsBytes (chans : Array FloatArray) : ByteArray :=
+  let n := chans.foldl (fun n c => n + c.size) 0
+  chans.foldl pushF32s (ByteArray.emptyWithCapacity (4 * n))
 
 def optF32s (fs : Array ByteArray) (i : Nat) : Except Int (Option FloatArray) :=
   match fs[i]? with
@@ -415,7 +471,9 @@ def idlOp (fs : Array ByteArray) : Except Int ByteArray :=
 
 def newContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let nch ← natArg fs 0
-  let len ← natArg fs 1
+  -- An absent length is a context whose length is `null`: it renders in steps and has no end. This
+  -- engine gives it the most frames that `maxSamples` allows; the page shows `length` as null.
+  let len ← (fun l => l.getD (maxSamples / max nch 1)) <$> optNatArg fs 1
   let sr ← f64Arg fs 2
   let q ← optNatArg fs 3
   if nch * len > maxSamples || s.contexts.size ≥ maxContexts then .error errNotSupported
@@ -529,7 +587,7 @@ def paramInfoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteAr
       | none => throw errIndexSize
       | some ps =>
         let now := Automation.frameTime c.state.frame c.sampleRate
-        let v := Automation.valueAt ps.timeline ps.spec.defaultValue now
+        let v := Render.finalValue ps.spec (Automation.valueAt ps.timeline ps.spec.defaultValue now)
         let out := f64le v ++ f64le ps.spec.defaultValue ++ f64le ps.spec.minValue ++
           f64le ps.spec.maxValue ++ ⟨#[if ps.spec.aRate then 1 else 0]⟩
         pure (c, out)
@@ -630,29 +688,38 @@ def setAttrOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
       | _ => throw errType
     pure (c', ByteArray.empty)
 
-/-- A buffer from the fields `channels, length, sampleRate, data`; `none` for null (`channels`
-""). -/
-def bufferArgs (fs : Array ByteArray) (i : Nat) :
+/-- A buffer from the fields `channels, length, sampleRate, data...` from field `i`; `none` for null
+(`channels` ""). `placeholder`: only the dimensions, checked, with silent channels. -/
+def bufferArgs (fs : Array ByteArray) (i : Nat) (placeholder : Bool := false) :
     Except Int (Option Buffer.AudioBuffer) := do
   match ← optNatArg fs i with
   | none => pure none
   | some nch =>
     let len ← natArg fs (i + 1)
     let sr ← f64Arg fs (i + 2)
-    let data := fs.getD (i + 3) ByteArray.empty
+    -- the samples: one argument of all channels, or one argument for each channel (the page does
+    -- not copy the channels into one array: `TypedArray.prototype.set` costs 0.7 microseconds a value)
+    let data := (fs.extract (i + 3) fs.size).foldl (· ++ ·) ByteArray.empty
     if nch * len > maxSamples then throw errNotSupported
-    let b ← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer)
+    if placeholder then
+      -- the dimensions are checked and the buffer is silent; the samples come at `start()`
+      return some (← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer))
+    -- `create` with one frame decides what `create` with `len` frames decides (its test reads the
+    -- length only as `1 ≤ length`), and makes no zero channels that the next lines throw away
+    let b ← lift (Buffer.AudioBuffer.create nch (min len 1) sr |>.mapError Context.Error.ofBuffer)
     if data.size != nch * len * 4 then throw errType
-    let all ← f32s data
-    let chans := (Array.range nch).map fun ch =>
-      (⟨(Array.range len).map fun j => all.data[ch * len + j]!⟩ : FloatArray)
-    pure (some { b with data := chans })
+    let chans := (Array.range nch).map fun ch => f32sFrom data (4 * ch * len) len
+    pure (some { b with length := len, data := chans })
 
 def setBufferOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
     let id ← natArg fs 1
-    let b ← bufferArgs fs 2
-    let c' ← lift (c.setBuffer id b)
+    let mode := strArg fs 2
+    let b ← bufferArgs fs 3 (mode == "2")
+    -- mode "1": acquire the content (`Context.acquireBuffer`); the page sends it at `start()`
+    let c' ← match mode, b with
+      | "1", some buf => lift (c.acquireBuffer id buf)
+      | _, _ => lift (c.setBuffer id b)
     pure (c', ByteArray.empty)
 
 def waveOf (fs : Array ByteArray) (i : Nat) : Except Int Oscillator.PeriodicWave := do
@@ -674,7 +741,7 @@ def checkOp (fs : Array ByteArray) : Except Int ByteArray :=
     let len ← natArg fs 2
     let sr ← f64Arg fs 3
     if nch * len > maxSamples then throw errNotSupported
-    let _ ← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer)
+    let _ ← lift (Buffer.AudioBuffer.create nch (min len 1) sr |>.mapError Context.Error.ofBuffer)
     pure ByteArray.empty
   | "wave" => do
     let _ ← waveOf fs 1
@@ -691,11 +758,14 @@ def endedIds (c : Context.OfflineContext) : List Nat :=
 
 def startRenderingOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
-    let (c', chans) ← lift c.startRendering
+    let quanta ← optNatArg fs 1
+    let (c', chans) ← match quanta with
+      | none => lift c.startRendering
+      | some k => lift (c.renderChunk k)
     let ended := endedIds c'
-    let samples := chans.foldl (fun acc ch => acc ++ f32sBytes ch) ByteArray.empty
+    let samples := channelsBytes chans
     let tail := ended.foldl (fun acc i => acc ++ u32le i) (u32le ended.length)
-    pure (c', u32le c.numberOfChannels ++ u32le c.length ++ samples ++ tail)
+    pure (c', u32le c.numberOfChannels ++ u32le (chans.getD 0 ⟨#[]⟩).size ++ samples ++ tail)
 
 def frequencyResponseOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
@@ -726,7 +796,7 @@ def infoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) 
       ⟨#[if c.rendered then 1 else 0]⟩)
 
 
-/-! ## 190 to 196: real-time contexts, decoding -/
+/-! ## 190 to 195: real-time contexts, decoding -/
 
 /-- Decimal text of a count, as bytes. -/
 def dec (k : Nat) : ByteArray := ofStr (toString k)
@@ -761,7 +831,25 @@ def targetFrames (h : Hint) (rate : Float) : Nat :=
   | .frames n => n
   | .seconds x => min 16384 (max 256 (x * rate).ceil.toUInt64.toNat)
 
-def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+/-- The graph state of a real-time context of sample rate `rate`: a destination of 2 channels,
+length 0 (it is never rendered whole). The control side (op 190) and the rendering side
+(`RenderSide.ofOpen`) both make it with this function. -/
+def rtContext (rate : Float) : Except Int Context.OfflineContext := do
+  let c0 ← lift (Context.OfflineContext.new 2 1 rate)
+  pure { c0 with length := 0 }
+
+/-- Web Audio API 1.1 "allowed to start": the page has sticky activation, or the engine holds the
+permission to start with none (`Risk.audioWithoutActivation`). The one function that decides it,
+so that another way for a page to be trusted changes only this function (owner, 2026-11-26: "In
+future we may have other mechanisms for page trust"). -/
+def allowedToStart (s : State) : Bool := s.autoplay.isSome || s.activated
+
+/-- The state a new real-time context starts in: running when it is allowed to start. -/
+def initialState (s : State) : RtState := if allowedToStart s then .running else .suspended
+
+/-- The checks of op 190, in order: the hint, the callback, the rate, the device and the limit of
+live contexts. Answers the rate, the device's channel count, the target frames and the callback. -/
+def openArgs (s : State) (fs : Array ByteArray) : Except Int (Float × Nat × Nat × Nat) := do
   let hint ← parseHint (fs.getD 0 ByteArray.empty)
   let cb ← natArg fs 2
   let rateField := fs.getD 1 ByteArray.empty
@@ -770,17 +858,45 @@ def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × 
   if !(rate ≥ 3000.0 && rate ≤ 768000.0) then throw errNotSupported
   if s.device.isNone || liveRealtime s ≥ maxLiveRealtime || s.contexts.size ≥ maxContexts then
     throw errNotSupported
-  let c0 ← lift (Context.OfflineContext.new 2 1 rate)
-  let c := { c0 with length := 0 }
+  pure (rate, devCh, targetFrames hint rate, cb)
+
+/-- A new real-time context with graph state `c`, under the next id: its record, with the first
+message for its rendering side, and the answer of op 190. -/
+def addRealtime (s : State) (rate : Float) (devCh target cb : Nat) (c : Context.OfflineContext) :
+    State × ByteArray :=
   let id := s.next
-  let target := targetFrames hint rate
+  let st := initialState s
   let rt : Realtime :=
-    { state := if s.autoplay || s.activated then .running else .suspended
-      maxChannels := devCh, target, callback := cb
-      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target])] }
-  pure ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt,
-                 next := id + 1 },
-        ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
+    { state := st, maxChannels := devCh, target, callback := cb
+      outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target, dec st.code])] }
+  ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt, next := id + 1 },
+   ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
+
+def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
+  let (rate, devCh, target, cb) ← openArgs s fs
+  let c ← rtContext rate
+  pure (addRealtime s rate devCh target cb c)
+
+/-- Says: a real-time context made by op 190 holds the graph state `rtContext` gives for some
+rate, the state the rendering side also starts from (`RenderSide.ofOpen`, with the rate it reads
+from the first message). Does not say: that the two rates are the same number (the first message
+carries the rate as the 8 bytes of a binary64; `#guard`s below). -/
+theorem newAudioContextOp_context (s s' : State) (fs : Array ByteArray) (out : ByteArray)
+    (h : newAudioContextOp s fs = .ok (s', out)) :
+    ∃ rate c, rtContext rate = .ok c ∧ s'.contexts[s.next]? = some c := by
+  unfold newAudioContextOp at h
+  cases ha : openArgs s fs with
+  | error e => simp [ha, bind, Except.bind] at h
+  | ok args =>
+    obtain ⟨rate, devCh, target, cb⟩ := args
+    cases hc : rtContext rate with
+    | error e => simp [ha, hc, bind, Except.bind] at h
+    | ok c =>
+      simp only [ha, hc, bind, Except.bind, pure, Except.pure, Except.ok.injEq] at h
+      refine ⟨rate, c, hc, ?_⟩
+      have h1 : (addRealtime s rate devCh target cb c).1 = s' := by rw [h]
+      rw [← h1]
+      simp [addRealtime]
 
 def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let id ← natArg fs 0
@@ -789,7 +905,7 @@ def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
   if !(verb == "resume" || verb == "suspend" || verb == "close") then throw errType
   if rt.state == .closed then throw errInvalidState
   let call := s.nextCall
-  let wait := verb == "resume" && !(s.autoplay || s.activated)
+  let wait := verb == "resume" && !allowedToStart s
   let rt' : Realtime :=
     { rt with calls := rt.calls.push (call, verb)
               pendingResume := if wait then rt.pendingResume.push call else rt.pendingResume
@@ -837,7 +953,8 @@ def decodeResultOp (s : State) (fs : Array ByteArray) : State × Except Int Byte
       | none => (s, .error errInvalidState)
       | some r => ({ s with decodeJobs := s.decodeJobs.erase job }, r.map decodeAnswer)
 
-/-- Op 196: sticky activation. Each pending `resume` call goes to its context's outbox. -/
+/-- Sticky activation, from the host's trusted input (never from an op, `op_gate`). Each pending
+`resume` call goes to its context's outbox. -/
 def activate (s : State) : State :=
   { s with activated := true
            realtime := s.realtime.map fun id rt =>
@@ -878,6 +995,17 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
              wakeups := if evs.isEmpty then s.wakeups else s.wakeups.push rt.callback }
   | _, _ => s
 
+/-- Plan 13.3: the page has a real-time context that is running, or one with a control call the
+rendering side has not answered (other than a `resume` that waits for activation), or a decode job
+without a result (ops 194 and 195: the engine finishes it on a task, and only a turn collects it).
+While this
+holds the engine asks for a turn at most 25 ms ahead, so the host gives the turns that deliver
+the events. -/
+def needsTurns (s : State) : Bool :=
+  s.realtime.fold (fun b _ rt => b || rt.state == .running ||
+    rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false ||
+  s.decodeJobs.fold (fun b _ j => b || j.result.isNone) false
+
 /-- A sequence of reports, in order. -/
 def applyReports (s : State) (rs : List (Nat × Report)) : State :=
   rs.foldl (fun s (c, r) => applyReport s c r) s
@@ -889,12 +1017,13 @@ def takeOutbox (s : State) : State × Array (Nat × Array (Nat × Array ByteArra
       if rt.outbox.isEmpty then none else some (id, rt.outbox)).toArray)
 
 /-- The decode jobs not yet taken: (job id, sample rate, bytes), in job order. They are marked
-taken. -/
+taken, and the table drops their bytes (the file stays in memory once, with the task). The order is `List.mergeSort`'s (a loop through its `@[csimp]` form; `Array.qsort` recursed
+once per job in its worst case, `tools/lean-tail-recursion-audit.py`). -/
 def takeDecodeJobs (s : State) : State × Array (Nat × Float × ByteArray) :=
   let l := s.decodeJobs.toList.filter fun (_, j) => !j.taken && j.result.isNone
-  let l := l.toArray.qsort (fun a b => a.1 < b.1)
-  ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true } },
-   l.map fun (id, j) => (id, j.rate, j.bytes))
+  let l := l.mergeSort (fun a b => a.1 ≤ b.1)
+  ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true, bytes := ByteArray.empty } },
+   (l.map fun (id, j) => (id, j.rate, j.bytes)).toArray)
 
 /-- Store the result of decode job `job` and queue its callback. A job that does not exist, or
 that has a result, is left alone. -/
@@ -939,7 +1068,6 @@ def run (s : State) (code : Nat) (fs : Array ByteArray) : Except Int (State × B
   | 192 => timeOp s fs
   | 193 => eventsOp s fs
   | 194 => decodeAudioDataOp s fs
-  | 196 => pure (activate s, ByteArray.empty)
   | _ => .error (-2)
 
 /-- The ops whose success is also sent to the rendering side of a real-time context. -/
@@ -958,34 +1086,67 @@ def pushOutbox (s : State) (code : Nat) (fs : Array ByteArray) : State :=
     | none => s
   | .error _ => s
 
-/-- The operations 173 to 196. A failed op leaves the state as it was (except 195 with a stored
-error result); the answer is the error code (negative) or the bytes. -/
-def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+/-- The operations 173 to 195, before `op` gives back the autoplay fields. A failed op leaves the
+state as it was (except 195 with a stored error result); the answer is the error code (negative)
+or the bytes. -/
+def opCore (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   if code = 195 then decodeResultOp s fs
   else
     match run s code fs with
     | .ok (s', out) => ((if outboxCode code then pushOutbox s' code fs else s'), .ok out)
     | .error e => (s, .error e)
 
+/-- The operations 173 to 195 of a page (`opCore`), with `autoplay` and `activated` given back as
+they were: whatever an op does, it can not give the page activation or the permission to start
+with none (`op_gate`). -/
+def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let r := opCore s code fs
+  ({ r.1 with autoplay := s.autoplay, activated := s.activated }, r.2)
+
+/-- Says: no op changes `autoplay` or `activated`, for any code and any arguments, so a page's
+script can not give itself activation or the permission to start with none. Does not say: that
+the host sets them only for the person's input and the person's setting (`activate` is called in
+`WebScripts.performInput`; `autoplay` comes from `Page.Limits.autoplay`, made only in
+`WebScripts.audioLimits`). -/
+theorem op_gate (s : State) (code : Nat) (fs : Array ByteArray) :
+    (op s code fs).1.autoplay = s.autoplay ∧ (op s code fs).1.activated = s.activated :=
+  ⟨rfl, rfl⟩
+
+/-- Says: `op` and `opCore` agree on every field but `autoplay` and `activated`, and give the same
+answer. Does not say: that `opCore` changes those two (it does not; `op` makes it so by
+construction). -/
+theorem op_eq (s : State) (code : Nat) (fs : Array ByteArray) :
+    op s code fs = ({ (opCore s code fs).1 with autoplay := s.autoplay, activated := s.activated },
+      (opCore s code fs).2) := rfl
+
 /-- Says: an op other than 195 that answers an error returns the state it was given. Does not
 say: that an op that succeeds changes the state (a query does not); nor anything about 195, which
 removes a job whose stored result is an error. -/
-theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
-    (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
-  unfold op at *
+theorem opCore_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
+    (hc : code ≠ 195) (h : (opCore s code fs).2 = .error e) : (opCore s code fs).1 = s := by
+  unfold opCore at *
   simp only [hc, if_false] at *
   split at h <;> simp_all
 
-/-- Says: a code outside 173 to 196 answers -2 and leaves the state alone. Does not say: anything
-about the codes inside the range. -/
-theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 196 < code) :
+theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
+    (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
+  have h' : (opCore s code fs).2 = .error e := h
+  have h1 := opCore_error_state s code fs e hc h'
+  show { (opCore s code fs).1 with autoplay := s.autoplay, activated := s.activated } = s
+  rw [h1]
+
+/-- Says: a code outside 173 to 195 answers -2 and leaves the state alone (196, `activate()` until
+2026-11-27, among them). Does not say: anything about the codes inside the range. -/
+theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 195 < code) :
     op s code fs = (s, .error (-2)) := by
   have hr : run s code fs = .error (-2) := by
     unfold run
     split <;> first | omega | rfl
   have hc : code ≠ 195 := by omega
-  unfold op
-  rw [if_neg hc, hr]
+  have hcore : opCore s code fs = (s, .error (-2)) := by
+    unfold opCore
+    rw [if_neg hc, hr]
+  rw [op_eq, hcore]
 
 /-- Says: `withCtx` changes only `contexts`. Does not say: which context. -/
 theorem withCtx_fields (s s' : State) (fs : Array ByteArray) (out : ByteArray)
@@ -1024,14 +1185,14 @@ theorem run_realtime (s s' : State) (code : Nat) (fs : Array ByteArray) (out : B
 /-- Says: a successful op 176 to 179 or 181 to 185 on a real-time context that is not closed
 appends exactly `(code, fs)` to its outbox, and changes no other context's record. Does not say:
 what happens to the graph state (`withCtx_other`), or for a closed context. -/
-theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+theorem opCore_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
     (id : Nat) (rt : Realtime) (hc : outboxCode code = true) (hid : natArg fs 0 = .ok id)
     (hrt : s.realtime[id]? = some rt) (hopen : rt.state ≠ .closed)
-    (h : op s code fs = (s', .ok out)) :
+    (h : opCore s code fs = (s', .ok out)) :
     s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
     ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
   have hn : code ≠ 195 := by unfold outboxCode at hc; simp at hc; omega
-  unfold op at h
+  unfold opCore at h
   rw [if_neg hn] at h
   split at h
   · rename_i s1 o1 hr
@@ -1050,6 +1211,19 @@ theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : Byte
     have : id ≠ id' := fun e => hne e.symm
     simp [Std.HashMap.getElem?_insert, this, hrt1]
   · simp at h
+
+/-- Says: as `opCore_outbox`, for `op`. Does not say: more than that. -/
+theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+    (id : Nat) (rt : Realtime) (hc : outboxCode code = true) (hid : natArg fs 0 = .ok id)
+    (hrt : s.realtime[id]? = some rt) (hopen : rt.state ≠ .closed)
+    (h : op s code fs = (s', .ok out)) :
+    s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
+    ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
+  have h2 : (opCore s code fs).2 = .ok out := congrArg Prod.snd h
+  have h1 : (opCore s code fs).1.realtime = s'.realtime := congrArg (fun p => p.1.realtime) h
+  have hpair : opCore s code fs = ((opCore s code fs).1, .ok out) := Prod.ext rfl h2
+  rw [← h1]
+  exact opCore_outbox s _ code fs out id rt hc hid hrt hopen hpair
 
 /-! ## Theorems of the IO-layer functions -/
 
@@ -1193,7 +1367,10 @@ private def okBytes (r : Except Int ByteArray) : ByteArray := (r.toOption).getD 
 #guard err {} 175 [n 1, n 100, d 100.0] == errNotSupported
 #guard err {} 175 [n 1, n 0, d 44100.0] == errNotSupported
 #guard err {} 175 [n 1, n 100, ByteArray.empty] == errType
-#guard err {} 175 [n 32, n 2000000, d 44100.0] == errNotSupported
+-- Above `maxSamples` (refused before anything is made): 32 channels of 5,000,000 frames, and one
+-- sample more than the limit in one channel.
+#guard err {} 175 [n 32, n 5000000, d 44100.0] == errNotSupported
+#guard err {} 175 [n 1, n (maxSamples + 1), d 44100.0] == errNotSupported
 #guard err st0 189 [n 99] == errType
 #guard err {} 999 [] == -2
 
@@ -1259,19 +1436,19 @@ private def osc : Option State :=
 private def bufBytes : ByteArray := f32le 0.5 ++ f32le (-0.25) ++ f32le 0.125 ++ f32le 1.0
 private def bufRender : Option State :=
   chain st0 [(176, [n 1, t "bufferSource"]), (177, [n 1, n 1, n 0, n 0, n 0, n 0]),
-             (184, [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]), (181, [n 1, n 1])]
+             (184, [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]), (181, [n 1, n 1])]
 #guard (bufRender.bind fun s => (ans s 187 [n 1]).toOption.map fun r =>
     ((samples r 6).take 6, u32At r (8 + 4000))) == some ([0.5, -0.25, 0.125, 1.0, 0.0, 0.0], 1)
 -- A second non-null buffer is refused; null is accepted.
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
-#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty]) == some 0
+#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
+#guard (bufRender.map fun s => err s 184 [n 1, n 1, ByteArray.empty, ByteArray.empty]) == some 0
 -- Wrong byte count; out of range sample rate; a node that is not a buffer source.
 #guard (chain st0 [(176, [n 1, t "bufferSource"])]).map
-  (fun s => (err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes.extract 0 8],
-             err s 184 [n 1, n 1, n 1, n 4, d 10.0, bufBytes])) == some (errType, errNotSupported)
-#guard err st0 184 [n 1, n 0, n 1, n 4, d 44100.0, bufBytes] == errInvalidState
+  (fun s => (err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes.extract 0 8],
+             err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 10.0, bufBytes])) == some (errType, errNotSupported)
+#guard err st0 184 [n 1, n 0, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes] == errInvalidState
 #guard (chain st0 [(176, [n 1, t "gain"])]).map
-  (fun s => err s 184 [n 1, n 1, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
+  (fun s => err s 184 [n 1, n 1, ByteArray.empty, n 1, n 4, d 44100.0, bufBytes]) == some errInvalidState
 
 -- Connect and disconnect.
 #guard (chain st0 [(176, [n 1, t "gain"])]).map
@@ -1438,16 +1615,19 @@ private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
 #guard codeOf (.invalidState "") == -29 && codeOf (.range "") == -21 && codeOf (.type "") == -20
 #guard errEncoding == -30
 
-/-! ### Real-time contexts (ops 190 to 196) -/
+/-! ### Real-time contexts (ops 190 to 195) -/
 
 private def devS : State := { device := some (48000.0, 2) }
+/-- A device and the permission to start with no activation. The tests' own acceptance of
+`Risk.audioWithoutActivation` (skills/lean-risk-flags §5). -/
+private def permitted : State := { devS with autoplay := some (Risk.dangerouslyAccept .audioWithoutActivation) }
 private def rtOf (s : State) (id : Nat) : Realtime := (s.realtime[id]?).getD default
 private def txt (r : Except Int ByteArray) : String := ((r.toOption).map String.fromUTF8!).getD "?"
 private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
-#guard txt (ans { devS with autoplay := true } 190 [t "interactive", ByteArray.empty, n 7]) ==
+#guard txt (ans permitted 190 [t "interactive", ByteArray.empty, n 7]) ==
   "1 48000 2 running"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
   "1 44100 2 running"
@@ -1483,11 +1663,26 @@ private def full : State :=
   let s ← chain devS [(190, [t "playback", ByteArray.empty, n 7])]
   let m := (rtOf s 1).outbox
   pure (m.size, m[0]!.1, m[0]!.2.size, strArg m[0]!.2 0, Float.ofBits (u64At m[0]!.2[1]! 0),
-        strArg m[0]!.2 2, strArg m[0]!.2 3)) == some (1, 190, 4, "1", 48000.0, "2", "4096")
+        strArg m[0]!.2 2, strArg m[0]!.2 3, strArg m[0]!.2 4)) ==
+  some (1, 190, 5, "1", 48000.0, "2", "4096", "0")
+-- The initial state in the first message: running with autoplay.
+#guard ((chain permitted [(190, [t "playback", ByteArray.empty, n 7])]).map fun s =>
+  strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
+-- The rate's 8 bytes give the rate back (the rendering side reads them, `RenderSide.ofOpen`).
+#guard [48000.0, 44100.0, 3000.0, 768000.0, 22050.5].all fun r => Float.ofBits (u64At (f64le r) 0) == r
+-- needsTurns: a running context; a suspended one with no call; a resume waiting for activation;
+-- a suspend not yet answered; a closed context.
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some false
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"])]).map needsTurns == some false
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "suspend"])]).map needsTurns == some true
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map
+  (fun s => needsTurns (applyReport s 1 { stateChanges := #[.closed] })) == some false
+#guard needsTurns {} == false
 
 -- The outbox after a few ops; an offline context beside it is not touched.
 private def rtGraph : Option State :=
-  chain { devS with autoplay := true } [
+  chain permitted [
     (175, [n 1, n 100, d 44100.0]),                                  -- ctx 1, offline
     (190, [t "interactive", ByteArray.empty, n 7]),                  -- ctx 2, real-time
     (176, [n 2, t "oscillator"]), (176, [n 1, t "gain"]),
@@ -1546,7 +1741,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
     nd.params[0]?.map fun p => p.timeline.events.length)) ==
   some (some 2)
 -- Both are sent to the rendering side of a real-time context.
-#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
           (176, [n 1, t "gain"]),
           (179, [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 1.0]),
           (179, [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5])]).map
@@ -1558,7 +1753,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
 #guard err (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).get! 191 [n 1, t "play"] == errType
 -- With autoplay a resume goes to the outbox at once; the call id is answered.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]
   let (s, r) ← (step s 191 #[n 1, t "resume"]).toOption
   let (s, r2) ← (step s 191 #[n 1, t "suspend"]).toOption
   let rt := rtOf s 1
@@ -1566,7 +1761,8 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
         rt.outbox[1]!.2.toList.map (String.fromUTF8! ·), rt.calls.toList.map (·.2),
         rt.pendingResume.size)) ==
   some ("1", "2", [190, 191, 191], ["1", "resume", "1"], ["resume", "suspend"], 0)
--- Without activation a resume waits; 196 releases it into the outbox, once.
+-- Without activation a resume waits; `activate` (the host's trusted input) releases it into the
+-- outbox, once.
 private def waiting : Option State :=
   chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
               (191, [n 1, t "suspend"])]
@@ -1574,22 +1770,34 @@ private def waiting : Option State :=
   some ([190, 191], [1])
 #guard (do
   let s ← waiting
-  let (s, r) ← (step s 196 #[]).toOption
+  let s := activate s
   let rt := rtOf s 1
-  pure (r.size, s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
+  pure (s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
         rt.pendingResume.size, (activate s).realtime[1]?.map (·.outbox.size))) ==
-  some (0, true, [190, 191, 191], ["1", "resume", "1"], 0, some 3)
+  some (true, [190, 191, 191], ["1", "resume", "1"], 0, some 3)
+-- Code 196 is not an op: it answers -2, and the resume still waits.
+#guard (do
+  let s ← waiting
+  let (s', r) := op s 196 #[]
+  pure (r.toOption.isNone, s'.activated, (rtOf s' 1).pendingResume.toList)) == some (true, false, [1])
+-- No op gives activation: after every op of a run of ops, `activated` and `autoplay` are as before
+-- (`op_gate`), here with the ops of a page that makes, resumes and closes a context.
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
+    (176, [n 1, t "oscillator"]), (196, []), (191, [n 1, t "close"])]).isNone
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
+    (176, [n 1, t "oscillator"]), (191, [n 1, t "close"])]).map (fun s => (s.activated, s.autoplay.isSome)) ==
+  some (false, false)
 -- After activation a new context starts running and a resume is not held.
 #guard (do
   let s ← waiting
-  let (s, _) ← (step s 196 #[]).toOption
+  let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
   pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
 private def reported : Option State := do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
             (176, [n 1, t "constantSource"]), (191, [n 1, t "resume"])]
   pure (applyReport s 1 { framesRendered := 24000, framesPlayed := 20000, underruns := 1,
                           latencyFrames := 480, timeMs := 1234.5, ended := #[1],
@@ -1625,7 +1833,7 @@ private def reported : Option State := do
 -- A report with no events queues no wakeup; a rejected call is an event of kind 4 and a state
 -- change sets the state; a context that is not real-time is not changed.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
                                                 (191, [n 1, t "close"])]
   let s1 := applyReport s 1 { framesRendered := 5 }
   let s2 := applyReport s 1 { rejected := #[1], stateChanges := #[.suspended, .closed] }
@@ -1634,7 +1842,7 @@ private def reported : Option State := do
         s3.wakeups.size)) == some (0, [(2, 0), (2, 2), (4, 1)], true, [7], 0)
 -- A closed context refuses control calls.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]
   let s := applyReport s 1 { stateChanges := #[.closed] }
   pure (err s 191 [n 1, t "resume"], err s 191 [n 1, t "suspend"], err s 191 [n 1, t "close"],
         (op s 176 #[n 1, t "gain"]).1.realtime[1]?.map (·.outbox.size),
@@ -1643,7 +1851,7 @@ private def reported : Option State := do
 private def fullClosed : State :=
   (List.range 16).foldl (fun s i =>
     applyReport (op s 190 #[t "interactive", ByteArray.empty, n 1]).1 (i + 1)
-      { stateChanges := #[.closed] }) { devS with autoplay := true }
+      { stateChanges := #[.closed] }) permitted
 #guard err fullClosed 190 [t "interactive", ByteArray.empty, n 1] == 0
 
 -- takeOutbox: the messages, once, in order; then nothing.
@@ -1703,6 +1911,31 @@ private def withJob : Option State :=
 #guard (do
   let s ← chain st0 [(194, [n 1, t "ab", n 3])]
   pure ((takeDecodeJobs s).2[0]!.2.1)) == some 44100.0
+
+-- A pending decode job asks for turns; a finished one does not.
+#guard (do
+  let s ← withJob
+  let (s1, _) := takeDecodeJobs s
+  pure (needsTurns s, needsTurns s1, needsTurns (finishDecode s1 1 (.error errEncoding)))) ==
+  some (true, true, false)
+-- Taken jobs drop their bytes; the job list gives them once.
+#guard (do
+  let s ← withJob
+  let (s1, jobs) := takeDecodeJobs s
+  pure (jobs[0]!.2.2.size, s1.decodeJobs[1]!.bytes.size)) == some (4, 0)
+
+-- The one-pass binary32 readers and writers equal the definitions they replace.
+private def f32Samples : FloatArray :=
+  ⟨#[0.0, -0.0, 1.0, -0.25, 0.1, 3.4028234663852886e38, 1.0e-45, 1.0 / 0.0, -1.0 / 0.0, 0.0 / 0.0, 123456.789]⟩
+#guard f32sBytes f32Samples == f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
+#guard channelsBytes #[f32Samples, ⟨#[0.5]⟩] ==
+  f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty ++ f32le 0.5
+#guard (f32s (f32sBytes f32Samples)).toOption.map (·.size) == some 11
+#guard (f32s (f32sBytes f32Samples)).toOption.map (fun a => a.data.map fun x => x.toFloat32.toBits) ==
+  some (f32Samples.data.map fun x => x.toFloat32.toBits)
+#guard (f32sFrom (f32sBytes f32Samples) 8 3).data ==
+  (Array.range 3).map fun i => (Float32.ofBits (u32At (f32sBytes f32Samples) (8 + 4 * i))).toFloat
+#guard (f32s ⟨#[1, 2, 3]⟩).toOption.isNone
 
 -- Ops 197 to 199 are not ops.
 #guard err devS 197 [] == -2 && err devS 199 [] == -2

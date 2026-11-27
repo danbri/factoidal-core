@@ -33,7 +33,7 @@ function agrees(engine:HTMLEngine){
     if(link.origin===""&&/^https?:$/.test((()=>{try{return new URL(lean.url??"").protocol;}catch{return "";}})()))
       assert(lean.route==="navigate"||lean.route==="refuse",`native web address not in the tab: ${JSON.stringify(lean)}`);
     // settings_only_from_settings.
-    if(lean.route==="command"&&lean.name==="search-engine")assert(link.base.endsWith("/settings.html"),`search engine chosen from ${link.base}`);
+    if(lean.route==="command"&&(lean.name==="search-engine"||lean.name==="permit-audio"))assert(link.base.endsWith("/settings.html"),`${lean.name} given from ${link.base}`);
   }
   assert.equal(differ.length,0,`${differ.length} of ${cases.length} links differ:\n${differ.slice(0,20).join("\n")}`);
   for(const kind of ["page","graph","navigate","outside","system","command","refuse"])assert(kinds[kind]>0,`no ${kind} route`);

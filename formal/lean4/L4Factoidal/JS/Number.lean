@@ -1,5 +1,6 @@
 import L4Factoidal.JS.Lexer
 import L4Factoidal.JS.Ryu
+import L4Factoidal.JS.DyadicFast
 
 /-!
 # L4Factoidal.JS.Number — the Number type's operations (§6.1.6.1, §7.1)
@@ -260,6 +261,36 @@ def dyadic (neg : Bool) (m : Nat) (e : Int) : Float :=
     if e ≥ 0 then XPath4.floatOfParsed (.num false (m * 2 ^ e.toNat) 0)
     else XPath4.floatOfParsed (.num false (m * 5 ^ (-e).toNat) e)
   if neg then -f else f
+
+/-- `dyadic` without the decimal detour: for `1 ≤ m < 2^64` and `-1100 ≤ e < 0`
+round `m / 2^(-e)` directly, so no `5^(-e)` product and no decimal print of
+it. `m >>> 64 == 0` tests `m < 2^64` with no large literal in compiled code. -/
+def dyadicFast (neg : Bool) (m : Nat) (e : Int) : Float :=
+  if e < 0 && -1100 ≤ e && m >>> 64 == 0 && m != 0 then
+    let f := XPath4.fvalToFloat ⟨false, XSD.roundRational 53 (-1022) 1023 m (2 ^ (-e).toNat)⟩
+    if neg then -f else f
+  else dyadic neg m e
+
+/-- Says: `dyadic` and `dyadicFast` are the same function, so the compiler
+may run `dyadicFast`. Does not say: anything about speed. -/
+@[csimp] theorem dyadic_eq_fast : @dyadic = @dyadicFast := by
+  funext neg m e
+  unfold dyadicFast
+  split
+  · rename_i h
+    simp only [Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq, bne_iff_ne, ne_eq,
+      Nat.shiftRight_eq_div_pow, Nat.div_eq_zero_iff] at h
+    obtain ⟨⟨⟨he, he2⟩, hm⟩, hm0⟩ := h
+    have hm' : m < 2 ^ 64 := by omega
+    obtain ⟨k, rfl⟩ : ∃ k : Nat, e = -(k : Int) := ⟨(-e).toNat, by omega⟩
+    have hkn : (-(-(k : Int))).toNat = k := by omega
+    unfold dyadic
+    have hge : ¬ (-(k : Int) ≥ 0) := by omega
+    simp only [hge, if_false, hkn]
+    rw [floatOfParsed_dyadic m k (by omega) hm' (by omega) (by omega)]
+  · rfl
+
+#print axioms dyadic_eq_fast
 
 /-- Number::remainder (§6.1.6.1.6): the result has the sign of the dividend and
 is exact (C `fmod`). -/

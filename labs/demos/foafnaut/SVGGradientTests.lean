@@ -169,13 +169,21 @@ private def textPixel (body : String) (x y : Nat) : List Nat :=
 -- A paint value in error is as if not specified (W3C styling-pres-01-t).
 #guard forgivenPixel "<g fill='lime'><rect width='100' height='100' fill='red !important'/></g>" 50 50 == [0,255,0]
 
+-- https://github.com/danbri/factoidal/issues/1254 (animation of a paint): the animation pass
+-- (`SVGAnimate`) runs it. At 0 ms a to-animation has the underlying value (red); at 500 ms of
+-- 1 s it is half way from red to lime.
+private def animatedSolid := "<solidColor id='g' solid-color='red'><animate attributeName='solid-color' to='lime' dur='1s'/></solidColor>" ++ full
+#guard (forgiven animatedSolid).contains "animation: drawn at 0 ms"
+#guard forgivenPixel animatedSolid 50 50 == [255,0,0]
+#guard (match NativeSVGText.parseWithFonts #[] (svg animatedSolid) 100 100 (time := 500) with
+  | .ok s => let c := s.samplePixel 50 50; [c.r,c.g,c.b].map fun f => (f*255).round.toUInt32.toNat
+  | .error _ => []) == [128,128,0]
+
 -- Expected failures. Each guard states the present wrong result, so the build
 -- fails when the fault is repaired; then state the right result and close the issue.
 -- https://github.com/danbri/factoidal/issues/1260: this thin path must draw 10% grey.
 #guard pixel "<path d='M50.5 0h0.1v100h-0.1z'/>" 50 50 == [255,255,255]
 -- https://github.com/danbri/factoidal/issues/1265: W3C paint-color-05-t wants the colour of the `g`; this is CSS Color 4.
 #guard pixel "<g fill='currentColor' color='lime'><rect width='100' height='100' color='blue'/></g>" 50 50 == [0,0,255]
--- https://github.com/danbri/factoidal/issues/1254: animation of a paint must run.
-#guard (forgiven ("<solidColor id='g' solid-color='red'><animate attributeName='solid-color' to='lime' dur='1s'/></solidColor>" ++ full)).contains "element: animate"
 -- https://github.com/danbri/factoidal/issues/1255: a paint in another document must be fetched.
 #guard (scene "<rect width='100' height='100' fill='url(other.svg#g) lime'/>").isNone

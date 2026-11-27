@@ -19,9 +19,11 @@
 // No host list: no web host goes to the system by itself (owner, 2026-11-16).
 const systemSchemes=['mailto','tel','sms'];
 const builtinPages=new Map([['bookmarks',false],['history',false],['settings',false],['wasm',true],['sparql',true],['console',true],['about',false],['search',true],['accessibility',false]]);
-const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding','liberal','search-engine'];
+const commands=['back','forward','reload','new','close','home','source','theme','zoom','bookmark','unbookmark','pod','sync','sparql-step','classic','encoding','liberal','search-engine','permit-audio'];
 // Commands a link may give only on the Settings page (WebRoute.settingsOnly).
-const settingsOnly=['search-engine'];
+const settingsOnly=['search-engine','permit-audio'];
+// Why a link on another page may not give a settings-only command (WebRoute.settingsOnlyReason).
+const settingsOnlyReason=name=>name==='permit-audio'?'only the Settings page, or the address bar, lets pages make sound before they are used':'only the Settings page, or the address bar, chooses a search engine';
 const special=scheme=>scheme==='http'||scheme==='https'||scheme==='file';
 const noHost='a relative link needs a web page or a local file around it';
 
@@ -98,7 +100,7 @@ const outsideOrPress=(site,url)=>site.outside&&site.outside===url?{route:'system
 // WebRoute.fromPage: a settings-only command from a link on any page but Settings is refused.
 function fromPage(site,base,route){
   if(route.route!=='command'||!settingsOnly.includes(route.name)||base===pageURL(site,'settings'))return route;
-  return {route:'refuse',url:'foafnaut:'+route.name+(route.argument?'/'+route.argument:''),reason:'only the Settings page, or the address bar, chooses a search engine'};
+  return {route:'refuse',url:'foafnaut:'+route.name+(route.argument?'/'+route.argument:''),reason:settingsOnlyReason(route.name)};
 }
 function decide(site,base,kind,url,scheme){
   if(kind==='web'){

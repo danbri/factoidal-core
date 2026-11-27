@@ -62,6 +62,10 @@ import L4Factoidal.SPARQL.ResultsJson
 import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.OWL.QueryEval
 import L4Factoidal.RIF.Saturate
+import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.Store
+import L4Factoidal.Syntax.TurtleChunkFold
+import L4Factoidal.Syntax.NQuadsFast
 
 open L4Factoidal.RDF
 open L4Factoidal.RDF.Canonical
@@ -443,6 +447,47 @@ def rifSaturateDataset (tc : TestCase) (ds : Dataset) :
   | some graph => return .ok { ds with default := graph }
   | none => return .error (.unsupported saturated.diagnostic)
 
+/-- The evaluation path of the W3C query tests
+(https://github.com/danbri/factoidal-core/issues/1183). `false` (the default):
+SELECT and ASK run the reference definitions `evalSelect` and `evalAsk`, so the
+score is that of the specification definitions. `true` (`l4w3c
+--engine=shipped`): they run `Dataflow.shippedEvaluator`, the evaluator of the
+wasm query op, with the indexed backend of the dataset, so the score is that of
+the shipped engine. CONSTRUCT, DESCRIBE and the OWL and RIF regimes take the
+same path in both modes. -/
+initialize shippedEngine : IO.Ref Bool ← IO.mkRef false
+
+/-- Under `--engine=shipped`: the SELECT and ASK queries answered by the shipped
+evaluator, and how many of them the backend runner itself answered
+(`backendSelect?`/`backendAsk?` is `some`; else `shippedRun` falls back to the
+reference definitions). `Main` prints both, so a
+score with no difference can be checked for reach (anti-pattern 28). -/
+initialize shippedCounts : IO.Ref (Nat × Nat) ← IO.mkRef (0, 0)
+
+/-- The answer of the shipped evaluator, built as the wasm op builds it: the
+dataset as a set, the backend of its store record, and `env.dataset` set (section 18.6:
+the backend runners read EXISTS from the environment, as
+`Wasm/Ops/Query.lean` `queryParsedDatasetWith` explains). -/
+def shippedInput (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.EvalInput :=
+  -- The store record of the certified dataset, as the wasm op passes it
+  -- (`dsb.map (·.backend)`); consumers do not build a bare backend
+  -- (tools/assumption-gate.py).
+  let c : CertifiedDataset := ⟨ds.toSet, ds.toSet_isSet⟩
+  { env := { env with dataset := some c.val }, ds := c.val,
+    backend := some (L4Factoidal.Dataflow.LawfulDataset.ofCertified c).backend, query := q }
+
+def shippedAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.Answer :=
+  L4Factoidal.Dataflow.shippedEvaluator.run (shippedInput env ds q)
+
+/-- The backend runner itself answered (`backendSelect?` or `backendAsk?` is
+`some`); otherwise `shippedRun` answered with the reference definitions. -/
+def shippedBackendAnswered (env : EvalEnv) (ds : Dataset) (q : Query) : Bool :=
+  let inp := shippedInput env ds q
+  match q.form with
+  | .ask => (L4Factoidal.Dataflow.backendAsk? inp).isSome
+  | .select _ => (L4Factoidal.Dataflow.backendSelect? inp).isSome
+  | _ => false
+
 /-- One `QueryEvaluationTest` / `CSVResultFormatTest`. `mode` is the
 suite's RDF version; a `.rdf12` suite parses its queries with the
 SPARQL 1.2 grammar. -/
@@ -542,6 +587,12 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   -- install the query's dataset in the environment themselves.
   let env : EvalEnv := { now := some fixedNow, services := services, base := q.base }
   let ordered := q.modifier.orderBy.isSome
+  let shipped ← shippedEngine.get
+  if shipped && !owlRegime then
+    match q.form with
+    | .select _ | .ask =>
+        shippedCounts.modify fun (n, b) => (n + 1, if shippedBackendAnswered env ds q then b + 1 else b)
+    | _ => pure ()
   -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
   -- query fail, and a QueryEvaluationTest names a result, so the test
   -- fails with the library's error (`Query.serviceFailure`).
@@ -552,6 +603,10 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   | .select _, .rows erows csv eordered =>
       let arows := if owlRegime then
                      (L4Factoidal.OWL.QueryEval.evalSelectOwl env ds q).filter rowAllowed
+                   else if shipped then
+                     (match shippedAnswer env ds q with
+                      | .select _ rows => rows
+                      | _ => [])
                    else (evalSelect env ds q).2
       let n := erows.length + arows.length
       return (match compareSelectRows (ordered && eordered) csv erows arows with
@@ -561,7 +616,12 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
             { outcome := .fail s!"solution-bijection budget exceeded ({erows.length} expected rows, {arows.length} actual)",
               budgetExceeded := true, rowsCompared := n })
   | .ask, .boolean b =>
+      -- An answer of the wrong form under --engine=shipped is `!b`, so it fails.
       let a := if owlRegime then L4Factoidal.OWL.QueryEval.evalAskOwl env ds q
+               else if shipped then
+                 (match shippedAnswer env ds q with
+                  | .ask x => x
+                  | _ => !b)
                else evalAsk env ds q
       return (if a == b then { outcome := .pass, rowsCompared := 1 }
               else { outcome := .fail s!"ASK boolean mismatch: expected {b}, got {a}", rowsCompared := 1 })
@@ -842,29 +902,41 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
         match ← readOpt rf with
         | none          => return .ofOutcome (.skip s!"result file missing: {rf}")
         | some expected => k path text expected
+  -- `--engine=shipped` (issue 1183): the Turtle, N-Triples and N-Quads tests
+  -- read with the functions the shipped reader calls (`RDF.Source.parseDocumentRaw`:
+  -- `parseTurtleText`, the statement walk with its fallback; `parseNTriplesDocument`;
+  -- `parseNQuadsFastDocument`), not the strict reference parsers. The expected
+  -- results are still read with the reference N-Triples parser.
+  let shipped ← shippedEngine.get
+  let ttlP := fun (text : String) (base : Option String) (mode : Mode) =>
+    if shipped then L4Factoidal.Syntax.parseTurtleText text base mode else parseTurtle text base mode
+  let ntP := fun (text : String) (mode : Mode) =>
+    if shipped then parseNTriplesDocument text mode else parseNTriples text mode
+  let nqP := fun (text : String) (mode : Mode) =>
+    if shipped then L4Factoidal.Syntax.parseNQuadsFastDocument text mode else parseNQuads text mode
   match tc.testType with
 
   /- ### N-Triples (RDF 1.1 N-Triples §4) -/
   | "TestNTriplesPositiveSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNTriples text mode with
+      match ntP text mode with
       | .ok _    => .pass
       | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestNTriplesNegativeSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNTriples text mode with
+      match ntP text mode with
       | .error _ => .pass
       | .ok g    => .fail s!"should reject but parsed OK ({g.length} triples)")
 
   /- ### N-Quads (RDF 1.1 N-Quads §4) -/
   | "TestNQuadsPositiveSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNQuads text mode with
+      match nqP text mode with
       | .ok _    => .pass
       | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestNQuadsNegativeSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNQuads text mode with
+      match nqP text mode with
       | .error _ => .pass
       | .ok _    => .fail "should reject but parsed OK")
 
@@ -873,20 +945,20 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .ok _    => .pass
         | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestTurtleNegativeSyntax" =>
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .error _ => .pass
         | .ok g    => .fail s!"should reject but parsed OK ({g.length} triples)")
   | "TestTurtleEval" =>
     withActionAndResult fun path text expectedText => do
       let base := fixtureBase assumedBase manifestDir path
-      match parseTurtle text (some base) mode with
+      match ttlP text (some base) mode with
       | .error e => return .ofOutcome (.fail s!"Turtle parse error: {e.msg} (offset {e.pos})")
       | .ok g =>
         match parseNTriples expectedText mode with
@@ -902,7 +974,7 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .error _ => .pass
         | .ok g    => if g.isEmpty then .pass
                       else .fail s!"should produce an eval error but succeeded ({g.length} triples)")

@@ -1,0 +1,46 @@
+# Panic sites in Lean modules that the wasm dispatch reaches by imports
+# (https://github.com/danbri/factoidal-core/issues/1181, P4). Written by
+# `python3 -I tools/lean-panic-sites.py --record`; checked by the same tool.
+# A ratchet: counts must match the tree, and they only go down.
+# modules reached: 937; kinds: partial-def 142, panic 0, index-bang 820, bang-call 314
+# max-total: 1276
+L4Factoidal.CSVW sites=2
+L4Factoidal.Codec sites=44
+L4Factoidal.Cottas sites=15
+L4Factoidal.Crypto sites=197
+L4Factoidal.Dataflow sites=4
+L4Factoidal.EXPath sites=8
+L4Factoidal.FullText sites=2
+L4Factoidal.Geo sites=6
+L4Factoidal.HDT sites=1
+L4Factoidal.HTML sites=70
+L4Factoidal.HTTP sites=14
+L4Factoidal.JSONSchema sites=2
+L4Factoidal.LWS sites=6
+L4Factoidal.Math sites=11
+L4Factoidal.MathML sites=5
+L4Factoidal.Net sites=3
+L4Factoidal.OWL sites=24
+L4Factoidal.Qlvr sites=118
+L4Factoidal.RDF sites=6
+L4Factoidal.RML sites=10
+L4Factoidal.SPARQL sites=1
+L4Factoidal.Schematron sites=1
+L4Factoidal.ShEx sites=21
+L4Factoidal.Storage sites=378
+L4Factoidal.Syntax sites=71
+L4Factoidal.Unicode sites=6
+L4Factoidal.VC sites=2
+L4Factoidal.WHATWG sites=33
+L4Factoidal.WebDAV sites=8
+L4Factoidal.XForms sites=2
+L4Factoidal.XML sites=33
+L4Factoidal.XMPP sites=33
+L4Factoidal.XPath sites=41
+L4Factoidal.XPath4 sites=44
+L4Factoidal.XQuery4 sites=2
+L4Factoidal.XSD sites=1
+L4Factoidal.XSD11 sites=1
+L4Factoidal.XSLT sites=27
+L4Factoidal.XSLT4 sites=14
+Wasm.Ops sites=9

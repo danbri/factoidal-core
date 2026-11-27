@@ -95,6 +95,16 @@ def exBase : String := "http://example.org/dir/doc.ttl"
 #guard ttlToNT "@prefix p: <http://a/> . p:s p:p p:o ." ==
   "<http://a/s> <http://a/p> <http://a/o> .\n"
 #guard ttlFoldMatches "@prefix p: <http://a/> . p:s p:p p:o .\n@prefix p: <http://b/> . p:s p:p p:o ."
+-- A prefix of `e` or `E` and digits is a prefixed name in every position, not
+-- the exponent of a number (PN_PREFIX [167s]; found by the random Turtle
+-- campaign, https://github.com/danbri/factoidal-core/issues/1184).
+#guard ttlToNT "@prefix e2: <http://a/> . e2:s e2:p e2:o ." ==
+  "<http://a/s> <http://a/p> <http://a/o> .\n"
+#guard ttlToNT "@prefix E10: <http://a/> . <http://s> <http://p> E10:o ." ==
+  "<http://s> <http://p> <http://a/o> .\n"
+-- A number with an exponent is still a DOUBLE.
+#guard ttlToNT "<http://s> <http://p> 1e2 ." ==
+  "<http://s> <http://p> \"1e2\"^^<http://www.w3.org/2001/XMLSchema#double> .\n"
 #guard ttlToNT "PREFIX p: <http://a/>\np:s p:p p:o ." ==
   "<http://a/s> <http://a/p> <http://a/o> .\n"
 -- `PREFIX` is case-insensitive; `@prefix` is not.

@@ -301,6 +301,20 @@ negativeSyntax fixtures. Advisory only — disagreements are triaged
 dispositions live in
 `docs/designissues/2026-07-10-shexc-treesitter-grammar-audit.md`.
 
+## Random differential campaigns (https://github.com/danbri/factoidal-core/issues/1184)
+
+`tools/diffcampaign/sparql.py` with `sparql-factoidal.mjs`, workflow `differential-sparql.yml`
+(daily; Factoidal from npm against pyoxigraph). Report the result as "agrees on N of M cases;
+K differ; R refused by both", with both engine versions and the seed.
+
+Before a disagreement is reported as a defect of either engine, check it against the
+specification: where the specification leaves a choice to the implementation, the comparer must
+accept each allowed answer. Cost of not doing this, 2026-11-27: the first run reported 3
+differences of 2,000; all 3 were the ORDER BY order of a simple literal and a language-tagged
+literal, which SPARQL 1.1 section 15.1 does not define. The comparer had compared row sequences
+as if the order were total. It now checks that each engine's order is one that section 15.1
+allows (`term_lt`, `order_ok`, tests in `tests/foundation/test_diff_sparql.py`).
+
 ## Importing external test suites
 
 Policy from

@@ -13,7 +13,7 @@ server on 127.0.0.1 (the native browser), to IndexedDB (the Hub), and to a remot
 Vocabulary: schema.org where it fits (`BookmarkAction`, `ViewAction`, `WebPage`, `url`,
 `name`, `keywords`, `startTime`, `dateModified`), and a small `foafnaut:` namespace for
 the rest (`Settings`, `Session`, `HistoryDay`, `visit`, `from`, `theme`, `textZoom`,
-`classicUI`, `liberal`, `font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
+`classicUI`, `liberal`, `permitAudio`, `font`, `fontFallback`, `remotePod`, `tab`, `activeTab`, `scroll`, `deleted`).
 
 Merge rules:
 * history: one resource per UTC day; its visits are a set. Merge is set union of the
@@ -367,6 +367,10 @@ structure Settings where
   /-- Liberal mode (`WebAccept`, the Settings checkbox "Be liberal in what we accept"): on
   (owner, 2026-11-09) unless a settings document says false. -/
   liberal : Bool := true
+  /-- The Settings switch "Let pages start sound before I use them", the saved form of
+  `--dangerously-permit-audio` (owner, 2026-11-26; `Risk.audioWithoutActivation`): off unless a
+  settings document says true. The window warns when it reads it on. -/
+  permitAudio : Bool := false
   /-- How a page that declares no encoding is read (`WHATWG.Encoding.Sniff.Fallback`):
   "" (detect, the default), "detect", "locale" or an encoding's name. -/
   encoding : String := ""
@@ -387,6 +391,7 @@ def searchStored (v : String) : String :=
 def Settings.doc (s : Settings) : Json :=
   document "foafnaut:Settings" ([("foafnaut:theme", .string s.theme), ("foafnaut:textZoom", num s.textZoom),
     ("foafnaut:classicUI", .bool s.classicUI), ("foafnaut:liberal", .bool s.liberal)] ++
+    (if s.permitAudio then [("foafnaut:permitAudio", .bool true)] else []) ++
     (if s.scripts.isEmpty then [] else [("foafnaut:scripts", .string s.scripts)]) ++
     (if s.encoding.isEmpty then [] else [("foafnaut:defaultEncoding", .string s.encoding)]) ++
     (if s.search.isEmpty then [] else [("foafnaut:searchEngine", .string s.search)]) ++
@@ -399,6 +404,7 @@ def Settings.ofDoc (j : Json) : Settings :=
     classicUI := (match j.field? "foafnaut:classicUI" with | some (.bool b) => b | _ => true),
     scripts := str j "foafnaut:scripts",
     liberal := j.field? "foafnaut:liberal" != some (.bool false), encoding := str j "foafnaut:defaultEncoding",
+    permitAudio := j.field? "foafnaut:permitAudio" == some (.bool true),
     search := searchStored (str j "foafnaut:searchEngine"),
     fonts := strings j "foafnaut:font", fallback := strings j "foafnaut:fontFallback",
     remotePod := str j "foafnaut:remotePod", modified := (millisOf (str j "dateModified")).getD 0 }
@@ -411,6 +417,9 @@ def Settings.ofDoc (j : Json) : Settings :=
 #guard (Settings.ofDoc (Json.object [])).scripts == ""
 #guard (Settings.ofDoc ({scripts := "quickjs"} : Settings).doc).scripts == "quickjs"
 #guard (Settings.ofDoc (Json.object [])).liberal && !(Settings.ofDoc ({liberal := false} : Settings).doc).liberal
+-- Sound before a page is used: off unless a settings document says true; on survives a round trip.
+#guard !(Settings.ofDoc (Json.object [])).permitAudio && (Settings.ofDoc ({permitAudio := true} : Settings).doc).permitAudio
+#guard !(Settings.ofDoc (Json.object [("foafnaut:permitAudio", .string "true")])).permitAudio
 -- The default encoding: detect until a choice; a choice survives a round trip.
 #guard (Settings.ofDoc (Json.object [])).encoding == ""
 -- No search engine until a choice; a choice survives a round trip.
@@ -700,6 +709,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         | some (.string v) => if v.isEmpty || ["bubblepop", "quickjs", "none"].contains v then v else old.scripts
         | _ => old.scripts),
       liberal := (match request.field? "liberal" with | some (.bool b) => b | _ => old.liberal),
+      permitAudio := (match request.field? "permitAudio" with | some (.bool b) => b | _ => old.permitAudio),
       encoding := (match request.field? "encoding" with
         | some (.string v) => encodingSetting v
         | _ => old.encoding),
@@ -735,7 +745,7 @@ def op (name : String) (request : Json) : Except String (Option String) := do
         ("tags", .array (b.tags.map .string)), ("added", num b.added)])),
       ("visits", num vs.length),
       ("settings", match settings with
-        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("encoding", .string s.encoding), ("search", .string s.search), ("fonts", .array (s.fonts.map .string)),
+        | some s => .object [("theme", .string s.theme), ("textZoom", num s.textZoom), ("classicUI", .bool s.classicUI), ("scripts", .string s.scripts), ("liberal", .bool s.liberal), ("permitAudio", .bool s.permitAudio), ("encoding", .string s.encoding), ("search", .string s.search), ("fonts", .array (s.fonts.map .string)),
             ("fallback", .array (s.fallback.map .string)), ("remotePod", .string s.remotePod)]
         | none => .null),
       ("session", match session with

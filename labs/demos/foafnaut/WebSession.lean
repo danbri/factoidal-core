@@ -150,6 +150,8 @@ def serve (s : Session) : BaseIO Unit := do
     | none => (#[],none)
   for job in left do
     job.reply.resolve (refusal job.call "engine session ended")
+  -- The session's real-time audio runs end with it (their sinks close).
+  engineEnd e
 
 /-- A session and its task. The task's closure holds the session; the handle holds both, and
 the session does not hold the task, so freeing the handle frees all of it once the task ends. -/

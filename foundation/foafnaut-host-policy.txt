@@ -1,0 +1,78 @@
+# Foafnaut host policy sites (https://github.com/danbri/factoidal-core/issues/1188, P11).
+# One line per host runtime file of labs/demos/foafnaut: `path sites=N  # reason`.
+# tools/foafnaut-host-policy-audit.py counts the sites (named numeric constants,
+# numeric defaults, thresholds, clamps) and fails when a count differs from its
+# line, so a new host decision changes this file in the same commit, and a
+# decision moved into Lean lowers a count. max-total may only go down.
+# Reasons are a Claude session's reading of 2026-11-27, not owner decisions.
+# "inventory 2026-11-27" means: counted, not yet reviewed for a move to Lean.
+# max-total: 690
+labs/demos/foafnaut/browser-webgpu/app.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/browser-webgpu/server.mjs sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/browser-webgpu/shader-editor.mjs sites=5  # inventory 2026-11-27
+labs/demos/foafnaut/browser-webgpu/shader-scalars.mjs sites=4  # inventory 2026-11-27
+labs/demos/foafnaut/browser-webgpu/smoke.mjs sites=5  # inventory 2026-11-27
+labs/demos/foafnaut/browser-webgpu/worker.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/canvas2d_reference.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/daily_use_server.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/demos_engine.ts sites=7  # inventory 2026-11-27
+labs/demos/foafnaut/fixtures/engine_sessions_answers.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/foafnaut_engine.ts sites=14  # inventory 2026-11-27
+labs/demos/foafnaut/foafnaut_live.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/gpu_pacing.ts sites=43  # GPU submission gate and slow-frame guard (limits, slowMs, duty factor); a candidate for a Lean decision with a theorem on the bound
+labs/demos/foafnaut/gpu_transport.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/host_contract_hub.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/host_parity_paths.ts sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/hub_boot_breakdown.mjs sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/hub_scripts_speed.mjs sites=7  # inventory 2026-11-27
+labs/demos/foafnaut/layer_compositor.ts sites=11  # inventory 2026-11-27
+labs/demos/foafnaut/lean_generator.ts sites=7  # inventory 2026-11-27
+labs/demos/foafnaut/linux_keys.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/native_console.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/native_engine_pool.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_compile.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_document.ts sites=17  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_engine.ts sites=21  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_http_fixture.mjs sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_session.ts sites=8  # inventory 2026-11-27
+labs/demos/foafnaut/native_html_tabs.ts sites=6  # inventory 2026-11-27
+labs/demos/foafnaut/native_net.ts sites=17  # fetch limits (body 64 MiB, 300 s), DNS cache 60 s and 256 entries, pool sizes, default ports; candidate for Lean (Net) with the HttpConnections contract
+labs/demos/foafnaut/native_press.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/native_print.ts sites=5  # inventory 2026-11-27
+labs/demos/foafnaut/native_state.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/native_window.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/policy-demo.mjs sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/real_sites_probe.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/render_plan.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/run_foaf_svg.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/run_html.ts sites=148  # command-line defaults, window and tab limits, sweep bounds, timer and settle intervals; review each for a move to Lean (P11)
+labs/demos/foafnaut/run_svg.ts sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/run_ui.ts sites=4  # inventory 2026-11-27
+labs/demos/foafnaut/scroll_prefetch.ts sites=7  # scroll prefetch margins and frame time; pure rules with tests; candidate for Lean
+labs/demos/foafnaut/sparql_page_shots.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/svg_engine.ts sites=10  # inventory 2026-11-27
+labs/demos/foafnaut/textnaut/grid.ts sites=57  # Textnaut terminal grid geometry (cell sizes, clamps to the terminal)
+labs/demos/foafnaut/textnaut/help.ts sites=9  # inventory 2026-11-27
+labs/demos/foafnaut/textnaut/saver-core.ts sites=16  # inventory 2026-11-27
+labs/demos/foafnaut/textnaut/savers.ts sites=91  # Textnaut screen saver animation parameters (speeds, sizes, frame counts); visual only, no web semantics
+labs/demos/foafnaut/textnaut/screensaver.ts sites=6  # inventory 2026-11-27
+labs/demos/foafnaut/textnaut/textnaut.ts sites=38  # Textnaut terminal front end: key repeat, refresh and size limits
+labs/demos/foafnaut/tor-wasm/deno/socks5.ts sites=4  # inventory 2026-11-27
+labs/demos/foafnaut/tor-wasm/deno/tor-host.ts sites=2  # inventory 2026-11-27
+labs/demos/foafnaut/tor-wasm/deno/tor-state.ts sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/tor-wasm/deno/tor-worker.ts sites=6  # inventory 2026-11-27
+labs/demos/foafnaut/ui_engine.ts sites=7  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/app.mjs sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/check-fonts.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/check-rdf.mjs sites=6  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/check-wasm.mjs sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/document-client.mjs sites=5  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/engine-core.mjs sites=9  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/engine-worker.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/engine.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/script-engine/guest.mjs sites=9  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/script-engine/lean-dom.mjs sites=5  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/script-engine/quickjs.mjs sites=3  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/script-engine/session.mjs sites=10  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/script-engine/worker.mjs sites=1  # inventory 2026-11-27
+labs/demos/foafnaut/web-render/server.mjs sites=9  # inventory 2026-11-27

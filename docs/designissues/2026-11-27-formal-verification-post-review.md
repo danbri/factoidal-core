@@ -147,3 +147,84 @@ that sessions wrote in parallel (the double `escapeString`, CLAUDE.md, 2026-10-1
   OKR batch.
 - It does not say the 16,143 theorems are of low value. It says no list tells a reader which ones
   carry a public claim.
+
+## 6. State after the first night (2026-11-27, approved batch)
+
+Owner, 2026-11-27, verbatim: "Approve, start P1" and "keep working on this all night".
+
+- P1, P2: `foundation/claims.toml`, 13 proposed claims; `tools/claims-gate.py` freezes each
+  statement and each listed specification definition by SHA-256 and runs on every push
+  (workflow "Assurance registers"); `#print axioms` per claim runs after the Lean build.
+- P3: PR https://github.com/danbri/factoidal-core/pull/1192 (3 witnesses; 4 claims with a
+  reason and no witness, two of them because their hypotheses are unproved named assumptions).
+- P4: `tools/lean-panic-sites.py`: 1,276 panic sites in the 937 modules the wasm reaches by
+  imports (142 `partial def`, 820 `xs[i]!`, 314 other `name!` calls, no `panic!`). A panic in
+  compiled Lean returns a default value, so each is a place where a wrong answer can return
+  silently.
+- P5: `tools/assurance-manifest.py`; 60 of 156 entry points map to a stage that a claim names
+  (35 of them through `shippedEvaluator`, under two unproved assumptions). Builds side:
+  https://github.com/danbri/factoidal-builds/pull/71.
+- P6: finding: `l4w3c` scores the reference definitions `evalSelect`/`evalAsk`, so the
+  SPARQL 1.1 score is a specification score; no runner checked the shipped evaluator against the
+  W3C expected results. PR https://github.com/danbri/factoidal-core/pull/1195 adds
+  `--engine=shipped`.
+- P7: daily SPARQL campaign against Oxigraph. Seed 3: agrees on 4,889 of 5,000. The remaining
+  differences are `!=` between literals of different kinds:
+  https://github.com/danbri/factoidal-core/issues/1194.
+- P8 to P11: label and release-note lines; theorem count (15,441 general, 951 closed-value
+  tests); `tools/lean-lemma-index.py`; Foafnaut host policy ratchet (690 sites in 124 files).
+
+Errors of this work, recorded per iron rule 14: the first campaign comparer treated ORDER BY as
+a total order (skills/test-suites, "Random differential campaigns"); a workflow with a YAML error
+was pushed because its check was on a separate line (hazard 47); the shared declaration reader
+did not end at `partial def` (hazard 48).
+
+## 7. Reader campaigns: results and third-party defects (2026-11-27)
+
+Workflow `differential-sparql.yml`, 5,000 random documents per format, Factoidal (npm latest
+and the newest web build of `main`) against pyoxigraph 0.5.13; comparison by RDFC-1.0 canonical
+form.
+
+- Turtle and TriG: the first runs agreed on 1,988 and 1,895 of 5,000. Every non-agreement
+  came from one Factoidal defect: a prefixed name with prefix `e` and digits (`e2:c`) in object
+  position was read as the number `e2`. Fixed by https://github.com/danbri/factoidal-core/pull/1204;
+  the W3C Turtle suite has no case for it (313 of 313 pass with and without the fix).
+- RDF/XML (run https://github.com/danbri/factoidal-core/actions/runs/45941688425): agrees on
+  3,900 of 5,000; 1,100 the same up to the namespace declarations inside `rdf:XMLLiteral`
+  values; 0 other differences.
+
+Third-party behaviour found (owner rule: recorded here, not reported upstream):
+
+- pyoxigraph 0.5.13 refuses `xml:lang=""` in RDF/XML ("A subtag should not be empty"). RDF/XML
+  permits it: an empty `xml:lang` removes the language in scope. Workaround: the generator does
+  not write it.
+- pyoxigraph 0.5.13 writes every in-scope namespace declaration into an `rdf:XMLLiteral` from
+  `rdf:parseType="Literal"`. My reading of RDF 1.1 XML Syntax (section 7.2.17) is that the value
+  is the exclusive canonical form, which keeps only the visibly used declarations, as Factoidal
+  does. To check against the W3C `rdfms-xml-literal-namespaces` tests. Workaround: the comparer
+  counts these documents apart.
+
+## 8. Defects found by the campaigns, first night (2026-11-27)
+
+The W3C suites pass in full for every one of these paths (SPARQL 1.1: 650 of 650; Turtle 313 of
+313; N-Triples 70 of 70; N-Quads 87 of 87), so none of these defects was visible before.
+
+- Turtle and TriG: a prefixed name with prefix `e` and digits in object position was read as a
+  number. Fixed: https://github.com/danbri/factoidal-core/pull/1204.
+- N-Triples and N-Quads accept two statements on one line:
+  https://github.com/danbri/factoidal-core/issues/1209 (expected-failure test).
+- SPARQL EXISTS: a literal substituted into a subject position leaves the variable free:
+  https://github.com/danbri/factoidal-core/issues/1210 (cause in `substPatternSubject`;
+  expected-failure tests).
+- SPARQL SUM and AVG of an unbound variable give 0, not an error:
+  https://github.com/danbri/factoidal-core/issues/1211 (expected-failure tests).
+- To check, not yet a defect: `!=` between a simple literal and a number
+  (https://github.com/danbri/factoidal-core/issues/1194); white space between `^^` and the
+  datatype IRI in N-Triples (item 2 of issue 1209).
+
+Differences where Factoidal follows the specification on a Claude session's reading and
+Oxigraph 0.5.13 does not (recorded here, not reported upstream): duplicates of alternative
+paths and of negated property sets with an inverse part (SPARQL 1.1 evaluates them as a union);
+zero-length paths with a constant end; `xml:lang=""` and the namespace declarations of
+`rdf:XMLLiteral` in RDF/XML (section 7). The order of MAX over literals of different kinds is
+left to the implementation.
