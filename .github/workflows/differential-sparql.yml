@@ -36,6 +36,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -58,8 +60,18 @@ jobs:
           python3 tools/diffcampaign/sparql.py gen --seed "$SEED" --n "$N" --out "$T/cases.jsonl"
           python3 tools/diffcampaign/sparql.py oxigraph "$T/cases.jsonl" --out "$T/ox.jsonl"
           node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fd.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs"
+          echo "npm @factoidal/core (latest):" | tee -a "$GITHUB_STEP_SUMMARY"
           python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fd.jsonl" --keep "$T/disagreements" --json "$T/summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
+          # The newest web build of a main ancestor (danbri/factoidal-builds), so a fix shows
+          # before it is released. A missing build is reported, not a failure.
+          if GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1; then
+            echo "web build of main ($(grep -oE 'build-[0-9a-f]{12}-web' "$T/fetch.log" | head -1)):" | tee -a "$GITHUB_STEP_SUMMARY"
+            node tools/diffcampaign/sparql-factoidal.mjs "$T/cases.jsonl" "$T/fdm.jsonl" "$PWD/npm/factoidal/index.mjs"
+            python3 tools/diffcampaign/sparql.py compare "$T/cases.jsonl" "$T/ox.jsonl" "$T/fdm.jsonl" --keep "$T/disagreements-main" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no web build of main fetched" | tee -a "$GITHUB_STEP_SUMMARY"; tail -5 "$T/fetch.log"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -67,6 +79,7 @@ jobs:
           path: |
             ${{ runner.temp }}/summary.json
             ${{ runner.temp }}/disagreements
+            ${{ runner.temp }}/disagreements-main
             ${{ runner.temp }}/both-refused
 
   turtle:
@@ -74,6 +87,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -93,8 +108,15 @@ jobs:
           T="$RUNNER_TEMP"
           python3 tools/diffcampaign/turtle.py gen --seed "$SEED" --n "$N" --out "$T/tcases.jsonl"
           python3 tools/diffcampaign/turtle.py oxigraph "$T/tcases.jsonl" --out "$T/tox.jsonl"
+          echo "npm @factoidal/core (latest):" | tee -a "$GITHUB_STEP_SUMMARY"
           node tools/diffcampaign/turtle-factoidal.mjs "$T/tcases.jsonl" "$T/tox.jsonl" "$T/fd/node_modules/@factoidal/core/index.mjs" --keep "$T/turtle-disagreements" --json "$T/turtle-summary.json" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
+          if GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1; then
+            echo "web build of main ($(grep -oE 'build-[0-9a-f]{12}-web' "$T/fetch.log" | head -1)):" | tee -a "$GITHUB_STEP_SUMMARY"
+            node tools/diffcampaign/turtle-factoidal.mjs "$T/tcases.jsonl" "$T/tox.jsonl" "$PWD/npm/factoidal/index.mjs" --keep "$T/turtle-disagreements-main" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no web build of main fetched" | tee -a "$GITHUB_STEP_SUMMARY"; tail -5 "$T/fetch.log"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -102,3 +124,4 @@ jobs:
           path: |
             ${{ runner.temp }}/turtle-summary.json
             ${{ runner.temp }}/turtle-disagreements
+            ${{ runner.temp }}/turtle-disagreements-main
