@@ -23,6 +23,10 @@ from eth_account import Account
 from mnemonic import Mnemonic
 
 
+# The Lean executables refuse to touch secrets without this flag (EthereumWallet/Keys/Risk.lean).
+RISK_FLAG = "--dangerously-enable-variable-time-secrets"
+
+
 def compare(field, ours, theirs, mismatches, case):
     if ours != theirs:
         mismatches.append((case, field))
@@ -34,7 +38,7 @@ def derive_check(keys_exe, per_size):
     Account.enable_unaudited_hdwallet_features()
     english = Mnemonic("english")
     entropies = [secrets.token_bytes(size) for size in (16, 20, 24, 28, 32) for _ in range(per_size)]
-    out = subprocess.run([keys_exe, "--derive"], input="".join(e.hex() + "\n" for e in entropies),
+    out = subprocess.run([keys_exe, RISK_FLAG, "--derive"], input="".join(e.hex() + "\n" for e in entropies),
                          capture_output=True, text=True, check=True).stdout.split("\n")
     matched = {"mnemonic": 0, "masterXprv": 0, "address0": 0, "address1": 0}
     mismatches = []
@@ -60,60 +64,45 @@ def derive_check(keys_exe, per_size):
 
 
 def keystore_check(keystore_exe, rounds):
-    result = {"cases": rounds, "theirsDecryptedByUs": 0, "oursDecryptedByThem": 0,
-              "wrongPasswordRefusedByUs": 0, "pbkdf2DecryptedByUs": 0, "mismatches": []}
+    """The reference library makes keystores; our executable must accept the right password
+    and refuse a wrong one (key derivation and MAC). Decryption, and keystores made by us,
+    are not compared: the repository has no implementation of the keystore's cipher."""
+    result = {"cases": rounds, "scryptPasswordAcceptedByUs": 0, "pbkdf2PasswordAcceptedByUs": 0,
+              "wrongPasswordRefusedByUs": 0,
+              "oursDecryptedByThem": "not run: no AES-128-CTR provider in the tree",
+              "mismatches": []}
+
+    def verify(ks_path, pw_path):
+        return subprocess.run([keystore_exe, RISK_FLAG, "--verify-password-file", ks_path, pw_path],
+                              capture_output=True, text=True)
+
     with tempfile.TemporaryDirectory() as tmp:
         os.chmod(tmp, 0o700)
         for case in range(rounds):
             key = secrets.token_bytes(32)
             password = secrets.token_urlsafe(18)
             pw_path = os.path.join(tmp, "pw")
+            wrong_path = os.path.join(tmp, "pw-wrong")
             ks_path = os.path.join(tmp, "ks.json")
             with open(pw_path, "w") as f:
                 f.write(password)
-            # Reference library encrypts (scrypt, n = 4096), we decrypt.
-            with open(ks_path, "w") as f:
-                json.dump(Account.encrypt(key, password, kdf="scrypt", iterations=4096), f)
-            ours = subprocess.run([keystore_exe, "--decrypt-file", ks_path, pw_path],
-                                  capture_output=True, text=True).stdout.strip()
-            if ours == key.hex():
-                result["theirsDecryptedByUs"] += 1
-            else:
-                result["mismatches"].append((case, "scrypt decrypt"))
-            # A wrong password must be refused with macMismatch.
-            with open(pw_path, "w") as f:
+            with open(wrong_path, "w") as f:
                 f.write(password + "x")
-            refused = subprocess.run([keystore_exe, "--decrypt-file", ks_path, pw_path],
-                                     capture_output=True, text=True)
-            if refused.returncode != 0 and "macMismatch" in refused.stdout:
+            for kdf, iterations, field in (("scrypt", 4096, "scryptPasswordAcceptedByUs"),
+                                           ("pbkdf2", 2000, "pbkdf2PasswordAcceptedByUs")):
+                with open(ks_path, "w") as f:
+                    json.dump(Account.encrypt(key, password, kdf=kdf, iterations=iterations), f)
+                ours = verify(ks_path, pw_path)
+                if ours.returncode == 0 and ours.stdout.strip() == "OK":
+                    result[field] += 1
+                else:
+                    result["mismatches"].append((case, kdf + " right password"))
+            # The last keystore written (PBKDF2), with a wrong password: refused with macMismatch.
+            refused = verify(ks_path, wrong_path)
+            if refused.returncode == 1 and "macMismatch" in refused.stdout:
                 result["wrongPasswordRefusedByUs"] += 1
             else:
                 result["mismatches"].append((case, "wrong password"))
-            with open(pw_path, "w") as f:
-                f.write(password)
-            # Reference library encrypts with PBKDF2 (c = 2000), we decrypt.
-            with open(ks_path, "w") as f:
-                json.dump(Account.encrypt(key, password, kdf="pbkdf2", iterations=2000), f)
-            ours = subprocess.run([keystore_exe, "--decrypt-file", ks_path, pw_path],
-                                  capture_output=True, text=True).stdout.strip()
-            if ours == key.hex():
-                result["pbkdf2DecryptedByUs"] += 1
-            else:
-                result["mismatches"].append((case, "pbkdf2 decrypt"))
-            # We encrypt (salt and IV supplied here, as the host would), the library decrypts.
-            secret_path = os.path.join(tmp, "secret")
-            with open(secret_path, "w") as f:
-                f.write(key.hex())
-            made = subprocess.run([keystore_exe, "--encrypt-file", secret_path, pw_path,
-                                   secrets.token_hex(32), secrets.token_hex(16), "4096", "8", "1"],
-                                  capture_output=True, text=True).stdout
-            try:
-                if bytes(Account.decrypt(json.loads(made), password)) == key:
-                    result["oursDecryptedByThem"] += 1
-                else:
-                    result["mismatches"].append((case, "our keystore, their decrypt"))
-            except Exception as error:  # the library's own refusal; no secret in its type name
-                result["mismatches"].append((case, "our keystore refused: " + type(error).__name__))
     return result
 
 
@@ -125,8 +114,9 @@ def main():
     report["passed"] = (not d["mismatches"] and d["controlDetected"]
                         and all(v == d["cases"] for v in d["matched"].values())
                         and not k["mismatches"]
-                        and all(k[f] == k["cases"] for f in ("theirsDecryptedByUs", "oursDecryptedByThem",
-                                                             "wrongPasswordRefusedByUs", "pbkdf2DecryptedByUs")))
+                        and all(k[f] == k["cases"] for f in ("scryptPasswordAcceptedByUs",
+                                                             "pbkdf2PasswordAcceptedByUs",
+                                                             "wrongPasswordRefusedByUs")))
     print(json.dumps(report))
     return 0 if report["passed"] else 1
 

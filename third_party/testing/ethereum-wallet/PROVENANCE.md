@@ -23,7 +23,8 @@ any of these keys, mnemonics or passwords for anything of value.
 Only the `english` entry of `bip-0039/vectors.json` is used so far; the other eleven
 languages need their wordlists and Unicode NFKD, which are later work.
 
-Vectors from RFC 6070 (PBKDF2-HMAC-SHA1 is not used; the SHA-256 and SHA-512 PBKDF2
-vectors come from RFC 7914 section 11 and from the BIP-39 seeds), RFC 7914 (scrypt,
-Salsa20/8, BlockMix, ROMix), RFC 4231 (HMAC) and FIPS 197 / NIST SP 800-38A (AES-128,
-CTR) are short and are written out in the test modules with their section numbers.
+Vectors from RFC 7914 (scrypt, Salsa20/8, BlockMix, ROMix, and section 11's
+PBKDF2-HMAC-SHA256), RFC 4231 (HMAC) and the RIPEMD-160 paper are short and are written
+out in the test modules with their section numbers. PBKDF2-HMAC-SHA512 is covered by the
+BIP-39 seeds. RFC 6070 (PBKDF2-HMAC-SHA1) is not used: the wallet has no SHA-1 PBKDF2.
+There are no AES vectors because the tree has no AES (skills/aes-hardware-only).

@@ -1,3 +1,4 @@
+import EthereumWallet.Keys.Risk
 import EthereumWallet.Keys.Bip39Theorems
 import EthereumWallet.Keys.Bip39Seed
 import EthereumWallet.Keys.Bip32Theorems
@@ -14,8 +15,9 @@ import EthereumWallet.Keys.KeystoreAxioms
 | `Keys/Pbkdf2` | PBKDF2 over HMAC-SHA-512 and HMAC-SHA-256, bounded |
 | `Keys/Bip32*` | BIP-32 master, private and public child keys, paths, xprv / xpub; BIP-44 path for Ethereum |
 | `Keys/Address` | address of a public point; ERC-55 checksum encoding and strict validation |
-| `Keys/Scrypt`, `Salsa`, `Aes` | scrypt (RFC 7914) with a memory bound, AES-128-CTR |
-| `Keys/Keystore*`, `Json` | Web3 Secret Storage v3: decrypt, encrypt, JSON |
+| `Keys/Scrypt`, `Salsa` | scrypt (RFC 7914) with a memory bound |
+| `Keys/Keystore*`, `Json` | Web3 Secret Storage v3: key derivation, MAC and password check, JSON; AES-128-CTR only through a provider (none in the tree, see below) |
+| `Keys/Risk` | the risk token every secret-taking entry point asks for |
 | `Keys/Ripemd160`, `Base58` | for extended-key fingerprints and text |
 | `Keys/Hash`, `Keys/Curve` | the only places that reach Keccak-256 and secp256k1 |
 
@@ -29,6 +31,15 @@ import EthereumWallet.Keys.KeystoreAxioms
   Keccak and the curve are `EVMCleanroom` modules; the rest is in this directory.
   Published vectors and the BIP-39 wordlist (specification data) are under
   `third_party/testing/ethereum-wallet`.
+* No AES. The repository allows only verified hardware AES and no hand-written one
+  (skills/aes-hardware-only, gate `tools/aes-gate.py`). Keystore v3 needs AES-128-CTR
+  for its last step, so that step goes through a provider record (`CtrCipher`) and the
+  tree has no provider: a keystore's password can be checked (KDF and MAC), its
+  plaintext cannot be recovered and new keystores cannot be made until the owner decides
+  where AES-128-CTR comes from. This is recorded as open.
+* Off by default. Every entry point that takes a secret asks for the risk token of
+  `Keys/Risk.lean` (skills/lean-risk-flags); the executables refuse without
+  `--dangerously-enable-variable-time-secrets`.
 
 ## Constant time
 
@@ -36,9 +47,9 @@ Nothing here is claimed to be constant-time.
 
 * **Not constant-time, known.** Private keys, entropy and Base58 payloads are Lean `Nat`s:
   arbitrary-precision (GMP), with timing that depends on the values. Secret-to-public
-  derivation (`Secp.pubOfSecret`) is a double-and-add loop branching on key bits. AES uses
-  an S-box table indexed by secret bytes. scrypt indexes memory by secret-dependent
-  values (by design). BIP-39 word lookup and digit conversion depend on the entropy.
+  derivation (`Secp.pubOfSecret`) is a double-and-add loop branching on key bits. scrypt
+  indexes memory by secret-dependent values (by design). BIP-39 word lookup and digit
+  conversion depend on the entropy.
 * **Fixed-width word code, not measured.** SHA-256, SHA-512, HMAC, PBKDF2, Keccak and
   RIPEMD-160 have no secret-dependent branches or indices at source level. The Lean
   compiler, the C compiler and the runtime are trusted; no machine-level timing was measured.
@@ -50,8 +61,7 @@ caches. It is not hardened against local side channels.
 
 ## Where secrets live, and for how long
 
-Passwords, mnemonics, entropy, seeds, private keys, chain codes, derived keys, AES key
-schedules, keystreams and plaintext are ordinary immutable Lean heap values (`ByteArray`,
+Passwords, mnemonics, entropy, seeds, private keys, chain codes and derived keys are ordinary immutable Lean heap values (`ByteArray`,
 `String`, `Nat`, lists). They live until the last reference is dropped, then the runtime
 frees the memory without clearing it; the allocator may keep and reuse the pages, and
 intermediate copies are made freely (appends, slices, big-number temporaries). There is
@@ -65,11 +75,11 @@ Proved (theorem names and axioms are printed by the theorem modules and by
 `KeystoreAxioms.lean`): BIP-39 `parse` accepts exactly what `generate` produces and
 returns its entropy; the refusals (lengths, counts, unknown words, checksum, over-long
 input); the BIP-32 invalid-child decision and the shape of derived keys; PBKDF2 and scrypt
-parameter bounds, refused before any allocation; the keystore MAC is checked before AES
-and a mismatch yields no plaintext; AES-CTR is its own inverse; strict ERC-55 acceptance
-implies the text is the checksummed form.
+parameter bounds, refused before any allocation; the keystore MAC is checked before the
+cipher provider is consulted and a mismatch yields no plaintext, for every provider;
+strict ERC-55 acceptance implies the text is the checksummed form.
 
-Tested against published vectors, not proved: that the hash, KDF, cipher and curve
+Tested against published vectors, not proved: that the hash, KDF and curve
 functions compute the standard ones; that public child derivation agrees with private
 (that needs the curve's group law); JSON reading and writing.
 -/

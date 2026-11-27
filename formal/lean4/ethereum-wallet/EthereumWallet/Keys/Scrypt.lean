@@ -1,5 +1,6 @@
 import L4Factoidal.Crypto.Hmac
 import EthereumWallet.Keys.Salsa
+import EthereumWallet.Keys.Risk
 
 /-
 scrypt (RFC 7914 sections 5 and 6) over the repository's pure PBKDF2-HMAC-SHA-256.
@@ -22,7 +23,8 @@ Tested only (RFC 7914 vectors, `KeystoreTests`): that the bytes are scrypt's.
 Constant time: the index into `V` depends on the password by design (that is
 scrypt); word operations are fixed-width `UInt32`; no `Nat` holds secret data
 (only sizes, counts and the index `j`, which is secret-dependent and is used as
-an array offset). Password, the `p` blocks and `V` live in ordinary Lean heap
+an array offset). `scrypt` therefore takes the risk token of `Risk.lean`.
+Password, the `p` blocks and `V` live in ordinary Lean heap
 objects until the runtime frees them; nothing is zeroised.
 -/
 
@@ -107,8 +109,9 @@ def scryptCore (password salt : ByteArray) (ps : ScryptParams) : ByteArray :=
   pbkdf2Sha256 password b' 1 ps.dkLen
 
 /-- scrypt (RFC 7914 section 6). Refuses bad or over-limit parameters before
-    allocating anything. -/
-def scrypt (password salt : ByteArray) (ps : ScryptParams) : Except ScryptError ByteArray :=
+    allocating anything. Takes the risk token: the password is a secret and
+    this code is not constant-time (`Risk.lean`). -/
+def scrypt (_ : SecretRisk) (password salt : ByteArray) (ps : ScryptParams) : Except ScryptError ByteArray :=
   match ps.check with
   | .error e => .error e
   | .ok () =>
@@ -129,19 +132,19 @@ theorem check_over_limit (ps : ScryptParams) (h : scryptMaxBytes < ps.memoryByte
     Says: `scrypt` answers `.error .memoryLimit`, without reaching `scryptCore`,
     when `128 * r * N + 128 * r * p` is above `scryptMaxBytes`.
     Does not say: that the limit suits a given machine. -/
-theorem scrypt_refuses_over_limit (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_over_limit (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (h : scryptMaxBytes < 128 * ps.r * ps.n + 128 * ps.r * ps.p) :
-    scrypt password salt ps = .error .memoryLimit := by
+    scrypt risk password salt ps = .error .memoryLimit := by
   have hc := check_over_limit ps (by simpa [ScryptParams.memoryBytes] using h)
   simp [scrypt, hc]
 
 /-- Kind: resource refusal.
     Says: `V` alone above the limit (`128 * r * N`) is refused the same way.
     Does not say: anything about parameters at or below the limit. -/
-theorem scrypt_refuses_large_n (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_large_n (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (h : scryptMaxBytes < 128 * ps.r * ps.n) :
-    scrypt password salt ps = .error .memoryLimit :=
-  scrypt_refuses_over_limit password salt ps (by omega)
+    scrypt risk password salt ps = .error .memoryLimit :=
+  scrypt_refuses_over_limit risk password salt ps (by omega)
 
 /-- Kind: resource bound.
     Says: a passed check means memory within the limit, `r` and `p` positive,
@@ -174,8 +177,8 @@ theorem check_ok_bound (ps : ScryptParams) (h : ps.check = .ok ()) :
     Says: if `scrypt` answers `.ok`, the parameters were within every bound of
     `check_ok_bound`; in particular `V` and the blocks fit in `scryptMaxBytes`.
     Does not say: that the answer is the scrypt function of RFC 7914 (tested). -/
-theorem scrypt_ok_bound (password salt : ByteArray) (ps : ScryptParams) (dk : ByteArray)
-    (h : scrypt password salt ps = .ok dk) :
+theorem scrypt_ok_bound (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams) (dk : ByteArray)
+    (h : scrypt risk password salt ps = .ok dk) :
     128 * ps.r * ps.n + 128 * ps.r * ps.p ≤ scryptMaxBytes ∧ 0 < ps.r ∧ 0 < ps.p ∧
       2 ≤ ps.n ∧ ps.n &&& (ps.n - 1) = 0 ∧ 0 < ps.dkLen ∧ ps.dkLen ≤ scryptMaxDkLen := by
   cases hc : ps.check with
@@ -185,8 +188,8 @@ theorem scrypt_ok_bound (password salt : ByteArray) (ps : ScryptParams) (dk : By
 /-- Kind: size.
     Says: an `.ok dk` answer has exactly `dkLen` bytes (`scrypt` checks it).
     Does not say: that the `.error .internal` branch is unreachable. -/
-theorem scrypt_ok_size (password salt : ByteArray) (ps : ScryptParams) (dk : ByteArray)
-    (h : scrypt password salt ps = .ok dk) : dk.size = ps.dkLen := by
+theorem scrypt_ok_size (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams) (dk : ByteArray)
+    (h : scrypt risk password salt ps = .ok dk) : dk.size = ps.dkLen := by
   cases hc : ps.check with
   | error e => simp [scrypt, hc] at h
   | ok u =>
@@ -199,25 +202,25 @@ theorem scrypt_ok_size (password salt : ByteArray) (ps : ScryptParams) (dk : Byt
 /-- Kind: refusal.
     Says: a failed check is `scrypt`'s answer, whatever the password and salt.
     Does not say: which check failed. -/
-theorem scrypt_check_error (password salt : ByteArray) (ps : ScryptParams) (e : ScryptError)
-    (h : ps.check = .error e) : scrypt password salt ps = .error e := by
+theorem scrypt_check_error (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams) (e : ScryptError)
+    (h : ps.check = .error e) : scrypt risk password salt ps = .error e := by
   simp [scrypt, h]
 
 /-- Kind: refusal.
     Says: within the memory limit, `r = 0` is refused with `.zeroR`.
     Does not say: anything else. -/
-theorem scrypt_refuses_zero_r (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_zero_r (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (hm : ps.memoryBytes ≤ scryptMaxBytes) (h : ps.r = 0) :
-    scrypt password salt ps = .error .zeroR := by
+    scrypt risk password salt ps = .error .zeroR := by
   apply scrypt_check_error
   simp [ScryptParams.check, Nat.not_lt_of_ge hm, h]
 
 /-- Kind: refusal.
     Says: within the memory limit and with `r > 0`, `p = 0` is refused with `.zeroP`.
     Does not say: anything else. -/
-theorem scrypt_refuses_zero_p (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_zero_p (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (hm : ps.memoryBytes ≤ scryptMaxBytes) (hr : ps.r ≠ 0) (h : ps.p = 0) :
-    scrypt password salt ps = .error .zeroP := by
+    scrypt risk password salt ps = .error .zeroP := by
   apply scrypt_check_error
   simp [ScryptParams.check, Nat.not_lt_of_ge hm, hr, h]
 
@@ -225,10 +228,10 @@ theorem scrypt_refuses_zero_p (password salt : ByteArray) (ps : ScryptParams)
     Says: within the memory limit and with `r, p > 0`, an `N` below 2 or with
     `N &&& (N - 1) ≠ 0` is refused with `.invalidN`.
     Does not say: anything else. -/
-theorem scrypt_refuses_bad_n (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_bad_n (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (hm : ps.memoryBytes ≤ scryptMaxBytes) (hr : ps.r ≠ 0) (hp : ps.p ≠ 0)
     (h : ps.n < 2 ∨ ps.n &&& (ps.n - 1) ≠ 0) :
-    scrypt password salt ps = .error .invalidN := by
+    scrypt risk password salt ps = .error .invalidN := by
   apply scrypt_check_error
   simp [ScryptParams.check, Nat.not_lt_of_ge hm, hr, hp, h]
 
@@ -236,11 +239,11 @@ theorem scrypt_refuses_bad_n (password salt : ByteArray) (ps : ScryptParams)
     Says: with the other parameters accepted, `dkLen = 0` or
     `dkLen > scryptMaxDkLen` is refused with `.invalidDkLen`.
     Does not say: anything else. -/
-theorem scrypt_refuses_dkLen (password salt : ByteArray) (ps : ScryptParams)
+theorem scrypt_refuses_dkLen (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
     (hm : ps.memoryBytes ≤ scryptMaxBytes) (hr : ps.r ≠ 0) (hp : ps.p ≠ 0)
     (hn : ¬(ps.n < 2 ∨ ps.n &&& (ps.n - 1) ≠ 0))
     (h : ps.dkLen = 0 ∨ scryptMaxDkLen < ps.dkLen) :
-    scrypt password salt ps = .error .invalidDkLen := by
+    scrypt risk password salt ps = .error .invalidDkLen := by
   apply scrypt_check_error
   simp only [ScryptParams.check, Nat.not_lt_of_ge hm, hr, hp, if_false, if_neg hn, if_pos h]
 

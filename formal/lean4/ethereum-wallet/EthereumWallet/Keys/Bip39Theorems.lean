@@ -22,8 +22,8 @@ theorem wordChars_length (i : Nat) : (wordChars i).length ≤ 8 := by
     Says: for entropy of 16, 20, 24, 28 or 32 bytes (the only lengths `generate` accepts),
     parsing the generated sentence returns exactly that entropy.
     Does not say: that `sha256` is SHA-256, or anything about timing or memory hygiene. -/
-theorem parse_generate (entropy : ByteArray) (sentence : String)
-    (h : generate entropy = .ok sentence) : parse sentence = .ok entropy := by
+theorem parse_generate (risk : SecretRisk) (entropy : ByteArray) (sentence : String)
+    (h : generate risk entropy = .ok sentence) : parse risk sentence = .ok entropy := by
   unfold generate at h
   by_cases hv : entropy.size % 4 = 0 ∧ 16 ≤ entropy.size ∧ entropy.size ≤ 32
   · have hg := generateWords_ok entropy hv
@@ -58,17 +58,17 @@ theorem parse_generate (entropy : ByteArray) (sentence : String)
 /-- Kind: refusal.
     Says: entropy that is not 16, 20, 24, 28 or 32 bytes is refused with its length.
     Does not say: that the entropy is random; that is the host's duty. -/
-theorem generate_refuses_length (entropy : ByteArray)
+theorem generate_refuses_length (risk : SecretRisk) (entropy : ByteArray)
     (h : ¬ (entropy.size % 4 = 0 ∧ 16 ≤ entropy.size ∧ entropy.size ≤ 32)) :
-    generate entropy = .error (.entropyLength entropy.size) := by
+    generate risk entropy = .error (.entropyLength entropy.size) := by
   unfold generate generateWords
   rw [if_neg h]
 
 /-- Kind: totality on valid input.
     Says: every entropy of a valid length has a mnemonic. -/
-theorem generate_accepts (entropy : ByteArray)
+theorem generate_accepts (risk : SecretRisk) (entropy : ByteArray)
     (h : entropy.size % 4 = 0 ∧ 16 ≤ entropy.size ∧ entropy.size ≤ 32) :
-    ∃ sentence, generate entropy = .ok sentence := by
+    ∃ sentence, generate risk entropy = .ok sentence := by
   unfold generate
   rw [generateWords_ok entropy h]
   exact ⟨_, rfl⟩
@@ -76,8 +76,9 @@ theorem generate_accepts (entropy : ByteArray)
 /-- Kind: refusal (resource bound).
     Says: a sentence of more than 512 characters is refused before it is split.
     Does not say: that building the character list is free (it is linear in the input). -/
-theorem parse_too_long (sentence : String) (h : maxSentenceChars < sentence.toList.length) :
-    parse sentence = .error .sentenceTooLong := by
+theorem parse_too_long (risk : SecretRisk) (sentence : String)
+    (h : maxSentenceChars < sentence.toList.length) :
+    parse risk sentence = .error .sentenceTooLong := by
   unfold parse
   rw [if_pos h]
 
@@ -142,8 +143,8 @@ theorem join_split : ∀ (cs : List Char), joinWords (splitWords cs) = cs
     With `parse_generate`: `parse s = .ok e` if and only if `generate e = .ok s`.
     Does not say: that sentences with other spacing or case, which other tools may accept,
     are wrong; they are refused here and the caller may normalise first. -/
-theorem parse_sound (sentence : String) (entropy : ByteArray)
-    (h : parse sentence = .ok entropy) : generate entropy = .ok sentence := by
+theorem parse_sound (risk : SecretRisk) (sentence : String) (entropy : ByteArray)
+    (h : parse risk sentence = .ok entropy) : generate risk entropy = .ok sentence := by
   unfold parse at h
   by_cases hl : maxSentenceChars < sentence.toList.length
   · rw [if_pos hl] at h; cases h

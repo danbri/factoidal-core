@@ -1,4 +1,5 @@
 import L4Factoidal.Crypto.Hmac
+import EthereumWallet.Keys.Risk
 
 /-!
 # PBKDF2 (RFC 8018 section 5.2) over HMAC-SHA-512 and HMAC-SHA-256
@@ -86,13 +87,14 @@ def blocks (prf : ByteArray → ByteArray) (salt : ByteArray) (iterations : Nat)
   | count + 1, index, acc =>
     blocks prf salt iterations count (index + 1) (acc ++ block prf salt iterations index)
 
-/-- PBKDF2 without parameter checks; `hLen` is the PRF output size and must not be 0. -/
+/-- PBKDF2 without parameter checks; `hLen` is the PRF output size and must not be 0.
+Internal: it takes no risk token; call it only from an entry point that took one. -/
 def raw (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
     (iterations dkLen : Nat) : ByteArray :=
   (blocks prf salt iterations ((dkLen + hLen - 1) / hLen) 1 ByteArray.empty).extract 0 dkLen
 
-/-- PBKDF2 with the parameter bounds checked first. -/
-def derive (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
+/-- PBKDF2 with the parameter bounds checked first. The PRF closes over the password. -/
+def derive (_ : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
     (iterations dkLen : Nat) : Except Error ByteArray :=
   if iterations = 0 then .error .zeroIterations
   else if maxIterations < iterations then .error (.tooManyIterations iterations)
@@ -101,32 +103,35 @@ def derive (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
   else .ok (raw prf hLen salt iterations dkLen)
 
 /-- PBKDF2-HMAC-SHA-512. -/
-def hmacSha512 (password salt : ByteArray) (iterations dkLen : Nat) : Except Error ByteArray :=
-  derive (HmacKey.ofSha512 password).mac512 64 salt iterations dkLen
+def hmacSha512 (risk : SecretRisk) (password salt : ByteArray) (iterations dkLen : Nat) :
+    Except Error ByteArray :=
+  derive risk (HmacKey.ofSha512 password).mac512 64 salt iterations dkLen
 
 /-- PBKDF2-HMAC-SHA-256. -/
-def hmacSha256 (password salt : ByteArray) (iterations dkLen : Nat) : Except Error ByteArray :=
-  derive (HmacKey.ofSha256 password).mac256 32 salt iterations dkLen
+def hmacSha256 (risk : SecretRisk) (password salt : ByteArray) (iterations dkLen : Nat) :
+    Except Error ByteArray :=
+  derive risk (HmacKey.ofSha256 password).mac256 32 salt iterations dkLen
 
 /-- Kind: refusal. Says: zero iterations are refused. -/
-theorem derive_zero_iterations (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
-    (dkLen : Nat) : derive prf hLen salt 0 dkLen = .error .zeroIterations := by
+theorem derive_zero_iterations (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat)
+    (salt : ByteArray) (dkLen : Nat) :
+    derive risk prf hLen salt 0 dkLen = .error .zeroIterations := by
   simp [derive]
 
 /-- Kind: refusal (work bound).
     Says: more than `maxIterations` iterations are refused, before any hashing.
     Does not say: how long `maxIterations` iterations take on a given machine. -/
-theorem derive_too_many (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
-    (iterations dkLen : Nat) (h : maxIterations < iterations) :
-    derive prf hLen salt iterations dkLen = .error (.tooManyIterations iterations) := by
+theorem derive_too_many (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat)
+    (salt : ByteArray) (iterations dkLen : Nat) (h : maxIterations < iterations) :
+    derive risk prf hLen salt iterations dkLen = .error (.tooManyIterations iterations) := by
   have h0 : iterations ≠ 0 := by intro h0; rw [h0] at h; exact absurd h (by decide)
   simp [derive, h0, h]
 
 /-- Kind: refusal (memory bound).
     Says: a derived key of more than `maxDkLen` bytes is refused. -/
-theorem derive_too_long (prf : ByteArray → ByteArray) (hLen : Nat) (salt : ByteArray)
-    (iterations dkLen : Nat) (h : maxDkLen < dkLen) :
-    (∃ e, derive prf hLen salt iterations dkLen = .error e) := by
+theorem derive_too_long (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat)
+    (salt : ByteArray) (iterations dkLen : Nat) (h : maxDkLen < dkLen) :
+    (∃ e, derive risk prf hLen salt iterations dkLen = .error e) := by
   unfold derive
   have h0 : dkLen ≠ 0 := by intro h0; rw [h0] at h; exact absurd h (by decide)
   by_cases h1 : iterations = 0
@@ -138,8 +143,9 @@ theorem derive_too_long (prf : ByteArray → ByteArray) (hLen : Nat) (salt : Byt
 /-- Kind: bound on accepted parameters.
     Says: an accepted derivation used between 1 and `maxIterations` iterations and
     asked for between 1 and `maxDkLen` bytes. -/
-theorem derive_ok_bounds (prf : ByteArray → ByteArray) (hLen : Nat) (salt out : ByteArray)
-    (iterations dkLen : Nat) (h : derive prf hLen salt iterations dkLen = .ok out) :
+theorem derive_ok_bounds (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat)
+    (salt out : ByteArray) (iterations dkLen : Nat)
+    (h : derive risk prf hLen salt iterations dkLen = .ok out) :
     0 < iterations ∧ iterations ≤ maxIterations ∧ 0 < dkLen ∧ dkLen ≤ maxDkLen := by
   unfold derive at h
   by_cases h1 : iterations = 0

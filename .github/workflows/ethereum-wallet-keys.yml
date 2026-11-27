@@ -1,6 +1,6 @@
 name: Ethereum wallet keys
 # Keys area of the stand-alone package formal/lean4/ethereum-wallet (EthereumWallet/Keys/*):
-# BIP-39, BIP-32/44, ERC-55 addresses, keystore v3 (scrypt, PBKDF2, AES-128-CTR).
+# BIP-39, BIP-32/44, ERC-55 addresses, keystore v3 (scrypt, PBKDF2, MAC; no AES in the tree).
 # Its own file so that it does not touch ethereum-wallet.yml from another branch; the
 # steps can move into that workflow's keys block once both are on main.
 # No step sends anything to an Ethereum network. Secrets in logs: none; the only keys,
@@ -30,6 +30,9 @@ jobs:
     timeout-minutes: 60
     env:
       LEAN_NUM_THREADS: '2'
+      # The key code is not constant-time; its executables refuse without this flag
+      # (EthereumWallet/Keys/Risk.lean, skills/lean-risk-flags).
+      RISK: '--dangerously-enable-variable-time-secrets'
     defaults:
       run:
         shell: bash
@@ -51,6 +54,15 @@ jobs:
           if grep -nE '@\[\s*(extern|implemented_by)|^\s*(unsafe|partial)\s+def|\bnative_decide\b|^\s*axiom\s|IO\.Process|\bSocket\b' EthereumWallet/Keys.lean EthereumWallet/Keys/*.lean; then
             echo "banned construct, process or network use in the keys modules"; exit 1
           fi
+          # The risk is accepted by name in exactly four places: the four executables' flag paths.
+          test "$(grep -c 'Risk.dangerouslyAccept \.variableTimeSecrets' EthereumWallet/Keys/KeysTestMain.lean)" = 1
+          test "$(grep -c 'Risk.dangerouslyAccept \.variableTimeSecrets' EthereumWallet/Keys/KeysBenchMain.lean)" = 1
+          test "$(grep -c 'Risk.dangerouslyAccept \.variableTimeSecrets' EthereumWallet/Keys/KeystoreTestMain.lean)" = 1
+          test "$(grep -c 'Risk.dangerouslyAccept \.variableTimeSecrets' EthereumWallet/Keys/KeystoreBenchMain.lean)" = 1
+          test "$(cat EthereumWallet/Keys.lean EthereumWallet/Keys/*.lean | grep -c 'Risk.dangerouslyAccept \.variableTimeSecrets')" = 4
+      - name: No hand-written AES (repository gate)
+        working-directory: .
+        run: python3 tools/aes-gate.py
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: formal/lean4/ethereum-wallet
@@ -90,7 +102,7 @@ jobs:
                     "axiomsUsed": sorted({x for a in keys.values() for x in a})}
           json.dump({**report, "reports": keys}, open(".lake/keys-evidence/axioms.json", "w"), indent=2)
           print(json.dumps(report))
-          assert not missing and not unlisted and not bad and len(keys) >= 88 and "sorryAx" not in log, report
+          assert not missing and not unlisted and not bad and len(keys) >= 94 and "sorryAx" not in log, report
           PY
       - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
         working-directory: .
@@ -123,32 +135,37 @@ jobs:
         run: |
           set -euo pipefail
           ulimit -v 2097152   # 2 GiB of address space is far more than these need
-          /usr/bin/time -v .lake/build/bin/wallet-keys-tests > .lake/keys-evidence/keys-tests.txt 2> .lake/keys-evidence/keys-tests.time
+          # Without the risk flag the program refuses (exit 2) and runs nothing.
+          set +e; .lake/build/bin/wallet-keys-tests > /tmp/refused.txt 2>&1; code=$?; set -e
+          test "$code" = 2; grep -q '^refused' /tmp/refused.txt; ! grep -q PASS /tmp/refused.txt
+          /usr/bin/time -v .lake/build/bin/wallet-keys-tests $RISK > .lake/keys-evidence/keys-tests.txt 2> .lake/keys-evidence/keys-tests.time
           tail -1 .lake/keys-evidence/keys-tests.txt
           grep -c '^PASS' .lake/keys-evidence/keys-tests.txt
           test "$(grep -c '^PASS' .lake/keys-evidence/keys-tests.txt)" -ge 247
           ! grep -q '^FAIL' .lake/keys-evidence/keys-tests.txt
           rss=$(awk '/Maximum resident set size/ {print $NF}' .lake/keys-evidence/keys-tests.time)
           echo "peak resident: $rss KiB"; test "$rss" -lt 262144   # memory bound: 256 MiB
-      - name: 'Keystore tests, all levels: RFC 7914 (incl. N=1048576, 1 GiB), FIPS 197, SP 800-38A, geth vectors at 262144 rounds'
+      - name: 'Keystore tests, all levels: RFC 7914 (incl. N=1048576, 1 GiB), geth vectors at 262144 rounds (KDF and MAC), JSON'
         run: |
           set -euo pipefail
           ulimit -v 6291456   # hard backstop: 6 GiB of address space
-          /usr/bin/time -v .lake/build/bin/wallet-keystore-tests --full > .lake/keys-evidence/keystore-tests.txt 2> .lake/keys-evidence/keystore-tests.time
+          set +e; .lake/build/bin/wallet-keystore-tests --full > /tmp/refused.txt 2>&1; code=$?; set -e
+          test "$code" = 2; ! grep -q PASS /tmp/refused.txt
+          /usr/bin/time -v .lake/build/bin/wallet-keystore-tests $RISK --full > .lake/keys-evidence/keystore-tests.txt 2> .lake/keys-evidence/keystore-tests.time
           tail -1 .lake/keys-evidence/keystore-tests.txt
           grep -c '^PASS' .lake/keys-evidence/keystore-tests.txt
-          test "$(grep -c '^PASS' .lake/keys-evidence/keystore-tests.txt)" -ge 97
+          test "$(grep -c '^PASS' .lake/keys-evidence/keystore-tests.txt)" -ge 110
           ! grep -q '^FAIL\|^SKIP' .lake/keys-evidence/keystore-tests.txt
           rss=$(awk '/Maximum resident set size/ {print $NF}' .lake/keys-evidence/keystore-tests.time)
           echo "peak resident: $rss KiB"; test "$rss" -lt 3145728   # memory bound: 3 GiB (largest case 1 GiB)
       - name: 'Negative control of the runners: a failing case makes the run fail'
         run: |
           set -euo pipefail
-          # An unreadable keystore and a wrong password must both give a non-zero exit.
+          # An unreadable keystore gives a non-zero exit.
           printf 'not json' > /tmp/bad.json; printf 'x' > /tmp/pw
-          if .lake/build/bin/wallet-keystore-tests --decrypt-file /tmp/bad.json /tmp/pw; then echo "accepted junk"; exit 1; fi
+          if .lake/build/bin/wallet-keystore-tests $RISK --verify-password-file /tmp/bad.json /tmp/pw; then echo "accepted junk"; exit 1; fi
           # A wrong entropy length is reported as an error line by the derive mode.
-          printf '00\n' | .lake/build/bin/wallet-keys-tests --derive | grep -q '^ERROR'
+          printf '00\n' | .lake/build/bin/wallet-keys-tests $RISK --derive | grep -q '^ERROR'
       - name: 'Oracle: mnemonic, master key, addresses and keystores against reference libraries, fresh material (test oracle only)'
         run: |
           set -euo pipefail
@@ -157,15 +174,38 @@ jobs:
           /tmp/oracle/bin/python3 scripts/keys-oracle-check.py .lake/build/bin/wallet-keys-tests .lake/build/bin/wallet-keystore-tests 20 \
             | tee .lake/keys-evidence/oracle.json
           python3 -c 'import json; x=json.load(open(".lake/keys-evidence/oracle.json")); assert x["passed"] and x["derive"]["cases"]==100 and x["keystore"]["cases"]==6, x'
-      - name: 'Timing (reported, not gated): BIP-39 seed, BIP-32 per level, keystore decrypt at scrypt n=262144'
+      - name: 'Timing (reported, not gated): BIP-39 seed, BIP-32 per level, keystore password check at scrypt n=262144'
         run: |
           set -euo pipefail
           nproc; grep -m1 'model name' /proc/cpuinfo
-          .lake/build/bin/wallet-keys-bench 30 | tee .lake/keys-evidence/bench-keys.txt
+          .lake/build/bin/wallet-keys-bench $RISK 30 | tee .lake/keys-evidence/bench-keys.txt
           ulimit -v 4194304
-          /usr/bin/time -v .lake/build/bin/wallet-keystore-bench 7 --standard --wiki 2> .lake/keys-evidence/bench-keystore.time | tee .lake/keys-evidence/bench-keystore.txt
+          /usr/bin/time -v .lake/build/bin/wallet-keystore-bench $RISK 7 --standard --wiki 2> .lake/keys-evidence/bench-keystore.time | tee .lake/keys-evidence/bench-keystore.txt
           awk '/Maximum resident set size/ {print "peak resident: " $NF " KiB"}' .lake/keys-evidence/bench-keystore.time
           ! grep -q 'correct=false' .lake/keys-evidence/bench-keys.txt .lake/keys-evidence/bench-keystore.txt
+      - name: 'No input-sized native recursion in the emitted C of the keys library'
+        working-directory: .
+        run: |
+          set -euo pipefail
+          # tools/lean-tail-recursion-audit.py knows only the main library's symbol prefix, so
+          # audit a copy of the IR with this package's prefix rewritten to it.
+          rm -rf /tmp/keys-ir && cp -r formal/lean4/ethereum-wallet/.lake/build/ir /tmp/keys-ir
+          find /tmp/keys-ir -name '*.c' -exec sed -i 's/lp_ethereum__wallet_/lp_l4factoidal_/g' {} +
+          python3 tools/lean-tail-recursion-audit.py --ir-dir /tmp/keys-ir --lean-dir formal/lean4/ethereum-wallet \
+            --json formal/lean4/ethereum-wallet/.lake/keys-evidence/tail-audit.json | tee formal/lean4/ethereum-wallet/.lake/keys-evidence/tail-audit.txt
+          python3 - <<'PY'
+          import json
+          a = json.load(open("formal/lean4/ethereum-wallet/.lake/keys-evidence/tail-audit.json"))
+          rows = [(r["decl"], r["class"], r.get("file", "")) for r in a["rows"]]
+          print(rows)
+          # Allowed: plain definitions the compiler replaces by proved loops (csimp), and what
+          # is outside the keys library (its test modules; L4Factoidal's own SHA-2 helper).
+          library = [r for r in rows if "/Keys/" in r[2] and "Tests" not in r[2] and "Main" not in r[2]]
+          assert all(c == "replaced" for _, c, _ in library), library
+          assert {d for d, _, _ in library} == {"EthereumWallet_Keys_Bip39_joinWords",
+              "EthereumWallet_Keys_Bip39_lookupAll", "EthereumWallet_Keys_Bip39_splitWords"}, library
+          assert a["cycles"] == [] and a["csimp_unresolved"] == [] and a["cfiles"] >= 20, a["cfiles"]
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

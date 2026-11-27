@@ -21,30 +21,30 @@ def seedIterations : Nat := 2048
 def isAscii (b : ByteArray) : Bool := b.foldl (fun ok x => ok && x < 128) true
 
 /-- The 64-byte seed for a mnemonic and passphrase given as NFKD-normalised UTF-8. -/
-def seedOfNormalized (mnemonic passphrase : ByteArray) : ByteArray :=
+def seedOfNormalized (_ : SecretRisk) (mnemonic passphrase : ByteArray) : ByteArray :=
   Pbkdf2.raw (HmacKey.ofSha512 mnemonic).mac512 64 ("mnemonic".toUTF8 ++ passphrase)
     seedIterations 64
 
 /-- The 64-byte seed for an ASCII mnemonic and ASCII passphrase. -/
-def seed (mnemonic passphrase : String) : Except Error ByteArray :=
+def seed (risk : SecretRisk) (mnemonic passphrase : String) : Except Error ByteArray :=
   if isAscii mnemonic.toUTF8 && isAscii passphrase.toUTF8 then
-    .ok (seedOfNormalized mnemonic.toUTF8 passphrase.toUTF8)
+    .ok (seedOfNormalized risk mnemonic.toUTF8 passphrase.toUTF8)
   else .error .notAscii
 
 /-- Kind: refusal.
     Says: a mnemonic or passphrase with a non-ASCII byte is refused, never hashed as it is.
     Does not say: that ASCII input needs no other preparation by the caller. -/
-theorem seed_not_ascii (mnemonic passphrase : String)
+theorem seed_not_ascii (risk : SecretRisk) (mnemonic passphrase : String)
     (h : (isAscii mnemonic.toUTF8 && isAscii passphrase.toUTF8) = false) :
-    seed mnemonic passphrase = .error .notAscii := by
+    seed risk mnemonic passphrase = .error .notAscii := by
   unfold seed
   rw [if_neg (by rw [h]; exact Bool.false_ne_true)]
 
 /-- Kind: equality with the checked form.
     Says: the seed is what the bounds-checked PBKDF2 returns for 2048 rounds and 64 bytes. -/
-theorem seedOfNormalized_eq (mnemonic passphrase : ByteArray) :
-    Pbkdf2.hmacSha512 mnemonic ("mnemonic".toUTF8 ++ passphrase) 2048 64
-      = .ok (seedOfNormalized mnemonic passphrase) := by
+theorem seedOfNormalized_eq (risk : SecretRisk) (mnemonic passphrase : ByteArray) :
+    Pbkdf2.hmacSha512 risk mnemonic ("mnemonic".toUTF8 ++ passphrase) 2048 64
+      = .ok (seedOfNormalized risk mnemonic passphrase) := by
   rfl
 
 end EthereumWallet.Keys.Bip39

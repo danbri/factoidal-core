@@ -1,5 +1,6 @@
 import L4Factoidal.Crypto.SHA2
 import EthereumWallet.Keys.Bip39English
+import EthereumWallet.Keys.Risk
 
 /-!
 # BIP-39 mnemonics (English): entropy to words and back
@@ -26,7 +27,8 @@ unknown words and checksum mismatches are refused; whatever `parse` accepts is e
 what `generate` produces for the entropy it returns.
 
 Not proved: that `sha256` is SHA-256 (tested against published vectors), and nothing about
-timing. Not constant-time: the entropy passes through `Nat` arithmetic (GMP, variable-time)
+timing. The entry points `generate`, `parse` and `isValid` take the risk token of
+`Keys/Risk.lean`; the functions they are built from are internal and take none. Not constant-time: the entropy passes through `Nat` arithmetic (GMP, variable-time)
 and list operations whose timing depends on the data. The entropy, the indices and the
 words are ordinary immutable heap values; they are freed by reference counting when the
 caller drops them and are not zeroised.
@@ -866,20 +868,20 @@ theorem joinWords_length : ∀ (ws : List (List Char)), (∀ w ∈ ws, w.length 
 def maxSentenceChars : Nat := 512
 
 /-- The mnemonic sentence for the given entropy (16, 20, 24, 28 or 32 bytes). -/
-def generate (entropy : ByteArray) : Except Error String :=
+def generate (_ : SecretRisk) (entropy : ByteArray) : Except Error String :=
   match generateWords entropy with
   | .ok ws => .ok (String.ofList (joinWords ws))
   | .error e => .error e
 
 /-- A mnemonic sentence to its entropy. Strict: lower-case words of the English list,
 one space between words, nothing else. -/
-def parse (sentence : String) : Except Error ByteArray :=
+def parse (_ : SecretRisk) (sentence : String) : Except Error ByteArray :=
   if maxSentenceChars < sentence.toList.length then .error .sentenceTooLong
   else parseWords (splitWords sentence.toList)
 
 /-- True when `sentence` is a valid English mnemonic. -/
-def isValid (sentence : String) : Bool :=
-  match parse sentence with
+def isValid (risk : SecretRisk) (sentence : String) : Bool :=
+  match parse risk sentence with
   | .ok _ => true
   | .error _ => false
 

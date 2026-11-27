@@ -22,7 +22,8 @@ inductive Error where
 def ofPub (p : Secp.Pub) : ByteArray := (keccak256 (Secp.xyBytes p)).extract 12 32
 
 /-- The address of a secret scalar; `none` for a scalar outside `1 .. n-1`. -/
-def ofSecret (k : Nat) : Option ByteArray := (Secp.pubOfSecret k).map ofPub
+def ofSecret (risk : SecretRisk) (k : Nat) : Option ByteArray :=
+  (Secp.pubOfSecret risk k).map ofPub
 
 /-- Lower-case hex of a byte string as ASCII bytes. -/
 def hexLowerBytes (b : ByteArray) : ByteArray := (toHex b).toUTF8

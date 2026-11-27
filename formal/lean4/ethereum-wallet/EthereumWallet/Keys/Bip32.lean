@@ -24,7 +24,9 @@ the curve module does not prove; the BIP-32 vectors test it), and nothing about 
 SHA-512, RIPEMD-160 or the curve arithmetic beyond their vectors.
 
 Not constant-time: private keys are `Nat`s (GMP, variable-time) and go through
-`Secp.pubOfSecret`, a double-and-add loop that branches on key bits. Keys and chain codes
+`Secp.pubOfSecret`, a double-and-add loop that branches on key bits. Every function here
+that takes or returns a private key takes the risk token of `Keys/Risk.lean`; public
+derivation, paths and fingerprints work on public data and take none. Keys and chain codes
 are immutable heap values, freed by reference counting when dropped, never zeroised.
 -/
 
@@ -83,7 +85,7 @@ def masterOfI (i : ByteArray) : Except Error ExtPriv :=
   else .ok ⟨bytesToNatBE (i.extract 0 32), i.extract 32 64, 0, zeroBytes 4, 0⟩
 
 /-- Master key: `I = HMAC-SHA512("Bitcoin seed", seed)`. -/
-def master (seed : ByteArray) : Except Error ExtPriv :=
+def master (_ : SecretRisk) (seed : ByteArray) : Except Error ExtPriv :=
   if seed.size < 16 ∨ 64 < seed.size then .error (.seedLength seed.size)
   else masterOfI (hmacSha512 "Bitcoin seed".toUTF8 seed)
 
@@ -98,7 +100,7 @@ def childKey? (il parentKey : Nat) : Option Nat :=
 def childPoint? (il : Nat) (parent : Secp.Pub) : Option Secp.Pub :=
   if Secp.n ≤ il then none
   else if il = 0 then some parent
-  else (Secp.pubOfSecret il).bind fun p => Secp.add p parent
+  else (Secp.mulBase il).bind fun p => Secp.add p parent
 
 /-- First four bytes of RIPEMD160(SHA256(compressed point)). -/
 def fingerprint (p : Secp.Pub) : ByteArray :=
@@ -118,17 +120,17 @@ def childOfI (parent : ExtPriv) (pub : Secp.Pub) (index : Nat) (i : ByteArray) :
   | some k => .ok ⟨k, i.extract 32 64, parent.depth + 1, fingerprint pub, index⟩
 
 /-- CKDpriv: the child of a private key at `index` (hardened when `index ≥ 2^31`). -/
-def ckdPriv (parent : ExtPriv) (index : Nat) : Except Error ExtPriv :=
+def ckdPriv (risk : SecretRisk) (parent : ExtPriv) (index : Nat) : Except Error ExtPriv :=
   if indexLimit ≤ index then .error (.indexRange index)
   else if 255 ≤ parent.depth then .error .depthOverflow
   else
-    match Secp.pubOfSecret parent.key with
+    match Secp.pubOfSecret risk parent.key with
     | none => .error .curve
     | some pub => childOfI parent pub index (hmacSha512 parent.chain (privData parent pub index))
 
 /-- The extended public key of an extended private key. -/
-def neuter (k : ExtPriv) : Except Error ExtPub :=
-  match Secp.pubOfSecret k.key with
+def neuter (risk : SecretRisk) (k : ExtPriv) : Except Error ExtPub :=
+  match Secp.pubOfSecret risk k.key with
   | none => .error .curve
   | some pub => .ok ⟨pub, k.chain, k.depth, k.parentFp, k.childNumber⟩
 
@@ -148,12 +150,12 @@ def sameHalfNext (index : Nat) : Bool := (index + 1) % hardened != 0
 /-- CKDpriv, proceeding to the next index while BIP-32 calls the child invalid, at most
 `attempts` times and never across the normal/hardened boundary. The index used is the
 `childNumber` of the result. -/
-def ckdPrivNext (parent : ExtPriv) : Nat → Nat → Except Error ExtPriv
+def ckdPrivNext (risk : SecretRisk) (parent : ExtPriv) : Nat → Nat → Except Error ExtPriv
   | 0, index => .error (.invalidChild index)
   | attempts + 1, index =>
-    match ckdPriv parent index with
+    match ckdPriv risk parent index with
     | .error (.invalidChild _) =>
-      if sameHalfNext index then ckdPrivNext parent attempts (index + 1)
+      if sameHalfNext index then ckdPrivNext risk parent attempts (index + 1)
       else .error (.invalidChild index)
     | other => other
 
@@ -168,11 +170,11 @@ def ckdPubNext (parent : ExtPub) : Nat → Nat → Except Error ExtPub
     | other => other
 
 /-- Derive along a path of child indices. Tail recursive on the path. -/
-def derivePath : List Nat → ExtPriv → Except Error ExtPriv
+def derivePath (risk : SecretRisk) : List Nat → ExtPriv → Except Error ExtPriv
   | [], k => .ok k
   | index :: rest, k =>
-    match ckdPriv k index with
-    | .ok child => derivePath rest child
+    match ckdPriv risk k index with
+    | .ok child => derivePath risk rest child
     | .error e => .error e
 
 /-- Derive along a path of normal indices from a public key. -/
@@ -243,7 +245,7 @@ def header (version depth : Nat) (parentFp : ByteArray) (childNumber : Nat) (cha
   natToBytesBE version 4 ++ natToBytesBE depth 1 ++ parentFp ++ natToBytesBE childNumber 4 ++ chain
 
 /-- The 78 bytes of an extended private key. -/
-def ExtPriv.serialize (k : ExtPriv) : ByteArray :=
+def ExtPriv.serialize (_ : SecretRisk) (k : ExtPriv) : ByteArray :=
   header versionPriv k.depth k.parentFp k.childNumber k.chain
     ++ (ByteArray.empty.push 0) ++ natToBytesBE k.key 32
 
@@ -251,15 +253,17 @@ def ExtPriv.serialize (k : ExtPriv) : ByteArray :=
 def ExtPub.serialize (k : ExtPub) : ByteArray :=
   header versionPub k.depth k.parentFp k.childNumber k.chain ++ Secp.compress k.point
 
-def ExtPriv.toBase58 (k : ExtPriv) : Option String := Base58.checkEncode k.serialize
+def ExtPriv.toBase58 (risk : SecretRisk) (k : ExtPriv) : Option String :=
+  Base58.checkEncode (k.serialize risk)
 def ExtPub.toBase58 (k : ExtPub) : Option String := Base58.checkEncode k.serialize
 
 inductive ExtKey where
   | priv (k : ExtPriv)
   | pub (k : ExtPub)
 
-/-- Read 78 bytes as an extended key, with the checks of BIP-32 test vector 5. -/
-def ExtKey.ofBytes (b : ByteArray) : Except Error ExtKey :=
+/-- Read 78 bytes as an extended key, with the checks of BIP-32 test vector 5. The bytes
+may hold a private key, so this takes the risk token. -/
+def ExtKey.ofBytes (_ : SecretRisk) (b : ByteArray) : Except Error ExtKey :=
   if b.size ≠ 78 then .error (.badExtendedKey "not 78 bytes")
   else
     let version := bytesToNatBE (b.extract 0 4)
@@ -285,9 +289,9 @@ def ExtKey.ofBytes (b : ByteArray) : Except Error ExtKey :=
     else .error (.badExtendedKey "unknown extended key version")
 
 /-- Read an `xprv...` or `xpub...` text. -/
-def ExtKey.ofBase58 (s : String) : Except Error ExtKey :=
+def ExtKey.ofBase58 (risk : SecretRisk) (s : String) : Except Error ExtKey :=
   match Base58.checkDecode? s with
   | none => .error (.badExtendedKey "not Base58Check, or wrong checksum")
-  | some payload => ExtKey.ofBytes payload
+  | some payload => ExtKey.ofBytes risk payload
 
 end EthereumWallet.Keys.Bip32

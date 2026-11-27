@@ -1,5 +1,6 @@
 import EVMCleanroom.SecpRecovery
 import EthereumWallet.Keys.Bytes
+import EthereumWallet.Keys.Risk
 
 /-
 The one place the key modules reach secp256k1 point arithmetic: secret to public
@@ -9,8 +10,10 @@ Today this is the affine arithmetic of `EVMCleanroom.SecpRecovery` (pure Lean,
 experimental, no group-law proofs, variable-time `Nat`). When the shared fast
 secp256k1 module lands, only this file changes.
 
-Not constant-time: `pubOfSecret` runs a double-and-add loop on a `Nat` scalar whose
-branches and big-number timings depend on the secret.
+Not constant-time: `mulBase` runs a double-and-add loop on a `Nat` scalar whose branches
+and big-number timings depend on the scalar. `pubOfSecret` is that loop on a secret key,
+so it takes the risk token (`Keys/Risk.lean`); `mulBase` without a token is for scalars
+that are public by the protocol (the `I_L` of public child derivation).
 -/
 
 namespace EthereumWallet.Keys.Secp
@@ -30,11 +33,15 @@ def ofPoint : SecpRecovery.Point → Option Pub
   | .infinity => none
   | .affine x y => some ⟨x, y⟩
 
-/-- `k·G` for a secret scalar `0 < k < n`; `none` outside that range or on an
-arithmetic refusal of the underlying module. -/
-def pubOfSecret (k : Nat) : Option Pub :=
+/-- `k·G` for a scalar `0 < k < n` that is public by the protocol; `none` outside that
+range or on an arithmetic refusal of the underlying module. Variable-time. -/
+def mulBase (k : Nat) : Option Pub :=
   if k = 0 ∨ n ≤ k then none
   else (SecpRecovery.mul k SecpRecovery.generator).bind ofPoint
+
+/-- The public point of a secret key `0 < k < n`. Variable-time in the key: the caller
+accepts that by passing the token. -/
+def pubOfSecret (_ : SecretRisk) (k : Nat) : Option Pub := mulBase k
 
 /-- Point addition; `none` when the sum is the point at infinity. -/
 def add (a b : Pub) : Option Pub :=
@@ -63,7 +70,11 @@ def decompress? (b : ByteArray) : Option Pub :=
 /-- Kind: refusal.
     Says: a zero scalar or one at or above the group order has no public key here.
     Does not say: that every scalar in range yields a point (the arithmetic may refuse). -/
-theorem pubOfSecret_out_of_range (k : Nat) (h : k = 0 ∨ n ≤ k) : pubOfSecret k = none := by
-  simp [pubOfSecret, h]
+theorem mulBase_out_of_range (k : Nat) (h : k = 0 ∨ n ≤ k) : mulBase k = none := by
+  simp [mulBase, h]
+
+/-- Kind: refusal. Says: the same for a secret key. -/
+theorem pubOfSecret_out_of_range (risk : SecretRisk) (k : Nat) (h : k = 0 ∨ n ≤ k) :
+    pubOfSecret risk k = none := mulBase_out_of_range k h
 
 end EthereumWallet.Keys.Secp

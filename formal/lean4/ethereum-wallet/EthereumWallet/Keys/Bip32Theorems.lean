@@ -50,8 +50,9 @@ theorem childPoint?_il_out_of_range (il : Nat) (parent : Secp.Pub) (h : Secp.n �
 
 /-- Kind: refusal.
     Says: seeds shorter than 16 or longer than 64 bytes are refused with their length. -/
-theorem master_seed_length (seed : ByteArray) (h : seed.size < 16 ∨ 64 < seed.size) :
-    master seed = .error (.seedLength seed.size) := by
+theorem master_seed_length (risk : SecretRisk) (seed : ByteArray)
+    (h : seed.size < 16 ∨ 64 < seed.size) :
+    master risk seed = .error (.seedLength seed.size) := by
   unfold master
   rw [if_pos h]
 
@@ -76,7 +77,8 @@ theorem masterOfI_ok (i : ByteArray) (k : ExtPriv) (h : masterOfI i = .ok k) :
 
 /-- Kind: range.
     Says: an accepted master key is in `1 .. n-1`, at depth 0 with child number 0. -/
-theorem master_ok (seed : ByteArray) (k : ExtPriv) (h : master seed = .ok k) :
+theorem master_ok (risk : SecretRisk) (seed : ByteArray) (k : ExtPriv)
+    (h : master risk seed = .ok k) :
     0 < k.key ∧ k.key < Secp.n ∧ k.depth = 0 ∧ k.childNumber = 0 := by
   unfold master at h
   by_cases h1 : seed.size < 16 ∨ 64 < seed.size
@@ -92,14 +94,15 @@ theorem ckdPub_hardened (parent : ExtPub) (index : Nat) (h : hardened ≤ index)
   rw [if_pos h]
 
 /-- Kind: refusal. Says: an index of 2^32 or more is refused. -/
-theorem ckdPriv_index_range (parent : ExtPriv) (index : Nat) (h : indexLimit ≤ index) :
-    ckdPriv parent index = .error (.indexRange index) := by
+theorem ckdPriv_index_range (risk : SecretRisk) (parent : ExtPriv) (index : Nat)
+    (h : indexLimit ≤ index) : ckdPriv risk parent index = .error (.indexRange index) := by
   unfold ckdPriv
   rw [if_pos h]
 
 /-- Kind: refusal. Says: a key at depth 255 has no children (the depth byte would wrap). -/
-theorem ckdPriv_depth (parent : ExtPriv) (index : Nat) (hi : index < indexLimit)
-    (h : 255 ≤ parent.depth) : ckdPriv parent index = .error .depthOverflow := by
+theorem ckdPriv_depth (risk : SecretRisk) (parent : ExtPriv) (index : Nat)
+    (hi : index < indexLimit) (h : 255 ≤ parent.depth) :
+    ckdPriv risk parent index = .error .depthOverflow := by
   unfold ckdPriv
   rw [if_neg (by omega), if_pos h]
 
@@ -130,7 +133,8 @@ theorem childOfI_invalid (parent : ExtPriv) (pub : Secp.Pub) (index : Nat) (i : 
     Says: a child from `ckdPriv` has a key in `1 .. n-1`, depth one more than its parent
     (at most 255) and the index asked for as its child number.
     Does not say: that the key equals what another implementation derives (vectors test that). -/
-theorem ckdPriv_ok (parent child : ExtPriv) (index : Nat) (h : ckdPriv parent index = .ok child) :
+theorem ckdPriv_ok (risk : SecretRisk) (parent child : ExtPriv) (index : Nat)
+    (h : ckdPriv risk parent index = .ok child) :
     0 < child.key ∧ child.key < Secp.n ∧ child.depth = parent.depth + 1 ∧ child.depth ≤ 255
       ∧ child.childNumber = index ∧ index < indexLimit := by
   unfold ckdPriv at h
@@ -140,7 +144,7 @@ theorem ckdPriv_ok (parent child : ExtPriv) (index : Nat) (h : ckdPriv parent in
     by_cases h2 : 255 ≤ parent.depth
     · rw [if_pos h2] at h; cases h
     · rw [if_neg h2] at h
-      cases hp : Secp.pubOfSecret parent.key with
+      cases hp : Secp.pubOfSecret risk parent.key with
       | none => rw [hp] at h; cases h
       | some pub =>
         rw [hp] at h
@@ -150,22 +154,22 @@ theorem ckdPriv_ok (parent child : ExtPriv) (index : Nat) (h : ckdPriv parent in
 /-- Kind: the proceeding rule (BIP-32 invalid child).
     Says: when the child at `index` is invalid and `index + 1` is in the same half of the
     index space, `ckdPrivNext` continues with `index + 1` and one attempt fewer. -/
-theorem ckdPrivNext_skips (parent : ExtPriv) (attempts index j : Nat)
-    (h : ckdPriv parent index = .error (.invalidChild j)) (hs : sameHalfNext index = true) :
-    ckdPrivNext parent (attempts + 1) index = ckdPrivNext parent attempts (index + 1) := by
+theorem ckdPrivNext_skips (risk : SecretRisk) (parent : ExtPriv) (attempts index j : Nat)
+    (h : ckdPriv risk parent index = .error (.invalidChild j)) (hs : sameHalfNext index = true) :
+    ckdPrivNext risk parent (attempts + 1) index = ckdPrivNext risk parent attempts (index + 1) := by
   simp [ckdPrivNext, h, hs]
 
 /-- Kind: the proceeding rule.
     Says: a valid child at `index` is returned as it is; nothing is skipped. -/
-theorem ckdPrivNext_ok (parent child : ExtPriv) (attempts index : Nat)
-    (h : ckdPriv parent index = .ok child) :
-    ckdPrivNext parent (attempts + 1) index = .ok child := by
+theorem ckdPrivNext_ok (risk : SecretRisk) (parent child : ExtPriv) (attempts index : Nat)
+    (h : ckdPriv risk parent index = .ok child) :
+    ckdPrivNext risk parent (attempts + 1) index = .ok child := by
   simp [ckdPrivNext, h]
 
 /-- Kind: bound.
     Says: with no attempts left the answer is a refusal, so at most `attempts` derivations run. -/
-theorem ckdPrivNext_zero (parent : ExtPriv) (index : Nat) :
-    ckdPrivNext parent 0 index = .error (.invalidChild index) := rfl
+theorem ckdPrivNext_zero (risk : SecretRisk) (parent : ExtPriv) (index : Nat) :
+    ckdPrivNext risk parent 0 index = .error (.invalidChild index) := rfl
 
 /-- Kind: the proceeding rule, public side. -/
 theorem ckdPubNext_skips (parent : ExtPub) (attempts index j : Nat)
@@ -189,8 +193,8 @@ theorem ethereumPath_ok (account index : Nat) (ha : account < hardened) (hi : in
   rw [if_neg (by omega)]
 
 /-- Kind: refusal. Says: bytes that are not 78 long are not an extended key. -/
-theorem ofBytes_size (b : ByteArray) (h : b.size ≠ 78) :
-    ExtKey.ofBytes b = .error (.badExtendedKey "not 78 bytes") := by
+theorem ofBytes_size (risk : SecretRisk) (b : ByteArray) (h : b.size ≠ 78) :
+    ExtKey.ofBytes risk b = .error (.badExtendedKey "not 78 bytes") := by
   unfold ExtKey.ofBytes
   rw [if_pos h]
 
