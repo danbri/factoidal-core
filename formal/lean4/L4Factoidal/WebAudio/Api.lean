@@ -1346,7 +1346,10 @@ private def okBytes (r : Except Int ByteArray) : ByteArray := (r.toOption).getD 
 #guard err {} 175 [n 1, n 100, d 100.0] == errNotSupported
 #guard err {} 175 [n 1, n 0, d 44100.0] == errNotSupported
 #guard err {} 175 [n 1, n 100, ByteArray.empty] == errType
-#guard err {} 175 [n 32, n 2000000, d 44100.0] == errNotSupported
+-- Above `maxSamples` (refused before anything is made): 32 channels of 5,000,000 frames, and one
+-- sample more than the limit in one channel.
+#guard err {} 175 [n 32, n 5000000, d 44100.0] == errNotSupported
+#guard err {} 175 [n 1, n (maxSamples + 1), d 44100.0] == errNotSupported
 #guard err st0 189 [n 99] == errType
 #guard err {} 999 [] == -2
 
