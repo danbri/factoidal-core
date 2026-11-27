@@ -972,7 +972,7 @@ async function runWdspec(engine:Engine,id:string):Promise<Case>{
   const t0=performance.now();
   const out=await new Deno.Command("python3",{args:[join(here,"wdspec-run.py"),"--wpt-root",wpt,"--test",id,"--host","127.0.0.1",
     "--port",String(webdriverPort),"--server-config",config,"--platform",Deno.build.os==="darwin"?"mac":Deno.build.os],
-    env:{FOAFNAUT_WD_SECRET:secret},stdout:"piped",stderr:"null",signal:AbortSignal.timeout(300000)}).output();
+    env:{FOAFNAUT_WD_SECRET:secret},stdout:"piped",stderr:Deno.env.get("FOAFNAUT_WD_PYTEST_LOG")?"inherit":"null",signal:AbortSignal.timeout(300000)}).output();
   const line=new TextDecoder().decode(out.stdout).trim().split("\n").pop()??"";
   try{
     const r=JSON.parse(line) as {harness:string;message?:string;subtests:{name:string;status:string;message?:string}[]};

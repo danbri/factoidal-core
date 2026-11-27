@@ -74,7 +74,8 @@ argument for `start`:
 - WebDriver BiDi on that endpoint (`WebDriver.BiDi`): `bidiConnect` (`path`, `host`,
   `origin`): a WebSocket upgrade request, answered `{connection}` or `{status}` (403, 404:
   the host refuses the upgrade); `bidi` (`connection`, `text` or `binary: true`): one frame,
-  answered `{reply}` (text to send; absent: send nothing), `navigate` (load this URL first, as
+  answered `{reply}` (text to send; absent: send nothing; never an empty object, which the
+  answer's wrapper extends), `navigate` (load this URL first, as
   for classic Navigate To) and `close` (the connection numbers to close after the reply);
   `bidiClose` (`connection`): the host's socket closed.
 - `message` (`data`: JSON text, `origin`): a message of the embedder to the page, as a
@@ -1757,7 +1758,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (srv, st, conn, out) := WebDriver.BiDi.handle env srv st conn frame
         let conns : List (Nat × WebDriver.BiDi.Conn) := conns.map fun (p : Nat × WebDriver.BiDi.Conn) => if p.1 == n then (p.1, conn) else p
         match out with
-        | .silent => return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) }, .ok "{}")
+        | .silent => return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) }, .ok "{\"silent\":true}")
         | .reply message effect =>
           let (doc, extra) := match effect with
             | .navigate _ url => (doc.navigate url, [("navigate", JSON.Json.string url)])
@@ -1774,7 +1775,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
   | "bidiClose" =>
     let (st, conns, next) := held.bidi
     let n := natField request "connection"
-    return ({ held with bidi := (st, conns.filter (fun (p : Nat × WebDriver.BiDi.Conn) => some p.1 != n), next) }, .ok "{}")
+    return ({ held with bidi := (st, conns.filter (fun (p : Nat × WebDriver.BiDi.Conn) => some p.1 != n), next) }, .ok "{\"closed\":true}")
   | "close" => return ({ held with session := none, turn := none, leanSession := none, startTodo := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")

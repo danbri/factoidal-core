@@ -79,6 +79,26 @@ def main():
 
         http.client.HTTPConnection.request = request_with_secret
 
+        # WebDriver BiDi: the endpoint's WebSocket URLs also start with the secret
+        # (ws://host:port/<secret>/session/<id>, L4Factoidal.WebDriver.BiDi.connect). The client checks that
+        # the path is exactly /session/<id> (or /session for session.new), so it is given the URL without the
+        # secret for that check and connects with it.
+        from urllib.parse import urlparse, urlunparse
+        from webdriver.bidi import client as bidi_client
+        bidi_init = bidi_client.BidiSession.__init__
+
+        def bidi_with_secret(self, websocket_url, *args, **kwargs):
+            parsed = urlparse(websocket_url)
+            path = parsed.path
+            if path.startswith(prefix + "/"):
+                path = path[len(prefix):]
+            bidi_init(self, urlunparse(parsed._replace(path=path)), *args, **kwargs)
+            final = urlparse(self.websocket_url)
+            if final.hostname == a.host and final.port == a.port and not final.path.startswith(prefix + "/"):
+                self.websocket_url = urlunparse(final._replace(path=prefix + final.path))
+
+        bidi_client.BidiSession.__init__ = bidi_with_secret
+
     class Harness:
         outcomes = {"failed": "ERROR", "passed": "OK", "skipped": "SKIP"}
 
