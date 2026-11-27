@@ -639,7 +639,7 @@ def setAttrOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
 
 /-- A buffer from the fields `channels, length, sampleRate, data`; `none` for null (`channels`
 ""). -/
-def bufferArgs (fs : Array ByteArray) (i : Nat) :
+def bufferArgs (fs : Array ByteArray) (i : Nat) (placeholder : Bool := false) :
     Except Int (Option Buffer.AudioBuffer) := do
   match ← optNatArg fs i with
   | none => pure none
@@ -649,6 +649,8 @@ def bufferArgs (fs : Array ByteArray) (i : Nat) :
     let data := fs.getD (i + 3) ByteArray.empty
     if nch * len > maxSamples then throw errNotSupported
     let b ← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer)
+    -- placeholder: the dimensions are checked and the buffer is silent; the samples come at `start()`
+    if placeholder then return some b
     if data.size != nch * len * 4 then throw errType
     let all ← f32s data
     let chans := (Array.range nch).map fun ch =>
@@ -658,7 +660,7 @@ def bufferArgs (fs : Array ByteArray) (i : Nat) :
 def setBufferOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
     let id ← natArg fs 1
-    let b ← bufferArgs fs 2
+    let b ← bufferArgs fs 2 (strArg fs 6 == "2")
     -- field 6 "1": acquire the content (`Context.acquireBuffer`); the page sends it at `start()`
     let c' ← match strArg fs 6, b with
       | "1", some buf => lift (c.acquireBuffer id buf)

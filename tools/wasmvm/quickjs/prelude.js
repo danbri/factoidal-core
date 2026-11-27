@@ -5764,19 +5764,23 @@
     const attrSet = (st, name, value) => { ask(183, [st.cs.id, st.id, name, value], 'AudioNode.' + name); };
     // "Acquire the content" (start(), or the buffer setter after start()): Lean takes the samples the buffer
     // has now, and the arrays that getChannelData() returned are detached; the buffer gets fresh copies.
-    const acquireContent = st => {
-      const b = st.buffer;
-      if (b === null) return;
-      ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b), '1'], 'AudioBufferSourceNode.buffer');
+    // Before start() the setter sends only the dimensions (op 184, flag "2"), so a long buffer is sent once.
+    const detachData = b => {
       const old = b.data;
       b.data = old.map(a => new Float32Array(a));
       for (const ab of new Set(old.map(a => a.buffer))) { try { if (typeof ab.transfer === 'function') ab.transfer(); else structuredClone(ab, { transfer: [ab] }); } catch (e) {} }
     };
+    const acquireContent = st => {
+      const b = st.buffer;
+      if (b === null) return;
+      ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b), '1'], 'AudioBufferSourceNode.buffer');
+      detachData(b);
+    };
     const setBufferOf = (st, b) => {
       if (b === null) ask(184, [st.cs.id, st.id, '', '', '', ''], 'AudioBufferSourceNode.buffer');
-      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b)], 'AudioBufferSourceNode.buffer');
+      else if (st.startCalled) { ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b)], 'AudioBufferSourceNode.buffer'); st.buffer = b; detachData(b); return; }
+      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), '', '2'], 'AudioBufferSourceNode.buffer');
       st.buffer = b;
-      if (b !== null && st.startCalled) acquireContent(st);
     };
     const waveBytes = w => [w.real === null ? '-' : u8(w.real), w.imag === null ? '-' : u8(w.imag), w.disable ? '1' : '0'];
     const setWave = (st, wave) => {
