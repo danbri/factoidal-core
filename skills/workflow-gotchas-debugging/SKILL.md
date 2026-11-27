@@ -2256,3 +2256,15 @@ Found by comparing the count with a plain `grep -c 'partial def'`.
 Rule: when a tool reads Lean declarations by text, compare one of its counts with a plain grep
 of the tree before you report a number from it (anti-pattern 28).
 
+
+## Hazard #49 — a Python tool that runs `lake build` (2026-11-27)
+
+What happened: to regenerate `docs/dataflow-inventory.md` for a pull request, a session on the
+owner's laptop ran `python3 tools/dataflow-inventory.py`. Its docstring says step 1 is
+`lake build L4Factoidal.Dataflow.Registry ...`; the session read that after the start. It was
+stopped after two minutes and the 153 MB `formal/lean4/.lake` it had made was removed (owner
+rule: no Lean build artifacts on the laptop).
+
+Rule: read the docstring of a `tools/*.py` before running it on the laptop. These run Lean:
+`tools/dataflow-inventory.py` (`lake build`, `lake env lean`). When CI reports a generated-file
+difference, copy the change from the CI log diff, or regenerate in a cloud session.
