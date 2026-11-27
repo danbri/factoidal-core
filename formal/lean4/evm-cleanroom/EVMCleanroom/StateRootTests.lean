@@ -32,6 +32,9 @@ private def ascii (s : String) : Array UInt8 := s.toUTF8.data
     (ascii "do", ascii "verb"), (ascii "dog", ascii "puppy")] =
   trieRoot a [(ascii "do", ascii "verb"), (ascii "dog", ascii "puppy"),
     (ascii "doge", ascii "coin"), (ascii "horse", ascii "stallion")]
+-- Duplicate keys: the last value wins.
+#guard sortEntries [(ascii "a", ascii "1"), (ascii "b", ascii "2"), (ascii "a", ascii "3")] =
+  [(ascii "a", ascii "3"), (ascii "b", ascii "2")]
 #guard rlpScalar 0 = #[0x80]
 #guard rlpScalar 0x7f = #[0x7f]
 #guard rlpScalar 0x80 = #[0x81, 0x80]

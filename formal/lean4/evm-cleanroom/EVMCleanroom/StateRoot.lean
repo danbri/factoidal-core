@@ -113,18 +113,15 @@ def encodeNode (a : Keccak.Acceptance) : Nat → List Entry → Option (Array UI
         if group.isEmpty then some (rlpBytes #[]) else (encodeNode a fuel group).map (nodeRef a)
       children.map fun refs => rlpList (refs ++ [rlpBytes (terminal.getD #[])])
 
-/-- Insert one pair into a byte-key-sorted list, replacing an equal key. -/
-def insertSorted (key : Array UInt8) (value : Array UInt8) :
-    List (Array UInt8 × Array UInt8) → List (Array UInt8 × Array UInt8)
-  | [] => [(key, value)]
-  | (k, v) :: rest =>
-    if key.toList = k.toList then (key, value) :: rest
-    else if decide (key.toList < k.toList) then (key, value) :: (k, v) :: rest
-    else (k, v) :: insertSorted key value rest
-
-/-- Sort by key bytes; for repeated keys the last value wins. -/
+/-- Sort by key bytes (stable merge sort, O(n log n)); for repeated keys
+    the last value wins. -/
 def sortEntries (pairs : List (Array UInt8 × Array UInt8)) : List (Array UInt8 × Array UInt8) :=
-  pairs.foldl (fun acc p => insertSorted p.1 p.2 acc) []
+  let sorted := pairs.mergeSort fun x y => !(decide (y.1.toList < x.1.toList))
+  let rev := sorted.foldl (fun acc p =>
+    match acc with
+    | q :: rest => if q.1.toList = p.1.toList then p :: rest else p :: q :: rest
+    | [] => [p]) []
+  rev.reverse
 
 /-- Fuel that covers the longest key: two nibbles per byte plus the leaf. -/
 def trieFuel (pairs : List (Array UInt8 × Array UInt8)) : Nat :=
