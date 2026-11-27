@@ -473,7 +473,17 @@ def main (args : List String) : IO UInt32 := do
   -- alt_bn128
   let bnPoints := Bn.pool 48
   bad := bad + (← compare "alt_bn128 add (0x06)" (Bn.addCases bnPoints (700 * scale)) (BN254.runAdd gas) (BN254.Fast.runAdd gas))
-  bad := bad + (← compare "alt_bn128 mul (0x07)" (Bn.mulCases bnPoints (520 * scale)) (BN254.runMul gas) (BN254.Fast.runMul gas))
+  bad := bad + (← compare "alt_bn128 mul (0x07)" (Bn.mulCases bnPoints (1040 * scale)) (BN254.runMul gas) (BN254.Fast.runMul gas))
+  -- alt_bn128 scalar split along the endomorphism: k1 + k2 lambda = k (mod r), parts short
+  let mut badSplit := 0
+  for v in #[0, 1, BN254.r - 1, BN254.r, BN254.r + 1, 2 ^ 256 - 1, BN254.Fast.lambdaNat] ++ randoms 6 (20000 * scale) do
+    let k := v % 2 ^ 256
+    let parts := BN254.Fast.glvSplit k
+    if (parts.1 + parts.2 * Int.ofNat BN254.Fast.lambdaNat - Int.ofNat k) % Int.ofNat BN254.r != 0 ||
+        parts.1.natAbs ≥ 2 ^ 128 || parts.2.natAbs ≥ 2 ^ 128 then
+      badSplit := badSplit + 1
+  IO.println s!"RESULT blsops alt_bn128 scalar split (k1 + k2 lambda = k mod r, parts below 2^128): {20007 * scale} scalars, {if badSplit == 0 then "no differences" else s!"{badSplit} FAILURES"}"
+  bad := bad + badSplit
   -- BLS12-381 subgroup checks
   let cases1 := Bls.subgroupCases1 scale
   let mut in1 := 0

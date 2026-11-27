@@ -13,10 +13,11 @@ EIP-1108), computed on the four-limb Montgomery field `BN254.baseField`:
 
 * coordinates are read straight into limbs and compared with `p` by a borrow;
 * the curve equation is checked in Montgomery form;
-* the addition is one mixed Jacobian addition, the multiplication a windowed
-  one (`Curve.windowMul`: a table of sixteen multiples, four doublings per four
-  scalar bits). The scalar is used as given, up to `2^256 − 1`, as in the
-  definition;
+* the addition is one mixed Jacobian addition; the multiplication reduces
+  the scalar (given up to `2^256 − 1`) modulo the group order, splits it along
+  the endomorphism `φ(x, y) = (βx, y)` into two parts of about 127 bits and
+  runs one doubling chain of that length with two tables of sixteen multiples
+  (see "Scalar multiplication with the endomorphism" below);
 * one field inversion per call (`Mont256.invFast` of `LimbInverse.lean`), none when
   the result already has `Z = 1` (an operand at infinity, scalar one).
 
@@ -31,7 +32,7 @@ Proved: gas accounting, output lengths, prefix-only input handling (the
 statements of `BN254.runAdd_success`, `runMul_success`, `run_reads_prefix`).
 
 Not constant-time: the window loop branches on scalar digits and its length is
-the bit length of the scalar.
+the bit length of the scalar parts.
 -/
 
 namespace EVMCleanroom.Precompiles.BN254.Fast
@@ -107,9 +108,55 @@ def addPoints (a b : Affine) : JPoint U256 :=
   | none => toJacobian a
   | some (x, y) => Curve.addMixed ops (toJacobian a) x y
 
+/-! ### Scalar multiplication with the endomorphism
+
+`φ(x, y) = (βx, y)` is an endomorphism of the curve (`β³ = 1`), and on the group, which
+has prime order `r`, it is the multiplication by `λ = 36x⁴ − 1` (`λ² + λ + 1 ≡ 0 mod r`).
+A scalar is reduced modulo `r` and written as `k₁ + k₂λ` with `|k₁|, |k₂|` of about 127
+bits (Gallant, Lambert, Vanstone, "Faster point multiplication on elliptic curves with
+efficient endomorphisms", 2001: rounding against the short lattice basis `(a₁, b₁)`,
+`(a₂, b₂)` of the vectors with `a + bλ ≡ 0 mod r`). Then `[k]P = [k₁]P + [k₂]φ(P)` with one
+doubling chain of half the length; the table of `φ(P)` is the table of `P` with every `x`
+multiplied by `β`, and a negative part negates `y`.
+
+Not proved: that `φ` is the multiplication by `λ`, or the splitting identity (guards on
+the constants and on sample scalars below; `evm-blsops` checks `k₁ + k₂λ ≡ k (mod r)` and
+the sizes of the parts on a pseudo-random walk, and compares whole results with the
+definition). The window count is taken from the actual sizes of the parts, so the result
+does not depend on a size bound. -/
+
+def lambdaNat : Nat := 21888242871839275217838484774961031246154997185409878258781734729429964517155
+def betaNat : Nat := 21888242871839275220042445260109153167277707414472061641714758635765020556616
+def beta : U256 := M.ofNat betaNat
+/-- The lattice basis `(glvA1, −glvB1)`, `(glvA2, glvB2)`; its determinant is `r`. -/
+def glvA1 : Nat := 147946756881789319000765030803803410728
+def glvB1 : Nat := 9931322734385697763
+def glvA2 : Nat := 9931322734385697763
+def glvB2 : Nat := 147946756881789319010696353538189108491
+
+/-- `(k₁, k₂)` with `k₁ + k₂·λ ≡ k (mod r)` and both parts short. -/
+def glvSplit (k : Nat) : Int × Int :=
+  let m := k % r
+  let c1 := (2 * m * glvB2 + r) / (2 * r)
+  let c2 := (2 * m * glvB1 + r) / (2 * r)
+  (Int.ofNat m - Int.ofNat (c1 * glvA1) - Int.ofNat (c2 * glvA2),
+   Int.ofNat (c1 * glvB1) - Int.ofNat (c2 * glvB2))
+
+/-- `[k](x, y)` for a curve point. -/
+def mulGlv (k : Nat) (x y : U256) : JPoint U256 :=
+  if k % r = 0 then Curve.infinity ops
+  else
+    let parts := glvSplit k
+    let first := Curve.table16 ops x (if parts.1 < 0 then fneg y else y)
+    let flip := decide (parts.1 < 0) != decide (parts.2 < 0)
+    let second := first.map fun point : JPoint U256 =>
+      ⟨fmul beta point.x, if flip then fneg point.y else point.y, point.z⟩
+    Curve.strausLoop ops (#[(parts.1.natAbs, first), (parts.2.natAbs, second)])
+      (Curve.windowCount 4 (max parts.1.natAbs parts.2.natAbs)) (Curve.infinity ops)
+
 def mulPoint (k : Nat) : Affine → JPoint U256
   | none => Curve.infinity ops
-  | some (x, y) => Curve.windowMul ops k x y
+  | some (x, y) => mulGlv k x y
 
 def addBody (data : ByteArray) : Body :=
   match decodeG1 data 0, decodeG1 data 64 with
@@ -181,7 +228,8 @@ theorem mulPoint_trivial (k : Nat) (a : Affine) : mulPoint k none = Curve.infini
     | none => rfl
     | some point =>
       obtain ⟨x, y⟩ := point
-      exact Curve.windowMul_zero ops x y
+      show mulGlv 0 x y = Curve.infinity ops
+      simp [mulGlv]
 
 /-! ### Guards against the `Nat` definition -/
 
@@ -223,12 +271,28 @@ private def p7 : Nat × Nat := multiple 7
   addAgrees (word 1) && addAgrees ByteArray.empty && addAgrees (addInput p5 p7 ++ word 99) &&
   addAgrees ((addInput p5 p7).extract 0 127)
 #guard !(match addBody (addInput g (1, 3)) with | .invalid => false | _ => true)
+-- The endomorphism constants: β³ = 1, λ² + λ + 1 ≡ 0, λ = 36x⁴ − 1, the basis vectors lie in the lattice, its
+-- determinant is r, and φ(G) = [λ]G on the definition's arithmetic.
+#guard betaNat ^ 3 % p == 1 && betaNat != 1 && (lambdaNat ^ 2 + lambdaNat + 1) % r == 0 &&
+  lambdaNat == (36 * parameter ^ 4 - 1) % r
+#guard (glvA1 + (r - glvB1) * lambdaNat) % r == 0 && (glvA2 + glvB2 * lambdaNat) % r == 0 &&
+  glvA1 * glvB2 + glvA2 * glvB1 == r
+#guard (Fp.mul p betaNat 1, 2) == multiple lambdaNat
+private def splitOk (k : Nat) : Bool :=
+  let parts := glvSplit k
+  (parts.1 + parts.2 * Int.ofNat lambdaNat - Int.ofNat k) % Int.ofNat r == 0 &&
+    parts.1.natAbs < 2 ^ 128 && parts.2.natAbs < 2 ^ 128
+#guard [0, 1, 2, r - 1, r, r + 1, r / 2, lambdaNat, lambdaNat + 1, 2 ^ 256 - 1, 2 ^ 255, 2 ^ 127, 2 ^ 128 + 1,
+  0xf0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdeffedcba9876543210].all splitOk
+#guard (List.range 300).all fun i => splitOk ((i * i + 3) * (2 ^ 250 - 2 ^ (i % 250) + 7 * i))
 -- Multiplication: scalars 0, 1, 2, r − 1, r, r + 1, 2^256 − 1 and a 256-bit one; infinity; invalid input.
 #guard mulAgrees (mulInput p5 0) && mulAgrees (mulInput p5 1) && mulAgrees (mulInput p5 2) &&
   mulAgrees (mulInput p7 (r - 1)) && mulAgrees (mulInput p7 r) && mulAgrees (mulInput p7 (r + 1))
 #guard mulAgrees (mulInput g (2 ^ 256 - 1)) &&
   mulAgrees (mulInput p5 0xf0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdeffedcba9876543210) &&
-  mulAgrees (mulInput p7 0x10000000000000000) && mulAgrees (mulInput p7 16)
+  mulAgrees (mulInput p7 0x10000000000000000) && mulAgrees (mulInput p7 16) &&
+  mulAgrees (mulInput p5 lambdaNat) && mulAgrees (mulInput p7 (2 * r)) && mulAgrees (mulInput g (r / 2)) &&
+  mulAgrees (mulInput p5 (2 ^ 127)) && mulAgrees (mulInput p7 glvB2)
 #guard mulAgrees (mulInput (0, 0) 5) && mulAgrees (mulInput (1, 3) 5) && mulAgrees (mulInput (p, 2) 5) &&
   mulAgrees (word 1 ++ word 2) && mulAgrees ByteArray.empty && mulAgrees (mulInput p5 7 ++ word 1)
 #guard (mulBody (mulInput g 12)).same (.output (pointBytes (multiple 12)))
