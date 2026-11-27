@@ -46,17 +46,17 @@ open EVMCleanroom.Precompiles.Secp256k1.Fe (P C)
 
 /-- `(high, low)` of `a * b + c + d` (always below `2^128`), from four 32-bit products. -/
 @[inline] def mac (a b c d : UInt64) : UInt64 × UInt64 :=
-  let a0 := a &&& 0xffffffff
-  let a1 := a >>> 32
-  let b0 := b &&& 0xffffffff
-  let b1 := b >>> 32
+  let a0 := a &&& (0xffffffff : UInt64)
+  let a1 := a >>> (32 : UInt64)
+  let b0 := b &&& (0xffffffff : UInt64)
+  let b1 := b >>> (32 : UInt64)
   let p00 := a0 * b0
   let p01 := a0 * b1
   let p10 := a1 * b0
   let p11 := a1 * b1
-  let mid := (p00 >>> 32) + (p01 &&& 0xffffffff) + (p10 &&& 0xffffffff)
-  let lo0 := (p00 &&& 0xffffffff) ||| (mid <<< 32)
-  let hi0 := p11 + (p01 >>> 32) + (p10 >>> 32) + (mid >>> 32)
+  let mid := (p00 >>> (32 : UInt64)) + (p01 &&& (0xffffffff : UInt64)) + (p10 &&& (0xffffffff : UInt64))
+  let lo0 := (p00 &&& (0xffffffff : UInt64)) ||| (mid <<< (32 : UInt64))
+  let hi0 := p11 + (p01 >>> (32 : UInt64)) + (p10 >>> (32 : UInt64)) + (mid >>> (32 : UInt64))
   let lo1 := lo0 + c
   let hi1 := hi0 + lt64 lo1 lo0
   let lo2 := lo1 + d
@@ -131,13 +131,13 @@ open EVMCleanroom.Precompiles.Secp256k1.Fe (P C)
   let r := mac a.l1 a.l2 t3 0; let t3 := r.2; let c := r.1
   let r := mac a.l1 a.l3 t4 c; let t4 := r.2; let t5 := r.1
   let r := mac a.l2 a.l3 t5 0; let t5 := r.2; let t6 := r.1
-  let t7 := t6 >>> 63
-  let t6 := (t6 <<< 1) ||| (t5 >>> 63)
-  let t5 := (t5 <<< 1) ||| (t4 >>> 63)
-  let t4 := (t4 <<< 1) ||| (t3 >>> 63)
-  let t3 := (t3 <<< 1) ||| (t2 >>> 63)
-  let t2 := (t2 <<< 1) ||| (t1 >>> 63)
-  let t1 := t1 <<< 1
+  let t7 := t6 >>> (63 : UInt64)
+  let t6 := (t6 <<< (1 : UInt64)) ||| (t5 >>> (63 : UInt64))
+  let t5 := (t5 <<< (1 : UInt64)) ||| (t4 >>> (63 : UInt64))
+  let t4 := (t4 <<< (1 : UInt64)) ||| (t3 >>> (63 : UInt64))
+  let t3 := (t3 <<< (1 : UInt64)) ||| (t2 >>> (63 : UInt64))
+  let t2 := (t2 <<< (1 : UInt64)) ||| (t1 >>> (63 : UInt64))
+  let t1 := t1 <<< (1 : UInt64)
   let r := mac a.l0 a.l0 0 0; let r0 := r.2; let c := r.1
   let r := adc t1 c 0; let r1 := r.2; let k := r.1
   let r := mac a.l1 a.l1 t2 k; let r2 := r.2; let c := r.1
@@ -255,10 +255,10 @@ def ops : FieldOps U256 where
 
 /-- `x / 2` modulo an odd `N`, for `x < N`: `x` or `x + N`, whichever is even, shifted right. -/
 @[inline] def halfMod (N x : U256) : U256 :=
-  let r := addCarry x (masked (0 - (x.l0 &&& 1)) N)
+  let r := addCarry x (masked (0 - (x.l0 &&& (1 : UInt64))) N)
   let s := r.2
-  ⟨(s.l0 >>> 1) ||| (s.l1 <<< 63), (s.l1 >>> 1) ||| (s.l2 <<< 63), (s.l2 >>> 1) ||| (s.l3 <<< 63),
-   (s.l3 >>> 1) ||| (r.1 <<< 63)⟩
+  ⟨(s.l0 >>> (1 : UInt64)) ||| (s.l1 <<< (63 : UInt64)), (s.l1 >>> (1 : UInt64)) ||| (s.l2 <<< (63 : UInt64)), (s.l2 >>> (1 : UInt64)) ||| (s.l3 <<< (63 : UInt64)),
+   (s.l3 >>> (1 : UInt64)) ||| (r.1 <<< (63 : UInt64))⟩
 
 /-- `a − b` modulo `N` for `a, b < N`. -/
 @[inline] def subMod (N a b : U256) : U256 :=
@@ -275,26 +275,26 @@ def xgcdLoop (N : U256) : Nat → UInt64 → UInt64 → UInt64 → UInt64 → UI
   | fuel+1, u0, u1, u2, u3, v0, v1, v2, v3, a0, a1, a2, a3, b0, b1, b2, b3 =>
     if u0 == 1 && (u1 ||| u2 ||| u3) == 0 then ⟨a0, a1, a2, a3⟩
     else if v0 == 1 && (v1 ||| v2 ||| v3) == 0 then ⟨b0, b1, b2, b3⟩
-    else if (u0 &&& 1) == 0 then
+    else if (u0 &&& (1 : UInt64)) == 0 then
       let a := halfMod N ⟨a0, a1, a2, a3⟩
-      xgcdLoop N fuel ((u0 >>> 1) ||| (u1 <<< 63)) ((u1 >>> 1) ||| (u2 <<< 63)) ((u2 >>> 1) ||| (u3 <<< 63))
-        (u3 >>> 1) v0 v1 v2 v3 a.l0 a.l1 a.l2 a.l3 b0 b1 b2 b3
-    else if (v0 &&& 1) == 0 then
+      xgcdLoop N fuel ((u0 >>> (1 : UInt64)) ||| (u1 <<< (63 : UInt64))) ((u1 >>> (1 : UInt64)) ||| (u2 <<< (63 : UInt64))) ((u2 >>> (1 : UInt64)) ||| (u3 <<< (63 : UInt64)))
+        (u3 >>> (1 : UInt64)) v0 v1 v2 v3 a.l0 a.l1 a.l2 a.l3 b0 b1 b2 b3
+    else if (v0 &&& (1 : UInt64)) == 0 then
       let b := halfMod N ⟨b0, b1, b2, b3⟩
-      xgcdLoop N fuel u0 u1 u2 u3 ((v0 >>> 1) ||| (v1 <<< 63)) ((v1 >>> 1) ||| (v2 <<< 63))
-        ((v2 >>> 1) ||| (v3 <<< 63)) (v3 >>> 1) a0 a1 a2 a3 b.l0 b.l1 b.l2 b.l3
+      xgcdLoop N fuel u0 u1 u2 u3 ((v0 >>> (1 : UInt64)) ||| (v1 <<< (63 : UInt64))) ((v1 >>> (1 : UInt64)) ||| (v2 <<< (63 : UInt64)))
+        ((v2 >>> (1 : UInt64)) ||| (v3 <<< (63 : UInt64))) (v3 >>> (1 : UInt64)) a0 a1 a2 a3 b.l0 b.l1 b.l2 b.l3
     else
       let d := subBorrow ⟨u0, u1, u2, u3⟩ ⟨v0, v1, v2, v3⟩
       if d.1 == 0 then
         let w := d.2
         let a := halfMod N (subMod N ⟨a0, a1, a2, a3⟩ ⟨b0, b1, b2, b3⟩)
-        xgcdLoop N fuel ((w.l0 >>> 1) ||| (w.l1 <<< 63)) ((w.l1 >>> 1) ||| (w.l2 <<< 63))
-          ((w.l2 >>> 1) ||| (w.l3 <<< 63)) (w.l3 >>> 1) v0 v1 v2 v3 a.l0 a.l1 a.l2 a.l3 b0 b1 b2 b3
+        xgcdLoop N fuel ((w.l0 >>> (1 : UInt64)) ||| (w.l1 <<< (63 : UInt64))) ((w.l1 >>> (1 : UInt64)) ||| (w.l2 <<< (63 : UInt64)))
+          ((w.l2 >>> (1 : UInt64)) ||| (w.l3 <<< (63 : UInt64))) (w.l3 >>> (1 : UInt64)) v0 v1 v2 v3 a.l0 a.l1 a.l2 a.l3 b0 b1 b2 b3
       else
         let w := (subBorrow ⟨v0, v1, v2, v3⟩ ⟨u0, u1, u2, u3⟩).2
         let b := halfMod N (subMod N ⟨b0, b1, b2, b3⟩ ⟨a0, a1, a2, a3⟩)
-        xgcdLoop N fuel u0 u1 u2 u3 ((w.l0 >>> 1) ||| (w.l1 <<< 63)) ((w.l1 >>> 1) ||| (w.l2 <<< 63))
-          ((w.l2 >>> 1) ||| (w.l3 <<< 63)) (w.l3 >>> 1) a0 a1 a2 a3 b.l0 b.l1 b.l2 b.l3
+        xgcdLoop N fuel u0 u1 u2 u3 ((w.l0 >>> (1 : UInt64)) ||| (w.l1 <<< (63 : UInt64))) ((w.l1 >>> (1 : UInt64)) ||| (w.l2 <<< (63 : UInt64)))
+          ((w.l2 >>> (1 : UInt64)) ||| (w.l3 <<< (63 : UInt64))) (w.l3 >>> (1 : UInt64)) a0 a1 a2 a3 b.l0 b.l1 b.l2 b.l3
 
 /-- A candidate for `x⁻¹` modulo an odd `N` (for `0 < x < N` and `gcd(x, N) = 1`); the caller
     checks it by a multiplication. At most 600 steps: each step removes at least one bit from

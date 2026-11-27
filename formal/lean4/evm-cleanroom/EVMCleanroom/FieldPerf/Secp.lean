@@ -28,9 +28,9 @@ open EVMCleanroom.Precompiles.Secp256k1.Fast
 /-- SplitMix64 (Steele, Lea and Flood 2014): the next state and an output word. -/
 def mix (s : UInt64) : UInt64 × UInt64 :=
   let s := s + 0x9e3779b97f4a7c15
-  let z := (s ^^^ (s >>> 30)) * 0xbf58476d1ce4e5b9
-  let z := (z ^^^ (z >>> 27)) * 0x94d049bb133111eb
-  (s, z ^^^ (z >>> 31))
+  let z := (s ^^^ (s >>> (30 : UInt64))) * 0xbf58476d1ce4e5b9
+  let z := (z ^^^ (z >>> (27 : UInt64))) * 0x94d049bb133111eb
+  (s, z ^^^ (z >>> (31 : UInt64)))
 
 /-- A pseudo-random number below `2^256`. -/
 def rand256 (s : UInt64) : UInt64 × Nat :=

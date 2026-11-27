@@ -425,7 +425,7 @@ theorem checkedAffineFast_onCurve (pt : Pt) (x y : Nat) (h : checkedAffineFast p
 
 /-- The candidate root with the wanted parity, if its square is `rhs`. -/
 def pickRoot (rhs root : U256) (parity : Nat) : Option U256 :=
-  if U256.beq (Ff.sqrO root) rhs then some (Ff.cneg ((root.l0 &&& 1) != parity.toUInt64) root) else none
+  if U256.beq (Ff.sqrO root) rhs then some (Ff.cneg ((root.l0 &&& (1 : UInt64)) != parity.toUInt64) root) else none
 
 /-- The ordinate with the given parity for abscissa `x < p`, when `x³ + 7` is a square. -/
 def liftY (x : U256) (parity : Nat) : Option U256 :=
