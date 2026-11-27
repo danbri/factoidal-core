@@ -51,6 +51,11 @@ jobs:
   valgrind:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    defaults:
+      run:
+        # pipefail: each step pipes into tee. Without it the step exit code is
+        # tee's, and the first run (45930142123) was green with a FAIL line.
+        shell: bash --noprofile --norc -euo pipefail {0}
     steps:
       - uses: actions/checkout@v4
       - name: Install Valgrind
@@ -85,6 +90,7 @@ jobs:
           lake-package-directory: formal/lean4
       - name: Build and run l4k256-probe
         working-directory: formal/lean4
+        shell: bash
         run: |
           set -euo pipefail
           lake build l4k256-probe 2>&1 | tee "$RUNNER_TEMP/k256-build.log"

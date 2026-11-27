@@ -146,9 +146,39 @@ that only HACL\* calls use.
 
 Measured on macOS arm64 before the push (no Valgrind on that host): `tests/ct/run.sh`, 8 pass, 0
 fail; the probe, linked by hand outside Lake, `k256: 13 pass, 0 fail (out of 13)`. Both include the
-EIP-155 example (r, s and v = 37 as published). The Valgrind results are in the first CI run of the
-workflow.
+EIP-155 example (r, s and v = 37 as published). Valgrind results: section 8.
 
 Not done: Ethereum transaction signing in `evm-cleanroom` does not call this yet (that package
 imports no FFI); a Valgrind run of Lean-compiled code (the Lean runtime on `Nat`, as a third
 control); the wasm build is wired but not built here.
+
+## 8. First Valgrind run: clang x86-64 breaks HACL\* `mod_exp_consttime`
+
+CI run https://github.com/danbri/factoidal-core/actions/runs/45930142123 (Ubuntu x86-64), memcheck
+errors with the secret marked undefined:
+
+| Case | gcc -O2 | clang -O2 |
+|---|---|---|
+| secp256k1 sign, EIP-155 key secret | 0 | 0 |
+| secp256k1 `secret_to_public` | 0 | 0 |
+| HACL\* `Hacl_Bignum64_mod_exp_consttime` | 0 | **316** |
+| control: HACL\* `mod_exp_vartime` (must leak) | 2,176 | 192 |
+| control: textbook square-and-multiply (must leak) | 106 | 129 |
+
+All 316 errors are at `Hacl_Bignum.c:1322`, the mask select `(m & tmp[i]) | (~m & res[i])` at the end
+of `Hacl_Bignum_AlmostMontgomery_bn_almost_mont_reduction_u64`. clang's x86-64 output has
+`testq %r8, %r8; je` in that loop, `%r8` being the reduction carry: a jump on whether the extra
+reduction happens. The RSA private operation (`Crypto/RsaOaep.lean`) calls this function. Apple
+clang 17 for arm64 compiles the same function with `cmeq` and `csel` and no branch (assembly read
+for this one function only). Issue, exposure and options:
+https://github.com/danbri/factoidal-core/issues/1200 (clang x86-64 branch in HACL\*
+`mod_exp_consttime`). The harness records it as an expected failure that turns the run red if the
+leak disappears.
+
+This is the case of section 1 item 4 (the compiler can turn branch-free code into a branch),
+measured. It is why layer 3 runs on compiled code, with each compiler that builds HACL\*.
+
+**Error in our method, 2026-11-27.** The first workflow piped each Valgrind step into `tee` with no
+`pipefail`, so the job was green although the clang step printed `FAIL ct_valgrind: 1 failures`.
+Found by reading the log, not from the status. Repair: the job's shell has `-euo pipefail`. Rule:
+a CI step that pipes into `tee` sets `pipefail` (`shell: bash` does; the default shell does not).

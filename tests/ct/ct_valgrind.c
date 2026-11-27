@@ -131,7 +131,15 @@ int main(void) {
   SECRET(e, sizeof e);
   before = ERRORS();
   Hacl_Bignum64_mod_exp_consttime(4, n, a, 256, e, res_ct);
+#if defined(__clang__) && defined(__x86_64__)
+  /* Expected failure: clang x86-64 compiles the mask select of
+   * Hacl_Bignum_AlmostMontgomery_bn_almost_mont_reduction_u64 into a jump on
+   * the reduction carry. https://github.com/danbri/factoidal-core/issues/1200
+   * If this case stops leaking, it fails: remove this branch and close the issue. */
+  expect_errors("expected failure (issue 1200): HACL* Bignum64 mod_exp_consttime, clang x86-64", before, 1);
+#else
   expect_errors("HACL* Bignum64 mod_exp_consttime (exponent secret)", before, 0);
+#endif
 
   /* 5. Control 1: HACL* variable-time exponentiation, same inputs. */
   before = ERRORS();

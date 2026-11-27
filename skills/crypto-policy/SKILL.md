@@ -233,6 +233,13 @@ cannot reach an extern).
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/Hpke.lean` | HPKE base mode (RFC 9180) | `ffi/hacl_hpke.c` | `l4crypto-probe` |
 
+**Constant time is checked on compiled code, per compiler.** HACL\*'s proofs end at C; a C compiler
+can add a branch on a secret. On 2026-11-27 clang -O2 for x86-64 did so in
+`Hacl_Bignum64_mod_exp_consttime` (316 memcheck errors; gcc 0):
+https://github.com/danbri/factoidal-core/issues/1200. Run `tests/ct/run.sh valgrind` with each
+compiler and target that builds HACL\* (`.github/workflows/check-k256-ct.yml`), and add a case there
+for each new secret-key path.
+
 Design record for the last four:
 [`docs/designissues/2026-09-07-crypto-primitives.md`](../../docs/designissues/2026-09-07-crypto-primitives.md).
 
