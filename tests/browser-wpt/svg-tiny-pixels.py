@@ -84,14 +84,22 @@ def score(actual, expected):
     difference = np.abs(actual.astype(np.int16) - expected.astype(np.int16)).max(axis=2)
     inside = np.zeros(difference.shape, dtype=bool)
     inside[BORDER:-BORDER, BORDER:-BORDER] = True
-    different = int(((difference > TOLERANCE) & inside).sum())
-    share = different / difference.size
-    ink = ((255 - expected.astype(np.int16)).max(axis=2) > INK) & inside
-    recall = float(((difference <= TOLERANCE) & ink).sum() / ink.sum()) if ink.any() else 1.0
-    band = 'MATCH' if share <= MATCH[0] and recall >= MATCH[1] else \
-        'CLOSE' if share <= CLOSE[0] and recall >= CLOSE[1] else 'MISMATCH'
+
+    def bands(region):
+        different = int(((difference > TOLERANCE) & region).sum())
+        share = different / difference.size
+        ink = ((255 - expected.astype(np.int16)).max(axis=2) > INK) & region
+        recall = float(((difference <= TOLERANCE) & ink).sum() / ink.sum()) if ink.any() else 1.0
+        band = 'MATCH' if share <= MATCH[0] and recall >= MATCH[1] else \
+            'CLOSE' if share <= CLOSE[0] and recall >= CLOSE[1] else 'MISMATCH'
+        return band, different, share, recall
+    band, different, share, recall = bands(inside)
+    # The same image with the border compared too: the rule before 2026-11-27.
+    whole, wholeDifferent, _, _ = bands(np.ones(difference.shape, dtype=bool))
     return {'band': band, 'differentPixels': different, 'differentShare': round(share, 6),
-            'inkRecall': round(recall, 4), 'exact': int(difference.max()) == 0}
+            'inkRecall': round(recall, 4), 'exact': int(difference.max()) == 0,
+            'bandWithBorder': whole, 'differentPixelsWithBorder': wholeDifferent,
+            'borderPixels': int((~inside).sum())}
 
 
 def prepare(stem):
@@ -165,12 +173,15 @@ report = {'format': 'factoidal-svg-tiny-pixels-v1',
           'gpu': adapter,
           'archiveSha256': ARCHIVE_SHA256, 'nativeSha256': sha(a.native.read_bytes()),
           'runnerSha256': sha(Path(__file__).read_bytes()),
-          'tolerance': TOLERANCE, 'match': MATCH, 'close': CLOSE, 'inkThreshold': INK, 'borderExcluded': BORDER,
+          'tolerance': TOLERANCE, 'match': MATCH, 'close': CLOSE, 'inkThreshold': INK,
+          'borderExcluded': {'width': BORDER, 'region': 'the template frame (test-frame) only: the outer 3 pixels of every image',
+                             'pixels': dict(collections.Counter(str(c['borderPixels']) for c in cases if 'borderPixels' in c))},
+          'countsWithBorder': dict(collections.Counter(c.get('bandWithBorder', c['status']) for c in cases)),
           'total': len(cases), 'counts': dict(counts), 'blankControlCounts': dict(blank),
           'exact': sum(1 for c in cases if c.get('exact')),
           'filesAffectedByDrop': dict(drops.most_common()), 'cases': cases}
 (out / 'svg-tiny-pixels.json').write_text(json.dumps(report, indent=1) + '\n')
-print(json.dumps({k: report[k] for k in ('total', 'counts', 'blankControlCounts', 'exact')}))
+print(json.dumps({k: report[k] for k in ('total', 'counts', 'countsWithBorder', 'blankControlCounts', 'exact')}))
 print('most common removals (files affected):')
 for line, count in drops.most_common(25):
     print(f'  {count:4} {line[:90]}')

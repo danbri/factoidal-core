@@ -237,7 +237,8 @@ class Run:
         self.add('svg-tiny-pixels', 'W3C SVG Tiny 1.2, WebGPU pixels against W3C images (our bands, not a W3C verdict)',
                  'tests/browser-wpt/svg-tiny-pixels.py', {'name': 'W3C SVG Tiny 1.2 archive', 'pin': TINY_SHA}, report['total'],
                  {k.lower(): v for k, v in report['counts'].items()}, tiny_groups(report['cases']),
-                 blankControl=report['blankControlCounts'], exact=report['exact'], gpu=report['gpu'])
+                 blankControl=report['blankControlCounts'], exact=report['exact'], gpu=report['gpu'],
+                 countsWithBorder=report.get('countsWithBorder'), borderExcluded=report.get('borderExcluded'))
 
     def wpt_images_wasm(self):
         corpus = self.need(self.a.svg_wpt, 'The pinned WPT SVG corpus')
