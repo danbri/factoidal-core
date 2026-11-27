@@ -1365,6 +1365,18 @@ mechanisms for page trust."
   permission for each site) are a later design. One Lean value decides "allowed to start" today, so
   such a mechanism changes one function.
 
+### Formal-verification batch approved; claims register first (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "file them all!", then "Approve, start P1", then "keep working on
+this all night". Batch: https://github.com/danbri/factoidal-core/issues/1189 (OKR batch,
+formal-verification discipline after https://www.anthropic.com/research/formal-verification);
+record `docs/designissues/2026-11-27-formal-verification-post-review.md`.
+
+- P1 first: `foundation/claims.toml`
+  (https://github.com/danbri/factoidal-core/issues/1178, claims register). The word "proved" in
+  a release note, hub page or README is for a register entry only. The owner reviews the register;
+  entries are Claude proposals until the owner marks them reviewed.
+
 ### Never report upstream (owner, 2026-11-25)
 
 Owner, 2026-11-25, verbatim: "Nothing upstream. Sites are swamped with sloppy llm tickets. Never

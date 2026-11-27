@@ -19,6 +19,9 @@ on:
       - 'tools/check-owl-public-artifact.mjs'
       - 'tools/test-owl-public-artifact.mjs'
       - 'tools/lean-*'
+      - 'tools/claims-gate.py'
+      - 'foundation/claims.toml'
+      - 'tests/foundation/**'
       - 'tools/test_lean_*'
       - 'tools/wasmvm/**'
       - 'third_party/spectec-lean4/**'
@@ -125,6 +128,22 @@ jobs:
       - name: Escape-hatch audit (sorry / axiom / native_decide / unsafe / partial def)
         working-directory: ${{ github.workspace }}
         run: python3 tools/lean-hygiene-audit.py --build-log "$RUNNER_TEMP/lake-build.log"
+
+      # The claims register (https://github.com/danbri/factoidal-core/issues/1178,
+      # P1; statement freeze, P2, https://github.com/danbri/factoidal-core/issues/1179):
+      # the static gate, its tests, then `#print axioms` for every claim after
+      # the build above. A claim that rests on sorryAx, Lean.ofReduceBool
+      # (native_decide) or a user axiom fails here.
+      - name: Claims register (statement freeze and axioms of each claim)
+        working-directory: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -I tests/foundation/test_claims_gate.py
+          python3 -I tools/claims-gate.py
+          python3 -I tools/claims-gate.py --axioms-lean "$RUNNER_TEMP/ClaimsAxioms.lean"
+          (cd formal/lean4 && lake build $(python3 -I ../../tools/claims-gate.py --modules) && lake env lean "$RUNNER_TEMP/ClaimsAxioms.lean") 2>&1 | tee "$RUNNER_TEMP/claims-axioms.log"
+          python3 -I tools/claims-gate.py --check-axioms "$RUNNER_TEMP/claims-axioms.log"
 
       # Report only (issue 427, https://github.com/danbri/factoidal-core/issues/427):
       # which modules can reach I/O through an escape hatch. The self-test plants one
