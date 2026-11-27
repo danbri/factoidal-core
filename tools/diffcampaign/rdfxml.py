@@ -52,7 +52,9 @@ def node(rng, depth, ids, indent=""):
     if rng.random() < 0.3:
         attrs += f' ex:attr={quoteattr(rng.choice(["v", "é", "1"]))}'
     if rng.random() < 0.15:
-        attrs += f' xml:lang="{rng.choice(["en", "fr", ""])}"'
+        # Not xml:lang="" (valid RDF/XML, it removes the language in scope):
+        # pyoxigraph 0.5.13 refuses it, so it would hide every other difference.
+        attrs += f' xml:lang="{rng.choice(["en", "fr"])}"'
     props = [prop(rng, depth, ids, indent + "  ") for _ in range(rng.randrange(0, 4))]
     if not props:
         return f"{indent}<{tag}{attrs}/>"
