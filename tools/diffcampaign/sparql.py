@@ -213,6 +213,7 @@ def compare(cases, oxf, fdf, keep=None, out_json=None):
     fd = {json.loads(l)["id"]: json.loads(l) for l in open(fdf)}
     tally = Counter()
     kept = []
+    refused = []  # a sample, to find generator defects
     for cid, c in cs.items():
         a, b = ox.get(cid), fd.get(cid)
         if a is None or b is None:
@@ -220,6 +221,8 @@ def compare(cases, oxf, fdf, keep=None, out_json=None):
             continue
         if not a["ok"] and not b["ok"]:
             tally["both refuse"] += 1
+            if tally["both refuse"] <= 25:
+                refused.append((c, a, b))
             continue
         if a["ok"] != b["ok"]:
             tally["one refuses"] += 1
@@ -245,6 +248,12 @@ def compare(cases, oxf, fdf, keep=None, out_json=None):
         for c, a, b, why in kept:
             with open(os.path.join(keep, f"{c['id']}.json"), "w") as fh:
                 json.dump({"why": why, "case": c, "oxigraph": a, "factoidal": b}, fh, indent=1)
+    if keep:
+        rdir = os.path.join(os.path.dirname(os.path.abspath(keep)), "both-refused")
+        os.makedirs(rdir, exist_ok=True)
+        for c, a, b in refused:
+            with open(os.path.join(rdir, f"{c['id']}.json"), "w") as fh:
+                json.dump({"query": c["query"], "oxigraph": a.get("error"), "factoidal": b.get("error")}, fh, indent=1)
     if out_json:
         json.dump({"cases": m, **tally}, open(out_json, "w"))
     return 0
