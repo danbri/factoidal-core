@@ -19,7 +19,7 @@ Oxigraph's output, so a defect shared by those and the Turtle reader is not
 seen. A document both readers refuse counts apart.
 
 Commands:
-  gen --seed S --n N --out cases.jsonl
+  gen --seed S --n N --out cases.jsonl [--format turtle|trig|nt|nquads] [--mutate]
   oxigraph cases.jsonl --out ox.jsonl                 (needs pyoxigraph)
 Then: node tools/diffcampaign/turtle-factoidal.mjs cases.jsonl ox.jsonl [module] [--keep DIR]
 """
@@ -105,20 +105,24 @@ def predicate_list(rng, prefixes, depth):
     return sep.join(parts) + (" ;" if rng.random() < 0.2 else "")
 
 
-def document(rng):
+def document_parts(rng):
+    """The prologue lines and the statements (each a whole statement, which may
+    span lines, ending with ` .`)."""
     prefixes = ["ex", "e2", ""]
-    lines = []
-    lines.append(rng.choice(["@base <http://example.org/base/> .", "BASE <http://example.org/base/>"]))
-    lines.append(rng.choice(["@prefix ex: <http://example.org/ns#> .", "PREFIX ex: <http://example.org/ns#>"]))
-    lines.append("@prefix e2: <ns2/> .")
-    lines.append("@prefix : <http://example.org/default/> .")
-    lines.append(f"@prefix xsd: <{XSD}> .")
+    prologue = [
+        rng.choice(["@base <http://example.org/base/> .", "BASE <http://example.org/base/>"]),
+        rng.choice(["@prefix ex: <http://example.org/ns#> .", "PREFIX ex: <http://example.org/ns#>"]),
+        "@prefix e2: <ns2/> .",
+        "@prefix : <http://example.org/default/> .",
+        f"@prefix xsd: <{XSD}> .",
+    ]
+    stmts = []
     for _ in range(rng.randrange(1, 6)):
         r = rng.random()
         if r < 0.15:
             subj = "[ " + predicate_list(rng, prefixes, 1) + " ]"
             if rng.random() < 0.5:
-                lines.append(subj + " .")
+                stmts.append(subj + " .")
                 continue
         elif r < 0.3:
             subj = f"_:b{rng.randrange(4)}"
@@ -126,16 +130,109 @@ def document(rng):
             subj = "( " + " ".join(obj(rng, prefixes, 1) for _ in range(rng.randrange(1, 3))) + " )"
         else:
             subj = iri(rng, prefixes)
-        lines.append(f"{subj} {predicate_list(rng, prefixes, 0)} .")
-    return "\n".join(lines) + "\n"
+        stmts.append(f"{subj} {predicate_list(rng, prefixes, 0)} .")
+    return prologue, stmts
 
 
-def gen(seed, n, out):
+def document(rng):
+    prologue, stmts = document_parts(rng)
+    return "\n".join(prologue + stmts) + "\n"
+
+
+def trig_document(rng):
+    """A TriG 1.1 document: the Turtle prologue, then statements in the default
+    graph, in `{ }` blocks, and in named graph blocks (`GRAPH g { }` and
+    `g { }`, with an IRI or blank node graph name)."""
+    prologue, body = document_parts(rng)
+    prefixes = ["ex", "e2", ""]
+    out, i = list(prologue), 0
+    while i < len(body):
+        k = rng.randrange(1, 3)
+        chunk = body[i:i + k]
+        i += k
+        r = rng.random()
+        if r < 0.25:
+            out.extend(chunk)
+            continue
+        inner = "\n".join(chunk)
+        if rng.random() < 0.3 and inner.endswith(" ."):
+            inner = inner[:-2]  # the last triple of a block may omit its '.'
+        name = iri(rng, prefixes) if rng.random() < 0.8 else f"_:g{rng.randrange(3)}"
+        if r < 0.45:
+            out.append("{ " + inner + " }")
+        elif r < 0.7:
+            out.append(f"GRAPH {name} {{ {inner} }}")
+        else:
+            out.append(f"{name} {{ {inner} }}")
+    return "\n".join(out) + "\n"
+
+
+def line_term(rng, pos):
+    """A term of an N-Triples / N-Quads line: absolute IRIs (with UCHAR
+    escapes), blank node labels with the characters [141s] allows, and
+    literals with every ECHAR and UCHAR form, language tags and datatypes."""
+    r = rng.random()
+    if pos != "o" or r < 0.4:
+        if pos in ("s", "g") and r < 0.25:
+            return "_:" + rng.choice(["b", "b1", "b.c", "b-d", "_x", "1a", "bé", "b.c.d"])
+        return "<" + rng.choice(["http://example.org/", "urn:x:", "http://ex.org/é/"]) + rng.choice(
+            ["a", "b\\u0041", "c\\U0001F600", "d%20e", "f#g", "h?i=1"]) + ">"
+    body = "".join(rng.choice(["w", " ", "é", "😀", "\\t", "\\n", "\\\"", "\\\\", "\\u00E9", "\\U0001F600", "\\r", "\\b", "\\f", "'"])
+                   for _ in range(rng.randrange(0, 5)))
+    k = rng.random()
+    if k < 0.3:
+        return f'"{body}"@' + rng.choice(["en", "en-GB", "zh-Hant-TW", "x-private"])
+    if k < 0.55:
+        return f'"{body}"^^<' + rng.choice([XSD + "integer", XSD + "string", "http://example.org/dt"]) + ">"
+    return f'"{body}"'
+
+
+def line_document(rng, quads):
+    lines = []
+    for _ in range(rng.randrange(1, 12)):
+        parts = [line_term(rng, "s"), "<http://example.org/p" + str(rng.randrange(3)) + ">", line_term(rng, "o")]
+        if quads and rng.random() < 0.6:
+            parts.append(line_term(rng, "g"))
+        sep = rng.choice([" ", "\t", "  "])
+        end = rng.choice([" .", ".", " . ", " .\t# comment"])
+        lines.append(sep.join(parts) + end)
+    if rng.random() < 0.3:
+        lines.insert(rng.randrange(len(lines) + 1), "# a comment line")
+    if rng.random() < 0.2:
+        lines.append("")
+    return "\n".join(lines) + ("\n" if rng.random() < 0.9 else "")
+
+
+MUTATIONS = list(".;,[]()<>\"'\\:_@^#{} \n") + ["", "a", "1", "e", "é"]
+
+
+def mutate(rng, text):
+    """One random edit at one random place: delete a character, insert one, or
+    replace one. Many results are invalid documents, so the campaign also
+    compares the readers' refusals."""
+    if not text:
+        return text
+    i = rng.randrange(len(text))
+    k = rng.random()
+    c = rng.choice(MUTATIONS)
+    if k < 0.34:
+        return text[:i] + text[i + 1:]
+    if k < 0.67:
+        return text[:i] + c + text[i:]
+    return text[:i] + c + text[i + 1:]
+
+
+def gen(seed, n, out, fmt="turtle", mutated=False):
     rng = random.Random(seed)
+    make = {"trig": trig_document, "nt": lambda r: line_document(r, False),
+            "nquads": lambda r: line_document(r, True)}.get(fmt, document)
     with open(out, "w") as fh:
         for i in range(n):
-            fh.write(json.dumps({"id": f"t{seed}-{i}", "data": document(rng)}, ensure_ascii=False) + "\n")
-    print(f"generated {n} Turtle documents, seed {seed}")
+            data = make(rng)
+            if mutated:
+                data = mutate(rng, data)
+            fh.write(json.dumps({"id": f"{fmt[0]}{'m' if mutated else ''}{seed}-{i}", "format": fmt, "data": data}, ensure_ascii=False) + "\n")
+    print(f"generated {n} {fmt} documents, seed {seed}")
 
 
 def run_oxigraph(cases, out):
@@ -144,7 +241,9 @@ def run_oxigraph(cases, out):
         for line in fin:
             c = json.loads(line)
             try:
-                quads = list(ox.parse(c["data"].encode(), format=ox.RdfFormat.TURTLE,
+                fmt = {"trig": ox.RdfFormat.TRIG, "rdfxml": ox.RdfFormat.RDF_XML, "nt": ox.RdfFormat.N_TRIPLES,
+                       "nquads": ox.RdfFormat.N_QUADS}.get(c.get("format"), ox.RdfFormat.TURTLE)
+                quads = list(ox.parse(c["data"].encode(), format=fmt,
                                       base_iri="http://example.org/base/"))
                 nq = ox.serialize(quads, format=ox.RdfFormat.N_QUADS).decode()
                 fout.write(json.dumps({"id": c["id"], "ok": True, "nquads": nq}, ensure_ascii=False) + "\n")
@@ -158,7 +257,7 @@ def main(argv):
         print(__doc__); return 2
     opt = lambda k, d=None: argv[argv.index(k) + 1] if k in argv else d
     if argv[0] == "gen":
-        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl")); return 0
+        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl"), opt("--format", "turtle"), "--mutate" in argv); return 0
     if argv[0] == "oxigraph":
         run_oxigraph(argv[1], opt("--out", "ox.jsonl")); return 0
     print(__doc__); return 2

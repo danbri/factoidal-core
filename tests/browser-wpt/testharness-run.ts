@@ -806,7 +806,22 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
       return did;
     };
+    // A page with a real-time AudioContext (Web Audio API: its rendering runs at the device rate,
+    // docs/designissues/2026-11-26-foafnaut-audio-plan.md section 13): its events come from the
+    // engine's rendering task in real time, so the page's clock moves with real time here, 10 ms
+    // of virtual time then 10 ms of waiting, until the harness is done or 30 s have passed. One
+    // settle of 70 s of virtual time would run the test's own timeout before any audio event.
+    const realTimeAudio=/(^|[^A-Za-z])AudioContext\s*\(/.test(html);
     const settleTo=async(budgetMs:number)=>{
+      if(realTimeAudio){
+        const stop=turn.clock+budgetMs,until=Date.now()+30000;
+        while(turn.clock<stop&&Date.now()<until&&!logs.some(l=>l.startsWith("__wpt_done "))){
+          take(turn=await ss({action:"settle",session:turn.session,budgetMs:10}));
+          await drive();
+          await new Promise(r=>setTimeout(r,10));
+        }
+        return;
+      }
       if(!driver){take(turn=await ss({action:"settle",session:turn.session,budgetMs}));return;}
       const stop=turn.clock+budgetMs;
       for(let i=0;i<200000;i++){

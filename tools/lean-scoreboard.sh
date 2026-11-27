@@ -135,8 +135,13 @@ defjob() {
 
 # --- SPARQL ---------------------------------------------------------------
 defjob l4w3c-sparql11 l4w3c parse_sparql11 w3c \
-  "SPARQL 1.1 (query+update+protocol, manifest-all)" "" \
+  "SPARQL 1.1, reference definitions (query+update+protocol, manifest-all)" "" \
   "--quiet $W3C/sparql/sparql11/manifest-all.ttl"
+# The same suite through the shipped evaluator and its backend (issue 1183).
+# The line above scores the reference definitions evalSelect/evalAsk.
+defjob l4w3c-sparql11-shipped l4w3c parse_sparql11 w3c \
+  "SPARQL 1.1 through the shipped evaluator (query+update+protocol, manifest-all)" "" \
+  "--quiet --engine=shipped $W3C/sparql/sparql11/manifest-all.ttl"
 defjob l4sparql-probe l4sparql-probe parse_sparql_probe none \
   "SPARQL 1.1 query syntax (parser only, no evaluation)" "" \
   "$W3C/sparql/sparql11"
