@@ -6,9 +6,9 @@ design: docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 12).
 ## Op numbers
 
 The plan named ops 170 to 189. Ops 170, 171 and 172 of `WasmVM/Hosts/WebApi.lean` are the
-layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 196**
-(173 to 189: contexts, nodes, rendering; 190 to 196: real-time contexts and decoding, step D2 of
-the plan). Routing: `173 ≤ code < 200` (197 to 199 answer -2).
+layout observers (`Rendering.Observe`, `DOM.PiAttributes`), so these ops are **173 to 195**
+(173 to 189: contexts, nodes, rendering; 190 to 195: real-time contexts and decoding, step D2 of
+the plan). Routing: `173 ≤ code < 200` (196 to 199 answer -2).
 
 ## Argument and answer conventions
 
@@ -120,7 +120,7 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
-    state (`suspended`, `running`, `closed`). The state is `running` when `autoplay` or `activated`.
+    state (`suspended`, `running`, `closed`). The state is `running` when `allowedToStart`.
     The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET, STATE])`,
     the target in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to
     16384) and STATE the initial state's code (`RtState.code`: 0 suspended, 1 running), so that
@@ -129,8 +129,8 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
   * 191 `control(ctx, verb)`: `resume`, `suspend`, `close` (else -20); -20 for a context that is
     not real-time; -29 when the context is closed. Answers the call id (decimal) and appends
     `(191, [ctx, verb, callId])` to the outbox; the promise resolves when an event of kind 3 (or
-    rejects: kind 4) names the call id. A `resume` before `autoplay` or `activated` waits in
-    `pendingResume`; op 196 releases it.
+    rejects: kind 4) names the call id. A `resume` that is not `allowedToStart` waits in
+    `pendingResume`; `activate` releases it.
   * 192 `time(ctx)`: doubles `currentTime`, `baseLatency`, `outputLatency`, one state byte (0
     suspended, 1 running, 2 closed), doubles `contextTime` and `performanceTime` (of
     `getOutputTimestamp()`; the page-clock ms of the last report, 0 before the first).
@@ -142,7 +142,16 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     binary32 channel by channel; or the error the decoder gave (-30, -23). The job is removed
     when the result is given, and also when it is an error (so 195 is the one op that changes the
     state while it answers an error). -29 while the job is pending; -20 for no such job.
-  * 196 `activate()`: the page's sticky activation; releases the pending `resume` calls.
+
+The autoplay rule (Web Audio API 1.1 "allowed to start"; owner, 2026-11-26, CLAUDE.md "Audio: AAC
+through AudioToolbox, HRTF data, autoplay rule"): a context may start when `allowedToStart`, that
+is when the page has sticky activation (`activated`) or the engine holds the risk token
+`Risk.audioWithoutActivation` (`autoplay`). Neither is an op: `op` gives back `autoplay` and
+`activated` as it found them, whatever the op (`op_gate`), so no page script can give itself
+either. The host sets `activated` with `activate` when its trusted input gives activation
+(`labs/demos/foafnaut/WebScripts.lean`, `performInput`; Lean decides which input does,
+`WebDriver.Input.activates`), and `autoplay` from the engine's limits (`Page.Limits.autoplay`).
+Code 196, `activate()` until 2026-11-27, answers -2.
 
 No op changes a context other than the one it names (`withCtx_other`), and an op that fails
 changes nothing (`op_error_state`; op 195 with a stored error result excepted).
@@ -153,6 +162,7 @@ host for a turn at most 25 ms ahead (`nextWake`, plan 13.3), so the events are d
 -/
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
+import L4Factoidal.Risk
 import Std.Data.HashMap
 
 namespace L4Factoidal.WebAudio.Api
@@ -244,9 +254,11 @@ structure State where
   /-- The output's preferred sample rate and channel count, set by the engine; `none`: no audio
   output (op 190 answers -23). -/
   device : Option (Float × Nat) := none
-  /-- True: no activation is needed (the WPT runner and tests). -/
-  autoplay : Bool := false
-  /-- The page's sticky activation (op 196). -/
+  /-- Present: a real-time context may start with no user activation. Set from the engine's
+  limits (`Page.Limits.autoplay`); no op changes it (`op_gate`). -/
+  autoplay : Option (Risk.Accepted .audioWithoutActivation) := none
+  /-- The page's sticky activation (HTML "has been activated"). Set by `activate`, which the host
+  calls when its trusted input gives activation; no op changes it (`op_gate`). -/
   activated : Bool := false
   nextCall : Nat := 1
   decodeJobs : Std.HashMap Nat DecodeJob := {}
@@ -733,7 +745,7 @@ def infoOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) 
       ⟨#[if c.rendered then 1 else 0]⟩)
 
 
-/-! ## 190 to 196: real-time contexts, decoding -/
+/-! ## 190 to 195: real-time contexts, decoding -/
 
 /-- Decimal text of a count, as bytes. -/
 def dec (k : Nat) : ByteArray := ofStr (toString k)
@@ -775,8 +787,14 @@ def rtContext (rate : Float) : Except Int Context.OfflineContext := do
   let c0 ← lift (Context.OfflineContext.new 2 1 rate)
   pure { c0 with length := 0 }
 
-/-- The state a new real-time context starts in: running when no activation is needed. -/
-def initialState (s : State) : RtState := if s.autoplay || s.activated then .running else .suspended
+/-- Web Audio API 1.1 "allowed to start": the page has sticky activation, or the engine holds the
+permission to start with none (`Risk.audioWithoutActivation`). The one function that decides it,
+so that another way for a page to be trusted changes only this function (owner, 2026-11-26: "In
+future we may have other mechanisms for page trust"). -/
+def allowedToStart (s : State) : Bool := s.autoplay.isSome || s.activated
+
+/-- The state a new real-time context starts in: running when it is allowed to start. -/
+def initialState (s : State) : RtState := if allowedToStart s then .running else .suspended
 
 /-- The checks of op 190, in order: the hint, the callback, the rate, the device and the limit of
 live contexts. Answers the rate, the device's channel count, the target frames and the callback. -/
@@ -836,7 +854,7 @@ def controlOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArra
   if !(verb == "resume" || verb == "suspend" || verb == "close") then throw errType
   if rt.state == .closed then throw errInvalidState
   let call := s.nextCall
-  let wait := verb == "resume" && !(s.autoplay || s.activated)
+  let wait := verb == "resume" && !allowedToStart s
   let rt' : Realtime :=
     { rt with calls := rt.calls.push (call, verb)
               pendingResume := if wait then rt.pendingResume.push call else rt.pendingResume
@@ -884,7 +902,8 @@ def decodeResultOp (s : State) (fs : Array ByteArray) : State × Except Int Byte
       | none => (s, .error errInvalidState)
       | some r => ({ s with decodeJobs := s.decodeJobs.erase job }, r.map decodeAnswer)
 
-/-- Op 196: sticky activation. Each pending `resume` call goes to its context's outbox. -/
+/-- Sticky activation, from the host's trusted input (never from an op, `op_gate`). Each pending
+`resume` call goes to its context's outbox. -/
 def activate (s : State) : State :=
   { s with activated := true
            realtime := s.realtime.map fun id rt =>
@@ -995,7 +1014,6 @@ def run (s : State) (code : Nat) (fs : Array ByteArray) : Except Int (State × B
   | 192 => timeOp s fs
   | 193 => eventsOp s fs
   | 194 => decodeAudioDataOp s fs
-  | 196 => pure (activate s, ByteArray.empty)
   | _ => .error (-2)
 
 /-- The ops whose success is also sent to the rendering side of a real-time context. -/
@@ -1014,34 +1032,67 @@ def pushOutbox (s : State) (code : Nat) (fs : Array ByteArray) : State :=
     | none => s
   | .error _ => s
 
-/-- The operations 173 to 196. A failed op leaves the state as it was (except 195 with a stored
-error result); the answer is the error code (negative) or the bytes. -/
-def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+/-- The operations 173 to 195, before `op` gives back the autoplay fields. A failed op leaves the
+state as it was (except 195 with a stored error result); the answer is the error code (negative)
+or the bytes. -/
+def opCore (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
   if code = 195 then decodeResultOp s fs
   else
     match run s code fs with
     | .ok (s', out) => ((if outboxCode code then pushOutbox s' code fs else s'), .ok out)
     | .error e => (s, .error e)
 
+/-- The operations 173 to 195 of a page (`opCore`), with `autoplay` and `activated` given back as
+they were: whatever an op does, it can not give the page activation or the permission to start
+with none (`op_gate`). -/
+def op (s : State) (code : Nat) (fs : Array ByteArray) : State × Except Int ByteArray :=
+  let r := opCore s code fs
+  ({ r.1 with autoplay := s.autoplay, activated := s.activated }, r.2)
+
+/-- Says: no op changes `autoplay` or `activated`, for any code and any arguments, so a page's
+script can not give itself activation or the permission to start with none. Does not say: that
+the host sets them only for the person's input and the person's setting (`activate` is called in
+`WebScripts.performInput`; `autoplay` comes from `Page.Limits.autoplay`, made only in
+`WebScripts.audioLimits`). -/
+theorem op_gate (s : State) (code : Nat) (fs : Array ByteArray) :
+    (op s code fs).1.autoplay = s.autoplay ∧ (op s code fs).1.activated = s.activated :=
+  ⟨rfl, rfl⟩
+
+/-- Says: `op` and `opCore` agree on every field but `autoplay` and `activated`, and give the same
+answer. Does not say: that `opCore` changes those two (it does not; `op` makes it so by
+construction). -/
+theorem op_eq (s : State) (code : Nat) (fs : Array ByteArray) :
+    op s code fs = ({ (opCore s code fs).1 with autoplay := s.autoplay, activated := s.activated },
+      (opCore s code fs).2) := rfl
+
 /-- Says: an op other than 195 that answers an error returns the state it was given. Does not
 say: that an op that succeeds changes the state (a query does not); nor anything about 195, which
 removes a job whose stored result is an error. -/
-theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
-    (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
-  unfold op at *
+theorem opCore_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
+    (hc : code ≠ 195) (h : (opCore s code fs).2 = .error e) : (opCore s code fs).1 = s := by
+  unfold opCore at *
   simp only [hc, if_false] at *
   split at h <;> simp_all
 
-/-- Says: a code outside 173 to 196 answers -2 and leaves the state alone. Does not say: anything
-about the codes inside the range. -/
-theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 196 < code) :
+theorem op_error_state (s : State) (code : Nat) (fs : Array ByteArray) (e : Int)
+    (hc : code ≠ 195) (h : (op s code fs).2 = .error e) : (op s code fs).1 = s := by
+  have h' : (opCore s code fs).2 = .error e := h
+  have h1 := opCore_error_state s code fs e hc h'
+  show { (opCore s code fs).1 with autoplay := s.autoplay, activated := s.activated } = s
+  rw [h1]
+
+/-- Says: a code outside 173 to 195 answers -2 and leaves the state alone (196, `activate()` until
+2026-11-27, among them). Does not say: anything about the codes inside the range. -/
+theorem op_unknown (s : State) (code : Nat) (fs : Array ByteArray) (h : code < 173 ∨ 195 < code) :
     op s code fs = (s, .error (-2)) := by
   have hr : run s code fs = .error (-2) := by
     unfold run
     split <;> first | omega | rfl
   have hc : code ≠ 195 := by omega
-  unfold op
-  rw [if_neg hc, hr]
+  have hcore : opCore s code fs = (s, .error (-2)) := by
+    unfold opCore
+    rw [if_neg hc, hr]
+  rw [op_eq, hcore]
 
 /-- Says: `withCtx` changes only `contexts`. Does not say: which context. -/
 theorem withCtx_fields (s s' : State) (fs : Array ByteArray) (out : ByteArray)
@@ -1080,14 +1131,14 @@ theorem run_realtime (s s' : State) (code : Nat) (fs : Array ByteArray) (out : B
 /-- Says: a successful op 176 to 179 or 181 to 185 on a real-time context that is not closed
 appends exactly `(code, fs)` to its outbox, and changes no other context's record. Does not say:
 what happens to the graph state (`withCtx_other`), or for a closed context. -/
-theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+theorem opCore_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
     (id : Nat) (rt : Realtime) (hc : outboxCode code = true) (hid : natArg fs 0 = .ok id)
     (hrt : s.realtime[id]? = some rt) (hopen : rt.state ≠ .closed)
-    (h : op s code fs = (s', .ok out)) :
+    (h : opCore s code fs = (s', .ok out)) :
     s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
     ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
   have hn : code ≠ 195 := by unfold outboxCode at hc; simp at hc; omega
-  unfold op at h
+  unfold opCore at h
   rw [if_neg hn] at h
   split at h
   · rename_i s1 o1 hr
@@ -1106,6 +1157,19 @@ theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : Byte
     have : id ≠ id' := fun e => hne e.symm
     simp [Std.HashMap.getElem?_insert, this, hrt1]
   · simp at h
+
+/-- Says: as `opCore_outbox`, for `op`. Does not say: more than that. -/
+theorem op_outbox (s s' : State) (code : Nat) (fs : Array ByteArray) (out : ByteArray)
+    (id : Nat) (rt : Realtime) (hc : outboxCode code = true) (hid : natArg fs 0 = .ok id)
+    (hrt : s.realtime[id]? = some rt) (hopen : rt.state ≠ .closed)
+    (h : op s code fs = (s', .ok out)) :
+    s'.realtime[id]? = some { rt with outbox := rt.outbox.push (code, fs) } ∧
+    ∀ id', id' ≠ id → s'.realtime[id']? = s.realtime[id']? := by
+  have h2 : (opCore s code fs).2 = .ok out := congrArg Prod.snd h
+  have h1 : (opCore s code fs).1.realtime = s'.realtime := congrArg (fun p => p.1.realtime) h
+  have hpair : opCore s code fs = ((opCore s code fs).1, .ok out) := Prod.ext rfl h2
+  rw [← h1]
+  exact opCore_outbox s _ code fs out id rt hc hid hrt hopen hpair
 
 /-! ## Theorems of the IO-layer functions -/
 
@@ -1494,16 +1558,19 @@ private def sn : ByteArray := f32le 0.0 ++ f32le 1.0
 #guard codeOf (.invalidState "") == -29 && codeOf (.range "") == -21 && codeOf (.type "") == -20
 #guard errEncoding == -30
 
-/-! ### Real-time contexts (ops 190 to 196) -/
+/-! ### Real-time contexts (ops 190 to 195) -/
 
 private def devS : State := { device := some (48000.0, 2) }
+/-- A device and the permission to start with no activation. The tests' own acceptance of
+`Risk.audioWithoutActivation` (skills/lean-risk-flags §5). -/
+private def permitted : State := { devS with autoplay := some (Risk.dangerouslyAccept .audioWithoutActivation) }
 private def rtOf (s : State) (id : Nat) : Realtime := (s.realtime[id]?).getD default
 private def txt (r : Except Int ByteArray) : String := ((r.toOption).map String.fromUTF8!).getD "?"
 private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
-#guard txt (ans { devS with autoplay := true } 190 [t "interactive", ByteArray.empty, n 7]) ==
+#guard txt (ans permitted 190 [t "interactive", ByteArray.empty, n 7]) ==
   "1 48000 2 running"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
   "1 44100 2 running"
@@ -1542,23 +1609,23 @@ private def full : State :=
         strArg m[0]!.2 2, strArg m[0]!.2 3, strArg m[0]!.2 4)) ==
   some (1, 190, 5, "1", 48000.0, "2", "4096", "0")
 -- The initial state in the first message: running with autoplay.
-#guard ((chain { devS with autoplay := true } [(190, [t "playback", ByteArray.empty, n 7])]).map fun s =>
+#guard ((chain permitted [(190, [t "playback", ByteArray.empty, n 7])]).map fun s =>
   strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
 -- The rate's 8 bytes give the rate back (the rendering side reads them, `RenderSide.ofOpen`).
 #guard [48000.0, 44100.0, 3000.0, 768000.0, 22050.5].all fun r => Float.ofBits (u64At (f64le r) 0) == r
 -- needsTurns: a running context; a suspended one with no call; a resume waiting for activation;
 -- a suspend not yet answered; a closed context.
-#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some false
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"])]).map needsTurns == some false
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "suspend"])]).map needsTurns == some true
-#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]).map
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map
   (fun s => needsTurns (applyReport s 1 { stateChanges := #[.closed] })) == some false
 #guard needsTurns {} == false
 
 -- The outbox after a few ops; an offline context beside it is not touched.
 private def rtGraph : Option State :=
-  chain { devS with autoplay := true } [
+  chain permitted [
     (175, [n 1, n 100, d 44100.0]),                                  -- ctx 1, offline
     (190, [t "interactive", ByteArray.empty, n 7]),                  -- ctx 2, real-time
     (176, [n 2, t "oscillator"]), (176, [n 1, t "gain"]),
@@ -1617,7 +1684,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
     nd.params[0]?.map fun p => p.timeline.events.length)) ==
   some (some 2)
 -- Both are sent to the rendering side of a real-time context.
-#guard (chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+#guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
           (176, [n 1, t "gain"]),
           (179, [n 1, n 1, n 0, t "setValueCurveAtTime", curve [0.0, 1.0], d 0.0, d 1.0]),
           (179, [n 1, n 1, n 0, t "cancelAndHoldAtTime", d 0.5])]).map
@@ -1629,7 +1696,7 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
 #guard err (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).get! 191 [n 1, t "play"] == errType
 -- With autoplay a resume goes to the outbox at once; the call id is answered.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]
   let (s, r) ← (step s 191 #[n 1, t "resume"]).toOption
   let (s, r2) ← (step s 191 #[n 1, t "suspend"]).toOption
   let rt := rtOf s 1
@@ -1637,7 +1704,8 @@ private def curve (vs : List Float) : ByteArray := vs.foldl (fun a v => a ++ f32
         rt.outbox[1]!.2.toList.map (String.fromUTF8! ·), rt.calls.toList.map (·.2),
         rt.pendingResume.size)) ==
   some ("1", "2", [190, 191, 191], ["1", "resume", "1"], ["resume", "suspend"], 0)
--- Without activation a resume waits; 196 releases it into the outbox, once.
+-- Without activation a resume waits; `activate` (the host's trusted input) releases it into the
+-- outbox, once.
 private def waiting : Option State :=
   chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
               (191, [n 1, t "suspend"])]
@@ -1645,22 +1713,34 @@ private def waiting : Option State :=
   some ([190, 191], [1])
 #guard (do
   let s ← waiting
-  let (s, r) ← (step s 196 #[]).toOption
+  let s := activate s
   let rt := rtOf s 1
-  pure (r.size, s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
+  pure (s.activated, rt.outbox.toList.map (·.1), rt.outbox[2]!.2.toList.map (String.fromUTF8! ·),
         rt.pendingResume.size, (activate s).realtime[1]?.map (·.outbox.size))) ==
-  some (0, true, [190, 191, 191], ["1", "resume", "1"], 0, some 3)
+  some (true, [190, 191, 191], ["1", "resume", "1"], 0, some 3)
+-- Code 196 is not an op: it answers -2, and the resume still waits.
+#guard (do
+  let s ← waiting
+  let (s', r) := op s 196 #[]
+  pure (r.toOption.isNone, s'.activated, (rtOf s' 1).pendingResume.toList)) == some (true, false, [1])
+-- No op gives activation: after every op of a run of ops, `activated` and `autoplay` are as before
+-- (`op_gate`), here with the ops of a page that makes, resumes and closes a context.
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
+    (176, [n 1, t "oscillator"]), (196, []), (191, [n 1, t "close"])]).isNone
+#guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7]), (191, [n 1, t "resume"]),
+    (176, [n 1, t "oscillator"]), (191, [n 1, t "close"])]).map (fun s => (s.activated, s.autoplay.isSome)) ==
+  some (false, false)
 -- After activation a new context starts running and a resume is not held.
 #guard (do
   let s ← waiting
-  let (s, _) ← (step s 196 #[]).toOption
+  let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
   pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
 private def reported : Option State := do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
             (176, [n 1, t "constantSource"]), (191, [n 1, t "resume"])]
   pure (applyReport s 1 { framesRendered := 24000, framesPlayed := 20000, underruns := 1,
                           latencyFrames := 480, timeMs := 1234.5, ended := #[1],
@@ -1696,7 +1776,7 @@ private def reported : Option State := do
 -- A report with no events queues no wakeup; a rejected call is an event of kind 4 and a state
 -- change sets the state; a context that is not real-time is not changed.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7]),
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7]),
                                                 (191, [n 1, t "close"])]
   let s1 := applyReport s 1 { framesRendered := 5 }
   let s2 := applyReport s 1 { rejected := #[1], stateChanges := #[.suspended, .closed] }
@@ -1705,7 +1785,7 @@ private def reported : Option State := do
         s3.wakeups.size)) == some (0, [(2, 0), (2, 2), (4, 1)], true, [7], 0)
 -- A closed context refuses control calls.
 #guard (do
-  let s ← chain { devS with autoplay := true } [(190, [t "interactive", ByteArray.empty, n 7])]
+  let s ← chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]
   let s := applyReport s 1 { stateChanges := #[.closed] }
   pure (err s 191 [n 1, t "resume"], err s 191 [n 1, t "suspend"], err s 191 [n 1, t "close"],
         (op s 176 #[n 1, t "gain"]).1.realtime[1]?.map (·.outbox.size),
@@ -1714,7 +1794,7 @@ private def reported : Option State := do
 private def fullClosed : State :=
   (List.range 16).foldl (fun s i =>
     applyReport (op s 190 #[t "interactive", ByteArray.empty, n 1]).1 (i + 1)
-      { stateChanges := #[.closed] }) { devS with autoplay := true }
+      { stateChanges := #[.closed] }) permitted
 #guard err fullClosed 190 [t "interactive", ByteArray.empty, n 1] == 0
 
 -- takeOutbox: the messages, once, in order; then nothing.

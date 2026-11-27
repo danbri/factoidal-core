@@ -466,8 +466,10 @@ structure Limits where
   channel count, or none (then `new AudioContext()` answers `NotSupportedError`). Set by the
   engine (`labs/demos/foafnaut/WebAudioRun.lean`), never by a page (`WebAudio.Api.State.device`). -/
   audioDevice : Option (Float × Nat) := none
-  /-- A real-time context runs with no user activation (`WebAudio.Api.State.autoplay`). -/
-  autoplay : Bool := false
+  /-- Present: a real-time context may start with no user activation
+  (`WebAudio.Api.State.autoplay`, `Risk.audioWithoutActivation`). Made only from the engine's
+  start request (`labs/demos/foafnaut/WebScripts.lean`, `audioLimits`), never by a page. -/
+  autoplay : Option (Risk.Accepted .audioWithoutActivation) := none
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/

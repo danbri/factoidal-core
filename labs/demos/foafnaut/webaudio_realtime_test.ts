@@ -4,7 +4,10 @@
 // library (`build-web-render.sh --native`; `WEB_RENDER_LIB=` names another). Each check uses an
 // engine session of its own, so the engine reads the environment's audio settings anew when the
 // page starts: FOAFNAUT_AUDIO_SINK (`wav:FILE`: the frames the output took, silence included, as
-// a 32-bit float WAV file; `null`) and FOAFNAUT_AUTOPLAY=allow. The host gives turns as a window
+// a 32-bit float WAV file; `null`). A start request with `dangerouslyPermitAudio: true` (what the
+// window sends for --dangerously-permit-audio) lets a context start with no user activation; without
+// it the page must be used first (CLAUDE.md, "Audio: AAC through AudioToolbox, HRTF data, autoplay
+// rule"). The host gives turns as a window
 // would: an `advance` by the real time since the last turn, every 10 ms (the engine asks for at most
 // 25 ms while a context runs, `nextWake`). Checks:
 //  1. `new AudioContext()` plays a 440 Hz OscillatorNode for one second through the wav sink: the
@@ -15,8 +18,9 @@
 //     the sink closes (the WAV header has its sizes), the run's task ends (the registry holds no
 //     run, its thread is gone). Prints the rendering thread's CPU time per second of audio and the
 //     frames ahead of the output (least and most).
-//  2. with no autoplay the context starts suspended, resume() waits; a press of the user's mouse
-//     (pointer down and up, trusted) activates the page; resume() resolves, then statechange fires.
+//  2. with no permission the context starts suspended, resume() waits; a press of the user's mouse
+//     (pointer down and up, trusted input, which Lean's WebScripts.performInput turns into the page's
+//     sticky activation) activates the page; resume() resolves, then statechange fires.
 //  3. suspend() then resume(): no under-run and no silent frame is counted while suspended.
 //  4. a run ends, and its thread is gone, on the document op audioEnd and when its engine session
 //     ends with no close of the page (web_session_free).
@@ -32,12 +36,14 @@ const noLibrary=(()=>{try{Deno.statSync(library);return false;}catch{return true
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms));
 
 type Turn=ScriptTurn&{engine?:string};
-/** An engine session with the environment's audio settings, and a page started on BubblePopJS. */
-async function startPage(env:Record<string,string|undefined>,source:string){
+/** An engine session with the environment's audio settings, and a page started on BubblePopJS;
+`permit`: the start request has `dangerouslyPermitAudio: true`. */
+async function startPage(env:Record<string,string|undefined>,source:string,permit=false){
   for(const [k,v] of Object.entries(env)){if(v===undefined)Deno.env.delete(k);else Deno.env.set(k,v);}
   const engine=await loadHTML(library,"bytes",{session:true});
   const url="file:///webaudio.html";
-  const turn=engine.scriptSession(source,{action:"start",url,resources:[],engine:"bubblepop",instructionsPerMs:1e12,full:true}) as Turn;
+  const turn=engine.scriptSession(source,{action:"start",url,resources:[],engine:"bubblepop",instructionsPerMs:1e12,full:true,
+    ...(permit?{dangerouslyPermitAudio:true}:{})}) as Turn;
   assert.deepEqual(turn.errors,[],"page errors at start");
   return {engine,url,turn};
 }
@@ -98,7 +104,7 @@ window.addEventListener('message',e=>{if(e.data==='close')ac.close().then(()=>lo
 
 Deno.test({name:"real-time audio: an AudioContext plays what an OfflineAudioContext renders, with no under-run",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
   const wavPath=await Deno.makeTempFile({suffix:".wav"});
-  const {engine,turn}=await startPage({FOAFNAUT_AUDIO_SINK:`wav:${wavPath}`,FOAFNAUT_AUTOPLAY:"allow"},playPage);
+  const {engine,turn}=await startPage({FOAFNAUT_AUDIO_SINK:`wav:${wavPath}`},playPage,true);
   const session=turn.session,logs=[...turn.logs];
   try{
     const made=logs.find(l=>l.startsWith("made "))!.split(" ");
@@ -172,8 +178,8 @@ ac.onstatechange=()=>log('statechange',ac.state);
 ac.resume().then(()=>log('resumed',ac.state));
 </script>`;
 
-Deno.test({name:"real-time audio: with no autoplay, resume() waits for the user's activation",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
-  const {engine,url,turn}=await startPage({FOAFNAUT_AUDIO_SINK:"null",FOAFNAUT_AUTOPLAY:undefined},activationPage);
+Deno.test({name:"real-time audio: with no permission, resume() waits for the user's activation",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
+  const {engine,url,turn}=await startPage({FOAFNAUT_AUDIO_SINK:"null"},activationPage);
   const session=turn.session,logs=[...turn.logs];
   try{
     assert.ok(logs.includes("made suspended"),logs.join("\n"));
@@ -215,7 +221,7 @@ window.addEventListener('message',e=>{
 </script>`;
 
 Deno.test({name:"real-time audio: no under-run is counted while a context is suspended",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
-  const {engine,turn}=await startPage({FOAFNAUT_AUDIO_SINK:"null",FOAFNAUT_AUTOPLAY:"allow"},suspendPage);
+  const {engine,turn}=await startPage({FOAFNAUT_AUDIO_SINK:"null"},suspendPage,true);
   const session=turn.session,logs=[...turn.logs];
   const say=(data:string)=>{const t=engine.scriptSession("",{action:"message",session,data:JSON.stringify(data),origin:"file://"}) as Turn;logs.push(...t.logs);};
   try{
@@ -248,7 +254,7 @@ Deno.test({name:"real-time audio: no under-run is counted while a context is sus
 }});
 
 Deno.test({name:"real-time audio: a context's run ends on audioEnd, and with its engine session",ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
-  const env={FOAFNAUT_AUDIO_SINK:"null",FOAFNAUT_AUTOPLAY:"allow"};
+  const env={FOAFNAUT_AUDIO_SINK:"null"};
   const runningTid=async(engine:HTMLEngine,session:number,logs:string[])=>{
     await turnsUntil(engine,session,logs,()=>onlyRun(engine).items.some(r=>r.tid>0&&r.quanta>0),2000);
     return onlyRun(engine).items[0].tid;
@@ -256,7 +262,7 @@ Deno.test({name:"real-time audio: a context's run ends on audioEnd, and with its
   const gone=async(tid:number)=>{for(let i=0;i<50&&threadAlive(tid);i++)await sleep(10);return !threadAlive(tid);};
   // audioEnd (a host that drops an engine it does not free): the runs end, their threads are gone.
   {
-    const {engine,turn}=await startPage(env,suspendPage);
+    const {engine,turn}=await startPage(env,suspendPage,true);
     try{
       const tid=await runningTid(engine,turn.session,[...turn.logs]);
       assert.equal(engine.audioEnd()?.runs,0);
@@ -268,7 +274,7 @@ Deno.test({name:"real-time audio: a context's run ends on audioEnd, and with its
   }
   // The engine session ends with no close of the page (a tab closed): web_session_free ends the runs.
   {
-    const {engine,turn}=await startPage(env,suspendPage);
+    const {engine,turn}=await startPage(env,suspendPage,true);
     const tid=await runningTid(engine,turn.session,[...turn.logs]);
     engine.endSession?.();
     assert.ok(await gone(tid),"the rendering thread is still there after its engine session ended");

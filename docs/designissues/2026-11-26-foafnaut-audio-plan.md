@@ -669,3 +669,33 @@ delay kernel 12 %, `fillFast` for the `setTarget` and ramp parameters 10 % (one 
 frame), allocation of one `FloatArray` per node per quantum about 15 %, input mixing 6 %.
 Not done: the delay kernel and the mixers still go through `mkChan` closures for each channel;
 an instruction-count measurement that does not depend on the load of the machine.
+
+## 15. The HRTF data set: what its licence is known to be (2026-11-27)
+
+Owner, 2026-11-26 (section 7, answer 2): yes to the HRTF data set for `PannerNode`, after its
+licence is reported. Chromium (`third_party/blink/renderer/platform/audio/resources/`), WebKit
+(`Source/WebCore/platform/audio/resources/`) and Firefox (`dom/media/webaudio/blink/`) ship the
+same impulse responses, `IRC_Composite_C_R0195_T*_P*.wav` joined into one file (`Composite.wav`,
+FLAC in Chromium). They come from the IRCAM LISTEN HRTF database.
+
+What the sources say, read on 2026-11-27:
+
+- Debian's copyright file of libmysofa, which ships one LISTEN subject as test data
+  ([copyright file](https://metadata.ftp-master.debian.org/changelogs//main/libm/libmysofa/libmysofa_0.6~dfsg0-3+deb10u1_copyright)),
+  records "Copyright: 2002, IRCAM" and licence `listen-ircam`, verbatim: "The Listen database is
+  public and available for any use. We would however appreciate an acknowledgment of the database
+  somewhere in the description of your work (e.g. paper) or in your development."
+- Chromium's README for the files gives no licence; it points to
+  [WebKit bug 98294](https://bugs.webkit.org/show_bug.cgi?id=98294), which is about the order of
+  the elevations and gives no licence either. A W3C list message
+  ([public-audio, 2013-01-24](https://lists.w3.org/Archives/Public/public-audio/2013JanMar/0210.html))
+  says only that WebKit's set is derived from LISTEN.
+- IRCAM's own LISTEN page (`recherche.ircam.fr/equipes/salles/listen/`) answered HTTP 503 twice,
+  so IRCAM's text was not read.
+
+Reading, not legal advice: the terms Debian records allow any use and ask for an acknowledgment.
+Not shown: IRCAM's own text today, and whether the composite files of the browsers carry the same
+terms (no file says). Before the data is vendored (in `danbri/factoidal-builds`, `third_party/`,
+with provenance, as for the decoders), IRCAM's page is read again and quoted in the provenance
+file, and the acknowledgment goes in the provenance file and in `about:foafnaut`. Equal-power
+panning, which needs no data, comes first (stage F).

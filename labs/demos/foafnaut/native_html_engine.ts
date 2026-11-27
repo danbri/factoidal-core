@@ -161,7 +161,7 @@ export type AudioRun={page:number;ctx:number;tid:number;quanta:number;renderNs:n
   looks:number;refused:number;divergence:number;written:number;read:number;underruns:number;silent:number;
   sinkError:string;finished:boolean;state:number;eventsOut:number;eventsIn:number};
 /** The answer of `audioRuns`: the runs, the audio output (null: none) and the sink spec. */
-export type AudioRuns={runs:number;items:AudioRun[];device:{rate:number;channels:number}|null;spec:string;autoplay:boolean};
+export type AudioRuns={runs:number;items:AudioRun[];device:{rate:number;channels:number}|null;spec:string};
 /** The answer of `frameWork`: layouts, kept layouts used and pointer states painted with no layout. */
 export type FrameWork={layouts:number;kept:number;repaints:number;layoutSlots:number;pagesMade?:number;pagesKept?:number;paintOnly?:number;recompiled?:number;reused?:number;moved?:number};
 /** An engine session of the native library (web_session_new; docs/designissues/2026-11-26-foafnaut-engine-sessions.md):

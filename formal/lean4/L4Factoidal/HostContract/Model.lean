@@ -168,8 +168,11 @@ theorem shellCommitFocus_contract : kindOf "shellCommitFocus" = .query ∧ needs
 docs/designissues/2026-11-14-engine-integration.md, "Theorems across the seams"): `hostCors`
 (no CORS check by the engine; the host enforces it), `address` (where the host loaded the page
 from), `network` (page scripts may fetch), `navigations`, `liberal` (draw what can be drawn and list
-what was skipped), `scripting` (`false`: no page script runs here). -/
-def relaxFields : List String := ["hostCors", "address", "network", "navigations", "liberal", "scripting"]
+what was skipped), `scripting` (`false`: no page script runs here), `dangerouslyPermitAudio`
+(a real-time `AudioContext` starts with no user activation; `Risk.audioWithoutActivation`, made in
+`WebScripts.audioLimits`). -/
+def relaxFields : List String :=
+  ["hostCors", "address", "network", "navigations", "liberal", "scripting", "dangerouslyPermitAudio"]
 
 /-- Top-level answer fields that are measurements, not page answers: `ns`, the engine time a
 `scriptSession` turn took (WasmVM/Hosts). They differ between two runs of one build, so a trace

@@ -5548,14 +5548,15 @@
   // without the operations leaves the interfaces undefined. Stage B of
   // https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
   //
-  // AudioContext (ops 190 to 196, step D3 of the plan): Lean's control side of the context; the
+  // AudioContext (ops 190 to 195, step D3 of the plan): Lean's control side of the context; the
   // engine renders it on a task of its own and plays it through its audio output
   // (labs/demos/foafnaut/WebAudioRun.lean). Its events (sources ended, control calls carried out or
   // refused, changes of state) come back through a page callback that the engine queues as a task;
   // the callback reads them (op 193). With no audio output (the Wasm build, or no Lean task
-  // manager) the constructor throws NotSupportedError. The page's first trusted activation-triggering
-  // input event (HTML "activation triggering input event") calls op 196 once: a context made before
-  // it starts suspended and its resume() waits for it, unless the engine allows autoplay.
+  // manager) the constructor throws NotSupportedError. A context made before the page has sticky
+  // activation starts suspended and its resume() waits for it, unless the browser was started with
+  // --dangerously-permit-audio (or its Settings switch). Lean decides which input gives activation
+  // and releases the rule (WebScripts.performInput, WebAudio.Api.activate); no code here can.
   //
   // What this section does not do, each with the issue that tracks it:
   //  - The nodes that the engine cannot render (Analyser, Convolver, DynamicsCompressor, IIRFilter,
@@ -20120,22 +20121,6 @@
     idlShape(name, gd && gd.value);
   }
 
-  // HTML §6.4.3, "activation triggering input event": keydown (not Escape, not a modifier key),
-  // mousedown, pointerdown of a mouse, pointerup of another pointer, touchend. The first trusted
-  // one is the page's sticky activation, which Web Audio's autoplay rule reads (op 196, once).
-  let activationNoted = false;
-  const modifierKeys = new Set(['Alt', 'AltGraph', 'CapsLock', 'Control', 'Fn', 'FnLock', 'Hyper', 'Meta', 'NumLock', 'ScrollLock', 'Shift', 'Super', 'Symbol', 'SymbolLock']);
-  const activationTriggering = (type, data) =>
-    type === 'keydown' ? typeof data.key === 'string' && data.key !== 'Escape' && !modifierKeys.has(data.key)
-      : type === 'mousedown' || type === 'touchend' ? true
-      : type === 'pointerdown' ? data.pointerType === 'mouse'
-      : type === 'pointerup' ? typeof data.pointerType === 'string' && data.pointerType !== 'mouse'
-      : false;
-  const noteActivation = (type, data) => {
-    if (activationNoted || !activationTriggering(type, data)) return;
-    activationNoted = true;
-    if (apiOn()) apiCall(196, []);
-  };
   return {
     // Lean runs a timer (target -1) or an animation frame callback (target -2, `arg` the time).
     call(id, target, arg) {
@@ -20244,7 +20229,6 @@
       if (C === KeyboardEvent && typeof data.keyCode === 'number') { state(e).keyCode = data.keyCode; state(e).which = data.keyCode; }
       state(e).trusted = true;
       noteFocusInput(type, e);
-      noteActivation(type, data);
       // "update the current document readiness" fires readystatechange at the document
       // the document's milestones (Navigation Timing 2 §4: domInteractive, DOMContentLoaded's start)
       if (type === 'DOMContentLoaded' && target === 0) { navNote('domInteractive'); navNote('domContentLoadedEventStart'); }

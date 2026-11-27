@@ -234,11 +234,10 @@ instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := defaul
 
 /-- What the engine says of its audio output (`WebAudioRun`, plan
 docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 13): the device's sample rate and
-channel count (none: no real-time audio, as in the Wasm build), and whether a real-time context
-runs with no user activation. A new session takes it (`Page.Limits.audioDevice`, `autoplay`). -/
+channel count (none: no real-time audio, as in the Wasm build). A new session takes it
+(`Page.Limits.audioDevice`). -/
 structure AudioEnv where
   device : Option (Float × Nat) := none
-  autoplay : Bool := false
   deriving Inhabited
 
 /-- What the engine holds between calls: the prepared module and one session. -/
@@ -299,17 +298,22 @@ structure Held where
   gate's configuration (secret, port), the protocol's state and what this browser is. -/
   webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser × WebDriver.Window.State × WebDriver.Page.Doc) := none
   /-- The engine's audio output, set by the engine before each call (`WebAudioRun.before`); a
-  session started then takes it, with `autoplay` also on when the `start` request has
-  `autoplay:true`. -/
+  session started then takes it (`audioLimits`). -/
   audio : AudioEnv := {}
 
 instance : Inhabited Held := ⟨{}⟩
 
-/-- The audio fields of a new session's limits: the engine's device, and autoplay when the engine
-or the `start` request allows it. -/
+/-- The audio fields of a new session's limits: the engine's device, and the permission to start
+real-time contexts with no user activation when the `start` request has
+`dangerouslyPermitAudio: true`. This is the only acceptance of `Risk.audioWithoutActivation` outside
+tests. The browser's window sends the field only for the command-line option
+`--dangerously-permit-audio` or the Settings switch, and warns when it is on (owner, 2026-11-26,
+`CLAUDE.md` "Audio: AAC through AudioToolbox, HRTF data, autoplay rule"); the start request is the
+host's, and no page content reaches it. -/
 def audioLimits (held : Held) (request : JSON.Json) (lim : Page.Limits) : Page.Limits :=
   { lim with audioDevice := held.audio.device,
-             autoplay := held.audio.autoplay || request.field? "autoplay" == some (.bool true) }
+             autoplay := if request.field? "dangerouslyPermitAudio" == some (.bool true)
+               then some (Risk.dangerouslyAccept .audioWithoutActivation) else none }
 
 /-! `Held` is a field of the engine's state (`WebDocument.Engine`), passed in and given back
 by each operation here (issue 390). The caller takes it out of the state before the call,
@@ -1269,14 +1273,24 @@ def hostKeyOf (request : JSON.Json) : Option WebDriver.HostKeys.HostKey :=
 
 /-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
 Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
-trusted input state changes. An event that gives user activation records its time. -/
+trusted input state changes. An event that gives user activation (`WebDriver.Input.activates`)
+records its time, and gives the page's Web Audio state its sticky activation
+(`WebAudio.Api.activate`: a context may start, and the `resume()` calls that waited go on). -/
 def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a : LeanJSWorkers.Agents) :
     LeanJSWorkers.Agents :=
   let e := LeanJSWorkers.engine
   let base := e.inputDriver refNode
   let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
     let a := base.dispatch a low
-    if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+    if WebDriver.Input.activates low then
+      let page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock }
+      let h := page.host
+      -- The first activation releases Web Audio's autoplay rule. A later one changes nothing
+      -- there: once `activated` holds, a `resume()` does not wait.
+      let page := if h.web.audio.activated || page.heap.host.isNone then page
+        else page.setHost { h with web := { h.web with audio := WebAudio.Api.activate h.web.audio } }
+      { a with page }
+    else a
   let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
   let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
   let r := WebDriver.Actions.perform d start sources

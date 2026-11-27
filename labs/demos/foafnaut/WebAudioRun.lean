@@ -117,7 +117,7 @@ structure Run where
 /-- What the engine keeps for real-time audio (`WebDocument.Engine.audio`). -/
 structure Registry where
   runs : Array Run := #[]
-  /-- The audio output and the autoplay setting, asked once (`probe`); `none` before. -/
+  /-- The audio output, asked once (`probe`); `none` before. -/
   env : Option WebScripts.AudioEnv := none
   /-- The sink spec (`Sink.defaultSpec`), read with `env`. -/
   spec : String := "null"
@@ -132,21 +132,20 @@ def taskManagerRuns : BaseIO Bool := do
   return here != there
 
 /-- The audio output (the sink's preferred rate and channels, `Sink.deviceInfo`) when the task
-manager runs, and the autoplay setting of the environment (`FOAFNAUT_AUTOPLAY=allow`). Asked once
-per engine. -/
+manager runs. Asked once per engine. The permission to start with no user activation is not here:
+it comes with each session's start request (`WebScripts.audioLimits`). -/
 def probe (reg : Registry) : BaseIO (Registry × WebScripts.AudioEnv) := do
   match reg.env with
   | some env => return (reg, env)
   | none =>
     let spec ← Sink.defaultSpec
-    let autoplay := (← IO.getEnv "FOAFNAUT_AUTOPLAY") == some "allow"
     let device ← if ← taskManagerRuns then do
         let info ← Sink.deviceInfo spec
         let rate := info.get! 0
         let ch := (info.get! 1).toUInt64.toNat
         pure (if rate ≥ 3000.0 && rate ≤ 768000.0 && 0 < ch && ch ≤ 32 then some (rate, ch) else none)
       else pure none
-    let env : WebScripts.AudioEnv := { device, autoplay }
+    let env : WebScripts.AudioEnv := { device }
     return ({ reg with env := some env, spec }, env)
 
 /-! ## The rendering task -/
@@ -424,6 +423,6 @@ def runsAnswer (reg : Registry) : BaseIO String := do
     | some (rate, ch) => .object [("rate", .number (toString rate.toUInt64.toNat)), ("channels", num ch)]
     | none => .null
   return (JSON.Json.object [("runs", num reg.runs.size), ("items", .array items.toList), ("device", device),
-    ("spec", .string reg.spec), ("autoplay", .bool ((reg.env.map (·.autoplay)).getD false))]).toString
+    ("spec", .string reg.spec)]).toString
 
 end WebAudioRun
