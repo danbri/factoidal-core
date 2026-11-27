@@ -31,6 +31,11 @@ For cross-zone work, name the adapter and the effect boundary. For example, JSON
 and GRDDL takes a retrieval function. A theorem about Fetch policy must constrain the construction or
 execution of those inputs; absence of a Network import alone does not establish the policy.
 
+Search before you write (https://github.com/danbri/factoidal-core/issues/1187): run
+`python3 -I tools/lean-lemma-index.py NAME-OR-WORDS` (no Lean build needed; `--kind theorem`,
+`--kind def`) and `lean_local_search` where a language server runs. Use or generalise an existing
+lemma or definition before you add one; name what you found in the report.
+
 Follow [local Lean rules](../local-lean-rules/SKILL.md). A theorem's hypothesis is not a requirement on web
 pages, and an invariant of current code does not decide a feature, default or user interface. See
 [theorem reading rules](../../docs/designissues/2026-11-10-theorems-as-contributions.md).
