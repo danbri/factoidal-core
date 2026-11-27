@@ -334,11 +334,12 @@ private theorem double_exp (e k : Nat) : (e + e) * 2 ^ k = e * 2 ^ (k + 1) :=
     _ = e * (2 ^ k * 2) := Nat.mul_assoc e (2 ^ k) 2
     _ = e * 2 ^ (k + 1) := by rw [Nat.pow_succ]
 
-private theorem sqrN_zero (x : U256) : sqrN x 0 = x := by
-  rw [sqrN]
+private theorem sqrN_zero (x : U256) : sqrN x 0 = x := rfl
 
-private theorem sqrN_succ (x : U256) (k : Nat) : sqrN x (k + 1) = sqrN (sqr x) k := by
-  rw [sqrN]
+-- With `sqr` opaque the two sides are compared by unfolding `sqrN` only; otherwise the
+-- comparison first tries `x` against `sqr x` and unfolds the whole reduction.
+attribute [local irreducible] sqr in
+private theorem sqrN_succ (x : U256) (k : Nat) : sqrN x (k + 1) = sqrN (sqr x) k := rfl
 
 /-- At least one squaring leaves a canonical value. -/
 private theorem sqrN_lt (k : Nat) : ∀ (x : U256), (sqrN x (k + 1)).toNat < pNat := by
