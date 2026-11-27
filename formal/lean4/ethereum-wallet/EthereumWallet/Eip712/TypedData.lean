@@ -428,6 +428,21 @@ def Shown.field? (s : Shown) (name : String) : Option Shown :=
   | .struct _ fields => fields.lookup name
   | _ => none
 
+def Shown.addr? (s : Shown) (name : String) : Option Nat :=
+  match s.field? name with
+  | some (.atom _ (.address a)) => some a
+  | _ => none
+
+def Shown.uint? (s : Shown) (name : String) : Option Nat :=
+  match s.field? name with
+  | some (.atom _ (.uint n)) => some n
+  | _ => none
+
+def Shown.bool? (s : Shown) (name : String) : Option Bool :=
+  match s.field? name with
+  | some (.atom _ (.bool b)) => some b
+  | _ => none
+
 /-- The chain a request is bound to, if its domain says. -/
 def SignRequest.chainId? (r : SignRequest) : Option Nat :=
   match r.domain.field? "chainId" with

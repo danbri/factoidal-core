@@ -250,21 +250,6 @@ structure SignSummary where
 
 def signWhen (c : Bool) (w : SignWarning) : List SignWarning := if c then [w] else []
 
-def Shown.addr? (s : Shown) (name : String) : Option Nat :=
-  match s.field? name with
-  | some (.atom _ (.address a)) => some a
-  | _ => none
-
-def Shown.uint? (s : Shown) (name : String) : Option Nat :=
-  match s.field? name with
-  | some (.atom _ (.uint n)) => some n
-  | _ => none
-
-def Shown.bool? (s : Shown) (name : String) : Option Bool :=
-  match s.field? name with
-  | some (.atom _ (.bool b)) => some b
-  | _ => none
-
 def classifyTypedData (r : SignRequest) : SignAction × List SignWarning :=
   let token := r.verifyingContract?.getD 0
   let m := r.message
