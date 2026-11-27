@@ -535,6 +535,23 @@ root. Keep the compiler/runtime trust boundary and unproved cryptographic
 properties explicit. Existing crypto choices for other products are not
 changed by this Ethereum-specific direction.
 
+### HACL\* is preferred; secp256k1 signer approved (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "HACL* is both approved and PREFERED over our own
+(crazy yolo roll your own etc.) Lean hackery." Then, to the statement that a
+HACL\* secp256k1 signer for Ethereum needed approval: "Do it."
+
+- For every cryptographic operation, Ethereum included, HACL\* is the source.
+  Pure Lean crypto is a specification or a differential oracle, never the
+  run-time path for secret data. The Ethereum independence rule above does not
+  apply to HACL\*.
+- A secret key is an opaque Lean type that only HACL\* calls can use
+  (`tools/secret-type-gate.py`). Constant time is checked on the compiled code
+  by Valgrind with leaking controls (`tests/ct/run.sh valgrind`).
+- First instance: `L4Factoidal/Crypto/K256Native.lean` over HACL\*
+  `Hacl_K256_ECDSA.c` (RFC 6979 nonce, low-S, recovery id), workflow
+  `check-k256-ct.yml`. Record: `docs/designissues/2026-11-27-bignum-timing-and-aes.md`.
+
 [Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
 
 Acceptance: https://github.com/danbri/factoidal-core/issues/725.
@@ -1064,6 +1081,13 @@ JS."; "VerifiedJS: implement now, I will talk to them, we can always back out.";
 - QuickJS stays in the tree and selectable. Do not delete it.
 - VerifiedJS has no licence file. The owner is asking its authors. Until they answer
   it is fetched at a pinned commit and none of its source is committed here.
+- SVG Tiny 1.2 is implemented in full (owner, 2026-11-27, verbatim, on the admission count of
+  https://github.com/danbri/factoidal-core/issues/1166: "It still sounds like you're giving yourself
+  a pass instead of getting the full thing properly implemented."). The target is all 496 files of
+  the W3C suite admitted and drawn correctly, every feature group included: animation, SVG fonts,
+  `textArea`, scripts and handlers, external references, media. The admission check only stops
+  wrong drawing; a refusal is a gap to implement, never a place to stop. Report admitted and pixel
+  counts together.
 - A node of the FOAF graph may not cover another: `WebGraph.keepApart` holds the
   layout policy on each step. Owner, verbatim: "this version of the foafy svg
   doesn't come with the inability for a node to occlude another". Cost of the
@@ -1114,6 +1138,63 @@ and proved; (1) make the link-time optimised build the default for the native en
 tier 2, inline caches for property reads (target: at least 3 times faster on sites that see one
 shape). Tracking: https://github.com/danbri/factoidal-core/issues/471. Each step reports its
 measurement before and after.
+
+### BubblePopJS JIT: order after tier 2 (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "next: 1. then 2 then3 then 4. Close 475. Your advice needed on 476,
+486." The numbers are those of the coordinator's question after tier 2 was measured and not landed
+(https://github.com/danbri/factoidal-core/issues/471#issuecomment-7200198103):
+
+1. The global-name cache (`vmGlobalHit` walks the environments with `findEnv` before every cached
+   read: 25% of `props.js`, 14% of `method.js`).
+2. Cheaper register-machine steps (values as 64-bit words, registers with no boxes; heap plan rule 1).
+3. Object shapes (design: `docs/bubblepopjs-heap.md` of PR 538).
+4. LTO as the default for `leanjs` (needs three packages in the factoidal-builds image first).
+
+PR 475 is closed (replaced by PR 557). PRs 476 and 486 wait for the owner after the coordinator's
+advice. Their measurements are in `docs/bubblepopjs-jit.md`, copied to `main`.
+
+Owner, 2026-11-27, verbatim, on stages E and F of the plan (generated code), which were design only:
+"ensure we get to these!" Goal of the same day: "performant JIT JS improving our ux": each step is
+judged on page script time (start turn and timer turns of Particle Rex on the Linux rig) as well as
+on the corpus.
+
+A new heap field that changes rarely goes in `ColdHeap`, not in `HeapOf`: the hot record is rebuilt
+at every change of the heap. Cost: `docs/designissues/2026-11-27-global-name-scope-chains.md`, trap.
+
+### No V8, no engine of another browser (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Please ensure in CLAUDE.md and elsewhere that we never slip into
+using V8. The hub thing is a cute demo, our main mission is a full independent web browser. Not
+something that runs inside someone else's browser, js or wasm implementation." Said after a session
+had written stage E as "generated WebAssembly run by the host's WebAssembly engine" (V8 on the
+desktop): that wording came from the plan's Hub text and was carried to the native browser without
+a check.
+
+- Page JavaScript and page WebAssembly run on our own engines only: BubblePopJS, BubblePopWASM
+  (WasmVM), and the code generators of the JIT stages. No JIT stage hands code to V8, to the Deno
+  host's WebAssembly engine, or to any engine of another browser.
+- Stage E is code that we generate and our own engine runs (WebAssembly run by BubblePopWASM's own
+  compiled path, or Lean-compiled code); stage F is machine code from our own templates (its trusted
+  primitive, "run bytes as code", still needs its own decision). `WasmVM.Aot`'s hand-off to the
+  host's engine is a Hub demonstration, not a route for the browser.
+- V8, QuickJS-NG and JavaScriptCore stay as measurement references and differential oracles in
+  benchmarks and tests, never as the path that runs a page.
+- Cost of not having this rule: on 2026-11-27 issue 471 was planned with V8 inside stage E.
+
+### SVG Tiny pixel harness: frame border out; fonts in (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: ""can the harness exclude the 3-pixel frame border from the
+comparison?" - I think yes is ok, but we should add the fonts anyway".
+
+- `tests/browser-wpt/svg-tiny-pixels.py` leaves the outer 3 pixels of each image out of the
+  comparison. Reason: the W3C PNGs draw the 1-pixel `test-frame` with stroke normalization
+  (one opaque row); an anti-aliasing renderer draws two half-grey rows, about 3,344 different
+  pixels against the 864 that MATCH allows. Chromium got 0 MATCH with the old bands. The
+  tolerance and the bands do not change.
+- The harness gives the engine the vendored OFL fonts (`third_party/fonts`) for text that the
+  SVG font does not draw.
+- Tracking: https://github.com/danbri/factoidal-core/issues/1165.
 
 ### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
 
@@ -1261,6 +1342,25 @@ macosx only."; "Hub: NOT A GOAL. Security and browser-in-a-browser are odd bedfe
   restarts until it is switched off. The command-line flag
   `--dangerously-use-unreviewed-tor-transport` stays for tests and scripts.
 
+### One host runtime: Deno; XMPP must not break (owner, 2026-11-26 and 2026-11-27)
+
+Owner, verbatim: "yes the intent is for this to be as internal to our packages as possible";
+"Seeing some use node, some use deno, feels off."; then, to the proposal that Deno be the single
+host runtime for our CLIs, servers, tests and scripts while the npm library stays usable from
+Node and browsers: "ok procede cautiously, and without breaking our xmpp".
+
+- Move one component at a time. Each move runs its suites under Node and under Deno; a move
+  lands only when the Deno run passes what the Node run passes. XMPP moves last. Its two Deno
+  differences are fixed (2026-11-27): all 20 XMPP test files pass under Node and Deno.
+- The npm library (`import '@factoidal/core'`) keeps working in Node and browsers.
+- `npx factoidal` keeps running under Node. Owner, 2026-11-27, verbatim: "keep running - yes
+  pls"; then "yes, re deno" (go on with the move), and: "we don't want to be too tied to any of
+  these, and the exposure to external code needs to be clear and documented". So code is not
+  tied to one runtime: runtime calls go through small host adapters, and a record lists every
+  piece of external code each path depends on (runtime, TLS library, crypto provider, crates,
+  packages), with its version and what it decides.
+- Baseline and plan: https://github.com/danbri/factoidal-core/issues/1176.
+
 ### Media: audio first; decoders vendored in factoidal-builds; OS video decoders (owner, 2026-11-26)
 
 Owner, 2026-11-26, verbatim, to the three questions of
@@ -1309,6 +1409,18 @@ mechanisms for page trust."
 - Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
   permission for each site) are a later design. One Lean value decides "allowed to start" today, so
   such a mechanism changes one function.
+
+### Formal-verification batch approved; claims register first (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "file them all!", then "Approve, start P1", then "keep working on
+this all night". Batch: https://github.com/danbri/factoidal-core/issues/1189 (OKR batch,
+formal-verification discipline after https://www.anthropic.com/research/formal-verification);
+record `docs/designissues/2026-11-27-formal-verification-post-review.md`.
+
+- P1 first: `foundation/claims.toml`
+  (https://github.com/danbri/factoidal-core/issues/1178, claims register). The word "proved" in
+  a release note, hub page or README is for a register entry only. The owner reviews the register;
+  entries are Claude proposals until the owner marks them reviewed.
 
 ### Never report upstream (owner, 2026-11-25)
 

@@ -1,6 +1,7 @@
 import L4Factoidal.WebAudio.Buffer
 import L4Factoidal.Media.Decode
 import L4Factoidal.Media.Modules
+import L4Factoidal.Prim.FloatOfNat
 
 /-!
 # Web Audio: `decodeAudioData`

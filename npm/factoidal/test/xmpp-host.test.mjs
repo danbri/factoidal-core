@@ -117,6 +117,29 @@ test('XMPP host releases its engine server when TLS setup fails', async () => {
   assert.equal(mock.state.closed, 1)
 })
 
+test('XMPP host refuses, before listening, a bad PEM or a key that does not match, on every TLS path (issue 1176)', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const dir = await fs.mkdtemp(join(tmpdir(), 'l4xmpp-pem-'))
+  try {
+    for (const n of ['a', 'b']) {
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
+        '-subj', `/CN=${n}`, '-keyout', join(dir, `${n}.key`), '-out', join(dir, `${n}.crt`)], { stdio: 'ignore' })
+    }
+    const certA = await fs.readFile(join(dir, 'a.crt')), keyA = await fs.readFile(join(dir, 'a.key'))
+    const keyB = await fs.readFile(join(dir, 'b.key'))
+    for (const extra of [{}]) {
+      for (const [cert, key] of [['invalid PEM', 'invalid PEM'], [certA, keyB]]) {
+        const mock = engine()
+        await assert.rejects(createXmppServer({ engine: mock, cert, key, ...extra }), /TLS certificate or key not usable/)
+        assert.equal(mock.state.opened, mock.state.closed)
+      }
+      const mock = engine()
+      const host = await createXmppServer({ engine: mock, cert: certA, key: keyA, ...extra })
+      await host.close()
+    }
+  } finally { await fs.rm(dir, { recursive: true, force: true }) }
+})
+
 test('XMPP host closes a TCP peer that has not started its TLS handshake', { timeout: 5000 }, async () => {
   const mock = engine()
   // No TLS handshake occurs: an empty certificate chain suffices to construct

@@ -31,6 +31,11 @@ For cross-zone work, name the adapter and the effect boundary. For example, JSON
 and GRDDL takes a retrieval function. A theorem about Fetch policy must constrain the construction or
 execution of those inputs; absence of a Network import alone does not establish the policy.
 
+Search before you write (https://github.com/danbri/factoidal-core/issues/1187): run
+`python3 -I tools/lean-lemma-index.py NAME-OR-WORDS` (no Lean build needed; `--kind theorem`,
+`--kind def`) and `lean_local_search` where a language server runs. Use or generalise an existing
+lemma or definition before you add one; name what you found in the report.
+
 Follow [local Lean rules](../local-lean-rules/SKILL.md). A theorem's hypothesis is not a requirement on web
 pages, and an invariant of current code does not decide a feature, default or user interface. See
 [theorem reading rules](../../docs/designissues/2026-11-10-theorems-as-contributions.md).
@@ -53,6 +58,18 @@ Every result records:
   Give before/after timings when execution changes.
 - The item issue and PR, the next obligation, and an updated pipeline state. Keep a partial lemma marked
   partial progress; it does not close an end-to-end statement.
+
+Public claims and counts (batch https://github.com/danbri/factoidal-core/issues/1189):
+
+- "Proved" in a release note, hub page or README is for an entry of `foundation/claims.toml` only
+  (https://github.com/danbri/factoidal-core/issues/1178). To add a claim: write the entry with its
+  says, does-not-say and assumptions, run `python3 -I tools/claims-gate.py --record ID`, and leave
+  `status = "proposed"` for the owner. A changed statement of a claim fails `tools/claims-gate.py`
+  until the register is edited in the same commit
+  (https://github.com/danbri/factoidal-core/issues/1179).
+- A theorem count gives general theorems and closed-value tests apart: `python3 -I
+  tools/theorem-count.py` (https://github.com/danbri/factoidal-core/issues/1186). 2026-11-27:
+  16,392 theorems, 15,441 general, 951 closed-value tests.
 
 ## Standing proofs that CI checks: fuel monotonicity of BubblePopJS
 

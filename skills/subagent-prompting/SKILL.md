@@ -359,6 +359,10 @@ Six licensing/preservation lemmas landed in one day via scoped
 worktree agents, one rule per agent; two more taught the failure
 modes. The brief shape that worked:
 
+- **Step 0 of a proof or definition brief: search the tree** with
+  `python3 -I tools/lean-lemma-index.py WORDS` (https://github.com/danbri/factoidal-core/issues/1187)
+  and name the lemmas to reuse in the brief. Duplicate code is a cost: two sessions wrote the same
+  `escapeString` fast form on 2026-10-13.
 - **Ship the full proof sketch, not the goal.** Every green agent got
   the exact lemma statements, the witness chain spelled out, the
   template section to mirror (file + construct names), and the known

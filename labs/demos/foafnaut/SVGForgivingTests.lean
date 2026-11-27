@@ -184,9 +184,13 @@ private def line2 : Float := 19.8
 #guard withFont ("<defs>" ++ area "id='t' width='30' height='30'" "a" ++ "</defs><use xlink:href='#t' xmlns:xlink='http://www.w3.org/1999/xlink'/>") == 1
 -- With no font the element goes and is logged, as `text` is.
 #guard (log "<textArea width='9' height='9'>a</textArea>").contains "element: textArea"
--- Expected failure, https://github.com/danbri/factoidal/issues/1259: a soft hyphen is
--- not yet a break opportunity. When it is one, "a a-" fits on line 1 and this guard fails.
-#guard originsAre (area "width='22' height='30'" "a a\u00ADaa") [(0,line1),(0,line2),(10,line2),(15,line2)]
+-- A soft hyphen is a break opportunity (UAX 14 class BA), https://github.com/danbri/factoidal/issues/1259:
+-- "a a" and the hyphen (this font's missing glyph, no path, advance 5) fit on line 1. Inside a
+-- line it has no advance and no glyph.
+#guard originsAre (area "width='22' height='30'" "a a\u00ADaa") [(0,line1),(10,line1),(0,line2),(5,line2)]
+#guard originsAre (area "width='40' height='30'" "a\u00ADa") [(0,line1),(5,line1)]
+-- A hyphen-minus is a break opportunity after it (UAX 14 class HY): "a-" stays on line 1.
+#guard originsAre (area "width='12' height='30'" "a-aa") [(0,line1),(0,line2),(5,line2)]
 
 -- Expected failures. Each guard states the present wrong result, so the build fails
 -- when the fault is repaired; then state the right result and close the issue.
@@ -229,3 +233,41 @@ private def markerPixel (orient : String) (x y : Nat) : Option (Float × Float �
 #guard markerPixel "180" 30 23 == some (0, 1, 0)
 -- the path's marker properties are gone from it: the strict reader would refuse marker-end
 #guard ((parse (markerSvg "0") 40 40).toOption.map (·.2)).getD [] |>.all (fun l => !l.startsWith "removed")
+
+-- The strict path with SVG fonts (`parseStrict`, SVG Tiny 1.2 §20): text in a family of an
+-- SVG font is drawn with its glyphs; what `lowerText` would not draw as specified is refused.
+private def sfDefs : String :=
+  "<defs><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/><glyph unicode=' ' horiz-adv-x='500'/></font></defs>"
+private def sfStrict (body : String) (supplied : List (String × ByteArray) := []) : Except String NativeSVG.Scene :=
+  parseStrict #[] supplied (svg body) 40 40
+#guard ((sfStrict (sfDefs ++ "<text font-family='T' x='0' y='10' font-size='10'>a a</text>")).map (·.compiled.length)).toOption == some 2
+#guard match sfStrict (sfDefs ++ "<text font-family='T' x='0' y='10'>ab</text>") with
+  | .error e => e.startsWith "SVG font T: no glyph for U+62" | .ok _ => false
+#guard match sfStrict (sfDefs ++ "<text font-family='T' letter-spacing='2'>a</text>") with
+  | .error e => e == "SVG font text: letter-spacing or word-spacing not drawn" | .ok _ => false
+#guard match sfStrict (sfDefs ++ "<text font-family='T' font-variant='small-caps'>a</text>") with
+  | .error e => e.startsWith "SVG font T: no face with font-variant small-caps" | .ok _ => false
+-- A font that a `font-face-uri` names in a supplied document (W3C ../images/SVGFreeSans.svg).
+private def sfLinked : String :=
+  "<defs><font-face font-family='L'><font-face-src><font-face-uri xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='f.svg#x'/></font-face-src></font-face></defs>"
+private def sfDoc : ByteArray :=
+  ("<svg xmlns='http://www.w3.org/2000/svg'><font id='x' horiz-adv-x='1000'><font-face units-per-em='1000'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>").toUTF8
+#guard ((sfStrict (sfLinked ++ "<text font-family='L' x='0' y='10' font-size='10'>a</text>") [("f.svg",sfDoc)]).map (·.compiled.length)).toOption == some 1
+-- Not supplied: the font does not load, the family is passed over, and with no SFNT font held the
+-- text is refused by the SFNT lowering.
+#guard ((sfStrict (sfLinked ++ "<text font-family='L' x='0' y='10' font-size='10'>a</text>")).toOption).isNone
+-- `textArea` with an SVG font (§10.11): drawn when `lowerArea` draws it as specified.
+#guard ((sfStrict (sfDefs ++ "<textArea font-family='T' x='0' y='0' width='30' height='30' font-size='10'>a a a a</textArea>")).map (·.compiled.length)).toOption == some 4
+-- A word wider than the area breaks between characters (W3C text-area-201-t).
+#guard ((sfStrict (sfDefs ++ "<textArea font-family='T' width='15' font-size='10'>aaa</textArea>")).map (·.compiled.length)).toOption == some 3
+#guard match sfStrict (sfDefs ++ "<textArea font-family='serif'>a</textArea>") with
+  | .error e => e == "textArea with an SFNT font: not drawn" | .ok _ => false
+-- Coverage walks the glyph choice: a glyph for one language does not cover text in another
+-- (W3C fonts-glyph-03-t, `xml:lang="de"` needs a fallback font), and a ligature covers its
+-- characters (W3C text-text-06-t).
+private def sfLangDefs : String :=
+  "<defs><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000'/><glyph unicode='a' lang='fr' d='M0 0H1000V1000H0Z'/><glyph unicode='fi' d='M0 0H1000V1000H0Z'/></font></defs>"
+#guard (sfStrict (sfLangDefs ++ "<text font-family='T' x='0' y='10' xml:lang='fr'>a</text>")).toOption.isSome
+#guard match sfStrict (sfLangDefs ++ "<text font-family='T' x='0' y='10' xml:lang='de'>a</text>") with
+  | .error e => e.startsWith "SVG font T: no glyph for U+61" | .ok _ => false
+#guard (sfStrict (sfLangDefs ++ "<text font-family='T' x='0' y='10'>fi</text>")).toOption.isSome

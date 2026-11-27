@@ -18,7 +18,7 @@ SUITES = [
     ('wpt-images-wasm', 'match', 'KR 3.4: 100 match'),
     ('wpt-images-native', 'pass', None),
     ('svg-tiny-pixels', 'match', None),
-    ('svg-tiny-admission', 'admitted', 'KR 3.6: 250 admitted'),
+    ('svg-tiny-acceptance', 'accepted', 'KR 3.6: 250 accepted'),
     ('wpt-scripts', 'pass', 'KR 3.5: 50 complete PASS documents'),
     ('wpt-tables', 'pass', None),
     ('html-tree', 'pass', 'KR 3.1: 1,973 pass'),
@@ -34,7 +34,7 @@ SUITES = [
 # Every state has one class, the same in each suite. Pass and fail never share
 # a class with unsupported, unavailable, not run or refused.
 STATE_CLASS = {
-    'pass': 'good', 'match': 'good', 'rendered': 'good', 'same': 'good', 'agree': 'good', 'admitted': 'good',
+    'pass': 'good', 'match': 'good', 'rendered': 'good', 'same': 'good', 'agree': 'good', 'accepted': 'good',
     'expected-refusal': 'refused', 'negative-only': 'close', 'negative_only': 'close', 'close': 'close',
     'fail': 'bad', 'mismatch': 'bad', 'different': 'bad', 'differ': 'bad', 'empty': 'bad',
     'error': 'error', 'crash': 'error', 'timeout': 'error', 'harness_error': 'error', 'gpu_error': 'error',

@@ -1,3 +1,5 @@
+import L4Factoidal.Prim.FloatOfNat
+
 /-
   Web Audio API, `AudioParam` automation: the automation event list.
 

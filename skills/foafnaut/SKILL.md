@@ -230,6 +230,13 @@ Other programs in `LAB`, older than the browser: `run_ui.ts` (springs, layout, v
 FOAF graph as a window), `run_lean.ts`, `run_svg.ts`, `web-render/server.mjs` (a local lab
 server with its own QuickJS worker path), `browser-webgpu/`. `LAB/README.md` covers them.
 
+## Rule: our own engines only
+
+Owner, 2026-11-27: Foafnaut is a full independent web browser. Page JavaScript and WebAssembly run on
+BubblePopJS and BubblePopWASM (and the JIT stages that generate code for them), never on V8 or on
+another browser's engine; V8, QuickJS-NG and JavaScriptCore are measurement references only.
+CLAUDE.md, "No V8, no engine of another browser".
+
 ## Build
 
 Toolchain pins: `LAB/toolchain-versions.env`. `test.sh` and `build-executables.sh` stop
@@ -522,6 +529,15 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- A profile of the engine by function must name the lab's own modules (`NativeSVG`, `NativeGraphics`,
+  `WebRender`, `NativeImage`): their C symbols have no `L4Factoidal_` prefix. On 2026-11-26 a list
+  filtered on that prefix put 61% of MDN's first layout under `Par.mapChunks` (the task helper); the
+  real cost was the CPU raster of SVG images (`WebRender.vectorPicture`, `NativeSVG.edgeUpAt`).
+  `tools/engine_time_split.py` now lists every named function of the library. A real-page profile:
+  `--window load` or `--window first-layout` against a run with the `native-html-load-phases`
+  line (https://github.com/danbri/factoidal-core/issues/1168, Real pages: load time and first paint).
+- The engine library's file name must contain `libweb-render` for `engine_time_split.py` to count
+  its samples: a copy saved as `base.so` gave 0 engine samples (2026-11-26).
 - A run with `--steps`, `--resize-sweep` or a sweep that is a list of steps (`--gesture-sweep`,
   `--scroll-sweep`, `--command-sweep` and the others that set `commands`) sets `everyFrame` in
   `run_html.ts` (`--watch-sweep` does not): every frame asks Lean for CPU probes
@@ -680,6 +696,12 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
 - Before you push to `main`: `git fetch origin main`, rebase, then
   `git merge-base --is-ancestor origin/main HEAD` and `git diff --stat origin/main HEAD`.
   Touch only the files you meant. Remove `.lake` and `.wasm-work` after the push.
+- Host policy ratchet (https://github.com/danbri/factoidal-core/issues/1188): a new numeric
+  constant, default, threshold or clamp in a host runtime file fails
+  `tools/foafnaut-host-policy-audit.py` (run by `tools/host-purity-lint.sh` and the workflow
+  "Assurance registers"). Prefer the decision in Lean; else update the file's line in
+  `foundation/foafnaut-host-policy.txt` with a reason (`--sites FILE` lists them, `--record`
+  rewrites the counts). A decision moved to Lean lowers the count.
 - Page-only change: `tools/hub-quick-ship.sh` (no engine build; it refuses other paths,
   prints the deploy command).
 

@@ -154,3 +154,27 @@ backend evaluator over a bare `DatasetBackend` (`runSelectQueryBackendDataset`,
 python3 -I tools/assumption-gate.py --list               # the gate on this tree
 python3 -I tests/foundation/test_assumption_gate.py      # the gate's own tests
 ```
+
+## Claims register (`claims.toml`)
+
+https://github.com/danbri/factoidal-core/issues/1178 (P1) and
+https://github.com/danbri/factoidal-core/issues/1179 (P2). The public claims of
+Factoidal: each entry names a Lean theorem, the function it is about, what it
+says, what it does not say, and its assumptions. A release note, hub page or
+README says "proved" only for an entry here. The owner reviews this file, not
+the proofs.
+
+`tools/claims-gate.py` fails when a named theorem is missing, private, or in a
+module no build root reaches, and when the statement of a theorem (or the text
+of a definition in `spec_defs`) no longer has the recorded SHA-256. A change of
+a statement therefore changes the register in the same commit. Proofs are free
+to change. In CI (`verify-lean4.yml`) the gate also runs `#print axioms` for
+each claim and fails on any axiom other than `propext`, `Classical.choice` and
+`Quot.sound`.
+
+```
+python3 -I tools/claims-gate.py                  # the gate on this tree
+python3 -I tools/claims-gate.py --show ID        # statement and hashes of one claim
+python3 -I tools/claims-gate.py --record ID      # record new hashes after review
+python3 -I tests/foundation/test_claims_gate.py  # the gate's own tests
+```

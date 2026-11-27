@@ -220,8 +220,12 @@ def main (args : List String) : IO UInt32 := do
     match parseScript (← IO.FS.readFile file) false with
     | .error e => IO.eprintln e; pure 1
     | .ok sc =>
-      let (f, c) := Resolve.stats sc
+      let (f, c, whys) := Resolve.stats sc
       IO.println s!"functions {f}, compiled {c}"
+      -- the reasons, most frequent first
+      let counts := whys.foldl (fun (m : Std.HashMap String Nat) w => m.insert w (m.getD w 0 + 1)) {}
+      for (w, k) in counts.toArray.qsort (fun a b => a.2 > b.2) do
+        IO.println s!"  {k} {w}"
       pure 0
   | ["numfmt-diff", n, seed] => numfmtDiff n.toNat! seed.toNat!.toUInt64 none
   | ["numfmt-diff", n, seed, out] => numfmtDiff n.toNat! seed.toNat!.toUInt64 (some out)
