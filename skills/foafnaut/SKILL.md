@@ -164,6 +164,12 @@ Desktop host (Deno, TypeScript, macOS only):
   fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
   in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
   `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
+- A run's timeline (load phases, frames, script turns, engine worker starts, slow main-thread
+  calls, pump gaps): `LAB/tools/trace_to_perfetto.py LOG... -o run.json` reads the JSON lines of
+  `run_html.ts --log-all --perf-summary` and writes the Trace Event Format; open the file in
+  https://ui.perfetto.dev or the Chrome DevTools Performance panel (Load profile). Several logs
+  give one process each, for a before/after view. `--self-test` checks the span times. Owner
+  decision of 2026-11-27 (CLAUDE.md); no viewer had loaded a file from it when it landed.
 - Audio and video: no playback in pages, no `AudioContext`, no audio output in the Mac host, no
   hardware video decode. What exists (decoders in WasmVM, Ogg and WebM in Lean, WebCodecs object
   model) and the owner's open decisions:
