@@ -550,4 +550,241 @@ theorem processWith_ring (force : Option Bool) (n : Nat) (s : State) (inputs : A
       · exact h1
       · exact rebuild_ring _ R h1
 
+
+/-! ## Tests -/
+
+private def close (a b : Float) (tol : Float) : Bool := (a - b).abs ≤ tol
+
+/-- Every frame of `a` and `b` differs by at most `tol` and the sizes are equal. -/
+private def allClose (a b : FloatArray) (tol : Float) : Bool :=
+  a.size == b.size &&
+  iter (fun i (ok : Bool) => ok && close (getF a i) (getF b i) tol) a.size 0 true
+
+private def maxAbs (a : FloatArray) : Float :=
+  iter (fun i (m : Float) => let v := (getF a i).abs; if v > m then v else m) a.size 0 0.0
+
+/-- A deterministic signal that looks random: values in [-0.5, 0.5). -/
+private def lcg (i : Nat) : Float :=
+  (((i * 1103515245 + 12345) % 2147483648).toFloat) / 2147483648.0 - 0.5
+
+private def sigOf (len seed : Nat) : FloatArray := mkChan len (fun i => lcg (i + seed * 7919))
+
+/-- The frames `[b * n, (b + 1) * n)` of `x` for each of the first `nb` blocks. -/
+private def chunks (x : FloatArray) (n nb : Nat) : List FloatArray :=
+  (List.range nb).map fun b => mkChan n (fun i => getF x (b * n + i))
+
+/-- Blocks (one block = the channels of one input block) through the node; the output blocks. -/
+private def runAll (force : Option Bool) (s : State) (blocks : List Block) : List Block :=
+  (blocks.foldl (fun (acc : State × List Block) b =>
+    let n := (b.getD 0 ⟨#[]⟩).size
+    let r := processWith force n acc.1 #[b] #[]
+    (r.1, acc.2 ++ [r.2.getD 0 #[]])) (s, [])).2
+
+/-- Channel `c` of every output block, joined. -/
+private def joined (outs : List Block) (c : Nat) : FloatArray :=
+  outs.foldl (fun (a : FloatArray) b => ⟨a.data ++ (b.getD c ⟨#[]⟩).data⟩) ⟨#[]⟩
+
+private def stateOf (pb : Nat) (chs : Array FloatArray) (nz : Bool) : State :=
+  match State.ofBufferWith pb chs 44100.0 44100.0 nz with
+  | .ok s => s
+  | .error _ => State.empty
+
+private def fa (l : List Float) : FloatArray := ⟨l.toArray⟩
+
+private def stereo (l r : FloatArray) (n nb : Nat) : List Block :=
+  (List.zip (chunks l n nb) (chunks r n nb)).map fun (a, b) => #[a, b]
+
+private def mono (x : FloatArray) (n nb : Nat) : List Block := (chunks x n nb).map fun c => #[c]
+
+private def del (x : FloatArray) (d : Nat) (t : Nat) : Float := if t ≥ d then getF x (t - d) else 0.0
+
+-- normalization (calculateNormalizationScale): all 0.5, one channel of 8 frames,
+-- power 0.5, scale 0.00125 / 0.5 * 44100 / rate
+#guard close (normalizationScale #[fa [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]] 44100.0) 0.0025 1e-12
+#guard close (normalizationScale #[fa [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]] 22050.0) 0.005 1e-12
+-- four channels: the scale is halved
+#guard close (normalizationScale (Array.replicate 4 (fa [0.5, 0.5])) 44100.0) 0.00125 1e-12
+-- silent response: power is MinPower 0.000125, scale 0.00125 / 0.000125 = 10
+#guard close (normalizationScale #[fa [0.0, 0.0, 0.0]] 44100.0) 10.0 1e-9
+-- a non-finite response: also MinPower
+#guard close (normalizationScale #[fa [(0.0 / 0.0), 1.0]] 44100.0) 10.0 1e-9
+-- normalize true scales the response held by the state
+#guard match State.ofBuffer #[fa [0.5, 0.5, 0.5, 0.5]] 44100.0 44100.0 true with
+  | .ok s => close (getF (s.ir.getD 0 ⟨#[]⟩) 0) 0.00125 1e-12
+  | .error _ => false
+
+-- refusals: 3 channels, unequal rates; the null buffer is accepted
+#guard match State.ofBuffer (Array.replicate 3 (fa [1.0])) 44100.0 44100.0 false with
+  | .error _ => true | .ok _ => false
+#guard match State.ofBuffer #[fa [1.0]] 48000.0 44100.0 false with
+  | .error _ => true | .ok _ => false
+#guard match State.ofBuffer #[] 44100.0 44100.0 true with
+  | .ok s => s.len == 0 | .error _ => false
+
+-- no buffer: one channel of silence
+#guard (process 4 State.empty #[#[fa [1.0, 2.0, 3.0, 4.0]]] #[]).2.getD 0 #[] ==
+  #[fa [0.0, 0.0, 0.0, 0.0]]
+
+-- an impulse response [1] with normalize false passes the input through, across blocks
+#guard
+  let x := sigOf 24 1
+  let outs := runAll none (stateOf 2 #[fa [1.0]] false) (mono x 8 3)
+  allClose (joined outs 0) x 1e-12 && outs.all (·.size == 1)
+
+-- [0, 1] delays by one frame, also across the block boundary (blocks of 4)
+#guard
+  let x := fa [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+  let outs := runAll none (stateOf 2 #[fa [0.0, 1.0]] false) (mono x 4 3)
+  allClose (joined outs 0) (fa [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]) 1e-12
+
+-- convolution-mono-mono.html: a square pulse of N ones with a square pulse of N ones gives the
+-- triangle `i + 1` for i < N, `2 N - i - 1` for i >= N, then zeros (N = 16, blocks of 8)
+private def triangle (nn len : Nat) : FloatArray :=
+  mkChan len (fun i => if i < nn then (i + 1).toFloat
+    else if i < 2 * nn then (2 * nn - i - 1).toFloat else 0.0)
+
+#guard
+  let nn := 16
+  let x := mkChan 64 (fun i => if i < nn then 1.0 else 0.0)
+  let outs := runAll none (stateOf 3 #[mkChan nn (fun _ => 1.0)] false) (mono x 8 8)
+  allClose (joined outs 0) (triangle nn 64) 1e-9
+
+-- the same with the fast path forced (partition 8 = block size)
+#guard
+  let nn := 16
+  let x := mkChan 64 (fun i => if i < nn then 1.0 else 0.0)
+  let outs := runAll (some true) (stateOf 3 #[mkChan nn (fun _ => 1.0)] false) (mono x 8 8)
+  allClose (joined outs 0) (triangle nn 64) 1e-9
+
+-- convolver-response-2-chan.html: channel k of the response is an impulse at k + 1 (length 4).
+-- Stereo input: out0 = L delayed by 1, out1 = R delayed by 2.
+#guard
+  let h0 := fa [0.0, 1.0, 0.0, 0.0]
+  let h1 := fa [0.0, 0.0, 1.0, 0.0]
+  let l := sigOf 16 2
+  let r := sigOf 16 3
+  let outs := runAll none (stateOf 2 #[h0, h1] false) (stereo l r 4 4)
+  allClose (joined outs 0) (mkChan 16 (del l 1)) 1e-12 &&
+  allClose (joined outs 1) (mkChan 16 (del r 2)) 1e-12 && outs.all (·.size == 2)
+
+-- mono input, 2-channel response: out0 = x delayed 1, out1 = x delayed 2 (the input is up-mixed)
+#guard
+  let h0 := fa [0.0, 1.0, 0.0, 0.0]
+  let h1 := fa [0.0, 0.0, 1.0, 0.0]
+  let x := sigOf 16 4
+  let outs := runAll none (stateOf 2 #[h0, h1] false) (mono x 4 4)
+  allClose (joined outs 0) (mkChan 16 (del x 1)) 1e-12 &&
+  allClose (joined outs 1) (mkChan 16 (del x 2)) 1e-12
+
+-- convolver-response-4-chan.html: channel k is an impulse at k + 1 (length 8), "true stereo":
+-- out0 = L * h0 + R * h2 = L[t-1] + R[t-3]; out1 = L * h1 + R * h3 = L[t-2] + R[t-4]
+private def fourCh : Array FloatArray :=
+  #[fa [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], fa [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    fa [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0], fa [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]
+
+#guard
+  let l := sigOf 32 5
+  let r := sigOf 32 6
+  let outs := runAll none (stateOf 2 fourCh false) (stereo l r 8 4)
+  allClose (joined outs 0) (mkChan 32 fun t => del l 1 t + del r 3 t) 1e-12 &&
+  allClose (joined outs 1) (mkChan 32 fun t => del l 2 t + del r 4 t) 1e-12
+
+-- the same with a mono input: up-mixed to L = R, out0 = x[t-1] + x[t-3], out1 = x[t-2] + x[t-4]
+#guard
+  let x := sigOf 32 7
+  let outs := runAll none (stateOf 2 fourCh false) (mono x 8 4)
+  allClose (joined outs 0) (mkChan 32 fun t => del x 1 t + del x 3 t) 1e-12 &&
+  allClose (joined outs 1) (mkChan 32 fun t => del x 2 t + del x 4 t) 1e-12
+
+-- convolver-response-1-chan.html: a 1-channel response with a stereo input gives (L * h, R * h)
+#guard
+  let l := sigOf 16 8
+  let r := sigOf 16 9
+  let outs := runAll none (stateOf 2 #[fa [0.0, 1.0]] false) (stereo l r 4 4)
+  allClose (joined outs 0) (mkChan 16 (del l 1)) 1e-12 &&
+  allClose (joined outs 1) (mkChan 16 (del r 1)) 1e-12
+
+-- channel count 1 to 2: the tail of the mono input continues in both output channels.
+-- Response [0, 0, 1] (delay 2), block 1 mono [1, 2, 3, 4], block 2 stereo silence.
+#guard
+  let s := stateOf 2 #[fa [0.0, 0.0, 1.0]] false
+  let z := fa [0.0, 0.0, 0.0, 0.0]
+  let outs := runAll none s [#[fa [1.0, 2.0, 3.0, 4.0]], #[z, z]]
+  outs.map (·.size) == [1, 2] &&
+  allClose (joined outs 0) (fa [0.0, 0.0, 1.0, 2.0, 3.0, 4.0, 0.0, 0.0]) 1e-12 &&
+  allClose ((outs.getD 1 #[]).getD 1 ⟨#[]⟩) (fa [3.0, 4.0, 0.0, 0.0]) 1e-12
+
+-- channel count 2 to 1: the tail is the mean of the two channels' tails
+#guard
+  let s := stateOf 2 #[fa [0.0, 0.0, 1.0]] false
+  let z := fa [0.0, 0.0, 0.0, 0.0]
+  let outs := runAll none s [#[fa [1.0, 2.0, 3.0, 4.0], fa [3.0, 4.0, 5.0, 6.0]], #[z]]
+  outs.map (·.size) == [2, 1] &&
+  allClose (joined outs 0) (fa [0.0, 0.0, 1.0, 2.0, 4.0, 5.0, 0.0, 0.0]) 1e-12
+
+-- fast path against the direct form: n = 128, a response of 1000 frames, three blocks
+private def bigIR : FloatArray := mkChan 1000 (fun i => lcg (i + 100000) * 0.02)
+
+#guard
+  let x := sigOf 384 11
+  let blocks := mono x 128 3
+  let a := joined (runAll (some true) (stateOf 7 #[bigIR] false) blocks) 0
+  let b := joined (runAll (some false) (stateOf 7 #[bigIR] false) blocks) 0
+  allClose a b (1e-9 * maxAbs b) && maxAbs b > 0.01
+
+-- the automatic choice (long response, n = 128: the fast path) equals the direct form too
+#guard
+  let x := sigOf 384 12
+  let blocks := mono x 128 3
+  let a := joined (runAll none (stateOf 7 #[bigIR] false) blocks) 0
+  let b := joined (runAll (some false) (stateOf 7 #[bigIR] false) blocks) 0
+  allClose a b (1e-9 * maxAbs b)
+
+-- the direct form is the definition: it equals `convolveDirect` of the whole signal
+#guard
+  let x := sigOf 384 13
+  let b := joined (runAll (some false) (stateOf 7 #[bigIR] false) (mono x 128 3)) 0
+  allClose b (convolveDirect bigIR x) (1e-9 * maxAbs b)
+
+-- stereo, 4-channel response through the fast path (partition 32, response 100 frames)
+#guard
+  let ir := (List.range 4).toArray.map fun c => mkChan 100 (fun i => lcg (i + 1000 * c + 5) * 0.1)
+  let blocks := stereo (sigOf 128 14) (sigOf 128 15) 32 4
+  let a := runAll (some true) (stateOf 5 ir false) blocks
+  let b := runAll (some false) (stateOf 5 ir false) blocks
+  allClose (joined a 0) (joined b 0) (1e-9 * maxAbs (joined b 0)) &&
+  allClose (joined a 1) (joined b 1) (1e-9 * maxAbs (joined b 1))
+
+-- switching between the paths: blocks of 128, 64, 128, 128 (direct on the 64-frame block, the delay
+-- line is rebuilt for the next 128-frame block), against the direct form for every block
+#guard
+  let x := sigOf 448 16
+  let sizes := [128, 64, 128, 128]
+  let blocks := (sizes.foldl (fun (acc : Nat × List Block) n =>
+    (acc.1 + n, acc.2 ++ [#[mkChan n (fun i => getF x (acc.1 + i))]])) (0, [])).2
+  let a := joined (runAll none (stateOf 7 #[bigIR] false) blocks) 0
+  let b := joined (runAll (some false) (stateOf 7 #[bigIR] false) blocks) 0
+  allClose a b (1e-9 * maxAbs b) && maxAbs b > 0.01
+
+-- stereo to mono on the fast path: the delay line is rebuilt from the down-mixed ring
+#guard
+  let ir := mkChan 300 (fun i => lcg (i + 77) * 0.05)
+  let l := sigOf 128 17
+  let r := sigOf 128 18
+  let z := mkChan 128 (fun _ => 0.0)
+  let blocks : List Block := [#[l, r], #[l, r], #[z], #[z]]
+  let a := runAll (some true) (stateOf 7 #[ir] false) blocks
+  let b := runAll (some false) (stateOf 7 #[ir] false) blocks
+  allClose (joined a 0) (joined b 0) (1e-9 * maxAbs (joined b 0)) && maxAbs (joined b 0) > 0.001
+
+/-- Benchmark, for `lake env lean --run` (after `import`ing this module in a file with a `main`):
+`reps` blocks of 128 frames through a mono response of 48000 frames; the sum of one output
+frame is returned so that the work is kept. `fast` selects the partitioned FFT path. -/
+def bench (fast : Bool) (reps : Nat) : Float :=
+  let s := stateOf 7 #[mkChan 48000 (fun i => lcg i * 0.01)] false
+  let x := mkChan 128 (fun i => lcg (i + 3))
+  (iter (fun _ (a : State × Float) =>
+    let r := processWith (some fast) 128 a.1 #[#[x]] #[]
+    (r.1, a.2 + getF ((r.2.getD 0 #[]).getD 0 ⟨#[]⟩) 5)) reps 0 (s, 0.0)).2
+
 end L4Factoidal.WebAudio.Convolver
