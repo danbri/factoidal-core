@@ -57,6 +57,56 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -rn '^import Lean' EVMCleanroom/Precompiles EVMCleanroom/Precompiles.lean EVMCleanroom/PrecompileCLI.lean
+      - name: Audit actual native precompile executable and negative controls
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, importlib.util, json, re
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("runtime_audit", "scripts/check-witness-runtime.py")
+          audit = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(audit)
+          controls = audit.selftest()
+          binary = "evm-precompile"
+          p = Path(".lake/build/bin") / binary
+          sha = hashlib.sha256(p.read_bytes()).hexdigest()
+          symbols = audit.symbols_from_nm(audit.command(["nm", "--demangle", "--no-sort", str(p)])[0])
+          definitions = {n for n, k in symbols if k in ("T", "t")}
+          candidates = {"lp_evm__cleanroom_EVMCleanroom_Precompiles_run",
+                        "lp_evm__cleanroom_EVMCleanroom_Precompiles_run___rarg",
+                        "lp_evm__cleanroom_EVMCleanroom_Precompiles_run___redArg"}
+          router = sorted(definitions & candidates)
+          assert router, "missing native Precompiles.run entry"
+          audit.REQUIRED_SYMBOLS[binary] = {"main", "run_main", "lean_initialize_runtime_module",
+              "initialize_evm__cleanroom_EVMCleanroom_PrecompileCLI", *router}
+          result = audit.inspect_binary(binary, p, sha)
+          def crypto_libraries(names):
+              return sorted(n for n in names if re.search(
+                  r"lib(?:crypto|ssl|secp256k1|blst|bls|mcl|sodium|gcrypt|nettle|mbedcrypto|kzg|relic|botan|hacl|evercrypt)", n, re.I))
+          result["externalCryptoLibraries"] = crypto_libraries(result["neededLibraries"])
+          good = [(n, "T") for n in audit.REQUIRED_SYMBOLS[binary]]
+          assert not audit.analyse_symbols(binary, good)["issues"]
+          assert audit.analyse_symbols(binary, [(n,k) for n,k in good if n not in router])["issues"]
+          assert audit.analyse_symbols(binary, [(n,"U" if n in router else k) for n,k in good])["issues"]
+          assert audit.analyse_symbols(binary, good+[("lean_initialize","T")])["issues"]
+          assert audit.analyse_symbols(binary, good+[("l_Lean_Elab_Term_elabTerm","T")])["issues"]
+          assert crypto_libraries(["libcrypto.so.3", "libblst.so"])
+          assert not crypto_libraries(["libc.so.6", "libgmp.so.10"])
+          try:
+              audit.inspect_binary(binary, p, "0"*64 if sha != "0"*64 else "1"*64)
+          except ValueError as e:
+              assert "binary differs" in str(e)
+          else:
+              raise AssertionError("wrong binary hash survived")
+          result["precompileControls"] = 6
+          result["sharedAuditControls"] = controls
+          result["checkerSha256"] = hashlib.sha256(Path("scripts/check-witness-runtime.py").read_bytes()).hexdigest()
+          result["passed"] = result["passed"] and not result["externalCryptoLibraries"]
+          Path(".lake/precompile-runtime.json").write_text(json.dumps(result, indent=2, sort_keys=True)+"\n")
+          print(json.dumps(result, sort_keys=True))
+          assert result["passed"], result
+          PY
       - name: Compare with published vectors and independent oracles, with negative controls
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -89,7 +139,23 @@ jobs:
           set -euo pipefail
           python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 3 --max-cases-per-file 12 \
             | tee .lake/precompile-timings.json
+      - name: Bind vector and timing runs to the inspected native binary
+        working-directory: formal/lean4/evm-cleanroom
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          p = Path(".lake/build/bin/evm-precompile")
+          report = json.loads(Path(".lake/precompile-runtime.json").read_text())
+          assert report["passed"]
+          assert hashlib.sha256(p.read_bytes()).hexdigest() == report["sha256"]
+          assert json.loads(Path(".lake/precompile-vectors.json").read_text())["status"] == "pass"
+          assert Path(".lake/precompile-timings.json").stat().st_size > 0
+          PY
       - name: Keep the audit, vector and timing reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: evm-precompile-evidence
@@ -97,3 +163,4 @@ jobs:
             formal/lean4/evm-cleanroom/.lake/precompile-axioms.json
             formal/lean4/evm-cleanroom/.lake/precompile-vectors.json
             formal/lean4/evm-cleanroom/.lake/precompile-timings.json
+            formal/lean4/evm-cleanroom/.lake/precompile-runtime.json
