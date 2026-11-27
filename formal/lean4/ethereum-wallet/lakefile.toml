@@ -1,0 +1,44 @@
+name = "ethereum_wallet"
+version = "0.1.0"
+defaultTargets = ["EthereumWallet"]
+
+# Transaction building, signing, keys and ABI for transacting with Ethereum.
+# Stand-alone like evm-cleanroom and ethereum-consensus: it does not depend on
+# the large Factoidal library. Modules it reuses from those packages or from
+# L4Factoidal.Crypto are added as extra lean_lib entries with srcDir, the way
+# ethereum-consensus takes FactoidalSHA2, after checking their import closure.
+
+[[lean_lib]]
+name = "EthereumWallet"
+
+# Modules reused from the sibling trees, selected in place by srcDir (a root is a prefix).
+# Never build these two libs as targets: `lake build EthereumWallet` compiles only what is
+# imported. Keys import L4Factoidal.Crypto.SHA2 and Hmac (pure) and, behind the one-file
+# interfaces Keys/Hash.lean and Keys/Curve.lean, EVMCleanroom.Keccak and Precompiles.Secp256k1.
+[[lean_lib]]
+name = "WalletEvmCleanroom"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom"]
+
+[[lean_lib]]
+name = "WalletFactoidalCrypto"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto"]
+
+# Keys, keystore half: scrypt, keystore v3 key derivation and MAC, and its JSON reader.
+[[lean_exe]]
+name = "wallet-keystore-tests"
+root = "EthereumWallet.Keys.KeystoreTestMain"
+
+[[lean_exe]]
+name = "wallet-keystore-bench"
+root = "EthereumWallet.Keys.KeystoreBenchMain"
+
+# Keys: BIP-39, BIP-32/44, Base58Check, ERC-55 addresses.
+[[lean_exe]]
+name = "wallet-keys-tests"
+root = "EthereumWallet.Keys.KeysTestMain"
+
+[[lean_exe]]
+name = "wallet-keys-bench"
+root = "EthereumWallet.Keys.KeysBenchMain"
