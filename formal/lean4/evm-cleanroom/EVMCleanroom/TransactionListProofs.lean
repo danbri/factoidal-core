@@ -72,8 +72,12 @@ theorem settleFrame_cumulativeGasUsed (tx : CallTransaction.Envelope)
     (h : CallTransaction.settleFrame tx block budget escrow initial raw = .executed result) :
     result.cumulativeGasUsed = block.gasUsedBefore + result.charge.used := by
   cases raw with
-  | stopped world state => exact finish_cumulativeGasUsed _ _ _ _ _ _ _ _ h
-  | returned world state => exact finish_cumulativeGasUsed _ _ _ _ _ _ _ _ h
+  | stopped world state =>
+    obtain ⟨inner, hInner, rfl⟩ := CallTransaction.destroyAfter_executed h
+    exact finish_cumulativeGasUsed _ _ _ _ _ _ _ inner hInner
+  | returned world state =>
+    obtain ⟨inner, hInner, rfl⟩ := CallTransaction.destroyAfter_executed h
+    exact finish_cumulativeGasUsed _ _ _ _ _ _ _ inner hInner
   | reverted state => exact finish_cumulativeGasUsed _ _ _ _ _ _ _ _ h
   | exceptional reason => exact finish_cumulativeGasUsed _ _ _ _ _ _ _ _ h
   | indeterminate reason => cases h

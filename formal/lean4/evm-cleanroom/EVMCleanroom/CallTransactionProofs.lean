@@ -294,6 +294,81 @@ theorem settleFrame_exception_balance (tx : Envelope) (block : BlockContext) (bu
       (if address = block.coinbase then result.charge.tip else 0) :=
   finish_balance _ _ _ _ _ _ _ _ _ h
 
+private theorem credit_toDelete (w result : TxWorld) (address amount : Nat)
+    (h : credit w address amount = .ok result) : result.toDelete = w.toDelete := by
+  unfold credit at h
+  dsimp only at h
+  split at h <;> cases h
+  rfl
+
+private theorem finish_toDelete (tx : Envelope) (block : BlockContext) (budget : Budget)
+    (world : TxWorld) (frame : FrameStatus) (s : State) (success : Bool) (result : Result)
+    (h : finish tx block budget world frame s success = .executed result) :
+    result.world.toDelete = world.toDelete := by
+  unfold finish at h
+  split at h
+  · cases h
+  · dsimp only at h
+    split at h
+    · cases h
+    · next refundWorld hRefund =>
+      split at h
+      · cases h
+      · next final hTip =>
+        cases h
+        exact (credit_toDelete _ _ _ _ hTip).trans (credit_toDelete _ _ _ _ hRefund)
+
+/-- Kind: effect (transaction end, EIP-6780).
+    Says: a successful transaction frame (stopped or returned) settles to the
+    ordinary fee settlement of its world with exactly the registered accounts
+    then reset to the absent account, after the sender refund and beneficiary
+    tip (so a destroyed fee recipient or sender loses that credit); every
+    unregistered account has the fee-settled balance and its own nonce,
+    storage and code; the registration list is then empty and the receipt
+    fields are those of the fee settlement.
+    Does not say: that the frame world registered only created accounts
+    (`SelfDestruct.selfDestructStep_registeredCreated` is the per-instruction
+    part), or anything about a failed frame (it deletes nothing). -/
+theorem settleFrame_success_destroys (tx : Envelope) (block : BlockContext) (budget : Budget)
+    (escrow world : TxWorld) (initial terminal : State) (returns : Bool) (result : Result)
+    (h : settleFrame tx block budget escrow initial
+      (if returns then .returned world terminal else .stopped world terminal) = .executed result) :
+    ∃ settled, finish tx block budget world (if returns then .returned else .stopped) terminal true =
+        .executed settled ∧
+      result = { settled with world := SelfDestruct.destroyRegistered settled.world } ∧
+      result.world.toDelete = [] ∧
+      (∀ address, address ∈ world.toDelete → result.world.accounts address = {}) ∧
+      (∀ address, address ∉ world.toDelete →
+        result.world.accounts address = settled.world.accounts address ∧
+        (result.world.accounts address).balance = (world.accounts address).balance +
+          (if address = tx.sender then result.charge.returnedWei else 0) +
+          (if address = block.coinbase then result.charge.tip else 0) ∧
+        (result.world.accounts address).nonce = (world.accounts address).nonce ∧
+        (result.world.accounts address).storage = (world.accounts address).storage) := by
+  have hInner : ∃ settled, finish tx block budget world (if returns then .returned else .stopped) terminal true =
+      .executed settled ∧ result = { settled with world := SelfDestruct.destroyRegistered settled.world } := by
+    cases returns
+    · exact destroyAfter_executed h
+    · exact destroyAfter_executed h
+  obtain ⟨settled, hFinish, hResult⟩ := hInner
+  have hList := finish_toDelete _ _ _ _ _ _ _ _ hFinish
+  obtain ⟨_, _, _, hAccounts⟩ := finish_projection _ _ _ _ _ _ _ _ hFinish
+  refine ⟨settled, hFinish, hResult, ?_, ?_, ?_⟩
+  · rw [hResult]
+    exact (SelfDestruct.destroyRegistered_accounts settled.world 0).2
+  · intro address hIn
+    rw [hResult]
+    simp [(SelfDestruct.destroyRegistered_accounts settled.world address).1, hList, hIn]
+  · intro address hOut
+    have hSame : result.world.accounts address = settled.world.accounts address := by
+      rw [hResult]
+      simp [(SelfDestruct.destroyRegistered_accounts settled.world address).1, hList, hOut]
+    refine ⟨hSame, ?_, ?_, ?_⟩
+    · rw [hSame, finish_balance _ _ _ _ _ _ _ _ address hFinish, hResult]
+    · rw [hSame]; exact (hAccounts address).1
+    · rw [hSame]; exact (hAccounts address).2
+
+#print axioms settleFrame_success_destroys
 #print axioms admit_checked
 #print axioms run_executed_admitted
 #print axioms debitSender_projection

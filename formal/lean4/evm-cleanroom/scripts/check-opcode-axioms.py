@@ -79,6 +79,11 @@ INVENTORY = {
         "EVMCleanroom.CallOpcode.createContinuation_parent": [],
         "EVMCleanroom.CallOpcode.executeAtDepth_create_error": [P, C, Q],
         "EVMCleanroom.CallOpcode.executeAtDepth_create_failed": [P, C, Q],
+        "EVMCleanroom.CallOpcode.executeAtDepth_selfDestruct": [P, C, Q],
+        "EVMCleanroom.CallOpcode.executeAtDepth_selfDestruct_error": [P, C, Q],
+        "EVMCleanroom.CallOpcode.executeLoop_selfDestruct_child": [P, C, Q],
+        "EVMCleanroom.CallOpcode.resumeChild_failure_registration": [P],
+        "EVMCleanroom.CallOpcode.settle_failure_registration": [],
     },
     "EVMCleanroom/Create.lean": {
         "EVMCleanroom.Create.charge_create": [P],
@@ -102,6 +107,29 @@ INVENTORY = {
         "EVMCleanroom.Create.setCode_effect": [P, Q],
         "EVMCleanroom.Create.collides_iff": [P, Q],
     },
+    "EVMCleanroom/SelfDestruct.lean": {
+        "EVMCleanroom.SelfDestruct.gasCost_values": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_gas": [P],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_outOfGas": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_static": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_fork": [P],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_uncovered": [P],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_halts": [P],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_warms": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_notCreated": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_created": [P, Q],
+        "EVMCleanroom.SelfDestruct.selfDestructStep_registeredCreated": [P, Q],
+        "EVMCleanroom.SelfDestruct.destroyRegistered_accounts": [P, Q],
+        "EVMCleanroom.SelfDestruct.destroyRegistered_keeps_old": [P, Q],
+        "EVMCleanroom.SelfDestruct.destroyRegistered_fields": [],
+        "EVMCleanroom.SelfDestruct.destroyRegistered_none": [P],
+    },
+    "EVMCleanroom/CallTransaction.lean": {
+        "EVMCleanroom.CallTransaction.destroyAfter_executed": [],
+    },
+    "EVMCleanroom/CallTransactionProofs.lean": {
+        "EVMCleanroom.CallTransaction.settleFrame_success_destroys": [P, Q],
+    },
     "EVMCleanroom/AccountTransientProofs.lean": {
         "EVMCleanroom.AccountTransient.witnessWorld_transient_empty": [],
         "EVMCleanroom.AccountTransient.debitSender_transient": [],
@@ -113,7 +141,7 @@ INVENTORY = {
 }
 # Sources that print only listed theorems.
 EXACT_SOURCES = {"EVMCleanroom/AccountOpcode.lean", "EVMCleanroom/AccountTransientProofs.lean",
-                 "EVMCleanroom/Create.lean"}
+                 "EVMCleanroom/Create.lean", "EVMCleanroom/SelfDestruct.lean"}
 
 
 def expected_claims(source):

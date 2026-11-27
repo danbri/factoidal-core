@@ -4,6 +4,7 @@ import EVMCleanroom.Proofs
 import EVMCleanroom.IdentityPrecompile
 import EVMCleanroom.AccountOpcode
 import EVMCleanroom.Create
+import EVMCleanroom.SelfDestruct
 
 /-!
 # World-aware execution of the EVM call family
@@ -637,6 +638,11 @@ private def systemStep (active : ActiveFrame) (opcode : Nat) : Transition :=
     dispatchCreate (beginCreate active false)
   else if opcode == 0xf5 then
     dispatchCreate (beginCreate active true)
+  else if opcode == 0xff then
+    -- SELFDESTRUCT halts like STOP with the world computed by its own module.
+    match SelfDestruct.selfDestructStep active.world active.address s with
+    | .error e => .terminal (stepError e)
+    | .ok (world, halted) => .terminal (.stopped world halted)
   else ordinaryStep active opcode
 
 /-- Account-reading instructions 0x31, 0x3b, 0x3c and 0x3f. -/
@@ -2262,5 +2268,84 @@ private theorem executeLoop_resumes_create (fuel : Nat) (active : ActiveFrame)
 #print axioms executeAtDepth_create_failed
 #print axioms executeLoop_enters_create
 #print axioms executeLoop_resumes_create
+/-- Kind: dispatcher correspondence (SELFDESTRUCT).
+    Says: in the actual world-aware loop, an entry frame whose next opcode is
+    0xff ends in one fuel unit, stopped with exactly the world and halted
+    state computed by `SelfDestruct.selfDestructStep`.
+    Does not say: what a transaction does with the registration at its end. -/
+theorem executeAtDepth_selfDestruct (fuel : Nat) (world world' : TxWorld) (address depth : Nat)
+    (state state' : State) (hRunning : state.halted = false) (hOpcode : byteAt state state.pc = 0xff)
+    (hStep : SelfDestruct.selfDestructStep world address state = .ok (world', state')) :
+    executeAtDepth (fuel + 1) world address depth state = .stopped world' state' := by
+  rw [executeAtDepth, executeLoop]
+  simp [dispatch, systemStep, hRunning, hOpcode, hStep]
+
+/-- Kind: dispatcher correspondence (SELFDESTRUCT failure).
+    Says: a failing 0xff ends the entry frame with the dispatcher's
+    classification of the same error: out of gas, write protection and stack
+    underflow are exceptional halts; a fork refusal or an uncovered account
+    is indeterminate.
+    Does not say: which inputs raise which error (see `SelfDestruct`). -/
+theorem executeAtDepth_selfDestruct_error (fuel : Nat) (world : TxWorld) (address depth : Nat)
+    (state : State) (e : Error) (hRunning : state.halted = false) (hOpcode : byteAt state state.pc = 0xff)
+    (hStep : SelfDestruct.selfDestructStep world address state = .error e) :
+    executeAtDepth (fuel + 1) world address depth state = stepError e := by
+  rw [executeAtDepth, executeLoop]
+  simp [dispatch, systemStep, hRunning, hOpcode, hStep]
+
+/-- Kind: dispatcher correspondence (SELFDESTRUCT in a child).
+    Says: when the active frame under a suspended CALL-family caller executes a
+    successful 0xff, the loop resumes that caller through `resumeChild` with
+    the stopped outcome carrying SELFDESTRUCT's world: success word 1, empty
+    return data, and the registration visible to the caller.
+    Does not say: that the caller then succeeds (see the two checkpoint
+    theorems), or what a creation frame's continuation does with initcode
+    that ends in SELFDESTRUCT (it deposits empty code; tested only). -/
+theorem executeLoop_selfDestruct_child (fuel : Nat) (active : ActiveFrame) (k : Continuation)
+    (callers : List Continuation) (world resumedWorld : TxWorld) (halted resumed : State)
+    (hRunning : active.state.halted = false) (hOpcode : byteAt active.state active.state.pc = 0xff)
+    (hStep : SelfDestruct.selfDestructStep active.world active.address active.state = .ok (world, halted))
+    (hKind : k.kind = .call)
+    (hResume : resumeChild k (.stopped world halted) = .committed resumedWorld resumed) :
+    executeLoop (fuel + 1) active (k :: callers) =
+        executeLoop fuel ⟨resumedWorld, k.address, k.depth, resumed⟩ callers ∧
+    resumedWorld = world ∧ resumed.stack.items = word 1 :: k.rest ∧ resumed.returnData = {} := by
+  have hTerminal : dispatch active = .terminal (.stopped world halted) := by
+    simp [dispatch, systemStep, hRunning, hOpcode, hStep]
+  obtain ⟨hWorld, hData, hStack⟩ := resumeChild_success k halted resumed world resumedWorld false hResume
+  exact ⟨executeLoop_resumes_caller fuel active callers k _ _ _ hTerminal hKind hResume, hWorld,
+    hStack, by simpa using hData⟩
+
+/-- Kind: checkpoint (EIP-6780 registration).
+    Says: when a CALL-family child reverts or halts exceptionally, the caller
+    resumes with the checkpoint world, so every registration, balance move and
+    zeroed balance made by a SELFDESTRUCT inside that child or its
+    descendants is discarded.
+    Does not say: what the checkpoint itself contains. -/
+theorem resumeChild_failure_registration (k : Continuation) (raw : RawOutcome) (resumed : State)
+    (result : TxWorld) (hFailed : (∃ t, raw = .reverted t) ∨ (∃ e, raw = .exceptional e))
+    (h : resumeChild k raw = .committed result resumed) :
+    result.toDelete = k.checkpoint.toDelete ∧ result.accounts = k.checkpoint.accounts ∧
+    result.created = k.checkpoint.created := by
+  obtain ⟨hWorld, _⟩ := resumeChild_failure_transient k raw resumed result hFailed h
+  rw [hWorld]
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- Kind: checkpoint (EIP-6780 registration, entry frame).
+    Says: an entry frame that reverts or halts exceptionally settles to the
+    entry world, whatever SELFDESTRUCT registered or moved in it or below it.
+    Does not say: how a transaction charges for the failed frame. -/
+theorem settle_failure_registration (entry : TxWorld) (initial : State) (raw : RawOutcome)
+    (hFailed : (∃ t, raw = .reverted t) ∨ (∃ e, raw = .exceptional e)) :
+    ∃ s, settle entry initial raw = .reverted entry s ∨ ∃ e, settle entry initial raw = .exceptional entry s e := by
+  rcases hFailed with ⟨t, rfl⟩ | ⟨e, rfl⟩
+  · exact ⟨_, .inl rfl⟩
+  · exact ⟨_, .inr ⟨e, rfl⟩⟩
+
+#print axioms executeAtDepth_selfDestruct
+#print axioms executeAtDepth_selfDestruct_error
+#print axioms executeLoop_selfDestruct_child
+#print axioms resumeChild_failure_registration
+#print axioms settle_failure_registration
 
 end EVMCleanroom.CallOpcode

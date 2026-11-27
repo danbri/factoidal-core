@@ -71,9 +71,9 @@ function leanLine(c) {
   const accounts = c.accounts.map(a => {
     const slots = Object.entries(a.storage ?? {}).map(([k, v]) => BigInt(k).toString(16) + '=' + BigInt(v).toString(16)).join(';')
     return [BigInt(a.address).toString(16), String(a.balance ?? 0), String(a.nonce ?? 0), a.code ?? '',
-      a.hasStorage ? '1' : '0', slots || '-'].join(':')
+      a.hasStorage ? '1' : '0', slots || '-', ...(a.created ? ['1'] : [])].join(':')
   })
-  return [c.profile, String(c.gas), String(c.fuel ?? 2000), c.readOnly ? '1' : '0', String(c.number ?? 0),
+  return [c.profile, String(c.gas), String(c.fuel ?? 2000), String((c.readOnly ? 1 : 0) + (c.applyDeletion ? 2 : 0)), String(c.number ?? 0),
     (c.hashes ?? []).length ? c.hashes.map(h => h.replace(/^0x/, '')).join(',') : '-',
     BigInt(c.entry).toString(16) + (c.depth ? '@' + c.depth : ''), list(c.prewarm ?? []), list(c.observe), ...accounts].join(' ')
 }
@@ -145,14 +145,30 @@ export async function runOracle(c) {
   const block = {header: {number, coinbase: addr(0), timestamp: 0n, gasLimit: 30000000n, baseFeePerGas: 7n,
     prevRandao: new Uint8Array(32), getBlobGasPrice: () => 1n}}
   const gasLimit = BigInt(c.gas)
+  // EIP-6780: accounts the case declares as created in this transaction.
+  const created = new Set(c.accounts.filter(a => a.created).map(a => addr(a.address).toString()))
   const {execResult: ex} = await evm.runCall({
     caller: addr(CALLER), origin: addr(CALLER), to: addr(c.entry), gasLimit, isStatic: !!c.readOnly,
-    skipNonceIncrement: true, block, ...(c.depth ? {depth: c.depth} : {}),
+    skipNonceIncrement: true, block, ...(c.depth ? {depth: c.depth} : {}), createdAddresses: new Set(created),
   })
   const error = ex.exceptionError?.error
   const status = error === 'revert' ? 'reverted' : error ? 'exceptional' :
     (lastOpcode === 0xf3 ? 'returned' : 'stopped')
   const out = {status, gasRemaining: String(gasLimit - ex.executionGasUsed), accounts: []}
+  // runCall leaves transaction-end deletion to the VM. What the VM's runTx
+  // does under EIP-6780 is repeated here: of the accounts that executed
+  // SELFDESTRUCT in a successful frame, those created in this transaction
+  // are registered, and deleted when the case asks for the transaction end.
+  // The result's created set holds the declared accounts and every account
+  // CREATE or CREATE2 made in the frame.
+  const registered = [...(ex.selfdestruct ?? new Map()).keys()].map(k => createAddressFromString(k))
+    .filter(a => (ex.createdAddresses ?? created).has(a.toString()))
+  if (c.applyDeletion && !error) for (const who of registered) {
+    // The simple state manager keys code by address, apart from the account record.
+    await evm.stateManager.putCode(who, new Uint8Array(0))
+    await evm.stateManager.clearStorage(who)
+    await evm.stateManager.deleteAccount(who)
+  }
   for (const a of c.observe) {
     const who = addr(a)
     const account = await evm.stateManager.getAccount(who)
@@ -176,8 +192,7 @@ export async function runOracle(c) {
     out.memoryHex = hex(memory.read(0, Number(32n * memoryWordCount))).slice(0, 8192)
   }
   if (c.observeDestructs) {
-    const set = ex.selfdestruct ?? new Map()
-    out.selfDestructed = c.observe.filter(a => [...set.keys()].some(k => BigInt(k) === BigInt(a))).map(a => String(BigInt(a)))
+    out.selfDestructed = c.observe.filter(a => registered.some(k => BigInt(k.toString()) === BigInt(a))).map(a => String(BigInt(a)))
   }
   return out
 }

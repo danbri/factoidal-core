@@ -454,9 +454,9 @@ charging. This does not prove EELS equivalence or world-state rollback.
 `PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`,
 `BLOCKHASH`, `TLOAD`, `TSTORE`, `MCOPY` and opt-in `KECCAK256`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
-handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths
-and the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`,
-and `CREATE` and `CREATE2`.
+handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths,
+the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`,
+`CREATE` and `CREATE2`, and `SELFDESTRUCT` (EIP-6780).
 
 The account instructions charge EIP-2929 warm/cold access (100/2600 gas) and
 warm their target in the checkpointed world, so a failed child's warm-ups are
@@ -517,6 +517,38 @@ is injective, or that a whole creation run terminates; those are tested.
 Guards: [CreateTests](EVMCleanroom/CreateTests.lean). Differential matrix:
 [`create.mjs`](scripts/differential/create.mjs) (292 cases against EthereumJS
 as an oracle, 32 gas-boundary pairs, five negative controls).
+
+`SELFDESTRUCT` (0xff) follows EIP-6780 on the Cancun and Osaka profiles only;
+`shanghaiPlus` spans the Cancun boundary and refuses it, as does the
+pre-Shanghai profile. It charges 5000 gas, plus 2600 for a cold beneficiary
+(then warm), plus 25000 when the beneficiary is not alive and the executing
+account has a balance; a static frame fails after the charge. The whole
+balance moves to the beneficiary. Only an account created in the same
+transaction has its balance zeroed (a self-beneficiary burns it) and is
+registered in the world's `toDelete` list, which every CALL checkpoint and
+the entry checkpoint roll back; any other account keeps its code, storage and
+nonce. `CallTransaction.settleFrame` deletes the registered accounts of a
+successful frame after the sender refund and the fee-recipient tip
+(`SelfDestruct.destroyRegistered`), as EELS does. Theorems:
+[SelfDestruct](EVMCleanroom/SelfDestruct.lean) (gas, static frame, warmth,
+both originator classes, per-instruction registration invariant, transaction
+end), the dispatcher links in [CallOpcode](EVMCleanroom/CallOpcode.lean)
+(`executeAtDepth_selfDestruct*`, `executeLoop_selfDestruct_child`,
+`resumeChild_failure_registration`, `settle_failure_registration`) and
+`settleFrame_success_destroys` in
+[CallTransactionProofs](EVMCleanroom/CallTransactionProofs.lean). Not proved:
+that every dispatcher transition preserves "each registered address carries
+the created flag" (no other transition writes either field; the step theorem
+covers the only writer). The created flag is set by `CREATE`/`CREATE2` (and by the test adapter's
+account flag).
+Differential matrix: [`selfdestruct.mjs`](scripts/differential/selfdestruct.mjs)
+(230 cases against EthereumJS Cancun and Osaka as an oracle, 44 of them
+creating the contract with `CREATE` or `CREATE2` in the same frame, seven gas
+boundary pairs, 24 hand-computed expectations and six negative controls).
+One ordering difference from the oracle is checked by hand against EELS:
+an underfunded SELFDESTRUCT in a static frame is out of gas here and in
+EELS, and a write-protection failure in EthereumJS; both halt the frame
+exceptionally with no gas left.
 
 `PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
 profile leaves activation of `SHL`, `SHR`, `RETURNDATASIZE` and

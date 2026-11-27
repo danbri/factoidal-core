@@ -267,13 +267,38 @@ def finish (tx : Envelope) (block : BlockContext) (budget : Budget)
           charge := bill, cumulativeGasUsed := block.gasUsedBefore + bill.used,
           effectiveGasPrice := budget.price, logs := w.logsRev.reverse }
 
+/-- Transaction-end deletion of the accounts SELFDESTRUCT registered
+    (EIP-6780), applied to an executed result after the sender refund and the
+    beneficiary tip, as in EELS `process_transaction`: a destroyed fee
+    recipient loses its tip. -/
+def destroyAfter : Outcome → Outcome
+  | .executed result => .executed { result with world := SelfDestruct.destroyRegistered result.world }
+  | .rejected reason => .rejected reason
+  | .indeterminate reason => .indeterminate reason
+
+/-- Kind: projection.
+    Says: an executed outcome after transaction-end deletion is the executed
+    fee settlement with only its world replaced by `destroyRegistered`; status,
+    output, charge, cumulative gas, price and logs are untouched.
+    Does not say: which accounts were registered. -/
+theorem destroyAfter_executed {out : Outcome} {result : Result}
+    (h : destroyAfter out = .executed result) :
+    ∃ inner, out = .executed inner ∧
+      result = { inner with world := SelfDestruct.destroyRegistered inner.world } :=
+  match out, h with
+  | .executed inner, h => ⟨inner, rfl, (Outcome.executed.inj h).symm⟩
+  | .rejected _, h => Outcome.noConfusion h
+  | .indeterminate _, h => Outcome.noConfusion h
+
 /-- Use the same failure boundary as the ordinary world-aware dispatcher,
-    with the fee-paid and nonce-incremented state as its checkpoint. -/
+    with the fee-paid and nonce-incremented state as its checkpoint. Only a
+    successful frame keeps its SELFDESTRUCT registrations, so only the two
+    success outcomes delete at transaction end. -/
 def settleFrame (tx : Envelope) (block : BlockContext) (budget : Budget)
     (escrow : TxWorld) (initial : State) (raw : CallOpcode.RawOutcome) : Outcome :=
   match CallOpcode.settle escrow initial raw with
-  | .stopped w s => finish tx block budget w .stopped s true
-  | .returned w s => finish tx block budget w .returned s true
+  | .stopped w s => destroyAfter (finish tx block budget w .stopped s true)
+  | .returned w s => destroyAfter (finish tx block budget w .returned s true)
   | .reverted w s => finish tx block budget w .reverted s false
   | .exceptional w s e => finish tx block budget w (.exceptional e) s false
   | .indeterminate e => .indeterminate (.frame e)
@@ -419,6 +444,7 @@ theorem debitSender_blobHashes (w : TxWorld) (sender : Nat) (budget : Budget) :
 theorem entryFrame_blobHashes (p : Request) (entered : TxWorld) (budget : Budget) :
     (entryFrame p entered budget).txBlobHashes = entered.txBlobHashes := rfl
 
+#print axioms destroyAfter_executed
 #print axioms runFrame_identity_exact
 #print axioms runFrame_identity_outOfGas
 #print axioms runFrame_identity_resourceLimit
