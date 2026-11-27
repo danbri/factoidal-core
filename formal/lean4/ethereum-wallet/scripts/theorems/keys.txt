@@ -1,4 +1,5 @@
-# Theorems of the keys area (EthereumWallet/Keys/*). scripts/check-axioms.py requires a
+# Theorems of the keys area (EthereumWallet/Keys/*). The axiom audit (inline in
+# ethereum-wallet-keys.yml; scripts/check-axioms.py of the signing area reads the same format) requires a
 # '#print axioms' report for each in the build log, naming only propext, Classical.choice, Quot.sound.
 EthereumWallet.Keys.HmacKey.mac512_eq
 EthereumWallet.Keys.HmacKey.mac256_eq
@@ -15,6 +16,7 @@ EthereumWallet.Keys.scrypt_refuses_over_limit
 EthereumWallet.Keys.scrypt_refuses_large_n
 EthereumWallet.Keys.check_ok_bound
 EthereumWallet.Keys.scrypt_ok_bound
+EthereumWallet.Keys.scrypt_refuses_over_work
 EthereumWallet.Keys.scrypt_ok_size
 EthereumWallet.Keys.scrypt_check_error
 EthereumWallet.Keys.scrypt_refuses_zero_r
@@ -55,8 +57,6 @@ EthereumWallet.Keys.ctEqBytes_self
 EthereumWallet.Keys.decryptWithKey_encryptWithKey
 EthereumWallet.Keys.encrypt_refuses_iv
 EthereumWallet.Keys.encrypt_refuses_secret
-EthereumWallet.Keys.Bip39.seed_not_ascii
-EthereumWallet.Keys.Bip39.seedOfNormalized_eq
 EthereumWallet.Keys.Bip39.parse_generate
 EthereumWallet.Keys.Bip39.parse_sound
 EthereumWallet.Keys.Bip39.generate_refuses_length
@@ -75,6 +75,8 @@ EthereumWallet.Keys.Bip39.codes_sorted
 EthereumWallet.Keys.Bip39.lookupAll_eq_fast
 EthereumWallet.Keys.Bip39.joinWords_eq_fast
 EthereumWallet.Keys.Bip39.splitWords_eq_fast
+EthereumWallet.Keys.Bip39.seed_not_ascii
+EthereumWallet.Keys.Bip39.seedOfNormalized_eq
 EthereumWallet.Keys.Bip32.childKey?_il_out_of_range
 EthereumWallet.Keys.Bip32.childKey?_zero
 EthereumWallet.Keys.Bip32.childKey?_some

@@ -60,6 +60,8 @@ inductive Error where
   | tooManyIterations (iterations : Nat)
   | zeroLength
   | tooLong (dkLen : Nat)
+  /-- A PRF output size of zero was given. -/
+  | zeroHashLength
   deriving DecidableEq, Repr
 
 /-- Largest iteration count accepted (2^26, about 67 million). -/
@@ -100,6 +102,7 @@ def derive (_ : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat) (salt :
   else if maxIterations < iterations then .error (.tooManyIterations iterations)
   else if dkLen = 0 then .error .zeroLength
   else if maxDkLen < dkLen then .error (.tooLong dkLen)
+  else if hLen = 0 then .error .zeroHashLength
   else .ok (raw prf hLen salt iterations dkLen)
 
 /-- PBKDF2-HMAC-SHA-512. -/
@@ -142,7 +145,10 @@ theorem derive_too_long (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLe
 
 /-- Kind: bound on accepted parameters.
     Says: an accepted derivation used between 1 and `maxIterations` iterations and
-    asked for between 1 and `maxDkLen` bytes. -/
+    asked for between 1 and `maxDkLen` bytes.
+    Does not say: that the output has `dkLen` bytes (tested, not proved), nor a bound on
+    `iterations * blocks`: a caller reading parameters from a file bounds both (the
+    keystore accepts at most 2^21 iterations and two blocks). -/
 theorem derive_ok_bounds (risk : SecretRisk) (prf : ByteArray → ByteArray) (hLen : Nat)
     (salt out : ByteArray) (iterations dkLen : Nat)
     (h : derive risk prf hLen salt iterations dkLen = .ok out) :

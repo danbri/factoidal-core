@@ -30,19 +30,45 @@ private def jsonHexField (j : Json) (name : String) : Except KeystoreError ByteA
   let s ← jsonStrField j name
   jsonNeed (name ++ " is not hex") (ofHex? s)
 
-/-- A keystore from a parsed JSON value. -/
+/-- Largest number of members accepted in one object of a keystore. -/
+def keystoreMaxMembers : Nat := 64
+
+/-- An object of at most `keystoreMaxMembers` members whose names differ even when case is
+    ignored; with `exactLower`, every name must also be lower case. Readers disagree on
+    which of two members with one name wins (first here, last in Go's decoder), so a
+    keystore with a repeated name is refused, not interpreted. -/
+def jsonMembersOk (j : Json) (exactLower : Bool) : Bool :=
+  match j with
+  | .obj members =>
+    members.length ≤ keystoreMaxMembers &&
+      (members.map (·.1.toLower)).eraseDups.length == members.length &&
+      (!exactLower || members.all fun kv => kv.1 == kv.1.toLower)
+  | _ => false
+
+/-- An object member that passes `jsonMembersOk`. -/
+def jsonCheckedMember (j : Json) (name : String) (exactLower : Bool) :
+    Except KeystoreError Json := do
+  let m ← jsonMember j name
+  if jsonMembersOk m exactLower then pure m
+  else .error (.json (name ++ ": repeated, too many or wrongly cased member names"))
+
+/-- A keystore from a parsed JSON value. Top-level and `crypto` names are matched
+    without regard to case (geth reads them into a struct); `kdfparams` names must be
+    lower case exactly (geth reads them into a map). Repeated names are refused. -/
 def Keystore.ofJson (j : Json) : Except KeystoreError Keystore := do
+  if !jsonMembersOk j false then
+    throw (.json "keystore: not an object, or repeated or too many member names")
   let version ← jsonNatField j "version"
-  let crypto ← jsonMember j "crypto"
+  let crypto ← jsonCheckedMember j "crypto" false
   let cipher ← jsonStrField crypto "cipher"
   let ciphertext ← jsonHexField crypto "ciphertext"
-  let cipherparams ← jsonMember crypto "cipherparams"
+  let cipherparams ← jsonCheckedMember crypto "cipherparams" false
   let iv ← jsonHexField cipherparams "iv"
   let mac ← jsonHexField crypto "mac"
   let kdfName ← jsonStrField crypto "kdf"
   let kdf ←
     if kdfName == "scrypt" then do
-      let kp ← jsonMember crypto "kdfparams"
+      let kp ← jsonCheckedMember crypto "kdfparams" true
       let n ← jsonNatField kp "n"
       let r ← jsonNatField kp "r"
       let p ← jsonNatField kp "p"
@@ -50,7 +76,7 @@ def Keystore.ofJson (j : Json) : Except KeystoreError Keystore := do
       let salt ← jsonHexField kp "salt"
       pure (Kdf.scrypt n r p dkLen salt)
     else if kdfName == "pbkdf2" then do
-      let kp ← jsonMember crypto "kdfparams"
+      let kp ← jsonCheckedMember crypto "kdfparams" true
       let c ← jsonNatField kp "c"
       let dkLen ← jsonNatField kp "dklen"
       let prf ← jsonStrField kp "prf"

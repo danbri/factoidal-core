@@ -25,7 +25,7 @@ name = "WalletFactoidalCrypto"
 srcDir = ".."
 roots = ["L4Factoidal.Crypto"]
 
-# Keys, keystore half: scrypt, AES-128-CTR, keystore v3 and its JSON reader.
+# Keys, keystore half: scrypt, keystore v3 key derivation and MAC, and its JSON reader.
 [[lean_exe]]
 name = "wallet-keystore-tests"
 root = "EthereumWallet.Keys.KeystoreTestMain"

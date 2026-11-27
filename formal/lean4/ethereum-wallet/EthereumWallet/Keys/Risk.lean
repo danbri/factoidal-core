@@ -6,9 +6,18 @@ their timing, branching or memory use is independent of the secrets, and nothing
 clears a secret from memory (see `EthereumWallet/Keys.lean`). So every entry point
 that takes a secret (entropy, a mnemonic, a passphrase or password, a seed, a private
 key, a derived key) takes a value of `Risk.Accepted .variableTimeSecrets`, and the only
-way to make one is `Risk.dangerouslyAccept`, by name. Code that does not pass the token
-does not compile; `git grep dangerouslyAccept` lists every acceptance. The token is
-erased at run time.
+way to make one is `Risk.dangerouslyAccept`, by name. A call of one of those entry points
+without the token does not compile; `git grep dangerouslyAccept` lists every acceptance.
+The token is erased at run time.
+
+What the token does not reach: the entry points are built from public helper functions
+that take no token, because the theorems are stated about them (`Bip39.generateWords`,
+`parseWords`; `Pbkdf2.raw`, `HmacKey`; `scryptCore`, `romix`; `Bip32.masterOfI`,
+`childKey?`, `childOfI`, `privData`; `macOf`, `macMatches`, `applyCipher`;
+`Base58.checkEncode`, `checkDecode?`; `Secp.mulBase`). Calling those directly on a secret
+goes round the token. They are internal: use the entry points. A build-level check that
+no shipped entry point reaches them except through a token is planned in
+skills/lean-risk-flags and not built.
 
 At a command line the acceptance is the flag `--dangerously-enable-variable-time-secrets`,
 off by default, and it is the only path that calls `Risk.dangerouslyAccept` there.

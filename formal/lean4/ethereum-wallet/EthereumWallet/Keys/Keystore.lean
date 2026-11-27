@@ -141,7 +141,11 @@ def CtrCipher.unavailable : CtrCipher :=
   { name := "none", available := false, apply := fun _ _ _ => none }
 
 /-- The largest PBKDF2 iteration count accepted (a work bound; geth writes 262144). -/
-def pbkdf2MaxIterations : Nat := 16777216
+def pbkdf2MaxIterations : Nat := 2097152
+
+/-- The largest PBKDF2 `dklen` accepted: only bytes 0 to 32 of the key are ever used, and
+    each further 32 bytes costs the whole iteration count again. -/
+def pbkdf2MaxDkLen : Nat := 64
 
 /-- The shortest salt `encrypt` accepts, in bytes. -/
 def minSaltBytes : Nat := 16
@@ -170,10 +174,10 @@ def deriveKey (risk : SecretRisk) (kdf : Kdf) (password : ByteArray) :
         | .ok dk => .ok dk
   | .pbkdf2 c dkLen prf salt =>
     if prf ≠ "hmac-sha256" then .error .unsupportedPrf
-    else if dkLen < 32 ∨ scryptMaxDkLen < dkLen then .error .badDkLen
+    else if dkLen < 32 ∨ pbkdf2MaxDkLen < dkLen then .error .badDkLen
     else if c = 0 ∨ pbkdf2MaxIterations < c then .error .badIterations
     else
-      -- Prepared-key PBKDF2 (`HmacKey.mac256_eq`: the same HMAC, two compressions a round).
+      -- Prepared-key PBKDF2 (`HmacKey.mac256_eq`: the same HMAC, the two pads made once).
       let dk := Pbkdf2.raw (HmacKey.ofSha256 password).mac256 32 salt c dkLen
       if dk.size = dkLen then .ok dk else .error .internal
   | .other _ => .error .unsupportedKdf
@@ -401,7 +405,7 @@ theorem deriveKey_ne_cipherUnavailable (risk : SecretRisk) (kdf : Kdf) (password
   | pbkdf2 c dkLen prf salt =>
     by_cases h1 : prf ≠ "hmac-sha256"
     · simp [deriveKey, h1]
-    · by_cases h2 : dkLen < 32 ∨ scryptMaxDkLen < dkLen
+    · by_cases h2 : dkLen < 32 ∨ pbkdf2MaxDkLen < dkLen
       · simp only [deriveKey, if_neg h1, if_pos h2]; intro h; cases h
       · by_cases h3 : c = 0 ∨ pbkdf2MaxIterations < c
         · simp only [deriveKey, if_neg h1, if_neg h2, if_pos h3]; intro h; cases h
@@ -535,7 +539,7 @@ theorem deriveKey_pbkdf2_refuses_dkLen (risk : SecretRisk) (c dkLen : Nat)
     Does not say: how long an accepted count takes. -/
 theorem deriveKey_pbkdf2_refuses_iterations (risk : SecretRisk) (c dkLen : Nat)
     (salt password : ByteArray)
-    (hd : ¬(dkLen < 32 ∨ scryptMaxDkLen < dkLen)) (h : c = 0 ∨ pbkdf2MaxIterations < c) :
+    (hd : ¬(dkLen < 32 ∨ pbkdf2MaxDkLen < dkLen)) (h : c = 0 ∨ pbkdf2MaxIterations < c) :
     deriveKey risk (.pbkdf2 c dkLen "hmac-sha256" salt) password = .error .badIterations := by
   simp only [deriveKey, ne_eq, not_true_eq_false, if_false, if_neg hd, if_pos h]
 

@@ -7,6 +7,7 @@ open EthereumWallet.Keys
 #print axioms scrypt_refuses_large_n
 #print axioms check_ok_bound
 #print axioms scrypt_ok_bound
+#print axioms scrypt_refuses_over_work
 #print axioms scrypt_ok_size
 #print axioms scrypt_check_error
 #print axioms scrypt_refuses_zero_r

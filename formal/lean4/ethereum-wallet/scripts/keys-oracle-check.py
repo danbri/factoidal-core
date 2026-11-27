@@ -47,15 +47,22 @@ def derive_check(keys_exe, per_size):
         if len(fields) != 4:
             mismatches.append((case, "output shape"))
             continue
-        words = english.to_mnemonic(entropy)
-        seed = Mnemonic.to_seed(words, passphrase="")
+        # The libraries' exceptions can quote the mnemonic: catch them and keep only the
+        # case number and the exception's type name.
+        try:
+            words = english.to_mnemonic(entropy)
+            seed = Mnemonic.to_seed(words, passphrase="")
+            xprv = Mnemonic.to_hd_master_key(seed)
+            addresses = [Account.from_mnemonic(words, account_path=f"m/44'/60'/0'/0/{index}").address
+                         for index in (0, 1)]
+        except Exception as error:  # noqa: BLE001
+            mismatches.append((case, "reference library refused: " + type(error).__name__))
+            continue
         matched["mnemonic"] += compare("mnemonic", fields[0], words, mismatches, case)
-        matched["masterXprv"] += compare("masterXprv", fields[1], Mnemonic.to_hd_master_key(seed),
-                                         mismatches, case)
+        matched["masterXprv"] += compare("masterXprv", fields[1], xprv, mismatches, case)
         for index in (0, 1):
-            address = Account.from_mnemonic(words, account_path=f"m/44'/60'/0'/0/{index}").address
-            matched[f"address{index}"] += compare(f"address{index}", fields[2 + index], address,
-                                                  mismatches, case)
+            matched[f"address{index}"] += compare(f"address{index}", fields[2 + index],
+                                                  addresses[index], mismatches, case)
     # Negative control of the comparison itself: a changed character must be reported.
     control = []
     compare("control", "0xabc", "0xabd", control, -1)

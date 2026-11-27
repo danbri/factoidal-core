@@ -15,7 +15,7 @@ import EthereumWallet.Keys.KeystoreAxioms
 | `Keys/Pbkdf2` | PBKDF2 over HMAC-SHA-512 and HMAC-SHA-256, bounded |
 | `Keys/Bip32*` | BIP-32 master, private and public child keys, paths, xprv / xpub; BIP-44 path for Ethereum |
 | `Keys/Address` | address of a public point; ERC-55 checksum encoding and strict validation |
-| `Keys/Scrypt`, `Salsa` | scrypt (RFC 7914) with a memory bound |
+| `Keys/Scrypt`, `Salsa` | scrypt (RFC 7914) with memory and work bounds |
 | `Keys/Keystore*`, `Json` | Web3 Secret Storage v3: key derivation, MAC and password check, JSON; AES-128-CTR only through a provider (none in the tree, see below) |
 | `Keys/Risk` | the risk token every secret-taking entry point asks for |
 | `Keys/Ripemd160`, `Base58` | for extended-key fingerprints and text |
@@ -37,8 +37,9 @@ import EthereumWallet.Keys.KeystoreAxioms
   tree has no provider: a keystore's password can be checked (KDF and MAC), its
   plaintext cannot be recovered and new keystores cannot be made until the owner decides
   where AES-128-CTR comes from. This is recorded as open.
-* Off by default. Every entry point that takes a secret asks for the risk token of
-  `Keys/Risk.lean` (skills/lean-risk-flags); the executables refuse without
+* Off by default. Every named entry point that takes a secret asks for the risk token of
+  `Keys/Risk.lean` (skills/lean-risk-flags; that file lists the internal helpers the
+  token does not reach); the executables refuse without
   `--dangerously-enable-variable-time-secrets`.
 
 ## Constant time

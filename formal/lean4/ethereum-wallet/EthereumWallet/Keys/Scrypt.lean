@@ -5,11 +5,14 @@ import EthereumWallet.Keys.Risk
 /-
 scrypt (RFC 7914 sections 5 and 6) over the repository's pure PBKDF2-HMAC-SHA-256.
 
-Memory: scryptROMix keeps `V`, `128 * r * N` bytes, in one `ByteArray`, and the
-`p` blocks are mixed one after another, so the peak is about
-`128 * r * N + 128 * r * p` bytes plus a few blocks. `ScryptParams.check` runs
-before anything is allocated and refuses parameters whose figure is above
-`scryptMaxBytes`.
+Memory: scryptROMix keeps `V`, `128 * r * N` bytes, in one `ByteArray`. The `p` blocks
+(`128 * r * p` bytes) are held several times over (the PBKDF2 output and its copies, the
+mixed blocks, the second PBKDF2's message: about seven copies were measured), so
+`ScryptParams.check` also keeps `p * r` at or below `scryptMaxBlocks` (under 1 MiB for
+all the copies). Time: the work is about `4 * N * r * p` Salsa20/8 cores, and the memory
+figure does not bound it (a small `N` with a huge `p` is cheap in memory and slow), so
+`check` refuses `N * r * p` above `scryptMaxWork`. `check` runs before anything is
+allocated.
 
 Theorems (stated here, proved at the end of the file):
 * `scrypt_refuses_over_limit`, `scrypt_refuses_large_n`: above the limit the
@@ -56,11 +59,20 @@ inductive ScryptError where
   | zeroP
   /-- `dkLen` is zero or above `scryptMaxDkLen`. -/
   | invalidDkLen
+  /-- `p * r` above `scryptMaxBlocks` or `N * r * p` above `scryptMaxWork`. -/
+  | workLimit
   /-- A derived key of the wrong length came back (not expected to happen). -/
   | internal
   deriving Repr, BEq, DecidableEq
 
-/-- The bytes scrypt needs for `V` and the `p` blocks. -/
+/-- The largest `p * r` accepted (RFC 7914's vectors need 128, geth's parameters 48). -/
+def scryptMaxBlocks : Nat := 1024
+
+/-- The largest `N * r * p` accepted: 2^24 (RFC 7914's largest vector is 2^23, geth's
+    standard parameters 2^21). About 2^26 Salsa20/8 cores, some tens of seconds. -/
+def scryptMaxWork : Nat := 16777216
+
+/-- The bytes scrypt needs for `V` and one copy of the `p` blocks. -/
 def ScryptParams.memoryBytes (ps : ScryptParams) : Nat :=
   128 * ps.r * ps.n + 128 * ps.r * ps.p
 
@@ -71,6 +83,8 @@ def ScryptParams.check (ps : ScryptParams) : Except ScryptError Unit :=
   else if ps.p = 0 then .error .zeroP
   else if ps.n < 2 ∨ ps.n &&& (ps.n - 1) ≠ 0 then .error .invalidN
   else if ps.dkLen = 0 ∨ scryptMaxDkLen < ps.dkLen then .error .invalidDkLen
+  else if scryptMaxBlocks < ps.p * ps.r then .error .workLimit
+  else if scryptMaxWork < ps.n * ps.r * ps.p then .error .workLimit
   else .ok ()
 
 /-- scryptROMix step 2: `V_i = X; X = BlockMix(X)`, `count` times. `v` is
@@ -148,11 +162,14 @@ theorem scrypt_refuses_large_n (risk : SecretRisk) (password salt : ByteArray) (
 
 /-- Kind: resource bound.
     Says: a passed check means memory within the limit, `r` and `p` positive,
-    `N` at least 2 with `N &&& (N - 1) = 0`, and `0 < dkLen ≤ scryptMaxDkLen`.
-    Does not say: that `N &&& (N - 1) = 0` is spelled out as "a power of two". -/
+    `N` at least 2 with `N &&& (N - 1) = 0`, `0 < dkLen ≤ scryptMaxDkLen`, and the work
+    within its limits: `p * r ≤ scryptMaxBlocks` and `N * r * p ≤ scryptMaxWork`.
+    Does not say: that `N &&& (N - 1) = 0` is spelled out as "a power of two", nor how
+    long `scryptMaxWork` takes on a given machine. -/
 theorem check_ok_bound (ps : ScryptParams) (h : ps.check = .ok ()) :
     128 * ps.r * ps.n + 128 * ps.r * ps.p ≤ scryptMaxBytes ∧ 0 < ps.r ∧ 0 < ps.p ∧
-      2 ≤ ps.n ∧ ps.n &&& (ps.n - 1) = 0 ∧ 0 < ps.dkLen ∧ ps.dkLen ≤ scryptMaxDkLen := by
+      2 ≤ ps.n ∧ ps.n &&& (ps.n - 1) = 0 ∧ 0 < ps.dkLen ∧ ps.dkLen ≤ scryptMaxDkLen ∧
+      ps.p * ps.r ≤ scryptMaxBlocks ∧ ps.n * ps.r * ps.p ≤ scryptMaxWork := by
   unfold ScryptParams.check at h
   by_cases h1 : scryptMaxBytes < ps.memoryBytes
   · rw [if_pos h1] at h; cases h
@@ -167,11 +184,17 @@ theorem check_ok_bound (ps : ScryptParams) (h : ps.check = .ok ()) :
         · rw [if_pos h4] at h; cases h
         · by_cases h5 : ps.dkLen = 0 ∨ scryptMaxDkLen < ps.dkLen
           · rw [if_neg h4, if_pos h5] at h; cases h
-          · exact ⟨Nat.le_of_not_lt h1, Nat.pos_of_ne_zero h2, Nat.pos_of_ne_zero h3,
-              Nat.le_of_not_lt (fun x => h4 (Or.inl x)),
-              Decidable.byContradiction (fun hn => h4 (Or.inr hn)),
-              Nat.pos_of_ne_zero (fun x => h5 (Or.inl x)),
-              Nat.le_of_not_lt (fun x => h5 (Or.inr x))⟩
+          · rw [if_neg h4, if_neg h5] at h
+            by_cases h6 : scryptMaxBlocks < ps.p * ps.r
+            · rw [if_pos h6] at h; cases h
+            · by_cases h7 : scryptMaxWork < ps.n * ps.r * ps.p
+              · rw [if_neg h6, if_pos h7] at h; cases h
+              · exact ⟨Nat.le_of_not_lt h1, Nat.pos_of_ne_zero h2, Nat.pos_of_ne_zero h3,
+                  Nat.le_of_not_lt (fun x => h4 (Or.inl x)),
+                  Decidable.byContradiction (fun hn => h4 (Or.inr hn)),
+                  Nat.pos_of_ne_zero (fun x => h5 (Or.inl x)),
+                  Nat.le_of_not_lt (fun x => h5 (Or.inr x)),
+                  Nat.le_of_not_lt h6, Nat.le_of_not_lt h7⟩
 
 /-- Kind: resource bound.
     Says: if `scrypt` answers `.ok`, the parameters were within every bound of
@@ -180,10 +203,24 @@ theorem check_ok_bound (ps : ScryptParams) (h : ps.check = .ok ()) :
 theorem scrypt_ok_bound (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams) (dk : ByteArray)
     (h : scrypt risk password salt ps = .ok dk) :
     128 * ps.r * ps.n + 128 * ps.r * ps.p ≤ scryptMaxBytes ∧ 0 < ps.r ∧ 0 < ps.p ∧
-      2 ≤ ps.n ∧ ps.n &&& (ps.n - 1) = 0 ∧ 0 < ps.dkLen ∧ ps.dkLen ≤ scryptMaxDkLen := by
+      2 ≤ ps.n ∧ ps.n &&& (ps.n - 1) = 0 ∧ 0 < ps.dkLen ∧ ps.dkLen ≤ scryptMaxDkLen ∧
+      ps.p * ps.r ≤ scryptMaxBlocks ∧ ps.n * ps.r * ps.p ≤ scryptMaxWork := by
   cases hc : ps.check with
   | error e => simp [scrypt, hc] at h
   | ok u => cases u; exact check_ok_bound ps hc
+
+/-- Kind: resource refusal (time).
+    Says: parameters whose work `N * r * p` is above `scryptMaxWork`, or whose `p * r` is
+    above `scryptMaxBlocks`, never give a key: `scrypt` refuses before any hashing.
+    Does not say: which error is reported (an earlier check may speak first). -/
+theorem scrypt_refuses_over_work (risk : SecretRisk) (password salt : ByteArray) (ps : ScryptParams)
+    (dk : ByteArray) (h : scryptMaxWork < ps.n * ps.r * ps.p ∨ scryptMaxBlocks < ps.p * ps.r) :
+    scrypt risk password salt ps ≠ .ok dk := by
+  intro hok
+  obtain ⟨_, _, _, _, _, _, _, h8, h9⟩ := scrypt_ok_bound risk password salt ps dk hok
+  rcases h with h | h
+  · exact absurd h9 (Nat.not_le_of_gt h)
+  · exact absurd h8 (Nat.not_le_of_gt h)
 
 /-- Kind: size.
     Says: an `.ok dk` answer has exactly `dkLen` bytes (`scrypt` checks it).

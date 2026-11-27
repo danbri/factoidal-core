@@ -2,6 +2,7 @@ import EthereumWallet.Keys.Bip39Theorems
 import EthereumWallet.Keys.Bip39Seed
 import EthereumWallet.Keys.Bip32Theorems
 import EthereumWallet.Keys.Address
+import EthereumWallet.Keys.KeystoreJson
 import EthereumWallet.Keys.KeysVectors
 
 /-
@@ -100,6 +101,68 @@ def ripemdVectors : List (String × String) := [
       (match Pbkdf2.hmacSha256 risk pw pw 2 n, Pbkdf2.hmacSha512 risk pw pw 2 n with
        | .ok a, .ok b => a.size == n && b.size == n
        | _, _ => false))
+
+/-- Not a published vector: the expected value was computed once with Python's
+`hashlib.pbkdf2_hmac('sha512', b'password', b'salt', 2, 100)` as a development oracle.
+It covers a second output block of PBKDF2-HMAC-SHA512, which the 64-byte BIP-39 seeds do not. -/
+@[noinline] def pbkdf2Sha512TwoBlocks (fails : IO.Ref Nat) (risk : SecretRisk) (pw salt : String) :
+    IO Unit :=
+  report fails "PBKDF2-HMAC-SHA512 c=2 dkLen=100 (two blocks; value from a development oracle)"
+    (okBytes (Pbkdf2.hmacSha512 risk pw.toUTF8 salt.toUTF8 2 100) (ofHex!
+      "e1d9c16aa681708a45f5c7c4e215ceb66e011a2e9f0040713f18aefdb866d53cf76cab2868a39b9f7840edce4fef5a82be67335c77a6068e04112754f27ccf4e473e311ad827b68945f4e2dddb204c78e40e2495141e411cd272d020640d673cd34aa29f"))
+
+/-- Base58 with leading zero bytes and short inputs (values as in Bitcoin Core's
+`base58_encode_decode.json`, recalled; each is also decoded back). -/
+def base58Vectors : List (String × String) := [
+  ("", ""), ("61", "2g"), ("626262", "a3gV"), ("636363", "aPEr"), ("572e4794", "3EFU7m"),
+  ("516b6fcd0f", "ABnLTmg"), ("10c8511e", "Rt5zm"), ("000000287fb4cd", "111233QC4"),
+  ("00000000000000000000", "1111111111"),
+  ("00eb15231dfceb60925886b67d065299925915aeb172c06647", "1NS17iag9jJgTHD1VXjvLCEnZuQ3rJDE9L")]
+
+@[noinline] def base58Case (fails : IO.Ref Nat) (hex text : String) : IO Unit :=
+  report fails s!"Base58 {hex.length / 2} bytes: encodes to {text} and decodes back"
+    (Base58.encode (ofHex! hex) == some text
+      && (Base58.decode? text).map toHex == some hex)
+
+@[noinline] def base58Negative (fails : IO.Ref Nat) (count : Nat) : IO Unit := do
+  report fails "Base58 negative: 0, O, I, l and a space are not Base58 characters"
+    (["10", "1O", "1I", "1l", "1 1"].all fun s => Base58.decode? s == none)
+  report fails "Base58 negative: 193 characters and 129 bytes refused"
+    (Base58.decode? (String.ofList (List.replicate (count + 1) '2')) == none
+      && Base58.encode (zeroBytes 129) == none)
+
+/-- scrypt's work bounds (time, and copies of the `p` blocks), which the memory figure
+does not give: refused before any hashing. -/
+@[noinline] def scryptWorkBounds (fails : IO.Ref Nat) (risk : SecretRisk) (pw : ByteArray) : IO Unit := do
+  report fails "scrypt N=2^20 r=1 p=32 (128 MiB but 2^25 work) refused with workLimit"
+    (errIs (scrypt risk pw pw ⟨1048576, 1, 32, 32⟩) .workLimit)
+  report fails "scrypt N=2 r=1 p=200000 (25 MiB by the formula, slow and many copies) refused with workLimit"
+    (errIs (scrypt risk pw pw ⟨2, 1, 200000, 32⟩) .workLimit)
+  report fails "scrypt N=4194304 r=1 p=4194304 refused"
+    (isErr (scrypt risk pw pw ⟨4194304, 1, 4194304, 32⟩))
+  report fails "keystore PBKDF2: c = 2^21 + 1 and dklen 65 refused before hashing"
+    (errIs (deriveKey risk (.pbkdf2 2097153 32 "hmac-sha256" pw) pw) .badIterations
+      && errIs (deriveKey risk (.pbkdf2 1000 65 "hmac-sha256" pw) pw) .badDkLen)
+  report fails "PBKDF2 with a PRF output size of 0 refused"
+    (errIs (Pbkdf2.derive risk (fun m => m) 0 pw 1 32) .zeroHashLength)
+
+/-- A small well-formed keystore text (made-up hex, never decrypted) and variants a
+strict reader must refuse. -/
+def ksText (version kdfparams extra : String) : String :=
+  "{\"version\":" ++ version ++ extra ++ ",\"crypto\":{\"cipher\":\"aes-128-ctr\",\"ciphertext\":\"00\"," ++
+  "\"cipherparams\":{\"iv\":\"00000000000000000000000000000000\"},\"kdf\":\"scrypt\"," ++
+  "\"kdfparams\":{" ++ kdfparams ++ "},\"mac\":\"00\"}}"
+
+@[noinline] def keystoreJsonStrict (fails : IO.Ref Nat) (params : String) : IO Unit := do
+  let ok (t : String) : Bool := match Keystore.ofJson? t with | .ok _ => true | .error _ => false
+  report fails "keystore JSON control: the base text is read" (ok (ksText "3" params ""))
+  report fails "keystore JSON negative: a second version member refused"
+    (!ok (ksText "3" params ",\"version\":4") && !ok (ksText "3" params ",\"Version\":3"))
+  report fails "keystore JSON negative: a repeated kdfparams name refused"
+    (!ok (ksText "3" (params ++ ",\"n\":4") ""))
+  report fails "keystore JSON negative: upper-case kdfparams names refused"
+    (!ok (ksText "3" "\"N\":2,\"r\":8,\"p\":1,\"dklen\":32,\"salt\":\"00\"" "")
+      && !ok (ksText "3" "\"n\":2,\"r\":8,\"p\":1,\"DKLEN\":32,\"salt\":\"00\"" ""))
 
 /-! ## BIP-39 -/
 
@@ -259,7 +322,8 @@ def pubText (k : Except Bip32.Error Bip32.ExtPub) : Option String :=
     report fails "BIP-32: a key at depth 255 has no children"
       (errIs (Bip32.ckdPriv risk { m with depth := 255 } 0 |>.map fun _ => ()) .depthOverflow)
     report fails "BIP-32: ckdPrivNext with a valid child returns that child (nothing skipped)"
-      (privText risk (Bip32.ckdPrivNext risk m 4 5) == privText risk (Bip32.ckdPriv risk m 5))
+      (privText risk (Bip32.ckdPrivNext risk m 4 5) == privText risk (Bip32.ckdPriv risk m 5)
+        && (privText risk (Bip32.ckdPriv risk m 5)).isSome)
     report fails "BIP-32: child key rule refuses I_L = n, I_L = n + 5 and I_L + k = n"
       (Bip32.childKey? Secp.n 1 == none && Bip32.childKey? (Secp.n + 5) 1 == none
         && Bip32.childKey? (Secp.n - 7) 7 == none && Bip32.childKey? (Secp.n - 7) 8 == some 1)
@@ -322,6 +386,11 @@ def runAll (risk : SecretRisk) : IO Nat := do
   pbkdf2Sha256Case fails risk "Password" "NaCl" 80000 64
     "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d"
   pbkdf2Refusals fails risk "not a secret".toUTF8
+  pbkdf2Sha512TwoBlocks fails risk "password" "salt"
+  for (hex, text) in base58Vectors do base58Case fails hex text
+  base58Negative fails Base58.maxChars
+  scryptWorkBounds fails risk "not a secret".toUTF8
+  keystoreJsonStrict fails "\"n\":2,\"r\":8,\"p\":1,\"dklen\":32,\"salt\":\"00\""
   let mut number := 1
   for v in Vectors.bip39English do
     bip39Case fails risk number v
