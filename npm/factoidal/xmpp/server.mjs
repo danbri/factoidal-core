@@ -361,6 +361,18 @@ async function accountsFileWarnings (path) {
  * @param {Function} [options.onLog]
  * @returns {Promise<{server: object, xmpp: object, close: Function, sessions: Function}>}
  */
+/** Parse each certificate and key, and check that a single key matches a single certificate.
+ *  Arrays may be empty (a transport-only listener with no handshake). Throws on a bad value. */
+async function checkTlsMaterial (cert, key) {
+  const crypto = await import('node:crypto')
+  const certs = (Array.isArray(cert) ? cert : [cert]).map((c) => new crypto.X509Certificate(c))
+  const keys = (Array.isArray(key) ? key : [key]).map((k) =>
+    crypto.createPrivateKey(k !== null && typeof k === 'object' && 'pem' in k ? k.pem : k))
+  if (certs.length === 1 && keys.length === 1 && !certs[0].checkPrivateKey(keys[0])) {
+    throw new Error('the key does not match the certificate')
+  }
+}
+
 export async function createXmppServer (options = {}) {
   const onError = typeof options.onError === 'function'
     ? options.onError
@@ -937,6 +949,20 @@ export async function createXmppServer (options = {}) {
     // The bytes that came in one read with a PROXY header.
     if (rest !== null && rest.length > 0) onData(rest)
   }
+  // Check the TLS certificates and keys before any listener opens, on every runtime. Node's
+  // tls.createServer refuses a bad PEM at once, but Deno's node:tls accepts one and fails each
+  // handshake later (measured 2026-11-27, Deno 2.9.8, issue 1176), and the PROXY protocol and
+  // STARTTLS paths make their TLS context per connection on both runtimes. This parses the
+  // transport's encodings (PEM, DER) and checks that each key matches its certificate; it
+  // decides no XMPP rule.
+  try {
+    if (haveKey) await checkTlsMaterial(options.cert, options.key)
+    if (ws !== null && ws.cert !== undefined && ws.key !== undefined) await checkTlsMaterial(ws.cert, ws.key)
+  } catch (error) {
+    xmpp.close()
+    throw new XmppHostError(`TLS certificate or key not usable: ${error?.message ?? error}`)
+  }
+
   let wsServer = null
   if (ws !== null) {
     if ((ws.cert !== undefined) !== (ws.key !== undefined)) {

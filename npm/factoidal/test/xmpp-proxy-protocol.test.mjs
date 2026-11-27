@@ -327,3 +327,18 @@ test('xmpp-serve --proxy-protocol logs each connection by address tag, never by 
   assert.ok(!stderr.includes(A), 'the address itself is never logged')
   assert.equal(m[1].length, 12)
 })
+
+test('PROXY protocol with direct TLS: a bad PEM or a key that does not match is refused before listening (issue 1176)', { skip }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'l4xmpp-proxy-pem-'))
+  try {
+    for (const n of ['a', 'b']) {
+      execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1',
+        '-subj', `/CN=${n}`, '-keyout', join(dir, `${n}.key`), '-out', join(dir, `${n}.crt`)], { stdio: 'ignore' })
+    }
+    const certA = await readFile(join(dir, 'a.crt')), keyB = await readFile(join(dir, 'b.key'))
+    for (const [cert, key] of [['invalid PEM', 'invalid PEM'], [certA, keyB]]) {
+      await assert.rejects(createXmppServer({ domain: DOMAIN, accounts: ACCOUNTS, pollMs: 0, engine, proxyProtocol: true, cert, key }),
+        /TLS certificate or key not usable/)
+    }
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
