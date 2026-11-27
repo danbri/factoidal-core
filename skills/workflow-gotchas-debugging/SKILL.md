@@ -2232,3 +2232,27 @@ from the brief to the fix. Fixed by PR 26 (2026-10-23: every parser returns
    the source; per graph on the quad layouts), registered as `packSetStage`
    (`packedRows_keyNodup`), with `Storage/PackSetTests.lean` `#guard`s; the
    IBK4 and IBK5 packers had written the repeated rows too.
+
+## Hazard #47 — a check on its own line does not stop the commit after it (2026-11-27)
+
+What happened: a session ran `ruby -ryaml -e 'YAML.load_file(...)'` to check a new workflow,
+then, on the next line of the same shell command, `git add ... && git commit ... && git push`.
+The check failed (an unquoted colon in a `description:` value), but the commit and push ran,
+because a newline does not stop a shell script. `differential-sparql.yml` was on `main` in a
+form that GitHub could not parse until the next commit (81f34fbdf, fixed in 6092c4580).
+
+Rule: join a check and the commit it guards with `&&` on one line, or start the script with
+`set -e`. Read the output of the check before you read the commit hash.
+
+## Hazard #48 — a shared declaration reader that does not end at every declaration keyword (2026-11-27)
+
+What happened: the declaration reader of `tools/claims-gate.py` ended a declaration at the next
+line that starts with `def`, `theorem`, `private` and others, but not at `partial def` or
+`unsafe def`. A declaration before a `partial def` then included it, and
+`tools/lean-panic-sites.py` counted 682 `partial def` sites where the tree has 142. The claims
+hashes did not change only because no claim's definition was followed by a `partial def`.
+Found by comparing the count with a plain `grep -c 'partial def'`.
+
+Rule: when a tool reads Lean declarations by text, compare one of its counts with a plain grep
+of the tree before you report a number from it (anti-pattern 28).
+
