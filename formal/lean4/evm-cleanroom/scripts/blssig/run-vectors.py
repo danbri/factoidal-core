@@ -80,11 +80,11 @@ def main():
     for row in rows:
         if row[0] not in seen:
             seen.add(row[0])
-            names.append(row[1])
+            names.append(row[0] + " " + row[1])
             row = row[:2] + [alter(row[2])] + row[3:]
         altered.append(row)
     control_code, control_mismatches, _ = run(args.binary, altered)
-    reported = [m.split()[2].rstrip(":") for m in control_mismatches]
+    reported = [m.split()[1] + " " + m.split()[2].rstrip(":") for m in control_mismatches]
     control_ok = control_code != 0 and sorted(reported) == sorted(names)
     summary = {
         "status": "pass" if code == 0 and not mismatches and counts == EXPECTED and control_ok else "fail",

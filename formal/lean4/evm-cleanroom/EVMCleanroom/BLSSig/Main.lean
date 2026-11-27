@@ -346,6 +346,18 @@ def timings (signed : Array Signed) (scale : Nat) : IO Unit := do
     match HashToCurve.hashToFieldFp2 dst c.msg with
     | some u => u.2.c1 % 7 + 1
     | none => 0
+  let _ ← timeEach "  part: G1 subgroup check (inSubgroup1)" reps inputs fun c =>
+    bit (BLS12381.Fast.inSubgroup1 c.key.x c.key.y)
+  let _ ← timeEach "  part: G2 subgroup check (inSubgroup2)" reps inputs fun c =>
+    match c.signature.point with
+    | some point => bit (BLS12381.Fast.inSubgroup2 point.1 point.2)
+    | none => 0
+  let _ ← timeEach "  part: one map to the curve (SWU, isogeny)" reps inputs fun c =>
+    match HashToCurve.hashToFieldFp2 dst c.msg with
+    | some u => (HashToCurve.mapToCurveG2 (BLS12381.Fast.toLimbs2 u.1)).z.c0.l0.toNat % 7 + 1
+    | none => 0
+  let _ ← timeEach "  part: clear the G2 cofactor" reps inputs fun c =>
+    (BLS12381.Fast.clearCofactor2 c.hashed).z.c0.l0.toNat % 7 + 1
   let pairTime ← timeEach "verifyPoints (affine conversion, 2 Miller loops shared, final exponentiation)" reps inputs fun c =>
     bit (BLSSignature.verifyPoints c.key c.hashed c.signature)
   let decodedTime ← timeEach "verifyDecoded (hash + pairing; for callers with cached keys)" reps inputs fun c =>
