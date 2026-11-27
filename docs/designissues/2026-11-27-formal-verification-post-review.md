@@ -7,7 +7,8 @@ we bring in from that blog post to approach the problem space with more discipli
 vibeslop?"
 
 Status: an evaluation and a set of proposals from a Claude session. No proposal here is an owner
-decision.
+decision. Owner, 2026-11-27, verbatim: "file them all!". Proposed batch:
+https://github.com/danbri/factoidal-core/issues/1189 (OKR batch, formal-verification discipline).
 
 ## 1. The post, in short
 
@@ -90,53 +91,53 @@ everything else is checked by a machine.
 
 ## 4. Proposals, in order of value for cost
 
-P1. **Claims register.** A file `foundation/claims.toml` with at most about 50 entries, one per
+P1. **Claims register.** (https://github.com/danbri/factoidal-core/issues/1178) A file `foundation/claims.toml` with at most about 50 entries, one per
 public claim (for example "SPARQL 1.1 evaluation equals the reference semantics on any
 LawfulStore", "SBM11 query answers equal the in-memory evaluator", "no wasm op panics on any
 input"). Each entry names the Lean theorem, the exported function it is about, the assumptions,
 and a "Does not say" line. The owner reviews this file only. A release note, a hub page or a README
 may say "proved" only for an entry in this file.
 
-P2. **Statement freeze gate.** For each claims-register theorem, record a hash of the elaborated
+P2. **Statement freeze gate.** (https://github.com/danbri/factoidal-core/issues/1179) For each claims-register theorem, record a hash of the elaborated
 statement and of the definitions it unfolds to (spec side). CI fails when a hash changes, unless
 the same commit edits the register entry with a reason. Proofs, implementations and lemmas stay
 free to change. This is the control the post uses against reward hacking, in Lean form.
 
-P3. **Hypothesis witness rule.** Every claims-register theorem with hypotheses has a checked
+P3. **Hypothesis witness rule.** (https://github.com/danbri/factoidal-core/issues/1180) Every claims-register theorem with hypotheses has a checked
 `example` that satisfies all hypotheses at once, and a `lean_minimal_hypotheses` report with no
 unused hypothesis. This catches the anti-pattern 29 family and unsatisfiable premises by
 machine.
 
-P4. **One fixed property per entry point: no panic.** For each wasm op and CLI command, a theorem
+P4. **One fixed property per entry point: no panic.** (https://github.com/danbri/factoidal-core/issues/1181) For each wasm op and CLI command, a theorem
 that the Lean function reaches no `panic!`, `get!`, `[i]!` or `partial` loop on any input, or a
 named exception list that ratchets down. This is the Lean analogue of the post's no-crash
 property and needs no model-written spec. Start with the parsers (fuzzing finds crashes there).
 
-P5. **Shipped-artifact coverage line.** Each release set in `danbri/factoidal-builds` writes
+P5. **Shipped-artifact coverage line.** (https://github.com/danbri/factoidal-core/issues/1182) Each release set in `danbri/factoidal-builds` writes
 `assurance.json`: the claims-register hashes, `#print axioms` for each claim, the list of
 `@[extern]` functions on each claim's path, the toolchain versions (Lean, emscripten, Deno), and
 the fraction of entry points covered by a claim. The npm package and the Foafnaut release ship it.
 
-P6. **Run the conformance suites against the spec definitions.** Where a spec definition is
+P6. **Run the conformance suites against the spec definitions.** (https://github.com/danbri/factoidal-core/issues/1183) Where a spec definition is
 executable (RDF Semantics, SPARQL algebra, XPath), run the W3C suite on it, apart from the
 engine. Report a spec fidelity score beside the engine score. This is the post's "boot Ubuntu on
 the model" check.
 
-P7. **Random differential campaigns with a stated rate.** BubblePopJS against V8 and QuickJS-NG,
+P7. **Random differential campaigns with a stated rate.** (https://github.com/danbri/factoidal-core/issues/1184) BubblePopJS against V8 and QuickJS-NG,
 SPARQL against Oxigraph, Turtle and N-Quads against Serd, layout against Chrome. Each campaign
 reports "agrees on N of M generated inputs" and keeps every disagreement as a test case.
 
-P8. **Count bugs found by proof.** A label `found-by-proof` on issues, and a line in each
+P8. **Count bugs found by proof.** (https://github.com/danbri/factoidal-core/issues/1185) A label `found-by-proof` on issues, and a line in each
 release note. This measures what the theorems are worth.
 
-P9. **Fewer, closed tests out of theorem form.** The 991 closed theorems are fine as tests but
+P9. **Fewer, closed tests out of theorem form.** (https://github.com/danbri/factoidal-core/issues/1186) The 991 closed theorems are fine as tests but
 they inflate the theorem count. Report theorem counts without them, or move them to `#guard`.
 
-P11. **Foafnaut host boundary.** Extend the host purity lint to `labs/demos/foafnaut`. Each host
+P11. **Foafnaut host boundary.** (https://github.com/danbri/factoidal-core/issues/1188) Extend the host purity lint to `labs/demos/foafnaut`. Each host
 policy (prefetch, pacing, DNS cache, scheduling) either moves to Lean as a pure decision that the
 host calls, or goes on an allow list with a reason, with a ratchet on its size.
 
-P10. **Shared lemma index before new work.** Each proof agent runs `lean_local_search` and reads a
+P10. **Shared lemma index before new work.** (https://github.com/danbri/factoidal-core/issues/1187) Each proof agent runs `lean_local_search` and reads a
 generated lemma index first (the post: 17% fewer tokens). This also reduces the duplicate code
 that sessions wrote in parallel (the double `escapeString`, CLAUDE.md, 2026-10-13).
 
