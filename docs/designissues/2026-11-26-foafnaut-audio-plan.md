@@ -593,6 +593,19 @@ latency. `--perf-summary` gets a block `audio`.
     run (no `emcc` here); the owner's check on a Mac (the `coreaudio` consumer
     takes the device's buffer at each callback, so the margin above may be smaller there). The
     rendering cost (above) has not been worked on.
+- The autoplay rule as the owner decided it (13.7; branch `wip/1169-autoplay`, which holds D3's
+  branch merged with `main`): `Risk.audioWithoutActivation`; `Api.State.autoplay` holds the token,
+  made only by `WebScripts.audioLimits` from the start request's `dangerouslyPermitAudio`;
+  `Api.op` gives back `autoplay` and `activated` (`op_gate`), code 196 answers -2;
+  `WebScripts.performInput` calls `Api.activate` at the first input that gives activation; the
+  prelude's own activation code is gone; the environment variable `FOAFNAUT_AUTOPLAY` is gone;
+  `dangerouslyPermitAudio` is in `HostContract.relaxFields` (and in `host-trace.mjs`). The window:
+  `--dangerously-permit-audio`, a warning on standard error and a `native-html-permit-audio`
+  trace line, the Settings switch "Let pages start sound before I use them" (saved as
+  `WebState.Settings.permitAudio`; command `permit-audio`, Settings-only by
+  `WebRoute.settingsOnly`, theorem `settings_only_from_settings` now over every such command, and
+  `link-route.mjs` the same), a row in `about:foafnaut`. The WPT runner: the same option, written
+  in its report (`dangerouslyPermitAudio`). The Hub's Settings page says it has no audio output.
 - Then the owner's check on the Mac, and stage E (the jukebox).
 
 ## 14. Render quantum speed (2026-11-26)
