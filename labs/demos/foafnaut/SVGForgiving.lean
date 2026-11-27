@@ -1384,4 +1384,98 @@ def imageRequests (xml : String) (documentURL : Option String := none)
   let external := (imports.missing ++ (externalFonts root documentURL supplied).2).filter (!·.toLower.startsWith "data:")
   return (external ++ (NativeSVG.imageKeys root documentURL).filter (!·.toLower.startsWith "data:")).eraseDups
 
+/-! ### SVG fonts on the strict path (SVG Tiny 1.2 §10 and §20)
+
+`parseStrict` draws text with the SVG fonts of the document and the SVG fonts that a
+`font-face-uri` names in a supplied document, and with the SFNT fonts `sfnt` for a family
+that no SVG font has. It refuses, with the reason, every text that `lowerText` would not
+draw as the specification says; the forgiving path above draws those with an
+approximation. -/
+
+/-- The generic families of CSS Fonts 4 §4.2. The SFNT fonts draw them. -/
+private def genericFamilies : List String :=
+  ["serif","sans-serif","monospace","cursive","fantasy","system-ui","ui-serif","ui-sans-serif",
+   "ui-monospace","ui-rounded","math","emoji","fangsong"]
+
+/-- The font that draws a text. -/
+private inductive TextFont where
+  | svg (font : SVGFont)
+  | sfnt
+
+/-- CSS Fonts 4 §5.1: the first family of the `font-family` list that is available, with
+ASCII case-insensitive names. A family with no font of the wanted `font-variant` is
+refused: CSS would synthesize the variant, which is not done here. No family available: the
+SFNT fonts, which give the initial font. -/
+private def textFont (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (family variant : String) :
+    Except String TextFont := do
+  for name in familyNames family do
+    let key := name.trimAscii.toString.toLower
+    let named := fonts.filter (·.family.toLower == key)
+    if let some font := named.find? (·.variant == variant) then return .svg font
+    if !named.isEmpty then throw s!"SVG font {name}: no face with font-variant {variant} (synthesis not done)"
+    if genericFamilies.contains key || sfnt.any (·.family.toLower == key) then return .sfnt
+  return .sfnt
+
+/-- Why `lowerText` would not draw this text as specified, if it would not. -/
+private def strictTextGap (font : SVGFont) (attrs : List NamespaceAttribute) (runs : List Run) : Option String :=
+  let chars := runs.flatMap (·.text.toList)
+  if (numberList attrs "dx").length > 1 || (numberList attrs "dy").length > 1 then
+    some "SVG font text: dx or dy list on text not drawn"
+  else if runs.any (fun r => r.dxs.length > 1 || r.dys.length > 1 || !r.rotates.isEmpty) then
+    some "SVG font text: dx, dy or rotate list on tspan not drawn"
+  else if runs.any (fun r => r.letterSpacing != 0 || r.wordSpacing != 0) then
+    some "SVG font text: letter-spacing or word-spacing not drawn"
+  else if runs.any (·.vertical) then some "SVG font text: vertical writing-mode not drawn"
+  else match chars.find? (fun c => !c.isWhitespace && c != ' ' && !font.glyphs.contains c) with
+    | some c => some s!"SVG font {font.family}: no glyph for U+{String.ofList (Nat.toDigits 16 c.toNat)}; font fallback for one character not done"
+    | none => none
+
+/-- `font` and `font-face` elements are removed (they draw nothing, §20.3), and each SVG
+`text` whose font is an SVG font is lowered to glyph paths. Other text stays for the SFNT
+lowering. The depth is that of the tree, at most `fuel`; deeper is refused. -/
+private def strictFontPass (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) :
+    Nat → TextState → NamespaceNode → Except String (List NamespaceNode)
+  | 0,_,_ => throw "SVG font pass: nesting exceeds 256"
+  | _,_,node@(.other _) => pure [node]
+  | fuel+1,state,.element name attrs children => do
+    let svg := name.namespace_ == some svgURI
+    if svg && (name.localPart == "font" || name.localPart == "font-face") then return []
+    if svg && name.localPart == "text" then
+      let attrs := expandStyle (renameId attrs)
+      let kids := children.map (expandStyleTree maxDepth)
+      let inner := state.read attrs
+      match ← textFont fonts sfnt inner.family inner.variant with
+      | .sfnt => return [.element name attrs kids]
+      | .svg font =>
+        let results := kids.map (textRuns false false maxDepth inner [])
+        if let some e := (results.flatMap (·.2)).head? then throw s!"SVG font text: {e}"
+        if let some gap := strictTextGap font attrs (spaceRuns (results.flatMap (·.1))) then throw gap
+        let (node,log) := lowerText font none state attrs kids
+        if let some e := log.head? then throw s!"SVG font text: {e}"
+        return [node]
+    let inner := if svg then state.read (expandStyle attrs) else state
+    let mut kids : Array NamespaceNode := #[]
+    for child in children do
+      kids := kids ++ (← strictFontPass fonts sfnt fuel inner child).toArray
+    return [.element name attrs kids.toList]
+
+/-- A standalone SVG document, strictly, with SVG fonts: `strictFontPass`, then
+`NativeSVGText.parseWithFontsNode` for the rest. `supplied` holds the documents that a
+`font-face-uri` may name, by key (`NativeSVG.imageKey`); a key not supplied is a font
+that does not load, and the text takes the next family (CSS Fonts 4 §4.3). -/
+def parseStrict (sfnt : Array NativeSVGText.Font) (supplied : List (String × ByteArray)) (xml : String)
+    (outputWidth outputHeight : Nat) (documentURL : Option String := none) : Except String NativeSVG.Scene := do
+  let root ← NativeSVG.checkedRoot xml
+  let (linked,_) := externalFonts root documentURL supplied
+  let [root] ← strictFontPass (fontsIn root ++ linked) sfnt NativeSVGText.maxTreeDepth {} root
+    | throw "root element is a font"
+  NativeSVGText.parseWithFontsNode sfnt root outputWidth outputHeight documentURL
+
+/-- `parseStrict` as the JSON artifact of `NativeSVG.compile`. -/
+def compileStrict (sfnt : Array NativeSVGText.Font) (supplied : List (String × ByteArray)) (xml : String)
+    (width height : Nat) : String :=
+  match parseStrict sfnt supplied xml width height >>= NativeSVG.Scene.artifact with
+  | .ok artifact => artifact
+  | .error message => "{\"error\":" ++ NativeSVG.quote message ++ "}"
+
 end NativeSVGForgiving

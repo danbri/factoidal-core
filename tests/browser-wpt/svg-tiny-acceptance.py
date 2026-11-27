@@ -33,10 +33,18 @@ out = a.output.resolve()
 out.mkdir(parents=True, exist_ok=False)
 corpus = out / 'originals'
 corpus.mkdir()
+resources = out / 'images'
+resources.mkdir()
 cases = []
+images = {}
 with tarfile.open(a.archive) as archive:
     for member in sorted(archive.getmembers(), key=lambda item: item.name):
         name = PurePosixPath(member.name)
+        if member.isfile() and len(name.parts) == 2 and name.parts[0] == 'images' and name.suffix == '.svg':
+            data = archive.extractfile(member).read()
+            (resources / name.name).write_bytes(data)
+            images[name.name] = sha(data)
+            continue
         if not (member.isfile() and name.parts[0] == 'svg' and name.suffix == '.svg'):
             continue
         assert len(name.parts) == 2 and name.name not in ('.', '..'), 'Unexpected archive path'
@@ -54,7 +62,7 @@ assert len(cases) == 496 and all(row['approved'] for row in cases), 'Official in
 driver = Path(__file__).with_name('SvgTinyProbe.lean')
 cache_roots = [lab / '.build/web-render/olean', formal / '.lake/build/lib/lean']
 cache = {str(path): sha(path.read_bytes()) for base in cache_roots for path in base.rglob('*.olean')}
-command = [a.lean, '--run', str(driver), str(a.font.resolve()), *(str(corpus / row['file']) for row in cases)]
+command = [a.lean, '--run', str(driver), str(a.font.resolve()), str(resources), *(str(corpus / row['file']) for row in cases)]
 result = subprocess.run(command, cwd=formal, env={**os.environ, 'LEAN_PATH': ':'.join(map(str, cache_roots))},
                         capture_output=True, timeout=a.timeout)
 (out / 'lean.log').write_bytes(result.stderr)
@@ -72,7 +80,7 @@ report = {'format': 'factoidal-svg-tiny-acceptance-v1', 'scope': 'Strict Lean SV
           'archiveURL': ARCHIVE_URL, 'archiveSha256': ARCHIVE_SHA256,
           'runnerSha256': sha(Path(__file__).read_bytes()), 'driverSha256': sha(driver.read_bytes()),
           'font': str(a.font), 'fontSha256': sha(a.font.read_bytes()),
-          'cache': cache, 'cases': cases,
+          'cache': cache, 'images': images, 'cases': cases,
           'approvedCounts': dict(Counter(row['acceptance'] for row in cases if row['approved'])),
           'allCounts': dict(Counter(row['acceptance'] for row in cases)),
           'errors': dict(Counter(row['error'] for row in cases if row['error']))}

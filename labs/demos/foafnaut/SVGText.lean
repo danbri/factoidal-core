@@ -982,23 +982,28 @@ def svgFontIn : Nat → NamespaceNode → Bool
   | fuel+1,.element name _ children =>
     (name.namespace_ == some svgURI && name.localPart == "font") || children.any (svgFontIn fuel)
 
-/-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
-`fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
-reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
-here the first entry refuses the document, with its text as the reason. -/
-def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
+/-- `parseWithFonts` from a checked root (`NativeSVG.checkedRoot`). -/
+def parseWithFontsNode (fonts : Array Font) (root : NamespaceNode) (outputWidth outputHeight : Nat)
     (documentURL : Option String := none) : Except String NativeSVG.Scene := do
-  let root ← NativeSVG.checkedRoot xml
   -- An SVG font in the document (SVG Tiny 1.2 §11.7) is not drawn by the SFNT lowering: its
   -- text would come out in the wrong font, so the document is refused. (A `font-face` whose
   -- `font-face-uri` names another document is a font that is not loaded here; the text falls
-  -- back to the next family, as for a web font that fails to load.)
+  -- back to the next family, as for a web font that fails to load.) `NativeSVGForgiving.parseStrict`
+  -- draws SVG fonts and removes them before it calls this.
   if svgFontIn maxTreeDepth root then throw "SVG font element in the document: not drawn by the SFNT text lowering"
   let (tree,log,glyphs) := lowerDocumentGlyphs fonts root
   if let some first := log.head? then throw s!"text lowering: {first}"
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   NativeSVG.parseRootInContextSized context [] (Float.ofNat outputWidth) (Float.ofNat outputHeight)
     {} (fun attrs => .ok attrs) none glyphs
+
+/-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
+`fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
+reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
+here the first entry refuses the document, with its text as the reason. -/
+def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
+    (documentURL : Option String := none) : Except String NativeSVG.Scene := do
+  parseWithFontsNode fonts (← NativeSVG.checkedRoot xml) outputWidth outputHeight documentURL
 
 /-- `parseWithFonts` as the JSON artifact of `NativeSVG.compile`. -/
 def compileWithFonts (fonts : Array Font) (xml : String) (width height : Nat) : String :=

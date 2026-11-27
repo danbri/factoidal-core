@@ -229,3 +229,26 @@ private def markerPixel (orient : String) (x y : Nat) : Option (Float × Float �
 #guard markerPixel "180" 30 23 == some (0, 1, 0)
 -- the path's marker properties are gone from it: the strict reader would refuse marker-end
 #guard ((parse (markerSvg "0") 40 40).toOption.map (·.2)).getD [] |>.all (fun l => !l.startsWith "removed")
+
+-- The strict path with SVG fonts (`parseStrict`, SVG Tiny 1.2 §20): text in a family of an
+-- SVG font is drawn with its glyphs; what `lowerText` would not draw as specified is refused.
+private def sfDefs : String :=
+  "<defs><font horiz-adv-x='1000'><font-face font-family='T' units-per-em='1000' ascent='1000' descent='0'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/><glyph unicode=' ' horiz-adv-x='500'/></font></defs>"
+private def sfStrict (body : String) (supplied : List (String × ByteArray) := []) : Except String NativeSVG.Scene :=
+  parseStrict #[] supplied (svg body) 40 40
+#guard ((sfStrict (sfDefs ++ "<text font-family='T' x='0' y='10' font-size='10'>a a</text>")).map (·.compiled.length)).toOption == some 2
+#guard match sfStrict (sfDefs ++ "<text font-family='T' x='0' y='10'>ab</text>") with
+  | .error e => e.startsWith "SVG font T: no glyph for U+62" | .ok _ => false
+#guard match sfStrict (sfDefs ++ "<text font-family='T' letter-spacing='2'>a</text>") with
+  | .error e => e == "SVG font text: letter-spacing or word-spacing not drawn" | .ok _ => false
+#guard match sfStrict (sfDefs ++ "<text font-family='T' font-variant='small-caps'>a</text>") with
+  | .error e => e.startsWith "SVG font T: no face with font-variant small-caps" | .ok _ => false
+-- A font that a `font-face-uri` names in a supplied document (W3C ../images/SVGFreeSans.svg).
+private def sfLinked : String :=
+  "<defs><font-face font-family='L'><font-face-src><font-face-uri xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='f.svg#x'/></font-face-src></font-face></defs>"
+private def sfDoc : ByteArray :=
+  ("<svg xmlns='http://www.w3.org/2000/svg'><font id='x' horiz-adv-x='1000'><font-face units-per-em='1000'/><glyph unicode='a' d='M0 0H1000V1000H0Z'/></font></svg>").toUTF8
+#guard ((sfStrict (sfLinked ++ "<text font-family='L' x='0' y='10' font-size='10'>a</text>") [("f.svg",sfDoc)]).map (·.compiled.length)).toOption == some 1
+-- Not supplied: the font does not load, the family is passed over, and with no SFNT font held the
+-- text is refused by the SFNT lowering.
+#guard ((sfStrict (sfLinked ++ "<text font-family='L' x='0' y='10' font-size='10'>a</text>")).toOption).isNone
