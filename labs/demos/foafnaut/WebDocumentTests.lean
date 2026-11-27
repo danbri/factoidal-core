@@ -29,6 +29,15 @@ private def editedInputText (value : JSON.Json) : Option (List String) := do
 #guard editedInputText (.string "") == some ["hint"]
 #guard editedInputText .null == some ["original"]
 
+#guard WebRender.styleTypeSupported ""
+#guard WebRender.styleTypeSupported "text/css"
+#guard WebRender.styleTypeSupported "TEXT/CsS"
+#guard !WebRender.styleTypeSupported " text/css "
+#guard !WebRender.styleTypeSupported "text/css; charset=utf-8"
+#guard WebRender.styleSource (DOM.parseHtmlDocument "<style type='TEXT/CsS'>p{color:red}</style>") == "p{color:red}"
+#guard WebRender.styleSource (DOM.parseHtmlDocument "<style type='text/css; charset=utf-8'>p{color:red}</style>") == ""
+#guard size "<style type='TEXT/CsS'>p{font-size:10px}</style><p id=target>A</p>" [] == some 10
+
 private def sheetSource := "<style>p{font-size:10px}</style><link rel=stylesheet href=one.css><style>p{font-size:30px}</style><p id=target>A</p>"
 -- Embedded/external sheets share document source order, rather than grouping
 -- fetched sheets at the beginning or end of the cascade.

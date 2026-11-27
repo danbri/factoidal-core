@@ -2,6 +2,7 @@ import WebRenderFontRequests
 import L4Factoidal.Epub
 import L4Factoidal.DOM.OfXml
 import WebRenderScript
+import WebRender
 import WebXslt
 import L4Factoidal.Syntax.IriResolve
 import WebSelection
@@ -67,7 +68,7 @@ theorem mediaEnv_eq (medium : String) (width rows percent : Nat) :
     mediaEnv medium width rows percent = WasmVM.Hosts.Page.mediaEnvOf medium width rows percent := rfl
 
 private def sheetTyped (n : DOM.Node) : Bool :=
-  !Rendering.CSS.hasAttribute n "disabled" && ["","text/css"].contains (attr n "type")
+  !Rendering.CSS.hasAttribute n "disabled" && WebRender.styleTypeSupported (attr n "type")
 
 /-- Where a sheet is, for a diagnostic. -/
 private def sheetWhere (n : DOM.Node) (id : Nat) : String :=

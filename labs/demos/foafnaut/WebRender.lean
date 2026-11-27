@@ -191,11 +191,16 @@ def sourcePath (dom : DOM.Dom) (root : Nat) : Nat → Nat → List Nat → Excep
     let some index := p.kids.findIdx? (· == id) | throw "SVG source path child index missing"
     sourcePath dom root fuel parent (index::path)
 
+/-- Whether a style type names CSS. CSS media types are ASCII case-insensitive; do not trim
+or accept parameters because those values do not name the supported type "text/css". -/
+def styleTypeSupported (value : String) : Bool :=
+  ["","text/css"].contains value.toLower
+
 /-- Embedded style sheets are read from their DOM text nodes. No host selector, computed-style or layout API participates in this pipeline. -/
 def styleSource (dom : DOM.Dom) : String := Id.run do
   let mut sheets : List String := []
   for n in dom.nodes do
-    if DOM.Dom.isHtmlElement n "style" then
+    if DOM.Dom.isHtmlElement n "style" && styleTypeSupported (Rendering.CSS.attrValue n "type") then
       let text := n.kids.foldl (fun s id => s ++ (dom.get id).data) ""
       sheets := text :: sheets
   return String.intercalate "\n" sheets.reverse
