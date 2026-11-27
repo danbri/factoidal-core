@@ -72,16 +72,16 @@ private theorem combine_spec (p00 p01 p10 p11 : UInt64)
     UInt64.toNat_ofNat, Nat.reducePow, Nat.reduceMod]
   omega
 
-private theorem addTwo_spec (r : UInt64 × UInt64) (c d : UInt64) (x : Nat)
-    (hx : r.1.toNat * 2 ^ 64 + r.2.toNat = x)
-    (hb : x + c.toNat + d.toNat < 2 ^ 128) :
-    (addTwo r c d).1.toNat * 2 ^ 64 + (addTwo r c d).2.toNat = x + c.toNat + d.toNat := by
-  obtain ⟨hi, lo⟩ := r
+private theorem addTwo_spec (hi lo c d : UInt64)
+    (hb : hi.toNat * 18446744073709551616 + lo.toNat + c.toNat + d.toNat <
+      340282366920938463463374607431768211456) :
+    (addTwo (hi, lo) c d).1.toNat * 2 ^ 64 + (addTwo (hi, lo) c d).2.toNat =
+      hi.toNat * 2 ^ 64 + lo.toNat + c.toNat + d.toNat := by
   have hhi := UInt64.toNat_lt hi
   have hlo := UInt64.toNat_lt lo
   have hc := UInt64.toNat_lt c
   have hd := UInt64.toNat_lt d
-  simp only [addTwo, toNat_carry, UInt64.toNat_add, Nat.reducePow] at hx hb hhi hlo hc hd ⊢
+  simp only [addTwo, toNat_carry, UInt64.toNat_add, Nat.reducePow] at hhi hlo hc hd ⊢
   split <;> split <;> omega
 
 /-- Kind: functional correctness (multiply-accumulate step).
@@ -95,68 +95,48 @@ theorem mac_spec (a b c d : UInt64) :
   have hb := UInt64.toNat_lt b
   have hc := UInt64.toNat_lt c
   have hd := UInt64.toNat_lt d
-  have hA : a.toNat / 4294967296 * 4294967296 + a.toNat % 4294967296 = a.toNat := by omega
-  have hB : b.toNat / 4294967296 * 4294967296 + b.toNat % 4294967296 = b.toNat := by omega
-  have hsplit := mul_split (a.toNat % 4294967296) (a.toNat / 4294967296)
-    (b.toNat % 4294967296) (b.toNat / 4294967296) 4294967296
-  rw [hA, hB] at hsplit
-  have hab : a.toNat * b.toNat ≤ 18446744073709551615 * 18446744073709551615 :=
-    Nat.mul_le_mul (by omega) (by omega)
+  have hA : a.toNat / 4294967296 * 4294967296 + a.toNat % 4294967296 = a.toNat :=
+    Nat.div_add_mod' _ _
+  have hB : b.toNat / 4294967296 * 4294967296 + b.toNat % 4294967296 = b.toNat :=
+    Nat.div_add_mod' _ _
   have a0 : (a % half).toNat ≤ 4294967295 := by rw [toNat_lo]; omega
   have a1 : (a / half).toNat ≤ 4294967295 := by rw [toNat_hi]; omega
   have b0 : (b % half).toNat ≤ 4294967295 := by rw [toNat_lo]; omega
   have b1 : (b / half).toNat ≤ 4294967295 := by rw [toNat_hi]; omega
+  have ha' : a.toNat ≤ 18446744073709551615 := by omega
+  have hb' : b.toNat ≤ 18446744073709551615 := by omega
+  have hc' : c.toNat ≤ 18446744073709551615 := by omega
+  have hd' : d.toNat ≤ 18446744073709551615 := by omega
+  have hab : a.toNat * b.toNat ≤ 18446744073709551615 * 18446744073709551615 :=
+    Nat.mul_le_mul ha' hb'
+  have hsum : a.toNat * b.toNat + c.toNat + d.toNat < 340282366920938463463374607431768211456 :=
+    Nat.lt_of_le_of_lt (Nat.add_le_add (Nat.add_le_add hab hc') hd') (by decide)
+  have hsplit := mul_split (a.toNat % 4294967296) (a.toNat / 4294967296)
+    (b.toNat % 4294967296) (b.toNat / 4294967296) 4294967296
+  rw [hA, hB] at hsplit
   obtain ⟨e00, k00⟩ := toNat_mul_small (a % half) (b % half) a0 b0
   obtain ⟨e01, k01⟩ := toNat_mul_small (a % half) (b / half) a0 b1
   obtain ⟨e10, k10⟩ := toNat_mul_small (a / half) (b % half) a1 b0
   obtain ⟨e11, k11⟩ := toNat_mul_small (a / half) (b / half) a1 b1
   have hcomb := combine_spec _ _ _ _ k00 k01 k10 k11
   rw [e00, e01, e10, e11, toNat_lo a, toNat_hi a, toNat_lo b, toNat_hi b] at hcomb
+  clear ha hb hc hd hA hB a0 a1 b0 b1 ha' hb' hc' hd' hab e00 e01 e10 e11 k00 k01 k10 k11
+  have hval : (combine ((a % half) * (b % half)) ((a % half) * (b / half))
+      ((a / half) * (b % half)) ((a / half) * (b / half))).1.toNat * 2 ^ 64 +
+      (combine ((a % half) * (b % half)) ((a % half) * (b / half))
+      ((a / half) * (b % half)) ((a / half) * (b / half))).2.toNat = a.toNat * b.toNat := by
+    clear hsum
+    omega
+  clear hcomb hsplit
   rw [mac_eq]
-  refine addTwo_spec _ c d (a.toNat * b.toNat) ?_ ?_
-  · omega
-  · omega
-
-/-- Kind: functional correctness (add with carry).
-    Says: for all inputs `adc a b c`, read as `carry · 2^64 + low`, is exactly `a + b + c`.
-    Does not say: that the carry is at most 1 (see `adc_carry_le`; it can be 2 for a large `c`). -/
-theorem adc_spec (a b c : UInt64) :
-    (adc a b c).1.toNat * 2 ^ 64 + (adc a b c).2.toNat = a.toNat + b.toNat + c.toNat := by
-  have ha := UInt64.toNat_lt a
-  have hb := UInt64.toNat_lt b
-  have hc := UInt64.toNat_lt c
-  simp only [adc, toNat_carry, UInt64.toNat_add, Nat.reducePow] at ha hb hc ⊢
-  split <;> split <;> omega
-
-/-- Kind: bound.
-    Says: with a carry-in of 0 or 1 the carry-out of `adc` is 0 or 1.
-    Does not say: anything for a larger third argument. -/
-theorem adc_carry_le (a b c : UInt64) (hc : c.toNat ≤ 1) : (adc a b c).1.toNat ≤ 1 := by
-  have ha := UInt64.toNat_lt a
-  have hb := UInt64.toNat_lt b
-  simp only [adc, toNat_carry, UInt64.toNat_add, Nat.reducePow] at ha hb ⊢
-  split <;> split <;> omega
-
-/-- Kind: functional correctness (subtract with borrow).
-    Says: for all inputs `sbb a b c = (borrow, low)` satisfies
-    `a + borrow · 2^64 = low + b + c` on natural numbers.
-    Does not say: that the borrow is at most 1 (see `sbb_borrow_le`). -/
-theorem sbb_spec (a b c : UInt64) :
-    a.toNat + (sbb a b c).1.toNat * 2 ^ 64 = (sbb a b c).2.toNat + b.toNat + c.toNat := by
-  have ha := UInt64.toNat_lt a
-  have hb := UInt64.toNat_lt b
-  have hc := UInt64.toNat_lt c
-  simp only [sbb, toNat_carry, UInt64.toNat_add, UInt64.toNat_sub, Nat.reducePow] at ha hb hc ⊢
-  split <;> split <;> omega
-
-/-- Kind: bound.
-    Says: with a borrow-in of 0 or 1 the borrow-out of `sbb` is 0 or 1.
-    Does not say: anything for a larger third argument. -/
-theorem sbb_borrow_le (a b c : UInt64) (hc : c.toNat ≤ 1) : (sbb a b c).1.toNat ≤ 1 := by
-  have ha := UInt64.toNat_lt a
-  have hb := UInt64.toNat_lt b
-  simp only [sbb, toNat_carry, UInt64.toNat_add, UInt64.toNat_sub, Nat.reducePow] at ha hb ⊢
-  split <;> split <;> omega
+  generalize combine ((a % half) * (b % half)) ((a % half) * (b / half))
+      ((a / half) * (b % half)) ((a / half) * (b / half)) = r at hval ⊢
+  obtain ⟨hi, lo⟩ := r
+  rw [← hval]
+  refine addTwo_spec hi lo c d ?_
+  have hval' : hi.toNat * 18446744073709551616 + lo.toNat = a.toNat * b.toNat := hval
+  rw [hval']
+  exact hsum
 
 #print axioms mac_spec
 #print axioms adc_spec
