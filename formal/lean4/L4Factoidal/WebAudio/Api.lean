@@ -147,6 +147,7 @@ changes nothing (`op_error_state`; op 195 with a stored error result excepted).
 import L4Factoidal.WebAudio.Context
 import L4Factoidal.WebAudio.Idl
 import Std.Data.HashMap
+import L4Factoidal.Prim.FloatOfNat
 
 namespace L4Factoidal.WebAudio.Api
 
