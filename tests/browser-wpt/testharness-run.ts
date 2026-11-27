@@ -94,7 +94,7 @@ const origin="http://web-platform.test",secureOrigin="https://web-platform.test"
 const wptserveMode=args.includes("--wptserve");
 const layoutImageHost=args.includes("--diagnostic-layout-images")
   ?await import("../../labs/demos/foafnaut/native_html_document.ts"):undefined;
-// --dangerously-enable-webdriver-endpoint (with --wptserve): wdspec names of webdriver/tests/classic/ run, with
+// --dangerously-enable-webdriver-endpoint (with --wptserve): wdspec names of webdriver/tests/classic/ and bidi/ run, with
 // pytest from the WPT tree (wdspec-run.py) against the engine's WebDriver endpoint. The endpoint is remote control
 // of the browser: off without this flag, on 127.0.0.1 only, behind a 128-bit secret the engine makes
 // (L4Factoidal.WebDriver.Gate; risk Risk.webdriverEndpoint in skills/lean-risk-flags). Nothing else starts it.
@@ -350,8 +350,8 @@ function servedName(id:string,path:string,url:string,exists:(f:string)=>boolean)
   // wpt.fyi's .py names are wdspec tests: pytest drives a browser over WebDriver (webdriver/)
   // or reads its accessibility tree (aria/, core-aam/, mathml-aam/). wptserve has no page for them.
   if(kind==="testharness"&&path.endsWith(".py"))
-    return webdriverOn&&path.startsWith("webdriver/tests/classic/")&&!path.includes("/support/")&&!/\/(conftest|__init__)\.py$/.test(path)?{file:id,kind:"wdspec"}:
-      {file:id,kind:"wdspec",skip:webdriverOn?"wdspec: only webdriver/tests/classic/ runs":"wdspec (pytest over WebDriver or an accessibility API), not a page; WebDriver needs --dangerously-enable-webdriver-endpoint"};
+    return webdriverOn&&(path.startsWith("webdriver/tests/classic/")||path.startsWith("webdriver/tests/bidi/"))&&!path.includes("/support/")&&!/\/(conftest|__init__)\.py$/.test(path)?{file:id,kind:"wdspec"}:
+      {file:id,kind:"wdspec",skip:webdriverOn?"wdspec: only webdriver/tests/classic/ and webdriver/tests/bidi/ run":"wdspec (pytest over WebDriver or an accessibility API), not a page; WebDriver needs --dangerously-enable-webdriver-endpoint"};
   if(kind==="testharness"){
     if(!testharnessPage.test(path))return {file:id,kind:"other",skip:"not a testharness page"};
     // NULs out: a UTF-16 page (html/infrastructure/urls/.../utf-16le.html) names the harness too.
