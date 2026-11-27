@@ -79,3 +79,48 @@ guarantee for the code it runs.
   differential oracle, never as the run-time path for secret data.
 - A pure Lean Ethereum signer (secp256k1 ECDSA or BLS) would fall under this rule. No such signer
   exists today.
+
+## 5. HACL\* for big-integer work (owner question, 2026-11-27)
+
+Owner, verbatim: "can we use HACL* for bigint work then?"
+
+- It is already vendored and used: `third_party/hacl/src/Hacl_Bignum64.c` (and `Hacl_Bignum.c`).
+  `formal/lean4/ffi/hacl_rsa.c` calls `Hacl_Bignum64_mod_exp_consttime` for the RSA private
+  operation and `Hacl_Bignum64_mod_exp_vartime` for the public operation.
+- What it gives: fixed-length numbers (the length in 64-bit limbs is public), add, subtract,
+  multiply, reduction, Montgomery contexts, modular exponentiation (constant-time and variable-time
+  forms) and inversion modulo a prime. Constant time is with respect to the values, not the length.
+- What it does not give: a general replacement for Lean `Nat`. It has no arbitrary-length values and
+  no general division. For public data, Lean `Nat` stays the right tool.
+- Curves: HACL\* upstream has secp256k1 ECDSA (`Hacl_K256_ECDSA`); it is not vendored here. HACL\*
+  has no BLS12-381.
+- Ethereum: CLAUDE.md requires repository-owned Lean for Ethereum protocol logic, with no external
+  implementation unless the owner approves it. A HACL\* secp256k1 signer for Ethereum needs that
+  approval.
+
+## 6. Checking constant time from Lean (owner question, 2026-11-27)
+
+Owner, verbatim: "can we find a way to police these issues with proofs in Lean?"
+
+The standard definition (Barthe et al., Almeida et al., ct-verif, USENIX Security 2016): a program is
+constant time when two runs with the same public inputs and any secret inputs produce the same
+leakage trace (branch conditions and memory addresses). This is observational noninterference. The
+tree already proves noninterference theorems of this form (`PageCanvas/Theorems.lean`,
+`Net/Socks5Theorems.lean`). Four layers, from cheap to costly:
+
+1. **Secret types (source level).** A `Secret` wrapper over `UInt64` and `UInt8` (the model is
+   HACL\*'s `Lib.IntTypes` with `SEC`). It has no `Decidable` equality, no `toNat`, and comparisons
+   that return a mask, not a `Bool`. So the type checker refuses an `if`, a `match` or an array index
+   on a secret. Plus a gate that refuses `Nat` and `Int` in modules that take secret inputs.
+2. **A leakage model with theorems (Lean semantics).** Write constant-time code in a small monad that
+   records each branch condition and address in a trace. For each routine prove: equal public
+   inputs give equal traces. This proves the property of the Lean definition.
+3. **A check of the compiled code (tests, not proofs).** No Lean theorem covers the machine code,
+   because Lean has no verified compiler. On Linux CI: Valgrind memcheck with the secret marked
+   undefined (each branch or address that depends on it is reported, Lean runtime included), and a
+   statistical timing test (dudect). These run on the HACL\* paths too.
+4. **The HACL\* paths.** Their constant-time proof is in F\*/Low\*. The Lean side passes bytes only.
+   The equivalence between the externs and the Lean specifications is
+   https://github.com/danbri/factoidal/issues/777.
+
+HACL\* has the same limit as layer 2: it trusts the C compiler.
