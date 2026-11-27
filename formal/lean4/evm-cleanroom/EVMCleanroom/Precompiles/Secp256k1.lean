@@ -1,28 +1,34 @@
 import EVMCleanroom.Precompiles.Curve
-import EVMCleanroom.Keccak
 
 /-!
-# ECRECOVER (precompile 0x01)
+# secp256k1: the one shared field and point module
 
-Public-key recovery on secp256k1 (SEC 2, section 2.4.1; SEC 1, section
-4.1.6), written on the shared curve arithmetic. Input is read as four 32-byte
-big-endian words `hash, v, r, s` (zero-padded on the right; bytes beyond 128
-are ignored). The call always costs 3000 gas. It returns the 20-byte address
-left-padded to 32 bytes, or empty output when `v` is not 27 or 28, `r` or `s`
-is outside `[1, n-1]`, `r` is not the abscissa of a curve point, or the
-recovered key is the point at infinity. Unlike transaction signatures
-(EIP-2), a high `s` is accepted here, as in the Yellow Paper and EELS.
+Jacobian arithmetic on `y² = x³ + 7` over the secp256k1 prime (SEC 2, section
+2.4.1), on the shared `Curve` code. This module imports only
+`Precompiles.Curve` → `Precompiles.Field` → `Precompiles.Basic` (nothing else,
+no Keccak, no EVM), so another package can take exactly these four files
+through a `srcDir` library.
 
-This is separate from `SecpRecovery.lean` (transaction admission): that module
-enforces the low-`s` rule and uses affine arithmetic with one inversion per
-step; the precompile needs the wider `s` range and is priced as a cheap call.
-A guard below checks that both recover the same address on a low-`s` vector.
+API for callers:
 
-The address is the Keccak-256 of the 64-byte public key, so the precompile
-needs the repository's explicit Keccak opt-in, like the KECCAK256 opcode.
+* `mulBase k` — `[k]G` as an affine point, for signing and key derivation;
+* `mulAdd u1 u2 q` — `[u1]G + [u2]Q` with one shared doubling chain, for
+  verification and recovery;
+* `recover z parity r s` — the ECDSA public key for a message hash and
+  signature, with the full `[1, n-1]` range for `s` (callers that need the
+  EIP-2 low-`s` rule check `s ≤ n / 2` themselves);
+* `liftX x parity` — the curve point with abscissa `x` and the given parity;
+* `scalarInv a` — inverse modulo the group order (zero for zero).
 
-Proved: gas accounting, output length, and that only the first 128 input
-bytes matter. Not proved: any group law or the recovery equation itself.
+Every point these functions return has passed `onCurve` at run time, so the
+theorems below hold for all inputs without assuming any group law. What is
+not proved: that the Jacobian formulas compute the group operation (and hence
+agreement with the affine arithmetic of `SecpRecovery.lean`). That agreement
+is tested: guards here on fixed scalars, and `PrecompileCallTests.lean`
+compares recovered keys with the affine implementation.
+
+Nothing here is constant-time. Signing with a secret scalar through `mulBase`
+leaks timing; a caller that handles secrets must take that into account.
 -/
 
 namespace EVMCleanroom.Precompiles.Secp256k1
@@ -35,76 +41,93 @@ def gy : Nat := 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4
 def field : FieldOps Nat := Fp.ops p
 def generator : JPoint Nat := Curve.ofAffine field gx gy
 
-/-- The public key `(x, y)` for message hash `z`, parity bit and signature `(r, s)`. -/
+/-- Is the affine pair a point of the curve with canonical coordinates? -/
+def onCurve (x y : Nat) : Bool := x < p && y < p && Curve.onCurve field 7 x y
+
+/-- Affine coordinates of a Jacobian point, kept only if they satisfy the curve equation. -/
+def checkedAffine (point : JPoint Nat) : Option (Nat × Nat) :=
+  match Curve.toAffine field point with
+  | some (x, y) => if onCurve x y then some (x, y) else none
+  | none => none
+
+/-- `[k]G`; `none` when the result is the point at infinity (`k ≡ 0 mod n`). -/
+def mulBase (k : Nat) : Option (Nat × Nat) :=
+  checkedAffine (Curve.mul field k generator)
+
+/-- `[u1]G + [u2]Q` for an affine `Q`; `none` for the point at infinity. -/
+def mulAdd (u1 u2 : Nat) (q : Nat × Nat) : Option (Nat × Nat) :=
+  checkedAffine (Curve.mul2 field u1 generator u2 (Curve.ofAffine field q.1 q.2))
+
+/-- Inverse modulo the group order; zero maps to zero. -/
+def scalarInv (a : Nat) : Nat := Fp.inv n a
+
+/-- The point with abscissa `x` whose ordinate has the given parity, if `x³ + 7` is a square. -/
+def liftX (x parity : Nat) : Option (Nat × Nat) :=
+  match Fp.sqrt? p ((x * x % p * x + 7) % p) with
+  | none => none
+  | some root =>
+    let y := if root % 2 = parity then root else p - root
+    if onCurve x y then some (x, y) else none
+
+/-- The public key `(x, y)` for message hash `z`, parity bit and signature `(r, s)`:
+    `Q = r⁻¹ (s·R − z·G)` with `R` the point of abscissa `r`. -/
 def recover (z parity r s : Nat) : Option (Nat × Nat) :=
   if r = 0 ∨ n ≤ r ∨ s = 0 ∨ n ≤ s ∨ 1 < parity then none
   else
-    match Fp.sqrt? p ((r * r % p * r + 7) % p) with
+    match liftX r parity with
     | none => none
-    | some root =>
-      let y := if root % 2 = parity then root else p - root
-      let rInv := Fp.inv n r
-      let u1 := (n - z % n) * rInv % n
-      let u2 := s * rInv % n
-      Curve.toAffine field (Curve.mul2 field u1 generator u2 (Curve.ofAffine field r y))
+    | some point =>
+      let rInv := scalarInv r
+      mulAdd ((n - z % n) * rInv % n) (s * rInv % n) point
 
-def gasCost : Nat := 3000
+/-- Kind: on-curve preservation (checked at run time).
+    Says: every point returned by `checkedAffine` has canonical coordinates and
+    satisfies `y² = x³ + 7`.
+    Does not say: it is the group-theoretic result of the operation that produced it. -/
+theorem checkedAffine_onCurve (point : JPoint Nat) (x y : Nat)
+    (h : checkedAffine point = some (x, y)) : onCurve x y = true := by
+  unfold checkedAffine at h
+  split at h
+  · split at h
+    · rename_i hCurve
+      cases h
+      exact hCurve
+    · cases h
+  · cases h
 
-private def view (b : ByteArray) : ByteView := { size := b.size, raw := fun i => byteAt b i }
+/-- Kind: on-curve preservation.
+    Says: `mulBase`, `mulAdd` and `recover` return only points on the curve.
+    Does not say: they return the correct multiple or key (tested, not proved). -/
+theorem mulBase_onCurve (k x y : Nat) (h : mulBase k = some (x, y)) : onCurve x y = true :=
+  checkedAffine_onCurve _ _ _ h
 
-/-- Keccak-256 of the 64-byte public key, with the first 12 bytes cleared. -/
-def addressBytes (x y : Nat) : ByteArray :=
-  let digest := Keccak.digest (view (natToBE 32 x ++ natToBE 32 y))
-  natToBE 32 (digest.toArray.foldl (fun acc byte => acc * 256 + byte.toNat) 0 % 2 ^ 160)
+theorem mulAdd_onCurve (u1 u2 : Nat) (q : Nat × Nat) (x y : Nat)
+    (h : mulAdd u1 u2 q = some (x, y)) : onCurve x y = true :=
+  checkedAffine_onCurve _ _ _ h
 
-def body (data : ByteArray) : Body :=
-  let v := beNat data 32 32
-  if v ≠ 27 ∧ v ≠ 28 then .output ByteArray.empty
-  else
-    match recover (beNat data 0 32) (v - 27) (beNat data 64 32) (beNat data 96 32) with
-    | none => .output ByteArray.empty
-    | some (x, y) => .output (addressBytes x y)
+theorem liftX_onCurve (x parity : Nat) (point : Nat × Nat) (h : liftX x parity = some point) :
+    onCurve point.1 point.2 = true ∧ point.1 = x := by
+  unfold liftX at h
+  split at h
+  · cases h
+  · rename_i root _
+    have h' : (if onCurve x (if root % 2 = parity then root else p - root) = true then
+        some (x, if root % 2 = parity then root else p - root) else none) = some point := h
+    by_cases hCurve : onCurve x (if root % 2 = parity then root else p - root) = true
+    · rw [if_pos hCurve] at h'
+      cases h'
+      exact ⟨hCurve, rfl⟩
+    · rw [if_neg hCurve] at h'
+      cases h'
 
-/-- Precompile 0x01. The acceptance token is the Keccak opt-in of the caller. -/
-def run (_ : Keccak.Acceptance) (gas : Nat) (input : ByteArray) : Result :=
-  charge gas gasCost fun _ => body (readPadded input 0 128)
-
-/-- Kind: gas admission.
-    Says: with less than 3000 gas the call fails, whatever the input.
-    Does not say: anything about the signature. -/
-theorem run_underfunded (a : Keccak.Acceptance) (gas : Nat) (input : ByteArray) (h : gas < 3000) :
-    run a gas input = .failure :=
-  charge_underfunded _ _ _ h
-
-/-- Kind: output contract.
-    Says: the body always produces output (never an invalid or refused result), and that
-    output is empty or exactly 32 bytes.
-    Does not say: which case applies. -/
-theorem body_output (data : ByteArray) :
-    ∃ out, body data = .output out ∧ (out.size = 0 ∨ out.size = 32) := by
-  unfold body
-  simp only
-  split
-  · exact ⟨_, rfl, Or.inl rfl⟩
-  · split
-    · exact ⟨_, rfl, Or.inl rfl⟩
-    · exact ⟨_, rfl, Or.inr (natToBE_size _ _)⟩
-
-/-- Kind: output contract and accounting.
-    Says: with at least 3000 gas the call always succeeds, costs exactly 3000, and returns
-    either no bytes or exactly 32 bytes. There is no failing input.
-    Does not say: that 32 bytes are returned exactly for valid signatures (tested). -/
-theorem run_funded (a : Keccak.Acceptance) (gas : Nat) (input : ByteArray) (h : 3000 ≤ gas) :
-    ∃ out, run a gas input = .success out (gas - 3000) ∧ (out.size = 0 ∨ out.size = 32) := by
-  have ⟨out, hBody, hSize⟩ := body_output (readPadded input 0 128)
-  exact ⟨out, charge_funded gas gasCost _ out h hBody, hSize⟩
-
-/-- Kind: input-length handling.
-    Says: the result depends only on the first 128 bytes, zero-padded.
-    Does not say: anything about what those bytes mean. -/
-theorem run_reads_prefix (a : Keccak.Acceptance) (gas : Nat) (x y : ByteArray)
-    (h : readPadded x 0 128 = readPadded y 0 128) : run a gas x = run a gas y := by
-  simp [run, h]
+theorem recover_onCurve (z parity r s x y : Nat) (h : recover z parity r s = some (x, y)) :
+    onCurve x y = true := by
+  unfold recover at h
+  split at h
+  · cases h
+  · split at h
+    · cases h
+    · exact mulAdd_onCurve _ _ _ _ _ h
 
 /-- Kind: range check.
     Says: `r` or `s` outside `[1, n-1]`, or a parity above one, recovers nothing.
@@ -113,48 +136,38 @@ theorem recover_range (z parity r s : Nat) (h : r = 0 ∨ n ≤ r ∨ s = 0 ∨ 
     recover z parity r s = none := by
   simp [recover, h]
 
-private def accept : Keccak.Acceptance := Keccak.dangerouslyAcceptUnverified
+/-- Kind: canonical representation.
+    Says: a point accepted by `onCurve` has both coordinates below the field prime.
+    Does not say: anything about its order. -/
+theorem onCurve_canonical (x y : Nat) (h : onCurve x y = true) : x < p ∧ y < p := by
+  simp only [onCurve, Bool.and_eq_true, decide_eq_true_eq] at h
+  exact ⟨h.1.1, h.1.2⟩
 
-private def call (gas : Nat) (input : String) : String :=
-  match run accept gas (hex input) with
-  | .success out left => toHex out ++ ":" ++ toString left
-  | .failure => "failure"
-  | .refusal => "refusal"
+#guard onCurve gx gy
+#guard mulBase 1 == some (gx, gy)
+#guard mulBase n == none && mulBase 0 == none
+#guard (mulBase (n - 1)).map (·.1) == some gx
+-- [2]G and [3]G (the published multiples of the generator, SEC 2 test values).
+#guard mulBase 2 == some
+  (0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5,
+   0x1ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a)
+#guard mulBase 3 == some
+  (0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9,
+   0x388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672)
+-- [a]G + [b]([c]G) = [a + b c]G, and addition of the inverse gives infinity.
+#guard (mulBase 3).bind (mulAdd 5 7) == mulBase 26
+#guard (mulBase 3).bind (mulAdd (n - 6) 2) == none
+#guard (mulBase 0xdeadbeef).bind (mulAdd 0 1) == mulBase 0xdeadbeef
+#guard scalarInv 0 == 0 && scalarInv 7 * 7 % n == 1
+#guard liftX gx (gy % 2) == some (gx, gy) && liftX gx (1 - gy % 2) == some (gx, p - gy)
+#guard liftX 5 0 == none
 
-private def sh : String := "18c547e4f7b0f325ad1e56f57e26c745b09a3e503d86e00e5255ff7f715d3d1c"
-private def sv : String := "000000000000000000000000000000000000000000000000000000000000001c"
-private def sr : String := "73b1693892219d736caba55bdb67216e485557ea6b6af75f37096c9aa6a5a75f"
-private def ss : String := "eeb940b1d03b21e36b0e47e79769f095fe2ab855bd91e3a38756b7d75a9c4549"
-private def w (v : Nat) : String := toHex (natToBE 32 v)
-private def expected : String := "000000000000000000000000a94f5374fce5edbc8e2a8697c15331677e6ebf0b"
-
-#guard Curve.onCurve field 7 gx gy
-#guard Curve.isInfinity field (Curve.mul field n generator)
-#guard !Curve.isInfinity field (Curve.mul field (n - 1) generator)
-#guard Curve.same field (Curve.mul2 field 5 generator 7 (Curve.mul field 3 generator))
-  (Curve.mul field 26 generator)
-#guard call 3000 (sh ++ sv ++ sr ++ ss) == expected ++ ":0"
-#guard call 2999 (sh ++ sv ++ sr ++ ss) == "failure"
--- Bytes beyond 128 are ignored; a short input is zero-padded (and then has v = 0).
-#guard call 3000 (sh ++ sv ++ sr ++ ss ++ "ffff") == expected ++ ":0"
-#guard call 3001 sh == ":1"
-#guard call 3000 "" == ":0"
--- v must be exactly 27 or 28 as a 256-bit number.
-#guard call 3000 (sh ++ "010000000000000000000000000000000000000000000000000000000000001c" ++ sr ++ ss) == ":0"
-#guard call 3000 (sh ++ w 29 ++ sr ++ ss) == ":0"
--- r = 0, s = 0, r = n and s = n are rejected.
-#guard call 3000 (sh ++ sv ++ w 0 ++ ss) == ":0"
-#guard call 3000 (sh ++ sv ++ sr ++ w 0) == ":0"
-#guard call 3000 (sh ++ sv ++ w n ++ ss) == ":0"
-#guard call 3000 (sh ++ sv ++ sr ++ w n) == ":0"
--- High s is accepted by the precompile: (r, n - s) with the other parity recovers the same key.
-#guard call 3000 (sh ++ w 27 ++ sr ++ w (n - beNat (hex ss) 0 32)) == expected ++ ":0"
-#guard n / 2 < n - beNat (hex ss) 0 32 || n / 2 < beNat (hex ss) 0 32
-
-#print axioms run_underfunded
-#print axioms body_output
-#print axioms run_funded
-#print axioms run_reads_prefix
+#print axioms checkedAffine_onCurve
+#print axioms mulBase_onCurve
+#print axioms mulAdd_onCurve
+#print axioms liftX_onCurve
+#print axioms recover_onCurve
 #print axioms recover_range
+#print axioms onCurve_canonical
 
 end EVMCleanroom.Precompiles.Secp256k1

@@ -3,7 +3,7 @@ import EVMCleanroom.Precompiles.Sha256
 import EVMCleanroom.Precompiles.Ripemd160
 import EVMCleanroom.Precompiles.Blake2f
 import EVMCleanroom.Precompiles.ModExp
-import EVMCleanroom.Precompiles.Secp256k1
+import EVMCleanroom.Precompiles.Ecrecover
 import EVMCleanroom.Precompiles.BN254
 
 /-!
@@ -83,7 +83,7 @@ def viewOf (bytes : ByteArray) : ByteView :=
 def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address gas : Nat)
     (input : ByteArray) : Option Result :=
   match address with
-  | 1 => keccak.map fun acceptance => Secp256k1.run acceptance gas input
+  | 1 => keccak.map fun acceptance => Ecrecover.run acceptance gas input
   | 2 => some (Sha256.run gas input)
   | 3 => some (Ripemd160.run gas input)
   | 5 => some (ModExp.run (modexpRule profile) gas input)
