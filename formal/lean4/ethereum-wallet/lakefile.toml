@@ -16,4 +16,4 @@ name = "EthereumWallet"
 [[lean_lib]]
 name = "EVMCleanroomKeccak"
 srcDir = "../evm-cleanroom"
-roots = ["EVMCleanroom.Keccak"]
+roots = ["EVMCleanroom.Keccak", "EVMCleanroom.Memory", "EVMCleanroom.MemoryGas"]
