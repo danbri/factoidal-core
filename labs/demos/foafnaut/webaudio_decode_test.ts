@@ -14,9 +14,9 @@
 //     AudioContext works too; bad arguments reject with TypeError.
 //  3. with no decoder modules (FOAFNAUT_MEDIA_DECODERS names an empty directory) an MP3 rejects
 //     with NotSupportedError naming tools/fetch-media-decoders.sh; a WAV (no module needed) decodes.
-//  4. expected failure, https://github.com/danbri/factoidal-core/issues/1177 (one page call carries at
-//     most 64 MiB): a 2-channel AudioBuffer of 9,000,000 frames (18 million samples) set as an
-//     AudioBufferSourceNode's buffer. It is refused today; the run fails when it starts to work.
+//  4. https://github.com/danbri/factoidal-core/issues/1177 (one page call carried at most 64 MiB): a
+//     2-channel AudioBuffer of 9,000,000 frames (18 million samples, 72 MB as binary32) set as an
+//     AudioBufferSourceNode's buffer works on a 64-bit host (LeanJS.outCap 1 GiB, Api.maxSamples 2^27).
 // Run: deno test --no-check --unstable-ffi -A webaudio_decode_test.ts
 import {strict as assert} from "node:assert";
 import {loadHTML,type ScriptTurn} from "./native_html_engine.ts";
@@ -183,25 +183,22 @@ Deno.test({name:"decodeAudioData: with no decoder modules an MP3 rejects with No
   }finally{engine.scriptSession("",{action:"close"});engine.endSession?.();await Deno.remove(empty).catch(()=>{});}
 }});
 
-// The expected failure of https://github.com/danbri/factoidal-core/issues/1177: the page sets an
-// AudioBuffer of 18 million samples (72 MB of binary32) as a buffer; the engine call that carries them
-// is refused today (LeanJS.outCap, 64 MiB), so the setter throws. The case passes as "xfail" while the
-// setter fails, and FAILS when the setter works: then make it an assertion and close the issue.
+// https://github.com/danbri/factoidal-core/issues/1177: the page sets an AudioBuffer of 18 million
+// samples (72 MB of binary32, more than the 64 MiB that one call carried until 2026-11-27) as a buffer.
 const bigPage=`<!doctype html><meta charset=utf-8><body><script>
 try{
   const ctx=new OfflineAudioContext(2,128,48000);
   const b=new AudioBuffer({numberOfChannels:2,length:9000000,sampleRate:48000});
+  b.getChannelData(1)[8999999]=0.5;
   const src=new AudioBufferSourceNode(ctx);
   src.buffer=b;
-  console.log('big ok');
+  console.log('big ok '+src.buffer.length+' '+src.buffer.getChannelData(1)[8999999]);
 }catch(e){console.log('big refused '+(e&&e.name)+' '+(e&&e.message));}
 </script>`;
-Deno.test({name:"xfail: an AudioBuffer of 18 million samples can be set as a buffer (https://github.com/danbri/factoidal-core/issues/1177)",
+Deno.test({name:"an AudioBuffer of 18 million samples can be set as a buffer (https://github.com/danbri/factoidal-core/issues/1177)",
   ignore:noLibrary||Deno.build.os!=="linux",fn:async()=>{
   const {engine,turn}=await startPage({FOAFNAUT_AUDIO_SINK:"null"},bigPage);
   try{
-    const line=turn.logs.find(l=>l.startsWith("big "))??"no answer from the page";
-    if(line==="big ok")throw new Error("unexpected pass: make this case an assertion and close https://github.com/danbri/factoidal-core/issues/1177");
-    console.log(`xfail big buffer (https://github.com/danbri/factoidal-core/issues/1177): ${line}`);
+    assert.deepEqual(turn.logs.filter(l=>l.startsWith("big ")),["big ok 9000000 0.5"],turn.logs.join("\n"));
   }finally{engine.scriptSession("",{action:"close"});engine.endSession?.();}
 }});

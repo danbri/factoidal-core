@@ -654,9 +654,14 @@ latency. `--perf-summary` gets a block `audio`.
     about 0.7 microseconds a value (2^22: 2.5 s); the `apiCall` block is limited to 64 MiB
     (`LeanJS.outCap`) in both directions, so a buffer or a decode answer above 16.7 million
     samples (a 3-minute stereo song at 48 kHz is 17.3 million) is refused with -5. Chunked transfer
-    would need ops of its own and a contiguous `Float32Array` made without `set`. Tracking, with an
-    expected-failure case in `webaudio_decode_test.ts`:
-    https://github.com/danbri/factoidal-core/issues/1177 (one page call carries at most 64 MiB).
+    would need ops of its own and a contiguous `Float32Array` made without `set`. Issue
+    https://github.com/danbri/factoidal-core/issues/1177 (one page call carried at most 64 MiB).
+    Owner, 2026-11-27, verbatim, on that issue: "maybe our rules are too uptight?". The
+    coordinator's answer, not the owner's words: the 64 MiB was the QuickJS build's `read_bytes`
+    limit, copied into BubblePopJS, whose call memory is sparse; so on a 64-bit host `LeanJS.outCap`
+    is 1 GiB and `Api.maxSamples` is 2^27 (a stereo recording of 23 minutes at 48 kHz; 512 MiB as
+    binary32, 1 GiB as the engine's binary64). The Wasm build (32-bit) keeps 64 MiB and 2^25, and
+    the QuickJS build keeps its 64 MiB. `webaudio_decode_test.ts` sets an 18-million-sample buffer.
   - Tests: `webaudio_decode_test.ts` (the five clips equal `lake exe media-bench decode` bit for bit at
     44.1 kHz; detach, order of callbacks, `EncodingError`, `DataCloneError`, `TypeError`, no modules
     gives `NotSupportedError`), `webaudio_jukebox_test.ts` (Decode all gives "Decoded 6 of 6 tracks.",

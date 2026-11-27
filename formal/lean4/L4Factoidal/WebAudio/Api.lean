@@ -173,8 +173,11 @@ open L4Factoidal.WebAudio
 def maxContexts : Nat := 256
 
 /-- Largest `numberOfChannels * length` of a context or buffer: the rendered result is that many
-binary32 values. -/
-def maxSamples : Nat := 33554432
+binary32 values. 2^27 on a 64-bit host (512 MiB as binary32: a stereo recording of 23 minutes at
+48 kHz), 2^25 on a 32-bit host (the Wasm build). It was 2^25 everywhere until 2026-11-27 (a stereo
+song of 5.8 minutes at 48 kHz; https://github.com/danbri/factoidal-core/issues/1177). The engine
+keeps samples as binary64 (`Buffer.AudioBuffer`), so the largest buffer is 1 GiB there. -/
+def maxSamples : Nat := if System.Platform.numBits == 64 then 1 <<< 27 else 1 <<< 25
 
 /-- Largest number of nodes of one context. -/
 def maxNodes : Nat := 65536
