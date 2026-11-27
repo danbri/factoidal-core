@@ -138,10 +138,33 @@ INVENTORY = {
         "EVMCleanroom.AccountTransient.frameInput_transient": [],
         "EVMCleanroom.AccountTransient.commitFrame_transient": [],
     },
+    "EVMCleanroom/CreateTransactionProofs.lean": {
+        "EVMCleanroom.CreateTransaction.intrinsic_creation": [P, Q],
+        "EVMCleanroom.CreateTransaction.intrinsic_call": [P, Q],
+        "EVMCleanroom.CreateTransaction.admit_creation": [P, C, Q],
+        "EVMCleanroom.CreateTransaction.admit_initcode_too_large": [P],
+        "EVMCleanroom.CreateTransaction.runWithBlobHashes_executed": [P, Q],
+        "EVMCleanroom.CreateTransaction.run_creation_address": [P, C, Q],
+        "EVMCleanroom.CreateTransaction.creationRefusal_no_keccak": [P, Q],
+        "EVMCleanroom.CreateTransaction.creationRefusal_call": [P, Q],
+        "EVMCleanroom.CreateTransaction.finish_frame_charge": [P],
+        "EVMCleanroom.CreateTransaction.runCreation_collision": [P, Q],
+        "EVMCleanroom.CreateTransaction.runAdmitted_collision": [P, Q],
+        "EVMCleanroom.CreateTransaction.runCreation_success": [P, C, Q],
+        "EVMCleanroom.CreateTransaction.runCreation_stopped": [P, Q],
+        "EVMCleanroom.CreateTransaction.runCreation_reverted": [P, Q],
+        "EVMCleanroom.CreateTransaction.runCreation_exceptional": [P, Q],
+        "EVMCleanroom.CreateTransaction.runCreation_deposit_failure": [P, Q],
+        "EVMCleanroom.CreateTransaction.failed_creation_escrow": [P],
+        "EVMCleanroom.CreateTransaction.createdAddress_iff": [P],
+        "EVMCleanroom.CreateTransaction.blob_creation_rejected": [P, Q],
+        "EVMCleanroom.CreateTransaction.run_type_above_two": [P, Q],
+    },
 }
 # Sources that print only listed theorems.
 EXACT_SOURCES = {"EVMCleanroom/AccountOpcode.lean", "EVMCleanroom/AccountTransientProofs.lean",
-                 "EVMCleanroom/Create.lean", "EVMCleanroom/SelfDestruct.lean"}
+                 "EVMCleanroom/Create.lean", "EVMCleanroom/SelfDestruct.lean",
+                 "EVMCleanroom/CreateTransactionProofs.lean"}
 
 
 def expected_claims(source):

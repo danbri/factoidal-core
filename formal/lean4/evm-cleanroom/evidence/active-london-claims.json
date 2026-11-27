@@ -17,7 +17,7 @@
   "sourceBlobs": {
     "EVMCleanroom/HeaderFees.lean": "f905369b16dfc9e457f2a1417ff7225df84430c5",
     "EVMCleanroom/HeaderFeeCLI.lean": "b9b60510f076961fe5ab3ce91c2459a79f3a5df3",
-    "EVMCleanroom.lean": "1e4eae223ebbe5a4bba6b0f2391a7e075a772f22",
+    "EVMCleanroom.lean": "4bb69bb6aec334faa103b82fdb2926da7cdf375a",
     "lakefile.toml": "c1a284f516f9d4587a43d75f9c2cefe287cdbf90",
     "scripts/check-london-header-fees.py": "22d50c23cdcd3b37d64b656736845e1ce8c364c2",
     "lakefile-london.toml": "1499bba3f28b0cc01e37575113b4be6fe51197e1"

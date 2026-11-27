@@ -68,7 +68,7 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-opcode-axioms.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==6,x'
-          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==96 and x["sources"]==8,x'
+          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==116 and x["sources"]==9,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -444,6 +444,15 @@ jobs:
           node scripts/eels/call-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
             | tee .lake/eels/call-transaction-differential.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==60 and x["independentAdmissionRejections"]==8 and x["preSerializationRejections"]==1 and x["boundaryRefusals"]==11 and x["negativeControls"]=={"changedGas":True,"changedReceiptLog":True,"changedStateBalance":True} and not x["failures"],x'
+      - name: Compare contract-creation transactions and their roots with EthereumJS
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/eels
+          node --check scripts/eels/create-transaction-differential.mjs
+          node scripts/eels/create-transaction-differential.mjs "$PWD/.lake/build/bin/evm-subset" \
+            | tee .lake/eels/create-transaction-differential.json \
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==x["receiptAndStateRootMatches"]==51 and x["independentAdmissionRejections"]==5 and x["oversizeInitcodeRejections"]==1 and x["boundaryRefusals"]==3 and x["gasBoundaryTriples"]==3 and x["sequenceCreations"]==3 and x["negativeControls"]=={"changedGas":True,"changedCreatedAddress":True,"droppedCreatedAddress":True,"changedDeployedCode":True,"changedDeployedCodeRoot":True,"changedSenderNonce":True} and not x["failures"],x'
       - name: Replay the authenticated Shanghai mainnet contract transaction with Lean, EthereumJS and Geth
         working-directory: formal/lean4/evm-cleanroom
         run: |

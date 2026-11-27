@@ -46,5 +46,7 @@ import EVMCleanroom.AccountOpcode
 import EVMCleanroom.AccountTransientProofs
 import EVMCleanroom.Create
 import EVMCleanroom.CreateTests
+import EVMCleanroom.CreateTransactionProofs
+import EVMCleanroom.CreateTransactionTests
 import EVMCleanroom.SelfDestruct
 import EVMCleanroom.SelfDestructTests

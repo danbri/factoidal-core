@@ -272,7 +272,7 @@ transaction execution and consensus unverified.
 ## Witness-limited call transactions
 
 `evm-subset --call-transaction REQUEST.json` accepts a normalised type-0,
-type-1 or type-2 call envelope, Shanghai or Cancun block context, and the
+type-1 or type-2 call or contract-creation envelope, Shanghai or Cancun block context, and the
 address and slot witnesses used by execution. Lean checks admission,
 derives the intrinsic gas and effective price, escrows fees, executes the
 call frames and settles the gas refund, burn and beneficiary tip. An
@@ -310,6 +310,56 @@ root after the transaction and checks the target storage root against
 its independently proven final-block value.
 [Mainnet replay record](../../../docs/20261122-evm-shanghai-contract-replay.md) ·
 [Transaction and audit evidence](../../../docs/20261122-evm-call-transaction-evidence.md)
+
+### Contract-creation transactions
+
+A type-0, type-1 or type-2 transaction without a destination creates a
+contract, following EELS `validate_transaction`, `calculate_intrinsic_cost`,
+`prepare_message`, `process_message_call` and `process_create_message`
+(Shanghai and Cancun). In the JSON request, `"to": null` (or no `to` field)
+marks a creation and `dataHex` is the initcode; the host never supplies the
+new address. Lean derives it as the low 160 bits of the hash of
+`rlp([sender, nonce])`, with the nonce the sender holds before the
+transaction, so the run needs the experimental Keccak opt-in and otherwise
+gives an indeterminate `unsupportedFork`. The new address must be among the
+witnessed accounts (as a proved absence, which may list zero-valued slots to
+observe what the constructor stores); without it the result is an
+indeterminate `incompleteState` naming the address.
+
+Admission adds 32000 gas and 2 gas per 32-byte word of initcode (EIP-3860) to
+the intrinsic gas and rejects initcode above 49152 bytes
+(`initcode-too-large`). A type-3 creation is rejected (`blob-creation`);
+type 4 is not executed by any entry point. After fee escrow and the sender's
+nonce increment, a target that already has a nonce, code or storage
+(EIP-684, EIP-7610; storage is known only from a listed nonzero slot) gives a
+failed receipt that uses all the gas. Otherwise the account is prepared and
+endowed with the same `Create.enter` as the `CREATE` instructions, the
+initcode runs in the ordinary dispatcher at depth 0 with all the execution
+gas, and the same deposit rules apply (24576 bytes, no 0xEF first byte, 200
+gas per byte). A failed deposit, an exceptional halt and a REVERT all settle
+on the escrow world: the sender has paid and its nonce is incremented, and
+nothing else changed. An executed creation reports `createdAddress`: the
+address as a decimal string, or `null` when the creation failed. A list
+receipt carries `createdAddress` only for a successful creation. The signed
+raw-transaction entry point (`evm-raw-signed`) still refuses creations.
+[Creation path](EVMCleanroom/CallTransaction.lean) (`runCreation`) ·
+[Theorems](EVMCleanroom/CreateTransactionProofs.lean) ·
+[Guards](EVMCleanroom/CreateTransactionTests.lean)
+
+The theorems cover the intrinsic gas, the initcode-size rejection, the
+address formula of every receipt-producing run, the collision outcome, the
+success equation (code set, remaining gas through the usual settlement) and
+the rollback of every failure to the escrow world. They do not say that the
+experimental hash is Keccak-256 or that the rules equal EELS; that is tested:
+[`create-transaction-differential.mjs`](scripts/eels/create-transaction-differential.mjs)
+compares 51 signed creations with EthereumJS `runTx` as an oracle (receipt
+bytes and state root), 5 admission rejections, the 49153-byte rejection, 3
+witness and resource refusals, 3 code-deposit gas boundaries (exact gas and
+one unit less) and a sequence of three creations by one sender, with 6
+comparator negative controls. Nonce progression inside one
+`TransactionList` run is a Lean guard in
+[TransactionListTests](EVMCleanroom/TransactionListTests.lean), not a
+differential case.
 
 ## External executable interface and first official-fixture integration
 
@@ -579,8 +629,9 @@ misrepresented as proofs.
 
 After that: independently reviewed EELS memory-opcode refinement,
 JUMPDEST conformance to EELS, external semantic refinement of the new
-storage/frame slices and nested CALL checkpoints, contract
-creation, receipts, fork transitions and ultimately a full execution client.
+storage/frame slices and nested CALL checkpoints, creation
+through signed raw transactions, receipts, fork transitions and ultimately a
+full execution client.
 
 Sources: [EELS](https://github.com/ethereum/execution-specs),
 [EthLib](https://github.com/ethereum/EthLib),
