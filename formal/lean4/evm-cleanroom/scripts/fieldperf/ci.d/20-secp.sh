@@ -1,11 +1,16 @@
 # Fast ECRECOVER: generic windowed scalar multiplication, the secp256k1 fast path, its differential check and timing.
 set -euo pipefail
-lake -f lakefile-fieldperf.toml build EVMCleanroom.Precompiles.ScalarMul EVMCleanroom.Precompiles.Secp256k1FieldFast \
-  EVMCleanroom.Precompiles.Secp256k1Fast EVMCleanroom.Precompiles.Ecrecover
-echo "RESULT secp modules built (theorems and build-time guards)"
-lake -f lakefile-fieldperf.toml build evm-secpperf
-for f in Secp256k1FieldFast Secp256k1Fast; do
-  c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
-  echo "$f.c: closure calls $(grep -c 'lean_apply_' "$c" || true), constructor allocations $(grep -c 'lean_alloc_ctor' "$c" || true), lines $(wc -l < "$c")"
+L="lake -f lakefile-fieldperf.toml"
+$L build EVMCleanroom.Precompiles.ScalarMul EVMCleanroom.Precompiles.Secp256k1FieldFast
+( ulimit -v 12000000; timeout 600 $L build EVMCleanroom.Precompiles.Secp256k1Glv ) || { echo "FAILURES Glv build"; exit 1; }
+echo "RESULT Glv built"
+P=EVMCleanroom/Precompiles/Secp256k1Point.lean
+for cut in "def madd" "def padd" "def betaL" "end EVMCleanroom"; do
+  n=$(grep -n "^$cut" $P | head -1 | cut -d: -f1)
+  head -n $((n-1)) $P > /tmp/Probe.lean
+  s=$(date +%s)
+  ( ulimit -v 12000000; timeout 240 $L env lean -D profiler=true -D profiler.threshold=300 /tmp/Probe.lean > /tmp/probe.out 2>&1 ) && r=ok || r="exit $?"
+  echo "RESULT probe up to '$cut': $r, $(( $(date +%s)-s )) s"
+  grep -v "^$" /tmp/probe.out | cut -c1-240 | tail -12
 done
-.lake/build/bin/evm-secpperf 2000
+exit 1
