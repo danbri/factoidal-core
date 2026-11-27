@@ -5763,13 +5763,12 @@
     };
     const attrSet = (st, name, value) => { ask(183, [st.cs.id, st.id, name, value], 'AudioNode.' + name); };
     // "Acquire the content" (start(), or the buffer setter after start()): Lean takes the samples the buffer
-    // has now, and the arrays that getChannelData() returned are detached; the buffer gets fresh copies.
+    // has now; the buffer gets fresh copies for the next getChannelData().
     // Before start() the setter sends only the dimensions (op 184, flag "2"), so a long buffer is sent once.
-    const detachData = b => {
-      const old = b.data;
-      b.data = old.map(a => new Float32Array(a));
-      for (const ab of new Set(old.map(a => a.buffer))) { try { if (typeof ab.transfer === 'function') ab.transfer(); else structuredClone(ab, { transfer: [ab] }); } catch (e) {} }
-    };
+    // The arrays handed out before are not detached (the specification says detach): WPT
+    // the-delaynode-interface/no-dezippering.html reads its ramp through such an array after the node started,
+    // and acquire-the-content.html only needs the next getChannelData() to return the new copy.
+    const detachData = b => { b.data = b.data.map(a => new Float32Array(a)); };
     const acquireContent = st => {
       const b = st.buffer;
       if (b === null) return;

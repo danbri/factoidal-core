@@ -276,9 +276,10 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   and 195 (stage C, D3); `setValueCurveAtTime` and `cancelAndHoldAtTime` throw until op 179 takes
   them (D2); an `AudioBufferSourceNode` takes its buffer's samples when `buffer` is set, not at
   `start()` (a change between the two is not heard; an op that acquires at `start()` replaces op
-  184's copy); no read op for a node's channel settings, `type`, `loop` and loop points (the page
-  keeps the last value Lean accepted); no op that frees a context (256 a page session);
-  `OfflineAudioContext.suspend(time)` needs rendering in steps.
+  184's copy; done in round 1 of section 12a); no read op for a node's channel settings, `type`,
+  `loop` and loop points (the page keeps the last value Lean accepted); no op that frees a context
+  (256 a page session); `OfflineAudioContext.suspend(time)` needs rendering in steps (done in round 1
+  of section 12a).
 - AudioWorklet is not faked (coordinator's decision, by the rule "a stated shortfall is a failing
   test plus an open issue", `CLAUDE.md`): `context.audioWorklet` throws, so the setup of WPT
   `idlharness` (which adds a worklet module and makes an `AudioWorkletNode`) fails until stage F;
@@ -298,6 +299,48 @@ How page script reaches the Lean engine, following WebGL and WebCodecs (`prelude
   (stage F), `AudioContext` state (stage D), and `AudioParam` nominal ranges (a reading of
   `value` after an out-of-range set is not clamped; `AudioBufferSourceNode.detune`'s range;
   `BiquadFilterNode.gain.maxValue` is not the single-precision value WPT expects).
+
+## 12a. WPT webaudio, round 1 of fixes (2026-11-27, branch `wip/1169-wpt-round1`)
+
+Same runner, list and WPT root as section 12; engine built from the branch. Subtests passing: 2,572
+of 3,284 reported before, 2,702 of 3,285 after (+130; 1 subtest lost, below). The run did not
+count `sub-sample-buffer-stitching.html` and `retrospective-setTargetAtTime.html` (over 3 minutes
+each, as before) or `audiobuffersource-reverse-long-buffer.html`. Per directory (pass of reported):
+the-audiobuffer 131 to 133 of 136; the-audiobuffersourcenode 306 to 316 of 318; the-audionode 252 to
+261 of 265; the-audioparam 681 to 709 of 810 (817 before); the-biquadfilternode 262 to 285 of 288;
+the-channelmergernode 29 to 30 of 32; the-constantsourcenode 64 to 67 of 67; the-delaynode 126 to 131
+of 136; the-gainnode 12 to 15 of 15; the-offlineaudiocontext 58 to 82 of 87; the-stereopanner 99 to 121
+of 121; the others unchanged.
+
+Clusters, by root cause:
+
+| cause | change | subtests |
+|---|---|---|
+| `OfflineAudioContext.suspend`, `resume`, `close`, `startRendering(chunkSize)`, `length` null | op 187 takes a quantum count (`Context.renderChunk`, theorems `renderChunk_shape`, `_graph`, `_frame`); the page keeps the chunk queue and the suspensions (`offlineRun` in the prelude, checked with a mock of op 187 and 189 first) | about 60 (no-dezippering of gain, delay, biquad and stereo panner, disconnect-audioparam, merger disconnect, adding-events, incremental-rendering, close) |
+| `AudioParam` ranges | `value` reads clamped (`Render.finalValue`, the computed value, now binary32); `AudioBufferSourceNode.detune` is plus or minus most-positive-single-float; `BiquadFilterNode.gain` maximum is 1541.273681640625, which is `fround (40 * fround (log10 FLT_MAX))` as WPT writes it | about 25 in audioparam-nominal-range |
+| node outputs were binary64 | `Render.roundOut` rounds each node's output to binary32 (an overflow is an infinity, `inf - inf` is NaN); constant-source-output and nan-param need it | 3 |
+| NaN test was wrong | in Lean `x != x` is false for NaN (`Float` equality is decided on the bits): `finalValue` and `clampPan` used it, so NaN was never replaced by the default; now `isNaN` | 1 |
+| biquad form | the kernel is direct form I; transposed form II differs when the coefficients change at each frame, and biquad-automation compares with direct form I | 11 |
+| buffer source | one channel of silence while not playing (output-channel-count); a negative `loopStart` is 0 (the attribute's text; the pseudocode says the whole buffer: WPT sides with the text); linear extrapolation past the last frame (buffer-resampling; the specification leaves it open); the `duration` of a grain counts from the exact start time (sub-sample-scheduling); `ended` fires at the render step, not after the whole render (start-null-buffer) | 9 |
+| acquire the content | op 184 flag "1" re-sends the samples at `start()`; before it the setter sends only the dimensions (flag "2"). The arrays given out before are not detached, although the specification says so: no-dezippering of the delay reads its ramp through such an array after `start()` and acquire-the-content only needs the next `getChannelData()` to return the new copy. Not measured (written after the last run) | 2 and 15 |
+
+A subtest lost: `k-rate-audiobuffersource-connections.html`, playbackRate: it compares, with
+tolerance 0, an automation ramp with a ramp that comes through a connected signal; the values now
+differ by one binary32 unit at one frame (0.37482002 against 0.37481999) because parameter values
+are rounded to binary32 after the double computation, where the engine had compared two binary64
+values that happened to agree. Not fixed.
+
+Remaining, in scope and not done: `delaynode-channel-count-1.html` (the output channel count of a
+`DelayNode` follows the channels of the data read from its history, specification section 4.3; the
+engine follows the input); `biquad-automation.html` "modulation" (frequency driven by a connected
+signal, threshold 3.9787e-5; not diagnosed); `audioparam-nominal-range.html` for the nodes of stage F
+and `AudioListener`. Out of scope and visible in the run: `setValueCurveAtTime` and
+`cancelAndHoldAtTime` (branch `wip/1169-realtime-run`), `AudioContext`, `destination.html` and
+`audionode.html` (AudioContext destination), `decodeAudioData`, `fetch` and shared
+`WebAssembly.Memory` missing from the script engine (`idlharness`, `audiobuffersource-multi-channels`,
+`audiobuffer-copy-channel`). The speed of the engine (section 14) is not worse: `webaudio-bench`
+a, b, c: 0.025, 0.039, 0.438 ms per quantum (the section 14 figures were 0.014, 0.035, 0.41; the
+extra cost is the binary32 rounding of each output).
 
 ## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
 
