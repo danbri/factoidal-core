@@ -2,17 +2,12 @@ name: Independent Lean beacon state transition (Fulu)
 on:
   pull_request:
     paths:
-      - 'formal/lean4/ethereum-consensus/Beacon/**'
-      - 'formal/lean4/ethereum-consensus/Beacon.lean'
-      - 'formal/lean4/ethereum-consensus/BeaconSpecTestsMain.lean'
+      - 'formal/lean4/ethereum-beacon/**'
       - 'formal/lean4/ethereum-consensus/BLSVerify.lean'
       - 'formal/lean4/ethereum-consensus/G1PublicKey.lean'
       - 'formal/lean4/ethereum-consensus/G2Signature.lean'
       - 'formal/lean4/ethereum-consensus/PairingTarget.lean'
       - 'formal/lean4/ethereum-consensus/HashToField.lean'
-      - 'formal/lean4/ethereum-consensus/lakefile.toml'
-      - 'formal/lean4/ethereum-consensus/scripts/check-beacon-spec-tests.py'
-      - 'formal/lean4/ethereum-consensus/evidence/beacon-spec-tests-baseline.json'
       - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
       - '.github/workflows/ethereum-beacon.yml'
   workflow_dispatch:
@@ -38,7 +33,7 @@ jobs:
         preset: [minimal, mainnet]
     defaults:
       run:
-        working-directory: formal/lean4/ethereum-consensus
+        working-directory: formal/lean4/ethereum-beacon
     env:
       LEAN_STACK_SIZE_KB: '65536'
       LAKE_ARTIFACT_CACHE: 'false'
@@ -46,7 +41,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: leanprover/lean-action@v1
         with:
-          lake-package-directory: formal/lean4/ethereum-consensus
+          lake-package-directory: formal/lean4/ethereum-beacon
           build: false
           axiom-audit: false
           test: false
@@ -84,6 +79,9 @@ jobs:
                   r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",
                   code, re.M), name
           assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
+          lakefile = pathlib.Path("lakefile.toml").read_text()
+          assert "require" not in lakefile and "moreLinkArgs" not in lakefile and "extern" not in lakefile
+          assert re.findall(r'^srcDir = "(.*)"$', lakefile, re.M) == ["../ethereum-consensus", ".."]
           assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
           print("source audit passed:", len(allowed), "files")
           PY
@@ -151,8 +149,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/lean-tail-recursion-audit.py \
-            --ir-dir formal/lean4/ethereum-consensus/.lake/build/ir \
-            --lean-dir formal/lean4/ethereum-consensus \
+            --ir-dir formal/lean4/ethereum-beacon/.lake/build/ir \
+            --lean-dir formal/lean4 \
             --json "$RUNNER_TEMP/beacon-tail-audit.json" | tee "$RUNNER_TEMP/beacon-tail-audit.txt"
           grep -F 'Recursive functions whose recursion is NOT a `goto _start` loop: 0' "$RUNNER_TEMP/beacon-tail-audit.txt"
       - name: Link audit (no external cryptography)

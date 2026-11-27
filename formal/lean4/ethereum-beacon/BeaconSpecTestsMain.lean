@@ -5,7 +5,7 @@ import Beacon.Transition
 # Runner for the official consensus test vectors (Fulu)
 
 `beacon-spec-tests --vectors DIR --preset minimal|mainnet [--runner R]
-[--handler H] [--case SUBSTRING] [--jobs N] [--bls-optional verify|skip]
+[--handler H] [--case SUBSTRING] [--jobs N (worker threads, default 4)] [--bls-optional verify|skip]
 [--json FILE]`
 
 Vectors are a test oracle: the runner compares the built-in state
@@ -297,14 +297,23 @@ def runAll (o : Options) (fn : CaseFn) (cases : Array (String × System.FilePath
   if o.jobs ≤ 1 then
     cases.mapM fun (name, dir) => runCase fn name dir
   else
-    -- One task per case; the runtime's worker pool (LEAN_NUM_THREADS) bounds the parallelism.
-    let tasks ← cases.mapM fun (name, dir) => IO.asTask (runCase fn name dir)
-    let mut out := #[]
-    for t in tasks do
+    -- `jobs` workers, each running the cases whose index is congruent to its number.
+    let workers ← (Array.range o.jobs).mapM fun w => IO.asTask (prio := .dedicated) do
+      let mut mine : Array (Nat × CaseResult) := #[]
+      for i in [0:cases.size] do
+        if i % o.jobs == w then
+          let (name, dir) := cases[i]!
+          mine := mine.push (i, ← runCase fn name dir)
+      return mine
+    let mut slots : Array (Option CaseResult) := Array.replicate cases.size none
+    for t in workers do
       match ← IO.wait t with
-      | .ok r => out := out.push r
-      | .error e => out := out.push { name := "?", status := .fail, detail := s!"task error: {e}" }
-    return out
+      | .ok mine => for (i, r) in mine do slots := slots.set! i (some r)
+      | .error e => IO.eprintln s!"worker error: {e}"
+    return (Array.range cases.size).map fun i =>
+      match slots[i]! with
+      | some r => r
+      | none => { name := cases[i]!.1, status := .fail, detail := "worker did not return a result" }
 
 structure HandlerSummary where
   runner : String
@@ -391,7 +400,22 @@ def benchEpoch (o : Options) (path : System.FilePath) : IO UInt32 := do
   let t0 ← IO.monoNanosNow
   IO.println s!"  state root {toHex ((stateRoot p state).extract 0 4)}"
   let t1 ← IO.monoNanosNow
-  IO.println s!"  hash_tree_root(state), no registry cache: {(t1 - t0) / 1000} us"
+  IO.println s!"  hash_tree_root(state), plain: {(t1 - t0) / 1000} us"
+  let (root1, cache) := cachedStateRoot p state {}
+  IO.println s!"  state root {toHex (root1.extract 0 4)}"
+  let t2 ← IO.monoNanosNow
+  IO.println s!"  hash_tree_root(state), cache built from empty: {(t2 - t1) / 1000} us"
+  -- A slot's worth of change: one balance, one validator, two history roots.
+  let changed := { (state.increaseBalance 7 1) with
+    validators := state.validators.modify 11 fun v => { v with effectiveBalance := v.effectiveBalance + 1 }
+    stateRoots := state.stateRoots.set! 3 root1
+    blockRoots := state.blockRoots.set! 3 root1 }
+  let t3 ← IO.monoNanosNow
+  let (root2, _) := cachedStateRoot p changed cache
+  IO.println s!"  state root {toHex (root2.extract 0 4)}"
+  let t4 ← IO.monoNanosNow
+  IO.println s!"  hash_tree_root(changed state), from the cache: {(t4 - t3) / 1000} us"
+  IO.println s!"  cached root equals plain root: {root2 == stateRoot p changed}"
   return 0
 
 def main (args : List String) : IO UInt32 := do
