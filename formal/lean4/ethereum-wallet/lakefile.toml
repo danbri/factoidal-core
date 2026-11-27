@@ -11,9 +11,17 @@ defaultTargets = ["EthereumWallet"]
 [[lean_lib]]
 name = "EthereumWallet"
 
-# Keccak-256 from evm-cleanroom, selected in place. Import closure checked
-# 2026-11-27: EVMCleanroom.Keccak, EVMCleanroom.Memory, EVMCleanroom.MemoryGas, Std.
+# Modules of evm-cleanroom selected in place (canonical RLP, Keccak, the signed
+# transaction decoder, the shared secp256k1 point arithmetic). The root is a
+# prefix, so one stanza serves every wallet module; this library is never a
+# build target itself: only what EthereumWallet imports is compiled.
 [[lean_lib]]
-name = "EVMCleanroomKeccak"
+name = "WalletEvmCleanroom"
 srcDir = "../evm-cleanroom"
-roots = ["EVMCleanroom.Keccak", "EVMCleanroom.Memory", "EVMCleanroom.MemoryGas"]
+roots = ["EVMCleanroom"]
+
+# Pure SHA-2 and HMAC from L4Factoidal.Crypto, selected in place the same way.
+[[lean_lib]]
+name = "WalletFactoidalCrypto"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto"]
