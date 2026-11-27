@@ -5,6 +5,8 @@ import EVMCleanroom.Precompiles.Blake2f
 import EVMCleanroom.Precompiles.ModExp
 import EVMCleanroom.Precompiles.Ecrecover
 import EVMCleanroom.Precompiles.BN254
+import EVMCleanroom.Precompiles.BLS12381
+import EVMCleanroom.Precompiles.KZG
 
 /-!
 # Precompiled contracts: fork gating and the single entry used by CALL
@@ -22,6 +24,7 @@ forks:
 * `cancunPlus`: adds 0x0a (EIP-4844);
 * `osaka`: adds 0x0b–0x11 (EIP-2537) and prices 0x05 by EIP-7883 with the
   EIP-7823 length bound. 0x100 (P256VERIFY) is not implemented and stays refused.
+  There is no separate Prague profile, so the EIP-2537 set is reachable only here.
 
 An address that is reserved in a profile but not implemented here is refused
 by the caller as before (`unsupportedFork`, an indeterminate result). It is
@@ -38,7 +41,7 @@ def maxInputBytes : Nat := 1_048_576
 
 /-- Precompile addresses with an implementation in this module. -/
 def implemented (address : Nat) : Bool :=
-  address == 1 || address == 2 || address == 3 || (5 ≤ address && address ≤ 9)
+  address == 1 || address == 2 || address == 3 || (5 ≤ address && address ≤ 0x11)
 
 /-- Highest precompile address a profile executes. -/
 def lastAddress : Profile → Nat
@@ -91,6 +94,14 @@ def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address ga
   | 7 => some (BN254.runMul gas input)
   | 8 => some (BN254.runPairing gas input)
   | 9 => some (Blake2f.run gas input)
+  | 0x0a => some (KZG.run gas input)
+  | 0x0b => some (BLS12381.runG1Add gas input)
+  | 0x0c => some (BLS12381.runG1Msm gas input)
+  | 0x0d => some (BLS12381.runG2Add gas input)
+  | 0x0e => some (BLS12381.runG2Msm gas input)
+  | 0x0f => some (BLS12381.runPairing gas input)
+  | 0x10 => some (BLS12381.runMapG1 gas input)
+  | 0x11 => some (BLS12381.runMapG2 gas input)
   | _ => none
 
 /-- Run a precompile on a call's input view with the forwarded gas.
@@ -165,6 +176,14 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
         · have := BN254.runMul_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := BN254.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := Blake2f.run_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := KZG.run_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.runG1Add_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.runG1Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.runG2Add_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.runG2Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := (BLS12381.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
+        · have := (BLS12381.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
         · cases hDispatch
       · cases h
       · cases h
@@ -183,6 +202,10 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
 #guard (match run .shanghaiPlus none 2 (1 <<< 40) { size := maxInputBytes + 1 } with
   | .error .resourceLimit => true | _ => false)
 #guard (match run .shanghaiPlus none 0x0a 100000 {} with | .error .unsupportedFork => true | _ => false)
+#guard (match run .cancunPlus none 0x0a 100000 {} with | .error .outOfGas => true | _ => false)
+#guard (match run .cancunPlus none 0x0b 100000 {} with | .error .unsupportedFork => true | _ => false)
+#guard (match run .osaka none 0x0b 100000 {} with | .error .outOfGas => true | _ => false)
+#guard active .cancunPlus 0x0a && !active .cancunPlus 0x0b && active .osaka 0x11
 
 #print axioms materialize_size
 #print axioms run_inactive

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "formal/lean4/evm-cleanroom/**"
+      - "third_party/ethereum-kzg-vectors/**"
       - ".github/workflows/evm-precompiles.yml"
   workflow_dispatch:
 
@@ -17,7 +18,7 @@ concurrency:
 jobs:
   precompiles:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -50,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/precompiles/check-axioms.py | tee .lake/precompile-axioms.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=12 and x["theorems"]>=60, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=15 and x["theorems"]>=88, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
       - name: Keep proof-assistant startup out of the precompile runner's imports
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -62,7 +63,7 @@ jobs:
           set -euo pipefail
           python3 scripts/precompiles/run-vectors.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors \
             | tee .lake/precompile-vectors.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=9 and x["publishedCases"]>=322 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=8 and x["gasShortfallControls"]>=1650, x; print({k: x[k] for k in ("files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=29 and x["publishedCases"]>=2351 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=19 and x["gasShortfallControls"]>=2500, x; print({k: x[k] for k in ("files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
       - name: Check directly invoked calls and refusals
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -74,13 +75,18 @@ jobs:
           test "$($run --run shanghaiPlus 1 3000 -)" = "refuse unavailable"
           test "$($run --dangerously-enable-unverified-keccak --run shanghaiPlus 1 3000 -)" = "ok 3000 "
           test "$($run --run shanghaiPlus 10 100000 -)" = "refuse unavailable"
+          test "$($run --run cancunPlus 10 100000 -)" = "fail"
+          test "$($run --run cancunPlus 11 100000 -)" = "refuse unavailable"
+          test "$($run --run osaka 11 100000 -)" = "fail"
+          test "$($run --run osaka 256 100000 -)" = "refuse unavailable"
+          test "$($run --run shanghaiPlus 8 45000 -)" = "ok 45000 0000000000000000000000000000000000000000000000000000000000000001"
           test "$($run --run osaka 5 499 -)" = "fail"
           test "$($run --run osaka 5 500 -)" = "ok 500 "
       - name: Report time per call against the gas price (not a gate)
         working-directory: formal/lean4/evm-cleanroom
         run: |
           set -euo pipefail
-          python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 5 \
+          python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 3 --max-cases-per-file 12 \
             | tee .lake/precompile-timings.json
       - name: Keep the audit, vector and timing reports
         uses: actions/upload-artifact@v4

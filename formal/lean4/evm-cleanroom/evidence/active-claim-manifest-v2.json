@@ -168,7 +168,7 @@
     "evidence/mpt-upstream-rlp-invalid.json": "21d0b2d14332292c9a9bd5becb73ad6a5bacba62",
     "evidence/mpt-upstream-rlp-valid.json": "cb0d9fd399f140d6bab9d411033f8be131df8df0",
     "evidence/mpt-upstream-secure-trie.json": "473f96419a49ca6493a1460f93f46b254fb095a7",
-    "evidence/witness-source-manifest.json": "17f31446ae2e6335ffc85dfae437f9495e62fbe8",
+    "evidence/witness-source-manifest.json": "2d3fafa396cc354286fb5f467a98dae547705fa1",
     "lakefile-witness.toml": "cec738d6474febe6858e0171df2bd29ef50c6288",
     "scripts/check-witness-axioms.py": "a4996c20ff796838679afe53926c3be8b82c7f79",
     "scripts/witness/README.md": "3139a47f208b7e13152b7e011151b1037f1fff38",
@@ -178,7 +178,7 @@
     "scripts/witness/transaction-lists.mjs": "eae966c69c72d1c9369a0edcc654d6fc52484df3",
     "scripts/witness/bench.mjs": "45e62043adcb12ad8fb02fdf3b1cffa37744dc52",
     "scripts/check-witness-runtime.py": "c77fbc547c0927f76dd9cdac1046f95dc27922de",
-    "EVMCleanroom/Precompiles.lean": "8bb0dfb4f4da941985f7ae6667fc372af02a1b91",
+    "EVMCleanroom/Precompiles.lean": "4f81e18806db825a10168331885edcf00fda573d",
     "EVMCleanroom/Precompiles/BN254.lean": "a47d8937c0cb2fbc6f6276d30acf7a4c517dd2de",
     "EVMCleanroom/Precompiles/Basic.lean": "98913187b483bfd857fc2a87eef68365e409c1a0",
     "EVMCleanroom/Precompiles/Blake2f.lean": "a68b07c472f79d578ede985ffa2a9bdd0e0b1a7b",
@@ -187,9 +187,12 @@
     "EVMCleanroom/Precompiles/ModExp.lean": "7b77cb67df4de4c293b11ad0d7eaf281a6441290",
     "EVMCleanroom/Precompiles/Pairing.lean": "aee00e87999f2af1d6a84408406b74eca67e54ff",
     "EVMCleanroom/Precompiles/Ripemd160.lean": "b7426f00ab4e389bc53c075d6893d0cc4ee2c88d",
-    "EVMCleanroom/Precompiles/Secp256k1.lean": "b9b1f220e8b42ad234e3213dcbfecb9ede760f7a",
+    "EVMCleanroom/Precompiles/Secp256k1.lean": "dc83d4e6cec6f1ece4b7effe8edc3cfab300831d",
     "EVMCleanroom/Precompiles/Sha256.lean": "8cb62e00d46f5fec10aa0e20485c587d35155c70",
-    "EVMCleanroom/Precompiles/Tower.lean": "28f45b41fd146a048c3abd40c61f8bf1fde36f44"
+    "EVMCleanroom/Precompiles/Tower.lean": "28f45b41fd146a048c3abd40c61f8bf1fde36f44",
+    "EVMCleanroom/Precompiles/BLS12381.lean": "36b2003a6fa141a8cf902f86a5b7a6c8970e44d8",
+    "EVMCleanroom/Precompiles/Ecrecover.lean": "565102070db5e56474810ca4528cbe2375ddeefc",
+    "EVMCleanroom/Precompiles/KZG.lean": "436c73666ecab5b0d58d68db672572b561f30118"
   },
   "theorem_inventory": [
     {

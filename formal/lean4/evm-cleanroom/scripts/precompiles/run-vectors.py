@@ -138,6 +138,32 @@ def modexp_cases(rng, count):
             yield "modexp/%s short" % profile, (profile, 5, gas - 1, data.hex()), "fail", "fail"
 
 
+def kzg_cases():
+    """The consensus-specification verify_kzg_proof cases as point-evaluation calls.
+
+    The versioned hash is computed here with hashlib. A true verdict must return the
+    constant output for exactly 50000 gas; a false verdict and rejected input must fail.
+    """
+    path = HERE.parents[3].parent / "third_party/ethereum-kzg-vectors/kzg-verify-proof.json"
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != SOURCES["kzgVectorsSha256"]:
+        raise SystemExit("digest mismatch for the KZG proof vectors")
+    constant = (4096).to_bytes(32, "big").hex() + \
+        "73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001"
+    for case in json.loads(data)["cases"]:
+        commitment = bytes.fromhex(case["commitment"])
+        versioned = "01" + hashlib.sha256(commitment).hexdigest()[2:]
+        call = versioned + case["z"] + case["y"] + case["commitment"] + case["proof"]
+        label = "kzg " + case["name"]
+        if case["output"] is True:
+            yield label, ("cancunPlus", 10, 50000, call), "ok", expected_line("ok", 50000, constant)
+            yield label + " short", ("cancunPlus", 10, 49999, call), "fail", "fail"
+            wrong = ("02" if versioned[:2] == "01" else "01") + versioned[2:]
+            yield label + " wrong version byte", ("cancunPlus", 10, 50000, wrong + call[64:]), "fail", "fail"
+        else:
+            yield label, ("cancunPlus", 10, AMPLE_GAS, call), "fail", "fail"
+
+
 def differential_cases(seed, count):
     rng = random.Random(seed)
     for _ in range(count):
@@ -183,6 +209,11 @@ def main():
         for label, case, kind, want in vector_cases(entry, fetch(entry, args.cache, args.offline)):
             labels.append(label); cases.append(case); kinds.append(kind); wanted.append(want)
         per_file[entry["file"]] = (before, len(cases))
+    if not only or "kzg" in only:
+        before = len(cases)
+        for label, case, kind, want in kzg_cases():
+            labels.append(label); cases.append(case); kinds.append(kind); wanted.append(want)
+        per_file["kzg-verify-proof.json"] = (before, len(cases))
     published = len(cases)
     if not only:
         for label, case, kind, want in differential_cases(args.seed, args.differential):
