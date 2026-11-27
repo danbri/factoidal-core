@@ -108,7 +108,8 @@ private theorem add_chain {a0 a1 a2 a3 b0 b1 b2 b3 c0 c1 c2 c3 r0 r1 r2 r3 z : N
     (s2 : c2 * 2 ^ 64 + r2 = a2 + b2 + c1)
     (s3 : c3 * 2 ^ 64 + r3 = a3 + b3 + c2)
     (hz : z = 0) :
-    c3 * 2 ^ 256 + (r0 + r1 * 2 ^ 64 + r2 * 2 ^ 128 + r3 * 2 ^ 192) = a0 + a1 * 2 ^ 64 + a2 * 2 ^ 128 + a3 * 2 ^ 192 + (b0 + b1 * 2 ^ 64 + b2 * 2 ^ 128 + b3 * 2 ^ 192) := by omega
+    c3 * 2 ^ 256 + (r0 + r1 * 2 ^ 64 + r2 * 2 ^ 128 + r3 * 2 ^ 192) = a0 + a1 * 2 ^ 64 + a2 * 2 ^ 128 + a3 * 2 ^ 192 + (b0 + b1 * 2 ^ 64 + b2 * 2 ^ 128 + b3 * 2 ^ 192) :=
+  Nat.le_antisymm (by omega) (by omega)
 
 private theorem sub_chain {a0 a1 a2 a3 b0 b1 b2 b3 c0 c1 c2 c3 r0 r1 r2 r3 z : Nat}
     (s0 : a0 + c0 * 2 ^ 64 = r0 + b0 + z)

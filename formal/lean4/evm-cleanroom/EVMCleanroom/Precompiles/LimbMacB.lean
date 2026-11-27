@@ -66,6 +66,15 @@ theorem carry_nat (x y : Nat) (hx : x < 2 ^ 64) (hy : y < 2 ^ 64) :
     (x + y) % 2 ^ 64 + (if (x + y) % 2 ^ 64 < x then 1 else 0) * 2 ^ 64 = x + y := by
   split <;> omega
 
+theorem addTwo_tot (hi lo c d x l1 l2 k1 k2 : Nat) (h1 : l1 + k1 * 2 ^ 64 = lo + c)
+    (h2 : l2 + k2 * 2 ^ 64 = l1 + d) (hx : hi * 2 ^ 64 + lo = x) :
+    (hi + k1 + k2) * 2 ^ 64 + l2 = x + c + d :=
+  Nat.le_antisymm (by omega) (by omega)
+
+theorem addTwo_lt (hi k1 k2 l2 v : Nat) (tot : (hi + k1 + k2) * 2 ^ 64 + l2 = v)
+    (hb : v < 2 ^ 128) : hi + k1 + k2 < 2 ^ 64 := by
+  omega
+
 theorem addTwo_nat (hi lo c d x : Nat) (hlo : lo < 2 ^ 64) (hc : c < 2 ^ 64) (hd : d < 2 ^ 64)
     (hx : hi * 2 ^ 64 + lo = x) (hb : x + c + d < 2 ^ 128) :
     ((hi + if (lo + c) % 2 ^ 64 < lo then 1 else 0) % 2 ^ 64 +
@@ -78,7 +87,12 @@ theorem addTwo_nat (hi lo c d x : Nat) (hlo : lo < 2 ^ 64) (hc : c < 2 ^ 64) (hd
   generalize (if ((lo + c) % 2 ^ 64 + d) % 2 ^ 64 < (lo + c) % 2 ^ 64 then 1 else 0 : Nat) = k2 at h2 ⊢
   generalize ((lo + c) % 2 ^ 64 + d) % 2 ^ 64 = l2 at h2 ⊢
   generalize (lo + c) % 2 ^ 64 = l1 at h1 h2 hl1 ⊢
-  omega
+  have tot := addTwo_tot hi lo c d x l1 l2 k1 k2 h1 h2 hx
+  have hlt := addTwo_lt hi k1 k2 l2 _ tot hb
+  have m1 : (hi + k1) % 2 ^ 64 = hi + k1 :=
+    Nat.mod_eq_of_lt (Nat.lt_of_le_of_lt (Nat.le_add_right _ _) hlt)
+  rw [m1, Nat.mod_eq_of_lt hlt]
+  exact tot
 
 theorem addTwo_spec (r : UInt64 × UInt64) (c d : UInt64) (x : Nat)
     (hx : r.1.toNat * 2 ^ 64 + r.2.toNat = x)
