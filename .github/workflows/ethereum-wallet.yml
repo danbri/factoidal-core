@@ -24,9 +24,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: ethereum-wallet-${{ github.ref }}
-  cancel-in-progress: false
 jobs:
   wallet:
     runs-on: ubuntu-latest

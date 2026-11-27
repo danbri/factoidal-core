@@ -4,7 +4,8 @@ import EVMCleanroom.Precompiles.Field
 # Short Weierstrass curves `y² = x³ + b` in Jacobian coordinates
 
 One implementation over a `FieldOps` dictionary serves secp256k1, alt_bn128
-(G1 and G2) and BLS12-381 (G1 and G2): all have `a = 0`.
+(G1 and G2) and BLS12-381 (G1 and G2): all have `a = 0`. The `…A` variants
+at the end take the coefficient `a` and serve secp256r1.
 
 A Jacobian point `(X, Y, Z)` stands for the affine point `(X/Z², Y/Z³)`; the
 point at infinity is any triple with `Z = 0`. Formulas are the textbook
@@ -104,6 +105,71 @@ def mul (O : FieldOps F) (k : Nat) (p : JPoint F) : JPoint F :=
 /-- `[k1]p1 + [k2]p2` with one shared doubling chain. -/
 def mul2 (O : FieldOps F) (k1 : Nat) (p1 : JPoint F) (k2 : Nat) (p2 : JPoint F) : JPoint F :=
   mul2Loop O k1 p1 k2 p2 (add O p1 p2) (Nat.log2 (max k1 k2) + 1) (infinity O)
+
+/-! ### Curves `y² = x³ + a x + b` with a non-zero `a`
+
+Only the tangent slope depends on `a` (`3X² + aZ⁴` in Jacobian coordinates),
+so the chord addition above is reused through a doubling parameter. -/
+
+/-- Is the affine pair on `y² = x³ + a x + b`? -/
+def onCurveA (O : FieldOps F) (a b x y : F) : Bool :=
+  O.eq (O.sqr y) (O.add (O.add (O.mul (O.sqr x) x) (O.mul a x)) b)
+
+@[specialize] def doubleA (O : FieldOps F) (a : F) (p : JPoint F) : JPoint F :=
+  let xx := O.sqr p.x
+  let yy := O.sqr p.y
+  let yyyy := O.sqr yy
+  let zz := O.sqr p.z
+  let xyy := O.mul p.x yy
+  let s2 := O.add xyy xyy
+  let s := O.add s2 s2
+  let m := O.add (O.add (O.add xx xx) xx) (O.mul a (O.sqr zz))
+  let x3 := O.sub (O.sqr m) (O.add s s)
+  let y2 := O.add yyyy yyyy
+  let y4 := O.add y2 y2
+  let y8 := O.add y4 y4
+  let y3 := O.sub (O.mul m (O.sub s x3)) y8
+  let yz := O.mul p.y p.z
+  ⟨x3, y3, O.add yz yz⟩
+
+@[specialize] def addA (O : FieldOps F) (a : F) (p q : JPoint F) : JPoint F :=
+  if O.isZero p.z then q
+  else if O.isZero q.z then p
+  else
+    let z1z1 := O.sqr p.z
+    let z2z2 := O.sqr q.z
+    let u1 := O.mul p.x z2z2
+    let u2 := O.mul q.x z1z1
+    let s1 := O.mul (O.mul p.y q.z) z2z2
+    let s2 := O.mul (O.mul q.y p.z) z1z1
+    let h := O.sub u2 u1
+    let r := O.sub s2 s1
+    if O.isZero h then
+      if O.isZero r then doubleA O a p else infinity O
+    else
+      let hh := O.sqr h
+      let hhh := O.mul hh h
+      let v := O.mul u1 hh
+      let x3 := O.sub (O.sub (O.sqr r) hhh) (O.add v v)
+      let y3 := O.sub (O.mul r (O.sub v x3)) (O.mul s1 hhh)
+      ⟨x3, y3, O.mul (O.mul h p.z) q.z⟩
+
+@[specialize] def mul2ALoop (O : FieldOps F) (a : F) (k1 : Nat) (p1 : JPoint F) (k2 : Nat)
+    (p2 p12 : JPoint F) : Nat → JPoint F → JPoint F
+  | 0, acc => acc
+  | bits+1, acc =>
+    let doubled := doubleA O a acc
+    let next :=
+      match k1.testBit bits, k2.testBit bits with
+      | true, true => addA O a doubled p12
+      | true, false => addA O a doubled p1
+      | false, true => addA O a doubled p2
+      | false, false => doubled
+    mul2ALoop O a k1 p1 k2 p2 p12 bits next
+
+/-- `[k1]p1 + [k2]p2` on a curve with coefficient `a`. -/
+def mul2A (O : FieldOps F) (a : F) (k1 : Nat) (p1 : JPoint F) (k2 : Nat) (p2 : JPoint F) : JPoint F :=
+  mul2ALoop O a k1 p1 k2 p2 (addA O a p1 p2) (Nat.log2 (max k1 k2) + 1) (infinity O)
 
 /-- Affine coordinates, `none` for the point at infinity. One field inversion. -/
 def toAffine (O : FieldOps F) (p : JPoint F) : Option (F × F) :=

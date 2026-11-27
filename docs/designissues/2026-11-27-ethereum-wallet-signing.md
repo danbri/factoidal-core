@@ -136,6 +136,7 @@ What still leaks:
 | Leak | Where | Note |
 |---|---|---|
 | Operand-dependent time of multiplication and reduction | every `a * b % p` on `Nat` (GMP) | division time depends on the values; a value with leading zero limbs is shorter and faster |
+| Carry and borrow branches | shared `Fp.add`, `Fp.sub`, `Fp.neg` | the shared field (as of the precompile work's head f7ffbd3da) avoids division by comparing and subtracting once: a branch on whether the sum reached the modulus, taken with secret operands on the signing path |
 | Small-value representation | Lean runtime | a `Nat` below 2^63 is a tagged word, not a GMP number: other code path, no allocation |
 | Allocation pattern | every `Nat` result | sizes and counts of allocations follow the values |
 | Secret-indexed table lookup | `mulBaseComb` | cache timing reveals digits of the recoded nonce to an attacker sharing the cache |
