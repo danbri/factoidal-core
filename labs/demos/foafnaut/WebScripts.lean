@@ -104,6 +104,10 @@ argument for `start`:
   `port` goes to that address only; the host does not resolve the name again (DNS
   rebinding, `Net.PageFetch.emit`). `pageAddress` in `start`: the address the host loaded
   the page from, when it knows it (a local one lets the page reach local addresses).
+  `tor:true` in `start` (with `network:true`): Tor mode (`Net.PageFetch.Page.tor`). Then every
+  request has `tor:true` and `partition` (the page's origin: the Tor circuit set to use), and
+  none has `resolve` or `address`: the host gives it to its Tor client and resolves no name
+  itself. Without `tor` the request JSON has no `tor` or `partition` field.
   `elapsedMs` moves the virtual clock before the answers apply (a test host's waiting time).
   On BubblePopJS a dedicated worker's requests are in `netRequests` too, as the page's (ids
   from the page's numbering), and their answers go to the worker (`LeanJSWorkers.giveNet`).
@@ -1143,7 +1147,8 @@ def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
       ("headers", .array (w.headers.map fun (n, v) => .array [.string n, .string v]))] ++
       (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []) ++
       (if w.resolve then [("resolve", .bool true)] else []) ++
-      (if w.address.isEmpty then [] else [("address", .string w.address), ("port", num w.port)]))
+      (if w.address.isEmpty then [] else [("address", .string w.address), ("port", num w.port)]) ++
+      (if w.tor then [("tor", .bool true), ("partition", .string w.partition)] else []))
 
 /-- The answer that undoes this run and asks the host for one sync request. -/
 def netSyncAnswer (id : Nat) (w : Net.PageFetch.Wire) : Except String String :=
@@ -1350,6 +1355,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
+  let tor := request.field? "tor" == some (.bool true)
   -- a start that stopped at a script waiting for this answer goes on from there
   if let some p := held.startPoint then
     if !held.syncCache.isEmpty && p.html == html && p.url == url then
@@ -1372,7 +1378,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let ent ← match held.startEntropy with
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
-  let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, tor, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let syn := str request "syntax"
   let kept := match held.startParsed with
     | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syn then some p else none
@@ -1390,7 +1396,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     let cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0
     let scripts0 := scripts
     let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
-      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom (LeanJSModules.baseOf dom url) scripts
+      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress") tor) dom (LeanJSModules.baseOf dom url) scripts
     let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta, cspViolations }
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
@@ -1400,7 +1406,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     | .ok base =>
       -- module scripts: their graphs are fetched first (each request a `netSync` and the start
       -- made again), so no script runs before they are all there. A page with none pays nothing.
-      let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")
+      let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress") tor
       -- the modules of the attempts before, while this start's answers are held (a first
       -- attempt, with no answers, takes none)
       let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
@@ -1729,7 +1735,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
+        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), tor := request.field? "tor" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, startTodo := none, nextSession := id + 1, layoutRequest := layoutOf request } id {} {} true true prog
@@ -1746,7 +1752,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), tor := request.field? "tor" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => return (held, .error s!"scriptSession: {e}")
