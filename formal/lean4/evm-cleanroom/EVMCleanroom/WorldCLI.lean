@@ -16,7 +16,8 @@ Arguments, separated by single spaces (a batch file has one case per line):
 
 * `PROFILE`: `shanghaiPlus`, `cancunPlus` or `osaka`.
 * `BLOCKHASHES`: comma-separated hex hashes, oldest first (or `-`).
-* `ENTRY`: hex address of the executing account; the caller and origin are 0xc2.
+* `ENTRY`: hex address of the executing account, optionally `ADDR@DEPTH` with a
+  decimal entry call depth (default 0, at most 1024); the caller and origin are 0xc2.
 * `PREWARM`, `OBSERVE`: comma-separated hex addresses (or `-`).
 * `ACCOUNT`: `ADDR:BALANCE:NONCE:CODE[:HASSTORAGE[:K=V;K=V...]]`, with hex
   address, code, keys and values, decimal balance and nonce.
@@ -50,6 +51,15 @@ private def parseProfile : String → Option Profile
   | "shanghaiPlus" => some .shanghaiPlus
   | "cancunPlus" => some .cancunPlus
   | "osaka" => some .osaka
+  | _ => none
+
+private def parseEntry (s : String) : Option (Nat × Nat) :=
+  match s.splitOn "@" with
+  | [a] => (hexNat? a).map (·, 0)
+  | [a, d] => do
+    let address ← hexNat? a
+    let depth ← d.toNat?
+    if depth > CallOpcode.maxDepth then none else pure (address, depth)
   | _ => none
 
 private structure Spec where
@@ -118,9 +128,9 @@ def runCase (acceptance : Option Keccak.Acceptance) (args : List String) : Strin
   | profileStr :: gasStr :: fuelStr :: readOnlyStr :: numberStr :: hashesStr :: entryStr ::
       prewarmStr :: observeStr :: accountStrs =>
     match parseProfile profileStr, gasStr.toNat?, fuelStr.toNat?, readOnlyStr.toNat?,
-      numberStr.toNat?, hexList? hashesStr, hexNat? entryStr, hexList? prewarmStr,
+      numberStr.toNat?, hexList? hashesStr, parseEntry entryStr, hexList? prewarmStr,
       hexList? observeStr, accountStrs.mapM parseAccount with
-    | some profile, some gas, some fuel, some readOnly, some number, some hashes, some entry,
+    | some profile, some gas, some fuel, some readOnly, some number, some hashes, some (entry, depth),
         some prewarm, some observe, some specs =>
       if fuel > 1000000 || gas > 1000000000 || specs.length > 64 || hashes.length > 256 then
         "{\"status\":\"inputError\",\"reason\":\"world-case-out-of-range\"}"
@@ -135,7 +145,7 @@ def runCase (acceptance : Option Keccak.Acceptance) (args : List String) : Strin
           warmAddresses := fun a => base.warmAddresses a || prewarm.contains a }
         let initial := { frameInput world entry gas (readOnly == 1) profile 0xc2 0xc2 with
           blockNumber := number }
-        match CallOpcode.settle world initial (CallOpcode.executeAtDepth fuel world entry 0 initial) with
+        match CallOpcode.settle world initial (CallOpcode.executeAtDepth fuel world entry depth initial) with
         | .stopped w s => outcomeJSON observe "stopped" w s none
         | .returned w s => outcomeJSON observe "returned" w s none
         | .reverted w s => outcomeJSON observe "reverted" w s none

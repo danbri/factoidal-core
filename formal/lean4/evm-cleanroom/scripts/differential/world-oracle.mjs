@@ -75,7 +75,7 @@ function leanLine(c) {
   })
   return [c.profile, String(c.gas), String(c.fuel ?? 2000), c.readOnly ? '1' : '0', String(c.number ?? 0),
     (c.hashes ?? []).length ? c.hashes.map(h => h.replace(/^0x/, '')).join(',') : '-',
-    BigInt(c.entry).toString(16), list(c.prewarm ?? []), list(c.observe), ...accounts].join(' ')
+    BigInt(c.entry).toString(16) + (c.depth ? '@' + c.depth : ''), list(c.prewarm ?? []), list(c.observe), ...accounts].join(' ')
 }
 
 /** Run every case in one Lean process; returns parsed JSON per case. */
@@ -99,7 +99,7 @@ export function runLean(executable, cases, {keccak = true} = {}) {
 export function projectLean(c, row) {
   if (row.status === 'indeterminate' || row.status === 'inputError') return {status: row.status, reason: row.reason}
   const out = {status: row.status, gasRemaining: row.gasRemaining, accounts: row.accounts.map(a => ({
-    address: a.address, balance: a.balance, nonce: a.nonce, codeHex: a.codeHex, storage: a.storage,
+    address: a.address, balance: a.balance, nonce: a.nonce, codeHex: a.codeHex, codeSize: a.codeSize, storage: a.storage,
     ...(c.observeWarm === false ? {} : {warm: a.warm}),
   }))}
   if (row.status === 'exceptional') out.reason = row.reason
@@ -129,7 +129,10 @@ export async function runOracle(c) {
   for (const target of evm.precompiles.keys()) evm.journal.addAlwaysWarmAddress(target)
   for (const a of c.prewarm ?? []) evm.journal.addAlwaysWarmAddress(addr(a).toString())
   for (const a of c.accounts) {
-    await evm.stateManager.putAccount(addr(a.address), new Account(BigInt(a.nonce ?? 0), BigInt(a.balance ?? 0)))
+    // `hasStorage` states a nonempty pre-transaction storage root (EIP-7610). The
+    // oracle's simple state manager keeps no roots, so the statement is given directly.
+    await evm.stateManager.putAccount(addr(a.address), new Account(BigInt(a.nonce ?? 0), BigInt(a.balance ?? 0),
+      a.hasStorage ? new Uint8Array(32).fill(1) : undefined))
     if (a.code) await evm.stateManager.putCode(addr(a.address), hexToBytes('0x' + a.code))
     for (const [k, v] of Object.entries(a.storage ?? {}))
       await evm.stateManager.putStorage(addr(a.address), hexToBytes('0x' + word(k)), bigIntToUnpaddedBytes(BigInt(v)))
@@ -144,7 +147,7 @@ export async function runOracle(c) {
   const gasLimit = BigInt(c.gas)
   const {execResult: ex} = await evm.runCall({
     caller: addr(CALLER), origin: addr(CALLER), to: addr(c.entry), gasLimit, isStatic: !!c.readOnly,
-    skipNonceIncrement: true, block,
+    skipNonceIncrement: true, block, ...(c.depth ? {depth: c.depth} : {}),
   })
   const error = ex.exceptionError?.error
   const status = error === 'revert' ? 'reverted' : error ? 'exceptional' :
@@ -160,7 +163,7 @@ export async function runOracle(c) {
       storage.push(v.length ? BigInt('0x' + hex(v)).toString() : '0')
     }
     out.accounts.push({address: String(BigInt(a)), balance: String(account?.balance ?? 0n),
-      nonce: String(account?.nonce ?? 0n), codeHex: hex(code), storage,
+      nonce: String(account?.nonce ?? 0n), codeHex: hex(code.subarray(0, 4096)), codeSize: String(code.length), storage,
       ...(c.observeWarm === false ? {} : {warm: evm.journal.isWarmedAddress(who.bytes)})})
   }
   if (status === 'exceptional') {
