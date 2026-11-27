@@ -720,6 +720,36 @@ def anchorChunk (spots : Array Spot) (chunk : Array Nat) (width : Float) (anchor
 def listAt (outer inner : List Float) (c idx : Nat) : Option Float :=
   (inner[idx]?).orElse fun _ => outer[c]?
 
+/-- The per-character values of the glyphs of a right-to-left run, moved so that the
+    run's absolute position starts its chunk. `shapeRuns` gives a run's glyphs in visual
+    order, so the first glyph of a right-to-left run is its last character; the `x` or `y`
+    of its first character (SVG 1.1 §10.4: an absolute position starts a text chunk) goes
+    to that first glyph, and the run is placed as one chunk. Only a run with one positioned
+    glyph changes; per-glyph positions of a reordered run stay as they are. -/
+def rtlChunkStarts (cells : Array GlyphCell)
+    (values : Array (Option Float × Option Float × Float × Float × Option Float)) :
+    Array (Option Float × Option Float × Float × Float × Option Float) := Id.run do
+  let mut values := values
+  let mut k := 0
+  for _ in [:cells.size] do
+    if k >= cells.size then break
+    let run := cells[k]!.run
+    -- The glyphs k .. stop-1 are of one run.
+    let mut stop := k+1
+    for _ in [:cells.size] do
+      if stop < cells.size && cells[stop]!.run == run then stop := stop+1 else break
+    let ks := (List.range (stop-k)).map (·+k)
+    let positioned := ks.filter fun j => let (ax,ay,_,_,_) := values[j]!; ax.isSome || ay.isSome
+    let reordered := ks.any fun j => j+1 < stop && cells[j+1]!.char < cells[j]!.char
+    if reordered then
+      if let [j] := positioned then
+        if j != k then
+          let (ax,ay,_,_,_) := values[j]!
+          values := values.modify j fun (_,_,dx,dy,r) => (none,none,dx,dy,r)
+          values := values.modify k fun (_,_,dx,dy,r) => (ax,ay,dx,dy,r)
+    k := stop
+  return values
+
 /-- Lower one `text` element to a group of glyph paths, drawn with `fonts`. With
     `numeric`, each glyph that `glyphAdmitted` accepts goes to the end of `table` and its
     path names it (`NativeSVG.glyphAttribute`) in place of path data text. -/
@@ -754,6 +784,7 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
     (listAt xs run.xs cell.char idx,listAt ys run.ys cell.char idx,
      (listAt dxs run.dxs cell.char idx).getD 0,(listAt dys run.dys cell.char idx).getD 0,
      (listAt rotations run.rotates cell.char idx).orElse fun _ => run.rotates.getLast?.orElse fun _ => rotations.getLast?)
+  let values := rtlChunkStarts cells values
   let isSpace := fun (c : Nat) => chars[c]? == some ' '
   let mut spots : Array Spot := Array.replicate cells.size {}
   -- Text chunks (SVG 1.1 §10.4): an absolute position starts one.
