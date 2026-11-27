@@ -1422,6 +1422,27 @@ record `docs/designissues/2026-11-27-formal-verification-post-review.md`.
   a release note, hub page or README is for a register entry only. The owner reviews the register;
   entries are Claude proposals until the owner marks them reviewed.
 
+### Foafnaut timelines, remote debugging and WebDriver scores (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Do items 1 and 2" and "Yes to a and b", to these proposals
+(session on https://github.com/danbri/factoidal-core/issues/1168, real-page load time):
+
+1. Write the host's trace records (`native-html-load-phases`, `native-html-frame`,
+   `native-html-script`, engine-worker records) as a Trace Event Format file, so that a run's
+   timeline opens in Perfetto (https://ui.perfetto.dev) or the Chrome DevTools Performance panel.
+2. Live remote debugging, WebDriver BiDi first, then a part of the Chrome DevTools Protocol only
+   where Chrome's own panels need it. Tracking https://github.com/danbri/factoidal-core/issues/372.
+   A debug port is a security surface: the experimental code notice, a `--dangerously-` option, the
+   invariants of https://github.com/danbri/factoidal/issues/1120.
+   (a) `branch-wpt.yml` in `danbri/factoidal-builds` gets the input
+   `dangerously_enable_webdriver_endpoint` that `skills/wpt-runs` described but that never existed;
+   one branch run of `webdriver/tests/classic/` gives the first WebDriver numbers.
+   (b) Full runs report the classic wdspec tests.
+
+Context for the owner's question "Can chrome/firefox do that remotely??" (coordinator's answer, not
+the owner's words): Chrome DevTools attaches to any Chrome DevTools Protocol server over WebSocket;
+Firefox's remote debugger speaks its own protocol, not Chrome's, and supports WebDriver BiDi.
+
 ### Never report upstream (owner, 2026-11-25)
 
 Owner, 2026-11-25, verbatim: "Nothing upstream. Sites are swamped with sloppy llm tickets. Never
