@@ -21,18 +21,6 @@ private def iv : Array UInt64 := #[
   0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
   0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179]
 
-private def sigma : Array Nat := #[
-  0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-  14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3,
-  11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4,
-  7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8,
-  9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13,
-  2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9,
-  12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11,
-  13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10,
-  6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5,
-  10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0]
-
 @[inline] private def rotr (x : UInt64) (n : UInt64) : UInt64 := (x >>> n) ||| (x <<< (64 - n))
 
 structure Quad where
@@ -52,6 +40,7 @@ structure Quad where
   let b := rotr (b ^^^ c) 63
   ⟨a, b, c, d⟩
 
+/-- The sixteen working words. All fields are unboxed machine words. -/
 structure Work where
   v0 : UInt64
   v1 : UInt64
@@ -70,24 +59,57 @@ structure Work where
   v14 : UInt64
   v15 : UInt64
 
-private def round (m : Array UInt64) (row : Nat) (w : Work) : Work :=
-  let s := 16 * row
-  let x (i : Nat) : UInt64 := m[sigma[s + i]!]!
-  let q0 := g ⟨w.v0, w.v4, w.v8, w.v12⟩ (x 0) (x 1)
-  let q1 := g ⟨w.v1, w.v5, w.v9, w.v13⟩ (x 2) (x 3)
-  let q2 := g ⟨w.v2, w.v6, w.v10, w.v14⟩ (x 4) (x 5)
-  let q3 := g ⟨w.v3, w.v7, w.v11, w.v15⟩ (x 6) (x 7)
-  let d0 := g ⟨q0.a, q1.b, q2.c, q3.d⟩ (x 8) (x 9)
-  let d1 := g ⟨q1.a, q2.b, q3.c, q0.d⟩ (x 10) (x 11)
-  let d2 := g ⟨q2.a, q3.b, q0.c, q1.d⟩ (x 12) (x 13)
-  let d3 := g ⟨q3.a, q0.b, q1.c, q2.d⟩ (x 14) (x 15)
+/-- The sixteen message words. -/
+structure Message where
+  m0 : UInt64
+  m1 : UInt64
+  m2 : UInt64
+  m3 : UInt64
+  m4 : UInt64
+  m5 : UInt64
+  m6 : UInt64
+  m7 : UInt64
+  m8 : UInt64
+  m9 : UInt64
+  m10 : UInt64
+  m11 : UInt64
+  m12 : UInt64
+  m13 : UInt64
+  m14 : UInt64
+  m15 : UInt64
+
+/-- One round on message words already permuted: four column steps, four diagonal steps. -/
+private def mix (w : Work) (x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14 x15 : UInt64) : Work :=
+  let q0 := g ⟨w.v0, w.v4, w.v8, w.v12⟩ x0 x1
+  let q1 := g ⟨w.v1, w.v5, w.v9, w.v13⟩ x2 x3
+  let q2 := g ⟨w.v2, w.v6, w.v10, w.v14⟩ x4 x5
+  let q3 := g ⟨w.v3, w.v7, w.v11, w.v15⟩ x6 x7
+  let d0 := g ⟨q0.a, q1.b, q2.c, q3.d⟩ x8 x9
+  let d1 := g ⟨q1.a, q2.b, q3.c, q0.d⟩ x10 x11
+  let d2 := g ⟨q2.a, q3.b, q0.c, q1.d⟩ x12 x13
+  let d3 := g ⟨q3.a, q0.b, q1.c, q2.d⟩ x14 x15
   { v0 := d0.a, v1 := d1.a, v2 := d2.a, v3 := d3.a
     v4 := d3.b, v5 := d0.b, v6 := d1.b, v7 := d2.b
     v8 := d2.c, v9 := d3.c, v10 := d0.c, v11 := d1.c
     v12 := d1.d, v13 := d2.d, v14 := d3.d, v15 := d0.d }
 
+/-- One round with the message schedule of SIGMA row `row` (RFC 7693, section 2.7),
+    written out so every word is a direct field read. -/
+private def round (m : Message) (row : Nat) (w : Work) : Work :=
+  match row with
+  | 0 => mix w m.m0 m.m1 m.m2 m.m3 m.m4 m.m5 m.m6 m.m7 m.m8 m.m9 m.m10 m.m11 m.m12 m.m13 m.m14 m.m15
+  | 1 => mix w m.m14 m.m10 m.m4 m.m8 m.m9 m.m15 m.m13 m.m6 m.m1 m.m12 m.m0 m.m2 m.m11 m.m7 m.m5 m.m3
+  | 2 => mix w m.m11 m.m8 m.m12 m.m0 m.m5 m.m2 m.m15 m.m13 m.m10 m.m14 m.m3 m.m6 m.m7 m.m1 m.m9 m.m4
+  | 3 => mix w m.m7 m.m9 m.m3 m.m1 m.m13 m.m12 m.m11 m.m14 m.m2 m.m6 m.m5 m.m10 m.m4 m.m0 m.m15 m.m8
+  | 4 => mix w m.m9 m.m0 m.m5 m.m7 m.m2 m.m4 m.m10 m.m15 m.m14 m.m1 m.m11 m.m12 m.m6 m.m8 m.m3 m.m13
+  | 5 => mix w m.m2 m.m12 m.m6 m.m10 m.m0 m.m11 m.m8 m.m3 m.m4 m.m13 m.m7 m.m5 m.m15 m.m14 m.m1 m.m9
+  | 6 => mix w m.m12 m.m5 m.m1 m.m15 m.m14 m.m13 m.m4 m.m10 m.m0 m.m7 m.m6 m.m3 m.m9 m.m2 m.m8 m.m11
+  | 7 => mix w m.m13 m.m11 m.m7 m.m14 m.m12 m.m1 m.m3 m.m9 m.m5 m.m0 m.m15 m.m4 m.m8 m.m6 m.m2 m.m10
+  | 8 => mix w m.m6 m.m15 m.m14 m.m9 m.m11 m.m3 m.m0 m.m8 m.m12 m.m2 m.m13 m.m7 m.m1 m.m4 m.m10 m.m5
+  | _ => mix w m.m10 m.m2 m.m8 m.m4 m.m7 m.m6 m.m1 m.m5 m.m15 m.m11 m.m9 m.m14 m.m3 m.m12 m.m13 m.m0
+
 /-- `remaining` rounds are still to run out of `total`; round `i` uses SIGMA row `i mod 10`. -/
-private def rounds (m : Array UInt64) (total : Nat) : Nat → Work → Work
+private def rounds (m : Message) (total : Nat) : Nat → Work → Work
   | 0, w => w
   | remaining+1, w => rounds m total remaining (round m ((total - (remaining + 1)) % 10) w)
 
@@ -96,7 +118,8 @@ private def rounds (m : Array UInt64) (total : Nat) : Nat → Work → Work
 private def putWord (acc : ByteArray) (w : UInt64) : ByteArray := acc ++ natToLE 8 w.toNat
 
 /-- The function F on decoded arguments; returns the eight new state words. -/
-def compress (roundCount : Nat) (h m : Array UInt64) (t0 t1 : UInt64) (final : Bool) : Array UInt64 :=
+def compress (roundCount : Nat) (h : Array UInt64) (m : Message) (t0 t1 : UInt64) (final : Bool) :
+    Array UInt64 :=
   let start : Work :=
     { v0 := h[0]!, v1 := h[1]!, v2 := h[2]!, v3 := h[3]!
       v4 := h[4]!, v5 := h[5]!, v6 := h[6]!, v7 := h[7]!
@@ -123,7 +146,8 @@ def body (input : ByteArray) : Body :=
   if roundField input > maxRounds then .refuse
   else
     let h := (Array.range 8).map fun i => word input (4 + 8 * i)
-    let m := (Array.range 16).map fun i => word input (68 + 8 * i)
+    let x (i : Nat) : UInt64 := word input (68 + 8 * i)
+    let m : Message := ⟨x 0, x 1, x 2, x 3, x 4, x 5, x 6, x 7, x 8, x 9, x 10, x 11, x 12, x 13, x 14, x 15⟩
     .output (encode (compress (roundField input) h m (word input 196) (word input 204)
       (byteAt input 212 == 1)))
 
