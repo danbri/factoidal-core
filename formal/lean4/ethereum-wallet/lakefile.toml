@@ -14,7 +14,7 @@ name = "EthereumWallet"
 # Modules reused from the sibling trees, selected in place by srcDir (a root is a prefix).
 # Never build these two libs as targets: `lake build EthereumWallet` compiles only what is
 # imported. Keys import L4Factoidal.Crypto.SHA2 and Hmac (pure) and, behind the one-file
-# interfaces Keys/Hash.lean and Keys/Curve.lean, EVMCleanroom.Keccak and SecpRecovery.
+# interfaces Keys/Hash.lean and Keys/Curve.lean, EVMCleanroom.Keccak and Precompiles.Secp256k1.
 [[lean_lib]]
 name = "WalletEvmCleanroom"
 srcDir = "../evm-cleanroom"

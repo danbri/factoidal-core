@@ -13,7 +13,10 @@ on:
       - 'formal/lean4/evm-cleanroom/EVMCleanroom/Keccak.lean'
       - 'formal/lean4/evm-cleanroom/EVMCleanroom/Memory.lean'
       - 'formal/lean4/evm-cleanroom/EVMCleanroom/MemoryGas.lean'
-      - 'formal/lean4/evm-cleanroom/EVMCleanroom/SecpRecovery.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Precompiles/Secp256k1.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Precompiles/Curve.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Precompiles/Field.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Precompiles/Basic.lean'
       - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
       - 'formal/lean4/L4Factoidal/Crypto/Hmac.lean'
       - 'third_party/testing/ethereum-wallet/**'
@@ -103,7 +106,7 @@ jobs:
                     "axiomsUsed": sorted({x for a in keys.values() for x in a})}
           json.dump({**report, "reports": keys}, open(".lake/keys-evidence/axioms.json", "w"), indent=2)
           print(json.dumps(report))
-          assert not missing and not unlisted and not bad and len(keys) >= 95 and "sorryAx" not in log, report
+          assert not missing and not unlisted and not bad and len(keys) >= 97 and "sorryAx" not in log, report
           PY
       - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
         working-directory: .

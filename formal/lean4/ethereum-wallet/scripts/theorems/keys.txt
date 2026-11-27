@@ -10,6 +10,8 @@ EthereumWallet.Keys.Pbkdf2.derive_ok_bounds
 EthereumWallet.Keys.Base58.decode?_too_long
 EthereumWallet.Keys.Base58.encode_too_long
 EthereumWallet.Keys.Base58.checkDecode?_checksum
+EthereumWallet.Keys.Secp.mulBase_out_of_range
+EthereumWallet.Keys.Secp.mulBase_onCurve
 EthereumWallet.Keys.Address.ofChecksummed_sound
 EthereumWallet.Keys.check_over_limit
 EthereumWallet.Keys.scrypt_refuses_over_limit

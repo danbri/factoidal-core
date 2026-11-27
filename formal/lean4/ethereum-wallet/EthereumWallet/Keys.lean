@@ -28,7 +28,7 @@ import EthereumWallet.Keys.KeystoreAxioms
   the operating system; every function refuses a wrong length. Whether the bytes are
   random, and never reused, is the host's duty and is not checked here.
 * No external implementation. SHA-2 and HMAC are `L4Factoidal.Crypto` (pure Lean);
-  Keccak and the curve are `EVMCleanroom` modules; the rest is in this directory.
+  Keccak and the curve are `EVMCleanroom` modules (`Keccak`, `Precompiles.Secp256k1`); the rest is in this directory.
   Published vectors and the BIP-39 wordlist (specification data) are under
   `third_party/testing/ethereum-wallet`.
 * No AES. The repository allows only verified hardware AES and no hand-written one

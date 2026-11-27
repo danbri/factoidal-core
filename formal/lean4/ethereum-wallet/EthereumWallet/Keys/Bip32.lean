@@ -100,7 +100,7 @@ def childKey? (il parentKey : Nat) : Option Nat :=
 def childPoint? (il : Nat) (parent : Secp.Pub) : Option Secp.Pub :=
   if Secp.n ≤ il then none
   else if il = 0 then some parent
-  else (Secp.mulBase il).bind fun p => Secp.add p parent
+  else Secp.baseMulAdd il parent
 
 /-- First four bytes of RIPEMD160(SHA256(compressed point)). -/
 def fingerprint (p : Secp.Pub) : ByteArray :=
