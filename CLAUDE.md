@@ -1115,6 +1115,21 @@ tier 2, inline caches for property reads (target: at least 3 times faster on sit
 shape). Tracking: https://github.com/danbri/factoidal-core/issues/471. Each step reports its
 measurement before and after.
 
+### BubblePopJS JIT: order after tier 2 (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "next: 1. then 2 then3 then 4. Close 475. Your advice needed on 476,
+486." The numbers are those of the coordinator's question after tier 2 was measured and not landed
+(https://github.com/danbri/factoidal-core/issues/471#issuecomment-7200198103):
+
+1. The global-name cache (`vmGlobalHit` walks the environments with `findEnv` before every cached
+   read: 25% of `props.js`, 14% of `method.js`).
+2. Cheaper register-machine steps (values as 64-bit words, registers with no boxes; heap plan rule 1).
+3. Object shapes (design: `docs/bubblepopjs-heap.md` of PR 538).
+4. LTO as the default for `leanjs` (needs three packages in the factoidal-builds image first).
+
+PR 475 is closed (replaced by PR 557). PRs 476 and 486 wait for the owner after the coordinator's
+advice. Their measurements are in `docs/bubblepopjs-jit.md`, copied to `main`.
+
 ### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
 
 Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
