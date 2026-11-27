@@ -40,7 +40,9 @@ images = {}
 with tarfile.open(a.archive) as archive:
     for member in sorted(archive.getmembers(), key=lambda item: item.name):
         name = PurePosixPath(member.name)
-        if member.isfile() and len(name.parts) == 2 and name.parts[0] == 'images' and name.suffix == '.svg':
+        # All files of images/: the SVG fonts, and the external scripts (.es, .js) that
+        # SvgTinyProbe.lean reads under this directory only (`scriptText`).
+        if member.isfile() and len(name.parts) == 2 and name.parts[0] == 'images':
             data = archive.extractfile(member).read()
             (resources / name.name).write_bytes(data)
             images[name.name] = sha(data)

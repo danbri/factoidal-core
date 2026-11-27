@@ -33,6 +33,7 @@ import ImageData
 import SVG
 import SVGRaster
 import SVGText
+import SVGScript
 import SVGForgiving
 import SVGCssColour
 import WebRenderSVG

@@ -840,12 +840,18 @@ def contains (d : Dom) (n : NodeId) (other : Option NodeId) : Bool :=
   | some o => d.isInclusiveAncestor n o
   | none => false
 
+/-- An attribute that gives its element an ID: `id` in no namespace (DOM §4.9), and in an
+XML document also `xml:id` (xml:id 1.0 §4: its value is an ID; SVG Tiny 1.2 §5.10.2 and
+Appendix A.8.2: the uDOM's `getElementById` finds it). An HTML document is not changed. -/
+def isIdAttr (htmlDoc : Bool) (a : Attr) : Bool :=
+  (a.ns.isNone && a.lname == "id") || (!htmlDoc && a.ns == some xmlNS && a.lname == "id")
+
 /-- "Get an element by ID" (DOM §4.2.4): the first element in tree order among
-the descendants of `n` whose ID is `id`. -/
+the descendants of `n` whose ID is `id` (`isIdAttr`). -/
 def getElementById (d : Dom) (n : NodeId) (id : String) : Option NodeId :=
   (d.treeOrder n false).find? fun k =>
     let x := d.get k
-    x.type == .element && x.attrs.any fun a => a.ns.isNone && a.lname == "id" && a.value == id
+    x.type == .element && x.attrs.any fun a => isIdAttr (d.get x.doc).htmlDoc a && a.value == id
 
 /-! ## Documents of other browsing contexts -/
 
