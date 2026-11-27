@@ -75,30 +75,32 @@ def permit : Risk.Accepted .audioWithoutActivation := Risk.dangerouslyAccept .au
 def part1 (t : Tally) (dir : String) : IO Unit := do
   let path := dir ++ "/realtime.wav"
   let dev : Api.State := { device := some (48000.0, 2), autoplay := some permit }
-  let .ok (st, outs) := ops dev ((190, [s "interactive", ByteArray.empty, n 7]) :: graph 1)
+  -- An offline context first, as a page that renders offline before it plays: the real-time
+  -- context is context 2 (its id is not 1 on either side).
+  let .ok (st, outs) := ops dev ([(175, [n 2, n 100, d 48000.0]), (190, [s "interactive", ByteArray.empty, n 7])] ++ graph 2)
     | check t "control ops" false; return
-  check t "context answer" (String.fromUTF8! outs[0]! == "1 48000 2 running") (String.fromUTF8! outs[0]!)
+  check t "context answer" (String.fromUTF8! outs[1]! == "2 48000 2 running") (String.fromUTF8! outs[1]!)
   let t0 ← IO.monoMsNow
   let (tasks, st) ← Realtime.after {} 1 s!"wav:{path}" st
   check t "task started" (tasks.size == 1)
-  check t "outbox taken" ((rtOf st 1).outbox.isEmpty)
+  check t "outbox taken" ((rtOf st 2).outbox.isEmpty)
   -- Until the source has ended and 1.1 s are played.
-  let (tasks, st, ended) ← pump tasks 1 st 600 fun a => (rtOf a 1).framesPlayed ≥ 52800
+  let (tasks, st, ended) ← pump tasks 1 st 600 fun a => (rtOf a 2).framesPlayed ≥ 52800
   let t1 ← IO.monoMsNow
-  check t "plays 1.1 s" ended s!"framesPlayed {(rtOf st 1).framesPlayed}"
-  let evs := (rtOf st 1).events.toList
+  check t "plays 1.1 s" ended s!"framesPlayed {(rtOf st 2).framesPlayed}"
+  let evs := (rtOf st 2).events.toList
   check t "ended event" (evs.contains (1, 1)) (toString evs)
   check t "state running reported" (evs.contains (2, 1)) (toString evs)
   check t "callback queued" (st.wakeups.contains 7)
   -- close()
-  let .ok (st, outs) := ops st [(191, [n 1, s "close"])] | check t "close op" false; return
+  let .ok (st, outs) := ops st [(191, [n 2, s "close"])] | check t "close op" false; return
   let call := (String.fromUTF8! outs[0]!).toNat!
   let (tasks, st) ← Realtime.after tasks 1 "unused" st
-  let (_, st, closed) ← pump tasks 1 st 400 fun a => (rtOf a 1).state == .closed
+  let (_, st, closed) ← pump tasks 1 st 400 fun a => (rtOf a 2).state == .closed
   check t "closed" closed
-  let evs := (rtOf st 1).events.toList
+  let evs := (rtOf st 2).events.toList
   check t "close confirmed" (evs.contains (3, call) && evs.contains (2, 2)) (toString evs)
-  let rt := rtOf st 1
+  let rt := rtOf st 2
   check t "no under-run" (rt.underruns == 0) s!"underruns {rt.underruns}"
   -- The task ends and closes the file: wait for it.
   for (_, h) in tasks.toList do let _ ← IO.wait h.task

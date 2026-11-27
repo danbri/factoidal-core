@@ -5842,8 +5842,11 @@
     const STATES = ['suspended', 'running', 'closed'];
     // The events of the rendering side, in the order Lean gives them (op 193): 1 a source ended,
     // 2 the state changed, 3 a control call was carried out, 4 one was refused.
+    // The engine runs a queued callback once and then releases it (as a timer's), so each read
+    // gives Lean the callback for the next events.
     const rtEvents = cs => {
-      const ab = ask(193, [cs.id], 'AudioContext', true);
+      cs.cb = register(() => rtEvents(cs));
+      const ab = ask(193, [cs.id, cs.cb], 'AudioContext', true);
       const dv = new DataView(ab), count = dv.getUint32(0, true);
       for (let i = 0; i < count; i++) {
         const kind = dv.getUint8(4 + 5 * i), v = dv.getUint32(5 + 5 * i, true);

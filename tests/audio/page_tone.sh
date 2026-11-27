@@ -43,7 +43,8 @@ offline = [l for l in logs if l.startswith('offline-hash ')]
 if not offline: fails.append('no offline-hash log')
 for need in ('created running', 'ended at', 'closed closed'):
     if not any(l.startswith(need) for l in logs): fails.append(f'no log "{need}"')
-data = open(wav, 'rb').read()
+import os
+data = open(wav, "rb").read() if os.path.exists(wav) else b""
 if len(data) < 58: fails.append(f'wav has {len(data)} bytes')
 else:
     rate, ch = struct.unpack_from('<I', data, 24)[0], struct.unpack_from('<H', data, 22)[0]

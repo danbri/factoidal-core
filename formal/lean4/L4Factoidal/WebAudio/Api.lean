@@ -131,7 +131,9 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
   * 192 `time(ctx)`: doubles `currentTime`, `baseLatency`, `outputLatency`, one state byte (0
     suspended, 1 running, 2 closed), doubles `contextTime` and `performanceTime` (of
     `getOutputTimestamp()`; the page-clock ms of the last report, 0 before the first).
-  * 193 `events(ctx)`: `u32` count, then each event as a kind byte and a `u32` value; clears them.
+  * 193 `events(ctx, [callback])`: `u32` count, then each event as a kind byte and a `u32` value;
+    clears them. `callback` (decimal) is the page callback for the next events: the engine releases
+    a task's callback after it runs once, so the page registers a new one at each read.
     Kind 1 source ended (node id), 2 state changed (0, 1, 2 as above), 3 control call resolved
     (call id), 4 control call rejected (call id).
   * 194 `decodeAudioData(ctx, bytes, callback)`: any context; queues a job; answers the job id.
@@ -820,8 +822,11 @@ def timeOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) 
 def eventsOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let id ← natArg fs 0
   let rt ← match s.realtime[id]? with | some rt => pure rt | none => throw errType
+  -- The page's callback handle for the next events: the engine releases a task's callback after
+  -- it runs (`PageEvents.runTask`), so the page gives a new one each time it reads the events.
+  let next ← optNatArg fs 1
   let out := rt.events.foldl (fun acc (k, v) => acc ++ ⟨#[k]⟩ ++ u32le v) (u32le rt.events.size)
-  pure ({ s with realtime := s.realtime.insert id { rt with events := #[] } }, out)
+  pure ({ s with realtime := s.realtime.insert id { rt with events := #[], callback := next.getD rt.callback } }, out)
 
 def decodeAudioDataOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) := do
   let id ← natArg fs 0
@@ -1645,6 +1650,13 @@ private def reported : Option State := do
   pure (u8s r, u8s r2, s.wakeups.size)) ==
   some ([3, 0, 0, 0, 1, 1, 0, 0, 0, 2, 1, 0, 0, 0, 3, 1, 0, 0, 0], [0, 0, 0, 0], 1)
 #guard err {} 193 [n 1] == errType
+-- The callback given to 193 takes the next events (the engine runs a callback once).
+#guard (do
+  let s ← reported
+  let (s, _) ← (step s 193 #[n 1, n 42]).toOption
+  let s := applyReport { s with wakeups := #[] } 1 { framesRendered := 30000, ended := #[1] }
+  pure (s.wakeups.toList, (rtOf s 1).callback)) == some ([42], 42)
+#guard err (reported.getD {}) 193 [n 1, t "x"] == errType
 -- Two reports: frames never go back; a late report with fewer frames changes no frame.
 #guard (do
   let s ← reported
