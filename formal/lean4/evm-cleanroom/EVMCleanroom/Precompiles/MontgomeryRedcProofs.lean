@@ -29,6 +29,9 @@ open Limb LimbB
 
 private theorem zero_toNat' : (0 : UInt64).toNat = 0 := rfl
 
+-- The rows are matched as written; nothing below looks inside the primitives.
+attribute [local irreducible] Limb.mac Limb.adc
+
 variable [LimbB.MacOK]
 
 /-- Kind: functional correctness (one row of Montgomery reduction on 4 limbs).
@@ -54,6 +57,7 @@ theorem U256.redc_row (N : U256) (inv a0 a1 a2 a3 a4 e : UInt64) (r0 r1 r2 r3 r4
     hinv (UInt64.toNat_mul a0 inv) h0 h1 h2 h3 h4
     (UInt64.toNat_lt _) (UInt64.toNat_lt _) (UInt64.toNat_lt _) he
 
+set_option maxHeartbeats 1600000 in
 /-- Kind: functional correctness (the 4 rows of Montgomery reduction).
     Says: for a modulus with the `n0inv` property, `redc N inv t` is the conditional subtraction
     `condSub N e q` of a carry `e` and 4 limbs `q` such that `t + M · N = (e · 2^256 + q) · 2^256`
@@ -160,6 +164,7 @@ theorem U384.redc_row (N : U384) (inv a0 a1 a2 a3 a4 a5 a6 e : UInt64) (r0 r1 r2
     hinv (UInt64.toNat_mul a0 inv) h0 h1 h2 h3 h4 h5 h6
     (UInt64.toNat_lt _) (UInt64.toNat_lt _) (UInt64.toNat_lt _) he
 
+set_option maxHeartbeats 1600000 in
 /-- Kind: functional correctness (the 6 rows of Montgomery reduction).
     Says: for a modulus with the `n0inv` property, `redc N inv t` is the conditional subtraction
     `condSub N e q` of a carry `e` and 6 limbs `q` such that `t + M · N = (e · 2^384 + q) · 2^384`
