@@ -90,7 +90,7 @@ of `WebApi.lean`; -28 to -30 are new.
     2 and the mode `max` are -23. An unknown name or enum value is -20.
   * 184 `setBuffer(ctx, node, channels, length, sampleRate, data)`: the `buffer` setter of an
     `AudioBufferSourceNode`; `channels` "" sets null; `data` is `channels * length` binary32
-    values. -29 when a non-null buffer was set before; -20 when the byte count does not match;
+    values, in one argument or in one argument for each channel (joined in order). -29 when a non-null buffer was set before; -20 when the byte count does not match;
     -23 buffer values out of range (`AudioBuffer.create`).
   * 185 `setPeriodicWave(ctx, node, real, imag, disableNormalization)`: `setPeriodicWave` of an
     oscillator; `real` and `imag` are binary32 arrays or "-". -28, -20 as `createPeriodicWave`.
@@ -332,13 +332,38 @@ def optF64Arg (fs : Array ByteArray) (i : Nat) : Except Int (Option Float) :=
   | none => .ok none
   | some b => if b.size == 0 then .ok none else (f64Arg fs i).map some
 
+/-- `n` binary32 values of `b`, from byte `off`, as one `FloatArray` made in one pass. The reads are
+`u32At`, which gives 0 past the end of `b`; callers check the size first. -/
+def f32sFrom (b : ByteArray) (off n : Nat) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity n
+  for i in [0:n] do
+    out := out.push (Float32.ofBits (u32At b (off + 4 * i))).toFloat
+  return out
+
 /-- A binary32 array. -/
 def f32s (b : ByteArray) : Except Int FloatArray :=
   if b.size % 4 != 0 then .error errType
-  else .ok ⟨(Array.range (b.size / 4)).map fun i => (Float32.ofBits (u32At b (4 * i))).toFloat⟩
+  else .ok (f32sFrom b 0 (b.size / 4))
+
+/-- The binary32 bytes of `a`, appended to `out`: four bytes for each value, little-endian, in one
+pass (the values are rounded to binary32 as `f32le` does). -/
+def pushF32s (out : ByteArray) (a : FloatArray) : ByteArray := Id.run do
+  let mut out := out
+  for i in [0:a.size] do
+    let v := (a.get! i).toFloat32.toBits
+    out := out.push v.toUInt8
+    out := out.push (v >>> 8).toUInt8
+    out := out.push (v >>> 16).toUInt8
+    out := out.push (v >>> 24).toUInt8
+  return out
 
 def f32sBytes (a : FloatArray) : ByteArray :=
-  a.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
+  pushF32s (ByteArray.emptyWithCapacity (4 * a.size)) a
+
+/-- The binary32 bytes of every channel, channel by channel (the samples of ops 187 and 195). -/
+def channelsBytes (chans : Array FloatArray) : ByteArray :=
+  let n := chans.foldl (fun n c => n + c.size) 0
+  chans.foldl pushF32s (ByteArray.emptyWithCapacity (4 * n))
 
 def optF32s (fs : Array ByteArray) (i : Nat) : Except Int (Option FloatArray) :=
   match fs[i]? with
@@ -658,14 +683,16 @@ def bufferArgs (fs : Array ByteArray) (i : Nat) :
   | some nch =>
     let len ← natArg fs (i + 1)
     let sr ← f64Arg fs (i + 2)
-    let data := fs.getD (i + 3) ByteArray.empty
+    -- the samples: one argument of all channels, or one argument for each channel (the page does
+    -- not copy the channels into one array: `TypedArray.prototype.set` costs 0.7 microseconds a value)
+    let data := (fs.extract (i + 3) fs.size).foldl (· ++ ·) ByteArray.empty
     if nch * len > maxSamples then throw errNotSupported
-    let b ← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer)
+    -- `create` with one frame decides what `create` with `len` frames decides (its test reads the
+    -- length only as `1 ≤ length`), and makes no zero channels that the next lines throw away
+    let b ← lift (Buffer.AudioBuffer.create nch (min len 1) sr |>.mapError Context.Error.ofBuffer)
     if data.size != nch * len * 4 then throw errType
-    let all ← f32s data
-    let chans := (Array.range nch).map fun ch =>
-      (⟨(Array.range len).map fun j => all.data[ch * len + j]!⟩ : FloatArray)
-    pure (some { b with data := chans })
+    let chans := (Array.range nch).map fun ch => f32sFrom data (4 * ch * len) len
+    pure (some { b with length := len, data := chans })
 
 def setBufferOp (s : State) (fs : Array ByteArray) : Except Int (State × ByteArray) :=
   withCtx s fs fun c => do
@@ -693,7 +720,7 @@ def checkOp (fs : Array ByteArray) : Except Int ByteArray :=
     let len ← natArg fs 2
     let sr ← f64Arg fs 3
     if nch * len > maxSamples then throw errNotSupported
-    let _ ← lift (Buffer.AudioBuffer.create nch len sr |>.mapError Context.Error.ofBuffer)
+    let _ ← lift (Buffer.AudioBuffer.create nch (min len 1) sr |>.mapError Context.Error.ofBuffer)
     pure ByteArray.empty
   | "wave" => do
     let _ ← waveOf fs 1
@@ -712,7 +739,7 @@ def startRenderingOp (s : State) (fs : Array ByteArray) : Except Int (State × B
   withCtx s fs fun c => do
     let (c', chans) ← lift c.startRendering
     let ended := endedIds c'
-    let samples := chans.foldl (fun acc ch => acc ++ f32sBytes ch) ByteArray.empty
+    let samples := channelsBytes chans
     let tail := ended.foldl (fun acc i => acc ++ u32le i) (u32le ended.length)
     pure (c', u32le c.numberOfChannels ++ u32le c.length ++ samples ++ tail)
 
@@ -945,12 +972,15 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
   | _, _ => s
 
 /-- Plan 13.3: the page has a real-time context that is running, or one with a control call the
-rendering side has not answered (other than a `resume` that waits for activation). While this
+rendering side has not answered (other than a `resume` that waits for activation), or a decode job
+without a result (ops 194 and 195: the engine finishes it on a task, and only a turn collects it).
+While this
 holds the engine asks for a turn at most 25 ms ahead, so the host gives the turns that deliver
 the events. -/
 def needsTurns (s : State) : Bool :=
   s.realtime.fold (fun b _ rt => b || rt.state == .running ||
-    rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false
+    rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false ||
+  s.decodeJobs.fold (fun b _ j => b || j.result.isNone) false
 
 /-- A sequence of reports, in order. -/
 def applyReports (s : State) (rs : List (Nat × Report)) : State :=
@@ -963,12 +993,12 @@ def takeOutbox (s : State) : State × Array (Nat × Array (Nat × Array ByteArra
       if rt.outbox.isEmpty then none else some (id, rt.outbox)).toArray)
 
 /-- The decode jobs not yet taken: (job id, sample rate, bytes), in job order. They are marked
-taken. The order is `List.mergeSort`'s (a loop through its `@[csimp]` form; `Array.qsort` recursed
+taken, and the table drops their bytes (the file stays in memory once, with the task). The order is `List.mergeSort`'s (a loop through its `@[csimp]` form; `Array.qsort` recursed
 once per job in its worst case, `tools/lean-tail-recursion-audit.py`). -/
 def takeDecodeJobs (s : State) : State × Array (Nat × Float × ByteArray) :=
   let l := s.decodeJobs.toList.filter fun (_, j) => !j.taken && j.result.isNone
   let l := l.mergeSort (fun a b => a.1 ≤ b.1)
-  ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true } },
+  ({ s with decodeJobs := s.decodeJobs.map fun _ j => { j with taken := true, bytes := ByteArray.empty } },
    (l.map fun (id, j) => (id, j.rate, j.bytes)).toArray)
 
 /-- Store the result of decode job `job` and queue its callback. A job that does not exist, or
@@ -1854,6 +1884,31 @@ private def withJob : Option State :=
 #guard (do
   let s ← chain st0 [(194, [n 1, t "ab", n 3])]
   pure ((takeDecodeJobs s).2[0]!.2.1)) == some 44100.0
+
+-- A pending decode job asks for turns; a finished one does not.
+#guard (do
+  let s ← withJob
+  let (s1, _) := takeDecodeJobs s
+  pure (needsTurns s, needsTurns s1, needsTurns (finishDecode s1 1 (.error errEncoding)))) ==
+  some (true, true, false)
+-- Taken jobs drop their bytes; the job list gives them once.
+#guard (do
+  let s ← withJob
+  let (s1, jobs) := takeDecodeJobs s
+  pure (jobs[0]!.2.2.size, s1.decodeJobs[1]!.bytes.size)) == some (4, 0)
+
+-- The one-pass binary32 readers and writers equal the definitions they replace.
+private def f32Samples : FloatArray :=
+  ⟨#[0.0, -0.0, 1.0, -0.25, 0.1, 3.4028234663852886e38, 1.0e-45, 1.0 / 0.0, -1.0 / 0.0, 0.0 / 0.0, 123456.789]⟩
+#guard f32sBytes f32Samples == f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty
+#guard channelsBytes #[f32Samples, ⟨#[0.5]⟩] ==
+  f32Samples.data.foldl (fun acc x => acc ++ f32le x) ByteArray.empty ++ f32le 0.5
+#guard (f32s (f32sBytes f32Samples)).toOption.map (·.size) == some 11
+#guard (f32s (f32sBytes f32Samples)).toOption.map (fun a => a.data.map fun x => x.toFloat32.toBits) ==
+  some (f32Samples.data.map fun x => x.toFloat32.toBits)
+#guard (f32sFrom (f32sBytes f32Samples) 8 3).data ==
+  (Array.range 3).map fun i => (Float32.ofBits (u32At (f32sBytes f32Samples) (8 + 4 * i))).toFloat
+#guard (f32s ⟨#[1, 2, 3]⟩).toOption.isNone
 
 -- Ops 197 to 199 are not ops.
 #guard err devS 197 [] == -2 && err devS 199 [] == -2
