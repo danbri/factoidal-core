@@ -228,3 +228,18 @@ statement_sha256 = "7fb309f4c092e73de74526a95c89465f819f3715281eec706ef8d872b9cd
 spec_defs = [
   { name = "L4Factoidal.FPP0.Derives", file = "formal/lean4/L4Factoidal/Proof/Syntax.lean", sha256 = "69688f55d09ed6a091dfff694e1835f16da2bbc7961a41c749f67f791e078030" },
 ]
+
+[[claim]]
+id = "reader-result-is-a-set"
+theorem = "L4Factoidal.RDF.Source.parseDocument_set"
+file = "formal/lean4/L4Factoidal/RDF/Source.lean"
+about = "RDF.Source.parseDocument, the reader of every RDF concrete syntax (N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD)"
+says = """When a reader accepts a document, the dataset it gives is the set of the quads of the raw parse of that document (SetOf): a set, with the same quads under the engine triple equality, the same graph names, and no quad that the raw parse does not have."""
+does_not_say = """It does not say that the raw parse follows the W3C grammar of the syntax, or that the reader accepts every valid document and refuses every invalid one: the W3C syntax suites measure that. It says nothing about blank node scoping across documents (scopedParseStage)."""
+assumptions = []
+status = "proposed"
+stages = ["parseStage", "ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+statement_sha256 = "4088529a796f87d7395faab7b4e314d1c016c653d193ca34cc5a157046aafebd"
+spec_defs = [
+  { name = "L4Factoidal.RDF.Source.SetOf", file = "formal/lean4/L4Factoidal/RDF/Source.lean", sha256 = "dec56d18f7ea95a4fdb4ca169e780411ad1c927b257bb5e020cdffe81001b14b" },
+]
