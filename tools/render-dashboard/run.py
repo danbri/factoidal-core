@@ -61,6 +61,28 @@ CORPUS_PATCHES = [
      "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001;", "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001+vec4f(f32(tiles[0])*0.0);"),
     ('Serve finite_floats.ts: render_plan.ts now imports it',
      "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts',", "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts','finite_floats.ts',"),
+    # Owner, 2026-11-27, to "should the harness give the HTML tests the files that the engine
+    # asks for": "yes" (https://github.com/danbri/factoidal-core/issues/1164).
+    ('The transport page may read files of the pinned corpus, from the same corpus server',
+     "r.request().url()===origin+'/transport'?r.continue():r.abort()",
+     "r.request().url()===origin+'/transport'||r.request().url().startsWith(origin+'/')?r.continue():r.abort()"),
+    ('An HTML test gets its document URL, and the stylesheets, imported sheets, images and '
+     'background images that Lean asks for, from the pinned corpus (inspect, then compileDocument), '
+     'as native_html_document.ts gives them; an image that is not read is left out, as there; fonts stay none',
+     "if(!a&&isHTML){a=await window.webEngine.compile(xml,800,600);policy={mode:'wasm-original-html-artifact',compilerWidth:800,compilerHeight:600,fontInputs:'none'};}",
+     "if(!a&&isHTML){const corpus=new URL(documentURL).origin+'/',inspect=options=>window.webEngine.inspectDocument(xml,{url:documentURL,...options});"
+     "const get=async url=>{if(!url.startsWith(corpus))throw Error('Requested resource outside the pinned corpus: '+url);"
+     "const response=await fetch(url);if(!response.ok)throw Error('Corpus resource HTTP '+response.status+': '+url);return new Uint8Array(await response.arrayBuffer());};"
+     "const text=bytes=>new TextDecoder().decode(bytes),base64=bytes=>{let out='';for(let i=0;i<bytes.length;i+=32768)out+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(out);};"
+     "const first=await inspect({}),resources=[],imported=[],images=[],missing=[];"
+     "for(const d of first.stylesheets??[])resources.push({nodeId:d.nodeId,url:d.url,source:text(await get(d.url))});"
+     "let sheets=first;if(resources.length||/<style/i.test(xml))for(let round=0;round<8;round++){"
+     "sheets=await inspect({resources,...(imported.length?{imported}:{})});const lacking=(sheets.imports??[]).filter(u=>!imported.some(i=>i.url===u.url));"
+     "if(!lacking.length)break;for(const {url} of lacking)imported.push({url,source:text(await get(url))});}"
+     "const wanted=new Map();for(const image of [...(first.images??[]),...(first.backgroundImages??[]),...(sheets.backgroundImages??[])])if(!wanted.has(image.key))wanted.set(image.key,image.url);"
+     "for(const [key,url] of wanted)try{images.push({key,base64:base64(await get(url))});}catch(error){missing.push(String(error.message??error));}"
+     "a=await window.webEngine.compileDocument(xml,800,600,{url:documentURL,resources,images,commands:[],...(imported.length?{imported}:{})});"
+     "policy={mode:'wasm-original-html-document',compilerWidth:800,compilerHeight:600,fontInputs:'none',documentURL,stylesheets:resources.length,imported:imported.length,images:images.length,missing};}"),
 ]
 
 
