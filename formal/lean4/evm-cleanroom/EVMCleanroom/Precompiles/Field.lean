@@ -23,7 +23,7 @@ by the callers (`a * inv a = 1`, `sqrt a ^ 2 = a`) before use, and by guards.
 namespace EVMCleanroom.Precompiles
 
 /-- Field operations on some representation. `inv` maps zero to zero. -/
-structure FieldOps (F : Type) where
+class FieldOps (F : Type) where
   zero : F
   one : F
   add : F → F → F

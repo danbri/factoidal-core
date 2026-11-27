@@ -1,0 +1,54 @@
+name: Independent Lean EVM field arithmetic
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-fieldperf.yml"
+  push:
+    branches:
+      - "wip/eth-fieldperf-**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evm-fieldperf-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  fieldperf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Lean toolchain
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Reuse compiled modules of earlier runs on this branch
+        uses: actions/cache@v4
+        with:
+          path: formal/lean4/evm-cleanroom/.lake
+          key: evm-fieldperf-lake-${{ github.head_ref || github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            evm-fieldperf-lake-${{ github.head_ref || github.ref_name }}-
+            evm-fieldperf-lake-wip/eth-fieldperf-20261127-
+      - name: Build, check and time the limb fields and the fast precompile paths
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          nproc
+          grep -m1 'model name' /proc/cpuinfo
+          scripts/fieldperf/ci.sh 2>&1 | tee /tmp/fieldperf.log
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-fieldperf-log
+          path: /tmp/fieldperf.log
