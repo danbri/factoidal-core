@@ -398,7 +398,7 @@ stereo (channels 0 and 1, a missing channel silent): the caller mixes to 1 or 2 
 def pi : Float := 3.141592653589793
 
 def clampPan (p : Float) : Float :=
-  if p ≠ p then 0.0 else if p < -1.0 then -1.0 else if p > 1.0 then 1.0 else p
+  if p.isNaN then 0.0 else if p < -1.0 then -1.0 else if p > 1.0 then 1.0 else p
 
 /-- Left and right output frame for input frames `l`, `r` (for mono, `r` is unused) at `pan`. -/
 def panFrame (mono : Bool) (pan l r : Float) : Float × Float :=

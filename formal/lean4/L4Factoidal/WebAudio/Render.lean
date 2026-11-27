@@ -232,8 +232,11 @@ def Plan.of (g : Graph.Graph) : Plan :=
 /-- `paramComputedValue`: NaN is replaced by the default value, then the value is clamped to the
 nominal range. -/
 def finalValue (s : ParamSpec) (x : Float) : Float :=
-  let y := if x ≠ x then s.defaultValue else x
-  if y < s.minValue then s.minValue else if y > s.maxValue then s.maxValue else y
+  let y := if x.isNaN then s.defaultValue else x
+  let z := if y < s.minValue then s.minValue else if y > s.maxValue then s.maxValue else y
+  -- the computed value of a parameter is a binary32 value (WPT k-rate-audiobuffersource-connections.html
+  -- compares an automation with a connected signal exactly)
+  z.toFloat32.toFloat
 
 /-- The block of output `out` of node `src`, or one mono channel of silence when the node has not
 produced it (a muted node, or a node that comes later in the order). -/

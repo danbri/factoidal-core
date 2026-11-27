@@ -735,6 +735,26 @@ private def zeros (k : Nat) : List Float := List.replicate k 0.0
   | .ok out => (out.getD 0 ⟨#[]⟩).data.all (fun x => x != x)
   | .error _ => false)
 
+-- a NaN input of a parameter is replaced by the default value (WPT nan-param.html, second part)
+#guard (match go 1 4 (fun c => do
+    let (c, m) ← c.createConstantSource
+    let c ← c.setValueAtTime m 0 1e30 0.0
+    let (c, g1) ← c.createGain
+    let (c, g2) ← c.createGain
+    let c ← c.setValueAtTime g1 0 1e30 0.0
+    let c ← c.setValueAtTime g2 0 (-1e30) 0.0
+    let c ← c.connect m 0 g1 0
+    let c ← c.connect m 0 g2 0
+    let (c, src) ← c.createConstantSource
+    let c ← c.setValueAtTime src 0 100.0 0.0
+    let c ← c.connectParam g1 0 src 0
+    let c ← c.connectParam g2 0 src 0
+    let c ← c.connect src 0 0 0
+    let c ← c.start m
+    c.start src) with
+  | .ok out => (out.getD 0 ⟨#[]⟩).data.all (fun x => x == 1.0)
+  | .error _ => false)
+
 -- Rendering in steps: length 10, quanta of 4, a source starting at frame 5. One quantum gives 4
 -- frames, the next step is cut at the length (6 frames, not 8), and a third step is refused.
 private def stepped : Except Error (Array FloatArray × Array FloatArray × Bool) := do
