@@ -61,6 +61,7 @@ def infinity : Pt := ⟨1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0⟩
 def affZero : Aff := ⟨0, 0, 0, 0, 0, 0, 0, 0⟩
 @[inline] def Pt.isInfinity (p : Pt) : Bool := (p.z0 ||| p.z1 ||| p.z2 ||| p.z3) == 0
 
+set_option maxRecDepth 16384 in
 /-- `[2]p`. Three multiplications and four squarings; infinity maps to infinity (`Z₃ = 2·Y·Z`). -/
 def dbl (p : Pt) : Pt :=
   let x := p.x
@@ -77,6 +78,7 @@ def dbl (p : Pt) : Pt :=
   let yz := Ff.mul y z
   Pt.ofXYZ x3 y3 (Ff.add yz yz)
 
+set_option maxRecDepth 16384 in
 /-- `p + q` for an affine `q` (negated first when `negate` is set). Eight multiplications and
     three squarings in the general case. -/
 def madd (p : Pt) (q : Aff) (negate : Bool) : Pt :=
@@ -102,6 +104,7 @@ def madd (p : Pt) (q : Aff) (negate : Bool) : Pt :=
       let y3 := Ff.sub (Ff.mul r (Ff.sub v x3)) (Ff.mul y hhh)
       Pt.ofXYZ x3 y3 (Ff.mul z h)
 
+set_option maxRecDepth 16384 in
 /-- `p + q` for Jacobian points (`q` negated first when `negate` is set). Twelve multiplications
     and four squarings in the general case. -/
 def padd (p q : Pt) (negate : Bool) : Pt :=

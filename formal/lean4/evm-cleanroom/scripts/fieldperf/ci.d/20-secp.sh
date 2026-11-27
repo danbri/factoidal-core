@@ -1,16 +1,19 @@
 # Fast ECRECOVER: generic windowed scalar multiplication, the secp256k1 fast path, its differential check and timing.
 set -euo pipefail
 L="lake -f lakefile-fieldperf.toml"
-$L build EVMCleanroom.Precompiles.ScalarMul EVMCleanroom.Precompiles.Secp256k1FieldFast
-( ulimit -v 12000000; timeout 600 $L build EVMCleanroom.Precompiles.Secp256k1Glv ) || { echo "FAILURES Glv build"; exit 1; }
-echo "RESULT Glv built"
-P=EVMCleanroom/Precompiles/Secp256k1Point.lean
-for cut in "def madd" "def padd" "def betaL" "end EVMCleanroom"; do
-  n=$(grep -n "^$cut" $P | head -1 | cut -d: -f1)
-  head -n $((n-1)) $P > /tmp/Probe.lean
-  s=$(date +%s)
-  ( ulimit -v 12000000; timeout 240 $L env lean -D profiler=true -D profiler.threshold=300 /tmp/Probe.lean > /tmp/probe.out 2>&1 ) && r=ok || r="exit $?"
-  echo "RESULT probe up to '$cut': $r, $(( $(date +%s)-s )) s"
-  grep -v "^$" /tmp/probe.out | grep -v "^	" | cut -c1-400 | head -25
+$L build EVMCleanroom.Precompiles.ScalarMul EVMCleanroom.Precompiles.Secp256k1FieldFast EVMCleanroom.Precompiles.Secp256k1Glv
+( ulimit -v 12000000; timeout 900 $L build EVMCleanroom.Precompiles.Secp256k1Point ) || { echo "FAILURES Point build"; exit 1; }
+echo "RESULT Point built"
+s=$(date +%s)
+( ulimit -v 12000000; timeout 420 $L env lean -D profiler=true -D profiler.threshold=300 EVMCleanroom/Precompiles/Secp256k1Fast.lean > /tmp/probe.out 2>&1 ) && r=ok || r="exit $?"
+echo "RESULT probe Fast: $r, $(( $(date +%s)-s )) s"
+grep -v "^$" /tmp/probe.out | grep -v "^	\|depends on axioms\|^ Quot\|^ Classical" | cut -c1-400 | head -60
+[ "$r" = ok ] || exit 1
+( ulimit -v 12000000; timeout 900 $L build EVMCleanroom.Precompiles.Secp256k1Fast EVMCleanroom.Precompiles.Ecrecover ) || { echo "FAILURES Fast build"; exit 1; }
+echo "RESULT secp modules built (theorems and build-time guards)"
+( ulimit -v 12000000; timeout 1200 $L build evm-secpperf ) || { echo "FAILURES exe build"; exit 1; }
+for f in Secp256k1FieldFast Secp256k1Point Secp256k1Fast; do
+  c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
+  echo "$f.c: closure calls $(grep -c 'lean_apply_' "$c" || true), constructor allocations $(grep -c 'lean_alloc_ctor' "$c" || true), lines $(wc -l < "$c")"
 done
-exit 1
+.lake/build/bin/evm-secpperf 2000
