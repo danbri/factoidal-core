@@ -1672,8 +1672,8 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     | .ok secret, some port =>
       let address := str request "address"
       let hostPart := if address.toList.contains ':' then "[" ++ address ++ "]" else address
-      let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p),
-        socketBase := "ws://" ++ hostPart ++ ":" ++ toString port ++ "/" ++ secret }
+      let platform := match str request "platform" with | "" => "linux" | p => p
+      let browser : WebDriver.Protocol.Browser := { platform := platform, socketBase := "ws://" ++ hostPart ++ ":" ++ toString port ++ "/" ++ secret }
       return ({ held with webdriver := some ({ secret, port }, {}, browser, {}, {}) },
         .ok (JSON.Json.object [("secret", .string secret)]).toString)
     | .ok _, none => return (held, .error "scriptSession: webdriverStart needs a port")
