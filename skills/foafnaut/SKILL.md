@@ -689,6 +689,12 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
 - Before you push to `main`: `git fetch origin main`, rebase, then
   `git merge-base --is-ancestor origin/main HEAD` and `git diff --stat origin/main HEAD`.
   Touch only the files you meant. Remove `.lake` and `.wasm-work` after the push.
+- Host policy ratchet (https://github.com/danbri/factoidal-core/issues/1188): a new numeric
+  constant, default, threshold or clamp in a host runtime file fails
+  `tools/foafnaut-host-policy-audit.py` (run by `tools/host-purity-lint.sh` and the workflow
+  "Assurance registers"). Prefer the decision in Lean; else update the file's line in
+  `foundation/foafnaut-host-policy.txt` with a reason (`--sites FILE` lists them, `--record`
+  rewrites the counts). A decision moved to Lean lowers the count.
 - Page-only change: `tools/hub-quick-ship.sh` (no engine build; it refuses other paths,
   prints the deploy command).
 
