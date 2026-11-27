@@ -13,6 +13,8 @@ extern lean_object *initialize_WebRenderFont(uint8_t builtin);
 extern lean_object *initialize_WebDocument(uint8_t builtin);
 extern lean_object *web_render_compile(lean_object *,uint32_t,uint32_t);
 extern lean_object *web_document_engine_new(lean_object *);
+/* WebDocument.engineEnd: the session's real-time audio runs end before its state is freed. */
+extern lean_object *web_document_end(lean_object *);
 #ifndef __EMSCRIPTEN__
 #include <dlfcn.h>
 #include <pthread.h>
@@ -205,7 +207,9 @@ void web_session_cancel(web_session *s) {
 }
 /* End a session: its engine state is freed (a task session is closed first; its task frees
    the state when it ends). No call on it may run or come after this: a host frees a session
-   only after every call it made on it has returned. The default session is never freed. */
+   only after every call it made on it has returned. The default session is never freed. Before
+   the state is freed its real-time audio runs end (WebDocument.engineEnd, which takes the state);
+   a task session's task does the same when it ends (WebSession.serve). */
 void web_session_free(web_session *s) {
   if (!s || s==default_session) return;
 #ifndef __EMSCRIPTEN__
@@ -219,7 +223,7 @@ void web_session_free(web_session *s) {
   session_lock(s);
   lean_object *e=s->engine; s->engine=NULL;
   session_unlock(s);
-  if (e) lean_dec(e);
+  if (e) lean_dec(web_document_end(e));
 #ifndef __EMSCRIPTEN__
   pthread_mutex_destroy(&s->lock);
 #endif

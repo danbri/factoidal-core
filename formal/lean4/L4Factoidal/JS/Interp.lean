@@ -299,6 +299,24 @@ def sizeCost (v : Value) : M Nat := do
     | _ => pure 0
   | _ => pure 0
 
+/-- `sizeCost` as a function of the heap (`sizeCost_eq`). -/
+def sizeCostOf (h : HeapOf H) (v : Value) : Nat :=
+  match v with
+  | .str s => s.utf8ByteSize / 64
+  | .obj id => match (h.obj id).kind with
+    | .array es => es.size / 64
+    | .buffer b => b.size / 4096
+    | .typed _ _ _ len => (if len == autoLen then 0 else len) / 4096
+    | _ => 0
+  | _ => 0
+
+theorem sizeCost_eq (v : Value) (h : HeapOf H) : sizeCost v h = .ok (sizeCostOf h v) h := by
+  unfold sizeCost sizeCostOf
+  cases v <;> try rfl
+  rename_i id
+  simp only [getObj, bind, EStateM.bind, get, getThe, MonadStateOf.get, EStateM.get, pure, EStateM.pure]
+  cases hk : (h.obj id).kind <;> simp only [hk] <;> rfl
+
 /-- `charAt` and `charCodeAt` on a string that is not ASCII, when it is the string whose units
 `cachedChars` holds: they index those units, and the only walk is the comparison with the cached
 string (memory speed, a step for each 4096 bytes). A loop over a string's units (the WPT
@@ -312,6 +330,16 @@ def cachedReceiverCost (id : Native) (thisV : Value) : M (Option Nat) := do
     | some (t, _) => pure (if t == s then some (s.utf8ByteSize / 4096) else none)
     | none => pure none
   | _ => pure none
+
+/-- `cachedReceiverCost` as a function of the heap. -/
+def cachedReceiverCostOf (h : HeapOf H) (id : Native) (thisV : Value) : Option Nat :=
+  match thisV with
+  | .str s =>
+    if !(id == .stringCharAt || id == .stringCharCodeAt) then none
+    else match h.reCache with
+      | some (t, _) => if t == s then some (s.utf8ByteSize / 4096) else none
+      | none => none
+  | _ => none
 
 /-- The built-ins that do not walk their receiver: String methods on an ASCII string index it
 in constant time (`Str.unitAt?`) or copy only their result (and take steps for that), and
@@ -340,6 +368,15 @@ def subjectCached (id : Native) (args : Array Value) : M Bool := do
     | some (t, _) => pure (t == s)
     | none => pure false
   | _, _ => pure false
+
+/-- `subjectCached` as a function of the heap. -/
+def subjectCachedOf (h : HeapOf H) (id : Native) (args : Array Value) : Bool :=
+  match id, (args[0]? : Option Value) with
+  | .regexpExec, some (Value.str s) | .regexpTest, some (Value.str s) =>
+    match h.reCache with
+    | some (t, _) => t == s
+    | none => false
+  | _, _ => false
 
 /-- Set or add an own data property with all attributes true (CreateDataProperty). -/
 def Obj.putOwn (o : Obj) (key : String) (p : PropV) : Obj :=
@@ -8095,13 +8132,17 @@ def callNative (core : CoreFn H) (id : Native) (thisV : Value) (args : Array Val
     -- String methods that index an ASCII receiver in constant time (`charAt`, `charCodeAt`,
     -- `at`, `codePointAt`) or copy only their result (`slice`, `substring`, `substr`, which
     -- take steps for the result) do not walk it, and take no steps for it.
-    let recvCost ← if indexesReceiver id thisV then pure 0 else
-      match ← cachedReceiverCost id thisV with
-      | some c => pure c
-      | none => sizeCost thisV
-    let argsCost ← if (← subjectCached id args) then pure 0
-      else args.foldlM (fun acc a => do pure (acc + (← sizeCost a))) 0
-    charge (recvCost + args.size / 64 + argsCost)
+    -- From one read of the heap, with pure functions: each call of a monadic helper that is
+    -- not inlined made a result cell (four or more a built-in call, 2026-11-27).
+    let h0 ← get
+    let recvCost := if indexesReceiver id thisV then 0 else
+      match cachedReceiverCostOf h0 id thisV with
+      | some c => c
+      | none => sizeCostOf h0 thisV
+    let argsCost := if subjectCachedOf h0 id args then 0
+      else args.foldl (fun acc a => acc + sizeCostOf h0 a) 0
+    let cost := recvCost + args.size / 64 + argsCost
+    if cost != 0 then charge cost
     let r ← realm
     match id with
     | .print => callNativeGlobal core r id thisV args newTarget
@@ -8475,9 +8516,7 @@ def loopNext (labels : List String) : Compl → Option Compl
 /-- A global name read through the cache: the value, or `Value.hole` when the general path
 must look (not a plain writable data property, or a lexical binding may shadow it). -/
 def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
-  match h.findEnv x 100000 env with
-  | some _ => .hole
-  | none =>
+  if !h.chainHit env x site then .hole else
     let g := h.obj h.realm.globalObj
     let slot := h.globalCache[site]!
     -- after `delete` the name may still be in a big map's keys as a tombstone (`PropMap.liveAt`)
@@ -8489,7 +8528,7 @@ def vmGlobalHit (h : HeapOf H) (env : Nat) (x : String) (site : Nat) : Value :=
 cached slot holds this name as a plain writable data property; `false` otherwise. -/
 def vmGlobalSet (env : Nat) (x : String) (site : Nat) (v : Value) : M Bool := do
   let h ← get
-  if (h.findEnv x 100000 env).isSome then return false
+  if !h.chainHit env x site then return false
   let gid := h.realm.globalObj
   let slot := h.globalCache[site]!
   let g := h.obj gid
@@ -11460,15 +11499,12 @@ termination_by structural n _ _ _ _ => n
 
 
 /-- The slow path of a global name: the lookup, and the cache learns the slot. -/
+@[noinline]
 def vmGlobalMiss : Nat → Nat → String → Nat → Bool → M Value
   | 0, _, _, _, _ => throw (.halt "fuel")
   | n + 1, env, x, site, strict => do
     let v ← lookup n { env, thisV := .undef, strict } x
-    let h ← get
-    if (h.findEnv x 100000 env).isNone then
-      match (h.obj h.realm.globalObj).props.slot? x with
-      | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
-      | none => pure ()
+    modify fun h => h.globalLearn site env x
     pure v
 termination_by structural n _ _ _ _ => n
 
@@ -11877,11 +11913,7 @@ def vmLoop : Nat → Code → Nat → Nat → Nat → List VFrame → Array Valu
       else
         vmStash regs fregs (bp + code.nregs)
         assignName n { env, thisV := .undef, strict := code.strict } x v
-        let h ← get
-        if (h.findEnv x 100000 env).isNone then
-          match (h.obj h.realm.globalObj).props.slot? x with
-          | some slot => set { h with globalCache := h.globalCache.setIfInBounds site slot }
-          | none => pure ()
+        modify fun h => h.globalLearn site env x
         let (regs, fregs) ← vmTake
         vmLoop n code (pc + 1) bp env fr regs fregs
     | .typeofGlobal dst x =>
@@ -13055,21 +13087,22 @@ def stringOrMath : Nat → Native → Value → Array Value → M Value
   | n + 1, id, thisV, args => do
     let a0 := argD args 0
     let a1 := argD args 1
-    let num1 (f : Float → Float) : M Value := do pure (.num (f (← toNum n a0)))
+    -- each case written out: a local helper that took the operation as a closure boxed its
+    -- argument and its answer (three cells a call of `Math.floor`, 2026-11-27)
     match id with
-    | .mathFloor => num1 Float.floor
-    | .mathCeil => num1 Float.ceil
-    | .mathAbs => num1 Float.abs
-    | .mathSqrt => num1 Float.sqrt
-    | .mathSin => num1 Float.sin
-    | .mathCos => num1 Float.cos
-    | .mathTan => num1 Float.tan
-    | .mathAtan => num1 Float.atan
-    | .mathLog => num1 Float.log
-    | .mathExp => num1 Float.exp
-    | .mathTrunc => num1 fun x => if x.isFinite then (if x < 0 then -((-x).floor) else x.floor) else x
-    | .mathSign => num1 fun x => if x.isNaN then x else if x > 0 then 1 else if x < 0 then -1 else x
-    | .mathRound => num1 mathRoundNumber
+    | .mathFloor => do pure (.num (Float.floor (← toNumQ n a0)))
+    | .mathCeil => do pure (.num (Float.ceil (← toNumQ n a0)))
+    | .mathAbs => do pure (.num (Float.abs (← toNumQ n a0)))
+    | .mathSqrt => do pure (.num (Float.sqrt (← toNumQ n a0)))
+    | .mathSin => do pure (.num (Float.sin (← toNumQ n a0)))
+    | .mathCos => do pure (.num (Float.cos (← toNumQ n a0)))
+    | .mathTan => do pure (.num (Float.tan (← toNumQ n a0)))
+    | .mathAtan => do pure (.num (Float.atan (← toNumQ n a0)))
+    | .mathLog => do pure (.num (Float.log (← toNumQ n a0)))
+    | .mathExp => do pure (.num (Float.exp (← toNumQ n a0)))
+    | .mathTrunc => do let x ← toNumQ n a0; pure (.num (if x.isFinite then (if x < 0 then -((-x).floor) else x.floor) else x))
+    | .mathSign => do let x ← toNumQ n a0; pure (.num (if x.isNaN then x else if x > 0 then 1 else if x < 0 then -1 else x))
+    | .mathRound => do pure (.num (mathRoundNumber (← toNumQ n a0)))
     | .mathAtan2 => pure (.num (Float.atan2 (← toNum n a0) (← toNum n a1)))
     | .mathPow => pure (.num (jsPow (← toNum n a0) (← toNum n a1)))
     | .mathMax | .mathMin =>

@@ -182,6 +182,13 @@ private def finish (out : Array Contour) (start : Point) (segments : Array Segme
   else if out.size >= 128 then throw "path subpath count exceeds 128"
   else pure (out.push (.path start segments.toList closed))
 
+/-- The path data as its tokens, for interpolation of `d` (SVG Tiny 1.2 §16.2.15): a command
+letter (`inl`) or the text of a number (`inr`). -/
+def tokenList (source : String) : Except String (List (Char ⊕ String)) := do
+  return (← tokens source).toList.map fun
+    | .command c => .inl c
+    | .number n => .inr n
+
 /-- Normalize valid SVG command groups into typed absolute geometry. Reflected
     controls reset after every unrelated command, including move/close/arc.
     Malformed data still follows this lab's explicit whole-input refusal policy. -/

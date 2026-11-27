@@ -53,3 +53,11 @@ private def kinds (body : String) : List String :=
 -- `xml:id` is an ID in an XML document (DOM `getElementById`)
 #guard (match parseXmlDocument (svgDoc "<rect xml:id='r'/>") with
   | .ok d => (d.getElementById 0 "r").isSome | .error _ => false)
+
+-- an attribute with a colon in its name and no namespace is left out of the drawing copy
+#guard (match parseXmlDocument (svgDoc "<rect/>") with
+  | .ok d =>
+    let k := ((d.treeOrder 0).find? fun k => (d.get k).lname == "rect").getD 0
+    let d := d.setNode k fun n => { n with attrs := n.attrs.push { lname := "v:crispness", value := "x" } }
+    XmlSerialize.serializeChildren (withoutScripting d) 0 == "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>"
+  | .error _ => false)

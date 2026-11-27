@@ -147,3 +147,34 @@ that sessions wrote in parallel (the double `escapeString`, CLAUDE.md, 2026-10-1
   OKR batch.
 - It does not say the 16,143 theorems are of low value. It says no list tells a reader which ones
   carry a public claim.
+
+## 6. State after the first night (2026-11-27, approved batch)
+
+Owner, 2026-11-27, verbatim: "Approve, start P1" and "keep working on this all night".
+
+- P1, P2: `foundation/claims.toml`, 13 proposed claims; `tools/claims-gate.py` freezes each
+  statement and each listed specification definition by SHA-256 and runs on every push
+  (workflow "Assurance registers"); `#print axioms` per claim runs after the Lean build.
+- P3: PR https://github.com/danbri/factoidal-core/pull/1192 (3 witnesses; 4 claims with a
+  reason and no witness, two of them because their hypotheses are unproved named assumptions).
+- P4: `tools/lean-panic-sites.py`: 1,276 panic sites in the 937 modules the wasm reaches by
+  imports (142 `partial def`, 820 `xs[i]!`, 314 other `name!` calls, no `panic!`). A panic in
+  compiled Lean returns a default value, so each is a place where a wrong answer can return
+  silently.
+- P5: `tools/assurance-manifest.py`; 60 of 156 entry points map to a stage that a claim names
+  (35 of them through `shippedEvaluator`, under two unproved assumptions). Builds side:
+  https://github.com/danbri/factoidal-builds/pull/71.
+- P6: finding: `l4w3c` scores the reference definitions `evalSelect`/`evalAsk`, so the
+  SPARQL 1.1 score is a specification score; no runner checked the shipped evaluator against the
+  W3C expected results. PR https://github.com/danbri/factoidal-core/pull/1195 adds
+  `--engine=shipped`.
+- P7: daily SPARQL campaign against Oxigraph. Seed 3: agrees on 4,889 of 5,000. The remaining
+  differences are `!=` between literals of different kinds:
+  https://github.com/danbri/factoidal-core/issues/1194.
+- P8 to P11: label and release-note lines; theorem count (15,441 general, 951 closed-value
+  tests); `tools/lean-lemma-index.py`; Foafnaut host policy ratchet (690 sites in 124 files).
+
+Errors of this work, recorded per iron rule 14: the first campaign comparer treated ORDER BY as
+a total order (skills/test-suites, "Random differential campaigns"); a workflow with a YAML error
+was pushed because its check was on a separate line (hazard 47); the shared declaration reader
+did not end at `partial def` (hazard 48).

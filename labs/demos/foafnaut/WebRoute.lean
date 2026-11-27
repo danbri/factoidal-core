@@ -19,8 +19,10 @@ The theorems at the end hold for every href, page address and site:
   and no scheme goes there by itself (owner, 2026-11-16: no host list sends links out);
 * `native_web_navigates`: the native browser, which loads every web site itself, opens
   every web address in the tab;
-* `settings_only_from_settings`: a link on a page other than Settings can not choose the
-  search engine (a page could otherwise send the words typed later to a site of its own);
+* `settings_only_from_settings`: a link on a page other than Settings can not give a
+  settings-only command: it can not choose the search engine (a page could otherwise send the
+  words typed later to a site of its own), and it can not let pages make sound before they are
+  used (`permit-audio`, the Settings switch of `--dangerously-permit-audio`);
 * `builtin_resolves`, `graph_resolves`: every built-in page name routes to its page;
 * `same_site_navigates`: an http(s) address of the site's own origin navigates in the tab;
 * `relative_resolves_against_base`: a relative href is the page address and the href,
@@ -59,11 +61,19 @@ def graphURL : String := "foafnaut:graph"
 (`foafnaut:theme/arcade`, `foafnaut:zoom/150`). -/
 def commands : List String :=
   ["back","forward","reload","new","close","home","source","theme","zoom",
-   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal","encoding","search-engine"]
+   "bookmark","unbookmark","pod","sync","sparql-step","classic","liberal","encoding","search-engine",
+   "permit-audio"]
 
 /-- Commands a link may give only on the Settings page; the address bar may type them
-(`:search-engine ...`). A page of any site could otherwise choose the search engine. -/
-def settingsOnly : List String := ["search-engine"]
+(`:search-engine ...`). A page of any site could otherwise choose the search engine, or let
+every page make sound before it is used (`permit-audio`: owner, 2026-11-26, "with a Settings or
+CLI setting --dangerously-permit-audio"; `Risk.audioWithoutActivation`). -/
+def settingsOnly : List String := ["search-engine", "permit-audio"]
+
+/-- Why a link on another page may not give the settings-only command `name`. -/
+def settingsOnlyReason (name : String) : String :=
+  if name == "permit-audio" then "only the Settings page, or the address bar, lets pages make sound before they are used"
+  else "only the Settings page, or the address bar, chooses a search engine"
 
 /-- What the browser loads itself. -/
 structure Site where
@@ -485,7 +495,7 @@ def fromPage (site : Site) (base : String) : Route → Route
   | .command name argument =>
     if settingsOnly.contains name && base != pageURL site "settings" then
       .refuse ("foafnaut:" ++ name ++ (if argument.isEmpty then "" else "/" ++ argument))
-        "only the Settings page, or the address bar, chooses a search engine"
+        (settingsOnlyReason name)
     else .command name argument
   | r => r
 
@@ -564,6 +574,10 @@ private def native : Site := {pages := "file:///lab/pages/",files := true}
 #guard route hub here "foafnaut:search-engine/mojeek" == .refuse "foafnaut:search-engine/mojeek" "only the Settings page, or the address bar, chooses a search engine"
 #guard route hub (pageURL hub "settings") "foafnaut:search-engine/mojeek" == .command "search-engine" "mojeek"
 #guard route native (pageURL native "settings") "foafnaut:search-engine/none" == .command "search-engine" "none"
+-- Sound before a page is used is permitted only from Settings, or typed.
+#guard route native here "foafnaut:permit-audio/on" == .refuse "foafnaut:permit-audio/on" "only the Settings page, or the address bar, lets pages make sound before they are used"
+#guard route native (pageURL native "settings") "foafnaut:permit-audio/on" == .command "permit-audio" "on"
+#guard commandRoute native "permit-audio" "off" == .command "permit-audio" "off"
 #guard commandRoute hub "search-engine" "mojeek" == .command "search-engine" "mojeek"
 #guard route hub here "foafnaut:search/lean+browser" == .page "search" "foafnaut:search/lean+browser"
 #guard (route hub here "javascript:alert(1)").isSystem == false
@@ -745,9 +759,12 @@ theorem native_web_navigates (site : Site) (base href : String) (w : Web)
   have hs : sameSite site w = false := by simp [sameSite, he]
   simp [route, h, decide, hs, he]
 
-/-- A link on a page other than Settings never chooses the search engine. -/
-theorem settings_only_from_settings (site : Site) (base href argument : String)
-    (hb : base ≠ pageURL site "settings") : route site base href ≠ .command "search-engine" argument := by
+/-- Says: a link on a page other than Settings never gives a settings-only command (it never
+chooses the search engine, and never lets pages make sound before they are used). Does not say:
+anything of the address bar (`commandRoute`), where the person types the command. -/
+theorem settings_only_from_settings (site : Site) (base href cmd argument : String)
+    (hn : cmd ∈ settingsOnly) (hb : base ≠ pageURL site "settings") :
+    route site base href ≠ .command cmd argument := by
   intro h
   unfold route at h
   split at h
@@ -765,7 +782,7 @@ theorem settings_only_from_settings (site : Site) (base href argument : String)
           simp only [Route.command.injEq] at h
           obtain ⟨rfl, rfl⟩ := h
           apply hc
-          simp [settingsOnly, hb]
+          simp [List.contains_iff_mem, hn, hb]
       | _ => simp [fromPage] at h
     | web w =>
       simp only [decide] at h

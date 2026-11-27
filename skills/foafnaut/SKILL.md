@@ -164,6 +164,12 @@ Desktop host (Deno, TypeScript, macOS only):
   fonts, page layer, CSS, layout, DOM): a `--call-graph dwarf` recording of a `--watch-sweep` run
   in `tasks` mode, read with `LAB/tools/engine_time_split.py`. Numbers for three demo pages:
   `docs/designissues/2026-11-26-foafnaut-engine-time-by-subsystem.md`.
+- A run's timeline (load phases, frames, script turns, engine worker starts, slow main-thread
+  calls, pump gaps): `LAB/tools/trace_to_perfetto.py LOG... -o run.json` reads the JSON lines of
+  `run_html.ts --log-all --perf-summary` and writes the Trace Event Format; open the file in
+  https://ui.perfetto.dev or the Chrome DevTools Performance panel (Load profile). Several logs
+  give one process each, for a before/after view. `--self-test` checks the span times. Owner
+  decision of 2026-11-27 (CLAUDE.md); no viewer had loaded a file from it when it landed.
 - Audio and video: no playback in pages, no `AudioContext`, no audio output in the Mac host, no
   hardware video decode. What exists (decoders in WasmVM, Ogg and WebM in Lean, WebCodecs object
   model) and the owner's open decisions:
@@ -229,6 +235,13 @@ Pages and generators (do not edit generated files by hand):
 Other programs in `LAB`, older than the browser: `run_ui.ts` (springs, layout, vectors, the
 FOAF graph as a window), `run_lean.ts`, `run_svg.ts`, `web-render/server.mjs` (a local lab
 server with its own QuickJS worker path), `browser-webgpu/`. `LAB/README.md` covers them.
+
+## Rule: our own engines only
+
+Owner, 2026-11-27: Foafnaut is a full independent web browser. Page JavaScript and WebAssembly run on
+BubblePopJS and BubblePopWASM (and the JIT stages that generate code for them), never on V8 or on
+another browser's engine; V8, QuickJS-NG and JavaScriptCore are measurement references only.
+CLAUDE.md, "No V8, no engine of another browser".
 
 ## Build
 
@@ -522,6 +535,12 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- Do not `git pull`, `git rebase` or `git stash pop` in the checkout while `build-web-render.sh`
+  runs there. The build reads the sources over 45 minutes; a pull in that time gives an engine of
+  no single commit, and a before/after comparison with it is not valid. Commit and push from a
+  worktree, or wait for `WEB_RENDER_BUILD_RC`. Cost: on 2026-11-26 and 2026-11-27 one session did
+  this three times (62 and 6 changed files); each time the build was stopped or run again, 45 to 60
+  minutes each.
 - A profile of the engine by function must name the lab's own modules (`NativeSVG`, `NativeGraphics`,
   `WebRender`, `NativeImage`): their C symbols have no `L4Factoidal_` prefix. On 2026-11-26 a list
   filtered on that prefix put 61% of MDN's first layout under `Par.mapChunks` (the task helper); the
@@ -689,6 +708,12 @@ site never leaves Foafnaut by itself (owner, 2026-11-16). In order
 - Before you push to `main`: `git fetch origin main`, rebase, then
   `git merge-base --is-ancestor origin/main HEAD` and `git diff --stat origin/main HEAD`.
   Touch only the files you meant. Remove `.lake` and `.wasm-work` after the push.
+- Host policy ratchet (https://github.com/danbri/factoidal-core/issues/1188): a new numeric
+  constant, default, threshold or clamp in a host runtime file fails
+  `tools/foafnaut-host-policy-audit.py` (run by `tools/host-purity-lint.sh` and the workflow
+  "Assurance registers"). Prefer the decision in Lean; else update the file's line in
+  `foundation/foafnaut-host-policy.txt` with a reason (`--sites FILE` lists them, `--record`
+  rewrites the counts). A decision moved to Lean lowers the count.
 - Page-only change: `tools/hub-quick-ship.sh` (no engine build; it refuses other paths,
   prints the deploy command).
 

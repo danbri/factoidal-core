@@ -77,6 +77,10 @@
   // ---- callbacks, by number ------------------------------------------------------
   const callbacks = new Map(); let nextCallback = 1;
   const register = f => { const id = nextCallback++; callbacks.set(id, f); return id; };
+  // Callbacks the engine queues as a task more than once (the event delivery of a real-time
+  // AudioContext, op 190): the host's release after each such task leaves them, and the page
+  // deletes them itself.
+  const kept = new Set();
 
   // ---- nodes ---------------------------------------------------------------------
   const wrappers = new Map();
@@ -5544,19 +5548,28 @@
   // without the operations leaves the interfaces undefined. Stage B of
   // https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).
   //
+  // AudioContext (ops 190 to 195, step D3 of the plan): Lean's control side of the context; the
+  // engine renders it on a task of its own and plays it through its audio output
+  // (labs/demos/foafnaut/WebAudioRun.lean). Its events (sources ended, control calls carried out or
+  // refused, changes of state) come back through a page callback that the engine queues as a task;
+  // the callback reads them (op 193). With no audio output (the Wasm build, or no Lean task
+  // manager) the constructor throws NotSupportedError. A context made before the page has sticky
+  // activation starts suspended and its resume() waits for it, unless the browser was started with
+  // --dangerously-permit-audio (or its Settings switch). Lean decides which input gives activation
+  // and releases the rule (WebScripts.performInput, WebAudio.Api.activate); no code here can.
+  //
   // What this section does not do, each with the issue that tracks it:
-  //  - AudioContext does not play. It builds graphs on a Lean context that is never rendered, so
-  //    currentTime stays 0 and no sound is made. Real-time output is stage D.
   //  - The nodes that the engine cannot render (Analyser, Convolver, DynamicsCompressor, IIRFilter,
   //    Panner, WaveShaper, ScriptProcessor, the MediaElement and MediaStream nodes, AudioWorklet and
   //    AudioListener) exist as interface objects; their constructors and factory methods throw
   //    NotSupportedError. Nothing here fakes their behaviour.
-  //  - decodeAudioData() rejects with NotSupportedError: the ops have no decoder entry yet (stage C).
+  //  - decodeAudioData() detaches its ArrayBuffer only where the engine has ArrayBuffer.prototype.transfer; see its entry.
   //  - The ops have no read of a node's channelCount, channelCountMode, channelInterpretation, type,
   //    loop, loopStart or loopEnd, and no read of a context's state. The page keeps the value of the
   //    last set that Lean accepted, and the defaults of Render.chanDefaults.
-  //  - The ops have no setValueCurveAtTime, cancelAndHoldAtTime, OfflineAudioContext.suspend(time)
-  //    or a way to free a context.
+  //  - The ops have no OfflineAudioContext.suspend(time) or a way to free an offline context.
+  //  - AudioContext.setSinkId(), a sinkId other than the default, playbackStats and the onerror of a
+  //    device that fails are not served.
   //  - AudioBufferSourceNode takes the buffer's samples when `buffer` is set (op 184), not at start()
   //    as the specification's "acquire the content" says: a change to the samples between the set
   //    and start() is not heard.
@@ -5756,15 +5769,13 @@
       if (value === undefined || Object.is(value, dflt)) return;
       ask(179, [st.cs.id, st.id, index, 'setValue', f64(value)], 'AudioParam.value');
     };
-    const bufferData = b => {
-      const data = new Float32Array(b.numberOfChannels * b.length);
-      b.data.forEach((c, i) => data.set(c, i * b.length));
-      return u8(data);
-    };
+    // The channels as byte views, one argument each: no copy here (TypedArray.prototype.set costs 0.7
+    // microseconds a value in this engine; a 2^23-frame channel took 6 s). Lean joins them.
+    const bufferData = b => b.data.map(u8);
     const attrSet = (st, name, value) => { ask(183, [st.cs.id, st.id, name, value], 'AudioNode.' + name); };
     const setBufferOf = (st, b) => {
       if (b === null) ask(184, [st.cs.id, st.id, '', '', '', ''], 'AudioBufferSourceNode.buffer');
-      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b)], 'AudioBufferSourceNode.buffer');
+      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), ...bufferData(b)], 'AudioBufferSourceNode.buffer');
       st.buffer = b;
     };
     const waveBytes = w => [w.real === null ? '-' : u8(w.real), w.imag === null ? '-' : u8(w.imag), w.disable ? '1' : '0'];
@@ -5803,18 +5814,75 @@
           self: null, params: [], kind: 'destination', maxChannelCount: cs.channels });
       }
     }
-    // A real-time context. It builds graphs on a Lean context of two channels that is never rendered:
-    // no sound is made and currentTime stays 0 (stage D, issue 1169).
+    // A real-time context (op 190): Lean answers its id, its rate, the output's channel count and its
+    // first state. `cb` is the page callback the engine queues when the rendering side reports.
+    // `control` is the [[control thread state]] (a call sets it at once); `state` is the attribute,
+    // set when the rendering side's change of state is delivered (rtEvents).
+    const STATES = ['suspended', 'running', 'closed'];
     class AudioContext extends BaseAudioContext {
       constructor(options = undefined) {
-        const o = dictConv('AudioContextOptions', options, "Failed to construct 'AudioContext'");
-        const cs = makeContext('AudioContext', 2, 1048576, o.sampleRate === undefined ? 44100 : o.sampleRate, quantumOf(o.renderSizeHint));
+        const what = "Failed to construct 'AudioContext'";
+        const o = dictConv('AudioContextOptions', options, what);
+        const hint = o.latencyHint === undefined ? 'interactive' : o.latencyHint;
+        const cs = { iface: 'AudioContext', id: 0, sampleRate: 0, channels: 2, length: 0, state: 'suspended', control: 'suspended',
+          nodes: new Map(), destination: null, self: null, started: false, offline: false, realtime: true, calls: new Map(), cb: 0 };
+        const cb = register(() => { rtEvents(cs); });
+        kept.add(cb);
+        let r;
+        try { r = ask(190, [typeof hint === 'number' ? f64(hint) : String(hint), o.sampleRate === undefined ? '' : f64(o.sampleRate), String(cb)], what); }
+        catch (e) { callbacks.delete(cb); kept.delete(cb); throw e; }
+        const f = String(r).split(' ');
+        cs.id = Number(f[0]); cs.sampleRate = Number(f[1]); cs.state = cs.control = f[3]; cs.cb = cb;
         super(SECRET, cs);
         cs.self = this;
         cs.destination = new classes.AudioDestinationNode(SECRET, { iface: 'AudioDestinationNode', cs, id: 0, nIn: 1, nOut: 0, chan: chanDefaults('destination', cs, []),
-          self: null, params: [], kind: 'destination', maxChannelCount: 2 });
+          self: null, params: [], kind: 'destination', maxChannelCount: Number(f[2]) });
       }
     }
+    // Op 192: currentTime, baseLatency and outputLatency (seconds), the state, then
+    // getOutputTimestamp()'s contextTime and performanceTime (0 before the first report).
+    const rtTime = cs => {
+      const dv = new DataView(ask(192, [cs.id], 'AudioContext', true));
+      return { currentTime: dv.getFloat64(0, true), baseLatency: dv.getFloat64(8, true), outputLatency: dv.getFloat64(16, true),
+        contextTime: dv.getFloat64(25, true), performanceTime: dv.getFloat64(33, true) };
+    };
+    // The events since the last call (op 193), in the specification's order: `ended` of each source
+    // that finished (a task each); the promises of the control calls carried out (resolved) or
+    // refused (rejected); then each change of state: the `state` attribute is set and `statechange`
+    // is queued (resume(), suspend() and close(): resolve the promise, set the state attribute,
+    // "queue a media element task to fire an event named statechange").
+    function rtEvents(cs) {
+      const r = apiCall(193, [String(cs.id)], 0, true);
+      if (!(r instanceof ArrayBuffer)) return;
+      const dv = new DataView(r), count = dv.getUint32(0, true), evs = [];
+      for (let i = 0; i < count; i++) evs.push([dv.getUint8(4 + 5 * i), dv.getUint32(5 + 5 * i, true)]);
+      for (const [k, v] of evs) if (k === 1) task(() => { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); });
+      for (const [k, v] of evs) {
+        if (k !== 3 && k !== 4) continue;
+        const call = cs.calls.get(v);
+        if (call === undefined) continue;
+        cs.calls.delete(v);
+        if (k === 3) call.resolve();
+        else call.reject(dom('InvalidStateError', `Failed to execute '${call.verb}' on 'AudioContext': the context is closed or has no audio output`));
+      }
+      for (const [k, v] of evs) {
+        if (k !== 2) continue;
+        const st = STATES[v];
+        if (st !== undefined && cs.state !== st) { cs.state = st; task(() => { fire(cs.self, 'statechange'); }); }
+      }
+      if (cs.state === 'closed' && cs.calls.size === 0) { callbacks.delete(cs.cb); kept.delete(cs.cb); }
+    }
+    // resume(), suspend() and close() (op 191): the promise settles when the rendering side has
+    // carried the call out; a call after close() is refused at once ([[control thread state]]).
+    const rtControl = (s, verb) => {
+      const what = `Failed to execute '${verb}' on 'AudioContext'`;
+      if (s.control === 'closed') return rejected(dom('InvalidStateError', `${what}: the context is closed`));
+      return new Promise((resolve, reject) => {
+        const call = Number(ask(191, [s.id, verb], what));
+        s.calls.set(call, { verb, resolve, reject });
+        s.control = verb === 'resume' ? 'running' : verb === 'suspend' ? 'suspended' : 'closed';
+      });
+    };
     class OfflineAudioCompletionEvent extends Event {
       constructor(type, init) {
         needNew(arguments.length, 2, 'OfflineAudioCompletionEvent');
@@ -5971,14 +6039,14 @@
     const A = {
       'BaseAudioContext.destination': { get: s => s.destination },
       'BaseAudioContext.sampleRate': { get: s => Math.fround(s.sampleRate) },
-      'BaseAudioContext.currentTime': { get: s => ctxInfo(s).frame / s.sampleRate },
+      'BaseAudioContext.currentTime': { get: s => (s.realtime ? rtTime(s).currentTime : ctxInfo(s).frame / s.sampleRate) },
       'BaseAudioContext.listener': { get: () => { throw unsup('BaseAudioContext.listener (AudioListener)'); } },
       'BaseAudioContext.state': { get: s => s.state },
       'BaseAudioContext.renderQuantumSize': { get: s => ctxInfo(s).quantum },
       'BaseAudioContext.audioWorklet': { get: () => { throw unsup('BaseAudioContext.audioWorklet (AudioWorklet)'); } },
-      // No output device yet (stage D, issue 1169): the latencies are 0 and the sink is the default one.
-      'AudioContext.baseLatency': { get: () => 0 },
-      'AudioContext.outputLatency': { get: () => 0 },
+      // The frames the rendering side keeps ahead, and the output's own latency, over the rate (op 192).
+      'AudioContext.baseLatency': { get: s => rtTime(s).baseLatency },
+      'AudioContext.outputLatency': { get: s => rtTime(s).outputLatency },
       'AudioContext.sinkId': { get: () => '' },
       'AudioContext.playbackStats': { get: () => { throw unsup('AudioContext.playbackStats'); } },
       'OfflineAudioContext.length': { get: s => s.length },
@@ -6053,31 +6121,55 @@
         const c = dictConv('PeriodicWaveConstraints', a[2], what);
         return new PeriodicWave(self, { real, imag, disableNormalization: c.disableNormalization });
       },
-      // Stage C of issue 1169: the ops have no decoder entry yet.
+      // decodeAudioData (ops 194 and 195, stage C of issue 1169). Order of the specification: the
+      // arguments are checked; a detached buffer rejects with DataCloneError; the ArrayBuffer is
+      // detached (`transfer()` where the engine has it: the bytes move, the page's buffer gets
+      // length 0; else the bytes are copied and the page's buffer stays as it was, which the
+      // specification does not allow); the decode runs on a task of the
+      // engine (WebAudioRun.lean) and the engine queues `cb` as a task when it has finished;
+      // then, in one task: the promise settles and the success or error callback is invoked.
       'BaseAudioContext.decodeAudioData': (s, a) => {
         const what = "Failed to execute 'decodeAudioData' on 'BaseAudioContext'";
         if (!(a[0] instanceof ArrayBuffer)) throw new TypeError(`${what}: parameter 1 is not of type 'ArrayBuffer'.`);
         for (const cb of [a[1], a[2]]) if (cb !== undefined && cb !== null && typeof cb !== 'function') throw new TypeError(`${what}: The callback provided is not a function.`);
-        const e = unsup('BaseAudioContext.decodeAudioData');
-        task(() => { if (typeof a[2] === 'function') { try { a[2].call(undefined, e); } catch (x) { report(x); } } });
-        return rejected(e);
+        const ok = typeof a[1] === 'function' ? a[1] : null, bad = typeof a[2] === 'function' ? a[2] : null;
+        const callBack = (f, v) => { if (f !== null) task(() => { try { f.call(undefined, v); } catch (x) { report(x); } }); };
+        if (a[0].detached) {
+          const e = dom('DataCloneError', `${what}: The ArrayBuffer is detached.`);
+          callBack(bad, e);
+          return rejected(e);
+        }
+        const moved = typeof a[0].transfer === 'function' ? a[0].transfer() : a[0].slice(0);
+        const bytes = new Uint8Array(moved);
+        return new Promise((resolve, reject) => {
+          let job = 0;
+          const cb = register(() => {
+            callbacks.delete(cb); kept.delete(cb);
+            const r = apiCall(195, [String(job)], 0, true);
+            if (!(r instanceof ArrayBuffer)) {
+              const e = errOf(typeof r === 'number' ? r : -30, r === -23
+                ? `${what}: Unable to decode audio data: the sample rate is not supported, or a decoder module is missing (tools/fetch-media-decoders.sh)`
+                : `${what}: Unable to decode audio data`);
+              reject(e);
+              if (bad !== null) { try { bad.call(undefined, e); } catch (x) { report(x); } }
+              return;
+            }
+            const dv = new DataView(r), nch = dv.getUint32(0, true), len = dv.getUint32(4, true), rate = dv.getFloat64(8, true);
+            // the samples are views of the answer: no copy (as renderResult)
+            const data = Array.from({ length: nch }, (_, c) => new Float32Array(r, 16 + 4 * len * c, len));
+            const buffer = wrapBuffer({ iface: 'AudioBuffer', numberOfChannels: nch, length: len, sampleRate: rate, data });
+            resolve(buffer);
+            if (ok !== null) { try { ok.call(undefined, buffer); } catch (x) { report(x); } }
+          });
+          kept.add(cb);
+          try { job = Number(ask(194, [s.id, bytes, String(cb)], what)); }
+          catch (e) { callbacks.delete(cb); kept.delete(cb); throw e; }
+        });
       },
-      'AudioContext.getOutputTimestamp': (s) => ({ contextTime: ctxInfo(s).frame / s.sampleRate, performanceTime: 0 }),
-      'AudioContext.resume': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'resume' on 'AudioContext': Cannot resume a context that has been closed"));
-        if (s.state !== 'running') pendingState(s, 'running');
-        return Promise.resolve();
-      },
-      'AudioContext.suspend': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'suspend' on 'AudioContext': Cannot suspend a context that has been closed"));
-        if (s.state !== 'suspended') pendingState(s, 'suspended');
-        return Promise.resolve();
-      },
-      'AudioContext.close': (s) => {
-        if (s.state === 'closed') return rejected(dom('InvalidStateError', "Failed to execute 'close' on 'AudioContext': Cannot close a context that is already closed"));
-        pendingState(s, 'closed');
-        return Promise.resolve();
-      },
+      'AudioContext.getOutputTimestamp': (s) => { const t = rtTime(s); return { contextTime: t.contextTime, performanceTime: t.performanceTime }; },
+      'AudioContext.resume': (s) => rtControl(s, 'resume'),
+      'AudioContext.suspend': (s) => rtControl(s, 'suspend'),
+      'AudioContext.close': (s) => rtControl(s, 'close'),
       'AudioContext.setSinkId': () => rejected(unsup('AudioContext.setSinkId')),
       'OfflineAudioContext.startRendering': (s) => {
         const ab = ask(187, [s.id], "Failed to execute 'startRendering' on 'OfflineAudioContext'", true);
@@ -6196,13 +6288,14 @@
     M['AudioParam.exponentialRampToValueAtTime'] = paramMethod('exponentialRampToValueAtTime', ['f', 'd']);
     M['AudioParam.setTargetAtTime'] = paramMethod('setTargetAtTime', ['f', 'd', 'f']);
     M['AudioParam.cancelScheduledValues'] = paramMethod('cancelScheduledValues', ['d']);
-    // Not in the ops (issue 1169): the arguments are converted, then the call is refused.
-    M['AudioParam.setValueCurveAtTime'] = (s, a) => {
+    // setValueCurveAtTime(values, startTime, duration): the values as binary32 (op 179).
+    M['AudioParam.setValueCurveAtTime'] = (s, a, self) => {
       const what = "Failed to execute 'setValueCurveAtTime' on 'AudioParam'";
-      seqFloats(a[0], what); toDouble(a[1], what); toDouble(a[2], what);
-      throw unsup('AudioParam.setValueCurveAtTime');
+      const values = seqFloats(a[0], what), start = toDouble(a[1], what), duration = toDouble(a[2], what);
+      ask(179, [s.node.cs.id, s.node.id, s.index, 'setValueCurveAtTime', u8(values), f64(start), f64(duration)], what);
+      return self;
     };
-    M['AudioParam.cancelAndHoldAtTime'] = (s, a) => { toDouble(a[0], "Failed to execute 'cancelAndHoldAtTime' on 'AudioParam'"); throw unsup('AudioParam.cancelAndHoldAtTime'); };
+    M['AudioParam.cancelAndHoldAtTime'] = paramMethod('cancelAndHoldAtTime', ['d']);
     const PROMISES = new Set(['BaseAudioContext.decodeAudioData', 'AudioContext.resume', 'AudioContext.suspend', 'AudioContext.close', 'AudioContext.setSinkId',
       'OfflineAudioContext.startRendering', 'OfflineAudioContext.resume', 'OfflineAudioContext.suspend', 'OfflineAudioContext.close']);
     // ---- the interface objects: members from Lean's table ----
@@ -8834,6 +8927,143 @@
     define(S, 'getElementById', function getElementById(id) { need(1, arguments.length, "Failed to execute 'getElementById' on 'SVGSVGElement'"); const e = this.ownerDocument.getElementById(String(id)); return e && this.contains(e) && e !== this ? e : null; });
     for (const k of ['createSVGNumber', 'createSVGLength', 'createSVGAngle', 'createSVGPoint', 'createSVGMatrix', 'createSVGRect', 'createSVGTransform', 'createSVGTransformFromMatrix', 'getElementById'])
       Object.defineProperty(S, k, { ...Object.getOwnPropertyDescriptor(S, k), enumerable: true });
+    // ---- SVG Tiny 1.2 uDOM (https://www.w3.org/TR/SVGTiny12/svgudom.html) ----------------------
+    // TraitAccess (A.8.13): which traits an element has, their types, computed values, lacuna
+    // values and the checks of each setter are Lean's (DOM/SvgTinyTraits.lean, web_api ops 210
+    // and 211); a setter writes the text Lean answers with setAttributeNS (a command of the
+    // arena). Matrix arithmetic is DOMMatrix's (Lean). This is the WebIDL surface.
+    const acc = (P, k, get, set) => Object.defineProperty(P, k, { enumerable: true, configurable: true,
+      get: getterNamed(k, function () { return get(this); }), set: set ? function (v) { set(this, v); } : undefined });
+    const NUL = '\u0000', BAD_TYPE = '\u0001type', BAD_NULL = '\u0001null';
+    const traitFail = r => {
+      if (r === -15) throw new DOMException('The trait value is not valid.', 'InvalidAccessError');
+      if (r === -17) throw new DOMException('The trait has another type.', 'TypeMismatchError');
+      throw new DOMException('The trait is not supported on this element.', 'NotSupportedError');
+    };
+    const nsText = ns => ns === null || ns === undefined ? '' : String(ns);
+    const traitAsk = (el, ns, name, kind) => {
+      const r = apiCall(210, [String(nodeId(el)), nsText(ns), String(name), String(kind)]);
+      if (typeof r !== 'string') traitFail(r);
+      return r;
+    };
+    const traitPut = (el, ns, name, kind, text) => {
+      const r = apiCall(211, [String(nodeId(el)), nsText(ns), String(name), String(kind), text]);
+      if (typeof r !== 'string') traitFail(r);
+      if (name === '#text' && nsText(ns) === '') { el.textContent = r; return; }
+      el.setAttributeNS(nsText(ns) === '' ? null : ns, String(name), r);
+    };
+    class SVGException { constructor(code) { this.code = code; } }
+    consts(SVGException, { SVG_WRONG_TYPE_ERR: 0, SVG_INVALID_VALUE_ERR: 1, SVG_MATRIX_NOT_INVERTABLE: 2 });
+    consts(SVGException.prototype, { SVG_WRONG_TYPE_ERR: 0, SVG_INVALID_VALUE_ERR: 1, SVG_MATRIX_NOT_INVERTABLE: 2 });
+    // SVGMatrix (A.8.10): a DOMMatrix whose m-methods change it in place and answer it; its
+    // inverse is a new matrix, and a matrix whose determinant is zero has none.
+    const DM = globalThis.DOMMatrix;
+    class SVGTinyMatrix extends DM {}
+    const tinyMatrix = xs => new SVGTinyMatrix(xs);
+    const comps = m => [m.a, m.b, m.c, m.d, m.e, m.f];
+    const TP = SVGTinyMatrix.prototype;
+    define(TP, 'getComponent', function getComponent(index) {
+      const i = Number(index);
+      if (!(i >= 0 && i <= 5) || !Number.isInteger(i)) throw new DOMException('The index is not 0 to 5.', 'IndexSizeError');
+      return comps(this)[i];
+    });
+    define(TP, 'mMultiply', function mMultiply(second) { return this.multiplySelf(second); });
+    define(TP, 'mTranslate', function mTranslate(x, y) { return this.translateSelf(Number(x), Number(y)); });
+    define(TP, 'mScale', function mScale(s) { s = Number(s); return this.scaleSelf(s, s); });
+    define(TP, 'mRotate', function mRotate(angle) { return this.rotateSelf(Number(angle)); });
+    define(TP, 'inverse', function inverse() {
+      if (this.a * this.d - this.b * this.c === 0) throw new SVGException(2);
+      return tinyMatrix(comps(this)).invertSelf();
+    });
+    // A transform list as Lean reads it ("name n1 n2 ..." a line), composed in order.
+    const composeList = text => {
+      const m = tinyMatrix([1, 0, 0, 1, 0, 0]);
+      for (const line of text.split('\n')) {
+        if (line === '') continue;
+        const [f, ...xs] = line.split(' '), v = xs.map(Number);
+        if (f === 'matrix') m.multiplySelf(new DM(v));
+        else if (f === 'translate') m.translateSelf(v[0], v.length > 1 ? v[1] : 0);
+        else if (f === 'scale') m.scaleSelf(v[0], v.length > 1 ? v[1] : v[0]);
+        else if (f === 'rotate') { if (v.length > 1) m.translateSelf(v[1], v[2]); m.rotateSelf(v[0]); if (v.length > 1) m.translateSelf(-v[1], -v[2]); }
+        else if (f === 'skewX') m.skewXSelf(v[0]);
+        else if (f === 'skewY') m.skewYSelf(v[0]);
+      }
+      return m;
+    };
+    // SVGPath (A.8.9): its segments; data from a trait are Lean's normalized segments.
+    const pathSegs = new WeakMap();
+    const ARITY = { 77: 2, 76: 2, 67: 6, 81: 4, 90: 0 };
+    class SVGPath { constructor() { illegal(); } }
+    consts(SVGPath, { MOVE_TO: 77, LINE_TO: 76, CURVE_TO: 67, QUAD_TO: 81, CLOSE: 90 });
+    consts(SVGPath.prototype, { MOVE_TO: 77, LINE_TO: 76, CURVE_TO: 67, QUAD_TO: 81, CLOSE: 90 });
+    const newPath = segs => { const p = Object.create(SVGPath.prototype); pathSegs.set(p, segs); return p; };
+    const segsOf = p => { const s = pathSegs.get(p); if (!s) throw new TypeError('Illegal invocation'); return s; };
+    acc(SVGPath.prototype, 'numberOfSegments', p => segsOf(p).length);
+    define(SVGPath.prototype, 'getSegment', function getSegment(i) {
+      const s = segsOf(this)[Number(i)];
+      if (!s || !Number.isInteger(Number(i))) throw new DOMException('The segment index is out of bounds.', 'IndexSizeError');
+      return s[0];
+    });
+    define(SVGPath.prototype, 'getSegmentParam', function getSegmentParam(i, k) {
+      const s = segsOf(this)[Number(i)], j = Number(k);
+      if (!s || !Number.isInteger(Number(i)) || !(j >= 0 && j < ARITY[s[0]]) || !Number.isInteger(j))
+        throw new DOMException('The segment or parameter index is out of bounds.', 'IndexSizeError');
+      return s[1 + j];
+    });
+    for (const [k, code] of [['moveTo', 77], ['lineTo', 76], ['quadTo', 81], ['curveTo', 67]])
+      define(SVGPath.prototype, k, function (...xs) { segsOf(this).push([code, ...xs.slice(0, ARITY[code]).map(x => Math.fround(Number(x)))]); });
+    define(SVGPath.prototype, 'close', function close() { segsOf(this).push([90]); });
+    const pathOfText = text => newPath(text.split('\n').filter(l => l !== '').map(l => {
+      const [c, ...xs] = l.split(' ');
+      return [c.charCodeAt(0), ...xs.map(Number)];
+    }));
+    const pathText = p => segsOf(p).map(s => [String.fromCharCode(s[0]), ...s.slice(1).map(String)].join(' ')).join('\n');
+    // SVGRGBColor (A.8.6).
+    const rgbs = new WeakMap();
+    class SVGRGBColor { constructor() { illegal(); } }
+    for (const k of ['red', 'green', 'blue'])
+      acc(SVGRGBColor.prototype, k, o => { const c = rgbs.get(o); if (!c) throw new TypeError('Illegal invocation'); return c[k]; },
+        (o, v) => { const c = rgbs.get(o); if (!c) throw new TypeError('Illegal invocation'); c[k] = Number(v) >>> 0; });
+    const newRGB = (r, g, b) => { const o = Object.create(SVGRGBColor.prototype); rgbs.set(o, { red: r, green: g, blue: b }); return o; };
+    const isRGB = o => o !== null && typeof o === 'object' && rgbs.has(o);
+    // TraitAccess on every SVG element (A.8.13); the presentation getters answer the base value
+    // until animations write traits.
+    const E = classes.SVGElement.prototype;
+    const asFloat = t => Number(t);
+    const asList = t => t === '' ? [] : t.split(' ').map(Number);
+    const asRect = t => { if (t === NUL) return null; const [x, y, w, h] = t.split(' ').map(Number); return new globalThis.DOMRect(x, y, w, h); };
+    const asRGB = t => { if (t === NUL) return null; const [r, g, b] = t.split(' ').map(Number); return newRGB(r, g, b); };
+    const getters = {
+      Trait: [0, t => t === NUL ? null : t], FloatTrait: [1, asFloat], FloatListTrait: [2, asList],
+      MatrixTrait: [3, composeList], RectTrait: [4, asRect], PathTrait: [5, pathOfText], RGBColorTrait: [6, asRGB],
+    };
+    for (const [k, [kind, conv]] of Object.entries(getters)) {
+      define(E, 'get' + k, function (name) { return conv(traitAsk(this, null, name, kind)); });
+      define(E, 'get' + k.replace('Trait', 'PresentationTrait'), function (name) { return conv(traitAsk(this, null, name, kind)); });
+    }
+    define(E, 'getTraitNS', function getTraitNS(ns, name) { const t = traitAsk(this, ns, name, 0); return t === NUL ? null : t; });
+    define(E, 'getPresentationTraitNS', function getPresentationTraitNS(ns, name) { const t = traitAsk(this, ns, name, 0); return t === NUL ? null : t; });
+    const numText = v => typeof v === 'number' ? String(v) : BAD_TYPE;
+    define(E, 'setTrait', function setTrait(name, value) { traitPut(this, null, name, 0, value === null ? BAD_NULL : String(value)); });
+    define(E, 'setTraitNS', function setTraitNS(ns, name, value) { traitPut(this, ns, name, 0, value === null ? BAD_NULL : String(value)); });
+    define(E, 'setFloatTrait', function setFloatTrait(name, value) { traitPut(this, null, name, 1, numText(value)); });
+    define(E, 'setFloatListTrait', function setFloatListTrait(name, value) {
+      traitPut(this, null, name, 2, value === null ? BAD_NULL : Array.isArray(value) ? value.map(Number).join(' ') : BAD_TYPE); });
+    define(E, 'setMatrixTrait', function setMatrixTrait(name, m) {
+      traitPut(this, null, name, 3, m === null ? BAD_NULL : m instanceof DM ? comps(m).join(' ') : BAD_TYPE); });
+    define(E, 'setRectTrait', function setRectTrait(name, r) {
+      traitPut(this, null, name, 4, r === null ? BAD_NULL : r instanceof globalThis.DOMRectReadOnly ? [r.x, r.y, r.width, r.height].join(' ') : BAD_TYPE); });
+    define(E, 'setPathTrait', function setPathTrait(name, p) {
+      traitPut(this, null, name, 5, p === null ? BAD_NULL : pathSegs.has(p) ? pathText(p) : BAD_TYPE); });
+    define(E, 'setRGBColorTrait', function setRGBColorTrait(name, c) {
+      traitPut(this, null, name, 6, c === null ? BAD_NULL : isRGB(c) ? [c.red, c.green, c.blue].join(' ') : BAD_TYPE); });
+    // SVGSVGElement's factories of SVG Tiny 1.2 (A.8.5).
+    define(S, 'createSVGMatrixComponents', function createSVGMatrixComponents(a, b, c, d, e, f) {
+      return tinyMatrix([a, b, c, d, e, f].map(Number)); });
+    define(S, 'createSVGPath', function createSVGPath() { return newPath([]); });
+    define(S, 'createSVGRGBColor', function createSVGRGBColor(r, g, b) {
+      return newRGB(...[r, g, b].map(x => { const v = Number(x); if (!Number.isFinite(v)) throw new SVGException(1); return v; })); });
+    Object.assign(classes, { SVGException, SVGPath, SVGRGBColor });
     // The value interfaces and their constants.
     class SVGUnitTypes { constructor() { illegal(); } }
     Object.assign(classes, { SVGNumber, SVGLength, SVGAngle, SVGTransform, SVGPreserveAspectRatio, SVGUnitTypes,
@@ -8858,6 +9088,7 @@
     return { classes, byTag };
   };
   for (const name of [...Object.keys(svgSpec), ...svgValueNames]) lazy(name, () => svgDom().classes[name]);
+  for (const name of ['SVGException', 'SVGPath', 'SVGRGBColor']) lazy(name, () => svgDom().classes[name]);
   lazy('SVGPoint', () => globalThis.DOMPoint); lazy('SVGRect', () => globalThis.DOMRect); lazy('SVGMatrix', () => globalThis.DOMMatrix);
   // ==== end SVG DOM =============================================================================
 
@@ -20206,7 +20437,7 @@
     start() { if (ttStart !== null) ttStart(); scanHandlers(0, false); flushViolations(); imgStart(); noteEmptyScripts(); },
     script(id) { currentScript = id < 0 ? null : wrap(id); const d = id < 0 ? 0 : info(id, 7); scriptDocument = d > 0 ? wrap(d) : null; if (d > 0 && ttDoc !== null) ttDoc(d); },
     url(u) { href = String(u); creationHref = href; },
-    release(id) { callbacks.delete(id); },
+    release(id) { if (!kept.has(id)) callbacks.delete(id); },
     // Section workers: this realm becomes a dedicated worker's global scope.
     worker(url, name) { makeWorkerScope(String(url), String(name)); },
   };
