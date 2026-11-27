@@ -1,0 +1,34 @@
+name = "ethereum_wallet"
+version = "0.1.0"
+defaultTargets = ["EthereumWallet"]
+
+# Transaction building, signing, keys and ABI for transacting with Ethereum.
+# Stand-alone like evm-cleanroom and ethereum-consensus: it does not depend on
+# the large Factoidal library. Modules it reuses from those packages or from
+# L4Factoidal.Crypto are added as extra lean_lib entries with srcDir, the way
+# ethereum-consensus takes FactoidalSHA2, after checking their import closure.
+
+[[lean_lib]]
+name = "EthereumWallet"
+
+# Modules of evm-cleanroom selected in place (canonical RLP, Keccak, the signed
+# transaction decoder, the shared secp256k1 point arithmetic). The root is a
+# prefix, so one stanza serves every wallet module; this library is never a
+# build target itself: only what EthereumWallet imports is compiled.
+[[lean_lib]]
+name = "WalletEvmCleanroom"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom"]
+
+# Pure SHA-2 and HMAC from L4Factoidal.Crypto, selected in place the same way.
+[[lean_lib]]
+name = "WalletFactoidalCrypto"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto"]
+
+# Test and development tool: sign a JSON transaction with a test key, run the
+# vector suites, measure. JSON data routines only; plain runtime initializer.
+[[lean_exe]]
+name = "eth-wallet-sign"
+root = "SignMain"
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
