@@ -1425,6 +1425,52 @@
       default: throw new DOMException('bad position', 'SyntaxError');
     }
   };
+  // HTML §3.2.6.6 and Web IDL legacy named properties. Lean's StringMap reads
+  // the current attribute list and converts keys. Symbols and inherited members
+  // use the ordinary JavaScript object operations.
+  class DOMStringMap { constructor() { throw new TypeError('Illegal constructor'); } }
+  Object.defineProperty(DOMStringMap.prototype, Symbol.toStringTag, {value: 'DOMStringMap', configurable: true});
+  const dataMaps = new WeakMap();
+  const dataMapOf = el => {
+    let map = dataMaps.get(el);
+    if (map) return map;
+    const query = (op, key = '') => chk(n.query(nodeId(el), 157, op + key));
+    const value = p => typeof p === 'string' ? query('V', p) : '';
+    const assign = (p, v) => {
+      const name = query('A', p);
+      if (!name) throw new DOMException('Invalid dataset property name.', 'SyntaxError');
+      if (name === '!') throw new DOMException('Invalid attribute local name.', 'InvalidCharacterError');
+      if (typeof v === 'symbol') throw new TypeError('Cannot convert a Symbol to a string');
+      setAttrPlain(el, name, String(v));
+      return true;
+    };
+    map = new Proxy(Object.create(DOMStringMap.prototype), {
+      get(t, p, r) { const s = value(p); return s ? s.slice(1) : Reflect.get(t, p, r); },
+      has(t, p) { return (typeof p === 'string' && query('H', p) === '1') || Reflect.has(t, p); },
+      ownKeys(t) { return Reflect.ownKeys(t).concat(query('K').split('\u0000').slice(1)); },
+      getOwnPropertyDescriptor(t, p) {
+        const s = value(p);
+        return s ? {value: s.slice(1), writable: true, enumerable: true, configurable: true} : Reflect.getOwnPropertyDescriptor(t, p);
+      },
+      set(t, p, v, r) { return r === map && typeof p === 'string' ? assign(p, v) : Reflect.set(t, p, v, r); },
+      deleteProperty(t, p) {
+        if (typeof p !== 'string' || query('H', p) !== '1') return Reflect.deleteProperty(t, p);
+        const name = query('A', p);
+        const attr = attrNode(el, null, name);
+        if (attr) detachAttr(attr);
+        chk(n.removeAttr(nodeId(el), name));
+        return true;
+      },
+      defineProperty(t, p, desc) {
+        if (typeof p !== 'string') return Reflect.defineProperty(t, p, desc);
+        if ('get' in desc || 'set' in desc || desc.configurable === false) return false;
+        return assign(p, desc.value);
+      },
+      preventExtensions() { return false; },
+    });
+    dataMaps.set(el, map);
+    return map;
+  };
   // [HTMLConstructor] (HTML §3.2.3): `new` on a custom element's constructor; set by section
   // customelements. Until a custom element is defined no constructor of an element is legal.
   // While `htmlConstructing`, the constructors of Node and EventTarget let the object through:
@@ -1438,13 +1484,7 @@
       htmlConstructed(this, d);
     }
     // title, lang, dir, hidden and the other reflected attributes: DOM.Reflect (dombreadth section).
-    get dataset() {
-      const el = this;
-      return new Proxy({}, {
-        get: (t, p) => typeof p === 'string' ? el.getAttribute('data-' + p.replace(/[A-Z]/g, c => '-' + c.toLowerCase())) ?? undefined : undefined,
-        set: (t, p, v) => { el.setAttribute('data-' + String(p).replace(/[A-Z]/g, c => '-' + c.toLowerCase()), String(v)); return true; },
-      });
-    }
+    get dataset() { return dataMapOf(this); }
     get style() { let s = styles.get(this); if (!s) styles.set(this, s = styleOf(this)); return s; }
     set style(v) { this.style.cssText = v; }
     click() {
@@ -15454,7 +15494,7 @@
     WheelEvent, PointerEvent, Touch, TouchList, TouchEvent, DOMRect, DOMRectReadOnly, DOMRectList, DOMPoint, DOMPointReadOnly, DOMQuad, DOMMatrix, DOMMatrixReadOnly, WebKitCSSMatrix: DOMMatrix, CompositionEvent, InputEvent, DragEvent, HashChangeEvent, MessageEvent, CloseEvent, StorageEvent, SecurityPolicyViolationEvent, DeviceMotionEvent,
     DeviceOrientationEvent, BeforeUnloadEvent, TextEvent,
     PromiseRejectionEvent, Node, Element, HTMLElement, HTMLUnknownElement, SVGElement, MathMLElement, CharacterData, Text, CDATASection, Comment,
-    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, Attr, DOMParser, SubmitEvent,
+    ProcessingInstruction, DocumentType, DocumentFragment, Document, HTMLDocument, XMLDocument, DOMImplementation, NodeList, HTMLCollection, NamedNodeMap, DOMStringMap, Attr, DOMParser, SubmitEvent,
     DOMTokenList, DOMException, AbortController, AbortSignal, Window, MutationObserver, MutationRecord, ...named, ...mediaGlobals })) def(k, v);
   if (shadowEngine()) def('ShadowRoot', ShadowRoot);
 
