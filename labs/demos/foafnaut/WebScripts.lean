@@ -1546,9 +1546,9 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     | none => keep "scriptSession: click needs node"
   | "pointer" =>
     match pointerKind (str request "kind"), natField request "node" with
-    | some kind, some node => run fun a =>
-        let a := if hostPointerActivates kind request then activateLean a (e.loop a).clock else a
-        e.pointer a kind node (pointerInit request)
+    | some kind, some node =>
+      let press := fun a => if hostPointerActivates kind request then activateLean a (e.loop a).clock else a
+      run fun a => e.pointer (press a) kind node (pointerInit request)
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
   | "key" =>
     -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
