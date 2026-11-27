@@ -1272,6 +1272,23 @@ theorem audioStart_none (request : JSON.Json) (h : Page.Host)
     audioStart request h = h := by
   simp [audioStart, h1, h2]
 
+/-- HTML "activation notification" for a host's pointer action (the window's mouse): a
+`pointerdown` of a mouse, or a `pointerup` of a pen or touch, is an activation-triggering input
+event (HTML, user activation). It is given before the event is dispatched, and it releases the
+Web Audio autoplay rule (plan 13.7), as `performInput` does for WebDriver actions and keys. -/
+def pointerActivates (kind : Page.PointerKind) (pointerType : String) : Bool :=
+  match kind with
+  | .down => pointerType == "mouse"
+  | .up => pointerType != "mouse"
+  | _ => false
+
+def activateAgents (a : LeanJSWorkers.Agents) : LeanJSWorkers.Agents :=
+  let e := LeanJSWorkers.engine
+  let a := { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } }
+  let h := a.page.host
+  if h.web.audio.activated then a
+  else { a with page := a.page.setHost { h with web := { h.web with audio := L4Factoidal.WebAudio.Api.activate h.web.audio } } }
+
 /-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
 Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
 trusted input state changes. An event that gives user activation records its time. -/
@@ -1283,12 +1300,7 @@ def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a :
     -- HTML "activation notification": before the event is dispatched, so its listeners see the
     -- activation (a click's listener may start an AudioContext). The same step releases the Web
     -- Audio autoplay rule (plan 13.7).
-    let a := if WebDriver.Input.activates low then
-        let a := { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } }
-        let h := a.page.host
-        if h.web.audio.activated then a
-        else { a with page := a.page.setHost { h with web := { h.web with audio := L4Factoidal.WebAudio.Api.activate h.web.audio } } }
-      else a
+    let a := if WebDriver.Input.activates low then activateAgents a else a
     base.dispatch a low
   let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
   let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
@@ -1522,7 +1534,9 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
     | none => keep "scriptSession: click needs node"
   | "pointer" =>
     match pointerKind (str request "kind"), natField request "node" with
-    | some kind, some node => run (e.pointer · kind node (pointerInit request))
+    | some kind, some node =>
+      let act := pointerActivates kind (str request "pointerType" "mouse")
+      run fun a => e.pointer (if act then activateAgents a else a) kind node (pointerInit request)
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
   | "key" =>
     -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
