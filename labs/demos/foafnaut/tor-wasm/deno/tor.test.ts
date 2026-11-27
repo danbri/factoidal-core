@@ -31,3 +31,10 @@ Deno.test("xfail: Foafnaut sends page requests through Tor with --tor (https://g
   const src = await Deno.readTextFile(new URL("../../run_html.ts", import.meta.url));
   xfail("https://github.com/danbri/factoidal-core/issues/1060", src.includes('"--tor"'));
 });
+
+Deno.test("xfail: a top-level navigation's wires carry the browser's cookies (https://github.com/danbri/factoidal-core/issues/1060)", async () => {
+  // Net.Navigation makes every navigation wire with omitCredentials: no Cookie field is sent and no
+  // Set-Cookie is stored. The case passes when Net/Navigation.lean takes a cookie jar.
+  const src = await Deno.readTextFile(new URL("../../../../../formal/lean4/L4Factoidal/Net/Navigation.lean", import.meta.url));
+  xfail("https://github.com/danbri/factoidal-core/issues/1060", !src.includes("omitCredentials := true"));
+});

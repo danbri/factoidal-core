@@ -1134,6 +1134,8 @@ import L4Factoidal.Net.Multipart
 import L4Factoidal.HTML.ImageSize
 import L4Factoidal.Net.WebSocket
 import L4Factoidal.Net.Subresource
+import L4Factoidal.Net.Navigation
+import L4Factoidal.Net.NavigationTheorems
 import L4Factoidal.HTML.ReferrerSource
 import L4Factoidal.HTML.CspSource
 import L4Factoidal.HTML.AccessibleTree

@@ -991,3 +991,75 @@ private def bigCurves (k : String) : String :=
 private def manyNamed := JSON.Json.object [("heldImages",.array ((List.range 200).map fun i =>
   .object [("key",.string s!"https://example.test/{i}.png"),("sha256",.string "00")]))]
 #guard (WebDocument.namedImages manyNamed).toOption.map (·.length) == some WebDocument.maxHeldImages
+
+/-! ## Op `navigation` and op `subresource` in Tor mode (issue 1060) -/
+
+private def navStart (fields : List (String × JSON.Json)) : Net.Navigation.Table × String :=
+  WebDocument.navigationOp {} (json (("action",.string "start") :: fields))
+private def wireOfAnswer (s : String) : Option JSON.Json :=
+  (JSON.parseJson? s).bind (·.field? "wire")
+private def hdr (w : JSON.Json) (name : String) : Option String :=
+  match w.field? "headers" with
+  | some (.array hs) => hs.findSome? fun
+    | .array [.string n, .string v] => if n.toLower == name then some v else none
+    | _ => none
+  | _ => none
+private def navAnswer (tab : Net.Navigation.Table) (answer : JSON.Json) :=
+  WebDocument.navigationOp tab (json [("action",.string "answer"),("id",.number "1"),("answer",answer)])
+
+-- a navigation start in Tor mode gives a wire marked tor, in the partition of the target's origin
+#guard match wireOfAnswer (navStart [("url",.string "https://a.example/x"),("tor",.bool true)]).2 with
+  | some w => w.field? "tor" == some (.bool true) && w.field? "partition" == some (.string "https://a.example") &&
+      w.field? "resolve" == none && w.field? "address" == none
+  | none => false
+-- a redirect hop keeps the partition of the first URL
+#guard
+  let (tab, _) := navStart [("url",.string "https://a.example/r"),("tor",.bool true)]
+  let (_, out) := navAnswer tab (json [("id",.number "1"),("status",.number "302"),
+    ("headers",.array [.array [.string "Location",.string "https://b.example/y"]])])
+  match wireOfAnswer out with
+  | some w => w.field? "url" == some (.string "https://b.example/y") && w.field? "tor" == some (.bool true) &&
+      w.field? "partition" == some (.string "https://a.example")
+  | none => false
+-- a POST followed by a 303 becomes a GET with no body
+#guard
+  let (tab, first) := navStart [("url",.string "https://a.example/post"),("method",.string "POST"),
+    ("bodyBase64",.string "cT0x"),("bodyType",.string "application/x-www-form-urlencoded"),
+    ("initiator",.string "https://a.example/form"),("tor",.bool true)]
+  let (_, out) := navAnswer tab (json [("id",.number "1"),("status",.number "303"),
+    ("headers",.array [.array [.string "Location",.string "/done"]])])
+  (match wireOfAnswer first with
+   | some w => w.field? "method" == some (.string "POST") && w.field? "bodyBase64" == some (.string "cT0x")
+   | none => false) &&
+  (match wireOfAnswer out with
+   | some w => w.field? "method" == some (.string "GET") && w.field? "bodyBase64" == none &&
+       hdr w "content-type" == none && w.field? "url" == some (.string "https://a.example/done")
+   | none => false)
+-- a direct-mode .onion navigation fails
+#guard match JSON.parseJson? (navStart [("url",.string "http://abcdefghijklmnop.onion/")]).2 with
+  | some j => (j.field? "fail").isSome && j.field? "wire" == none
+  | none => false
+-- the final answer: done, with the status, type and URL
+#guard
+  let (tab, _) := navStart [("url",.string "https://a.example/"),("tor",.bool true)]
+  let (_, out) := navAnswer tab (json [("id",.number "1"),("status",.number "200"),
+    ("headers",.array [.array [.string "Content-Type",.string "text/html"]])])
+  match (JSON.parseJson? out).bind (·.field? "done") with
+  | some d => d.field? "status" == some (.number "200") && d.field? "type" == some (.string "text/html") &&
+      d.field? "url" == some (.string "https://a.example/")
+  | none => false
+-- subresource start with "tor": true gives a tor wire, in the document's partition
+#guard
+  let (_, _, out) := WebDocument.subresourceOp {} (json [("action",.string "start"),("kind",.string "image"),
+    ("url",.string "https://b.example/x.png"),("documentURL",.string "https://a.example/page.html"),("tor",.bool true)])
+  match wireOfAnswer out with
+  | some w => w.field? "tor" == some (.bool true) && w.field? "partition" == some (.string "https://a.example") &&
+      w.field? "resolve" == none && w.field? "address" == none
+  | none => false
+-- and without it, the name is resolved first (direct mode), with no tor mark
+#guard
+  let (_, _, out) := WebDocument.subresourceOp {} (json [("action",.string "start"),("kind",.string "image"),
+    ("url",.string "https://b.example/x.png"),("documentURL",.string "https://a.example/page.html")])
+  match wireOfAnswer out with
+  | some w => w.field? "resolve" == some (.bool true) && w.field? "tor" == none
+  | none => false
