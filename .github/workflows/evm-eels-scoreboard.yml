@@ -15,7 +15,7 @@ on:
     inputs:
       forks:
         description: "Comma-separated fork names (fixture directories for_<fork>)"
-        default: "Cancun,Prague"
+        default: "Shanghai,Cancun,Prague,Osaka"
 
 concurrency:
   group: evm-eels-scoreboard-${{ github.head_ref || github.ref_name }}
@@ -83,7 +83,7 @@ jobs:
       - name: Extract the state tests of the selected forks
         run: |
           set -euo pipefail
-          forks="${{ github.event.inputs.forks || 'Cancun,Prague' }}"
+          forks="${{ github.event.inputs.forks || 'Shanghai,Cancun,Prague,Osaka' }}"
           members=""
           for f in ${forks//,/ }; do members="$members fixtures/state_tests/for_${f,,}"; done
           tar -xzf /tmp/eels/fixtures.tar.gz -C /tmp/eels $members
@@ -98,7 +98,7 @@ jobs:
         working-directory: formal/lean4/evm-cleanroom
         run: |
           set -euo pipefail
-          forks="${{ github.event.inputs.forks || 'Cancun,Prague' }}"
+          forks="${{ github.event.inputs.forks || 'Shanghai,Cancun,Prague,Osaka' }}"
           python3 -I scripts/eels/scoreboard.py \
             --fixtures /tmp/eels/fixtures/state_tests --bin .lake/build/bin/evm-state-test \
             --forks "$forks" --jobs "$(nproc)" --out /tmp/eels/scoreboard \

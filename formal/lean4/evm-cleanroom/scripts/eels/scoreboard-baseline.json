@@ -1,0 +1,6 @@
+{
+ "note": "Provisional baseline before the first CI scoreboard run; replaced by the counts of that run.",
+ "fixtures": "ethereum/execution-specs tests@v21.0.3 fixtures.tar.gz sha256 46bd48fb71a23da084218fe856fe442ab0c8d00c85c1c1aead0d2a965804fd24",
+ "counts": {"Shanghai": {"pass": 0}, "Cancun": {"pass": 0}, "Prague": {"pass": 0}, "Osaka": {"pass": 0}},
+ "fails": {}
+}
