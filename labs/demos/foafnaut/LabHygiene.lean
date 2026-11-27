@@ -187,8 +187,9 @@ having RSA or SHA-3. -/
 -- `Codec.Zstd.bitsAt`, which reads words through the C primitives of `Prim.Bytes`; each has a
 -- Lean reference body and the differential test `tests/prim/run.sh` (CLAUDE.md, "Support library").
 -- The primitives are not new: the lab's import closure now reaches five more `extern` declarations.
--- formal extern 32 → 38 and opaque 1 → 2 (2026-11-26, branch wip/1169-realtime-run, NOT YET
--- APPROVED BY THE OWNER, whose approval the rule above asks for): the engine plays real-time Web
+-- formal extern 32 → 38 and opaque 1 → 2 (2026-11-26, branch wip/1169-realtime-run; approved by
+-- the owner, 2026-11-27, verbatim: "ok", to the question "may I raise the lab hygiene count for
+-- the audio output?"): the engine plays real-time Web
 -- Audio (`WebAudioRun`, step D3 of docs/designissues/2026-11-26-foafnaut-audio-plan.md), so the
 -- lab's import closure reaches `WebAudio/Sink.lean` (step D1): six `@[extern]` entry points of
 -- `ffi/audio_sink.c` (open, write, counters, pause, close, deviceInfo) and its opaque type

@@ -1309,6 +1309,9 @@ mechanisms for page trust."
 - Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
   permission for each site) are a later design. One Lean value decides "allowed to start" today, so
   such a mechanism changes one function.
+- Owner, 2026-11-27, verbatim: "ok", to the question "may I raise the lab hygiene count for the
+  audio output?" (`labs/demos/foafnaut/LabHygiene.lean`: formal `extern` 32 to 38 and `opaque` 1
+  to 2, the six C functions of `formal/lean4/ffi/audio_sink.c` and its handle type).
 
 ### Never report upstream (owner, 2026-11-25)
 
