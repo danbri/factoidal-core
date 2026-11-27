@@ -535,6 +535,23 @@ root. Keep the compiler/runtime trust boundary and unproved cryptographic
 properties explicit. Existing crypto choices for other products are not
 changed by this Ethereum-specific direction.
 
+### HACL\* is preferred; secp256k1 signer approved (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "HACL* is both approved and PREFERED over our own
+(crazy yolo roll your own etc.) Lean hackery." Then, to the statement that a
+HACL\* secp256k1 signer for Ethereum needed approval: "Do it."
+
+- For every cryptographic operation, Ethereum included, HACL\* is the source.
+  Pure Lean crypto is a specification or a differential oracle, never the
+  run-time path for secret data. The Ethereum independence rule above does not
+  apply to HACL\*.
+- A secret key is an opaque Lean type that only HACL\* calls can use
+  (`tools/secret-type-gate.py`). Constant time is checked on the compiled code
+  by Valgrind with leaking controls (`tests/ct/run.sh valgrind`).
+- First instance: `L4Factoidal/Crypto/K256Native.lean` over HACL\*
+  `Hacl_K256_ECDSA.c` (RFC 6979 nonce, low-S, recovery id), workflow
+  `check-k256-ct.yml`. Record: `docs/designissues/2026-11-27-bignum-timing-and-aes.md`.
+
 [Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
 
 Acceptance: https://github.com/danbri/factoidal-core/issues/725.
@@ -1392,6 +1409,9 @@ mechanisms for page trust."
 - Coordinator's reading, not the owner's words: "other mechanisms for page trust" (for example a
   permission for each site) are a later design. One Lean value decides "allowed to start" today, so
   such a mechanism changes one function.
+- Owner, 2026-11-27, verbatim: "ok", to the question "may I raise the lab hygiene count for the
+  audio output?" (`labs/demos/foafnaut/LabHygiene.lean`: formal `extern` 32 to 38 and `opaque` 1
+  to 2, the six C functions of `formal/lean4/ffi/audio_sink.c` and its handle type).
 
 ### Formal-verification batch approved; claims register first (owner, 2026-11-27)
 
@@ -1404,6 +1424,27 @@ record `docs/designissues/2026-11-27-formal-verification-post-review.md`.
   (https://github.com/danbri/factoidal-core/issues/1178, claims register). The word "proved" in
   a release note, hub page or README is for a register entry only. The owner reviews the register;
   entries are Claude proposals until the owner marks them reviewed.
+
+### Foafnaut timelines, remote debugging and WebDriver scores (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "Do items 1 and 2" and "Yes to a and b", to these proposals
+(session on https://github.com/danbri/factoidal-core/issues/1168, real-page load time):
+
+1. Write the host's trace records (`native-html-load-phases`, `native-html-frame`,
+   `native-html-script`, engine-worker records) as a Trace Event Format file, so that a run's
+   timeline opens in Perfetto (https://ui.perfetto.dev) or the Chrome DevTools Performance panel.
+2. Live remote debugging, WebDriver BiDi first, then a part of the Chrome DevTools Protocol only
+   where Chrome's own panels need it. Tracking https://github.com/danbri/factoidal-core/issues/372.
+   A debug port is a security surface: the experimental code notice, a `--dangerously-` option, the
+   invariants of https://github.com/danbri/factoidal/issues/1120.
+   (a) `branch-wpt.yml` in `danbri/factoidal-builds` gets the input
+   `dangerously_enable_webdriver_endpoint` that `skills/wpt-runs` described but that never existed;
+   one branch run of `webdriver/tests/classic/` gives the first WebDriver numbers.
+   (b) Full runs report the classic wdspec tests.
+
+Context for the owner's question "Can chrome/firefox do that remotely??" (coordinator's answer, not
+the owner's words): Chrome DevTools attaches to any Chrome DevTools Protocol server over WebSocket;
+Firefox's remote debugger speaks its own protocol, not Chrome's, and supports WebDriver BiDi.
 
 ### Never report upstream (owner, 2026-11-25)
 

@@ -104,6 +104,10 @@ argument for `start`:
   `port` goes to that address only; the host does not resolve the name again (DNS
   rebinding, `Net.PageFetch.emit`). `pageAddress` in `start`: the address the host loaded
   the page from, when it knows it (a local one lets the page reach local addresses).
+  `tor:true` in `start` (with `network:true`): Tor mode (`Net.PageFetch.Page.tor`). Then every
+  request has `tor:true` and `partition` (the page's origin: the Tor circuit set to use), and
+  none has `resolve` or `address`: the host gives it to its Tor client and resolves no name
+  itself. Without `tor` the request JSON has no `tor` or `partition` field.
   `elapsedMs` moves the virtual clock before the answers apply (a test host's waiting time).
   On BubblePopJS a dedicated worker's requests are in `netRequests` too, as the page's (ids
   from the page's numbering), and their answers go to the worker (`LeanJSWorkers.giveNet`).
@@ -232,6 +236,14 @@ structure StartPoint where
 
 instance : Inhabited StartPoint := ⟨{ html := "", url := "", session := default, todo := [], mods := {}, missing := #[] }⟩
 
+/-- What the engine says of its audio output (`WebAudioRun`, plan
+docs/designissues/2026-11-26-foafnaut-audio-plan.md, section 13): the device's sample rate and
+channel count (none: no real-time audio, as in the Wasm build). A new session takes it
+(`Page.Limits.audioDevice`). -/
+structure AudioEnv where
+  device : Option (Float × Nat) := none
+  deriving Inhabited
+
 /-- What the engine holds between calls: the prepared module and one session. -/
 structure Held where
   module : Option Page.Module' := none
@@ -289,8 +301,23 @@ structure Held where
   /-- The WebDriver endpoint, when the test runner started one (`webdriverStart`): the
   gate's configuration (secret, port), the protocol's state and what this browser is. -/
   webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser × WebDriver.Window.State × WebDriver.Page.Doc) := none
+  /-- The engine's audio output, set by the engine before each call (`WebAudioRun.before`); a
+  session started then takes it (`audioLimits`). -/
+  audio : AudioEnv := {}
 
 instance : Inhabited Held := ⟨{}⟩
+
+/-- The audio fields of a new session's limits: the engine's device, and the permission to start
+real-time contexts with no user activation when the `start` request has
+`dangerouslyPermitAudio: true`. This is the only acceptance of `Risk.audioWithoutActivation` outside
+tests. The browser's window sends the field only for the command-line option
+`--dangerously-permit-audio` or the Settings switch, and warns when it is on (owner, 2026-11-26,
+`CLAUDE.md` "Audio: AAC through AudioToolbox, HRTF data, autoplay rule"); the start request is the
+host's, and no page content reaches it. -/
+def audioLimits (held : Held) (request : JSON.Json) (lim : Page.Limits) : Page.Limits :=
+  { lim with audioDevice := held.audio.device,
+             autoplay := if request.field? "dangerouslyPermitAudio" == some (.bool true)
+               then some (Risk.dangerouslyAccept .audioWithoutActivation) else none }
 
 /-! `Held` is a field of the engine's state (`WebDocument.Engine`), passed in and given back
 by each operation here (issue 390). The caller takes it out of the state before the call,
@@ -469,6 +496,9 @@ theorem animatedOf_earlier (reads : Page.Reads) (now : Int) (hn : reads.keptNow 
     animatedOf reads now = none := by
   simp [animatedOf, hn]
 
+/-- The most time between two turns while a real-time audio context runs (plan 13.3). -/
+def audioTurnMs : Nat := 25
+
 /-- The answer of a turn. -/
 def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full : Bool) (ns : Nat)
     (extra : List (String × JSON.Json) := []) : String × Marks :=
@@ -486,7 +516,10 @@ def turnAnswerOf (id : Nat) (before : Before) (s : View) (marks : Marks) (full :
     ("nextTimer",match loop.timers with | t :: _ => num t.due | [] => .null),
     ("frames",num loop.frames.length),
     -- a task still queued (an advance that stopped between tasks, `sliceSteps`) is due now
-    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake].filterMap (fun x => x) with
+    -- a real-time audio context that runs, or waits for its rendering side to answer a call: a
+    -- turn at most 25 ms ahead, so that its events are delivered (`WebAudio.Api.needsTurns`)
+    ("nextWake",match [if loop.idle then none else some loop.clock, loop.timers.head?.map (·.due), s.nextFrame, s.moveWake,
+        if L4Factoidal.WebAudio.Api.needsTurns s.host.web.audio then some (loop.clock + audioTurnMs) else none].filterMap (fun x => x) with
       | [] => .null
       | t :: ts => num (ts.foldl min t)),
     ("quiet",.bool s.quiet),
@@ -968,7 +1001,10 @@ path (the Hub). -/
 at most 32 MiB of memory, at most 4096 commands and 256 console lines, so a frame cannot
 starve its page. -/
 def frameLimits (lim : Page.Limits) (fEnt : Nat → ByteArray) (el : Nat) : Page.Limits :=
-  { lim with entropy := fEnt el, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false }
+  { lim with entropy := fEnt el, fuel := lim.fuel / 8, pages := min lim.pages 512, commands := min lim.commands 4096, logs := 256, frames := false,
+             -- a frame's session has its own outbox, which the engine does not take (`WebAudioRun`):
+             -- no real-time audio in a sandboxed frame (`new AudioContext()` answers NotSupportedError)
+             audioDevice := none }
 
 /-- Tasks a frame's session may run in one round; rounds of messages in one pump; frames
 with sessions in one page. -/
@@ -1143,7 +1179,8 @@ def wireJson (w : Net.PageFetch.Wire) : JSON.Json :=
       ("headers", .array (w.headers.map fun (n, v) => .array [.string n, .string v]))] ++
       (match w.body with | some b => [("bodyBase64", .string (WHATWG.Base64.encode b))] | none => []) ++
       (if w.resolve then [("resolve", .bool true)] else []) ++
-      (if w.address.isEmpty then [] else [("address", .string w.address), ("port", num w.port)]))
+      (if w.address.isEmpty then [] else [("address", .string w.address), ("port", num w.port)]) ++
+      (if w.tor then [("tor", .bool true), ("partition", .string w.partition)] else []))
 
 /-- The answer that undoes this run and asks the host for one sync request. -/
 def netSyncAnswer (id : Nat) (w : Net.PageFetch.Wire) : Except String String :=
@@ -1239,16 +1276,49 @@ def hostKeyOf (request : JSON.Json) : Option WebDriver.HostKeys.HostKey :=
   | _, _, some (.string k) => some (.dom k bits)
   | _, _, _ => none
 
+/-- The first user activation releases Web Audio's autoplay rule (`WebAudio.Api.activate`: a
+context may start, and the `resume()` calls that waited go on). A later one changes nothing there:
+once `activated` holds, a `resume()` does not wait. -/
+def audioActivated (h : Page.Host) : Page.Host :=
+  if h.web.audio.activated then h
+  else { h with web := { h.web with audio := WebAudio.Api.activate h.web.audio } }
+
+/-- User activation of a BubblePopJS page from the host's trusted input, before the event is
+dispatched (HTML §6.4.1, "activation notification"): its time in the trusted input state, and
+`audioActivated`. -/
+def activateLean (a : LeanJSWorkers.Agents) (clock : Nat) : LeanJSWorkers.Agents :=
+  let page := a.page.setTrusted { a.page.trusted with activated := some clock }
+  let page := if page.heap.host.isNone then page else page.setHost (audioActivated page.host)
+  { a with page }
+
+/-- User activation of a page of the QuickJS engine (`Page.Session`), which has no trusted input
+state of its own: `audioActivated`. -/
+def activatePage (s : Page.Session) : Page.Session := { s with host := audioActivated s.host }
+
+/-- Whether a host's pointer event (action `pointer`: `kind`, and `pointerType` "mouse", "pen" or
+"touch", default "mouse") gives user activation: the rule of WebDriver's pointer actions,
+`WebDriver.Input.pointerActivates`. -/
+def hostPointerActivates (kind : Page.PointerKind) (request : JSON.Json) : Bool :=
+  let phase : WebDriver.Actions.Phase := match kind with
+    | .down => .down | .up => .up | .move => .move | .cancel => .cancel
+  let type : WebDriver.Actions.PointerType := match str request "pointerType" "mouse" with
+    | "pen" => .pen | "touch" => .touch | _ => .mouse
+  WebDriver.Input.pointerActivates phase type
+
 /-- Input of the user as WebDriver's Perform Actions (`Actions.perform`, then Release
 Actions with `release`) over the engine (`PageEvents.inputDriver`): the one place the
-trusted input state changes. An event that gives user activation records its time. -/
+trusted input state changes. An event that gives user activation (`WebDriver.Input.activates`)
+records its time, and gives the page's Web Audio state its sticky activation
+(`WebAudio.Api.activate`: a context may start, and the `resume()` calls that waited go on). -/
 def performInput (sources : List WebDriver.Actions.Source) (release : Bool) (a : LeanJSWorkers.Agents) :
     LeanJSWorkers.Agents :=
   let e := LeanJSWorkers.engine
   let base := e.inputDriver refNode
+  -- HTML §6.4.1: the activation notification comes before the event is dispatched, so the
+  -- event's own listeners see the activation (a `resume()` in a pointerdown listener goes on).
   let dispatch := fun (a : LeanJSWorkers.Agents) (low : WebDriver.Actions.Low) =>
-    let a := base.dispatch a low
-    if WebDriver.Input.activates low then { a with page := a.page.setTrusted { a.page.trusted with activated := some (e.loop a).clock } } else a
+    if WebDriver.Input.activates low then base.dispatch (activateLean a (e.loop a).clock) low
+    else base.dispatch a low
   let d : WebDriver.Actions.Driver LeanJSWorkers.Agents := { env := base.env, dispatch := dispatch, wait := base.wait }
   let start : WebDriver.Actions.Run LeanJSWorkers.Agents := { engine := a, input := a.page.trusted.actions }
   let r := WebDriver.Actions.perform d start sources
@@ -1350,6 +1420,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let hostLoads := request.field? "navigations" == some (.bool true)
   let network := request.field? "network" == some (.bool true)
   let hostCors := request.field? "hostCors" == some (.bool true)
+  let tor := request.field? "tor" == some (.bool true)
   -- a start that stopped at a script waiting for this answer goes on from there
   if let some p := held.startPoint then
     if !held.syncCache.isEmpty && p.html == html && p.url == url then
@@ -1372,7 +1443,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
   let ent ← match held.startEntropy with
     | some e => if held.syncCache.isEmpty then entropy id else pure e
     | none => entropy id
-  let lim : Page.Limits := { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
+  let lim : Page.Limits := audioLimits held request { commands, logs, gpuPage := id, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", frames := true, hostLoads, network, hostCors, tor, pageAddress := str request "pageAddress", referrerPolicy := str request "referrerPolicy", syncOk := true, syncAnswers := held.syncCache }
   let syn := str request "syntax"
   let kept := match held.startParsed with
     | some (h, u, sy, p) => if !held.syncCache.isEmpty && h == html && u == url && sy == syn then some p else none
@@ -1390,7 +1461,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     let cspMeta := L4Factoidal.HTML.CspSource.metaText dom 0
     let scripts0 := scripts
     let (scripts, cspViolations) := L4Factoidal.HTML.CspSource.filterScripts (str request "csp") (str request "cspReportOnly")
-      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")) dom (LeanJSModules.baseOf dom url) scripts
+      (L4Factoidal.Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress") tor) dom (LeanJSModules.baseOf dom url) scripts
     let lim := { lim with csp := str request "csp", cspReportOnly := str request "cspReportOnly", cspMeta, cspViolations }
     let (base, ns0) ← WebWasm.timed fun _ => match held.leanBase with
       | some b => Except.ok b
@@ -1400,7 +1471,7 @@ def startLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (h
     | .ok base =>
       -- module scripts: their graphs are fetched first (each request a `netSync` and the start
       -- made again), so no script runs before they are all there. A page with none pays nothing.
-      let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress")
+      let page := Net.PageFetch.Page.ofUrl url hostCors (str request "pageAddress") tor
       -- the modules of the attempts before, while this start's answers are held (a first
       -- attempt, with no answers, takes none)
       let memo := if held.syncCache.isEmpty then #[] else held.moduleMemo
@@ -1473,13 +1544,17 @@ def actLean {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (act
   let runAll := fun (f : LeanJSWorkers.Agents → LeanJSWorkers.Agents) => runRest fun a => (f (started a), none)
   let keep := fun (msg : String) => pure (f := M) ({ held with leanSession := some (id, undoEnd s, marks) }, Except.error msg)
   match action with
+  -- The person's click or pointer event in a host: trusted input. A click, and a pointer event
+  -- that `hostPointerActivates` names, give user activation before the events are dispatched.
   | "click" =>
     match natField request "node" with
-    | some node => run (e.click · node)
+    | some node => run fun a => e.click (activateLean a (e.loop a).clock) node
     | none => keep "scriptSession: click needs node"
   | "pointer" =>
     match pointerKind (str request "kind"), natField request "node" with
-    | some kind, some node => run (e.pointer · kind node (pointerInit request))
+    | some kind, some node =>
+      let press := fun a => if hostPointerActivates kind request then activateLean a (e.loop a).clock else a
+      run fun a => e.pointer (press a) kind node (pointerInit request)
     | _, _ => keep "scriptSession: pointer needs kind (down, move, up, cancel) and node"
   | "key" =>
     -- a key a person pressed in a host (the window, the Hub): its WebDriver key actions
@@ -1729,7 +1804,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let (vw, vh) := (viewport request).getD (800, 600)
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
-        let prog := PageAot.startProg aot dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress" } #[] missing
+        let prog := PageAot.startProg aot dom url scripts (audioLimits held request { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ← entropy held.nextSession, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), tor := request.field? "tor" == some (.bool true), pageAddress := str request "pageAddress" }) #[] missing
           reads { instructionsPerMs := rate }
         let id := held.nextSession
         beginTurn { held with session := none, leanSession := none, startTodo := none, nextSession := id + 1, layoutRequest := layoutOf request } id {} {} true true prog
@@ -1746,7 +1821,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
         let reads : Page.Reads := { measure := measure ((request.field? "layout").getD (.object [])), width := vw, height := vh, canvasEnv := canvas }
         let rate := max 1 ((natField request "instructionsPerMs").getD 100000)
         let hostLoads := request.field? "navigations" == some (.bool true)
-        let s ← Page.start m dom url scripts { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts } #[] reads { instructionsPerMs := rate }
+        let s ← Page.start m dom url scripts (audioLimits held request { commands, logs, gpuPage := held.nextSession, gpuReplay := request.field? "gpuReplay" == some (.bool true), entropy := ent, encoding := str request "encoding", network := request.field? "network" == some (.bool true), hostCors := request.field? "hostCors" == some (.bool true), tor := request.field? "tor" == some (.bool true), pageAddress := str request "pageAddress", syncOk := true, syncAnswers := held.syncCache, frames := true, hostLoads, mayBlock := request.field? "network" == some (.bool true) && mentionsXhr scripts }) #[] reads { instructionsPerMs := rate }
         return missing.foldl Page.Session.fail s
       match started with
       | (.error e, _) => return (held, .error s!"scriptSession: {e}")
@@ -1798,11 +1873,12 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
       match action with
       | "click" =>
         match natField request "node" with
-        | some node => run (·.clickP node)
+        | some node => run fun s => (activatePage s).clickP node
         | none => return ({ held with session := some (id, s, marks) }, .error "scriptSession: click needs node")
       | "pointer" =>
         match pointerKind (str request "kind"), natField request "node" with
-        | some kind, some node => run (·.pointerP kind node (pointerInit request))
+        | some kind, some node => run fun s =>
+            (if hostPointerActivates kind request then activatePage s else s).pointerP kind node (pointerInit request)
         | _, _ => return ({ held with session := some (id, s, marks) }, .error "scriptSession: pointer needs kind (down, move, up, cancel) and node")
       | "resize" =>
         match viewport request with

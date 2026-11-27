@@ -150,6 +150,8 @@ Two-tier rule for `formal/lean4/` (analysis:
    under [`lean-risk-flags`](../lean-risk-flags/SKILL.md) until its
    constant-time property is shown, not assumed. Test vectors as
    `#guard`s are tests. They are not a security argument.
+   Why Lean `Nat` arithmetic is not constant time, and how that differs
+   from the AES case: [`docs/designissues/2026-11-27-bignum-timing-and-aes.md`](../../docs/designissues/2026-11-27-bignum-timing-and-aes.md).
 
    Open on 2026-11-13: the SPARQL MD5 and SHA builtins, `fn:hash`,
    RDFC-1.0 and VC hashing still run the pure Lean code. The follow-up
@@ -225,10 +227,18 @@ cannot reach an extern).
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
 | `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
+| `Crypto/K256Native.lean` | ECDSA secp256k1: key check, public key, RFC 6979 recoverable signing with low-S and recovery id (Ethereum), low-S verification; `SecretKey` is opaque (`tools/secret-type-gate.py`) | `ffi/hacl_k256.c` | `l4k256-probe`, `tests/ct/run.sh valgrind` |
 | `Crypto/AesGcmNative.lean` | AES-128-GCM, AES-256-GCM (EverCrypt AEAD over Vale assembly; x86-64 Linux and macOS only, refusal elsewhere; `Crypto/Aead.lean` `AeadOps` is the parameter type) | `ffi/hacl_aesgcm.c` | `l4crypto-probe` section `aes-gcm` |
 | `Crypto/Hkdf.lean` | HMAC-SHA-256, HKDF-SHA-256 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/Hpke.lean` | HPKE base mode (RFC 9180) | `ffi/hacl_hpke.c` | `l4crypto-probe` |
+
+**Constant time is checked on compiled code, per compiler.** HACL\*'s proofs end at C; a C compiler
+can add a branch on a secret. On 2026-11-27 clang -O2 for x86-64 did so in
+`Hacl_Bignum64_mod_exp_consttime` (316 memcheck errors; gcc 0):
+https://github.com/danbri/factoidal-core/issues/1200. Run `tests/ct/run.sh valgrind` with each
+compiler and target that builds HACL\* (`.github/workflows/check-k256-ct.yml`), and add a case there
+for each new secret-key path.
 
 Design record for the last four:
 [`docs/designissues/2026-09-07-crypto-primitives.md`](../../docs/designissues/2026-09-07-crypto-primitives.md).

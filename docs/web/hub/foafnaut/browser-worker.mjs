@@ -417,6 +417,10 @@ function settingsSource(source){
   const liberalBox=`<span class="box">${liberal?'<span class="tick"></span>':''}</span>`;
   source=source.replace('<!--foafnaut:liberal-->',`<p class="check"><a href="foafnaut:liberal/${liberal?'off':'on'}">${liberalBox} Be liberal in what we accept</a></p>`+
     '<p>On (the default): a page with a feature this browser does not support is drawn without it (a module script, a stylesheet it did not load, a media condition or inline SVG it can not read), and the console (:console, or Control-Alt-J) lists what was skipped. Off: strict, such a page is refused.</p>');
+  // Sound: the browser in this page has no audio output of its own (the Wasm build), so a page's
+  // real-time AudioContext is refused here; the Foafnaut window has the switch of
+  // --dangerously-permit-audio in this place.
+  source=source.replace('<!--foafnaut:permit-audio-->','<p>The browser in this page has no audio output of its own: a page\'s AudioContext is refused here (NotSupportedError). In the Foafnaut window, this section has the switch that lets pages start sound before you use them.</p>');
   if(!source.includes(classicMark))return source;
   const box=`<span class="box">${classicUI?'<span class="tick"></span>':''}</span>`;
   const row=canFold()

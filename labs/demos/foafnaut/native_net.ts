@@ -28,18 +28,46 @@
 //
 // Every fetch: redirect "manual" (each hop goes back to the engine), no cookies (Deno's fetch
 // has no cookie jar), a body of at most 64 MiB, 300 s at most.
+//
+// Tor (issue 1060; Net.PageFetch Tor mode, record 2026-11-25-foafnaut-tor-onion-routing.md
+// section 21a): a wire marked `tor` goes only through `NetOptions.tor`, the HTTP client of the
+// Tor worker's SOCKS5 port for the wire's `partition`. With no Tor route, or with `resolve` or
+// an `address` on a tor wire, the answer is a failure (status 0): nothing is resolved here and
+// no direct connection is made. With `torOnly` (a browser in Tor mode), a wire NOT marked `tor`
+// fails too, and so does every WebSocket. Lean proves its wires never need these checks
+// (`wireReach_tor`, `plan_tor`); the host keeps them so that a defect on either side fails
+// closed instead of sending a request from the user's own address.
 
 export type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string;
   resolve?:boolean;address?:string;port?:number;
   /** Network partition: the top-level site of the page that made the request. The Lean wire does
    *  not carry it yet; the host sets it. Absent means the pool's `partition` option, else "". */
-  partition?:string};
+  partition?:string;
+  /** Send through Tor (Net.PageFetch `Wire.tor`), in circuit set `partition`. */
+  tor?:boolean};
 export type NetAnswer={id:number;status?:number;statusText?:string;headers?:[string,string][];bodyBase64?:string;addresses?:string[]};
 
 const MAX_BODY=67108864;
 
 /** Extra trust roots (tests only: a local TLS server's certificate). */
-export type NetOptions={caCerts?:string[];timeoutMs?:number};
+export type NetOptions={caCerts?:string[];timeoutMs?:number;
+  /** The Tor route: an HTTP client that sends through the Tor worker (socks5.ts `torRoute`). */
+  tor?:TorRoute;
+  /** Tor mode: refuse every wire that is not marked `tor`, and every WebSocket. */
+  torOnly?:boolean};
+
+/** One HTTP client per Tor partition (circuit set); socks5h, so the exit resolves names. */
+export type TorRoute={client(partition:string):Deno.HttpClient};
+
+/** The host's check of a wire before any byte leaves (see the Tor note above): `"tor"` to send
+ *  through the Tor route, `"direct"` to send as before, `"refuse"` to fail closed. */
+export function wireRoute(w:NetWire,opts:NetOptions):"tor"|"direct"|"refuse"{
+  if(w.tor){
+    if(!opts.tor||w.resolve||w.address||!w.partition||w.partition==="null")return "refuse";
+    return "tor";
+  }
+  return opts.torOnly?"refuse":"direct";
+}
 
 export type NetPoolOptions=NetOptions&{maxClients?:number;maxPerKey?:number;idleMs?:number;partition?:string;
   /** DNS cache (issue 1031). Off with `dnsCache:false`. Default lifetime 60 s, at most 256 entries. */
@@ -284,6 +312,9 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Pro
   const failed={id:w.id,status:0};
   // a WebSocket connection's wires go to socketOpen / socketWrite / socketClose
   if(w.method.startsWith("WEBSOCKET"))return failed;
+  const route=wireRoute(w,opts);
+  if(route==="refuse")return failed;
+  if(route==="tor")return await torAnswer(w,opts);
   if(w.resolve){
     try{
       const host=new URL(w.url).hostname;
@@ -323,6 +354,21 @@ export async function netAnswer(w:NetWire,opts:NetOptions={},batch?:NetPool):Pro
   }
 }
 
+/** A tor wire through the Tor route: no resolve, no address, no pool. */
+async function torAnswer(w:NetWire,opts:NetOptions):Promise<NetAnswer>{
+  const failed={id:w.id,status:0};
+  try{
+    const client=opts.tor!.client(w.partition!);
+    const body=w.bodyBase64!==undefined?Uint8Array.from(atob(w.bodyBase64),c=>c.charCodeAt(0)):undefined;
+    const r=await fetch(w.url,{method:w.method,headers:w.headers,body,redirect:"manual",client,
+      signal:AbortSignal.timeout(opts.timeoutMs??300000)} as RequestInit);
+    const reader=r.body?.getReader();let total=0;const parts:Uint8Array[]=[];
+    for(;reader;){const {done:end,value}=await reader.read();if(end)break;total+=value.length;if(total>MAX_BODY){await reader.cancel();return failed;}parts.push(value);}
+    const bytes=new Uint8Array(total);let at=0;for(const p of parts){bytes.set(p,at);at+=p.length;}
+    return {id:w.id,status:r.status,statusText:r.statusText,headers:[...r.headers],bodyBase64:b64(bytes)};
+  }catch{return failed;}
+}
+
 // ---- WebSocket connections (formal/lean4/L4Factoidal/Net/WebSocket.lean) ----------------
 // The engine writes the opening handshake's fields and every frame, and reads every byte that
 // comes back; this host opens one TCP connection (TLS for `wss`, the certificate checked
@@ -335,6 +381,8 @@ export type NetSocket={conn:Deno.Conn;writing:Promise<unknown>};
  *  response's status and fields and the bytes after them; `socket` when it is open. */
 export async function socketOpen(w:NetWire,opts:NetOptions={}):Promise<{answer:NetAnswer;socket?:NetSocket}>{
   const failed={answer:{id:w.id,status:0}};
+  // Tor mode has no WebSocket (Net.WebSocket.connect_tor): never a direct connection.
+  if(opts.torOnly||w.tor)return failed;
   let u:URL;try{u=new URL(w.url);}catch{return failed;}
   const secure=u.protocol==="wss:";
   if(!secure&&u.protocol!=="ws:")return failed;

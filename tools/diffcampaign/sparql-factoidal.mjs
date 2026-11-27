@@ -15,6 +15,12 @@ const results = [];
 for (const line of lines) {
   const c = JSON.parse(line);
   try {
+    if (c.kind === "graph") {
+      const g = await fd.query(c.data, c.query, { format: "ntriples" });
+      const nt = typeof g === "string" ? g : await g.serialize({ format: "ntriples" });
+      results.push(JSON.stringify({ id: c.id, ok: true, nt }));
+      continue;
+    }
     let json = await fd.query(c.data, c.query, { format: "ntriples", output: "json" });
     if (typeof json !== "string") json = JSON.stringify(json);
     results.push(JSON.stringify({ id: c.id, ok: true, json }));

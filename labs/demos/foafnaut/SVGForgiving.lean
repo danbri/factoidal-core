@@ -869,10 +869,18 @@ private def normalise (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (
       let named := namedFont fonts inner.family inner.variant
       -- CSS Fonts 4 §5: a family that no SVG font has, but an SFNT font has, is drawn with
       -- the SFNT fonts; so is a text with a character that the SVG font has no glyph for
-      -- (the SFNT fallback list covers it, as for HTML text). Approximation: the whole
-      -- `text` changes font, not only that character.
+      -- (the SFNT fallback list covers it, as for HTML text), when the text names no SVG
+      -- font or names a family after it. A text whose only family is an SVG font keeps
+      -- that font's missing glyph (W3C fonts-glyph-04-t, text-text-06-t). Approximation:
+      -- the whole `text` changes font, not only that character.
+      let names := familyNames inner.family
+      let fallbackOffered := match named with
+        | none => true
+        | some f => match names.findIdx? (· == f.family) with
+          | some i => i+1 < names.length
+          | none => true
       let toSfnt := !sfnt.isEmpty && ((named.isNone && sfntNamed sfnt inner.family) ||
-        ((named.orElse fun _ => fonts.getLast?).map (uncovered · children)).getD true)
+        (fallbackOffered && ((named.orElse fun _ => fonts.getLast?).map (uncovered · children)).getD true))
       if toSfnt then
         let (node,log) := lowerSfnt sfnt targets.get? state attrs children
         (some node,log)

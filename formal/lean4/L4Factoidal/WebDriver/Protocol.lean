@@ -344,6 +344,10 @@ structure Session where
   id : String
   capabilities : List (String × Json) := []
   timeouts : Timeouts := {}
+  /-- The HTTP flag: false for a session that WebDriver BiDi's `session.new` made
+  (`WebDriver.BiDi`). Such a session "will not be accessible via HTTP": classic commands that
+  name it answer `invalid session id`. -/
+  http : Bool := true
   deriving Repr, Inhabited
 
 /-- The session id of 16 bytes of the machine's generator: a UUID's 32 hexadecimal digits
@@ -423,7 +427,7 @@ def handle (cfg : Gate.Config) (b : Browser) (srv : Server) (r : Request) : Serv
         else
           match srv.session, routed.session with
           | some session, some sid =>
-            if !Gate.sameText sid session.id then (srv, .ofError { code := .invalidSessionId, message := "no such session" })
+            if !Gate.sameText sid session.id || !session.http then (srv, .ofError { code := .invalidSessionId, message := "no such session" })
             else match routed.command with
               | .deleteSession => ({ srv with session := none }, .reply 200 (successBody .null))
               | .getTimeouts => (srv, .reply 200 (successBody session.timeouts.toJson))
@@ -552,6 +556,11 @@ private def live : Server := (newSession "{}").1
 #guard errorOf (send live "POST" ("/session/" ++ sid ++ "/timeouts") "{\"foo\":1}").2 == "invalid argument"
 #guard errorOf (send live "POST" ("/session/" ++ sid ++ "/timeouts") "[]").2 == "invalid argument"
 #guard (send live "DELETE" ("/session/" ++ sid)).1.session.isNone
+-- a session with no HTTP flag (BiDi `session.new`) is not reached over HTTP, and blocks New Session
+private def bidiOnly : Server := { session := some { id := sid, http := false } }
+#guard errorOf (send bidiOnly "GET" ("/session/" ++ sid ++ "/timeouts")).2 == "invalid session id"
+#guard (send bidiOnly "DELETE" ("/session/" ++ sid)).1.session.isSome
+#guard errorOf (send bidiOnly "POST" "/session" "{\"capabilities\":{}}").2 == "session not created"
 -- the timeouts a session reports read back as themselves
 #guard (Timeouts.merge {} ({ script := none, pageLoad := 7, implicit := 9 } : Timeouts).toJson).toOption == some { script := none, pageLoad := 7, implicit := 9 }
 #guard (Timeouts.merge {} ({} : Timeouts).toJson).toOption == some {}

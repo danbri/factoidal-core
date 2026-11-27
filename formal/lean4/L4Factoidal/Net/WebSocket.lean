@@ -64,6 +64,12 @@ def tchar (c : Char) : Bool := c.isAlphanum || "!#$%&'*+-.^_`|~".contains c
 def validProtocols (ps : List String) : Bool :=
   ps.all (fun p => !p.isEmpty && p.all tchar) && ps.eraseDups.length == ps.length
 
+/-- The exception of `new WebSocket` for a page in Tor mode (`PageFetch.Page.tor`): the
+connection would leave the Tor client, so none is made
+(https://github.com/danbri/factoidal-core/issues/1060). -/
+def torRefusal : String × String :=
+  ("SecurityError", "WebSocket is refused in Tor mode: this browser does not yet carry WebSocket connections through Tor.")
+
 /-- `new WebSocket(url, protocols)` (§3.1 steps 1 to 7) on a page whose URL is secure or not:
 the URL to connect to, or the exception (name, message). -/
 def openCheck (base input : String) (protocols : List String) (secure : Bool) :
@@ -82,6 +88,11 @@ def openCheck (base input : String) (protocols : List String) (secure : Bool) :
     else if !validProtocols protocols then
       .error ("SyntaxError", "The subprotocol list is invalid: each must be a token, and none may be given twice.")
     else .ok u
+
+/-- `openCheck` for a page: in Tor mode every URL is refused with `torRefusal`. -/
+def openCheckFor (page : PageFetch.Page) (base input : String) (protocols : List String) :
+    Except (String × String) URL.Url :=
+  if page.tor then .error torRefusal else openCheck base input protocols page.secure
 
 /-- `close(code, reason)` (§3.2 steps 1 and 2): `none` when the arguments may be used. -/
 def closeCheck (code : Option Nat) (reason : String) : Option (String × String) :=
@@ -309,14 +320,15 @@ def planStep (s : Sock) (st : PageFetch.Step) : Sock × List PageFetch.Wire :=
   | _ => fail s
 
 /-- Start a connection: `u` passed `openCheck`; `entropy`: at least 16 bytes for the key and
-more for masking keys. A blocked port fails at once. -/
+more for masking keys. A blocked port fails at once, and so does any connection of a page in
+Tor mode (`openCheckFor` refuses it first). -/
 def connect (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (protocols : List String) (entropy : ByteArray) :
     Sock × List PageFetch.Wire :=
   let t : PageFetch.Transfer :=
     { id, page, method := "GET", url := (httpForm u).serialize, headers := [], body := none, credentials := true, destination := "websocket" }
   let s : Sock :=
     { id, url := u.serialize, t, key := keyOf entropy, protocols, origin := page.origin, cb, pool := (entropy.extract 16 entropy.size).toList }
-  if badPorts.contains (portOf u) then fail s else planStep s (PageFetch.plan t)
+  if page.tor || badPorts.contains (portOf u) then fail s else planStep s (PageFetch.plan t)
 
 /-- Four bytes of the pool for a frame the engine sends on its own. -/
 def takeKey (s : Sock) : Sock × List UInt8 :=
@@ -456,6 +468,13 @@ def close (s : Sock) (code : Option Nat) (reason : String) (key : List UInt8) : 
   | .ok u => u.serialize == "ws://web-platform.test:8888/echo" | _ => false)
 #guard (match openCheck "https://a.test/x.html" "/echo" [] true with | .ok u => u.serialize == "wss://a.test/echo" | _ => false)
 #guard (match openCheck "http://a.test/" "ws://a.test/#x" [] false with | .error ("SyntaxError", _) => true | _ => false)
+#guard (match openCheckFor (PageFetch.Page.ofUrl "https://a.test/x.html" (tor := true)) "https://a.test/x.html" "wss://a.test/echo" [] with
+  | .error (n, m) => n == "SecurityError" && (m.splitOn "Tor mode").length > 1 | _ => false)
+#guard (match openCheckFor (PageFetch.Page.ofUrl "https://a.test/x.html") "https://a.test/x.html" "/echo" [] with
+  | .ok u => u.serialize == "wss://a.test/echo" | _ => false)
+#guard (match openCheck "https://a.test/x.html" "wss://a.test/echo" [] true with
+  | .ok u => (connect (PageFetch.Page.ofUrl "https://a.test/x.html" (tor := true)) 5 9 u [] (ByteArray.mk (Array.replicate 80 1))).2.map (·.method) == ["WEBSOCKET-CLOSE"]
+  | _ => false)
 #guard (match openCheck "http://a.test/" "ftp://a.test/" [] false with | .error ("SyntaxError", _) => true | _ => false)
 #guard (match openCheck "https://a.test/" "ws://a.test/" [] true with | .error ("SecurityError", _) => true | _ => false)
 #guard (match openCheck "http://a.test/" "ws://a.test/" ["echo", "echo"] false with | .error ("SyntaxError", _) => true | _ => false)
@@ -658,8 +677,27 @@ theorem connect_badPort (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (ps 
     (hb : badPorts.contains (portOf u) = true) (s : Sock) (ws : List PageFetch.Wire)
     (h : connect page id cb u ps e = (s, ws)) : ∀ w ∈ ws, w.method = "WEBSOCKET-CLOSE" := by
   unfold connect at h
-  simp only [hb, if_true] at h
+  simp only [hb, Bool.or_true, if_true] at h
   exact fail_wires _ _ _ h
+
+/-- Kind: privacy theorem (Tor mode). Says: a page in Tor mode opens no WebSocket connection:
+the only wire is the one that closes it (no `WEBSOCKET` wire, so the host connects nowhere).
+Does not say: anything of a host that opens sockets on its own. -/
+theorem connect_tor (page : PageFetch.Page) (id cb : Nat) (u : URL.Url) (ps : List String) (e : ByteArray)
+    (ht : page.tor = true) (s : Sock) (ws : List PageFetch.Wire)
+    (h : connect page id cb u ps e = (s, ws)) : ∀ w ∈ ws, w.method = "WEBSOCKET-CLOSE" := by
+  unfold connect at h
+  simp only [ht, Bool.true_or, if_true] at h
+  exact fail_wires _ _ _ h
+
+/-- Kind: policy theorem (Tor mode). Says: `new WebSocket` on a page in Tor mode throws the
+Tor-mode exception, whatever the URL. -/
+theorem openCheckFor_tor (page : PageFetch.Page) (base input : String) (ps : List String) (ht : page.tor = true) :
+    openCheckFor page base input ps = .error torRefusal := by
+  simp [openCheckFor, ht]
+
+#print axioms connect_tor
+#print axioms openCheckFor_tor
 
 /-- Kind: policy theorem. Says: the first wire of a connection that is not a close is the one
 `PageFetch.plan` chose for its `http`/`https` form (so it passes `mayConnect`, mixed content

@@ -191,14 +191,23 @@ def postOrder (d : Dom) (root : NodeId) : Array NodeId := Id.run do
       stack := kids.map (·, false) ++ (k, true) :: rest
   return out
 
+/-- An attribute that a script made with a colon in its name and no namespace
+(`setAttribute("v:crispness", ...)`, DOM §4.9: the qualified name is the local name). It is
+an unknown attribute in no namespace, so it does not change the rendering; XML with
+namespaces can not write it (Namespaces in XML 1.0 §7: a colon in a name starts a prefix). -/
+def unwritableAttr (a : Attr) : Bool := a.ns.isNone && a.lname.contains ':'
+
 /-- The arena with the `script`, `handler` and `listener` elements taken out of their
-parents' children (they are not rendered); the arena is otherwise the same. -/
+parents' children (they are not rendered), and without the attributes of `unwritableAttr`;
+the arena is otherwise the same. -/
 def withoutScripting (d : Dom) : Dom := Id.run do
   let mut out := d
   for k in d.treeOrder 0 do
     let n := d.get k
     if n.kids.any fun c => isScripting (d.get c) then
       out := out.setNode k fun m => { m with kids := m.kids.filter fun c => !isScripting (d.get c) }
+    if n.attrs.any unwritableAttr then
+      out := out.setNode k fun m => { m with attrs := m.attrs.filter fun a => !unwritableAttr a }
   return out
 
 /-- Run the scripts of `d` on the realm `base` (`LeanJS.prepareSource`). The arena after the

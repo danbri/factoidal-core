@@ -214,12 +214,10 @@ def timingOf (ids : String → Option Nat) (attrs : List NamespaceAttribute) (di
       | some k => if k > 0 then pure (some (some k)) else throw "animation: repeatCount must be more than 0"
       | none => throw s!"animation: invalid repeatCount: {s}"
   let repeatDur ← durationOf "repeatDur" (plain attrs "repeatDur")
-  let minDur ← match ← durationOf "min" (plain attrs "min") true with
-    | some (some v) => pure v
-    | _ => pure 0
-  let maxDur ← match ← durationOf "max" (plain attrs "max") true with
-    | some (some v) => pure (some v)
-    | _ => pure none
+  -- An invalid or negative `min` or `max` is ignored (SMIL 2.0 §10.3.3; W3C animate-elem-65-t).
+  let clock := fun (key : String) => (plain attrs key).bind fun v => L4Factoidal.Rendering.Smil.clockValue (trim v)
+  let minDur : Int := ((clock "min").map Int.ofNat).getD 0
+  let maxDur : Option Int := (clock "max").map Int.ofNat
   let (minDur,maxDur) := match maxDur with
     | some m => if minDur > m then (0,none) else (minDur,some m)
     | none => (minDur,none)
@@ -348,6 +346,8 @@ def attrInfo (name : String) : Option AttrInfo :=
   | "font-style" => some {kind:=.discrete,inherited:=true,initial:="normal"}
   | "font-weight" => some {kind:=.discrete,inherited:=true,initial:="normal"}
   | "font-variant" => some {kind:=.discrete,inherited:=true,initial:="normal"}
+  | "display-align" => some {kind:=.discrete,inherited:=true,initial:="auto"}
+  | "focusable" => some {kind:=.discrete,inherited:=false,initial:="auto"}
   | "d" => some {kind:=.pathData,inherited:=false,initial:=""}
   | "xlink:href" => some {kind:=.discrete,inherited:=false,initial:="",ns:=some xlinkNS}
   | _ => none
@@ -372,6 +372,66 @@ private def numList (s : String) : Except String (Array Float) := do
     NativeSVG.number item
   return out.toArray
 
+/-- Parameters of each path command (SVG Tiny 1.2 §9.3.1). -/
+private def pathArity (c : Char) : Option Nat :=
+  match c.toUpper with
+  | 'M' | 'L' | 'T' => some 2
+  | 'H' | 'V' => some 1
+  | 'C' => some 6
+  | 'S' | 'Q' => some 4
+  | 'A' => some 7
+  | 'Z' => some 0
+  | _ => none
+
+/-- Path data in absolute commands, one command for each segment (the implicit repetition of a
+command made explicit): the form in which two path values are compatible when they have the
+same command letters, whatever the case of the source (W3C test animate-elem-83-t mixes `L`
+and `l`, `S` and `s`, `T` and `t`). -/
+def absolutePath (source : String) : Except String (List (Char × Array Float)) := do
+  let tokens ← NativeSVGPath.tokenList source
+  let mut out : Array (Char × Array Float) := #[]
+  let mut cmd : Option Char := none
+  let mut args : Array Float := #[]
+  let mut cx : Float := 0
+  let mut cy : Float := 0
+  let mut sx : Float := 0
+  let mut sy : Float := 0
+  -- The token list ends with a sentinel command so the last command is emitted.
+  for tok in tokens ++ [.inl '!'] do
+    match tok with
+    | .inr n =>
+      let some c := cmd | throw "animation: path data begins with a number"
+      args := args.push (← NativeSVG.number n)
+      let some k := pathArity c | throw s!"animation: unknown path command {c}"
+      if k == 0 then throw "animation: numbers after Z in path data"
+      if args.size == k then
+        let rel := c.isLower
+        let ox : Float := if rel then cx else 0
+        let oy : Float := if rel then cy else 0
+        let up := c.toUpper
+        let abs : Array Float := match up with
+          | 'H' => #[args[0]!+ox]
+          | 'V' => #[args[0]!+oy]
+          | 'A' => #[args[0]!,args[1]!,args[2]!,args[3]!,args[4]!,args[5]!+ox,args[6]!+oy]
+          | _ => args.mapIdx fun i v => v + (if i % 2 == 0 then ox else oy)
+        out := out.push (up,abs)
+        match up with
+        | 'H' => cx := abs[0]!
+        | 'V' => cy := abs[0]!
+        | _ => cx := abs[abs.size-2]!; cy := abs[abs.size-1]!
+        if up == 'M' then sx := cx; sy := cy
+        args := #[]
+        -- After a moveto, further pairs are lineto (relative after `m`).
+        if up == 'M' then cmd := some (if rel then 'l' else 'L')
+    | .inl c =>
+      if !args.isEmpty then throw "animation: path command with too few numbers"
+      if c == '!' then break
+      let some k := pathArity c | throw s!"animation: unknown path command {c}"
+      if k == 0 then
+        out := out.push ('Z',#[]); cx := sx; cy := sy; cmd := none
+      else cmd := some c
+  return out.toList
+
 /-- Read one value of attribute `info`. A paint that is not a colour is a string. -/
 def readValue (info : AttrInfo) (source : String) : Except String AValue := do
   let s := trim source
@@ -383,12 +443,9 @@ def readValue (info : AttrInfo) (source : String) : Except String AValue := do
     return .nums v
   | .numberList => if s == "none" then return .str s else return .nums (← numList s)
   | .pathData =>
-    let tokens ← NativeSVGPath.tokenList s
-    let shape := tokens.map fun | .inl c => some c | .inr _ => none
-    let v ← tokens.filterMapM fun
-      | .inr n => do pure (some (← NativeSVG.number n))
-      | .inl _ => pure none
-    return .path shape v.toArray
+    let commands ← absolutePath s
+    let shape := commands.flatMap fun (c,p) => some c :: p.toList.map fun _ => none
+    return .path shape (commands.foldl (fun acc (_,p) => acc ++ p) #[])
   | .transform => return .nums (← numList s)
   | .colour =>
     let c ← NativeSVG.colourOf s
@@ -419,10 +476,16 @@ def writeValue (kind : Kind) (typ : String) : AValue → String
   | .path shape v => Id.run do
     let mut out : Array String := #[]
     let mut i := 0
+    let mut command := ' '
+    let mut k := 0
     for item in shape do
       match item with
-      | some c => out := out.push (String.singleton c)
-      | none => out := out.push (fmt (v.getD i 0)); i := i+1
+      | some c => out := out.push (String.singleton c); command := c; k := 0
+      | none =>
+        -- The two flags of an arc are 0 or 1 (§9.3.8): an interpolated flag is 1 when not 0.
+        let x := v.getD i 0
+        out := out.push (if command == 'A' && (k == 3 || k == 4) then (if x != 0 then "1" else "0") else fmt x)
+        i := i+1; k := k+1
     return String.intercalate " " out.toList
   | .inherit => "inherit"
 
@@ -738,6 +801,39 @@ def pointAt (pts : Array (Float × Float × Float)) (d : Float) : Float × Float
   let angle := Float.atan2 (y1-y0) (x1-x0) * 180 / 3.141592653589793
   return (x0+(x1-x0)*t,y0+(y1-y0)*t,angle)
 
+private def segmentEnd : L4Factoidal.Rendering.PathSegment → L4Factoidal.Rendering.Point
+  | .line e => e
+  | .quadratic _ e => e
+  | .cubic _ _ e => e
+  | .arc _ _ _ _ _ e => e
+
+/-- The path flattened one segment at a time, and the index in the joined point list of the
+start of the path and of the end of each segment. A `Z` is a segment (a line to the start of
+the subpath); a moveto is not (SVG 1.1 §19.2.12, which SVG Tiny 1.2 §16.2.17 follows: "A
+moveto command does not count as an additional point when dividing up the duration"). -/
+def segmentParts (contours : List L4Factoidal.Rendering.Contour) :
+    Except String (List (List (Float × Float)) × Array Nat) := do
+  let mut parts : Array (List (Float × Float)) := #[]
+  let mut ends : Array Nat := #[]
+  let mut count := 0
+  for c in contours do
+    match c with
+    | .empty _ => pure ()
+    | .path start segs closed =>
+      let mut pts : Array (Float × Float) := #[(start.x,start.y)]
+      if ends.isEmpty then ends := ends.push count
+      let mut cur := start
+      let segs := if closed then segs ++ [.line start] else segs
+      for seg in segs do
+        let lines ← NativeSVGCurves.flatten ⟨1,0,0,1,0,0⟩ [.path cur [seg] false] 0.05
+        for q in (lines.flatMap (·.points)).drop 1 do
+          pts := pts.push (q.x,q.y)
+        ends := ends.push (count + pts.size - 1)
+        cur := segmentEnd seg
+      parts := parts.push pts.toList
+      count := count + pts.size
+  return (parts.toList,ends)
+
 private def pointList (s : String) : Except String (Float × Float) := do
   let v ← numList s
   if v.size != 2 then throw s!"animateMotion: a point needs two numbers: {s}"
@@ -782,14 +878,11 @@ def readMotion (entries : Array Entry) (ids : String → Option Nat) (i : Nat) :
       if (plain pe.attrs "transform").isSome then throw "mpath: a path with a transform unsupported"
       pure (some ((plain pe.attrs "d").getD ""))
     | none => pure (plain e.attrs "path")
-  let (parts,vertexCount) ← match pathData with
+  let (parts,vertexCount,segmentEnds) ← match pathData with
     | some d => do
       let contours ← NativeSVGPath.parse NativeSVG.number d
-      let lines ← NativeSVGCurves.flatten ⟨1,0,0,1,0,0⟩ contours 0.05
-      let parts := lines.filterMap fun c => match c.points with
-        | [] => none
-        | first::_ => some ((if c.closed then c.points ++ [first] else c.points).map fun q => (q.x,q.y))
-      pure (parts,none)
+      let (parts,ends) ← segmentParts contours
+      pure (parts,none,some ends)
     | none => do
       let pts ← match plain e.attrs "values" with
         | some vs => ((vs.splitOn ";").map trim |>.filter (!·.isEmpty)).mapM pointList
@@ -803,7 +896,7 @@ def readMotion (entries : Array Entry) (ids : String → Option Nat) (i : Nat) :
             let (bx,by_) ← pointList b
             pure [(0,0),(bx,by_)]
           | _, _, _ => throw "animateMotion without path, values, to or by"
-      pure ([pts],some pts.length)
+      pure ([pts],some pts.length,none)
   let pts := withDistances parts
   if pts.isEmpty then throw "animateMotion with an empty path"
   let total := pts.back!.2.2
@@ -827,7 +920,16 @@ def readMotion (entries : Array Entry) (ids : String → Option Nat) (i : Nat) :
         pure (k,cum,authorMode == "discrete")
     | none, none =>
       if authorMode == "paced" then pure (#[0,1],#[0,total],false)
-      else throw s!"animateMotion: a path with calcMode {authorMode} and no keyPoints unsupported"
+      else
+        -- Each segment of the path gets an equal share of the time (or its keyTimes).
+        let ends := segmentEnds.getD #[]
+        let n := ends.size
+        if n < 2 then pure (#[0,1],#[0,total],false) else
+        let cum := ends.map fun j => (pts[j]!).2.2
+        let k := keyTimes.getD ((Array.range n).map fun j =>
+          Float.ofNat j/Float.ofNat (if authorMode == "discrete" then n else n-1))
+        if k.size != n then throw "animation: keyTimes in error"
+        pure (k,cum,authorMode == "discrete")
   if times.size > 0 && (times[0]! != 0 || (!discrete && times[times.size-1]! != 1) ||
       (List.range (times.size-1)).any (fun j => times[j]! > times[j+1]!)) then throw "animation: keyTimes in error"
   let keySplines ← if authorMode != "spline" then pure #[] else do

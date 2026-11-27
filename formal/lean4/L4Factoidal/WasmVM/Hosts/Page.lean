@@ -443,6 +443,9 @@ structure Limits where
   /-- The address the embedder loaded the page from, when it knows it: a special-purpose one
   makes the page local (`Net.PageFetch.Page.ofUrl`). -/
   pageAddress : String := ""
+  /-- Tor mode: the page's requests go through the host's Tor client (`tor:true` of `start`,
+  `Net.PageFetch.Page.tor`). -/
+  tor : Bool := false
   /-- The `Referrer-Policy` field of the page's response, when the embedder gave it (several
   fields joined with commas); "" for none: the default policy (`Net.Xhr.policyOfHeader`). -/
   referrerPolicy : String := ""
@@ -462,6 +465,14 @@ structure Limits where
   syncOk : Bool := false
   /-- The page's scripts may make a sync request in a later action (`Net.Xhr.State.mayBlock`). -/
   mayBlock : Bool := false
+  /-- The engine's audio output for Web Audio's real-time contexts: the device's sample rate and
+  channel count, or none (then `new AudioContext()` answers `NotSupportedError`). Set by the
+  engine (`labs/demos/foafnaut/WebAudioRun.lean`), never by a page (`WebAudio.Api.State.device`). -/
+  audioDevice : Option (Float × Nat) := none
+  /-- Present: a real-time context may start with no user activation
+  (`WebAudio.Api.State.autoplay`, `Risk.audioWithoutActivation`). Made only from the engine's
+  start request (`labs/demos/foafnaut/WebScripts.lean`, `audioLimits`), never by a page. -/
+  autoplay : Option (Risk.Accepted .audioWithoutActivation) := none
   deriving Inhabited
 
 /-- The exports of the module, by function address. -/
@@ -2444,7 +2455,9 @@ def Session.startP (s : Session) (url : String) (scripts : Array (Nat × String)
       aboutPolicies := aboutPolicyURL.toArray.map fun u => (0, u, [])
       encoding := L4Factoidal.WHATWG.Encoding.getEncoding s.limits.encoding
       policies := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta } }
-  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
+  let web := { s.host.web with net := { enabled := s.limits.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url s.limits.hostCors s.limits.pageAddress s.limits.tor, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader s.limits.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf s.limits.csp s.limits.cspReportOnly s.limits.cspMeta, violations := s.limits.cspViolations, syncOk := s.limits.syncOk, syncAnswers := s.limits.syncAnswers, mayBlock := s.limits.mayBlock } }
+  -- the engine's audio output and autoplay setting (`Limits.audioDevice`, `autoplay`)
+  let web := { web with audio := { web.audio with device := s.limits.audioDevice, autoplay := s.limits.autoplay } }
   let s := { s with host := { s.host with web } }
   let d0 := Id.run do
     let mut d0 := d0

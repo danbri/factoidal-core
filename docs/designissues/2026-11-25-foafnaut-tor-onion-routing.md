@@ -765,3 +765,27 @@ the lean-based core."
   its first lines and is not called from the product path.
 - Open: top-level page navigation in `native_html_document.ts` may fetch without a Lean decision;
   the Lean change reports where, and Tor mode must cover it before it is offered in Settings.
+
+### 21a. No direct connection in Tor mode (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim, on the finding that top-level page loads, images and fonts are
+fetched by the host with no Lean decision: "yes take huge care not to expose us this way."
+
+Rules for Tor mode, all four before Settings offers it:
+
+1. Runtime permission. The browser in Tor mode is its own Deno process with network permission
+   for the local SOCKS5 address only (`--allow-net=127.0.0.1:<port>`); the Tor client is a
+   separate Deno process. A direct fetch, `Deno.resolveDns` or a socket from the browser process
+   then fails with a permission error, whatever code path makes it.
+2. Lean decides every load: navigations and their redirects, images, fonts, style sheets,
+   scripts, XHR and fetch. In Tor mode the only answers are a refusal or "through Tor, partition
+   P", with theorems that no load goes direct and no name is looked up.
+3. Start-up checks: the `NO_PROXY` check (`proxyCheck`), and a check that a direct connection
+   from the browser process is refused by the runtime.
+4. A leak test on the private network: Textnaut in Tor mode loads a page with a redirect, an
+   image, a font, a script fetch and a WebSocket; a counting server checks that every request
+   came through the SOCKS5 server; any request by another path, or any permission error, fails
+   the test.
+
+Until then the Tor path is reachable only through the test flag
+`--dangerously-use-unreviewed-tor-transport`, never from Settings.
