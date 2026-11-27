@@ -149,7 +149,7 @@ function initialAccounts(test) {
   put(record(child, { balance: 100, code: test.childCode ?? '', storage: slots }))
   put(record(reverter, { balance: 100, code: effects('fd'), storage: slots }))
   put(record(invalid, { balance: 100, code: effects('fe'), storage: slots }))
-  put(record(unsupported, { balance: 100, code: '5f4000', storage: slots }))
+  put(record(unsupported, { balance: 100, code: '5f0c00', storage: slots }))
   const coinbase = test.coinbase ?? beneficiary
   if (!accounts.has(dec(coinbase))) put(record(coinbase, { balance: 11 }))
   return [...accounts.values()]
