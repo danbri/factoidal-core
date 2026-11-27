@@ -211,7 +211,8 @@ theorem subMod_spec (N a b : U256) (ha : a.toNat < N.toNat) (hb : b.toNat < N.to
     Says: `isZero` holds exactly for the limbs of the number zero.
     Does not say: anything about zero modulo a prime for non-canonical values. -/
 theorem isZero_iff (a : U256) : a.isZero = true ↔ a.toNat = 0 := by
-  simp only [U256.isZero, beq_iff_eq, UInt64.or_eq_zero_iff, u64_eq_zero_iff, U256.toNat]
+  simp only [U256.isZero, beq_iff_eq, UInt64.or_eq_zero_iff]
+  simp only [u64_eq_zero_iff, U256.toNat]
   limb_omega
 
 /-- Kind: functional correctness (equality test).
