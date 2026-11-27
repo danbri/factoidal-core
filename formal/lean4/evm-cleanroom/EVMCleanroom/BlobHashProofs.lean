@@ -37,7 +37,7 @@ theorem World.pay_txBlobHashes {w out : World.TxWorld} {sender recipient amount 
     Does not say: the context was authenticated by a signed transaction. -/
 theorem step_blobHash_success (s : State) (index : Word) (rest : List Word)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = index :: rest) (hGas : 3 ≤ s.gas) :
     ∃ out, step s = .ok out ∧
       out.stack.items = s.txBlobHashes.getD index.val (word 0) :: rest ∧
@@ -58,7 +58,7 @@ theorem step_blobHash_success (s : State) (index : Word) (rest : List Word)
     Does not say: list elements are valid versioned hashes. -/
 theorem step_blobHash_in_range (s : State) (index : Word) (rest : List Word)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = index :: rest) (hGas : 3 ≤ s.gas)
     (hIndex : index.val < s.txBlobHashes.size) :
     ∃ out, step s = .ok out ∧
@@ -74,7 +74,7 @@ theorem step_blobHash_in_range (s : State) (index : Word) (rest : List Word)
     Does not say: out-of-range is a transaction or execution failure. -/
 theorem step_blobHash_out_of_range (s : State) (index : Word) (rest : List Word)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = index :: rest) (hGas : 3 ≤ s.gas)
     (hIndex : s.txBlobHashes.size ≤ index.val) :
     ∃ out, step s = .ok out ∧
@@ -90,7 +90,7 @@ theorem step_blobHash_out_of_range (s : State) (index : Word) (rest : List Word)
     Does not say: the caller's transaction checkpoint has been settled here. -/
 theorem step_blobHash_outOfGas (s : State) (index : Word) (rest : List Word)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = index :: rest) (hGas : s.gas < 3) :
     step s = .error .outOfGas := by
   have hBound : (s.txBlobHashes.getD index.val (word 0) :: rest).length ≤ 1024 := by

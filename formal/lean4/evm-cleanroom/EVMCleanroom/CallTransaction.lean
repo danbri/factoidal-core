@@ -14,10 +14,9 @@ namespace EVMCleanroom.CallTransaction
 
 open World
 
-/-- Prague's instruction set is Cancun's, so it shares that profile. Its
-    other ordinary-call change, the EIP-7623 calldata floor, is applied by
-    `forkGasRules`. EIP-2537 addresses 0x0b-0x11 are precompiles in Prague
-    and are warm; this runner has no implementation of them. Osaka adds
+/-- Prague has its own profile: Cancun's instruction set with the EIP-2537
+    precompiles 0x0b-0x11 active (and warm). Its other ordinary-call change,
+    the EIP-7623 calldata floor, is applied by `forkGasRules`. Osaka adds
     CLZ (its own profile), the EIP-7825 transaction gas cap and P256VERIFY
     at 0x100. -/
 inductive Fork where
@@ -30,7 +29,7 @@ inductive Fork where
 def Fork.profile : Fork → Profile
   | .shanghai => .shanghaiPlus
   | .cancun => .cancunPlus
-  | .prague => .cancunPlus
+  | .prague => .prague
   | .osaka => .osaka
 
 def Fork.precompileLimit : Fork → Nat

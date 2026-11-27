@@ -23,9 +23,9 @@ forks:
   for 0x05, EIP-1108 for 0x06–0x08). `shanghaiPlus` cannot tell Shanghai from
   later forks, so 0x0a–0x11 stay refused there, as before;
 * `cancunPlus`: adds 0x0a (EIP-4844);
-* `osaka`: adds 0x0b–0x11 (EIP-2537) and 0x100 (P256VERIFY, EIP-7951), and prices
+* `prague`: adds 0x0b–0x11 (EIP-2537), with Berlin pricing for 0x05;
+* `osaka`: as `prague`, plus 0x100 (P256VERIFY, EIP-7951), and prices
   0x05 by EIP-7883 with the EIP-7823 length bound.
-  There is no separate Prague profile, so the EIP-2537 set is reachable only here.
 
 An address that is reserved in a profile but not implemented here is refused
 by the caller as before (`unsupportedFork`, an indeterminate result). It is
@@ -49,6 +49,7 @@ def lastAddress : Profile → Nat
   | .preShanghai => 0x09
   | .shanghaiPlus => 0x09
   | .cancunPlus => 0x0a
+  | .prague => 0x11
   | .osaka => 0x11
 
 /-- Does this profile execute `address` through `run`? -/
@@ -212,6 +213,7 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
 #guard (match run .cancunPlus none 0x0b 100000 {} with | .error .unsupportedFork => true | _ => false)
 #guard (match run .osaka none 0x0b 100000 {} with | .error .outOfGas => true | _ => false)
 #guard active .cancunPlus 0x0a && !active .cancunPlus 0x0b && active .osaka 0x11
+#guard active .prague 0x0b && active .prague 0x11 && !active .prague 0x100 && !active .prague 0x12
 
 #print axioms materialize_size
 #print axioms run_inactive

@@ -54,6 +54,41 @@ theorem charge_zero_floor (b : Budget) (remaining : Nat) (counter : Int) (h : b.
       (b.gasLimit - remaining) - min counter.toNat ((b.gasLimit - remaining) / 5) := by
   simp [charge, h]
 
+/-- Kind: fork ordering.
+    Says: the Prague profile runs exactly the EIP-2537 addresses 0x0b-0x11 on
+    top of Cancun's set, and Osaka runs the same set below 0x100.
+    Does not say: that each precompile computes its specified function. -/
+theorem prague_active_bls (a : Nat) (h : 0x0b ≤ a ∧ a ≤ 0x11) :
+    Precompiles.active .prague a = true := by
+  have : a = 11 ∨ a = 12 ∨ a = 13 ∨ a = 14 ∨ a = 15 ∨ a = 16 ∨ a = 17 := by omega
+  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+theorem prague_extends_cancun (a : Nat) (h : Precompiles.active .cancunPlus a = true) :
+    Precompiles.active .prague a = true := by
+  simp only [Precompiles.active, Precompiles.lastAddress, Bool.and_eq_true, Bool.or_eq_true,
+    beq_iff_eq] at h ⊢
+  obtain ⟨hi, hr⟩ := h
+  refine ⟨hi, Or.inl ?_⟩
+  rcases hr with hr | ⟨_, hc⟩
+  · exact decide_eq_true (Nat.le_trans (of_decide_eq_true hr) (by decide))
+  · cases hc
+
+theorem prague_osaka_agree (a : Nat) (h : a < 0x100) :
+    Precompiles.active .prague a = Precompiles.active .osaka a := by
+  have h2 : (a == 256) = false := by simp only [beq_eq_false_iff_ne]; omega
+  simp only [Precompiles.active, h2, Bool.false_and, Bool.or_false]
+  rfl
+
+/-- Kind: fork ordering.
+    Says: the Prague fork selects the Prague profile and warms 0x01-0x11.
+    Does not say: anything about the instruction set (shared with Cancun). -/
+theorem prague_profile : Fork.prague.profile = .prague ∧ Fork.prague.precompileLimit = 0x11 :=
+  ⟨rfl, rfl⟩
+
+#print axioms prague_active_bls
+#print axioms prague_extends_cancun
+#print axioms prague_osaka_agree
+#print axioms prague_profile
 #print axioms forkGasRules_before_prague
 #print axioms forkGasRules_floor
 #print axioms forkGasRules_osaka_cap

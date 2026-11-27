@@ -236,11 +236,15 @@ def Stack.empty : Stack := ⟨[], by decide⟩
 /-- Opcode-dispatch profiles, NOT complete fork execution environments.
     "shanghaiPlus" is the pre-Osaka legacy subset used by the existing
     tests, NOT a claim that later opcodes/gas rules are present. "osaka"
-    enables EIP-7939 CLZ but does not claim full Fusaka/Osaka support. -/
+    enables EIP-7939 CLZ but does not claim full Fusaka/Osaka support.
+    "prague" has Cancun's instruction set and gas schedule; it differs in
+    the precompile set (EIP-2537 BLS12-381 at 0x0b-0x11) and transaction
+    rules, which the call and transaction layers select from it. -/
 inductive Profile where
   | preShanghai
   | shanghaiPlus
   | cancunPlus
+  | prague
   | osaka
   deriving DecidableEq, Repr
 
@@ -635,12 +639,12 @@ def planStep (s : State) : Except Error Plan :=
       if s.profile = .preShanghai then .error .unsupportedFork
       else prepared (s.pc + 1) (word s.blockBaseFee :: s.stack.items) 2
     | 0x49 => -- BLOBHASH (EIP-4844; Cancun onwards)
-      if s.profile = .cancunPlus ∨ s.profile = .osaka then
+      if s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka then
         unary s (fun index => s.txBlobHashes.getD index.val (word 0)) 3
       else .error .unsupportedFork
     | 0x4a => -- BLOBBASEFEE (EIP-7516; Cancun onwards)
       -- shanghaiPlus spans the fork boundary, so it cannot decide activation.
-      if s.profile = .cancunPlus ∨ s.profile = .osaka then
+      if s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka then
         prepared (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2
       else .error .unsupportedFork
     | 0x50 => pop s                                    -- POP
@@ -1003,21 +1007,21 @@ theorem step_slt_underflow (s : State) (hRun : s.halted = false)
     Does not say: the transaction hashes or blob sidecars are authenticated. -/
 theorem step_blobHash (s : State) (index : Word) (rest : List Word)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = index :: rest) :
     step s = commit s (s.pc + 1)
       (s.txBlobHashes.getD index.val (word 0) :: rest) 3 := by
-  simp [step, planStep, hRun, hOp, hProfile, unary, hStack, prepared]
+  rcases hProfile with h | h | h <;> simp [step, planStep, hRun, hOp, h, unary, hStack, prepared]
 
 /-- Kind: executable failure boundary.
     Says: an admitted BLOBHASH with no index reports stack underflow.
     Does not say: an earlier fork activates the instruction. -/
 theorem step_blobHash_underflow (s : State)
     (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x49)
-    (hProfile : s.profile = .cancunPlus ∨ s.profile = .osaka)
+    (hProfile : s.profile = .cancunPlus ∨ s.profile = .prague ∨ s.profile = .osaka)
     (hStack : s.stack.items = []) :
     step s = .error .stackUnderflow := by
-  simp [step, planStep, hRun, hOp, hProfile, unary, hStack]
+  rcases hProfile with h | h | h <;> simp [step, planStep, hRun, hOp, h, unary, hStack]
 
 /-- Kind: fork boundary.
     Says: the coarse older profiles refuse BLOBHASH without executing it.
@@ -1039,6 +1043,11 @@ theorem step_blobHash_unknown_fork (s : State)
     blob base fee. No theorem here derives the fee from excess blob gas. -/
 theorem step_blobBaseFee_cancun (s : State) (hRun : s.halted = false)
     (hOp : byteAt s s.pc = 0x4a) (hProfile : s.profile = .cancunPlus) :
+    step s = commit s (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2 := by
+  simp [step, planStep, hRun, hOp, hProfile, prepared]
+
+theorem step_blobBaseFee_prague (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x4a) (hProfile : s.profile = .prague) :
     step s = commit s (s.pc + 1) (word s.blockBlobBaseFee :: s.stack.items) 2 := by
   simp [step, planStep, hRun, hOp, hProfile, prepared]
 
@@ -1217,5 +1226,6 @@ def run : Nat → State → Except Error State
 #print axioms step_mulMod
 #print axioms step_slt_underflow
 #print axioms step_callValue_zero
+
 
 end EVMCleanroom

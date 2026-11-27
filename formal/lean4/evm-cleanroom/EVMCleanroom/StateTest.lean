@@ -251,13 +251,14 @@ def ensureSlots (ws : List WitnessAccount) (address key : Nat) : Option (List Wi
 /-- EIP-2537 precompile addresses, executable from Prague. -/
 def blsAddress (address : Nat) : Bool := decide (0x0b ≤ address ∧ address ≤ 0x11)
 
-/-- Precompile addresses this runner has no implementation for, beyond the
-    Cancun set that the call dispatcher already refuses. -/
+/-- Precompile addresses of the fork beyond the Cancun set that the
+    precompile router does not execute for the fork's profile. -/
 def laterPrecompile (fork : Fork) (address : Nat) : Bool :=
-  match fork with
-  | .prague => blsAddress address
-  | .osaka => blsAddress address || address == 0x100
-  | _ => false
+  let reserved := match fork with
+    | .prague => blsAddress address
+    | .osaka => blsAddress address || address == 0x100
+    | _ => false
+  reserved && !Precompiles.active fork.profile address
 
 /-- Forks with EIP-7702 delegations. -/
 def hasDelegations (fork : Fork) : Bool := fork = .prague || fork = .osaka
