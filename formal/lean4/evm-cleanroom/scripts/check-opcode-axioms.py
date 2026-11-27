@@ -59,6 +59,48 @@ INVENTORY = {
         "EVMCleanroom.CallOpcode.executeAtDepth_account_error": [P, C, Q],
         "EVMCleanroom.CallOpcode.resumeChild_failure_transient": [P],
         "EVMCleanroom.CallOpcode.beginCall_checkpoint_transient": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_preShanghai": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_underflow": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_outOfGas": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_oversize": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_static": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_uncovered_creator": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_admitted": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_soft_failure": [P, C, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_no_keccak": [P, Q],
+        "EVMCleanroom.CallOpcode.enterCreate_uncovered": [P, Q],
+        "EVMCleanroom.CallOpcode.enterCreate_collision": [P, Q],
+        "EVMCleanroom.CallOpcode.enterCreate_entered": [P, Q],
+        "EVMCleanroom.CallOpcode.beginCreate_entered": [P, C, Q],
+        "EVMCleanroom.CallOpcode.resumeCreate_revert": [P],
+        "EVMCleanroom.CallOpcode.resumeCreate_exception": [P],
+        "EVMCleanroom.CallOpcode.resumeCreate_deposit_failure": [P],
+        "EVMCleanroom.CallOpcode.resumeCreate_success": [P, Q],
+        "EVMCleanroom.CallOpcode.createContinuation_parent": [],
+        "EVMCleanroom.CallOpcode.executeAtDepth_create_error": [P, C, Q],
+        "EVMCleanroom.CallOpcode.executeAtDepth_create_failed": [P, C, Q],
+    },
+    "EVMCleanroom/Create.lean": {
+        "EVMCleanroom.Create.charge_create": [P],
+        "EVMCleanroom.Create.charge_create2": [P],
+        "EVMCleanroom.Create.childGas_reserve": [P, C, Q],
+        "EVMCleanroom.Create.fixedBytes_length": [P],
+        "EVMCleanroom.Create.byteLength_le": [P, Q],
+        "EVMCleanroom.Create.rlpScalar_length": [P, Q],
+        "EVMCleanroom.Create.rlpSenderNonce_shape": [P, Q],
+        "EVMCleanroom.Create.create2Preimage_shape": [P],
+        "EVMCleanroom.Create.address_bound": [P, Q],
+        "EVMCleanroom.Create.materialize_bytes": [P, C, Q],
+        "EVMCleanroom.Create.deposit_oversize": [P],
+        "EVMCleanroom.Create.deposit_invalid_prefix": [P, C, Q],
+        "EVMCleanroom.Create.deposit_outOfGas": [P],
+        "EVMCleanroom.Create.deposit_success": [P, C, Q],
+        "EVMCleanroom.Create.deposit_empty": [P, Q],
+        "EVMCleanroom.Create.bumpNonce_accounts": [P, Q],
+        "EVMCleanroom.Create.bumpNonce_journal": [],
+        "EVMCleanroom.Create.prepare_new": [P, Q],
+        "EVMCleanroom.Create.setCode_effect": [P, Q],
+        "EVMCleanroom.Create.collides_iff": [P, Q],
     },
     "EVMCleanroom/AccountTransientProofs.lean": {
         "EVMCleanroom.AccountTransient.witnessWorld_transient_empty": [],
@@ -70,7 +112,8 @@ INVENTORY = {
     },
 }
 # Sources that print only listed theorems.
-EXACT_SOURCES = {"EVMCleanroom/AccountOpcode.lean", "EVMCleanroom/AccountTransientProofs.lean"}
+EXACT_SOURCES = {"EVMCleanroom/AccountOpcode.lean", "EVMCleanroom/AccountTransientProofs.lean",
+                 "EVMCleanroom/Create.lean"}
 
 
 def expected_claims(source):

@@ -1739,4 +1739,528 @@ theorem beginCall_checkpoint_transient (active child : ActiveFrame) (k : Continu
 #print axioms resumeChild_failure_transient
 #print axioms beginCall_checkpoint_transient
 
+/-! ## CREATE and CREATE2 -/
+
+/-- The opcode byte of each creation instruction. -/
+def createOpcode (create2 : Bool) : Nat := if create2 then 0xf5 else 0xf0
+
+/-- Kind: fork admission.
+    Says: the coarse pre-Shanghai profile refuses both creation instructions.
+    Does not say: the instructions are absent on those forks. -/
+theorem beginCreate_preShanghai (active : ActiveFrame) (create2 : Bool)
+    (hProfile : active.state.profile = .preShanghai) :
+    beginCreate active create2 = .error .unsupportedFork := by
+  simp [beginCreate, hProfile]
+
+/-- Kind: boundary.
+    Says: CREATE needs three stack words and CREATE2 four; with fewer the
+    instruction underflows before any charge.
+    Does not say: how the dispatcher classifies the error. -/
+theorem beginCreate_underflow (active : ActiveFrame) (create2 : Bool)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = none) :
+    beginCreate active create2 = .error .stackUnderflow := by
+  simp [beginCreate, hProfile, hDecode]
+
+/-- Kind: gas boundary.
+    Says: gas below 32000 + memory expansion + initcode words (+ hash words
+    for CREATE2) is out of gas, before every other check.
+    Does not say: that the creator keeps any gas. -/
+theorem beginCreate_outOfGas (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : active.state.gas < Create.charge create2 active.state.memory.words ops.offset ops.size) :
+    beginCreate active create2 = .error .outOfGas := by
+  simp [beginCreate, hProfile, hDecode, hGas]
+
+/-- Kind: executable correspondence (EIP-3860).
+    Says: an initcode window longer than 49152 bytes is an out-of-gas
+    exceptional halt whatever the gas, and no byte of it is read.
+    Does not say: anything about create transactions. -/
+theorem beginCreate_oversize (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hSize : Create.maxInitCodeSize < ops.size) :
+    beginCreate active create2 = .error .outOfGas := by
+  simp only [beginCreate, hProfile, hDecode, if_false]
+  split
+  · rfl
+  · simp [hSize]
+
+/-- Kind: executable correspondence (static context).
+    Says: a funded creation with an admissible initcode size in a static
+    frame is a write-protection exceptional halt, whatever the value.
+    Does not say: that an underfunded static creation reports this error. -/
+theorem beginCreate_static (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas)
+    (hSize : ops.size ≤ Create.maxInitCodeSize) (hStatic : active.state.readOnly = true) :
+    beginCreate active create2 = .error .writeProtection := by
+  simp [beginCreate, hProfile, hDecode, Nat.not_lt_of_ge hGas, Nat.not_lt_of_ge hSize, hStatic]
+
+/-- Kind: boundary (witness mode).
+    Says: a creation by an account outside the witness coverage refuses with
+    that address before its nonce or balance is read.
+    Does not say: the account is absent from the real state. -/
+theorem beginCreate_uncovered_creator (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas)
+    (hSize : ops.size ≤ Create.maxInitCodeSize) (hMutable : active.state.readOnly = false)
+    (hMissing : active.world.hasAccount active.address = false) :
+    beginCreate active create2 = .error (.incompleteState active.address none) := by
+  simp [beginCreate, hProfile, hDecode, Nat.not_lt_of_ge hGas, Nat.not_lt_of_ge hSize, hMutable, hMissing]
+
+/-- The soft-failure condition of EELS `generic_create`. -/
+def createSoftFails (active : ActiveFrame) (ops : CreateOperands) : Bool :=
+  ops.value > ((commitFrame active.world active.address active.state).accounts active.address).balance ||
+    ((commitFrame active.world active.address active.state).accounts active.address).nonce == Create.maxNonce ||
+    active.depth ≥ maxDepth
+
+/-- Kind: executable correspondence.
+    Says: once charged, size-checked, mutable and covered, a creation is a
+    soft failure exactly on `createSoftFails`; otherwise it needs the Keccak
+    opt-in and continues in `enterCreate` with the EIP-150 budget of the gas
+    left after the charge and the creator's committed world.
+    Does not say: what `enterCreate` then decides. -/
+theorem beginCreate_admitted (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas)
+    (hSize : ops.size ≤ Create.maxInitCodeSize) (hMutable : active.state.readOnly = false)
+    (hCovered : active.world.hasAccount active.address = true) :
+    beginCreate active create2 =
+      let budget := createBudget
+        (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size)
+      let callerWorld := commitFrame active.world active.address active.state
+      if createSoftFails active ops then
+        .ok (.failed (createContinuation active ops callerWorld budget .call))
+      else
+        match active.state.keccakAcceptance with
+        | none => .error .unsupportedFork
+        | some acceptance => enterCreate active ops budget callerWorld acceptance := by
+  simp only [beginCreate, hProfile, hDecode, Nat.not_lt_of_ge hGas, Nat.not_lt_of_ge hSize, hMutable,
+    hCovered, if_false, Bool.not_true, Bool.false_eq_true]
+  rfl
+
+/-- Kind: executable correspondence (soft failure).
+    Says: when the endowment exceeds the creator's balance, or its nonce is
+    2^64-1, or the child would exceed depth 1024, the creation fails softly
+    and the resumed creator has: the committed world unchanged (same nonce,
+    same warm set: the new address is not warmed), all gas except the charge,
+    zero on the stack and an empty last-child buffer.
+    Does not say: which of the three conditions held. -/
+theorem beginCreate_soft_failure (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas)
+    (hSize : ops.size ≤ Create.maxInitCodeSize) (hMutable : active.state.readOnly = false)
+    (hCovered : active.world.hasAccount active.address = true)
+    (hSoft : createSoftFails active ops = true) :
+    ∃ k, beginCreate active create2 = .ok (.failed k) ∧
+      ∀ result resumed, resumeFailedCall k = .committed result resumed →
+        result = commitFrame active.world active.address active.state ∧
+        (result.accounts active.address).nonce = (active.world.accounts active.address).nonce ∧
+        result.warmAddresses = active.world.warmAddresses ∧
+        resumed.gas = active.state.gas -
+          Create.charge create2 active.state.memory.words ops.offset ops.size ∧
+        resumed.stack.items = word 0 :: ops.rest ∧ resumed.returnData.size = 0 := by
+  have hBegin := beginCreate_admitted active create2 ops hProfile hDecode hGas hSize hMutable hCovered
+  simp only [hSoft, if_true] at hBegin
+  refine ⟨_, hBegin, ?_⟩
+  intro result resumed h
+  obtain ⟨hWorld, hData, _, hResumedGas, hStack⟩ := resumeFailedCall_observations _ _ _ h
+  have hSplit := Create.childGas_reserve
+    (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size)
+  refine ⟨hWorld, ?_, ?_, ?_, hStack, hData⟩
+  · rw [hWorld]
+    exact commitFrame_own_nonce _ _ _
+  · rw [hWorld]
+    rfl
+  · rw [hResumedGas]
+    simp only [createContinuation, createBudget]
+    omega
+
+/-- Kind: admission.
+    Says: a creation that passes the soft checks refuses (indeterminate)
+    without the opt-in to the experimental Keccak; no address is guessed.
+    Does not say: the instruction is invalid on Ethereum. -/
+theorem beginCreate_no_keccak (active : ActiveFrame) (create2 : Bool) (ops : CreateOperands)
+    (hProfile : active.state.profile ≠ .preShanghai)
+    (hDecode : decodeCreate create2 active.state.stack.items = some ops)
+    (hGas : Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas)
+    (hSize : ops.size ≤ Create.maxInitCodeSize) (hMutable : active.state.readOnly = false)
+    (hCovered : active.world.hasAccount active.address = true)
+    (hHard : createSoftFails active ops = false) (hAccept : active.state.keccakAcceptance = none) :
+    beginCreate active create2 = .error .unsupportedFork := by
+  rw [beginCreate_admitted active create2 ops hProfile hDecode hGas hSize hMutable hCovered]
+  simp [hHard, hAccept]
+
+/-- The address `enterCreate` derives: CREATE from the creator's nonce,
+    CREATE2 from the salt and the initcode window of the expanded memory. -/
+def createTarget (active : ActiveFrame) (ops : CreateOperands) (callerWorld : TxWorld)
+    (acceptance : Keccak.Acceptance) : Nat :=
+  Create.address acceptance active.address (callerWorld.accounts active.address).nonce ops.salt
+    (ByteView.ofMemory (active.state.memory.expand (MemoryGas.requestedWords ops.offset ops.size))
+      ops.offset ops.size)
+
+/-- Kind: boundary (witness mode).
+    Says: a new address outside the witness coverage refuses with that
+    address before the collision test reads the account.
+    Does not say: the account is absent from the real state. -/
+theorem enterCreate_uncovered (active : ActiveFrame) (ops : CreateOperands) (budget : Budget)
+    (callerWorld : TxWorld) (acceptance : Keccak.Acceptance)
+    (hMissing : active.world.hasAccount (createTarget active ops callerWorld acceptance) = false) :
+    enterCreate active ops budget callerWorld acceptance =
+      .error (.incompleteState (createTarget active ops callerWorld acceptance) none) := by
+  unfold createTarget at hMissing
+  simp [enterCreate, createTarget, hMissing]
+
+/-- Kind: executable correspondence (EIP-684, EIP-7610, EIP-2929).
+    Says: on a collision no child runs; the resumed creator sees the new
+    address warmed and its own nonce incremented, receives none of the child
+    gas (only the one-64th reserve), and gets zero on the stack.
+    Does not say: that the colliding account is changed (it is not). -/
+theorem enterCreate_collision (active : ActiveFrame) (ops : CreateOperands) (budget : Budget)
+    (callerWorld : TxWorld) (acceptance : Keccak.Acceptance)
+    (hCovered : active.world.hasAccount (createTarget active ops callerWorld acceptance) = true)
+    (hCollides : Create.collides (callerWorld.accounts (createTarget active ops callerWorld acceptance)) = true) :
+    ∃ k, enterCreate active ops budget callerWorld acceptance = .ok (.failed k) ∧
+      k.checkpoint = Create.bumpNonce
+        (WorldCall.warmTarget callerWorld (createTarget active ops callerWorld acceptance)) active.address ∧
+      ∀ result resumed, resumeFailedCall k = .committed result resumed →
+        result = k.checkpoint ∧ resumed.gas = budget.reserve ∧
+        resumed.stack.items = word 0 :: ops.rest ∧ resumed.returnData.size = 0 := by
+  unfold createTarget at hCovered hCollides
+  refine ⟨_, by simp only [enterCreate, hCovered, hCollides, Bool.not_true, Bool.false_eq_true, if_false, if_true]; rfl, rfl, ?_⟩
+  intro result resumed h
+  obtain ⟨hWorld, hData, _, hResumedGas, hStack⟩ := resumeFailedCall_observations _ _ _ h
+  exact ⟨hWorld, by simpa [createContinuation] using hResumedGas, hStack, hData⟩
+
+/-- Kind: executable correspondence (child entry).
+    Says: an entered creation runs at the derived address (the CREATE or
+    CREATE2 formula of `Create.address`), which is covered and free of a
+    collision; the checkpoint is the creator's world with that address warmed
+    and the creator's nonce incremented and nothing else; the child's world is
+    `Create.enter` of the checkpoint (new account prepared, endowment moved);
+    the child gets exactly the budgeted gas, the materialised initcode as its
+    code, empty calldata, the endowment as CALLVALUE, the creator as CALLER,
+    a mutable frame one level deeper with the same profile and origin.
+    Does not say: that the initcode succeeds. -/
+theorem enterCreate_entered (active child : ActiveFrame) (ops : CreateOperands) (budget : Budget)
+    (callerWorld : TxWorld) (acceptance : Keccak.Acceptance) (k : Continuation)
+    (h : enterCreate active ops budget callerWorld acceptance = .ok (.entered child k)) :
+    let new := createTarget active ops callerWorld acceptance
+    child.address = new ∧ k.kind = .create new ∧
+    active.world.hasAccount new = true ∧ Create.collides (callerWorld.accounts new) = false ∧
+    k.checkpoint = Create.bumpNonce (WorldCall.warmTarget callerWorld new) active.address ∧
+    Create.enter k.checkpoint active.address new ops.value = .ok child.world ∧
+    k = createContinuation active ops k.checkpoint budget (.create new) ∧
+    child.state.gas = budget.childGas ∧
+    child.state.code = Create.materialize (ByteView.ofMemory
+      (active.state.memory.expand (MemoryGas.requestedWords ops.offset ops.size)) ops.offset ops.size) ∧
+    child.state.callData.size = 0 ∧ child.state.callValue = ops.value ∧
+    child.state.callerAddress = active.address ∧ child.state.readOnly = false ∧
+    child.depth = active.depth + 1 ∧ child.state.profile = active.state.profile ∧
+    child.state.txOrigin = active.state.txOrigin := by
+  unfold enterCreate at h
+  dsimp only at h
+  split at h
+  · cases h
+  next hCovered =>
+    split at h
+    · cases h
+    next hFree =>
+      split at h
+      · cases h
+      next childWorld hEnter =>
+        cases h
+        simp only [Bool.not_eq_true, Bool.not_eq_false'] at hCovered
+        exact ⟨rfl, rfl, by simpa [createTarget] using hCovered, by simpa [createTarget] using hFree,
+          rfl, hEnter, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Kind: executable correspondence (address and gas of the entered child).
+    Says: a child entered by `beginCreate` was reached through decoded
+    operands, a paid charge, an admissible size, a mutable frame, no soft
+    failure and the Keccak opt-in; it runs at
+    `Create.address acceptance creator creatorNonce salt initcode` with
+    exactly L(gas - charge) = remaining - remaining / 64 gas, the creator
+    keeps remaining / 64, and the child's depth is at most 1024.
+    Does not say: that the experimental hash is Keccak-256. -/
+theorem beginCreate_entered (active child : ActiveFrame) (create2 : Bool) (k : Continuation)
+    (h : beginCreate active create2 = .ok (.entered child k)) :
+    ∃ ops acceptance, decodeCreate create2 active.state.stack.items = some ops ∧
+      active.state.keccakAcceptance = some acceptance ∧
+      Create.charge create2 active.state.memory.words ops.offset ops.size ≤ active.state.gas ∧
+      ops.size ≤ Create.maxInitCodeSize ∧ active.state.readOnly = false ∧
+      createSoftFails active ops = false ∧
+      enterCreate active ops
+        (createBudget (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size))
+        (commitFrame active.world active.address active.state) acceptance = .ok (.entered child k) ∧
+      child.address = Create.address acceptance active.address (active.world.accounts active.address).nonce
+        ops.salt (ByteView.ofMemory
+          (active.state.memory.expand (MemoryGas.requestedWords ops.offset ops.size)) ops.offset ops.size) ∧
+      child.state.gas = Create.childGas
+        (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size) ∧
+      k.budget.reserve =
+        (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size) / 64 ∧
+      child.depth ≤ maxDepth := by
+  by_cases hProfile : active.state.profile = .preShanghai
+  · rw [beginCreate_preShanghai active create2 hProfile] at h
+    cases h
+  cases hDecode : decodeCreate create2 active.state.stack.items with
+  | none =>
+    rw [beginCreate_underflow active create2 hProfile hDecode] at h
+    cases h
+  | some ops =>
+    by_cases hGas : active.state.gas < Create.charge create2 active.state.memory.words ops.offset ops.size
+    · rw [beginCreate_outOfGas active create2 ops hProfile hDecode hGas] at h
+      cases h
+    by_cases hSize : Create.maxInitCodeSize < ops.size
+    · rw [beginCreate_oversize active create2 ops hProfile hDecode hSize] at h
+      cases h
+    have hGas' := Nat.le_of_not_lt hGas
+    have hSize' := Nat.le_of_not_lt hSize
+    cases hStatic : active.state.readOnly with
+    | true =>
+      rw [beginCreate_static active create2 ops hProfile hDecode hGas' hSize' hStatic] at h
+      cases h
+    | false =>
+      cases hCovered : active.world.hasAccount active.address with
+      | false =>
+        rw [beginCreate_uncovered_creator active create2 ops hProfile hDecode hGas' hSize' hStatic hCovered] at h
+        cases h
+      | true =>
+        rw [beginCreate_admitted active create2 ops hProfile hDecode hGas' hSize' hStatic hCovered] at h
+        dsimp only at h
+        cases hSoft : createSoftFails active ops with
+        | true => simp [hSoft] at h
+        | false =>
+          simp only [hSoft, Bool.false_eq_true, if_false] at h
+          cases hAccept : active.state.keccakAcceptance with
+          | none => simp [hAccept] at h
+          | some acceptance =>
+            simp only [hAccept] at h
+            obtain ⟨hAddress, _, _, _, _, _, hK, hChildGas, _, _, _, _, _, hDepth, _, _⟩ :=
+              enterCreate_entered active child ops _ _ acceptance k h
+            have hSplit := Create.childGas_reserve
+              (active.state.gas - Create.charge create2 active.state.memory.words ops.offset ops.size)
+            have hLimit : active.depth < maxDepth := by
+              simp only [createSoftFails, Bool.or_eq_false_iff, decide_eq_false_iff_not] at hSoft
+              omega
+            refine ⟨ops, acceptance, rfl, rfl, hGas', hSize', rfl, hSoft, h, ?_, ?_, ?_, by omega⟩
+            · rw [hAddress, createTarget, commitFrame_own_nonce]
+            · rw [hChildGas]
+              rfl
+            · rw [hK]
+              simp only [createContinuation, createBudget]
+              omega
+
+/-- Kind: projection.
+    Says: a resumed creator keeps its memory and last-child buffer as
+    supplied, has the declared gas and the pushed word on its stack, in the
+    supplied world.
+    Does not say: which outcome qualifies to resume. -/
+private theorem finishWord_observations (address : Nat) (parent resumed : State)
+    (rest : List Word) (world result : TxWorld) (gas : Nat) (pushed : Word)
+    (h : finishWord address parent rest world gas pushed = .committed result resumed) :
+    result = world ∧ resumed.memory = parent.memory ∧ resumed.returnData = parent.returnData ∧
+    resumed.gas = gas ∧ resumed.stack.items = pushed :: rest := by
+  unfold finishWord at h
+  split at h
+  next hGas =>
+    split at h
+    next _ hCommit =>
+      cases h
+      have hCost : parent.gas - gas ≤ parent.gas := Nat.sub_le _ _
+      by_cases hStack : (pushed :: rest).length ≤ 1024
+      · simp only [commit, dif_pos hStack, dif_pos hCost] at hCommit
+        cases hCommit
+        exact ⟨rfl, rfl, rfl, Nat.sub_sub_self hGas, rfl⟩
+      · simp only [commit, dif_neg hStack] at hCommit
+        cases hCommit
+    next => cases h
+  next => cases h
+
+/-- Kind: checkpoint.
+    Says: reverting initcode restores the exact checkpoint (the creator's
+    nonce stays incremented and the new address warm, as the checkpoint
+    records, and nothing the child did survives), returns the child's unused
+    gas and its revert data, and pushes zero.
+    Does not say: which initcode reverts. -/
+theorem resumeCreate_revert (k : Continuation) (new : Nat) (terminal resumed : State) (result : TxWorld)
+    (h : resumeCreate k new (.reverted terminal) = .committed result resumed) :
+    result = k.checkpoint ∧ resumed.returnData = terminal.outputData ∧
+    resumed.gas = k.budget.reserve + terminal.gas ∧ resumed.stack.items = word 0 :: k.rest := by
+  obtain ⟨hWorld, hData, _, hGas, hStack⟩ := resumeCall_observations _ _ _ _ _ _ _ h
+  exact ⟨hWorld, hData, hGas, hStack⟩
+
+/-- Kind: checkpoint.
+    Says: initcode that halts exceptionally restores the exact checkpoint,
+    returns no child gas and no data, and pushes zero.
+    Does not say: which initcode halts exceptionally. -/
+theorem resumeCreate_exception (k : Continuation) (new : Nat) (e : Error) (resumed : State)
+    (result : TxWorld) (h : resumeCreate k new (.exceptional e) = .committed result resumed) :
+    result = k.checkpoint ∧ resumed.returnData.size = 0 ∧
+    resumed.gas = k.budget.reserve ∧ resumed.stack.items = word 0 :: k.rest := by
+  obtain ⟨hWorld, hData, _, hGas, hStack⟩ := resumeCall_observations _ _ _ _ _ _ _ h
+  exact ⟨hWorld, congrArg ByteView.size hData, hGas, hStack⟩
+
+/-- The world, remaining gas and output of initcode that ended successfully. -/
+def createOutput : RawOutcome → Option (TxWorld × Nat × ByteView)
+  | .stopped world s => some (world, s.gas, {})
+  | .returned world s => some (world, s.gas, s.outputData)
+  | _ => none
+
+/-- Kind: checkpoint (code deposit failure).
+    Says: successful initcode whose output fails a deposit rule (EIP-170
+    size, EIP-3541 first byte, 200 gas per byte) is treated exactly like an
+    exceptional halt: checkpoint restored, no gas, no data, zero pushed.
+    Does not say: which rule failed (see the `Create.deposit_*` theorems). -/
+theorem resumeCreate_deposit_failure (k : Continuation) (new : Nat) (raw : RawOutcome)
+    (world : TxWorld) (gas : Nat) (output : ByteView) (resumed : State) (result : TxWorld)
+    (hRaw : createOutput raw = some (world, gas, output))
+    (hDeposit : Create.deposit gas output = none)
+    (h : resumeCreate k new raw = .committed result resumed) :
+    result = k.checkpoint ∧ resumed.returnData.size = 0 ∧
+    resumed.gas = k.budget.reserve ∧ resumed.stack.items = word 0 :: k.rest := by
+  have hStep : resumeCreate k new raw = resumeCall k k.checkpoint 0 {} false := by
+    cases raw <;> simp only [createOutput, Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at hRaw
+    all_goals
+      obtain ⟨rfl, rfl, rfl⟩ := hRaw
+      simp only [resumeCreate, finishCreate, hDeposit]
+  rw [hStep] at h
+  obtain ⟨hWorld, hData, _, hGas, hStack⟩ := resumeCall_observations _ _ _ _ _ _ _ h
+  exact ⟨hWorld, congrArg ByteView.size hData, hGas, hStack⟩
+
+/-- Kind: executable correspondence (successful creation).
+    Says: successful initcode whose output passes the deposit rules resumes
+    the creator in the child's world with only the new account's code set to
+    the deposited bytes (so the account stays marked as created there), the
+    child's gas minus the deposit returned, the new address pushed, and the
+    creator's memory and (already cleared) last-child buffer as suspended.
+    Does not say: that the child's world still holds the mark set at entry
+    (that depends on the initcode's own steps, none of which clears it). -/
+theorem resumeCreate_success (k : Continuation) (new : Nat) (raw : RawOutcome)
+    (world : TxWorld) (gas : Nat) (output : ByteView) (code : Array UInt8) (remaining : Nat)
+    (resumed : State) (result : TxWorld)
+    (hRaw : createOutput raw = some (world, gas, output))
+    (hDeposit : Create.deposit gas output = some (code, remaining))
+    (h : resumeCreate k new raw = .committed result resumed) :
+    result = Create.setCode world new code ∧ (result.accounts new).code = code ∧
+    result.created = world.created ∧
+    resumed.gas = k.budget.reserve + remaining ∧ resumed.stack.items = word new :: k.rest ∧
+    resumed.returnData = k.parent.returnData ∧ resumed.memory = k.parent.memory := by
+  have hStep : resumeCreate k new raw = finishCreate k new world gas output := by
+    cases raw <;> simp only [createOutput, Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at hRaw
+    all_goals
+      obtain ⟨rfl, rfl, rfl⟩ := hRaw
+      rfl
+  rw [hStep] at h
+  simp only [finishCreate, hDeposit] at h
+  split at h
+  · obtain ⟨hWorld, hMemory, hData, hGas, hStack⟩ := finishWord_observations _ _ _ _ _ _ _ _ h
+    subst hWorld
+    exact ⟨rfl, (Create.setCode_effect world new code).1, rfl, hGas, hStack, hData, hMemory⟩
+  · cases h
+
+/-- Kind: projection.
+    Says: every creation continuation suspends the creator with an empty
+    last-child buffer and memory expanded over the initcode window, so a
+    successful creation leaves RETURNDATASIZE at zero.
+    Does not say: anything about the memory contents. -/
+theorem createContinuation_parent (active : ActiveFrame) (ops : CreateOperands)
+    (checkpoint : TxWorld) (budget : Budget) (kind : ContinuationKind) :
+    (createContinuation active ops checkpoint budget kind).parent.returnData.size = 0 ∧
+    (createContinuation active ops checkpoint budget kind).parent.memory =
+      active.state.memory.expand (MemoryGas.requestedWords ops.offset ops.size) ∧
+    (createContinuation active ops checkpoint budget kind).rest = ops.rest := ⟨rfl, rfl, rfl⟩
+
+/-- Kind: dispatcher correspondence.
+    Says: in the actual world-aware loop, opcode 0xf0 (0xf5) whose setup
+    fails ends the frame with the dispatcher's classification of the error
+    of `beginCreate` (exceptional for out of gas, the initcode size limit,
+    write protection and underflow; indeterminate for refusals).
+    Does not say: which error each input raises. -/
+theorem executeAtDepth_create_error (fuel : Nat) (world : TxWorld) (address depth : Nat)
+    (state : State) (create2 : Bool) (e : Error) (hRunning : state.halted = false)
+    (hOpcode : byteAt state state.pc = createOpcode create2)
+    (hStep : beginCreate ⟨world, address, depth, state⟩ create2 = .error e) :
+    executeAtDepth (fuel + 1) world address depth state = stepError e := by
+  rw [executeAtDepth, executeLoop]
+  cases create2 <;> simp only [createOpcode] at hOpcode <;>
+    simp [dispatch, systemStep, dispatchCreate, hRunning, hOpcode, hStep]
+
+/-- Kind: dispatcher correspondence.
+    Says: in the actual loop, a creation that fails before child entry (soft
+    failure or collision) continues the creator, one fuel unit later, with
+    exactly the world and state of `resumeFailedCall`; no child instruction
+    is dispatched.
+    Does not say: the remaining execution terminates within the fuel. -/
+theorem executeAtDepth_create_failed (fuel : Nat) (world world' : TxWorld) (address depth : Nat)
+    (state state' : State) (create2 : Bool) (k : Continuation) (hRunning : state.halted = false)
+    (hOpcode : byteAt state state.pc = createOpcode create2)
+    (hStep : beginCreate ⟨world, address, depth, state⟩ create2 = .ok (.failed k))
+    (hResume : resumeFailedCall k = .committed world' state') :
+    executeAtDepth (fuel + 1) world address depth state =
+      executeAtDepth fuel world' k.address k.depth state' := by
+  rw [executeAtDepth, executeLoop]
+  cases create2 <;> simp only [createOpcode] at hOpcode <;>
+    simp [dispatch, systemStep, dispatchCreate, afterCall, hRunning, hOpcode, hStep, hResume] <;> rfl
+
+/-- Kind: dispatcher correspondence.
+    Says: once 0xf0 or 0xf5 enters a child, the next dispatch is the same
+    world-aware interpreter running the initcode frame, with the suspended
+    creator on the continuation stack; it is never resolved as a precompile.
+    Does not say: all instructions reached in the initcode are supported. -/
+private theorem executeLoop_enters_create (fuel : Nat) (active child : ActiveFrame)
+    (callers : List Continuation) (k : Continuation) (create2 : Bool)
+    (hRunning : active.state.halted = false)
+    (hOpcode : byteAt active.state active.state.pc = createOpcode create2)
+    (hEntry : beginCreate active create2 = .ok (.entered child k)) :
+    executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
+  rw [executeLoop]
+  cases create2 <;> simp only [createOpcode] at hOpcode <;>
+    simp [dispatch, systemStep, dispatchCreate, hRunning, hOpcode, hEntry]
+
+/-- Kind: dispatcher correspondence.
+    Says: when the initcode frame ends, the loop resumes the creator with
+    the world and state chosen by `resumeCreate` (deposit, rollback), not by
+    the CALL-family handler.
+    Does not say: the remaining creator code completes. -/
+private theorem executeLoop_resumes_create (fuel : Nat) (active : ActiveFrame)
+    (callers : List Continuation) (k : Continuation) (new : Nat) (raw : RawOutcome)
+    (world : TxWorld) (state : State) (hTerminal : dispatch active = .terminal raw)
+    (hKind : k.kind = .create new)
+    (hResume : resumeCreate k new raw = .committed world state) :
+    executeLoop (fuel + 1) active (k :: callers) =
+      executeLoop fuel ⟨world, k.address, k.depth, state⟩ callers := by
+  rw [executeLoop, hTerminal]
+  simp only [resumeAny, hKind, hResume]
+
+#print axioms beginCreate_preShanghai
+#print axioms beginCreate_underflow
+#print axioms beginCreate_outOfGas
+#print axioms beginCreate_oversize
+#print axioms beginCreate_static
+#print axioms beginCreate_uncovered_creator
+#print axioms beginCreate_admitted
+#print axioms beginCreate_soft_failure
+#print axioms beginCreate_no_keccak
+#print axioms enterCreate_uncovered
+#print axioms enterCreate_collision
+#print axioms enterCreate_entered
+#print axioms beginCreate_entered
+#print axioms finishWord_observations
+#print axioms resumeCreate_revert
+#print axioms resumeCreate_exception
+#print axioms resumeCreate_deposit_failure
+#print axioms resumeCreate_success
+#print axioms createContinuation_parent
+#print axioms executeAtDepth_create_error
+#print axioms executeAtDepth_create_failed
+#print axioms executeLoop_enters_create
+#print axioms executeLoop_resumes_create
+
 end EVMCleanroom.CallOpcode
