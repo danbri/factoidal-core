@@ -101,6 +101,9 @@ inductive TimeItem where
   | offset (ms : Int)
   /-- The begin (`isEnd = false`) or end of each interval of animation `element`, plus `ms`. -/
   | sync (element : Nat) (isEnd : Bool) (ms : Int)
+  /-- The begin of repetition `n` of each interval of animation `element` (`id.repeat(n)`), plus
+  `ms`; `n = none`: every repetition (`id.repeatEvent`). -/
+  | repeat_ (element : Nat) (n : Option Nat) (ms : Int)
   /-- A time that is never resolved in a snapshot: `indefinite`, or an event of user input. -/
   | unresolved
   deriving Inhabited, BEq
@@ -137,6 +140,10 @@ def timeList (ids : String → Option Nat) (source : String) : Except String (Li
     if let some ms := signedClock item then out := out ++ [.offset ms]; continue
     if item.startsWith "accessKey(" then out := out ++ [.unresolved]; continue
     if item.startsWith "wallclock(" then throw "animation: wallclock time values unsupported"
+    -- An offset that is not a clock value is a syntax error: the list as a whole is in error,
+    -- which is the same as `indefinite` (SVG Tiny 1.2 §16.2.7; W3C test animate-elem-225-t).
+    if item.startsWith "+" || item.startsWith "-" || item.startsWith "." || item.front.isDigit then
+      return [.unresolved]
     let (base,ms) := splitOffset item
     -- `Id-value "." name`: the id is all before the last full stop.
     let (id,event) := match base.splitOn "." with
@@ -150,7 +157,13 @@ def timeList (ids : String → Option Nat) (source : String) : Except String (Li
       out := out ++ [.sync element (event == "end" || event == "endEvent") ms]
     else if event == "load" || event == "SVGLoad" then out := out ++ [.offset ms]
     else if userEvents.contains event then out := out ++ [.unresolved]
-    else if event.startsWith "repeat" then throw s!"animation: repeat event times unsupported: {item}"
+    else if event == "repeatEvent" || (event.startsWith "repeat(" && event.endsWith ")") then
+      let some name := id | throw s!"animation: {event} with no element id"
+      let some element := ids name | throw s!"animation: syncbase id not in the document: {name}"
+      if event == "repeatEvent" then out := out ++ [.repeat_ element none ms]
+      else
+        let some n := ((event.drop 7).dropEnd 1).toString.trimAscii.toString.toNat? | throw s!"animation: invalid repeat value: {item}"
+        out := out ++ [.repeat_ element (some n) ms]
     else throw s!"animation: time value unsupported: {item}"
   return out
 
@@ -286,6 +299,8 @@ inductive Kind where
   /-- `fill`, `stroke`, `viewport-fill`: a colour, or a value that is not interpolated. -/
   | paint
   | transform
+  /-- Path data: interpolated number by number when two values have the same commands. -/
+  | pathData
   /-- A value that is not interpolated: `animate` steps through it as `discrete`. -/
   | discrete
   deriving Inhabited, BEq
@@ -324,14 +339,16 @@ def attrInfo (name : String) : Option AttrInfo :=
   | "fill-rule" => some {kind:=.discrete,inherited:=true,initial:="nonzero"}
   | "stroke-linecap" => some {kind:=.discrete,inherited:=true,initial:="butt"}
   | "stroke-linejoin" => some {kind:=.discrete,inherited:=true,initial:="miter"}
-  | "stroke-dasharray" => some {kind:=.discrete,inherited:=true,initial:="none"}
+  | "stroke-dasharray" => some {kind:=.numberList,inherited:=true,initial:="none"}
+  -- The initial value `medium` is 16 user units, as the text lowering takes it (`TextState`).
+  | "font-size" => some {kind:=.number,inherited:=true,initial:="16"}
   | "text-anchor" => some {kind:=.discrete,inherited:=true,initial:="start"}
   | "pointer-events" => some {kind:=.discrete,inherited:=true,initial:="visiblePainted"}
   | "font-family" => some {kind:=.discrete,inherited:=true,initial:="sans-serif"}
   | "font-style" => some {kind:=.discrete,inherited:=true,initial:="normal"}
   | "font-weight" => some {kind:=.discrete,inherited:=true,initial:="normal"}
   | "font-variant" => some {kind:=.discrete,inherited:=true,initial:="normal"}
-  | "d" => some {kind:=.discrete,inherited:=false,initial:=""}
+  | "d" => some {kind:=.pathData,inherited:=false,initial:=""}
   | "xlink:href" => some {kind:=.discrete,inherited:=false,initial:="",ns:=some xlinkNS}
   | _ => none
 
@@ -341,6 +358,10 @@ inductive AValue where
   /-- Red, green, blue on 0 to 255 (sums may leave the range; it is clamped on output). -/
   | rgb (r g b : Float)
   | str (s : String)
+  /-- Path data: its tokens with `none` at each number, and the numbers. -/
+  | path (shape : List (Option Char)) (v : Array Float)
+  /-- `inherit`: the value of the parent element, read when the animation is applied. -/
+  | inherit
   deriving Inhabited, Repr
 
 private def numList (s : String) : Except String (Array Float) := do
@@ -354,13 +375,20 @@ private def numList (s : String) : Except String (Array Float) := do
 /-- Read one value of attribute `info`. A paint that is not a colour is a string. -/
 def readValue (info : AttrInfo) (source : String) : Except String AValue := do
   let s := trim source
-  if s == "inherit" then throw "animation: inherit as an animation value unsupported"
+  if s == "inherit" then return .inherit
   match info.kind with
   | .number =>
     let v ← numList s
     if v.size != 1 then throw s!"animation: one number expected: {s}"
     return .nums v
-  | .numberList => return .nums (← numList s)
+  | .numberList => if s == "none" then return .str s else return .nums (← numList s)
+  | .pathData =>
+    let tokens ← NativeSVGPath.tokenList s
+    let shape := tokens.map fun | .inl c => some c | .inr _ => none
+    let v ← tokens.filterMapM fun
+      | .inr n => do pure (some (← NativeSVG.number n))
+      | .inl _ => pure none
+    return .path shape v.toArray
   | .transform => return .nums (← numList s)
   | .colour =>
     let c ← NativeSVG.colourOf s
@@ -388,9 +416,19 @@ def writeValue (kind : Kind) (typ : String) : AValue → String
     if kind == .transform then s!"{typ}({items})" else items
   | .rgb r g b => "#" ++ hex2 (clamp255 r) ++ hex2 (clamp255 g) ++ hex2 (clamp255 b)
   | .str s => s
+  | .path shape v => Id.run do
+    let mut out : Array String := #[]
+    let mut i := 0
+    for item in shape do
+      match item with
+      | some c => out := out.push (String.singleton c)
+      | none => out := out.push (fmt (v.getD i 0)); i := i+1
+    return String.intercalate " " out.toList
+  | .inherit => "inherit"
 
 def interpolable : AValue → Bool
   | .str _ => false
+  | .inherit => false
   | _ => true
 
 def add : AValue → AValue → Except String AValue
@@ -398,11 +436,15 @@ def add : AValue → AValue → Except String AValue
     if a.size != b.size then throw "animation: sum of number lists of different lengths" else
     pure (.nums ((a.zip b).map fun (x,y) => x+y))
   | .rgb a b c, .rgb x y z => pure (.rgb (a+x) (b+y) (c+z))
+  | .path s a, .path t b =>
+    if s != t || a.size != b.size then throw "animation: path data with different commands"
+    else pure (.path s ((a.zip b).map fun (x,y) => x+y))
   | _, _ => throw "animation: sum of values that are not numbers or colours"
 
 def scale (k : Float) : AValue → AValue
   | .nums a => .nums (a.map (·*k))
   | .rgb a b c => .rgb (a*k) (b*k) (c*k)
+  | .path s a => .path s (a.map (·*k))
   | v => v
 
 def lerp (a b : AValue) (t : Float) : Except String AValue := do
@@ -415,6 +457,7 @@ def distance (typ : String) : AValue → AValue → Float
     -- `rotate` paces on the angle alone (§16.2.16); the centre is not a distance.
     if typ == "rotate" then (b.getD 0 0 - a.getD 0 0).abs else Float.sqrt (d.foldl (·+·) 0)
   | .rgb a b c, .rgb x y z => Float.sqrt ((x-a)*(x-a)+(y-b)*(y-b)+(z-c)*(z-c))
+  | .path _ a, .path _ b => Float.sqrt (((a.zip b).map fun (x,y) => (y-x)*(y-x)).foldl (·+·) 0)
   | _, _ => 0
 
 /-- Parameter count rules of `animateTransform` values (§16.2.16). -/
@@ -487,6 +530,9 @@ def readAnim (entries : Array Entry) (ids : String → Option Nat) (i : Nat) : E
   let some attrName := (plain e.attrs "attributeName").map trim | throw s!"{tag} without attributeName"
   let attributeKey := if attrName == "href" then "xlink:href" else attrName
   let some info := attrInfo attributeKey | throw s!"animation of attribute unsupported: {attrName}"
+  -- On `text` and `tspan`, `x`, `y` and `rotate` are lists of coordinates (§10.4).
+  let info := if ["x","y"].contains attributeKey && (isSvg entries[target]!.name "text" ||
+      isSvg entries[target]!.name "tspan") then {info with kind := .numberList} else info
   if (info.kind == .transform) != (tag == "animateTransform") then
     throw s!"animation of {attrName} by {tag} unsupported"
   if tag == "animateColor" && !(info.kind == .colour || info.kind == .paint) then
@@ -526,7 +572,7 @@ def readAnim (entries : Array Entry) (ids : String → Option Nat) (i : Nat) : E
       match v with
       | .nums p => if !transformArity typ p.size then throw s!"animateTransform {typ} value with {p.size} parameters"
       | _ => pure ()
-  let interp := values.all interpolable
+  let interp := values.all fun v => interpolable v || (match v with | .inherit => true | _ => false)
   let authorMode := trim ((plain e.attrs "calcMode").getD "linear")
   if !["discrete","linear","paced","spline"].contains authorMode then throw s!"invalid calcMode: {authorMode}"
   let calcMode := if isSet || !interp then "discrete" else authorMode
@@ -534,10 +580,8 @@ def readAnim (entries : Array Entry) (ids : String → Option Nat) (i : Nat) : E
     for v in values.toList.drop 1 do
       match values[0]!, v with
       | .nums a, .nums b => if a.size != b.size then throw "animation: values of different lengths"
+      | .path s _, .path t _ => if s != t then throw "animation: path data values with different commands"
       | _, _ => pure ()
-  -- Path data and dash arrays are interpolated in SVG Tiny 1.2; this pass does not do it.
-  if ["d","stroke-dasharray"].contains attributeKey && !isSet && authorMode != "discrete" && values.size + (if toAnimation then 1 else 0) > 1 then
-    throw s!"animation: interpolation of {attributeKey} unsupported"
   if info.kind == .transform && toAnimation then throw "animateTransform to-animation unsupported"
   let n := if toAnimation then 2 else values.size
   let keyTimes ← match plain e.attrs "keyTimes" with
@@ -587,7 +631,7 @@ def simpleValue (a : Anim) (vs : Array AValue) (f : Float) : Except String AValu
   let n := vs.size
   if n == 0 then throw "animation: no values"
   if n == 1 then return vs[0]!
-  if a.calcMode == "discrete" then
+  if a.calcMode == "discrete" || !(vs.all interpolable) then
     let k := a.keyTimes.getD ((Array.range n).map fun j => Float.ofNat j/Float.ofNat n)
     let j := (List.range n).foldl (fun acc j => if k[j]! ≤ f then j else acc) 0
     return vs[j]!
@@ -625,7 +669,12 @@ def stateAt (timing : Timing) (ivs : List Interval) (t : Int) : Option (Int × N
     else some (iv.b,el/dn,Float.ofNat (el%dn)/Float.ofNat dn)
 
 /-- The value of animation `a` in state (iteration `i`, fraction `f`) over `under`. -/
-def valueOver (a : Anim) (i : Nat) (f : Float) (under : AValue) : Except String AValue := do
+def valueOver (a : Anim) (i : Nat) (f : Float) (under : AValue) (parent : AValue := .inherit) :
+    Except String AValue := do
+  let resolve := fun (v : AValue) => match v with | .inherit => parent | v => v
+  let a := {a with values := a.values.map resolve}
+  if a.values.any (fun v => match v with | .inherit => true | _ => false) then
+    throw "animation: inherit with no parent value"
   let vs := if a.toAnimation then #[under,a.values[0]!] else a.values
   if a.toAnimation && !(interpolable under) then
     -- A to-animation of a value that is not interpolated: discrete over two values.
@@ -835,17 +884,35 @@ def motionAt (m : Motion) (i : Nat) (f : Float) : String := Id.run do
 /-! ## The snapshot -/
 
 /-- Resolve the instance times of every animation, to a fixed point over syncbase values. -/
-def resolveIntervals (anims : Array (Nat × Timing)) : Except String (Std.TreeMap Nat (List Interval)) := do
+def resolveIntervals (anims : Array (Nat × Timing)) (horizon : Int) : Except String (Std.TreeMap Nat (List Interval)) := do
+  let durs : Std.TreeMap Nat (Option Int) := anims.foldl (fun m (el,tm) => m.insert el tm.dur) {}
   let mut table : Std.TreeMap Nat (List Interval) := {}
-  for _ in [:anims.size+2] do
+  -- Only begins at or before the time of the snapshot can change it, so a sequence of
+  -- intervals with no end (`begin="0s; a.end+1s"` on `a`) stops at the horizon.
+  for _ in [:anims.size+2+horizon.toNat] do
     let mut next : Std.TreeMap Nat (List Interval) := {}
     for (el,tm) in anims do
       let times := fun (items : List TimeItem) => items.flatMap fun
         | .offset ms => [ms]
         | .sync other isEnd ms => ((table.get? other).getD []).filterMap fun iv =>
             if isEnd then iv.e.map (·+ms) else some (iv.b+ms)
+        | .repeat_ other n ms =>
+          match (durs.get? other).join with
+          | none => []
+          | some d =>
+            if d ≤ 0 then [] else
+            ((table.get? other).getD []).flatMap fun iv =>
+              -- Repetition k begins at b + k·d, while the interval is active, up to the horizon.
+              let last : Int := match iv.e with
+                | some e => min e (horizon+1)
+                | none => horizon+1
+              let count := ((last - iv.b) / d).toNat
+              let ks : List Int := match n with
+                | some k => if k ≥ 1 && iv.b + (k : Int)*d < last then [(k : Int)] else []
+                | none => ((List.range (count+1)).filter (· ≥ 1)).map Int.ofNat
+              ks.filterMap fun k => let at_ := iv.b + k*d; if at_ < last then some (at_+ms) else none
         | .unresolved => []
-      next := next.insert el (intervals tm (times tm.begins) (times tm.ends))
+      next := next.insert el (intervals tm ((times tm.begins).filter (· ≤ horizon)) (times tm.ends))
     if next.toList == table.toList then return table
     table := next
   throw "animation: syncbase times do not settle (a cycle)"
@@ -900,10 +967,28 @@ def applyLayers (layers : List Layer) (attrs : List NamespaceAttribute)
             if [Kind.number,Kind.numberList,Kind.colour].contains a.info.kind then
               throw s!"animation: underlying value of {a.attrName} not read: {err}"
             else pure (.str under)
-        let v ← valueOver a l.iteration l.fraction u
+        -- `inherit` (SMIL 2.1 §3.6.2): the value of the parent element.
+        let parentText := match ancestors with
+          | p::rest => underlying {a.info with inherited := true} a.attrName p rest
+          | [] => a.info.initial
+        let parent := match readValue a.info parentText with
+          | .ok v => v
+          | .error _ => .str parentText
+        let v ← valueOver a l.iteration l.fraction u parent
         pure (writeValue a.info.kind a.typ v)
     attrs := setAttr a.info a.attrName value attrs
   return attrs
+
+/-- Whether the document has an animation or `discard` element (to a depth of 256). -/
+def animates (root : NamespaceNode) : Bool :=
+  go 256 root
+where
+  go : Nat → NamespaceNode → Bool
+    | 0, _ => false
+    | _, .other _ => false
+    | fuel+1, .element name _ children =>
+      (name.namespace_ == some svgNS && (animationTags.contains name.localPart || name.localPart == "discard")) ||
+        children.any (go fuel)
 
 /-- The document at time `t`: animated attributes set, animation elements and the targets of
 `discard` elements that have begun replaced by comments (so the source paths of the other
@@ -939,7 +1024,7 @@ def snapshot (t : Int) (root : NamespaceNode) : Except String NamespaceNode := d
         discards := discards.push (i,target,← timingOf ids e.attrs (discard := true))
   if anims.isEmpty && motions.isEmpty && discards.isEmpty then return root
   let table ← resolveIntervals ((anims.map fun a => (a.element,a.timing)) ++ (motions.map fun m => (m.element,m.timing)) ++
-    discards.map fun (i,_,tm) => (i,tm))
+    discards.map fun (i,_,tm) => (i,tm)) t
   for (i,target,_) in discards do
     let ivs := (table.get? i).getD []
     if ivs.any (·.b ≤ t) then

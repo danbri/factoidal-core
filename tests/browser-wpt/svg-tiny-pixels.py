@@ -34,7 +34,9 @@ INK = 24                  # distance from white that counts as ink
 BORDER = 3                # outer pixels left out: the test-frame (see above)
 # Lines of the Lean log that say the file animates (same prefixes as the dashboard).
 ANIMATION = ('element: animate', 'element: set', 'element in text: set', 'element in text: animate',
-             'element: animation', 'element: discard')
+             'element: animation', 'element: discard',
+             # The animation pass (SVGAnimate) draws the file at 0 ms, or says why it can not.
+             'animation: ')
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--archive', required=True, type=Path)

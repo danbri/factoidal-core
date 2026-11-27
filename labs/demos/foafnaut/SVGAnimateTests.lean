@@ -87,6 +87,26 @@ private def r (anim : String) (base : String := "") : String :=
 -- discard (§16.2.19): the target is not in the document from the begin on.
 #guard at_ (r "<discard begin='1s'/>") 999 "r" "width" == "10"
 #guard at_ (r "<discard begin='1s'/>") 1000 "r" "width" == "gone"
+-- inherit as a value: the value of the parent element (SMIL 2.1 §3.6.2).
+#guard at_ ("<g fill='#0000ff'>" ++ r "<animate attributeName='fill' values='inherit;#ff0000' dur='1s'/>" ++ "</g>") 0 "r" "fill" == "#0000ff"
+-- font-size is a number with the initial value 16.
+#guard at_ (r "<animate attributeName='font-size' to='24' dur='1s'/>") 500 "r" "font-size" == "20"
+-- Path data with the same commands interpolates number by number (§16.2.15).
+#guard at_ ("<path id='p' d='M0 0 L10 0'><animate attributeName='d' from='M0 0 L10 0' to='M0 10 L30 0' dur='1s'/></path>") 500 "p" "d" == "M 0 5 L 20 0"
+#guard (at_ ("<path id='p' d='M0 0'><animate attributeName='d' from='M0 0 L1 1' to='M0 0 H1' dur='1s'/></path>") 0 "p" "d").startsWith "error: animation: path data values with different commands"
+-- A dash array is a list of numbers.
+#guard at_ (r "<animate attributeName='stroke-dasharray' from='2 2' to='6 4' dur='1s'/>") 500 "r" "stroke-dasharray" == "4 3"
+-- x and y of text are lists.
+#guard at_ ("<text id='t' x='0'>A<animate attributeName='x' values='0 5;10 5' dur='1s'/></text>") 500 "t" "x" == "5 5"
+-- repeat(n): the begin of repetition n of another animation.
+#guard at_ (r "<animate id='a' attributeName='y' from='0' to='1' dur='1s' repeatCount='3'/><set attributeName='fill' to='#00ff00' begin='a.repeat(2)'/>" "fill='#000000'") 1999 "r" "fill" == "#000000"
+#guard at_ (r "<animate id='a' attributeName='y' from='0' to='1' dur='1s' repeatCount='3'/><set attributeName='fill' to='#00ff00' begin='a.repeat(2)'/>" "fill='#000000'") 2000 "r" "fill" == "#00ff00"
+-- An animation that begins again when it ends (W3C animate-elem-70-t): active 0-1 s, 2-3 s, ...
+#guard at_ (r "<set id='s' attributeName='x' to='74' begin='0s; s.end + 1s' dur='1s'/>") 1500 "r" "x" == "absent"
+#guard at_ (r "<set id='s' attributeName='x' to='74' begin='0s; s.end + 1s' dur='1s'/>") 2500 "r" "x" == "74"
+#guard at_ (r "<set id='s' attributeName='x' to='74' begin='0s; s.end + 1s' dur='1s'/>") 10500 "r" "x" == "74"
+-- A syntax error in a begin list: the whole list is indefinite (W3C animate-elem-225-t).
+#guard at_ (r "<set attributeName='fill' to='red' begin='1s; +-2s; 3s'/>" "fill='lime'") 5000 "r" "fill" == "lime"
 -- Refusals name the feature.
 -- animateMotion (§16.2.17): paced along the path; the motion is to the left of `transform`.
 #guard at_ (r "<animateMotion path='M0 0 L10 0 L10 10' dur='2s'/>") 500 "r" "transform" == "translate(5 0)"
@@ -101,9 +121,7 @@ private def r (anim : String) (base : String := "") : String :=
 #guard at_ ("<path id='p' d='M0 0 L0 20'/>" ++ r "<animateMotion dur='1s'><mpath xlink:href='#p'/></animateMotion>") 500 "r" "transform" == "translate(0 10)"
 -- Frozen at the end of the path.
 #guard at_ (r "<animateMotion path='M0 0 L10 0' dur='1s' fill='freeze'/>") 5000 "r" "transform" == "translate(10 0)"
-#guard (at_ (r "<animate attributeName='d' from='M0 0' to='M1 1' dur='1s'/>") 0 "r" "x").startsWith "error: animation: interpolation of d"
 #guard (at_ (r "<animate attributeName='x' from='0px' to='1px' dur='1s'/>") 0 "r" "x").startsWith "error: animation: value with a unit"
-#guard (at_ (r "<animate attributeName='x' from='0' to='1' begin='a.repeat(1)' dur='1s'/><animate id='a' attributeName='y' to='1' dur='1s'/>") 0 "r" "x").startsWith "error: animation: repeat event"
 -- The snapshot of a shape with an animation child is drawn by the strict reader.
 #guard match parseNamespaceView (doc (r "<set attributeName='fill' to='red'/>")) >>= snapshot 0 >>= (NativeSVG.parseRoot · 100 100) with
   | .ok _ => true | .error _ => false

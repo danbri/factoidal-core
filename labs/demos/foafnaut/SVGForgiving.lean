@@ -1244,9 +1244,16 @@ private def externalFonts (root : NamespaceNode) (documentURL : Option String)
     elements and attributes that are taken out before the reader gives up. -/
 def parseNode (root : NamespaceNode) (width height : Nat) (font : Option SVGFont := none)
     (images : List (String × ByteArray) := []) (documentURL : Option String := none)
-    (sfnt : Array NativeSVGText.Font := #[]) (repairs : Nat := 1024) :
+    (sfnt : Array NativeSVGText.Font := #[]) (repairs : Nat := 1024) (time : Int := 0) :
     Except String (NativeSVG.Scene × List String) := do
+  -- SVG Tiny 1.2 chapter 16: the document at document time `time` ms (0: the first frame).
+  -- Where the animation pass refuses, the animation elements are removed as before, and
+  -- the log says why.
+  let (root,animationLog) := match NativeSVGAnimate.snapshot time root with
+    | .ok drawn => (drawn,if NativeSVGAnimate.animates root then [s!"animation: drawn at {time} ms"] else [])
+    | .error e => (root,[s!"animation: not drawn: {e}"])
   let (root,rootLog) := rootAttrs root
+  let rootLog := animationLog ++ rootLog
   let (root,imports) := importDocuments root documentURL images
   -- Fonts in the document come first; the host's font is the default.
   let targets := (idTargets maxDepth root).foldl (fun map (id,node) =>
