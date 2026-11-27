@@ -17,3 +17,11 @@ moreLeancArgs = ["-O3"]
 name = "evm-precompile"
 root = "EVMCleanroom.PrecompileCLI"
 moreLeancArgs = ["-O3"]
+
+# Differential check and timing of the group-operation precompiles on limbs
+# (alt_bn128 add and mul, BLS12-381 add, multi-scalar multiplication, map,
+# subgroup checks) against their Nat definitions.
+[[lean_exe]]
+name = "evm-blsops"
+root = "EVMCleanroom.FieldPerf.BlsOps"
+moreLeancArgs = ["-O3"]

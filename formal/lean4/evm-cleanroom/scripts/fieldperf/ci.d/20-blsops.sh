@@ -1,0 +1,50 @@
+# The group-operation precompiles on limbs (alt_bn128 add and mul, BLS12-381 add, multi-scalar
+# multiplication, map to curve, subgroup checks, KZG helpers): build, differential run against the
+# Nat definitions, published vectors through the router, and time per call, old beside new.
+set -uo pipefail
+status=0
+# Every module on its own, so one run reports the errors of all of them.
+for module in LimbBytes Fp2Limb CurveFast BN254Fast BLS12381Fast BLS12381Msm; do
+  start=$(date +%s)
+  lake -f lakefile-fieldperf.toml build "EVMCleanroom.Precompiles.$module" || status=1
+  echo "RESULT build $module: $(( $(date +%s) - start )) s, status so far $status"
+done
+[ "$status" = 0 ] || { echo "RESULT blsops: module build FAILURES"; exit 1; }
+set -e
+lake -f lakefile-fieldperf.toml build evm-blsops
+for f in CurveFast BN254Fast BLS12381Fast BLS12381Msm; do
+  c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
+  echo "$f.c: closure calls $(grep -c 'lean_apply_' "$c" || true), constructor allocations $(grep -c 'lean_alloc_ctor' "$c" || true)"
+done
+.lake/build/bin/evm-blsops
+lake -f lakefile-fieldperf.toml build evm-precompile
+python3 scripts/precompiles/run-vectors.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors \
+  | tee .lake/precompile-vectors.json \
+  | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="pass" and x["failed"]==0 and x["files"]>=30 and x["publishedCases"]>=3915 and x["differentialCases"]>=3000 and x["alteredOutputControls"]==x["alteredOutputControlsRejected"]>=20 and x["gasShortfallControls"]>=3300, x; print("RESULT vectors through the router:", {k: x[k] for k in ("status","failed","files","publishedCases","differentialCases","gasShortfallControls","alteredOutputControlsRejected")})'
+python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 3 --max-cases-per-file 12 > /tmp/bench-new.json
+# The router of the base commit, built in a copy of the tree with this build directory, for old beside new.
+base=7fbcd099bc5384a4553d81396ec7d4a276bdbbe6
+top=$(git rev-parse --show-toplevel)
+here=$PWD
+rm -rf /tmp/fp-base /tmp/bench-old.json && mkdir -p /tmp/fp-base
+git -C "$top" fetch -q --depth 1 origin "$base" \
+  && git -C "$top" archive "$base" formal/lean4/evm-cleanroom | tar -x -C /tmp/fp-base \
+  && cp -r .lake /tmp/fp-base/formal/lean4/evm-cleanroom/.lake \
+  && cd /tmp/fp-base/formal/lean4/evm-cleanroom \
+  && lake -f lakefile-fieldperf.toml build evm-precompile >/tmp/fp-base-build.log 2>&1 \
+  && python3 scripts/precompiles/bench.py --binary .lake/build/bin/evm-precompile --cache /tmp/precompile-vectors --repeats 3 --max-cases-per-file 12 > /tmp/bench-old.json \
+  || echo "RESULT base router not built: bench.py rows below are for the new router only"
+cd "$here"
+python3 - <<'PY'
+import json, os
+new = {r["address"]: r for r in json.load(open("/tmp/bench-new.json"))["rows"]}
+old = {r["address"]: r for r in json.load(open("/tmp/bench-old.json"))["rows"]} if os.path.exists("/tmp/bench-old.json") else {}
+for address in (6, 7, 10, 11, 12, 13, 14, 15, 16, 17):
+    n = new.get(address)
+    if n is None:
+        continue
+    o = old.get(address)
+    before = "old p50 %s p95 %s max %s us; " % (o["p50_us"], o["p95_us"], o["max_us"]) if o else ""
+    print("TIMING bench.py %s (%d cases): %snew p50 %s p95 %s max %s us, %s ns/gas at p50" % (
+        n["name"], n["cases"], before, n["p50_us"], n["p95_us"], n["max_us"], n["ns_per_gas_p50"]))
+PY
