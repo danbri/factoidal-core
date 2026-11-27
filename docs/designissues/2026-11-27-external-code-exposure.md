@@ -35,6 +35,18 @@ which move bytes and decide nothing).
 | npm servers and XMPP | Node `http`, `net`, `tls` (OpenSSL 3.5.9) | TLS and HTTP framing | Protocol state machines (LWS, Solid, WebDAV, XMPP STARTTLS) |
 | Ethereum RPC capture (`evm-cleanroom/scripts/rpc`) | Node `https` (OpenSSL) | TLS, HTTP | Nothing in transport; Lean checks the saved replies |
 
+## Runtime differences found (Node 22.23.5 against Deno 2.9.8, 2026-11-27)
+
+- Deno's `node:tls` `createSecureContext` and `createServer` accept an invalid PEM; Node refuses
+  it. The XMPP host now checks certificates and keys itself before listening (`checkTlsMaterial`
+  in `npm/factoidal/xmpp/server.mjs`, with `node:crypto` `X509Certificate`, `createPrivateKey`
+  and `checkPrivateKey`, which behave the same on both).
+- Deno's `tls.connect({ socket })` over a corked TCP socket gives no handshake. Our server is not
+  affected (checked with clients on both runtimes, header and ClientHello in one read: 1,586 bytes
+  from Node's client, 240 from Deno's); the test client now writes through a stream instead.
+- Test harnesses that start `process.execPath` with Node flags (`-e`, `--input-type`, `--test`)
+  fail under Deno, whose `process.execPath` is the deno binary.
+
 ## Cryptography
 
 | Use | Source | Version or pin |

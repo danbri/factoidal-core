@@ -1330,8 +1330,8 @@ host runtime for our CLIs, servers, tests and scripts while the npm library stay
 Node and browsers: "ok procede cautiously, and without breaking our xmpp".
 
 - Move one component at a time. Each move runs its suites under Node and under Deno; a move
-  lands only when the Deno run passes what the Node run passes. XMPP moves last, after the two
-  Deno differences in its suites are fixed or explained.
+  lands only when the Deno run passes what the Node run passes. XMPP moves last. Its two Deno
+  differences are fixed (2026-11-27): all 20 XMPP test files pass under Node and Deno.
 - The npm library (`import '@factoidal/core'`) keeps working in Node and browsers.
 - `npx factoidal` keeps running under Node. Owner, 2026-11-27, verbatim: "keep running - yes
   pls"; then "yes, re deno" (go on with the move), and: "we don't want to be too tied to any of

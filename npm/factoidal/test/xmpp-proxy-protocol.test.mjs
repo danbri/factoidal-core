@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import net from 'node:net'
 import tls from 'node:tls'
 import { once } from 'node:events'
+import { Duplex } from 'node:stream'
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -195,11 +196,22 @@ test('direct TLS: the header and the TLS ClientHello in one TCP read', { skip },
   try {
     const raw = net.connect(port, '127.0.0.1')
     await once(raw, 'connect')
-    // Hold the header until the ClientHello is written, then send both at once.
-    raw.cork()
-    raw.write(v4(A))
-    const secure = tls.connect({ socket: raw, rejectUnauthorized: false, servername: DOMAIN })
-    process.nextTick(() => raw.uncork())
+    // The TLS client writes through a stream whose first write is sent as one TCP write of the
+    // header and the ClientHello. Before 2026-11-27 this test corked the socket; Deno's
+    // tls.connect over a corked socket gives no handshake, so the case failed under Deno
+    // while the server was correct on both runtimes (issue 1176).
+    let first = true
+    const carrier = new Duplex({
+      write (chunk, _encoding, callback) {
+        if (first) { first = false; raw.write(Buffer.concat([v4(A), chunk]), callback) } else raw.write(chunk, callback)
+      },
+      read () {},
+      final (callback) { raw.end(); callback() },
+      destroy (error, callback) { raw.destroy(); callback(error) }
+    })
+    raw.on('data', (chunk) => carrier.push(chunk))
+    raw.on('end', () => carrier.push(null))
+    const secure = tls.connect({ socket: carrier, rejectUnauthorized: false, servername: DOMAIN })
     await once(secure, 'secureConnect')
     const c = client(secure)
     secure.write(HEADER)
