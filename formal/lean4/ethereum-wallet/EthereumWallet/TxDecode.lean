@@ -48,7 +48,7 @@ def ofDecoded (d : Decoded) : Unsigned × Signature × Array UInt8 :=
    ⟨d.r, d.s, d.parity⟩, d.signing)
 
 /-- Local cap on authorizations per transaction (a resource rule, not a protocol one). -/
-def maxAuthorizations : Nat := 256
+def maxAuthorizations : Nat := 8192
 
 def readAuthorization (item : Item) : Except Failure Authorization := do
   let fields ← members item 7
