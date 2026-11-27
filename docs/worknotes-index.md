@@ -15,9 +15,9 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-27 | [Beacon state transition (Fulu)](designissues/2026-11-27-beacon-state-transition.md) | [issue 725](https://github.com/danbri/factoidal-core/issues/725) | current — independent slot, epoch and block processing checked against the official vectors; pins, limits, what is proved and what is tested |
 | 2026-11-25 | [Execution integration candidate](20261125-evm-main-integration.md) | issue 1085 | candidate — source identity and ancestry audit, fresh build and proof gates pending |
 | 2026-11-25 | [Ethereum witness admission](20261125-evm-witness-admission.md) | [issue 1043](https://github.com/danbri/factoidal-core/issues/1043) | current — independent RLP/trie admission, actual ordered execution and source-bound evidence |
-| 2026-11-27 | [Beacon state transition (Fulu)](designissues/2026-11-27-beacon-state-transition.md) | [issue 725](https://github.com/danbri/factoidal-core/issues/725) | current — independent slot, epoch and block processing checked against the official vectors; pins, limits, what is proved and what is tested |
 | 2026-11-25 | [Ethereum runtime boundary](designissues/2026-11-25-ethereum-runtime-boundary.md) | [issue 1043](https://github.com/danbri/factoidal-core/issues/1043) | current — build-time proof assistance, native runtime startup and enforced dependency checks |
 | 2026-11-23 | [Independent Lean SSZ byte proofs](20261123-independent-ssz-byte-proofs.md) | issue 834 | current — concrete pure Lean SHA-256 verification, 35 actual axiom reports, 5,580 independent cases in three runs and source/compiled/link dependency evidence |
 | 2026-11-23 | [Independent Ethereum SSZ design](designissues/2026-11-23-independent-ethereum-ssz.md) | issue 834 | current — independent implementation boundary, admitted byte proofs, conditional proof scope and resource limits |
