@@ -2398,6 +2398,8 @@ structure DirectPaint where
 
 /-- The colour of `rgb(r,g,b)` with whole components, as the attribute parser reads it. -/
 def rgbColor (r g b : Nat) : Color := rgb r g b
+/-- The colour reader of this module, for the animation pass (`SVGAnimate`). -/
+def colourOf (input : String) : Except String Color := color input
 
 def directScene (width height viewWidth viewHeight : Nat) (inherited : Style) (items : List DirectPaint) :
     Except String Scene := do

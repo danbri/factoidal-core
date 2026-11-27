@@ -1,4 +1,5 @@
 import SVG
+import SVGAnimate
 import L4Factoidal.Rendering.SfntProfile
 import Std.Data.HashMap
 
@@ -1033,8 +1034,10 @@ def parseWithFontsNode (fonts : Array Font) (root : NamespaceNode) (outputWidth 
 reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
 here the first entry refuses the document, with its text as the reason. -/
 def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
-    (documentURL : Option String := none) : Except String NativeSVG.Scene := do
-  parseWithFontsNode fonts (← NativeSVG.checkedRoot xml) outputWidth outputHeight documentURL
+    (documentURL : Option String := none) (time : Int := 0) : Except String NativeSVG.Scene := do
+  -- SVG Tiny 1.2 chapter 16: the document at document time `time` ms (`NativeSVGAnimate`).
+  let root ← NativeSVGAnimate.snapshot time (← NativeSVG.checkedRoot xml)
+  parseWithFontsNode fonts root outputWidth outputHeight documentURL
 
 /-- `parseWithFonts` as the JSON artifact of `NativeSVG.compile`. -/
 def compileWithFonts (fonts : Array Font) (xml : String) (width height : Nat) : String :=

@@ -1558,8 +1558,10 @@ private def strictFontPass (fonts : List SVGFont) (sfnt : Array NativeSVGText.Fo
 `font-face-uri` may name, by key (`NativeSVG.imageKey`); a key not supplied is a font
 that does not load, and the text takes the next family (CSS Fonts 4 §4.3). -/
 def parseStrict (sfnt : Array NativeSVGText.Font) (supplied : List (String × ByteArray)) (xml : String)
-    (outputWidth outputHeight : Nat) (documentURL : Option String := none) : Except String NativeSVG.Scene := do
-  let root ← NativeSVG.checkedRoot xml
+    (outputWidth outputHeight : Nat) (documentURL : Option String := none) (time : Int := 0) :
+    Except String NativeSVG.Scene := do
+  -- SVG Tiny 1.2 chapter 16: the document at document time `time` ms (`NativeSVGAnimate`).
+  let root ← NativeSVGAnimate.snapshot time (← NativeSVG.checkedRoot xml)
   let (linked,_) := externalFonts root documentURL supplied
   let [root] ← strictFontPass (fontsIn root ++ linked) sfnt NativeSVGText.maxTreeDepth {} root
     | throw "root element is a font"
