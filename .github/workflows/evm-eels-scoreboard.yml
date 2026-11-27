@@ -1,0 +1,123 @@
+name: EVM EELS state-test scoreboard
+
+# Every state test of the pinned execution-spec-tests release for the
+# selected forks runs through the Lean executable `evm-state-test`. The
+# host script only shards files and tallies Lean's verdicts. The pass count
+# per fork may not fall below the committed baseline, and no case outside
+# the baseline's known-fail list may fail.
+
+on:
+  pull_request:
+    paths:
+      - "formal/lean4/evm-cleanroom/**"
+      - ".github/workflows/evm-eels-scoreboard.yml"
+  workflow_dispatch:
+    inputs:
+      forks:
+        description: "Comma-separated fork names (fixture directories for_<fork>)"
+        default: "Shanghai,Cancun,Prague,Osaka"
+
+concurrency:
+  group: evm-eels-scoreboard-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  FIXTURE_URL: "https://github.com/ethereum/execution-specs/releases/download/tests%40v21.0.3/fixtures.tar.gz"
+  FIXTURE_SHA256: "46bd48fb71a23da084218fe856fe442ab0c8d00c85c1c1aead0d2a965804fd24"
+  FIXTURE_RELEASE: "ethereum/execution-specs tests@v21.0.3 (commit 391d8a05d5cb182542ac7e7330c858b6ee03f990)"
+
+jobs:
+  scoreboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned Lean toolchain
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          build: false
+          test: false
+          lint: false
+      - name: Build the state-test executable and its theorem modules
+        working-directory: formal/lean4/evm-cleanroom
+        env:
+          LEAN_NUM_THREADS: "2"
+        run: |
+          set -euo pipefail
+          lake -f lakefile-state-test.toml build evm-state-test \
+            EVMCleanroom.StateRoot EVMCleanroom.StateRootTests EVMCleanroom.StateTest 2>&1 | tee /tmp/build.log | tail -5
+          # Every theorem of the new modules reports only the standard axioms.
+          python3 - <<'PY'
+          import re
+          text = open("/tmp/build.log").read()
+          rows = re.findall(r"'(EVMCleanroom\.State(?:Root|Test)\.[^']+)' (depends on axioms: \[([^\]]*)\]|does not depend on any axioms)", text)
+          assert len(rows) >= 13, rows
+          allowed = {"propext", "Classical.choice", "Quot.sound"}
+          for name, _, axioms in rows:
+              used = {a.strip() for a in axioms.split(",") if a.strip()}
+              assert used <= allowed, (name, used)
+          print("axioms ok for", len(rows), "theorems")
+          PY
+      - name: Restore the pinned fixture release
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/eels/fixtures.tar.gz
+          key: eels-fixtures-${{ env.FIXTURE_SHA256 }}
+      - name: Download and check the fixture digest
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/eels
+          if [ ! -f /tmp/eels/fixtures.tar.gz ]; then
+            curl --fail --location --silent --show-error --retry 3 -o /tmp/eels/fixtures.tar.gz "$FIXTURE_URL"
+          fi
+          echo "$FIXTURE_SHA256  /tmp/eels/fixtures.tar.gz" | sha256sum --check
+      - name: Extract the state tests of the selected forks
+        run: |
+          set -euo pipefail
+          forks="${{ github.event.inputs.forks || 'Shanghai,Cancun,Prague,Osaka' }}"
+          members=""
+          for f in ${forks//,/ }; do members="$members fixtures/state_tests/for_${f,,}"; done
+          tar -xzf /tmp/eels/fixtures.tar.gz -C /tmp/eels $members
+          du -sh /tmp/eels/fixtures/state_tests/*
+      - name: Negative controls (tampered root, logs and exception are caught by Lean)
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          python3 -I scripts/eels/scoreboard-selftest.py \
+            --bin .lake/build/bin/evm-state-test \
+            --fixture /tmp/eels/fixtures/state_tests/for_cancun/shanghai/eip3855_push0/push0/push0_contracts.json
+      - name: Run every case through Lean and apply the ratchet
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          forks="${{ github.event.inputs.forks || 'Shanghai,Cancun,Prague,Osaka' }}"
+          python3 -I scripts/eels/scoreboard.py \
+            --fixtures /tmp/eels/fixtures/state_tests --bin .lake/build/bin/evm-state-test \
+            --forks "$forks" --jobs "$(nproc)" --out /tmp/eels/scoreboard \
+            --source "$FIXTURE_RELEASE fixtures.tar.gz sha256 $FIXTURE_SHA256" \
+            --ratchet scripts/eels/scoreboard-baseline.json
+      - name: Publish the summary
+        if: always()
+        run: |
+          if [ -f /tmp/eels/scoreboard/scoreboard.md ]; then
+            cat /tmp/eels/scoreboard/scoreboard.md >> "$GITHUB_STEP_SUMMARY"
+            gzip -k /tmp/eels/scoreboard/cases.jsonl
+          fi
+      - name: Upload scoreboard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eels-scoreboard
+          path: |
+            /tmp/eels/scoreboard/scoreboard.json
+            /tmp/eels/scoreboard/scoreboard.md
+            /tmp/eels/scoreboard/cases.jsonl.gz
+          if-no-files-found: warn

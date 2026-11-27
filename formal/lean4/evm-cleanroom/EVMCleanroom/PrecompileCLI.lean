@@ -12,7 +12,7 @@ be measured. It imports no `Lean.*` module.
     evm-precompile [--dangerously-enable-unverified-keccak] --batch FILE
     evm-precompile [--dangerously-enable-unverified-keccak] --bench FILE REPEATS
 
-`PROFILE` is `preShanghai`, `shanghaiPlus`, `cancunPlus` or `osaka`; `ADDRESS`
+`PROFILE` is `preShanghai`, `shanghaiPlus`, `cancunPlus`, `prague` or `osaka`; `ADDRESS`
 and `GAS` are decimal; `HEX` is the input without `0x` (`-` for empty). A
 batch file has one `PROFILE ADDRESS GAS HEX` case per line. Each case prints
 
@@ -33,6 +33,7 @@ private def profileOf : String → Option Profile
   | "preShanghai" => some .preShanghai
   | "shanghaiPlus" => some .shanghaiPlus
   | "cancunPlus" => some .cancunPlus
+  | "prague" => some .prague
   | "osaka" => some .osaka
   | _ => none
 

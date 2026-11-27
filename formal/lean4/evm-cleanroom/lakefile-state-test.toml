@@ -1,0 +1,14 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+# Same native runtime bootstrap as the witness and signed transaction
+# executables: the closure uses only JSON data routines from Lean.*.
+moreLeancArgs = ["-Dlean_initialize=lean_initialize_runtime_module"]
+
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-state-test"
+root = "EVMCleanroom.StateTestCLI"

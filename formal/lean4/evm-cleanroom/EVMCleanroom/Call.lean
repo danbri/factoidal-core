@@ -54,6 +54,7 @@ def unsupportedPrecompile (profile : Profile) (target : Nat) : Bool :=
   | .preShanghai => decide (1 ≤ target ∧ target ≤ 0x09)
   | .shanghaiPlus => decide (1 ≤ target ∧ target ≤ 0x11)
   | .cancunPlus => decide (1 ≤ target ∧ target ≤ 0x0a)
+  | .prague => decide (1 ≤ target ∧ target ≤ 0x11)
   | .osaka => decide ((1 ≤ target ∧ target ≤ 0x11) ∨ target = 0x100)
 
 #guard unsupportedPrecompile .cancunPlus 0x0a

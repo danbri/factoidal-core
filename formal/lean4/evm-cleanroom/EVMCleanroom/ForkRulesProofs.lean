@@ -1,0 +1,98 @@
+import EVMCleanroom.CallTransaction
+
+/-! Theorems for the Prague and Osaka transaction gas rules added to the
+ordinary call runner (EIP-7623 calldata floor, EIP-7825 gas cap). -/
+
+namespace EVMCleanroom.CallTransaction
+
+/-- Kind: preservation.
+    Says: Shanghai and Cancun admission is unchanged by the later fork
+    rules: the budget passes through untouched, with a zero floor.
+    Does not say: that the Shanghai or Cancun rules are complete. -/
+theorem forkGasRules_before_prague (fork : Fork) (tx : Envelope) (b : Budget)
+    (h : fork = .shanghai ∨ fork = .cancun) : forkGasRules fork tx b = .ok b := by
+  rcases h with h | h <;> subst h <;> rfl
+
+/-- Kind: admission.
+    Says: in Prague and Osaka an admitted budget's floor is the EIP-7623
+    calldata floor and fits within the transaction gas limit.
+    Does not say: that the floor formula is checked against EELS (tested only). -/
+theorem forkGasRules_floor (fork : Fork) (tx : Envelope) (b b' : Budget)
+    (hf : fork = .prague ∨ fork = .osaka) (h : forkGasRules fork tx b = .ok b') :
+    b'.floor = calldataFloor tx.data ∧ b'.floor ≤ tx.gasLimit := by
+  rcases hf with hf | hf <;> subst hf <;> unfold forkGasRules at h
+  · by_cases hl : tx.gasLimit < calldataFloor tx.data
+    · simp [hl] at h
+    · simp [hl] at h; subst h; exact ⟨rfl, by simp only [calldataFloor] at hl ⊢; omega⟩
+  · by_cases hc : tx.gasLimit > osakaGasCap
+    · simp [hc] at h
+    · by_cases hl : tx.gasLimit < calldataFloor tx.data
+      · simp [hc, hl] at h
+      · simp [hc, hl] at h; subst h; exact ⟨rfl, by simp only [calldataFloor] at hl ⊢; omega⟩
+
+/-- Kind: admission.
+    Says: Osaka refuses a transaction reserving more than 2^24 gas.
+    Does not say: anything about block gas. -/
+theorem forkGasRules_osaka_cap (tx : Envelope) (b : Budget) (h : tx.gasLimit > osakaGasCap) :
+    forkGasRules .osaka tx b = .error "gas-limit-above-cap" := by
+  simp [forkGasRules, h]
+
+/-- Kind: gas accounting.
+    Says: gas used is never below the floor once the floor fits the limit.
+    Does not say: that the refund cap matches each fork (tested only). -/
+theorem charge_used_ge_floor (b : Budget) (remaining : Nat) (counter : Int)
+    (h : b.floor ≤ b.gasLimit) : b.floor ≤ (charge b remaining counter).used := by
+  simp only [charge, Nat.min_eq_left h]
+  exact Nat.le_max_right _ _
+
+/-- Kind: preservation.
+    Says: with a zero floor the bill is the pre-Prague one: gas consumed
+    minus the capped refund.
+    Does not say: which forks use a zero floor (see `forkGasRules_before_prague`). -/
+theorem charge_zero_floor (b : Budget) (remaining : Nat) (counter : Int) (h : b.floor = 0) :
+    (charge b remaining counter).used =
+      (b.gasLimit - remaining) - min counter.toNat ((b.gasLimit - remaining) / 5) := by
+  simp [charge, h]
+
+/-- Kind: fork ordering.
+    Says: the Prague profile runs exactly the EIP-2537 addresses 0x0b-0x11 on
+    top of Cancun's set, and Osaka runs the same set below 0x100.
+    Does not say: that each precompile computes its specified function. -/
+theorem prague_active_bls (a : Nat) (h : 0x0b ≤ a ∧ a ≤ 0x11) :
+    Precompiles.active .prague a = true := by
+  have : a = 11 ∨ a = 12 ∨ a = 13 ∨ a = 14 ∨ a = 15 ∨ a = 16 ∨ a = 17 := by omega
+  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> decide
+
+theorem prague_extends_cancun (a : Nat) (h : Precompiles.active .cancunPlus a = true) :
+    Precompiles.active .prague a = true := by
+  simp only [Precompiles.active, Precompiles.lastAddress, Bool.and_eq_true, Bool.or_eq_true,
+    beq_iff_eq] at h ⊢
+  obtain ⟨hi, hr⟩ := h
+  refine ⟨hi, Or.inl ?_⟩
+  rcases hr with hr | ⟨_, hc⟩
+  · exact decide_eq_true (Nat.le_trans (of_decide_eq_true hr) (by decide))
+  · cases hc
+
+theorem prague_osaka_agree (a : Nat) (h : a < 0x100) :
+    Precompiles.active .prague a = Precompiles.active .osaka a := by
+  have h2 : (a == 256) = false := by simp only [beq_eq_false_iff_ne]; omega
+  simp only [Precompiles.active, h2, Bool.false_and, Bool.or_false]
+  rfl
+
+/-- Kind: fork ordering.
+    Says: the Prague fork selects the Prague profile and warms 0x01-0x11.
+    Does not say: anything about the instruction set (shared with Cancun). -/
+theorem prague_profile : Fork.prague.profile = .prague ∧ Fork.prague.precompileLimit = 0x11 :=
+  ⟨rfl, rfl⟩
+
+#print axioms prague_active_bls
+#print axioms prague_extends_cancun
+#print axioms prague_osaka_agree
+#print axioms prague_profile
+#print axioms forkGasRules_before_prague
+#print axioms forkGasRules_floor
+#print axioms forkGasRules_osaka_cap
+#print axioms charge_used_ge_floor
+#print axioms charge_zero_floor
+
+end EVMCleanroom.CallTransaction

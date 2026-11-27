@@ -415,7 +415,9 @@ private def blobBaseFeeMain (args : List String) : IO UInt32 := do
     let selected : Option Profile :=
       match profileName with
       | "cancun" => some .cancunPlus
-      | "osaka" => some .osaka
+      | "prague" => some .prague
+      | "prague" => some .prague
+  | "osaka" => some .osaka
       | "shanghai" => some .shanghaiPlus
       | "preShanghai" => some .preShanghai
       | _ => none
@@ -546,6 +548,7 @@ private def parseProfile : String → Option Profile
   | "preShanghai" => some .preShanghai
   | "shanghaiPlus" => some .shanghaiPlus
   | "cancunPlus" => some .cancunPlus
+  | "prague" => some .prague
   | "osaka" => some .osaka
   | _ => none
 

@@ -1,0 +1,33 @@
+{
+ "counts": {
+  "Cancun": {
+   "fail": 0,
+   "not-executed": 11,
+   "pass": 5188,
+   "unsupported": 6370
+  },
+  "Osaka": {
+   "fail": 0,
+   "not-executed": 6,
+   "pass": 5429,
+   "unsupported": 9229
+  },
+  "Prague": {
+   "fail": 0,
+   "not-executed": 10,
+   "pass": 4805,
+   "unsupported": 9104
+  },
+  "Shanghai": {
+   "fail": 0,
+   "not-executed": 0,
+   "pass": 1295,
+   "unsupported": 2789
+  }
+ },
+ "fails": {},
+ "fixtures": "ethereum/execution-specs tests@v21.0.3 (commit 391d8a05d5cb182542ac7e7330c858b6ee03f990) fixtures.tar.gz sha256 46bd48fb71a23da084218fe856fe442ab0c8d00c85c1c1aead0d2a965804fd24",
+ "note": "Baseline from CI run 45941944065 at 5cdfda82d. Pass counts may only rise; any fail outside 'fails' breaks the ratchet.",
+ "passingDigest": "a20505153295943b4146efe924c0a7caaa778e375ca315e86e9d50ceb575d45a",
+ "run": "https://github.com/danbri/factoidal-core/actions/runs/45941944065"
+}

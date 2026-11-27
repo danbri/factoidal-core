@@ -14,18 +14,29 @@ namespace EVMCleanroom.CallTransaction
 
 open World
 
+/-- Prague has its own profile: Cancun's instruction set with the EIP-2537
+    precompiles 0x0b-0x11 active (and warm). Its other ordinary-call change,
+    the EIP-7623 calldata floor, is applied by `forkGasRules`. Osaka adds
+    CLZ (its own profile), the EIP-7825 transaction gas cap and P256VERIFY
+    at 0x100. -/
 inductive Fork where
   | shanghai
   | cancun
+  | prague
+  | osaka
   deriving DecidableEq, Repr
 
 def Fork.profile : Fork → Profile
   | .shanghai => .shanghaiPlus
   | .cancun => .cancunPlus
+  | .prague => .prague
+  | .osaka => .osaka
 
 def Fork.precompileLimit : Fork → Nat
   | .shanghai => 0x09
   | .cancun => 0x0a
+  | .prague => 0x11
+  | .osaka => 0x11
 
 structure Access where
   address : Nat
@@ -92,8 +103,11 @@ inductive FrameStatus where
   | reverted
   | exceptional (error : Error)
 
-/-- Simulation resource limits, independent of fork validity. -/
-def maxGas : Nat := 100000000
+/-- Simulation resource limits, independent of fork validity. The gas cap
+    bounds memory through its quadratic price: a frame that can pay for
+    `w` words has `w ≤ 369960` (11.3 MiB), `StateTest.memory_words_bounded`.
+    It is above the 120,000,000 transaction gas of the official fixtures. -/
+def maxGas : Nat := 268435456
 def maxFuel : Nat := 1000000
 def maxDataBytes : Nat := 16777216
 
@@ -123,7 +137,7 @@ def BlockContext.bounded (block : BlockContext) (fork : Fork) : Bool :=
     block.number < nonceBound ∧ block.timestamp < nonceBound ∧ block.gasLimit < nonceBound ∧
     block.gasUsedBefore ≤ block.gasLimit ∧ block.baseFee < modulus ∧
     block.prevRandao < modulus ∧ block.blobBaseFee < modulus) &&
-  (if fork = .cancun then block.blobBaseFee != 0 else block.blobBaseFee == 0)
+  (if fork = .shanghai then block.blobBaseFee == 0 else block.blobBaseFee != 0)
 
 def WitnessAccount.valid (w : WitnessAccount) : Bool :=
   decide (w.address < addressBound ∧ w.balance < modulus ∧ w.nonce < nonceBound ∧
@@ -148,6 +162,8 @@ structure Budget where
   gasLimit : Nat
   price : Nat
   baseFee : Nat
+  /-- EIP-7623 minimum gas used (Prague); zero before Prague. -/
+  floor : Nat := 0
 
 def Budget.frameGas (budget : Budget) : Nat := budget.gasLimit - budget.intrinsic
 
@@ -175,7 +191,7 @@ def admit (tx : Envelope) (block : BlockContext) (sender : Account) : Except Str
   else if tx.gasLimit < intrinsic then .error "below-intrinsic-gas"
   else if price < block.baseFee then .error "price-below-base-fee"
   else if sender.balance < tx.gasLimit * tx.gasPriceCap + tx.value then .error "insufficient-upfront-balance"
-  else .ok ⟨intrinsic, tx.gasLimit, price, block.baseFee⟩
+  else .ok ⟨intrinsic, tx.gasLimit, price, block.baseFee, 0⟩
 
 /-- The same input inventory supplies each lookup's coverage check and
     authenticated value. Zeros in the functional map alone prove nothing. -/
@@ -217,12 +233,14 @@ structure Charge where
   tip : Nat
   burned : Nat
 
-/-- Shanghai and Cancun cap the SSTORE refund at one fifth of gas consumed,
-    including intrinsic gas. Their receipt gas has no Prague calldata floor. -/
+/-- Shanghai, Cancun and Prague cap the SSTORE refund at one fifth of gas
+    consumed, including intrinsic gas. Prague then raises gas used to the
+    EIP-7623 floor (zero before Prague); admission has checked the floor
+    against the gas limit, and the `min` keeps the bill within it anyway. -/
 def charge (budget : Budget) (frameGasRemaining : Nat) (refundCounter : Int) : Charge :=
   let gross := budget.gasLimit - frameGasRemaining
   let refund := min refundCounter.toNat (gross / 5)
-  let used := gross - refund
+  let used := max (gross - refund) (min budget.floor budget.gasLimit)
   { beforeRefund := gross, refund, used
     returnedWei := (budget.gasLimit - used) * budget.price
     tip := used * (budget.price - budget.baseFee)
@@ -266,6 +284,24 @@ def finish (tx : Envelope) (block : BlockContext) (budget : Budget)
           world, frame, receiptStatus := success, output := s.outputData,
           charge := bill, cumulativeGasUsed := block.gasUsedBefore + bill.used,
           effectiveGasPrice := budget.price, logs := w.logsRev.reverse }
+
+/-- EIP-7623: in Prague a transaction must pay at least
+    21000 + 10 * (zero bytes + 4 * nonzero bytes) of calldata, and gas used
+    is at least that floor. Earlier forks keep a zero floor. -/
+def calldataFloor (data : Array UInt8) : Nat :=
+  let zeros := data.foldl (fun n b => if b == 0 then n + 1 else n) 0
+  21000 + 10 * (zeros + 4 * (data.size - zeros))
+
+/-- EIP-7825 (Osaka): a transaction may not reserve more than 2^24 gas. -/
+def osakaGasCap : Nat := 16777216
+
+def forkGasRules (fork : Fork) (tx : Envelope) (budget : Budget) : Except String Budget :=
+  if fork = .osaka && tx.gasLimit > osakaGasCap then .error "gas-limit-above-cap"
+  else if fork = .prague || fork = .osaka then
+    let floor := calldataFloor tx.data
+    if tx.gasLimit < floor then .error "below-calldata-floor"
+    else .ok { budget with floor }
+  else .ok budget
 
 /-- Use the same failure boundary as the ordinary world-aware dispatcher,
     with the fee-paid and nonce-incremented state as its checkpoint. -/
@@ -422,7 +458,7 @@ def runWithBlobHashes (p : Request) (hashes : Array Word) : Outcome :=
     | none =>
       if CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
       else
-        match admit p.tx p.block (w.accounts p.tx.sender) with
+        match admit p.tx p.block (w.accounts p.tx.sender) >>= forkGasRules p.fork p.tx with
         | .error reason => .rejected reason
         | .ok budget => runAdmitted p w budget
 
