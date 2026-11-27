@@ -1,5 +1,7 @@
 import EVMCleanroom.Precompiles.BN254Fast
 import EVMCleanroom.Precompiles.BLS12381Msm
+import EVMCleanroom.Precompiles.BLS12381Map
+import EVMCleanroom.Precompiles.KZGFast
 
 /-!
 # `evm-blsops`: the group-operation precompiles on limbs against their definitions
@@ -7,8 +9,10 @@ import EVMCleanroom.Precompiles.BLS12381Msm
     evm-blsops [SCALE]
 
 For alt_bn128 addition and multiplication (0x06, 0x07), BLS12-381 G1 and G2
-addition (0x0b, 0x0d), the two multi-scalar multiplications (0x0c, 0x0e) and
-the two subgroup checks, the limb implementation is run beside the `Nat`
+addition (0x0b, 0x0d), the two multi-scalar multiplications (0x0c, 0x0e), the two maps to the curve
+(0x10, 0x11), the two subgroup checks, the square root in `Fp2`, the cofactor
+clearing of `G2` and the KZG helpers (decompression, fixed-base
+multiplication), the limb implementation is run beside the `Nat`
 definition on deterministic pseudo-random inputs: valid points, the edge cases
 (infinity, equal and inverse points, scalars `0, 1, r − 1, r, 2^256 − 1`),
 points outside the subgroup, points of small order, and invalid encodings.
@@ -295,6 +299,68 @@ def msmInput2 (points : Array (Fp2 × Fp2)) (seed count mode : Nat) : ByteArray 
     out := out ++ bytes2 point ++ natToBE 32 k
   return out
 
+
+/-- Inputs of the map of a field element to `G1`: random, edge and invalid values. -/
+def mapCases1 (count : Nat) : Array ByteArray := Id.run do
+  let mut out : Array ByteArray := #[fe 0, fe 1, fe 2, fe (p - 1), fe p, fe (p + 1), fe (2 ^ 384), fe (2 ^ 511),
+    fe 1 ++ fe 1, ByteArray.empty, natToBE 63 1, fe 11, fe (p - 11)]
+  for v in randoms 41 count do
+    out := out.push (fe (v % p))
+  return out
+
+def mapCases2 (count : Nat) : Array ByteArray := Id.run do
+  let mut out : Array ByteArray := #[fe 0 ++ fe 0, fe 1 ++ fe 0, fe 0 ++ fe 1, fe (p - 1) ++ fe (p - 1), fe p ++ fe 0,
+    fe 0 ++ fe p, fe (2 ^ 384) ++ fe 1, fe 1, fe 1 ++ fe 1 ++ fe 1, ByteArray.empty]
+  let rs := randoms 42 (2 * count)
+  for i in [0:count] do
+    let a := rs.getD (2 * i) 0 % p
+    let b := rs.getD (2 * i + 1) 0 % p
+    out := out.push (match i % 8 with
+      | 0 => fe a ++ fe 0
+      | 1 => fe 0 ++ fe b
+      | _ => fe a ++ fe b)
+  return out
+
+/-- Values for the square root in `Fp2`: random ones (half are squares), squares, real and imaginary ones. -/
+def rootCases (count : Nat) : Array Fp2 := Id.run do
+  let mut out : Array Fp2 := #[⟨0, 0⟩, ⟨1, 0⟩, ⟨0, 1⟩, ⟨p - 1, 0⟩, ⟨0, p - 1⟩, ⟨4, 0⟩, ⟨5, 0⟩, ⟨0, 4⟩, ⟨0, 5⟩]
+  let rs := randoms 43 (2 * count)
+  for i in [0:count] do
+    let a : Fp2 := ⟨rs.getD (2 * i) 0 % p, rs.getD (2 * i + 1) 0 % p⟩
+    out := out.push (match i % 6 with
+      | 0 => Fp2.sqr p a
+      | 1 => ⟨a.c0, 0⟩
+      | 2 => ⟨0, a.c1⟩
+      | 3 => Fp2.sqr p ⟨a.c0, 0⟩
+      | _ => a)
+  return out
+
+/-- The 48-byte compressed form of `x` with the three flag bits (4: compressed, 2: infinity, 1: larger root). -/
+def compressed (x flags : Nat) : ByteArray := natToBE 48 (x % 2 ^ 381 + flags * 2 ^ 381)
+
+def compress1 (point : Nat × Nat) : ByteArray :=
+  compressed point.1 (if point.2 > (p - 1) / 2 then 5 else 4)
+
+/-- Compressed encodings: subgroup points with either root, points outside the subgroup, `x` off the
+    curve, the infinity encodings, every flag combination, non-canonical `x`. -/
+def decompressCases (inside outside : Array (Nat × Nat)) (count : Nat) : Array ByteArray := Id.run do
+  let mut out : Array ByteArray := #[compressed 0 6, compressed 0 7, compressed 0 2, compressed 0 4, compressed 1 6,
+    compressed p 4, compressed (p + 3) 4, compressed (2 ^ 381 - 1) 4, compressed 0 5, compressed 0 0]
+  let rs := randoms 44 count
+  for i in [0:count] do
+    let v := rs.getD i 0
+    let a := pick inside v (0, 0)
+    let b := pick outside v (0, 0)
+    out := out.push (match i % 10 with
+      | 0 => compressed a.1 ((if a.2 > (p - 1) / 2 then 5 else 4) ^^^ 1)
+      | 1 => compress1 b
+      | 2 => compressed (v % p) 4
+      | 3 => compressed a.1 (v % 8)
+      | 4 => compressed (v % p) 5
+      | 5 => (compress1 a).extract 0 (v / 2 ^ 64 % 49)
+      | _ => compress1 a)
+  return out
+
 /-- Replace the point of item `index` (items of `itemBytes` bytes, the point first). -/
 def replacePoint (input : ByteArray) (itemBytes index : Nat) (point : ByteArray) : ByteArray :=
   input.extract 0 (itemBytes * index) ++ point ++
@@ -419,6 +485,62 @@ def main (args : List String) : IO UInt32 := do
     msm2 := msm2.push (Bls.replacePoint valid 288 index (Bls.bytes2 (pick curve2 index Bls.zero2)))
     msm2 := msm2.push (valid.extract 0 (288 * index + 287))
   bad := bad + (← compare "BLS12-381 G2 MSM (0x0e)" msm2 (BLS12381.runG2Msm gas) (BLS12381.Fast.runG2Msm gas))
+  -- BLS12-381 maps to the curve, the square root in Fp2, the cofactor clearing of G2
+  bad := bad + (← compare "BLS12-381 map Fp to G1 (0x10)" (Bls.mapCases1 (600 * scale))
+    (BLS12381.runMapG1 gas) (BLS12381.Fast.runMapG1 gas))
+  bad := bad + (← compare "BLS12-381 map Fp2 to G2 (0x11)" (Bls.mapCases2 (160 * scale))
+    (BLS12381.runMapG2 gas) (BLS12381.Fast.runMapG2 gas))
+  let roots := Bls.rootCases (400 * scale)
+  let mut squares := 0
+  let mut badRoots := 0
+  for a in roots do
+    let want := BLS12381.sqrt2? a
+    let got := BLS12381.Fast.sqrt2? (BLS12381.Fast.toLimbs2 a)
+    if want.isSome then squares := squares + 1
+    let ok := match want, got with
+      | some _, some root => BLS12381.Fast.ofLimbs2 (Q2.sqr BLS12381.Fast.fp root) == a
+      | none, none => true
+      | _, _ => false
+    if !ok then badRoots := badRoots + 1
+  IO.println s!"RESULT blsops Fp2 square root: {roots.size} values ({squares} squares), {if badRoots == 0 then "no differences" else s!"{badRoots} FAILURES"}"
+  let mut badClear := 0
+  let clearPoints := curve2 ++ group2.extract 0 4
+  for point in clearPoints do
+    let want := Curve.toAffine BLS12381.field2 (Curve.mul BLS12381.field2 BLS12381.cofactor2 (Bls.jac2 point))
+    let got := (Curve.toAffineFast BLS12381.Fast.fp2 (BLS12381.Fast.clearCofactor2
+      (Curve.ofAffine BLS12381.Fast.fp2 (BLS12381.Fast.toLimbs2 point.1) (BLS12381.Fast.toLimbs2 point.2)))).map
+        fun a => (BLS12381.Fast.ofLimbs2 a.1, BLS12381.Fast.ofLimbs2 a.2)
+    if want != got then badClear := badClear + 1
+  IO.println s!"RESULT blsops G2 cofactor clearing by endomorphisms against the multiplication by h_eff: {clearPoints.size} points, {if badClear == 0 then "no differences" else s!"{badClear} FAILURES"}"
+  -- KZG helpers: decompression and the two fixed-base multiplications
+  let packed := Bls.decompressCases group1 curve1 (500 * scale)
+  let mut validPacked := 0
+  let mut badPacked := 0
+  for input in packed do
+    let want := KZG.decompressG1 input 0
+    let got := (KZG.Fast.decompressG1 input 0).map fun inner =>
+      inner.map fun a => (BLS12381.Fast.M.toNat a.1, BLS12381.Fast.M.toNat a.2)
+    if want.isSome then validPacked := validPacked + 1
+    if want != got then badPacked := badPacked + 1
+  IO.println s!"RESULT blsops KZG G1 decompression: {packed.size} encodings ({validPacked} valid), {if badPacked == 0 then "no differences" else s!"{badPacked} FAILURES"}"
+  let mut badFixed := 0
+  let scalars := #[0, 1, 2, 15, 16, BLS12381.r - 1, BLS12381.r, 2 ^ 255, 2 ^ 256 - 1, 2 ^ 256, 2 ^ 300 + 5] ++
+    (randoms 45 (60 * scale)).mapIdx fun i v => if i % 2 == 0 then v % BLS12381.r else v % 2 ^ 256
+  for k in scalars do
+    let want1 := Curve.toAffine BLS12381.field (Curve.mul BLS12381.field k (Bls.jac1 BLS12381.g1Generator))
+    let got1 := (Curve.toAffineFast BLS12381.Fast.fp (KZG.Fast.mulG1 k)).map fun a =>
+      (BLS12381.Fast.M.toNat a.1, BLS12381.Fast.M.toNat a.2)
+    if want1 != got1 then badFixed := badFixed + 1
+  for k in scalars.extract 0 (11 + 24 * scale) do
+    let want2 := Curve.toAffine BLS12381.field2 (Curve.mul BLS12381.field2 k (Bls.jac2 BLS12381.g2Generator))
+    let got2 := (Curve.toAffineFast BLS12381.Fast.fp2 (KZG.Fast.mulG2 k)).map fun a =>
+      (BLS12381.Fast.ofLimbs2 a.1, BLS12381.Fast.ofLimbs2 a.2)
+    if want2 != got2 then badFixed := badFixed + 1
+  IO.println s!"RESULT blsops KZG fixed-base multiplication: {scalars.size} scalars on G1, {min scalars.size (11 + 24 * scale)} on G2, {if badFixed == 0 then "no differences" else s!"{badFixed} FAILURES"}"
+  bad := bad + badRoots + badClear + badPacked + badFixed
+  if squares < 100 || roots.size - squares < 100 || validPacked < 100 || packed.size - validPacked < 100 then
+    IO.println "RESULT blsops: too few cases on one side of a square-root or decompression check, FAILURES"
+    bad := bad + 1
   -- Timing, old and new on the same inputs
   timeBoth "alt_bn128 add" (Bn.addTiming bnPoints 60) (BN254.runAdd gas) (BN254.Fast.runAdd gas)
   timeBoth "alt_bn128 mul" (Bn.mulTiming bnPoints 60) (BN254.runMul gas) (BN254.Fast.runMul gas)
@@ -438,6 +560,20 @@ def main (args : List String) : IO UInt32 := do
   for count in [1, 2, 8, 32, 128] do
     let inputs := (List.range (if count < 8 then 12 else 2)).toArray.map fun i => Bls.msmInput2 group2 (950 + i) count 1
     timeBoth s!"BLS12-381 G2 MSM, {count} items" inputs (BLS12381.runG2Msm gas) (BLS12381.Fast.runG2Msm gas)
+  timeBoth "BLS12-381 map Fp to G1" ((Bls.mapCases1 48).extract 13 61) (BLS12381.runMapG1 gas) (BLS12381.Fast.runMapG1 gas)
+  timeBoth "BLS12-381 map Fp2 to G2" ((Bls.mapCases2 32).extract 10 42) (BLS12381.runMapG2 gas) (BLS12381.Fast.runMapG2 gas)
+  timeBoth "KZG G1 decompression" (group1.map Bls.compress1)
+    (fun input => boolResult (KZG.decompressG1 input 0).isSome)
+    (fun input => boolResult (KZG.Fast.decompressG1 input 0).isSome)
+  let scalarBytes := (randoms 46 24).map fun v => natToBE 32 (v % BLS12381.r)
+  timeBoth "KZG [k]G1 for a scalar below r" scalarBytes
+    (fun input => boolResult (Curve.isInfinity BLS12381.field
+      (Curve.mul BLS12381.field (beNat input 0 32) (Bls.jac1 BLS12381.g1Generator)) == false))
+    (fun input => boolResult (!U384.isZero (KZG.Fast.mulG1 (beNat input 0 32)).z))
+  timeBoth "KZG [k]G2 for a scalar below r" scalarBytes
+    (fun input => boolResult (Curve.isInfinity BLS12381.field2
+      (Curve.mul BLS12381.field2 (beNat input 0 32) (Bls.jac2 BLS12381.g2Generator)) == false))
+    (fun input => boolResult (!Q2.isZero BLS12381.Fast.fp (KZG.Fast.mulG2 (beNat input 0 32)).z))
   if bad == 0 then
     IO.println "RESULT blsops: all differential checks agree"
     return 0

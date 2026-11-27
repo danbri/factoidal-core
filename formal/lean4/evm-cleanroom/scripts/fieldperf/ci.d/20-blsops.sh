@@ -15,6 +15,8 @@ lake -f lakefile-fieldperf.toml build evm-blsops
 for f in CurveFast BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
   c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
   echo "$f.c: closure calls $(grep -c 'lean_apply_' "$c" || true), constructor allocations $(grep -c 'lean_alloc_ctor' "$c" || true)"
+  # Which functions still call through a closure (the generic copies are expected; a specialised one is not).
+  awk '/^(LEAN_EXPORT|static) .*\(.*\) *\{$/ {name=$0} /lean_apply_/ {count[name]++} END {for (n in count) print "  closure calls " count[n] ": " substr(n, 1, 150)}' "$c" | sort | head -40
 done
 .lake/build/bin/evm-blsops
 lake -f lakefile-fieldperf.toml build evm-precompile

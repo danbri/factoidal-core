@@ -8,6 +8,7 @@ import EVMCleanroom.Precompiles.BN254
 import EVMCleanroom.Precompiles.BN254Fast
 import EVMCleanroom.Precompiles.BLS12381
 import EVMCleanroom.Precompiles.BLS12381Msm
+import EVMCleanroom.Precompiles.BLS12381Map
 import EVMCleanroom.Precompiles.KZG
 import EVMCleanroom.Precompiles.P256
 
@@ -104,8 +105,8 @@ def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address ga
   | 0x0d => some (BLS12381.Fast.runG2Add gas input)
   | 0x0e => some (BLS12381.Fast.runG2Msm gas input)
   | 0x0f => some (BLS12381.runPairing gas input)
-  | 0x10 => some (BLS12381.runMapG1 gas input)
-  | 0x11 => some (BLS12381.runMapG2 gas input)
+  | 0x10 => some (BLS12381.Fast.runMapG1 gas input)
+  | 0x11 => some (BLS12381.Fast.runMapG2 gas input)
   | 0x100 => some (P256.run gas input)
   | _ => none
 
@@ -188,8 +189,8 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
         · have := BLS12381.Fast.runG2Add_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := BLS12381.Fast.runG2Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := BLS12381.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := (BLS12381.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
-        · have := (BLS12381.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
+        · have := (BLS12381.Fast.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
+        · have := (BLS12381.Fast.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
         · have := P256.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · cases hDispatch
       · cases h
