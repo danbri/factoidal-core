@@ -1,169 +1,121 @@
-import EVMCleanroom.Precompiles.Field
+import EVMCleanroom.Precompiles.Secp256k1Field
+import EVMCleanroom.Precompiles.BN254Field
+import EVMCleanroom.Precompiles.BLS12381Field
+import EVMCleanroom.Precompiles.Secp256k1
 
-/-! Scratch experiment (not for main): cost of fixed-width limb arithmetic in compiled Lean
-    against the `Nat` path. -/
+/-! Scratch experiment (not for main): limb fields against the `Nat` path, and how well the
+    generic curve code specialises over a dictionary and over a class. -/
 
 namespace EVMCleanroom.FieldPerf.Exp
 
 open EVMCleanroom.Precompiles
 
-@[inline] def mask32 : UInt64 := 0xffffffff
-
-/-- `(hi, lo)` of `a * b + c + d`. -/
-@[inline] def mac (a b c d : UInt64) : UInt64 × UInt64 :=
-  let a0 := a &&& mask32
-  let a1 := a >>> 32
-  let b0 := b &&& mask32
-  let b1 := b >>> 32
-  let p00 := a0 * b0
-  let p01 := a0 * b1
-  let p10 := a1 * b0
-  let p11 := a1 * b1
-  let mid := (p00 >>> 32) + (p01 &&& mask32) + (p10 &&& mask32)
-  let lo0 := (p00 &&& mask32) ||| (mid <<< 32)
-  let hi0 := p11 + (p01 >>> 32) + (p10 >>> 32) + (mid >>> 32)
-  let lo1 := lo0 + c
-  let hi1 := hi0 + (if lo1 < lo0 then 1 else 0)
-  let lo2 := lo1 + d
-  let hi2 := hi1 + (if lo2 < lo1 then 1 else 0)
-  (hi2, lo2)
-
-@[inline] def adc (a b c : UInt64) : UInt64 × UInt64 :=
-  let s := a + b
-  let c1 : UInt64 := if s < a then 1 else 0
-  let t := s + c
-  let c2 : UInt64 := if t < s then 1 else 0
-  (c1 + c2, t)
-
-@[inline] def sbb (a b c : UInt64) : UInt64 × UInt64 :=
-  let s := a - b
-  let c1 : UInt64 := if a < b then 1 else 0
-  let t := s - c
-  let c2 : UInt64 := if s < c then 1 else 0
-  (c1 + c2, t)
-
-structure U256 where
-  l0 : UInt64
-  l1 : UInt64
-  l2 : UInt64
-  l3 : UInt64
-
-def U256.toNat (a : U256) : Nat :=
-  a.l0.toNat + a.l1.toNat * 2 ^ 64 + a.l2.toNat * 2 ^ 128 + a.l3.toNat * 2 ^ 192
-
-def U256.ofNat (n : Nat) : U256 :=
-  ⟨UInt64.ofNat n, UInt64.ofNat (n >>> 64), UInt64.ofNat (n >>> 128), UInt64.ofNat (n >>> 192)⟩
-
-/-- secp256k1: `2^256 ≡ c (mod p)`. -/
-@[inline] def secC : UInt64 := 0x1000003D1
-
-/-- `a - p` if `a ≥ p` (given as limbs), else `a`. `p = 2^256 - c`: `a ≥ p` iff `a + c` carries. -/
-@[inline] def secCondSub (r0 r1 r2 r3 : UInt64) : U256 :=
-  let (c, s0) := adc r0 secC 0
-  let (c, s1) := adc r1 0 c
-  let (c, s2) := adc r2 0 c
-  let (c, s3) := adc r3 0 c
-  if c != 0 then ⟨s0, s1, s2, s3⟩ else ⟨r0, r1, r2, r3⟩
-
-def secMul (a b : U256) : U256 :=
-  let (c, t0) := mac a.l0 b.l0 0 0
-  let (c, t1) := mac a.l0 b.l1 0 c
-  let (c, t2) := mac a.l0 b.l2 0 c
-  let (t4, t3) := mac a.l0 b.l3 0 c
-  let (c, t1) := mac a.l1 b.l0 t1 0
-  let (c, t2) := mac a.l1 b.l1 t2 c
-  let (c, t3) := mac a.l1 b.l2 t3 c
-  let (t5, t4) := mac a.l1 b.l3 t4 c
-  let (c, t2) := mac a.l2 b.l0 t2 0
-  let (c, t3) := mac a.l2 b.l1 t3 c
-  let (c, t4) := mac a.l2 b.l2 t4 c
-  let (t6, t5) := mac a.l2 b.l3 t5 c
-  let (c, t3) := mac a.l3 b.l0 t3 0
-  let (c, t4) := mac a.l3 b.l1 t4 c
-  let (c, t5) := mac a.l3 b.l2 t5 c
-  let (t7, t6) := mac a.l3 b.l3 t6 c
-  -- fold the high half: lo + hi * c
-  let (c, r0) := mac t4 secC t0 0
-  let (c, r1) := mac t5 secC t1 c
-  let (c, r2) := mac t6 secC t2 c
-  let (k, r3) := mac t7 secC t3 c
-  -- fold the carry limb
-  let (c, r0) := mac k secC r0 0
-  let (c, r1) := adc r1 0 c
-  let (c, r2) := adc r2 0 c
-  let (c, r3) := adc r3 0 c
-  -- a last carry stands for 2^256 ≡ c; the sum is then tiny, so no further carry
-  let (c2, r0) := adc r0 (if c != 0 then secC else 0) 0
-  let (c2, r1) := adc r1 0 c2
-  let (c2, r2) := adc r2 0 c2
-  let (_, r3) := adc r3 0 c2
-  secCondSub r0 r1 r2 r3
-
-def secAdd (a b : U256) : U256 :=
-  let (c, r0) := adc a.l0 b.l0 0
-  let (c, r1) := adc a.l1 b.l1 c
-  let (c, r2) := adc a.l2 b.l2 c
-  let (c, r3) := adc a.l3 b.l3 c
-  if c != 0 then
-    let (c2, r0) := adc r0 secC 0
-    let (c2, r1) := adc r1 0 c2
-    let (c2, r2) := adc r2 0 c2
-    let (_, r3) := adc r3 0 c2
-    ⟨r0, r1, r2, r3⟩
-  else secCondSub r0 r1 r2 r3
-
-/-! Montgomery (CIOS) for the alt_bn128 prime. -/
-@[inline] def bn0 : UInt64 := 0x3c208c16d87cfd47
-@[inline] def bn1 : UInt64 := 0x97816a916871ca8d
-@[inline] def bn2 : UInt64 := 0xb85045b68181585d
-@[inline] def bn3 : UInt64 := 0x30644e72e131a029
-@[inline] def bnInv : UInt64 := 0x87d20782e4866389
-
-@[inline] def montRow (t0 t1 t2 t3 t4 : UInt64) (a : U256) (bi : UInt64) :
-    UInt64 × UInt64 × UInt64 × UInt64 × UInt64 :=
-  let (c, t0) := mac a.l0 bi t0 0
-  let (c, t1) := mac a.l1 bi t1 c
-  let (c, t2) := mac a.l2 bi t2 c
-  let (c, t3) := mac a.l3 bi t3 c
-  let (t5, t4) := adc t4 c 0
-  let m := t0 * bnInv
-  let (c, _) := mac m bn0 t0 0
-  let (c, t0) := mac m bn1 t1 c
-  let (c, t1) := mac m bn2 t2 c
-  let (c, t2) := mac m bn3 t3 c
-  let (c, t3) := adc t4 c 0
-  (t0, t1, t2, t3, t5 + c)
-
-def bnMul (a b : U256) : U256 :=
-  let (t0, t1, t2, t3, t4) := montRow 0 0 0 0 0 a b.l0
-  let (t0, t1, t2, t3, t4) := montRow t0 t1 t2 t3 t4 a b.l1
-  let (t0, t1, t2, t3, t4) := montRow t0 t1 t2 t3 t4 a b.l2
-  let (t0, t1, t2, t3, _) := montRow t0 t1 t2 t3 t4 a b.l3
-  let (c, s0) := sbb t0 bn0 0
-  let (c, s1) := sbb t1 bn1 c
-  let (c, s2) := sbb t2 bn2 c
-  let (c, s3) := sbb t3 bn3 c
-  if c != 0 then ⟨t0, t1, t2, t3⟩ else ⟨s0, s1, s2, s3⟩
-
-def secP : Nat := 0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f
+def secP : Nat := Secp256k1.p
+def secN : Nat := Secp256k1.n
 def bnP : Nat := 21888242871839275222246405745257275088696311157297823662689037894645226208583
 def blsP : Nat := 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab
 
-@[noinline] def loopLimb (f : U256 → U256 → U256) (y : U256) : Nat → U256 → U256
-  | 0, x => x
-  | n+1, x => loopLimb f y n (f x y)
+/-- Deterministic test values below `p`: edge cases, then a multiplicative walk. -/
+def samples (p count : Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := #[0, 1, 2, p - 1, p - 2, (p - 1) / 2, (p + 1) / 2, 2 ^ 64 % p, (2 ^ 64 - 1) % p,
+    2 ^ 128 % p, (2 ^ 192 - 1) % p, (2 ^ 255) % p, (2 ^ 256 - 1) % p, 2 ^ 32 % p, 977 % p, (2 ^ 256 - 2 ^ 32) % p]
+  let mut x : Nat := 0x9e3779b97f4a7c15f39cc0605cedc8341082276bf3a27251f86c6a11d0c18e95 % p
+  for _ in [0:count] do
+    x := (x * x + 0x243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89) % p
+    out := out.push x
+  return out
+
+structure Check where
+  name : String
+  failures : Nat
+
+def checkField256 (name : String) (p : Nat) (ofNat : Nat → U256) (toNat : U256 → Nat) (O : FieldOps U256) :
+    Array Check := Id.run do
+  let xs := samples p 300
+  let mut add := 0
+  let mut sub := 0
+  let mut mul := 0
+  let mut sqr := 0
+  let mut neg := 0
+  let mut inv := 0
+  let mut rt := 0
+  for a in xs do
+    let fa := ofNat a
+    if toNat fa != a then rt := rt + 1
+    if toNat (O.neg fa) != Fp.neg p a then neg := neg + 1
+    if toNat (O.sqr fa) != a * a % p then sqr := sqr + 1
+    if O.isZero fa != (a == 0) then rt := rt + 1
+    for b in xs.extract 0 40 do
+      let fb := ofNat b
+      if toNat (O.add fa fb) != Fp.add p a b then add := add + 1
+      if toNat (O.sub fa fb) != Fp.sub p a b then sub := sub + 1
+      if toNat (O.mul fa fb) != Fp.mul p a b then mul := mul + 1
+      if O.eq fa fb != (a == b) then rt := rt + 1
+  for a in xs.extract 0 60 do
+    if toNat (O.inv (ofNat a)) != Fp.inv p a then inv := inv + 1
+  return #[⟨name ++ " add", add⟩, ⟨name ++ " sub", sub⟩, ⟨name ++ " mul", mul⟩, ⟨name ++ " sqr", sqr⟩,
+    ⟨name ++ " neg", neg⟩, ⟨name ++ " inv", inv⟩, ⟨name ++ " round trip, isZero, eq", rt⟩]
+
+def checkField384 (name : String) (p : Nat) (M : Mont384) : Array Check := Id.run do
+  let xs := samples p 300
+  let O := M.ops
+  let mut add := 0
+  let mut sub := 0
+  let mut mul := 0
+  let mut sqr := 0
+  let mut neg := 0
+  let mut inv := 0
+  let mut rt := 0
+  for a in xs do
+    let fa := M.ofNat a
+    if M.toNat fa != a then rt := rt + 1
+    if M.toNat (O.neg fa) != Fp.neg p a then neg := neg + 1
+    if M.toNat (O.sqr fa) != a * a % p then sqr := sqr + 1
+    if O.isZero fa != (a == 0) then rt := rt + 1
+    for b in xs.extract 0 40 do
+      let fb := M.ofNat b
+      if M.toNat (O.add fa fb) != Fp.add p a b then add := add + 1
+      if M.toNat (O.sub fa fb) != Fp.sub p a b then sub := sub + 1
+      if M.toNat (O.mul fa fb) != Fp.mul p a b then mul := mul + 1
+      if O.eq fa fb != (a == b) then rt := rt + 1
+  for a in xs.extract 0 60 do
+    if M.toNat (O.inv (M.ofNat a)) != Fp.inv p a then inv := inv + 1
+  return #[⟨name ++ " add", add⟩, ⟨name ++ " sub", sub⟩, ⟨name ++ " mul", mul⟩, ⟨name ++ " sqr", sqr⟩,
+    ⟨name ++ " neg", neg⟩, ⟨name ++ " inv", inv⟩, ⟨name ++ " round trip, isZero, eq", rt⟩]
+
+/-! Timing loops. -/
 
 @[noinline] def loopSecMul (y : U256) : Nat → U256 → U256
   | 0, x => x
-  | n+1, x => loopSecMul y n (secMul x y)
+  | n+1, x => loopSecMul y n (Secp256k1.Fe.mul x y)
+
+@[noinline] def loopSecSqr : Nat → U256 → U256
+  | 0, x => x
+  | n+1, x => loopSecSqr n (Secp256k1.Fe.sqr x)
 
 @[noinline] def loopSecAdd (y : U256) : Nat → U256 → U256
   | 0, x => x
-  | n+1, x => loopSecAdd y n (secAdd x y)
+  | n+1, x => loopSecAdd y n (Secp256k1.Fe.add x y)
+
+@[noinline] def loopSecSub (y : U256) : Nat → U256 → U256
+  | 0, x => x
+  | n+1, x => loopSecSub y n (Secp256k1.Fe.sub x y)
 
 @[noinline] def loopBnMul (y : U256) : Nat → U256 → U256
   | 0, x => x
-  | n+1, x => loopBnMul y n (bnMul x y)
+  | n+1, x => loopBnMul y n (BN254.baseField.mul x y)
+
+@[noinline] def loopBnAdd (y : U256) : Nat → U256 → U256
+  | 0, x => x
+  | n+1, x => loopBnAdd y n (BN254.baseField.add x y)
+
+@[noinline] def loopBlsMul (y : U384) : Nat → U384 → U384
+  | 0, x => x
+  | n+1, x => loopBlsMul y n (BLS12381.baseField.mul x y)
+
+@[noinline] def loopBlsAdd (y : U384) : Nat → U384 → U384
+  | 0, x => x
+  | n+1, x => loopBlsAdd y n (BLS12381.baseField.add x y)
 
 @[noinline] def loopNatMul (p y : Nat) : Nat → Nat → Nat
   | 0, x => x
@@ -173,13 +125,73 @@ def blsP : Nat := 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0
   | 0, x => x
   | n+1, x => loopNatAdd p y n (Fp.add p x y)
 
-@[noinline] def loopNatSub (p y : Nat) : Nat → Nat → Nat
+/-- Dictionary route: the existing generic curve code over the limb field. -/
+@[noinline] def loopDoubleDict : Nat → JPoint U256 → JPoint U256
   | 0, x => x
-  | n+1, x => loopNatSub p y n (Fp.sub p x y)
+  | n+1, x => loopDoubleDict n (Curve.double Secp256k1.Fe.ops x)
 
-@[noinline] def loopNatMulOnly (y : Nat) : Nat → Nat → Nat → Nat
-  | 0, _, acc => acc
-  | n+1, x, acc => loopNatMulOnly y n x (acc ^^^ (x * y))
+@[noinline] def loopAddDict (q : JPoint U256) : Nat → JPoint U256 → JPoint U256
+  | 0, x => x
+  | n+1, x => loopAddDict q n (Curve.add Secp256k1.Fe.ops x q)
+
+@[noinline] def loopDoubleNat : Nat → JPoint Nat → JPoint Nat
+  | 0, x => x
+  | n+1, x => loopDoubleNat n (Curve.double Secp256k1.field x)
+
+@[noinline] def loopAddNat (q : JPoint Nat) : Nat → JPoint Nat → JPoint Nat
+  | 0, x => x
+  | n+1, x => loopAddNat q n (Curve.add Secp256k1.field x q)
+
+/-- Class route: the same doubling formula over a type class. -/
+class Fast (F : Type) where
+  add : F → F → F
+  sub : F → F → F
+  mul : F → F → F
+  sqr : F → F
+
+def SecFe := U256
+instance : Fast SecFe := ⟨Secp256k1.Fe.add, Secp256k1.Fe.sub, Secp256k1.Fe.mul, Secp256k1.Fe.sqr⟩
+
+@[specialize] def doubleClass {F : Type} [Fast F] (p : JPoint F) : JPoint F :=
+  let a := Fast.sqr p.x
+  let b := Fast.sqr p.y
+  let c := Fast.sqr b
+  let xb := Fast.add p.x b
+  let d0 := Fast.sub (Fast.sub (Fast.sqr xb) a) c
+  let d := Fast.add d0 d0
+  let e := Fast.add (Fast.add a a) a
+  let x3 := Fast.sub (Fast.sqr e) (Fast.add d d)
+  let c2 := Fast.add c c
+  let c4 := Fast.add c2 c2
+  let c8 := Fast.add c4 c4
+  let y3 := Fast.sub (Fast.mul e (Fast.sub d x3)) c8
+  let yz := Fast.mul p.y p.z
+  ⟨x3, y3, Fast.add yz yz⟩
+
+@[noinline] def loopDoubleClass : Nat → JPoint SecFe → JPoint SecFe
+  | 0, x => x
+  | n+1, x => loopDoubleClass n (doubleClass x)
+
+/-- Direct route: the formula written against the secp256k1 functions. -/
+def doubleDirect (p : JPoint U256) : JPoint U256 :=
+  let a := Secp256k1.Fe.sqr p.x
+  let b := Secp256k1.Fe.sqr p.y
+  let c := Secp256k1.Fe.sqr b
+  let xb := Secp256k1.Fe.add p.x b
+  let d0 := Secp256k1.Fe.sub (Secp256k1.Fe.sub (Secp256k1.Fe.sqr xb) a) c
+  let d := Secp256k1.Fe.add d0 d0
+  let e := Secp256k1.Fe.add (Secp256k1.Fe.add a a) a
+  let x3 := Secp256k1.Fe.sub (Secp256k1.Fe.sqr e) (Secp256k1.Fe.add d d)
+  let c2 := Secp256k1.Fe.add c c
+  let c4 := Secp256k1.Fe.add c2 c2
+  let c8 := Secp256k1.Fe.add c4 c4
+  let y3 := Secp256k1.Fe.sub (Secp256k1.Fe.mul e (Secp256k1.Fe.sub d x3)) c8
+  let yz := Secp256k1.Fe.mul p.y p.z
+  ⟨x3, y3, Secp256k1.Fe.add yz yz⟩
+
+@[noinline] def loopDoubleDirect : Nat → JPoint U256 → JPoint U256
+  | 0, x => x
+  | n+1, x => loopDoubleDirect n (doubleDirect x)
 
 @[noinline] def force (run : Unit → Nat) : IO Nat := pure (run () % 1000003)
 
@@ -191,31 +203,70 @@ def timeIt (label : String) (count : Nat) (run : Unit → Nat) : IO Unit := do
 
 def main (args : List String) : IO UInt32 := do
   let count := (args.head?.bind String.toNat?).getD 2000000
-  let x : Nat := 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798
-  let y : Nat := 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8
+  let checks := checkField256 "secp256k1 p" secP Secp256k1.Fe.ofNat Secp256k1.Fe.toNat Secp256k1.Fe.ops
+    ++ checkField256 "secp256k1 n" secN Secp256k1.scalarField.ofNat Secp256k1.scalarField.toNat Secp256k1.scalarField.ops
+    ++ checkField256 "alt_bn128 p" bnP BN254.baseField.ofNat BN254.baseField.toNat BN254.baseField.ops
+    ++ checkField384 "bls12-381 p" blsP BLS12381.baseField
+  let mut bad := 0
+  for c in checks do
+    IO.println s!"check {c.name}: {if c.failures == 0 then "ok" else s!"{c.failures} FAILURES"}"
+    bad := bad + c.failures
+  -- square roots on secp256k1
+  let mut rootBad := 0
+  for a in samples secP 100 do
+    let expect := Fp.sqrt? secP a
+    let got := (Secp256k1.Fe.sqrt? (Secp256k1.Fe.ofNat a)).map Secp256k1.Fe.toNat
+    if expect != got then rootBad := rootBad + 1
+  IO.println s!"check secp256k1 sqrt: {if rootBad == 0 then "ok" else s!"{rootBad} FAILURES"}"
+  let x : Nat := Secp256k1.gx
+  let y : Nat := Secp256k1.gy
   let xb := x % bnP
   let yb := y % bnP
   let xl : Nat := x * y % blsP + 2 ^ 370
   let yl : Nat := (x * x * y) % blsP
-  -- correctness spot checks
-  IO.println s!"secMul agrees: {(secMul (.ofNat x) (.ofNat y)).toNat == Fp.mul secP x y}"
-  IO.println s!"secAdd agrees: {(secAdd (.ofNat x) (.ofNat y)).toNat == Fp.add secP x y}"
-  IO.println s!"secMul chain agrees: {(loopSecMul (.ofNat y) 1000 (.ofNat x)).toNat == loopNatMul secP y 1000 x}"
-  IO.println s!"secAdd chain agrees: {(loopSecAdd (.ofNat y) 1000 (.ofNat x)).toNat == loopNatAdd secP y 1000 x}"
-  let rInv := Fp.inv bnP (2 ^ 256 % bnP)
-  IO.println s!"bnMul agrees: {(bnMul (.ofNat xb) (.ofNat yb)).toNat == xb * yb % bnP * rInv % bnP}"
-  timeIt "nat256 mul+mod (secp)" count fun _ => loopNatMul secP y count x
-  timeIt "nat256 mul+mod (bn)" count fun _ => loopNatMul bnP yb count xb
-  timeIt "nat381 mul+mod (bls)" count fun _ => loopNatMul blsP yl count xl
-  timeIt "nat256 add" count fun _ => loopNatAdd secP y count x
-  timeIt "nat256 sub" count fun _ => loopNatSub secP y count x
-  timeIt "nat381 add" count fun _ => loopNatAdd blsP yl count xl
-  timeIt "nat256 mul only" count fun _ => loopNatMulOnly y count x 0
-  timeIt "nat381 mul only" count fun _ => loopNatMulOnly yl count xl 0
+  timeIt "nat secp mul" count fun _ => loopNatMul secP y count x
+  timeIt "nat bls mul" count fun _ => loopNatMul blsP yl count xl
+  timeIt "nat secp add" count fun _ => loopNatAdd secP y count x
   timeIt "limb secp mul" count fun _ => (loopSecMul (.ofNat y) count (.ofNat x)).toNat
+  timeIt "limb secp sqr" count fun _ => (loopSecSqr count (.ofNat x)).toNat
   timeIt "limb secp add" count fun _ => (loopSecAdd (.ofNat y) count (.ofNat x)).toNat
-  timeIt "limb bn montgomery mul" count fun _ => (loopBnMul (.ofNat yb) count (.ofNat xb)).toNat
-  return 0
+  timeIt "limb secp sub" count fun _ => (loopSecSub (.ofNat y) count (.ofNat x)).toNat
+  timeIt "limb bn mul" count fun _ => (loopBnMul (.ofNat yb) count (.ofNat xb)).toNat
+  timeIt "limb bn add" count fun _ => (loopBnAdd (.ofNat yb) count (.ofNat xb)).toNat
+  timeIt "limb bls mul" count fun _ => (loopBlsMul (.ofNat yl) count (.ofNat xl)).toNat
+  timeIt "limb bls add" count fun _ => (loopBlsAdd (.ofNat yl) count (.ofNat xl)).toNat
+  let small := count / 20
+  let g : JPoint U256 := ⟨.ofNat x, .ofNat y, Secp256k1.Fe.one⟩
+  let g2 := Curve.double Secp256k1.Fe.ops g
+  let gn : JPoint Nat := ⟨x, y, 1⟩
+  let gn2 := Curve.double Secp256k1.field gn
+  timeIt "nat secp point double" small fun _ => (loopDoubleNat small gn).x
+  timeIt "nat secp point add" small fun _ => (loopAddNat gn2 small gn).x
+  timeIt "limb secp point double (dictionary)" small fun _ => (loopDoubleDict small g).x.toNat
+  timeIt "limb secp point add (dictionary)" small fun _ => (loopAddDict g2 small g).x.toNat
+  timeIt "limb secp point double (class)" small fun _ => (loopDoubleClass small g).x.toNat
+  timeIt "limb secp point double (direct)" small fun _ => (loopDoubleDirect small g).x.toNat
+  timeIt "limb secp inverse" (small / 100) fun _ => Id.run do
+    let mut acc := U256.ofNat x
+    for _ in [0:small / 100] do acc := Secp256k1.Fe.inv acc
+    return acc.toNat
+  timeIt "limb secp scalar inverse (Fermat, Montgomery)" (small / 100) fun _ => Id.run do
+    let mut acc := U256.ofNat x
+    for _ in [0:small / 100] do acc := Secp256k1.scalarField.inv acc
+    return acc.toNat
+  timeIt "nat secp inverse (Euclid)" (small / 100) fun _ => Id.run do
+    let mut acc := x
+    for _ in [0:small / 100] do acc := Fp.inv secP acc
+    return acc
+  timeIt "nat bls inverse (Euclid)" (small / 100) fun _ => Id.run do
+    let mut acc := xl
+    for _ in [0:small / 100] do acc := Fp.inv blsP acc
+    return acc
+  timeIt "limb bls inverse (Fermat)" (small / 100) fun _ => Id.run do
+    let mut acc := U384.ofNat xl
+    for _ in [0:small / 100] do acc := BLS12381.baseField.inv acc
+    return acc.toNat
+  return (if bad + rootBad == 0 then 0 else 1)
 
 end EVMCleanroom.FieldPerf.Exp
 
