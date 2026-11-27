@@ -36,6 +36,7 @@ private def parseEntry (value : Json) : Except String TransactionList.Entry := d
     | _, _ => throw "blobVersionedHashes and maxFeePerBlobGas must be supplied together"
   return {
     tx := ← parseTransactionEnvelope (← value.getObjVal? "transaction")
+      (some Keccak.dangerouslyAcceptUnverified)
     fuel := ← decimalField value "fuel"
     blob }
 
@@ -71,7 +72,7 @@ private def receiptJSON (receipt : TransactionList.Receipt) : Json :=
     ("logs", .arr (receipt.logs.map transactionLogJSON).toArray),
     ("blobGasUsed", decimal receipt.blobGasUsed),
     ("blobFeeBurn", decimal receipt.blobFeeBurn)
-  ] ++ frameError)
+  ] ++ frameError ++ (receipt.createdAddress.map fun new => [("createdAddress", decimal new)]).getD [])
 
 private def report (status : String) (fields : List (String × Json)) (optIn : Bool := true)
     (schemaVersion : Nat := 1) : Json :=

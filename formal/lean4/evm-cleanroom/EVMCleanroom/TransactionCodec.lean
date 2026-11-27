@@ -49,16 +49,24 @@ def parseTransactionAccess (value : Json) : Except String CallTransaction.Access
     address := ← decimalField value "address"
     storageKeys := ← (← arrayField value "storageKeys" CallTransaction.maxKeysPerAccount).mapM decimalJSON }
 
-def parseTransactionEnvelope (value : Json) : Except String CallTransaction.Envelope := do
+/-- A `to` that is JSON null or absent makes a contract-creation
+    transaction: `dataHex` is the initcode and Lean derives the new address
+    from the sender and the nonce (which needs the Keccak opt-in; without it
+    the run refuses). The host never supplies the created address. -/
+def parseTransactionEnvelope (value : Json) (acceptance : Option Keccak.Acceptance := none) :
+    Except String CallTransaction.Envelope := do
   let chain ← value.getObjVal? "chainId"
   let signedChainId ← match chain with
     | .null => pure none
     | _ => some <$> decimalJSON chain
-  return {
+  let destination ← match value.getObjVal? "to" with
+    | .error _ | .ok .null => pure none
+    | .ok given => some <$> decimalJSON given
+  (if destination.isNone then CallTransaction.Envelope.creation acceptance else id) <$> pure {
     kind := ← (← value.getObjVal? "type").getNat?
     signedChainId
     sender := ← decimalField value "sender"
-    to := ← decimalField value "to"
+    to := destination.getD 0
     nonce := ← decimalField value "nonce"
     value := ← decimalField value "value"
     gasLimit := ← decimalField value "gasLimit"
@@ -102,7 +110,7 @@ def parseCallTransaction (value : Json) (acceptance : Option Keccak.Acceptance) 
   return {
     fork
     fuel := ← decimalField value "fuel"
-    tx := ← parseTransactionEnvelope (← value.getObjVal? "transaction")
+    tx := ← parseTransactionEnvelope (← value.getObjVal? "transaction") acceptance
     block := ← parseTransactionBlock (← value.getObjVal? "block")
     witnesses := ← (← arrayField value "accounts" CallTransaction.maxAccounts).mapM parseWitnessAccount
     keccakAcceptance := acceptance }
@@ -171,7 +179,12 @@ def transactionResponse (request : CallTransaction.Request) (outcome : CallTrans
         ("returnBytesHex", .str (exactViewHex result.output)),
         ("logs", .arr (result.logs.map transactionLogJSON).toArray),
         ("accounts", .arr (request.witnesses.map (transactionAccountJSON result.world)).toArray)
-      ] ++ frameError)
+      ] ++ frameError ++
+        -- Only a creation request reports this field: the new address, or
+        -- null when the creation failed and no account was created.
+        (if request.tx.create then
+          [("createdAddress", ((CallTransaction.createdAddress request.tx result).map decimal).getD .null)]
+         else []))
 
 def parseHeader (v : Json) : Except String (Array (Array UInt8)) := do
   let a ← v.getArr?

@@ -65,7 +65,9 @@ structure Slot where
   value : Nat
 
 /-- Every replay address is explicit, including a proved absence. Each listed
-    storage entry can authenticate a present value or a zero word. -/
+    storage entry can authenticate a present value or a zero word. An absent
+    account may list slots, all zero: this lets the host observe the storage a
+    creation writes at that address. -/
 structure WitnessAccount where
   address : Nat
   present : Bool
@@ -76,7 +78,10 @@ structure WitnessAccount where
 
 def WitnessAccount.account (w : WitnessAccount) : Account :=
   { balance := w.balance, nonce := w.nonce, code := w.code
-    storage := fun key => ((w.storage.find? (fun entry => entry.key == key)).map (·.value)).getD 0 }
+    storage := fun key => ((w.storage.find? (fun entry => entry.key == key)).map (·.value)).getD 0
+    -- A listed nonzero slot proves nonempty storage (EIP-7610 collision test).
+    -- Nonempty storage with no nonzero slot listed cannot be stated here.
+    hasStorage := w.storage.any (fun entry => entry.value != 0) }
 
 structure Request where
   fork : Fork
@@ -135,7 +140,7 @@ def WitnessAccount.valid (w : WitnessAccount) : Bool :=
     (w.storage.map (·.key)).Nodup) &&
   w.storage.all (fun entry => decide (entry.key < modulus ∧ entry.value < modulus)) &&
   (if w.present then CallValue.accountAlive w.account
-   else w.balance == 0 && w.nonce == 0 && w.code.isEmpty && w.storage.isEmpty)
+   else w.balance == 0 && w.nonce == 0 && w.code.isEmpty && w.storage.all (fun entry => entry.value == 0))
 
 /-- Input-dependent costs are derived from the envelope itself. Duplicate
     access-list entries are charged individually and warmed only as a set. -/
@@ -479,11 +484,11 @@ def runWithBlobHashes (p : Request) (hashes : Array Word) : Outcome :=
     .indeterminate .invalidWitness
   else
     let w := { witnessWorld p with txBlobHashes := hashes }
-    match [p.tx.sender, p.tx.to, p.block.coinbase].find? (fun address => !w.hasAccount address) with
-    | some address => .indeterminate (.frame (.incompleteState address none))
+    match p.creationRefusal with
+    | some reason => .indeterminate reason
     | none =>
-      match p.creationRefusal with
-      | some reason => .indeterminate reason
+      match [p.tx.sender, p.tx.to, p.block.coinbase].find? (fun address => !w.hasAccount address) with
+      | some address => .indeterminate (.frame (.incompleteState address none))
       | none =>
         if CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to then .indeterminate (.frame .unsupportedFork)
         else

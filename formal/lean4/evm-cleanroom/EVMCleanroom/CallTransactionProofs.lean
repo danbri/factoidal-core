@@ -103,15 +103,15 @@ theorem run_executed_admitted (p : Request) (result : Result) (h : run p = .exec
   · rw [if_pos hCoverage] at h
     cases h
   simp only [hCoverage] at h
+  cases hCreation : p.creationRefusal with
+  | some reason => simp only [hCreation] at h; cases h
+  | none =>
+  simp only [hCreation] at h
   cases hMissing : [p.tx.sender, p.tx.to, p.block.coinbase].find?
       (fun address => !(witnessWorld p).hasAccount address) with
   | some address => simp only [hMissing] at h; cases h
   | none =>
     simp only [hMissing] at h
-    cases hCreation : p.creationRefusal with
-    | some reason => simp only [hCreation] at h; cases h
-    | none =>
-    simp only [hCreation] at h
     by_cases hPrecompile : CallOpcode.unimplementedPrecompile p.fork.profile p.tx.to = true
     · rw [if_pos hPrecompile] at h
       cases h

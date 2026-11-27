@@ -20,8 +20,14 @@ theorem prepareWithFees_checked (p : Input) (fees : Nat × Nat) (ready : Prepare
       p.hashes.size ≤ 6 ∧ p.hashes.all validHash = true := by
   unfold prepareWithFees at h
   dsimp only at h
-  split at h
-  · cases h
+  by_cases hKind : (p.request.tx.kind != 3) = true
+  · rw [if_pos hKind] at h
+    cases h
+  rw [if_neg hKind] at h
+  by_cases hCreate : p.request.tx.create = true
+  · rw [if_pos hCreate] at h
+    cases h
+  rw [if_neg hCreate] at h
   split at h
   · cases h
   split at h

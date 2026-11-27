@@ -85,6 +85,7 @@ def checkFunds (p : Input) (fees : Nat × Nat) (sender : WitnessAccount) :
 def prepareWithFees (p : Input) (fees : Nat × Nat) : Except Refusal Prepared :=
   let r := p.request
   if r.tx.kind != 3 then .error (.indeterminate "not-type-3")
+  else if r.tx.create then .error (.rejected "blob-creation")
   else if HeaderRLP.readNat p.child 11 >= HeaderRLP.pragueTime then
     .error (.indeterminate "later-transaction-rules")
   else if r.exceedsResources then .error (.indeterminate "resource-limit")
