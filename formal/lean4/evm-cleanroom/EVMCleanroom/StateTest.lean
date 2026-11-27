@@ -227,10 +227,17 @@ def expansionBatch : Nat := 16
 /-- Add `address` and its successors as absent, staying within the
     runner's account limit. -/
 def ensureAccounts (ws : List WitnessAccount) (address : Nat) : List WitnessAccount :=
-  let extra := (List.range expansionBatch).map (address + ·)
-  let extra := extra.filter (· < 2 ^ 160)
-  if ws.length + expansionBatch ≤ CallTransaction.maxAccounts / 2 then extra.foldl ensureAccount ws
+  -- Extras never fall in the precompile range (up to 0x100): a later-fork
+  -- precompile listed as an absent account would run as an empty account.
+  let extra := ((List.range expansionBatch).map (address + · + 1)).filter
+    (fun x => x < 2 ^ 160 && x > 0x100)
+  if ws.length + expansionBatch ≤ CallTransaction.maxAccounts / 2 then
+    extra.foldl ensureAccount (ensureAccount ws address)
   else ensureAccount ws address
+
+-- A probe of 0x0a lists only 0x0a itself, never 0x0b-0x11.
+#guard (ensureAccounts [] 0x0a).map (·.address) = [0x0a]
+#guard (ensureAccounts [] 0xf8).map (·.address) = [0xf8] ++ (List.range 8).map (0x101 + ·)
 
 /-- Add `key` and its successors as zero slots, within the slot limits. -/
 def ensureSlots (ws : List WitnessAccount) (address key : Nat) : Option (List WitnessAccount) := do
