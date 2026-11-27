@@ -5,7 +5,10 @@ import EVMCleanroom.Precompiles.Blake2f
 import EVMCleanroom.Precompiles.ModExp
 import EVMCleanroom.Precompiles.Ecrecover
 import EVMCleanroom.Precompiles.BN254
+import EVMCleanroom.Precompiles.BN254Fast
 import EVMCleanroom.Precompiles.BLS12381
+import EVMCleanroom.Precompiles.BLS12381Msm
+import EVMCleanroom.Precompiles.BLS12381Map
 import EVMCleanroom.Precompiles.KZG
 import EVMCleanroom.Precompiles.P256
 import EVMCleanroom.Precompiles.BN254Pairing
@@ -95,18 +98,18 @@ def dispatch (profile : Profile) (keccak : Option Keccak.Acceptance) (address ga
   | 2 => some (Sha256.run gas input)
   | 3 => some (Ripemd160.run gas input)
   | 5 => some (ModExp.run (modexpRule profile) gas input)
-  | 6 => some (BN254.runAdd gas input)
-  | 7 => some (BN254.runMul gas input)
+  | 6 => some (BN254.Fast.runAdd gas input)
+  | 7 => some (BN254.Fast.runMul gas input)
   | 8 => some (BN254Pairing.runPairing gas input)
   | 9 => some (Blake2f.run gas input)
   | 0x0a => some (KZGPairing.run gas input)
-  | 0x0b => some (BLS12381.runG1Add gas input)
-  | 0x0c => some (BLS12381.runG1Msm gas input)
-  | 0x0d => some (BLS12381.runG2Add gas input)
-  | 0x0e => some (BLS12381.runG2Msm gas input)
+  | 0x0b => some (BLS12381.Fast.runG1Add gas input)
+  | 0x0c => some (BLS12381.Fast.runG1Msm gas input)
+  | 0x0d => some (BLS12381.Fast.runG2Add gas input)
+  | 0x0e => some (BLS12381.Fast.runG2Msm gas input)
   | 0x0f => some (BLS12381Pairing.runPairing gas input)
-  | 0x10 => some (BLS12381.runMapG1 gas input)
-  | 0x11 => some (BLS12381.runMapG2 gas input)
+  | 0x10 => some (BLS12381.Fast.runMapG1 gas input)
+  | 0x11 => some (BLS12381.Fast.runMapG2 gas input)
   | 0x100 => some (P256.run gas input)
   | _ => none
 
@@ -179,18 +182,18 @@ theorem run_gas_le (profile : Profile) (keccak : Option Keccak.Acceptance) (addr
         · have := Sha256.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := Ripemd160.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := ModExp.run_success _ _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BN254.runAdd_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BN254.runMul_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BN254.Fast.runAdd_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BN254.Fast.runMul_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := BN254Pairing.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := Blake2f.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := KZGPairing.run_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BLS12381.runG1Add_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BLS12381.runG1Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BLS12381.runG2Add_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := BLS12381.runG2Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.Fast.runG1Add_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.Fast.runG1Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.Fast.runG2Add_success _ _ _ _ (Option.some.inj hDispatch); omega
+        · have := BLS12381.Fast.runG2Msm_success _ _ _ _ (Option.some.inj hDispatch); omega
         · have := BLS12381Pairing.runPairing_success _ _ _ _ (Option.some.inj hDispatch); omega
-        · have := (BLS12381.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
-        · have := (BLS12381.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
+        · have := (BLS12381.Fast.runMap_success _ _ _ _).1 (Option.some.inj hDispatch); omega
+        · have := (BLS12381.Fast.runMap_success _ _ _ _).2 (Option.some.inj hDispatch); omega
         · have := P256.run_success _ _ _ _ (Option.some.inj hDispatch); omega
         · cases hDispatch
       · cases h
