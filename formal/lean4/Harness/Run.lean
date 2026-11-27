@@ -63,6 +63,7 @@ import L4Factoidal.SPARQL.ResultsCsvTsv
 import L4Factoidal.OWL.QueryEval
 import L4Factoidal.RIF.Saturate
 import L4Factoidal.Dataflow.Evaluator
+import L4Factoidal.Dataflow.Store
 
 open L4Factoidal.RDF
 open L4Factoidal.RDF.Canonical
@@ -462,13 +463,16 @@ score with no difference can be checked for reach (anti-pattern 28). -/
 initialize shippedCounts : IO.Ref (Nat × Nat) ← IO.mkRef (0, 0)
 
 /-- The answer of the shipped evaluator, built as the wasm op builds it: the
-dataset as a set, its indexed backend, and `env.dataset` set (section 18.6:
+dataset as a set, the backend of its store record, and `env.dataset` set (section 18.6:
 the backend runners read EXISTS from the environment, as
 `Wasm/Ops/Query.lean` `queryParsedDatasetWith` explains). -/
 def shippedInput (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.EvalInput :=
-  let d := ds.toSet
-  { env := { env with dataset := some d }, ds := d,
-    backend := some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d), query := q }
+  -- The store record of the certified dataset, as the wasm op passes it
+  -- (`dsb.map (·.backend)`); consumers do not build a bare backend
+  -- (tools/assumption-gate.py).
+  let c : CertifiedDataset := ⟨ds.toSet, ds.toSet_isSet⟩
+  { env := { env with dataset := some c.val }, ds := c.val,
+    backend := some (L4Factoidal.Dataflow.LawfulDataset.ofCertified c).backend, query := q }
 
 def shippedAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.Answer :=
   L4Factoidal.Dataflow.shippedEvaluator.run (shippedInput env ds q)
