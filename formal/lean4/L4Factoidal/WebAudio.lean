@@ -41,6 +41,9 @@ docs/designissues/2026-11-26-foafnaut-audio-plan.md).
   externs of the C sink are `WebAudio.Sink`, which this file does not import (it links C).
 - `WebAudio.Idl`: the interface table generated from WPT's `interfaces/webaudio.idl` by
   `tools/webaudio-idl-table.py` (interfaces, attributes, operations, enums, dictionaries).
+- `WebAudio.FFT`: a radix-2 FFT with a table of twiddle factors, for the `AnalyserNode` and the
+  `ConvolverNode` (stage F); the sizes of its results are proved, its values tested against the
+  DFT sum.
 -/
 import L4Factoidal.WebAudio.Mix
 import L4Factoidal.WebAudio.Automation
@@ -56,3 +59,4 @@ import L4Factoidal.WebAudio.Decode
 import L4Factoidal.WebAudio.Ring
 import L4Factoidal.WebAudio.Api
 import L4Factoidal.WebAudio.RenderSide
+import L4Factoidal.WebAudio.FFT
