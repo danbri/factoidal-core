@@ -75,7 +75,20 @@ def mul (T : Tower) (a b : Fp12) : Fp12 :=
     c4 := reduce T.p (wmul a.c0 b.c4 + wmul a.c1 b.c3 + wmul a.c2 b.c2 + wmul a.c3 b.c1 + wmul a.c4 b.c0 + wxi T (wmul a.c5 b.c5))
     c5 := reduce T.p (wmul a.c0 b.c5 + wmul a.c1 b.c4 + wmul a.c2 b.c3 + wmul a.c3 b.c2 + wmul a.c4 b.c1 + wmul a.c5 b.c0) }
 
-@[inline] def sqr (T : Tower) (a : Fp12) : Fp12 := mul T a a
+@[inline] def wsqr (a : Fp2) : Wide :=
+  ⟨((a.c0 : Int) + a.c1) * ((a.c0 : Int) - a.c1), 2 * ((a.c0 : Int) * a.c1)⟩
+
+@[inline] def wdouble (x : Wide) : Wide := ⟨2 * x.re, 2 * x.im⟩
+
+/-- Square: the symmetric products of `mul` are computed once and doubled. -/
+def sqr (T : Tower) (a : Fp12) : Fp12 :=
+  {
+    c0 := reduce T.p (wsqr a.c0 + wxi T (wdouble (wmul a.c1 a.c5 + wmul a.c2 a.c4) + wsqr a.c3))
+    c1 := reduce T.p (wdouble (wmul a.c0 a.c1) + wxi T (wdouble (wmul a.c2 a.c5 + wmul a.c3 a.c4)))
+    c2 := reduce T.p (wdouble (wmul a.c0 a.c2) + wsqr a.c1 + wxi T (wdouble (wmul a.c3 a.c5) + wsqr a.c4))
+    c3 := reduce T.p (wdouble (wmul a.c0 a.c3 + wmul a.c1 a.c2) + wxi T (wdouble (wmul a.c4 a.c5)))
+    c4 := reduce T.p (wdouble (wmul a.c0 a.c4 + wmul a.c1 a.c3) + wsqr a.c2 + wxi T (wsqr a.c5))
+    c5 := reduce T.p (wdouble (wmul a.c0 a.c5 + wmul a.c1 a.c4 + wmul a.c2 a.c3)) }
 
 /-- The `p⁶`-power Frobenius: `w ↦ −w`. -/
 def conj (T : Tower) (a : Fp12) : Fp12 :=

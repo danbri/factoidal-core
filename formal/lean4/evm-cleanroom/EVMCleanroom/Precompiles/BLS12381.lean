@@ -584,6 +584,8 @@ private def affine2 (k : Nat) : Fp2 × Fp2 :=
 private def sample : Fp12 := Pairing.miller curve g1Generator g2Generator
 #guard Fp12.mul tower sample (Fp12.inv tower sample) == Fp12.one
 #guard Fp12.frobenius tower sample == Fp12.pow tower sample p
+#guard Fp12.sqr tower sample == Fp12.mul tower sample sample
+#guard Fp12.sqr tower (Fp12.frobenius tower sample) == Fp12.mul tower (Fp12.frobenius tower sample) (Fp12.frobenius tower sample)
 #guard Pairing.hardPart curve sample == Fp12.pow tower sample ((p ^ 4 - p ^ 2 + 1) / r)
 private def e11 : Fp12 := Pairing.pairing curve g1Generator g2Generator
 #guard e11 != Fp12.one

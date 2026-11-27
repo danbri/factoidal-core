@@ -216,6 +216,8 @@ private def sample : Fp12 := Pairing.miller curve g1 g2
 #guard Fp12.mul tower sample (Fp12.inv tower sample) == Fp12.one
 #guard Fp12.mul tower (Fp12.mul tower sample sample) sample == Fp12.mul tower sample (Fp12.mul tower sample sample)
 #guard Fp12.frobenius tower sample == Fp12.pow tower sample p
+#guard Fp12.sqr tower sample == Fp12.mul tower sample sample
+#guard Fp12.sqr tower (Fp12.frobenius tower sample) == Fp12.mul tower (Fp12.frobenius tower sample) (Fp12.frobenius tower sample)
 -- The pairing: order r, non-degenerate, bilinear in both arguments.
 private def e11 : Fp12 := Pairing.pairing curve g1 g2
 #guard e11 != Fp12.one
