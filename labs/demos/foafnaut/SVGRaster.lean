@@ -251,6 +251,8 @@ structure Prep where
   strokeLive : Bool
   /-- The stroke pieces of a dashed record, with their boxes (`Primitive.dashPieces`). -/
   dash : Option DashPieces
+  /-- The edge count of a dashed path record (its fill tests edges as `edgeCount` does). -/
+  dashEdgeCount : Option Nat
   x0 : Float
   y0 : Float
   x1 : Float
@@ -276,7 +278,10 @@ def prep (m : Mapping) (data : Array Float) (item : Item) : Prep :=
       let c := sample.coverage
       let c := if fillLive then c else c.withoutFill
       {sample with coverage := if strokeLive then c else c.withoutStroke}
-  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,dash,x0,y0,x1,y1⟩
+  let dashEdgeCount := match item.1.dashParts,item.1.geometry with
+    | some _,.path contours => some (NativeSVGPath.edges contours).length
+    | _,_ => none
+  ⟨item,sample,item.1.pathEdges?,rows,fillLive,strokeLive,dash,dashEdgeCount,x0,y0,x1,y1⟩
 
 /-- True when the box of `r` meets the pixel square at `(x,y)`. -/
 @[inline] def Prep.meetsRow (r : Prep) (y : Float) : Bool := r.y0 <= y+1 && y <= r.y1
@@ -294,12 +299,19 @@ def Prep.forRow (m : Mapping) (data : Array Float) (yf : Float) (r : Prep) : Pre
   | some d =>
     -- A dashed stroke: the pieces whose box meets each of the row's sixteen sample lines
     -- (`DashPieces.crossing`), by the local `y` of the line; any other `y` tests every piece.
-    if !r.strokeLive then r else
+    -- Its fill, of a path: the edges that cross each of the sixteen lines, as below.
+    let edgeCount := if r.fillLive then r.dashEdgeCount else none
+    if !r.strokeLive && edgeCount.isNone then r else
     let wx := (world m (max 0 r.x0) yf).1
-    let spans := sampleRows.map fun dy =>
+    let spans := if !r.strokeLive then #[] else sampleRows.map fun dy =>
       let py := (r.item.1.localPoint wx (world m wx (yf+dy)).2).2
       (py,d.crossing py)
-    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageCulled data r.item.2 r.fillLive r.strokeLive d spans}}
+    let edgeSpans := match edgeCount with
+      | none => #[]
+      | some count => sampleRows.map fun dy =>
+        let py := pathSampleY (r.item.1.localPoint wx (world m wx (yf+dy)).2)
+        (py,pathSpansAt data r.item.2 count py)
+    {r with sample := {r.sample with coverage := r.item.1.prepareCoverageCulled data r.item.2 r.fillLive r.strokeLive d spans edgeSpans}}
   | none =>
   match r.edgeCount with
   | none => r

@@ -2731,6 +2731,12 @@ def pathHitSpans (data : Array Float) (base count : Nat) (rule : FillRule)
       | none => pathWindingFrom data base q count 0 0
     if rule == .nonzero then winding != 0 else winding%2 != 0
 
+/-- Kind: equivalence. Says: with no known lines, `pathHitSpans` is `pathHitFast` (every edge
+    is tested). Does not say: anything of a list of lines that `pathSpansAt` did not make. -/
+theorem pathHitSpans_nil (data : Array Float) (base count : Nat) (rule : FillRule) (q : Float × Float) :
+    pathHitSpans data base count rule #[] q = pathHitFast data base count rule q := by
+  simp [pathHitSpans, pathHitFast]
+
 /-- Whether edge `i` of a path record can change the winding number on the line of `q`:
     its two ends compare differently with `q`'s local `y`, by the `<=` of `edgeUp` and
     `edgeDown` on the same Float values. -/
@@ -4378,7 +4384,8 @@ def PreparedCoverage.withoutStroke : PreparedCoverage → PreparedCoverage
     piece, so the coverage is that of `prepareCoverage`; no theorem states this (it
     is geometry over Float), and the CPU raster's differential test checks it. -/
 def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) (base : Nat)
-    (fillLive strokeLive : Bool) (pieces : DashPieces) (spans : Array (Float × Array Nat)) : PreparedCoverage :=
+    (fillLive strokeLive : Bool) (pieces : DashPieces) (spans : Array (Float × Array Nat))
+    (edgeSpans : Array (Float × Array Nat) := #[]) : PreparedCoverage :=
   match p.dashParts with
   | none => p.prepareCoverage data base
   | some _ =>
@@ -4391,8 +4398,13 @@ def Primitive.prepareCoverageCulled (p : BackendPrimitive) (data : Array Float) 
         ((boundsCondition base).prepare data).and
           (.dynamic (fun env => windingHitFast env.data base count p.style.rule env.position))
       | .path contours =>
+        -- The fill tests the edges that cross the sample's line when the raster knows them
+        -- (`edgeSpans`, `SVGRaster.Prep.forRow`: `pathSpansAt` of the row's sixteen lines),
+        -- as `prepareCoverageSpans` does for a path with no dash; with none, every edge
+        -- (`pathHitSpans_nil`). Measured 2026-11-26 on MDN's page: every edge at every sample
+        -- was about 40% of the first layout (https://github.com/danbri/factoidal-core/issues/1168).
         let count := (NativeSVGPath.edges contours).length
-        .dynamic (fun env => pathHitFast env.data base count p.style.rule env.position)
+        .dynamic (fun env => pathHitSpans env.data base count p.style.rule edgeSpans env.position)
       | g => (fillCondition g base).prepare data
     let inner : PreparedCoverage := .local p.transform.inverse fun q =>
       let fillHit := match fill with
