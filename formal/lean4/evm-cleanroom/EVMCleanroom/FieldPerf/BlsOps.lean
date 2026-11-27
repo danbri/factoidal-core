@@ -479,10 +479,10 @@ def main (args : List String) : IO UInt32 := do
     (BLS12381.runG1Add gas) (BLS12381.Fast.runG1Add gas))
   bad := bad + (← compare "BLS12-381 G2 add (0x0d)" (Bls.addCases2 (group2 ++ curve2) (640 * scale))
     (BLS12381.runG2Add gas) (BLS12381.Fast.runG2Add gas))
-  -- BLS12-381 multi-scalar multiplication: counts on both sides of the method switch, wide windows with
+  -- BLS12-381 multi-scalar multiplication: counts on both sides of the method and window switches, wide windows with
   -- short scalars, invalid items
   let mut msm1 : Array ByteArray := #[]
-  for count in [1, 1, 1, 2, 3, 5, 8, 16, 33, 79, 80, 81, 128, 129, 300] do
+  for count in [1, 1, 1, 2, 3, 5, 8, 16, 31, 32, 33, 47, 48, 79, 80, 128, 129, 300] do
     msm1 := msm1.push (Bls.msmInput1 group1 (100 + msm1.size) count 0)
     msm1 := msm1.push (Bls.msmInput1 group1 (200 + msm1.size) count 1)
   for count in [700, 1600, 3700] do
@@ -494,7 +494,7 @@ def main (args : List String) : IO UInt32 := do
     msm1 := msm1.push (valid.extract 0 (160 * index + 159))
   bad := bad + (← compare "BLS12-381 G1 MSM (0x0c)" msm1 (BLS12381.runG1Msm gas) (BLS12381.Fast.runG1Msm gas))
   let mut msm2 : Array ByteArray := #[]
-  for count in [1, 1, 2, 3, 7, 16, 40, 79, 80, 81, 130] do
+  for count in [1, 1, 2, 3, 7, 11, 12, 13, 16, 23, 24, 40, 64, 80, 130] do
     msm2 := msm2.push (Bls.msmInput2 group2 (500 + msm2.size) count 0)
     msm2 := msm2.push (Bls.msmInput2 group2 (600 + msm2.size) count 1)
   for count in [300, 700, 1600] do
