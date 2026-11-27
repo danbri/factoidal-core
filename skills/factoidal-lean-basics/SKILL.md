@@ -448,6 +448,20 @@ executable edge only.
   changes, its spec-transcription twin — `ebvSpec`, `termToExpr?` —
   must move in the same commit.) Before any commit claiming build
   cleanliness: `lake build`, no target.
+- **An argument on a new line must be to the right of where the match
+  arm's right-hand side starts.** Lean reads function arguments only at a
+  column greater than the saved position (`checkColGt`), and a `match`
+  alternative saves the position of its right-hand side. So in
+  `| some k, some n => run fun a =>` with the body `e.pointer (f a) k n` on
+  the next line at column 8, the arguments are left of `run`, and Lean reads
+  the body as `e.pointer` alone. The errors do not name the cause: "Type
+  mismatch", "Unknown identifier `k`", "Missing cases", "Too many patterns
+  in match alternative" on the next arm. (2026-11-27, WebScripts.lean action
+  `pointer`: one failed 25-minute engine build.) Put the right-hand side on
+  a new line of its own (`| some k, some n =>` then the body), or keep each
+  application on one line; check one lab module alone with
+  `LEAN_PATH="$BUILD/olean:$PWD/.lake/build/lib/lean" lean -R "$LAB" "$LAB/M.lean"`
+  from `formal/lean4/` before the whole build.
 
 ## Style contract (owner priority: W3C-expert readability)
 
