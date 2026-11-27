@@ -120,7 +120,8 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
-    state (`suspended`, `running`, `closed`). The state is `running` when `autoplay` or `activated`.
+    state, which is `suspended` (Web Audio API, the constructor). When `allowedToStart`, the
+    rendering side starts at once and reports `running`.
     The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET])`, the target
     in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to 16384).
   * 191 `control(ctx, verb)`: `resume`, `suspend`, `close` (else -20); -20 for a context that is
@@ -175,6 +176,9 @@ inductive RtState where
 def RtState.code : RtState → Nat
   | .suspended => 0 | .running => 1 | .closed => 2
 
+def RtState.ofCode? : Nat → Option RtState
+  | 0 => some .suspended | 1 => some .running | 2 => some .closed | _ => none
+
 def RtState.text : RtState → String
   | .suspended => "suspended" | .running => "running" | .closed => "closed"
 
@@ -220,6 +224,11 @@ structure Report where
   confirmed : Array Nat := #[]
   /-- Control calls it refused. -/
   rejected : Array Nat := #[]
+  /-- Events in the order the rendering side made them (kinds as `Realtime.events`), after the
+  grouped ones above. The rendering task gives only these: Web Audio API, `resume()`, `suspend()`
+  and `close()` change the state and then settle the promise, call by call, so a later call's
+  state change follows an earlier call's resolution (WPT `suspend-after-construct.html`). -/
+  events : Array (UInt8 × Nat) := #[]
   deriving Inhabited
 
 /-- A `decodeAudioData` job. `result` is (channels, length, sample rate, samples as binary32
@@ -786,8 +795,11 @@ def newAudioContextOp (s : State) (fs : Array ByteArray) : Except Int (State × 
   let c := { c0 with length := 0 }
   let id := s.next
   let target := targetFrames hint rate
+  -- Web Audio API, the AudioContext constructor: the control thread state starts `suspended`; when
+  -- the context is allowed to start, the rendering side starts and reports `running`, which the
+  -- page sees with `statechange` (WPT `constructor-allowed-to-start.html`).
   let rt : Realtime :=
-    { state := if allowedToStart s then .running else .suspended
+    { state := .suspended
       maxChannels := devCh, target, callback := cb
       outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target,
                           dec (if allowedToStart s then 1 else 0)])] }
@@ -879,11 +891,13 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
       r.ended.map (fun i => ((1 : UInt8), i)) ++
       r.stateChanges.map (fun st => ((2 : UInt8), st.code)) ++
       r.confirmed.map (fun i => ((3 : UInt8), i)) ++
-      r.rejected.map (fun i => ((4 : UInt8), i))
-    let done (i : Nat) : Bool := r.confirmed.contains i || r.rejected.contains i
+      r.rejected.map (fun i => ((4 : UInt8), i)) ++ r.events
+    let done (i : Nat) : Bool := r.confirmed.contains i || r.rejected.contains i ||
+      r.events.any (fun (k, v) => (k == 3 || k == 4) && v == i)
     let fr := max rt.framesRendered r.framesRendered
     let rt' : Realtime :=
-      { rt with state := r.stateChanges.back?.getD rt.state
+      { rt with state := ((r.events.filter (·.1 == 2)).back?.bind (fun (_, v) => RtState.ofCode? v)).getD
+                           (r.stateChanges.back?.getD rt.state)
                 framesRendered := fr
                 framesPlayed := max rt.framesPlayed r.framesPlayed
                 underruns := max rt.underruns r.underruns
@@ -1480,10 +1494,18 @@ private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
+-- The state is `suspended` at once in both cases (the constructor); the rendering side starts
+-- a context that is allowed to start (field 4 of message 190) and reports `running`.
 #guard txt (ans { devS with autoplay := some permit } 190 [t "interactive", ByteArray.empty, n 7]) ==
-  "1 48000 2 running"
+  "1 48000 2 suspended"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
-  "1 44100 2 running"
+  "1 44100 2 suspended"
+#guard ((chain { devS with autoplay := some permit } [(190, [t "interactive", ByteArray.empty, n 7])]).map
+  fun s => strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
+-- Ordered events: a state change, then the call it settles, then the next.
+#guard ((chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map fun s =>
+  let s := applyReport s 1 { events := #[(2, 1), (3, 5), (2, 0), (3, 6)] }
+  ((rtOf s 1).events.toList, (rtOf s 1).state == .suspended)) == some ([(2, 1), (3, 5), (2, 0), (3, 6)], true)
 -- Refusals: hint, rate, no device, callback, 16 live contexts.
 #guard err devS 190 [t "fast", ByteArray.empty, n 7] == errType
 #guard err devS 190 [d (-1.0), ByteArray.empty, n 7] == errType
@@ -1621,7 +1643,7 @@ private def waiting : Option State :=
   let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
-  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
+  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 suspended", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
 private def reported : Option State := do
