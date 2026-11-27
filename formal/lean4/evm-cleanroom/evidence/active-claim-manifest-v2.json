@@ -184,7 +184,7 @@
     "EVMCleanroom/Precompiles/Blake2f.lean": "a68b07c472f79d578ede985ffa2a9bdd0e0b1a7b",
     "EVMCleanroom/Precompiles/Curve.lean": "1eaf36bcb67b55f9d175f6926049ad1dbecaf980",
     "EVMCleanroom/Precompiles/Field.lean": "5aa8888fab3cfd7f804802aa58beb0d86b7826cc",
-    "EVMCleanroom/Precompiles/ModExp.lean": "7b77cb67df4de4c293b11ad0d7eaf281a6441290",
+    "EVMCleanroom/Precompiles/ModExp.lean": "cebf839b4dd26a5e8235afeb916749ce4bbe4cdb",
     "EVMCleanroom/Precompiles/Pairing.lean": "aee00e87999f2af1d6a84408406b74eca67e54ff",
     "EVMCleanroom/Precompiles/Ripemd160.lean": "b7426f00ab4e389bc53c075d6893d0cc4ee2c88d",
     "EVMCleanroom/Precompiles/Secp256k1.lean": "f2f326e1439087e7ab70116123176827bb9f2dbe",

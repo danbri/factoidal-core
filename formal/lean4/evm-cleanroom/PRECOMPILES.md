@@ -59,9 +59,13 @@ Every loop runs on a count that is fixed by the input length or proved bounded.
 ## Proved, and only tested
 
 Proved (no `sorry`, no user axioms, `native_decide`, `unsafe`, `implemented_by` or `partial`; CI
-reads the actual `#print axioms` output of 15 modules and admits only `propext`, `Classical.choice`
+reads the actual `#print axioms` output of 16 modules and admits only `propext`, `Classical.choice`
 and `Quot.sound`):
 
+- MODEXP computes the modular power: for a non-zero modulus and lengths within the local bounds
+  the output is the big-endian encoding of `base ^ exponent % modulus` on the natural numbers
+  ([`ModExpProofs`](EVMCleanroom/Precompiles/ModExpProofs.lean): `powByte_spec`, `powBytes_spec`,
+  `powBytes_eq_pow_mod`, `body_eq_pow_mod`);
 - gas admission and exact accounting for every precompile (`charge_underfunded`, `charge_success`,
   the `run_success` theorems, `Precompiles.run_gas_le`);
 - output lengths and input-length rules (fixed lengths, whole items, empty-input failure, prefix-only
@@ -75,7 +79,7 @@ and `Quot.sound`):
   equal the residues on canonical values, MODEXP accumulators stay below the modulus, and every
   point returned by the shared secp256k1 API satisfies the curve equation (checked at run time).
 
-Only tested: every function value. That is the digests, modular powers, recovered addresses, group
+Only tested: every other function value. That is the digests, recovered addresses, group
 operations, pairings, map-to-curve results and the KZG verdict. Group laws, bilinearity and primality
 of the moduli are not proved. They are exercised by build-time guards (generator orders, the curve
 polynomials at the curve parameter, Frobenius as a `p`-th power, bilinearity in both arguments on

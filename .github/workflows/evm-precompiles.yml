@@ -32,7 +32,7 @@ jobs:
           auto-config: false
       - name: Compile the routing tests and build the native precompile runner
         working-directory: formal/lean4/evm-cleanroom
-        run: lake -f lakefile-precompiles.toml build EVMCleanroom.PrecompileCallTests evm-precompile
+        run: lake -f lakefile-precompiles.toml build EVMCleanroom.PrecompileCallTests EVMCleanroom.Precompiles.ModExpProofs evm-precompile
       - name: Check the package has no external Lean dependency
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/precompiles/check-axioms.py | tee .lake/precompile-axioms.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=15 and x["theorems"]>=88, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="actual-lean-axioms-audited" and x["modules"]>=16 and x["theorems"]>=100, (x["modules"], x["theorems"]); print(x["modules"], "modules,", x["theorems"], "theorems")'
       - name: Keep proof-assistant startup out of the precompile runner's imports
         working-directory: formal/lean4/evm-cleanroom
         run: |

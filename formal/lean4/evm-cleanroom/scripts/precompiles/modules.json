@@ -5,6 +5,7 @@
   "EVMCleanroom/Precompiles/Ripemd160.lean",
   "EVMCleanroom/Precompiles/Blake2f.lean",
   "EVMCleanroom/Precompiles/ModExp.lean",
+  "EVMCleanroom/Precompiles/ModExpProofs.lean",
   "EVMCleanroom/Precompiles/Field.lean",
   "EVMCleanroom/Precompiles/Curve.lean",
   "EVMCleanroom/Precompiles/Secp256k1.lean",

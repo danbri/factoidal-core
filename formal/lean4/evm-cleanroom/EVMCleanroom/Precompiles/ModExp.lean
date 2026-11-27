@@ -67,7 +67,7 @@ def powByte (modulus base : Nat) (byte : UInt8) : Nat → Nat → Nat
   | 0, acc => acc
   | k+1, acc =>
     let square := acc * acc % modulus
-    powByte modulus base byte k (if (byte >>> UInt8.ofNat k) &&& 1 == 1 then square * base % modulus else square)
+    powByte modulus base byte k (if byte.toNat.testBit k then square * base % modulus else square)
 
 /-- Consume `remaining` exponent bytes of the input starting at `off`. -/
 def powBytes (modulus base : Nat) (input : ByteArray) : Nat → Nat → Nat → Nat
