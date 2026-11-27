@@ -347,6 +347,34 @@ and `AudioListener`. Out of scope and visible in the run: `setValueCurveAtTime` 
 a, b, c: 0.025, 0.039, 0.438 ms per quantum (the section 14 figures were 0.014, 0.035, 0.41; the
 extra cost is the binary32 rounding of each output).
 
+### 12b. After the merges of 2026-11-27 (`main` at 1d07850f5)
+
+Round 1 was merged with the real-time contexts (step D3), `decodeAudioData` in pages and the larger
+limits. Op 184 is now `setBuffer(ctx, node, mode, channels, length, sampleRate, data...)`: the
+decode work's samples, one argument a channel, and round 1's modes ("" set, "2" the dimensions
+before `start()`, "1" acquire at `start()`).
+
+WPT run of 2026-11-27, local runner, BubblePopJS, native engine of 1d07850f5's tree, with
+`--dangerously-permit-audio` (as Chrome's WPT runs pass `--autoplay-policy=no-user-gesture-required`),
+the same list and exclusions as section 12 (`audiobuffersource-reverse-long-buffer.html`, and
+`sub-sample-buffer-stitching.html` and `retrospective-setTargetAtTime.html`, each over 3 minutes):
+**2,780 of 3,298 subtests pass** (2,572 of 3,284 in section 12, 2,702 of 3,285 in round 1 alone).
+16 subtests that passed in section 12 fail now; none comes from round 1 except the last:
+
+- 14 of `audiocontext-rendersizehint.html`: the real-time context ignores `renderSizeHint`,
+  https://github.com/danbri/factoidal-core/issues/1206 (real-time AudioContext ignores renderSizeHint);
+- 1 of `audiocontext-suspend-resume.html`, and 12 files that now time out or end in an error
+  (`AudioContext` and `AudioWorklet` tests): the runner's virtual clock against the context's
+  wall time, https://github.com/danbri/factoidal-core/issues/1207 (real-time contexts time out in
+  the WPT runner);
+- `k-rate-audiobuffersource-connections.html` playbackRate: one binary32 unit at one frame
+  (round 1 rounds parameter values to binary32, section 12a).
+
+Also now a timeout: `decodeAudioData-oversized-resample.html` (an unsupported FLAC stream of 44
+million samples), https://github.com/danbri/factoidal-core/issues/1208 (decodeAudioData of a large
+unsupported file times out). Files: `/home/user/media-build/wpt-merge.jsonl` on the cloud VM (not
+committed), compared with `wpt-after.jsonl` by the scratch script `wpt_compare.py`.
+
 ## 13. Stage D design: the real-time `AudioContext` (2026-11-26)
 
 ### 13.1 Threads and state
