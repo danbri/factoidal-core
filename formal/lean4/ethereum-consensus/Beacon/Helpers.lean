@@ -222,25 +222,43 @@ def Shuffling.committee (p : Preset) (sh : Shuffling) (slot index : Nat) : Array
   let n := sh.shuffled.size
   sh.shuffled.extract (n * i / count) (n * (i + 1) / count)
 
+/-- The per-round pivot values of `compute_shuffled_index` for one seed,
+    before reduction modulo the index count. -/
+def roundPivots (p : Preset) (seed : ByteArray) : Array Nat :=
+  (Array.range p.shuffleRoundCount).map fun round => leNat (sha (seed.push (UInt8.ofNat round))) 0 8
+
+/-- `shuffledIndex` with the pivot hashes of the seed computed once by
+    `roundPivots`. Tested equal to `shuffledIndex` through the vectors; not
+    proved equal. -/
+def shuffledIndexWith (pivots : Array Nat) (index count : Nat) (seed : ByteArray) : Nat :=
+  (List.range pivots.size).foldl
+    (fun index round =>
+      let flip := (pivots[round]! % count + count - index) % count
+      let position := max index flip
+      let source := sha (seed.push (UInt8.ofNat round) ++ natLE (position / 256) 4)
+      let byte := (source.get! (position % 256 / 8)).toNat
+      if byte / 2 ^ (position % 8) % 2 == 1 then flip else index)
+    index
+
 /-- Bound on the candidate loop of `compute_proposer_index`. -/
 def proposerSearchLimit : Nat := 1048576
 
-def proposerLoop (p : Preset) (s : BeaconState) (indices : Array Nat) (seed : ByteArray) :
+def proposerLoop (s : BeaconState) (indices : Array Nat) (seed : ByteArray) (pivots : Array Nat) :
     Nat → Nat → Except String Nat
   | 0, _ => .error "proposer selection: candidate limit reached"
   | fuel + 1, i =>
     let total := indices.size
-    let candidate := indices[shuffledIndex p (i % total) total seed]!
+    let candidate := indices[shuffledIndexWith pivots (i % total) total seed]!
     let randomBytes := sha (seed ++ natLE (i / 16) 8)
     let randomValue := leNat randomBytes (i % 16 * 2) 2
     let effective := s.validators[candidate]!.effectiveBalance
     if effective * 65535 ≥ maxEffectiveBalanceElectra * randomValue then .ok candidate
-    else proposerLoop p s indices seed fuel (i + 1)
+    else proposerLoop s indices seed pivots fuel (i + 1)
 
 def computeProposerIndex (p : Preset) (s : BeaconState) (indices : Array Nat) (seed : ByteArray) :
     Except String Nat :=
   if indices.size = 0 then .error "proposer selection: no active validators"
-  else proposerLoop p s indices seed proposerSearchLimit 0
+  else proposerLoop s indices seed (roundPivots p seed) proposerSearchLimit 0
 
 /-- `get_beacon_proposer_indices`: the proposers of every slot of `epoch`. -/
 def beaconProposerIndices (p : Preset) (s : BeaconState) (epoch : Nat) : Except String (Array Nat) :=

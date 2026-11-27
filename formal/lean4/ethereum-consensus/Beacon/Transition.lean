@@ -1,4 +1,4 @@
-import Beacon.Block
+import Beacon.RootCache
 
 /-!
 # Slot processing and the state transition (Fulu)
@@ -12,39 +12,40 @@ namespace Beacon
 
 def stateRoot (p : Preset) (s : BeaconState) : ByteArray := BeaconState.codec.root p s
 
-/-- `process_slot`: cache the state root and the block root of the slot. -/
-def processSlot (p : Preset) (s : BeaconState) : BeaconState :=
-  let root := stateRoot p s
+/-- `process_slot`: cache the state root and the block root of the slot.
+    The state root comes from `cachedStateRoot`. -/
+def processSlot (p : Preset) (s : BeaconState) (cache : HashCache) : BeaconState × HashCache :=
+  let (root, cache) := cachedStateRoot p s cache
   let position := s.slot % p.slotsPerHistoricalRoot
   let s := { s with stateRoots := s.stateRoots.set! position root }
   let s :=
     if s.latestBlockHeader.stateRoot == zero32 then
       { s with latestBlockHeader := { s.latestBlockHeader with stateRoot := root } }
     else s
-  { s with blockRoots := s.blockRoots.set! position (BeaconBlockHeader.codec.root p s.latestBlockHeader) }
+  ({ s with blockRoots := s.blockRoots.set! position (BeaconBlockHeader.codec.root p s.latestBlockHeader) }, cache)
 
 /-- One iteration of `process_slots`: the slot's caches, epoch processing
     at the last slot of an epoch, then the slot number. The slot number is
     written from the value read at the start; a step that changed it is
-    refused. -/
-def slotStep (c : Ctx) (s : BeaconState) : Except String BeaconState :=
-  let slot := s.slot
+    refused. The second component is the hashing cache. -/
+def slotStep (c : Ctx) (x : BeaconState × HashCache) : Except String (BeaconState × HashCache) :=
+  let slot := x.1.slot
   if slot ≥ uint64Max then .error "process_slots: slot number at the uint64 limit"
   else
-    let s := processSlot c.p s
+    let (s, cache) := processSlot c.p x.1 x.2
     match (if (slot + 1) % c.p.slotsPerEpoch == 0 then processEpoch c s else .ok s) with
     | .error e => .error e
     | .ok s =>
       if s.slot ≠ slot then .error "process_slots: slot changed inside a slot step"
       else if !s.inRange then .error "process_slots: a uint64 field left its range"
-      else .ok { s with slot := slot + 1 }
+      else .ok ({ s with slot := slot + 1 }, cache)
 
-def iterateSlots (c : Ctx) : Nat → BeaconState → Except String BeaconState
-  | 0, s => .ok s
-  | n + 1, s =>
-    match slotStep c s with
+def iterateSlots (c : Ctx) : Nat → BeaconState × HashCache → Except String (BeaconState × HashCache)
+  | 0, x => .ok x
+  | n + 1, x =>
+    match slotStep c x with
     | .error e => .error e
-    | .ok s => iterateSlots c n s
+    | .ok x => iterateSlots c n x
 
 /-- Largest number of slots one call may advance (an implementation
     resource limit, not a consensus rule): 2^24 slots. -/
@@ -53,7 +54,7 @@ def maxSlotAdvance : Nat := 16777216
 def processSlots (c : Ctx) (s : BeaconState) (slot : Nat) : Except String BeaconState :=
   if s.slot < slot then
     if slot - s.slot > maxSlotAdvance then .error "process_slots: advance above the resource limit"
-    else iterateSlots c (slot - s.slot) s
+    else (iterateSlots c (slot - s.slot) (s, {})).map (·.1)
   else .error "process_slots: target slot is not after the state's slot"
 
 def verifyBlockSignature (c : Ctx) (s : BeaconState) (signed : SignedBeaconBlock) : Bool :=

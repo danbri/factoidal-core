@@ -16,8 +16,8 @@ namespace Beacon
 /-- Kind: invariant. Says: a successful slot step raises the slot number by
     exactly one. Does not say: the caches or the epoch processing inside
     the step agree with the specification. -/
-theorem slotStep_slot (c : Ctx) (s s' : BeaconState) (h : slotStep c s = .ok s') :
-    s'.slot = s.slot + 1 := by
+theorem slotStep_slot (c : Ctx) (x x' : BeaconState × HashCache) (h : slotStep c x = .ok x') :
+    x'.1.slot = x.1.slot + 1 := by
   unfold slotStep at h
   simp only at h
   split at h
@@ -33,44 +33,45 @@ theorem slotStep_slot (c : Ctx) (s s' : BeaconState) (h : slotStep c s = .ok s')
 /-- Kind: definitional. Says: `iterateSlots` of `n + 1` is one `slotStep`
     followed by `iterateSlots` of `n`. Does not say: anything about the
     step itself. -/
-theorem iterateSlots_succ (c : Ctx) (n : Nat) (s : BeaconState) :
-    iterateSlots c (n + 1) s = (slotStep c s).bind (iterateSlots c n) := by
+theorem iterateSlots_succ (c : Ctx) (n : Nat) (x : BeaconState × HashCache) :
+    iterateSlots c (n + 1) x = (slotStep c x).bind (iterateSlots c n) := by
   simp only [iterateSlots]
-  cases slotStep c s <;> rfl
+  cases slotStep c x <;> rfl
 
 /-- Kind: structural. Says: iterating `m + n` slot steps is iterating `m`
     and then `n`. Does not say: that either part succeeds. -/
-theorem iterateSlots_add (c : Ctx) (m n : Nat) (s : BeaconState) :
-    iterateSlots c (m + n) s = (iterateSlots c m s).bind (iterateSlots c n) := by
-  induction m generalizing s with
+theorem iterateSlots_add (c : Ctx) (m n : Nat) (x : BeaconState × HashCache) :
+    iterateSlots c (m + n) x = (iterateSlots c m x).bind (iterateSlots c n) := by
+  induction m generalizing x with
   | zero => simp [iterateSlots, Except.bind]
   | succ m ih =>
     rw [Nat.add_right_comm, iterateSlots_succ, iterateSlots_succ]
-    cases slotStep c s with
+    cases slotStep c x with
     | error e => rfl
-    | ok s1 => simpa [Except.bind] using ih s1
+    | ok x1 => simpa [Except.bind] using ih x1
 
 /-- Kind: invariant. Says: `n` successful slot steps raise the slot number
     by exactly `n`. Does not say: that they succeed. -/
-theorem iterateSlots_slot (c : Ctx) (n : Nat) (s s' : BeaconState)
-    (h : iterateSlots c n s = .ok s') : s'.slot = s.slot + n := by
-  induction n generalizing s with
+theorem iterateSlots_slot (c : Ctx) (n : Nat) (x x' : BeaconState × HashCache)
+    (h : iterateSlots c n x = .ok x') : x'.1.slot = x.1.slot + n := by
+  induction n generalizing x with
   | zero => simp [iterateSlots] at h; subst h; rfl
   | succ n ih =>
     rw [iterateSlots_succ] at h
-    cases hs : slotStep c s with
+    cases hs : slotStep c x with
     | error e => simp [hs, Except.bind] at h
-    | ok s1 =>
+    | ok x1 =>
       simp only [hs, Except.bind] at h
-      rw [ih s1 h, slotStep_slot c s s1 hs]
+      rw [ih x1 h, slotStep_slot c x x1 hs]
       omega
 
 /-- Kind: characterisation. Says: an admitted `processSlots` call is
-    exactly `target - slot` iterations of `slotStep`; the iteration count is
-    fixed before the first step. Does not say: the iteration succeeds. -/
+    exactly `target - slot` iterations of `slotStep` from an empty hashing
+    cache; the iteration count is fixed before the first step. Does not
+    say: the iteration succeeds. -/
 theorem processSlots_eq_iterate (c : Ctx) (s : BeaconState) (target : Nat)
     (h : s.slot < target) (hl : target - s.slot ≤ maxSlotAdvance) :
-    processSlots c s target = iterateSlots c (target - s.slot) s := by
+    processSlots c s target = (iterateSlots c (target - s.slot) (s, {})).map (·.1) := by
   simp [processSlots, h, Nat.not_lt.mpr hl]
 
 /-- Kind: postcondition. Says: a successful `processSlots` ends at exactly
@@ -81,7 +82,14 @@ theorem processSlots_slot (c : Ctx) (s s' : BeaconState) (target : Nat)
   split at h
   · split at h
     · cases h
-    · rw [iterateSlots_slot c _ s s' h]; omega
+    · cases hi : iterateSlots c (target - s.slot) (s, {}) with
+      | error e => simp [hi, Except.map] at h
+      | ok x =>
+        simp only [hi, Except.map] at h
+        cases h
+        rw [iterateSlots_slot c _ _ x hi]
+        simp only
+        omega
   · cases h
 
 /-- Kind: monotonicity. Says: a successful `processSlots` strictly raises
@@ -350,5 +358,42 @@ theorem byteList_decode_over_limit (limit : Preset → Nat) (p : Preset) (b : By
 #print axioms bitlist_decode_empty
 #print axioms bytesN_decode_wrong_width
 #print axioms byteList_decode_over_limit
+
+end Beacon
+
+namespace Beacon
+
+/-! ## Fast paths -/
+
+/-- Kind: auxiliary. Says: two folds over the same list agree when their
+    step functions agree on the list's elements. -/
+theorem foldl_congr_mem {α β : Type} (f g : α → β → α) (l : List β) (a : α)
+    (h : ∀ a b, b ∈ l → f a b = g a b) : l.foldl f a = l.foldl g a := by
+  induction l generalizing a with
+  | nil => rfl
+  | cons x xs ih =>
+    simp only [List.foldl_cons]
+    rw [h a x (by simp)]
+    exact ih _ (fun a b hb => h a b (by simp [hb]))
+
+/-- Kind: fast path equals specification form. Says: `shuffledIndexWith`,
+    given the pivots that `roundPivots` computes for the same seed, returns
+    exactly `shuffledIndex` (the form written from `compute_shuffled_index`).
+    Does not say: `shuffledIndex` matches the specification (tested by the
+    vectors), nor anything about `shuffleList`. -/
+theorem shuffledIndexWith_eq (p : Preset) (seed : ByteArray) (index count : Nat) :
+    shuffledIndexWith (roundPivots p seed) index count seed = shuffledIndex p index count seed := by
+  unfold shuffledIndexWith shuffledIndex
+  have hsize : (roundPivots p seed).size = p.shuffleRoundCount := by simp [roundPivots]
+  rw [hsize]
+  apply foldl_congr_mem
+  intro acc round hmem
+  have hlt : round < p.shuffleRoundCount := List.mem_range.mp hmem
+  have hp : (roundPivots p seed)[round]! = leNat (sha (seed.push (UInt8.ofNat round))) 0 8 := by
+    simp [roundPivots, hlt]
+  simp only [hp]
+
+#print axioms foldl_congr_mem
+#print axioms shuffledIndexWith_eq
 
 end Beacon

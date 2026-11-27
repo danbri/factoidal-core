@@ -25,6 +25,8 @@ structure Options where
   jobs : Nat := 4
   verifyOptionalBls : Bool := true
   json : Option System.FilePath := none
+  benchState : Option System.FilePath := none
+  benchValidators : Nat := 0
 
 def parseArgs : List String → Options → Except String Options
   | [], o => .ok o
@@ -38,6 +40,8 @@ def parseArgs : List String → Options → Except String Options
   | "--bls-optional" :: "verify" :: rest, o => parseArgs rest { o with verifyOptionalBls := true }
   | "--bls-optional" :: "skip" :: rest, o => parseArgs rest { o with verifyOptionalBls := false }
   | "--json" :: v :: rest, o => parseArgs rest { o with json := some v }
+  | "--bench-epoch" :: v :: rest, o => parseArgs rest { o with benchState := some v }
+  | "--validators" :: v :: rest, o => parseArgs rest { o with benchValidators := v.toNat! }
   | arg :: _, _ => .error s!"unknown argument {arg}"
 
 def sszCheck {α : Type} (c : Codec α) (p : Preset) (bytes root : ByteArray) : Except String Unit := do
@@ -190,7 +194,9 @@ def transitionCase (o : Options) (dir : System.FilePath) (extraCtx : Ctx → Ctx
   | .ok _, none => return (.fail, "accepted an input the vector marks invalid", bls, verify)
   | .error e, some _ => return (.fail, s!"refused a valid input: {e}", bls, verify)
   | .ok s, some expected =>
-    if BeaconState.codec.encode p s == expected then return (.pass, "", bls, verify)
+    if (cachedStateRoot p s {}).1 != BeaconState.codec.root p s then
+      return (.fail, "cached state root differs from the plain state root", bls, verify)
+    else if BeaconState.codec.encode p s == expected then return (.pass, "", bls, verify)
     else match BeaconState.codec.decode p expected with
       | .ok e => return (.fail, s!"post-state differs in: {stateDiff p s e}", bls, verify)
       | .error e => return (.fail, s!"post-state vector does not decode: {e}", bls, verify)
@@ -324,10 +330,75 @@ def HandlerSummary.json (h : HandlerSummary) : String :=
   s!",\"p50_us\":{percentile times 50},\"p95_us\":{percentile times 95},\"max_us\":{percentile times 100}" ++
   ",\"not_passing\":[" ++ ",".intercalate failures.toList ++ "]}"
 
+/-- Grow the registry of `s` to `n` validators by repeating its entries,
+    each a separate object with its own (not valid) public key bytes;
+    enough for the steps timed below, which check no signature. -/
+def growRegistry (s : BeaconState) (n : Nat) : BeaconState :=
+  let m := s.validators.size
+  if n ≤ m || m = 0 then s
+  else
+    let pick {α : Type} [Inhabited α] (xs : Array α) : Array α := (Array.range n).map fun i => xs[i % m]!
+    { s with
+      validators := (Array.range n).map fun i =>
+        { s.validators[i % m]! with pubkey := natLE (i + 1) 48 }
+      balances := pick s.balances
+      inactivityScores := pick s.inactivityScores
+      previousEpochParticipation := ⟨(Array.range n).map fun i => s.previousEpochParticipation.get! (i % m)⟩
+      currentEpochParticipation := ⟨(Array.range n).map fun i => s.currentEpochParticipation.get! (i % m)⟩ }
+
+/-- Time each epoch sub-step once on a state grown to `--validators`
+    entries. A scaling measurement, not a conformance test. -/
+def benchEpoch (o : Options) (path : System.FilePath) : IO UInt32 := do
+  let p := o.preset
+  let c : Ctx := { p, verifyBls := false }
+  let base ← match BeaconState.codec.decode p (← readSnappy path) with
+    | .ok s => pure s
+    | .error e => IO.eprintln s!"state does not decode: {e}"; return 2
+  let s := growRegistry base o.benchValidators
+  IO.println s!"bench-epoch preset {p.name} validators {s.validators.size} slot {s.slot}"
+  let steps : List (String × (BeaconState → Except String BeaconState)) := [
+    ("justification_and_finalization", processJustificationAndFinalization p),
+    ("inactivity_updates", fun s => .ok (processInactivityUpdates p s)),
+    ("rewards_and_penalties", fun s => .ok (processRewardsAndPenalties p s)),
+    ("registry_updates", fun s => .ok (processRegistryUpdates p s)),
+    ("slashings", fun s => .ok (processSlashings p s)),
+    ("eth1_data_reset", fun s => .ok (processEth1DataReset p s)),
+    ("pending_deposits", fun s => .ok (processPendingDeposits c s)),
+    ("pending_consolidations", fun s => .ok (processPendingConsolidations p s)),
+    ("effective_balance_updates", fun s => .ok (processEffectiveBalanceUpdates s)),
+    ("slashings_reset", fun s => .ok (processSlashingsReset p s)),
+    ("randao_mixes_reset", fun s => .ok (processRandaoMixesReset p s)),
+    ("historical_summaries_update", fun s => .ok (processHistoricalSummariesUpdate p s)),
+    ("participation_flag_updates", fun s => .ok (processParticipationFlagUpdates s)),
+    ("proposer_lookahead", processProposerLookahead p)]
+  let mut state := s
+  let mut total := 0
+  for (name, step) in steps do
+    let t0 ← IO.monoNanosNow
+    match step state with
+    | .ok next =>
+      -- Force the fields the steps write before reading the clock.
+      let witness := next.balances.size + next.validators.size + next.inactivityScores.size +
+        next.currentEpochParticipation.size + next.proposerLookahead.foldl (· + ·) 0 +
+        (next.balances.foldl (· + ·) 0) % 2 + (next.validators.foldl (fun acc v => acc + v.effectiveBalance) 0) % 2
+      let t1 ← IO.monoNanosNow
+      IO.println s!"  {name}: {(t1 - t0) / 1000} us (witness {witness % 10})"
+      total := total + (t1 - t0) / 1000
+      state := next
+    | .error e =>
+      IO.println s!"  {name}: refused: {e}"
+  IO.println s!"  epoch sub-steps total: {total} us"
+  let t0 ← IO.monoNanosNow
+  IO.println s!"  state root {toHex ((stateRoot p state).extract 0 4)}"
+  let t1 ← IO.monoNanosNow
+  IO.println s!"  hash_tree_root(state), no registry cache: {(t1 - t0) / 1000} us"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
   let o ← match parseArgs args {} with
     | .ok o => pure o
     | .error e => IO.eprintln e; return 2
+  if let some path := o.benchState then return ← benchEpoch o path
   let base := o.vectors / "tests" / o.preset.name / o.fork
   let runners := if o.runners.isEmpty then ["ssz_static", "epoch_processing", "operations", "sanity"] else o.runners
   let mut summaries : Array HandlerSummary := #[]
