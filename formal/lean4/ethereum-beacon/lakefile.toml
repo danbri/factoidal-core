@@ -1,0 +1,24 @@
+name = "ethereum_beacon"
+version = "0.1.0"
+defaultTargets = ["Beacon", "beacon-spec-tests"]
+
+# The beacon state transition. It selects, in place and without copying,
+# the repository's pure SHA-256 module and the BLS12-381 modules of
+# ../ethereum-consensus. No external Lake package.
+
+[[lean_lib]]
+name = "Beacon"
+
+[[lean_lib]]
+name = "ConsensusBLS"
+srcDir = "../ethereum-consensus"
+roots = ["G1PublicKey", "G2Signature", "PairingTarget", "HashToField", "BLSVerify"]
+
+[[lean_lib]]
+name = "FactoidalSHA2"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto.SHA2"]
+
+[[lean_exe]]
+name = "beacon-spec-tests"
+root = "BeaconSpecTestsMain"

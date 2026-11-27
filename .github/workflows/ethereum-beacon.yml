@@ -1,0 +1,198 @@
+name: Independent Lean beacon state transition (Fulu)
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-beacon/**'
+      - 'formal/lean4/ethereum-consensus/BLSVerify.lean'
+      - 'formal/lean4/ethereum-consensus/G1PublicKey.lean'
+      - 'formal/lean4/ethereum-consensus/G2Signature.lean'
+      - 'formal/lean4/ethereum-consensus/PairingTarget.lean'
+      - 'formal/lean4/ethereum-consensus/HashToField.lean'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - '.github/workflows/ethereum-beacon.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ethereum-beacon-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # Normative pin: ethereum/consensus-specs v1.6.1, commit 5fa6edcca8ab4cf548653e6680b17b9d3e04d225.
+  # The vectors are that release's own assets; the digests are the release's published sha256 values.
+  SPEC_RELEASE: v1.6.1
+  MINIMAL_SHA256: e1d0c9dc3d09fb74a98b324c40b2587a17dc555e6149d3f9741601fffcf43901
+  MAINNET_SHA256: 8401c58700c461154db2050c2a982af7aca259bd016c2184ec39c454edf6f1c5
+jobs:
+  beacon:
+    name: beacon vectors (${{ matrix.preset }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [minimal, mainnet]
+    defaults:
+      run:
+        working-directory: formal/lean4/ethereum-beacon
+    env:
+      LEAN_STACK_SIZE_KB: '65536'
+      LAKE_ARTIFACT_CACHE: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-beacon
+          build: false
+          axiom-audit: false
+          test: false
+          use-github-cache: false
+          use-mathlib-cache: false
+      - name: Source audit (hygiene, imports, no external package)
+        run: |
+          set -euo pipefail
+          python3 scripts/check-beacon-spec-tests.py --self-test
+          python3 - <<'PY'
+          import json, pathlib, re
+          allowed = {
+              "Beacon/Preset.lean": [],
+              "Beacon/Snappy.lean": [],
+              "Beacon/SSZ.lean": ["Beacon.Preset", "L4Factoidal.Crypto.SHA2"],
+              "Beacon/Types.lean": ["Beacon.SSZ"],
+              "Beacon/Helpers.lean": ["Beacon.Types", "BLSVerify", "Std.Data.HashMap"],
+              "Beacon/Epoch.lean": ["Beacon.Helpers"],
+              "Beacon/Block.lean": ["Beacon.Epoch"],
+              "Beacon/RootCache.lean": ["Beacon.Block"],
+              "Beacon/Transition.lean": ["Beacon.RootCache"],
+              "Beacon/Theorems.lean": ["Beacon.Transition"],
+              "Beacon/Harness.lean": ["Beacon.Types", "Beacon.Snappy"],
+              "Beacon.lean": ["Beacon.Transition", "Beacon.Theorems", "Beacon.Harness"],
+              "BeaconSpecTestsMain.lean": ["Beacon.Harness", "Beacon.Transition"],
+          }
+          found = sorted(str(p) for p in pathlib.Path("Beacon").glob("*.lean"))
+          assert found == sorted(k for k in allowed if k.startswith("Beacon/")), found
+          for name, imports in allowed.items():
+              code = pathlib.Path(name).read_text()
+              code = re.sub(r"/-.*?-/", "", code, flags=re.S)
+              code = re.sub(r"--[^\n]*", "", code)
+              assert re.findall(r"^import\s+(\S+)\s*$", code, re.M) == imports, name
+              assert not re.search(
+                  r"\b(sorry|admit|native_decide|unsafe)\b|^\s*(axiom|partial\s+def)\b|@\[(implemented_by|extern|csimp)",
+                  code, re.M), name
+          assert json.loads(pathlib.Path("lake-manifest.json").read_text())["packages"] == []
+          lakefile = pathlib.Path("lakefile.toml").read_text()
+          assert "[[require]]" not in lakefile and "moreLinkArgs" not in lakefile and "extraDepTargets" not in lakefile
+          assert re.findall(r'^srcDir = "(.*)"$', lakefile, re.M) == ["../ethereum-consensus", ".."]
+          assert pathlib.Path("lean-toolchain").read_text().strip().endswith("v4.33.1")
+          print("source audit passed:", len(allowed), "files")
+          PY
+      - name: Restore the pinned vectors
+        id: vectors
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vectors
+          key: consensus-spec-tests-${{ env.SPEC_RELEASE }}-${{ matrix.preset }}-fulu-7suites-${{ matrix.preset == 'minimal' && env.MINIMAL_SHA256 || env.MAINNET_SHA256 }}
+      - name: Download and verify the pinned vectors
+        if: steps.vectors.outputs.cache-hit != 'true'
+        env:
+          PRESET: ${{ matrix.preset }}
+          DIGEST: ${{ matrix.preset == 'minimal' && env.MINIMAL_SHA256 || env.MAINNET_SHA256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/vectors" "$RUNNER_TEMP/download"
+          curl -sSL --fail --retry 3 -o "$RUNNER_TEMP/download/$PRESET.tar.gz" \
+            "https://github.com/ethereum/consensus-specs/releases/download/$SPEC_RELEASE/$PRESET.tar.gz"
+          echo "$DIGEST  $RUNNER_TEMP/download/$PRESET.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/download/$PRESET.tar.gz" -C "$RUNNER_TEMP/vectors" \
+            "tests/$PRESET/fulu/ssz_static" "tests/$PRESET/fulu/epoch_processing" \
+            "tests/$PRESET/fulu/operations" "tests/$PRESET/fulu/sanity" \
+            "tests/$PRESET/fulu/rewards" "tests/$PRESET/fulu/finality" "tests/$PRESET/fulu/random"
+      - name: Build the runner and check the theorems
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          ulimit -c 0
+          lean --version
+          lake build beacon-spec-tests Beacon.Theorems 2>&1 | tee "$RUNNER_TEMP/beacon-build.log"
+      - name: Theorem inventory and axioms
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, re
+          log = (pathlib.Path(os.environ["RUNNER_TEMP"]) / "beacon-build.log").read_text()
+          source = pathlib.Path("Beacon/Theorems.lean").read_text()
+          declared = set(re.findall(r"^theorem (\w+)", source, re.M))
+          def audit(text):
+              reports = re.findall(
+                  r"'Beacon\.(\w+)' (?:depends on axioms:\s*\[([^]]*)\]|does not depend on any axioms)", text)
+              names = [n for n, _ in reports]
+              if len(names) != len(set(names)) or set(names) != declared or len(declared) < 35:
+                  raise ValueError("theorem inventory")
+              for name, axioms in reports:
+                  if not set(filter(None, (a.strip() for a in axioms.split(",")))) <= {
+                          "propext", "Classical.choice", "Quot.sound"}:
+                      raise ValueError(name)
+          audit(log)
+          first = sorted(declared)[0]
+          controls = ["", log.replace(f"'Beacon.{first}'", "'Beacon.other'"),
+                      re.sub(r"('Beacon\.\w+') (?:depends on axioms:\s*\[[^]]*\]|does not depend on any axioms)",
+                             r"\1 depends on axioms: [sorryAx]", log, count=1)]
+          for bad in controls:
+              try:
+                  audit(bad)
+              except ValueError:
+                  continue
+              raise SystemExit("an audit control escaped")
+          print(len(declared), "theorems reported, axioms within propext / Classical.choice / Quot.sound;",
+                len(controls), "audit controls behaved")
+          PY
+      - name: Recursion audit of the emitted C
+        working-directory: .
+        run: |
+          set -euo pipefail
+          python3 tools/lean-tail-recursion-audit.py \
+            --ir-dir formal/lean4/ethereum-beacon/.lake/build/ir \
+            --lean-dir formal/lean4 \
+            --json "$RUNNER_TEMP/beacon-tail-audit.json" | tee "$RUNNER_TEMP/beacon-tail-audit.txt"
+          grep -F 'Recursive functions whose recursion is NOT a `goto _start` loop: 0' "$RUNNER_TEMP/beacon-tail-audit.txt"
+      - name: Link audit (no external cryptography)
+        run: |
+          set -euo pipefail
+          ldd .lake/build/bin/beacon-spec-tests | tee "$RUNNER_TEMP/beacon-link.log"
+          nm -u .lake/build/bin/beacon-spec-tests > "$RUNNER_TEMP/beacon-symbols.log"
+          if grep -E ' (EVP_|EC_|BN_|SHA256|blst_|BLS_|mcl_|Hacl_|snappy_)' "$RUNNER_TEMP/beacon-symbols.log"; then exit 1; fi
+      - name: Run the official vectors (signatures checked in every case that allows it)
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          /usr/bin/time -v .lake/build/bin/beacon-spec-tests --vectors "$RUNNER_TEMP/vectors" --preset "$PRESET" \
+            --json "$RUNNER_TEMP/beacon-$PRESET.json" 2> "$RUNNER_TEMP/beacon-$PRESET-time.log" \
+            | tee "$RUNNER_TEMP/beacon-$PRESET.log"
+          grep -E "Maximum resident|Elapsed|User time" "$RUNNER_TEMP/beacon-$PRESET-time.log" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Epoch processing at one million validators (scaling measurement)
+        if: matrix.preset == 'mainnet'
+        run: |
+          set -euo pipefail
+          STATE="$RUNNER_TEMP/vectors/tests/mainnet/fulu/epoch_processing/rewards_and_penalties/pyspec_tests/almost_full_attestations/pre.ssz_snappy"
+          for N in 100000 1000000; do
+            /usr/bin/time -v .lake/build/bin/beacon-spec-tests --preset mainnet --bench-epoch "$STATE" --validators "$N" \
+              2> "$RUNNER_TEMP/beacon-bench-$N-time.log" | tee -a "$RUNNER_TEMP/beacon-bench.log"
+            grep -E "Maximum resident|Elapsed" "$RUNNER_TEMP/beacon-bench-$N-time.log" | tee -a "$RUNNER_TEMP/beacon-bench.log"
+          done
+          { echo '### Epoch sub-steps on a grown registry'; echo '```'; cat "$RUNNER_TEMP/beacon-bench.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Ratchet
+        env:
+          PRESET: ${{ matrix.preset }}
+        run: |
+          set -euo pipefail
+          python3 scripts/check-beacon-spec-tests.py --run "$RUNNER_TEMP/beacon-$PRESET.json" \
+            --baseline evidence/beacon-spec-tests-baseline.json --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: beacon-${{ matrix.preset }}-evidence
+          path: |
+            ${{ runner.temp }}/beacon-*.json
+            ${{ runner.temp }}/beacon-*.log
+            ${{ runner.temp }}/beacon-*.txt

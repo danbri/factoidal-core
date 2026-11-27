@@ -15,6 +15,7 @@ worknote, kept as the record of a decision or a measurement),
 
 | Date | Note | Commit | Status |
 | --- | --- | --- | --- |
+| 2026-11-27 | [Beacon state transition (Fulu)](designissues/2026-11-27-beacon-state-transition.md) | [issue 725](https://github.com/danbri/factoidal-core/issues/725) | current — independent slot, epoch and block processing checked against the official vectors; pins, limits, what is proved and what is tested |
 | 2026-11-25 | [Execution integration candidate](20261125-evm-main-integration.md) | issue 1085 | candidate — source identity and ancestry audit, fresh build and proof gates pending |
 | 2026-11-25 | [Ethereum witness admission](20261125-evm-witness-admission.md) | [issue 1043](https://github.com/danbri/factoidal-core/issues/1043) | current — independent RLP/trie admission, actual ordered execution and source-bound evidence |
 | 2026-11-25 | [Ethereum runtime boundary](designissues/2026-11-25-ethereum-runtime-boundary.md) | [issue 1043](https://github.com/danbri/factoidal-core/issues/1043) | current — build-time proof assistance, native runtime startup and enforced dependency checks |
