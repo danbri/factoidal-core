@@ -2,12 +2,12 @@
 set -euo pipefail
 L="lake -f lakefile-fieldperf.toml"
 $L build EVMCleanroom.Precompiles.ScalarMul EVMCleanroom.Precompiles.Secp256k1FieldFast EVMCleanroom.Precompiles.Secp256k1Glv
-( ulimit -v 12000000; timeout 900 $L build EVMCleanroom.Precompiles.Secp256k1Point ) || { echo "FAILURES Point build"; exit 1; }
+( timeout 900 $L build EVMCleanroom.Precompiles.Secp256k1Point ) || { echo "FAILURES Point build"; exit 1; }
 echo "RESULT Point built"
 for f in scripts/fieldperf/probe/P*.lean; do
   s=$(date +%s)
-  ( ulimit -v 4000000; timeout 100 $L env lean -D profiler=true -D profiler.threshold=200 $f > /tmp/probe.out 2>&1 ) && r=ok || r="exit $?"
-  echo "RESULT probe $f: $r, $(( $(date +%s)-s )) s"
+  /usr/bin/time -v -o /tmp/probe.time timeout 45 $L env lean -D profiler=true -D profiler.threshold=200 $f > /tmp/probe.out 2>&1 && r=ok || r="exit $?"
+  echo "RESULT probe $f: $r, $(( $(date +%s)-s )) s, $(grep 'Maximum resident' /tmp/probe.time || true)"
   grep -v "^$" /tmp/probe.out | grep -v "^	" | cut -c1-300 | head -8 || true
 done
 exit 1
