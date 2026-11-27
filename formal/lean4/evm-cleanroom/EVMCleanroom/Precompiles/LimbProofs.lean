@@ -13,6 +13,9 @@ Montgomery proofs) chain these equations and never unfold the primitives.
 Everything here is proved for all inputs. Nothing is said about timing.
 -/
 
+-- `omega` builds deep terms on coefficients of 2^64 and above.
+set_option maxRecDepth 8192
+
 namespace EVMCleanroom.Precompiles.Limb
 
 /-- The product of two numbers split at a base `h`. -/
@@ -92,10 +95,10 @@ theorem mac_spec (a b c d : UInt64) :
   have hb := UInt64.toNat_lt b
   have hc := UInt64.toNat_lt c
   have hd := UInt64.toNat_lt d
-  have hsplit := mul_split (a.toNat % 4294967296) (a.toNat / 4294967296)
-    (b.toNat % 4294967296) (b.toNat / 4294967296) 4294967296
   have hA : a.toNat / 4294967296 * 4294967296 + a.toNat % 4294967296 = a.toNat := by omega
   have hB : b.toNat / 4294967296 * 4294967296 + b.toNat % 4294967296 = b.toNat := by omega
+  have hsplit := mul_split (a.toNat % 4294967296) (a.toNat / 4294967296)
+    (b.toNat % 4294967296) (b.toNat / 4294967296) 4294967296
   rw [hA, hB] at hsplit
   have hab : a.toNat * b.toNat ≤ 18446744073709551615 * 18446744073709551615 :=
     Nat.mul_le_mul (by omega) (by omega)
