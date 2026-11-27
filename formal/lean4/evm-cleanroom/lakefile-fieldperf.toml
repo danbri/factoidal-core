@@ -32,3 +32,11 @@ moreLeancArgs = ["-O3"]
 name = "evm-blsops"
 root = "EVMCleanroom.FieldPerf.BlsOps"
 moreLeancArgs = ["-O3"]
+
+# BLS signature verification (Precompiles/BLSSignature.lean): RFC 9380 vectors,
+# differential run against the Nat definitions, published vectors, timing, and
+# the command line used for cross-checks from other packages.
+[[lean_exe]]
+name = "evm-blssig"
+root = "EVMCleanroom.BLSSig.Main"
+moreLeancArgs = ["-O3"]

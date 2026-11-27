@@ -1,0 +1,27 @@
+[[lean_lib]]
+name = "EVMCleanroomBLS"
+srcDir = "../evm-cleanroom"
+roots = [
+  "EVMCleanroom.Precompiles.BLS12381",
+  "EVMCleanroom.Precompiles.BLS12381Fast",
+  "EVMCleanroom.Precompiles.BLS12381Field",
+  "EVMCleanroom.Precompiles.BLS12381Map",
+  "EVMCleanroom.Precompiles.BLS12381Pairing",
+  "EVMCleanroom.Precompiles.BLSSignature",
+  "EVMCleanroom.Precompiles.Basic",
+  "EVMCleanroom.Precompiles.Curve",
+  "EVMCleanroom.Precompiles.CurveFast",
+  "EVMCleanroom.Precompiles.FastPairing",
+  "EVMCleanroom.Precompiles.FastTower",
+  "EVMCleanroom.Precompiles.Field",
+  "EVMCleanroom.Precompiles.Fp2Limb",
+  "EVMCleanroom.Precompiles.HashToCurveG2",
+  "EVMCleanroom.Precompiles.Limb",
+  "EVMCleanroom.Precompiles.LimbBytes",
+  "EVMCleanroom.Precompiles.LimbInverse",
+  "EVMCleanroom.Precompiles.Montgomery",
+  "EVMCleanroom.Precompiles.Pairing",
+  "EVMCleanroom.Precompiles.QuadLimb",
+  "EVMCleanroom.Precompiles.Sha256",
+  "EVMCleanroom.Precompiles.Tower"
+]
