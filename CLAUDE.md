@@ -535,6 +535,23 @@ root. Keep the compiler/runtime trust boundary and unproved cryptographic
 properties explicit. Existing crypto choices for other products are not
 changed by this Ethereum-specific direction.
 
+### HACL\* is preferred; secp256k1 signer approved (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: "HACL* is both approved and PREFERED over our own
+(crazy yolo roll your own etc.) Lean hackery." Then, to the statement that a
+HACL\* secp256k1 signer for Ethereum needed approval: "Do it."
+
+- For every cryptographic operation, Ethereum included, HACL\* is the source.
+  Pure Lean crypto is a specification or a differential oracle, never the
+  run-time path for secret data. The Ethereum independence rule above does not
+  apply to HACL\*.
+- A secret key is an opaque Lean type that only HACL\* calls can use
+  (`tools/secret-type-gate.py`). Constant time is checked on the compiled code
+  by Valgrind with leaking controls (`tests/ct/run.sh valgrind`).
+- First instance: `L4Factoidal/Crypto/K256Native.lean` over HACL\*
+  `Hacl_K256_ECDSA.c` (RFC 6979 nonce, low-S, recovery id), workflow
+  `check-k256-ct.yml`. Record: `docs/designissues/2026-11-27-bignum-timing-and-aes.md`.
+
 [Independent SSZ design and proof boundary](docs/designissues/2026-11-23-independent-ethereum-ssz.md).
 
 Acceptance: https://github.com/danbri/factoidal-core/issues/725.

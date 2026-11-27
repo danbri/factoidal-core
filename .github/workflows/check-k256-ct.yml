@@ -1,0 +1,91 @@
+# secp256k1 over HACL*, and the constant-time checks of
+# docs/designissues/2026-11-27-bignum-timing-and-aes.md section 6:
+#   gate      layer 1: secret-key types stay opaque (tools/secret-type-gate.py)
+#   valgrind  layer 3: memcheck finds no secret-dependent branch or address in the
+#             signing path; two leaking controls must be found (tests/ct/run.sh)
+#   probe     the Lean binding: EIP-155 vector, generator, refusals (l4k256-probe)
+
+name: Check secp256k1 and constant time
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'formal/lean4/L4Factoidal/Crypto/K256Native.lean'
+      - 'formal/lean4/Harness/K256Probe.lean'
+      - 'formal/lean4/ffi/hacl_k256.c'
+      - 'formal/lean4/lakefile.lean'
+      - 'formal/lean4/lean-toolchain'
+      - 'third_party/hacl/**'
+      - 'tests/ct/**'
+      - 'tools/secret-type-gate.py'
+      - '.github/workflows/check-k256-ct.yml'
+  pull_request:
+    paths:
+      - 'formal/lean4/L4Factoidal/Crypto/**'
+      - 'formal/lean4/Harness/K256Probe.lean'
+      - 'formal/lean4/ffi/hacl_k256.c'
+      - 'third_party/hacl/**'
+      - 'tests/ct/**'
+      - 'tools/secret-type-gate.py'
+      - '.github/workflows/check-k256-ct.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Self-test of the gate
+        run: python3 tools/secret-type-gate.py --self-test
+      - name: Secret-key types are opaque
+        run: python3 tools/secret-type-gate.py
+      - name: Vendored HACL* checksums
+        working-directory: third_party/hacl
+        run: sha256sum -c --quiet SHA256SUMS
+
+  valgrind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Correctness (no Valgrind)
+        run: tests/ct/run.sh 2>&1 | tee "$RUNNER_TEMP/ct-plain.log"
+      - name: Memcheck, secret marked undefined, gcc -O2
+        run: CC=gcc tests/ct/run.sh valgrind 2>&1 | tee "$RUNNER_TEMP/ct-gcc.log"
+      - name: Memcheck, secret marked undefined, clang -O2
+        run: CC=clang tests/ct/run.sh valgrind 2>&1 | tee "$RUNNER_TEMP/ct-clang.log"
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-valgrind-logs
+          path: ${{ runner.temp }}/ct-*.log
+          retention-days: 30
+
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-github-cache: false
+          use-mathlib-cache: false
+          lake-package-directory: formal/lean4
+      - name: Build and run l4k256-probe
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          lake build l4k256-probe 2>&1 | tee "$RUNNER_TEMP/k256-build.log"
+          lake exe l4k256-probe

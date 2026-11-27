@@ -227,6 +227,7 @@ cannot reach an extern).
 | `Crypto/RsaNative.lean` | the RSA public operation (RS256) | `ffi/hacl_rsa.c` | `l4jose-probe` |
 | `Crypto/RsaOaep.lean` | the RSA private operation (constant time) and RSAES-OAEP padding in pure Lean | `ffi/hacl_rsa.c` | `l4crypto-probe` section `rsa-oaep`, `tests/crypto/rsa-oaep-diff.mjs` |
 | `Crypto/ChaChaPoly.lean` | ChaCha20-Poly1305 AEAD | `ffi/hacl_chachapoly.c` | `l4crypto-probe` |
+| `Crypto/K256Native.lean` | ECDSA secp256k1: key check, public key, RFC 6979 recoverable signing with low-S and recovery id (Ethereum), low-S verification; `SecretKey` is opaque (`tools/secret-type-gate.py`) | `ffi/hacl_k256.c` | `l4k256-probe`, `tests/ct/run.sh valgrind` |
 | `Crypto/AesGcmNative.lean` | AES-128-GCM, AES-256-GCM (EverCrypt AEAD over Vale assembly; x86-64 Linux and macOS only, refusal elsewhere; `Crypto/Aead.lean` `AeadOps` is the parameter type) | `ffi/hacl_aesgcm.c` | `l4crypto-probe` section `aes-gcm` |
 | `Crypto/Hkdf.lean` | HMAC-SHA-256, HKDF-SHA-256 | `ffi/hacl_kdf.c` | `l4crypto-probe` |
 | `Crypto/X25519.lean` | X25519 | `ffi/hacl_kdf.c` | `l4crypto-probe` |

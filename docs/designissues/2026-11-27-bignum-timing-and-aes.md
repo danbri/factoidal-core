@@ -92,11 +92,9 @@ Owner, verbatim: "can we use HACL* for bigint work then?"
   forms) and inversion modulo a prime. Constant time is with respect to the values, not the length.
 - What it does not give: a general replacement for Lean `Nat`. It has no arbitrary-length values and
   no general division. For public data, Lean `Nat` stays the right tool.
-- Curves: HACL\* upstream has secp256k1 ECDSA (`Hacl_K256_ECDSA`); it is not vendored here. HACL\*
+- Curves: HACL\* has secp256k1 ECDSA (`Hacl_K256_ECDSA`, vendored 2026-11-27, section 7). HACL\*
   has no BLS12-381.
-- Ethereum: CLAUDE.md requires repository-owned Lean for Ethereum protocol logic, with no external
-  implementation unless the owner approves it. A HACL\* secp256k1 signer for Ethereum needs that
-  approval.
+- Ethereum: the owner approved HACL\* for Ethereum the same day (section 7).
 
 ## 6. Checking constant time from Lean (owner question, 2026-11-27)
 
@@ -124,3 +122,33 @@ tree already proves noninterference theorems of this form (`PageCanvas/Theorems.
    https://github.com/danbri/factoidal/issues/777.
 
 HACL\* has the same limit as layer 2: it trusts the C compiler.
+
+## 7. What landed (2026-11-27)
+
+Owner, verbatim: "Yes, start both" (layers 1 and 3), then "HACL* is both approved and PREFERED over
+our own (crazy yolo roll your own etc.) Lean hackery." and, on the secp256k1 signer, "Do it."
+
+Consequence for layer 1: we write no constant-time arithmetic in Lean. A secret is an opaque type
+that only HACL\* calls use.
+
+- **secp256k1 over HACL\*.** `third_party/hacl` gains `Hacl_K256_ECDSA.c`, `Hacl_EC_K256.c`,
+  `Hacl_HMAC_DRBG.c` and their headers, unchanged, from the pinned commit. `ffi/hacl_k256.c` signs a
+  hash with the RFC 6979 nonce (HACL\* HMAC-DRBG, RFC 6979 section 3.3), normalises to low S, and
+  takes the recovery id from y(R), with R from HACL\*'s constant-time point multiplication.
+  `L4Factoidal/Crypto/K256Native.lean` gives `SecretKey`, `signHash`, `verifyLowS` and the Ethereum
+  `v` values.
+- **Layer 1.** `SecretKey` has a private constructor and field. `#check_failure` lines fail the
+  build if it gets equality, `BEq`, `ToString`, `Repr`, `Hashable` or `Ord`.
+  `tools/secret-type-gate.py` checks the same rules from source, with a self-test of five mutants.
+- **Layer 3.** `tests/ct/ct_valgrind.c` marks the key undefined and counts memcheck errors in each
+  case. Two controls must leak: HACL\* `mod_exp_vartime`, and a textbook square-and-multiply. CI runs
+  it with gcc and clang (`.github/workflows/check-k256-ct.yml`).
+
+Measured on macOS arm64 before the push (no Valgrind on that host): `tests/ct/run.sh`, 8 pass, 0
+fail; the probe, linked by hand outside Lake, `k256: 13 pass, 0 fail (out of 13)`. Both include the
+EIP-155 example (r, s and v = 37 as published). The Valgrind results are in the first CI run of the
+workflow.
+
+Not done: Ethereum transaction signing in `evm-cleanroom` does not call this yet (that package
+imports no FFI); a Valgrind run of Lean-compiled code (the Lean runtime on `Nat`, as a third
+control); the wasm build is wired but not built here.
