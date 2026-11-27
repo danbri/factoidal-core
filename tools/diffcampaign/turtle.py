@@ -19,7 +19,7 @@ Oxigraph's output, so a defect shared by those and the Turtle reader is not
 seen. A document both readers refuse counts apart.
 
 Commands:
-  gen --seed S --n N --out cases.jsonl [--format turtle|trig]
+  gen --seed S --n N --out cases.jsonl [--format turtle|trig|nt|nquads]
   oxigraph cases.jsonl --out ox.jsonl                 (needs pyoxigraph)
 Then: node tools/diffcampaign/turtle-factoidal.mjs cases.jsonl ox.jsonl [module] [--keep DIR]
 """
@@ -167,9 +167,46 @@ def trig_document(rng):
     return "\n".join(out) + "\n"
 
 
+def line_term(rng, pos):
+    """A term of an N-Triples / N-Quads line: absolute IRIs (with UCHAR
+    escapes), blank node labels with the characters [141s] allows, and
+    literals with every ECHAR and UCHAR form, language tags and datatypes."""
+    r = rng.random()
+    if pos != "o" or r < 0.4:
+        if pos in ("s", "g") and r < 0.25:
+            return "_:" + rng.choice(["b", "b1", "b.c", "b-d", "_x", "1a", "bé", "b.c.d"])
+        return "<" + rng.choice(["http://example.org/", "urn:x:", "http://ex.org/é/"]) + rng.choice(
+            ["a", "b\\u0041", "c\\U0001F600", "d%20e", "f#g", "h?i=1"]) + ">"
+    body = "".join(rng.choice(["w", " ", "é", "😀", "\\t", "\\n", "\\\"", "\\\\", "\\u00E9", "\\U0001F600", "\\r", "\\b", "\\f", "'"])
+                   for _ in range(rng.randrange(0, 5)))
+    k = rng.random()
+    if k < 0.3:
+        return f'"{body}"@' + rng.choice(["en", "en-GB", "zh-Hant-TW", "x-private"])
+    if k < 0.55:
+        return f'"{body}"^^<' + rng.choice([XSD + "integer", XSD + "string", "http://example.org/dt"]) + ">"
+    return f'"{body}"'
+
+
+def line_document(rng, quads):
+    lines = []
+    for _ in range(rng.randrange(1, 12)):
+        parts = [line_term(rng, "s"), "<http://example.org/p" + str(rng.randrange(3)) + ">", line_term(rng, "o")]
+        if quads and rng.random() < 0.6:
+            parts.append(line_term(rng, "g"))
+        sep = rng.choice([" ", "\t", "  "])
+        end = rng.choice([" .", ".", " . ", " .\t# comment"])
+        lines.append(sep.join(parts) + end)
+    if rng.random() < 0.3:
+        lines.insert(rng.randrange(len(lines) + 1), "# a comment line")
+    if rng.random() < 0.2:
+        lines.append("")
+    return "\n".join(lines) + ("\n" if rng.random() < 0.9 else "")
+
+
 def gen(seed, n, out, fmt="turtle"):
     rng = random.Random(seed)
-    make = trig_document if fmt == "trig" else document
+    make = {"trig": trig_document, "nt": lambda r: line_document(r, False),
+            "nquads": lambda r: line_document(r, True)}.get(fmt, document)
     with open(out, "w") as fh:
         for i in range(n):
             fh.write(json.dumps({"id": f"{fmt[0]}{seed}-{i}", "format": fmt, "data": make(rng)}, ensure_ascii=False) + "\n")
@@ -182,7 +219,8 @@ def run_oxigraph(cases, out):
         for line in fin:
             c = json.loads(line)
             try:
-                fmt = {"trig": ox.RdfFormat.TRIG, "rdfxml": ox.RdfFormat.RDF_XML}.get(c.get("format"), ox.RdfFormat.TURTLE)
+                fmt = {"trig": ox.RdfFormat.TRIG, "rdfxml": ox.RdfFormat.RDF_XML, "nt": ox.RdfFormat.N_TRIPLES,
+                       "nquads": ox.RdfFormat.N_QUADS}.get(c.get("format"), ox.RdfFormat.TURTLE)
                 quads = list(ox.parse(c["data"].encode(), format=fmt,
                                       base_iri="http://example.org/base/"))
                 nq = ox.serialize(quads, format=ox.RdfFormat.N_QUADS).decode()

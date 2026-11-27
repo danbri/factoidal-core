@@ -1,4 +1,4 @@
-name: Differential SPARQL, Turtle, TriG and RDF/XML (Factoidal against Oxigraph)
+name: Differential SPARQL and RDF readers (Factoidal against Oxigraph)
 
 # P7 of batch https://github.com/danbri/factoidal-core/issues/1189:
 # https://github.com/danbri/factoidal-core/issues/1184 (random differential campaigns).
@@ -99,7 +99,7 @@ jobs:
         run: |
           python3 -m pip install --quiet pyoxigraph
           mkdir -p "$RUNNER_TEMP/fd" && cd "$RUNNER_TEMP/fd" && npm init -y >/dev/null && npm install --silent @factoidal/core@latest
-      - name: Generate, read, compare (Turtle, TriG, RDF/XML)
+      - name: Generate, read, compare (Turtle, TriG, RDF/XML, N-Triples, N-Quads)
         env:
           N: ${{ github.event.inputs.n || '5000' }}
           SEED: ${{ github.event.inputs.seed || github.run_number }}
@@ -107,7 +107,7 @@ jobs:
           set -o pipefail
           T="$RUNNER_TEMP"
           MAIN_OK=0; GH_TOKEN="${{ github.token }}" bash tools/fetch-builds.sh --set web > "$T/fetch.log" 2>&1 && MAIN_OK=1
-          for fmt in turtle trig rdfxml; do
+          for fmt in turtle trig rdfxml nt nquads; do
             if [ "$fmt" = rdfxml ]; then
               python3 tools/diffcampaign/rdfxml.py --seed "$SEED" --n "$N" --out "$T/$fmt-cases.jsonl"
             else
