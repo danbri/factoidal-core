@@ -1,4 +1,5 @@
 import Beacon.Harness
+import Beacon.Transition
 
 /-!
 # Runner for the official consensus test vectors (Fulu)
@@ -121,9 +122,159 @@ def sszStaticCase (o : Options) (handler : String) : CaseFn := fun dir => do
     | .ok () => return (.pass, "", 0, false)
     | .error e => return (.fail, e, 0, false)
 
+/-- Names of the top-level state fields whose serialisations differ. -/
+def stateDiff (p : Preset) (a b : BeaconState) : List String :=
+  let u := Codec.u64
+  let cp := Checkpoint.codec
+  let fields : List (String × ByteArray × ByteArray) := [
+    ("genesis_time", u.encode p a.genesisTime, u.encode p b.genesisTime),
+    ("slot", u.encode p a.slot, u.encode p b.slot),
+    ("fork", Fork.codec.encode p a.fork, Fork.codec.encode p b.fork),
+    ("latest_block_header", BeaconBlockHeader.codec.encode p a.latestBlockHeader, BeaconBlockHeader.codec.encode p b.latestBlockHeader),
+    ("block_roots", rootsCodec.encode p a.blockRoots, rootsCodec.encode p b.blockRoots),
+    ("state_roots", rootsCodec.encode p a.stateRoots, rootsCodec.encode p b.stateRoots),
+    ("eth1_data", Eth1Data.codec.encode p a.eth1Data, Eth1Data.codec.encode p b.eth1Data),
+    ("eth1_data_votes", Codec.encodeSeq Eth1Data.codec p a.eth1DataVotes, Codec.encodeSeq Eth1Data.codec p b.eth1DataVotes),
+    ("eth1_deposit_index", u.encode p a.eth1DepositIndex, u.encode p b.eth1DepositIndex),
+    ("validators", Codec.encodeSeq Validator.codec p a.validators, Codec.encodeSeq Validator.codec p b.validators),
+    ("balances", Codec.encodeSeq u p a.balances, Codec.encodeSeq u p b.balances),
+    ("randao_mixes", Codec.encodeSeq Codec.bytes32 p a.randaoMixes, Codec.encodeSeq Codec.bytes32 p b.randaoMixes),
+    ("slashings", Codec.encodeSeq u p a.slashings, Codec.encodeSeq u p b.slashings),
+    ("previous_epoch_participation", a.previousEpochParticipation, b.previousEpochParticipation),
+    ("current_epoch_participation", a.currentEpochParticipation, b.currentEpochParticipation),
+    ("justification_bits", Codec.packBits a.justificationBits 1, Codec.packBits b.justificationBits 1),
+    ("previous_justified_checkpoint", cp.encode p a.previousJustifiedCheckpoint, cp.encode p b.previousJustifiedCheckpoint),
+    ("current_justified_checkpoint", cp.encode p a.currentJustifiedCheckpoint, cp.encode p b.currentJustifiedCheckpoint),
+    ("finalized_checkpoint", cp.encode p a.finalizedCheckpoint, cp.encode p b.finalizedCheckpoint),
+    ("inactivity_scores", Codec.encodeSeq u p a.inactivityScores, Codec.encodeSeq u p b.inactivityScores),
+    ("current_sync_committee", SyncCommittee.codec.encode p a.currentSyncCommittee, SyncCommittee.codec.encode p b.currentSyncCommittee),
+    ("next_sync_committee", SyncCommittee.codec.encode p a.nextSyncCommittee, SyncCommittee.codec.encode p b.nextSyncCommittee),
+    ("latest_execution_payload_header", ExecutionPayloadHeader.codec.encode p a.latestExecutionPayloadHeader, ExecutionPayloadHeader.codec.encode p b.latestExecutionPayloadHeader),
+    ("next_withdrawal_index", u.encode p a.nextWithdrawalIndex, u.encode p b.nextWithdrawalIndex),
+    ("next_withdrawal_validator_index", u.encode p a.nextWithdrawalValidatorIndex, u.encode p b.nextWithdrawalValidatorIndex),
+    ("historical_summaries", Codec.encodeSeq HistoricalSummary.codec p a.historicalSummaries, Codec.encodeSeq HistoricalSummary.codec p b.historicalSummaries),
+    ("deposit_requests_start_index", u.encode p a.depositRequestsStartIndex, u.encode p b.depositRequestsStartIndex),
+    ("deposit_balance_to_consume", u.encode p a.depositBalanceToConsume, u.encode p b.depositBalanceToConsume),
+    ("exit_balance_to_consume", u.encode p a.exitBalanceToConsume, u.encode p b.exitBalanceToConsume),
+    ("earliest_exit_epoch", u.encode p a.earliestExitEpoch, u.encode p b.earliestExitEpoch),
+    ("consolidation_balance_to_consume", u.encode p a.consolidationBalanceToConsume, u.encode p b.consolidationBalanceToConsume),
+    ("earliest_consolidation_epoch", u.encode p a.earliestConsolidationEpoch, u.encode p b.earliestConsolidationEpoch),
+    ("pending_deposits", Codec.encodeSeq PendingDeposit.codec p a.pendingDeposits, Codec.encodeSeq PendingDeposit.codec p b.pendingDeposits),
+    ("pending_partial_withdrawals", Codec.encodeSeq PendingPartialWithdrawal.codec p a.pendingPartialWithdrawals, Codec.encodeSeq PendingPartialWithdrawal.codec p b.pendingPartialWithdrawals),
+    ("pending_consolidations", Codec.encodeSeq PendingConsolidation.codec p a.pendingConsolidations, Codec.encodeSeq PendingConsolidation.codec p b.pendingConsolidations),
+    ("proposer_lookahead", Codec.encodeSeq u p a.proposerLookahead, Codec.encodeSeq u p b.proposerLookahead)]
+  (fields.filter fun f => f.2.1 != f.2.2).map (·.1)
+
+/-- A transition under test: context, pre-state, case directory contents. -/
+abbrev Transition := Ctx → BeaconState → Except String BeaconState
+
+/-- Run `step` on `pre.ssz_snappy` and compare with `post.ssz_snappy`; a
+    case without a post-state passes exactly when the step is refused. -/
+def transitionCase (o : Options) (dir : System.FilePath) (extraCtx : Ctx → Ctx)
+    (load : IO (Except String Transition)) : IO (Status × String × Nat × Bool) := do
+  let p := o.preset
+  let metaText ← readText (dir / "meta.yaml")
+  let bls := (yamlNat metaText "bls_setting").getD 0
+  let verify := bls == 1 || (bls == 0 && o.verifyOptionalBls)
+  let c := extraCtx { p, verifyBls := verify, blsOff := bls == 2 }
+  let pre ← match BeaconState.codec.decode p (← readSnappy (dir / "pre.ssz_snappy")) with
+    | .ok s => pure s
+    | .error e => return (.fail, s!"pre-state does not decode: {e}", bls, verify)
+  let post ← readOptional (dir / "post.ssz_snappy")
+  let outcome := match ← load with
+    | .error e => Except.error s!"input does not decode: {e}"
+    | .ok step => (step c pre).bind fun s =>
+        if s.inRange then .ok s else .error "a uint64 field left its range"
+  match outcome, post with
+  | .error _, none => return (.pass, "", bls, verify)
+  | .ok _, none => return (.fail, "accepted an input the vector marks invalid", bls, verify)
+  | .error e, some _ => return (.fail, s!"refused a valid input: {e}", bls, verify)
+  | .ok s, some expected =>
+    if BeaconState.codec.encode p s == expected then return (.pass, "", bls, verify)
+    else match BeaconState.codec.decode p expected with
+      | .ok e => return (.fail, s!"post-state differs in: {stateDiff p s e}", bls, verify)
+      | .error e => return (.fail, s!"post-state vector does not decode: {e}", bls, verify)
+
+def withOp {α : Type} (codec : Codec α) (p : Preset) (path : System.FilePath)
+    (f : Ctx → BeaconState → α → Except String BeaconState) : IO (Except String Transition) := do
+  match codec.decode p (← readSnappy path) with
+  | .ok op => return .ok fun c s => f c s op
+  | .error e => return .error e
+
+def epochStep (handler : String) : Option Transition :=
+  match handler with
+  | "justification_and_finalization" => some fun c s => processJustificationAndFinalization c.p s
+  | "inactivity_updates" => some fun c s => .ok (processInactivityUpdates c.p s)
+  | "rewards_and_penalties" => some fun c s => .ok (processRewardsAndPenalties c.p s)
+  | "registry_updates" => some fun c s => .ok (processRegistryUpdates c.p s)
+  | "slashings" => some fun c s => .ok (processSlashings c.p s)
+  | "eth1_data_reset" => some fun c s => .ok (processEth1DataReset c.p s)
+  | "pending_deposits" => some fun c s => .ok (processPendingDeposits c s)
+  | "pending_consolidations" => some fun c s => .ok (processPendingConsolidations c.p s)
+  | "effective_balance_updates" => some fun _ s => .ok (processEffectiveBalanceUpdates s)
+  | "slashings_reset" => some fun c s => .ok (processSlashingsReset c.p s)
+  | "randao_mixes_reset" => some fun c s => .ok (processRandaoMixesReset c.p s)
+  | "historical_summaries_update" => some fun c s => .ok (processHistoricalSummariesUpdate c.p s)
+  | "participation_flag_updates" => some fun _ s => .ok (processParticipationFlagUpdates s)
+  | "sync_committee_updates" => some fun c s => processSyncCommitteeUpdates c s
+  | "proposer_lookahead" => some fun c s => processProposerLookahead c.p s
+  | _ => none
+
+def operationCase (o : Options) (handler : String) : Option CaseFn :=
+  let p := o.preset
+  let simple {α : Type} (codec : Codec α) (file : String)
+      (f : Ctx → BeaconState → α → Except String BeaconState) : Option CaseFn :=
+    some fun dir => transitionCase o dir id (withOp codec p (dir / file) f)
+  match handler with
+  | "attestation" => simple Attestation.codec "attestation.ssz_snappy" processAttestation
+  | "attester_slashing" => simple AttesterSlashing.codec "attester_slashing.ssz_snappy" processAttesterSlashing
+  | "proposer_slashing" => simple ProposerSlashing.codec "proposer_slashing.ssz_snappy" processProposerSlashing
+  | "block_header" => simple BeaconBlock.codec "block.ssz_snappy" fun c s b => processBlockHeader c.p s b
+  | "bls_to_execution_change" =>
+    simple SignedBLSToExecutionChange.codec "address_change.ssz_snappy" processBlsToExecutionChange
+  | "consolidation_request" => simple ConsolidationRequest.codec "consolidation_request.ssz_snappy"
+      fun c s r => .ok (processConsolidationRequest c.p s r)
+  | "deposit" => simple Deposit.codec "deposit.ssz_snappy" processDeposit
+  | "deposit_request" => simple DepositRequest.codec "deposit_request.ssz_snappy"
+      fun _ s r => .ok (processDepositRequest s r)
+  | "sync_aggregate" => simple SyncAggregate.codec "sync_aggregate.ssz_snappy" processSyncAggregate
+  | "voluntary_exit" => simple SignedVoluntaryExit.codec "voluntary_exit.ssz_snappy" processVoluntaryExit
+  | "withdrawal_request" => simple WithdrawalRequest.codec "withdrawal_request.ssz_snappy"
+      fun c s r => .ok (processWithdrawalRequest c.p s r)
+  | "withdrawals" => simple ExecutionPayload.codec "execution_payload.ssz_snappy"
+      fun c s payload => processWithdrawals c.p s payload
+  | "execution_payload" => some fun dir => do
+      let valid := (yamlBool (← readText (dir / "execution.yaml")) "execution_valid").getD true
+      transitionCase o dir (fun c => { c with executionValid := valid })
+        (withOp BeaconBlockBody.codec p (dir / "body.ssz_snappy") processExecutionPayload)
+  | _ => none
+
+def sanityCase (o : Options) (handler : String) : Option CaseFn :=
+  let p := o.preset
+  match handler with
+  | "slots" => some fun dir => do
+      let some n := firstNat (← readText (dir / "slots.yaml"))
+        | return (.fail, "slots.yaml has no slot count", 0, false)
+      transitionCase o dir id (pure (.ok fun c s => processSlots c s (s.slot + n)))
+  | "blocks" => some fun dir => do
+      let some n := yamlNat (← readText (dir / "meta.yaml")) "blocks_count"
+        | return (.fail, "meta.yaml has no blocks_count", 0, false)
+      let mut raw : Array ByteArray := #[]
+      for i in [0:n] do
+        raw := raw.push (← readSnappy (dir / s!"blocks_{i}.ssz_snappy"))
+      transitionCase o dir id (pure (.ok fun c s =>
+        raw.foldlM (fun s bytes =>
+          match SignedBeaconBlock.codec.decode p bytes with
+          | .ok block => stateTransition c s block
+          | .error e => .error s!"block does not decode: {e}") s))
+  | _ => none
+
 def caseFnFor (o : Options) (runner handler : String) : Option CaseFn :=
   match runner with
   | "ssz_static" => some (sszStaticCase o handler)
+  | "epoch_processing" => (epochStep handler).map fun step dir => transitionCase o dir id (pure (.ok step))
+  | "operations" => operationCase o handler
+  | "sanity" => sanityCase o handler
   | _ => none
 
 def runCase (fn : CaseFn) (name : String) (dir : System.FilePath) : IO CaseResult := do
@@ -140,16 +291,13 @@ def runAll (o : Options) (fn : CaseFn) (cases : Array (String × System.FilePath
   if o.jobs ≤ 1 then
     cases.mapM fun (name, dir) => runCase fn name dir
   else
+    -- One task per case; the runtime's worker pool (LEAN_NUM_THREADS) bounds the parallelism.
+    let tasks ← cases.mapM fun (name, dir) => IO.asTask (runCase fn name dir)
     let mut out := #[]
-    let mut i := 0
-    while i < cases.size do
-      let batch := cases.extract i (i + o.jobs)
-      let tasks ← batch.mapM fun (name, dir) => IO.asTask (runCase fn name dir)
-      for t in tasks do
-        match ← IO.wait t with
-        | .ok r => out := out.push r
-        | .error e => out := out.push { name := "?", status := .fail, detail := s!"task error: {e}" }
-      i := i + o.jobs
+    for t in tasks do
+      match ← IO.wait t with
+      | .ok r => out := out.push r
+      | .error e => out := out.push { name := "?", status := .fail, detail := s!"task error: {e}" }
     return out
 
 structure HandlerSummary where

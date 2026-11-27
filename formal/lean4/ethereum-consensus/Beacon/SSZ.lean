@@ -304,7 +304,7 @@ macro "ssz_container " name:ident " where " fields:(ident " : " term " := " term
     roots := roots.push (← `(Beacon.Codec.root ($c : Beacon.Codec $t) p ($proj x)))
   `(structure $name where
       $[$names:ident : $types]*
-      deriving Inhabited
+      deriving Inhabited, BEq
     def $codecName : Beacon.Codec $name where
       fixedSize := fun p => Beacon.Codec.containerFixed [$fixeds,*]
       encode := fun p x => Beacon.Codec.containerEncode [$encs,*]
