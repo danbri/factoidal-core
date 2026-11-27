@@ -110,24 +110,17 @@ def flo (x : Float) : String := if x.isFinite then toString x else "null"
 
 /-! ## Threads -/
 
-/-- Asked once for the process: `some true` when dedicated tasks run on threads of their own. -/
-initialize threadsProbe : IO.Ref (Option Bool) ← IO.mkRef none
-
 /-- True when a dedicated task runs on a thread of its own. With no task manager a task runs at
 once on the calling thread: a probe task that sleeps 50 ms makes `IO.asTask` return after it. With
-a task manager it returns at once. Not in the Wasm build; not with `FOAFNAUT_LEAN_THREADS=0`. -/
+a task manager it returns at once. Not in the Wasm build; not with `FOAFNAUT_LEAN_THREADS=0`. The
+caller keeps the answer (`WebDocument.Engine.audioDevice`): this module holds no global state. -/
 def threadsAvailable : BaseIO Bool := do
   if System.Platform.isEmscripten then return false
   if (← IO.getEnv "FOAFNAUT_LEAN_THREADS") == some "0" then return false
-  match ← threadsProbe.modifyGet (fun p => (p, p)) with
-  | some b => return b
-  | none =>
-    let t0 ← IO.monoMsNow
-    let _ ← IO.asTask (IO.sleep 50) Task.Priority.dedicated
-    let t1 ← IO.monoMsNow
-    let b := t1 - t0 < 40
-    threadsProbe.modify fun _ => some b
-    return b
+  let t0 ← IO.monoMsNow
+  let _ ← IO.asTask (IO.sleep 50) Task.Priority.dedicated
+  let t1 ← IO.monoMsNow
+  return t1 - t0 < 40
 
 /-! ## The task -/
 
@@ -323,23 +316,14 @@ def hasEnded (h : Handle) : BaseIO Bool := h.shared.ended.modifyGet fun b => (b,
 /-- The rendering tasks of one engine, by (page session, context). -/
 abbrev Tasks := Std.HashMap (Nat × Nat) Handle
 
-/-- The audio output the engine uses: the sink spec and the device's preferred rate and channels;
-`none` when there is no output (no threads, or the sink kind can not open). -/
-initialize deviceProbe : IO.Ref (Option (Option (String × Float × Nat))) ← IO.mkRef none
-
+/-- The audio output: the sink spec and the device's preferred rate and channels; `none` when there
+is no output (no threads, or the sink kind gives no device). Asked once by each engine. -/
 def device : BaseIO (Option (String × Float × Nat)) := do
-  match ← deviceProbe.modifyGet (fun p => (p, p)) with
-  | some d => return d
-  | none =>
-    let d ← do
-      if !(← threadsAvailable) then pure none
-      else
-        let spec ← Sink.defaultSpec
-        let info ← Sink.deviceInfo spec
-        if info.size < 2 then pure none
-        else pure (some (spec, info[0]!, info[1]!.toUInt64.toNat))
-    deviceProbe.modify fun _ => some d
-    return d
+  if !(← threadsAvailable) then return none
+  let spec ← Sink.defaultSpec
+  let info ← Sink.deviceInfo spec
+  if info.size < 2 then return none
+  return some (spec, info[0]!, info[1]!.toUInt64.toNat)
 
 /-- Before a page action of session `sid`: merge the reports of its tasks into `audio`, and drop
 the tasks that ended. `nowMs` is the page clock (for `getOutputTimestamp().performanceTime`). -/
