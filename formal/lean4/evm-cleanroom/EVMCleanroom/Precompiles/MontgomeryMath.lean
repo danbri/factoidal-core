@@ -25,7 +25,8 @@ hypotheses. Nothing here says the modulus is prime, and nothing is said about
 the limb routines themselves: that is `MontgomeryProofs.lean`.
 -/
 
-set_option maxRecDepth 4096
+set_option maxRecDepth 8192
+set_option exponentiation.threshold 1024
 
 namespace EVMCleanroom.Precompiles.MontMath
 
@@ -107,6 +108,41 @@ theorem redc_final (N R t m q : Nat) (h : t + m * N = q * R) (ht : t < N * R) (h
     rw [← hmod, ← e2, Nat.add_mul_mod_self_left]
   · rw [if_neg hc]
     exact ⟨by omega, hmod⟩
+
+/-- Kind: functional correctness (Montgomery reduction, the final reduction written with `%`).
+    Says: if `t + m · N = q · R` then `(q mod N) · R ≡ t (mod N)`.
+    Does not say: that `q mod N` is what a single conditional subtraction returns; that needs `q < 2N` (`redc_lt_two`). -/
+theorem redc_mod (N R t m q : Nat) (h : t + m * N = q * R) : q % N * R % N = t % N := by
+  have e1 : q % N * R % N = q * R % N := mul_congr (Nat.mod_mod q N) rfl
+  have e2 : q * R % N = t % N := by rw [← h, Nat.add_mul_mod_self_right]
+  exact e1.trans e2
+
+/-- Kind: algebraic fact.
+    Says: for a number below `2n`, subtracting `n` once when it is not below `n` gives its residue.
+    Does not say: anything for a number of `2n` or more. -/
+theorem mod_of_lt_two (v n : Nat) (h : v < 2 * n) : (if v < n then v else v - n) = v % n := by
+  by_cases hlt : v < n
+  · rw [if_pos hlt, Nat.mod_eq_of_lt hlt]
+  · rw [if_neg hlt]
+    have h1 : v - n < n := by omega
+    exact ((Nat.mod_eq_sub_mod (Nat.le_of_not_lt hlt)).trans (Nat.mod_eq_of_lt h1)).symm
+
+/-- Kind: bound.
+    Says: a number below the radix is below any positive multiple of the radix.
+    Does not say: anything for a zero modulus. -/
+theorem lt_mul_radix {x N R : Nat} (hx : x < R) (hN : 0 < N) : x < N * R := by
+  have h : 1 * R ≤ N * R := Nat.mul_le_mul_right R hN
+  rw [Nat.one_mul] at h
+  exact Nat.lt_of_lt_of_le hx h
+
+/-- Kind: bound.
+    Says: the product of a canonical residue and a number below the radix is below `N · R`, the range Montgomery reduction accepts.
+    Does not say: anything when the first factor is not below `N`. -/
+theorem mul_lt_mul_radix {a b N R : Nat} (ha : a < N) (hb : b < R) : a * b < N * R := by
+  have h1 : a * b ≤ a * R := Nat.mul_le_mul_left a (Nat.le_of_lt hb)
+  have h2 : (a + 1) * R ≤ N * R := Nat.mul_le_mul_right R (Nat.succ_le_of_lt ha)
+  rw [Nat.add_mul, Nat.one_mul] at h2
+  omega
 
 /-! ### The per-row fact -/
 
@@ -429,7 +465,7 @@ theorem redc_chain4 {t0 t1 t2 t3 t4 t5 t6 t7 N m0 m1 m2 m3 x0_1 x0_2 x0_3 x0_4 x
     (he0 : e0 = 0) (hm0 : m0 < 2 ^ 64) (hm1 : m1 < 2 ^ 64) (hm2 : m2 < 2 ^ 64) (hm3 : m3 < 2 ^ 64) :
     (m0 + m1 * 2 ^ 64 + m2 * 2 ^ 128 + m3 * 2 ^ 192) < 2 ^ 256 ∧
     t0 + t1 * 2 ^ 64 + t2 * 2 ^ 128 + t3 * 2 ^ 192 + t4 * 2 ^ 256 + t5 * 2 ^ 320 + t6 * 2 ^ 384 + t7 * 2 ^ 448 + (m0 + m1 * 2 ^ 64 + m2 * 2 ^ 128 + m3 * 2 ^ 192) * N =
-      (x3_1 + x3_2 * 2 ^ 64 + x3_3 * 2 ^ 128 + x3_4 * 2 ^ 192 + e4 * 2 ^ 256) * 2 ^ 256 := by
+      (e4 * 2 ^ 256 + (x3_1 + x3_2 * 2 ^ 64 + x3_3 * 2 ^ 128 + x3_4 * 2 ^ 192)) * 2 ^ 256 := by
   rw [sum_mul4 m0 m1 m2 m3 N]
   constructor
   · omega
@@ -500,7 +536,7 @@ theorem redc_chain6 {t0 t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 N m0 m1 m2 m3 m4 m5 x
     (he0 : e0 = 0) (hm0 : m0 < 2 ^ 64) (hm1 : m1 < 2 ^ 64) (hm2 : m2 < 2 ^ 64) (hm3 : m3 < 2 ^ 64) (hm4 : m4 < 2 ^ 64) (hm5 : m5 < 2 ^ 64) :
     (m0 + m1 * 2 ^ 64 + m2 * 2 ^ 128 + m3 * 2 ^ 192 + m4 * 2 ^ 256 + m5 * 2 ^ 320) < 2 ^ 384 ∧
     t0 + t1 * 2 ^ 64 + t2 * 2 ^ 128 + t3 * 2 ^ 192 + t4 * 2 ^ 256 + t5 * 2 ^ 320 + t6 * 2 ^ 384 + t7 * 2 ^ 448 + t8 * 2 ^ 512 + t9 * 2 ^ 576 + t10 * 2 ^ 640 + t11 * 2 ^ 704 + (m0 + m1 * 2 ^ 64 + m2 * 2 ^ 128 + m3 * 2 ^ 192 + m4 * 2 ^ 256 + m5 * 2 ^ 320) * N =
-      (x5_1 + x5_2 * 2 ^ 64 + x5_3 * 2 ^ 128 + x5_4 * 2 ^ 192 + x5_5 * 2 ^ 256 + x5_6 * 2 ^ 320 + e6 * 2 ^ 384) * 2 ^ 384 := by
+      (e6 * 2 ^ 384 + (x5_1 + x5_2 * 2 ^ 64 + x5_3 * 2 ^ 128 + x5_4 * 2 ^ 192 + x5_5 * 2 ^ 256 + x5_6 * 2 ^ 320)) * 2 ^ 384 := by
   rw [sum_mul6 m0 m1 m2 m3 m4 m5 N]
   constructor
   · omega
@@ -513,6 +549,10 @@ theorem redc_chain6 {t0 t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 N m0 m1 m2 m3 m4 m5 x
 #print axioms mul_unit
 #print axioms redc_lt_two
 #print axioms redc_final
+#print axioms redc_mod
+#print axioms mod_of_lt_two
+#print axioms lt_mul_radix
+#print axioms mul_lt_mul_radix
 #print axioms row_low_zero
 #print axioms row_low_zero_gen
 #print axioms one_lt_of_inv
