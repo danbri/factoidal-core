@@ -5,6 +5,13 @@ defaultTargets = ["EVMCleanroom"]
 [[lean_lib]]
 name = "EVMCleanroom"
 
+# The repository's pure SHA-256 (no imports beyond Init), shared by source
+# with the consensus package. Used by precompiles 0x02 and 0x0a.
+[[lean_lib]]
+name = "FactoidalSHA2"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto.SHA2", "L4Factoidal.Crypto.SHA2Theorems"]
+
 [[lean_exe]]
 name = "evm-subset"
 root = "EVMCleanroom.CLI"

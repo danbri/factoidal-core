@@ -292,6 +292,12 @@ def runFrame (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State) :
       .returned entered { frame with gas := remaining, outputData := bytes, halted := true }
     | .error .outOfGas => .exceptional .outOfGas
     | .error reason => .indeterminate reason
+  else if Precompiles.active frame.profile address then
+    match Precompiles.run frame.profile frame.keccakAcceptance address frame.gas frame.callData with
+    | .ok (bytes, remaining) =>
+      .returned entered { frame with gas := remaining, outputData := bytes, halted := true }
+    | .error .outOfGas => .exceptional .outOfGas
+    | .error reason => .indeterminate reason
   else CallOpcode.execute fuel entered address frame
 
 /-- Kind: executable correspondence.
@@ -351,9 +357,34 @@ theorem runFrame_identity_fuel (fuel otherFuel : Nat) (entered : TxWorld) (frame
     and its complete fuel and journal semantics without a second implementation.
     Does not say: that all Ethereum instructions or forks are implemented. -/
 theorem runFrame_ordinary (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State)
-    (hAddress : address ≠ 4) :
+    (hAddress : address ≠ 4) (hNotNative : Precompiles.active frame.profile address = false) :
     runFrame fuel entered address frame = CallOpcode.execute fuel entered address frame := by
-  simp [runFrame, hAddress]
+  simp [runFrame, hAddress, hNotNative]
+
+/-- Kind: executable correspondence.
+    Says: a transaction sent directly to an active native precompile other than identity
+    returns the router's output and unspent gas, without running account code or using
+    instruction fuel.
+    Does not say: the router's output is the specified function. -/
+theorem runFrame_native_success (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State)
+    (bytes : ByteView) (remaining : Nat) (hAddress : address ≠ 4)
+    (hActive : Precompiles.active frame.profile address = true)
+    (hRun : Precompiles.run frame.profile frame.keccakAcceptance address frame.gas frame.callData =
+      .ok (bytes, remaining)) :
+    runFrame fuel entered address frame =
+      .returned entered { frame with gas := remaining, outputData := bytes, halted := true } := by
+  simp [runFrame, hAddress, hActive, hRun]
+
+/-- Kind: exceptional boundary.
+    Says: an exceptional halt of a directly called native precompile is an EVM
+    out-of-gas outcome of the transaction frame.
+    Does not say: which inputs are rejected. -/
+theorem runFrame_native_failure (fuel : Nat) (entered : TxWorld) (address : Nat) (frame : State)
+    (hAddress : address ≠ 4) (hActive : Precompiles.active frame.profile address = true)
+    (hRun : Precompiles.run frame.profile frame.keccakAcceptance address frame.gas frame.callData =
+      .error .outOfGas) :
+    runFrame fuel entered address frame = .exceptional .outOfGas := by
+  simp [runFrame, hAddress, hActive, hRun]
 
 /-- The real top-level frame projection, shared by ordinary and admitted blob
     transactions. Transaction context is already installed in `entered`; local
@@ -425,6 +456,8 @@ theorem entryFrame_blobHashes (p : Request) (entered : TxWorld) (budget : Budget
 #print axioms settleFrame_identity_outOfGas
 #print axioms runFrame_identity_fuel
 #print axioms runFrame_ordinary
+#print axioms runFrame_native_success
+#print axioms runFrame_native_failure
 #print axioms run_empty_blobHashes
 #print axioms debitSender_blobHashes
 #print axioms entryFrame_blobHashes
