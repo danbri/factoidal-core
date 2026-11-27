@@ -1,4 +1,5 @@
 import SVG
+import SVGAnimate
 import L4Factoidal.Rendering.SfntProfile
 import Std.Data.HashMap
 
@@ -720,6 +721,36 @@ def anchorChunk (spots : Array Spot) (chunk : Array Nat) (width : Float) (anchor
 def listAt (outer inner : List Float) (c idx : Nat) : Option Float :=
   (inner[idx]?).orElse fun _ => outer[c]?
 
+/-- The per-character values of the glyphs of a right-to-left run, moved so that the
+    run's absolute position starts its chunk. `shapeRuns` gives a run's glyphs in visual
+    order, so the first glyph of a right-to-left run is its last character; the `x` or `y`
+    of its first character (SVG 1.1 §10.4: an absolute position starts a text chunk) goes
+    to that first glyph, and the run is placed as one chunk. Only a run with one positioned
+    glyph changes; per-glyph positions of a reordered run stay as they are. -/
+def rtlChunkStarts (cells : Array GlyphCell)
+    (values : Array (Option Float × Option Float × Float × Float × Option Float)) :
+    Array (Option Float × Option Float × Float × Float × Option Float) := Id.run do
+  let mut values := values
+  let mut k := 0
+  for _ in [:cells.size] do
+    if k >= cells.size then break
+    let run := cells[k]!.run
+    -- The glyphs k .. stop-1 are of one run.
+    let mut stop := k+1
+    for _ in [:cells.size] do
+      if stop < cells.size && cells[stop]!.run == run then stop := stop+1 else break
+    let ks := (List.range (stop-k)).map (·+k)
+    let positioned := ks.filter fun j => let (ax,ay,_,_,_) := values[j]!; ax.isSome || ay.isSome
+    let reordered := ks.any fun j => j+1 < stop && cells[j+1]!.char < cells[j]!.char
+    if reordered then
+      if let [j] := positioned then
+        if j != k then
+          let (ax,ay,_,_,_) := values[j]!
+          values := values.modify j fun (_,_,dx,dy,r) => (none,none,dx,dy,r)
+          values := values.modify k fun (_,_,dx,dy,r) => (ax,ay,dx,dy,r)
+    k := stop
+  return values
+
 /-- Lower one `text` element to a group of glyph paths, drawn with `fonts`. With
     `numeric`, each glyph that `glyphAdmitted` accepts goes to the end of `table` and its
     path names it (`NativeSVG.glyphAttribute`) in place of path data text. -/
@@ -754,6 +785,7 @@ def lowerSfntWith (fonts : Array Font) (lookup : String → Option NamespaceNode
     (listAt xs run.xs cell.char idx,listAt ys run.ys cell.char idx,
      (listAt dxs run.dxs cell.char idx).getD 0,(listAt dys run.dys cell.char idx).getD 0,
      (listAt rotations run.rotates cell.char idx).orElse fun _ => run.rotates.getLast?.orElse fun _ => rotations.getLast?)
+  let values := rtlChunkStarts cells values
   let isSpace := fun (c : Nat) => chars[c]? == some ' '
   let mut spots : Array Spot := Array.replicate cells.size {}
   -- Text chunks (SVG 1.1 §10.4): an absolute position starts one.
@@ -982,23 +1014,30 @@ def svgFontIn : Nat → NamespaceNode → Bool
   | fuel+1,.element name _ children =>
     (name.namespace_ == some svgURI && name.localPart == "font") || children.any (svgFontIn fuel)
 
-/-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
-`fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
-reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
-here the first entry refuses the document, with its text as the reason. -/
-def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
+/-- `parseWithFonts` from a checked root (`NativeSVG.checkedRoot`). -/
+def parseWithFontsNode (fonts : Array Font) (root : NamespaceNode) (outputWidth outputHeight : Nat)
     (documentURL : Option String := none) : Except String NativeSVG.Scene := do
-  let root ← NativeSVG.checkedRoot xml
   -- An SVG font in the document (SVG Tiny 1.2 §11.7) is not drawn by the SFNT lowering: its
   -- text would come out in the wrong font, so the document is refused. (A `font-face` whose
   -- `font-face-uri` names another document is a font that is not loaded here; the text falls
-  -- back to the next family, as for a web font that fails to load.)
+  -- back to the next family, as for a web font that fails to load.) `NativeSVGForgiving.parseStrict`
+  -- draws SVG fonts and removes them before it calls this.
   if svgFontIn maxTreeDepth root then throw "SVG font element in the document: not drawn by the SFNT text lowering"
   let (tree,log,glyphs) := lowerDocumentGlyphs fonts root
   if let some first := log.head? then throw s!"text lowering: {first}"
   let context ← NativeSVG.ReferenceContext.create tree documentURL
   NativeSVG.parseRootInContextSized context [] (Float.ofNat outputWidth) (Float.ofNat outputHeight)
     {} (fun attrs => .ok attrs) none glyphs
+
+/-- A standalone SVG document with its text, strictly: the text is lowered to glyph paths with
+`fonts` (as the engine does for SVG in a page, `WebRender.makeReplacedIn`), and then the strict
+reader draws the tree. Where the lowering approximates or drops anything, it writes a log entry;
+here the first entry refuses the document, with its text as the reason. -/
+def parseWithFonts (fonts : Array Font) (xml : String) (outputWidth outputHeight : Nat)
+    (documentURL : Option String := none) (time : Int := 0) : Except String NativeSVG.Scene := do
+  -- SVG Tiny 1.2 chapter 16: the document at document time `time` ms (`NativeSVGAnimate`).
+  let root ← NativeSVGAnimate.snapshot time (← NativeSVG.checkedRoot xml)
+  parseWithFontsNode fonts root outputWidth outputHeight documentURL
 
 /-- `parseWithFonts` as the JSON artifact of `NativeSVG.compile`. -/
 def compileWithFonts (fonts : Array Font) (xml : String) (width height : Nat) : String :=

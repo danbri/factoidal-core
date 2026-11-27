@@ -59,6 +59,30 @@ CORPUS_PATCHES = [
      "const webNames=['web-render/engine.mjs',", "const webNames=['web-render/engine.mjs','web-render/engine-worker.mjs','web-render/engine-core.mjs',"),
     ('The magenta control shader also reads the tiles binding, which the engine now has',
      "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001;", "clamp(params.rows[0],vec4f(0.0),vec4f(1.0))*0.000001+vec4f(f32(tiles[0])*0.0);"),
+    ('Serve finite_floats.ts: render_plan.ts now imports it',
+     "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts',", "const runtimeNames=['svg_engine.ts','render_plan.ts','gpu_transport.ts','finite_floats.ts',"),
+    # Owner, 2026-11-27, to "should the harness give the HTML tests the files that the engine
+    # asks for": "yes" (https://github.com/danbri/factoidal-core/issues/1164).
+    ('The transport page may read files of the pinned corpus, from the same corpus server',
+     "r.request().url()===origin+'/transport'?r.continue():r.abort()",
+     "r.request().url()===origin+'/transport'||r.request().url().startsWith(origin+'/')?r.continue():r.abort()"),
+    ('An HTML test gets its document URL, and the stylesheets, imported sheets, images and '
+     'background images that Lean asks for, from the pinned corpus (inspect, then compileDocument), '
+     'as native_html_document.ts gives them; an image that is not read is left out, as there; fonts stay none',
+     "if(!a&&isHTML){a=await window.webEngine.compile(xml,800,600);policy={mode:'wasm-original-html-artifact',compilerWidth:800,compilerHeight:600,fontInputs:'none'};}",
+     "if(!a&&isHTML){const corpus=new URL(documentURL).origin+'/',inspect=options=>window.webEngine.inspectDocument(xml,{url:documentURL,...options});"
+     "const get=async url=>{if(!url.startsWith(corpus))throw Error('Requested resource outside the pinned corpus: '+url);"
+     "const response=await fetch(url);if(!response.ok)throw Error('Corpus resource HTTP '+response.status+': '+url);return new Uint8Array(await response.arrayBuffer());};"
+     "const text=bytes=>new TextDecoder().decode(bytes),base64=bytes=>{let out='';for(let i=0;i<bytes.length;i+=32768)out+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(out);};"
+     "const first=await inspect({}),resources=[],imported=[],images=[],missing=[];"
+     "for(const d of first.stylesheets??[])resources.push({nodeId:d.nodeId,url:d.url,source:text(await get(d.url))});"
+     "let sheets=first;if(resources.length||/<style/i.test(xml))for(let round=0;round<8;round++){"
+     "sheets=await inspect({resources,...(imported.length?{imported}:{})});const lacking=(sheets.imports??[]).filter(u=>!imported.some(i=>i.url===u.url));"
+     "if(!lacking.length)break;for(const {url} of lacking)imported.push({url,source:text(await get(url))});}"
+     "const wanted=new Map();for(const image of [...(first.images??[]),...(first.backgroundImages??[]),...(sheets.backgroundImages??[])])if(!wanted.has(image.key))wanted.set(image.key,image.url);"
+     "for(const [key,url] of wanted)try{images.push({key,base64:base64(await get(url))});}catch(error){missing.push(String(error.message??error));}"
+     "a=await window.webEngine.compileDocument(xml,800,600,{url:documentURL,resources,images,commands:[],...(imported.length?{imported}:{})});"
+     "policy={mode:'wasm-original-html-document',compilerWidth:800,compilerHeight:600,fontInputs:'none',documentURL,stylesheets:resources.length,imported:imported.length,images:images.length,missing};}"),
 ]
 
 
@@ -161,7 +185,7 @@ class Run:
         self.records.append({'format': 'factoidal-render-score-v1', 'suite': suite, 'title': title, 'origin': 'measured',
                              'runner': runner, 'input': pin, 'denominator': denominator, 'commit': self.commit,
                              'date': time.strftime('%Y-%m-%d', time.gmtime()), 'counts': counts,
-                             'groups': groups or [], 'host': host_name(), **extra,
+                             'groups': groups or [], 'host': self.a.host or host_name(), **extra,
                              **({'dirty': self.dirty} if self.dirty else {})})
 
     # Suites. Each one calls add() once for each score it gives.
@@ -199,23 +223,23 @@ class Run:
                  audit['documents'], {'agree': audit['equal'], 'differ': audit['different']},
                  [{'reason': name.replace('_', ' '), 'count': n, 'examples': []} for name, n in buckets])
 
-    def svg_tiny_admission(self):
+    def svg_tiny_acceptance(self):
         archive = self.tiny_archive()
         self.need(LAB / '.build/web-render/olean', 'The lab Lean modules')
         self.native()
-        out = self.dir / 'tiny-admission'
-        self.call('tiny-admission', [sys.executable, 'tests/browser-wpt/svg-tiny-admission.py', '--archive', archive,
+        out = self.dir / 'tiny-acceptance'
+        self.call('tiny-acceptance', [sys.executable, 'tests/browser-wpt/svg-tiny-acceptance.py', '--archive', archive,
                                      '--output', out, '--timeout', 900], 1200, cwd=ROOT)
-        path = out / 'svg-tiny-admission.json'
+        path = out / 'svg-tiny-acceptance.json'
         if not path.exists():
-            raise NotRun(f'svg-tiny-admission.py wrote no report, see {self.dir}/tiny-admission.log')
+            raise NotRun(f'svg-tiny-acceptance.py wrote no report, see {self.dir}/tiny-acceptance.log')
         report = json.loads(path.read_text())
-        rows = [row for row in report['cases'] if row['admission'] != 'ADMITTED']
+        rows = [row for row in report['cases'] if row['acceptance'] != 'ACCEPTED']
         counts = {k.lower(): v for k, v in report['allCounts'].items()}
-        self.add('svg-tiny-admission', 'W3C SVG Tiny 1.2, strict Lean SVG compiler admission', 'tests/browser-wpt/svg-tiny-admission.py',
+        self.add('svg-tiny-acceptance', 'W3C SVG Tiny 1.2, files accepted by the strict Lean SVG reader', 'tests/browser-wpt/svg-tiny-acceptance.py',
                  {'name': 'W3C SVG Tiny 1.2 archive', 'pin': TINY_SHA}, len(report['cases']), counts,
                  groups_of(rows, lambda r: plain_reason(r['error']), lambda r: r['file']),
-                 notes='Admission only. Visual conformance is NOT_RUN here.')
+                 notes='Accepted means the strict reader read the file with no refusal. It is not a pixel pass: see svg-tiny-pixels.')
 
     def tiny_archive(self):
         archive = self.need(self.a.tiny_archive, 'The W3C SVG Tiny archive')
@@ -251,7 +275,7 @@ class Run:
         harness = self.patched_corpus(corpus)
         self.call('wpt-images', [self.a.node, harness / 'run.mjs', '--output', out, '--browser', self.a.chrome,
                                  '--playwright', self.a.playwright, '--svg-lab', LAB, '--html-lab', LAB,
-                                 '--html-witness', WITNESS, '--controls'], 5400)
+                                 '--html-witness', WITNESS, '--controls'], self.a.runner_limit)
         path = out / 'capture/report.json'
         if not path.exists():
             raise NotRun(f'run.mjs wrote no report, see {self.dir}/wpt-images.log')
@@ -263,9 +287,19 @@ class Run:
                  {'name': 'WPT SVG subtree', 'pin': WPT_PIN}, report['total'], counts,
                  groups_of(bad, wpt_reason, lambda r: r['test'], top=20),
                  static=report['static'], matches=sorted(row['test'] for row in rows if row['status'] == 'match'),
-                 controls=report.get('controls', {}).get('counts'), harnessPatches=[note for note, _, _ in CORPUS_PATCHES],
+                 controls=report.get('controls', {}).get('counts'), harnessPatches=[note for note, _, _ in self.corpus_patches()],
                  notes='The harness of 2 November is patched at run time for the current engine: see harnessPatches. Fixtures and limits are unchanged.')
         self.oracle = out / 'capture'
+
+    def corpus_patches(self):
+        """CORPUS_PATCHES, and one that gives Chrome the --chrome-arg flags (a Linux host
+        without a GPU needs --enable-unsafe-webgpu for a WebGPU adapter)."""
+        patches = list(CORPUS_PATCHES)
+        if self.a.chrome_arg:
+            launch = "chromium.launch({executablePath:resolve(chrome),headless:true})"
+            patches.append(('Chrome is started with ' + ' '.join(self.a.chrome_arg), launch,
+                            launch[:-2] + ',args:' + json.dumps(self.a.chrome_arg) + '})'))
+        return patches
 
     def patched_corpus(self, corpus):
         """A copy of the corpus scripts in the run directory, with CORPUS_PATCHES. Data are links."""
@@ -278,7 +312,7 @@ class Run:
             elif item.name != '__pycache__':
                 (here / item.name).symlink_to(item)
         text = (here / 'capture.mjs').read_text()
-        for _, old, new in CORPUS_PATCHES:
+        for _, old, new in self.corpus_patches():
             assert text.count(old) == 1, 'The corpus harness changed: ' + old
             text = text.replace(old, new)
         (here / 'capture.mjs').write_text(text)
@@ -498,7 +532,7 @@ def tiny_groups(cases):
     return groups_of([row for row in cases if row['status'] != 'MATCH'], cause, lambda r: r['file'])
 
 
-SUITES = {'html-parser': Run.html_parser, 'svg-tiny-admission': Run.svg_tiny_admission, 'svg-tiny-pixels': Run.svg_tiny_pixels,
+SUITES = {'html-parser': Run.html_parser, 'svg-tiny-acceptance': Run.svg_tiny_acceptance, 'svg-tiny-pixels': Run.svg_tiny_pixels,
           'wpt-images-wasm': Run.wpt_images_wasm, 'wpt-images-native': Run.wpt_images_native, 'wpt-scripts': Run.wpt_scripts,
           'harfbuzz': Run.harfbuzz, 'font-records': Run.font_records, 'font-coverage': Run.font_coverage, 'old-web': Run.old_web,
           'wpt-tables': Run.wpt_tables, 'demo-pages': Run.demo_pages, 'lab-suite': Run.lab_suite}
@@ -527,6 +561,10 @@ def main():
     p.add_argument('--oracle', help='directory of an earlier capture, for wpt-images-native alone')
     p.add_argument('--tiny-archive', default=DEPMAP / 'cache/svg-tiny/W3C_SVG_12_TinyTestSuite.tar.gz')
     p.add_argument('--harfbuzz', default=DEPMAP / 'cache/render-metrics/harfbuzz-15.0.0', help='HarfBuzz 15.0.0 source tree')
+    p.add_argument('--host', help='the machine, as the record names it (default: CPU model and system), e.g. to name a software GPU')
+    p.add_argument('--runner-limit', type=int, default=5400,
+                   help='wall-clock seconds for the whole wpt-images-wasm runner; a machine with a software GPU needs more. Per-test limits do not change')
+    p.add_argument('--chrome-arg', action='append', default=[], help='a flag for Chrome in the wpt-images-wasm suite')
     p.add_argument('--chrome', default='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
     p.add_argument('--playwright', default=DEPMAP / 'cache/browser-check/node_modules/playwright-core/index.mjs')
     p.add_argument('--record-font', action='append', default=[

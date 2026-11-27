@@ -140,8 +140,8 @@ autoplay rule: section 13.7.
 
 ## 8. Stage A, done 2026-11-26
 
-- `danbri/factoidal-builds`, branch `wip/1169-media-decoders` (commit `67701b16`; `main` after
-  release 0.38.0, by its release manager): `third_party/media-decoders/` with the four modules,
+- `danbri/factoidal-builds` `main` (commit `67701b16`, merged by `57d766d3` on 2026-11-27 after
+  release 0.38.0; owner: "yes merge"): `third_party/media-decoders/` with the four modules,
   `PROVENANCE.md`, the licences, the build chain and the checks.
 - Here: `Media/Modules.lean` (pins: size, SHA-256, interface version; `media-bench check` runs
   each module in WasmVM and compares its `mw_abi`), `media-bench` refuses a module that is not

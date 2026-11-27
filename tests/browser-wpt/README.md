@@ -63,29 +63,36 @@ The provenance command currently uses macOS `otool` and `dyld` diagnostics.
 The parser runner starts Lean from `formal/lean4`, as required by this repo.
 Use `--lean /absolute/path/to/lean` if it is not on the command path.
 
-## Original SVG Tiny 1.2 admission
+## Original SVG Tiny 1.2 acceptance
 
-`svg-tiny-admission.py` takes the official W3C archive as a local input,
+`svg-tiny-acceptance.py` takes the official W3C archive as a local input,
 checks its pinned SHA256, and sends all 496 original `svg/` documents to
-the Lean SVG compiler. The archive contains 496 metadata-approved cases,
+the strict Lean SVG reader. The archive contains 496 metadata-approved cases,
 including a UTF-16 case; the overview page's 495 summary is not the runner's
 denominator. No labels, metadata, attributes or unsupported content are
 removed. `svggen/` derived files are not substituted.
 
 ```sh
-python3 tests/browser-wpt/svg-tiny-admission.py \
+python3 tests/browser-wpt/svg-tiny-acceptance.py \
   --archive /path/to/W3C_SVG_12_TinyTestSuite.tar.gz \
   --output /tmp/factoidal-tiny-new-run
 ```
 
 This uses the existing `labs/demos/foafnaut/.build/web-render/olean` and
 production Lean caches. It records every input's SHA256 and every refusal.
-`ADMITTED` would only mean a scene compiled; **visual conformance is
-NOT_RUN**, never inferred from admission. The
-[initial inventory and admission](svg-tiny-admission-20261103.json) has
-495 unsupported cases, one unavailable UTF-16 input and zero admitted
-scenes. Most stop at the unsupported `baseProfile` attribute. This is a
-baseline for SVG work, not a passing Tiny implementation.
+Each file gets one of three values: `ACCEPTED` (the reader read the whole file
+and made a scene), `REFUSED` (the reader met a feature that it does not
+implement, and stopped instead of drawing the file wrong), or `UNAVAILABLE`
+(the input is not UTF-8). `ACCEPTED` is not a pixel pass: **visual conformance
+is NOT_RUN** here; `svg-tiny-pixels.py` below measures it. The target is all
+496 files accepted and drawn correctly (owner, 2026-11-27, CLAUDE.md); a refusal
+is a gap to implement.
+
+The words were "admission", `ADMITTED` and `UNSUPPORTED` until 2026-11-27. The
+meaning did not change. The
+[initial inventory](svg-tiny-admission-20261103.json) (dated record, old words)
+has 495 refused cases, one unavailable UTF-16 input and zero accepted scenes.
+Most stop at the `baseProfile` attribute.
 
 ## SVG Tiny 1.2 pixel comparison
 

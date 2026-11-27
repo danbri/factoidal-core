@@ -302,6 +302,27 @@ changes it.
 Cost: five to ten minutes with warm caches; about two hours with a cold
 `.checked` cache, because the tree re-verifies.
 
+## Assurance lines in each release note (batch 1189)
+
+Each CHANGELOG release section and each Foafnaut release note ends with these two lines
+(https://github.com/danbri/factoidal-core/issues/1189, OKR batch, formal-verification discipline):
+
+```
+Claims: N in foundation/claims.toml (R reviewed by the owner); `python3 -I tools/claims-gate.py` exit 0.
+Defects found by proof since the last release: K (label found-by-proof in danbri/factoidal-core and danbri/factoidal).
+```
+
+Count K with:
+
+```
+gh issue list --repo danbri/factoidal-core --label found-by-proof --state all --search "created:>=YYYY-MM-DD" --json number --jq length
+gh issue list --repo danbri/factoidal --label found-by-proof --state all --search "created:>=YYYY-MM-DD" --json number --jq length
+```
+
+The word "proved" in a release note is for a claim in the register only
+(https://github.com/danbri/factoidal-core/issues/1178). Put the label `found-by-proof` on each
+issue for a defect that a proof attempt found (https://github.com/danbri/factoidal-core/issues/1185).
+
 ## The gates before a release
 
 Run these from the repository root, with the numbers each one must

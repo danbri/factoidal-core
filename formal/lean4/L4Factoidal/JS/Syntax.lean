@@ -59,6 +59,10 @@ U+10FFFE. Two classes with the same private name share it (record, section 5). A
 value never becomes such a key: `strKey` puts a mark before a string that starts with one of
 the three reserved characters. -/
 def privKey (name : String) : String := String.singleton (Char.ofNat 0x10FFFE) ++ name
+/-- Slots of the register machine's global name cache (`HeapOf.globalCache`, `globalChain`); a
+site's number is taken modulo this. -/
+def globalCacheSize : Nat := 4096
+
 def isPrivKey (k : String) : Bool := k.front == Char.ofNat 0x10FFFE
 
 /-! ### Property keys of String values
@@ -154,7 +158,8 @@ inductive Instr where
   | jnge (a b t : Nat)
   /-- A step of the script's budget: the head of a loop. -/
   | tick
-  /-- A global name; `site` numbers a slot of the global name cache (`HeapOf.globalCache`). -/
+  /-- A global name; `site` numbers a slot of the global name cache (`HeapOf.globalCache`,
+  `HeapOf.globalChain`), one for each site of the code (`Compile.globalSite`). -/
   | getGlobal (dst : Nat) (name : String) (site : Nat)
   | setGlobal (src : Nat) (name : String) (site : Nat)
   /-- `dst = a + k`, `a - k`, `a * k`: a number constant as an operand. -/

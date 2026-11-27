@@ -834,6 +834,17 @@ slot is still the name's (`PropMap.liveAt`). -/
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } var s = 0; for (var j = 0; j < 50; j++) s += f(); delete globalThis.zz; var r; try { r = f(); } catch (e) { r = e.constructor.name; } print(s, r)" == ["50 ReferenceError"]
 #guard out "for (var i = 0; i < 12; i++) globalThis['k' + i] = i; globalThis.zz = 1; function f() { return zz; } function g(v) { zz = v; } for (var j = 0; j < 50; j++) { g(j); f(); } delete globalThis.zz; g(7); print('zz' in globalThis, f(), Object.keys(globalThis).indexOf('zz') > 0)" == ["true 7 true"]
 
+/-! ## The global name cache's scope chains (issue 471, 2026-11-27)
+
+A read of a global name uses the site's scope chain (`HeapOf.globalChain`) in place of a walk of
+the environments by name. These change the chain after the site has learned it: a direct `eval`
+adds a binding to an enclosing function's environment, a `with` puts an object in the chain, and
+two closures of one function share a site. -/
+
+#guard out "var g = 1; function outer() { function inner() { return g; } var s = 0; for (var i = 0; i < 20; i++) s += inner(); eval('var g = 100'); for (var j = 0; j < 20; j++) s += inner(); return s; } print(outer())" == ["2020"]
+#guard out "var o = { h: 5 }; var h = 1; function w() { var s = 0; function r() { return h; } for (var i = 0; i < 20; i++) s += r(); with (o) { for (var k = 0; k < 20; k++) s += h; } return s; } print(w())" == ["120"]
+#guard out "function mk() { return function () { return Math.abs(-3); }; } var f1 = mk(), f2 = mk(); var t = 0; for (var i = 0; i < 30; i++) t += f1() + f2(); print(t)" == ["180"]
+
 /-! `String.prototype.normalize` (§22.1.3.15): the four forms of UAX #15, NFC when the form is
 undefined, a RangeError for any other form, a TypeError on null or undefined, and a lone
 surrogate left as it is. Missing until 2026-11-25: the scripts of the real page wp-us (English

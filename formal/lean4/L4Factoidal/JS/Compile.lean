@@ -74,6 +74,13 @@ def emit (i : Instr) : C Nat := modifyGet fun s => (s.code.size, { s with code :
 
 def here : C Nat := do pure (← get).code.size
 
+/-- The global name cache's slot of the next instruction, for the name `x`: from the name and the
+position in the code, so that reads of one name in different functions keep their own scope
+chains (`HeapOf.globalChain`). Two sites that share a slot only make each other miss. -/
+def globalSite (x : String) : C Nat := do
+  let pc ← here
+  pure ((mixHash (hash x) pc.toUInt64).toNat % globalCacheSize)
+
 def patch (at_ t : Nat) : C Unit :=
   modify fun s => { s with code := s.code.modify at_ fun i =>
     match i with
@@ -186,14 +193,14 @@ def readTarget (x : String) (t : Target) (dst : Nat) : C Unit :=
   match t with
   | .reg r => discard <| emit (.move dst r)
   | .up h i => discard <| emit (.getUp dst h i x)
-  | .global => discard <| emit (.getGlobal dst x ((hash x).toNat % 1024))
+  | .global => do discard <| emit (.getGlobal dst x (← globalSite x))
 
 /-- Write register `src` to a target. -/
 def writeTarget (x : String) (t : Target) (src : Nat) : C Unit :=
   match t with
   | .reg r => discard <| emit (.move r src)
   | .up h i => discard <| emit (.setUp src h i x)
-  | .global => discard <| emit (.setGlobal src x ((hash x).toNat % 1024))
+  | .global => do discard <| emit (.setGlobal src x (← globalSite x))
 
 /-- The instruction of a binary operator. -/
 def opInstr (op : BinOp) (dst a b : Nat) : Instr :=
@@ -241,7 +248,7 @@ def cE : Nat → Expr → Nat → C Unit
       | some (_, v) =>
         if !v.ready then discard <| emit (.checkInit v.reg x)
         if v.reg != dst then discard <| emit (.move dst v.reg)
-      | none => discard <| emit (.getGlobal dst x ((hash x).toNat % 1024))
+      | none => discard <| emit (.getGlobal dst x (← globalSite x))
     | .this =>
       let s ← get
       let r ← match s.thisReg with
@@ -346,7 +353,7 @@ def cE : Nat → Expr → Nat → C Unit
           if vr.reg != dst then discard <| emit (.move vr.reg dst)
         | none =>
           cE n v dst
-          discard <| emit (.setGlobal dst x ((hash x).toNat % 1024))
+          discard <| emit (.setGlobal dst x (← globalSite x))
       | .member o k =>
         -- a private name resolves through the class scope (`privRk`): the evaluator runs it
         if isPrivKey k then fail
@@ -590,7 +597,7 @@ def cDecls : Nat → DeclKind → List Decl → C Unit
           cE n e t
           match findVar x (← get).scopes with
           | some (_, v) => discard <| emit (.move v.reg t)
-          | none => discard <| emit (.setGlobal t x ((hash x).toNat % 1024))  -- a top-level `var`: an ordinary assignment
+          | none => discard <| emit (.setGlobal t x (← globalSite x))  -- a top-level `var`: an ordinary assignment
           release base
         | none => pure ()
       | _ =>

@@ -150,6 +150,8 @@ Two-tier rule for `formal/lean4/` (analysis:
    under [`lean-risk-flags`](../lean-risk-flags/SKILL.md) until its
    constant-time property is shown, not assumed. Test vectors as
    `#guard`s are tests. They are not a security argument.
+   Why Lean `Nat` arithmetic is not constant time, and how that differs
+   from the AES case: [`docs/designissues/2026-11-27-bignum-timing-and-aes.md`](../../docs/designissues/2026-11-27-bignum-timing-and-aes.md).
 
    Open on 2026-11-13: the SPARQL MD5 and SHA builtins, `fn:hash`,
    RDFC-1.0 and VC hashing still run the pure Lean code. The follow-up

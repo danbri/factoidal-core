@@ -31,8 +31,10 @@ import ImageJPEG
 import ImageGIF
 import ImageData
 import SVG
+import SVGAnimate
 import SVGRaster
 import SVGText
+import SVGScript
 import SVGForgiving
 import SVGCssColour
 import WebRenderSVG

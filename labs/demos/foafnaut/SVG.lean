@@ -8,6 +8,8 @@ import SVGDash
 import SVGDashUnits
 import SVGStroke
 import ImageData
+import L4Factoidal.WHATWG.URL.PercentDecode
+import L4Factoidal.WHATWG.Encoding.Core
 -- The `csimp` theorems of `Prim.FloatOfNat` make this module's `Float.ofNat`, `Float.ofInt` and
 -- `n.toFloat` calls the fast twins (no decimal parse of 2^53 at each call, Lean 4.33.1): keep
 -- this import.
@@ -569,9 +571,9 @@ private def cssAttribute (d : NativeSVGCSS.Declaration) : NamespaceAttribute :=
   {name:={namespace_:=none,localPart:=d.property},value:=d.value}
 private def applyCSSWith (validate : NativeSVGCSS.Declaration → Except String Unit) (rules : List NativeSVGCSS.Rule)
     (tag : String) (attrs : List NamespaceAttribute) (nested : Bool := false) : Except String (List NamespaceAttribute) := do
-  -- a geometry property cascades only on an element that has it as an attribute
+  -- geometry properties cascade only on the element types that support them
   let geometry := match tag with
-    | "rect" => ["x","y","rx","ry"]
+    | "rect" => ["x","y","width","height","rx","ry"]
     | "circle" => ["cx","cy","r"]
     | "ellipse" => ["cx","cy","rx","ry"]
     | _ => []
@@ -765,6 +767,39 @@ private def readSolidColor (paints : PaintContext) (entry : NativeSVGReferences.
 private def transparentPaint : Gradient :=
   {shape:=.linear 0 0 1 0,boundingBoxUnits:=false,stops:=[{offset:=0,color:=renderingColor (rgb 0 0 0),opacity:=0}]}
 
+/-- Percent-decode fragment bytes exactly once, then UTF-8 decode without BOM (URL Standard
+§1.3 "percent-decode", Encoding Standard §6 "UTF-8 decode without BOM"): malformed percent
+escapes stay literal, `+` is not a space, and UTF-8 errors become U+FFFD. -/
+private def paintFragmentId (fragment : String) : String :=
+  L4Factoidal.WHATWG.Encoding.utf8DecodeWithoutBOM (L4Factoidal.WHATWG.URL.percentDecode fragment.toUTF8)
+
+#guard paintFragmentId "%66%6f%6f" == "foo"
+#guard paintFragmentId "%C3%A9" == "é"
+#guard paintFragmentId "%25ZZ" == "%ZZ"
+#guard paintFragmentId "%ZZ" == "%ZZ"
+#guard paintFragmentId "a+b" == "a+b"
+#guard paintFragmentId "%E2%82" == "�"
+#guard paintFragmentId "%E2%82A" == "�A"
+#guard paintFragmentId "%E0%80%80" == "���"
+#guard paintFragmentId "%EF%BB%BF" == "\ufeff"
+
+/-- Raw fragment syntax supported by this CSS URL reader. Validate before percent
+decoding so encoded spaces may identify an element without admitting whitespace,
+quotes, parentheses or backslashes into an unquoted CSS URL token. Quoted targets
+retain the same restricted profile. -/
+private def paintFragmentSyntax (fragment : String) : Bool :=
+  fragment.toList.all fun c =>
+    (c.isAlphanum && c.toNat < 128) || ['_','-',':','.','%'].contains c ||
+      (c.toNat >= 128 && !c.isWhitespace)
+
+#guard paintFragmentSyntax "foo%20bar"
+#guard paintFragmentSyntax "%C3%A9"
+#guard !paintFragmentSyntax "foo bar"
+#guard !paintFragmentSyntax "foo\"bar"
+#guard !paintFragmentSyntax "foo'bar"
+#guard !paintFragmentSyntax "foo\\bar"
+#guard !paintFragmentSyntax "foo(bar"
+
 private def readPaint (lengths : LengthContext) (paints : PaintContext) (source : String) : Except String Paint := do
   let s := trim source
   if s.startsWith "url(" then
@@ -775,9 +810,9 @@ private def readPaint (lengths : LengthContext) (paints : PaintContext) (source 
         (target.startsWith "'" && target.endsWith "'") then
         String.ofList (target.toList.drop 1 |>.take (target.length-2)) else target
     if !target.startsWith "#" || target.length < 2 then throw "external/unsupported paint URL"
-    let id := String.ofList (target.toList.drop 1)
-    if !id.toList.all (fun c => c.isAlphanum && c.toNat < 128 || ['_','-',':','.'].contains c) then
-      throw "unsupported paint fragment syntax/encoding"
+    let rawId := String.ofList (target.toList.drop 1)
+    if !paintFragmentSyntax rawId then throw "unsupported paint fragment syntax/encoding"
+    let id := paintFragmentId rawId
     let fallback := trim fallback
     let fallbackPaint : Paint ←
       if fallback.isEmpty || fallback.toLower == "none" then pure .none
@@ -882,7 +917,11 @@ private def applyCSS (lengths : LengthContext) (paints : PaintContext) (rules : 
     if d.property == "opacity" then let _ ← number d.value; pure ()
     else if d.property == "overflow" then
       if !["hidden","visible","scroll","auto"].contains (trim d.value) then throw "unsupported overflow"
-    else if ["width","height"].contains d.property then throw "unsupported CSS geometry property"
+    else if ["width","height"].contains d.property then
+      if tag == "rect" then
+        let value ← relativeLength d.value 1
+        if value < 0 then throw "negative rectangle dimensions"
+      else throw "unsupported CSS geometry property"
     else if geometryProperties.contains d.property then
       if ["rx","ry"].contains d.property && (trim d.value).toLower == "auto" then pure ()
       else let _ ← relativeLength d.value 1; pure ()
@@ -2398,6 +2437,8 @@ structure DirectPaint where
 
 /-- The colour of `rgb(r,g,b)` with whole components, as the attribute parser reads it. -/
 def rgbColor (r g b : Nat) : Color := rgb r g b
+/-- The colour reader of this module, for the animation pass (`SVGAnimate`). -/
+def colourOf (input : String) : Except String Color := color input
 
 def directScene (width height viewWidth viewHeight : Nat) (inherited : Style) (items : List DirectPaint) :
     Except String Scene := do

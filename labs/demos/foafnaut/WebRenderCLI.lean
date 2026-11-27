@@ -2,6 +2,7 @@ import WebRenderRDF
 import WebRenderFont
 import WebDocument
 import SVGForgiving
+import SVGScript
 import L4Factoidal.PageCanvas.Png
 
 open L4Factoidal
@@ -17,7 +18,7 @@ private def pixels (scene : Rendering.Scene) (w h : Nat) : Except String String 
 /-- WebGPU artifact of one SVG file, with the log of what the forgiving pass removed. -/
 private def svgArtifact (source : String) (w h : Nat) (font : Option String)
     (images : List (String × ByteArray)) (documentURL : Option String)
-    (sfnt : Array Rendering.SfntProfile.Font := #[]) : String :=
+    (sfnt : Array Rendering.SfntProfile.Font := #[]) (notes : List String := []) : String :=
   let quoted := fun (line : String) => "\"" ++ (line.replace "\\" "\\\\" |>.replace "\"" "\\\"") ++ "\""
   let parsed := do
     let font ← font.mapM NativeSVGForgiving.SVGFont.parse
@@ -27,7 +28,7 @@ private def svgArtifact (source : String) (w h : Nat) (font : Option String)
   | .error message => WebRender.errorJSON message
   | .ok (artifact,count,dropped) =>
     "{\"primitiveCount\":" ++ toString count ++ ",\"dropped\":[" ++
-      String.intercalate "," (dropped.map quoted) ++ "],\"artifact\":" ++ artifact ++ "}"
+      String.intercalate "," ((notes ++ dropped).map quoted) ++ "],\"artifact\":" ++ artifact ++ "}"
 
 /-- A file under the resource root has this URL, so that relative references and
     `xml:base` resolve in Lean as they do for an HTTP document. It names no host. -/
@@ -158,7 +159,25 @@ def main (args : List String) : IO UInt32 := do
         match Rendering.SfntProfile.Font.read bytes family "cli" with
         | .ok f => pure f
         | .error e => throw (IO.userError s!"SFNT font refused: {file}: {e}")
-      IO.println (svgArtifact source w h font images documentURL sfnt)
+      -- SVG Tiny 1.2 chapter 15: the document's scripts and handlers run first (BubblePopJS on
+      -- its DOM, `NativeSVGScript.run`); the document after them is drawn. External scripts are
+      -- read under the resource root by the policy of images (`localImage`). When the step is
+      -- refused, the original document is drawn and the refusal is the first `dropped` line.
+      let (source,notes) ← if NativeSVGScript.hasScripting source then do
+          let wanted := match documentURL with
+            | some url => NativeSVGScript.scriptRequests source url
+            | none => []
+          let mut texts : List (String × String) := []
+          for (href,url) in wanted do
+            if let some root := resources then
+              if let some bytes ← localImage root url then
+                if let some text := String.fromUTF8? bytes then texts := (href,text)::texts
+          let fetch := fun (h : String) => (texts.find? (·.1 == h)).map (·.2)
+          match L4Factoidal.WasmVM.Hosts.LeanJS.prepare >>= fun base => NativeSVGScript.run base source (documentURL.getD "about:svg") fetch with
+          | .ok after => pure (after,[])
+          | .error e => pure (source,[s!"scripts: {e}"])
+        else pure (source,[])
+      IO.println (svgArtifact source w h font images documentURL sfnt notes)
       if let some out := cpuOut then
         let parsed := do
           let font ← font.mapM NativeSVGForgiving.SVGFont.parse

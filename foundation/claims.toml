@@ -1,0 +1,245 @@
+# The Factoidal CLAIMS register.
+#
+# https://github.com/danbri/factoidal-core/issues/1178 (P1, claims register) and
+# https://github.com/danbri/factoidal-core/issues/1179 (P2, statement freeze).
+# Batch: https://github.com/danbri/factoidal-core/issues/1189.
+# Reason: docs/designissues/2026-11-27-formal-verification-post-review.md.
+#
+# Owner, 2026-11-27, verbatim: "Approve, start P1".
+#
+# Rules:
+#   * A release note, a hub page or a README may say "proved" only for an entry
+#     here, and must give its assumptions and its "does not say" with it.
+#   * The owner reviews this file. Nobody needs to review the proofs: Lean checks
+#     them, and CI checks that each claim uses only the axioms propext,
+#     Classical.choice and Quot.sound (tools/claims-gate.py --check-axioms).
+#   * status = "proposed" until the owner reviews an entry; then
+#     status = "reviewed" and `reviewed` gives who, the date and the words.
+#   * statement_sha256 freezes the statement; each spec_defs sha256 freezes a
+#     definition the statement uses. tools/claims-gate.py fails when one
+#     changes and the register does not change in the same commit. A frozen
+#     definition's text is frozen, not the definitions it calls in turn.
+#   * `stages` names the dataflow stages (docs/dataflow-inventory.md) the claim
+#     is about; a release counts the entry points it covers through them
+#     (tools/assurance-manifest.py). Claude-inferred 2026-11-27, to review.
+#   * Every entry with hypotheses gets a `witness` (P3,
+#     https://github.com/danbri/factoidal-core/issues/1180): an `example` that
+#     satisfies all the hypotheses at once.
+#
+# The entries below, their "says", "does_not_say" and assumptions are a Claude
+# session's reading of the Lean sources on 2026-11-27. They are not owner
+# decisions.
+
+[meta]
+max-entries = 50
+
+[[claim]]
+id = "sparql-eval-lawful-dataset"
+theorem = "L4Factoidal.Dataflow.query_sound"
+file = "formal/lean4/L4Factoidal/Dataflow/Compose.lean"
+about = "LawfulEvaluator.run on queryInput, for any LawfulDataset (store) and any lawful evaluator"
+says = """For a store with a lawful dataset S and a lawful evaluator, the answer to any SPARQL query satisfies EvalContract: it is the SPARQL 1.1 reference answer of the foundation (referenceAnswer), or, on the backend path for SELECT and ASK, an answer that SPARQL 1.1 section 18.5 allows and that equals the reference WHERE answer up to the order of solutions. When the solution modifiers do not read the order (OrderFree), the answer equals the reference answer up to row order."""
+does_not_say = """It does not say that the Lean definition referenceAnswer is SPARQL 1.1: that is a fidelity question for the W3C suites (P6, https://github.com/danbri/factoidal-core/issues/1183). It does not cover any particular store until its assumptions are discharged; it says nothing about time or memory."""
+assumptions = [
+  "hev: the evaluator's named assumption (LawfulEvaluator.assumed_contractOn, foundation/assumptions.txt)",
+  "hS: the store's named assumptions (LawfulDataset.assumed_contracts, the name: lines of foundation/assumptions.txt)",
+  "hset, hden: the dataset is a set and has the store's denotation",
+]
+status = "proposed"
+statement_sha256 = "952d5363d7d07026ebd2a18795b2c684a7f5d6c370033df18f3a6eed09e442db"
+spec_defs = [
+  { name = "L4Factoidal.Dataflow.referenceAnswer", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "b85e89fd69dc77c5643db2769d2859c6e5f3325e28e48732f51c7464b8bcadbb" },
+  { name = "L4Factoidal.Dataflow.EvalContract", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "e5cf63db4744f6e7c588829fdaa681a93b3bbd31d8390211bfd0b0bf092832f4" },
+  { name = "L4Factoidal.Dataflow.AnswerAgrees", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "7a70e8e9c336e99fb6b9671f23f0e8dd55afb1bd6ad8a03a36e4a16ccd2f51b1" },
+]
+
+[[claim]]
+id = "shipped-parse-query-pipeline"
+theorem = "L4Factoidal.Dataflow.shipped_pipeline_sound"
+file = "formal/lean4/L4Factoidal/Dataflow/EndToEnd.lean"
+about = "pipeline with shippedEvaluator, the evaluator of the wasm query ops"
+says = """When a reader accepts a document, the shipped pipeline parses it to the set of quads of the raw parse, loads a store whose law is proved, and answers the query with an answer that satisfies EvalContract (see sparql-eval-lawful-dataset)."""
+does_not_say = """The shipped evaluator's backend path outside the native fragment and its SELECT fast paths are ASSUMED correct (h1, h2), not proved. It does not say that the wasm or native binary computes shippedRun: the Lean compiler, the C externs and emscripten are outside the proof (P5, https://github.com/danbri/factoidal-core/issues/1182)."""
+assumptions = [
+  "h1: BackendOutsideFragmentAgrees (the backend path outside NativeFrag satisfies EvalContract)",
+  "h2: SelectFastPathAgrees (the SELECT fast paths satisfy EvalContract)",
+  "h: the reader accepts the document (a case split, not an assumption)",
+]
+status = "proposed"
+stages = ["shippedEvaluator"]
+statement_sha256 = "b911f5027b8152cf0c430797fbef280eee0e1aea5f7a5582910c87875ab76b02"
+spec_defs = [
+  { name = "L4Factoidal.Dataflow.BackendOutsideFragmentAgrees", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "e09931f3046776ad15efb15b7c6102806c5eaae5801a37817463ae050cf47aef" },
+  { name = "L4Factoidal.Dataflow.SelectFastPathAgrees", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "98972272ae45f539707bb7213e486781bb31497bab3a872f7c1ad043208c3b87" },
+]
+
+[[claim]]
+id = "rdfs-regime-bgp-sound"
+theorem = "L4Factoidal.SPARQL.rdfsRegime_bgp_sound"
+file = "formal/lean4/L4Factoidal/SPARQL/EntailmentRegimeRdfs.lean"
+about = "evalBgp over RDFS.closure (the SPARQL RDFS entailment regime, BGP level)"
+says = """Every solution of a basic graph pattern over the rho-df closure of g instantiates the pattern to triples that RDFS derivation licenses from g itself."""
+does_not_say = """Soundness only: it does not say the regime finds every entailed solution (completeness). It is about one BGP, not a whole query. RDFS.Derives is the Lean reading of the RDFS rules; its fidelity to RDF 1.1 Semantics is a separate question."""
+assumptions = []
+status = "proposed"
+statement_sha256 = "84b23543dd28424c49b9f56428e745a143c91d24a11d0be4492e95ef466911d3"
+spec_defs = [
+  { name = "L4Factoidal.SPARQL.RdfsLicenses", file = "formal/lean4/L4Factoidal/SPARQL/EntailmentRegimeRdfs.lean", sha256 = "627dbfefa7d520c355cdb02494aadb59c81fcb773b48f41931ac337c7a3e9c92" },
+  { name = "L4Factoidal.RDFS.Derives", file = "formal/lean4/L4Factoidal/RDFS/RdfsCore.lean", sha256 = "e3121168295fd7c87c13b3f99f6f91200b41953b6a499e67c72e663064d61d18" },
+]
+
+[[claim]]
+id = "owl-rl-closure-exact"
+theorem = "L4Factoidal.OWL.RL.mem_indexedClosureSN_iff"
+file = "formal/lean4/L4Factoidal/OWL/RLSemiNaiveTheorems.lean"
+about = "indexedClosureSN, the semi-naive OWL 2 RL closure"
+says = """When the closure is saturated and the list fuel is adequate, a triple is in the semi-naive OWL 2 RL closure exactly when the OWL 2 RL rules derive it from g."""
+does_not_say = """It does not prove that the fuel the engine gives is enough (termination at closureFuelBound is not proved). Derives is the Lean reading of the OWL 2 Profiles section 4.3 rule tables."""
+assumptions = [
+  "hsat: the result is saturated (one more round adds nothing)",
+  "hlf: the list fuel is adequate for the rdf:List structures of the result",
+]
+status = "proposed"
+statement_sha256 = "8277cc6ba1bbc0894715095f856370c92e27b0c9b2c69f56126b591bf5c7512f"
+spec_defs = [
+  { name = "L4Factoidal.OWL.RL.Derives", file = "formal/lean4/L4Factoidal/OWL/RLRules.lean", sha256 = "558701a61189b9ab04ef9ea12c1c640b2723fc1c02bb0a22d8c96ee28fd3af92" },
+]
+
+[[claim]]
+id = "rdf-closure-entailed"
+theorem = "L4Factoidal.RDF.rdfClosure_entails"
+file = "formal/lean4/L4Factoidal/RDF/EntailmentRegimeSoundness.lean"
+about = "RDFS.rdfClosure (RDF entailment closure)"
+says = """Under the RDF semantic conditions, a graph entails its RDF closure, for container membership IRIs that are rdf:_n."""
+does_not_say = """Soundness of the closure only, not completeness. RdfEntails is the Lean reading of RDF 1.1 Semantics section 7."""
+assumptions = ["hcmps: every listed container membership IRI is an rdf:_n IRI"]
+status = "proposed"
+statement_sha256 = "9a02902467acf46112c82085d94be17fde22dab7cfc72a0396cb0395cd85330b"
+spec_defs = [
+  { name = "L4Factoidal.RDF.RdfEntails", file = "formal/lean4/L4Factoidal/RDF/EntailmentRdfsModelTheory.lean", sha256 = "0cf3da63b8af649a8710b35bc82780ea6e9b18c2f13a300691516cece36b1fb9" },
+]
+
+[[claim]]
+id = "backend-bgp-refinement"
+theorem = "L4Factoidal.Storage.BackendRefinement.evalBgpBackend_solEquiv"
+file = "formal/lean4/L4Factoidal/Storage/BackendRefinement.lean"
+about = "evalBgpBackend, BGP evaluation through any exact GraphBackend (indexes, stores)"
+says = """For any backend that answers triple patterns exactly for a graph g with no repeated keys, BGP evaluation through the backend gives the same solutions as the reference evalBgp over g, up to order."""
+does_not_say = """It does not say a particular on-disk store is exact: that is the BackendExact premise, proved per backend or named as an assumption (foundation/assumptions.txt)."""
+assumptions = [
+  "hx: the backend is exact for G",
+  "hg: g has no repeated keys",
+  "hG: G is membership in g",
+]
+status = "proposed"
+stages = ["Storage.BackendRefinement.backendBgpStage"]
+statement_sha256 = "6e4a2ea83e696886a6928f25caf6e6e65811d244ded6ecdde7224f5b18eaf011"
+spec_defs = [
+  { name = "L4Factoidal.SPARQL.StoreBackend.BackendExact", file = "formal/lean4/L4Factoidal/SPARQL/StoreBackendDenotation.lean", sha256 = "6d46f506d765c79a3cd319ce22a7b8cb2768ca2f1bfcb021804c57819ddad2ab" },
+]
+
+[[claim]]
+id = "nquads-writer-round-trip"
+theorem = "L4Factoidal.Dataflow.writerRoundTrip_nquads"
+file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean"
+about = "Sink.serializeDataset for N-Quads, read back by parseDocument"
+says = """For every dataset that is a set and is in the writer's domain, if the N-Quads writer gives text, the parser reads that text back to a dataset whose denotation is isomorphic to the written one."""
+does_not_say = """It does not say the parser accepts every N-Quads document the W3C grammar accepts, or refuses every one it refuses: that is the W3C syntax suite. Isomorphism is up to blank node labels."""
+assumptions = []
+status = "proposed"
+stages = ["nquadsDocumentWriter"]
+statement_sha256 = "878715d5069504abcc227591e9671658dd5c1a1adba291f6bca4ce9469788388"
+spec_defs = [
+  { name = "L4Factoidal.Dataflow.WriterRoundTrip", file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean", sha256 = "bd965b5e23d2e50a84ed7a586051923ee5eed96a99ba0f3963130e985c5d83d1" },
+]
+
+[[claim]]
+id = "ntriples-writer-round-trip"
+theorem = "L4Factoidal.Dataflow.writerRoundTrip_nt"
+file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean"
+about = "Sink.serializeDataset for N-Triples, read back by parseDocument"
+says = """As nquads-writer-round-trip, for N-Triples (the default graph)."""
+does_not_say = """As nquads-writer-round-trip."""
+assumptions = []
+status = "proposed"
+stages = ["ntriplesDocumentWriter"]
+statement_sha256 = "451a9c64ba70526f616555695f915eb2cb9c6368df08a67ac29ef7dadc00c5e3"
+spec_defs = [
+  { name = "L4Factoidal.Dataflow.WriterRoundTrip", file = "formal/lean4/L4Factoidal/Dataflow/PhaseC.lean", sha256 = "bd965b5e23d2e50a84ed7a586051923ee5eed96a99ba0f3963130e985c5d83d1" },
+]
+
+[[claim]]
+id = "capability-planner-sound"
+theorem = "L4Factoidal.Planner.search_sound"
+file = "formal/lean4/L4Factoidal/Planner/Search.lean"
+about = "Planner.search, the capability-aware planner"
+says = """For a catalog whose exact sources are sound, every exact row of every plan the search returns is, up to binding equality, an answer of the requirement over the catalog's declared graph."""
+does_not_say = """Rows marked approximate are not covered. It does not say the search finds the best plan, or any plan. Source soundness is a premise per source."""
+assumptions = ["hsound: every source declared exact is sound"]
+status = "proposed"
+statement_sha256 = "ee4f6295a863ffa6d43066a057e4b8efa8a8b1df4ef37e8955244d3109806bcb"
+spec_defs = [
+  { name = "L4Factoidal.Planner.SolEquiv", file = "formal/lean4/L4Factoidal/Planner/Requirement.lean", sha256 = "efecb13b429173559daa68fce6966a213f1b772b54a17e0adfc909f7eed45e04" },
+]
+
+[[claim]]
+id = "page-gpu-validator-sound"
+theorem = "L4Factoidal.PageGpu.validate_sound"
+file = "formal/lean4/L4Factoidal/PageGpu/Theorems.lean"
+about = "PageGpu.validate, the check on GPU modules that page scripts send"
+says = """A module that the page GPU validator accepts is in the permitted subset (InSubset)."""
+does_not_say = """It does not say that the permitted subset is safe on a given GPU driver, or that the host runs only validated modules: the host is TypeScript (P11, https://github.com/danbri/factoidal-core/issues/1188)."""
+assumptions = []
+status = "proposed"
+statement_sha256 = "438f81d5800698f0cd0f7a9de0a2cbf9feaafd0e8e02ae29e4b91e6b53ea4288"
+spec_defs = [
+  { name = "L4Factoidal.PageGpu.InSubset", file = "formal/lean4/L4Factoidal/PageGpu/Theorems.lean", sha256 = "366ebfcaf01b93441e65c1dc887d244e9ecc3aaaf6dabbbef5bf319b28b4d0a1" },
+]
+
+[[claim]]
+id = "vc-rdfc-isomorphic-verify"
+theorem = "L4Factoidal.VC.Cryptosuite.vcDi10_rdfc10_isomorphic_verify_alike"
+file = "formal/lean4/L4Factoidal/VC/CryptosuiteTheorems.lean"
+about = "verifyDataset for the VC Data Integrity RDFC-1.0 cryptosuites"
+says = """If RDFC-1.0 canonicalisation is invariant under blank node relabelling, then two isomorphic graphs give the same verification result."""
+does_not_say = """RelabellingInvariance is NOT proved: its evidence is the corpus probe (86 of 86) and the #guards of RDF/CanonicalTests.lean. It does not say the signature primitives are correct (prims is a parameter)."""
+assumptions = [
+  "hR: Canonical.RelabellingInvariance (unproved; RDF/CanonicalTheorems.lean)",
+  "prims: the signature primitives (outside Lean; io:Ed25519Correct, io:Sha256Agrees in foundation/assumptions.txt)",
+]
+status = "proposed"
+stages = ["vcVerifyStage"]
+statement_sha256 = "d022acadcd686cef67b958538a2a93f2d59829c25b42f0e3d1a45f82a400b5f9"
+spec_defs = [
+  { name = "L4Factoidal.RDF.Canonical.RelabellingInvariance", file = "formal/lean4/L4Factoidal/RDF/CanonicalTheorems.lean", sha256 = "cc28c93f54ddb687166201d0d9bd52d2b8f10d67049f3a11ce348fd4b3febbc6" },
+]
+
+[[claim]]
+id = "proof-bundle-checker-sound"
+theorem = "L4Factoidal.FPP0.checkBundle_sound"
+file = "formal/lean4/L4Factoidal/Proof/Checker.lean"
+about = "checkBundle, the checker of proof bundles"
+says = """When the checker reports a bundle valid, its conclusion is derivable from the bundle's artifacts and the assumptions the checker reports, in some scope."""
+does_not_say = """valid alone does not say the conclusion is foundational: a reader must read the reported assumptions, frontier and foundationalOnly (Proof/Syntax.lean, Derives)."""
+assumptions = []
+status = "proposed"
+stages = ["proofCheckStage"]
+statement_sha256 = "7fb309f4c092e73de74526a95c89465f819f3715281eec706ef8d872b9cdebc8"
+spec_defs = [
+  { name = "L4Factoidal.FPP0.Derives", file = "formal/lean4/L4Factoidal/Proof/Syntax.lean", sha256 = "69688f55d09ed6a091dfff694e1835f16da2bbc7961a41c749f67f791e078030" },
+]
+
+[[claim]]
+id = "reader-result-is-a-set"
+theorem = "L4Factoidal.RDF.Source.parseDocument_set"
+file = "formal/lean4/L4Factoidal/RDF/Source.lean"
+about = "RDF.Source.parseDocument, the reader of every RDF concrete syntax (N-Triples, N-Quads, Turtle, TriG, RDF/XML, JSON-LD)"
+says = """When a reader accepts a document, the dataset it gives is the set of the quads of the raw parse of that document (SetOf): a set, with the same quads under the engine triple equality, the same graph names, and no quad that the raw parse does not have."""
+does_not_say = """It does not say that the raw parse follows the W3C grammar of the syntax, or that the reader accepts every valid document and refuses every invalid one: the W3C syntax suites measure that. It says nothing about blank node scoping across documents (scopedParseStage)."""
+assumptions = []
+status = "proposed"
+stages = ["parseStage", "ntriplesDocumentReader", "nquadsDocumentReader", "turtleDocumentReader", "trigDocumentReader", "rdfxmlDocumentReader", "jsonldDocumentReader"]
+statement_sha256 = "4088529a796f87d7395faab7b4e314d1c016c653d193ca34cc5a157046aafebd"
+spec_defs = [
+  { name = "L4Factoidal.RDF.Source.SetOf", file = "formal/lean4/L4Factoidal/RDF/Source.lean", sha256 = "dec56d18f7ea95a4fdb4ca169e780411ad1c927b257bb5e020cdffe81001b14b" },
+]

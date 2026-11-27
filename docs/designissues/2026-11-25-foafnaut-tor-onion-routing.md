@@ -744,3 +744,24 @@ Difference found by the Lean model: `TextDecoder` removed a leading UTF-8 byte o
 Lean refuses it. Repaired: both decoders keep the mark (`ignoreBOM: true`); `socks5.test.ts`
 checks the refusal. `tools/lean-unbuilt-modules.py --gate` exits 1 on `main` because of 27
 other modules not reached from a root; the two new modules are reached.
+
+## 21. Connecting the browser: decisions in Lean, Textnaut first (2026-11-27)
+
+Owner, 2026-11-27, verbatim: "also for debugging should we make our testbed be the textnaut
+browser?" (answered yes), then "ok now carefully avoid putting code that should be Lean into .ts
+for this hack. But you can also do "one to throw away" for demos etc. Ideally we call APIs from
+the lean-based core."
+
+- Textnaut and the window browser share the page network code (`native_html_document.ts`,
+  `native_net.ts`), so Tor wired there serves both. Textnaut runs in a terminal with no GPU, so a
+  test on the private Tor network can drive it end to end on Linux; the macOS run stays the one
+  that counts.
+- Lean decides (`Net/PageFetch.lean`, Tor mode): no name lookup by the host, each request marked
+  `tor` with the page's partition (its origin; the engine has no public suffix list), `.onion`
+  only in Tor mode, local targets refused, WebSocket refused at first. `Net/TorSetting.lean`
+  decides the Settings confirmation text. `Net/Socks5.lean` decides SOCKS5 admission.
+- The host only moves bytes: a wire with `tor` goes through `torHttpClient` for its partition
+  (SOCKS5 to the Tor worker, `socks5h`). Any code written only for a demo is marked as such in
+  its first lines and is not called from the product path.
+- Open: top-level page navigation in `native_html_document.ts` may fetch without a Lean decision;
+  the Lean change reports where, and Tor mode must cover it before it is offered in Settings.
