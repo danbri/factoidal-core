@@ -18,7 +18,7 @@ const snapshotPath = new URL('../../evidence/2026-11-24-transaction-list/list-ex
 const sourcePath = new URL('../differential/transaction-list.mjs', import.meta.url)
 const snapshotBytes = readFileSync(snapshotPath)
 assert.equal(digest(snapshotBytes), 'ff3e56deaec8c8ff4cb99725f8d8283565a0e0fcf1c4fed175596faba5a3f484', 'dated reference evidence pin')
-assert.equal(digest(readFileSync(sourcePath)), 'a6bd1e84993d500a29f45dd76ffa142c3056b11d4a1f14eafe92a32c76872bb2', 'fixture preparation source pin')
+assert.equal(digest(readFileSync(sourcePath)), 'e0b16b7754b89be10f680da23f59b287b0e0bc7c9ce8007a5b93585700c0e768', 'fixture preparation source pin')
 const snapshot = JSON.parse(snapshotBytes)
 assert.equal(snapshot.rows.length, 36); assert.equal(snapshot.failed, 0)
 const scalar = value => bytesToBigInt(value), decimal = value => BigInt(value).toString()
@@ -98,7 +98,7 @@ function initialAccounts(options) {
   record(child, { balance: 100n, code: options.childCode ?? '', storage: slots })
   record(reverter, { balance: 100n, code: effects('fd'), storage: slots })
   record(invalid, { balance: 100n, code: effects('fe'), storage: slots })
-  record(unsupported, { balance: 100n, code: '5f4000', storage: slots })
+  record(unsupported, { balance: 100n, code: '5f0c00', storage: slots })
   if (!rows.has(decimal(options.coinbase))) record(options.coinbase, { balance: 11n })
   return [...rows.values()]
 }

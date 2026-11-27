@@ -175,7 +175,7 @@
     "scripts/witness/corpus.mjs": "ca5f362bdeae00b2155d9d7689c2294a7e03b873",
     "scripts/witness/oracle.mjs": "8242ed0c5707b841bbaf7c26aac94afefbe5af81",
     "scripts/witness/run.mjs": "ff826446070653f07b2d6c7987797cf1e8976d37",
-    "scripts/witness/transaction-lists.mjs": "eae966c69c72d1c9369a0edcc654d6fc52484df3",
+    "scripts/witness/transaction-lists.mjs": "2f8d792cbd6a5047dec5ea47708b3db93af25922",
     "scripts/witness/bench.mjs": "45e62043adcb12ad8fb02fdf3b1cffa37744dc52",
     "scripts/check-witness-runtime.py": "c77fbc547c0927f76dd9cdac1046f95dc27922de",
     "EVMCleanroom/AccountOpcode.lean": "7b9cd3608f7affe15e574c32380fede937539e0d",
