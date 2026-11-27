@@ -561,6 +561,32 @@ after the handover of the batch with `start()`. That time does not include the t
 to the end of its page task. The render CPU time is 9.1 ms for each second of audio (one sine
 oscillator). The ring holds 128 to 1,024 frames ahead of the consumer.
 
+Rules from the Web Audio API specification and WPT, 2026-11-27 (owner, verbatim: "Use WPT and
+relevant W3C/WHATWG specs to guide API implementation when appropriate"):
+- The constructor: the state is `suspended` right after `new AudioContext()`, also when the
+  context is allowed to start; the rendering side starts and reports `running`, and the page sees
+  `statechange` (WPT `constructor-allowed-to-start.html`). Op 190 answered `running` before this.
+- The rendering thread queues one media element task for each control message. The page runs
+  each event of a report in a task of its own, in the rendering side's order (`Report.events`).
+  A state change sets the state attribute in its task and fires `statechange` in a later task,
+  after the reactions of the promise it answers (WPT `suspend-after-construct.html`). The offline
+  `startRendering()` promise resolves before its `closed` state change, for the same reason
+  (`audiocontext-suspend-resume-close.html`, `testOfflineAudioContext`).
+- The engine runs a task's callback once and then releases it (`PageEvents.runTask`). Op 193
+  therefore takes the page's callback for the next events. Before this fix, only the first report
+  reached the page: `ended` and a later `suspend()` promise were lost.
+
+WPT `webaudio/the-audio-api/the-audiocontext-interface` (19 files, native engine, BubblePopJS,
+WPT d29e99b, `tests/browser-wpt/testharness-run.ts --wpt-root --list`, `FOAFNAUT_AUDIO_SINK=null`):
+38 pass, 43 fail (out of 81 subtests reported) when the runner moves the virtual clock through 70 s
+in one call. Then 76 pass, 46 fail (out of 122) with the runner's real-time mode (a page with a
+real-time `AudioContext` moves its clock 10 ms, then waits 10 ms of real time). Passing in full:
+`audiocontextoptions.html` (41 of 41), `audiocontext-suspend-resume.html` (4 of 4),
+`audiocontext-getoutputtimestamp.html` (10 of 10), `constructor-allowed-to-start.html` (1 of 1).
+Failing for features that do not exist yet: `setSinkId` and `sinkId` (and `navigator.mediaDevices`),
+`decodeAudioData`, AudioWorklet, `playbackStats`, `createMediaStreamDestination`, `renderSizeHint`
+on a real-time context (128 only), documents that are discarded or in the bfcache.
+
 Not done:
 - QuickJS-NG sessions get no audio device. `Page.start` runs the scripts before `audioStart` could
   set the device, so `new AudioContext()` throws `NotSupportedError` there. BubblePopJS is the
