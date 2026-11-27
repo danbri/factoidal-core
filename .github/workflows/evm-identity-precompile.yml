@@ -48,7 +48,7 @@ jobs:
               assert [line for line in source.splitlines() if line.startswith("import ")] == imports, name
           assert Path("lean-toolchain").read_text().strip() == "leanprover/lean4:v4.33.1"
           PY
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"]=="active-sources-consistent" and r["selectedTheorems"]==324 and r["files"]==186,r'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["status"]=="active-sources-consistent" and r["selectedTheorems"]==324 and r["files"]==196,r'
       - name: Build the identity precompile native executable
         working-directory: formal/lean4/evm-cleanroom
         run: lake build evm-identity-precompile
