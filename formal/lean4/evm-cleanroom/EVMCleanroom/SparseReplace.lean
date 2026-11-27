@@ -170,8 +170,11 @@ def replace (a : Keccak.Acceptance) (root key old value : Array UInt8)
       match hn : MPT.lookup a projected.root key projected.nodes with
       | .ok (some observedNew) =>
         if en : observedNew = value then
-          return { projection := projected, oldChecked := by simpa only [eq] using h,
-            newChecked := by simpa only [en] using hn }
+          have oldChecked : MPT.lookup a root key proof = .ok (some old) := by
+            simpa only [eq] using h
+          have newChecked : MPT.lookup a projected.root key projected.nodes = .ok (some value) := by
+            simpa only [en] using hn
+          return ⟨projected, oldChecked, newChecked⟩
         else throw (.internal "new-value-mismatch")
       | .error .resourceLimit => throw .resourceLimit
       | _ => throw (.internal "new-path-refused")
