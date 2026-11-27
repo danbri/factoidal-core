@@ -289,6 +289,18 @@ def decodeRaw (b : ByteArray) (modules : String → Option ByteArray) : IO (Exce
   catch e =>
     return enc e.toString
 
+/-- The channel with each value rounded to binary32 (`toF32`), made in one pass. (`a.data` of a
+`FloatArray` copies the whole array into boxed values, 24 bytes each: about 200 MB for the 2^23
+frames of a 3-minute song's channel.) -/
+def roundF32 (a : FloatArray) : FloatArray := Id.run do
+  let mut out := FloatArray.emptyWithCapacity a.size
+  for i in [0:a.size] do
+    out := out.push (toF32 (a.get! i))
+  return out
+
+#guard (roundF32 ⟨#[0.1, 1.0, -0.5, 1.0 / 0.0]⟩).data == #[toF32 0.1, 1.0, -0.5, 1.0 / 0.0]
+#guard (roundF32 FloatArray.empty).size == 0
+
 /-- A decoded buffer with what the decode found. -/
 structure Decoded where
   buffer : AudioBuffer
@@ -314,7 +326,7 @@ def decode (bytes : ByteArray) (contextRate : Float) (modules : String → Optio
     | .error _ =>
       return .error (.notSupported s!"cannot make a buffer of {out.size} channels, {len} frames at {contextRate} Hz")
     | .ok b0 =>
-      let data := out.map fun a => (⟨a.data.map toF32⟩ : FloatArray)
+      let data := out.map roundF32
       return .ok { buffer := { b0 with data }, format := raw.format, sourceRate := raw.rate,
                    sourceFrames := frames, nanReplaced := raw.nanReplaced }
 

@@ -531,3 +531,59 @@ latency. `--perf-summary` gets a block `audio`.
     takes the device's buffer at each callback, so the margin above may be smaller there). The
     rendering cost (above) has not been worked on.
 - Then the owner's check on the Mac, and stage E (the jukebox).
+- D3, second part (2026-11-27, branch `wip/1169-page-decode`): decode jobs in pages, and large buffers.
+  - `WebAudioRun.lean`: in `after`, each job of `Api.takeDecodeJobs` starts a task of the task pool
+    (`BaseIO.asTask`, default priority) that runs `WebAudio.Decode.decodeAudioData` and packs the
+    samples (`Api.channelsBytes`); finished tasks give their result to the page (`Api.finishDecode`) in
+    `before`, and in `after` for a task that finished at once (no task manager: `asTask` runs on the
+    calling thread, correct and only slower). `Api.needsTurns` is true while a job has no result. The
+    decoder modules are read once per engine from `FOAFNAUT_MEDIA_DECODERS`, else
+    `~/.cache/factoidal/media-decoders`, each checked with `Media.Modules.check`; a file that needs a
+    missing module answers -23 (`NotSupportedError`, the message names `tools/fetch-media-decoders.sh`);
+    other failures -30 (`EncodingError`). `build-web-render.sh` builds `L4Factoidal.WebAudio.Decode`
+    into the library.
+  - `prelude.js`: `decodeAudioData(arrayBuffer, success, error)` on ops 194 and 195: argument checks,
+    `DataCloneError` for a detached buffer, `ArrayBuffer.prototype.transfer()` detaches the page's
+    buffer (BubblePopJS has it), the promise resolves and then the success callback is called in the
+    same task (the specification's order); the error path rejects with the named `DOMException` and then
+    calls the error callback. The samples are `Float32Array` views of the op 195 answer, with no copy.
+    Works on `AudioContext` and `OfflineAudioContext`.
+  - Hygiene: importing `Media.Decode` brought `WasmVM.Bench.Sample` (its `initialize prof` is one more
+    opaque) into the lab's closure. `Media.Decode.Module` now has an optional `sampler`
+    (`WasmVM.Bench.Sample.runIO`, passed by `media-bench video` when `WASMVM_PROFILE` is set), so the
+    import is gone: 38 externs, 2 opaques, as before. Side effect: `WASMVM_PROFILE` now samples only
+    `media-bench video`, not `media-bench audio`.
+  - Large buffers. Cause: `bufferArgs` read each value with `all.data[i]!` on a `FloatArray`; `.data` of a
+    `FloatArray` copies the whole array, so setting a buffer was quadratic. Fixed (one pass,
+    `Api.f32sFrom`), and the other loops of the same kind (`f32sBytes`, `Decode`'s rounding) are one pass
+    now. Also: `checkOp` and `bufferArgs` no longer allocate a zero buffer of the full length to
+    validate it, and the page passes each channel as its own argument instead of copying the channels
+    into one array (`TypedArray.prototype.set` costs 0.7 microseconds a value in BubblePopJS; 2.5 s for
+    one 2^22 channel). Host-timed page turns (`webaudio_bigbuffer_bench.ts`, Linux, 4 vCPUs, another
+    build running):
+
+    | frames | new AudioBuffer before / after | set `buffer` before / after | render answer into JS before / after |
+    |---|---|---|---|
+    | 2^12 | 9 ms | 121 ms | |
+    | 2^14 | 14 ms | 1,980 ms | |
+    | 2^15 | 20 ms | 8,259 ms | |
+    | 2^16 | 50 / 6 ms | (about 33 s) / 4 ms | 22 / 15 ms |
+    | 2^18 | 133 / 8 ms | (about 9 min) / 7 ms | 68 / 46 ms |
+    | 2^20 | 464 / 16 ms | | 257 / 194 ms |
+    | 2^22 | 1,986 / 43 ms | | 1,038 / 651 ms |
+
+    Setting `buffer`: 2^22 118 ms, 2^23 (+512) 323 ms (target 2 s). Before, time grew by 4 for each doubling
+    (quadratic; 2^23 extrapolates to about 150 hours). The 2^16 and 2^18 "before" values in
+    parentheses are extrapolated from 2^15, not measured.
+  - Findings inside BubblePopJS, not changed: `TypedArray.prototype.set` of another typed array is
+    about 0.7 microseconds a value (2^22: 2.5 s); the `apiCall` block is limited to 64 MiB
+    (`LeanJS.outCap`) in both directions, so a buffer or a decode answer above 16.7 million
+    samples (a 3-minute stereo song at 48 kHz is 17.3 million) is refused with -5. Chunked transfer
+    would need ops of its own and a contiguous `Float32Array` made without `set`.
+  - Tests: `webaudio_decode_test.ts` (the five clips equal `lake exe media-bench decode` bit for bit at
+    44.1 kHz; detach, order of callbacks, `EncodingError`, `DataCloneError`, `TypeError`, no modules
+    gives `NotSupportedError`), `webaudio_jukebox_test.ts` (Decode all gives "Decoded 6 of 6 tracks.",
+    Play: the WAV holds the first track bit for bit times 0.8, 0 under-runs; "From the last click to the
+    first frame played" 121 to 135 ms; Decode all of 6 tracks about 7.4 s in this build).
+    The jukebox test clicks by a message that makes the page call `click()`: the engine's hit test reads
+    the page's static layout, which the page's own script changes.

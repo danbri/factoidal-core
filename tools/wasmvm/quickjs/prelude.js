@@ -5562,7 +5562,7 @@
   //    Panner, WaveShaper, ScriptProcessor, the MediaElement and MediaStream nodes, AudioWorklet and
   //    AudioListener) exist as interface objects; their constructors and factory methods throw
   //    NotSupportedError. Nothing here fakes their behaviour.
-  //  - decodeAudioData() rejects with NotSupportedError: the ops have no decoder entry yet (stage C).
+  //  - decodeAudioData() detaches its ArrayBuffer only where the engine has ArrayBuffer.prototype.transfer; see its entry.
   //  - The ops have no read of a node's channelCount, channelCountMode, channelInterpretation, type,
   //    loop, loopStart or loopEnd, and no read of a context's state. The page keeps the value of the
   //    last set that Lean accepted, and the defaults of Render.chanDefaults.
@@ -5768,15 +5768,13 @@
       if (value === undefined || Object.is(value, dflt)) return;
       ask(179, [st.cs.id, st.id, index, 'setValue', f64(value)], 'AudioParam.value');
     };
-    const bufferData = b => {
-      const data = new Float32Array(b.numberOfChannels * b.length);
-      b.data.forEach((c, i) => data.set(c, i * b.length));
-      return u8(data);
-    };
+    // The channels as byte views, one argument each: no copy here (TypedArray.prototype.set costs 0.7
+    // microseconds a value in this engine; a 2^23-frame channel took 6 s). Lean joins them.
+    const bufferData = b => b.data.map(u8);
     const attrSet = (st, name, value) => { ask(183, [st.cs.id, st.id, name, value], 'AudioNode.' + name); };
     const setBufferOf = (st, b) => {
       if (b === null) ask(184, [st.cs.id, st.id, '', '', '', ''], 'AudioBufferSourceNode.buffer');
-      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), bufferData(b)], 'AudioBufferSourceNode.buffer');
+      else ask(184, [st.cs.id, st.id, b.numberOfChannels, b.length, f64(b.sampleRate), ...bufferData(b)], 'AudioBufferSourceNode.buffer');
       st.buffer = b;
     };
     const waveBytes = w => [w.real === null ? '-' : u8(w.real), w.imag === null ? '-' : u8(w.imag), w.disable ? '1' : '0'];
@@ -6122,14 +6120,50 @@
         const c = dictConv('PeriodicWaveConstraints', a[2], what);
         return new PeriodicWave(self, { real, imag, disableNormalization: c.disableNormalization });
       },
-      // Stage C of issue 1169: the ops have no decoder entry yet.
+      // decodeAudioData (ops 194 and 195, stage C of issue 1169). Order of the specification: the
+      // arguments are checked; a detached buffer rejects with DataCloneError; the ArrayBuffer is
+      // detached (`transfer()` where the engine has it: the bytes move, the page's buffer gets
+      // length 0; else the bytes are copied and the page's buffer stays as it was, which the
+      // specification does not allow); the decode runs on a task of the
+      // engine (WebAudioRun.lean) and the engine queues `cb` as a task when it has finished;
+      // then, in one task: the promise settles and the success or error callback is invoked.
       'BaseAudioContext.decodeAudioData': (s, a) => {
         const what = "Failed to execute 'decodeAudioData' on 'BaseAudioContext'";
         if (!(a[0] instanceof ArrayBuffer)) throw new TypeError(`${what}: parameter 1 is not of type 'ArrayBuffer'.`);
         for (const cb of [a[1], a[2]]) if (cb !== undefined && cb !== null && typeof cb !== 'function') throw new TypeError(`${what}: The callback provided is not a function.`);
-        const e = unsup('BaseAudioContext.decodeAudioData');
-        task(() => { if (typeof a[2] === 'function') { try { a[2].call(undefined, e); } catch (x) { report(x); } } });
-        return rejected(e);
+        const ok = typeof a[1] === 'function' ? a[1] : null, bad = typeof a[2] === 'function' ? a[2] : null;
+        const callBack = (f, v) => { if (f !== null) task(() => { try { f.call(undefined, v); } catch (x) { report(x); } }); };
+        if (a[0].detached) {
+          const e = dom('DataCloneError', `${what}: The ArrayBuffer is detached.`);
+          callBack(bad, e);
+          return rejected(e);
+        }
+        const moved = typeof a[0].transfer === 'function' ? a[0].transfer() : a[0].slice(0);
+        const bytes = new Uint8Array(moved);
+        return new Promise((resolve, reject) => {
+          let job = 0;
+          const cb = register(() => {
+            callbacks.delete(cb); kept.delete(cb);
+            const r = apiCall(195, [String(job)], 0, true);
+            if (!(r instanceof ArrayBuffer)) {
+              const e = errOf(typeof r === 'number' ? r : -30, r === -23
+                ? `${what}: Unable to decode audio data: the sample rate is not supported, or a decoder module is missing (tools/fetch-media-decoders.sh)`
+                : `${what}: Unable to decode audio data`);
+              reject(e);
+              if (bad !== null) { try { bad.call(undefined, e); } catch (x) { report(x); } }
+              return;
+            }
+            const dv = new DataView(r), nch = dv.getUint32(0, true), len = dv.getUint32(4, true), rate = dv.getFloat64(8, true);
+            // the samples are views of the answer: no copy (as renderResult)
+            const data = Array.from({ length: nch }, (_, c) => new Float32Array(r, 16 + 4 * len * c, len));
+            const buffer = wrapBuffer({ iface: 'AudioBuffer', numberOfChannels: nch, length: len, sampleRate: rate, data });
+            resolve(buffer);
+            if (ok !== null) { try { ok.call(undefined, buffer); } catch (x) { report(x); } }
+          });
+          kept.add(cb);
+          try { job = Number(ask(194, [s.id, bytes, String(cb)], what)); }
+          catch (e) { callbacks.delete(cb); kept.delete(cb); throw e; }
+        });
       },
       'AudioContext.getOutputTimestamp': (s) => { const t = rtTime(s); return { contextTime: t.contextTime, performanceTime: t.performanceTime }; },
       'AudioContext.resume': (s) => rtControl(s, 'resume'),

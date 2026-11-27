@@ -14,7 +14,6 @@ randomness, environment or output). The one other import,
 `env.emscripten_notify_memory_growth`, does nothing.
 -/
 import L4Factoidal.WasmVM.WasiIO
-import L4Factoidal.WasmVM.Bench.Sample
 import L4Factoidal.Media.Ogg
 import L4Factoidal.Media.WebM
 import L4Factoidal.Media.Mp3
@@ -31,6 +30,14 @@ def extraNames (mo nm : String) : Bool := mo == "env" && nm == "emscripten_notif
 def noExtra : String → String → Array Value → Store → IO (Store × HostResult) :=
   fun _ _ _ st => pure (st, .values #[])
 
+/-- A runner that stands in for the plain loop of `Module.call`: the instruction-sampling runner of
+the benchmarks (`WasmVM.Bench.Sample.runIO`), given by `media-bench`. This file does not import
+`WasmVM.Bench.Sample`: that module holds a global profile (`initialize prof`) which every module that
+imports this one, the engine's Web Audio included, would carry as one more opaque constant
+(`labs/demos/foafnaut/LabHygiene.lean`). -/
+abbrev Sampler := Store → Nat → Array Value → Budget →
+  (Nat → Array Value → Store → IO (Store × HostResult)) → IO (Store × Outcome × Nat)
+
 /-- A loaded decoder module, a buffer in its memory for packets, and the
 instructions and nanoseconds its calls have used. -/
 structure Module where
@@ -42,19 +49,20 @@ structure Module where
   cap : Nat := 0
   steps : Nat := 0
   ns : Nat := 0
+  sampler : Option Sampler := none
 
 def budget : Budget := { fuel := 1000000000000 }
 
 /-- Run export `name`, counting instructions; host calls go to the WASI host. -/
 def Module.call (m : Module) (name : String) (args : Array Value) : IO (Module × Outcome) := do
-  let ⟨st, inst, mem, bs, buf, cap, steps, ns⟩ := m
+  let ⟨st, inst, mem, bs, buf, cap, steps, ns, sampler⟩ := m
   match st.export? inst name with
   | some (.func fa) =>
     let t0 ← IO.monoNanosNow
-    if ← WasmVM.Bench.Sample.enabled then
-      let (st, o, n) ← WasmVM.Bench.Sample.runIO st fa args budget (host caps mem bs noExtra)
+    if let some run := sampler then
+      let (st, o, n) ← run st fa args budget (host caps mem bs noExtra)
       let t1 ← IO.monoNanosNow
-      return (⟨st, inst, mem, bs, buf, cap, steps + n, ns + (t1 - t0)⟩, o)
+      return (⟨st, inst, mem, bs, buf, cap, steps + n, ns + (t1 - t0), sampler⟩, o)
     let (st, o, n) := invokeSteps st fa args budget
     let mut st := st
     let mut o := o
@@ -67,8 +75,8 @@ def Module.call (m : Module) (name : String) (args : Array Value) : IO (Module �
         st := st''; o := o'; total := total + n'
       | _ => break
     let t1 ← IO.monoNanosNow
-    return (⟨st, inst, mem, bs, buf, cap, steps + total, ns + (t1 - t0)⟩, o)
-  | _ => return (⟨st, inst, mem, bs, buf, cap, steps, ns⟩, .trap (.host s!"no export {name}"))
+    return (⟨st, inst, mem, bs, buf, cap, steps + total, ns + (t1 - t0), sampler⟩, o)
+  | _ => return (⟨st, inst, mem, bs, buf, cap, steps, ns, sampler⟩, .trap (.host s!"no export {name}"))
 
 def Module.callI32 (m : Module) (name : String) (args : Array Value) : IO (Module × Int) := do
   let (m, o) ← m.call name args
@@ -85,17 +93,17 @@ def Module.read (m : Module) (off n : Nat) : IO ByteArray :=
   | .error e => throw (IO.userError e)
 
 def Module.write (m : Module) (off : Nat) (b : ByteArray) : IO Module := do
-  let ⟨st, inst, mem, bs, buf, cap, steps, ns⟩ := m
+  let ⟨st, inst, mem, bs, buf, cap, steps, ns, sampler⟩ := m
   match st.writeMem mem off b with
-  | .ok st => pure ⟨st, inst, mem, bs, buf, cap, steps, ns⟩
+  | .ok st => pure ⟨st, inst, mem, bs, buf, cap, steps, ns, sampler⟩
   | .error e => throw (IO.userError e)
 
 /-- Load a module, run `_initialize`, and allocate a packet buffer. -/
-def load (bytes : ByteArray) : IO Module := do
+def load (bytes : ByteArray) (sampler : Option Sampler := none) : IO Module := do
   let l ← match ← Wasi.load caps bytes {} extraNames noExtra with
     | .ok l => pure l
     | .error e => throw (IO.userError e)
-  let m : Module := { store := l.store, inst := l.inst, mem := l.mem, bindings := l.bindings }
+  let m : Module := { store := l.store, inst := l.inst, mem := l.mem, bindings := l.bindings, sampler }
   let m ← match m.store.export? m.inst "_initialize" with
     | some _ => do let (m, _) ← m.callI32 "_initialize" #[]; pure m
     | none => pure m
@@ -498,8 +506,9 @@ def timedPure {α : Type} (f : Unit → α) : IO (α × Nat) := do
   return (r, t1 - t0)
 
 /-- Decode the VP8 frames of a WebM track, at most `limit` of them. -/
-def vp8 (wasm : ByteArray) (frames : Array WebM.Frame) (limit : Nat) (keepI420 : Bool) : IO Video := do
-  let mut m ← load wasm
+def vp8 (wasm : ByteArray) (frames : Array WebM.Frame) (limit : Nat) (keepI420 : Bool)
+    (sampler : Option Sampler := none) : IO Video := do
+  let mut m ← load wasm sampler
   let (m', r) ← m.callI32 "mw_vp8_init" #[]
   m := m'
   if r != 0 then throw (IO.userError s!"mw_vp8_init: {r}")

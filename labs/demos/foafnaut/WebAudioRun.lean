@@ -1,3 +1,4 @@
+import L4Factoidal.WebAudio.Decode
 import L4Factoidal.WebAudio.RenderSide
 import L4Factoidal.WebAudio.Sink
 import WebScripts
@@ -49,13 +50,30 @@ modules without `web_render_shim.c`).
 
 Measures (plan 13.9): `Stats`, read by the document op `audioRuns`.
 
+## Decode jobs (ops 194 and 195, stage C)
+
+`decodeAudioData` is a job of the page's Web Audio state (`Api.DecodeJob`). In `after`, the jobs
+the page queued (`Api.takeDecodeJobs`) each start a task of the task pool
+(`BaseIO.asTask`, default priority, not a dedicated thread) that runs
+`WebAudio.Decode.decodeAudioData` with the pinned decoder modules and packs the samples as binary32
+(`Api.channelsBytes`). In `before` (and in `after`, for a task that has already finished) the
+finished tasks give their result to the page (`Api.finishDecode`, which queues the page callback
+as a task); a job with no result asks for turns (`Api.needsTurns`). The modules are read once per
+engine (`loadDecoders`) from `FOAFNAUT_MEDIA_DECODERS`, else `~/.cache/factoidal/media-decoders`
+(`tools/fetch-media-decoders.sh`), each checked with `L4Factoidal.Media.Modules.check`; a module that is
+missing or has other bytes than its pin makes a file that needs it answer `NotSupportedError`
+(code -23). The format a decode does not read, or data a decoder refuses, answers `EncodingError`
+(-30). With no task manager (the Wasm build, or `FOAFNAUT_LEAN_THREADS=0`) `BaseIO.asTask` runs
+the decode at once on the calling thread, inside `after`: the answer is right and the page is
+blocked for the decode (only slower).
+
 ## Not done
 
 - A host that drops an engine with none of the steps of `endAll` (no `close`, no session end, no
   `audioEnd`) leaves its runs playing until the process ends; if the library is then unloaded
   (`dlclose`), a run's thread runs unloaded code. Task sessions pin the library
   (`web_render_shim.c`); real-time runs do not.
-- The decode jobs of ops 194 and 195 (stage C), the `native-audio` trace line and the
+- The `native-audio` trace line and the
   `--perf-summary` block of plan 13.9 (host work).
 -/
 
@@ -114,9 +132,25 @@ structure Run where
   shared : Shared
   task : Task Unit
 
+/-- The pinned decoder modules that were found and passed `L4Factoidal.Media.Modules.check`, and the files of
+the pins that were not (missing, or other bytes). -/
+structure Decoders where
+  modules : Array (String × ByteArray) := #[]
+  missing : Array String := #[]
+
+/-- A decode job of a page running on a task: its result in the form `Api.finishDecode` takes. -/
+structure DecodeRun where
+  page : Nat
+  job : Nat
+  task : Task (Except Int (Nat × Nat × Float × ByteArray))
+
 /-- What the engine keeps for real-time audio (`WebDocument.Engine.audio`). -/
 structure Registry where
   runs : Array Run := #[]
+  /-- The decode jobs of the page sessions, running or finished and not yet given to a page. -/
+  decodes : Array DecodeRun := #[]
+  /-- The decoder modules, read when the first job starts. -/
+  decoders : Option Decoders := none
   /-- The audio output and the autoplay setting, asked once (`probe`); `none` before. -/
   env : Option WebScripts.AudioEnv := none
   /-- The sink spec (`Sink.defaultSpec`), read with `env`. -/
@@ -346,6 +380,96 @@ def audioOf (held : WebScripts.Held) : Option Api.State :=
   | none, some (_, s, _) => some s.host.web.audio
   | none, none => none
 
+/-! ## Decode jobs -/
+
+/-- The directory of the decoder modules: `FOAFNAUT_MEDIA_DECODERS`, else
+`~/.cache/factoidal/media-decoders` (where `tools/fetch-media-decoders.sh` puts them). -/
+def decoderDir : BaseIO String := do
+  match ← IO.getEnv "FOAFNAUT_MEDIA_DECODERS" with
+  | some d => if d.isEmpty then pure "" else pure d
+  | none =>
+    match ← IO.getEnv "HOME" with
+    | some h => pure (h ++ "/.cache/factoidal/media-decoders")
+    | none => pure ""
+
+/-- Read the pinned modules from `decoderDir`; each is kept only when it has its pin's size and
+SHA-256 (`L4Factoidal.Media.Modules.check`). -/
+def loadDecoders : BaseIO Decoders := do
+  let dir ← decoderDir
+  let mut mods : Array (String × ByteArray) := #[]
+  let mut missing : Array String := #[]
+  for p in L4Factoidal.Media.Modules.pins do
+    match ← (IO.FS.readBinFile (dir ++ "/" ++ p.file)).toBaseIO with
+    | .ok b =>
+      match L4Factoidal.Media.Modules.check p.file b with
+      | .ok _ => mods := mods.push (p.file, b)
+      | .error _ => missing := missing.push p.file
+    | .error _ => missing := missing.push p.file
+  return { modules := mods, missing }
+
+/-- The code of a decode error. A file that needs a module that is not there answers -23, as does
+a context rate outside the supported range; the rest is -30. `Decode.getModule` words the first
+as "decoder module FILE was not given". -/
+def errorCode : WebAudio.Decode.DecodeError → Int
+  | .notSupported _ => Api.errNotSupported
+  | .encoding d => if (d.splitOn "decoder module ").length > 1 then Api.errNotSupported else Api.errEncoding
+
+/-- One decode job, in the form of `Api.finishDecode`'s result: channels, length, rate and the
+samples as binary32, channel by channel. -/
+def decodeJob (dec : Decoders) (rate : Float) (bytes : ByteArray) :
+    BaseIO (Except Int (Nat × Nat × Float × ByteArray)) := do
+  let find := fun (n : String) => (dec.modules.find? (·.1 == n)).map (·.2)
+  match ← (WebAudio.Decode.decodeAudioData bytes rate find).toBaseIO with
+  | .error _ => return .error Api.errEncoding
+  | .ok (.error e) => return .error (errorCode e)
+  | .ok (.ok b) => return .ok (b.numberOfChannels, b.length, b.sampleRate, Api.channelsBytes b.data)
+
+/-- Start a task for each decode job the page of `held` queued. The decoder modules are read before
+the first one. -/
+def startDecodes (reg : Registry) (held : WebScripts.Held) : BaseIO (Registry × WebScripts.Held) := do
+  match WebScripts.currentId held, audioOf held with
+  | some page, some audio =>
+    if audio.decodeJobs.isEmpty then return (reg, held)
+    let (held, jobs) := withHost held fun h =>
+      let (a, jobs) := Api.takeDecodeJobs h.web.audio
+      ({ h with web := { h.web with audio := a } }, jobs)
+    let jobs := jobs.getD #[]
+    if jobs.isEmpty then return (reg, held)
+    let (reg, dec) ← match reg.decoders with
+      | some d => pure (reg, d)
+      | none => do let d ← loadDecoders; pure ({ reg with decoders := some d }, d)
+    let mut decodes := reg.decodes
+    for (job, rate, bytes) in jobs do
+      let task ← BaseIO.asTask (decodeJob dec rate bytes)
+      decodes := decodes.push { page, job, task }
+    return ({ reg with decodes }, held)
+  | _, _ => return (reg, held)
+
+/-- Give the page of `held` the results of its decode jobs whose tasks have finished
+(`Api.finishDecode`, which queues the job's callback in the page's Web Audio state; the callers
+queue it as a task of the page's loop). -/
+def finishDecodes (reg : Registry) (held : WebScripts.Held) : BaseIO (Registry × WebScripts.Held) := do
+  match WebScripts.currentId held with
+  | some page =>
+    let mut keep : Array DecodeRun := #[]
+    let mut done : Array (Nat × Except Int (Nat × Nat × Float × ByteArray)) := #[]
+    for d in reg.decodes do
+      if d.page != page then keep := keep.push d
+      else if ← IO.hasFinished d.task then done := done.push (d.job, d.task.get)
+      else keep := keep.push d
+    if done.isEmpty then return (reg, held)
+    let (held, _) := withHost held fun h =>
+      let a := done.foldl (fun a (job, r) => Api.finishDecode a job r) h.web.audio
+      ({ h with web := { h.web with audio := a } }, ())
+    return ({ reg with decodes := keep }, held)
+  | none => return (reg, held)
+
+/-- Queue the page callbacks of the Web Audio state (`Api.takeWakeups`) as tasks of the page's loop. -/
+def queueWakeups (held : WebScripts.Held) : WebScripts.Held :=
+  (withHost held fun h =>
+    let (a, wakeups) := Api.takeWakeups h.web.audio
+    ({ h with web := { h.web with audio := a }, loop := wakeups.foldl (fun l w => l.queueTask .other w) h.loop }, ())).1
+
 /-- Before a `scriptSession` call (plan 13.3): the engine's audio output for the call; the reports
 of the page's runs merged into its Web Audio state, and the page callbacks of the contexts with
 events queued as tasks. A run whose task has ended leaves the registry once its last report is
@@ -353,6 +477,7 @@ taken (the task is looked at before its report is taken). -/
 def before (reg : Registry) (held : WebScripts.Held) : BaseIO (Registry × WebScripts.Held) := do
   let (reg, env) ← probe reg
   let held := { held with audio := env }
+  let (reg, held) ← finishDecodes reg held
   match WebScripts.currentId held, audioOf held with
   | some page, some audio =>
     let held := if audio.device == env.device then held
@@ -381,7 +506,12 @@ def after (reg : Registry) (held : WebScripts.Held) : BaseIO (Registry × WebScr
   let cur := WebScripts.currentId held
   for r in reg.runs do
     if some r.page != cur then endRun r
-  let reg := { reg with runs := reg.runs.filter fun r => some r.page == cur }
+  let reg := { reg with runs := reg.runs.filter fun r => some r.page == cur
+                        decodes := reg.decodes.filter fun d => some d.page == cur }
+  let (reg, held) ← startDecodes reg held
+  -- a decode that has already finished (with no task manager, `asTask` ran it at once)
+  let (reg, held) ← finishDecodes reg held
+  let held := queueWakeups held
   match cur, audioOf held with
   | some page, some audio =>
     if audio.realtime.isEmpty then return (reg, held)
