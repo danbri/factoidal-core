@@ -108,7 +108,8 @@ Deno.test({name:"real-time audio: an AudioContext plays what an OfflineAudioCont
   const session=turn.session,logs=[...turn.logs];
   try{
     const made=logs.find(l=>l.startsWith("made "))!.split(" ");
-    assert.equal(made[1],"running");
+    // Web Audio API, the constructor: suspended at once; statechange to running follows.
+    assert.equal(made[1],"suspended");
     const rate=Number(made[2]);
     // The offline render's length: one second of the oscillator, then 2048 frames of silence.
     const need=Math.round(rate)+2048;
@@ -244,7 +245,8 @@ Deno.test({name:"real-time audio: no under-run is counted while a context is sus
     const resumed=onlyRun(engine).items[0];
     assert.ok(resumed.read>after.read,"nothing played after resume()");
     assert.equal(resumed.underruns,0,`under-runs: ${JSON.stringify(resumed)}`);
-    assert.deepEqual(logs.filter(l=>l.startsWith("statechange")),["statechange suspended","statechange running"]);
+    // The first statechange is the start (Web Audio API, the constructor: suspended, then running).
+    assert.deepEqual(logs.filter(l=>l.startsWith("statechange")),["statechange running","statechange suspended","statechange running"]);
     console.log(JSON.stringify({atSuspend:{read:atSuspend.read,underruns:atSuspend.underruns},suspended:{read:after.read,underruns:after.underruns},
       resumed:{read:resumed.read,underruns:resumed.underruns,aheadMin:resumed.aheadMin,aheadMax:resumed.aheadMax}}));
   }finally{

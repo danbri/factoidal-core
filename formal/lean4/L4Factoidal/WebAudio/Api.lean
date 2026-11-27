@@ -128,7 +128,8 @@ merges the reports (`applyReport`), takes decode jobs and wakeups; this file has
     the page callback handle for events (decimal). -23 when `device` is `none` (no audio output)
     or when 16 real-time contexts that are not closed exist. Answers `"ID RATE CHANNELS STATE"`:
     the id, the rate, the device's channel count (`maxChannelCount`; the destination has 2) and the
-    state (`suspended`, `running`, `closed`). The state is `running` when `allowedToStart`.
+    state, which is `suspended` (the Web Audio API constructor). When `allowedToStart`, the
+    rendering side starts at once and reports `running` (field 4 of the first message is 1).
     The first message of the outbox is `(190, [ID, RATE (binary64), CHANNELS, TARGET, STATE])`,
     the target in frames (1024, 2048, 4096 for the hints; `ceil(seconds * rate)` from 256 to
     16384) and STATE the initial state's code (`RtState.code`: 0 suspended, 1 running), so that
@@ -227,6 +228,9 @@ structure Realtime where
   latencyFrames : Nat := 0
   /-- The page-clock time of the last report, in ms. -/
   reportMs : Float := 0.0
+  /-- Made allowed to start, with no state change reported yet: the rendering side starts it and
+  reports `running`; the engine asks for turns until then (`needsTurns`). -/
+  starting : Bool := false
   deriving Inhabited
 
 /-- What a rendering side tells the control side (plan 13.3). -/
@@ -866,8 +870,12 @@ def addRealtime (s : State) (rate : Float) (devCh target cb : Nat) (c : Context.
     State × ByteArray :=
   let id := s.next
   let st := initialState s
+  -- Web Audio API, the AudioContext constructor: the control thread state is `suspended` at
+  -- first, also when the context is allowed to start. The rendering side starts in `st` (field 4
+  -- of the first message) and reports `running`; the page sees `statechange` then (WPT
+  -- constructor-allowed-to-start.html).
   let rt : Realtime :=
-    { state := st, maxChannels := devCh, target, callback := cb
+    { state := .suspended, starting := st == .running, maxChannels := devCh, target, callback := cb
       outbox := #[(190, #[dec id, f64le rate, dec devCh, dec target, dec st.code])] }
   ({ s with contexts := s.contexts.insert id c, realtime := s.realtime.insert id rt, next := id + 1 },
    ofStr s!"{id} {rateText rate} {devCh} {rt.state.text}")
@@ -983,6 +991,7 @@ def applyReport (s : State) (ctx : Nat) (r : Report) : State :=
     let fr := max rt.framesRendered r.framesRendered
     let rt' : Realtime :=
       { rt with state := r.stateChanges.back?.getD rt.state
+                starting := rt.starting && r.stateChanges.isEmpty
                 framesRendered := fr
                 framesPlayed := max rt.framesPlayed r.framesPlayed
                 underruns := max rt.underruns r.underruns
@@ -1002,7 +1011,7 @@ While this
 holds the engine asks for a turn at most 25 ms ahead, so the host gives the turns that deliver
 the events. -/
 def needsTurns (s : State) : Bool :=
-  s.realtime.fold (fun b _ rt => b || rt.state == .running ||
+  s.realtime.fold (fun b _ rt => b || rt.state == .running || rt.starting ||
     rt.calls.any (fun (c, _) => !rt.pendingResume.contains c)) false ||
   s.decodeJobs.fold (fun b _ j => b || j.result.isNone) false
 
@@ -1630,9 +1639,9 @@ private def u8s (b : ByteArray) : List Nat := b.toList.map (·.toNat)
 -- Making a context: the answer, with and without activation.
 #guard txt (ans devS 190 [t "interactive", ByteArray.empty, n 7]) == "1 48000 2 suspended"
 #guard txt (ans permitted 190 [t "interactive", ByteArray.empty, n 7]) ==
-  "1 48000 2 running"
+  "1 48000 2 suspended"
 #guard txt (ans { devS with activated := true } 190 [t "balanced", d 44100.0, n 7]) ==
-  "1 44100 2 running"
+  "1 44100 2 suspended"
 -- Refusals: hint, rate, no device, callback, 16 live contexts.
 #guard err devS 190 [t "fast", ByteArray.empty, n 7] == errType
 #guard err devS 190 [d (-1.0), ByteArray.empty, n 7] == errType
@@ -1672,7 +1681,7 @@ private def full (_ : Unit := ()) : State :=
   strArg (rtOf s 1).outbox[0]!.2 4) == some "1"
 -- The rate's 8 bytes give the rate back (the rendering side reads them, `RenderSide.ofOpen`).
 #guard [48000.0, 44100.0, 3000.0, 768000.0, 22050.5].all fun r => Float.ofBits (u64At (f64le r) 0) == r
--- needsTurns: a running context; a suspended one with no call; a resume waiting for activation;
+-- needsTurns: a context starting (allowed, before its running report); a suspended one with no call; a resume waiting for activation;
 -- a suspend not yet answered; a closed context.
 #guard (chain permitted [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some true
 #guard (chain devS [(190, [t "interactive", ByteArray.empty, n 7])]).map needsTurns == some false
@@ -1795,7 +1804,7 @@ private def waiting (_ : Unit := ()) : Option State :=
   let s := activate s
   let (s, r) ← (step s 190 #[t "interactive", ByteArray.empty, n 7]).toOption
   let (s, _) ← (step s 191 #[n 2, t "resume"]).toOption
-  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 running", [190, 191])
+  pure (String.fromUTF8! r, (rtOf s 2).outbox.toList.map (·.1))) == some ("2 48000 2 suspended", [190, 191])
 
 -- 192, 193: a report that ends a source and resolves a call; currentTime is monotone.
 private def reported (_ : Unit := ()) : Option State := do
