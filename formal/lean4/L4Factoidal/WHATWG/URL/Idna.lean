@@ -91,29 +91,32 @@ def statusOf (fields : List String) : Status :=
   | "m" :: [] => .mapped #[]
   | _ => .disallowed
 
-def idnaTable : Array (Row Status) := rowsOf IdnaData.idnaText statusOf
+/-- The tables are functions of `Unit`: a top-level constant is parsed from its text when the module
+starts, which cost every engine about 120 million instructions at library load (issue 471). The
+body is a closed term, parsed once, at the first lookup. -/
+def idnaTable (_ : Unit := ()) : Array (Row Status) := rowsOf IdnaData.idnaText statusOf
 
 /-- The status of a code point; a code point not in the table is disallowed. -/
 def status (c : Nat) : Status := (lookup idnaTable c).getD .disallowed
 
-def bidiTable : Array (Row String) :=
+def bidiTable (_ : Unit := ()) : Array (Row String) :=
   rowsOf IdnaData.bidiText (fun fs => fs.headD "L")
 
 /-- The Bidi_Class short name of a code point (UCD 18.0.0). -/
 def bidiClass (c : Nat) : String := (lookup bidiTable c).getD "L"
 
-def joinTable : Array (Row String) :=
+def joinTable (_ : Unit := ()) : Array (Row String) :=
   rowsOf IdnaData.joinText (fun fs => fs.headD "U")
 
 /-- The Joining_Type of a code point (UCD 18.0.0). -/
 def joiningType (c : Nat) : String := (lookup joinTable c).getD "U"
 
-def markTable : Array (Row Unit) := rowsOf IdnaData.markText (fun _ => ())
+def markTable (_ : Unit := ()) : Array (Row Unit) := rowsOf IdnaData.markText (fun _ => ())
 
 /-- General_Category is Mn, Mc or Me. -/
 def isMark (c : Nat) : Bool := (lookup markTable c).isSome
 
-def viramaTable : Array (Row Unit) := rowsOf IdnaData.viramaText (fun _ => ())
+def viramaTable (_ : Unit := ()) : Array (Row Unit) := rowsOf IdnaData.viramaText (fun _ => ())
 
 /-- Canonical_Combining_Class is 9 (Virama). -/
 def isVirama (c : Nat) : Bool := (lookup viramaTable c).isSome

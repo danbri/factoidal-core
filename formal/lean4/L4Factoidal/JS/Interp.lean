@@ -2462,7 +2462,7 @@ structure VFrame where
 @[inline] def vmCallCode (h : HeapOf H) (fv : Value) : Option Code :=
   match fv with
   | .obj id => match (h.obj id).kind with
-    | .closure fd _ _ _ _ _ => fd.info.code
+    | .closure fd _ _ _ _ _ => fd.info.code.get
     | _ => none
   | _ => none
 
@@ -9153,7 +9153,7 @@ def callClosure : Nat → FunDef → Nat → Value → Value → Value → Value
     -- must not use up the call depth).
     -- the environment: the arguments are its first slots when the parameters are plain
     if h.useVm then
-      if let some c := fd.info.code then
+      if let some c := fd.info.code.get then
         return ← tryCatch (do
             if fd.kind == .ctor false then
               initFields n { env, thisV, strict := fd.strict, fnObj } fnObj thisV

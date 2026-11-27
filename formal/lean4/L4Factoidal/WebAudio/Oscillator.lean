@@ -332,6 +332,20 @@ theorem create_ok_shape (real imag : Option FloatArray) (d : Bool) (w : Periodic
 def builtinWave (t : OscType) : PeriodicWave :=
   PeriodicWave.build builtinLen builtinReal (builtinImag t) false
 
+/-- `builtinWave`, each type's wave computed once, at its first use. Each branch is a closed term,
+which Lean evaluates once when it is first needed. A top-level constant is evaluated when the
+module starts instead: the waves cost every engine about 340 million instructions at library
+load, also on pages with no audio (issue 471). Same value: `builtinWaveCached_eq`. -/
+def builtinWaveCached : OscType → PeriodicWave
+  | .sine => builtinWave .sine
+  | .square => builtinWave .square
+  | .sawtooth => builtinWave .sawtooth
+  | .triangle => builtinWave .triangle
+  | .custom => builtinWave .custom
+
+theorem builtinWaveCached_eq (t : OscType) : builtinWaveCached t = builtinWave t := by
+  cases t <;> rfl
+
 /-! ## Evaluation of the series -/
 
 /-- `acc + sum_{j=0}^{m-1} (a[k+j] cos(2 pi (k+j) phase) + b[k+j] sin(2 pi (k+j) phase))`, with
@@ -399,7 +413,7 @@ set to custom without also specifying a periodicWave"). -/
 def OscState.new (sampleRate : Float) (t : OscType) : Except WaveError OscState :=
   match t with
   | .custom => .error .invalidStateError
-  | _ => .ok { sampleRate, type := t, wave := builtinWave t }
+  | _ => .ok { sampleRate, type := t, wave := builtinWaveCached t }
 
 /-- A new oscillator with a custom wave (the `periodicWave` option, or `setPeriodicWave` at once). -/
 def OscState.newCustom (sampleRate : Float) (w : PeriodicWave) : OscState :=
@@ -410,7 +424,7 @@ is set, the phase of the oscillator MUST be conserved." -/
 def OscState.setType (s : OscState) (t : OscType) : Except WaveError OscState :=
   match t with
   | .custom => .error .invalidStateError
-  | _ => .ok { s with type := t, wave := builtinWave t }
+  | _ => .ok { s with type := t, wave := builtinWaveCached t }
 
 /-- `setPeriodicWave`: the type becomes `custom`; the phase is kept. -/
 def OscState.setPeriodicWave (s : OscState) (w : PeriodicWave) : OscState :=
@@ -555,7 +569,7 @@ def sr44 : Float := 44100.0
 def okOr (r : Except WaveError OscState) (d : OscState) : OscState :=
   match r with | .ok s => s | .error _ => d
 
-def sineState : OscState := started (okOr (OscState.new sr44 .sine) (OscState.newCustom sr44 (builtinWave .sine)))
+def sineState (_ : Unit := ()) : OscState := started (okOr (OscState.new sr44 .sine) (OscState.newCustom sr44 (builtinWave .sine)))
 
 def refSine (f : Float) (n : Nat) : List Float :=
   (List.range n).map fun k => Float.sin (2.0 * piF * f * k.toFloat / sr44)
@@ -649,16 +663,16 @@ private def sinSumSame (t : OscType) (cnt : Nat) : Bool :=
 #guard (builtinWave .sawtooth).realZero && (builtinWave .sine).realZero
 
 -- error bound of the recurrence against one `cos` and `sin` per partial
-def sawW : PeriodicWave := builtinWave .sawtooth
+def sawW (_ : Unit := ()) : PeriodicWave := builtinWave .sawtooth
 #guard (partialCount sawW 44100.0 440.0) == 50
 #guard (partialCount sawW 44100.0 20.0) == 1102
-#guard (waveAt sawW 44100.0 440.0 0.123 - sawW.scale * directSum sawW.real sawW.imag 0.123 50).abs < 1.0e-12
-#guard (waveAt sawW 44100.0 20.0 0.4321 - sawW.scale * directSum sawW.real sawW.imag 0.4321 1102).abs < 1.0e-12
-#guard (waveAt sawW 44100.0 20.0 0.9999 - sawW.scale * directSum sawW.real sawW.imag 0.9999 1102).abs < 1.0e-12
+#guard (waveAt sawW 44100.0 440.0 0.123 - (sawW ()).scale * directSum (sawW ()).real (sawW ()).imag 0.123 50).abs < 1.0e-12
+#guard (waveAt sawW 44100.0 20.0 0.4321 - (sawW ()).scale * directSum (sawW ()).real (sawW ()).imag 0.4321 1102).abs < 1.0e-12
+#guard (waveAt sawW 44100.0 20.0 0.9999 - (sawW ()).scale * directSum (sawW ()).real (sawW ()).imag 0.9999 1102).abs < 1.0e-12
 
 -- band limit: no partial at or above Nyquist
 -- wave with partials 1 to 3 of equal weight, not normalized
-def threeW : PeriodicWave := customWave [0, 0, 0, 0] [0, 1, 1, 1] true
+def threeW (_ : Unit := ()) : PeriodicWave := customWave [0, 0, 0, 0] [0, 1, 1, 1] true
 #guard partialCount threeW 44100.0 (44100.0 / 8.0) == 3   -- 4 f = 11025 ... partials 1..3 are below 22050
 #guard partialCount threeW 44100.0 (44100.0 / 3.0) == 1   -- nyquist / f = 1.5: only partial 1
 #guard partialCount (customWave (List.replicate 40 0.0) (List.replicate 40 1.0) true) 44100.0 22050.0 == 0   -- f = Nyquist
@@ -695,18 +709,18 @@ def threeW : PeriodicWave := customWave [0, 0, 0, 0] [0, 1, 1, 1] true
   maxDiff y [0.0, 0.0, Float.sin (2.0 * piF * 441.0 / sr44), Float.sin (2.0 * piF * 882.0 / sr44)] < 1.0e-9
 
 -- start and stop: cosine wave, so the first active sample is 1
-def cosState : OscState := OscState.newCustom sr44 (customWave [0, 1] [0, 0] true)
-def window : OscState := (cosState.start (5.0 / 44100.0)).stop (20.0 / 44100.0)
+def cosState (_ : Unit := ()) : OscState := OscState.newCustom sr44 (customWave [0, 1] [0, 0] true)
+def window (_ : Unit := ()) : OscState := ((cosState ()).start (5.0 / 44100.0)).stop (20.0 / 44100.0)
 #guard
   let y := render window 128 1 1000.0 0.0
   (y.take 5).all (· == 0.0) && (y.drop 20).all (· == 0.0) && y.getD 5 0.0 == 1.0
     && (y.getD 6 0.0 - Float.cos (2.0 * piF * 1000.0 / sr44)).abs < 1e-12
 -- a source that was never started is silent; a stop frame before the start frame is silent
 #guard (render (OscState.newCustom sr44 (customWave [0, 1] [0, 0] true)) 128 1 1000.0 0.0).all (· == 0.0)
-#guard (render ((cosState.start (30.0 / 44100.0)).stop (10.0 / 44100.0)) 128 1 1000.0 0.0).all (· == 0.0)
+#guard (render (((cosState ()).start (30.0 / 44100.0)).stop (10.0 / 44100.0)) 128 1 1000.0 0.0).all (· == 0.0)
 -- the start is in the second block: the phase is 0 there
 #guard
-  let y := render (cosState.start (200.0 / 44100.0)) 128 2 1000.0 0.0
+  let y := render ((cosState ()).start (200.0 / 44100.0)) 128 2 1000.0 0.0
   (y.take 200).all (· == 0.0) && y.getD 200 0.0 == 1.0
 
 -- phase is conserved when the type changes
@@ -725,7 +739,7 @@ def isErr (r : Except WaveError α) (e : WaveError) : Bool :=
 def isOkW (r : Except WaveError α) : Bool :=
   match r with | .ok _ => true | .error _ => false
 -- `type` set to "custom" directly
-#guard isErr (sineState.setType .custom) .invalidStateError
+#guard isErr ((sineState ()).setType .custom) .invalidStateError
 #guard isErr (OscState.new sr44 .custom) .invalidStateError
 -- different lengths (`periodicWave.html`: 512 and 4), and lengths below 2
 #guard isErr (createPeriodicWave (mkCoefs 512 (fun _ => 0.0)) (mkCoefs 4 (fun _ => 0.0))) .indexSizeError
