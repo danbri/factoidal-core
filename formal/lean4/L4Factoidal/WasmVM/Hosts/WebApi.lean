@@ -59,6 +59,7 @@ import L4Factoidal.Net.SecureContext
 import L4Factoidal.Net.Multipart
 import L4Factoidal.HTML.ImageSize
 import L4Factoidal.DOM.SvgValues
+import L4Factoidal.DOM.SvgTinyTraits
 import L4Factoidal.HTML.DocumentEncoding
 import L4Factoidal.PageGl.Api
 import L4Factoidal.WebCodecs.Api
@@ -776,6 +777,8 @@ def run (s : State) (op flags : Nat) (fs : Array ByteArray) (dom : L4Factoidal.D
       ({ s with net := { s.net with cookies, now } }, r)
     -- The values the SVG DOM reflects: a length, a number, a number list, a transform list.
     else if 92 ≤ code && code < 96 then pure' (L4Factoidal.DOM.SvgValues.op code fs)
+    -- SVG Tiny 1.2 uDOM TraitAccess: a trait's type, computed value and setter checks, on the arena.
+    else if code == 210 || code == 211 then pure' (L4Factoidal.DOM.SvgTinyTraits.op code fs dom)
     -- WebGL: the rendering context interfaces (and, later ops, the contexts' state machine).
     else if 100 ≤ code && code < 120 then
       let (gl, r) := L4Factoidal.PageGl.Api.op s.gl code fs
