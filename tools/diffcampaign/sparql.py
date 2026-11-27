@@ -106,7 +106,7 @@ def group(rng, depth=0, binds=None):
             binds[0] += 1  # a fresh variable each time: BIND to a variable in scope is a syntax error
             parts.append(f"BIND(STR({rng.choice(VARS)}) AS ?z{binds[0]})")
         else:
-            parts.append(f"FILTER {filter_expr(rng)}")
+            parts.append(f"FILTER ({filter_expr(rng)})")  # a Constraint must be bracketed or a call
     return " ".join(parts)
 
 
