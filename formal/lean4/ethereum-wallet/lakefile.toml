@@ -1,0 +1,12 @@
+name = "ethereum_wallet"
+version = "0.1.0"
+defaultTargets = ["EthereumWallet"]
+
+# Transaction building, signing, keys and ABI for transacting with Ethereum.
+# Stand-alone like evm-cleanroom and ethereum-consensus: it does not depend on
+# the large Factoidal library. Modules it reuses from those packages or from
+# L4Factoidal.Crypto are added as extra lean_lib entries with srcDir, the way
+# ethereum-consensus takes FactoidalSHA2, after checking their import closure.
+
+[[lean_lib]]
+name = "EthereumWallet"
