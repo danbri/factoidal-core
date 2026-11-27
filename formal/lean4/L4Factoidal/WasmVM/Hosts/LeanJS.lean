@@ -238,6 +238,9 @@ keeps it: that refused a Web Audio buffer or decode of a stereo song longer than
 (https://github.com/danbri/factoidal-core/issues/1177). -/
 def outCap : Nat := if System.Platform.numBits == 64 then 1 <<< 30 else 1 <<< 26
 
+-- The output capacity and the argument block limit of `web_api` are the same number.
+#guard outCap == Hosts.WebApi.maxInput
+
 /-- ToInt32 of an argument (`JS_ToInt32` of the QuickJS build). -/
 def intOf : JS.HostArg → Int
   | .val (.num x) => JS.toInt32 x

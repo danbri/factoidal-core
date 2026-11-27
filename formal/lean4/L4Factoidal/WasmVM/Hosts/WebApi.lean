@@ -72,8 +72,11 @@ namespace L4Factoidal.WasmVM.Hosts.WebApi
 open L4Factoidal.WasmVM L4Factoidal.WasmVM.Hosts.Dom
 open L4Factoidal.WHATWG
 
-/-- The largest argument block: 64 MiB. -/
-def maxInput : Nat := 1 <<< 26
+/-- The largest argument block: 1 GiB on a 64-bit host, 64 MiB on a 32-bit host (the Wasm build),
+as `LeanJS.outCap` (a `#guard` there checks that they agree). The QuickJS build's guest can not
+send more than its own 64 MiB. 64 MiB everywhere until 2026-11-27
+(https://github.com/danbri/factoidal-core/issues/1177). -/
+def maxInput : Nat := if System.Platform.numBits == 64 then 1 <<< 30 else 1 <<< 26
 /-- Decoders in the middle of a stream at one time. -/
 def maxDecoders : Nat := 4096
 /-- Arguments of one call. -/
