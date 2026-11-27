@@ -435,4 +435,119 @@ def process (n : Nat) (s : State) (inputs : Array Block) (params : Array FloatAr
     State × Array Block :=
   processWith none n s inputs params
 
+
+/-! ## Theorems -/
+
+/-- Says: `render` gives `outputChannels` channels of `n` frames each. Does not say: anything about
+the values. -/
+theorem render_shape (n ic irc : Nat) (f : Array (Nat × Nat) → FloatArray) :
+    (render n ic irc f).size = outputChannels ic irc ∧ IsBlock n (render n ic irc f) := by
+  refine ⟨by simp [render, routes_size], ?_⟩
+  intro c hc
+  simp only [render, Array.mem_map] at hc
+  obtain ⟨pairs, _, rfl⟩ := hc
+  exact mkChan_size n _
+
+/-- Says: `process` returns one output block with `outputChannels` of the input's channel count
+(1 for an empty block, at most 2) and the response's channel count (0 with no buffer) channels,
+and every channel has `n` frames; this holds for every state and every input block. Does not say:
+what the values are (see the `#guard`s), or that the input block has `n` frames. -/
+theorem process_shape (n : Nat) (s : State) (inputs : Array Block) (params : Array FloatArray) :
+    (process n s inputs params).2.size = 1 ∧
+    ((process n s inputs params).2.getD 0 #[]).size =
+      outputChannels (inChOf (inputs.getD 0 #[]).size) s.irChannels ∧
+    IsBlock n ((process n s inputs params).2.getD 0 #[]) := by
+  unfold process processWith
+  by_cases h : s.len = 0
+  · simp only [h, if_true]
+    refine ⟨rfl, ?_, ?_⟩
+    · simp [State.irChannels, h, outputChannels]
+    · intro c hc
+      simp at hc
+      subst hc; exact mkChan_size n _
+  · simp only [h, if_false]
+    have hirc : (retarget s (inChOf (inputs.getD 0 #[]).size)).irChannels = s.irChannels := by
+      unfold retarget; split <;> simp [State.irChannels, h]
+    split <;> simp only [] <;>
+    · have := render_shape n (inChOf (inputs.getD 0 #[]).size)
+        (retarget s (inChOf (inputs.getD 0 #[]).size)).irChannels
+      refine ⟨rfl, ?_, ?_⟩ <;> simp_all [render_shape]
+
+/-- Says: a buffer with 3 channels is refused (`NotSupportedError`). Does not say: anything about
+other channel counts. -/
+theorem ofBuffer_three_channels (pbits : Nat) (chs : Array FloatArray) (br cr : Float)
+    (nz : Bool) (h : chs.size = 3) : ∃ m, State.ofBufferWith pbits chs br cr nz = .error m := by
+  unfold State.ofBufferWith
+  simp [h]
+
+/-- Says: a non-empty buffer of 1, 2 or 4 channels whose sample rate differs from the context's
+is refused (`NotSupportedError`). Does not say: that a buffer with equal rates is accepted. -/
+theorem ofBuffer_rate_mismatch (pbits : Nat) (chs : Array FloatArray) (br cr : Float)
+    (nz : Bool) (h0 : chs.size ≠ 0) (hr : (br != cr) = true) :
+    ∃ m, State.ofBufferWith pbits chs br cr nz = .error m := by
+  unfold State.ofBufferWith
+  simp [h0, hr]
+  split <;> exact ⟨_, rfl⟩
+
+theorem ring_get (s : State) (R : Nat) (h : s.RingSize R) (i : Nat) (hi : i < 2) :
+    (s.ring[i]?.getD ⟨#[]⟩).size = R := by
+  have hi' : i < s.ring.size := by have := h.1; omega
+  rw [Array.getElem?_eq_getElem hi']
+  exact h.2 _ (Array.getElem_mem hi')
+
+theorem retarget_ring (s : State) (ic R : Nat) (h : s.RingSize R) : (retarget s ic).RingSize R := by
+  unfold retarget
+  split
+  · have hm := ring_get s R h 0 (by omega)
+    refine ⟨by simp, ?_⟩
+    intro c hc
+    simp at hc
+    have : c.size = (s.ring[0]?.getD (⟨#[]⟩ : FloatArray)).size := by
+      rcases hc with rfl | rfl <;> exact mkChan_size _ _
+    omega
+  · exact h
+
+theorem commit_ring (s : State) (n : Nat) (x0 x1 : FloatArray) (ic R : Nat) (h : s.RingSize R) :
+    (commit s n x0 x1 ic).RingSize R := by
+  unfold commit
+  refine ⟨by simp, ?_⟩
+  intro c hc
+  simp at hc
+  rcases hc with rfl | rfl
+  · rw [writeRing_size]; exact ring_get s R h 0 (by omega)
+  · rw [writeRing_size]; exact ring_get s R h 1 (by omega)
+
+theorem rebuild_ring (s : State) (R : Nat) (h : s.RingSize R) : (rebuild s).RingSize R := by
+  unfold rebuild; exact h
+
+theorem fastStore_ring (s : State) (hd : Nat) (x0 x1 : FloatArray) (ic R : Nat)
+    (h : s.RingSize R) : (fastStore s hd x0 x1 ic).RingSize R := by
+  unfold fastStore; exact h
+
+/-- Says: `process` keeps the number (2) and the size (`R`) of the history rings, for a state whose
+rings have size `R`. Does not say: that the rings hold the right samples (see the `#guard`s). -/
+theorem processWith_ring (force : Option Bool) (n : Nat) (s : State) (inputs : Array Block)
+    (params : Array FloatArray) (R : Nat) (h : s.RingSize R) :
+    (processWith force n s inputs params).1.RingSize R := by
+  unfold processWith
+  by_cases hl : s.len = 0
+  · simp [hl, h]
+  · simp only [hl, if_false]
+    have h1 := retarget_ring s (inChOf (inputs.getD 0 #[]).size) R h
+    have hf : ∀ s2 : State, s2.RingSize R → ∀ (hd : Nat) (x0 x1 : FloatArray) (ic : Nat),
+        (commit (fastStore s2 hd x0 x1 ic) n x0 x1 ic).RingSize R :=
+      fun s2 h2 hd x0 x1 ic => commit_ring _ _ _ _ _ R (fastStore_ring _ _ _ _ _ R h2)
+    generalize (n == (retarget s (inChOf (inputs.getD 0 #[]).size)).part &&
+      (match force with
+        | some b => b
+        | none => decide ((retarget s (inChOf (inputs.getD 0 #[]).size)).len > 2 * n))) = c
+    cases c
+    · simp only [Bool.false_eq_true, if_false]
+      exact commit_ring _ _ _ _ _ R h1
+    · simp only [if_true]
+      refine hf _ ?_ _ _ _ _
+      split
+      · exact h1
+      · exact rebuild_ring _ R h1
+
 end L4Factoidal.WebAudio.Convolver
