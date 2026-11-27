@@ -127,7 +127,7 @@ def notExecuted (file id fork : String) (index : Nat) (indexes : Json) (why : St
   { file, id, fork, index, indexes, verdict := "not-executed", reason := some why }
 
 /-- Run every post entry of one test. -/
-def runTest (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (forks : List String)
+def runTest (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (affine : Bool) (forks : List String)
     (file id : String) (test : Json) : IO Unit := do
   let posts ← match test.getObjVal? "post" >>= members with
     | .ok p => pure p
@@ -161,13 +161,13 @@ def runTest (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (forks : List 
         -- The case depends on the clock reading so the pure evaluation
         -- cannot be moved before it; the branch is never taken in practice.
         let c := if t0 == 0 then { c with fork := "" } else c
-        let r := evaluate a s c
+        let r := if affine then evaluate a s c else evaluateWith a (fastRecover a) c
         let tag := match r.verdict with | .pass => 0 | .fail _ => 1 | .unsupported _ => 2
         -- Reading the clock depends on the verdict, so evaluation happens first.
         let t1 ← if tag == 3 then pure t0 else IO.monoNanosNow
         IO.println (reportLine file id fork i indexes c.expected r (t1 - t0)).json.compress
 
-def runFile (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (forks : List String)
+def runFile (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (affine : Bool) (forks : List String)
     (path : String) : IO Unit := do
   let fail := fun (why : String) =>
     IO.println (notExecuted path "*" "*" 0 .null why).json.compress
@@ -182,7 +182,7 @@ def runFile (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (forks : List 
       | .error why => fail ("fixture-shape:" ++ why)
       | .ok tests =>
         for (id, test) in tests do
-          runTest a s forks path id test
+          runTest a s affine forks path id test
   catch e => fail ("fixture-io:" ++ toString e)
 
 def splitForks (s : String) : List String :=
@@ -190,11 +190,14 @@ def splitForks (s : String) : List String :=
 
 def usage : String :=
   "usage: evm-state-test --dangerously-enable-unverified-keccak " ++
-  "--dangerously-enable-unverified-secp256k1 [--forks F1,F2] (--list LISTFILE | FILE...)"
+  "--dangerously-enable-unverified-secp256k1 [--affine-secp256k1] [--forks F1,F2] (--list LISTFILE | FILE...)"
 
 def cliMain (args : List String) : IO UInt32 := do
   match args with
   | "--dangerously-enable-unverified-keccak" :: "--dangerously-enable-unverified-secp256k1" :: rest =>
+    let (affine, rest) := match rest with
+      | "--affine-secp256k1" :: more => (true, more)
+      | more => (false, more)
     let (forks, rest) := match rest with
       | "--forks" :: fs :: more => (splitForks fs, more)
       | more => ([], more)
@@ -205,7 +208,7 @@ def cliMain (args : List String) : IO UInt32 := do
       | fs => pure fs
     if files.isEmpty then IO.eprintln usage; return 2
     for f in files do
-      runFile Keccak.dangerouslyAcceptUnverified SecpRecovery.dangerouslyAcceptUnverified forks f
+      runFile Keccak.dangerouslyAcceptUnverified SecpRecovery.dangerouslyAcceptUnverified affine forks f
     return 0
   | _ => IO.eprintln usage; return 2
 

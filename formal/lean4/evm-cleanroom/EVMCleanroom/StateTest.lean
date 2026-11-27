@@ -1,5 +1,6 @@
 import EVMCleanroom.SignedTransaction
 import EVMCleanroom.StateRoot
+import EVMCleanroom.Precompiles.Secp256k1
 
 /-!
 # Official state-test cases through the Lean EVM
@@ -304,8 +305,23 @@ def rejectedReport (a : Keccak.Acceptance) (c : Case) (why : String) : Report :=
   judge c (.rejected why) (StateRoot.stateRoot a (preAccounts c.pre))
     (some (StateRoot.logsHash a [])) 0
 
-/-- Evaluate one case. Every refusal names its reason. -/
-def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : Report :=
+/-- Sender recovery on the shared Jacobian secp256k1 module, with the same
+    EIP-2 scalar bounds as `SecpRecovery.signatureBounds`. Agreement with
+    the affine `SignedTransaction.recover` is tested (the CI selftest runs
+    both on the same fixture), not proved. -/
+def fastRecover (a : Keccak.Acceptance) (d : SignedTransaction.Decoded) :
+    Except SignedTransaction.Failure Nat :=
+  let z := Keccak.experimentalDigestWord a (ByteView.ofArray d.signing)
+  if !SecpRecovery.signatureBounds z d.parity d.r d.s then .error .invalidSignature
+  else match Precompiles.Secp256k1.recover z d.parity d.r d.s with
+    | none => .error .invalidSignature
+    | some (x, y) =>
+      .ok (Keccak.experimentalDigestWord a
+        (ByteView.ofArray (SecpRecovery.fixed32 x ++ SecpRecovery.fixed32 y)) % 2 ^ 160)
+
+/-- Evaluate one case with a given sender recovery. Every refusal names its reason. -/
+def evaluateWith (a : Keccak.Acceptance)
+    (recover : SignedTransaction.Decoded → Except SignedTransaction.Failure Nat) (c : Case) : Report :=
   match forkOf c.fork with
   | none => unsupportedReport ("fork-not-implemented:" ++ c.fork)
   | some fork =>
@@ -329,7 +345,7 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
   | .ok d =>
   if d.kind == 3 && fork != .cancun then unsupportedReport ("tx-type-3-not-implemented:" ++ c.fork)
   else
-  match SignedTransaction.recover a s d with
+  match recover d with
   | .error .invalidSignature => rejectedReport a c "invalid-signature"
   | .error _ => unsupportedReport "secp-arithmetic-refusal"
   | .ok sender =>
@@ -361,6 +377,10 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
         (StateRoot.stateRoot a (postAccounts result.world ws))
         (some (StateRoot.logsHash a (logsOf result.logs))) used
 
+/-- Evaluation with the affine reference recovery. -/
+def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : Report :=
+  evaluateWith a (SignedTransaction.recover a s) c
+
 /-! ## Theorems -/
 
 /-- Kind: classification.
@@ -370,7 +390,7 @@ def evaluate (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case) : 
 theorem evaluate_unknown_fork (a : Keccak.Acceptance) (s : SecpRecovery.Acceptance) (c : Case)
     (h : forkOf c.fork = none) :
     (evaluate a s c).verdict = .unsupported ("fork-not-implemented:" ++ c.fork) := by
-  simp [evaluate, h, unsupportedReport]
+  simp [evaluate, evaluateWith, h, unsupportedReport]
 
 /-- Kind: soundness of the verdict.
     Says: `pass` is only given when the computed state root and logs hash

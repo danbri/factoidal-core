@@ -17,8 +17,8 @@ import tempfile
 FLAGS = ["--dangerously-enable-unverified-keccak", "--dangerously-enable-unverified-secp256k1"]
 
 
-def run(binary, path):
-    out = subprocess.run([binary] + FLAGS + [path], check=True, capture_output=True).stdout
+def run(binary, path, extra=()):
+    out = subprocess.run([binary] + FLAGS + list(extra) + [path], check=True, capture_output=True).stdout
     return [json.loads(l) for l in out.decode().splitlines() if l.strip()]
 
 
@@ -66,6 +66,13 @@ def main():
     }
     report = {"control": target["id"], "untampered": target["verdict"], "results": {}}
     ok = True
+    # Differential: the Jacobian sender recovery (default) and the affine
+    # reference give identical verdicts and roots on every case of the file.
+    key = lambda r: (r["id"], r["fork"], r["index"], r["verdict"], r.get("reason"), r.get("stateRoot"))
+    affine = run(args.bin, args.fixture, ["--affine-secp256k1"])
+    same = sorted(map(key, base)) == sorted(map(key, affine))
+    report["affineRecoveryAgrees"] = {"cases": len(base), "identical": same}
+    ok = ok and same
     for name, (mutate, allowed) in controls.items():
         row = tampered(mutate)
         report["results"][name] = {"verdict": row["verdict"], "reason": row.get("reason")}
