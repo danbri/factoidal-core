@@ -529,6 +529,12 @@ Several sessions work on the owner's laptop at once.
 
 ## Traps, each with its cost
 
+- Do not `git pull`, `git rebase` or `git stash pop` in the checkout while `build-web-render.sh`
+  runs there. The build reads the sources over 45 minutes; a pull in that time gives an engine of
+  no single commit, and a before/after comparison with it is not valid. Commit and push from a
+  worktree, or wait for `WEB_RENDER_BUILD_RC`. Cost: on 2026-11-26 and 2026-11-27 one session did
+  this three times (62 and 6 changed files); each time the build was stopped or run again, 45 to 60
+  minutes each.
 - A profile of the engine by function must name the lab's own modules (`NativeSVG`, `NativeGraphics`,
   `WebRender`, `NativeImage`): their C symbols have no `L4Factoidal_` prefix. On 2026-11-26 a list
   filtered on that prefix put 61% of MDN's first layout under `Par.mapChunks` (the task helper); the
