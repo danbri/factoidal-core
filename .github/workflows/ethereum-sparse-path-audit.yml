@@ -1,0 +1,174 @@
+name: Ethereum sparse path stress (exact candidate)
+on:
+  push:
+    branches: [wip/ethereum-sparse-path-audit-20261127-0403]
+    paths: ['.github/workflows/ethereum-sparse-path-audit.yml']
+permissions:
+  contents: read
+jobs:
+  sparse-replace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      LEAN_NUM_THREADS: '1'
+      LEAN_STACK_SIZE_KB: '32768'
+      MIMALLOC_ARENA_RESERVE: '64M'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: e6c587923decd4fdcc8c802d1c70d09deef816ef
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: false
+          use-github-cache: false
+      - name: Build native probe and record exact source identity
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          test "$(cat evm-cleanroom/lean-toolchain)" = leanprover/lean4:v4.33.1
+          test "$(git rev-parse HEAD)" = e6c587923decd4fdcc8c802d1c70d09deef816ef
+          test "$(git rev-parse HEAD^{tree})" = 18675e7164c9d16573d31d2a3cd1cd36f9e42566
+          git rev-parse HEAD HEAD^{tree}
+          git ls-tree -r HEAD -- evm-cleanroom/EVMCleanroom/SparseReplace.lean evm-cleanroom/EVMCleanroom/SparseReplaceProbe.lean evm-cleanroom/EVMCleanroom/MPT.lean evm-cleanroom/EVMCleanroom/CanonicalRLP.lean evm-cleanroom/EVMCleanroom/Keccak.lean evm-cleanroom/lakefile-sparse.toml
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-sparse.toml build evm-sparse-probe
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-sparse.toml env lean -j1 -M2048 -s32768 "$PWD/evm-cleanroom/EVMCleanroom/SparseReplace.lean" 2>&1 | tee "$RUNNER_TEMP/sparse-axioms.txt"
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ["RUNNER_TEMP"],"sparse-axioms.txt").read_text()
+          for name in ("splice_preserves","liftParent_source","replace_checked","collect_zero"):
+              lines=[line for line in log.splitlines() if f"EVMCleanroom.SparseReplace.{name}'" in line]
+              assert len(lines)==1, (name,lines)
+              line=lines[0]
+              if "does not depend on any axioms" not in line:
+                  match=re.search(r"depends on axioms: \[(.*?)\]",line)
+                  assert match and set(x.strip() for x in match[1].split(",")).issubset({"propext","Classical.choice","Quot.sound"}),line
+          PY
+      - name: Check compiled recursion and native proof-engine boundary
+        run: |
+          set -euo pipefail
+          python3 tools/lean-tail-recursion-audit.py --ir-dir formal/lean4/evm-cleanroom/.lake/build/ir --lean-dir formal/lean4/evm-cleanroom --json "$RUNNER_TEMP/sparse-recursion.json"
+          python3 - <<'PY'
+          import json,os,importlib.util,hashlib
+          from pathlib import Path
+          report=json.loads(Path(os.environ["RUNNER_TEMP"],"sparse-recursion.json").read_text())
+          assert report["cfiles"]>0 and not report["rows"] and not report["cycles"], report
+          root=Path("formal/lean4/evm-cleanroom")
+          spec=importlib.util.spec_from_file_location("runtime_audit",root/"scripts/check-witness-runtime.py")
+          audit=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(audit)
+          print(json.dumps(audit.selftest()))
+          p=root/".lake/build/bin/evm-sparse-probe"
+          sha=hashlib.sha256(p.read_bytes()).hexdigest()
+          audit.REQUIRED_SYMBOLS["evm-sparse-probe"]=audit.COMMON_SYMBOLS | {"initialize_evm__cleanroom_EVMCleanroom_SparseReplaceProbe"}
+          result=audit.inspect_binary("evm-sparse-probe",p,sha)
+          Path(os.environ["RUNNER_TEMP"],"sparse-runtime.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(result))
+          assert result["passed"],result
+          symbols,_=audit.command(["nm","--no-sort",str(p)])
+          defs={name for name,kind in audit.symbols_from_nm(symbols) if kind in ("T","t")}
+          assert defs & {"lp_evm__cleanroom_EVMCleanroom_SparseReplace_replace","lp_evm__cleanroom_EVMCleanroom_SparseReplace_replace___rarg"}, "missing native projection entry"
+          PY
+      - name: Independent full-trie differential and refusal controls
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          node scripts/witness/sparse-replace.mjs | tee "$RUNNER_TEMP/sparse-native.json"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ["RUNNER_TEMP"])
+          native=json.loads((root/"sparse-native.json").read_text())
+          runtime=json.loads((root/"sparse-runtime.json").read_text())
+          assert runtime["passed"] and runtime["sha256"] == native["executableSha256"] == hashlib.sha256(Path(".lake/build/bin/evm-sparse-probe").read_bytes()).hexdigest()
+          assert (native["nativeComparisons"],native["refusalControls"],native["comparatorControls"],len(native["rows"])) == (65,6,2,64),native
+          PY
+      - name: Independent varied paths and sequential proof reuse
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          cat > scripts/witness/sparse-path-audit.mjs <<'JS'
+          import assert from 'node:assert/strict'
+          import {spawnSync} from 'node:child_process'
+          import {readFileSync} from 'node:fs'
+          import {MerklePatriciaTrie,bytes,hex,proofRequest,verifyProofBag,digest,checkSources} from './oracle.mjs'
+          checkSources()
+          const bin='.lake/build/bin/evm-sparse-probe'
+          const opt='--dangerously-enable-unverified-keccak'
+          function call(root,key,old,value,proof) {
+            const p=spawnSync(bin,[opt,root,key,old,value,...proof],{encoding:'utf8',timeout:60000,maxBuffer:2*1024*1024})
+            assert.ifError(p.error); assert.equal(p.status,0,p.stderr); assert.equal(p.stderr,'')
+            return p.stdout.trimEnd().split('\n')
+          }
+          function different(key,i) {
+            return key.slice(0,i)+((parseInt(key[i],16)+1)%16).toString(16)+key.slice(i+1)
+          }
+          async function membership(key,proof,root,value) {
+            const result=await verifyProofBag(bytes(key),proof.map(bytes),{root:bytes(root),useKeyHashing:false})
+            assert(result!==null);assert.equal(hex(result),value)
+          }
+          const rows=[]
+          let negative=0
+          for (const prefix of [0,1,2,15,31,32,47,62,63]) {
+            for (const [before,after] of [[1,55],[55,56],[255,256],[1024,1]]) {
+              const key=Array.from({length:64},(_,i)=>((i+prefix)%16).toString(16)).join('')
+              const others=[...new Set([different(key,prefix),different(key,0),different(key,63)])]
+              const t=new MerklePatriciaTrie({useKeyHashing:false})
+              const old='81'.repeat(before), next='a2'.repeat(after), final='c3'.repeat(before)
+              await t.put(bytes(key),bytes(old))
+              for(const k of others) await t.put(bytes(k),bytes('73'.repeat(40)))
+              const req=await proofRequest(t,bytes(key))
+              const siblingPaths=await Promise.all(others.map(k=>proofRequest(t,bytes(k))))
+              let root=req.root, proof=req.proof.slice().reverse(), prior=old
+              for(const value of [next,final]) {
+                await t.put(bytes(key),bytes(value))
+                const expected=hex(t.root())
+                const lines=call(root,key,prior,value,proof)
+                assert.equal(lines[0],'projected');assert.equal(lines[1],expected)
+                assert(lines.length>=3 && lines.length<=67)
+                proof=lines.slice(2)
+                await membership(key,proof,expected,value)
+                for(let i=0;i<others.length;i++) await membership(others[i],[...proof,...siblingPaths[i].proof],expected,'73'.repeat(40))
+                root=expected;prior=value
+              }
+              const bad=different(root,0)
+              const rejected=call(bad,key,prior,next,proof)
+              assert.equal(rejected.length,1);assert.match(rejected[0],/^witness:/)
+              negative++
+              rows.push({prefix,before,after,siblings:others.length,root})
+            }
+          }
+          assert.equal(rows.length,36);assert.equal(negative,36)
+          console.log(JSON.stringify({scope:'existing leaves, sequential replacements, not state transition',nativeComparisons:rows.length*2,wrongRootControls:negative,executableSha256:digest(readFileSync(bin)),rows}))
+          JS
+          node scripts/witness/sparse-path-audit.mjs | tee "$RUNNER_TEMP/sparse-path-audit.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path(os.environ["RUNNER_TEMP"])
+          extra=json.loads((p/"sparse-path-audit.json").read_text())
+          native=json.loads((p/"sparse-native.json").read_text())
+          assert (extra["nativeComparisons"],extra["wrongRootControls"],len(extra["rows"])) == (72,36,36)
+          assert extra["executableSha256"] == native["executableSha256"]
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sparse-replace-evidence
+          path: |
+            ${{ runner.temp }}/sparse-axioms.txt
+            ${{ runner.temp }}/sparse-recursion.json
+            ${{ runner.temp }}/sparse-native.json
+            ${{ runner.temp }}/sparse-runtime.json
+            ${{ runner.temp }}/sparse-path-audit.json
