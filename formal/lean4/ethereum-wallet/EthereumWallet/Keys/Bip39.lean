@@ -64,8 +64,8 @@ def toDigits (b : Nat) : Nat → Nat → List Nat → List Nat
 /-- The number spelled by digits, most significant first. -/
 def fromDigits (b : Nat) (l : List Nat) : Nat := l.foldl (fun a d => a * b + d) 0
 
-/-- Little-endian value, used only in proofs. -/
-def valLE (b : Nat) : List Nat → Nat
+/-- Little-endian value, used only in proofs (no code is generated for it). -/
+noncomputable def valLE (b : Nat) : List Nat → Nat
   | [] => 0
   | d :: t => d + b * valLE b t
 
@@ -618,13 +618,43 @@ theorem encode_decode (idx : List Nat) (bytes : List UInt8) (h : decodeIndices i
 
 /-! ## Words -/
 
-/-- Look every word up. Structural recursion: callers bound the list length first. -/
+/-- Look every word up. This is the plain definition the theorems are about; the compiler
+emits the loop `lookupAllFast` in its place (`lookupAll_eq_fast`). -/
 def lookupAll : List (List Char) → Option (List Nat)
   | [] => some []
   | w :: t =>
     match wordIndex? w, lookupAll t with
     | some i, some r => some (i :: r)
     | _, _ => none
+
+/-- `lookupAll` as a loop; `acc` holds the indices so far, reversed. -/
+def lookupGo : List (List Char) → List Nat → Option (List Nat)
+  | [], acc => some acc.reverse
+  | w :: t, acc =>
+    match wordIndex? w with
+    | some i => lookupGo t (i :: acc)
+    | none => none
+
+theorem lookupGo_eq : ∀ (ws : List (List Char)) (acc : List Nat),
+    lookupGo ws acc = (lookupAll ws).map (acc.reverse ++ ·) := by
+  intro ws
+  induction ws with
+  | nil => intro acc; simp [lookupGo, lookupAll]
+  | cons w t ih =>
+    intro acc
+    cases hw : wordIndex? w with
+    | none => cases ht : lookupAll t <;> simp [lookupGo, lookupAll, hw, ht]
+    | some i => cases ht : lookupAll t <;> simp [lookupGo, lookupAll, hw, ih, ht]
+
+def lookupAllFast (ws : List (List Char)) : Option (List Nat) := lookupGo ws []
+
+/-- Kind: compiled form (`csimp`).
+    Says: the loop the compiler emits for `lookupAll` returns the same value, for every input.
+    Does not say: anything about the compiler itself, which is trusted. -/
+@[csimp] theorem lookupAll_eq_fast : @lookupAll = @lookupAllFast := by
+  funext ws
+  rw [lookupAllFast, lookupGo_eq]
+  cases lookupAll ws <;> simp
 
 theorem lookupAll_map : ∀ (l : List Nat), (∀ i ∈ l, i < 2048) →
     lookupAll (l.map wordChars) = some l := by
@@ -706,13 +736,14 @@ theorem parseWords_generateWords (entropy : ByteArray) (ws : List (List Char))
 
 /-! ## Sentences -/
 
-/-- Words joined by single spaces. -/
+/-- Words joined by single spaces. Plain definition; compiled as the loop `joinWordsFast`. -/
 def joinWords : List (List Char) → List Char
   | [] => []
   | [w] => w
   | w :: w2 :: t => w ++ ' ' :: joinWords (w2 :: t)
 
-/-- Split at every space. Structural recursion: `parse` bounds the length first. -/
+/-- Split at every space. Plain definition; compiled as the loop `splitWordsFast`
+(`splitWords_eq_fast`). `parse` also bounds the length first. -/
 def splitWords : List Char → List (List Char)
   | [] => [[]]
   | c :: t =>
@@ -721,6 +752,71 @@ def splitWords : List Char → List (List Char)
       match splitWords t with
       | [] => [[c]]
       | w :: ws => (c :: w) :: ws
+
+theorem splitWords_ne_nil : ∀ (cs : List Char), splitWords cs ≠ []
+  | [] => by simp [splitWords]
+  | c :: t => by
+    by_cases hc : c = ' '
+    · simp [splitWords, hc]
+    · cases hs : splitWords t with
+      | nil => exact absurd hs (splitWords_ne_nil t)
+      | cons w ws => simp [splitWords, hc, hs]
+
+/-- `joinWords` as a loop; `acc` holds the characters so far, reversed. -/
+def joinGo : List (List Char) → List Char → List Char
+  | [], acc => acc.reverse
+  | [w], acc => acc.reverse ++ w
+  | w :: w2 :: t, acc => joinGo (w2 :: t) (' ' :: (w.reverse ++ acc))
+
+theorem joinGo_eq : ∀ (ws : List (List Char)) (acc : List Char),
+    joinGo ws acc = acc.reverse ++ joinWords ws
+  | [], acc => by simp [joinGo, joinWords]
+  | [w], acc => by simp [joinGo, joinWords]
+  | w :: w2 :: t, acc => by simp [joinGo, joinGo_eq (w2 :: t), joinWords]
+
+def joinWordsFast (ws : List (List Char)) : List Char := joinGo ws []
+
+/-- Kind: compiled form (`csimp`). Says: the loop emitted for `joinWords` returns the same value. -/
+@[csimp] theorem joinWords_eq_fast : @joinWords = @joinWordsFast := by
+  funext ws
+  simp [joinWordsFast, joinGo_eq]
+
+/-- `splitWords` as a loop; `cur` is the current word and `acc` the finished words, reversed. -/
+def splitGo : List Char → List Char → List (List Char) → List (List Char)
+  | [], cur, acc => (cur.reverse :: acc).reverse
+  | c :: t, cur, acc =>
+    if c = ' ' then splitGo t [] (cur.reverse :: acc) else splitGo t (c :: cur) acc
+
+/-- Put `pre` in front of the first word. -/
+def consHead (pre : List Char) : List (List Char) → List (List Char)
+  | [] => [pre]
+  | w :: ws => (pre ++ w) :: ws
+
+theorem splitGo_eq : ∀ (cs cur : List Char) (acc : List (List Char)),
+    splitGo cs cur acc = acc.reverse ++ consHead cur.reverse (splitWords cs) := by
+  intro cs
+  induction cs with
+  | nil => intro cur acc; simp [splitGo, splitWords, consHead]
+  | cons c t ih =>
+    intro cur acc
+    cases hs : splitWords t with
+    | nil => exact absurd hs (splitWords_ne_nil t)
+    | cons w ws =>
+      by_cases hc : c = ' '
+      · simp [splitGo, splitWords, hc, ih, hs, consHead]
+      · simp [splitGo, splitWords, hc, ih, hs, consHead]
+
+def splitWordsFast (cs : List Char) : List (List Char) := splitGo cs [] []
+
+/-- Kind: compiled form (`csimp`).
+    Says: the loop emitted for `splitWords` returns the same value, so splitting uses
+    constant stack whatever the sentence length. -/
+@[csimp] theorem splitWords_eq_fast : @splitWords = @splitWordsFast := by
+  funext cs
+  rw [splitWordsFast, splitGo_eq]
+  cases hs : splitWords cs with
+  | nil => exact absurd hs (splitWords_ne_nil cs)
+  | cons w ws => simp [consHead]
 
 theorem splitWords_word : ∀ (w : List Char), (∀ ch ∈ w, ch ≠ ' ') → splitWords w = [w] := by
   intro w

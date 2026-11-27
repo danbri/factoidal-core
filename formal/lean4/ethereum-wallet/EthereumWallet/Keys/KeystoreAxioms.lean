@@ -1,6 +1,6 @@
 import EthereumWallet.Keys.KeystoreJson
-/- Axiom report for the keystore half: run with `lake env lean EthereumWallet/Keys/KeystoreAxioms.lean`.
-   Not imported by the library. Every line must list only propext, Classical.choice, Quot.sound. -/
+/- Axiom report for the keystore half, imported by `EthereumWallet/Keys.lean` so that the build log carries it.
+   Every line must list only propext, Classical.choice, Quot.sound. -/
 open EthereumWallet.Keys
 #print axioms check_over_limit
 #print axioms scrypt_refuses_over_limit

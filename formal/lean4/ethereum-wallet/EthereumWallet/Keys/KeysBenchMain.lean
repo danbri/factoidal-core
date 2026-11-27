@@ -19,19 +19,22 @@ def percentile (sorted : Array Nat) (pct : Nat) : Nat :=
 def showMicros (us : Nat) : String :=
   s!"{us / 1000}.{(us % 1000) / 100}{(us % 100) / 10}{us % 10}ms"
 
-/-- Time `runs` evaluations of `f` on the value in `input`; `good` must hold of each result. -/
-def timeIt {α β : Type} (name : String) (input : IO.Ref α) (f : α → β) (good : β → Bool)
-    (runs : Nat) : IO Unit := do
-  let mut times : Array Nat := #[]
-  let mut ok := true
-  for _ in [0:runs] do
+/-- `count` more timed evaluations; a loop (tail call). -/
+def timeLoop {α β : Type} (input : IO.Ref α) (f : α → β) (good : β → Bool) :
+    Nat → Array Nat → Bool → IO (Array Nat × Bool)
+  | 0, times, ok => pure (times, ok)
+  | count + 1, times, ok => do
     let x ← input.get
     let t0 ← IO.monoNanosNow
     let fine ← IO.lazyPure fun _ => good (f x)
     let t1 ← IO.monoNanosNow
-    ok := ok && fine
-    times := times.push ((t1 - t0) / 1000)
-  let sorted := times.qsort (· < ·)
+    timeLoop input f good count (times.push ((t1 - t0) / 1000)) (ok && fine)
+
+/-- Time `runs` evaluations of `f` on the value in `input`; `good` must hold of each result. -/
+def timeIt {α β : Type} (name : String) (input : IO.Ref α) (f : α → β) (good : β → Bool)
+    (runs : Nat) : IO Unit := do
+  let (times, ok) ← timeLoop input f good runs #[] true
+  let sorted := times.insertionSort (· < ·)
   IO.println s!"{name}: runs={runs} correct={ok} p50={showMicros (percentile sorted 50)} p95={showMicros (percentile sorted 95)} max={showMicros (percentile sorted 100)}"
 
 def main (args : List String) : IO UInt32 := do

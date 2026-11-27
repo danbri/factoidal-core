@@ -74,8 +74,7 @@ theorem generate_accepts (entropy : ByteArray)
   exact ⟨_, rfl⟩
 
 /-- Kind: refusal (resource bound).
-    Says: a sentence of more than 512 characters is refused before it is split,
-    so the non-tail recursion of `splitWords` is at most 512 deep.
+    Says: a sentence of more than 512 characters is refused before it is split.
     Does not say: that building the character list is free (it is linear in the input). -/
 theorem parse_too_long (sentence : String) (h : maxSentenceChars < sentence.toList.length) :
     parse sentence = .error .sentenceTooLong := by
@@ -118,15 +117,6 @@ theorem parseWords_sound (ws : List (List Char)) (entropy : ByteArray)
         rw [if_pos (by rw [hsz]; exact hv)]
         show Except.ok ((encodeIndices bytes).map wordChars) = Except.ok ws
         rw [henc, hws]
-
-theorem splitWords_ne_nil : ∀ (cs : List Char), splitWords cs ≠ []
-  | [] => by simp [splitWords]
-  | c :: t => by
-    by_cases hc : c = ' '
-    · simp [splitWords, hc]
-    · cases hs : splitWords t with
-      | nil => exact absurd hs (splitWords_ne_nil t)
-      | cons w ws => simp [splitWords, hc, hs]
 
 theorem join_split : ∀ (cs : List Char), joinWords (splitWords cs) = cs
   | [] => rfl
@@ -210,3 +200,9 @@ open EthereumWallet.Keys.Bip39 in
 #print axioms wordIndex?_sound
 open EthereumWallet.Keys.Bip39 in
 #print axioms codes_sorted
+open EthereumWallet.Keys.Bip39 in
+#print axioms lookupAll_eq_fast
+open EthereumWallet.Keys.Bip39 in
+#print axioms joinWords_eq_fast
+open EthereumWallet.Keys.Bip39 in
+#print axioms splitWords_eq_fast

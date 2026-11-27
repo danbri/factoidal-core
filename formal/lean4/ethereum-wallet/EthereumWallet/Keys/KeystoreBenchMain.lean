@@ -20,19 +20,22 @@ def percentile (sorted : Array Nat) (pct : Nat) : Nat :=
   if sorted.size == 0 then 0
   else sorted[min (sorted.size - 1) ((pct * sorted.size + 99) / 100 - 1)]!
 
-def timeDecrypt (name : String) (ksRef : IO.Ref Keystore) (pwRef : IO.Ref ByteArray)
-    (want : ByteArray) (runs : Nat) : IO Unit := do
-  let mut times : Array Nat := #[]
-  let mut ok := true
-  for _ in [0:runs] do
+/-- `count` more timed decryptions; a loop (tail call). -/
+def timeDecryptLoop (ksRef : IO.Ref Keystore) (pwRef : IO.Ref ByteArray) (want : ByteArray) :
+    Nat → Array Nat → Bool → IO (Array Nat × Bool)
+  | 0, times, ok => pure (times, ok)
+  | count + 1, times, ok => do
     let ks ← ksRef.get
     let pw ← pwRef.get
     let t0 ← IO.monoNanosNow
     let good ← IO.lazyPure fun _ => KeystoreTests.exceptBytes (decrypt ks pw) want
     let t1 ← IO.monoNanosNow
-    ok := ok && good
-    times := times.push ((t1 - t0) / 1000000)
-  let sorted := times.qsort (· < ·)
+    timeDecryptLoop ksRef pwRef want count (times.push ((t1 - t0) / 1000000)) (ok && good)
+
+def timeDecrypt (name : String) (ksRef : IO.Ref Keystore) (pwRef : IO.Ref ByteArray)
+    (want : ByteArray) (runs : Nat) : IO Unit := do
+  let (times, ok) ← timeDecryptLoop ksRef pwRef want runs #[] true
+  let sorted := times.insertionSort (· < ·)
   IO.println s!"{name}: runs={runs} correct={ok} p50={percentile sorted 50}ms p95={percentile sorted 95}ms max={percentile sorted 100}ms"
 
 def benchMade (name : String) (kdf : Kdf) (runs : Nat) : IO Unit := do

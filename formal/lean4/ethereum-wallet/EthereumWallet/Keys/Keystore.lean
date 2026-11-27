@@ -1,5 +1,6 @@
 import L4Factoidal.Crypto.Hmac
 import EthereumWallet.Keys.Hash
+import EthereumWallet.Keys.Pbkdf2
 import EthereumWallet.Keys.Scrypt
 import EthereumWallet.Keys.Aes
 
@@ -46,7 +47,7 @@ are; a caller that wants a 32-byte private key left-pads with zeros.
 
 namespace EthereumWallet.Keys
 
-open L4Factoidal.Crypto (pbkdf2Sha256 ctEqBytes ctDiffFrom)
+open L4Factoidal.Crypto (ctEqBytes ctDiffFrom)
 
 /-- The key-derivation part of a keystore. -/
 inductive Kdf where
@@ -118,7 +119,8 @@ def deriveKey (kdf : Kdf) (password : ByteArray) : Except KeystoreError ByteArra
     else if dkLen < 32 ∨ scryptMaxDkLen < dkLen then .error .badDkLen
     else if c = 0 ∨ pbkdf2MaxIterations < c then .error .badIterations
     else
-      let dk := pbkdf2Sha256 password salt c dkLen
+      -- Prepared-key PBKDF2 (`HmacKey.mac256_eq`: the same HMAC, two compressions a round).
+      let dk := Pbkdf2.raw (HmacKey.ofSha256 password).mac256 32 salt c dkLen
       if dk.size = dkLen then .ok dk else .error .internal
   | .other _ => .error .unsupportedKdf
 

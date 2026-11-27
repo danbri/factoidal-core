@@ -1,0 +1,173 @@
+name: Ethereum wallet keys
+# Keys area of the stand-alone package formal/lean4/ethereum-wallet (EthereumWallet/Keys/*):
+# BIP-39, BIP-32/44, ERC-55 addresses, keystore v3 (scrypt, PBKDF2, AES-128-CTR).
+# Its own file so that it does not touch ethereum-wallet.yml from another branch; the
+# steps can move into that workflow's keys block once both are on main.
+# No step sends anything to an Ethereum network. Secrets in logs: none; the only keys,
+# mnemonics and passwords printed anywhere are published test vectors, and the oracle
+# step's fresh throwaway material is never printed.
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/ethereum-wallet/**'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Keccak.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/Memory.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/MemoryGas.lean'
+      - 'formal/lean4/evm-cleanroom/EVMCleanroom/SecpRecovery.lean'
+      - 'formal/lean4/L4Factoidal/Crypto/SHA2.lean'
+      - 'formal/lean4/L4Factoidal/Crypto/Hmac.lean'
+      - 'third_party/testing/ethereum-wallet/**'
+      - '.github/workflows/ethereum-wallet-keys.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ethereum-wallet-keys-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  keys:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LEAN_NUM_THREADS: '2'
+    defaults:
+      run:
+        shell: bash
+        working-directory: formal/lean4/ethereum-wallet
+    steps:
+      - uses: actions/checkout@v4
+      - name: Vendored vectors and wordlist match their pins; generated Lean data is current
+        run: |
+          set -euo pipefail
+          python3 scripts/gen-keys-data.py --check
+          ( cd ../../../third_party/testing/ethereum-wallet && sha256sum bip-0039/english.txt bip-0039/vectors.json bip-0032/bip-0032.mediawiki erc-55/erc-55.md go-ethereum/v3_test_vector.json )
+      - name: No Lean.* import and no banned construct in the keys sources
+        run: |
+          set -euo pipefail
+          # A runtime `Lean.*` import would link the proof assistant's initialiser into the executables.
+          if grep -nE '^\s*(public\s+)?import\s+Lean(\.|\s|$)' EthereumWallet.lean EthereumWallet/Keys.lean EthereumWallet/Keys/*.lean; then
+            echo "Lean.* import in the keys modules"; exit 1
+          fi
+          if grep -nE '@\[\s*(extern|implemented_by)|^\s*(unsafe|partial)\s+def|\bnative_decide\b|^\s*axiom\s|IO\.Process|\bSocket\b' EthereumWallet/Keys.lean EthereumWallet/Keys/*.lean; then
+            echo "banned construct, process or network use in the keys modules"; exit 1
+          fi
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/ethereum-wallet
+          auto-config: false
+          use-mathlib-cache: false
+          use-github-cache: false
+          build: false
+          test: false
+          lint: false
+      - name: Build the keys library (theorems checked by the kernel)
+        run: |
+          set -euo pipefail
+          test "$(cat lean-toolchain)" = "leanprover/lean4:v4.33.1"
+          mkdir -p .lake/keys-evidence
+          ulimit -v 8388608
+          lake build EthereumWallet.Keys 2>&1 | tee .lake/keys-evidence/build.log
+      - name: Axiom audit of the keys theorems (propext, Classical.choice, Quot.sound only)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, re
+          log = open(".lake/keys-evidence/build.log").read()
+          allowed = {"propext", "Classical.choice", "Quot.sound"}
+          reports = {}
+          for name, body in re.findall(r"'([^']+)' depends on axioms: \[(.*?)\]", log, re.S):
+              reports[name] = sorted(set(re.findall(r"[\w.]+", body)))
+          for name in re.findall(r"'([^']+)' does not depend on any axioms", log):
+              reports[name] = []
+          keys = {n: a for n, a in reports.items() if n.startswith("EthereumWallet.Keys")}
+          expected = [l.split("#")[0].strip() for l in open("scripts/theorems/keys.txt")]
+          expected = [n for n in expected if n]
+          missing = [n for n in expected if n not in keys]
+          unlisted = [n for n in keys if n not in expected]
+          bad = {n: a for n, a in keys.items() if not set(a) <= allowed}
+          report = {"theorems": len(keys), "expected": len(expected), "missing": missing,
+                    "unlisted": unlisted, "outsideAllowed": bad,
+                    "axiomsUsed": sorted({x for a in keys.values() for x in a})}
+          json.dump({**report, "reports": keys}, open(".lake/keys-evidence/axioms.json", "w"), indent=2)
+          print(json.dumps(report))
+          assert not missing and not unlisted and not bad and len(keys) >= 88 and "sorryAx" not in log, report
+          PY
+      - name: Hygiene audit (no sorry, user axiom, native_decide, unsafe or implemented_by; partial def count may not rise)
+        working-directory: .
+        run: python3 tools/lean-hygiene-audit.py --build-log formal/lean4/ethereum-wallet/.lake/keys-evidence/build.log
+      - name: Build the test and timing executables
+        run: |
+          set -euo pipefail
+          ulimit -v 8388608
+          lake build wallet-keys-tests wallet-keys-bench wallet-keystore-tests wallet-keystore-bench 2>&1 | tail -5
+          sha256sum .lake/build/bin/wallet-keys-tests .lake/build/bin/wallet-keystore-tests | tee .lake/keys-evidence/SHA256SUMS
+      - name: No proof assistant in the executables
+        run: |
+          set -euo pipefail
+          # Lean's emitted main calls lean_initialize() (the whole proof assistant) only when a
+          # runtime Lean.* module is imported; otherwise lean_initialize_runtime_module().
+          for main in KeysTestMain KeysBenchMain KeystoreTestMain KeystoreBenchMain; do
+            c=.lake/build/ir/EthereumWallet/Keys/$main.c
+            grep -q 'lean_initialize_runtime_module();' "$c"
+            if grep -q 'lean_initialize();' "$c"; then echo "$main starts the proof assistant"; exit 1; fi
+          done
+          for exe in wallet-keys-tests wallet-keystore-tests; do
+            size=$(stat -c %s .lake/build/bin/$exe)
+            echo "$exe: $size bytes"
+            test "$size" -lt 30000000
+            if nm .lake/build/bin/$exe | grep -E ' [Tt] _?(l_Lean_Elab_|l_Lean_Meta_whnf|lean_kernel_)' | head -3 | grep .; then
+              echo "elaborator or kernel symbols in $exe"; exit 1
+            fi
+          done
+      - name: 'Key tests: BIP-39 (24 vectors), BIP-32 vectors 1 to 5, ERC-55, RIPEMD-160, PBKDF2, negative controls'
+        run: |
+          set -euo pipefail
+          ulimit -v 2097152   # 2 GiB of address space is far more than these need
+          /usr/bin/time -v .lake/build/bin/wallet-keys-tests > .lake/keys-evidence/keys-tests.txt 2> .lake/keys-evidence/keys-tests.time
+          tail -1 .lake/keys-evidence/keys-tests.txt
+          grep -c '^PASS' .lake/keys-evidence/keys-tests.txt
+          test "$(grep -c '^PASS' .lake/keys-evidence/keys-tests.txt)" -ge 247
+          ! grep -q '^FAIL' .lake/keys-evidence/keys-tests.txt
+          rss=$(awk '/Maximum resident set size/ {print $NF}' .lake/keys-evidence/keys-tests.time)
+          echo "peak resident: $rss KiB"; test "$rss" -lt 262144   # memory bound: 256 MiB
+      - name: 'Keystore tests, all levels: RFC 7914 (incl. N=1048576, 1 GiB), FIPS 197, SP 800-38A, geth vectors at 262144 rounds'
+        run: |
+          set -euo pipefail
+          ulimit -v 6291456   # hard backstop: 6 GiB of address space
+          /usr/bin/time -v .lake/build/bin/wallet-keystore-tests --full > .lake/keys-evidence/keystore-tests.txt 2> .lake/keys-evidence/keystore-tests.time
+          tail -1 .lake/keys-evidence/keystore-tests.txt
+          grep -c '^PASS' .lake/keys-evidence/keystore-tests.txt
+          test "$(grep -c '^PASS' .lake/keys-evidence/keystore-tests.txt)" -ge 97
+          ! grep -q '^FAIL\|^SKIP' .lake/keys-evidence/keystore-tests.txt
+          rss=$(awk '/Maximum resident set size/ {print $NF}' .lake/keys-evidence/keystore-tests.time)
+          echo "peak resident: $rss KiB"; test "$rss" -lt 3145728   # memory bound: 3 GiB (largest case 1 GiB)
+      - name: 'Negative control of the runners: a failing case makes the run fail'
+        run: |
+          set -euo pipefail
+          # An unreadable keystore and a wrong password must both give a non-zero exit.
+          printf 'not json' > /tmp/bad.json; printf 'x' > /tmp/pw
+          if .lake/build/bin/wallet-keystore-tests --decrypt-file /tmp/bad.json /tmp/pw; then echo "accepted junk"; exit 1; fi
+          # A wrong entropy length is reported as an error line by the derive mode.
+          printf '00\n' | .lake/build/bin/wallet-keys-tests --derive | grep -q '^ERROR'
+      - name: 'Oracle: mnemonic, master key, addresses and keystores against reference libraries, fresh material (test oracle only)'
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/oracle
+          /tmp/oracle/bin/pip install --quiet 'eth-account==0.13.4' 'mnemonic==0.21'
+          /tmp/oracle/bin/python3 scripts/keys-oracle-check.py .lake/build/bin/wallet-keys-tests .lake/build/bin/wallet-keystore-tests 20 \
+            | tee .lake/keys-evidence/oracle.json
+          python3 -c 'import json; x=json.load(open(".lake/keys-evidence/oracle.json")); assert x["passed"] and x["derive"]["cases"]==100 and x["keystore"]["cases"]==6, x'
+      - name: 'Timing (reported, not gated): BIP-39 seed, BIP-32 per level, keystore decrypt at scrypt n=262144'
+        run: |
+          set -euo pipefail
+          nproc; grep -m1 'model name' /proc/cpuinfo
+          .lake/build/bin/wallet-keys-bench 30 | tee .lake/keys-evidence/bench-keys.txt
+          ulimit -v 4194304
+          /usr/bin/time -v .lake/build/bin/wallet-keystore-bench 7 --standard --wiki 2> .lake/keys-evidence/bench-keystore.time | tee .lake/keys-evidence/bench-keystore.txt
+          awk '/Maximum resident set size/ {print "peak resident: " $NF " KiB"}' .lake/keys-evidence/bench-keystore.time
+          ! grep -q 'correct=false' .lake/keys-evidence/bench-keys.txt .lake/keys-evidence/bench-keystore.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ethereum-wallet-keys-evidence
+          path: formal/lean4/ethereum-wallet/.lake/keys-evidence/

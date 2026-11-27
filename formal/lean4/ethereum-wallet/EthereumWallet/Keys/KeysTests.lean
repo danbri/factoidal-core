@@ -77,6 +77,27 @@ def ripemdVectors : List (String × String) := [
       && Bip39.wordIndex? "zooo".toList == none && Bip39.wordIndex? "Zoo".toList == none
       && Bip39.wordIndex? [] == none)
 
+/-! ## PBKDF2 -/
+
+/-- RFC 7914 section 11 (PBKDF2-HMAC-SHA-256), for the prepared-key form used by the keystore. -/
+@[noinline] def pbkdf2Sha256Case (fails : IO.Ref Nat) (pw salt : String) (c dkLen : Nat)
+    (want : String) : IO Unit :=
+  report fails s!"RFC 7914 s11 PBKDF2-HMAC-SHA-256 (prepared key) c={c} dkLen={dkLen}"
+    (okBytes (Pbkdf2.hmacSha256 pw.toUTF8 salt.toUTF8 c dkLen) (ofHex! want))
+
+@[noinline] def pbkdf2Refusals (fails : IO.Ref Nat) (pw : ByteArray) : IO Unit := do
+  report fails "PBKDF2 refuses 0 iterations, more than 2^26 iterations, 0 bytes and more than 65536 bytes"
+    (errIs (Pbkdf2.hmacSha512 pw pw 0 64) .zeroIterations
+      && errIs (Pbkdf2.hmacSha512 pw pw (Pbkdf2.maxIterations + 1) 64)
+        (.tooManyIterations (Pbkdf2.maxIterations + 1))
+      && errIs (Pbkdf2.hmacSha512 pw pw 1 0) .zeroLength
+      && errIs (Pbkdf2.hmacSha256 pw pw 1 65537) (.tooLong 65537))
+  report fails "PBKDF2 output sizes: 1, 31, 32, 33, 64, 65, 100 bytes as asked"
+    ([1, 31, 32, 33, 64, 65, 100].all fun n =>
+      (match Pbkdf2.hmacSha256 pw pw 2 n, Pbkdf2.hmacSha512 pw pw 2 n with
+       | .ok a, .ok b => a.size == n && b.size == n
+       | _, _ => false))
+
 /-! ## BIP-39 -/
 
 @[noinline] def bip39Case (fails : IO.Ref Nat) (number : Nat)
@@ -293,6 +314,11 @@ def runAll : IO Nat := do
   let fails ← IO.mkRef 0
   for (input, want) in ripemdVectors do ripemdCase fails input want
   wordlistCase fails 2048
+  pbkdf2Sha256Case fails "passwd" "salt" 1 64
+    "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783"
+  pbkdf2Sha256Case fails "Password" "NaCl" 80000 64
+    "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d"
+  pbkdf2Refusals fails "not a secret".toUTF8
   let mut number := 1
   for v in Vectors.bip39English do
     bip39Case fails number v
