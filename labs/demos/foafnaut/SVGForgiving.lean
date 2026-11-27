@@ -1440,9 +1440,31 @@ private def textFont (fonts : List SVGFont) (sfnt : Array NativeSVGText.Font) (f
     if genericFamilies.contains key || sfnt.any (·.family.toLower == key) then return .sfnt
   return .sfnt
 
+/-- The first character for which `lowerText` finds no glyph with `SVGFont.pick`, walking the
+runs as it does: a ligature covers all its characters (W3C text-text-06-t has an `fi` glyph and
+no `i`). White space and the no-break space do not count (`SVGFont.glyph` draws them). -/
+private def uncoveredAt (font : SVGFont) (runs : List Run) : Option Char := Id.run do
+  let chars := (runs.flatMap (·.text.toList)).toArray
+  let forms := arabicForms chars
+  let mut index := 0
+  for run in runs do
+    let n := run.text.length
+    if run.size > 0 then
+      let mut position := 0
+      for _ in [:n] do
+        if position >= n then break
+        let at_ := index+position
+        let c := chars[at_]!
+        match font.pick chars at_ run.lang forms[at_]! with
+        | some g => position := position+max 1 g.text.length
+        | none =>
+          if !c.isWhitespace && c != '\u00A0' then return some c
+          position := position+1
+    index := index+n
+  return none
+
 /-- Why `lowerText` would not draw this text as specified, if it would not. -/
 private def strictTextGap (font : SVGFont) (attrs : List NamespaceAttribute) (runs : List Run) : Option String :=
-  let chars := runs.flatMap (·.text.toList)
   if (numberList attrs "dx").length > 1 || (numberList attrs "dy").length > 1 then
     some "SVG font text: dx or dy list on text not drawn"
   else if runs.any (fun r => r.dxs.length > 1 || r.dys.length > 1 || !r.rotates.isEmpty) then
@@ -1450,7 +1472,7 @@ private def strictTextGap (font : SVGFont) (attrs : List NamespaceAttribute) (ru
   else if runs.any (fun r => r.letterSpacing != 0 || r.wordSpacing != 0) then
     some "SVG font text: letter-spacing or word-spacing not drawn"
   else if runs.any (·.vertical) then some "SVG font text: vertical writing-mode not drawn"
-  else match chars.find? (fun c => !c.isWhitespace && c != ' ' && !font.glyphs.contains c) with
+  else match uncoveredAt font runs with
     | some c => some s!"SVG font {font.family}: no glyph for U+{String.ofList (Nat.toDigits 16 c.toNat)}; font fallback for one character not done"
     | none => none
 
