@@ -48,9 +48,9 @@ Proved (Lean theorems; axioms `propext`, `Quot.sound`, `Classical.choice`):
 
 | Theorem | Says |
 |---|---|
-| `Sign.signHash_sound` | a returned signature has `r ∈ [1, n-1]`, `s ∈ [1, n/2]`, `yParity ∈ {0, 1}`, and the shared recovery gives the signer's public key |
+| `Sign.signHash_sound` | a returned signature has `r ∈ [1, n-1]`, `s ∈ [1, n/2]`, `yParity ∈ {0, 1}`, and the shared recovery gives the public key held in the key pair (that this key is `[secret]G` is tested, not proved) |
 | `Sign.signHash_recovers_address` | the recovered address is the signer's address |
-| `Sign.signHash_nonce_range`, `Rfc6979.search_range`, `Rfc6979.nonce_range` | the nonce used is a candidate in `[1, n-1]` |
+| `Sign.signHash_nonce_range`, `Rfc6979.search_range`, `Rfc6979.nonce_range` | the signature was produced by the ECDSA attempt on some `k ∈ [1, n-1]`; a nonce returned by `nonce` is in `[1, n-1]`. That `k` is the RFC 6979 value is tested against vectors, not carried by the theorem |
 | `Sign.normalizeS_low` | EIP-2 normalisation maps `[1, n-1]` into `[1, n/2]` |
 | `Sign.signHash_zero_hash`, `signHash_hash_length`, `signHash_invalid_key`, `ofSecret_invalid` | the defined refusals |
 | `Sign.ofSecret_valid`, `Secp.mulBaseSecret_onCurve` | a public key made here is on the curve, its scalar in range |
@@ -63,8 +63,8 @@ Tested, not proved:
 - that signing and encoding succeed on valid input, and produce the right
   bytes: the EIP-155 specification example; the 12,885 distinct signed
   transactions of the execution-specs `tests@v21.0.3` Prague state tests
-  (fields and published test key in, `txbytes` out: 12,871 reproduced byte for
-  byte, the other 14 are transactions the fixtures mark invalid and the wallet
+  (fields and published test key in, `txbytes` out: 12,869 reproduced byte for
+  byte, the other 16 are transactions the fixtures mark invalid and the wallet
   refuses to build), 500 of them committed; EthereumJS as an oracle on random
   transactions with fresh keys in CI;
 - RFC 6979 nonces and signatures: the bitcoinjs-lib fixture (7 signatures,
@@ -91,6 +91,15 @@ Open:
 - Limits: the admission decoder's local caps apply to what the wallet will
   emit (16 MiB raw, its access list caps), and 8,192 authorizations.
   Chain ids are below 2^64, nonces below 2^64 − 1 (EIP-2681).
+- `validate` does not yet refuse a chain id of zero or more blob hashes than a
+  fork allows, and an authorization with chain id 0 (valid on every chain) is
+  signed without a separate opt-in. The JSON tool refuses a missing chain id
+  (only an explicit `null` on a legacy transaction gives the replayable
+  pre-EIP-155 form), conflicting field aliases and fee fields of another kind.
+- The encoders (`signingPayload`, `signedRaw`, `authorizationPayload`) are
+  meant for validated input; called directly with out-of-range values they
+  wrap (kind byte, fixed-width fields). `signTransaction` and
+  `signAuthorization` check first.
 
 ## Timing: what is and is not constant-time
 
@@ -100,12 +109,18 @@ arbitrary-precision integer above 63 bits and an unboxed machine word below.
 
 What was done to reduce the leak:
 
-- **No secret-dependent schedule in the scalar multiplication.** `[k]G` is 63
-  additions of entries of a precomputed table (4-bit comb), whatever `k` is.
-  There is no doubling chain, no branch on a bit of `k`, and no dependence on
-  the bit length of `k` in the wallet's code. The digits are recoded (the
-  scalar is shifted by a public constant) so that no selected entry is the
-  point at infinity. The textbook double-and-add of the shared module, which
+- **No secret-dependent schedule in the scalar multiplication.** `[k]G` is 64
+  additions of entries of a precomputed table (4-bit comb) to a fixed public
+  starting point, whatever `k` is. There is no doubling chain, no branch on a
+  bit of `k`, and no dependence on the bit length of `k` in the wallet's code.
+  The digits are recoded (the scalar is shifted by a public constant) so that
+  no selected entry is the point at infinity. The starting point `[2^255]G`
+  is there because of a review finding: without it the running sum equalled
+  the next entry for about one scalar in 240 (low byte of the recoded scalar
+  `0x0F`, and similar patterns), the shared `add` then took its doubling
+  branch, and timing would have shown those low bits. With it the two can
+  coincide only when the digits consumed so far equal one exact number of
+  about 250 bits. The textbook double-and-add of the shared module, which
   is right for public data, would leak the bit pattern and length of the nonce
   directly; a few leaked nonce bits per signature are enough to recover a key
   with lattice methods, which is why this was the first thing to remove.
@@ -124,7 +139,11 @@ What still leaks:
 | Small-value representation | Lean runtime | a `Nat` below 2^63 is a tagged word, not a GMP number: other code path, no allocation |
 | Allocation pattern | every `Nat` result | sizes and counts of allocations follow the values |
 | Secret-indexed table lookup | `mulBaseComb` | cache timing reveals digits of the recoded nonce to an attacker sharing the cache |
-| Special-case branches | shared `Curve.add` (equal points, inverse points, infinity) | reached only with negligible probability for a recoded scalar, but the code is not branch-free |
+| Special-case branches | shared `Curve.add` (equal points, inverse points, infinity) | with the public starting point, reached only for exact values of the scalar (probability about 2⁻²⁴⁸), but the code is not branch-free |
+| Low-`s` branch | `normalizeS` | whether `s` was replaced by `n − s` (one bit about the nonce's sign) is taken as a branch; the output does not show it |
+| Rare-case branches | `attempt` (`R.x ≥ n`, `r = 0`, `s = 0`), `Rfc6979.search` (range test) | negligible probability each |
+| Digit extraction | `(k >>> 4i) % 16` on a GMP number | value- and length-dependent like the other `Nat` operations |
+| The key on the command line | `eth-wallet-sign --test-key-hex` | visible in the process list and shell history: test keys only |
 | Reduction of the key and hash | `(z + r·d) % n`, `natToBE` of the key for HMAC | value-dependent |
 | HMAC-SHA-256 | `L4Factoidal.Crypto` | `UInt32` arithmetic with no secret-dependent branch in the source; not examined at the level of generated code |
 | Memory | everywhere | secrets are not wiped; Lean values are immutable and freed by reference counting |
@@ -156,12 +175,13 @@ Linux numbers in `bench-sign.json`):
 
 | | p50 | p95 | max |
 |---|---|---|---|
-| Before: signature using the affine scalar multiplication of `SecpRecovery` (what the tree had) | 48.7 ms | 51.7 ms | 75.7 ms |
-| Before: signature using the shared Jacobian double-and-add | 2.7 ms | 3.0 ms | 3.2 ms |
-| After: `signTransaction`, kind 2, everything included | 4.0 ms | 4.1 ms | 4.4 ms |
+| Before: signature using the affine scalar multiplication of `SecpRecovery` (what the tree had) | 46.5 ms | 48.7 ms | 49.3 ms |
+| Before: signature using the shared Jacobian double-and-add | 2.8 ms | 2.9 ms | 3.0 ms |
+| After: `signTransaction`, kind 2, everything included | 4.2 ms | 4.3 ms | 4.4 ms |
 
-Parts of the 4.0 ms: recovery self-check about 3.0 ms, comb multiplication
-0.6 ms, inverse 0.15 ms, RFC 6979 0.13 ms, encode and decode back 0.06 ms.
+Parts of the 4.2 ms: recovery self-check about 3.1 ms, comb multiplication
+0.62 ms, inverse 0.15 ms, RFC 6979 0.13 ms, encode and decode back 0.06 ms.
 The self-check is a shared double-and-add over public data; it gets faster
-when the shared field arithmetic does. The table (1,024 points) is built once
-by whoever signs; a program that never signs does not build it.
+when the shared field arithmetic does. The table (1,024 points and the
+starting point) takes about 7 ms to build, once, by whoever signs; a program
+that never signs does not build it.

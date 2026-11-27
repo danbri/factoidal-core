@@ -168,9 +168,11 @@ theorem signHash_recovers_address (risk : Risk.Accepted .variableTimeSigning) (t
   simp [recoverAddress, hs, KeyPair.address]
 
 /-- Kind: nonce range.
-    Says: a returned signature came from an RFC 6979 candidate `k` in `[1, n-1]` that the
-    ECDSA attempt accepted.
-    Does not say: which candidate, or anything about its secrecy. -/
+    Says: for a returned signature there is some `k` in `[1, n-1]` on which the ECDSA attempt
+    produced it (before the final check).
+    Does not say: that this `k` is the RFC 6979 candidate for this key and hash (`search_range`
+    does not carry that; the nonce values are tested against vectors), or anything about
+    its secrecy. -/
 theorem signHash_nonce_range (risk : Risk.Accepted .variableTimeSigning) (t : BaseTable)
     (kp : KeyPair) (hash : ByteArray) (sig : Signature)
     (h : signHash risk t kp hash = .ok sig) :
@@ -207,8 +209,9 @@ theorem signHash_zero_hash (risk : Risk.Accepted .variableTimeSigning) (t : Base
   simp [signHash, hsize, hzero]
 
 /-- Kind: refusal.
-    Says: a private scalar outside `[1, n-1]` never signs: the result is an error, and for a
-    well-formed non-zero hash it is `invalidKey`.
+    Says: with a private scalar outside `[1, n-1]`, a 32-byte non-zero hash is refused with
+    `invalidKey`. (Other hashes are refused by `signHash_hash_length` and
+    `signHash_zero_hash`, so such a key never signs.)
     Does not say: every scalar in range is a good key. -/
 theorem signHash_invalid_key (risk : Risk.Accepted .variableTimeSigning) (t : BaseTable)
     (kp : KeyPair) (hash : ByteArray) (hkey : kp.secret = 0 ∨ n ≤ kp.secret)

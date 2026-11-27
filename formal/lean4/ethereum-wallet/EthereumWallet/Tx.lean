@@ -104,6 +104,7 @@ inductive Error where
   | noBlobHashes
   | blobHashVersion
   | noAuthorizations
+  | priorityAboveMaxFee
   | signing (e : Sign.Error)
   | checkFailed (reason : String)
   deriving DecidableEq, Repr
@@ -126,6 +127,7 @@ def validateFields (tx : Unsigned) : Option Error :=
   else if (tx.to.getD 0) ≥ 2 ^ 160 then some (.fieldRange "to")
   else if !tx.accessList.all accessEntryOk then some (.fieldRange "accessList")
   else if tx.kind < 2 ∧ tx.maxPriorityFeePerGas ≠ 0 then some (.notEmpty "maxPriorityFeePerGas")
+  else if tx.maxPriorityFeePerGas > tx.maxFeePerGas then some .priorityAboveMaxFee
   else if tx.kind = 0 ∧ tx.accessList ≠ [] then some (.notEmpty "accessList")
   else if tx.kind ≠ 3 ∧ (tx.maxFeePerBlobGas ≠ 0 ∨ tx.blobVersionedHashes ≠ []) then
     some (.notEmpty "blob fields")
@@ -186,7 +188,8 @@ def eip155Suffix : Option Nat → ByteArray
   | none => ByteArray.empty
   | some chainId => rlpNat chainId ++ ⟨#[0x80, 0x80]⟩
 
-/-- The exact bytes whose Keccak-256 is signed. -/
+/-- The exact bytes whose Keccak-256 is signed. Meant for a transaction that passed
+    `validate`: the kind byte and fixed-width fields wrap for values out of range. -/
 def signingPayload (tx : Unsigned) : ByteArray :=
   if tx.kind = 0 then rlpList (unsignedFields tx ++ eip155Suffix tx.chainId)
   else ⟨#[UInt8.ofNat tx.kind]⟩ ++ rlpList (unsignedFields tx)

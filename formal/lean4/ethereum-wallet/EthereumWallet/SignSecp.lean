@@ -10,9 +10,13 @@ is a second implementation of point addition. This module adds what a signer
 needs on top of it:
 
 * `BaseTable` and `mulBaseSecret`: `[k]G` for a secret `k` on a fixed schedule
-  of 63 point additions from a precomputed table (a comb with 4-bit windows).
-  There is no doubling chain and no branch on a bit of `k` in this module; the
-  digits are recoded so that no table entry is the point at infinity;
+  of 64 point additions from a precomputed table (a comb with 4-bit windows),
+  starting from a fixed public point. There is no doubling chain and no branch
+  on a bit of `k` in this module; the digits are recoded so that no table entry
+  is the point at infinity, and the public starting point keeps the running
+  sum away from the entry being added (they coincide, and the shared `add`
+  takes its doubling branch, only for scalars whose recoded value matches one
+  exact number of about 250 bits);
 * `invFixed`: modular inverse by a fixed public exponent (Fermat), in place of
   Euclid's algorithm whose step count depends on the secret operand;
 * `verify`: ECDSA verification on public data;
@@ -82,11 +86,20 @@ def combBuild : Nat → JPoint Nat → Array (JPoint Nat) → Array (JPoint Nat)
     Public data. Built once by the caller (about a thousand point additions). -/
 structure BaseTable where
   entries : Array (JPoint Nat)
+  /-- `[combStart]G`, the public point every multiplication starts from. -/
+  start : JPoint Nat
 
-def BaseTable.build (_ : Unit) : BaseTable := ⟨combBuild 64 generator (Array.mkEmpty 1024)⟩
+/-- The public scalar of the starting point. With the running sum always above `2^255`
+    and every table entry's scalar at most `2^256`, the sum and the entry added to it can
+    only coincide (up to sign) for one exact value of the digits consumed so far. -/
+def combStart : Nat := 2 ^ 255
 
-/-- `Σ 16^i` for `i < 64`, reduced: the amount by which the recoded digits overshoot. -/
-def combOffset : Nat := (16 ^ 64 - 1) / 15 % n
+def BaseTable.build (_ : Unit) : BaseTable :=
+  ⟨combBuild 64 generator (Array.mkEmpty 1024), Curve.mul field combStart generator⟩
+
+/-- `combStart + Σ 16^i` for `i < 64`, reduced: what the recoded digits and the starting
+    point add to the scalar. -/
+def combOffset : Nat := (combStart + (16 ^ 64 - 1) / 15) % n
 
 def combLoop (t : BaseTable) (k : Nat) : Nat → Nat → JPoint Nat → JPoint Nat
   | 0, _, acc => acc
@@ -94,12 +107,11 @@ def combLoop (t : BaseTable) (k : Nat) : Nat → Nat → JPoint Nat → JPoint N
     combLoop t k rem (i + 1)
       (Curve.add field acc (t.entries.getD (16 * i + (k >>> (4 * i)) % 16) generator))
 
-/-- `[k]G` in Jacobian form by 63 additions of table entries. With
-    `k' = k − combOffset (mod n)` and base-16 digits `d_i` of `k'`, the entries
-    `(d_i + 1)·16^i·G` sum to `(k' + combOffset)·G = k·G`. -/
+/-- `[k]G` in Jacobian form by 64 additions of table entries to the starting point. With
+    `k' = k − combOffset (mod n)` and base-16 digits `d_i` of `k'`, the start and the
+    entries `(d_i + 1)·16^i·G` sum to `(k' + combOffset)·G = k·G`. -/
 def mulBaseComb (t : BaseTable) (k : Nat) : JPoint Nat :=
-  let k' := (k % n + n - combOffset) % n
-  combLoop t k' 63 1 (t.entries.getD (k' % 16) generator)
+  combLoop t ((k % n + n - combOffset) % n) 64 0 t.start
 
 /-- An affine pair, kept only if it satisfies the curve equation. -/
 def keepOnCurve (x y : Nat) : Option (Nat × Nat) :=

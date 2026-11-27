@@ -51,8 +51,9 @@ private def signedHex (key : Nat) (tx : Unsigned) : String :=
 
 -- The comb table has 64 rows of 16 entries, and agrees with the shared double-and-add.
 #guard table.entries.size == 1024
-#guard [1, 2, 15, 16, 17, 0xdeadbeef, n - 1, n - 2, 2 ^ 255 + 12345, combOffset, combOffset + 1].all
-  fun k => mulBaseSecret table k == Secp256k1.mulBase k
+#guard [1, 2, 15, 16, 17, 0xdeadbeef, n - 1, n - 2, 2 ^ 255 + 12345, combOffset, combOffset + 1,
+    combOffset + 0x0f, combOffset + 0xef, combOffset + n - 1, combStart, combStart + 1].all
+  fun k => mulBaseSecret table (k % n) == Secp256k1.mulBase (k % n)
 #guard mulBaseSecret table 0 == none && mulBaseSecret table n == none
 #guard invFixed n 7 * 7 % n == 1 && invFixed n 0 == 0
 
@@ -108,6 +109,9 @@ private def setCodeTx : Unsigned :=
 #guard signedHex eip155Key { eip155Tx with maxPriorityFeePerGas := 1 } ==
   reprStr (Tx.Error.notEmpty "maxPriorityFeePerGas")
 #guard signedHex eip155Key { eip155Tx with to := some (2 ^ 160) } == reprStr (Tx.Error.fieldRange "to")
+#guard signedHex eip155Key { eip155Tx with kind := 2, maxPriorityFeePerGas := 20000000001 } ==
+  reprStr Tx.Error.priorityAboveMaxFee
+#guard (signAuthorization risk table ⟨1, Secp256k1.gx, Secp256k1.gy⟩ 1 5 (2 ^ 64 - 1)).toOption.isNone
 
 -- Negative controls on the EIP-155 signature.
 private def r155 : Nat := 0x28ef61340bd939bc2195fe537567866003e1a15d3c71ff63e1590620aa636276

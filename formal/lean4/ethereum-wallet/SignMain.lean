@@ -7,8 +7,9 @@ import Lean.Data.Json.FromToJson.Basic
 
 A development and test tool. It signs with a key given on the command line,
 which is only acceptable for published test keys and keys made for a test:
-the flag is called `--test-key-hex` for that reason. It never talks to a
-network and never prints a key.
+the flag is called `--test-key-hex` for that reason (the key is then visible
+in the process list and the shell history). It never talks to a network and
+never prints a key.
 
 Signing is not constant-time, so the signing commands refuse to run without
 `--dangerously-enable-variable-time-signing` (skills/lean-risk-flags); that
@@ -58,11 +59,11 @@ def quantityOfString (s : String) : Except String Nat :=
   | '0' :: 'x' :: rest =>
     match digits? 16 hexDigit? rest with
     | some n => .ok n
-    | none => if rest.isEmpty then .ok 0 else .error ("bad hexadecimal quantity: " ++ s)
+    | none => if rest.isEmpty then .ok 0 else .error "bad hexadecimal quantity"
   | cs =>
     match digits? 10 decDigit? cs with
     | some n => .ok n
-    | none => .error ("bad quantity: " ++ s)
+    | none => .error "bad quantity"
 
 def quantity (j : Json) : Except String Nat :=
   match j with
@@ -132,9 +133,17 @@ def parseTx (j : Json) : Except String Unsigned := do
     "gas", "gasLimit", "to", "value", "input", "data", "accessList", "maxFeePerBlobGas",
     "blobVersionedHashes", "authorizationList"]
   let kind ← natField j ["type"]
-  let chainId ← match field? j "chainId" with
-    | some v => pure (some (← quantity v))
-    | none => pure none
+  -- A missing chain id is an error. Only an explicit `null` on a legacy transaction asks
+  -- for the replayable pre-EIP-155 form.
+  let chainId ← match j.getObjVal? "chainId" with
+    | .ok v => if v.isNull then pure none else pure (some (← quantity v))
+    | .error _ => throw "missing field: chainId (null only for a pre-EIP-155 legacy transaction)"
+  if (field? j "gas").isSome && (field? j "gasLimit").isSome then throw "both gas and gasLimit"
+  if (field? j "input").isSome && (field? j "data").isSome then throw "both input and data"
+  if kind < 2 && ((field? j "maxFeePerGas").isSome || (field? j "maxPriorityFeePerGas").isSome) then
+    throw "maxFeePerGas and maxPriorityFeePerGas do not belong to this transaction type"
+  if kind ≥ 2 && (field? j "gasPrice").isSome then
+    throw "gasPrice does not belong to this transaction type"
   let to ← match field? j "to" with
     | some (.str "") => pure none
     | some (.str "0x") => pure none
@@ -187,8 +196,16 @@ def signedJson (tx : Unsigned) (kp : KeyPair) (out : Signed) : Json :=
     (if tx.kind = 0 then [("v", .str (quantityHex (legacyV tx.chainId out.signature.yParity)))]
      else []))
 
-def readJson (path : String) : IO (Except String Json) := do
+/-- Largest file the signing commands read (the vector runners read trusted, larger files). -/
+def maxSignInputBytes : Nat := 4 * 1024 * 1024
+
+def readJson (path : String) (limit : Option Nat := none) : IO (Except String Json) := do
   try
+    match limit with
+    | some cap =>
+      if (← System.FilePath.metadata path).byteSize.toNat > cap then
+        return .error "input file exceeds the size limit"
+    | none => pure ()
     let text ← IO.FS.readFile path
     pure (Json.parse text)
   catch error => pure (.error error.toString)
@@ -200,7 +217,7 @@ def fail (message : String) : IO UInt32 := do
 def signCommand (risk : Risk.Accepted .variableTimeSigning) (keyHex path : String) :
     IO UInt32 := do
   let t := baseTable
-  match (← readJson path) >>= parseTx, keyPairOf t keyHex with
+  match (← readJson path (some maxSignInputBytes)) >>= parseTx, keyPairOf t keyHex with
   | .error why, _ => fail ("transaction: " ++ why)
   | _, .error why => fail why
   | .ok tx, .ok kp =>
@@ -215,7 +232,7 @@ def signCommand (risk : Risk.Accepted .variableTimeSigning) (keyHex path : Strin
 def authorizationCommand (risk : Risk.Accepted .variableTimeSigning) (keyHex path : String) :
     IO UInt32 := do
   let t := baseTable
-  let file ← readJson path
+  let file ← readJson path (some maxSignInputBytes)
   let parsed : Except String (Nat × Nat × Nat) := do
     let j ← file
     fieldsOnly j ["chainId", "address", "nonce"]

@@ -64,7 +64,7 @@ def signTransaction (risk : Risk.Accepted .variableTimeSigning) (t : BaseTable) 
 /-- Sign an EIP-7702 authorization tuple `(chainId, address, nonce)`. -/
 def signAuthorization (risk : Risk.Accepted .variableTimeSigning) (t : BaseTable) (kp : KeyPair)
     (chainId address nonce : Nat) : Except Tx.Error Authorization :=
-  if chainId ≥ 2 ^ 256 ∨ address ≥ 2 ^ 160 ∨ nonce ≥ 2 ^ 64 then
+  if chainId ≥ 2 ^ 256 ∨ address ≥ 2 ^ 160 ∨ nonce ≥ 2 ^ 64 - 1 then
     .error (.fieldRange "authorization")
   else
     match signHash risk t kp (authorizationHash chainId address nonce) with

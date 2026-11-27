@@ -114,7 +114,7 @@ jobs:
           set -euo pipefail
           .lake/build/bin/eth-wallet-sign tx-vectors $RISK vectors/eest-prague-signing.json --affine 25 \
             | tee .lake/wallet-evidence/tx-vectors.json
-          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/tx-vectors.json")); assert x["failed"]==0 and x["vectors"]==500 and x["matched"]>=499 and x["matched"]+x["refusedAsFixtureExpects"]==500 and x["affineRecoveryChecked"]==25, x'
+          python3 -c 'import json; x=json.load(open(".lake/wallet-evidence/tx-vectors.json")); assert x["failed"]==0 and x["vectors"]==500 and x["matched"]>=498 and x["matched"]+x["refusedAsFixtureExpects"]==500 and x["affineRecoveryChecked"]==25, x'
       - name: 'sign: a wrong expected byte is reported (negative control of the runner)'
         shell: bash
         run: |
