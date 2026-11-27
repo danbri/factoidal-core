@@ -55,20 +55,24 @@ def eip_dir(rel):
 
 
 def run_shard(binary, fork, files, out_path, timeout, log):
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".list") as lst:
-        lst.write("\n".join(files) + "\n")
-        list_path = lst.name
+    """One Lean process per fixture file, each with a wall-clock limit.
+
+    Lines Lean printed before a limit is reached are kept; the remaining
+    cases of that file are counted as not-executed (local-time-limit)."""
     start = time.monotonic()
+    timed_out, failed, err = [], [], ""
     with open(out_path, "w") as out:
-        try:
-            proc = subprocess.run([binary, KECCAK, SECP, "--forks", fork, "--list", list_path],
-                                  stdout=out, stderr=subprocess.PIPE, timeout=timeout)
-            status = proc.returncode
-            err = proc.stderr.decode("utf-8", "replace")[-2000:]
-        except subprocess.TimeoutExpired:
-            status, err = "timeout", ""
-    os.unlink(list_path)
-    log.append({"fork": fork, "files": len(files), "status": status,
+        for f in files:
+            try:
+                proc = subprocess.run([binary, KECCAK, SECP, "--forks", fork, f],
+                                      stdout=out, stderr=subprocess.PIPE, timeout=timeout)
+                if proc.returncode != 0:
+                    failed.append(f)
+                    err = proc.stderr.decode("utf-8", "replace")[-500:]
+            except subprocess.TimeoutExpired:
+                timed_out.append(f)
+            out.flush()
+    log.append({"fork": fork, "files": len(files), "timedOut": timed_out, "nonzeroExit": failed,
                 "seconds": round(time.monotonic() - start, 3), "stderr": err})
 
 
@@ -86,7 +90,7 @@ def main():
     ap.add_argument("--forks", default="Cancun,Prague")
     ap.add_argument("--jobs", type=int, default=os.cpu_count() or 2)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--timeout", type=int, default=3600, help="seconds per shard")
+    ap.add_argument("--timeout", type=int, default=90, help="seconds per fixture file")
     ap.add_argument("--limit", type=int, default=0, help="first N files per fork (0 = all)")
     ap.add_argument("--ratchet", help="baseline JSON; fail when passes fall or new fails appear")
     ap.add_argument("--source", default="", help="fixture provenance line for the report")
@@ -163,6 +167,7 @@ def main():
                 seen[(x["file"], x["id"], x["fork"], x["index"])] = x
         os.unlink(path)
 
+    timed_out_files = {f for entry in log for f in entry.get("timedOut", [])}
     counts = collections.OrderedDict()
     by_eip = collections.defaultdict(lambda: collections.Counter())
     reasons = collections.defaultdict(collections.Counter)
@@ -173,8 +178,9 @@ def main():
             f, tid, pf, i = key
             x = seen.get(key)
             if x is None:
+                why = "local-time-limit" if f in timed_out_files else "no-lean-output"
                 x = {"file": f, "id": tid, "fork": pf, "index": i,
-                     "verdict": "not-executed", "reason": "no-lean-output"}
+                     "verdict": "not-executed", "reason": why}
             v = x["verdict"]
             c = counts.setdefault(pf, collections.Counter())
             c[v] += 1
