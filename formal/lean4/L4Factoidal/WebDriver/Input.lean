@@ -186,13 +186,19 @@ structure Trusted where
   error : Option Error := none
   deriving Inhabited
 
+/-- The pointer events that give user activation (HTML §6.4.1 "activation triggering input
+event"): a press of a mouse or pen, a release of a touch. Also the rule for a host's own pointer
+input (`labs/demos/foafnaut/WebScripts.lean`, action `pointer`), so both paths have one rule. -/
+def pointerActivates : Actions.Phase → Actions.PointerType → Bool
+  | .down, type => type != .touch
+  | .up, type => type == .touch
+  | _, _ => false
+
 /-- The low-level events that give user activation (HTML §6.4.1 "activation triggering
-input event"): a key down other than Escape, a press of a mouse or pen, a release of a
-touch. -/
+input event"): a key down other than Escape, and the pointer events of `pointerActivates`. -/
 def activates : Low → Bool
   | .key true data _ _ => data.key != "Escape"
-  | .pointer .down type _ _ _ _ _ _ _ => type != .touch
-  | .pointer .up type _ _ _ _ _ _ _ => type == .touch
+  | .pointer phase type _ _ _ _ _ _ _ => pointerActivates phase type
   | _ => false
 
 /-! ## Theorems -/

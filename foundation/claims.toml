@@ -32,6 +32,8 @@
 
 [meta]
 max-entries = 50
+# Entries with assumptions and no witness (witness_none, with a reason). Only goes down.
+max-unwitnessed = 4
 
 [[claim]]
 id = "sparql-eval-lawful-dataset"
@@ -46,6 +48,7 @@ assumptions = [
   "hset, hden: the dataset is a set and has the store's denotation",
 ]
 status = "proposed"
+witness = { name = "L4Factoidal.Claims.query_sound_witness", file = "formal/lean4/L4Factoidal/Claims/Witnesses.lean" }
 statement_sha256 = "952d5363d7d07026ebd2a18795b2c684a7f5d6c370033df18f3a6eed09e442db"
 spec_defs = [
   { name = "L4Factoidal.Dataflow.referenceAnswer", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "b85e89fd69dc77c5643db2769d2859c6e5f3325e28e48732f51c7464b8bcadbb" },
@@ -67,6 +70,7 @@ assumptions = [
 ]
 status = "proposed"
 stages = ["shippedEvaluator"]
+witness_none = "h1 and h2 are named assumptions with no proof; a witness needs them proved (they are the open work of this claim)"
 statement_sha256 = "b911f5027b8152cf0c430797fbef280eee0e1aea5f7a5582910c87875ab76b02"
 spec_defs = [
   { name = "L4Factoidal.Dataflow.BackendOutsideFragmentAgrees", file = "formal/lean4/L4Factoidal/Dataflow/Evaluator.lean", sha256 = "e09931f3046776ad15efb15b7c6102806c5eaae5801a37817463ae050cf47aef" },
@@ -100,6 +104,7 @@ assumptions = [
   "hlf: the list fuel is adequate for the rdf:List structures of the result",
 ]
 status = "proposed"
+witness_none = "not yet written: a saturated closure with adequate list fuel at a concrete graph (issue 1180)"
 statement_sha256 = "8277cc6ba1bbc0894715095f856370c92e27b0c9b2c69f56126b591bf5c7512f"
 spec_defs = [
   { name = "L4Factoidal.OWL.RL.Derives", file = "formal/lean4/L4Factoidal/OWL/RLRules.lean", sha256 = "558701a61189b9ab04ef9ea12c1c640b2723fc1c02bb0a22d8c96ee28fd3af92" },
@@ -114,6 +119,7 @@ says = """Under the RDF semantic conditions, a graph entails its RDF closure, fo
 does_not_say = """Soundness of the closure only, not completeness. RdfEntails is the Lean reading of RDF 1.1 Semantics section 7."""
 assumptions = ["hcmps: every listed container membership IRI is an rdf:_n IRI"]
 status = "proposed"
+witness = { name = "L4Factoidal.RDF.rdfClosure_entails_nil", file = "formal/lean4/L4Factoidal/RDF/EntailmentRegimeSoundness.lean" }
 statement_sha256 = "9a02902467acf46112c82085d94be17fde22dab7cfc72a0396cb0395cd85330b"
 spec_defs = [
   { name = "L4Factoidal.RDF.RdfEntails", file = "formal/lean4/L4Factoidal/RDF/EntailmentRdfsModelTheory.lean", sha256 = "0cf3da63b8af649a8710b35bc82780ea6e9b18c2f13a300691516cece36b1fb9" },
@@ -133,6 +139,7 @@ assumptions = [
 ]
 status = "proposed"
 stages = ["Storage.BackendRefinement.backendBgpStage"]
+witness = { name = "L4Factoidal.Claims.evalBgpBackend_solEquiv_witness", file = "formal/lean4/L4Factoidal/Claims/Witnesses.lean" }
 statement_sha256 = "6e4a2ea83e696886a6928f25caf6e6e65811d244ded6ecdde7224f5b18eaf011"
 spec_defs = [
   { name = "L4Factoidal.SPARQL.StoreBackend.BackendExact", file = "formal/lean4/L4Factoidal/SPARQL/StoreBackendDenotation.lean", sha256 = "6d46f506d765c79a3cd319ce22a7b8cb2768ca2f1bfcb021804c57819ddad2ab" },
@@ -177,6 +184,7 @@ says = """For a catalog whose exact sources are sound, every exact row of every 
 does_not_say = """Rows marked approximate are not covered. It does not say the search finds the best plan, or any plan. Source soundness is a premise per source."""
 assumptions = ["hsound: every source declared exact is sound"]
 status = "proposed"
+witness_none = "not yet written: a catalog with an exact sound source and a ranked plan the search returns (issue 1180)"
 statement_sha256 = "ee4f6295a863ffa6d43066a057e4b8efa8a8b1df4ef37e8955244d3109806bcb"
 spec_defs = [
   { name = "L4Factoidal.Planner.SolEquiv", file = "formal/lean4/L4Factoidal/Planner/Requirement.lean", sha256 = "efecb13b429173559daa68fce6966a213f1b772b54a17e0adfc909f7eed45e04" },
@@ -209,6 +217,7 @@ assumptions = [
 ]
 status = "proposed"
 stages = ["vcVerifyStage"]
+witness_none = "hR (RelabellingInvariance) has no proof; a witness needs it proved"
 statement_sha256 = "d022acadcd686cef67b958538a2a93f2d59829c25b42f0e3d1a45f82a400b5f9"
 spec_defs = [
   { name = "L4Factoidal.RDF.Canonical.RelabellingInvariance", file = "formal/lean4/L4Factoidal/RDF/CanonicalTheorems.lean", sha256 = "cc28c93f54ddb687166201d0d9bd52d2b8f10d67049f3a11ce348fd4b3febbc6" },

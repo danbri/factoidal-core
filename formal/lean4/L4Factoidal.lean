@@ -5,6 +5,7 @@ import L4Factoidal.NatBounds
 import L4Factoidal.ListTR
 import L4Factoidal.Text.CaseMap
 import L4Factoidal.Text.CaseMapTests
+import L4Factoidal.Claims.Witnesses
 import L4Factoidal.Crypto.SHA2
 import L4Factoidal.Crypto.SHA2Native
 import L4Factoidal.Crypto.SHA2Theorems
@@ -394,6 +395,7 @@ import L4Factoidal.Solid.Server.AuthConfig
 import L4Factoidal.Solid.Server.Auth
 import L4Factoidal.Solid.Server.Oidc
 import L4Factoidal.Crypto.P256Native
+import L4Factoidal.Crypto.K256Native
 import L4Factoidal.Crypto.ConcatKdf
 import L4Factoidal.Crypto.Aead
 import L4Factoidal.Crypto.AesGcmNative
@@ -1140,6 +1142,7 @@ import L4Factoidal.Net.FetchRules
 import L4Factoidal.Net.ProxyProtocol
 import L4Factoidal.Net.Socks5
 import L4Factoidal.Net.Socks5Theorems
+import L4Factoidal.Net.TorSetting
 import L4Factoidal.WebDAV.Login
 import L4Factoidal.WebDAV.Local
 import L4Factoidal.WebDAV.Route
@@ -1330,6 +1333,7 @@ import L4Factoidal.WebDriver.Protocol
 import L4Factoidal.WebDriver.HostKeys
 import L4Factoidal.WebDriver.Touch
 import L4Factoidal.WebDriver.Window
+import L4Factoidal.WebDriver.BiDi
 import L4Factoidal.WebDriver.Page
 import L4Factoidal.WebDriver.Capture
 import L4Factoidal.Rendering.Tests

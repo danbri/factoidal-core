@@ -76,3 +76,4 @@ L4Factoidal.JS.toUint32 L4Factoidal.JS.toUint32Fast        # twin: JS/Number.lea
 L4Factoidal.JS.floatOfNat L4Factoidal.JS.floatOfNatFast    # twin: JS/Lexer.lean, floatOfNatFast: a literal of 2^32 or more goes to the specification; every smaller literal takes the machine conversion
 L4Factoidal.JS.typedRead L4Factoidal.JS.typedReadByteFast  # twin: unsigned byte reads use the direct form; other element types deliberately call the reference, compiled before the replacement theorem
 L4Factoidal.JS.typedBytes L4Factoidal.JS.typedBytesByteFast # twin: byte-sized numeric writes use the singleton form; other element types deliberately call the reference, compiled before the replacement theorem
+L4Factoidal.JS.dyadic L4Factoidal.JS.dyadicFast   # the fast form calls dyadic on purpose as its slow path outside 1 <= m < 2^64, -1100 <= e < 0 (issue 471)

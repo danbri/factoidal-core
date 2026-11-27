@@ -448,6 +448,25 @@ executable edge only.
   changes, its spec-transcription twin — `ebvSpec`, `termToExpr?` —
   must move in the same commit.) Before any commit claiming build
   cleanliness: `lake build`, no target.
+- **An argument on a new line must be to the right of where the match
+  arm's right-hand side starts.** Lean reads function arguments only at a
+  column greater than the saved position (`checkColGt`), and a `match`
+  alternative saves the position of its right-hand side. So in
+  `| some k, some n => run fun a =>` with the body `e.pointer (f a) k n` on
+  the next line at column 8, the arguments are left of `run`, and Lean reads
+  the body as `e.pointer` alone. The errors do not name the cause: "Type
+  mismatch", "Unknown identifier `k`", "Missing cases", "Too many patterns
+  in match alternative" on the next arm. (2026-11-27, WebScripts.lean action
+  `pointer`: one failed 25-minute engine build.) Put the right-hand side on
+  a new line of its own (`| some k, some n =>` then the body), or keep each
+  application on one line. To check one lab module before the whole build, run
+  `LEAN_PATH="$BUILD/olean:$PWD/.lake/build/lib/lean" lean -R "$LAB" "$LAB/M.lean"`
+  from `formal/lean4/`, but only when no `L4Factoidal` module that the lab
+  imports changed since the last full build: `lean -R` loads the lab's older
+  `.olean` files beside the new library without a check, and gives errors that
+  are not in the source. (2026-11-27: after a merge added a field to
+  `Page.Limits`, this check reported "Application type mismatch ... Page.Limits.mk"
+  and "Unknown identifier `startLean`" for a correct file.)
 
 ## Style contract (owner priority: W3C-expert readability)
 

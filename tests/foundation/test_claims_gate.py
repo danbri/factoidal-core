@@ -149,6 +149,19 @@ class ClaimsGateTest(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("does not apply", out)
 
+    def test_assumptions_need_witness(self):
+        self.edit(self.reg, 'witness = { name = "L4Factoidal.Demo.double_pos_witness", file = "formal/lean4/L4Factoidal/Demo.lean" }\n', "")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("no `witness`", out)
+        self.edit(self.reg, 'status = "proposed"', 'status = "proposed"\nwitness_none = "not yet"')
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("max-unwitnessed is missing", out)
+        self.edit(self.reg, "max-entries = 5", "max-entries = 5\nmax-unwitnessed = 1")
+        rc, out = self.run_gate()
+        self.assertEqual(rc, 0, out)
+
     def test_private_fails(self):
         self.edit(self.demo, "theorem double_pos", "private theorem double_pos")
         rc, out = self.run_gate()

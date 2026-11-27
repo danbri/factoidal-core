@@ -95,6 +95,9 @@ const pump=htmlPump(queue,async request=>{if(request.op==="end"){await finish();
 let ending=false;
 const finish=async()=>{
   for(const r of queue.drain())drop(r);
+  // The engine's real-time audio runs end first: the default session of this worker's library copy
+  // is never freed, and their threads would run on after the worker (WebAudioRun.endAll).
+  try{(await engine)?.audioEnd();}catch{/* never started */}
   try{(await engine)?.endSession();}catch{/* never started */}
   (globalThis as unknown as {close():void}).close();
 };
