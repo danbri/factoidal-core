@@ -17,9 +17,6 @@ The proofs chain the equations of `LimbProofs.lean` (`mac_spec`, `adc_spec`,
 Montgomery reduction (`U256.redc`) is not covered in this module.
 -/
 
--- `omega` builds deep terms on coefficients of 2^64 and above.
-set_option maxRecDepth 8192
-
 namespace EVMCleanroom.Precompiles.U256
 
 open Limb
@@ -44,7 +41,7 @@ theorem toNat_lt (a : U256) : a.toNat < 2 ^ 256 := by
   have h2 := UInt64.toNat_lt a.l2
   have h3 := UInt64.toNat_lt a.l3
   simp only [U256.toNat]
-  omega
+  limb_omega
 
 /-- Kind: functional correctness (conversion).
     Says: the limbs of a natural number are its low 256 bits.
@@ -58,7 +55,7 @@ theorem toNat_ofNat (n : Nat) : (U256.ofNat n).toNat = n % 2 ^ 256 := by
   have e4 : n / 2 ^ 256 = n / 2 ^ 64 / 2 ^ 64 / 2 ^ 64 / 2 ^ 64 := by
     simp only [Nat.div_div_eq_div_mul, Nat.reducePow, Nat.reduceMul]
   rw [e2, e3]
-  omega
+  limb_omega
 
 /-- Kind: representation.
     Says: two four-limb values with the same number are the same limbs.
@@ -77,10 +74,10 @@ theorem toNat_inj {a b : U256} : a.toNat = b.toNat ↔ a = b := by
     have hb1 := UInt64.toNat_lt b1
     have hb2 := UInt64.toNat_lt b2
     have hb3 := UInt64.toNat_lt b3
-    have e0 : a0 = b0 := UInt64.toNat_inj.1 (by omega)
-    have e1 : a1 = b1 := UInt64.toNat_inj.1 (by omega)
-    have e2 : a2 = b2 := UInt64.toNat_inj.1 (by omega)
-    have e3 : a3 = b3 := UInt64.toNat_inj.1 (by omega)
+    have e0 : a0 = b0 := UInt64.toNat_inj.1 (by limb_omega)
+    have e1 : a1 = b1 := UInt64.toNat_inj.1 (by limb_omega)
+    have e2 : a2 = b2 := UInt64.toNat_inj.1 (by limb_omega)
+    have e3 : a3 = b3 := UInt64.toNat_inj.1 (by limb_omega)
     subst e0 e1 e2 e3
     rfl
   · intro h
@@ -96,18 +93,18 @@ theorem addCarry_spec (a b : U256) :
   have z := zero_toNat
   simp only [U256.addCarry, U256.toNat]
   have s0 := adc_spec a.l0 b.l0 0
-  have k0 := adc_carry_le a.l0 b.l0 0 (by omega)
+  have k0 := adc_carry_le a.l0 b.l0 0 (by limb_omega)
   generalize adc a.l0 b.l0 0 = r0 at s0 k0 ⊢
   have s1 := adc_spec a.l1 b.l1 r0.1
-  have k1 := adc_carry_le a.l1 b.l1 r0.1 (by omega)
+  have k1 := adc_carry_le a.l1 b.l1 r0.1 (by limb_omega)
   generalize adc a.l1 b.l1 r0.1 = r1 at s1 k1 ⊢
   have s2 := adc_spec a.l2 b.l2 r1.1
-  have k2 := adc_carry_le a.l2 b.l2 r1.1 (by omega)
+  have k2 := adc_carry_le a.l2 b.l2 r1.1 (by limb_omega)
   generalize adc a.l2 b.l2 r1.1 = r2 at s2 k2 ⊢
   have s3 := adc_spec a.l3 b.l3 r2.1
-  have k3 := adc_carry_le a.l3 b.l3 r2.1 (by omega)
+  have k3 := adc_carry_le a.l3 b.l3 r2.1 (by limb_omega)
   generalize adc a.l3 b.l3 r2.1 = r3 at s3 k3 ⊢
-  omega
+  limb_omega
 
 /-- Kind: functional correctness (four-limb subtraction).
     Says: for all inputs `subBorrow a b = (borrow, diff)` with
@@ -119,18 +116,18 @@ theorem subBorrow_spec (a b : U256) :
   have z := zero_toNat
   simp only [U256.subBorrow, U256.toNat]
   have s0 := sbb_spec a.l0 b.l0 0
-  have k0 := sbb_borrow_le a.l0 b.l0 0 (by omega)
+  have k0 := sbb_borrow_le a.l0 b.l0 0 (by limb_omega)
   generalize sbb a.l0 b.l0 0 = r0 at s0 k0 ⊢
   have s1 := sbb_spec a.l1 b.l1 r0.1
-  have k1 := sbb_borrow_le a.l1 b.l1 r0.1 (by omega)
+  have k1 := sbb_borrow_le a.l1 b.l1 r0.1 (by limb_omega)
   generalize sbb a.l1 b.l1 r0.1 = r1 at s1 k1 ⊢
   have s2 := sbb_spec a.l2 b.l2 r1.1
-  have k2 := sbb_borrow_le a.l2 b.l2 r1.1 (by omega)
+  have k2 := sbb_borrow_le a.l2 b.l2 r1.1 (by limb_omega)
   generalize sbb a.l2 b.l2 r1.1 = r2 at s2 k2 ⊢
   have s3 := sbb_spec a.l3 b.l3 r2.1
-  have k3 := sbb_borrow_le a.l3 b.l3 r2.1 (by omega)
+  have k3 := sbb_borrow_le a.l3 b.l3 r2.1 (by limb_omega)
   generalize sbb a.l3 b.l3 r2.1 = r3 at s3 k3 ⊢
-  omega
+  limb_omega
 
 /-- Kind: functional correctness (one conditional subtraction).
     Says: when the value `e · 2^256 + a` is below `2N`, `condSub N e a` is that value if it is
@@ -149,17 +146,17 @@ theorem condSub_eq (N : U256) (e : UInt64) (a : U256)
   by_cases hc : (e != 0 || (U256.subBorrow a N).1 == 0) = true
   · rw [if_pos hc]
     simp only [Bool.or_eq_true, bne_zero_iff, beq_zero_iff] at hc
-    split <;> omega
+    split <;> limb_omega
   · rw [if_neg hc]
     simp only [Bool.or_eq_true, bne_zero_iff, beq_zero_iff] at hc
-    split <;> omega
+    split <;> limb_omega
 
 private theorem mod_of_lt_two (v n : Nat) (h : v < 2 * n) :
     (if v < n then v else v - n) = v % n := by
   split
   · rename_i hlt; exact (Nat.mod_eq_of_lt hlt).symm
   · rename_i hge
-    rw [Nat.mod_eq_sub_mod (by omega), Nat.mod_eq_of_lt (by omega)]
+    rw [Nat.mod_eq_sub_mod (by limb_omega), Nat.mod_eq_of_lt (by limb_omega)]
 
 /-- Kind: functional correctness (one conditional subtraction).
     Says: when the value `e · 2^256 + a` is below `2N`, `condSub N e a` is its residue modulo
@@ -173,7 +170,7 @@ theorem condSub_spec (N : U256) (e : UInt64) (a : U256)
   rw [mod_of_lt_two _ _ h] at e1
   refine ⟨e1, ?_⟩
   rw [e1]
-  exact Nat.mod_lt _ (by omega)
+  exact Nat.mod_lt _ (by limb_omega)
 
 /-- Kind: refinement (modular addition).
     Says: on values below the modulus, `addMod` on limbs is `Fp.add` on natural numbers.
@@ -181,11 +178,11 @@ theorem condSub_spec (N : U256) (e : UInt64) (a : U256)
 theorem addMod_spec (N a b : U256) (ha : a.toNat < N.toNat) (hb : b.toNat < N.toNat) :
     (U256.addMod N a b).toNat = Fp.add N.toNat a.toNat b.toNat := by
   obtain ⟨hs, hc⟩ := addCarry_spec a b
-  have hcs := condSub_eq N (U256.addCarry a b).1 (U256.addCarry a b).2 (by omega)
+  have hcs := condSub_eq N (U256.addCarry a b).1 (U256.addCarry a b).2 (by limb_omega)
   show (U256.condSub N (U256.addCarry a b).1 (U256.addCarry a b).2).toNat = _
   rw [hcs]
   unfold Fp.add
-  split <;> split <;> omega
+  split <;> split <;> limb_omega
 
 /-- Kind: refinement (modular subtraction).
     Says: on values below the modulus, `subMod` on limbs is `Fp.sub` on natural numbers.
@@ -205,17 +202,17 @@ theorem subMod_spec (N a b : U256) (ha : a.toNat < N.toNat) (hb : b.toNat < N.to
   by_cases hc : ((U256.subBorrow a b).1 != 0) = true
   · rw [if_pos hc]
     rw [bne_zero_iff] at hc
-    split <;> omega
+    split <;> limb_omega
   · rw [if_neg hc]
     rw [bne_zero_iff] at hc
-    split <;> omega
+    split <;> limb_omega
 
 /-- Kind: functional correctness (zero test).
     Says: `isZero` holds exactly for the limbs of the number zero.
     Does not say: anything about zero modulo a prime for non-canonical values. -/
 theorem isZero_iff (a : U256) : a.isZero = true ↔ a.toNat = 0 := by
   simp only [U256.isZero, beq_iff_eq, UInt64.or_eq_zero_iff, u64_eq_zero_iff, U256.toNat]
-  omega
+  limb_omega
 
 /-- Kind: functional correctness (equality test).
     Says: `beq` holds exactly when the two values are the same number.
@@ -242,7 +239,7 @@ theorem negMod_spec (N a : U256) (ha : a.toNat < N.toNat) :
     exact (isZero_iff a).1 hz
   · have hne : ¬ a.toNat = 0 := fun h0 => hz ((isZero_iff a).2 h0)
     rw [if_neg hz, if_neg hne]
-    omega
+    limb_omega
 
 /-- The product of two four-digit numbers, digit by digit. -/
 private theorem mul_expand4 (a0 a1 a2 a3 b0 b1 b2 b3 w1 w2 w3 : Nat) :
@@ -297,7 +294,7 @@ theorem mulWide_spec (a b : U256) : (U256.mulWide a b).toNat = a.toNat * b.toNat
   generalize mac a.l3 b.l2 r23.2 r31.1 = r32 at s32 ⊢
   have s33 := mac_spec a.l3 b.l3 r23.1 r32.1
   generalize mac a.l3 b.l3 r23.1 r32.1 = r33 at s33 ⊢
-  omega
+  limb_omega
 
 #print axioms toNat_lt
 #print axioms toNat_ofNat

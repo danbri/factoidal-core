@@ -13,10 +13,13 @@ Montgomery proofs) chain these equations and never unfold the primitives.
 Everything here is proved for all inputs. Nothing is said about timing.
 -/
 
--- `omega` builds deep terms on coefficients of 2^64 and above.
-set_option maxRecDepth 8192
-
 namespace EVMCleanroom.Precompiles.Limb
+
+/-- `omega` with the goal moved into the context first. The `omega` tactic begins with
+`assumption`, which compares the goal with every hypothesis; for two different sums with
+weights such as `2^64` (or `2^64` against `2^128`) that comparison unfolds the numerals and
+runs into the recursion limit. With the goal `False` the comparison is immediate. -/
+macro "limb_omega" : tactic => `(tactic| (apply Classical.byContradiction; intro _; omega))
 
 /-- The product of two numbers split at a base `h`. -/
 private theorem mul_split (a0 a1 b0 b1 h : Nat) :
@@ -43,7 +46,7 @@ private theorem toNat_mul_small (x y : UInt64) (hx : x.toNat ≤ 4294967295) (hy
     (x * y).toNat = x.toNat * y.toNat ∧ (x * y).toNat ≤ 18446744065119617025 := by
   have h : x.toNat * y.toNat ≤ 4294967295 * 4294967295 := Nat.mul_le_mul hx hy
   rw [UInt64.toNat_mul]
-  omega
+  limb_omega
 
 /-- The second half of `mac`: the four half products put together. -/
 private def combine (p00 p01 p10 p11 : UInt64) : UInt64 × UInt64 :=
@@ -70,7 +73,7 @@ private theorem combine_spec (p00 p01 p10 p11 : UInt64)
       p11.toNat * 2 ^ 64 + (p01.toNat + p10.toNat) * 2 ^ 32 + p00.toNat := by
   simp only [combine, half, UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_div, UInt64.toNat_mod,
     UInt64.toNat_ofNat, Nat.reducePow, Nat.reduceMod]
-  omega
+  limb_omega
 
 private theorem addTwo_spec (hi lo c d : UInt64)
     (hb : hi.toNat * 18446744073709551616 + lo.toNat + c.toNat + d.toNat <
@@ -82,7 +85,7 @@ private theorem addTwo_spec (hi lo c d : UInt64)
   have hc := UInt64.toNat_lt c
   have hd := UInt64.toNat_lt d
   simp only [addTwo, toNat_carry, UInt64.toNat_add, Nat.reducePow] at hhi hlo hc hd ⊢
-  split <;> split <;> omega
+  split <;> split <;> limb_omega
 
 /-- Kind: functional correctness (multiply-accumulate step).
     Says: for all inputs the pair returned by `mac a b c d`, read as `high · 2^64 + low`, is
@@ -99,14 +102,14 @@ theorem mac_spec (a b c d : UInt64) :
     Nat.div_add_mod' _ _
   have hB : b.toNat / 4294967296 * 4294967296 + b.toNat % 4294967296 = b.toNat :=
     Nat.div_add_mod' _ _
-  have a0 : (a % half).toNat ≤ 4294967295 := by rw [toNat_lo]; omega
-  have a1 : (a / half).toNat ≤ 4294967295 := by rw [toNat_hi]; omega
-  have b0 : (b % half).toNat ≤ 4294967295 := by rw [toNat_lo]; omega
-  have b1 : (b / half).toNat ≤ 4294967295 := by rw [toNat_hi]; omega
-  have ha' : a.toNat ≤ 18446744073709551615 := by omega
-  have hb' : b.toNat ≤ 18446744073709551615 := by omega
-  have hc' : c.toNat ≤ 18446744073709551615 := by omega
-  have hd' : d.toNat ≤ 18446744073709551615 := by omega
+  have a0 : (a % half).toNat ≤ 4294967295 := by rw [toNat_lo]; limb_omega
+  have a1 : (a / half).toNat ≤ 4294967295 := by rw [toNat_hi]; limb_omega
+  have b0 : (b % half).toNat ≤ 4294967295 := by rw [toNat_lo]; limb_omega
+  have b1 : (b / half).toNat ≤ 4294967295 := by rw [toNat_hi]; limb_omega
+  have ha' : a.toNat ≤ 18446744073709551615 := by limb_omega
+  have hb' : b.toNat ≤ 18446744073709551615 := by limb_omega
+  have hc' : c.toNat ≤ 18446744073709551615 := by limb_omega
+  have hd' : d.toNat ≤ 18446744073709551615 := by limb_omega
   have hab : a.toNat * b.toNat ≤ 18446744073709551615 * 18446744073709551615 :=
     Nat.mul_le_mul ha' hb'
   have hsum : a.toNat * b.toNat + c.toNat + d.toNat < 340282366920938463463374607431768211456 :=
@@ -126,7 +129,7 @@ theorem mac_spec (a b c d : UInt64) :
       (combine ((a % half) * (b % half)) ((a % half) * (b / half))
       ((a / half) * (b % half)) ((a / half) * (b / half))).2.toNat = a.toNat * b.toNat := by
     clear hsum
-    omega
+    limb_omega
   clear hcomb hsplit
   rw [mac_eq]
   generalize combine ((a % half) * (b % half)) ((a % half) * (b / half))
@@ -137,6 +140,47 @@ theorem mac_spec (a b c d : UInt64) :
   have hval' : hi.toNat * 18446744073709551616 + lo.toNat = a.toNat * b.toNat := hval
   rw [hval']
   exact hsum
+
+/-- Kind: functional correctness (add with carry).
+    Says: for all inputs `adc a b c`, read as `carry · 2^64 + low`, is exactly `a + b + c`.
+    Does not say: that the carry is at most 1 (see `adc_carry_le`; it can be 2 for a large `c`). -/
+theorem adc_spec (a b c : UInt64) :
+    (adc a b c).1.toNat * 2 ^ 64 + (adc a b c).2.toNat = a.toNat + b.toNat + c.toNat := by
+  have ha := UInt64.toNat_lt a
+  have hb := UInt64.toNat_lt b
+  have hc := UInt64.toNat_lt c
+  simp only [adc, toNat_carry, UInt64.toNat_add, Nat.reducePow] at ha hb hc ⊢
+  split <;> split <;> limb_omega
+
+/-- Kind: bound.
+    Says: with a carry-in of 0 or 1 the carry-out of `adc` is 0 or 1.
+    Does not say: anything for a larger third argument. -/
+theorem adc_carry_le (a b c : UInt64) (hc : c.toNat ≤ 1) : (adc a b c).1.toNat ≤ 1 := by
+  have ha := UInt64.toNat_lt a
+  have hb := UInt64.toNat_lt b
+  simp only [adc, toNat_carry, UInt64.toNat_add, Nat.reducePow] at ha hb ⊢
+  split <;> split <;> limb_omega
+
+/-- Kind: functional correctness (subtract with borrow).
+    Says: for all inputs `sbb a b c = (borrow, low)` satisfies
+    `a + borrow · 2^64 = low + b + c` on natural numbers.
+    Does not say: that the borrow is at most 1 (see `sbb_borrow_le`). -/
+theorem sbb_spec (a b c : UInt64) :
+    a.toNat + (sbb a b c).1.toNat * 2 ^ 64 = (sbb a b c).2.toNat + b.toNat + c.toNat := by
+  have ha := UInt64.toNat_lt a
+  have hb := UInt64.toNat_lt b
+  have hc := UInt64.toNat_lt c
+  simp only [sbb, toNat_carry, UInt64.toNat_add, UInt64.toNat_sub, Nat.reducePow] at ha hb hc ⊢
+  split <;> split <;> limb_omega
+
+/-- Kind: bound.
+    Says: with a borrow-in of 0 or 1 the borrow-out of `sbb` is 0 or 1.
+    Does not say: anything for a larger third argument. -/
+theorem sbb_borrow_le (a b c : UInt64) (hc : c.toNat ≤ 1) : (sbb a b c).1.toNat ≤ 1 := by
+  have ha := UInt64.toNat_lt a
+  have hb := UInt64.toNat_lt b
+  simp only [sbb, toNat_carry, UInt64.toNat_add, UInt64.toNat_sub, Nat.reducePow] at ha hb ⊢
+  split <;> split <;> limb_omega
 
 #print axioms mac_spec
 #print axioms adc_spec
