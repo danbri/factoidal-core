@@ -121,6 +121,16 @@ jobs:
               node tools/diffcampaign/turtle-factoidal.mjs "$T/$fmt-cases.jsonl" "$T/$fmt-ox.jsonl" "$PWD/npm/factoidal/index.mjs" --keep "$T/turtle-disagreements-main/$fmt" | tee -a "$GITHUB_STEP_SUMMARY"
             fi
           done
+          # Mutated documents: one random edit each, so many are invalid; the readers'
+          # accept/refuse decisions are compared too (refused by both counts apart).
+          for fmt in turtle nt nquads trig; do
+            python3 tools/diffcampaign/turtle.py gen --seed "$SEED" --n "$N" --format "$fmt" --mutate --out "$T/m-$fmt-cases.jsonl"
+            python3 tools/diffcampaign/turtle.py oxigraph "$T/m-$fmt-cases.jsonl" --out "$T/m-$fmt-ox.jsonl"
+            M="$T/fd/node_modules/@factoidal/core/index.mjs"; L="npm latest"
+            if [ "$MAIN_OK" = 1 ]; then M="$PWD/npm/factoidal/index.mjs"; L="web build of main"; fi
+            echo "$L, mutated $fmt:" | tee -a "$GITHUB_STEP_SUMMARY"
+            node tools/diffcampaign/turtle-factoidal.mjs "$T/m-$fmt-cases.jsonl" "$T/m-$fmt-ox.jsonl" "$M" --keep "$T/turtle-disagreements-mutated/$fmt" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
           [ "$MAIN_OK" = 1 ] || { echo "no web build of main fetched" | tee -a "$GITHUB_STEP_SUMMARY"; tail -5 "$T/fetch.log"; }
           echo "seed $SEED" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -131,3 +141,4 @@ jobs:
             ${{ runner.temp }}/turtle-summary-*.json
             ${{ runner.temp }}/turtle-disagreements
             ${{ runner.temp }}/turtle-disagreements-main
+            ${{ runner.temp }}/turtle-disagreements-mutated

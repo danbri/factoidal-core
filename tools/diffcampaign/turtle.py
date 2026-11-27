@@ -19,7 +19,7 @@ Oxigraph's output, so a defect shared by those and the Turtle reader is not
 seen. A document both readers refuse counts apart.
 
 Commands:
-  gen --seed S --n N --out cases.jsonl [--format turtle|trig|nt|nquads]
+  gen --seed S --n N --out cases.jsonl [--format turtle|trig|nt|nquads] [--mutate]
   oxigraph cases.jsonl --out ox.jsonl                 (needs pyoxigraph)
 Then: node tools/diffcampaign/turtle-factoidal.mjs cases.jsonl ox.jsonl [module] [--keep DIR]
 """
@@ -203,13 +203,35 @@ def line_document(rng, quads):
     return "\n".join(lines) + ("\n" if rng.random() < 0.9 else "")
 
 
-def gen(seed, n, out, fmt="turtle"):
+MUTATIONS = list(".;,[]()<>\"'\\:_@^#{} \n") + ["", "a", "1", "e", "é"]
+
+
+def mutate(rng, text):
+    """One random edit at one random place: delete a character, insert one, or
+    replace one. Many results are invalid documents, so the campaign also
+    compares the readers' refusals."""
+    if not text:
+        return text
+    i = rng.randrange(len(text))
+    k = rng.random()
+    c = rng.choice(MUTATIONS)
+    if k < 0.34:
+        return text[:i] + text[i + 1:]
+    if k < 0.67:
+        return text[:i] + c + text[i:]
+    return text[:i] + c + text[i + 1:]
+
+
+def gen(seed, n, out, fmt="turtle", mutated=False):
     rng = random.Random(seed)
     make = {"trig": trig_document, "nt": lambda r: line_document(r, False),
             "nquads": lambda r: line_document(r, True)}.get(fmt, document)
     with open(out, "w") as fh:
         for i in range(n):
-            fh.write(json.dumps({"id": f"{fmt[0]}{seed}-{i}", "format": fmt, "data": make(rng)}, ensure_ascii=False) + "\n")
+            data = make(rng)
+            if mutated:
+                data = mutate(rng, data)
+            fh.write(json.dumps({"id": f"{fmt[0]}{'m' if mutated else ''}{seed}-{i}", "format": fmt, "data": data}, ensure_ascii=False) + "\n")
     print(f"generated {n} {fmt} documents, seed {seed}")
 
 
@@ -235,7 +257,7 @@ def main(argv):
         print(__doc__); return 2
     opt = lambda k, d=None: argv[argv.index(k) + 1] if k in argv else d
     if argv[0] == "gen":
-        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl"), opt("--format", "turtle")); return 0
+        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl"), opt("--format", "turtle"), "--mutate" in argv); return 0
     if argv[0] == "oxigraph":
         run_oxigraph(argv[1], opt("--out", "ox.jsonl")); return 0
     print(__doc__); return 2
