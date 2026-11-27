@@ -6,7 +6,11 @@ the same WebGPU artifact the browser draws. svg_tiny_gpu.ts draws it on a real
 GPU and reads the pixels back. They are compared with the png/ file of the same
 name from the same archive. The CPU sampler is not used: it takes minutes a file.
 
-MATCH and CLOSE are our own bands, fixed before the first run. They are not a
+MATCH and CLOSE are our own bands, fixed before the first run. The outer
+BORDER pixels of each image are not compared (owner, 2026-11-27): the W3C PNGs
+draw the 1-pixel test-frame with stroke normalization, one opaque row, and an
+anti-aliasing renderer (ours, Chromium) draws two half-grey rows, about 3,344
+pixels that no band allows. Shares are of the whole image, as before. They are not a
 W3C verdict: W3C pass criteria are read by a person, and allow label text to
 differ. A blank white image goes through the same bands as a control.
 
@@ -27,6 +31,7 @@ TOLERANCE = 32            # channel difference that counts as a different pixel
 MATCH = (0.005, 0.95)     # most different share, least ink recall
 CLOSE = (0.05, 0.70)
 INK = 24                  # distance from white that counts as ink
+BORDER = 3                # outer pixels left out: the test-frame (see above)
 # Lines of the Lean log that say the file animates (same prefixes as the dashboard).
 ANIMATION = ('element: animate', 'element: set', 'element in text: set', 'element in text: animate',
              'element: animation', 'element: discard')
@@ -77,9 +82,11 @@ def flatten(image):
 
 def score(actual, expected):
     difference = np.abs(actual.astype(np.int16) - expected.astype(np.int16)).max(axis=2)
-    different = int((difference > TOLERANCE).sum())
+    inside = np.zeros(difference.shape, dtype=bool)
+    inside[BORDER:-BORDER, BORDER:-BORDER] = True
+    different = int(((difference > TOLERANCE) & inside).sum())
     share = different / difference.size
-    ink = (255 - expected.astype(np.int16)).max(axis=2) > INK
+    ink = ((255 - expected.astype(np.int16)).max(axis=2) > INK) & inside
     recall = float(((difference <= TOLERANCE) & ink).sum() / ink.sum()) if ink.any() else 1.0
     band = 'MATCH' if share <= MATCH[0] and recall >= MATCH[1] else \
         'CLOSE' if share <= CLOSE[0] and recall >= CLOSE[1] else 'MISMATCH'
@@ -158,7 +165,7 @@ report = {'format': 'factoidal-svg-tiny-pixels-v1',
           'gpu': adapter,
           'archiveSha256': ARCHIVE_SHA256, 'nativeSha256': sha(a.native.read_bytes()),
           'runnerSha256': sha(Path(__file__).read_bytes()),
-          'tolerance': TOLERANCE, 'match': MATCH, 'close': CLOSE, 'inkThreshold': INK,
+          'tolerance': TOLERANCE, 'match': MATCH, 'close': CLOSE, 'inkThreshold': INK, 'borderExcluded': BORDER,
           'total': len(cases), 'counts': dict(counts), 'blankControlCounts': dict(blank),
           'exact': sum(1 for c in cases if c.get('exact')),
           'filesAffectedByDrop': dict(drops.most_common()), 'cases': cases}

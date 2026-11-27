@@ -1130,6 +1130,20 @@ Owner, 2026-11-27, verbatim: "next: 1. then 2 then3 then 4. Close 475. Your advi
 PR 475 is closed (replaced by PR 557). PRs 476 and 486 wait for the owner after the coordinator's
 advice. Their measurements are in `docs/bubblepopjs-jit.md`, copied to `main`.
 
+### SVG Tiny pixel harness: frame border out; fonts in (owner, 2026-11-27)
+
+Owner, 2026-11-27, verbatim: ""can the harness exclude the 3-pixel frame border from the
+comparison?" - I think yes is ok, but we should add the fonts anyway".
+
+- `tests/browser-wpt/svg-tiny-pixels.py` leaves the outer 3 pixels of each image out of the
+  comparison. Reason: the W3C PNGs draw the 1-pixel `test-frame` with stroke normalization
+  (one opaque row); an anti-aliasing renderer draws two half-grey rows, about 3,344 different
+  pixels against the 864 that MATCH allows. Chromium got 0 MATCH with the old bands. The
+  tolerance and the bands do not change.
+- The harness gives the engine the vendored OFL fonts (`third_party/fonts`) for text that the
+  SVG font does not draw.
+- Tracking: https://github.com/danbri/factoidal-core/issues/1165.
+
 ### Foafnaut: desktop gestures are answered at once (owner, 2026-11-25)
 
 Owner, verbatim: "Think of user as having likely many desktop habits learned over years with
