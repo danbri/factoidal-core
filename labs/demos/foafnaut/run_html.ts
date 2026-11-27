@@ -283,7 +283,10 @@ async function main() {
         console.log(JSON.stringify({type:"native-html-slow-call",t:Math.round(performance.now()),call:name,ms:Math.round(took*10)/10}));}
       return result;
     }])) as T;
-  const engine=timed(await loadHTML());
+  // The main-thread engine: the native library when there is one, in an engine session of its
+  // own (its state is not the worker's), else Wasm. Wasm here cost 475 to 620 ms of the main
+  // thread at start on the Linux rig, and V8 compile work on other threads (issue 1168).
+  const engine=timed(await loadHTML(nativeEngine,"bytes",{session:!!nativeEngine}));
   const linuxKeys=Deno.build.os==="linux"
     ?new Map(engine.keyTable("other").map(row=>[row.modifier+"/"+row.key,row.command])):undefined;
   // Downloads go to --downloads, else ~/Downloads (HOME is the one variable the app may read).
@@ -305,10 +308,11 @@ async function main() {
   const prepareHTML:typeof prepareDocument=(reader,url,signal,inline,accept)=>
     prepareDocument(reader,url,signal,inline,{...accept,epubReader:engine.epubReader});
   // The engine that runs Lean's renders: the native library in the worker, or Wasm (in the
-  // worker, or on the main thread, which has only the Wasm engine). Said at start and in the summary.
+  // worker, or on the main thread, which uses the native library too when there is one). Said at
+  // start and in the summary.
   let engineRan="wasm";
   const sayEngine=(where:string)=>{
-    engineRan=worker&&nativeEngine?`native ${nativeEngine}`:"wasm";
+    engineRan=nativeEngine?`native ${nativeEngine}`:"wasm";
     console.log(`engine: ${engineRan}`);
     console.log(JSON.stringify({type:"native-html-engine",t:Math.round(performance.now()),engine:engineRan,where}));
   };
