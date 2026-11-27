@@ -1746,7 +1746,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     match held.webdriver, natField request "connection" with
     | some (cfg, srv, browser, window, doc), some n =>
       let (st, conns, next) := held.bidi
-      match conns.find? (·.1 == n) with
+      match conns.find? (fun (p : Nat × WebDriver.BiDi.Conn) => p.1 == n) with
       | none => return (held, .error "scriptSession: no such BiDi connection")
       | some (_, conn) =>
         let entropy ← turnBytes
@@ -1755,7 +1755,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
           | some (.string t) => .text t
           | _ => .binary
         let (srv, st, conn, out) := WebDriver.BiDi.handle env srv st conn frame
-        let conns := conns.map fun (k, c) => if k == n then (k, conn) else (k, c)
+        let conns : List (Nat × WebDriver.BiDi.Conn) := conns.map fun (p : Nat × WebDriver.BiDi.Conn) => if p.1 == n then (p.1, conn) else p
         match out with
         | .silent => return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) }, .ok "{}")
         | .reply message effect =>
@@ -1763,10 +1763,10 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
             | .navigate _ url => (doc.navigate url, [("navigate", JSON.Json.string url)])
             | _ => (doc, [])
           -- after session.end: every connection of the ended session closes
-          let closing := match effect, conn.session with
-            | .close, some sid => (conns.filter fun (_, c) => c.session == some sid).map (·.1)
+          let closing : List Nat := match effect, conn.session with
+            | .close, some sid => (conns.filter fun (p : Nat × WebDriver.BiDi.Conn) => p.2.session == some sid).map (fun (p : Nat × WebDriver.BiDi.Conn) => p.1)
             | _, _ => []
-          let conns := conns.filter fun (k, _) => !closing.contains k
+          let conns := conns.filter fun (p : Nat × WebDriver.BiDi.Conn) => !closing.contains p.1
           return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) },
             .ok (JSON.Json.object ([("reply", .string message.toString)] ++ extra ++
               [("close", .array (closing.map fun k => .number (toString k)))])).toString)
@@ -1774,7 +1774,7 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
   | "bidiClose" =>
     let (st, conns, next) := held.bidi
     let n := natField request "connection"
-    return ({ held with bidi := (st, conns.filter (fun (k, _) => some k != n), next) }, .ok "{}")
+    return ({ held with bidi := (st, conns.filter (fun (p : Nat × WebDriver.BiDi.Conn) => some p.1 != n), next) }, .ok "{}")
   | "close" => return ({ held with session := none, turn := none, leanSession := none, startTodo := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")
