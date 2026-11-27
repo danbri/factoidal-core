@@ -551,6 +551,9 @@ export type RemoteEngine={
   request the host makes next, or what is used, or the refusal. An engine from before it throws
   "unknown document operation". */
   subresource(request:Record<string,unknown>):Answer;
+  /** One step of a top-level navigation with its redirects (WebDocument op `navigation`,
+  Net.Navigation). An engine from before it throws "unknown document operation". */
+  navigation(request:Record<string,unknown>):Answer;
   /** Held images (WebDocument, issue 1292): sent once, named by renders in `heldImages`.
   Undefined for an engine from before them, which then gets `images` with the bytes in each
   request, as before (issue 1274). */
@@ -638,6 +641,7 @@ function remoteMethods(k:Kernel):RemoteEngine {
     fontFaces:(source,options)=>doc(source,{...options,op:"fontFaces"}),
     webFontLoad:(bytes,fontSha256)=>then(k.font(bytes,"",fontSha256,"web"),checkedAnswer),
     subresource:request=>doc("",{...request,op:"subresource"}),
+    navigation:request=>doc("",{...request,op:"navigation"}),
     imageInfo:()=>orUndefined(()=>then(doc("",{op:"imageInfo"}),(info:ImageInfo)=>Array.isArray(info?.ops)&&info.ops.includes("imageLoad")?info:undefined)),
     encodingSetting:setting=>orUndefined(()=>then(doc("",{op:"encodingSetting",setting}),field("setting"))),
     encodingChoices:(setting,locale)=>orUndefined(()=>then(doc("",{op:"encodingChoices",setting,locale}),field("html"))),

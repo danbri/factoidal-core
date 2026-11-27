@@ -2,7 +2,7 @@ import {pathToFileURL} from "node:url";
 import {resolve} from "node:path";
 import {sourceBound,MAX_SOURCE_BYTES,type HTMLEngine,type HTMLResource,type ScriptTurn} from "./native_html_engine.ts";
 import {addEntries,noteDiagnostics,noteTurn} from "./native_console.ts";
-import {netAnswer,pinnedHTTPSBatch,type NetWire} from "./native_net.ts";
+import {netAnswer,pinnedHTTPSBatch,type NetWire,type NetOptions,type TorRoute} from "./native_net.ts";
 import {loadSubresource,newlyListed,takeAnimated,takeTurn,loadImports} from "../../../docs/web/hub/foafnaut/page-load.mjs";
 
 /** The view state of a page. Lean applies it; the host only keeps the values. */
@@ -33,6 +33,38 @@ export type PageDecoder=(bytes:Uint8Array,contentType:string,fallback?:string,lo
 system's language; the host sets them, Lean decides with them (WebDocument.decodeBinWith). */
 let pageDecoding={fallback:"",locale:""};
 export function setPageDecoding(next:{fallback?:string;locale?:string}){pageDecoding={...pageDecoding,...next};}
+/** Tor mode of this host (issue 1060, record 2026-11-25-foafnaut-tor-onion-routing.md section 21a).
+When set, every request of a page is decided by the engine in Tor mode (op `navigation` for the
+document, op `subresource` with `tor` for its sheets, images, fonts, icon and classic scripts) and
+sent only through the Tor route (`torOnly`): a fetch that has no engine route here is refused, and
+no plain `fetch` is made. `file:` pages are still read from disk. */
+let torNet:NetOptions|undefined;
+export function setTorNet(route:TorRoute|undefined){torNet=route?{tor:route,torOnly:true,timeoutMs:10000}:undefined;}
+/** The network options of Tor mode, for the host's other wires (page scripts); undefined in direct mode. */
+export function torNetOptions():NetOptions|undefined{return torNet;}
+/** A step of an engine op that answers `{id, wire}`, `{id, done}` or `{id, fail}`. */
+type NetStep=(request:Record<string,unknown>)=>unknown;
+function base64Bytes(text:string):Uint8Array{const raw=atob(text),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;}
+function bytesBase64(bytes:Uint8Array):string{let s="";for(let i=0;i<bytes.length;i+=0x8000)s+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return btoa(s);}
+/** A top-level navigation through the engine (op `navigation`, Net.Navigation): the engine
+decides each request and redirect; this host sends each wire with `opts` and gives the answer
+back. The answer is the last response: its status, type, final URL, header fields and bytes. */
+async function navigateThrough(step:NetStep,opts:NetOptions,start:Record<string,unknown>,signal?:AbortSignal)
+  :Promise<{url:string;status:number;contentType:string;headers:[string,string][];bytes:Uint8Array}>{
+  let answer=await step({action:"start",...start}) as {id?:number;wire?:NetWire;done?:{status:number;type:string;url:string};fail?:string}|undefined;
+  let headers:[string,string][]=[],body="";
+  // 20 redirects at most (Net.PageFetch.maxRedirects), each one request: under 64 steps.
+  for(let steps=0;steps<64;steps++){
+    if(answer?.done)return {url:answer.done.url,status:answer.done.status,contentType:answer.done.type??"",headers,bytes:base64Bytes(body)};
+    if(!answer?.wire)throw new Error(String(answer?.fail??"navigation refused"));
+    if(signal?.aborted){await step({action:"cancel",id:answer.id});signal.throwIfAborted();}
+    const {bodyBase64,...head}=await netAnswer(answer.wire,opts);
+    body=bodyBase64??"";headers=head.headers??[];
+    answer=await step({action:"answer",id:answer.id,answer:head}) as typeof answer;
+  }
+  if(answer?.id!==undefined)await step({action:"cancel",id:answer.id});
+  throw new Error("navigation: too many steps");
+}
 /** How a document is asked for: a form's POST (method, body, its type), and whether the
 server's page for an HTTP error status (404, 500, ...) is the answer, as browsers show it. Only
 a top-level document asks for that; a script or a sheet with an error status stays an error. */
@@ -43,7 +75,10 @@ export type DocumentRequest={method?:"GET"|"POST";body?:string;bodyType?:string;
   downloads?:string;
   /** The browser's cookies (the engine decides each hop's field and what a response sets);
   with them, redirects are followed here hop by hop so each hop's cookies are seen. */
-  cookies?:DocumentCookies};
+  cookies?:DocumentCookies;
+  /** The engine's op `navigation` (Net.Navigation). Tor mode needs it: without it the document
+  is not fetched. `initiator`: the URL of the document that started the navigation. */
+  navigate?:NetStep;initiator?:string};
 /** What a navigation asks of the browser's cookie jar, at each hop. */
 export type DocumentCookies={request(url:string,method:string):Promise<string>;response(url:string,setCookie:string[]):Promise<void>};
 /** The most redirects a navigation follows (Fetch §4.4 step 13). */
@@ -68,6 +103,28 @@ export async function readSource(url:string,signal?:AbortSignal,decode?:PageDeco
   if(parsed.protocol==="file:") {
     if((await Deno.stat(parsed)).size>MAX_SOURCE_BYTES)throw new Error("Native HTML resource exceeds 16 MiB");
     bytes=await Deno.readFile(parsed);abort();
+  } else if(torNet) {
+    // Tor mode: the engine decides every hop (Net.Navigation, wires marked `tor`); the wires
+    // carry no cookie (Net.Navigation `omitCredentials`, gap of issue 1060). No engine route,
+    // no fetch.
+    if(!request.navigate)throw new Error(`Tor mode: no engine route for this request; refused: ${url}`);
+    const post=request.method==="POST";
+    const got=await navigateThrough(request.navigate,torNet,{url:parsed.href,method:post?"POST":"GET",initiator:request.initiator??"",tor:true,
+      ...(post?{bodyBase64:bytesBase64(new TextEncoder().encode(request.body??"")),bodyType:request.bodyType??"application/x-www-form-urlencoded"}:{})},signal);
+    abort();
+    const field=(name:string)=>got.headers.find(([k])=>k.toLowerCase()===name)?.[1]??"";
+    finalURL=inputURL(got.url);contentType=got.contentType||field("content-type");contentTypeOptions=field("x-content-type-options");
+    const ok=got.status>=200&&got.status<300;
+    if(!ok&&!(request.errorPages&&got.status>=400&&got.bytes.length))throw new Error(`HTTP ${got.status}: ${url}`);
+    if(!ok)status=got.status;
+    const decided=request.decide&&ok?await request.decide({contentType,disposition:field("content-disposition"),url:finalURL}):undefined;
+    if(decided?.action==="save"&&decided.name&&request.downloads){
+      await Deno.mkdir(request.downloads,{recursive:true});
+      const path=await freePath(request.downloads,decided.name);
+      await Deno.writeFile(path,got.bytes,{createNew:true});
+      throw new Downloaded(finalURL,path,got.bytes.length);
+    }
+    bytes=got.bytes;
   } else {
     // A form's POST (HTML §4.10.21.3, the body Lean serialized); a 303 (or a 301/302 after a
     // POST) is then followed with GET, as fetch's redirect steps say.
@@ -175,6 +232,7 @@ async function readBytes(url:string,limit:number,signal?:AbortSignal):Promise<Ui
     if((await Deno.stat(parsed)).size>limit)throw new Error("image too large");
     return await Deno.readFile(parsed);
   }
+  if(torNet)throw new Error(`Tor mode: no direct fetch; refused: ${url}`);
   const response=await fetch(parsed,{signal:AbortSignal.any([AbortSignal.timeout(10000),...(signal?[signal]:[])])});
   if(!response.ok){await response.body?.cancel();throw new Error(`HTTP ${response.status}`);}
   const reader=response.body?.getReader();if(!reader)throw new Error("no body");
@@ -195,7 +253,7 @@ A `file:` URL is read here, for a `file:` page only. Every other URL is the engi
 (Net.Subresource, through page-load.mjs `loadSubresource`): this host makes the requests it
 is told to (native_net.ts: redirect "manual", the address the engine chose). An engine from
 before the op gets the rule of before: the page's own origin, by a plain fetch. */
-export async function readSubresource(engine:SubresourceEngine|undefined,kind:"image"|"style"|"font",url:string,documentURL:string,
+export async function readSubresource(engine:SubresourceEngine|undefined,kind:"image"|"style"|"font"|"script",url:string,documentURL:string,
   limit:number,signal?:AbortSignal,before?:()=>Promise<{url:string;bytes:Uint8Array;contentType:string}>,
   transport?:ReturnType<typeof pinnedHTTPSBatch>):Promise<{url:string;bytes:Uint8Array;contentType:string}> {
   const local=new URL(url).protocol==="file:";
@@ -209,7 +267,9 @@ export async function readSubresource(engine:SubresourceEngine|undefined,kind:"i
     };
     // Is the op there? One call that starts nothing: `cancel` of no transfer.
     if(await step({action:"cancel",id:0})!==undefined) {
-      const got=await loadSubresource(step,(wire:NetWire)=>netAnswer(wire,{timeoutMs:10000},transport),{url:documentURL},kind,url,signal) as
+      // Tor mode: wires marked `tor` (the engine decides it, Net.Subresource), sent only through Tor.
+      const got=await loadSubresource(step,(wire:NetWire)=>torNet?netAnswer(wire,torNet):netAnswer(wire,{timeoutMs:10000},transport),
+        {url:documentURL,...(torNet?{tor:true}:{})},kind,url,signal) as
         {url:string;contentType:string;base64:string};
       const text=atob(got.base64);
       if(text.length>limit)throw new Error(`${kind} too large`);
@@ -218,6 +278,8 @@ export async function readSubresource(engine:SubresourceEngine|undefined,kind:"i
       return {url:got.url,bytes,contentType:got.contentType};
     }
   }
+  // Tor mode: an engine with no op `subresource` gets no fetch (fail closed).
+  if(torNet&&!local)throw new Error(`Tor mode: no engine route for this ${kind}; refused: ${url}`);
   // A local file, or an engine from before the op: `before` (a style sheet: as it was read
   // then), else the page's own origin only.
   if(before)return await before();
@@ -420,7 +482,9 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
   }
   const document:{url:string;source:string;bytes:number;encoding?:string;raw?:Uint8Array;status?:number}=inline===undefined
     ?await readSource(url,signal,decode,{errorPages:true,...(engine.download&&accept.downloads?{decide:r=>engine.download!(r) as {action:string;name?:string}|undefined,downloads:accept.downloads}:{}),
-      ...(accept.cookies?{cookies:accept.cookies}:{}),...accept.request})
+      ...(accept.cookies?{cookies:accept.cookies}:{}),
+      ...(typeof (engine as {navigation?:unknown}).navigation==="function"?{navigate:(r:Record<string,unknown>)=>(engine as unknown as {navigation:NetStep}).navigation(r)}:{}),
+      ...accept.request})
     :{url,source:inline,bytes:inline.length},resources:HTMLResource[]=[];
   phase("document");
   // The page's console (native_console.ts): System entries now, script lines later.
@@ -467,7 +531,10 @@ export async function prepareHTML(engine:PageEngine,url:string,signal?:AbortSign
     signal?.throwIfAborted();
     try{
       navigationURL(descriptor.url,inspection.baseURL,document.url);
-      const resource=await readSource(descriptor.url,signal);
+      // Tor mode: a classic script is a subresource (destination "script") that the engine decides.
+      const resource=torNet
+        ?await readSubresource(engine as SubresourceEngine,"script",descriptor.url,document.url,MAX_SOURCE_BYTES,signal).then(r=>({url:r.url,source:new TextDecoder("utf-8").decode(r.bytes)}))
+        :await readSource(descriptor.url,signal);
       return {nodeId:descriptor.nodeId,url:resource.url,source:resource.source};
     }catch(error){
       // Liberal mode: a script that is not fetched does not run, as in a browser after a failed fetch.

@@ -94,7 +94,7 @@ the engine accepted (for a `data:` URL, the body the engine made). A refusal is 
 the engine's reason. No URL is read here, and the engine's decision never gets a body. */
 export async function loadSubresource(step,wire,page,kind,url,signal,crossorigin='') {
   let answer=await step({action:'start',kind,url,documentURL:page.url,referrerPolicy:page.referrerPolicy??'',crossorigin,
-    ...(page.hostCors?{hostCors:true}:{}),...(page.address?{address:page.address}:{})}),body='';
+    ...(page.hostCors?{hostCors:true}:{}),...(page.address?{address:page.address}:{}),...(page.tor?{tor:true}:{})}),body='';
   // 20 redirects at most, each a name to resolve and a request: under 64 steps.
   for(let steps=0;steps<64;steps++) {
     if(answer?.done)return {url:answer.done.url,status:answer.done.status,contentType:answer.done.type??'',

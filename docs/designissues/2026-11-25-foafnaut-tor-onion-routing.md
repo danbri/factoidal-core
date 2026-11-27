@@ -840,3 +840,24 @@ does that.
   `Sub.start_tor`, `Sub.answer_tor`, `Sub.start_direct`, `Sub.op_page_tor` for op `subresource`;
   `onAnswer_page` (a `PageFetch` step keeps the transfer's page). None says that the host sends a
   `tor` wire through Tor: host glue, tested, not proved.
+
+### 21b. The page loader in Tor mode (2026-11-27)
+
+`labs/demos/foafnaut/native_html_document.ts` has a Tor mode, set by `setTorNet(route)`. In Tor mode:
+
+1. The document of a page goes through the engine's op `navigation` (Net.Navigation) with
+   `tor: true`. The host sends each wire with `torOnly`, so a wire that is not marked `tor` is
+   refused. If the engine has no op `navigation`, the document is not fetched.
+2. Style sheets, images, fonts, the tab icon and classic scripts go through op `subresource` with
+   `tor: true` (classic scripts with destination `script`). If the engine has no op
+   `subresource`, the request is refused. The `before` path (a plain fetch of a sheet) and
+   `readBytes` refuse every non-`file:` URL.
+3. An XSLT style sheet of an XML page has no engine route yet, so it is refused.
+4. The navigation wires carry no cookie (gap, https://github.com/danbri/factoidal-core/issues/1060,
+   expected failure in `tor.test.ts`). A download is written from the bytes in memory (16 MiB
+   limit).
+
+Not yet in Tor mode: the wires of page scripts and module scripts in `run_html.ts` (step 5 of
+issue 1060, `torNetOptions()` gives the options), and the Textnaut host. Test:
+`labs/demos/foafnaut/tor-wasm/deno/pageload.test.ts` (fake engine, fake Tor side, counting server:
+2 pass, 0 fail; a mutation that removes the fail-closed check makes it fail).
