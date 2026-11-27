@@ -10,3 +10,22 @@ defaultTargets = ["EthereumWallet"]
 
 [[lean_lib]]
 name = "EthereumWallet"
+
+# Keys (EthereumWallet/Keys/*): pure SHA-2 and HMAC from L4Factoidal.Crypto
+# (import closure: SHA2 imports nothing, Hmac imports SHA2).
+[[lean_lib]]
+name = "WalletFactoidalCrypto"
+srcDir = ".."
+roots = ["L4Factoidal.Crypto.SHA2", "L4Factoidal.Crypto.Hmac"]
+
+[[lean_lib]]
+name = "EVMCleanroomKeccak"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom.MemoryGas", "EVMCleanroom.Memory", "EVMCleanroom.Keccak"]
+
+# Keys: secret-to-public derivation, behind EthereumWallet/Keys/Curve.lean only,
+# until the shared secp256k1 module lands (closure: SecpRecovery, Keccak).
+[[lean_lib]]
+name = "EVMCleanroomSecpRecovery"
+srcDir = "../evm-cleanroom"
+roots = ["EVMCleanroom.SecpRecovery"]
