@@ -11,6 +11,6 @@ for cut in "def madd" "def padd" "def betaL" "end EVMCleanroom"; do
   s=$(date +%s)
   ( ulimit -v 12000000; timeout 240 $L env lean -D profiler=true -D profiler.threshold=300 /tmp/Probe.lean > /tmp/probe.out 2>&1 ) && r=ok || r="exit $?"
   echo "RESULT probe up to '$cut': $r, $(( $(date +%s)-s )) s"
-  grep -v "^$" /tmp/probe.out | cut -c1-240 | tail -12
+  grep -v "^$" /tmp/probe.out | grep -v "^	" | cut -c1-400 | head -25
 done
 exit 1
