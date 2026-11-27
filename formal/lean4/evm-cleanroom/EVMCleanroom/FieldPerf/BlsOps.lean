@@ -428,6 +428,15 @@ def limbPattern (limbs code : Nat) : Nat := Id.run do
     rest := rest / 7
   return value
 
+/-- The wide square against the general product and against the `Nat` square. -/
+def wideAgrees256 (a : U256) : Bool :=
+  let square := (U256.sqrWide a).toNat
+  square == (U256.mulWide a a).toNat && square == a.toNat * a.toNat
+
+def wideAgrees384 (a : U384) : Bool :=
+  let square := (U384.sqrWide a).toNat
+  square == (U384.mulWide a a).toNat && square == a.toNat * a.toNat
+
 @[noinline] def sqrChain384 (f : U384 → U384) : Nat → U384 → U384
   | 0, x => x
   | n+1, x => sqrChain384 f n (f x)
@@ -585,18 +594,15 @@ def main (args : List String) : IO UInt32 := do
   -- The dedicated squaring against the general product: every combination of extreme limbs, and a walk
   let mut badSqr := 0
   for code in [0:7 ^ 4] do
-    let a := U256.ofNat (limbPattern 4 code)
-    if (U256.sqrWide a).toNat != (U256.mulWide a a).toNat then badSqr := badSqr + 1
+    if !wideAgrees256 (U256.ofNat (limbPattern 4 code)) then badSqr := badSqr + 1
   for code in [0:7 ^ 6] do
-    let a := U384.ofNat (limbPattern 6 code)
-    if (U384.sqrWide a).toNat != (U384.mulWide a a).toNat then badSqr := badSqr + 1
+    if !wideAgrees384 (U384.ofNat (limbPattern 6 code)) then badSqr := badSqr + 1
   for v in randoms 61 (20000 * scale) do
     let a := U256.ofNat v
     let b := U384.ofNat (v * v)
-    if (U256.sqrWide a).toNat != (U256.mulWide a a).toNat || (U256.sqrWide a).toNat != a.toNat * a.toNat then badSqr := badSqr + 1
-    if (U384.sqrWide b).toNat != (U384.mulWide b b).toNat || (U384.sqrWide b).toNat != b.toNat * b.toNat then badSqr := badSqr + 1
-    if (BN254.baseField.sqrFast a).toNat != (BN254.baseField.sqr a).toNat then badSqr := badSqr + 1
-    if (BLS12381.baseField.sqrFast b).toNat != (BLS12381.baseField.sqr b).toNat then badSqr := badSqr + 1
+    if !wideAgrees256 a || !wideAgrees384 b then badSqr := badSqr + 1
+    if (BN254.Fast.fsqr a).toNat != (BN254.Fast.fmul a a).toNat then badSqr := badSqr + 1
+    if (BLS12381.Fast.fsqr b).toNat != (BLS12381.Fast.fmul b b).toNat then badSqr := badSqr + 1
   IO.println s!"RESULT blsops limb squaring against the general product: {7 ^ 4 + 7 ^ 6} limb patterns and {2 * 20000 * scale} random values, {if badSqr == 0 then "no differences" else s!"{badSqr} FAILURES"}"
   bad := bad + badSqr
   -- The limb inverse against the Euclid of the definition: the unverified candidate must already agree
@@ -627,10 +633,10 @@ def main (args : List String) : IO UInt32 := do
     IO.println "RESULT blsops limb inverse chains differ, FAILURES"
     bad := bad + 1
   let sq := 2000000
-  let s1 ← timeChain "TIMING alt_bn128 field square, general product (Mont256.sqr)" sq fun _ => (sqrChain256 BN254.baseField.sqr sq x256).toNat
-  let s2 ← timeChain "TIMING alt_bn128 field square, dedicated (Mont256.sqrFast)" sq fun _ => (sqrChain256 BN254.baseField.sqrFast sq x256).toNat
-  let s3 ← timeChain "TIMING BLS12-381 field square, general product (Mont384.sqr)" sq fun _ => (sqrChain384 BLS12381.baseField.sqr sq x384).toNat
-  let s4 ← timeChain "TIMING BLS12-381 field square, dedicated (Mont384.sqrFast)" sq fun _ => (sqrChain384 BLS12381.baseField.sqrFast sq x384).toNat
+  let s1 ← timeChain "TIMING alt_bn128 field square as a general product (fmul a a)" sq fun _ => (sqrChain256 (fun x => BN254.Fast.fmul x x) sq x256).toNat
+  let s2 ← timeChain "TIMING alt_bn128 field square, dedicated (fsqr a)" sq fun _ => (sqrChain256 BN254.Fast.fsqr sq x256).toNat
+  let s3 ← timeChain "TIMING BLS12-381 field square as a general product (fmul a a)" sq fun _ => (sqrChain384 (fun x => BLS12381.Fast.fmul x x) sq x384).toNat
+  let s4 ← timeChain "TIMING BLS12-381 field square, dedicated (fsqr a)" sq fun _ => (sqrChain384 BLS12381.Fast.fsqr sq x384).toNat
   if s1 != s2 || s3 != s4 then
     IO.println "RESULT blsops limb squaring chains differ, FAILURES"
     bad := bad + 1
