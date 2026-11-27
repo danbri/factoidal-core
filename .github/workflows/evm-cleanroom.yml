@@ -58,17 +58,17 @@ jobs:
       - name: Verify active source blobs and theorem inventory against v2 evidence
         working-directory: formal/lean4/evm-cleanroom
         run: |
-          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==171,x'
+          python3 scripts/check-active-ledger.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==172,x'
       - name: Run the Lean compiler and compare actual theorem axioms to the v2 ledger
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-axiom-output.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==5,x'
           python3 scripts/check-axiom-output.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match-manifest" and x["selectedTheorems"]==324 and x["sourceFiles"]==30,x'
-      - name: Audit the instruction-set theorem axioms (BALANCE/EXTCODE*/BLOCKHASH/TLOAD/TSTORE/MCOPY)
+      - name: Audit the instruction-set theorem axioms (BALANCE/EXTCODE*/BLOCKHASH/TLOAD/TSTORE/MCOPY/CREATE/CREATE2)
         working-directory: formal/lean4/evm-cleanroom
         run: |
           python3 scripts/check-opcode-axioms.py --selftest | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==6,x'
-          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==34 and x["sources"]==4,x'
+          python3 scripts/check-opcode-axioms.py | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="printed-axioms-match" and x["theorems"]==74 and x["sources"]==5,x'
       - name: Check executable Lean Prague type-3/4 fee and EIP-7702 delegation API boundaries
         working-directory: formal/lean4/evm-cleanroom
         run: |
@@ -247,6 +247,14 @@ jobs:
           mkdir -p .lake/differential
           node --check scripts/differential/account-transient.mjs
           node scripts/differential/account-transient.mjs .lake/build/bin/evm-subset | tee .lake/differential/account-transient.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==117 and x["mismatches"]==0 and x["gasBoundaryPairs"]==10 and x["independentGas"] and all(x["negativeControls"].values()) and not x["firstFailures"],x'
+      - name: Compare world-aware CREATE and CREATE2 against EthereumJS Shanghai, Cancun and Osaka
+        timeout-minutes: 5
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          mkdir -p .lake/differential
+          node --check scripts/differential/create.mjs
+          node scripts/differential/create.mjs .lake/build/bin/evm-subset | tee .lake/differential/create.json | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["compared"]==x["matched"]==292 and x["mismatches"]==0 and x["gasBoundaryPairs"]==32 and x["independentGas"] and all(x["leanOnly"].values()) and all(x["negativeControls"].values()) and len(x["negativeControls"])==5 and x["profiles"]=={"shanghaiPlus":2,"cancunPlus":153,"osaka":137} and not x["firstFailures"],x'
       - name: Compare calldata, unsigned word operations and bounded frame output against EthereumJS
         shell: bash
         working-directory: formal/lean4

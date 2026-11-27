@@ -455,7 +455,8 @@ charging. This does not prove EELS equivalence or world-state rollback.
 `BLOCKHASH`, `TLOAD`, `TSTORE`, `MCOPY` and opt-in `KECCAK256`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
 handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths
-and the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`.
+and the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`,
+and `CREATE` and `CREATE2`.
 
 The account instructions charge EIP-2929 warm/cold access (100/2600 gas) and
 warm their target in the checkpointed world, so a failed child's warm-ups are
@@ -480,6 +481,42 @@ dispatcher links in [CallOpcode](EVMCleanroom/CallOpcode.lean)
 matrix: [`account-transient.mjs`](scripts/differential/account-transient.mjs)
 (117 cases against EthereumJS Cancun as an oracle, with gas boundary pairs and
 negative controls), through the `evm-subset --world` test entry point.
+
+`CREATE` and `CREATE2` (Shanghai, Cancun and Osaka profiles; refused on the
+coarse pre-Shanghai profile) follow EELS `create`, `create2`,
+`generic_create` and `process_create_message`. The instruction charges 32000
+gas, the memory expansion of the initcode window and 2 gas per initcode word
+(EIP-3860), plus 6 gas per word for the CREATE2 hash; a window above 49152
+bytes is then an out-of-gas halt and a static frame a write-protection halt.
+The child gets all but one 64th of the remaining gas. An endowment above the
+creator's balance, a creator nonce of 2^64-1 or a child depth above 1024 is a
+soft failure: zero is pushed, the child gas comes back, and neither the nonce
+nor the warm set changes. Otherwise the address (`keccak(rlp([sender,
+nonce]))` or the EIP-1014 preimage, low 160 bits) is warmed, and a target
+with code, a nonce or storage (EIP-684, EIP-7610; storage by the host's
+`hasStorage` statement) is a collision: the creator's nonce rises, zero is
+pushed and the child gas is consumed. An entered creation raises the
+creator's nonce (this world is the checkpoint), marks the new account as
+created in the transaction (EIP-6780), gives it nonce 1 and empty storage,
+moves the endowment and runs the initcode as the frame's code with empty
+calldata. Successful initcode deposits its output as code unless it is longer
+than 24576 bytes (EIP-170), starts with 0xEF (EIP-3541) or the child cannot
+pay 200 gas per byte; such a deposit failure and an exceptional halt both
+restore the checkpoint and return no gas, and a REVERT restores it and
+returns its gas and data. The address derivations need the experimental
+Keccak opt-in, and in witness mode the creator and the new address must be
+covered. The created mark is rolled back with a failed creation; EELS keeps
+its marker until the transaction ends, which differs only for an account that
+runs code without being created again, and a rolled-back address has no code.
+Theorems: [Create](EVMCleanroom/Create.lean) (charge, child gas, preimage
+shapes, deposit rules, world effects) and
+[CallOpcode](EVMCleanroom/CallOpcode.lean) (`beginCreate_*`,
+`enterCreate_*`, `resumeCreate_*`, `executeAtDepth_create_*`). They do not say
+that the experimental hash is Keccak-256, that the CREATE preimage encoding
+is injective, or that a whole creation run terminates; those are tested.
+Guards: [CreateTests](EVMCleanroom/CreateTests.lean). Differential matrix:
+[`create.mjs`](scripts/differential/create.mjs) (292 cases against EthereumJS
+as an oracle, 32 gas-boundary pairs, five negative controls).
 
 `PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
 profile leaves activation of `SHL`, `SHR`, `RETURNDATASIZE` and
