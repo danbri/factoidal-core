@@ -1,0 +1,102 @@
+name: Ethereum authenticated sparse leaf projection
+on:
+  pull_request:
+    paths:
+      - 'formal/lean4/evm-cleanroom/**'
+      - 'tools/lean-tail-recursion-audit.py'
+      - '.github/workflows/evm-sparse-replace.yml'
+permissions:
+  contents: read
+jobs:
+  sparse-replace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      LEAN_NUM_THREADS: '1'
+      LEAN_STACK_SIZE_KB: '32768'
+      MIMALLOC_ARENA_RESERVE: '64M'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: formal/lean4/evm-cleanroom
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+          use-mathlib-cache: false
+          use-github-cache: false
+      - name: Build native probe and record exact source identity
+        working-directory: formal/lean4
+        run: |
+          set -euo pipefail
+          ulimit -v 4194304
+          test "$(cat evm-cleanroom/lean-toolchain)" = leanprover/lean4:v4.33.1
+          git rev-parse HEAD HEAD^{tree}
+          git ls-tree -r HEAD -- evm-cleanroom/EVMCleanroom/SparseReplace.lean evm-cleanroom/EVMCleanroom/SparseReplaceProbe.lean evm-cleanroom/EVMCleanroom/MPT.lean evm-cleanroom/EVMCleanroom/CanonicalRLP.lean evm-cleanroom/EVMCleanroom/Keccak.lean evm-cleanroom/lakefile-sparse.toml
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-sparse.toml build evm-sparse-probe
+          flock /tmp/ethereum-mpt-lean.lock lake -d evm-cleanroom -f lakefile-sparse.toml env lean -j1 -M2048 -s32768 "$PWD/evm-cleanroom/EVMCleanroom/SparseReplace.lean" 2>&1 | tee "$RUNNER_TEMP/sparse-axioms.txt"
+          python3 - <<'PY'
+          import os,re
+          from pathlib import Path
+          log=Path(os.environ["RUNNER_TEMP"],"sparse-axioms.txt").read_text()
+          for name in ("splice_preserves","liftParent_source","replace_checked","collect_zero"):
+              lines=[line for line in log.splitlines() if f"EVMCleanroom.SparseReplace.{name}'" in line]
+              assert len(lines)==1, (name,lines)
+              line=lines[0]
+              if "does not depend on any axioms" not in line:
+                  match=re.search(r"depends on axioms: \[(.*?)\]",line)
+                  assert match and set(x.strip() for x in match[1].split(",")).issubset({"propext","Classical.choice","Quot.sound"}),line
+          PY
+      - name: Check compiled recursion and native proof-engine boundary
+        run: |
+          set -euo pipefail
+          python3 tools/lean-tail-recursion-audit.py --ir-dir formal/lean4/evm-cleanroom/.lake/build/ir --lean-dir formal/lean4/evm-cleanroom --json "$RUNNER_TEMP/sparse-recursion.json"
+          python3 - <<'PY'
+          import json,os,importlib.util,hashlib
+          from pathlib import Path
+          report=json.loads(Path(os.environ["RUNNER_TEMP"],"sparse-recursion.json").read_text())
+          assert report["cfiles"]>0 and not report["rows"] and not report["cycles"], report
+          root=Path("formal/lean4/evm-cleanroom")
+          spec=importlib.util.spec_from_file_location("runtime_audit",root/"scripts/check-witness-runtime.py")
+          audit=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(audit)
+          print(json.dumps(audit.selftest()))
+          p=root/".lake/build/bin/evm-sparse-probe"
+          sha=hashlib.sha256(p.read_bytes()).hexdigest()
+          audit.REQUIRED_SYMBOLS["evm-sparse-probe"]=audit.COMMON_SYMBOLS | {"initialize_evm__cleanroom_EVMCleanroom_SparseReplaceProbe"}
+          result=audit.inspect_binary("evm-sparse-probe",p,sha)
+          Path(os.environ["RUNNER_TEMP"],"sparse-runtime.json").write_text(json.dumps(result,indent=2,sort_keys=True)+"\n")
+          print(json.dumps(result))
+          assert result["passed"],result
+          symbols,_=audit.command(["nm","--no-sort",str(p)])
+          defs={name for name,kind in audit.symbols_from_nm(symbols) if kind in ("T","t")}
+          assert defs & {"lp_evm__cleanroom_EVMCleanroom_SparseReplace_replace","lp_evm__cleanroom_EVMCleanroom_SparseReplace_replace___rarg"}, "missing native projection entry"
+          PY
+      - name: Independent full-trie differential and refusal controls
+        working-directory: formal/lean4/evm-cleanroom
+        run: |
+          set -euo pipefail
+          npm ci --prefix scripts/differential --ignore-scripts --no-audit --no-fund
+          node scripts/witness/sparse-replace.mjs | tee "$RUNNER_TEMP/sparse-native.json"
+          python3 - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          root=Path(os.environ["RUNNER_TEMP"])
+          native=json.loads((root/"sparse-native.json").read_text())
+          runtime=json.loads((root/"sparse-runtime.json").read_text())
+          assert runtime["passed"] and runtime["sha256"] == native["executableSha256"] == hashlib.sha256(Path(".lake/build/bin/evm-sparse-probe").read_bytes()).hexdigest()
+          assert (native["nativeComparisons"],native["refusalControls"],native["comparatorControls"],len(native["rows"])) == (65,6,2,64),native
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sparse-replace-evidence
+          path: |
+            ${{ runner.temp }}/sparse-axioms.txt
+            ${{ runner.temp }}/sparse-recursion.json
+            ${{ runner.temp }}/sparse-native.json
+            ${{ runner.temp }}/sparse-runtime.json
