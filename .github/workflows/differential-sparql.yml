@@ -11,7 +11,7 @@ on:
     inputs:
       n:
         description: number of cases
-        default: '2000'
+        default: '5000'
       seed:
         description: 'generator seed (default is the run number)'
         default: ''
@@ -50,7 +50,7 @@ jobs:
           python3 -c 'import pyoxigraph; print("pyoxigraph", pyoxigraph.__version__)' | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Generate, answer, compare
         env:
-          N: ${{ github.event.inputs.n || '2000' }}
+          N: ${{ github.event.inputs.n || '5000' }}
           SEED: ${{ github.event.inputs.seed || github.run_number }}
         run: |
           set -o pipefail

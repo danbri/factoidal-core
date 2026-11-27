@@ -33,6 +33,7 @@ jobs:
           python3 -I tests/foundation/test_theorem_count.py
           python3 -I tests/foundation/test_foafnaut_host_policy.py
           python3 -I tests/foundation/test_lean_panic_sites.py
+          python3 -I tests/foundation/test_diff_sparql.py
       - name: Claims register and statement freeze
         run: python3 -I tools/claims-gate.py
       - name: Host purity lint, Foafnaut host policy ratchet included

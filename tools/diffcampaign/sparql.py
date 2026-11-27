@@ -11,8 +11,10 @@ SPARQL 1.1 Query Results JSON Format; the comparer reports "agrees on N of M"
 and writes each disagreement as a case to keep.
 
 Comparison: SELECT answers are compared as multisets of rows (variable to
-term), except with ORDER BY, where the sequence is compared; ASK answers as
-booleans. Terms compare by type, value, datatype and language tag. Literal
+term); with ORDER BY each engine's row order must also be one that SPARQL 1.1
+section 15.1 allows (the order of, for example, a simple literal and a
+language-tagged literal is left to the implementation, so two different orders
+can both be right). ASK answers compare as booleans. Terms compare by type, value, datatype and language tag. Literal
 values are compared as written (no value-space equality), so `"01"^^xsd:integer`
 and `"1"^^xsd:integer` differ, as they do in RDF term equality. A case where
 both engines refuse the query counts apart, not as agreement.
@@ -89,18 +91,20 @@ def filter_expr(rng):
     ])
 
 
-def group(rng, depth=0):
+def group(rng, depth=0, binds=None):
+    binds = binds if binds is not None else [0]
     parts = [bgp(rng)]
     for _ in range(rng.randrange(0, 3)):
         r = rng.random()
         if r < 0.3:
             parts.append(f"OPTIONAL {{ {bgp(rng, 1)} }}")
         elif r < 0.45 and depth == 0:
-            parts = [f"{{ {' '.join(parts)} }} UNION {{ {group(rng, depth + 1)} }}"]
+            parts = [f"{{ {' '.join(parts)} }} UNION {{ {group(rng, depth + 1, binds)} }}"]
         elif r < 0.6:
             parts.append(f"MINUS {{ {bgp(rng, 1)} }}")
         elif r < 0.75:
-            parts.append(f"BIND(STR({rng.choice(VARS)}) AS ?z)")
+            binds[0] += 1  # a fresh variable each time: BIND to a variable in scope is a syntax error
+            parts.append(f"BIND(STR({rng.choice(VARS)}) AS ?z{binds[0]})")
         else:
             parts.append(f"FILTER {filter_expr(rng)}")
     return " ".join(parts)
@@ -153,14 +157,54 @@ def norm_term(t):
     return (t.get("type").replace("typed-literal", "literal"), t.get("value"), t.get("datatype", XSD + "string" if t.get("type") == "literal" and "xml:lang" not in t else ""), t.get("xml:lang", "").lower())
 
 
+NUMERIC = {XSD + t for t in ("integer", "decimal", "double", "float")}
+
+
+def term_lt(x, y):
+    """SPARQL 1.1 section 15.1 order of two terms: True, False, or None when the
+    specification leaves the order to the implementation (for example a simple
+    literal against a language-tagged literal)."""
+    rank = lambda t: 0 if t is None else {"bnode": 1, "uri": 2, "literal": 3}[t[0]]
+    rx, ry = rank(x), rank(y)
+    if rx != ry:
+        return rx < ry
+    if x is None or x[0] == "bnode":
+        return None if x != y else False
+    if x[0] == "uri":
+        return x[1] < y[1]
+    if x[2] in NUMERIC and y[2] in NUMERIC:
+        return float(x[1]) < float(y[1])
+    if x[2] == y[2] == XSD + "string" and not x[3] and not y[3]:
+        return x[1] < y[1]
+    return None if x != y else False
+
+
+def order_ok(rows, keys):
+    """True when no later row sorts strictly before an earlier one, by the
+    ORDER BY keys, in the order SPARQL defines."""
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            a, b = dict(rows[i]), dict(rows[j])
+            for k in keys:
+                if term_lt(b.get(k), a.get(k)):
+                    return False
+                lt = term_lt(a.get(k), b.get(k))
+                if lt is None or lt:
+                    break  # undefined, or decided in the right order
+    return True
+
+
 def norm(text, ordered):
+    """The answer as a value to compare, and whether its row order is one that
+    SPARQL allows for the ORDER BY of the generator (?a then ?b)."""
     d = json.loads(text)
     if "boolean" in d:
-        return ("ask", d["boolean"])
+        return ("ask", d["boolean"]), True
     vars_ = sorted(d.get("head", {}).get("vars", []))
     rows = [tuple((v, norm_term(b.get(v))) for v in vars_ if b.get(v) is not None)
             for b in d["results"]["bindings"]]
-    return ("select", tuple(vars_), tuple(rows) if ordered else tuple(sorted(Counter(rows).items(), key=repr)))
+    ok = order_ok(rows, ["a", "b"]) if ordered else True
+    return ("select", tuple(vars_), tuple(sorted(Counter(rows).items(), key=repr))), ok
 
 
 def compare(cases, oxf, fdf, keep=None, out_json=None):
@@ -182,15 +226,16 @@ def compare(cases, oxf, fdf, keep=None, out_json=None):
             kept.append((c, a, b, "one refuses"))
             continue
         try:
-            same = norm(a["json"], c["ordered"]) == norm(b["json"], c["ordered"])
+            (va, oka), (vb, okb) = norm(a["json"], c["ordered"]), norm(b["json"], c["ordered"])
         except Exception as e:
-            same = False
+            va, oka, vb, okb = 0, True, 1, True
             b = dict(b, error=f"cannot read answer: {e}")
-        if same:
+        if va == vb and oka and okb:
             tally["agree"] += 1
         else:
+            why = "differ" if va != vb else ("order not allowed: " + ("factoidal" if not okb else "oxigraph"))
             tally["differ"] += 1
-            kept.append((c, a, b, "differ"))
+            kept.append((c, a, b, why))
     m = len(cs)
     print(f"sparql differential: agrees on {tally['agree']} of {m} cases; "
           f"{tally['differ']} differ, {tally['one refuses']} refused by one engine, "
