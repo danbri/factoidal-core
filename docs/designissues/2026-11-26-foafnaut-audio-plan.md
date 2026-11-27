@@ -513,11 +513,62 @@ latency. `--perf-summary` gets a block `audio`.
   the outbox in `op`, `applyReport`, `takeOutbox`, `takeDecodeJobs`, `finishDecode`,
   `takeWakeups`, and the two new `paramCall` methods; theorems `op_outbox`, `applyReport_mono`
   (and the list and graph-frame forms), `takeOutbox_empty`, `takeOutbox_messages`; routing
-  173 to 199 in `WasmVM/Hosts/WebApi.lean`. Not done: `prelude.js` (`AudioContext`), D3.
+  173 to 199 in `WasmVM/Hosts/WebApi.lean`. Page part done 2026-11-27 (section 13.11).
 - D3: the rendering task and the engine's IO layer (inbox, report, callback, `nextWake`, closing
   with the page), the decode jobs of ops 194 and 195 (stage C), the trace lines, the end-to-end
   test.
 - Then the owner's check on the Mac, and stage E (the jukebox).
+
+### 13.11 D2 page part and D3, done 2026-11-27
+
+Branch `wip/1169-realtime-d3`, then `main`. What landed:
+
+- `prelude.js`: `AudioContext` on ops 190 to 193. Op 190 makes the context; its answer gives the
+  id, the rate, the device channels and the state. `resume()`, `suspend()` and `close()` are op
+  191; each promise settles at an event of kind 3 or 4 (op 193). The events come in a callback that
+  the engine queues as a task when a report has events (`Api.takeWakeups`). `currentTime`,
+  `baseLatency`, `outputLatency` and `getOutputTimestamp()` are op 192. An engine with no audio
+  output answers -23, and the constructor throws `NotSupportedError`.
+- `Api.lean`: `autoplay` is `Option (Risk.Accepted .audioWithoutActivation)`. `allowedToStart` is
+  the one decision. 196 is not a page op (it answers -2). `op` gives back the `activated` it was
+  given (`op_activated`, by `rfl`). Message 190 has a fifth field, the initial state (1 running, 0
+  suspended), so the rendering side starts in the state that the page was told.
+- `WebAudio/Realtime.lean`: the rendering task of 13.4 (`serve`, `serveWith`) and the IO functions
+  `before`, `after` and `stopGone`. The first batch is in the inbox before the task starts, so no
+  quantum is rendered before the graph is there (a source started at 0 starts at frame 0, as
+  offline). Tasks run only when `threadsAvailable` holds: not in the Wasm build, not with
+  `FOAFNAUT_LEAN_THREADS=0`, and not when a probe task of 50 ms blocks `IO.asTask` (no task manager).
+- `WebScripts.lean`: `performInput` sets the activation, and calls `Api.activate`, before it
+  dispatches the event (HTML "activation notification" comes before the dispatch; before this
+  change the trusted activation was set after it). `audioStart` reads `audioDeviceRate`,
+  `audioDeviceChannels` and `dangerouslyPermitAudio` from the start request (BubblePopJS sessions).
+  `nextWake` is at most 25 ms ahead while a context runs, has a pending call or has an outbox
+  (`audioWakes`).
+- `WebDocument.lean`: `audioAround` wraps every `scriptSession` call. Before the call, the reports
+  are merged and the callbacks are queued. After the call, the outboxes go to the tasks, and the
+  tasks of a session that is no longer held are stopped. The start request gets the device's rate
+  and channels when the engine has an output.
+- Hosts: `run_html.ts --dangerously-permit-audio` (warning on standard error);
+  `tests/browser-wpt/testharness-run.ts` always sends `dangerouslyPermitAudio: true`. Register:
+  `skills/lean-risk-flags` section 5.
+- `WebRenderCLI --script-seq`, `tests/audio/page_tone.sh`, `tests/audio/tone-page.html`;
+  `pages/tone.html`, linked from the new tab page.
+
+Measured (Linux, 4 vCPUs, `lake exe audio-realtime-test`, 48,000 Hz, `interactive`): 21 pass, 0
+fail (out of 21). The WAV's first 48,000 frames are bit equal to the offline render of the same
+ops, and later frames are 0. There are 0 under-runs. The first audible frame is in the ring 2.5 ms
+after the handover of the batch with `start()`. That time does not include the time from `start()`
+to the end of its page task. The render CPU time is 9.1 ms for each second of audio (one sine
+oscillator). The ring holds 128 to 1,024 frames ahead of the consumer.
+
+Not done:
+- QuickJS-NG sessions get no audio device. `Page.start` runs the scripts before `audioStart` could
+  set the device, so `new AudioContext()` throws `NotSupportedError` there. BubblePopJS is the
+  default engine.
+- Contexts made in frames and workers are not moved to rendering tasks.
+- `decodeAudioData` (ops 194 and 195) is not connected to decode tasks yet (stage C).
+- A Settings switch for the autoplay rule.
+- Sound on a Mac: the `coreaudio` consumer has never been compiled against Apple's headers.
 
 ## 14. Render quantum speed (2026-11-26)
 
