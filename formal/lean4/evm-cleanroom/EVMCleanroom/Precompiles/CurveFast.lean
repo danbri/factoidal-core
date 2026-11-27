@@ -249,17 +249,21 @@ theorem windowMul_zero (O : FieldOps F) (x y : F) : windowMul O 0 x y = infinity
 
 -- The windowed and bucket sums against double-and-add, on the small curve y² = x³ + 7 over 10007 elements.
 private def small : FieldOps Nat := Fp.ops 10007
-private def smallPoints : Array (Nat × Nat) :=
+/- Test values are functions of a unit argument, compiled without closed-term extraction: a constant
+   would be computed whenever a program that links this module starts. -/
+set_option compiler.extract_closed false in
+private def smallPointsOf (_ : Unit) : Array (Nat × Nat) :=
   ((List.range 400).filterMap fun x => (Fp.sqrt? 10007 ((x * x * x + 7) % 10007)).map fun y => (x, y)).toArray
 private def reference (items : Array (MsmItem Nat)) : JPoint Nat :=
   items.foldl (fun acc item => add small acc (mul small item.1 (ofAffine small item.2.1 item.2.2))) (infinity small)
 private def items (count seed : Nat) : Array (MsmItem Nat) :=
+  let points := smallPointsOf ()
   ((List.range count).map fun i =>
-    let point := smallPoints.getD (i % smallPoints.size) (0, 0)
+    let point := points.getD (i % points.size) (0, 0)
     ((i * i * seed + 3 * i + seed % 5) % 65000 * (i % 3), point.1, point.2)).toArray
-#guard smallPoints.size ≥ 100 && smallPoints.all fun point => onCurve small 7 point.1 point.2
+#guard (smallPointsOf ()).size ≥ 100 && (smallPointsOf ()).all fun point => onCurve small 7 point.1 point.2
 #guard (List.range 40).all fun k =>
-  (smallPoints.extract 0 40).all fun point => same small (windowMul small (k * 331) point.1 point.2) (mul small (k * 331) (ofAffine small point.1 point.2))
+  ((smallPointsOf ()).extract 0 40).all fun point => same small (windowMul small (k * 331) point.1 point.2) (mul small (k * 331) (ofAffine small point.1 point.2))
 #guard (List.range 12).all fun n => same small (straus small (items n 77) 17) (reference (items n 77))
 #guard (List.range 12).all fun n => same small (straus small (items (3 * n) 5) 20) (reference (items (3 * n) 5))
 #guard [1, 2, 3, 4, 5, 6, 7].all fun width =>
@@ -267,7 +271,7 @@ private def items (count seed : Nat) : Array (MsmItem Nat) :=
 #guard same small (msm small (items 79 3) 17) (reference (items 79 3)) &&
   same small (msm small (items 80 3) 17) (reference (items 80 3)) &&
   same small (msm small (items 200 9) 17) (reference (items 200 9))
-#guard (smallPoints.extract 0 30).all fun point =>
+#guard ((smallPointsOf ()).extract 0 30).all fun point =>
   (toAffineFast small (addMixed small (mul small 5 (ofAffine small point.1 point.2)) point.1 point.2)) ==
     (toAffine small (mul small 6 (ofAffine small point.1 point.2))) &&
   (toAffineFast small (addMixed small (ofAffine small point.1 point.2) point.1 point.2)) ==
@@ -276,11 +280,11 @@ private def items (count seed : Nat) : Array (MsmItem Nat) :=
 
 -- The affine sum against the Jacobian one: all pairs of 40 points (equal points included), inverse points,
 -- and points of order two when the curve has them.
-#guard (smallPoints.extract 0 40).all fun a => (smallPoints.extract 0 40).all fun b =>
+#guard ((smallPointsOf ()).extract 0 40).all fun a => ((smallPointsOf ()).extract 0 40).all fun b =>
   toAffineFast small (addAffine small a.1 a.2 b.1 b.2) ==
     toAffine small (add small (ofAffine small a.1 a.2) (ofAffine small b.1 b.2)) &&
   (toAffineFast small (addAffine small a.1 a.2 a.1 (Fp.neg 10007 a.2))).isNone
-#guard (smallPoints.filter fun point => point.2 == 0).all fun a =>
+#guard ((smallPointsOf ()).filter fun point => point.2 == 0).all fun a =>
   (toAffineFast small (addAffine small a.1 a.2 a.1 a.2)).isNone
 
 #print axioms passes_le

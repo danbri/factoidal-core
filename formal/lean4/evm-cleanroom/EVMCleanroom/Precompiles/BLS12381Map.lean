@@ -305,12 +305,13 @@ private def wide : Nat := 0x123456789abcdef0fedcba9876543210a5a5a5a55a5a5a5a0f0f
 #guard map2Agrees ⟨0, 0⟩ && map2Agrees ⟨1, 0⟩ && map2Agrees ⟨0, 1⟩ && map2Agrees ⟨1, 2⟩
 #guard map2Agrees ⟨wide, p - 1⟩ && map2Agrees ⟨p, 1⟩ && map2Agrees ⟨1, 2 ^ 384⟩
 -- Clearing the cofactor by endomorphisms against the multiplication by h_eff, on a point outside the subgroup.
-private def outside : Fp2 × Fp2 :=
+set_option compiler.extract_closed false in
+private def outsideOf (_ : Unit) : Fp2 × Fp2 :=
   (⟨2, 1⟩, (BLS12381.sqrt2? (Fp2.add p (Fp2.mul p (Fp2.sqr p ⟨2, 1⟩) ⟨2, 1⟩) BLS12381.twistB)).getD Fp2.zero)
-#guard Curve.onCurve field2 BLS12381.twistB outside.1 outside.2 && !BLS12381.inSubgroup2 outside.1 outside.2
-#guard (Curve.toAffineFast fp2 (clearCofactor2 (Curve.ofAffine fp2 (toLimbs2 outside.1) (toLimbs2 outside.2)))).map
+#guard Curve.onCurve field2 BLS12381.twistB (outsideOf ()).1 (outsideOf ()).2 && !BLS12381.inSubgroup2 (outsideOf ()).1 (outsideOf ()).2
+#guard (Curve.toAffineFast fp2 (clearCofactor2 (Curve.ofAffine fp2 (toLimbs2 (outsideOf ()).1) (toLimbs2 (outsideOf ()).2)))).map
     (fun point => (ofLimbs2 point.1, ofLimbs2 point.2)) ==
-  Curve.toAffine field2 (Curve.mul field2 cofactor2 (Curve.ofAffine field2 outside.1 outside.2))
+  Curve.toAffine field2 (Curve.mul field2 cofactor2 (Curve.ofAffine field2 (outsideOf ()).1 (outsideOf ()).2))
 #guard (Curve.toAffineFast fp2 (clearCofactor2 (Curve.infinity fp2))).isNone
 
 #print axioms runMap_success

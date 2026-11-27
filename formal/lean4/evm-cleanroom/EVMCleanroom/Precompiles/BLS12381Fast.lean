@@ -364,19 +364,32 @@ private def sub1Agrees (point : Nat × Nat) : Bool :=
 private def sub2Agrees (point : Fp2 × Fp2) : Bool :=
   inSubgroup2 (toLimbs2 point.1) (toLimbs2 point.2) == BLS12381.inSubgroup2 point.1 point.2
 
-private def a1 : Nat × Nat := multiple1 5 g1Generator
-private def b1 : Nat × Nat := multiple1 7 g1Generator
-private def a2 : Fp2 × Fp2 := multiple2 5 g2Generator
-private def b2 : Fp2 × Fp2 := multiple2 7 g2Generator
+/- Test values are functions of a unit argument, compiled without closed-term extraction: a constant
+   would be computed whenever a program that links this module starts (the small-order points below
+   cost milliseconds each). -/
+set_option compiler.extract_closed false in
+private def a1 (_ : Unit) : Nat × Nat := multiple1 5 g1Generator
+set_option compiler.extract_closed false in
+private def b1 (_ : Unit) : Nat × Nat := multiple1 7 g1Generator
+set_option compiler.extract_closed false in
+private def a2 (_ : Unit) : Fp2 × Fp2 := multiple2 5 g2Generator
+set_option compiler.extract_closed false in
+private def b2 (_ : Unit) : Fp2 × Fp2 := multiple2 7 g2Generator
+set_option compiler.extract_closed false in
 /-- Curve points outside the subgroups (`x = 5` and `x = 2 + u` lift; checked below). -/
-private def out1 : Nat × Nat := lift1 5
-private def out2 : Fp2 × Fp2 := lift2 ⟨2, 1⟩
+private def out1 (_ : Unit) : Nat × Nat := lift1 5
+set_option compiler.extract_closed false in
+private def out2 (_ : Unit) : Fp2 × Fp2 := lift2 ⟨2, 1⟩
+set_option compiler.extract_closed false in
 /-- Points of order 3 and 11 on the curve, 13 and 23 on the twist (cofactor multiples; the
     11-, 13- and 23-parts of the groups are not cyclic, hence the squares). -/
-private def order3 : Nat × Nat := multiple1 (h1 * r / 3) out1
-private def order11 : Nat × Nat := multiple1 (h1 * r / 121) out1
-private def order13 : Fp2 × Fp2 := multiple2 (h2 * r / 169) out2
-private def order23 : Fp2 × Fp2 := multiple2 (h2 * r / 529) out2
+private def order3 (_ : Unit) : Nat × Nat := multiple1 (h1 * r / 3) (out1 ())
+set_option compiler.extract_closed false in
+private def order11 (_ : Unit) : Nat × Nat := multiple1 (h1 * r / 121) (out1 ())
+set_option compiler.extract_closed false in
+private def order13 (_ : Unit) : Fp2 × Fp2 := multiple2 (h2 * r / 169) (out2 ())
+set_option compiler.extract_closed false in
+private def order23 (_ : Unit) : Fp2 × Fp2 := multiple2 (h2 * r / 529) (out2 ())
 
 -- The Montgomery parameters belong to the modulus of the definition.
 #guard M.n.toNat == p && M.toNat four == 4 && M.toNat M.one == 1
@@ -408,44 +421,53 @@ private def order23 : Fp2 × Fp2 := multiple2 (h2 * r / 529) out2
 #guard (Fp2.mul p (Fp2.conj p g2Generator.1) psiXNat, Fp2.neg p (Fp2.mul p (Fp2.conj p g2Generator.2) psiYNat)) ==
   multiple2 parameter g2Generator
 -- The limb checks accept the generators and multiples, as the definition does.
-#guard inSubgroup1 (M.ofNat g1Generator.1) (M.ofNat g1Generator.2) && sub1Agrees a1 && sub1Agrees b1
-#guard inSubgroup2 (toLimbs2 g2Generator.1) (toLimbs2 g2Generator.2) && sub2Agrees a2 && sub2Agrees b2
+#guard inSubgroup1 (M.ofNat g1Generator.1) (M.ofNat g1Generator.2) && sub1Agrees (a1 ()) && sub1Agrees (b1 ())
+#guard inSubgroup2 (toLimbs2 g2Generator.1) (toLimbs2 g2Generator.2) && sub2Agrees (a2 ()) && sub2Agrees (b2 ())
 -- Points outside the subgroups are on the curve and are rejected, as by the definition.
-#guard Curve.onCurve field 4 out1.1 out1.2 && !BLS12381.inSubgroup1 out1.1 out1.2 && sub1Agrees out1
-#guard Curve.onCurve field2 BLS12381.twistB out2.1 out2.2 && !BLS12381.inSubgroup2 out2.1 out2.2 && sub2Agrees out2
+#guard Curve.onCurve field 4 (out1 ()).1 (out1 ()).2 && !BLS12381.inSubgroup1 (out1 ()).1 (out1 ()).2 && sub1Agrees (out1 ())
+#guard Curve.onCurve field2 BLS12381.twistB (out2 ()).1 (out2 ()).2 && !BLS12381.inSubgroup2 (out2 ()).1 (out2 ()).2 && sub2Agrees (out2 ())
 -- Small-order points, and a subgroup point plus a small-order point.
-#guard order3 != (0, 0) && order11 != (0, 0) && multiple1 3 order3 == (0, 0) && multiple1 11 order11 == (0, 0) && !inSubgroup1 (M.ofNat order3.1) (M.ofNat order3.2) &&
-  sub1Agrees order3 && sub1Agrees order11 && sub1Agrees (sum1 a1 order3) && sub1Agrees (sum1 b1 order11) &&
-  !inSubgroup1 (M.ofNat (sum1 a1 order3).1) (M.ofNat (sum1 a1 order3).2)
-#guard order13 != (Fp2.zero, Fp2.zero) && order23 != (Fp2.zero, Fp2.zero) &&
-  multiple2 13 order13 == (Fp2.zero, Fp2.zero) && multiple2 23 order23 == (Fp2.zero, Fp2.zero) &&
-  !inSubgroup2 (toLimbs2 order13.1) (toLimbs2 order13.2) &&
-  sub2Agrees order13 && sub2Agrees order23 && sub2Agrees (sum2 a2 order13) && sub2Agrees (sum2 b2 order23) &&
-  !inSubgroup2 (toLimbs2 (sum2 a2 order13).1) (toLimbs2 (sum2 a2 order13).2)
+#guard
+  let t3 := order3 ()
+  let t11 := order11 ()
+  let mixed := sum1 (a1 ()) t3
+  t3 != (0, 0) && t11 != (0, 0) && multiple1 3 t3 == (0, 0) && multiple1 11 t11 == (0, 0) &&
+    !inSubgroup1 (M.ofNat t3.1) (M.ofNat t3.2) && sub1Agrees t3 && sub1Agrees t11 && sub1Agrees mixed &&
+    sub1Agrees (sum1 (b1 ()) t11) && !inSubgroup1 (M.ofNat mixed.1) (M.ofNat mixed.2) &&
+    g1Add (bytes1 t3) (bytes1 t3) && g1Add (bytes1 t3) (bytes1 mixed)
+#guard
+  let t13 := order13 ()
+  let t23 := order23 ()
+  let mixed := sum2 (a2 ()) t13
+  t13 != (Fp2.zero, Fp2.zero) && t23 != (Fp2.zero, Fp2.zero) &&
+    multiple2 13 t13 == (Fp2.zero, Fp2.zero) && multiple2 23 t23 == (Fp2.zero, Fp2.zero) &&
+    !inSubgroup2 (toLimbs2 t13.1) (toLimbs2 t13.2) && sub2Agrees t13 && sub2Agrees t23 && sub2Agrees mixed &&
+    sub2Agrees (sum2 (b2 ()) t23) && !inSubgroup2 (toLimbs2 mixed.1) (toLimbs2 mixed.2) &&
+    g2Add (bytes2 t13) (bytes2 t13) && g2Add (bytes2 t13) (bytes2 mixed)
 -- The limb Fp2 against the definition on full-size values.
-#guard ofLimbs2 (Q2.mul fp (toLimbs2 a2.1) (toLimbs2 b2.2)) == Fp2.mul p a2.1 b2.2 &&
-  ofLimbs2 (Q2.sqr fp (toLimbs2 a2.2)) == Fp2.sqr p a2.2 && ofLimbs2 (Q2.inv fp (toLimbs2 b2.1)) == Fp2.inv p b2.1 &&
-  ofLimbs2 (Q2.sub fp (toLimbs2 a2.1) (toLimbs2 b2.2)) == Fp2.sub p a2.1 b2.2
+#guard ofLimbs2 (Q2.mul fp (toLimbs2 (a2 ()).1) (toLimbs2 (b2 ()).2)) == Fp2.mul p (a2 ()).1 (b2 ()).2 &&
+  ofLimbs2 (Q2.sqr fp (toLimbs2 (a2 ()).2)) == Fp2.sqr p (a2 ()).2 && ofLimbs2 (Q2.inv fp (toLimbs2 (b2 ()).1)) == Fp2.inv p (b2 ()).1 &&
+  ofLimbs2 (Q2.sub fp (toLimbs2 (a2 ()).1) (toLimbs2 (b2 ()).2)) == Fp2.sub p (a2 ()).1 (b2 ()).2
 -- Addition: generic, doubling, inverse points, infinity, points outside the subgroup, invalid input.
-#guard g1Add (bytes1 a1) (bytes1 b1) && g1Add (bytes1 a1) (bytes1 a1) && g1Add (bytes1 a1) (bytes1 (a1.1, p - a1.2)) &&
-  g1Add (fe 0 ++ fe 0) (bytes1 b1) && g1Add (bytes1 b1) (fe 0 ++ fe 0) && g1Add (fe 0 ++ fe 0) (fe 0 ++ fe 0) &&
-  g1Add (bytes1 out1) (bytes1 a1) && g1Add (bytes1 order3) (bytes1 order3)
-#guard g1Add (bytes1 (p, a1.2)) (bytes1 b1) && g1Add (bytes1 (a1.1, a1.2 + 1)) (bytes1 b1) &&
-  g1Add (natToBE 64 (2 ^ 384 + a1.1) ++ fe a1.2) (bytes1 b1) && g1Add (bytes1 a1) (natToBE 64 (2 ^ 500) ++ fe 1) &&
-  g1Add (bytes1 a1) (fe 0 ++ fe 2) && g1Add (bytes1 a1) (fe 1) && g1Add ByteArray.empty ByteArray.empty
-#guard (g1AddBody (bytes1 a1 ++ bytes1 b1)).same (.output (bytes1 (multiple1 12 g1Generator)))
-#guard g2Add (bytes2 a2) (bytes2 b2) && g2Add (bytes2 a2) (bytes2 a2) &&
-  g2Add (bytes2 a2) (bytes2 (a2.1, Fp2.neg p a2.2)) && g2Add (natToBE 256 0) (bytes2 b2) &&
-  g2Add (bytes2 b2) (natToBE 256 0) && g2Add (natToBE 256 0) (natToBE 256 0) && g2Add (bytes2 out2) (bytes2 a2)
-#guard g2Add (bytes2 (⟨p, 0⟩, a2.2)) (bytes2 b2) && g2Add (bytes2 (a2.1, ⟨a2.2.c0, a2.2.c1 + 1⟩)) (bytes2 b2) &&
-  g2Add (natToBE 64 (2 ^ 384) ++ (bytes2 a2).extract 64 256) (bytes2 b2) && g2Add (bytes2 a2) (fe 1)
-#guard (g2AddBody (bytes2 a2 ++ bytes2 b2)).same (.output (bytes2 (multiple2 12 g2Generator)))
+#guard g1Add (bytes1 (a1 ())) (bytes1 (b1 ())) && g1Add (bytes1 (a1 ())) (bytes1 (a1 ())) && g1Add (bytes1 (a1 ())) (bytes1 ((a1 ()).1, p - (a1 ()).2)) &&
+  g1Add (fe 0 ++ fe 0) (bytes1 (b1 ())) && g1Add (bytes1 (b1 ())) (fe 0 ++ fe 0) && g1Add (fe 0 ++ fe 0) (fe 0 ++ fe 0) &&
+  g1Add (bytes1 (out1 ())) (bytes1 (a1 ()))
+#guard g1Add (bytes1 (p, (a1 ()).2)) (bytes1 (b1 ())) && g1Add (bytes1 ((a1 ()).1, (a1 ()).2 + 1)) (bytes1 (b1 ())) &&
+  g1Add (natToBE 64 (2 ^ 384 + (a1 ()).1) ++ fe (a1 ()).2) (bytes1 (b1 ())) && g1Add (bytes1 (a1 ())) (natToBE 64 (2 ^ 500) ++ fe 1) &&
+  g1Add (bytes1 (a1 ())) (fe 0 ++ fe 2) && g1Add (bytes1 (a1 ())) (fe 1) && g1Add ByteArray.empty ByteArray.empty
+#guard (g1AddBody (bytes1 (a1 ()) ++ bytes1 (b1 ()))).same (.output (bytes1 (multiple1 12 g1Generator)))
+#guard g2Add (bytes2 (a2 ())) (bytes2 (b2 ())) && g2Add (bytes2 (a2 ())) (bytes2 (a2 ())) &&
+  g2Add (bytes2 (a2 ())) (bytes2 ((a2 ()).1, Fp2.neg p (a2 ()).2)) && g2Add (natToBE 256 0) (bytes2 (b2 ())) &&
+  g2Add (bytes2 (b2 ())) (natToBE 256 0) && g2Add (natToBE 256 0) (natToBE 256 0) && g2Add (bytes2 (out2 ())) (bytes2 (a2 ()))
+#guard g2Add (bytes2 (⟨p, 0⟩, (a2 ()).2)) (bytes2 (b2 ())) && g2Add (bytes2 ((a2 ()).1, ⟨(a2 ()).2.c0, (a2 ()).2.c1 + 1⟩)) (bytes2 (b2 ())) &&
+  g2Add (natToBE 64 (2 ^ 384) ++ (bytes2 (a2 ())).extract 64 256) (bytes2 (b2 ())) && g2Add (bytes2 (a2 ())) (fe 1)
+#guard (g2AddBody (bytes2 (a2 ()) ++ bytes2 (b2 ()))).same (.output (bytes2 (multiple2 12 g2Generator)))
 -- Decoding with the subgroup check agrees with the definition's verdicts.
-#guard (decodeG1 (bytes1 a1) 0 true).isSome && (decodeG1 (bytes1 out1) 0 true).isNone &&
-  (decodeG1 (bytes1 out1) 0 false).isSome &&
+#guard (decodeG1 (bytes1 (a1 ())) 0 true).isSome && (decodeG1 (bytes1 (out1 ())) 0 true).isNone &&
+  (decodeG1 (bytes1 (out1 ())) 0 false).isSome &&
   (match decodeG1 (fe 0 ++ fe 0) 0 true with | some none => true | _ => false)
-#guard (decodeG2 (bytes2 a2) 0 true).isSome && (decodeG2 (bytes2 out2) 0 true).isNone &&
-  (decodeG2 (bytes2 out2) 0 false).isSome && (decodeG2 (natToBE 256 0) 0 true).isSome
+#guard (decodeG2 (bytes2 (a2 ())) 0 true).isSome && (decodeG2 (bytes2 (out2 ())) 0 true).isNone &&
+  (decodeG2 (bytes2 (out2 ())) 0 false).isSome && (decodeG2 (natToBE 256 0) 0 true).isSome
 
 #print axioms pushFp_size
 #print axioms encodeG1_size

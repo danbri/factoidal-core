@@ -246,8 +246,6 @@ private def addAgrees (input : ByteArray) : Bool :=
   (runAdd 1000 input).same (BN254.runAdd 1000 input)
 private def mulAgrees (input : ByteArray) : Bool :=
   (runMul 10000 input).same (BN254.runMul 10000 input)
-private def p5 : Nat × Nat := multiple 5
-private def p7 : Nat × Nat := multiple 7
 
 -- The Montgomery parameters belong to the modulus of the definition.
 #guard M.n.toNat == p && M.toNat three == 3 && M.toNat M.one == 1
@@ -262,16 +260,16 @@ private def p7 : Nat × Nat := multiple 7
 #guard [0, 1, 2, p - 1, p - 2, (p - 1) / 2, 2 ^ 253, 2 ^ 64 - 1, 0xfedcba9876543210f0e1d2c3b4a5968778695a4b3c2d1e % p].all fun a =>
   M.toNat (fsqr (M.ofNat a)) == a * a % p && (fsqr (M.ofNat a)).toNat == (M.sqr (M.ofNat a)).toNat
 -- Addition: generic, doubling, inverse points, infinity on either side and on both.
-#guard addAgrees (addInput p5 p7) && addAgrees (addInput p5 p5) && addAgrees (addInput g g)
-#guard addAgrees (addInput p5 (p5.1, p - p5.2)) && addAgrees (addInput (0, 0) p7) &&
-  addAgrees (addInput p7 (0, 0)) && addAgrees (addInput (0, 0) (0, 0))
+#guard addAgrees (addInput (multiple 5) (multiple 7)) && addAgrees (addInput (multiple 5) (multiple 5)) && addAgrees (addInput g g)
+#guard addAgrees (addInput (multiple 5) ((multiple 5).1, p - (multiple 5).2)) && addAgrees (addInput (0, 0) (multiple 7)) &&
+  addAgrees (addInput (multiple 7) (0, 0)) && addAgrees (addInput (0, 0) (0, 0))
 -- The result bytes are the known multiples.
-#guard (addBody (addInput p5 p7)).same (.output (pointBytes (multiple 12)))
+#guard (addBody (addInput (multiple 5) (multiple 7))).same (.output (pointBytes (multiple 12)))
 -- Invalid input: a coordinate equal to or above p, a point off the curve, (0, y), short and long input.
 #guard addAgrees (addInput (p, 2) g) && addAgrees (addInput (1, p + 2) g) && addAgrees (addInput g (1, 3)) &&
   addAgrees (addInput (0, 1) g) && addAgrees (addInput g (2 ^ 256 - 1, 2 ^ 256 - 1)) &&
-  addAgrees (word 1) && addAgrees ByteArray.empty && addAgrees (addInput p5 p7 ++ word 99) &&
-  addAgrees ((addInput p5 p7).extract 0 127)
+  addAgrees (word 1) && addAgrees ByteArray.empty && addAgrees (addInput (multiple 5) (multiple 7) ++ word 99) &&
+  addAgrees ((addInput (multiple 5) (multiple 7)).extract 0 127)
 #guard !(match addBody (addInput g (1, 3)) with | .invalid => false | _ => true)
 -- The endomorphism constants: β³ = 1, λ² + λ + 1 ≡ 0, λ = 36x⁴ − 1, the basis vectors lie in the lattice, its
 -- determinant is r, and φ(G) = [λ]G on the definition's arithmetic.
@@ -288,15 +286,15 @@ private def splitOk (k : Nat) : Bool :=
   0xf0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdeffedcba9876543210].all splitOk
 #guard (List.range 300).all fun i => splitOk ((i * i + 3) * (2 ^ 250 - 2 ^ (i % 250) + 7 * i))
 -- Multiplication: scalars 0, 1, 2, r − 1, r, r + 1, 2^256 − 1 and a 256-bit one; infinity; invalid input.
-#guard mulAgrees (mulInput p5 0) && mulAgrees (mulInput p5 1) && mulAgrees (mulInput p5 2) &&
-  mulAgrees (mulInput p7 (r - 1)) && mulAgrees (mulInput p7 r) && mulAgrees (mulInput p7 (r + 1))
+#guard mulAgrees (mulInput (multiple 5) 0) && mulAgrees (mulInput (multiple 5) 1) && mulAgrees (mulInput (multiple 5) 2) &&
+  mulAgrees (mulInput (multiple 7) (r - 1)) && mulAgrees (mulInput (multiple 7) r) && mulAgrees (mulInput (multiple 7) (r + 1))
 #guard mulAgrees (mulInput g (2 ^ 256 - 1)) &&
-  mulAgrees (mulInput p5 0xf0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdeffedcba9876543210) &&
-  mulAgrees (mulInput p7 0x10000000000000000) && mulAgrees (mulInput p7 16) &&
-  mulAgrees (mulInput p5 lambdaNat) && mulAgrees (mulInput p7 (2 * r)) && mulAgrees (mulInput g (r / 2)) &&
-  mulAgrees (mulInput p5 (2 ^ 127)) && mulAgrees (mulInput p7 glvB2)
+  mulAgrees (mulInput (multiple 5) 0xf0e1d2c3b4a5968778695a4b3c2d1e0f0123456789abcdeffedcba9876543210) &&
+  mulAgrees (mulInput (multiple 7) 0x10000000000000000) && mulAgrees (mulInput (multiple 7) 16) &&
+  mulAgrees (mulInput (multiple 5) lambdaNat) && mulAgrees (mulInput (multiple 7) (2 * r)) && mulAgrees (mulInput g (r / 2)) &&
+  mulAgrees (mulInput (multiple 5) (2 ^ 127)) && mulAgrees (mulInput (multiple 7) glvB2)
 #guard mulAgrees (mulInput (0, 0) 5) && mulAgrees (mulInput (1, 3) 5) && mulAgrees (mulInput (p, 2) 5) &&
-  mulAgrees (word 1 ++ word 2) && mulAgrees ByteArray.empty && mulAgrees (mulInput p5 7 ++ word 1)
+  mulAgrees (word 1 ++ word 2) && mulAgrees ByteArray.empty && mulAgrees (mulInput (multiple 5) 7 ++ word 1)
 #guard (mulBody (mulInput g 12)).same (.output (pointBytes (multiple 12)))
 #guard (match runAdd 149 (addInput g g) with | .failure => true | _ => false)
 #guard (match runMul 5999 (mulInput g 2) with | .failure => true | _ => false)
