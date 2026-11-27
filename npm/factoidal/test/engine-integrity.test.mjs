@@ -45,7 +45,11 @@ function loadCopy(stamp, env = {}) {
     if (stamp !== undefined) writeFileSync(join(dir, 'l4-assets', 'version.json'), JSON.stringify(stamp));
     const code = "import('./bin/engine.mjs').then((m) => m.loadEngine()).then(" +
       "(e) => { console.log('LOADED', typeof e.call); }, (e) => { console.log('REFUSED', e.code); process.exit(3); })";
-    return spawnSync(process.execPath, ['--input-type=module', '-e', code],
+    // A module file, started the way this runtime starts one: Node's `-e`/`--input-type`
+    // flags mean nothing to Deno, whose process.execPath is the deno binary (issue 1176).
+    writeFileSync(join(dir, 'probe.mjs'), code);
+    const args = globalThis.Deno ? ['run', '-A', 'probe.mjs'] : ['probe.mjs'];
+    return spawnSync(process.execPath, args,
       { cwd: dir, encoding: 'utf8', env: { ...process.env, ...env } });
   } finally {
     rmSync(dir, { recursive: true, force: true });
