@@ -1,6 +1,6 @@
 import {buildTransactionLists} from './transaction-lists.mjs';
 import assert from 'node:assert/strict';
-import {RLP,bytes,hex,nat,bytesToBigInt,checkSources} from './oracle.mjs';
+import {RLP,bytes,hex,nat,bytesToBigInt,checkSources,fixed,keccak,ecrecover,publicToAddress,clone,buildStateWitness,checkStateWitness} from './oracle.mjs';
 import {spawnSync} from 'node:child_process';
 import {writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -75,6 +75,90 @@ try {
   }
   refusal([flags[0],'--raw-signed-list'],rawRequest);
   refusal([...flags,'--raw-signed-list'],{...rawRequest,transactions:[{...rawRequest.transactions[0],sender:'0'}]});
+
+  // Mutate public fixture envelopes and independently recover the resulting
+  // senders. No signing key, wallet, or network is used.
+  const template=cases.find(c=>c.id==='single-blobhash').request;
+  const retained=cases.flatMap(c=>c.expected.txBytes);
+  let creationComparisons=0, creationControls=0;
+  for(const spec of [{kind:0},{kind:1},{kind:2},{kind:2,revert:true},{kind:2,zero:true}]){
+    const kind=spec.kind;
+    const original=bytes(retained.find(h=>kind===0?bytes(h)[0]>=192:bytes(h)[0]===kind));
+    const fs=RLP.decode(kind===0?original:original.slice(1));
+    const gi=kind===0?2:kind===1?3:4;
+    fs[kind===0?0:1]=nat(0);
+    fs[gi-1]=nat(3);
+    if(kind===2)fs[2]=nat(1);
+    fs[gi]=nat(100000);
+    fs[gi+1]=spec.zero?fixed(0,20):bytes('');
+    fs[gi+2]=nat(0);
+    fs[gi+3]=bytes(spec.revert?'5f5ffd':'');
+    if(kind>0)fs[gi+4]=[];
+    const v=bytesToBigInt(fs.at(-3));
+    const chain=kind===0?(v>=35n?(v-35n)/2n:null):bytesToBigInt(fs[0]);
+    const recovery=kind===0?(chain===null?v:v-chain*2n-8n):v+27n;
+    const body=RLP.encode(fs);
+    const rawHex=hex(kind===0?body:Uint8Array.from([kind,...body]));
+    const sender=bytesToBigInt(publicToAddress(ecrecover(keccak(bytes(signing(rawHex))),recovery,
+      fixed(bytesToBigInt(fs.at(-2)),32),fixed(bytesToBigInt(fs.at(-1)),32))));
+    const created=bytesToBigInt(keccak(RLP.encode([fixed(sender,20),nat(0)])).slice(12));
+    const target=spec.zero?0n:created;
+    assert.notEqual(sender,target);
+    assert.notEqual(sender,196n);
+    assert.notEqual(target,196n);
+    const record=(address,exists,balance,nonce)=>({address:String(address),exists,balance:String(balance),nonce:String(nonce),codeHex:'',storage:[]});
+    const initial=[record(sender,true,1000000000000000n,0),record(196,true,11,1),record(target,false,0,0)];
+    const witnesses=await buildStateWitness(initial);
+    await checkStateWitness(witnesses,initial);
+    const request=clone(template);
+    request.accounts=witnesses.accounts;
+    request.parentHeader[3]=witnesses.stateRoot;
+    request.childHeader[0]=hex(keccak(RLP.encode(request.parentHeader.map(bytes))));
+    const gas=spec.zero?21000:spec.revert?53054:53000;
+    request.childHeader[10]=hex(nat(gas));
+    request.childHeader[17]=hex(nat(0));
+    request.transactions=[{fuel:'1000',transaction:{type:kind,chainId:chain===null?null:String(chain),
+      sender:String(sender),to:spec.zero?'0':null,nonce:'0',value:'0',gasLimit:'100000',gasPriceCap:'3',
+      priorityFeeCap:kind===2?'1':'0',dataHex:hex(fs[gi+3]),accessList:[]}}];
+    const rawReq={...request,schemaVersion:3,transactions:[{rawHex,fuel:'1000'}]};
+    const old=run(oldBin,[flags[0],'--authenticated-transaction-list'],request);
+    const out=run(rawBin,[...flags,'--raw-signed-list'],rawReq);
+    const {secpOptIn,...rest}=out;
+    assert.deepEqual({...rest,schemaVersion:2},old);
+    assert.equal(out.status,'executed');
+    assert.equal(out.gasUsed,String(gas));
+    const receipt=out.receipts[0];
+    assert.equal(receipt.receiptStatus,spec.revert?0:1);
+    const createdExpected=spec.revert||spec.zero?undefined:String(created);
+    assert.equal(receipt.createdAddress,createdExpected);
+    const after=out.accounts.find(a=>a.address===String(target));
+    assert.equal(after.exists,!spec.revert&&!spec.zero);
+    assert.equal(after.nonce,spec.revert||spec.zero?'0':'1');
+    assert.equal(out.accounts.find(a=>a.address===String(sender)).nonce,'1');
+    const inspection=run(rawBin,[...flags,'--inspect-raw-signed'],[rawHex]).rows[0];
+    assert.equal(inspection.sender,String(sender));
+    assert.equal(inspection.to,spec.zero?'0':null);
+    creationComparisons++;
+    if(kind===2&&!spec.revert&&!spec.zero){
+      const missing=run(rawBin,[...flags,'--raw-signed-list'],{...rawReq,accounts:rawReq.accounts.filter(a=>a.address!==String(target))});
+      assert.equal(missing.status,'indeterminate');
+      assert.equal(missing.index,0);
+      assert(!('receipts' in missing)&&!('accounts' in missing));
+      creationControls++;
+      const wrong={...receipt,createdAddress:'0'};
+      assert.throws(()=>assert.equal(wrong.createdAddress,createdExpected));
+      creationControls++;
+    }
+  }
+  const blob=bytes(retained.find(h=>bytes(h)[0]===3));
+  const blobFields=RLP.decode(blob.slice(1));
+  blobFields[5]=bytes('');
+  const blobCreation=hex(Uint8Array.from([3,...RLP.encode(blobFields)]));
+  const blobResult=run(rawBin,[...flags,'--inspect-raw-signed'],[blobCreation]).rows[0];
+  assert.deepEqual(blobResult,{status:'malformed',reason:'blob-creation'});
+  creationControls++;
+  assert.equal(creationComparisons,5);
+  assert.equal(creationControls,3);
   assert.equal(inspections,344);
-  console.log(JSON.stringify({status:'pass',lists:cases.length,signedOccurrences:txs,inspections,negativeControls:bad.length+2,publishedVectors:1}));
+  console.log(JSON.stringify({status:'pass',lists:cases.length,signedOccurrences:txs,inspections,negativeControls:bad.length+2,publishedVectors:1,creationComparisons,creationControls}));
 } finally {rmSync(dir,{recursive:true,force:true});}
