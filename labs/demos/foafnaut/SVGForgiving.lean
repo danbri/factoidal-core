@@ -1,6 +1,7 @@
 import SVG
 import SVGText
 import L4Factoidal.Unicode.Bidi
+import L4Factoidal.Unicode.LineBreak
 import Std.Data.HashMap
 
 /- Forgiving front door for the strict SVG reader.
@@ -404,7 +405,13 @@ private structure Cell where
   kern : Float
   space : Bool
   lineBreak : Bool := false
-instance : Inhabited Cell := ⟨⟨default,0,0,0,false,false⟩⟩
+  /-- The character, after white space handling; a `tbreak` is U+000A. -/
+  char : Char := '\n'
+  /-- A soft hyphen (U+00AD): no advance and no glyph, except at the end of a line, where
+  `glyph` (the font's hyphen) is drawn with the advance `hyphen` (CSS Text 3 §5.4). -/
+  soft : Bool := false
+  hyphen : Float := 0
+instance : Inhabited Cell := ⟨⟨default,0,0,0,false,false,'\n',false,0⟩⟩
 
 /-- Cells `first` to `stop-1`. `run` is the run that gives the size of an empty line. -/
 private structure AreaLine where
@@ -434,22 +441,19 @@ private def areaCells (font : SVGFont) (runs : Array Run) : Array Cell := Id.run
         | none => true
         | some last => last.space || last.lineBreak
       if space && !run.preserveSpace && afterGap then continue
+      if c == '\u00AD' then
+        let g := font.glyph '-'
+        cells := cells.push {glyph:=g,run:=current,advance:=0,kern:=0,space:=false,char:=c,soft:=true,hyphen:=g.advance*scale}
+        continue
       let g := font.glyph c
       let kern := match previous with
         | some (r,p) => if r == current then (font.kern p g)*scale else 0
         | none => 0
-      cells := cells.push {glyph:=g,run:=current,advance:=g.advance*scale,kern,space}
+      cells := cells.push {glyph:=g,run:=current,advance:=g.advance*scale,kern,space,char:=c}
       previous := some (current,g)
   return cells
 
 private def cellWidth (cell : Cell) : Float := cell.advance-cell.kern
-
-/-- First cell at or after `start` that ends a word. -/
-private def wordEnd (cells : Array Cell) (start : Nat) : Nat := Id.run do
-  for i in [start:cells.size] do
-    if let some cell := cells[i]? then
-      if cell.space || cell.lineBreak then return i
-  return cells.size
 
 private def rangeWidth (cells : Array Cell) (start stop : Nat) : Float := Id.run do
   let mut total := 0
@@ -457,53 +461,71 @@ private def rangeWidth (cells : Array Cell) (start stop : Nat) : Float := Id.run
     if let some cell := cells[i]? then total := total+cellWidth cell
   return total
 
-private structure Breaker where
-  lines : Array AreaLine := #[]
-  start : Nat := 0
-  /-- End of the last word on the line; spaces after it are not part of it yet. -/
-  stop : Nat := 0
-  width : Float := 0
+/-- The width of cells `start` to `stop-1` on one line: the kerning before the first cell
+does not count (`lowerArea` draws it at the line start). -/
+private def lineWidth (cells : Array Cell) (start stop : Nat) : Float :=
+  rangeWidth cells start stop + (if start < stop then ((cells[start]?).map (·.kern)).getD 0 else 0) +
+    (if start < stop then ((cells[stop-1]?).map (fun c => if c.soft then c.hyphen else 0)).getD 0 else 0)
 
-/-- End the current line. The next line starts at `next`. -/
-private def Breaker.finish (b : Breaker) (run next : Nat) (width : Float := 0) : Breaker :=
-  {lines:=b.lines.push ⟨b.start,b.stop,run,b.width⟩,start:=next,stop:=next,width}
-
-/-- §10.11.7: a `tbreak` ends a line, and a word goes to the next line when it does
-    not fit. A word wider than the area breaks between characters; each line has at
-    least one character, so the loop always makes progress. `limit` is the width of
-    the area, and `none` is `auto`: there only a `tbreak` ends a line. -/
+/-- §10.11.7: lines of an area. A `tbreak` ends a line. Elsewhere a line ends at a line-break
+opportunity of UAX 14 (`LineBreak.breakFlags`, strict mode), the last one before the content
+would be wider than the area; spaces at the end of a line do not count in its width. A segment
+that is wider than the area alone breaks between characters (W3C text-area-201-t: "Lines
+should break at character boundaries if there is not enough room to perform word breaks").
+`limit` is the width of the area, and `none` is `auto`: there only a `tbreak` ends a line.
+With `preserve`, the spaces at a break go to the start of the next line; without, they end
+with the line. Each pass of the loop moves `i` on or ends a line that has a cell, and a line
+ends at most once for each cell, so `2 * size + 2` passes are enough. -/
 private def breakLines (cells : Array Cell) (limit : Option Float) (preserve : Bool) : Array AreaLine := Id.run do
-  let mut b : Breaker := {}
+  let flags := L4Factoidal.Unicode.LineBreak.breakFlags (cells.map (·.char))
+  let size := cells.size
+  let fits := fun (a b : Nat) => match limit with
+    | none => true
+    | some w => lineWidth cells a b <= w
+  let runAt := fun (k : Nat) => ((cells[k]?).map (·.run)).getD 0
+  let mut lines : Array AreaLine := #[]
+  let mut start := 0
+  let mut stop := 0
   let mut i := 0
-  let width := limit.getD 0
-  for _ in [0:cells.size+1] do
-    let some cell := cells[i]? | break
+  for _ in [0:2*size+2] do
+    if i >= size then break
+    let cell := cells[i]!
     if cell.lineBreak then
-      b := b.finish cell.run (i+1)
+      lines := lines.push ⟨start,stop,cell.run,lineWidth cells start stop⟩
+      start := i+1
+      stop := i+1
       i := i+1
-    else if cell.space then
-      i := i+1
+      continue
+    -- The segment `i` to `q`: up to the next opportunity or `tbreak`.
+    let mut q := i+1
+    for _ in [0:size] do
+      if q >= size || flags.getD q false || cells[q]!.lineBreak then break
+      q := q+1
+    let mut e := q
+    for _ in [0:size] do
+      if e <= i || !cells[e-1]!.space then break
+      e := e-1
+    if e == i then
+      i := q
+      continue
+    if fits start e then
+      stop := e
+      i := q
+    else if stop > start then
+      lines := lines.push ⟨start,stop,runAt start,lineWidth cells start stop⟩
+      let next := if preserve then stop else i
+      start := next
+      stop := next
     else
-      let stop := wordEnd cells i
-      let word := rangeWidth cells i stop
-      let gap := rangeWidth cells b.stop i
-      if limit.isSome && b.stop > b.start && b.width+gap+word > width then
-        -- A preserved space goes to the next line; another one ends with the line.
-        let next := if preserve then b.stop else i
-        b := b.finish cell.run next (if preserve then gap else 0)
-        b := {b with stop:=i}
-      else
-        b := {b with stop:=i,width:=b.width+gap}
-      if limit.isNone || word <= width then
-        b := {b with stop,width:=b.width+word}
-      else
-        for k in [i:stop] do
-          if let some part := cells[k]? then
-            if b.stop > b.start && b.width+cellWidth part > width then b := b.finish part.run k
-            b := {b with stop:=k+1,width:=b.width+cellWidth part}
-      i := stop
-  if b.stop > b.start then b := b.finish ((cells[b.start]?).map (·.run) |>.getD 0) b.stop
-  return b.lines
+      for k in [i:e] do
+        if stop > start && !fits start (k+1) then
+          lines := lines.push ⟨start,stop,runAt start,lineWidth cells start stop⟩
+          start := k
+          stop := k
+        stop := k+1
+      i := q
+  if stop > start then lines := lines.push ⟨start,stop,runAt start,lineWidth cells start stop⟩
+  return lines
 
 /-- §10.11.4 and §10.11.7: the largest line increment of the runs on the line, where
     `auto` is 1.1 times the font size. An empty line has the size of its `tbreak`. -/
@@ -572,6 +594,8 @@ private def lowerArea (font : SVGFont) (state : TextState) (attrs : List Namespa
         groups := flush groups paths current
         paths := #[]
         current := some cell.run
+      if cell.soft && i+1 != line.stop then continue
+      let cell := if cell.soft then {cell with advance:=cell.hyphen} else cell
       if i > line.first then x := x-cell.kern
       let scale := run.size/font.unitsPerEm
       if !cell.glyph.data.isEmpty then
@@ -1430,6 +1454,41 @@ private def strictTextGap (font : SVGFont) (attrs : List NamespaceAttribute) (ru
     | some c => some s!"SVG font {font.family}: no glyph for U+{String.ofList (Nat.toDigits 16 c.toNat)}; font fallback for one character not done"
     | none => none
 
+/-- A character of a script whose line breaks need a dictionary (UAX 14 class SA): LB1 makes
+it AL, so `breakLines` finds no break inside a word of it. -/
+private def dictionaryScript (c : Char) : Bool :=
+  (c.toNat >= 0x0E00 && c.toNat <= 0x0EFF) || (c.toNat >= 0x1000 && c.toNat <= 0x109F) ||
+    (c.toNat >= 0x1780 && c.toNat <= 0x17FF) || (c.toNat >= 0x1950 && c.toNat <= 0x19DF) ||
+    (c.toNat >= 0x1A20 && c.toNat <= 0x1AAF) || (c.toNat >= 0xA9E0 && c.toNat <= 0xA9FF) ||
+    (c.toNat >= 0xAA60 && c.toNat <= 0xAADF)
+
+/-- A character of a right-to-left script: `lowerArea` lays out in logical order only. -/
+private def rightToLeftChar (c : Char) : Bool :=
+  (c.toNat >= 0x0590 && c.toNat <= 0x08FF) || (c.toNat >= 0xFB1D && c.toNat <= 0xFDFF) ||
+    (c.toNat >= 0xFE70 && c.toNat <= 0xFEFF)
+
+/-- Why `lowerArea` would not draw this `textArea` as specified (SVG Tiny 1.2 §10.11), if it
+would not. `lowerArea` takes one glyph for each character (no ligature, `lang` or
+`arabic-form` choice), and lays out in logical order. -/
+private def strictAreaGap (font : SVGFont) (runs : List Run) : Option String := Id.run do
+  -- A soft hyphen is drawn with the font's hyphen-minus glyph, at a line end only.
+  let chars := runs.flatMap (·.text.toList) |>.map fun c => if c == '\u00AD' then '-' else c
+  if runs.any (fun r => r.letterSpacing != 0 || r.wordSpacing != 0) then
+    return some "SVG font textArea: letter-spacing or word-spacing not drawn"
+  if runs.any (fun r => !r.xs.isEmpty || !r.ys.isEmpty || !r.dxs.isEmpty || !r.dys.isEmpty || !r.rotates.isEmpty) then
+    return some "SVG font textArea: x, y, dx, dy or rotate on tspan not drawn"
+  if runs.any (·.vertical) then return some "SVG font textArea: vertical writing-mode not drawn"
+  if let some c := chars.find? (fun c => !c.isWhitespace && !font.glyphs.contains c) then
+    return some s!"SVG font {font.family}: no glyph for U+{String.ofList (Nat.toDigits 16 c.toNat)}; font fallback for one character not done"
+  if chars.any rightToLeftChar then return some "SVG font textArea: right-to-left text not drawn"
+  -- A glyph that `SVGFont.pick` could choose and `SVGFont.glyph` does not: a ligature, or a
+  -- glyph for one language or one Arabic form.
+  for c in chars.eraseDups do
+    if (font.glyphs.getD c #[]).any (fun g => g.text.length > 1 || !g.lang.isEmpty || g.form.isSome) then
+      return some s!"SVG font textArea: glyph choice by ligature, lang or arabic-form for U+{String.ofList (Nat.toDigits 16 c.toNat)} not drawn"
+  if chars.any dictionaryScript then return some "SVG font textArea: line breaks by dictionary (UAX 14 class SA) not done"
+  return none
+
 /-- `font` and `font-face` elements are removed (they draw nothing, §20.3), and each SVG
 `text` whose font is an SVG font is lowered to glyph paths. Other text stays for the SFNT
 lowering. The depth is that of the tree, at most `fuel`; deeper is refused. -/
@@ -1452,6 +1511,19 @@ private def strictFontPass (fonts : List SVGFont) (sfnt : Array NativeSVGText.Fo
         if let some gap := strictTextGap font attrs (spaceRuns (results.flatMap (·.1))) then throw gap
         let (node,log) := lowerText font none state attrs kids
         if let some e := log.head? then throw s!"SVG font text: {e}"
+        return [node]
+    if svg && name.localPart == "textArea" then
+      let attrs := expandStyle (renameId attrs)
+      let kids := children.map (expandStyleTree maxDepth)
+      let inner := state.read attrs
+      match ← textFont fonts sfnt inner.family inner.variant with
+      | .sfnt => throw "textArea with an SFNT font: not drawn"
+      | .svg font =>
+        let results := kids.map (textRuns true false maxDepth inner [])
+        if let some e := (results.flatMap (·.2)).head? then throw s!"SVG font textArea: {e}"
+        if let some gap := strictAreaGap font (results.flatMap (·.1)) then throw gap
+        let (node,log) := lowerArea font state attrs kids
+        if let some e := log.head? then throw s!"SVG font textArea: {e}"
         return [node]
     let inner := if svg then state.read (expandStyle attrs) else state
     let mut kids : Array NamespaceNode := #[]
