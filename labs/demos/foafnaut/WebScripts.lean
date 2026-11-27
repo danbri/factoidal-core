@@ -5,6 +5,7 @@ import L4Factoidal.WasmVM.Hosts.LeanJSWorkers
 import L4Factoidal.DOM.OfXml
 import L4Factoidal.WHATWG.Encoding.Sniff
 import L4Factoidal.HTML.CspSource
+import L4Factoidal.WebDriver.BiDi
 import WebRenderScript
 import WebWasm
 import WebShell
@@ -70,6 +71,12 @@ argument for `start`:
   runner's `--dangerously-enable-webdriver-endpoint` sends; loopback only); answers its
   `secret`. `webdriver` (`method`, `path`, `host`, `origin`, `body`): one request of its
   listener, answered `{status, body}` (`WebDriver.Protocol.handle`: the gate first).
+- WebDriver BiDi on that endpoint (`WebDriver.BiDi`): `bidiConnect` (`path`, `host`,
+  `origin`): a WebSocket upgrade request, answered `{connection}` or `{status}` (403, 404:
+  the host refuses the upgrade); `bidi` (`connection`, `text` or `binary: true`): one frame,
+  answered `{reply}` (text to send; absent: send nothing), `navigate` (load this URL first, as
+  for classic Navigate To) and `close` (the connection numbers to close after the reply);
+  `bidiClose` (`connection`): the host's socket closed.
 - `message` (`data`: JSON text, `origin`): a message of the embedder to the page, as a
   `message` event at the window (a test host answers a page's request this way).
 - `resize` (`width`, `height`): the viewport in CSS pixels; `resize` at the window.
@@ -293,6 +300,9 @@ structure Held where
   /-- The WebDriver endpoint, when the test runner started one (`webdriverStart`): the
   gate's configuration (secret, port), the protocol's state and what this browser is. -/
   webdriver : Option (WebDriver.Gate.Config × WebDriver.Protocol.Server × WebDriver.Protocol.Browser × WebDriver.Window.State × WebDriver.Page.Doc) := none
+  /-- WebDriver BiDi on that endpoint (`WebDriver.BiDi`): its state, the open WebSocket
+  connections by the number the host knows them by, and the next number. -/
+  bidi : WebDriver.BiDi.State × List (Nat × WebDriver.BiDi.Conn) × Nat := ({}, [], 1)
 
 instance : Inhabited Held := ⟨{}⟩
 
@@ -339,7 +349,7 @@ def frameEntropyOf (id : Nat) (parent b : ByteArray) : Nat → ByteArray :=
   fun el => if parent.isEmpty || b.isEmpty then ByteArray.empty
     else b ++ ("frame:" ++ toString id ++ ":" ++ toString el).toUTF8
 
-def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "computed", "resize", "advance", "settle", "turn", "close",
+def actions : List String := ["info", "load", "start", "click", "pointer", "key", "actions", "message", "webdriverStart", "webdriver", "bidiConnect", "bidi", "bidiClose", "computed", "resize", "advance", "settle", "turn", "close",
   "aotModule", "resume", "host", "frame", "fetched", "net", "syncAnswer", "cookies", "gpuRead"]
 
 /-- The actions that name a session the engine holds (`session` in the request). -/
@@ -1660,7 +1670,10 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
     let launch : WebDriver.Gate.Launch := { enabled, address := str request "address", entropy }
     match WebDriver.Gate.start launch, natField request "port" with
     | .ok secret, some port =>
-      let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p) }
+      let address := str request "address"
+      let hostPart := if address.toList.contains ':' then "[" ++ address ++ "]" else address
+      let browser : WebDriver.Protocol.Browser := { platform := (match str request "platform" with | "" => "linux" | p => p),
+        socketBase := "ws://" ++ hostPart ++ ":" ++ toString port ++ "/" ++ secret }
       return ({ held with webdriver := some ({ secret, port }, {}, browser, {}, {}) },
         .ok (JSON.Json.object [("secret", .string secret)]).toString)
     | .ok _, none => return (held, .error "scriptSession: webdriverStart needs a port")
@@ -1713,6 +1726,55 @@ def act {M : Type → Type} [Monad M] [WebWasm.Machine M] (held : Held) (action 
                 | .ok j => WebDriver.Page.finish doc.refPrefix window.handle finish j
                 | .error _ => .error { code := .unknownError, message := "the page's answer is not JSON" }
               return answer { held with leanSession := some (id, s, marks) } result
+  | "bidiConnect" =>
+    -- a WebSocket upgrade on the endpoint's port: the gate, then the resource (`BiDi.connect`)
+    match held.webdriver with
+    | none => return (held, .error "scriptSession: no WebDriver endpoint")
+    | some (cfg, srv, browser, window, doc) =>
+      let origin : Option String := match request.field? "origin" with
+        | some (.string o) => some o
+        | _ => none
+      let (st, conns, next) := held.bidi
+      let (srv, st, r) := WebDriver.BiDi.connect cfg srv st { path := str request "path", host := str request "host", origin }
+      let held := { held with webdriver := some (cfg, srv, browser, window, doc) }
+      match r with
+      | .error status => return ({ held with bidi := (st, conns, next) }, .ok (JSON.Json.object [("status", .number (toString status))]).toString)
+      | .ok conn => return ({ held with bidi := (st, conns ++ [(next, conn)], next + 1) },
+          .ok (JSON.Json.object [("connection", .number (toString next))]).toString)
+  | "bidi" =>
+    -- one frame of a connection (`BiDi.handle`)
+    match held.webdriver, natField request "connection" with
+    | some (cfg, srv, browser, window, doc), some n =>
+      let (st, conns, next) := held.bidi
+      match conns.find? (·.1 == n) with
+      | none => return (held, .error "scriptSession: no such BiDi connection")
+      | some (_, conn) =>
+        let entropy ← turnBytes
+        let env : WebDriver.BiDi.Env := { browser, entropy, contexts := [{ id := window.handle, url := doc.url, clientWindow := window.handle }] }
+        let frame : WebDriver.BiDi.Frame := match request.field? "text" with
+          | some (.string t) => .text t
+          | _ => .binary
+        let (srv, st, conn, out) := WebDriver.BiDi.handle env srv st conn frame
+        let conns := conns.map fun (k, c) => if k == n then (k, conn) else (k, c)
+        match out with
+        | .silent => return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) }, .ok "{}")
+        | .reply message effect =>
+          let (doc, extra) := match effect with
+            | .navigate _ url => (doc.navigate url, [("navigate", JSON.Json.string url)])
+            | _ => (doc, [])
+          -- after session.end: every connection of the ended session closes
+          let closing := match effect, conn.session with
+            | .close, some sid => (conns.filter fun (_, c) => c.session == some sid).map (·.1)
+            | _, _ => []
+          let conns := conns.filter fun (k, _) => !closing.contains k
+          return ({ held with webdriver := some (cfg, srv, browser, window, doc), bidi := (st, conns, next) },
+            .ok (JSON.Json.object ([("reply", .string message.toString)] ++ extra ++
+              [("close", .array (closing.map fun k => .number (toString k)))])).toString)
+    | _, _ => return (held, .error "scriptSession: no WebDriver endpoint or no connection number")
+  | "bidiClose" =>
+    let (st, conns, next) := held.bidi
+    let n := natField request "connection"
+    return ({ held with bidi := (st, conns.filter (fun (k, _) => some k != n), next) }, .ok "{}")
   | "close" => return ({ held with session := none, turn := none, leanSession := none, startTodo := none, leanWorkers := {}, frames := #[], leanFrames := #[], frameScan := 0 }, .ok "{\"closed\":true}")
   | _ =>
   if held.turn.isSome then return (held, .error "scriptSession: a turn waits for the host")

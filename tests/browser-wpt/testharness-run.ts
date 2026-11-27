@@ -64,6 +64,7 @@ import {fileURLToPath as fromFileUrl} from "node:url";
 import {wptDomains,wptFetcher,wptPorts,wptRoute,wptSubdomains,type WptServe} from "./wpt-hosts.ts";
 // @ts-ignore plain JavaScript module of the Hub
 import {loadImports} from "../../docs/web/hub/foafnaut/page-load.mjs";
+import {bidiUpgrade,REVIEW_WARNING} from "../../labs/demos/foafnaut/webdriver_bidi.ts";
 
 const args=Deno.args,opt=(name:string,fallback="")=>{const i=args.indexOf(name);return i>=0?args[i+1]:fallback;};
 const here=dirname(fromFileUrl(import.meta.url)),root=resolve(here,"../.."),
@@ -943,7 +944,12 @@ function webdriverEndpoint(engine:Engine){
   if(!webdriverPort){const l=Deno.listen({hostname:address,port:0});webdriverPort=(l.addr as Deno.NetAddr).port;l.close();}
   const {secret}=engine.scriptSession("",{action:"webdriverStart",address,port:webdriverPort,
     platform:Deno.build.os==="darwin"?"mac":Deno.build.os,dangerouslyEnable:true}) as {secret:string};
+  console.error(REVIEW_WARNING);
+  console.error(`webdriver: endpoint on ${address}:${webdriverPort} (classic over HTTP, BiDi over WebSocket); remote control of the browser`);
   const server=Deno.serve({hostname:address,port:webdriverPort,onListen:()=>{}},async request=>{
+    // WebDriver BiDi: a WebSocket upgrade (L4Factoidal.WebDriver.BiDi decides; webdriver_bidi.ts moves bytes)
+    const upgraded=bidiUpgrade(engine,request,loadPage);
+    if(upgraded)return upgraded;
     const url=new URL(request.url);
     const body=request.method==="POST"?await request.text():"";
     const answer=engine.scriptSession("",{action:"webdriver",method:request.method,path:url.pathname+url.search,
