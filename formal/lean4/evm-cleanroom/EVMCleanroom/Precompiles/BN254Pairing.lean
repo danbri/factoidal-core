@@ -52,6 +52,22 @@ arithmetic of the first step for this curve (`p + 1 = r + (6x² + 1)` and the re
   the twist is outside), and on points of small order;
 * the published pairing vectors, with their failure cases.
 
+### The shorter relation (measured, not routed)
+
+The same paper gives a relation with a scalar of half the length:
+
+    [x+1]Q + ψ([x]Q) + ψ²([x]Q) = ψ³([2x]Q)
+
+(`inG2Short`, `FastPairing.psiShortRelation`). It is about 0.08 ms per point faster than the
+routed test. Its soundness needs one more published fact, the order `r·(2p − r)` of
+`E'(Fp2)`: with `ψ² = [t]ψ − [p]` the left side minus the right is `([a] + [b]ψ)Q` for two
+integers `a`, `b`; composing with `[a] + [b]([t] − ψ)` gives `[a² + abt + b²p]Q = O`, and that
+integer is a multiple of `r` whose greatest common divisor with `r·(2p − r)` is `r`
+(`FastPairingProofs.bn_short_relation_arithmetic`), so `[r]Q = O`. It is compared with the
+definition and with the routed test on every input of the differential check and in the
+guards below. The precompile uses `inG2`; routing `inG2Short` is a one-line change in
+`decodeG2` for whoever decides that the extra assumption is acceptable.
+
 ## Final value
 
 `FastPairing.finalExponentiation` computes the power `2x(6x²+3x+1)` of the value of

@@ -509,6 +509,20 @@ def timings (k : Nat) : IO Unit := do
   let bnNewM := BN254Pairing.millerProduct bnNewPairs
   measure "alt_bn128 OLD final exponentiation" 9 fun _ => (Pairing.finalExponentiation BN254.curve bnOldM).c0.c0
   measure "alt_bn128 NEW final exponentiation" 101 fun _ => (BN254Pairing.finalExponentiation bnNewM).c0.c0.r0.toNat
+  -- The same loop without two of the steps, for the split: the generic Fq2 over the limb field
+  -- (boxed coordinates, a reduction per base multiplication), and binary digits.
+  let genQ (a : Fp2) : Fq2 U256 := Fq2.ofNat BN254.baseField.ofNat a
+  let genPairs := bnOldPairs.map fun (a, b) =>
+    FastPairing.pairState (Fq2.quadOps BN254.baseField.ops true) (genQ ⟨a.1, 0⟩) (genQ ⟨a.2, 0⟩) (genQ b.1) (genQ b.2)
+  measure "alt_bn128 Miller loop on the generic Fq2 over the limb field (not routed)" 51 fun _ =>
+    (FastPairing.millerProduct (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve genPairs).c0.c0.c0.l0.toNat
+  let genM := FastPairing.millerProduct (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve genPairs
+  measure "alt_bn128 final exponentiation on the generic Fq2 over the limb field (not routed)" 51 fun _ =>
+    (FastPairing.finalExponentiation (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve genM).c0.c0.c0.l0.toNat
+  let binaryCurve : FastCurve Quad256 :=
+    { BN254Pairing.fastCurve with loopDigits := signedDigits BN254Pairing.loopScalar 0 (Nat.log2 BN254Pairing.loopScalar) }
+  measure "alt_bn128 Miller loop with binary digits (36 additions per pair; the signed digits have 21)" 51 fun _ =>
+    (FastPairing.millerProduct (Quad256.ops BN254.baseField true) binaryCurve bnNewPairs).c0.c0.r0.toNat
   let q := (bnMul2 (0xfedcba0987654321fedcba0987654321 + k) bnG2).getD bnG2
   measure "alt_bn128 OLD one G2 subgroup check" 9 fun _ => if bnDefinitional q then 1 else 0
   measure "alt_bn128 NEW one G2 subgroup check, psi(Q) = [6x^2]Q" 101 fun _ => if BN254Pairing.inG2 q.1 q.2 then 1 else 0
@@ -587,7 +601,7 @@ def main (args : List String) : IO UInt32 := do
           BN254Pairing.toLimbs BN254.curve BN254Pairing.hardPower (n 200)
         ++ checkTower "alt_bn128 (generic Fq2 over the limb field)" (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve
           (Fq2.toNat BN254.baseField.toNat) (Fq2.ofNat BN254.baseField.ofNat) BN254.curve BN254Pairing.hardPower (n 40)
-        ++ checkBnSubgroup (n 100) ++ checkBnPairs (n 60) ++ checkBnBody (n 60)
+        ++ checkBnSubgroup (n 400) ++ checkBnPairs (n 60) ++ checkBnBody (n 60)
         ++ checkTower "bls12-381" (Quad384.ops BLS12381.baseField false) BLS12381Pairing.fastCurve BLS12381Pairing.ofLimbs
           BLS12381Pairing.toLimbs BLS12381.curve BLS12381Pairing.hardPower (n 100)
         ++ checkBlsPairs (n 30) ++ checkBlsBody (n 20) ++ checkKzg (n 12)
