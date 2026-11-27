@@ -14,6 +14,7 @@
     "EVMCleanroom/TransactionListCLI.lean"
   ],
   "lean_source_closure": [
+    "EVMCleanroom/AccountOpcode.lean",
     "EVMCleanroom/BlobCall.lean",
     "EVMCleanroom/CLIEncoding.lean",
     "EVMCleanroom/Call.lean",
@@ -48,8 +49,8 @@
     "EVMCleanroom/World.lean"
   ],
   "repository_source_blobs": {
-    ".github/workflows/evm-cleanroom.yml": "4aa56fd14018c38acd712d65526acf6e7e804685",
-    ".github/workflows/evm-witness.yml": "7289ec39b0efd648f61da0f4f858c17e91074454",
+    ".github/workflows/evm-cleanroom.yml": "2116dc5fcc5cbed98272f599e886b9679aacb16f",
+    ".github/workflows/evm-witness.yml": "c16a83f5d2761f8e08e97b9c995d2fdc063fe616",
     "tools/lean-tail-recursion-audit.py": "d1c53ce322b491381ea0a7b50bf608ad48035b6e"
   },
   "native_targets": {

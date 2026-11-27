@@ -21,6 +21,10 @@ structure Account where
   nonce : Nat := 0
   code : Array UInt8 := #[]
   storage : Nat → Nat := fun _ => 0
+  /-- The host's statement that the account's pre-transaction storage is
+      nonempty (a nonempty storage root). The functional `storage` map cannot
+      decide this. Only the EIP-7610 creation-collision check reads it. -/
+  hasStorage : Bool := false
 
 /-- Account presence or absence and storage membership proved by the host. -/
 structure WitnessCoverage where
@@ -57,6 +61,16 @@ structure TxWorld where
   /-- Immutable, ordered transaction context installed by the transaction
       adapter. Neither the signed envelope nor sidecars are authenticated here. -/
   txBlobHashes : Array Word := #[]
+  /-- EIP-1153 transient storage, per account. Journalled with the frame and
+      every CALL/CREATE checkpoint, and empty at every transaction boundary. -/
+  transient : Nat → Nat → Nat := fun _ _ => 0
+  /-- Host-supplied recent block hashes for BLOCKHASH, oldest first. -/
+  blockHashes : Array Nat := #[]
+  /-- Accounts created by CREATE/CREATE2 in this transaction (EIP-6780). -/
+  created : Nat → Bool := fun _ => false
+  /-- Accounts registered by SELFDESTRUCT for deletion at transaction end,
+      most recent first (EIP-6780: only accounts created in this transaction). -/
+  toDelete : List Nat := []
 
 def beginTransaction (accounts : Nat → Account) : TxWorld :=
   { accounts := accounts
@@ -104,6 +118,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
     blockBaseFee := w.blockBaseFee
     blockBlobBaseFee := w.blockBlobBaseFee
     txBlobHashes := w.txBlobHashes
+    blockHashes := w.blockHashes
     logsRev := w.logsRev
     keccakAcceptance := w.keccakAcceptance
     callerAddress := callerAddress
@@ -116,6 +131,7 @@ def frameInput (w : TxWorld) (address gas : Nat)
       current := (w.accounts address).storage
       warm := w.warmSlots address
       refund := w.refund
+      transient := w.transient address
     } }
 
 /-- The executing address and its pre-instruction balance come from the
@@ -208,6 +224,7 @@ def commitFrame (w : TxWorld) (address : Nat) (out : State) : TxWorld :=
     warmSlots := fun other key =>
       if other = address then out.storage.warm key else w.warmSlots other key
     refund := out.storage.refund
+    transient := fun other => if other = address then out.storage.transient else w.transient other
     logsRev := out.logsRev }
 
 /-- Kind: transaction-context preservation.

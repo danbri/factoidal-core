@@ -224,6 +224,9 @@ inductive Error where
   | incompleteState (address : Nat) (slot : Option Nat)
   | framePolicyViolation (opcode : Nat)
   | stepLimit
+  /-- BLOCKHASH asked for a block inside the 256-block window whose hash the
+      host did not supply. This is an incomplete input, not an EVM failure. -/
+  | missingBlockHash (number : Nat)
   deriving Repr, DecidableEq
 
 /-- The bounds check is part of the constructor, not an assumed theorem. -/
@@ -284,6 +287,10 @@ structure State where
       context belongs to ordinary transactions; this frame does not authenticate
       the signed envelope or any blob sidecar. -/
   txBlobHashes : Array Word := #[]
+  /-- Host-supplied hashes of the most recent complete blocks, oldest first;
+      the last entry is the parent of `blockNumber`. At most 256 are used.
+      Not authenticated against a header chain here. -/
+  blockHashes : Array Nat := #[]
   /-- Immediate caller, set at each CALL entry. -/
   callerAddress : Nat := 0
   callValue : Nat := 0
@@ -335,15 +342,14 @@ def commit (s : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
       let s3 : State := { s2 with gas := s.gas - cost }
       let s4 : State := { s3 with halted := halt }
       let m : Memory := nextMemory.getD s.memory
-      let planned : Storage := nextStorage.getD s.storage
       -- No opcode may alter transaction-original storage. Static frames can
-      -- warm slots but cannot change current storage or the refund counter.
-      let st : Storage := {
-        planned with
-        original := s.storage.original
-        current := if s.readOnly then s.storage.current else planned.current
-        refund := if s.readOnly then s.storage.refund else planned.refund
-      }
+      -- warm slots but cannot change current or transient storage or the
+      -- refund counter. A step without a storage plan keeps the journal.
+      let st : Storage := match nextStorage with
+        | none => s.storage
+        | some planned =>
+          if s.readOnly then { s.storage with warm := planned.warm }
+          else { planned with original := s.storage.original }
       .ok { s4 with memory := m, storage := st, logsRev := s.recordLog nextLog }
     else .error .outOfGas
   else .error .stackOverflow
@@ -561,6 +567,75 @@ private def sstore (s : State) : Except Error Plan :=
       prepared (s.pc + 1) rest price.gas false none (some next)
   | _ => .error .stackUnderflow
 
+/-- Cancun opcodes (EIP-1153, EIP-5656) need a profile at or after Cancun.
+    `shanghaiPlus` spans the Cancun boundary, so it cannot decide activation. -/
+def Profile.cancunOrLater (p : Profile) : Bool :=
+  p == .cancunPlus || p == .osaka
+
+/-- EIP-1153 TLOAD: 100 gas, reads this account's transient slot. -/
+def tloadPlan (s : State) : Except Error Plan :=
+  if !s.profile.cancunOrLater then .error .unsupportedFork
+  else match s.stack.items with
+  | key :: rest => prepared (s.pc + 1) (word (s.storage.transient key.val) :: rest) 100
+  | [] => .error .stackUnderflow
+
+/-- Replace one transient slot, keeping every other part of the journal. -/
+def Storage.storeTransient (st : Storage) (key value : Nat) : Storage :=
+  { st with transient := fun k => if k = key then value else st.transient k }
+
+/-- EIP-1153 TSTORE: 100 gas charged before the static check, as in EELS
+    (`forks/cancun/vm/instructions/storage.py`); no 2300-gas stipend rule. -/
+def tstorePlan (s : State) : Except Error Plan :=
+  if !s.profile.cancunOrLater then .error .unsupportedFork
+  else match s.stack.items with
+  | key :: value :: rest =>
+    if s.gas < 100 then .error .outOfGas
+    else if s.readOnly then .error .writeProtection
+    else prepared (s.pc + 1) rest 100 false none (some (s.storage.storeTransient key.val value.val))
+  | _ => .error .stackUnderflow
+
+/-- EIP-5656 MCOPY word demand: both the source and destination windows. -/
+def mcopyWords (dest source length : Nat) : Nat :=
+  max (MemoryGas.requestedWords source length) (MemoryGas.requestedWords dest length)
+
+/-- EIP-5656 MCOPY gas: 3 + 3 per copied word + expansion over both windows. -/
+def mcopyCost (oldWords dest source length : Nat) : Nat :=
+  3 + 3 * ((length + 31) / 32) + MemoryGas.expansion oldWords (mcopyWords dest source length)
+
+/-- EIP-5656 MCOPY. The source is a view of the expanded memory before the
+    write, so overlapping ranges copy as if through a temporary buffer. -/
+def mcopyPlan (s : State) : Except Error Plan :=
+  if !s.profile.cancunOrLater then .error .unsupportedFork
+  else match s.stack.items with
+  | dest :: source :: length :: rest =>
+    let cost := mcopyCost s.memory.words dest.val source.val length.val
+    if s.gas < cost then .error .outOfGas
+    else
+      let expanded := s.memory.expand (mcopyWords dest.val source.val length.val)
+      let memory := expanded.copyFrom (ByteView.ofMemory expanded source.val length.val) 0 dest.val length.val
+      prepared (s.pc + 1) rest cost false (some memory)
+  | _ => .error .stackUnderflow
+
+/-- BLOCKHASH answer for a requested number: zero outside the 256 most
+    recent complete blocks, otherwise the supplied hash; a hash the host
+    did not supply is a refusal, never a guessed zero. -/
+def blockHashLookup (s : State) (number : Nat) : Except Error Word :=
+  if number < s.blockNumber ∧ s.blockNumber ≤ number + 256 then
+    let back := s.blockNumber - number
+    if back ≤ s.blockHashes.size then
+      .ok (word (s.blockHashes.getD (s.blockHashes.size - back) 0))
+    else .error (.missingBlockHash number)
+  else .ok (word 0)
+
+/-- BLOCKHASH (0x40): 20 gas on every fork. -/
+def blockHashPlan (s : State) : Except Error Plan :=
+  match s.stack.items with
+  | number :: rest =>
+    match blockHashLookup s number.val with
+    | .ok h => prepared (s.pc + 1) (h :: rest) 20
+    | .error e => .error e
+  | [] => .error .stackUnderflow
+
 /-- Partial instruction set. Unsupported instructions are errors, not NOPs.
     Gas costs here are those of the explicitly supported opcodes. -/
 def planStep (s : State) : Except Error Plan :=
@@ -615,6 +690,7 @@ def planStep (s : State) : Except Error Plan :=
       if s.profile = .preShanghai then .error .unsupportedFork
       else copyBytes s s.returnData true
     | 0x3a => prepared (s.pc + 1) (word s.effectiveGasPrice :: s.stack.items) 2 -- GASPRICE
+    | 0x40 => blockHashPlan s                              -- BLOCKHASH
     | 0x41 => prepared (s.pc + 1) (word s.blockCoinbase :: s.stack.items) 2 -- COINBASE
     | 0x42 => prepared (s.pc + 1) (word s.blockTimestamp :: s.stack.items) 2 -- TIMESTAMP
     | 0x43 => prepared (s.pc + 1) (word s.blockNumber :: s.stack.items) 2 -- NUMBER
@@ -658,6 +734,9 @@ def planStep (s : State) : Except Error Plan :=
         prepared (s.pc + 1) (word (s.gas - 2) :: s.stack.items) 2
       else .error .outOfGas
     | 0x5b => prepared (s.pc + 1) s.stack.items 1        -- JUMPDEST
+    | 0x5c => tloadPlan s                                  -- TLOAD (EIP-1153)
+    | 0x5d => tstorePlan s                                 -- TSTORE (EIP-1153)
+    | 0x5e => mcopyPlan s                                  -- MCOPY (EIP-5656)
     | 0x5f =>
       if s.profile != .preShanghai then
         prepared (s.pc + 1) (word 0 :: s.stack.items) 2
@@ -796,6 +875,189 @@ theorem step_log_underflow (s : State) (count : Nat)
 #print axioms step_log_static
 #print axioms step_log_outOfGas
 #print axioms step_log_underflow
+
+/-! ## Cancun instructions: TLOAD, TSTORE (EIP-1153), MCOPY (EIP-5656), BLOCKHASH -/
+
+/-- Kind: dispatcher correspondence (gas schedule).
+    Says: on a Cancun-or-later profile, TLOAD pops a key, pushes this account's
+    transient value and requests a 100-gas commit.
+    Does not say: transient storage is shared with any other account. -/
+theorem step_tload (s : State) (key : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5c)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = key :: rest) :
+    step s = commit s (s.pc + 1) (word (s.storage.transient key.val) :: rest) 100 := by
+  simp [step, planStep, hRun, hOp, tloadPlan, hFork, hStack, prepared]
+
+/-- Kind: dispatcher correspondence (gas schedule).
+    Says: a funded TSTORE outside a static frame charges exactly 100 gas and
+    commits the journal with exactly one transient slot replaced.
+    Does not say: the write survives a later REVERT (the checkpoint decides). -/
+theorem step_tstore (s : State) (key value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5d)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = key :: value :: rest)
+    (hGas : 100 ≤ s.gas) (hStatic : s.readOnly = false) :
+    step s = commit s (s.pc + 1) rest 100 false none
+      (some (s.storage.storeTransient key.val value.val)) := by
+  simp [step, planStep, hRun, hOp, tstorePlan, hFork, hStack, Nat.not_lt_of_ge hGas, hStatic, prepared]
+
+/-- Kind: static boundary.
+    Says: a funded TSTORE in a static frame is a write-protection error.
+    Does not say: an underfunded one reports write protection (it is out of gas first). -/
+theorem step_tstore_static (s : State) (key value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5d)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = key :: value :: rest)
+    (hGas : 100 ≤ s.gas) (hStatic : s.readOnly = true) :
+    step s = .error .writeProtection := by
+  simp [step, planStep, hRun, hOp, tstorePlan, hFork, hStack, Nat.not_lt_of_ge hGas, hStatic]
+
+/-- Kind: gas boundary.
+    Says: TSTORE with less than 100 gas is out of gas, as in EELS where the
+    charge precedes the static check.
+    Does not say: anything about the 2300-gas SSTORE stipend rule (TSTORE has none). -/
+theorem step_tstore_outOfGas (s : State) (key value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5d)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = key :: value :: rest)
+    (hGas : s.gas < 100) : step s = .error .outOfGas := by
+  simp [step, planStep, hRun, hOp, tstorePlan, hFork, hStack, hGas]
+
+/-- Kind: fork admission.
+    Says: TLOAD, TSTORE and MCOPY refuse on any profile before Cancun
+    (including `shanghaiPlus`, which spans the Cancun boundary).
+    Does not say: the opcodes are invalid on those forks' later blocks. -/
+theorem step_cancun_opcodes_unknown_fork (s : State) (hRun : s.halted = false)
+    (hOp : byteAt s s.pc = 0x5c ∨ byteAt s s.pc = 0x5d ∨ byteAt s s.pc = 0x5e)
+    (hFork : s.profile.cancunOrLater = false) : step s = .error .unsupportedFork := by
+  rcases hOp with h | h | h <;>
+    simp [step, planStep, hRun, h, tloadPlan, tstorePlan, mcopyPlan, hFork]
+
+/-- Kind: invariant (static frames).
+    Says: the single commit path never changes transient storage in a
+    read-only frame, whatever plan it is given.
+    Does not say: which instructions a static frame can execute. -/
+theorem commit_static_transient (s s' : State) (nextPC : Nat) (xs : List Word) (cost : Nat)
+    (halt : Bool) (m : Option Memory) (st : Option Storage) (log : Option LogEntry)
+    (hStatic : s.readOnly = true) (h : commit s nextPC xs cost halt m st log = .ok s') :
+    s'.storage.transient = s.storage.transient := by
+  unfold commit at h
+  split at h
+  · split at h
+    · cases h
+      cases st <;> simp [hStatic]
+    · cases h
+  · cases h
+
+/-- Kind: semantic correspondence.
+    Says: after a successful TSTORE, the frame's transient slot holds the
+    stored value and every other slot is unchanged.
+    Does not say: a later TLOAD in a different account sees the value. -/
+theorem step_tstore_transient (s s' : State) (key value : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5d)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = key :: value :: rest)
+    (hGas : 100 ≤ s.gas) (hStatic : s.readOnly = false) (h : step s = .ok s') (other : Nat) :
+    s'.storage.transient other = if other = key.val then value.val else s.storage.transient other := by
+  rw [step_tstore s key value rest hRun hOp hFork hStack hGas hStatic] at h
+  unfold commit at h
+  by_cases hb : rest.length ≤ 1024
+  · rw [dif_pos hb, dif_pos hGas] at h
+    cases h
+    simp [hStatic, Storage.storeTransient]
+  · rw [dif_neg hb] at h
+    cases h
+
+/-- Kind: dispatcher correspondence (gas schedule).
+    Says: a funded MCOPY charges 3 + 3 per word + expansion over both windows
+    and commits memory expanded to both windows with the destination
+    overwritten from a snapshot of the expanded source.
+    Does not say: the copy is cheaper than the byte-level model. -/
+theorem step_mcopy (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5e)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : mcopyCost s.memory.words dest.val source.val length.val ≤ s.gas) :
+    let expanded := s.memory.expand (mcopyWords dest.val source.val length.val)
+    step s = commit s (s.pc + 1) rest (mcopyCost s.memory.words dest.val source.val length.val) false
+      (some (expanded.copyFrom (ByteView.ofMemory expanded source.val length.val) 0 dest.val length.val)) := by
+  simp [step, planStep, hRun, hOp, mcopyPlan, hFork, hStack, Nat.not_lt_of_ge hGas, prepared]
+
+/-- Kind: semantic correspondence (overlap).
+    Says: every destination byte of the MCOPY memory reads the byte that was
+    at the corresponding source position before the copy, even when the
+    windows overlap.
+    Does not say: bytes outside the destination change (see `readByte_copyFrom_outside`). -/
+theorem mcopy_reads_source (m : Memory) (dest source length address : Nat)
+    (hPaid : address < 32 * m.words) (hStart : dest ≤ address) (hEnd : address < dest + length) :
+    (m.copyFrom (ByteView.ofMemory m source length) 0 dest length).readByte address =
+      m.readByte (source + (address - dest)) := by
+  rw [Memory.readByte_copyFrom_inside m _ 0 dest length address hPaid hStart hEnd]
+  have hIn : address - dest < length := by omega
+  simp [ByteView.readByte, ByteView.ofMemory, hIn]
+
+/-- Kind: gas boundary.
+    Says: an underfunded MCOPY is out of gas before any memory is expanded.
+    Does not say: which bound applies to the host's representation. -/
+theorem step_mcopy_outOfGas (s : State) (dest source length : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x5e)
+    (hFork : s.profile.cancunOrLater = true) (hStack : s.stack.items = dest :: source :: length :: rest)
+    (hGas : s.gas < mcopyCost s.memory.words dest.val source.val length.val) :
+    step s = .error .outOfGas := by
+  simp [step, planStep, hRun, hOp, mcopyPlan, hFork, hStack, hGas]
+
+/-- Kind: boundary.
+    Says: a zero-length MCOPY costs exactly 3 gas from any offsets and
+    requests no expansion, even at full-width offsets.
+    Does not say: the commit succeeds (the stack bound and gas still apply). -/
+theorem mcopyCost_zero (oldWords dest source : Nat) : mcopyCost oldWords dest source 0 = 3 := by
+  simp [mcopyCost, mcopyWords, MemoryGas.requestedWords, MemoryGas.expansion]
+
+/-- Kind: dispatcher correspondence (gas schedule).
+    Says: BLOCKHASH charges 20 gas and pushes the supplied hash for a block
+    in the 256-block window, counting back from the parent.
+    Does not say: the supplied hashes were authenticated. -/
+theorem step_blockHash_window (s : State) (number : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x40) (hStack : s.stack.items = number :: rest)
+    (hBelow : number.val < s.blockNumber) (hWindow : s.blockNumber ≤ number.val + 256)
+    (hKnown : s.blockNumber - number.val ≤ s.blockHashes.size) :
+    step s = commit s (s.pc + 1)
+      (word (s.blockHashes.getD (s.blockHashes.size - (s.blockNumber - number.val)) 0) :: rest) 20 := by
+  simp [step, planStep, hRun, hOp, blockHashPlan, blockHashLookup, hStack, hBelow, hWindow, hKnown,
+    prepared]
+
+/-- Kind: dispatcher correspondence.
+    Says: BLOCKHASH of the current block, any later block, or any block more
+    than 256 before the current one pushes zero for 20 gas, whatever the host supplied.
+    Does not say: that the current block number is authenticated. -/
+theorem step_blockHash_outside (s : State) (number : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x40) (hStack : s.stack.items = number :: rest)
+    (hOutside : ¬ (number.val < s.blockNumber ∧ s.blockNumber ≤ number.val + 256)) :
+    step s = commit s (s.pc + 1) (word 0 :: rest) 20 := by
+  simp only [step, planStep, hRun, hOp, blockHashPlan, blockHashLookup, hStack, if_neg hOutside]
+  rfl
+
+/-- Kind: input boundary.
+    Says: BLOCKHASH of a block inside the window whose hash was not supplied
+    is a named refusal, never a guessed zero.
+    Does not say: the block hash does not exist. -/
+theorem step_blockHash_missing (s : State) (number : Word) (rest : List Word)
+    (hRun : s.halted = false) (hOp : byteAt s s.pc = 0x40) (hStack : s.stack.items = number :: rest)
+    (hBelow : number.val < s.blockNumber) (hWindow : s.blockNumber ≤ number.val + 256)
+    (hUnknown : s.blockHashes.size < s.blockNumber - number.val) :
+    step s = .error (.missingBlockHash number.val) := by
+  simp [step, planStep, hRun, hOp, blockHashPlan, blockHashLookup, hStack, hBelow, hWindow,
+    Nat.not_le_of_lt hUnknown]
+
+#print axioms step_tload
+#print axioms step_tstore
+#print axioms step_tstore_static
+#print axioms step_tstore_outOfGas
+#print axioms step_cancun_opcodes_unknown_fork
+#print axioms commit_static_transient
+#print axioms step_tstore_transient
+#print axioms step_mcopy
+#print axioms mcopy_reads_source
+#print axioms step_mcopy_outOfGas
+#print axioms mcopyCost_zero
+#print axioms step_blockHash_window
+#print axioms step_blockHash_outside
+#print axioms step_blockHash_missing
 
 /-- Kind: dispatcher correspondence.
     Says: CALLDATALOAD replaces the top stack item through the loader and

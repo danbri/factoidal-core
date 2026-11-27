@@ -40,6 +40,7 @@ def errorCode : EVMCleanroom.Error → String
   | .unsupportedFork => "unsupportedFork"
   | .framePolicyViolation _ => "framePolicyViolation"
   | .stepLimit => "stepLimit"
+  | .missingBlockHash _ => "missingBlockHash"
 
 def hexDigit (n : Nat) : Char :=
   Char.ofNat (if n < 10 then 48 + n else 87 + n)

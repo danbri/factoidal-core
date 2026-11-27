@@ -31,6 +31,10 @@ structure Storage where
   current : Nat → Nat := fun _ => 0
   warm : Nat → Bool := fun _ => false
   refund : Int := 0
+  /-- EIP-1153 transient storage of this account for the current transaction.
+      It is journalled with the frame like `current` and starts empty at
+      every transaction boundary. -/
+  transient : Nat → Nat := fun _ => 0
 
 def Storage.empty : Storage := {}
 

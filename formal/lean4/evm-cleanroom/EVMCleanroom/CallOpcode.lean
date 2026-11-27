@@ -2,6 +2,7 @@ import EVMCleanroom.Call
 import EVMCleanroom.ValueCall
 import EVMCleanroom.Proofs
 import EVMCleanroom.IdentityPrecompile
+import EVMCleanroom.AccountOpcode
 
 /-!
 # World-aware execution of the EVM call family
@@ -49,7 +50,8 @@ private def finishCall (parentAddress : Nat) (parent : State) (rest : List Word)
             current := (out.accounts parentAddress).storage
             original := parent.storage.original
             warm := out.warmSlots parentAddress
-            refund := out.refund } }
+            refund := out.refund
+            transient := out.transient parentAddress } }
     | .error e => .exceptional e
   else .indeterminate .unsupportedFork
 
@@ -87,6 +89,22 @@ theorem finishCall_logs_projection (parentAddress : Nat) (parent resumed : State
     rfl
   · cases h
 
+/-- Kind: projection.
+    Says: the resumed caller's EIP-1153 transient storage is read from the
+    selected child outcome's world, so a rolled-back child leaves the caller
+    with its checkpointed transient values.
+    Does not say: whether the child outcome itself commits or rolls back. -/
+theorem finishCall_transient_projection (parentAddress : Nat) (parent resumed : State)
+    (rest : List Word) (out world : TxWorld) (remaining : Nat) (succeeded : Bool)
+    (h : finishCall parentAddress parent rest out remaining succeeded =
+      .committed world resumed) :
+    resumed.storage.transient = world.transient parentAddress := by
+  unfold finishCall at h
+  split at h
+  · split at h <;> cases h
+    rfl
+  · cases h
+
 /-- Preservation.
     Says: committing the resumed caller preserves the resulting world if no
     intervening instruction changes the caller's journal.
@@ -99,8 +117,10 @@ theorem finishCall_commit_preserves_world (parentAddress : Nat) (parent resumed 
   obtain ⟨_, current, _, warm, refund⟩ :=
     finishCall_state_projection parentAddress parent resumed rest out world remaining succeeded h
   have logs := finishCall_logs_projection parentAddress parent resumed rest out world remaining succeeded h
+  have transient := finishCall_transient_projection parentAddress parent resumed rest out world
+    remaining succeeded h
   unfold commitFrame
-  rw [current, warm, refund, logs]
+  rw [current, warm, refund, logs, transient]
   have accounts : (fun other => if other = parentAddress then
       { world.accounts parentAddress with storage := (world.accounts parentAddress).storage }
       else world.accounts other) = world.accounts := by
@@ -116,8 +136,15 @@ theorem finishCall_commit_preserves_world (parentAddress : Nat) (parent resumed 
     · subst other
       simp
     · simp [hOther]
+  have transientMap : (fun other => if other = parentAddress then
+      world.transient parentAddress else world.transient other) = world.transient := by
+    funext other
+    by_cases hOther : other = parentAddress
+    · subst other
+      simp
+    · simp [hOther]
   dsimp only
-  rw [accounts, warmSlots]
+  rw [accounts, warmSlots, transientMap]
 
 /-- Unbounded offsets and sizes, so their sum cannot wrap modulo 2^256. -/
 structure Windows where
@@ -164,7 +191,7 @@ inductive RawOutcome where
 def stepError (e : Error) : RawOutcome :=
   match e with
   | .unsupportedFork | .stepLimit | .framePolicyViolation _
-  | .resourceLimit | .incompleteState _ _ => .indeterminate e
+  | .resourceLimit | .incompleteState _ _ | .missingBlockHash _ => .indeterminate e
   | .invalidOpcode b =>
       if b == 0xfe then .exceptional e else .indeterminate e
   | _ => .exceptional e
@@ -444,34 +471,57 @@ private def missingStorage (active : ActiveFrame) (opcode : Nat) : Option Nat :=
       | [] => none
     key.filter (fun slot => !coverage.slot active.address slot)
 
+/-- Instructions that need no world access beyond the frame's own journal. -/
+private def ordinaryStep (active : ActiveFrame) (opcode : Nat) : Transition :=
+  let s := active.state
+  match missingStorage active opcode with
+  | some key => .terminal (.indeterminate (.incompleteState active.address (some key)))
+  | none =>
+    match step s with
+    | .error e => .terminal (stepError e)
+    | .ok next =>
+      if next.halted then .terminal (.stopped (commitFrame active.world active.address next) next)
+      else .next { active with state := next }
+
+/-- The 0xf0-0xff system instructions handled with the world journal. -/
+private def systemStep (active : ActiveFrame) (opcode : Nat) : Transition :=
+  let s := active.state
+  if opcode == 0xf1 then
+    dispatchCall (beginCall active)
+  else if opcode == 0xf2 then
+    dispatchCall (beginVariant active .callCode)
+  else if opcode == 0xf4 then
+    dispatchCall (beginVariant active .delegateCall)
+  else if opcode == 0xfa then
+    dispatchCall (beginVariant active .staticCall)
+  else if opcode == 0xf3 || opcode == 0xfd then
+    match Frame.haltWithData s with
+    | .error e => .terminal (stepError e)
+    | .ok (terminal, _, _) =>
+      if opcode == 0xfd then .terminal (.reverted terminal)
+      else .terminal (.returned (commitFrame active.world active.address terminal) terminal)
+  else ordinaryStep active opcode
+
+/-- Account-reading instructions 0x31, 0x3b, 0x3c and 0x3f. -/
+private def isAccountOpcode (opcode : Nat) : Bool :=
+  opcode == 0x31 || opcode == 0x3b || opcode == 0x3c || opcode == 0x3f
+
+/-- One dispatch. The common path (an opcode below 0x31, or between 0x40
+    and 0xef) costs two comparisons before reaching `Core.step`. -/
 private def dispatch (active : ActiveFrame) : Transition :=
   let s := active.state
   if s.halted then .terminal (.stopped active.world s)
   else
     let opcode := byteAt s s.pc
-    if opcode == 0xf1 then
-      dispatchCall (beginCall active)
-    else if opcode == 0xf2 then
-      dispatchCall (beginVariant active .callCode)
-    else if opcode == 0xf4 then
-      dispatchCall (beginVariant active .delegateCall)
-    else if opcode == 0xfa then
-      dispatchCall (beginVariant active .staticCall)
-    else if opcode == 0xf3 || opcode == 0xfd then
-      match Frame.haltWithData s with
-      | .error e => .terminal (stepError e)
-      | .ok (terminal, _, _) =>
-        if opcode == 0xfd then .terminal (.reverted terminal)
-        else .terminal (.returned (commitFrame active.world active.address terminal) terminal)
-    else
-      match missingStorage active opcode with
-      | some key => .terminal (.indeterminate (.incompleteState active.address (some key)))
-      | none =>
-        match step s with
+    if opcode < 0x31 then ordinaryStep active opcode
+    else if opcode < 0x40 then
+      if isAccountOpcode opcode then
+        match AccountOpcode.accountStep active.world s opcode with
         | .error e => .terminal (stepError e)
-        | .ok next =>
-          if next.halted then .terminal (.stopped (commitFrame active.world active.address next) next)
-          else .next { active with state := next }
+        | .ok (world, next) => .next { active with world, state := next }
+      else ordinaryStep active opcode
+    else if opcode < 0xf0 then ordinaryStep active opcode
+    else systemStep active opcode
 
 /-- The continuation stack is separate from the Lean call stack. One fuel
     unit is consumed per dispatch across the active frames, including implicit
@@ -755,7 +805,7 @@ theorem execute_missing_sload (fuel : Nat) (world : TxWorld) (address depth : Na
     executeAtDepth (fuel + 1) world address depth state =
       .indeterminate (.incompleteState address (some key.val)) := by
   rw [executeAtDepth, executeLoop]
-  cases rest <;> simp [dispatch, missingStorage, Option.filter, hRunning, hOpcode, hStack, hCoverage, hMissing]
+  cases rest <;> simp [dispatch, ordinaryStep, systemStep, missingStorage, Option.filter, hRunning, hOpcode, hStack, hCoverage, hMissing]
 
 /-- Kind: boundary.
     Says: the actual dispatcher refuses an eligible SSTORE when no
@@ -770,7 +820,7 @@ theorem execute_missing_sstore (fuel : Nat) (world : TxWorld) (address depth : N
     executeAtDepth (fuel + 1) world address depth state =
       .indeterminate (.incompleteState address (some key.val)) := by
   rw [executeAtDepth, executeLoop]
-  simp [dispatch, missingStorage, Option.filter, hRunning, hOpcode, hStack, hMutable, hGas, hCoverage, hMissing]
+  simp [dispatch, ordinaryStep, systemStep, missingStorage, Option.filter, hRunning, hOpcode, hStack, hMutable, hGas, hCoverage, hMissing]
 
 /-- Kind: boundary.
     Says: a CALL without a target account witness refuses before scheduling
@@ -1032,7 +1082,7 @@ private theorem executeLoop_enters_child (fuel : Nat) (active child : ActiveFram
     (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  simp [dispatch, dispatchCall, precompileStep, hRunning, hOpcode, hEntry, hOrdinary]
+  simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, hRunning, hOpcode, hEntry, hOrdinary]
 
 /-- Kind: correspondence.
     Says: all three new opcode bytes enter the same continuation loop as CALL.
@@ -1045,7 +1095,7 @@ private theorem executeLoop_enters_variant (fuel : Nat) (active child : ActiveFr
     (hOrdinary : k.codeTarget ≠ 4) :
     executeLoop (fuel + 1) active callers = executeLoop fuel child (k :: callers) := by
   rw [executeLoop]
-  cases kind <;> simp [dispatch, dispatchCall, precompileStep, CallVariant.opcode, hRunning, hOpcode, hEntry,
+  cases kind <;> simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, CallVariant.opcode, hRunning, hOpcode, hEntry,
     hOrdinary]
 
 /-- Kind: boundary.
@@ -1064,7 +1114,7 @@ theorem execute_missing_variant_code (fuel : Nat) (active : ActiveFrame) (kind :
   rcases active with ⟨world, address, depth, state⟩
   change state.halted = false at hRunning
   rw [executeAtDepth, executeLoop]
-  cases kind <;> simp [dispatch, dispatchCall, stepError, CallVariant.opcode, hRunning, hOpcode, hEntry]
+  cases kind <;> simp [dispatch, ordinaryStep, systemStep, dispatchCall, stepError, CallVariant.opcode, hRunning, hOpcode, hEntry]
 
 /-- Kind: correspondence.
     Says: the dispatcher continues a caller using the world and state
@@ -1306,6 +1356,7 @@ theorem run_parent_exception_atomic (fuel : Nat) (entry result : TxWorld)
 #print axioms finishCall_state_projection
 #print axioms finishCall_logs_projection
 #print axioms finishCall_commit_preserves_world
+#print axioms finishCall_transient_projection
 
 /-- Kind: executable correspondence.
     Says: the actual identity dispatcher derives unchanged bytes and exact
@@ -1450,7 +1501,7 @@ theorem executeAtDepth_identity_oversize (fuel : Nat) (active child : ActiveFram
   have hResult := IdentityPrecompile.executeView_oversize maxIdentityCallBytes k.budget.childGas
     child.state.callData hSize
   rw [executeAtDepth, executeLoop]
-  simp [dispatch, dispatchCall, precompileStep, afterCall, hRunning, hOpcode, hEntry, hTarget, hResult]
+  simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, afterCall, hRunning, hOpcode, hEntry, hTarget, hResult]
 
 /-- Kind: public opcode boundary.
     Says: CALLCODE, DELEGATECALL and STATICCALL each propagate identity's
@@ -1467,7 +1518,7 @@ theorem executeAtDepth_identity_variant_oversize (fuel : Nat) (active child : Ac
   have hResult := IdentityPrecompile.executeView_oversize maxIdentityCallBytes k.budget.childGas
     child.state.callData hSize
   rw [executeAtDepth, executeLoop]
-  cases kind <;> simp [dispatch, dispatchCall, precompileStep, afterCall, CallVariant.opcode,
+  cases kind <;> simp [dispatch, ordinaryStep, systemStep, dispatchCall, precompileStep, afterCall, CallVariant.opcode,
     hRunning, hOpcode, hEntry, hTarget, hResult]
 
 #print axioms dispatchCall_identity_admitted
@@ -1480,5 +1531,74 @@ theorem executeAtDepth_identity_variant_oversize (fuel : Nat) (active child : Ac
 #print axioms callStep_identity_input_to_output
 #print axioms executeAtDepth_identity_oversize
 #print axioms executeAtDepth_identity_variant_oversize
+
+/-- Kind: dispatcher correspondence.
+    Says: in the actual world-aware loop, a successful BALANCE, EXTCODESIZE,
+    EXTCODECOPY or EXTCODEHASH continues with exactly the world and frame state
+    computed by `AccountOpcode.accountStep`, consuming one fuel unit.
+    Does not say: the remaining execution terminates within the fuel. -/
+theorem executeAtDepth_account (fuel : Nat) (world world' : TxWorld) (address depth : Nat)
+    (state state' : State) (hRunning : state.halted = false)
+    (hOpcode : byteAt state state.pc = 0x31 ∨ byteAt state state.pc = 0x3b ∨
+      byteAt state state.pc = 0x3c ∨ byteAt state state.pc = 0x3f)
+    (hStep : AccountOpcode.accountStep world state (byteAt state state.pc) = .ok (world', state')) :
+    executeAtDepth (fuel + 1) world address depth state = executeAtDepth fuel world' address depth state' := by
+  rw [executeAtDepth, executeLoop]
+  rcases hOpcode with h | h | h | h <;> rw [h] at hStep <;>
+    simp [dispatch, ordinaryStep, systemStep, isAccountOpcode, hRunning, h, hStep] <;> rfl
+
+/-- Kind: dispatcher correspondence.
+    Says: a failing account instruction ends the frame with the dispatcher's
+    classification of the same error (exceptional or indeterminate).
+    Does not say: which errors each instruction can raise. -/
+theorem executeAtDepth_account_error (fuel : Nat) (world : TxWorld) (address depth : Nat)
+    (state : State) (e : Error) (hRunning : state.halted = false)
+    (hOpcode : byteAt state state.pc = 0x31 ∨ byteAt state state.pc = 0x3b ∨
+      byteAt state state.pc = 0x3c ∨ byteAt state state.pc = 0x3f)
+    (hStep : AccountOpcode.accountStep world state (byteAt state state.pc) = .error e) :
+    executeAtDepth (fuel + 1) world address depth state = stepError e := by
+  rw [executeAtDepth, executeLoop]
+  rcases hOpcode with h | h | h | h <;> rw [h] at hStep <;>
+    simp [dispatch, ordinaryStep, systemStep, isAccountOpcode, hRunning, h, hStep]
+
+/-- Kind: checkpoint (EIP-1153).
+    Says: when a CALL-family child reverts or halts exceptionally, the resumed
+    caller's transient storage is the checkpoint's value for the caller, so
+    every TSTORE made by the child and its descendants is discarded.
+    Does not say: what the checkpoint itself contains (see `beginCall_checkpoint_transient`). -/
+theorem resumeChild_failure_transient (k : Continuation) (raw : RawOutcome) (resumed : State)
+    (result : TxWorld) (hFailed : (∃ t, raw = .reverted t) ∨ (∃ e, raw = .exceptional e))
+    (h : resumeChild k raw = .committed result resumed) :
+    result = k.checkpoint ∧ resumed.storage.transient = k.checkpoint.transient k.address := by
+  rcases hFailed with ⟨t, rfl⟩ | ⟨e, rfl⟩
+  · obtain ⟨hWorld, _, _⟩ := resumeChild_revert k t resumed result h
+    simp only [resumeChild, resumeCall] at h
+    split at h
+    · exact ⟨hWorld, (finishCall_transient_projection _ _ _ _ _ _ _ _ h).trans (by rw [hWorld])⟩
+    · cases h
+  · obtain ⟨hWorld, _, _⟩ := resumeChild_exception k e resumed result h
+    simp only [resumeChild, resumeCall] at h
+    split at h
+    · exact ⟨hWorld, (finishCall_transient_projection _ _ _ _ _ _ _ _ h).trans (by rw [hWorld])⟩
+    · cases h
+
+/-- Kind: checkpoint (EIP-1153).
+    Says: the checkpoint saved by an entered CALL holds the caller frame's own
+    transient storage at the moment of the call, and every other account's
+    transient storage from the world.
+    Does not say: that the caller later keeps the child's writes. -/
+theorem beginCall_checkpoint_transient (active child : ActiveFrame) (k : Continuation)
+    (h : beginCall active = .ok (.entered child k)) (other : Nat) :
+    k.checkpoint.transient other =
+      if other = active.address then active.state.storage.transient else active.world.transient other := by
+  obtain ⟨_, _, _, _, _, _, hCheckpoint, _⟩ := beginCall_entered_context active child k h
+  rw [hCheckpoint]
+  unfold WorldCall.warmTarget
+  split <;> simp [commitFrame]
+
+#print axioms executeAtDepth_account
+#print axioms executeAtDepth_account_error
+#print axioms resumeChild_failure_transient
+#print axioms beginCall_checkpoint_transient
 
 end EVMCleanroom.CallOpcode

@@ -451,10 +451,35 @@ charging. This does not prove EELS equivalence or world-state rollback.
 `CALLDATALOAD`, `CALLDATASIZE`, `CALLDATACOPY`, `CODESIZE`, `CODECOPY`,
 `RETURNDATASIZE`, `RETURNDATACOPY`, `SELFBALANCE`, `BLOBHASH`, `BLOBBASEFEE`, `POP`,
 `JUMP`, `JUMPI`, `PC`, `GAS`, `JUMPDEST`, `MLOAD`, `MSTORE`, `MSTORE8`, `MSIZE`,
-`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`
-and opt-in `KECCAK256`.
+`PUSH0`, `PUSH1..32`, `DUP1..16`, `SWAP1..16`, `SLOAD`, `SSTORE`, `LOG0..4`,
+`BLOCKHASH`, `TLOAD`, `TSTORE`, `MCOPY` and opt-in `KECCAK256`.
 A separate `Frame.run` handles `RETURN` and `REVERT` and `CallOpcode.run`
-handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths.
+handles the restricted `CALL`, `CALLCODE`, `DELEGATECALL` and `STATICCALL` paths
+and the world-reading `BALANCE`, `EXTCODESIZE`, `EXTCODECOPY` and `EXTCODEHASH`.
+
+The account instructions charge EIP-2929 warm/cold access (100/2600 gas) and
+warm their target in the checkpointed world, so a failed child's warm-ups are
+discarded. `EXTCODEHASH` returns zero for an empty account and needs the
+Keccak opt-in. `BLOCKHASH` reads a host-supplied list of the 256 most recent
+hashes; a hash inside the window that was not supplied is refused, never
+guessed. EIP-1153 transient storage is per account in the transaction world,
+saved in every CALL checkpoint (rolled back with a failed child or entry
+frame) and empty at the start of every transaction; `TSTORE` is refused in a
+static frame. `MCOPY` charges both windows' expansion and copies from a
+snapshot, so overlapping ranges behave as a temporary buffer. `TLOAD`,
+`TSTORE` and `MCOPY` require the Cancun or Osaka profile; the account
+instructions refuse on the coarse pre-Shanghai profile, which spans their
+repricings. Theorems: [Core](EVMCleanroom/Core.lean) (`step_tload`,
+`step_tstore*`, `step_mcopy*`, `step_blockHash_*`),
+[AccountOpcode](EVMCleanroom/AccountOpcode.lean),
+[AccountTransientProofs](EVMCleanroom/AccountTransientProofs.lean) and the
+dispatcher links in [CallOpcode](EVMCleanroom/CallOpcode.lean)
+(`executeAtDepth_account`, `resumeChild_failure_transient`,
+`beginCall_checkpoint_transient`), audited by
+[`check-opcode-axioms.py`](scripts/check-opcode-axioms.py). Differential
+matrix: [`account-transient.mjs`](scripts/differential/account-transient.mjs)
+(117 cases against EthereumJS Cancun as an oracle, with gas boundary pairs and
+negative controls), through the `evm-subset --world` test entry point.
 
 `PUSH0` is gated by the coarse pre-/post-Shanghai profiles. The pre-Shanghai
 profile leaves activation of `SHL`, `SHR`, `RETURNDATASIZE` and

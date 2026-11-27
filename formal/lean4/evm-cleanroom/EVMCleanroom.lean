@@ -42,3 +42,5 @@ import EVMCleanroom.TransactionListProofs
 import EVMCleanroom.TransactionListTests
 import EVMCleanroom.TransactionTransportProofs
 import EVMCleanroom.TransactionTransportTests
+import EVMCleanroom.AccountOpcode
+import EVMCleanroom.AccountTransientProofs

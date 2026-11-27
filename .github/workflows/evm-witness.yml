@@ -68,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/check-active-ledger.py | tee .lake/witness-evidence/source-ledger.json \
-            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==170,x'
+            | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="active-sources-consistent" and x["selectedTheorems"]==324 and x["files"]==171,x'
           python3 scripts/test-active-ledger.py
           python3 scripts/check-witness-axioms.py --selftest | tee .lake/witness-evidence/axiom-controls.json \
             | python3 -c 'import json,sys; x=json.load(sys.stdin); assert x["status"]=="negative-controls-pass" and x["rejected"]==19 and x["retainedClaims"]==292,x'
