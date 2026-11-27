@@ -1308,7 +1308,12 @@ Node and browsers: "ok procede cautiously, and without breaking our xmpp".
   lands only when the Deno run passes what the Node run passes. XMPP moves last, after the two
   Deno differences in its suites are fixed or explained.
 - The npm library (`import '@factoidal/core'`) keeps working in Node and browsers.
-- Open question for the owner: does `npx factoidal` keep running under Node?
+- `npx factoidal` keeps running under Node. Owner, 2026-11-27, verbatim: "keep running - yes
+  pls"; then "yes, re deno" (go on with the move), and: "we don't want to be too tied to any of
+  these, and the exposure to external code needs to be clear and documented". So code is not
+  tied to one runtime: runtime calls go through small host adapters, and a record lists every
+  piece of external code each path depends on (runtime, TLS library, crypto provider, crates,
+  packages), with its version and what it decides.
 - Baseline and plan: https://github.com/danbri/factoidal-core/issues/1176.
 
 ### Media: audio first; decoders vendored in factoidal-builds; OS video decoders (owner, 2026-11-26)
