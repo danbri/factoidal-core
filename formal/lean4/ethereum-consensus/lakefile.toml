@@ -74,3 +74,14 @@ root = "RegistryProofMain"
 [[lean_exe]]
 name = "ssz-proposer-slashing"
 root = "ProposerSlashingMain"
+
+[[lean_lib]]
+name = "BeaconBLS"
+roots = ["G1PublicKey", "G2Signature", "PairingTarget", "HashToField", "BLSVerify"]
+
+[[lean_lib]]
+name = "Beacon"
+
+[[lean_exe]]
+name = "beacon-spec-tests"
+root = "BeaconSpecTestsMain"
