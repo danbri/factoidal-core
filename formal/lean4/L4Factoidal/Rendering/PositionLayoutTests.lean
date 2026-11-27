@@ -42,6 +42,21 @@ private def breaksSix (extra : String) : Option (Bool × Bool) := do
 #guard box sixWords "#heading{width:120px;text-wrap:balance}" "heading" ==
   box sixWords "#heading{width:120px}" "heading"
 
+-- The winning wrap mode controls soft wrapping independently of space collapse.
+#guard breaksSix "#heading{text-wrap:nowrap}" == some (true,true)
+#guard breaksSix "#heading{white-space:nowrap;text-wrap-mode:wrap}" == some (true,false)
+#guard breaksSix "#heading{text-wrap-mode:wrap;white-space:nowrap}" == some (true,true)
+#guard breaksSix "#heading{text-wrap-mode:wrap!important;white-space:nowrap}" == some (true,false)
+#guard breaksSix "#heading{--space:nowrap;text-wrap-mode:wrap;white-space:var(--space)}" == some (true,true)
+#guard breaksSix "#parent{white-space:nowrap} #heading{text-wrap:initial}" == some (true,false)
+#guard breaksSix "#parent{text-wrap:nowrap} #heading{white-space:initial;text-wrap-mode:inherit}" ==
+  some (true,true)
+#guard breaksSix "#parent{text-wrap:nowrap} #heading{text-wrap-mode:unset}" == some (true,true)
+
+private def forcedBreakWords := "<div id=heading>AAAA    BBBB\nCCCC DDDD</div>"
+#guard (box forcedBreakWords "#heading{width:120px;white-space:pre-line;text-wrap:nowrap}" "heading").map
+  (·.2.2.2) == some 14
+
 -- A float that ends above a heading leaves the full line width available to balance.
 -- A float that remains alongside the heading continues to constrain its lines.
 private def headingAfterFloat := "<div id=float>F</div><div id=spacer></div><div id=heading>AAAA BBBB CCCC DDDD EEEE FFFF</div>"
