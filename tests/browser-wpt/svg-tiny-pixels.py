@@ -6,7 +6,11 @@ the same WebGPU artifact the browser draws. svg_tiny_gpu.ts draws it on a real
 GPU and reads the pixels back. They are compared with the png/ file of the same
 name from the same archive. The CPU sampler is not used: it takes minutes a file.
 
-MATCH and CLOSE are our own bands, fixed before the first run. They are not a
+MATCH and CLOSE are our own bands, fixed before the first run. The outer
+BORDER pixels of each image are not compared (owner, 2026-11-27): the W3C PNGs
+draw the 1-pixel test-frame with stroke normalization, one opaque row, and an
+anti-aliasing renderer (ours, Chromium) draws two half-grey rows, about 3,344
+pixels that no band allows. Shares are of the whole image, as before. They are not a
 W3C verdict: W3C pass criteria are read by a person, and allow label text to
 differ. A blank white image goes through the same bands as a control.
 
@@ -27,6 +31,7 @@ TOLERANCE = 32            # channel difference that counts as a different pixel
 MATCH = (0.005, 0.95)     # most different share, least ink recall
 CLOSE = (0.05, 0.70)
 INK = 24                  # distance from white that counts as ink
+BORDER = 3                # outer pixels left out: the test-frame (see above)
 # Lines of the Lean log that say the file animates (same prefixes as the dashboard).
 ANIMATION = ('element: animate', 'element: set', 'element in text: set', 'element in text: animate',
              'element: animation', 'element: discard')
@@ -77,14 +82,24 @@ def flatten(image):
 
 def score(actual, expected):
     difference = np.abs(actual.astype(np.int16) - expected.astype(np.int16)).max(axis=2)
-    different = int((difference > TOLERANCE).sum())
-    share = different / difference.size
-    ink = (255 - expected.astype(np.int16)).max(axis=2) > INK
-    recall = float(((difference <= TOLERANCE) & ink).sum() / ink.sum()) if ink.any() else 1.0
-    band = 'MATCH' if share <= MATCH[0] and recall >= MATCH[1] else \
-        'CLOSE' if share <= CLOSE[0] and recall >= CLOSE[1] else 'MISMATCH'
+    inside = np.zeros(difference.shape, dtype=bool)
+    inside[BORDER:-BORDER, BORDER:-BORDER] = True
+
+    def bands(region):
+        different = int(((difference > TOLERANCE) & region).sum())
+        share = different / difference.size
+        ink = ((255 - expected.astype(np.int16)).max(axis=2) > INK) & region
+        recall = float(((difference <= TOLERANCE) & ink).sum() / ink.sum()) if ink.any() else 1.0
+        band = 'MATCH' if share <= MATCH[0] and recall >= MATCH[1] else \
+            'CLOSE' if share <= CLOSE[0] and recall >= CLOSE[1] else 'MISMATCH'
+        return band, different, share, recall
+    band, different, share, recall = bands(inside)
+    # The same image with the border compared too: the rule before 2026-11-27.
+    whole, wholeDifferent, _, _ = bands(np.ones(difference.shape, dtype=bool))
     return {'band': band, 'differentPixels': different, 'differentShare': round(share, 6),
-            'inkRecall': round(recall, 4), 'exact': int(difference.max()) == 0}
+            'inkRecall': round(recall, 4), 'exact': int(difference.max()) == 0,
+            'bandWithBorder': whole, 'differentPixelsWithBorder': wholeDifferent,
+            'borderPixels': int((~inside).sum())}
 
 
 def prepare(stem):
@@ -159,11 +174,14 @@ report = {'format': 'factoidal-svg-tiny-pixels-v1',
           'archiveSha256': ARCHIVE_SHA256, 'nativeSha256': sha(a.native.read_bytes()),
           'runnerSha256': sha(Path(__file__).read_bytes()),
           'tolerance': TOLERANCE, 'match': MATCH, 'close': CLOSE, 'inkThreshold': INK,
+          'borderExcluded': {'width': BORDER, 'region': 'the template frame (test-frame) only: the outer 3 pixels of every image',
+                             'pixels': dict(collections.Counter(str(c['borderPixels']) for c in cases if 'borderPixels' in c))},
+          'countsWithBorder': dict(collections.Counter(c.get('bandWithBorder', c['status']) for c in cases)),
           'total': len(cases), 'counts': dict(counts), 'blankControlCounts': dict(blank),
           'exact': sum(1 for c in cases if c.get('exact')),
           'filesAffectedByDrop': dict(drops.most_common()), 'cases': cases}
 (out / 'svg-tiny-pixels.json').write_text(json.dumps(report, indent=1) + '\n')
-print(json.dumps({k: report[k] for k in ('total', 'counts', 'blankControlCounts', 'exact')}))
+print(json.dumps({k: report[k] for k in ('total', 'counts', 'countsWithBorder', 'blankControlCounts', 'exact')}))
 print('most common removals (files affected):')
 for line, count in drops.most_common(25):
     print(f'  {count:4} {line[:90]}')

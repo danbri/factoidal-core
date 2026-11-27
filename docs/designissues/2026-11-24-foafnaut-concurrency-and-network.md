@@ -400,3 +400,12 @@ Notes:
   version and can report its handshake details; (2) Lean decides the TLS policy (versions, cipher
   suites, groups, certificate path and name checks) and the library only does the cryptography;
   (3) a TLS 1.3 state machine in Lean over HACL* primitives. Only (1) is small. None is started.
+
+Checked 2026-11-27 against the Deno v2.9.8 sources (`Cargo.toml`, `ext/tls/lib.rs`): Deno uses
+rustls 0.23.40 (features `std`, `tls12`, `aws_lc_rs`), so its crypto provider is aws-lc-rs
+(AWS-LC, a C library derived from BoringSSL and OpenSSL), not ring. Certificates are checked by
+rustls-webpki 0.103.16. The default root store is the Mozilla list compiled in
+(`webpki_roots::TLS_SERVER_ROOTS`); Deno's `DENO_TLS_CA_STORE=system` option selects the
+operating system store instead (`deno_native_certs`). Our Tor wasm module uses rustls 0.23 with
+the ring provider: same TLS library, different crypto provider. Deno does not enable the FIPS
+build of aws-lc-rs.
