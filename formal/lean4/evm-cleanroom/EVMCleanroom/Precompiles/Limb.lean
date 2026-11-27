@@ -17,6 +17,8 @@ This module imports nothing. The specifications of these steps on natural
 numbers are proved in `LimbProofs.lean`.
 -/
 
+set_option linter.unusedVariables false
+
 namespace EVMCleanroom.Precompiles
 
 namespace Limb

@@ -23,14 +23,14 @@ namespace EVMCleanroom.Precompiles
     `R mod N` (the stored form of one) and `R² mod N`. -/
 structure Mont256 where
   n : U256
-  inv : UInt64
+  n0inv : UInt64
   one : U256
   r2 : U256
 
 namespace Mont256
 
-@[inline] def mul (M : Mont256) (a b : U256) : U256 := U256.redc M.n M.inv (U256.mulWide a b)
-@[inline] def sqr (M : Mont256) (a : U256) : U256 := U256.redc M.n M.inv (U256.mulWide a a)
+@[inline] def mul (M : Mont256) (a b : U256) : U256 := U256.redc M.n M.n0inv (U256.mulWide a b)
+@[inline] def sqr (M : Mont256) (a : U256) : U256 := U256.redc M.n M.n0inv (U256.mulWide a a)
 @[inline] def add (M : Mont256) (a b : U256) : U256 := U256.addMod M.n a b
 @[inline] def sub (M : Mont256) (a b : U256) : U256 := U256.subMod M.n a b
 @[inline] def neg (M : Mont256) (a : U256) : U256 := U256.negMod M.n a
@@ -38,7 +38,7 @@ namespace Mont256
 /-- Stored form of a canonical residue. -/
 @[inline] def toMont (M : Mont256) (a : U256) : U256 := mul M a M.r2
 /-- The canonical residue of a stored value. -/
-@[inline] def fromMont (M : Mont256) (a : U256) : U256 := U256.redc M.n M.inv a.widen
+@[inline] def fromMont (M : Mont256) (a : U256) : U256 := U256.redc M.n M.n0inv a.widen
 
 /-- Stored form of any natural number (reduced first). -/
 def ofNat (M : Mont256) (x : Nat) : U256 := toMont M (U256.ofNat (x % M.n.toNat))
@@ -74,20 +74,20 @@ end Mont256
 /-- Parameters of a six-limb odd modulus. -/
 structure Mont384 where
   n : U384
-  inv : UInt64
+  n0inv : UInt64
   one : U384
   r2 : U384
 
 namespace Mont384
 
-@[inline] def mul (M : Mont384) (a b : U384) : U384 := U384.redc M.n M.inv (U384.mulWide a b)
-@[inline] def sqr (M : Mont384) (a : U384) : U384 := U384.redc M.n M.inv (U384.mulWide a a)
+@[inline] def mul (M : Mont384) (a b : U384) : U384 := U384.redc M.n M.n0inv (U384.mulWide a b)
+@[inline] def sqr (M : Mont384) (a : U384) : U384 := U384.redc M.n M.n0inv (U384.mulWide a a)
 @[inline] def add (M : Mont384) (a b : U384) : U384 := U384.addMod M.n a b
 @[inline] def sub (M : Mont384) (a b : U384) : U384 := U384.subMod M.n a b
 @[inline] def neg (M : Mont384) (a : U384) : U384 := U384.negMod M.n a
 
 @[inline] def toMont (M : Mont384) (a : U384) : U384 := mul M a M.r2
-@[inline] def fromMont (M : Mont384) (a : U384) : U384 := U384.redc M.n M.inv a.widen
+@[inline] def fromMont (M : Mont384) (a : U384) : U384 := U384.redc M.n M.n0inv a.widen
 
 def ofNat (M : Mont384) (x : Nat) : U384 := toMont M (U384.ofNat (x % M.n.toNat))
 def toNat (M : Mont384) (a : U384) : Nat := (fromMont M a).toNat

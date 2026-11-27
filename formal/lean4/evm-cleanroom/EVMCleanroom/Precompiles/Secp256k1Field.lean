@@ -118,7 +118,7 @@ namespace EVMCleanroom.Precompiles.Secp256k1
 /-- The scalar field (integers modulo the group order) in Montgomery form. -/
 def scalarField : Mont256 where
   n := ⟨0xbfd25e8cd0364141, 0xbaaedce6af48a03b, 0xfffffffffffffffe, 0xffffffffffffffff⟩
-  inv := 0x4b0dff665588b13f
+  n0inv := 0x4b0dff665588b13f
   one := ⟨0x402da1732fc9bebf, 0x4551231950b75fc4, 0x1, 0x0⟩
   r2 := ⟨0x896cf21467d7d140, 0x741496c20e7cf878, 0xe697f5e45bcd07c6, 0x9d671cd581c69bc5⟩
 
