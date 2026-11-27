@@ -1,0 +1,13 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+# Field-arithmetic experiments and timing. Its own configuration, so the
+# reviewed ones stay unchanged.
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-fieldperf-exp"
+root = "EVMCleanroom.FieldPerf.Exp"
+moreLeancArgs = ["-O3"]
