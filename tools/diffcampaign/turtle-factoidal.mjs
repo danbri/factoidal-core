@@ -27,7 +27,7 @@ for (const c of read(cases)) {
   const o = ox.get(c.id);
   if (!o) { tally.missing++; continue; }
   let f;
-  try { f = { ok: true, canon: await fd.canonicalize(c.data, { format: "turtle", baseIRI: BASE }) }; }
+  try { f = { ok: true, canon: await fd.canonicalize(c.data, { format: c.format || "turtle", baseIRI: BASE }) }; }
   catch (e) { f = { ok: false, error: String(e && e.message || e).slice(0, 300) }; }
   if (!o.ok && !f.ok) { tally["both refuse"]++; continue; }
   let why = null, oc = null;
@@ -41,6 +41,6 @@ for (const c of read(cases)) {
   tally[why === "one refuses" ? "one refuses" : "differ"]++;
   if (keep) writeFileSync(join(keep, `${c.id}.json`), JSON.stringify({ why, data: c.data, oxigraph: o, oxigraphCanonical: oc, factoidal: f }, null, 1));
 }
-console.log(`turtle differential: agrees on ${tally.agree} of ${total} documents; ${tally.differ} differ, ` +
+console.log(`${(read(cases)[0] || {}).format || "turtle"} differential: agrees on ${tally.agree} of ${total} documents; ${tally.differ} differ, ` +
   `${tally["one refuses"]} refused by one reader, ${tally["both refuse"]} refused by both, ${tally.missing} missing`);
 if (out) writeFileSync(out, JSON.stringify({ documents: total, ...tally }));
