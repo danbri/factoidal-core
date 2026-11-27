@@ -44,7 +44,7 @@ jobs:
           import os,re
           from pathlib import Path
           log=Path(os.environ["RUNNER_TEMP"],"sparse-axioms.txt").read_text()
-          for name in ("splice_preserves","replace_checked","collect_zero"):
+          for name in ("splice_preserves","liftParent_source","replace_checked","collect_zero"):
               lines=[line for line in log.splitlines() if f"EVMCleanroom.SparseReplace.{name}'" in line]
               assert len(lines)==1, (name,lines)
               line=lines[0]
