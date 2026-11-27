@@ -19,7 +19,7 @@ step $L evm-precompile
 # Closure calls in the compiled C. The generic modules keep them in their unspecialised
 # bodies; the curve modules hold the specialised code that runs. For each closure call,
 # the function it is in.
-for f in FastTower FastPairing BN254Pairing BLS12381Pairing KZGPairing; do
+for f in FastTower FastPairing QuadLimb BN254Pairing BLS12381Pairing KZGPairing; do
   c=.lake/build/ir/EVMCleanroom/Precompiles/$f.c
   [ -f "$c" ] || continue
   echo "RESULT pairing: $f.c closure calls $(grep -c 'lean_apply_' "$c" || true), lines $(wc -l < "$c")"

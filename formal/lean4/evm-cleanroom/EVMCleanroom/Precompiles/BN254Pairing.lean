@@ -1,6 +1,7 @@
 import EVMCleanroom.Precompiles.BN254
 import EVMCleanroom.Precompiles.BN254Field
 import EVMCleanroom.Precompiles.FastPairing
+import EVMCleanroom.Precompiles.QuadLimb
 
 /-!
 # alt_bn128 pairing check (0x08) on the limb tower
@@ -65,14 +66,17 @@ namespace EVMCleanroom.Precompiles.BN254Pairing
 
 open BN254 (p r parameter baseField)
 
-/-- An `Fp2` element in Montgomery limbs, and back. -/
-def toLimbs (a : Fp2) : Fq2 U256 := Fq2.ofNat baseField.ofNat a
-def ofLimbs (a : Fq2 U256) : Fp2 := Fq2.toNat baseField.toNat a
+/-- The quadratic extension on flat limbs with `ξ = 9 + u`: the dictionary every generic
+    function below is specialised on. -/
+local notation "quad" => Quad256.ops baseField true
 
-/-- `ξ = 9 + u`, with the Frobenius constants of `BN254.tower` converted once. -/
-def towerParams : TowerParams U256 :=
-  { xiNine := true
-    frob1 := toLimbs BN254.tower.frob[1]!
+/-- An `Fp2` element in Montgomery limbs, and back. -/
+def toLimbs (a : Fp2) : Quad256 := Quad256.ofFp2 baseField a
+def ofLimbs (a : Quad256) : Fp2 := Quad256.toFp2 baseField a
+
+/-- The Frobenius constants of `BN254.tower`, converted once. -/
+def towerParams : TowerParams Quad256 :=
+  { frob1 := toLimbs BN254.tower.frob[1]!
     frob2 := toLimbs BN254.tower.frob[2]!
     frob3 := toLimbs BN254.tower.frob[3]!
     frob4 := toLimbs BN254.tower.frob[4]!
@@ -91,11 +95,15 @@ def psiScalar : Nat := 6 * parameter ^ 2
 def psiPos : Nat := 0x80500249000082000040a08408810148
 def psiNeg : Nat := 0x110280001148280408020a0120040402
 
-def loopDigits : List Digit := signedDigits loopScalar 0 (Nat.log2 loopScalar)
+/-- `6x + 2 = loopPos − loopNeg` in non-adjacent form (22 non-zero digits; the binary form has 37). -/
+def loopPos : Nat := 0x22002004200804028
+def loopNeg : Nat := 0x82889008420a0480
+
+def loopDigits : List Digit := signedDigits loopPos loopNeg (Nat.log2 loopPos)
 def xDigits : List Digit := signedDigits xPos xNeg (Nat.log2 xPos)
 def psiDigits : List Digit := signedDigits psiPos psiNeg (Nat.log2 psiPos)
 
-def fastCurve : FastCurve U256 :=
+def fastCurve : FastCurve Quad256 :=
   { tower := towerParams, divide := true, loopDigits := loopDigits, frobeniusSteps := true,
     negative := false, xDigits := xDigits, bnFamily := true }
 
@@ -105,7 +113,12 @@ def hardPower : Nat := 2 * parameter * (6 * parameter ^ 2 + 3 * parameter + 1)
 /-- Subgroup membership of a point of the twist by `ψ(Q) = [6x²]Q` (see the module comment).
     Tested against `[r]Q = O`, not proved. -/
 def inG2 (x y : Fp2) : Bool :=
-  FastPairing.psiEqualsMultiple baseField.ops towerParams psiDigits (toLimbs x) (toLimbs y)
+  FastPairing.psiEqualsMultiple quad towerParams psiDigits (toLimbs x) (toLimbs y)
+
+/-- The shorter relation `[x+1]Q + ψ([x]Q) + ψ²([x]Q) = ψ³([2x]Q)` of the same paper (see the
+    module comment). Measured and tested beside `inG2`; not used by the precompile. -/
+def inG2Short (x y : Fp2) : Bool :=
+  FastPairing.psiShortRelation quad towerParams xDigits (toLimbs x) (toLimbs y)
 
 /-- Decode a `G2` point at `off` (imaginary parts first), as `BN254.decodeG2` but with the
     subgroup check `inG2`. -/
@@ -124,12 +137,13 @@ def decodeG2 (data : ByteArray) (off : Nat) : Option BN254.Affine2 :=
     else none
 
 /-- A pair of finite points, in limbs. -/
-def pairOf (a : Nat × Nat) (b : Fp2 × Fp2) : PairState U256 :=
-  FastPairing.pairState baseField.ops (baseField.ofNat a.1) (baseField.ofNat a.2) (toLimbs b.1) (toLimbs b.2)
+def pairOf (a : Nat × Nat) (b : Fp2 × Fp2) : PairState Quad256 :=
+  FastPairing.pairState quad (Quad256.ofReal (baseField.ofNat a.1)) (Quad256.ofReal (baseField.ofNat a.2))
+    (toLimbs b.1) (toLimbs b.2)
 
 /-- Decode `count` pairs starting at `off`. Pairs with a point at infinity contribute one
     to the product and are dropped after validation, as in `BN254.decodePairs`. -/
-def decodePairs (data : ByteArray) : Nat → Nat → List (PairState U256) → Option (List (PairState U256))
+def decodePairs (data : ByteArray) : Nat → Nat → List (PairState Quad256) → Option (List (PairState Quad256))
   | 0, _, acc => some acc
   | count+1, off, acc =>
     match BN254.decodeG1 data off, decodeG2 data (off + 64) with
@@ -140,12 +154,12 @@ def decodePairs (data : ByteArray) : Nat → Nat → List (PairState U256) → O
     | _, _ => none
 
 /-- The product of the Miller values, the final exponentiation and the verdict on limbs. -/
-def millerProduct (pairs : List (PairState U256)) : Fq12 U256 :=
-  FastPairing.millerProduct baseField.ops fastCurve pairs
-def finalExponentiation (f : Fq12 U256) : Fq12 U256 :=
-  FastPairing.finalExponentiation baseField.ops fastCurve f
-def productIsOne (pairs : List (PairState U256)) : Bool :=
-  FastPairing.productIsOne baseField.ops fastCurve pairs
+def millerProduct (pairs : List (PairState Quad256)) : Fq12 Quad256 :=
+  FastPairing.millerProduct quad fastCurve pairs
+def finalExponentiation (f : Fq12 Quad256) : Fq12 Quad256 :=
+  FastPairing.finalExponentiation quad fastCurve f
+def productIsOne (pairs : List (PairState Quad256)) : Bool :=
+  FastPairing.productIsOne quad fastCurve pairs
 
 def pairingBody (input : ByteArray) : Body :=
   if input.size % 192 ≠ 0 then .invalid
@@ -217,8 +231,8 @@ private def jac (q : Fp2 × Fp2) : JPoint Fp2 := Curve.ofAffine BN254.field2 q.1
 private def definitional (q : Fp2 × Fp2) : Bool :=
   Curve.isInfinity BN254.field2 (Curve.mul BN254.field2 r (jac q))
 
-private def flat (g : Fq12 U256) : Fp12 := Fq12.toFlat baseField.toNat g
-private def lift (a : Fp12) : Fq12 U256 := Fq12.ofFlat baseField.ofNat a
+private def flat (g : Fq12 Quad256) : Fp12 := Fq12.toFlat ofLimbs g
+private def lift (a : Fp12) : Fq12 Quad256 := Fq12.ofFlat toLimbs a
 private def oldEasyOf (f : Fp12) : Fp12 :=
   let T := BN254.tower
   let easy1 := Fp12.mul T (Fp12.conj T f) (Fp12.inv T f)
@@ -226,51 +240,71 @@ private def oldEasyOf (f : Fp12) : Fp12 :=
 
 private def oldSample : Fp12 := Pairing.miller BN254.curve g1 g2
 private def oldOther : Fp12 := Fp12.frobenius BN254.tower (Fp12.sqr BN254.tower oldSample)
-private def sample : Fq12 U256 := lift oldSample
-private def other : Fq12 U256 := lift oldOther
+private def sample : Fq12 Quad256 := lift oldSample
+private def other : Fq12 Quad256 := lift oldOther
 private def oldEasy : Fp12 := oldEasyOf oldSample
-private def easy : Fq12 U256 := FastPairing.easyPart baseField.ops fastCurve sample
+private def easy : Fq12 Quad256 := FastPairing.easyPart quad fastCurve sample
 private def a2 : Fp2 := oldSample.c1
 private def b2 : Fp2 := oldSample.c4
 private def c2 : Fp2 := oldSample.c5
 
--- The limb field and the recodings.
-#guard baseField.toNat (baseField.ofNat 5) == 5 && baseField.toNat baseField.one == 1
-#guard xPos - xNeg == parameter && xPos &&& xNeg == 0 && psiPos - psiNeg == psiScalar && psiPos &&& psiNeg == 0
+-- The limb field, the spare bits lazy reduction needs, and the recodings.
+#guard baseField.toNat (baseField.ofNat 5) == 5 && baseField.toNat baseField.one == 1 && 4 * p < 2 ^ 256
+#guard loopPos - loopNeg == loopScalar && loopPos &&& loopNeg == 0 && xPos - xNeg == parameter &&
+  xPos &&& xNeg == 0 && psiPos - psiNeg == psiScalar && psiPos &&& psiNeg == 0
 #guard digitsValue loopDigits 1 == Int.ofNat loopScalar && digitsValue xDigits 1 == Int.ofNat parameter &&
   digitsValue psiDigits 1 == Int.ofNat psiScalar
--- Fq2 against Fp2.
-#guard ofLimbs (Fq2.mul baseField.ops (toLimbs a2) (toLimbs b2)) == Fp2.mul p a2 b2
-#guard ofLimbs (Fq2.sqr baseField.ops (toLimbs a2)) == Fp2.sqr p a2
-#guard ofLimbs (Fq2.inv baseField.ops (toLimbs a2)) == Fp2.inv p a2
-#guard ofLimbs (Fq2.mulXi baseField.ops true (toLimbs a2)) == Fp2.mul p a2 ⟨9, 1⟩
-#guard ofLimbs (Fq2.scale baseField.ops (baseField.ofNat 7) (toLimbs a2)) == Fp2.scale p 7 a2
+-- The flat quadratic extension against Fp2, on sample and edge values.
+private def edge2 : List Fp2 := [a2, b2, ⟨0, 0⟩, ⟨1, 0⟩, ⟨0, 1⟩, ⟨p - 1, p - 1⟩, ⟨p - 1, 0⟩, ⟨0, p - 1⟩, ⟨p - 1, 1⟩, ⟨1, p - 1⟩]
+#guard edge2.all fun a => edge2.all fun b =>
+  ofLimbs (Quad256.mul baseField (toLimbs a) (toLimbs b)) == Fp2.mul p a b &&
+  ofLimbs (Quad256.add baseField (toLimbs a) (toLimbs b)) == Fp2.add p a b &&
+  ofLimbs (Quad256.sub baseField (toLimbs a) (toLimbs b)) == Fp2.sub p a b &&
+  ofLimbs (Quad256.mulReal baseField (toLimbs a) (toLimbs b)) == Fp2.scale p b.c0 a &&
+  Quad256.eq (toLimbs a) (toLimbs b) == (a == b)
+#guard edge2.all fun a =>
+  ofLimbs (Quad256.sqr baseField (toLimbs a)) == Fp2.sqr p a &&
+  ofLimbs (Quad256.neg baseField (toLimbs a)) == Fp2.neg p a &&
+  ofLimbs (Quad256.double baseField (toLimbs a)) == Fp2.add p a a &&
+  ofLimbs (Quad256.conj baseField (toLimbs a)) == Fp2.conj p a &&
+  ofLimbs (Quad256.mulXi baseField true (toLimbs a)) == Fp2.mul p a ⟨9, 1⟩ &&
+  ofLimbs (Quad256.mulXi baseField false (toLimbs a)) == Fp2.mul p a ⟨1, 1⟩ &&
+  ofLimbs (Quad256.inv baseField (toLimbs a)) == Fp2.inv p a &&
+  Quad256.isZero (toLimbs a) == Fp2.isZero a && ofLimbs (toLimbs a) == a
+#guard ofLimbs Quad256.zero == Fp2.zero && ofLimbs (Quad256.one baseField) == Fp2.one
+-- The generic quadratic extension over the limb field (kept as the second route to the tower).
+#guard Fq2.toNat baseField.toNat (Fq2.mul baseField.ops (Fq2.ofNat baseField.ofNat a2) (Fq2.ofNat baseField.ofNat b2)) ==
+  Fp2.mul p a2 b2
 -- Fq12 against the flat Fp12: product, square, inverse, Frobenius, conjugate, sparse product.
 #guard flat sample == oldSample
-#guard flat (Fq12.mul baseField.ops towerParams sample other) == Fp12.mul BN254.tower oldSample oldOther
-#guard flat (Fq12.sqr baseField.ops towerParams sample) == Fp12.sqr BN254.tower oldSample
-#guard flat (Fq12.inv baseField.ops towerParams sample) == Fp12.inv BN254.tower oldSample
-#guard flat (Fq12.frobenius baseField.ops towerParams sample) == Fp12.frobenius BN254.tower oldSample
-#guard flat (Fq12.conj baseField.ops sample) == Fp12.conj BN254.tower oldSample
-#guard flat (Fq12.mulLineD baseField.ops towerParams sample (toLimbs a2) (toLimbs b2) (toLimbs c2)) ==
+#guard flat (Fq12.mul quad sample other) == Fp12.mul BN254.tower oldSample oldOther
+#guard flat (Fq12.sqr quad sample) == Fp12.sqr BN254.tower oldSample
+#guard flat (Fq12.inv quad sample) == Fp12.inv BN254.tower oldSample
+#guard flat (Fq12.frobenius quad towerParams sample) == Fp12.frobenius BN254.tower oldSample
+#guard flat (Fq12.conj quad sample) == Fp12.conj BN254.tower oldSample
+#guard flat (Fq12.mulLineD quad sample (toLimbs a2) (toLimbs b2) (toLimbs c2)) ==
   Fp12.mul BN254.tower oldSample ⟨a2, b2, Fp2.zero, c2, Fp2.zero, Fp2.zero⟩
 -- The easy part, then cyclotomic squaring and the power by x on its result.
 #guard flat easy == oldEasy
-#guard flat (Fq12.cyclotomicSqr baseField.ops towerParams easy) == Fp12.sqr BN254.tower oldEasy
-#guard flat (FastPairing.expX baseField.ops fastCurve easy) == Fp12.pow BN254.tower oldEasy parameter
+#guard flat (Fq12.cyclotomicSqr quad easy) == Fp12.sqr BN254.tower oldEasy
+#guard flat (FastPairing.expX quad fastCurve easy) == Fp12.pow BN254.tower oldEasy parameter
 -- The hard part is the stated power of the old hard part, and that power is coprime to r.
-#guard flat (FastPairing.hardPart baseField.ops fastCurve easy) ==
+#guard flat (FastPairing.hardPart quad fastCurve easy) ==
   Fp12.pow BN254.tower (Pairing.hardPart BN254.curve oldEasy) hardPower
 #guard Nat.gcd hardPower r == 1
--- The Miller value is the old one, for one pair and for a product with shared squarings.
-#guard flat (millerProduct [pairOf g1 g2]) == oldSample
-#guard flat (millerProduct [pairOf g1 g2, pairOf (mul1 5) (mul2 7)]) ==
-  Fp12.mul BN254.tower oldSample (Pairing.miller BN254.curve (mul1 5) (mul2 7))
+-- The Miller value. With binary digits it is the old value; with the signed digits used
+-- here it differs by a factor that the easy part removes, so the values after the easy
+-- part are compared: for one pair, and for a product with shared squarings.
+#guard flat (FastPairing.millerProduct quad { fastCurve with loopDigits := signedDigits loopScalar 0 (Nat.log2 loopScalar) }
+  [pairOf g1 g2]) == oldSample
+#guard flat (FastPairing.easyPart quad fastCurve (millerProduct [pairOf g1 g2])) == oldEasy
+#guard flat (FastPairing.easyPart quad fastCurve (millerProduct [pairOf g1 g2, pairOf (mul1 5) (mul2 7)])) ==
+  oldEasyOf (Fp12.mul BN254.tower oldSample (Pairing.miller BN254.curve (mul1 5) (mul2 7)))
 -- The verdict: e(P, Q)·e(−P, Q) = 1, a product that is not one, the empty product computed
 -- in full, and bilinearity in each argument.
 #guard productIsOne [pairOf g1 g2, pairOf (neg1 g1) g2]
 #guard !productIsOne [pairOf g1 g2, pairOf g1 g2]
-#guard Fq12.isOne baseField.ops (finalExponentiation (millerProduct []))
+#guard Fq12.isOne quad (finalExponentiation (millerProduct []))
 #guard productIsOne [pairOf (mul1 5) g2, pairOf (neg1 (mul1 2)) g2, pairOf (neg1 (mul1 3)) g2]
 #guard productIsOne [pairOf g1 (mul2 5), pairOf (neg1 g1) (mul2 2), pairOf (neg1 g1) (mul2 3)]
 #guard productIsOne [pairOf (mul1 5) (mul2 7), pairOf (neg1 (mul1 35)) g2]
@@ -288,27 +322,29 @@ private def smallOrder : Fp2 × Fp2 :=
     14259550034904450902393517181334394889178378255868966757665071873786609510755⟩)
 private def psiNat (q : Fp2 × Fp2) : Fp2 × Fp2 := Pairing.twistFrobenius BN254.curve q
 private def fastMultiple (q : Fp2 × Fp2) : JPoint Fp2 :=
-  let m := FastPairing.g2MulDigits baseField.ops (toLimbs q.1) (toLimbs q.2) (Fq2.neg baseField.ops (toLimbs q.2))
-    psiDigits ⟨toLimbs q.1, toLimbs q.2, Fq2.one baseField.ops⟩
+  let m := FastPairing.g2MulDigits quad (toLimbs q.1) (toLimbs q.2) (Quad256.neg baseField (toLimbs q.2))
+    psiDigits ⟨toLimbs q.1, toLimbs q.2, Quad256.one baseField⟩
   ⟨ofLimbs m.x, ofLimbs m.y, ofLimbs m.z⟩
 
-#guard inG2 g2.1 g2.2 && definitional g2
-#guard inG2 (mul2 7).1 (mul2 7).2
+#guard inG2 g2.1 g2.2 && definitional g2 && inG2Short g2.1 g2.2
+#guard inG2 (mul2 7).1 (mul2 7).2 && inG2Short (mul2 7).1 (mul2 7).2
 #guard Curve.onCurve BN254.field2 BN254.twistB outside.1 outside.2 && !definitional outside
-#guard !inG2 outside.1 outside.2
+#guard !inG2 outside.1 outside.2 && !inG2Short outside.1 outside.2
 #guard Curve.onCurve BN254.field2 BN254.twistB smallOrder.1 smallOrder.2 && !definitional smallOrder &&
   Curve.isInfinity BN254.field2 (Curve.mul BN254.field2 10069 (jac smallOrder))
-#guard !inG2 smallOrder.1 smallOrder.2
+#guard !inG2 smallOrder.1 smallOrder.2 && !inG2Short smallOrder.1 smallOrder.2
 -- The fast multiple [6x²]Q is the one of the Nat path, also outside the subgroup.
 #guard Curve.same BN254.field2 (fastMultiple outside) (Curve.mul BN254.field2 psiScalar (jac outside))
 #guard Curve.same BN254.field2 (fastMultiple smallOrder) (Curve.mul BN254.field2 psiScalar (jac smallOrder))
 -- ψ is the old twist Frobenius, and satisfies ψ² − [t]ψ + [p] = 0 with t = 6x² + 1 outside the subgroup.
-#guard ofLimbs (FastPairing.psiX baseField.ops towerParams (toLimbs outside.1)) == (psiNat outside).1 &&
-  ofLimbs (FastPairing.psiY baseField.ops towerParams (toLimbs outside.2)) == (psiNat outside).2
+#guard ofLimbs (FastPairing.psiX quad towerParams (toLimbs outside.1)) == (psiNat outside).1 &&
+  ofLimbs (FastPairing.psiY quad towerParams (toLimbs outside.2)) == (psiNat outside).2
 #guard Curve.same BN254.field2
   (Curve.add BN254.field2 (jac (psiNat (psiNat outside))) (Curve.mul BN254.field2 p (jac outside)))
   (Curve.mul BN254.field2 (psiScalar + 1) (jac (psiNat outside)))
 #guard p + 1 == r + (psiScalar + 1) && Nat.gcd r (2 * p - r) == 1
+-- The order of the twist group kills the outside point: [r·(2p − r)]Q = O.
+#guard Curve.isInfinity BN254.field2 (Curve.mul BN254.field2 (r * (2 * p - r)) (jac outside))
 -- The body: empty input, a valid two-pair product, a bad length.
 #guard (match runPairing 45000 ByteArray.empty with
   | .success out left => toHex out == "0000000000000000000000000000000000000000000000000000000000000001" && left == 0

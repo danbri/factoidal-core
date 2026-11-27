@@ -44,11 +44,11 @@ theorem bls_digits : digitsValue BLS12381Pairing.xDigits 1 = Int.ofNat BLS12381.
   decide +kernel
 
 /-- Kind: loop bound.
-    Says: the Miller loop of alt_bn128 runs 64 shared squarings, its hard-part powers 62
+    Says: the Miller loop of alt_bn128 runs 65 shared squarings, its hard-part powers 62
     cyclotomic squarings each, its subgroup test 127 doublings; BLS12-381 runs 63 and 63.
     Does not say: how long a step takes. -/
 theorem digit_counts :
-    BN254Pairing.loopDigits.length = 64 ∧ BN254Pairing.xDigits.length = 62 ∧
+    BN254Pairing.loopDigits.length = 65 ∧ BN254Pairing.xDigits.length = 62 ∧
     BN254Pairing.psiDigits.length = 127 ∧ BLS12381Pairing.xDigits.length = 63 := by
   decide +kernel
 
@@ -90,11 +90,35 @@ theorem bn_subgroup_arithmetic :
     Nat.gcd BN254.r (2 * BN254.p - BN254.r) = 1 := by
   decide +kernel
 
+/-- The integers `a`, `b` with `(x+1) + x·ψ + x·ψ² − 2x·ψ³ = a + b·ψ` when `ψ² = t·ψ − p`
+    (`t = 6x² + 1`): `a = (x+1) − x·p + 2x·t·p`, `b = x + x·t − 2x·(t² − p)`. -/
+def shortA : Int :=
+  (BN254.parameter + 1 : Int) - BN254.parameter * BN254.p +
+    2 * BN254.parameter * (BN254Pairing.psiScalar + 1) * BN254.p
+def shortB : Int :=
+  (BN254.parameter : Int) + BN254.parameter * (BN254Pairing.psiScalar + 1) -
+    2 * BN254.parameter * ((BN254Pairing.psiScalar + 1 : Int) ^ 2 - BN254.p)
+
+/-- Kind: arithmetic step of the short subgroup relation.
+    Says: for alt_bn128, the norm `a² + a·b·t + b²·p` of `a + b·ψ` is a multiple of `r` whose
+    greatest common divisor with the order `r·(2p − r)` of the twist group is exactly `r`;
+    and the relation holds modulo `r` when `ψ` is replaced by `p` (its action on the subgroup).
+    So a point of the twist satisfying the relation is killed by `r`, given
+    `ψ² − [t]ψ + [p] = 0` and the group order (both published, tested here, not proved).
+    Does not say: those two facts, or that the code evaluates the relation. -/
+theorem bn_short_relation_arithmetic :
+    (shortA ^ 2 + shortA * shortB * (BN254Pairing.psiScalar + 1) + shortB ^ 2 * BN254.p) % BN254.r = 0 ∧
+    Int.gcd (shortA ^ 2 + shortA * shortB * (BN254Pairing.psiScalar + 1) + shortB ^ 2 * BN254.p)
+      (BN254.r * (2 * BN254.p - BN254.r) : Nat) = BN254.r ∧
+    ((BN254.parameter + 1 : Int) + BN254.parameter * BN254.p + BN254.parameter * (BN254.p : Int) ^ 2 -
+      2 * BN254.parameter * (BN254.p : Int) ^ 3) % BN254.r = 0 := by
+  decide +kernel
+
 /-- Kind: loop bound.
     Says: decoding returns at most one pair per 192-byte item on top of the pairs already
     held, so the shared Miller loop of 0x08 runs over at most `input.size / 192` pairs.
     Does not say: how long the loop takes. -/
-theorem bn_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs : List (PairState U256))
+theorem bn_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs : List (PairState Quad256))
     (h : BN254Pairing.decodePairs data count off acc = some pairs) : pairs.length ≤ acc.length + count := by
   induction count generalizing off acc with
   | zero =>
@@ -115,7 +139,7 @@ theorem bn_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs : 
 /-- Kind: loop bound.
     Says: the same for 0x0f: at most `input.size / 384` pairs enter the Miller loop.
     Does not say: how long the loop takes. -/
-theorem bls_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs : List (PairState U384))
+theorem bls_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs : List (PairState Quad384))
     (h : BLS12381Pairing.decodePairs data count off acc = some pairs) : pairs.length ≤ acc.length + count := by
   induction count generalizing off acc with
   | zero =>
@@ -139,6 +163,7 @@ theorem bls_decodePairs_length (data : ByteArray) (count off : Nat) (acc pairs :
 #print axioms bn_hard_exponent
 #print axioms bls_hard_exponent
 #print axioms bn_subgroup_arithmetic
+#print axioms bn_short_relation_arithmetic
 #print axioms bn_decodePairs_length
 #print axioms bls_decodePairs_length
 

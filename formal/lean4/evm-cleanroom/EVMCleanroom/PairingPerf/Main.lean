@@ -55,24 +55,25 @@ def oldEasy (T : Tower) (f : Fp12) : Fp12 :=
   let easy1 := Fp12.mul T (Fp12.conj T f) (Fp12.inv T f)
   Fp12.mul T (Fp12.frobenius T (Fp12.frobenius T easy1)) easy1
 
-/-- Every tower operation on random elements, against `Tower.lean`. -/
-@[specialize] def checkTower {F : Type} (name : String) (O : FieldOps F) (C : FastCurve F) (toNat : F → Nat)
-    (ofNat : Nat → F) (old : PairingCurve) (hardPower count : Nat) : Array Check := Id.run do
+/-- Every operation of the quadratic extension and of the tower on random elements, against
+    `Field.lean` and `Tower.lean`. -/
+@[specialize] def checkTower {K : Type} (name : String) (Q : QuadOps K) (C : FastCurve K) (toFp2 : K → Fp2)
+    (ofFp2 : Fp2 → K) (old : PairingCurve) (hardPower count : Nat) : Array Check := Id.run do
   let T := C.tower
   let oldT := old.tower
   let p := oldT.p
-  let flat := Fq12.toFlat toNat
-  let lift := Fq12.ofFlat ofNat
+  let flat := Fq12.toFlat toFp2
+  let lift := Fq12.ofFlat ofFp2
   let mut seed := 0x9e3779b97f4a7c15f39cc0605cedc8341082276bf3a27251f86c6a11d0c18e95
-  let mut mul := 0
-  let mut sqr := 0
-  let mut inv := 0
-  let mut frob := 0
-  let mut conj := 0
-  let mut line := 0
-  let mut fp2 := 0
-  let mut cyc := 0
-  let mut hard := 0
+  let mut mulBad := 0
+  let mut sqrBad := 0
+  let mut invBad := 0
+  let mut frobBad := 0
+  let mut conjBad := 0
+  let mut lineBad := 0
+  let mut quadBad := 0
+  let mut cycBad := 0
+  let mut hardBad := 0
   for i in [0:count] do
     let ra := randFp12 p seed
     let rb := randFp12 p ra.2
@@ -81,51 +82,62 @@ def oldEasy (T : Tower) (f : Fp12) : Fp12 :=
     let b := rb.1
     let fa := lift a
     let fb := lift b
-    if flat (Fq12.mul O T fa fb) != Fp12.mul oldT a b then mul := mul + 1
-    if flat (Fq12.sqr O T fa) != Fp12.sqr oldT a then sqr := sqr + 1
-    if flat (Fq12.inv O T fa) != Fp12.inv oldT a then inv := inv + 1
-    if flat (Fq12.frobenius O T fa) != Fp12.frobenius oldT a then frob := frob + 1
-    if flat (Fq12.conj O fa) != Fp12.conj oldT a then conj := conj + 1
+    if flat (Fq12.mul Q fa fb) != Fp12.mul oldT a b then mulBad := mulBad + 1
+    if flat (Fq12.sqr Q fa) != Fp12.sqr oldT a then sqrBad := sqrBad + 1
+    if flat (Fq12.inv Q fa) != Fp12.inv oldT a then invBad := invBad + 1
+    if flat (Fq12.frobenius Q T fa) != Fp12.frobenius oldT a then frobBad := frobBad + 1
+    if flat (Fq12.conj Q fa) != Fp12.conj oldT a then conjBad := conjBad + 1
     let l0 := b.c0
     let l1 := b.c1
     let l2 := b.c2
     let sparse : Fp12 := if C.divide then ⟨l0, l1, Fp2.zero, l2, Fp2.zero, Fp2.zero⟩
       else ⟨l0, Fp2.zero, l1, l2, Fp2.zero, Fp2.zero⟩
-    let fastLine := if C.divide then Fq12.mulLineD O T fa (Fq2.ofNat ofNat l0) (Fq2.ofNat ofNat l1) (Fq2.ofNat ofNat l2)
-      else Fq12.mulLineM O T fa (Fq2.ofNat ofNat l0) (Fq2.ofNat ofNat l1) (Fq2.ofNat ofNat l2)
-    if flat fastLine != Fp12.mul oldT a sparse then line := line + 1
-    let x := Fq2.ofNat ofNat l0
-    let y := Fq2.ofNat ofNat l1
-    if Fq2.toNat toNat (Fq2.mul O x y) != Fp2.mul p l0 l1 || Fq2.toNat toNat (Fq2.sqr O x) != Fp2.sqr p l0 ||
-        Fq2.toNat toNat (Fq2.inv O x) != Fp2.inv p l0 || Fq2.toNat toNat (Fq2.mulXi O T.xiNine x) != Fp2.mul p l0 oldT.xi ||
-        Fq2.toNat toNat (Fq2.add O x y) != Fp2.add p l0 l1 || Fq2.toNat toNat (Fq2.sub O x y) != Fp2.sub p l0 l1 ||
-        Fq2.toNat toNat (Fq2.neg O x) != Fp2.neg p l0 || Fq2.toNat toNat (Fq2.conj O x) != Fp2.conj p l0 then
-      fp2 := fp2 + 1
+    let fastLine := if C.divide then Fq12.mulLineD Q fa (ofFp2 l0) (ofFp2 l1) (ofFp2 l2)
+      else Fq12.mulLineM Q fa (ofFp2 l0) (ofFp2 l1) (ofFp2 l2)
+    if flat fastLine != Fp12.mul oldT a sparse then lineBad := lineBad + 1
+    -- The quadratic extension: every operation, on six random pairs per case and on edge values.
+    let edges : Array Fp2 := #[⟨0, 0⟩, ⟨1, 0⟩, ⟨0, 1⟩, ⟨p - 1, p - 1⟩, ⟨p - 1, 0⟩, ⟨0, p - 1⟩, ⟨p - 2, 1⟩, ⟨(p - 1) / 2, (p + 1) / 2⟩]
+    let xs : Array Fp2 := #[a.c0, a.c1, a.c2, a.c3, a.c4, a.c5, edges[i % 8]!, edges[(i / 8) % 8]!]
+    let ys : Array Fp2 := #[b.c0, b.c1, b.c2, b.c3, b.c4, edges[(i / 64) % 8]!, b.c5, edges[i % 8]!]
+    for j in [0:8] do
+      let u := xs[j]!
+      let v := ys[j]!
+      let x := ofFp2 u
+      let y := ofFp2 v
+      if toFp2 (Q.mul x y) != Fp2.mul p u v || toFp2 (Q.sqr x) != Fp2.sqr p u ||
+          toFp2 (Q.inv x) != Fp2.inv p u || toFp2 (Q.mulXi x) != Fp2.mul p u oldT.xi ||
+          toFp2 (Q.add x y) != Fp2.add p u v || toFp2 (Q.sub x y) != Fp2.sub p u v ||
+          toFp2 (Q.neg x) != Fp2.neg p u || toFp2 (Q.conj x) != Fp2.conj p u ||
+          toFp2 (Q.double x) != Fp2.add p u u || toFp2 (Q.mulReal x y) != Fp2.scale p v.c0 u ||
+          Q.isZero x != Fp2.isZero u || Q.eq x y != (u == v) || !Q.eq x x || toFp2 x != u then
+        quadBad := quadBad + 1
     -- The cyclotomic subgroup: squaring, and (one case in eight) the hard part as the stated power.
     let e := oldEasy oldT a
-    let fe := FastPairing.easyPart O C fa
-    if flat fe != e || flat (Fq12.cyclotomicSqr O T fe) != Fp12.sqr oldT e then cyc := cyc + 1
+    let fe := FastPairing.easyPart Q C fa
+    if flat fe != e || flat (Fq12.cyclotomicSqr Q fe) != Fp12.sqr oldT e then cycBad := cycBad + 1
     if i % 8 == 0 then
-      if flat (FastPairing.hardPart O C fe) != Fp12.pow oldT (Pairing.hardPart old e) hardPower then hard := hard + 1
-  return #[⟨name ++ " Fq2 operations", count, fp2, ""⟩, ⟨name ++ " Fq12 mul", count, mul, ""⟩,
-    ⟨name ++ " Fq12 sqr", count, sqr, ""⟩, ⟨name ++ " Fq12 inverse", count, inv, ""⟩,
-    ⟨name ++ " Fq12 Frobenius", count, frob, ""⟩, ⟨name ++ " Fq12 conjugate", count, conj, ""⟩,
-    ⟨name ++ " sparse line product", count, line, ""⟩, ⟨name ++ " easy part and cyclotomic squaring", count, cyc, ""⟩,
-    ⟨name ++ " hard part = old hard part ^ hardPower", (count + 7) / 8, hard, ""⟩]
+      if flat (FastPairing.hardPart Q C fe) != Fp12.pow oldT (Pairing.hardPart old e) hardPower then hardBad := hardBad + 1
+  return #[⟨name ++ " quadratic extension, every operation", 8 * count, quadBad, ""⟩, ⟨name ++ " Fq12 mul", count, mulBad, ""⟩,
+    ⟨name ++ " Fq12 sqr", count, sqrBad, ""⟩, ⟨name ++ " Fq12 inverse", count, invBad, ""⟩,
+    ⟨name ++ " Fq12 Frobenius", count, frobBad, ""⟩, ⟨name ++ " Fq12 conjugate", count, conjBad, ""⟩,
+    ⟨name ++ " sparse line product", count, lineBad, ""⟩, ⟨name ++ " easy part and cyclotomic squaring", count, cycBad, ""⟩,
+    ⟨name ++ " hard part = old hard part ^ hardPower", (count + 7) / 8, hardBad, ""⟩]
 
-/-- The Miller value (when the digits are binary), the final value as the stated power of the
-    old one, and the verdict, for one list of finite pairs. Returns the three mismatch flags. -/
-@[specialize] def compareProduct {F : Type} (O : FieldOps F) (C : FastCurve F) (toNat : F → Nat) (ofNat : Nat → F)
+/-- The Miller value (when the digits are binary; after the easy part otherwise), the final
+    value as the stated power of the old one, and the verdict, for one list of finite pairs.
+    Returns the three mismatch flags. -/
+@[specialize] def compareProduct {K : Type} (Q : QuadOps K) (C : FastCurve K) (toFp2 : K → Fp2) (ofFp2 : Fp2 → K)
     (old : PairingCurve) (hardPower : Nat) (exact : Bool) (pairs : List (Pairing.G1 × Pairing.G2)) : Nat × Nat × Nat :=
   let states := pairs.map fun (a, b) =>
-    FastPairing.pairState O (ofNat a.1) (ofNat a.2) (Fq2.ofNat ofNat b.1) (Fq2.ofNat ofNat b.2)
-  let fm := FastPairing.millerProduct O C states
+    FastPairing.pairState Q (ofFp2 ⟨a.1, 0⟩) (ofFp2 ⟨a.2, 0⟩) (ofFp2 b.1) (ofFp2 b.2)
+  let fm := FastPairing.millerProduct Q C states
   let om := Pairing.millerProduct old pairs Fp12.one
-  let ff := FastPairing.finalExponentiation O C fm
+  let ff := FastPairing.finalExponentiation Q C fm
   let ofin := Pairing.finalExponentiation old om
-  let m := if exact && Fq12.toFlat toNat fm != om then 1 else 0
-  let f := if Fq12.toFlat toNat ff != Fp12.pow old.tower ofin hardPower then 1 else 0
-  let v := if FastPairing.productIsOne O C states != Pairing.productIsOne old pairs then 1 else 0
+  let m := if exact then (if Fq12.toFlat toFp2 fm != om then 1 else 0)
+    else (if Fq12.toFlat toFp2 (FastPairing.easyPart Q C fm) != oldEasy old.tower om then 1 else 0)
+  let f := if Fq12.toFlat toFp2 ff != Fp12.pow old.tower ofin hardPower then 1 else 0
+  let v := if FastPairing.productIsOne Q C states != Pairing.productIsOne old pairs then 1 else 0
   (m, f, v)
 
 def sameResult : Result → Result → Bool
@@ -208,6 +220,7 @@ def checkBnSubgroup (count : Nat) : Array Check := Id.run do
   let cofactor := 2 * BN254.p - BN254.r
   let mut seed := 0x6a09e667f3bcc908bb67ae8584caa73b3c6ef372fe94f82ba54ff53a5f1d36f1
   let mut bad := 0
+  let mut badShort := 0
   let mut insideSeen := 0
   let mut outsideSeen := 0
   let mut smallSeen := 0
@@ -221,6 +234,7 @@ def checkBnSubgroup (count : Nat) : Array Check := Id.run do
       cases := cases + 1
       insideSeen := insideSeen + 1
       if !BN254Pairing.inG2 q.1 q.2 then bad := bad + 1
+      if !BN254Pairing.inG2Short q.1 q.2 then badShort := badShort + 1
       if !bnDefinitional q then wrongSide := wrongSide + 1
     | none => pure ()
   -- Random points of the twist: the definition decides which side they are on.
@@ -232,6 +246,7 @@ def checkBnSubgroup (count : Nat) : Array Check := Id.run do
     let expect := bnDefinitional q
     if expect then insideSeen := insideSeen + 1 else outsideSeen := outsideSeen + 1
     if BN254Pairing.inG2 q.1 q.2 != expect then bad := bad + 1
+    if BN254Pairing.inG2Short q.1 q.2 != expect then badShort := badShort + 1
     -- One in sixteen: the same point with the cofactor cleared (inside), and with the
     -- order-r part and all of the cofactor but 10069 cleared (order 1 or 10069).
     if i % 16 == 0 then
@@ -241,6 +256,7 @@ def checkBnSubgroup (count : Nat) : Array Check := Id.run do
         let e := bnDefinitional c
         if e then insideSeen := insideSeen + 1 else wrongSide := wrongSide + 1
         if BN254Pairing.inG2 c.1 c.2 != e then bad := bad + 1
+        if BN254Pairing.inG2Short c.1 c.2 != e then badShort := badShort + 1
       | none => pure ()
       match bnMul2 (BN254.r * (cofactor / 10069)) q with
       | some c =>
@@ -249,10 +265,19 @@ def checkBnSubgroup (count : Nat) : Array Check := Id.run do
         let e := bnDefinitional c
         if e then wrongSide := wrongSide + 1
         if BN254Pairing.inG2 c.1 c.2 != e then bad := bad + 1
+        if BN254Pairing.inG2Short c.1 c.2 != e then badShort := badShort + 1
       | none => pure ()
   return #[⟨"alt_bn128 G2 subgroup test = definitional [r]Q = O", cases, bad,
     s!"{insideSeen} inside, {outsideSeen} random points outside, {smallSeen} of order 10069"⟩,
+    ⟨"alt_bn128 G2 short relation = definitional [r]Q = O", cases, badShort, ""⟩,
     ⟨"alt_bn128 subgroup test inputs on the expected side", cases, wrongSide, ""⟩]
+
+/-- alt_bn128 on the generic `Fq2` over the limb field: the second route to the tower. -/
+def bnGenericCurve : FastCurve (Fq2 U256) :=
+  let c (i : Nat) : Fq2 U256 := Fq2.ofNat BN254.baseField.ofNat BN254.tower.frob[i]!
+  { tower := { frob1 := c 1, frob2 := c 2, frob3 := c 3, frob4 := c 4, frob5 := c 5 }, divide := true,
+    loopDigits := BN254Pairing.loopDigits, frobeniusSteps := true, negative := false,
+    xDigits := BN254Pairing.xDigits, bnFamily := true }
 
 /-- Random finite pairs: the Miller value, the final value and the verdict. -/
 def checkBnPairs (count : Nat) : Array Check := Id.run do
@@ -261,6 +286,7 @@ def checkBnPairs (count : Nat) : Array Check := Id.run do
   let mut miller := 0
   let mut finalBad := 0
   let mut verdict := 0
+  let mut generic := 0
   for i in [0:count] do
     let mut pairs : List (Pairing.G1 × Pairing.G2) := []
     for _ in [0:1 + i % 3] do
@@ -270,12 +296,17 @@ def checkBnPairs (count : Nat) : Array Check := Id.run do
       match bnMul1 (a % BN254.r), bnMul2 (b % BN254.r) bnG2 with
       | some x, some y => pairs := (x, y) :: pairs
       | _, _ => pure ()
-    let r := compareProduct BN254.baseField.ops BN254Pairing.fastCurve BN254.baseField.toNat BN254.baseField.ofNat
-      BN254.curve BN254Pairing.hardPower exact pairs
+    let r := compareProduct (Quad256.ops BN254.baseField true) BN254Pairing.fastCurve BN254Pairing.ofLimbs
+      BN254Pairing.toLimbs BN254.curve BN254Pairing.hardPower exact pairs
+    if i % 8 == 0 then
+      let g := compareProduct (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve (Fq2.toNat BN254.baseField.toNat)
+        (Fq2.ofNat BN254.baseField.ofNat) BN254.curve BN254Pairing.hardPower exact pairs
+      generic := generic + g.1 + g.2.1 + g.2.2
     miller := miller + r.1
     finalBad := finalBad + r.2.1
     verdict := verdict + r.2.2
-  return #[⟨"alt_bn128 Miller value = old Miller value" ++ (if exact then "" else " (skipped: signed digits)"), count, miller, ""⟩,
+  return #[⟨"alt_bn128 Miller value = old Miller value" ++ (if exact then "" else " after the easy part (signed digits)"), count, miller, ""⟩,
+    ⟨"alt_bn128 products on the generic Fq2 over the limb field", (count + 7) / 8, generic, ""⟩,
     ⟨"alt_bn128 final value = old final value ^ hardPower", count, finalBad, ""⟩,
     ⟨"alt_bn128 product verdict", count, verdict, ""⟩]
 
@@ -363,8 +394,8 @@ def checkBlsPairs (count : Nat) : Array Check := Id.run do
       match blsMul1 (a % BLS12381.r), blsMul2 (b % BLS12381.r) with
       | some x, some y => pairs := (x, y) :: pairs
       | _, _ => pure ()
-    let r := compareProduct BLS12381.baseField.ops BLS12381Pairing.fastCurve BLS12381.baseField.toNat
-      BLS12381.baseField.ofNat BLS12381.curve BLS12381Pairing.hardPower true pairs
+    let r := compareProduct (Quad384.ops BLS12381.baseField false) BLS12381Pairing.fastCurve BLS12381Pairing.ofLimbs
+      BLS12381Pairing.toLimbs BLS12381.curve BLS12381Pairing.hardPower true pairs
     miller := miller + r.1
     finalBad := finalBad + r.2.1
     verdict := verdict + r.2.2
@@ -473,14 +504,15 @@ def timings (k : Nat) : IO Unit := do
   let bnOldPairs := (BN254.decodePairs bnInput 2 0 []).getD []
   let bnNewPairs := (BN254Pairing.decodePairs bnInput 2 0 []).getD []
   measure "alt_bn128 OLD Miller loops" 9 fun _ => (Pairing.millerProduct BN254.curve bnOldPairs Fp12.one).c0.c0
-  measure "alt_bn128 NEW Miller loop (shared)" 101 fun _ => (BN254Pairing.millerProduct bnNewPairs).c0.c0.c0.l0.toNat
+  measure "alt_bn128 NEW Miller loop (shared)" 101 fun _ => (BN254Pairing.millerProduct bnNewPairs).c0.c0.r0.toNat
   let bnOldM := Pairing.millerProduct BN254.curve bnOldPairs Fp12.one
   let bnNewM := BN254Pairing.millerProduct bnNewPairs
   measure "alt_bn128 OLD final exponentiation" 9 fun _ => (Pairing.finalExponentiation BN254.curve bnOldM).c0.c0
-  measure "alt_bn128 NEW final exponentiation" 101 fun _ => (BN254Pairing.finalExponentiation bnNewM).c0.c0.c0.l0.toNat
+  measure "alt_bn128 NEW final exponentiation" 101 fun _ => (BN254Pairing.finalExponentiation bnNewM).c0.c0.r0.toNat
   let q := (bnMul2 (0xfedcba0987654321fedcba0987654321 + k) bnG2).getD bnG2
   measure "alt_bn128 OLD one G2 subgroup check" 9 fun _ => if bnDefinitional q then 1 else 0
-  measure "alt_bn128 NEW one G2 subgroup check" 101 fun _ => if BN254Pairing.inG2 q.1 q.2 then 1 else 0
+  measure "alt_bn128 NEW one G2 subgroup check, psi(Q) = [6x^2]Q" 101 fun _ => if BN254Pairing.inG2 q.1 q.2 then 1 else 0
+  measure "alt_bn128 one G2 subgroup check by the short relation (not routed)" 101 fun _ => if BN254Pairing.inG2Short q.1 q.2 then 1 else 0
   -- BLS12-381: two finite pairs.
   let blsInput := blsEncode1 (blsMul1 (0x1234567890abcdef1234567890abcdef + k)) ++ blsEncode2 (blsMul2 (0xfedcba0987654321fedcba0987654321 + k)) ++
     blsEncode1 (blsMul1 0x1111111111111111222222222222222233333333) ++ blsEncode2 (blsMul2 0x4444444444444444555555555555555566666666)
@@ -491,11 +523,11 @@ def timings (k : Nat) : IO Unit := do
   let blsOldPairs := (BLS12381.decodePairs blsInput 2 0 []).getD []
   let blsNewPairs := (BLS12381Pairing.decodePairs blsInput 2 0 []).getD []
   measure "bls12-381 OLD Miller loops" 9 fun _ => (Pairing.millerProduct BLS12381.curve blsOldPairs Fp12.one).c0.c0
-  measure "bls12-381 NEW Miller loop (shared)" 101 fun _ => (BLS12381Pairing.millerProduct blsNewPairs).c0.c0.c0.l0.toNat
+  measure "bls12-381 NEW Miller loop (shared)" 101 fun _ => (BLS12381Pairing.millerProduct blsNewPairs).c0.c0.r0.toNat
   let blsOldM := Pairing.millerProduct BLS12381.curve blsOldPairs Fp12.one
   let blsNewM := BLS12381Pairing.millerProduct blsNewPairs
   measure "bls12-381 OLD final exponentiation" 9 fun _ => (Pairing.finalExponentiation BLS12381.curve blsOldM).c0.c0
-  measure "bls12-381 NEW final exponentiation" 101 fun _ => (BLS12381Pairing.finalExponentiation blsNewM).c0.c0.c0.l0.toNat
+  measure "bls12-381 NEW final exponentiation" 101 fun _ => (BLS12381Pairing.finalExponentiation blsNewM).c0.c0.r0.toNat
   -- KZG: the verification equation only (two scalar multiplications and the product), no decompression.
   let commitment := blsMul1 (0x1234567890abcdef + k)
   let proof := blsMul1 0xfedcba0987654321
@@ -551,11 +583,13 @@ def main (args : List String) : IO UInt32 := do
     let scale := (args.head?.bind String.toNat?).getD 100
     let n (base : Nat) := max 1 (base * scale / 100)
     let checks :=
-      checkTower "alt_bn128" BN254.baseField.ops BN254Pairing.fastCurve BN254.baseField.toNat BN254.baseField.ofNat
-          BN254.curve BN254Pairing.hardPower (n 200)
+      checkTower "alt_bn128" (Quad256.ops BN254.baseField true) BN254Pairing.fastCurve BN254Pairing.ofLimbs
+          BN254Pairing.toLimbs BN254.curve BN254Pairing.hardPower (n 200)
+        ++ checkTower "alt_bn128 (generic Fq2 over the limb field)" (Fq2.quadOps BN254.baseField.ops true) bnGenericCurve
+          (Fq2.toNat BN254.baseField.toNat) (Fq2.ofNat BN254.baseField.ofNat) BN254.curve BN254Pairing.hardPower (n 40)
         ++ checkBnSubgroup (n 100) ++ checkBnPairs (n 60) ++ checkBnBody (n 60)
-        ++ checkTower "bls12-381" BLS12381.baseField.ops BLS12381Pairing.fastCurve BLS12381.baseField.toNat
-          BLS12381.baseField.ofNat BLS12381.curve BLS12381Pairing.hardPower (n 100)
+        ++ checkTower "bls12-381" (Quad384.ops BLS12381.baseField false) BLS12381Pairing.fastCurve BLS12381Pairing.ofLimbs
+          BLS12381Pairing.toLimbs BLS12381.curve BLS12381Pairing.hardPower (n 100)
         ++ checkBlsPairs (n 30) ++ checkBlsBody (n 20) ++ checkKzg (n 12)
     let mut bad := 0
     let mut total := 0
