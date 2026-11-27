@@ -49,7 +49,15 @@ Commands: `grep`/Python scans of `formal/lean4/L4Factoidal` with comments remove
   def`. 93 `@[extern]`/`@[implemented_by]`.
 - 991 theorems (6%) have no binder, no `∀` and no `→`: they are tests of one closed value in
   theorem form, not general properties.
-- Foafnaut host: about 36,700 lines of TypeScript and JavaScript outside Lean.
+- Lean in `formal/lean4` (all of it, `.lake` excluded): 952,967 lines. Browser parts: Rendering
+  56,211, WasmVM 42,182, JS (BubblePopJS) 33,373, DOM 15,668, Net 10,853, HTML 10,419.
+- Foafnaut TypeScript and JavaScript, tracked files in `labs/demos/foafnaut` (`git ls-files`):
+  34,821 lines. (A first count of 36,700 included untracked files.) Tests 11,811; benchmarks,
+  surveys and developer tools 3,717; Textnaut 2,614; Hub host 2,611; Tor host 751; native host
+  runtime 13,317 (`run_html.ts` 2,749 of it). Most host files say they decide no pixel and no
+  colour. Some carry policy that no theorem covers: scroll prefetch rules (`scroll_prefetch.ts`),
+  GPU pacing (`gpu_pacing.ts`), the DNS cache lifetime and size (`native_net.ts`), engine worker
+  and tab scheduling. `tools/host-purity-lint.sh` does not scan this directory.
 - Process volume, last 30 days: 4,201 commits on `main`; 601 design records in total; 290 files
   in `tools/`; 263 open issues in `danbri/factoidal-core`, 639 in `danbri/factoidal`.
 - npm `@factoidal/core` 0.38.0, 2026-11-26, 35 MB unpacked.
@@ -123,6 +131,10 @@ release note. This measures what the theorems are worth.
 
 P9. **Fewer, closed tests out of theorem form.** The 991 closed theorems are fine as tests but
 they inflate the theorem count. Report theorem counts without them, or move them to `#guard`.
+
+P11. **Foafnaut host boundary.** Extend the host purity lint to `labs/demos/foafnaut`. Each host
+policy (prefetch, pacing, DNS cache, scheduling) either moves to Lean as a pure decision that the
+host calls, or goes on an allow list with a reason, with a ratchet on its size.
 
 P10. **Shared lemma index before new work.** Each proof agent runs `lean_local_search` and reads a
 generated lemma index first (the post: 17% fewer tokens). This also reduces the duplicate code
