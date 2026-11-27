@@ -1,4 +1,4 @@
-name: W3C SPARQL 1.1, reference definitions and shipped engine
+name: W3C SPARQL 1.1 and RDF syntax suites, reference definitions and shipped engine
 
 # P6 of batch https://github.com/danbri/factoidal-core/issues/1189:
 # https://github.com/danbri/factoidal-core/issues/1183. `l4w3c` scores the
@@ -56,6 +56,23 @@ jobs:
           echo "exit $RC"; grep -E '^TOTAL|^engine:' "$RUNNER_TEMP/shipped.log" | sed 's/^/shipped: /' | tee -a "$GITHUB_STEP_SUMMARY"
           grep -qE '^engine: shipped; [1-9]' "$RUNNER_TEMP/shipped.log" || { echo "::error::the shipped engine answered no query"; exit 1; }
           grep -qE '^TOTAL' "$RUNNER_TEMP/shipped.log"
+      # The RDF 1.1 syntax suites: reference parsers (parseTurtle, parseNTriples,
+      # parseNQuads) against the readers the shipped Source layer calls
+      # (parseTurtleText's statement walk, parseNTriplesDocument, parseNQuadsFastDocument).
+      - name: RDF 1.1 Turtle, N-Triples, N-Quads, both readers
+        working-directory: formal/lean4
+        shell: bash
+        run: |
+          W=../../third_party/testing/w3c/rdf/rdf11
+          for suite in rdf-turtle rdf-n-triples rdf-n-quads; do
+            for eng in reference shipped; do
+              F=""; [ "$eng" = shipped ] && F="--engine=shipped"
+              lake exe l4w3c --quiet $F "$W/$suite/manifest.ttl" > "$RUNNER_TEMP/$suite-$eng.log" 2>&1 || true
+              echo "$suite $eng: $(grep -E '^TOTAL' "$RUNNER_TEMP/$suite-$eng.log")" | tee -a "$GITHUB_STEP_SUMMARY"
+              grep -qE '^TOTAL' "$RUNNER_TEMP/$suite-$eng.log"
+            done
+            diff <(grep -E '^FAIL' "$RUNNER_TEMP/$suite-reference.log" | sort) <(grep -E '^FAIL' "$RUNNER_TEMP/$suite-shipped.log" | sort) | tee -a "$RUNNER_TEMP/rdf-engine-diff.txt" || true
+          done
       - name: Tests whose outcome differs between the two
         shell: bash
         run: |
@@ -71,3 +88,5 @@ jobs:
             ${{ runner.temp }}/ref.log
             ${{ runner.temp }}/shipped.log
             ${{ runner.temp }}/engine-diff.txt
+            ${{ runner.temp }}/rdf-*.log
+            ${{ runner.temp }}/rdf-engine-diff.txt

@@ -64,6 +64,8 @@ import L4Factoidal.OWL.QueryEval
 import L4Factoidal.RIF.Saturate
 import L4Factoidal.Dataflow.Evaluator
 import L4Factoidal.Dataflow.Store
+import L4Factoidal.Syntax.TurtleChunkFold
+import L4Factoidal.Syntax.NQuadsFast
 
 open L4Factoidal.RDF
 open L4Factoidal.RDF.Canonical
@@ -900,29 +902,41 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
         match ← readOpt rf with
         | none          => return .ofOutcome (.skip s!"result file missing: {rf}")
         | some expected => k path text expected
+  -- `--engine=shipped` (issue 1183): the Turtle, N-Triples and N-Quads tests
+  -- read with the functions the shipped reader calls (`RDF.Source.parseDocumentRaw`:
+  -- `parseTurtleText`, the statement walk with its fallback; `parseNTriplesDocument`;
+  -- `parseNQuadsFastDocument`), not the strict reference parsers. The expected
+  -- results are still read with the reference N-Triples parser.
+  let shipped ← shippedEngine.get
+  let ttlP := fun (text : String) (base : Option String) (mode : Mode) =>
+    if shipped then L4Factoidal.Syntax.parseTurtleText text base mode else parseTurtle text base mode
+  let ntP := fun (text : String) (mode : Mode) =>
+    if shipped then parseNTriplesDocument text mode else parseNTriples text mode
+  let nqP := fun (text : String) (mode : Mode) =>
+    if shipped then L4Factoidal.Syntax.parseNQuadsFastDocument text mode else parseNQuads text mode
   match tc.testType with
 
   /- ### N-Triples (RDF 1.1 N-Triples §4) -/
   | "TestNTriplesPositiveSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNTriples text mode with
+      match ntP text mode with
       | .ok _    => .pass
       | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestNTriplesNegativeSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNTriples text mode with
+      match ntP text mode with
       | .error _ => .pass
       | .ok g    => .fail s!"should reject but parsed OK ({g.length} triples)")
 
   /- ### N-Quads (RDF 1.1 N-Quads §4) -/
   | "TestNQuadsPositiveSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNQuads text mode with
+      match nqP text mode with
       | .ok _    => .pass
       | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestNQuadsNegativeSyntax" =>
     withAction fun _ text => return .ofOutcome (
-      match parseNQuads text mode with
+      match nqP text mode with
       | .error _ => .pass
       | .ok _    => .fail "should reject but parsed OK")
 
@@ -931,20 +945,20 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .ok _    => .pass
         | .error e => .fail s!"parser rejected input that should parse: {e.msg} (offset {e.pos})")
   | "TestTurtleNegativeSyntax" =>
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .error _ => .pass
         | .ok g    => .fail s!"should reject but parsed OK ({g.length} triples)")
   | "TestTurtleEval" =>
     withActionAndResult fun path text expectedText => do
       let base := fixtureBase assumedBase manifestDir path
-      match parseTurtle text (some base) mode with
+      match ttlP text (some base) mode with
       | .error e => return .ofOutcome (.fail s!"Turtle parse error: {e.msg} (offset {e.pos})")
       | .ok g =>
         match parseNTriples expectedText mode with
@@ -960,7 +974,7 @@ def runTest (mode : Mode) (assumedBase : Option String) (manifestDir : String)
     withAction fun path text => do
       let base := fixtureBase assumedBase manifestDir path
       return .ofOutcome (
-        match parseTurtle text (some base) mode with
+        match ttlP text (some base) mode with
         | .error _ => .pass
         | .ok g    => if g.isEmpty then .pass
                       else .fail s!"should produce an eval error but succeeded ({g.length} triples)")
