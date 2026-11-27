@@ -218,6 +218,29 @@ def attempt (fork : Fork) (env : Env) (block : BlockContext) (fuel : Nat) (tx : 
 
 def maxExpansions : Nat := 512
 
+/-- Each expansion also lists the next `expansionBatch - 1` addresses (or
+    slot keys): tests often probe consecutive ones, and every listed extra is
+    exactly what the complete pre-state says (absent, or zero), so it cannot
+    change the outcome; empty accounts and zero slots leave the roots alone. -/
+def expansionBatch : Nat := 16
+
+/-- Add `address` and its successors as absent, staying within the
+    runner's account limit. -/
+def ensureAccounts (ws : List WitnessAccount) (address : Nat) : List WitnessAccount :=
+  let extra := (List.range expansionBatch).map (address + ·)
+  let extra := extra.filter (· < 2 ^ 160)
+  if ws.length + expansionBatch ≤ CallTransaction.maxAccounts / 2 then extra.foldl ensureAccount ws
+  else ensureAccount ws address
+
+/-- Add `key` and its successors as zero slots, within the slot limits. -/
+def ensureSlots (ws : List WitnessAccount) (address key : Nat) : Option (List WitnessAccount) := do
+  let first ← ensureSlot ws address key
+  let total := first.foldl (fun n w => n + w.storage.length) 0
+  if total + expansionBatch ≤ 8192 then
+    (List.range (expansionBatch - 1)).foldlM (fun acc i =>
+      if key + i + 1 < 2 ^ 256 then ensureSlot acc address (key + i + 1) else some acc) first
+  else pure first
+
 /-- EIP-2537 precompile addresses, executable from Prague. -/
 def blsAddress (address : Nat) : Bool := decide (0x0b ≤ address ∧ address ≤ 0x11)
 
@@ -248,9 +271,9 @@ def runExpanding (fork : Fork) (env : Env) (block : BlockContext) (fuel : Nat) (
         (.done (.indeterminate (.unsupported ("missing-precompile:0x" ++ precompileHex address))), ws, used)
       else if ws.any (·.address == address) then
         (.done (.indeterminate (.unsupported "witness-domain-loop")), ws, used)
-      else runExpanding fork env block fuel tx blob a budget (used + 1) (ensureAccount ws address)
+      else runExpanding fork env block fuel tx blob a budget (used + 1) (ensureAccounts ws address)
     | .done (.indeterminate (.frame (.incompleteState address (some key)))) =>
-      match ensureSlot ws address key with
+      match ensureSlots ws address key with
       | some next =>
         if next.length == ws.length && ws.any (fun w => w.address == address &&
             w.storage.any (·.key == key)) then
