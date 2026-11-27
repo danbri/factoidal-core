@@ -5851,7 +5851,10 @@
       for (let i = 0; i < count; i++) {
         const kind = dv.getUint8(4 + 5 * i), v = dv.getUint32(5 + 5 * i, true);
         if (kind === 1) { const nd = cs.nodes.get(v); if (nd) fire(nd, 'ended'); }
-        else if (kind === 2) { cs.state = STATES[v] ?? cs.state; fire(cs.self, 'statechange'); }
+        // The state attribute changes now and the promises of the calls settle in this task;
+        // `statechange` fires in a later task, so a call's promise reactions run before it (WPT
+        // suspend-after-construct.html, audiocontext-suspend-resume-close.html).
+        else if (kind === 2) { cs.state = STATES[v] ?? cs.state; task(() => fire(cs.self, 'statechange')); }
         else if (kind === 3 || kind === 4) {
           const c = cs.calls.get(v); cs.calls.delete(v);
           if (c) { if (kind === 3) c.resolve(); else c.reject(dom('InvalidStateError', `Failed to execute '${c.verb}' on 'AudioContext': the context is closed`)); }
@@ -6135,10 +6138,13 @@
           // The specification's order: `ended` of each source that finished, then the promise
           // (and the context's state `closed`), then the event `complete`.
           for (const id of r.ended) task(() => { const n = s.nodes.get(id); if (n) fire(n, 'ended'); });
+          // The promise resolves before `statechange` (closed) fires: its reactions run in this
+          // task's microtask checkpoint, the event in the next task (WPT
+          // audiocontext-suspend-resume-close.html, testOfflineAudioContext).
           task(() => {
             s.state = 'closed';
-            fire(s.self, 'statechange');
             resolve(out);
+            task(() => fire(s.self, 'statechange'));
             task(() => {
               const ev = new OfflineAudioCompletionEvent('complete', { renderedBuffer: out });
               state(ev).trusted = true; dispatch(s.self, ev);
