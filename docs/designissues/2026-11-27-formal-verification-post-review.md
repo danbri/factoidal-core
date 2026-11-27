@@ -203,3 +203,28 @@ Third-party behaviour found (owner rule: recorded here, not reported upstream):
   is the exclusive canonical form, which keeps only the visibly used declarations, as Factoidal
   does. To check against the W3C `rdfms-xml-literal-namespaces` tests. Workaround: the comparer
   counts these documents apart.
+
+## 8. Defects found by the campaigns, first night (2026-11-27)
+
+The W3C suites pass in full for every one of these paths (SPARQL 1.1: 650 of 650; Turtle 313 of
+313; N-Triples 70 of 70; N-Quads 87 of 87), so none of these defects was visible before.
+
+- Turtle and TriG: a prefixed name with prefix `e` and digits in object position was read as a
+  number. Fixed: https://github.com/danbri/factoidal-core/pull/1204.
+- N-Triples and N-Quads accept two statements on one line:
+  https://github.com/danbri/factoidal-core/issues/1209 (expected-failure test).
+- SPARQL EXISTS: a literal substituted into a subject position leaves the variable free:
+  https://github.com/danbri/factoidal-core/issues/1210 (cause in `substPatternSubject`;
+  expected-failure tests).
+- SPARQL SUM and AVG of an unbound variable give 0, not an error:
+  https://github.com/danbri/factoidal-core/issues/1211 (expected-failure tests).
+- To check, not yet a defect: `!=` between a simple literal and a number
+  (https://github.com/danbri/factoidal-core/issues/1194); white space between `^^` and the
+  datatype IRI in N-Triples (item 2 of issue 1209).
+
+Differences where Factoidal follows the specification on a Claude session's reading and
+Oxigraph 0.5.13 does not (recorded here, not reported upstream): duplicates of alternative
+paths and of negated property sets with an inverse part (SPARQL 1.1 evaluates them as a union);
+zero-length paths with a constant end; `xml:lang=""` and the namespace declarations of
+`rdf:XMLLiteral` in RDF/XML (section 7). The order of MAX over literals of different kinds is
+left to the implementation.
