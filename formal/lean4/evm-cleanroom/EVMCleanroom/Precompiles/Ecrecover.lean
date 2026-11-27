@@ -1,4 +1,4 @@
-import EVMCleanroom.Precompiles.Secp256k1
+import EVMCleanroom.Precompiles.Secp256k1Fast
 import EVMCleanroom.Keccak
 
 /-!
@@ -12,18 +12,24 @@ a curve point, or the recovered key is the point at infinity. Unlike
 transaction signatures (EIP-2), a high `s` is accepted here, as in the Yellow
 Paper and EELS.
 
-Key recovery is `Secp256k1.recover` from the shared curve module. The address
-is the Keccak-256 of the 64-byte public key, so the precompile needs the
-repository's explicit Keccak opt-in, like the KECCAK256 opcode.
+Key recovery is `Secp256k1.recoverFast` (`Secp256k1Fast.lean`): the inputs of a
+precompile call are public, so the variable-time fast path is in order here.
+It is tested, not proved, to return what the definition `Secp256k1.recover`
+returns (guards, the differential run of `evm-secpperf`, the published
+vectors); every key it returns has passed the curve equation in the `Nat`
+field. The address is the Keccak-256 of the 64-byte public key, so the
+precompile needs the repository's explicit Keccak opt-in, like the KECCAK256
+opcode.
 
 Proved: gas accounting, output length, that only the first 128 input bytes
-matter. Tested, not proved: the recovered address (published vectors, and
-agreement with the affine `SecpRecovery` in `PrecompileCallTests.lean`).
+matter. Tested, not proved: the recovered address (published vectors,
+agreement with `Secp256k1.recover` in `evm-secpperf`, and agreement with the
+affine `SecpRecovery` in `PrecompileCallTests.lean`).
 -/
 
 namespace EVMCleanroom.Precompiles.Ecrecover
 
-open Secp256k1 (recover n)
+open Secp256k1 (recoverFast n)
 
 def gasCost : Nat := 3000
 
@@ -38,7 +44,7 @@ def body (data : ByteArray) : Body :=
   let v := beNat data 32 32
   if v ≠ 27 ∧ v ≠ 28 then .output ByteArray.empty
   else
-    match recover (beNat data 0 32) (v - 27) (beNat data 64 32) (beNat data 96 32) with
+    match recoverFast (beNat data 0 32) (v - 27) (beNat data 64 32) (beNat data 96 32) with
     | none => .output ByteArray.empty
     | some (x, y) => .output (addressBytes x y)
 

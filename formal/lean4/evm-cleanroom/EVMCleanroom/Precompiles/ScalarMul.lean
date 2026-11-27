@@ -161,11 +161,17 @@ theorem wnafStep_digit (h k : Nat) (hh : 0 < h) : DigitOk h (wnafStep h k).1 := 
       generalize h * (k / (2 * h)) = t at hdm
       omega
 
+/-- Kind: arithmetic lemma.
+    Says: `2^(a+b) = 2^a · 2^b` in the integers.
+    Does not say: anything about digits. -/
 private theorem two_pow_add (a b : Nat) : (2 : Int) ^ (a + b) = 2 ^ a * 2 ^ b := by
   induction b with
   | zero => simp
   | succ b ih => rw [← Nat.add_assoc, Int.pow_succ, Int.pow_succ, ih, Int.mul_assoc]
 
+/-- Kind: arithmetic lemma.
+    Says: the value of two digit lists joined is the first plus the second shifted by the length of the first.
+    Does not say: anything about how the digits were made. -/
 private theorem evalDigits_append (l1 l2 : List Int) :
     evalDigits (l1 ++ l2) = evalDigits l1 + 2 ^ l1.length * evalDigits l2 := by
   induction l1 with
@@ -177,6 +183,9 @@ private theorem evalDigits_append (l1 l2 : List Int) :
       rw [← Int.mul_assoc, Int.mul_comm 2 (2 ^ as.length)]
     omega
 
+/-- Kind: arithmetic lemma.
+    Says: appending a digit adds it with the weight of its position.
+    Does not say: anything about how the digits were made. -/
 private theorem evalArr_push (a : Array Int) (d : Int) :
     evalArr (a.push d) = evalArr a + 2 ^ a.size * d := by
   have h := evalDigits_append a.toList [d]
@@ -188,9 +197,14 @@ private theorem evalArr_push (a : Array Int) (d : Int) :
     | simpa [evalArr] using h
     | simp [evalArr, evalDigits_append, evalDigits]
 
+/-- Kind: arithmetic lemma.
+    Says: no digits have the value zero.
+    Does not say: anything else. -/
 private theorem evalArr_empty : evalArr #[] = 0 := rfl
 
-/-- Pure arithmetic of one recoding step under the weight `P` of the next digit. -/
+/-- Kind: arithmetic lemma.
+    Says: one recoding step keeps the weighted sum, under the weight `P` of the next digit.
+    Does not say: anything about the digit. -/
 private theorem step_arith (A P d v' v : Int) (hs : v = d + 2 * v') :
     A + P * d + P * 2 * v' = A + P * v := by
   subst hs
@@ -198,7 +212,9 @@ private theorem step_arith (A P d v' v : Int) (hs : v = d + 2 * v') :
   have e : P * (2 * v') = P * 2 * v' := (Int.mul_assoc P 2 v').symm
   omega
 
-/-- Pure arithmetic of one 60-digit round. -/
+/-- Kind: arithmetic lemma.
+    Says: one 60-digit round keeps the weighted sum.
+    Does not say: anything about the digits. -/
 private theorem chunk_arith (E A P Q X Y q r Z : Int) (hQ : Q = P * 2 ^ 60)
     (h1 : E + Q * r = A + P * Y) (hX : X = Y + 2 ^ 60 * q) (hZ : Z = q + r) :
     E + Q * Z = A + P * X := by
@@ -207,6 +223,9 @@ private theorem chunk_arith (E A P Q X Y q r Z : Int) (hQ : Q = P * 2 ^ 60)
   have e : P * (2 ^ 60 * q) = P * 2 ^ 60 * q := (Int.mul_assoc P (2 ^ 60) q).symm
   omega
 
+/-- Kind: recoding identity (fixed count).
+    Says: `f` steps append exactly `f` digits, and the digits with the rest reconstruct the value.
+    Does not say: that the rest is zero. -/
 private theorem wnafFixed_spec (h : Nat) : ∀ (f v : Nat) (acc : Array Int),
     (wnafFixed h f v acc).1.size = acc.size + f ∧
       evalArr (wnafFixed h f v acc).1 + 2 ^ (acc.size + f) * ((wnafFixed h f v acc).2 : Int)
@@ -221,6 +240,9 @@ private theorem wnafFixed_spec (h : Nat) : ∀ (f v : Nat) (acc : Array Int),
       (wnafStep_eq h v)
     exact ⟨ih.1, ih.2.trans hs⟩
 
+/-- Kind: recoding identity (last piece).
+    Says: with a count at least the value, the appended digits reconstruct the value with no rest.
+    Does not say: how many digits are appended. -/
 private theorem wnafTail_eval (h : Nat) : ∀ (f v : Nat) (acc : Array Int), v ≤ f →
     evalArr (wnafTail h f v acc) = evalArr acc + 2 ^ acc.size * (v : Int)
   | 0, v, acc, hv => by
@@ -242,6 +264,9 @@ private theorem wnafTail_eval (h : Nat) : ∀ (f v : Nat) (acc : Array Int), v �
       exact step_arith (evalArr acc) (2 ^ acc.size) (wnafStep h v).1 ((wnafStep h v).2 : Int) (v : Int)
         (wnafStep_eq h v)
 
+/-- Kind: recoding identity (all rounds).
+    Says: for every count of rounds, the appended digits reconstruct `K + c` at the weight of the position reached.
+    Does not say: how many digits are appended. -/
 private theorem wnafGo_eval (h : Nat) : ∀ (f K c : Nat) (acc : Array Int),
     evalArr (wnafGo h f K c acc) = evalArr acc + 2 ^ acc.size * ((K + c : Nat) : Int)
   | 0, K, c, acc => wnafTail_eval h (K + c) (K + c) acc (Nat.le_refl _)
@@ -269,6 +294,9 @@ theorem wnaf_eval (h k : Nat) : evalArr (wnaf h k) = (k : Int) := by
   rw [wnafGo_eval, evalArr_empty]
   simp
 
+/-- Kind: digit bound (bookkeeping).
+    Says: appending a good digit to good digits leaves all digits good.
+    Does not say: anything about values. -/
 private theorem push_ok (h : Nat) (acc : Array Int) (x : Int) (hacc : ∀ d ∈ acc, DigitOk h d)
     (hx : DigitOk h x) : ∀ d ∈ acc.push x, DigitOk h d := by
   intro d hd
@@ -279,6 +307,9 @@ private theorem push_ok (h : Nat) (acc : Array Int) (x : Int) (hacc : ∀ d ∈ 
   | inl hd => exact hacc d hd
   | inr hd => rw [hd]; exact hx
 
+/-- Kind: digit bound (fixed count).
+    Says: the digits appended by `wnafFixed` are zero or odd and within the window.
+    Does not say: anything about values. -/
 private theorem wnafFixed_digits (h : Nat) (hh : 0 < h) : ∀ (f v : Nat) (acc : Array Int),
     (∀ d ∈ acc, DigitOk h d) → ∀ d ∈ (wnafFixed h f v acc).1, DigitOk h d
   | 0, _, _, hacc => hacc
@@ -286,6 +317,9 @@ private theorem wnafFixed_digits (h : Nat) (hh : 0 < h) : ∀ (f v : Nat) (acc :
     wnafFixed_digits h hh f (wnafStep h v).2 (acc.push (wnafStep h v).1)
       (push_ok h acc _ hacc (wnafStep_digit h v hh))
 
+/-- Kind: digit bound (last piece).
+    Says: the digits appended by `wnafTail` are zero or odd and within the window.
+    Does not say: anything about values. -/
 private theorem wnafTail_digits (h : Nat) (hh : 0 < h) : ∀ (f v : Nat) (acc : Array Int),
     (∀ d ∈ acc, DigitOk h d) → ∀ d ∈ wnafTail h f v acc, DigitOk h d
   | 0, _, _, hacc => hacc
@@ -298,6 +332,9 @@ private theorem wnafTail_digits (h : Nat) (hh : 0 < h) : ∀ (f v : Nat) (acc : 
       exact wnafTail_digits h hh f (wnafStep h v).2 (acc.push (wnafStep h v).1)
         (push_ok h acc _ hacc (wnafStep_digit h v hh))
 
+/-- Kind: digit bound (all rounds).
+    Says: the digits appended by `wnafGo` are zero or odd and within the window.
+    Does not say: anything about values. -/
 private theorem wnafGo_digits (h : Nat) (hh : 0 < h) : ∀ (f K c : Nat) (acc : Array Int),
     (∀ d ∈ acc, DigitOk h d) → ∀ d ∈ wnafGo h f K c acc, DigitOk h d
   | 0, K, c, acc, hacc => wnafTail_digits h hh (K + c) (K + c) acc hacc
@@ -358,10 +395,14 @@ variable {P : Type}
   | 0, acc => acc
   | i+1, acc => windowLoop dbl add neg zero table ds i (addDigit add neg zero table (dbl acc) (ds.getD i 0))
 
+@[specialize] def windowRun (dbl : P → P) (add : P → P → P) (neg : P → P) (zero : P) (table : Array P)
+    (ds : Array Int) : P :=
+  windowLoop dbl add neg zero table ds ds.size zero
+
 /-- `[k]p` with half-window `h`: a table of `(h+1)/2` odd multiples, one doubling per digit
     and one addition per non-zero digit. -/
 @[specialize] def windowMul (dbl : P → P) (add : P → P → P) (neg : P → P) (zero : P) (h k : Nat) (p : P) : P :=
-  windowLoop dbl add neg zero (oddMultiples dbl add p ((h + 1) / 2)) (wnaf h k) (wnaf h k).size zero
+  windowRun dbl add neg zero (oddMultiples dbl add p ((h + 1) / 2)) (wnaf h k)
 
 @[specialize] def strausLoop (dbl : P → P) (add : P → P → P) (neg : P → P) (zero : P)
     (t1 t2 : Array P) (d1 d2 : Array Int) : Nat → P → P
@@ -370,11 +411,15 @@ variable {P : Type}
     strausLoop dbl add neg zero t1 t2 d1 d2 i
       (addDigit add neg zero t2 (addDigit add neg zero t1 (dbl acc) (d1.getD i 0)) (d2.getD i 0))
 
+@[specialize] def strausRun (dbl : P → P) (add : P → P → P) (neg : P → P) (zero : P) (t1 t2 : Array P)
+    (d1 d2 : Array Int) : P :=
+  strausLoop dbl add neg zero t1 t2 d1 d2 (max d1.size d2.size) zero
+
 /-- `[k1]p1 + [k2]p2` with one shared doubling chain (Straus) and half-window `h` for both. -/
 @[specialize] def strausMul (dbl : P → P) (add : P → P → P) (neg : P → P) (zero : P) (h k1 : Nat) (p1 : P)
     (k2 : Nat) (p2 : P) : P :=
-  strausLoop dbl add neg zero (oddMultiples dbl add p1 ((h + 1) / 2)) (oddMultiples dbl add p2 ((h + 1) / 2))
-    (wnaf h k1) (wnaf h k2) (max (wnaf h k1).size (wnaf h k2).size) zero
+  strausRun dbl add neg zero (oddMultiples dbl add p1 ((h + 1) / 2)) (oddMultiples dbl add p2 ((h + 1) / 2))
+    (wnaf h k1) (wnaf h k2)
 
 end Generic
 
@@ -436,7 +481,20 @@ private def digitOk (h : Nat) (d : Int) : Bool := d == 0 || (d % 2 == 1 && -(h :
 #print axioms wnafStep_eq
 #print axioms wnafStep_lt
 #print axioms wnafStep_digit
+#print axioms two_pow_add
+#print axioms evalDigits_append
+#print axioms evalArr_push
+#print axioms evalArr_empty
+#print axioms step_arith
+#print axioms chunk_arith
+#print axioms wnafFixed_spec
+#print axioms wnafTail_eval
+#print axioms wnafGo_eval
 #print axioms wnaf_eval
+#print axioms push_ok
+#print axioms wnafFixed_digits
+#print axioms wnafTail_digits
+#print axioms wnafGo_digits
 #print axioms wnaf_digits
 #print axioms wnaf_digits_even
 #print axioms curveMul_eq

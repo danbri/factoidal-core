@@ -9,6 +9,8 @@
   "EVMCleanroom/Precompiles/Field.lean",
   "EVMCleanroom/Precompiles/Curve.lean",
   "EVMCleanroom/Precompiles/Secp256k1.lean",
+  "EVMCleanroom/Precompiles/ScalarMul.lean",
+  "EVMCleanroom/Precompiles/Secp256k1Fast.lean",
   "EVMCleanroom/Precompiles/Ecrecover.lean",
   "EVMCleanroom/Precompiles/Tower.lean",
   "EVMCleanroom/Precompiles/Pairing.lean",

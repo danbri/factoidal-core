@@ -17,3 +17,9 @@ moreLeancArgs = ["-O3"]
 name = "evm-precompile"
 root = "EVMCleanroom.PrecompileCLI"
 moreLeancArgs = ["-O3"]
+
+# The secp256k1 fast paths against the old ones (differential check), and time per step.
+[[lean_exe]]
+name = "evm-secpperf"
+root = "EVMCleanroom.FieldPerf.Secp"
+moreLeancArgs = ["-O3"]
