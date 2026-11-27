@@ -185,9 +185,11 @@ theorem addMod_spec (N a b : U256) (ha : a.toNat < N.toNat) (hb : b.toNat < N.to
   split <;> split <;> limb_omega
 
 /-- Kind: refinement (modular subtraction).
-    Says: on values below the modulus, `subMod` on limbs is `Fp.sub` on natural numbers.
-    Does not say: anything for a non-canonical argument, or that the modulus is prime. -/
-theorem subMod_spec (N a b : U256) (ha : a.toNat < N.toNat) (hb : b.toNat < N.toNat) :
+    Says: on values below the modulus, `subMod` on limbs is `Fp.sub` on natural numbers. (The
+    proof uses only the bound on the second argument; the first hypothesis is kept so that the
+    three modular statements have the same shape.)
+    Does not say: anything for a non-canonical second argument, or that the modulus is prime. -/
+theorem subMod_spec (N a b : U256) (_ha : a.toNat < N.toNat) (hb : b.toNat < N.toNat) :
     (U256.subMod N a b).toNat = Fp.sub N.toNat a.toNat b.toNat := by
   obtain ⟨hs, hbw⟩ := subBorrow_spec a b
   obtain ⟨hs2, hc2⟩ := addCarry_spec (U256.subBorrow a b).2 N

@@ -20,9 +20,13 @@ product by folding with `2^256 ≡ 2^32 + 977 (mod p)`. Proved here, against
   dictionary `Fe.ops` against `Fp.ops Secp256k1.p`, with the zero and equality
   tests.
 
-Not proved here: that `p` is prime, any field law, and that `Fe.inv` is an
-inverse or `Fe.sqrtCandidate` a square root (they are fixed power chains;
-`evm-fieldperf` compares them with the `Nat` definitions at run time).
+* `inv_spec`, `sqrtCandidate_spec`: the two fixed power chains return the
+  residues of `a ^ (p − 2)` and `a ^ ((p + 1) / 4)`.
+
+Not proved here: that `p` is prime, any field law, and so neither that
+`a ^ (p − 2)` is an inverse nor that `a ^ ((p + 1) / 4)` is a square root
+(`evm-fieldperf` compares `Fe.inv` with `Fp.inv` at run time, and `Fe.sqrt?`
+checks the square).
 Nothing is said about timing.
 -/
 
@@ -293,6 +297,138 @@ theorem ops_refines (a b : U256) (ha : a.toNat < Secp256k1.p) (hb : b.toNat < Se
     bool_eq_of_iff ((U256.beq_iff a b).trans (beq_iff_eq (a := a.toNat) (b := b.toNat)).symm),
     zero_spec, one_spec⟩
 
+/-! ### The fixed power chains
+
+`Fe.inv` and `Fe.sqrtCandidate` are addition chains built from `mul`, `sqr` and `sqrN`. Each
+step multiplies residues, so the exponents add; the theorems below follow the chain and
+compare the final exponent with `p − 2` and `(p + 1) / 4` by evaluation. -/
+
+/-- `x` is the `e`-th power of `A` modulo `p` (the limbs need not be canonical). -/
+private def Pow (A : Nat) (x : U256) (e : Nat) : Prop := x.toNat % pNat = A ^ e % pNat
+
+private theorem pow_cast {A : Nat} {x : U256} {e f : Nat} (h : Pow A x e) (he : e = f) :
+    Pow A x f := he ▸ h
+
+private theorem pow_self (a : U256) : Pow a.toNat a 1 := by
+  unfold Pow
+  rw [Nat.pow_one]
+
+private theorem pow_mul_val {A : Nat} {x y : U256} {e f : Nat} (hx : Pow A x e) (hy : Pow A y f) :
+    (mul x y).toNat = A ^ (e + f) % pNat := by
+  unfold Pow at hx hy
+  rw [mul_spec]
+  show x.toNat * y.toNat % pNat = A ^ (e + f) % pNat
+  rw [Nat.mul_mod, hx, hy, ← Nat.mul_mod, ← Nat.pow_add]
+
+private theorem pow_mul {A : Nat} {x y : U256} {e f : Nat} (hx : Pow A x e) (hy : Pow A y f) :
+    Pow A (mul x y) (e + f) := by
+  unfold Pow
+  rw [pow_mul_val hx hy, Nat.mod_mod]
+
+private theorem pow_sqr {A : Nat} {x : U256} {e : Nat} (hx : Pow A x e) :
+    Pow A (sqr x) (e + e) := pow_mul hx hx
+
+private theorem double_exp (e k : Nat) : (e + e) * 2 ^ k = e * 2 ^ (k + 1) :=
+  calc (e + e) * 2 ^ k = e * 2 ^ k + e * 2 ^ k := Nat.add_mul e e (2 ^ k)
+    _ = e * 2 ^ k * 2 := (Nat.mul_two _).symm
+    _ = e * (2 ^ k * 2) := Nat.mul_assoc e (2 ^ k) 2
+    _ = e * 2 ^ (k + 1) := by rw [Nat.pow_succ]
+
+private theorem pow_sqrN {A : Nat} (k : Nat) :
+    ∀ (x : U256) (e : Nat), Pow A x e → Pow A (sqrN x k) (e * 2 ^ k) := by
+  induction k with
+  | zero =>
+    intro x e h
+    rw [Nat.pow_zero, Nat.mul_one]
+    exact h
+  | succ k ih =>
+    intro x e h
+    have h2 := ih (sqr x) (e + e) (pow_sqr h)
+    rw [double_exp] at h2
+    exact h2
+
+private theorem chain_pow (a : U256) :
+    Pow a.toNat (chain a).1 (2 ^ 223 - 1) ∧ Pow a.toNat (chain a).2.1 (2 ^ 22 - 1) ∧
+      Pow a.toNat (chain a).2.2 3 := by
+  have h1 := pow_self a
+  simp only [chain]
+  have hx2 : Pow a.toNat (mul (sqr a) a) 3 :=
+    pow_cast (pow_mul (pow_sqr h1) h1) (by first | rfl | decide)
+  generalize mul (sqr a) a = x2 at hx2 ⊢
+  have hx3 : Pow a.toNat (mul (sqr x2) a) 7 :=
+    pow_cast (pow_mul (pow_sqr hx2) h1) (by first | rfl | decide)
+  generalize mul (sqr x2) a = x3 at hx3 ⊢
+  have hx6 : Pow a.toNat (mul (sqrN x3 3) x3) (2 ^ 6 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 3 _ _ hx3) hx3) (by first | rfl | decide)
+  generalize mul (sqrN x3 3) x3 = x6 at hx6 ⊢
+  have hx9 : Pow a.toNat (mul (sqrN x6 3) x3) (2 ^ 9 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 3 _ _ hx6) hx3) (by first | rfl | decide)
+  generalize mul (sqrN x6 3) x3 = x9 at hx9 ⊢
+  have hx11 : Pow a.toNat (mul (sqrN x9 2) x2) (2 ^ 11 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 2 _ _ hx9) hx2) (by first | rfl | decide)
+  generalize mul (sqrN x9 2) x2 = x11 at hx11 ⊢
+  have hx22 : Pow a.toNat (mul (sqrN x11 11) x11) (2 ^ 22 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 11 _ _ hx11) hx11) (by first | rfl | decide)
+  generalize mul (sqrN x11 11) x11 = x22 at hx22 ⊢
+  have hx44 : Pow a.toNat (mul (sqrN x22 22) x22) (2 ^ 44 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 22 _ _ hx22) hx22) (by first | rfl | decide)
+  generalize mul (sqrN x22 22) x22 = x44 at hx44 ⊢
+  have hx88 : Pow a.toNat (mul (sqrN x44 44) x44) (2 ^ 88 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 44 _ _ hx44) hx44) (by first | rfl | decide)
+  generalize mul (sqrN x44 44) x44 = x88 at hx88 ⊢
+  have hx176 : Pow a.toNat (mul (sqrN x88 88) x88) (2 ^ 176 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 88 _ _ hx88) hx88) (by first | rfl | decide)
+  generalize mul (sqrN x88 88) x88 = x176 at hx176 ⊢
+  have hx220 : Pow a.toNat (mul (sqrN x176 44) x44) (2 ^ 220 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 44 _ _ hx176) hx44) (by first | rfl | decide)
+  generalize mul (sqrN x176 44) x44 = x220 at hx220 ⊢
+  have hx223 : Pow a.toNat (mul (sqrN x220 3) x3) (2 ^ 223 - 1) :=
+    pow_cast (pow_mul (pow_sqrN 3 _ _ hx220) hx3) (by first | rfl | decide)
+  generalize mul (sqrN x220 3) x3 = x223 at hx223 ⊢
+  exact ⟨hx223, hx22, hx2⟩
+
+/-- Kind: functional correctness (inverse as a power).
+    Says: for every four-limb input, canonical or not, `Fe.inv a` is the residue of
+    `a ^ (p − 2)` modulo `p`.
+    Does not say: that this is an inverse (that needs `p` prime and Fermat's little theorem,
+    neither of which is proved in this package); anything about running time. -/
+theorem inv_spec (a : U256) : (inv a).toNat = a.toNat ^ (pNat - 2) % pNat := by
+  obtain ⟨h223, h22, h2⟩ := chain_pow a
+  have h1 := pow_self a
+  show (mul (sqrN (mul (sqrN (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 5) a) 3)
+    (chain a).2.2) 2) a).toNat = _
+  have t1 := pow_mul (pow_sqrN 23 _ _ h223) h22
+  have t2 := pow_mul (pow_sqrN 5 _ _ t1) h1
+  have t3 := pow_mul (pow_sqrN 3 _ _ t2) h2
+  rw [pow_mul_val (pow_sqrN 2 _ _ t3) h1]
+  have he : ((((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 5 + 1) * 2 ^ 3 + 3) * 2 ^ 2 + 1 =
+      pNat - 2 := by first | rfl | decide
+  rw [he]
+
+/-- Kind: functional correctness (square-root candidate as a power).
+    Says: for every four-limb input, canonical or not, `Fe.sqrtCandidate a` is the residue of
+    `a ^ ((p + 1) / 4)` modulo `p`.
+    Does not say: that this is a square root (`Fe.sqrt?` checks the square at run time);
+    that `p` is prime. -/
+theorem sqrtCandidate_spec (a : U256) :
+    (sqrtCandidate a).toNat = a.toNat ^ ((pNat + 1) / 4) % pNat := by
+  obtain ⟨h223, h22, h2⟩ := chain_pow a
+  show (sqr (sqr (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 6) (chain a).2.2))).toNat = _
+  have t1 := pow_mul (pow_sqrN 23 _ _ h223) h22
+  have t2 := pow_mul (pow_sqrN 6 _ _ t1) h2
+  have t3 : Pow a.toNat
+      (sqr (sqr (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 6) (chain a).2.2))) _ :=
+    pow_sqr (pow_sqr t2)
+  unfold Pow at t3
+  rw [Nat.mod_eq_of_lt (sqr_lt _)] at t3
+  rw [t3]
+  have he : (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3 +
+      (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3) +
+      ((((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3) +
+      (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3))) = (pNat + 1) / 4 := by
+    first | rfl | decide
+  rw [he]
+
 #print axioms pNat_eq
 #print axioms P_toNat
 #print axioms pNat_eq_p
@@ -310,5 +446,7 @@ theorem ops_refines (a b : U256) (ha : a.toNat < Secp256k1.p) (hb : b.toNat < Se
 #print axioms zero_spec
 #print axioms one_spec
 #print axioms ops_refines
+#print axioms inv_spec
+#print axioms sqrtCandidate_spec
 
 end EVMCleanroom.Precompiles.Secp256k1.Fe
