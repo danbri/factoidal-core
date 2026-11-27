@@ -4,7 +4,7 @@
 set -uo pipefail
 status=0
 # Every module on its own, so one run reports the errors of all of them.
-for module in LimbBytes Fp2Limb CurveFast BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
+for module in LimbBytes Fp2Limb CurveFast LimbInverse BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
   start=$(date +%s)
   lake -f lakefile-fieldperf.toml build "EVMCleanroom.Precompiles.$module" || status=1
   echo "RESULT build $module: $(( $(date +%s) - start )) s, status so far $status"

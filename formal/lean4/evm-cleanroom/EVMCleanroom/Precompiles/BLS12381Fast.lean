@@ -3,6 +3,7 @@ import EVMCleanroom.Precompiles.BLS12381Field
 import EVMCleanroom.Precompiles.LimbBytes
 import EVMCleanroom.Precompiles.Fp2Limb
 import EVMCleanroom.Precompiles.CurveFast
+import EVMCleanroom.Precompiles.LimbInverse
 
 /-!
 # BLS12-381 on limbs: decoding, subgroup checks, G1 and G2 addition (0x0b, 0x0d)
@@ -87,7 +88,7 @@ def fsqr (a : U384) : U384 := BLS12381.baseField.sqr a
 def fadd (a b : U384) : U384 := BLS12381.baseField.add a b
 def fsub (a b : U384) : U384 := BLS12381.baseField.sub a b
 def fneg (a : U384) : U384 := BLS12381.baseField.neg a
-def finv (a : U384) : U384 := BLS12381.baseField.inv a
+def finv (a : U384) : U384 := BLS12381.baseField.invFast a
 def toMont (a : U384) : U384 := BLS12381.baseField.toMont a
 def fromMont (a : U384) : U384 := BLS12381.baseField.fromMont a
 
@@ -378,6 +379,11 @@ private def order23 : Fp2 × Fp2 := multiple2 (h2 * r / 529) out2
 #guard M.n.toNat == p && M.toNat four == 4 && M.toNat M.one == 1
 #guard M.toNat (fmul (M.ofNat (p - 5)) (M.ofNat (p - 7))) == 35 && M.toNat (finv (M.ofNat 7)) == Fp.inv p 7 &&
   M.toNat (fsub (M.ofNat 3) (M.ofNat 5)) == p - 2 && (fromMont (toMont (U384.ofNat 12345))).toNat == 12345
+-- The limb inverse: the unverified candidate is the inverse of the definition (381 bits fit 383).
+#guard M.n.toNat < 2 ^ 383 &&
+  [1, 2, 3, 7, p - 1, p - 2, (p - 1) / 2, (p + 1) / 2, 2 ^ 64, 2 ^ 380, betaNat, traceF].all fun a =>
+    M.toNat (M.invCandidate (M.ofNat a)) == Fp.inv p a && M.toNat (finv (M.ofNat a)) == Fp.inv p a
+#guard (finv U384.zero).isZero
 -- Numeric facts behind the subgroup criteria.
 #guard betaNat ^ 3 % p == 1 && betaNat != 1 && (betaNat ^ 2 + betaNat + 1) % p == 0
 #guard r == parameter ^ 4 - parameter ^ 2 + 1 && (parameter + 1) ^ 2 % 3 == 0 && p + parameter == h1 * r

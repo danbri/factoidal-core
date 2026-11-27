@@ -2,6 +2,7 @@ import EVMCleanroom.Precompiles.BN254
 import EVMCleanroom.Precompiles.BN254Field
 import EVMCleanroom.Precompiles.LimbBytes
 import EVMCleanroom.Precompiles.CurveFast
+import EVMCleanroom.Precompiles.LimbInverse
 
 /-!
 # alt_bn128 addition and scalar multiplication on limbs (0x06, 0x07)
@@ -15,7 +16,7 @@ EIP-1108), computed on the four-limb Montgomery field `BN254.baseField`:
   one (`Curve.windowMul`: a table of sixteen multiples, four doublings per four
   scalar bits). The scalar is used as given, up to `2^256 − 1`, as in the
   definition;
-* one field inversion per call (the `Nat` Euclid of `Mont256.inv`), none when
+* one field inversion per call (`Mont256.invFast` of `LimbInverse.lean`), none when
   the result already has `Z = 1` (an operand at infinity, scalar one).
 
 `BN254.lean` stays the definition. This module is tested against it, not
@@ -46,7 +47,7 @@ def fsqr (a : U256) : U256 := BN254.baseField.sqr a
 def fadd (a b : U256) : U256 := BN254.baseField.add a b
 def fsub (a b : U256) : U256 := BN254.baseField.sub a b
 def fneg (a : U256) : U256 := BN254.baseField.neg a
-def finv (a : U256) : U256 := BN254.baseField.inv a
+def finv (a : U256) : U256 := BN254.baseField.invFast a
 def toMont (a : U256) : U256 := BN254.baseField.toMont a
 def fromMont (a : U256) : U256 := BN254.baseField.fromMont a
 
@@ -201,6 +202,11 @@ private def p7 : Nat × Nat := multiple 7
 #guard M.n.toNat == p && M.toNat three == 3 && M.toNat M.one == 1
 #guard M.toNat (fmul (M.ofNat (p - 5)) (M.ofNat (p - 7))) == 35 && M.toNat (finv (M.ofNat 7)) == Fp.inv p 7 &&
   M.toNat (fsub (M.ofNat 3) (M.ofNat 5)) == p - 2 && (fromMont (toMont (U256.ofNat 12345))).toNat == 12345
+-- The limb inverse: the unverified candidate is the inverse of the definition (254 bits fit 255).
+#guard M.n.toNat < 2 ^ 255 &&
+  [1, 2, 3, 7, p - 1, p - 2, (p - 1) / 2, (p + 1) / 2, 2 ^ 64, 2 ^ 253, 0x1234567890abcdef1234567890abcdef % p].all fun a =>
+    M.toNat (M.invCandidate (M.ofNat a)) == Fp.inv p a && M.toNat (finv (M.ofNat a)) == Fp.inv p a
+#guard (finv U256.zero).isZero
 -- Addition: generic, doubling, inverse points, infinity on either side and on both.
 #guard addAgrees (addInput p5 p7) && addAgrees (addInput p5 p5) && addAgrees (addInput g g)
 #guard addAgrees (addInput p5 (p5.1, p - p5.2)) && addAgrees (addInput (0, 0) p7) &&

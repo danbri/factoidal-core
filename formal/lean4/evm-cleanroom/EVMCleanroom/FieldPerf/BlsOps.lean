@@ -327,7 +327,7 @@ def rootCases (count : Nat) : Array Fp2 := Id.run do
   let rs := randoms 43 (2 * count)
   for i in [0:count] do
     let a : Fp2 := ⟨rs.getD (2 * i) 0 % p, rs.getD (2 * i + 1) 0 % p⟩
-    out := out.push (match i % 6 with
+    out := out.push (match i % 12 with
       | 0 => Fp2.sqr p a
       | 1 => ⟨a.c0, 0⟩
       | 2 => ⟨0, a.c1⟩
@@ -413,6 +413,25 @@ def timeBoth (name : String) (inputs : Array ByteArray) (old new : ByteArray →
   let sn := news.qsort (· < ·)
   let nth (xs : Array Nat) (percent : Nat) : Nat := xs.getD ((xs.size - 1) * percent / 100) 0
   IO.println s!"TIMING {name} ({inputs.size} inputs, us): old p50 {micros (nth so 50)} p95 {micros (nth so 95)} max {micros (nth so 100)}; new p50 {micros (nth sn 50)} p95 {micros (nth sn 95)} max {micros (nth sn 100)}; old/new at p50 {micros (nth so 50 * 1000 / (nth sn 50 + 1))}"
+
+/-! ### The limb inverse -/
+
+@[noinline] def invChain256 (f : U256 → U256) : Nat → U256 → U256
+  | 0, x => x
+  | n+1, x => invChain256 f n (f x)
+
+@[noinline] def invChain384 (f : U384 → U384) : Nat → U384 → U384
+  | 0, x => x
+  | n+1, x => invChain384 f n (f x)
+
+@[noinline] def force (run : Unit → Nat) : IO Nat := pure (run ())
+
+def timeChain (label : String) (count : Nat) (run : Unit → Nat) : IO Nat := do
+  let start ← IO.monoNanosNow
+  let digest ← force run
+  let stop ← IO.monoNanosNow
+  IO.println s!"{label}: {(stop - start) / count} ns/op (check {digest % 1000003})"
+  return digest
 
 def boolResult (ok : Bool) : Result := if ok then .success ByteArray.empty 1 else .failure
 
@@ -540,6 +559,33 @@ def main (args : List String) : IO UInt32 := do
   bad := bad + badRoots + badClear + badPacked + badFixed
   if squares < 100 || roots.size - squares < 100 || validPacked < 100 || packed.size - validPacked < 100 then
     IO.println "RESULT blsops: too few cases on one side of a square-root or decompression check, FAILURES"
+    bad := bad + 1
+  -- The limb inverse against the Euclid of the definition: the unverified candidate must already agree
+  let mut badInv := 0
+  let bnP := BN254.p
+  let blsP := BLS12381.p
+  for v in #[1, 2, 3, bnP - 1, bnP - 2, (bnP - 1) / 2, 2 ^ 64, 2 ^ 128 + 1, 2 ^ 253] ++ (randoms 51 (3000 * scale)) do
+    let a := v % bnP
+    if a != 0 then
+      if BN254.baseField.toNat (BN254.baseField.invCandidate (BN254.baseField.ofNat a)) != Fp.inv bnP a then badInv := badInv + 1
+      if BN254.baseField.toNat (BN254.Fast.finv (BN254.baseField.ofNat a)) != Fp.inv bnP a then badInv := badInv + 1
+  for v in #[1, 2, 3, blsP - 1, blsP - 2, (blsP - 1) / 2, 2 ^ 64, 2 ^ 128 + 1, 2 ^ 380] ++ (randoms 52 (3000 * scale)) do
+    let a := v % blsP
+    if a != 0 then
+      if BLS12381.baseField.toNat (BLS12381.baseField.invCandidate (BLS12381.baseField.ofNat a)) != Fp.inv blsP a then badInv := badInv + 1
+      if BLS12381.baseField.toNat (BLS12381.Fast.finv (BLS12381.baseField.ofNat a)) != Fp.inv blsP a then badInv := badInv + 1
+  if !(BN254.Fast.finv U256.zero).isZero || !(BLS12381.Fast.finv U384.zero).isZero then badInv := badInv + 1
+  IO.println s!"RESULT blsops limb inverse (Kaliski candidate, unverified, against Fp.inv): {2 * (3009 * scale)} values, {if badInv == 0 then "no differences" else s!"{badInv} FAILURES"}"
+  bad := bad + badInv
+  let chain := 20000
+  let x256 := BN254.baseField.ofNat 0x123456789abcdef0123456789abcdef0123456789abcdef
+  let x384 := BLS12381.baseField.ofNat (2 ^ 370 + 0x123456789abcdef0123456789abcdef0123456789abcdef)
+  let d1 ← timeChain "TIMING alt_bn128 field inverse, Nat Euclid (Mont256.inv)" chain fun _ => (invChain256 BN254.baseField.inv chain x256).toNat
+  let d2 ← timeChain "TIMING alt_bn128 field inverse, limbs (Mont256.invFast)" chain fun _ => (invChain256 BN254.baseField.invFast chain x256).toNat
+  let d3 ← timeChain "TIMING BLS12-381 field inverse, Nat Euclid (Mont384.inv)" chain fun _ => (invChain384 BLS12381.baseField.inv chain x384).toNat
+  let d4 ← timeChain "TIMING BLS12-381 field inverse, limbs (Mont384.invFast)" chain fun _ => (invChain384 BLS12381.baseField.invFast chain x384).toNat
+  if d1 != d2 || d3 != d4 then
+    IO.println "RESULT blsops limb inverse chains differ, FAILURES"
     bad := bad + 1
   -- Timing, old and new on the same inputs
   timeBoth "alt_bn128 add" (Bn.addTiming bnPoints 60) (BN254.runAdd gas) (BN254.Fast.runAdd gas)
