@@ -2,6 +2,7 @@ import EVMCleanroom.Precompiles.BN254Fast
 import EVMCleanroom.Precompiles.BLS12381Msm
 import EVMCleanroom.Precompiles.BLS12381Map
 import EVMCleanroom.Precompiles.KZGFast
+import EVMCleanroom.Precompiles.LimbSquare
 
 /-!
 # `evm-blsops`: the group-operation precompiles on limbs against their definitions
@@ -414,6 +415,27 @@ def timeBoth (name : String) (inputs : Array ByteArray) (old new : ByteArray →
   let nth (xs : Array Nat) (percent : Nat) : Nat := xs.getD ((xs.size - 1) * percent / 100) 0
   IO.println s!"TIMING {name} ({inputs.size} inputs, us): old p50 {micros (nth so 50)} p95 {micros (nth so 95)} max {micros (nth so 100)}; new p50 {micros (nth sn 50)} p95 {micros (nth sn 95)} max {micros (nth sn 100)}; old/new at p50 {micros (nth so 50 * 1000 / (nth sn 50 + 1))}"
 
+/-! ### The dedicated squaring -/
+
+def limbEdges : Array Nat := #[0, 1, 2 ^ 63, 2 ^ 64 - 1, 2 ^ 64 - 2, 2 ^ 32, 2 ^ 32 - 1]
+
+/-- The number with limb `i` taken from `limbEdges` by the base-7 digit `i` of `code`. -/
+def limbPattern (limbs code : Nat) : Nat := Id.run do
+  let mut value := 0
+  let mut rest := code
+  for i in [0:limbs] do
+    value := value + limbEdges.getD (rest % 7) 0 * 2 ^ (64 * i)
+    rest := rest / 7
+  return value
+
+@[noinline] def sqrChain384 (f : U384 → U384) : Nat → U384 → U384
+  | 0, x => x
+  | n+1, x => sqrChain384 f n (f x)
+
+@[noinline] def sqrChain256 (f : U256 → U256) : Nat → U256 → U256
+  | 0, x => x
+  | n+1, x => sqrChain256 f n (f x)
+
 /-! ### The limb inverse -/
 
 @[noinline] def invChain256 (f : U256 → U256) : Nat → U256 → U256
@@ -560,6 +582,23 @@ def main (args : List String) : IO UInt32 := do
   if squares < 100 || roots.size - squares < 100 || validPacked < 100 || packed.size - validPacked < 100 then
     IO.println "RESULT blsops: too few cases on one side of a square-root or decompression check, FAILURES"
     bad := bad + 1
+  -- The dedicated squaring against the general product: every combination of extreme limbs, and a walk
+  let mut badSqr := 0
+  for code in [0:7 ^ 4] do
+    let a := U256.ofNat (limbPattern 4 code)
+    if (U256.sqrWide a).toNat != (U256.mulWide a a).toNat then badSqr := badSqr + 1
+  for code in [0:7 ^ 6] do
+    let a := U384.ofNat (limbPattern 6 code)
+    if (U384.sqrWide a).toNat != (U384.mulWide a a).toNat then badSqr := badSqr + 1
+  for v in randoms 61 (20000 * scale) do
+    let a := U256.ofNat v
+    let b := U384.ofNat (v * v)
+    if (U256.sqrWide a).toNat != (U256.mulWide a a).toNat || (U256.sqrWide a).toNat != a.toNat * a.toNat then badSqr := badSqr + 1
+    if (U384.sqrWide b).toNat != (U384.mulWide b b).toNat || (U384.sqrWide b).toNat != b.toNat * b.toNat then badSqr := badSqr + 1
+    if (BN254.baseField.sqrFast a).toNat != (BN254.baseField.sqr a).toNat then badSqr := badSqr + 1
+    if (BLS12381.baseField.sqrFast b).toNat != (BLS12381.baseField.sqr b).toNat then badSqr := badSqr + 1
+  IO.println s!"RESULT blsops limb squaring against the general product: {7 ^ 4 + 7 ^ 6} limb patterns and {2 * 20000 * scale} random values, {if badSqr == 0 then "no differences" else s!"{badSqr} FAILURES"}"
+  bad := bad + badSqr
   -- The limb inverse against the Euclid of the definition: the unverified candidate must already agree
   let mut badInv := 0
   let bnP := BN254.p
@@ -586,6 +625,14 @@ def main (args : List String) : IO UInt32 := do
   let d4 ← timeChain "TIMING BLS12-381 field inverse, limbs (Mont384.invFast)" chain fun _ => (invChain384 BLS12381.baseField.invFast chain x384).toNat
   if d1 != d2 || d3 != d4 then
     IO.println "RESULT blsops limb inverse chains differ, FAILURES"
+    bad := bad + 1
+  let sq := 2000000
+  let s1 ← timeChain "TIMING alt_bn128 field square, general product (Mont256.sqr)" sq fun _ => (sqrChain256 BN254.baseField.sqr sq x256).toNat
+  let s2 ← timeChain "TIMING alt_bn128 field square, dedicated (Mont256.sqrFast)" sq fun _ => (sqrChain256 BN254.baseField.sqrFast sq x256).toNat
+  let s3 ← timeChain "TIMING BLS12-381 field square, general product (Mont384.sqr)" sq fun _ => (sqrChain384 BLS12381.baseField.sqr sq x384).toNat
+  let s4 ← timeChain "TIMING BLS12-381 field square, dedicated (Mont384.sqrFast)" sq fun _ => (sqrChain384 BLS12381.baseField.sqrFast sq x384).toNat
+  if s1 != s2 || s3 != s4 then
+    IO.println "RESULT blsops limb squaring chains differ, FAILURES"
     bad := bad + 1
   -- Timing, old and new on the same inputs
   timeBoth "alt_bn128 add" (Bn.addTiming bnPoints 60) (BN254.runAdd gas) (BN254.Fast.runAdd gas)

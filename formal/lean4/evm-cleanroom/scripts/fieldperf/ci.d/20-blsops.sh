@@ -3,13 +3,28 @@
 # Nat definitions, published vectors through the router, and time per call, old beside new.
 set -uo pipefail
 status=0
+rm -f /tmp/blsops-build.log
 # Every module on its own, so one run reports the errors of all of them.
-for module in LimbBytes Fp2Limb CurveFast LimbInverse BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
+for module in LimbBytes Fp2Limb CurveFast LimbInverse LimbSquare BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do
   start=$(date +%s)
-  lake -f lakefile-fieldperf.toml build "EVMCleanroom.Precompiles.$module" || status=1
+  lake -f lakefile-fieldperf.toml build "EVMCleanroom.Precompiles.$module" 2>&1 | tee -a /tmp/blsops-build.log
+  [ "${PIPESTATUS[0]}" = 0 ] || status=1
   echo "RESULT build $module: $(( $(date +%s) - start )) s, status so far $status"
 done
 [ "$status" = 0 ] || { echo "RESULT blsops: module build FAILURES"; exit 1; }
+# The axioms printed by the modules (lake replays the lines of modules it did not rebuild).
+python3 - <<'PY' || status=1
+import re
+text = open("/tmp/blsops-build.log").read().replace("\n ", " ")
+found = {}
+for name, _, axioms in re.findall(r"'([^']+)' (depends on axioms: \[([^\]]*)\]|does not depend on any axioms)", text):
+    found[name] = {a.strip() for a in axioms.split(",") if a.strip()}
+allowed = {"propext", "Classical.choice", "Quot.sound"}
+bad = {name: sorted(used - allowed) for name, used in found.items() if used - allowed}
+print("RESULT blsops axioms: %d theorems printed, outside propext/Classical.choice/Quot.sound: %s" % (len(found), bad or "none"))
+raise SystemExit(1 if bad or len(found) < 30 else 0)
+PY
+[ "$status" = 0 ] || { echo "RESULT blsops: axiom audit FAILURES"; exit 1; }
 set -e
 lake -f lakefile-fieldperf.toml build evm-blsops
 for f in CurveFast BN254Fast BLS12381Fast BLS12381Msm BLS12381Map KZGFast; do

@@ -3,6 +3,7 @@ import EVMCleanroom.Precompiles.BN254Field
 import EVMCleanroom.Precompiles.LimbBytes
 import EVMCleanroom.Precompiles.CurveFast
 import EVMCleanroom.Precompiles.LimbInverse
+import EVMCleanroom.Precompiles.LimbSquare
 
 /-!
 # alt_bn128 addition and scalar multiplication on limbs (0x06, 0x07)
@@ -43,7 +44,7 @@ are marked for inlining; here each is instantiated once for this modulus, and th
 code calls these (inlining them at every use made the compiler exceed its step limit). -/
 
 def fmul (a b : U256) : U256 := BN254.baseField.mul a b
-def fsqr (a : U256) : U256 := BN254.baseField.sqr a
+def fsqr (a : U256) : U256 := BN254.baseField.sqrFast a
 def fadd (a b : U256) : U256 := BN254.baseField.add a b
 def fsub (a b : U256) : U256 := BN254.baseField.sub a b
 def fneg (a : U256) : U256 := BN254.baseField.neg a
@@ -207,6 +208,9 @@ private def p7 : Nat × Nat := multiple 7
   [1, 2, 3, 7, p - 1, p - 2, (p - 1) / 2, (p + 1) / 2, 2 ^ 64, 2 ^ 253, 0x1234567890abcdef1234567890abcdef % p].all fun a =>
     M.toNat (M.invCandidate (M.ofNat a)) == Fp.inv p a && M.toNat (finv (M.ofNat a)) == Fp.inv p a
 #guard (finv U256.zero).isZero
+-- The field square through the dedicated squaring is the product with itself.
+#guard [0, 1, 2, p - 1, p - 2, (p - 1) / 2, 2 ^ 253, 2 ^ 64 - 1, 0xfedcba9876543210f0e1d2c3b4a5968778695a4b3c2d1e % p].all fun a =>
+  M.toNat (fsqr (M.ofNat a)) == a * a % p && (fsqr (M.ofNat a)).toNat == (M.sqr (M.ofNat a)).toNat
 -- Addition: generic, doubling, inverse points, infinity on either side and on both.
 #guard addAgrees (addInput p5 p7) && addAgrees (addInput p5 p5) && addAgrees (addInput g g)
 #guard addAgrees (addInput p5 (p5.1, p - p5.2)) && addAgrees (addInput (0, 0) p7) &&

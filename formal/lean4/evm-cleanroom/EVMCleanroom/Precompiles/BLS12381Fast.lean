@@ -4,6 +4,7 @@ import EVMCleanroom.Precompiles.LimbBytes
 import EVMCleanroom.Precompiles.Fp2Limb
 import EVMCleanroom.Precompiles.CurveFast
 import EVMCleanroom.Precompiles.LimbInverse
+import EVMCleanroom.Precompiles.LimbSquare
 
 /-!
 # BLS12-381 on limbs: decoding, subgroup checks, G1 and G2 addition (0x0b, 0x0d)
@@ -84,7 +85,7 @@ are marked for inlining; here each is instantiated once for this modulus, and th
 code calls these (inlining them at every use made the compiler exceed its step limit). -/
 
 def fmul (a b : U384) : U384 := BLS12381.baseField.mul a b
-def fsqr (a : U384) : U384 := BLS12381.baseField.sqr a
+def fsqr (a : U384) : U384 := BLS12381.baseField.sqrFast a
 def fadd (a b : U384) : U384 := BLS12381.baseField.add a b
 def fsub (a b : U384) : U384 := BLS12381.baseField.sub a b
 def fneg (a : U384) : U384 := BLS12381.baseField.neg a
@@ -384,6 +385,9 @@ private def order23 : Fp2 × Fp2 := multiple2 (h2 * r / 529) out2
   [1, 2, 3, 7, p - 1, p - 2, (p - 1) / 2, (p + 1) / 2, 2 ^ 64, 2 ^ 380, betaNat, traceF].all fun a =>
     M.toNat (M.invCandidate (M.ofNat a)) == Fp.inv p a && M.toNat (finv (M.ofNat a)) == Fp.inv p a
 #guard (finv U384.zero).isZero
+-- The field square through the dedicated squaring is the product with itself.
+#guard [0, 1, 2, p - 1, p - 2, (p - 1) / 2, 2 ^ 380, 2 ^ 64 - 1, betaNat, traceF].all fun a =>
+  M.toNat (fsqr (M.ofNat a)) == a * a % p && (fsqr (M.ofNat a)).toNat == (M.sqr (M.ofNat a)).toNat
 -- Numeric facts behind the subgroup criteria.
 #guard betaNat ^ 3 % p == 1 && betaNat != 1 && (betaNat ^ 2 + betaNat + 1) % p == 0
 #guard r == parameter ^ 4 - parameter ^ 2 + 1 && (parameter + 1) ^ 2 % 3 == 0 && p + parameter == h1 * r
