@@ -248,24 +248,23 @@ theorem powLoop_spec (hV : M.Valid) (base : U256) (e : Nat) (k : Nat) (acc : U25
       M.toNat (M.powLoop base e k acc) =
         Fp.powLoop M.n.toNat (M.toNat base) e k (M.toNat acc) := by
   induction k generalizing acc with
-  | zero => exact ⟨hacc, rfl⟩
+  | zero =>
+    rw [Mont256.powLoop, Fp.powLoop]
+    exact ⟨hacc, rfl⟩
   | succ k ih =>
     obtain ⟨hs1, hs2⟩ := sqr_spec hV acc hacc
     obtain ⟨hm1, hm2⟩ := mul_spec hV (M.sqr acc) base hs1
-    show (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)).toNat <
-        M.n.toNat ∧
-      M.toNat (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)) =
-        Fp.powLoop M.n.toNat (M.toNat base) e k
-          (if e.testBit k then M.toNat acc * M.toNat acc % M.n.toNat * M.toNat base % M.n.toNat
-            else M.toNat acc * M.toNat acc % M.n.toNat)
+    simp only [Mont256.powLoop, Fp.powLoop]
     by_cases hb : e.testBit k = true
     · rw [if_pos hb, if_pos hb]
       have h := ih (M.mul (M.sqr acc) base) hm1
       rw [hm2, hs2] at h
+      simp only [Fp.mul] at h
       exact h
     · rw [if_neg hb, if_neg hb]
       have h := ih (M.sqr acc) hs1
       rw [hs2] at h
+      simp only [Fp.mul] at h
       exact h
 
 /-- Kind: refinement (exponentiation).
@@ -517,24 +516,23 @@ theorem powLoop_spec (hV : M.Valid) (base : U384) (e : Nat) (k : Nat) (acc : U38
       M.toNat (M.powLoop base e k acc) =
         Fp.powLoop M.n.toNat (M.toNat base) e k (M.toNat acc) := by
   induction k generalizing acc with
-  | zero => exact ⟨hacc, rfl⟩
+  | zero =>
+    rw [Mont384.powLoop, Fp.powLoop]
+    exact ⟨hacc, rfl⟩
   | succ k ih =>
     obtain ⟨hs1, hs2⟩ := sqr_spec hV acc hacc
     obtain ⟨hm1, hm2⟩ := mul_spec hV (M.sqr acc) base hs1
-    show (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)).toNat <
-        M.n.toNat ∧
-      M.toNat (M.powLoop base e k (if e.testBit k then M.mul (M.sqr acc) base else M.sqr acc)) =
-        Fp.powLoop M.n.toNat (M.toNat base) e k
-          (if e.testBit k then M.toNat acc * M.toNat acc % M.n.toNat * M.toNat base % M.n.toNat
-            else M.toNat acc * M.toNat acc % M.n.toNat)
+    simp only [Mont384.powLoop, Fp.powLoop]
     by_cases hb : e.testBit k = true
     · rw [if_pos hb, if_pos hb]
       have h := ih (M.mul (M.sqr acc) base) hm1
       rw [hm2, hs2] at h
+      simp only [Fp.mul] at h
       exact h
     · rw [if_neg hb, if_neg hb]
       have h := ih (M.sqr acc) hs1
       rw [hs2] at h
+      simp only [Fp.mul] at h
       exact h
 
 /-- Kind: refinement (exponentiation).

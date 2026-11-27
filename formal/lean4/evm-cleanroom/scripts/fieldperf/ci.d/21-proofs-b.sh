@@ -12,7 +12,7 @@ for m in MontgomeryMath Limb384Proofs MontgomeryRedcProofs MontgomeryProofs Mont
 done
 # Every theorem of these modules ends in a '#print axioms' line; lake replays those lines for
 # modules it did not rebuild.
-grep -E "'EVMCleanroom\.Precompiles\.(MontMath|U384|U256\.(redc_row|redc_rows|redc_spec|toNat_mod|widen_toNat|toNat_zero)|Mont256|Mont384|Secp256k1\.scalarField_|BN254\.baseField_|BLS12381\.baseField_)[A-Za-z0-9_'.]*' (depends on axioms|does not depend)" "$log" | sed 's/^.*: .EVMCleanroom/EVMCleanroom/' | sort -u > "$log.ax"
+grep -E "'EVMCleanroom\.Precompiles\.(MontMath|U384|U256\.(redc_row|redc_rows|redc_spec|toNat_mod|widen_toNat|toNat_zero)|Mont256|Mont384|Secp256k1\.scalarField_|BN254\.baseField_|BLS12381\.baseField_)[A-Za-z0-9_'.]*' (depends on axioms|does not depend)" "$log" | sed "s/^[^']*//" | sort -u > "$log.ax"
 count=$(wc -l < "$log.ax")
 bad=$(sed -e 's/.*depends on axioms: \[//' -e 's/\]$//' -e 's/.*does not depend on any axioms//' "$log.ax"   | tr ',' '\n' | sed 's/ //g' | grep -v -E '^(propext|Classical\.choice|Quot\.sound|)$' | sort -u | tr '\n' ' ')
 echo "proofs-b: $count theorems audited; axioms outside the allowed three: [${bad}]"
