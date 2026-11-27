@@ -1,0 +1,58 @@
+name: Ethereum sparse replacement exact candidate premerge
+# One-off hosted test harness, not part of the candidate or a release workflow.
+on:
+  push:
+    branches: [wip/ethereum-sparse-premerge-20261127-0303]
+    paths: ['.github/workflows/ethereum-exact-premerge-probe.yml']
+permissions:
+  contents: read
+jobs:
+  premerge:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ref: e6c587923decd4fdcc8c802d1c70d09deef816ef
+            tree: 18675e7164c9d16573d31d2a3cd1cd36f9e42566
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.9.4
+      - name: Install the already required pinned WABT assembler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl --fail --location --retry 2 --output wabt.tar.gz https://github.com/WebAssembly/wabt/releases/download/1.0.42/wabt-1.0.42-linux-x64.tar.gz
+          echo '84895407a6bbb80e918f33b16b2fb2206021c150b6bc9ff6f761263a745ab131  wabt.tar.gz' | sha256sum -c -
+          mkdir -p wabt-pinned
+          tar -xzf wabt.tar.gz -C wabt-pinned
+          mapfile -t tools < <(find "$RUNNER_TEMP/wabt-pinned" -type f -name wat2wasm)
+          test "${#tools[@]}" = 1
+          test "$("${tools[0]}" --version)" = 1.0.42
+          dirname "${tools[0]}" >> "$GITHUB_PATH"
+      - name: Verify exact candidate and run complete default premerge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = ${{ matrix.ref }}
+          test "$(git rev-parse HEAD^{tree})" = ${{ matrix.tree }}
+          test "$(git rev-parse HEAD:tools/premerge.sh)" = a25dc508d881e0671c970b2dc82e56271202bf01
+          test "$(git rev-parse HEAD:formal/lean4/evm-cleanroom/EVMCleanroom/SparseReplace.lean)" = ab7a0d866d06e2332b71d2a1b4bbdda450748859
+          test "$(git rev-parse HEAD:formal/lean4/ethereum-consensus)" = 70908a9923b80352ea6ccbf88ce9078d3d78132d
+          test -z "$(git status --porcelain)"
+          git log -1 --format='%H %T %P'
+          test "$(wat2wasm --version)" = 1.0.42
+          deno --version
+          python3 --version
+          cc --version
+          bash tools/premerge.sh 2>&1 | tee "$RUNNER_TEMP/ethereum-premerge.log"
+          grep -E '^premerge summary: 6 checks, 0 failed,' "$RUNNER_TEMP/ethereum-premerge.log"
+          test "$(grep -c '^  ok ' "$RUNNER_TEMP/ethereum-premerge.log")" = 6
+          if grep -E 'NOT RUN|^  skip ' "$RUNNER_TEMP/ethereum-premerge.log"; then exit 1; fi
