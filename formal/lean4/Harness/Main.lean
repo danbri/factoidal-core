@@ -160,7 +160,7 @@ def main (args : List String) : IO UInt32 := do
   IO.println (Diag.line "TOTAL" totalDiag)
   if (← shippedEngine.get) then
     let (n, b) ← shippedCounts.get
-    IO.println s!"engine: shipped; {n} SELECT/ASK queries through shippedEvaluator, {b} of them with no FROM clause (backend path)"
+    IO.println s!"engine: shipped; {n} SELECT/ASK queries through shippedEvaluator, {b} answered by the backend runner, {n - b} by the reference fallback"
   return (if total.fail == 0 then 0 else 1)
 
 end Harness

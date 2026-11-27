@@ -455,8 +455,9 @@ same path in both modes. -/
 initialize shippedEngine : IO.Ref Bool ← IO.mkRef false
 
 /-- Under `--engine=shipped`: the SELECT and ASK queries answered by the shipped
-evaluator, and how many of them have no FROM clause, so that `shippedRun` takes
-its backend path (`backendSelect?`/`backendAsk?`). `Main` prints both, so a
+evaluator, and how many of them the backend runner itself answered
+(`backendSelect?`/`backendAsk?` is `some`; else `shippedRun` falls back to the
+reference definitions). `Main` prints both, so a
 score with no difference can be checked for reach (anti-pattern 28). -/
 initialize shippedCounts : IO.Ref (Nat × Nat) ← IO.mkRef (0, 0)
 
@@ -464,11 +465,22 @@ initialize shippedCounts : IO.Ref (Nat × Nat) ← IO.mkRef (0, 0)
 dataset as a set, its indexed backend, and `env.dataset` set (section 18.6:
 the backend runners read EXISTS from the environment, as
 `Wasm/Ops/Query.lean` `queryParsedDatasetWith` explains). -/
-def shippedAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.Answer :=
+def shippedInput (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.EvalInput :=
   let d := ds.toSet
-  L4Factoidal.Dataflow.shippedEvaluator.run
-    { env := { env with dataset := some d }, ds := d,
-      backend := some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d), query := q }
+  { env := { env with dataset := some d }, ds := d,
+    backend := some (L4Factoidal.SPARQL.StoreDataset.indexedDatasetBackend d), query := q }
+
+def shippedAnswer (env : EvalEnv) (ds : Dataset) (q : Query) : L4Factoidal.Dataflow.Answer :=
+  L4Factoidal.Dataflow.shippedEvaluator.run (shippedInput env ds q)
+
+/-- The backend runner itself answered (`backendSelect?` or `backendAsk?` is
+`some`); otherwise `shippedRun` answered with the reference definitions. -/
+def shippedBackendAnswered (env : EvalEnv) (ds : Dataset) (q : Query) : Bool :=
+  let inp := shippedInput env ds q
+  match q.form with
+  | .ask => (L4Factoidal.Dataflow.backendAsk? inp).isSome
+  | .select _ => (L4Factoidal.Dataflow.backendSelect? inp).isSome
+  | _ => false
 
 /-- One `QueryEvaluationTest` / `CSVResultFormatTest`. `mode` is the
 suite's RDF version; a `.rdf12` suite parses its queries with the
@@ -573,7 +585,7 @@ def runQueryEvaluation (tc : TestCase) (mode : Mode := .rdf11) : IO RunResult :=
   if shipped && !owlRegime then
     match q.form with
     | .select _ | .ask =>
-        shippedCounts.modify fun (n, b) => (n + 1, if q.dataset.isEmpty then b + 1 else b)
+        shippedCounts.modify fun (n, b) => (n + 1, if shippedBackendAnswered env ds q then b + 1 else b)
     | _ => pure ()
   -- Federated Query §2.3: a failed SERVICE call without SILENT makes the
   -- query fail, and a QueryEvaluationTest names a result, so the test
