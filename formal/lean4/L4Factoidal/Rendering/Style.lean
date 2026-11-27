@@ -244,6 +244,12 @@ structure Computed where
   /-- `caption-side: bottom` (inherited). -/
   captionBottom : Bool := false
   verticalAlign : VerticalAlign := .baseline
+  /-- Numeric vertical-align, computed in px on this element. -/
+  numericAlign : Float := 0
+  /-- Numeric displacement from this inline formatting context's baseline, positive up. -/
+  lineRise : Float := 0
+  /-- Font size of the document element for root-relative lengths. -/
+  rootFontSize : Float := 16
   /-- `table-layout: fixed`. -/
   tableFixed : Bool := false
   /-- CSS 2.1 §10.4 and §10.7: `auto` is 0 for a minimum and `none` for a maximum. -/
@@ -1965,6 +1971,28 @@ private def cornerPair (fontSize : Float) (source : String) : Except String (Len
 @[noinline] private def Computed.withBorderImage (s : Computed) (borderImage : BorderImage) : Computed :=
   {s with borderImage}
 
+/-- CSS 2.2 §10.8.1. Percentages use this element's line height. Only accept
+dimensions whose reference is available here. In particular the font's x-height
+cannot be recovered from its font size. -/
+private def verticalLength (s : Computed) (source : String) : Option Float := do
+  let px ← match CssValues.stripWs (CssValues.CV.parse source) with
+    | [.tok (.num n _)] => if n == 0 then some 0 else none
+    | [.tok (.pct n)] => some (ratToFloat (n/100) * s.lineHeight)
+    | [.tok (.dim n _ unit)] =>
+      match unit.toLower with
+      | "em" => some (ratToFloat n * s.fontSize)
+      | "rem" => some (ratToFloat n * s.rootFontSize)
+      | "lh" => some (ratToFloat n * s.lineHeight)
+      | u => do
+        let (factor, "px") ← CssValues.absFactor u | none
+        return ratToFloat (n * factor)
+    | _ => none
+  if px.isFinite && px.abs <= 1000000 then some px else none
+
+@[noinline] private def Computed.withVerticalAlign (s : Computed) (align : VerticalAlign)
+    (shift : Int) (px : Float) : Computed :=
+  {s with verticalAlign := align, shift, numericAlign := px}
+
 private def apply (s : Computed) (d : Declaration) : Except String Computed := do
   match d.property with
   | "display" =>
@@ -2310,13 +2338,15 @@ private def apply (s : Computed) (d : Declaration) : Except String Computed := d
     | "auto" => return {s with tableFixed := false}
     | _ => throw "unsupported CSS table-layout"
   | "vertical-align" => match d.value with
-    | "top" | "text-top" => return {s with verticalAlign := .top, shift := 0}
-    | "middle" => return {s with verticalAlign := .middle, shift := 0}
-    | "bottom" | "text-bottom" => return {s with verticalAlign := .bottom, shift := 0}
-    | "baseline" => return {s with verticalAlign := .baseline, shift := 0}
-    | "super" => return {s with verticalAlign := .baseline, shift := 1}
-    | "sub" => return {s with verticalAlign := .baseline, shift := -1}
-    | _ => throw "unsupported CSS vertical-align"
+    | "top" | "text-top" => return s.withVerticalAlign .top 0 0
+    | "middle" => return s.withVerticalAlign .middle 0 0
+    | "bottom" | "text-bottom" => return s.withVerticalAlign .bottom 0 0
+    | "baseline" => return s.withVerticalAlign .baseline 0 0
+    | "super" => return s.withVerticalAlign .baseline 1 0
+    | "sub" => return s.withVerticalAlign .baseline (-1) 0
+    | value =>
+      let some px := verticalLength s value | throw "unsupported CSS vertical-align"
+      return s.withVerticalAlign .baseline 0 px
   | "min-width" => return {s with minWidth := ← limit s.fontSize d.value}
   | "max-width" => return {s with maxWidth := ← limit s.fontSize d.value}
   | "min-height" => return {s with minHeight := ← limit s.fontSize d.value}
@@ -2475,9 +2505,12 @@ the style `s`. -/
 def tableDynamic (s : Computed) (d : Declaration) : Option String :=
   let value := fun (v : String) => some v
   let px := fun (x : Float) => CssValues.fmtRat (ratOfFloat x) ++ "px"
+  let fontRelative (property : String) := (CssValues.specified property d.value).map fun value =>
+    CssValues.computed {num := {fontSize := tableRat s.fontSize, rootFontSize := tableRat s.rootFontSize}}
+      property value
   match d.property with
   | "font-size" =>
-    match (tableComputed s.fontSize "font-size" d.value).map (·.toLower) with
+    match (fontRelative "font-size").map (·.toLower) with
     | none => none
     | some t =>
       match fontSizeKeyword t, percentOf t with
@@ -2488,7 +2521,7 @@ def tableDynamic (s : Computed) (d : Declaration) : Option String :=
         else if t == "smaller" then value (px (s.fontSize / 1.2))
         else value t
   | "line-height" =>
-    match tableComputed s.fontSize "line-height" d.value with
+    match fontRelative "line-height" with
     | none => none
     | some t =>
       match percentOf t with
@@ -2789,7 +2822,7 @@ def copyProperty (property : String) (source s : Computed) : Option Computed :=
   | "border-collapse" => some {s with borderCollapse := source.borderCollapse}
   | "caption-side" => some {s with captionBottom := source.captionBottom}
   | "table-layout" => some {s with tableFixed := source.tableFixed}
-  | "vertical-align" => some {s with verticalAlign := source.verticalAlign}
+  | "vertical-align" => some (s.withVerticalAlign source.verticalAlign source.shift source.numericAlign)
   | "min-width" => some {s with minWidth := source.minWidth}
   | "max-width" => some {s with maxWidth := source.maxWidth}
   | "min-height" => some {s with minHeight := source.minHeight}
@@ -3194,6 +3227,17 @@ theorem alignHints_plain (n : DOM.Node) (s parent : Computed) (hp : parent.cente
 positioned box (CSS 2.1 §11.1.2 applies `clip` to those only), or `clip-path` with no area. -/
 def Computed.clippedAway (s : Computed) : Bool := (s.clipRectEmpty && s.pos.isAbsolute) || s.clipPathEmpty
 
+/-- Children of a normal inline share its displacement. An atomic inline is
+positioned by its parent line, so its own contents start on their local baseline. -/
+def Computed.childLineRise (s : Computed) : Float :=
+  if s.display == .inline then s.lineRise else 0
+
+theorem Computed.childLineRise_inlineBlock (s : Computed) (h : s.display = .inlineBlock) :
+    s.childLineRise = 0 := by
+  rw [Computed.childLineRise, h] <;> rfl
+
+#print axioms Computed.childLineRise_inlineBlock
+
 /-- After the cascade of an element: its text is raised by its own `super` (a third of the
 parent's font size, CSS 2.1 §10.8.1, as other engines draw it) or lowered by its own `sub`
 (a fifth), over what its ancestors raise; and when it or an ancestor is clipped to nothing
@@ -3204,12 +3248,27 @@ def finishEffects (parent s : Computed) : Computed :=
   -- move their text relative to the box (CSS 2.2 §10.8.1).
   let own : Float := if s.pos.isAbsolute then 0
     else if s.shift == 1 then parent.fontSize/3 else if s.shift == -1 then -(parent.fontSize/5) else 0
+  let lineRise := if s.pos.contents then parent.childLineRise
+    else if s.display == .inline || s.display == .inlineBlock || s.display.isInlineContainer then
+      parent.childLineRise + s.numericAlign
+    else 0
   let hidden := parent.clipHidden || s.clippedAway
   {s with
+    lineRise
     rise := parent.rise + own
     clipHidden := hidden
     visible := s.visible && !hidden
     transparent := parent.transparent || s.opacityZero}
+
+/-- Normal inline descendants add their own numeric value to the displacement
+of the inline containing them. The parent's own display controls propagation. -/
+theorem finishEffects_lineRise_inline (parent s : Computed) (hd : s.display = .inline)
+    (hb : s.pos.contents = false) :
+    (finishEffects parent s).lineRise = parent.childLineRise + s.numericAlign := by
+  have hi : (s.display == .inline) = true := by rw [hd] <;> rfl
+  simp [finishEffects, hi, hb]
+
+#print axioms finishEffects_lineRise_inline
 
 /-- Descendant opacity cannot expose paint under a transparent ancestor. -/
 theorem finishEffects_transparent_parent (parent s : Computed) (h : parent.transparent = true) :
@@ -4511,7 +4570,7 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
     fontFamily := if html && monospaceTags.contains n.lname then "monospace" else parent.fontFamily,
     lineHeight := parent.lineHeightFactor.map (fontSize*·) |>.getD parent.lineHeight,
     lineHeightFactor := parent.lineHeightFactor, visible := parent.visible,
-    rise := parent.rise, centerBlocks := parent.centerBlocks,
+    rise := parent.rise, rootFontSize := parent.rootFontSize, centerBlocks := parent.centerBlocks,
     -- HTML §15.3.6: `sub { vertical-align: sub }`, `sup { vertical-align: super }`
     shift := if html && n.lname == "sup" then 1 else if html && n.lname == "sub" then -1 else 0,
     preformatted := parent.preformatted || ["pre","listing","xmp","plaintext"].contains n.lname,
@@ -4668,17 +4727,25 @@ def computedFrom (dom : Dom) (id : Nat) (matched : List Match) (parent : Compute
         a.top == ua.top && a.right == ua.right && a.bottom == ua.bottom && a.left == ua.left) &&
         ua.top + ua.bottom > 0 then
       result := {result with margin := startMargin n.lname result.fontSize (insideList dom id)}
+  if n.parent.any (fun p => (dom.get p).type == .document) then
+    result := {result with rootFontSize := result.fontSize}
   if n.ns == some DOM.svgNS then
     result := {result with svgAuthor := chosen.filterMap fun (key,(priority,d)) =>
       let author := (priority[1]?.getD 0) ≥ 2
       let outerDimension := svgViewport && (key == "width" || key == "height")
       if author && svgAuthorProperties.contains key && !outerDimension then some (key,d.value)
       else none}
+  -- Percentage vertical-align depends on the final line-height, including a
+  -- font shorthand or an inherited value. Apply its winner after those values.
+  let mut vertical : Option Declaration := none
   for (key,(priority,d)) in chosen do
     if key != "font-size" then
       -- SVG paint goes to the SVG renderer; the root's layout-related properties stay here.
       if n.ns == some DOM.svgNS && priority[2]? == some 1 && !htmlProperties.contains key then pure ()
+      else if key == "vertical-align" then vertical := some d
       else result := applyWinnerM (memos.get? key) parent initial result d
+  if let some d := vertical then
+    result := applyWinnerM (memos.get? "vertical-align") parent initial result d
   -- A root or body never clips here: the window scrolls instead.
   if ["html","body"].contains n.lname then result := {result with clipOverflow := false}
   -- The children of a flex or grid container are its items: blockified.
@@ -4721,7 +4788,8 @@ def styleOfNode (matchesOf : Nat → List Match) (dom : Dom) (id : Nat) (parent 
   let svgDescendant := n.ns == some DOM.svgNS && (n.parent.map (fun p => (dom.get p).ns == some DOM.svgNS)).getD false
   if n.type == .element && !svgDescendant then return ← computedFrom dom id (matchesOf id) parent
   let inherited : Computed := {parent with
-    svgAuthor := [], display := .inline, width := .auto, height := .auto,
+    svgAuthor := [], display := .inline, numericAlign := 0, lineRise := parent.childLineRise,
+    width := .auto, height := .auto,
     margin := {}, padding := {}, background := none, backgroundGradient := none, borderImage := {}, clipOverflow := false,
     columnCount := none, columnWidth := none,
     borderStyles := .all .none, borderWidth := ⟨3,3,3,3⟩, borderColors := .all .current, cornerLengths := none,
@@ -5478,5 +5546,13 @@ private def borderImageOf (property value : String) : Option BorderImage :=
 -- it is not inherited from a parent, and `inherit` copies it
 #guard ((copyProperty "border-image-source" ((applyDeclaration ({} : Computed) "border-image-source" "url(x.png)").getD {}) {}).map
   (·.borderImage.source)) == some (some "x.png")
+
+-- The explicit plus and the physical units in CSS2/linebox/vertical-align-007..068.
+#guard ["96px","+96px","72pt","+6pc","2.54cm","+25.4mm","1in"].all
+  (fun v => verticalLength {} v == some 96)
+#guard verticalLength {fontSize := 20} "-0.125em" == some (-2.5)
+#guard verticalLength {rootFontSize := 24} "-0.25rem" == some (-6)
+#guard verticalLength {lineHeight := 30} "+50%" == some 15
+#guard ["1","1deg","6ex","auto","1 px"].all (fun v => (verticalLength {} v).isNone)
 
 end L4Factoidal.Rendering.CSS
