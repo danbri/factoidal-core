@@ -334,17 +334,36 @@ private theorem double_exp (e k : Nat) : (e + e) * 2 ^ k = e * 2 ^ (k + 1) :=
     _ = e * (2 ^ k * 2) := Nat.mul_assoc e (2 ^ k) 2
     _ = e * 2 ^ (k + 1) := by rw [Nat.pow_succ]
 
+private theorem sqrN_zero (x : U256) : sqrN x 0 = x := by
+  rw [sqrN]
+
+private theorem sqrN_succ (x : U256) (k : Nat) : sqrN x (k + 1) = sqrN (sqr x) k := by
+  rw [sqrN]
+
+/-- At least one squaring leaves a canonical value. -/
+private theorem sqrN_lt (k : Nat) : ∀ (x : U256), (sqrN x (k + 1)).toNat < pNat := by
+  induction k with
+  | zero =>
+    intro x
+    rw [sqrN_succ, sqrN_zero]
+    exact sqr_lt x
+  | succ k ih =>
+    intro x
+    rw [sqrN_succ]
+    exact ih (sqr x)
+
 private theorem pow_sqrN {A : Nat} (k : Nat) :
     ∀ (x : U256) (e : Nat), Pow A x e → Pow A (sqrN x k) (e * 2 ^ k) := by
   induction k with
   | zero =>
     intro x e h
-    rw [Nat.pow_zero, Nat.mul_one]
+    rw [Nat.pow_zero, Nat.mul_one, sqrN_zero]
     exact h
   | succ k ih =>
     intro x e h
     have h2 := ih (sqr x) (e + e) (pow_sqr h)
     rw [double_exp] at h2
+    rw [sqrN_succ]
     exact h2
 
 private theorem chain_pow (a : U256) :
@@ -395,11 +414,16 @@ private theorem chain_pow (a : U256) :
 theorem inv_spec (a : U256) : (inv a).toNat = a.toNat ^ (pNat - 2) % pNat := by
   obtain ⟨h223, h22, h2⟩ := chain_pow a
   have h1 := pow_self a
-  show (mul (sqrN (mul (sqrN (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 5) a) 3)
-    (chain a).2.2) 2) a).toNat = _
-  have t1 := pow_mul (pow_sqrN 23 _ _ h223) h22
+  unfold inv
+  generalize chain a = c at h223 h22 h2 ⊢
+  obtain ⟨x223, x22, x2⟩ := c
+  have h223' : Pow a.toNat x223 (2 ^ 223 - 1) := h223
+  have h22' : Pow a.toNat x22 (2 ^ 22 - 1) := h22
+  have h2' : Pow a.toNat x2 3 := h2
+  show (mul (sqrN (mul (sqrN (mul (sqrN (mul (sqrN x223 23) x22) 5) a) 3) x2) 2) a).toNat = _
+  have t1 := pow_mul (pow_sqrN 23 _ _ h223') h22'
   have t2 := pow_mul (pow_sqrN 5 _ _ t1) h1
-  have t3 := pow_mul (pow_sqrN 3 _ _ t2) h2
+  have t3 := pow_mul (pow_sqrN 3 _ _ t2) h2'
   rw [pow_mul_val (pow_sqrN 2 _ _ t3) h1]
   have he : ((((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 5 + 1) * 2 ^ 3 + 3) * 2 ^ 2 + 1 =
       pNat - 2 := by first | rfl | decide
@@ -413,19 +437,21 @@ theorem inv_spec (a : U256) : (inv a).toNat = a.toNat ^ (pNat - 2) % pNat := by
 theorem sqrtCandidate_spec (a : U256) :
     (sqrtCandidate a).toNat = a.toNat ^ ((pNat + 1) / 4) % pNat := by
   obtain ⟨h223, h22, h2⟩ := chain_pow a
-  show (sqr (sqr (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 6) (chain a).2.2))).toNat = _
-  have t1 := pow_mul (pow_sqrN 23 _ _ h223) h22
-  have t2 := pow_mul (pow_sqrN 6 _ _ t1) h2
-  have t3 : Pow a.toNat
-      (sqr (sqr (mul (sqrN (mul (sqrN (chain a).1 23) (chain a).2.1) 6) (chain a).2.2))) _ :=
-    pow_sqr (pow_sqr t2)
+  unfold sqrtCandidate
+  generalize chain a = c at h223 h22 h2 ⊢
+  obtain ⟨x223, x22, x2⟩ := c
+  have h223' : Pow a.toNat x223 (2 ^ 223 - 1) := h223
+  have h22' : Pow a.toNat x22 (2 ^ 22 - 1) := h22
+  have h2' : Pow a.toNat x2 3 := h2
+  show (sqrN (mul (sqrN (mul (sqrN x223 23) x22) 6) x2) 2).toNat = _
+  have t1 := pow_mul (pow_sqrN 23 _ _ h223') h22'
+  have t2 := pow_mul (pow_sqrN 6 _ _ t1) h2'
+  have t3 := pow_sqrN 2 _ _ t2
+  have hlt : (sqrN (mul (sqrN (mul (sqrN x223 23) x22) 6) x2) 2).toNat < pNat := sqrN_lt 1 _
   unfold Pow at t3
-  rw [Nat.mod_eq_of_lt (sqr_lt _)] at t3
+  rw [Nat.mod_eq_of_lt hlt] at t3
   rw [t3]
-  have he : (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3 +
-      (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3) +
-      ((((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3) +
-      (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3))) = (pNat + 1) / 4 := by
+  have he : (((2 ^ 223 - 1) * 2 ^ 23 + (2 ^ 22 - 1)) * 2 ^ 6 + 3) * 2 ^ 2 = (pNat + 1) / 4 := by
     first | rfl | decide
   rw [he]
 
