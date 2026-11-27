@@ -14,13 +14,16 @@ Comparison: SELECT answers are compared as multisets of rows (variable to
 term); with ORDER BY each engine's row order must also be one that SPARQL 1.1
 section 15.1 allows (the order of, for example, a simple literal and a
 language-tagged literal is left to the implementation, so two different orders
-can both be right). ASK answers compare as booleans. Terms compare by type, value, datatype and language tag. Literal
-values are compared as written (no value-space equality), so `"01"^^xsd:integer`
-and `"1"^^xsd:integer` differ, as they do in RDF term equality. A case where
+can both be right). ASK answers compare as booleans. Terms compare by type, value, datatype and language tag. Numeric
+literals (xsd:integer, decimal, double, float) compare by value, because an
+aggregate may be written `2.5` or `2.50`; other literals compare as written.
+CONSTRUCT answers (profile ext) compare as sets of N-Triples lines; the
+generated data has no blank nodes, so no relabelling is needed. A case where
 both engines refuse the query counts apart, not as agreement.
 
 Commands:
-  gen --seed S --n N --out cases.jsonl
+  gen --seed S --n N --out cases.jsonl [--profile base|ext]
+    ext: property paths, VALUES, subqueries, EXISTS, aggregates with HAVING, CONSTRUCT
   oxigraph cases.jsonl --out ox.jsonl         (needs pyoxigraph)
   compare cases.jsonl ox.jsonl fd.jsonl [--keep DIR] [--json FILE]
 The Factoidal side is tools/diffcampaign/sparql-factoidal.mjs.
@@ -124,8 +127,69 @@ def query(rng):
     return f"SELECT {distinct}* WHERE {{ {where} }}", False
 
 
-def gen(seed, n, out):
+PATHS = ["<{a}>/<{b}>", "<{a}>|<{b}>", "<{a}>*", "<{a}>+", "^<{a}>", "<{a}>?", "(<{a}>/<{b}>)*",
+         "!(<{a}>)", "!(<{a}>|^<{b}>)", "<{a}>/^<{b}>", "(<{a}>|<{b}>)+"]
+
+
+def tp_ext(rng):
+    """A triple pattern whose predicate may be a property path (SPARQL 1.1 section 9)."""
+    if rng.random() < 0.45:
+        a, b = rng.sample(PREDICATES, 2)
+        p = rng.choice(PATHS).format(a=a, b=b)
+    else:
+        p = f"<{rng.choice(PREDICATES)}>" if rng.random() < 0.8 else rng.choice(VARS)
+    return f"{term(rng, 's')} {p} {term(rng, 'o')} ."
+
+
+def group_ext(rng, depth=0):
+    parts = [" ".join(tp_ext(rng) for _ in range(rng.randrange(1, 3)))]
+    for _ in range(rng.randrange(0, 3)):
+        r = rng.random()
+        if r < 0.2:
+            vals = " ".join(rng.choice([f"<{x}>" for x in SUBJECTS] + ["UNDEF", f'"{rng.randrange(6)}"^^<{XSD}integer>'])
+                            for _ in range(rng.randrange(1, 4)))
+            parts.append(f"VALUES {rng.choice(VARS)} {{ {vals} }}")
+        elif r < 0.35 and depth == 0:
+            v = rng.choice(VARS)
+            parts.append(f"{{ SELECT {v} (COUNT(*) AS ?k) WHERE {{ {bgp(rng, 1)} }} GROUP BY {v} }}")
+        elif r < 0.5:
+            parts.append(f"OPTIONAL {{ {tp_ext(rng)} }}")
+        elif r < 0.65:
+            parts.append(f"FILTER ({filter_expr(rng)})")
+        elif r < 0.75:
+            parts.append(f"FILTER NOT EXISTS {{ {tp_ext(rng)} }}")
+        else:
+            parts.append(f"FILTER EXISTS {{ {tp(rng)} }}")
+    return " ".join(parts)
+
+
+def query_ext(rng):
+    """Returns (query, ordered, kind); kind is "rows" or "graph" (CONSTRUCT)."""
+    where = group_ext(rng)
+    r = rng.random()
+    if r < 0.15:
+        a, b = rng.sample(VARS, 2)
+        return f"CONSTRUCT {{ {a} <{EX}q> {b} }} WHERE {{ {where} }}", False, "graph"
+    if r < 0.45:
+        v, w = rng.sample(VARS, 2)
+        agg = rng.choice([f"COUNT(DISTINCT {w})", f"SUM({w})", f"MIN({w})", f"MAX({w})", f"AVG({w})", f"COUNT({w})"])
+        having = f" HAVING (COUNT(*) > {rng.randrange(1, 3)})" if rng.random() < 0.3 else ""
+        return f"SELECT {v} ({agg} AS ?x) WHERE {{ {where} }} GROUP BY {v}{having}", False, "rows"
+    if r < 0.55:
+        return f"ASK {{ {where} }}", False, "rows"
+    distinct = "DISTINCT " if rng.random() < 0.4 else ""
+    return f"SELECT {distinct}* WHERE {{ {where} }}", False, "rows"
+
+
+def gen(seed, n, out, profile="base"):
     rng = random.Random(seed)
+    if profile == "ext":
+        with open(out, "w") as fh:
+            for i in range(n):
+                q, ordered, kind = query_ext(rng)
+                fh.write(json.dumps({"id": f"e{seed}-{i}", "data": graph(rng), "query": q, "ordered": ordered, "kind": kind}) + "\n")
+        print(f"generated {n} cases, profile ext, seed {seed}")
+        return
     with open(out, "w") as fh:
         for i in range(n):
             q, ordered = query(rng)
@@ -142,6 +206,10 @@ def run_oxigraph(cases, out):
                 store = ox.Store()
                 store.load(c["data"].encode(), format=ox.RdfFormat.N_TRIPLES)
                 res = store.query(c["query"])
+                if c.get("kind") == "graph":
+                    text = ox.serialize(list(res), format=ox.RdfFormat.N_TRIPLES).decode()
+                    fout.write(json.dumps({"id": c["id"], "ok": True, "nt": text}, ensure_ascii=False) + "\n")
+                    continue
                 text = res.serialize(format=ox.QueryResultsFormat.JSON).decode()
                 fout.write(json.dumps({"id": c["id"], "ok": True, "json": text}) + "\n")
             except Exception as e:  # a refusal is an answer of the engine
@@ -152,6 +220,11 @@ def run_oxigraph(cases, out):
 def norm_term(t):
     if t is None:
         return None
+    if t.get("type") in ("literal", "typed-literal") and t.get("datatype") in NUMERIC:
+        try:  # aggregates: the same value may be written as "2.5" or "2.50"
+            return ("literal", round(float(t["value"]), 9), t["datatype"], "")
+        except ValueError:
+            pass
     if t.get("type") == "literal" and "datatype" not in t and "xml:lang" not in t:
         return ("literal", t["value"], XSD + "string", "")
     return (t.get("type").replace("typed-literal", "literal"), t.get("value"), t.get("datatype", XSD + "string" if t.get("type") == "literal" and "xml:lang" not in t else ""), t.get("xml:lang", "").lower())
@@ -228,6 +301,15 @@ def compare(cases, oxf, fdf, keep=None, out_json=None):
             tally["one refuses"] += 1
             kept.append((c, a, b, "one refuses"))
             continue
+        if c.get("kind") == "graph":
+            la = sorted(set(l.strip() for l in a.get("nt", "").splitlines() if l.strip()))
+            lb = sorted(set(l.strip() for l in b.get("nt", "").splitlines() if l.strip()))
+            if la == lb:
+                tally["agree"] += 1
+            else:
+                tally["differ"] += 1
+                kept.append((c, a, b, "differ"))
+            continue
         try:
             (va, oka), (vb, okb) = norm(a["json"], c["ordered"]), norm(b["json"], c["ordered"])
         except Exception as e:
@@ -265,7 +347,7 @@ def main(argv):
     cmd = argv[0]
     opt = lambda k, d=None: argv[argv.index(k) + 1] if k in argv else d
     if cmd == "gen":
-        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl")); return 0
+        gen(int(opt("--seed", "1")), int(opt("--n", "1000")), opt("--out", "cases.jsonl"), opt("--profile", "base")); return 0
     if cmd == "oxigraph":
         run_oxigraph(argv[1], opt("--out", "ox.jsonl")); return 0
     if cmd == "compare":

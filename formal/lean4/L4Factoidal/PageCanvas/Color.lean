@@ -23,6 +23,13 @@ namespace L4Factoidal.PageCanvas
 through `OfScientific`, which is slow in a pixel loop). Exact below 2^53. -/
 @[inline] def nf (n : Nat) : Float := n.toUInt64.toFloat
 
+/-- `0.5` and `0.0` as constants made once when the module starts. Written as literals inside a
+loop, each evaluation called `Prim.ofScientificFast` (about 0.4% of a Particle Rex turn's samples
+on 2026-11-27, `coverageIn` and `samplePattern`; `tools/lean-literal-parse-audit.py
+--float-literals`). -/
+def halfF : Float := 0.5
+def zeroF : Float := 0.0
+
 /-- `n` zero Floats, pushed (an `Array.replicate` of Floats boxes each one first). -/
 def fzeros (n : Nat) : FloatArray := Id.run do
   let mut a := FloatArray.emptyWithCapacity n

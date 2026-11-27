@@ -43,6 +43,11 @@ structure St where
   /-- Functions seen and functions compiled (coverage statistics). -/
   funs : Nat := 0
   compiled : Nat := 0
+  /-- For each function with no code, why (`Compile.compileWhy`): read by `leanjs compile-stats`. -/
+  whys : Array String := #[]
+  /-- Count compiled functions now (`stats`). Otherwise a function's code is a `Thunk`, made
+  at its first call. -/
+  counting : Bool := false
   /-- `arguments` of the function being resolved: reads of `arguments.length` made
   `Expr.argCount`, and whether `arguments` is used in any other way (also any use inside an
   arrow function, whose `arguments` is this function's). -/
@@ -279,9 +284,13 @@ def rFunAs : Nat → Frames → Bool → Bool → FunDef → R (FunDef × St)
           plain := plainParams f
           frameLocal := !inner.closure && !inner.dynamic && !gen && !async }
       let fd : FunDef := .mk name params' rest' body' vars usesArgs strict kind gen async info
-      let code := if inner.dynamic then none else Compile.compile fd
-      if code.isSome then modify fun s => { s with compiled := s.compiled + 1 }
-      let info := { info with code }
+      let dynamic := inner.dynamic
+      if (← get).counting then
+        let res : Except String Code := if dynamic then .error "direct eval or with" else Compile.compileE fd
+        match res with
+        | .ok _ => modify fun s => { s with compiled := s.compiled + 1 }
+        | .error why => modify fun s => { s with whys := s.whys.push why }
+      let info := { info with code := Thunk.mk fun _ => if dynamic then none else Compile.compile fd }
       pure (.mk name params' rest' body' vars usesArgs strict kind gen async info, inner)
 
 def rParams : Nat → Frames → List PatElem → R (List PatElem)
@@ -431,9 +440,9 @@ list (statements, arguments, elements) costs one unit of nesting, not one per el
 def fuel : Nat := 1000
 
 /-- Functions seen and compiled in a parsed script (a coverage figure for tools). -/
-def stats (s : Script) : Nat × Nat :=
-  let (_, st) := (rSs fuel [] s.body).run {}
-  (st.funs, st.compiled)
+def stats (s : Script) : Nat × Nat × Array String :=
+  let (_, st) := (rSs fuel [] s.body).run { counting := true }
+  (st.funs, st.compiled, st.whys)
 
 /-- Resolve a whole script: its functions and its top-level statements. Top-level `let`,
 `const` and classes are bindings of the global environment, in the global record; names

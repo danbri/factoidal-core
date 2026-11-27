@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tone</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f6f5f1; --muted: #5b5b5f; --line: #8a8a8e; --button: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #ececee; --bg: #1c1c1e; --muted: #a8a8ad; --line: #6c6c70; --button: #2c2c2e; } }
+  body { font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: var(--bg); color: var(--fg); }
+  main { max-width: 40rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  .note { color: var(--muted); font-size: 0.9rem; }
+  .bar { display: flex; gap: 0.5rem; margin: 1rem 0; }
+  button { font: inherit; padding: 0.45rem 0.9rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--button); color: inherit; }
+  #status { font-variant-numeric: tabular-nums; min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+<h1>Tone</h1>
+<p class="note">A 440 Hz sine wave through the Web Audio API: <code>new AudioContext()</code>, an
+<code>OscillatorNode</code> into <code>destination</code>, <code>start()</code> after a click. The engine
+renders the graph in Lean and writes it to the sound output. A page can start sound only after the
+person has used it (a click or a key), as in Chrome and Safari; the option
+<code>--dangerously-permit-audio</code> turns this rule off.</p>
+<div class="bar">
+  <button id="play" type="button">Play 440 Hz</button>
+  <button id="stop" type="button">Stop</button>
+</div>
+<p id="status">Not started.</p>
+<p class="note">Tracking: https://github.com/danbri/factoidal-core/issues/1169 (audio in Foafnaut).</p>
+</main>
+<script>
+(() => {
+  const status = document.getElementById('status');
+  const say = text => { status.textContent = text; };
+  let ctx = null, osc = null, timer = 0;
+  const show = () => { if (ctx) say(`State ${ctx.state}, time ${ctx.currentTime.toFixed(2)} s, sample rate ${ctx.sampleRate} Hz.`); };
+  document.getElementById('play').addEventListener('click', () => {
+    if (typeof AudioContext !== 'function') { say('This engine has no AudioContext.'); return; }
+    try {
+      if (!ctx) {
+        ctx = new AudioContext();
+        ctx.addEventListener('statechange', show);
+      }
+      if (osc) return;
+      osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = 440;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.25;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      ctx.resume().then(show, e => say('resume() failed: ' + e.message));
+      if (!timer) timer = setInterval(show, 250);
+      show();
+    } catch (e) { say('Error: ' + e.message); }
+  });
+  document.getElementById('stop').addEventListener('click', () => {
+    if (osc) { osc.stop(); osc.disconnect(); osc = null; }
+    show();
+  });
+})();
+</script>
+</body>
+</html>

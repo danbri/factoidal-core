@@ -98,6 +98,12 @@ const layoutImageHost=args.includes("--diagnostic-layout-images")
 // of the browser: off without this flag, on 127.0.0.1 only, behind a 128-bit secret the engine makes
 // (L4Factoidal.WebDriver.Gate; risk Risk.webdriverEndpoint in skills/lean-risk-flags). Nothing else starts it.
 const webdriverOn=args.includes("--dangerously-enable-webdriver-endpoint");
+// --dangerously-permit-audio: each page's start request has dangerouslyPermitAudio, so a real-time
+// AudioContext starts with no user activation (Lean's Risk.audioWithoutActivation), as Chrome's WPT
+// runs pass --autoplay-policy=no-user-gesture-required. Off, an AudioContext starts suspended and
+// resume() waits for input the tests do not give. The report records which (dangerouslyPermitAudio).
+const permitAudio=args.includes("--dangerously-permit-audio");
+if(permitAudio)console.error("Warning: --dangerously-permit-audio is on: pages start real-time audio with no user activation.");
 // --webdriver-port: default a free port of the machine (several runners may share it).
 let webdriverPort=Number(opt("--webdriver-port","0"));
 const serveSpec:WptServe={domains:wptDomains,subdomains:wptSubdomains,ports:wptPorts};
@@ -670,7 +676,7 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
     // navigations:true: this runner loads frames' URLs (scriptSession action `frame`).
     let turn=start(html,{action:"start",url,resources,...layout,commandLimit:200000,logLimit:100000,instructionsPerMs:scriptRate,...(encoding?{encoding}:{}),
-      navigations:true,...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(pageCsp?{csp:pageCsp}:{}),...(pageCspReportOnly?{cspReportOnly:pageCspReportOnly}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
+      navigations:true,...(permitAudio?{dangerouslyPermitAudio:true}:{}),...(http?{network:true,pageAddress:"127.0.0.1"}:{}),...(pagePolicy?{referrerPolicy:pagePolicy}:{}),...(pageCsp?{csp:pageCsp}:{}),...(pageCspReportOnly?{cspReportOnly:pageCspReportOnly}:{}),...(scriptEngine==="bubblepop"?{engine:"bubblepop"}:{})});
     // The engine's page requests in flight (each from one turn): http.fetch to wptserve.
     type NetWire={id:number;method:string;url:string;headers:[string,string][];bodyBase64?:string};
     const inflight=new Map<number,Promise<{id:number;answer:Record<string,unknown>}>>();
@@ -800,7 +806,22 @@ export async function engineBackend(fetcher?:Pick<ReturnType<typeof wptFetcher>,
       }
       return did;
     };
+    // A page with a real-time AudioContext (Web Audio API: its rendering runs at the device rate,
+    // docs/designissues/2026-11-26-foafnaut-audio-plan.md section 13): its events come from the
+    // engine's rendering task in real time, so the page's clock moves with real time here, 10 ms
+    // of virtual time then 10 ms of waiting, until the harness is done or 30 s have passed. One
+    // settle of 70 s of virtual time would run the test's own timeout before any audio event.
+    const realTimeAudio=/(^|[^A-Za-z])AudioContext\s*\(/.test(html);
     const settleTo=async(budgetMs:number)=>{
+      if(realTimeAudio){
+        const stop=turn.clock+budgetMs,until=Date.now()+30000;
+        while(turn.clock<stop&&Date.now()<until&&!logs.some(l=>l.startsWith("__wpt_done "))){
+          take(turn=await ss({action:"settle",session:turn.session,budgetMs:10}));
+          await drive();
+          await new Promise(r=>setTimeout(r,10));
+        }
+        return;
+      }
       if(!driver){take(turn=await ss({action:"settle",session:turn.session,budgetMs}));return;}
       const stop=turn.clock+budgetMs;
       for(let i=0;i<200000;i++){
@@ -1004,9 +1025,9 @@ async function runList(listFile:string) {
   }
   const totals={files:cases.length,run:cases.filter(c=>c.harness!=="SKIP").length,subtests:cases.reduce((n,c)=>n+c.subtests.length,0),
     pass:cases.reduce((n,c)=>n+c.subtests.filter(s=>s.status==="PASS").length,0)};
-  console.log(`total: ${totals.pass}/${totals.subtests} subtests pass in ${totals.run} pages run of ${totals.files}`);
+  console.log(`total: ${totals.pass}/${totals.subtests} subtests pass in ${totals.run} pages run of ${totals.files}${permitAudio?" (with --dangerously-permit-audio)":""}`);
   if(opt("--out"))await Deno.writeTextFile(opt("--out"),JSON.stringify({format:"factoidal-wpt-testharness-v1",
-    measuredAt:new Date().toISOString(),wptRoot:wpt,wptCommit:opt("--wpt-commit")||null,engine:engineKind,scriptEngine,
+    measuredAt:new Date().toISOString(),wptRoot:wpt,wptCommit:opt("--wpt-commit")||null,engine:engineKind,scriptEngine,dangerouslyPermitAudio:permitAudio,
     info:backend.info,wptserve:wptserveMode?{origin:serveOrigin,secureOrigin:serveSecureOrigin}:null,totals,cases},null,1)+"\n");
   serve?.fetcher.close();await serve?.stop?.();
   await webdriver?.server.shutdown();
@@ -1038,7 +1059,7 @@ else if(import.meta.main) {
   const hash=async(path:string)=>{try{return [...new Uint8Array(await crypto.subtle.digest("SHA-256",await Deno.readFile(path)))].map(b=>b.toString(16).padStart(2,"0")).join("");}catch{return null;}};
   const report={format:"factoidal-wpt-testharness-v1",measuredAt:started,
     scope:`WPT testharness.js tests, window variant, in the engine's script session (${scriptEngine==="bubblepop"?"BubblePopJS (the JavaScript engine written in Lean)":"QuickJS-NG in WasmVM"}, Lean DOM arena, Lean event loop, virtual clock). Subtest counts are of the subtests a page reported; a page that reported none counts 0 of 0.`,scriptEngine,
-    wptCommit:"ce5ca39646886a9349fc42913f843ec6e1c8a36f",engine:engineKind,info:backend.info,
+    wptCommit:"ce5ca39646886a9349fc42913f843ec6e1c8a36f",engine:engineKind,info:backend.info,dangerouslyPermitAudio:permitAudio,
     quickjsWasmSha256:await hash(quickjs),runnerSha256:await hash(fromFileUrl(import.meta.url)),
     reportSha256:await hash(join(here,"testharnessreport.js")),
     directories:byDir,
@@ -1046,7 +1067,7 @@ else if(import.meta.main) {
       pass:cases.reduce((n,c)=>n+c.subtests.filter(s=>s.status==="PASS").length,0)},
     cases};
   for(const [d,v] of Object.entries(byDir))console.log(`${d}: ${v.pass}/${v.subtests} subtests pass; ${v.harnessOK}/${v.run} pages OK; ${v.skipped} skipped`);
-  console.log(`total: ${report.totals.pass}/${report.totals.subtests} subtests pass`);
+  console.log(`total: ${report.totals.pass}/${report.totals.subtests} subtests pass${permitAudio?" (with --dangerously-permit-audio)":""}`);
   if(opt("--out"))await Deno.writeTextFile(opt("--out"),JSON.stringify(report,null,1)+"\n");
   // @ts-ignore bench backend only
   await backend.cleanup?.();

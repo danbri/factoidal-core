@@ -100,6 +100,9 @@ def ops : List OpSpec :=
     ⟨"historyPush", .state, []⟩, ⟨"gesture", .state, [.pointer]⟩,
     ⟨"graphStart", .state, []⟩, ⟨"graphEvent", .state, []⟩, ⟨"wasmRun", .state, []⟩,
     ⟨"command", .state, []⟩,
+    -- the real-time Web Audio runs end (`WebAudioRun.endAll`): a host that drops an engine it
+    -- does not free
+    ⟨"audioEnd", .state, []⟩,
     -- page answers
     ⟨"render", .query, []⟩, ⟨"inspect", .query, []⟩, ⟨"decode", .query, []⟩,
     ⟨"epubReader", .query, []⟩,
@@ -128,6 +131,8 @@ def ops : List OpSpec :=
     ⟨"keyTable", .query, [.keyboard]⟩, ⟨"findEdit", .query, [.keyboard]⟩,
     -- counters and host facts
     ⟨"frameWork", .counter, []⟩, ⟨"imageInfo", .counter, []⟩, ⟨"cpuInfo", .counter, []⟩,
+    -- the real-time Web Audio runs and their measures (`WebAudioRun.runsAnswer`)
+    ⟨"audioRuns", .counter, []⟩,
     ⟨"aboutPage", .hostFact, []⟩, ⟨"engineBuild", .hostFact, []⟩ ]
 
 def opSpec? (name : String) : Option OpSpec := ops.find? (·.name == name)
@@ -140,7 +145,7 @@ def namesDistinct : List String → Bool
   | n :: ns => !ns.contains n && namesDistinct ns
 
 #guard namesDistinct opNames
-#guard opNames.length == 75
+#guard opNames.length == 77
 
 /-- The kind of an operation; an unknown one is treated as `state` (compared least). -/
 def kindOf (name : String) : Kind := ((opSpec? name).map (·.kind)).getD .state
@@ -163,8 +168,10 @@ theorem shellCommitFocus_contract : kindOf "shellCommitFocus" = .query ∧ needs
 docs/designissues/2026-11-14-engine-integration.md, "Theorems across the seams"): `hostCors`
 (no CORS check by the engine; the host enforces it), `address` (where the host loaded the page
 from), `network` (page scripts may fetch), `navigations`, `liberal` (draw what can be drawn and list
-what was skipped), `scripting` (`false`: no page script runs here). -/
-def relaxFields : List String := ["hostCors", "address", "network", "navigations", "liberal", "scripting"]
+what was skipped), `scripting` (`false`: no page script runs here), `dangerouslyPermitAudio`
+(a real-time `AudioContext` starts with no user activation; `Risk.audioWithoutActivation`, made in
+`WebScripts.audioLimits`). -/
+def relaxFields : List String := ["hostCors", "address", "network", "navigations", "liberal", "scripting", "dangerouslyPermitAudio"]
 
 /-- Top-level answer fields that are measurements, not page answers: `ns`, the engine time a
 `scriptSession` turn took (WasmVM/Hosts). They differ between two runs of one build, so a trace

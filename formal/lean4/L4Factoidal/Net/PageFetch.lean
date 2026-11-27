@@ -66,6 +66,17 @@ fetch, §4.8 CORS-preflight fetch, §4.9 CORS check; §2.2.2 header name lists.
   still apply, to the first URL and to the final URL the host reports (a response whose
   final URL is outside the policy is withheld; the request was made by then). DNS is the
   Hub browser's: no pin there.
+* Tor mode (`Page.tor`, `tor:true` in `scriptSession start`;
+  https://github.com/danbri/factoidal-core/issues/1060): every request goes to the host's
+  Tor client (`Wire.tor`) in one partition per page origin (`Wire.partition`; the engine has
+  no public suffix list, so the partition is the origin, stricter than a site). The host
+  resolves no name: no request enters phase `resolve`, no wire carries `resolve` or an
+  `address` (the Tor exit or the onion service connects, so the DNS-rebinding pin does not
+  apply; a local lookup would name the site to the local resolver). A page with an opaque
+  origin (`"null"`) and the Hub get no network in Tor mode. A target that is local by its URL
+  (`privateHost`) is refused in Tor mode, for a local page too. `.onion` names (RFC 7686) are
+  reached only in Tor mode: in direct mode an onion URL is refused before any request
+  (RFC 7686 §2). WebSocket is refused in Tor mode (`Net.WebSocket.openCheck`).
 -/
 import L4Factoidal.WHATWG.URL.Parser
 import L4Factoidal.Net.Egress
@@ -107,24 +118,46 @@ structure Page where
   /-- The Hub: the browser that runs the Hub enforces CORS itself (this file's preflight and
   CORS check are off, the scheme and local rules are not). -/
   hostCors : Bool := false
+  /-- Tor mode: the host sends every request of the page through Tor (an exit or an onion
+  service connects; the host resolves no name). See "Tor mode" in the decisions above. -/
+  tor : Bool := false
   deriving Inhabited, Repr, DecidableEq
 
 /-- The page from its URL. `address`: the address the host loaded an `http` or `https` page
 from, when it knows it (`""` otherwise); a special-purpose one makes the page local. -/
-def Page.ofUrl (url : String) (hostCors : Bool := false) (address : String := "") : Page :=
+def Page.ofUrl (url : String) (hostCors : Bool := false) (address : String := "") (tor : Bool := false) : Page :=
   let fromLocal := match addr? address with
     | some a => specialPurpose a
     | none => false
   match URL.parseUrl url with
-  | some u => { origin := u.origin, secure := u.scheme == "https", hostCors,
+  | some u => { origin := u.origin, secure := u.scheme == "https", hostCors, tor,
                 isLocal := privateHost u || (fromLocal && (u.scheme == "http" || u.scheme == "https")) }
-  | none => { origin := "null", isLocal := false, secure := false, hostCors }
+  | none => { origin := "null", isLocal := false, secure := false, hostCors, tor }
+
+/-- An onion service name (RFC 7686 §1: a name whose last label is `onion`). -/
+def onionHost (u : URL.Url) : Bool :=
+  let h := lower u.hostname
+  let h := if h.endsWith "." then (h.dropEnd 1).toString else h
+  h == "onion" || h.endsWith ".onion"
+
+/-- The URL string parses and names an onion service. -/
+def onionUrl (s : String) : Bool :=
+  match URL.parseUrl s with
+  | some u => onionHost u
+  | none => false
+
+/-- The Tor rule of `mayConnect`. In Tor mode the page needs a tuple origin (its partition,
+`Wire.partition`) and is not on the Hub. In direct mode an onion name is refused before any
+request (RFC 7686 §2: applications do not resolve `.onion` names through DNS). -/
+def torRule (p : Page) (u : URL.Url) : Bool :=
+  if p.tor then p.origin != "null" && !p.hostCors else !onionHost u
 
 /-- May a page ask the host to connect to `u` at all. -/
 def mayConnect (p : Page) (u : URL.Url) : Bool :=
   (u.scheme == "http" || u.scheme == "https") &&
-    (!privateHost u || p.isLocal) &&
-      (!p.secure || u.scheme == "https")
+    (!privateHost u || (p.isLocal && !p.tor)) &&
+      (!p.secure || u.scheme == "https") &&
+        torRule p u
 
 /-- The URL is same-origin with the page. -/
 def sameOrigin (p : Page) (u : URL.Url) : Bool :=
@@ -240,6 +273,11 @@ structure Wire where
   the name again. `""`: the host connects as it does (an IP literal, a local page, the Hub). -/
   address : String := ""
   port : Nat := 0
+  /-- Send through Tor (`Page.tor`): the host gives the request to its Tor client, names
+  nothing to its own resolver, and uses the circuits of `partition`. -/
+  tor : Bool := false
+  /-- The Tor partition (circuit set) of the request: the page's origin. `""` in direct mode. -/
+  partition : String := ""
   deriving Inhabited
 
 /-- The host's answer to a `Wire`: `status` 0 is a network failure. -/
@@ -594,7 +632,7 @@ def Transfer.preflightWire (t : Transfer) : Wire :=
 /-- The name the host must resolve before a request to the current URL: its host when that is
 a name (not an IP literal), for a page that is not local, on a native host. -/
 def Transfer.toResolve (t : Transfer) : Option String :=
-  if t.page.hostCors || t.page.isLocal then none else
+  if t.page.tor || t.page.hostCors || t.page.isLocal then none else
   match URL.parseUrl t.url with
   | some u =>
     let h := lower u.hostname
@@ -613,11 +651,11 @@ def Transfer.portOf (t : Transfer) : Nat :=
   | some u => u.port.getD ((URL.defaultPort u.scheme).getD 0)
   | none => 0
 
-/-- The address rule of a request the host makes. A resolve-only wire sends nothing to a
-server. Otherwise, for a page that is not local on a native host, the URL's host is an IP
-literal that is not special-purpose, or the wire names the address the host connects to, and
-that address is not special-purpose. -/
-def wireReach (p : Page) (w : Wire) : Bool :=
+/-- The address rule of a request the host makes in direct mode. A resolve-only wire sends
+nothing to a server. Otherwise, for a page that is not local on a native host, the URL's host
+is an IP literal that is not special-purpose, or the wire names the address the host connects
+to, and that address is not special-purpose. -/
+def directReach (p : Page) (w : Wire) : Bool :=
   w.resolve || p.isLocal || p.hostCors ||
     match URL.parseUrl w.url with
     | none => false
@@ -628,6 +666,24 @@ def wireReach (p : Page) (w : Wire) : Bool :=
         match addr? w.address with
         | some a => !specialPurpose a
         | none => false
+
+/-- The address rule of a request the host makes in Tor mode: no resolve-only request and no
+address (the exit or the onion service connects; a lookup here would name the site to the
+local resolver), the wire is marked `tor` with the page's origin as its partition (a tuple
+origin, never the Hub), and the URL's host is not local by its URL (`privateHost`), for a local
+page too. -/
+def torReach (p : Page) (w : Wire) : Bool :=
+  !w.resolve && w.address.isEmpty && w.tor && w.partition == p.origin && p.origin != "null" && !p.hostCors &&
+    match URL.parseUrl w.url with
+    | some u => !privateHost u
+    | none => false
+
+/-- The address rule of every request the host makes (`emit` checks it last): `torReach` in
+Tor mode; in direct mode `directReach`, on a wire not marked `tor`, with no partition and no
+onion name. -/
+def wireReach (p : Page) (w : Wire) : Bool :=
+  if p.tor then torReach p w
+  else !w.tor && w.partition.isEmpty && !onionUrl w.url && directReach p w
 
 /-- What a step asks for. -/
 inductive Step where
@@ -643,9 +699,19 @@ inductive Step where
 def Transfer.resolveWire (t : Transfer) : Wire :=
   { id := t.id, method := "", url := t.url, headers := [], body := none, resolve := true }
 
+/-- The wire `w` as Tor mode sends it: no resolve, no address, marked `tor`, in the page's
+partition (its origin). -/
+def Transfer.torWire (t : Transfer) (w : Wire) : Wire :=
+  { w with resolve := false, address := "", port := 0, tor := true, partition := t.page.origin }
+
 /-- Send `w` for `t` on the address rule: a name that must be resolved and has no pin yet is
 resolved first; a pinned name's request carries its address; `wireReach` is checked last. -/
 def emit (t : Transfer) (w : Wire) : Step :=
+  if t.page.tor then
+    let w' := t.torWire w
+    if wireReach t.page w' then .send t w' else .fail "refused: address (Tor mode)"
+  else if onionUrl t.url then .fail "refused: an onion name needs Tor mode"
+  else
   match t.toResolve with
   | none => if wireReach t.page w then .send t w else .fail "refused: address"
   | some host =>
@@ -943,7 +1009,7 @@ local address (the DNS answer is the host's). -/
 theorem mayConnect_local_needs_local_page (p : Page) (u : URL.Url)
     (h : mayConnect p u = true) (hp : privateHost u = true) : p.isLocal = true := by
   simp [mayConnect, hp] at h
-  exact h.1.2
+  exact h.1.1.2.1
 
 /-- Kind: policy lemma. Says: no scheme outside `http` and `https` passes `mayConnect` (so a
 page reads no `file:` URL through this core). Does not say: anything of other paths, such as
@@ -951,40 +1017,56 @@ the host loading `file:` pages for its own document. -/
 theorem mayConnect_scheme (p : Page) (u : URL.Url) (h : mayConnect p u = true) :
     u.scheme = "http" ∨ u.scheme = "https" := by
   simp [mayConnect] at h
-  exact h.1.1
+  exact h.1.1.1
 
 /-- Kind: lemma on `emit`. Says: `emit` sends either the resolve-only request of the
-transfer's URL (and waits in phase `resolve`), or the request it was given, with the same
-URL, method, fields and body, for the same transfer, and then `wireReach` held. Does not say:
-which of the two (that is `toResolve` and the pin). -/
+transfer's URL (and waits in phase `resolve`; only in direct mode and for a URL that is not an
+onion name), or the request it was given, with the same URL, method, fields and body, for the
+same transfer, and then `wireReach` held. Does not say: which of the two (that is `toResolve`
+and the pin). -/
 theorem emit_cases {t t' : Transfer} {w w' : Wire} (h : emit t w = .send t' w') :
-    (t' = { t with phase := .resolve } ∧ w' = t.resolveWire) ∨
+    (t' = { t with phase := .resolve } ∧ w' = t.resolveWire ∧ t.page.tor = false ∧ onionUrl t.url = false) ∨
     (t' = t ∧ w'.url = w.url ∧ w'.method = w.method ∧ w'.headers = w.headers ∧ w'.body = w.body ∧
       wireReach t.page w' = true) := by
   unfold emit at h
-  split at h
-  · split at h
+  by_cases ht : t.page.tor = true
+  · simp only [ht, if_true] at h
+    split at h
     · simp only [Step.send.injEq] at h
       obtain ⟨rfl, rfl⟩ := h
       exact Or.inr ⟨rfl, rfl, rfl, rfl, rfl, by assumption⟩
     · simp at h
-  · split at h
-    · simp only [Step.send.injEq] at h
-      obtain ⟨rfl, rfl⟩ := h
-      exact Or.inl ⟨rfl, rfl⟩
-    · split at h
-      · simp only [Step.send.injEq] at h
-        obtain ⟨rfl, rfl⟩ := h
-        exact Or.inr ⟨rfl, rfl, rfl, rfl, rfl, by assumption⟩
-      · simp at h
+  · have ht' : t.page.tor = false := by simpa using ht
+    simp only [ht', Bool.false_eq_true, if_false] at h
+    by_cases ho : onionUrl t.url = true
+    · simp [ho] at h
+    · have ho' : onionUrl t.url = false := by simpa using ho
+      simp only [ho', Bool.false_eq_true, if_false] at h
+      split at h
+      · split at h
+        · simp only [Step.send.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact Or.inr ⟨rfl, rfl, rfl, rfl, rfl, by assumption⟩
+        · simp at h
+      · split at h
+        · simp only [Step.send.injEq] at h
+          obtain ⟨rfl, rfl⟩ := h
+          exact Or.inl ⟨rfl, rfl, ht', ho'⟩
+        · split at h
+          · simp only [Step.send.injEq] at h
+            obtain ⟨rfl, rfl⟩ := h
+            exact Or.inr ⟨rfl, rfl, rfl, rfl, rfl, by assumption⟩
+          · simp at h
 
 /-- Kind: policy lemma. Says: every request `emit` tells the host to make passes `wireReach`
 for the page: a resolve-only request, or one whose address is not special-purpose (or a local
-page, or the Hub). Does not say: that the host connects to that address. -/
+page, or the Hub); in Tor mode, `torReach`. Does not say: that the host connects to that
+address. -/
 theorem emit_reach {t t' : Transfer} {w w' : Wire} (h : emit t w = .send t' w') :
     wireReach t.page w' = true ∧ t'.page = t.page := by
-  rcases emit_cases h with ⟨rfl, rfl⟩ | ⟨rfl, -, -, -, -, hr⟩
-  · simp [wireReach, Transfer.resolveWire]
+  rcases emit_cases h with ⟨rfl, rfl, ht, ho⟩ | ⟨rfl, -, -, -, -, hr⟩
+  · refine ⟨?_, rfl⟩
+    simp [wireReach, directReach, Transfer.resolveWire, ht, ho]
   · exact ⟨hr, rfl⟩
 
 /-- Kind: lemma. Says: a `data:` or `blob:` URL never makes `plan` send anything (it is
@@ -1023,11 +1105,11 @@ theorem plan_send_allowed (t t' : Transfer) (w : Wire) (h : plan t = .send t' w)
       · simp at h
       · split at h
         · have ⟨hr, hp⟩ := emit_reach h
-          rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
+          rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, hu, -⟩
           · exact ⟨ha, rfl, hr, hp⟩
           · exact ⟨ha, by simp [hu, Transfer.preflightWire], hr, hp⟩
         · have ⟨hr, hp⟩ := emit_reach h
-          rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, hu, -⟩
+          rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, hu, -⟩
           · exact ⟨ha, rfl, hr, hp⟩
           · exact ⟨ha, by simp [hu, Transfer.mainWire], hr, hp⟩
   · simp [ha] at h
@@ -1132,10 +1214,14 @@ theorem deliver_cross_origin_needs_cors (t t' : Transfer) (a : Answer) (r : Resp
 theorem emit_not_deliver (t : Transfer) (w : Wire) (t' : Transfer) (r : Response) : emit t w ≠ .deliver t' r := by
   unfold emit
   split
-  · split <;> simp
+  · simp only; split <;> simp
   · split
     · simp
-    · split <;> simp
+    · split
+      · split <;> simp
+      · split
+        · simp
+        · split <;> simp
 
 /-- Kind: lemma. Says: `plan` answers in the engine (a `data:` or `blob:` URL) only for the
 first URL of a request: after a redirect it sends or fails. -/
@@ -1255,7 +1341,7 @@ theorem plan_cross_unsafe_is_preflight (t t' : Transfer) (w : Wire)
     · split at h
       · simp at h
       · simp only [hn, hc, hu, Bool.not_false, Bool.and_self, if_true] at h
-        rcases emit_cases h with ⟨-, rfl⟩ | ⟨rfl, -, hm, -, hb, -⟩
+        rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨rfl, -, hm, -, hb, -⟩
         · exact Or.inl ⟨rfl, rfl⟩
         · exact Or.inr ⟨rfl, by simp [hm, Transfer.preflightWire], by simp [hb, Transfer.preflightWire]⟩
   · simp [ha] at h
@@ -1335,10 +1421,10 @@ theorem plan_wire_forbidden (t : Transfer) (t' : Transfer) (w : Wire) (h : plan 
     · split at h
       · simp at h
       · split at h
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, hm, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, -, hm, -⟩
           · simp [Transfer.resolveWire] at hn
           · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (by simp [hm, Transfer.preflightWire]))))))
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             simp only [Transfer.mainWire] at hn
@@ -1391,7 +1477,7 @@ theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t 
     · split at h
       · simp at h
       · split at h
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             simp only [Transfer.preflightWire] at hn
@@ -1406,7 +1492,7 @@ theorem plan_wire_referer (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t 
                   rw [hn] at hr
                   simp at hr
             · exact last _ _ hl
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             simp only [Transfer.mainWire] at hn
@@ -1530,11 +1616,11 @@ theorem plan_wire_cookie (t : Transfer) (t' : Transfer) (w : Wire) (h : plan t =
     · split at h
       · simp at h
       · split at h
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨-, -, -, hh, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨-, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             exact absurd hc (preflight_no_cookie _ n hn)
-        · rcases emit_cases h with ⟨-, rfl⟩ | ⟨ht, -, -, hh, -⟩
+        · rcases emit_cases h with ⟨-, rfl, -⟩ | ⟨ht, -, -, hh, -⟩
           · simp [Transfer.resolveWire] at hn
           · rw [hh] at hn
             simp only [Transfer.mainWire] at hn
@@ -1729,11 +1815,12 @@ theorem forWorker_policy (owner : Page) (url : String) :
   unfold Page.forWorker; split <;> simp
 
 /-- Kind: policy lemma (workers). Says: `mayConnect` of a worker's policy is its owner's,
-for every URL. Does not say: that the worker's requests are the same as the owner's
-(CORS depends on the origin). -/
-theorem forWorker_mayConnect (owner : Page) (url : String) (u : URL.Url) :
+for every URL, in direct mode. Does not say: that the worker's requests are the same as the
+owner's (CORS depends on the origin); anything of Tor mode, where a `data:` worker (opaque
+origin, so no partition) gets no network. -/
+theorem forWorker_mayConnect (owner : Page) (url : String) (u : URL.Url) (ht : owner.tor = false) :
     mayConnect (owner.forWorker url) u = mayConnect owner u := by
-  unfold Page.forWorker; split <;> rfl
+  unfold Page.forWorker; split <;> simp [mayConnect, torRule, ht]
 
 /-- Kind: policy lemma (workers). Says: a worker's requests carry its owner's origin, unless
 the worker's script is a `data:` URL, whose origin is opaque (`"null"`). Never another
@@ -2123,5 +2210,156 @@ private def l6A₂ : Answer := { status := 404, statusText := "Gone", headers :=
 #guard match (onAnswer l6T l6A₁).seen, (onAnswer l6T l6A₂).seen with | .fail x, .fail y => x == "" && y == "" | _, _ => false
 #guard match onAnswer l6T { l6A₁ with headers := [("Access-Control-Allow-Origin", "*")] } with
   | .deliver _ r => r.body.size == 3 | _ => false
+
+/-! ## Tor mode (https://github.com/danbri/factoidal-core/issues/1060)
+
+The theorems are over `plan` and `onAnswer`, the two functions that give the host every page
+request (through `emit`); `wireReach` is the check `emit` makes last on each wire. -/
+
+/-- Kind: policy lemma (Tor mode). Says: a wire that passes `wireReach` for a page in Tor mode
+is not resolve-only, names no address, is marked `tor`, and has the page's origin, which is not
+opaque, as its partition. Does not say: that the host sends it through Tor. -/
+theorem wireReach_tor {p : Page} {w : Wire} (hp : p.tor = true) (h : wireReach p w = true) :
+    w.resolve = false ∧ w.address = "" ∧ w.tor = true ∧ w.partition = p.origin ∧ p.origin ≠ "null" := by
+  simp only [wireReach, hp, if_true, torReach, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true,
+    String.isEmpty_iff, beq_iff_eq, bne_iff_ne, ne_eq] at h
+  exact ⟨h.1.1.1.1.1.1, h.1.1.1.1.1.2, h.1.1.1.1.2, h.1.1.1.2, h.1.1.2⟩
+
+/-- Kind: policy lemma (direct mode). Says: a wire that passes `wireReach` for a page in
+direct mode is not marked `tor`, has no partition, and does not name an onion service. -/
+theorem wireReach_direct {p : Page} {w : Wire} (hp : p.tor = false) (h : wireReach p w = true) :
+    w.tor = false ∧ w.partition = "" ∧ onionUrl w.url = false := by
+  simp only [wireReach, hp, Bool.false_eq_true, if_false, Bool.and_eq_true, Bool.not_eq_eq_eq_not, Bool.not_true,
+    String.isEmpty_iff] at h
+  exact ⟨h.1.1.1, h.1.1.2, h.1.2⟩
+
+/-- Kind: privacy theorem (Tor mode, the first request and each redirect). Says: every request
+that `plan` tells the host to make for a page in Tor mode is not resolve-only (the host resolves
+no name), names no address, is marked `tor`, and carries the page's origin as its partition; the
+page's origin is not opaque. Does not say: that the host routes it through Tor, or that the Tor
+client keeps partitions apart (host and Tor client, tested, not proved). -/
+theorem plan_tor (t t' : Transfer) (w : Wire) (hp : t.page.tor = true) (h : plan t = .send t' w) :
+    w.resolve = false ∧ w.address = "" ∧ w.tor = true ∧ w.partition = t.page.origin ∧ t.page.origin ≠ "null" :=
+  wireReach_tor hp (plan_send_allowed t t' w h).2.2.1
+
+/-- Kind: privacy theorem (Tor mode, every later hop: preflight answered, redirect, resolve
+answer). Says: every request that `onAnswer` tells the host to make for a page in Tor mode is
+not resolve-only, names no address, is marked `tor`, and carries the page's origin as its
+partition. Does not say: that the host routes it through Tor. -/
+theorem onAnswer_tor (t t' : Transfer) (a : Answer) (w : Wire) (hp : t.page.tor = true)
+    (h : onAnswer t a = .send t' w) :
+    w.resolve = false ∧ w.address = "" ∧ w.tor = true ∧ w.partition = t.page.origin ∧ t.page.origin ≠ "null" :=
+  wireReach_tor hp (onAnswer_reach t t' a w h)
+
+/-- Kind: lemma (Tor mode). Says: `emit` for a page in Tor mode keeps the transfer as it is:
+it never moves it to phase `resolve`. -/
+theorem emit_tor_same {t t' : Transfer} {w w' : Wire} (hp : t.page.tor = true) (h : emit t w = .send t' w') :
+    t' = t := by
+  rcases emit_cases h with ⟨-, -, ht, -⟩ | ⟨rfl, -⟩
+  · rw [hp] at ht; cases ht
+  · rfl
+
+/-- Kind: privacy theorem (Tor mode). Says: no request that `plan` makes for a page in Tor
+mode leaves the transfer in phase `resolve` (the host is never asked for the addresses of a
+name). -/
+theorem plan_tor_phase (t t' : Transfer) (w : Wire) (hp : t.page.tor = true) (h : plan t = .send t' w) :
+    t'.phase ≠ .resolve := by
+  replace h := plan_send_net h
+  unfold planNet at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · have := emit_tor_same (t := { t with phase := .preflight }) hp h
+          subst this; simp
+        · have := emit_tor_same (t := { t with phase := .main }) hp h
+          subst this; simp
+
+/-- Kind: policy theorem (direct mode, RFC 7686 §2). Says: for a page in direct mode, no
+request that `plan` tells the host to make names an onion service, none is marked `tor`, and
+none has a partition (the wire form of direct mode has no new field). Does not say: that the
+other fields are those of the code before Tor mode (they are built by the same functions). -/
+theorem plan_direct (t t' : Transfer) (w : Wire) (hp : t.page.tor = false) (h : plan t = .send t' w) :
+    onionUrl w.url = false ∧ w.tor = false ∧ w.partition = "" := by
+  have ⟨a, b, c⟩ := wireReach_direct hp (plan_send_allowed t t' w h).2.2.1
+  exact ⟨c, a, b⟩
+
+/-- Kind: policy theorem (direct mode, every later hop). Says: for a page in direct mode, no
+request that `onAnswer` tells the host to make names an onion service, is marked `tor`, or has
+a partition. -/
+theorem onAnswer_direct (t t' : Transfer) (a : Answer) (w : Wire) (hp : t.page.tor = false)
+    (h : onAnswer t a = .send t' w) : onionUrl w.url = false ∧ w.tor = false ∧ w.partition = "" := by
+  have ⟨a, b, c⟩ := wireReach_direct hp (onAnswer_reach t t' a w h)
+  exact ⟨c, a, b⟩
+
+/-- Kind: policy lemma (RFC 7686 §2). Says: in direct mode an onion URL is outside the policy.
+-/
+theorem mayConnect_onion_direct (p : Page) (u : URL.Url) (hp : p.tor = false) (ho : onionHost u = true) :
+    mayConnect p u = false := by
+  simp [mayConnect, torRule, hp, ho]
+
+/-- Kind: policy lemma (Tor mode). Says: in Tor mode a target that is local by its URL is
+outside the policy, for a local page too. Does not say: anything of a name that a Tor exit
+resolves to a local address of the exit's network. -/
+theorem mayConnect_tor_private (p : Page) (u : URL.Url) (hp : p.tor = true) (hl : privateHost u = true) :
+    mayConnect p u = false := by
+  simp [mayConnect, hp, hl]
+
+/-- Kind: policy lemma (Tor mode). Says: a page with an opaque origin, or on the Hub, reaches
+nothing in Tor mode (it has no partition). -/
+theorem mayConnect_tor_null (p : Page) (u : URL.Url) (hp : p.tor = true)
+    (hn : p.origin = "null" ∨ p.hostCors = true) : mayConnect p u = false := by
+  rcases hn with hn | hn <;> simp [mayConnect, torRule, hp, hn]
+
+#print axioms wireReach_tor
+#print axioms wireReach_direct
+#print axioms plan_tor
+#print axioms onAnswer_tor
+#print axioms plan_tor_phase
+#print axioms plan_direct
+#print axioms onAnswer_direct
+#print axioms mayConnect_onion_direct
+#print axioms mayConnect_tor_private
+#print axioms mayConnect_tor_null
+
+private def torPg : Page := Page.ofUrl "https://a.example/x" (tor := true)
+private def torT : Transfer := { base with page := torPg }
+#guard torPg.tor && torPg.origin == "https://a.example" && !pg.tor
+-- an https page in Tor mode fetching a name: one wire, marked tor, in its origin's partition,
+-- no resolve and no address (the pin of `base` is not used)
+#guard match plan torT with
+  | .send t w => w.tor && !w.resolve && w.address.isEmpty && w.port == 0 && w.partition == "https://a.example" &&
+      w.url == "https://b.example/d" && t.phase == .main
+  | _ => false
+#guard match plan { torT with pin := none } with
+  | .send t w => w.tor && !w.resolve && w.address.isEmpty && t.phase != .resolve | _ => false
+-- a preflight in Tor mode goes the same way
+#guard match plan { torT with headers := [("X-A", "1")] } with
+  | .send t w => w.method == "OPTIONS" && w.tor && !w.resolve && t.phase == .preflight | _ => false
+-- an onion URL: refused in direct mode, a wire in Tor mode
+#guard match plan { base with url := "https://abcdefgh.onion/", pin := none } with | .fail _ => true | _ => false
+#guard match plan { named with url := "http://abcdefgh.onion./" } with | .fail _ => true | _ => false
+#guard match plan { torT with url := "https://abcdefgh.onion/" } with
+  | .send _ w => w.tor && !w.resolve && w.address.isEmpty | _ => false
+#guard (URL.parseUrl "https://x.ONION/").any onionHost && !(URL.parseUrl "https://onion.example/").any onionHost
+-- local targets stay refused in Tor mode, for a local page too
+#guard match plan { torT with page := Page.ofUrl "http://127.0.0.1:8000/x" (tor := true), url := "http://127.0.0.1:8000/y" } with
+  | .fail _ => true | _ => false
+#guard match plan { torT with url := "https://localhost/" } with | .fail _ => true | _ => false
+-- no network in Tor mode for an opaque origin or on the Hub
+#guard match plan { torT with page := Page.ofUrl "file:///tmp/x.html" (tor := true), url := "http://b.example/" } with
+  | .fail _ => true | _ => false
+#guard match plan { torT with page := { torPg with hostCors := true } } with | .fail _ => true | _ => false
+-- a redirect in Tor mode: the next hop is a Tor wire too
+#guard match onAnswer { torT with url := "https://a.example/r" } ({ status := 302, headers := [("Location", "https://a.example/z")] } : Answer) with
+  | .send _ w => w.tor && !w.resolve && w.url == "https://a.example/z" | _ => false
+-- a resolve-phase transfer in Tor mode is planned again with no lookup
+#guard match onAnswer { torT with phase := .resolve, pin := none } ({ addresses := ["127.0.0.1"] } : Answer) with
+  | .send _ w => w.tor && !w.resolve && w.address.isEmpty | _ => false
+-- direct mode: the wire has no Tor field
+#guard match plan base with | .send _ w => !w.tor && w.partition.isEmpty && w.address == "93.184.215.14" | _ => false
 
 end L4Factoidal.Net.PageFetch

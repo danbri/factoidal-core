@@ -65,6 +65,83 @@ where
 #guard [0, 1, 31, 32, 33, 1023, 1024, 2 ^ 64 - 1, 2 ^ 200 + 7].all fun n =>
   readNat (pushNat (ByteArray.mk #[0x41]) n) 1 == some (n, (pushNat (ByteArray.mk #[0x41]) n).size)
 
+/-- The index after the number at `i` (after its last digit, the first in `#` to `B`), or `i`
+when no number starts there. With `natVal`, `getNat` reads a number with no `Option` or pair (a
+realm decode reads about 530,000 numbers of more than one digit; issue 471). -/
+def natEnd (b : ByteArray) (i : Nat) : Nat :=
+  go i (b.size - i + 1)
+where
+  go (j : Nat) : Nat → Nat
+    | 0 => i
+    | fuel + 1 =>
+      if h : j < b.size then
+        let x := b[j].toNat
+        if 0x23 ≤ x && x ≤ 0x42 then j + 1
+        else if 0x5D ≤ x && x ≤ 0x7C then go (j + 1) fuel
+        else i
+      else i
+
+/-- The value of the digits from `i` up to `j` (not included), low digits first: Horner's rule
+from the last digit down. -/
+def natVal (b : ByteArray) (i j : Nat) : Nat :=
+  go (j - 1) 0 (j - i)
+where
+  go (k acc : Nat) : Nat → Nat
+    | 0 => acc
+    | n + 1 =>
+      let x := b[k]!.toNat
+      go (k - 1) (acc * 32 + (if x ≤ 0x42 then x - 0x23 else x - 0x5D)) n
+
+-- `natEnd` and `natVal` read what `readNat` reads (tested here; the realm check
+-- `WasmVM/Tests/LeanJSRealm.lean` compares a whole decoded realm with the prelude's)
+#guard (List.range 5000 ++ [32 ^ 3 - 1, 32 ^ 3, 47749, 2 ^ 40 + 5, 2 ^ 62 - 1, 2 ^ 64 - 1, 2 ^ 200 + 7]).all fun n =>
+  let b := pushNat (pushNat (ByteArray.mk #[0x20]) n) 7
+  let j := natEnd b 1
+  readNat b 1 == some (natVal b 1 j, j) && natEnd b 0 == 0 && natEnd (ByteArray.mk #[0x41, 0x5D]) 1 == 1
+
+/-- The number at `i` modulo 2^64, as `readNat` reads it but with `UInt64` arithmetic, so the
+64 bits of a float (13 digits) never become a big `Nat`. `readNat` there cost a GMP number for
+the scale and a shift for `Nat.toUInt64` on every float: 360 million of the 1,450 million
+instructions of a realm decode (issue 471). Same value: `readU64_eq`. -/
+def readU64 (b : ByteArray) (i : Nat) : Option (UInt64 × Nat) :=
+  go i 0 1 (b.size - i + 1)
+where
+  go (i : Nat) (acc scale : UInt64) : Nat → Option (UInt64 × Nat)
+    | 0 => none
+    | fuel + 1 =>
+      if h : i < b.size then
+        let x := b[i].toNat
+        if 0x23 ≤ x && x ≤ 0x42 then some (acc + (x - 0x23).toUInt64 * scale, i + 1)
+        else if 0x5D ≤ x && x ≤ 0x7C then go (i + 1) (acc + (x - 0x5D).toUInt64 * scale) (scale * 32) fuel
+        else none
+      else none
+
+theorem readU64_go_eq (b : ByteArray) (i acc scale fuel : Nat) :
+    readU64.go b i acc.toUInt64 scale.toUInt64 fuel
+      = (readNat.go b i acc scale fuel).map fun p => (p.1.toUInt64, p.2) := by
+  induction fuel generalizing i acc scale with
+  | zero => simp [readU64.go, readNat.go]
+  | succ fuel ih =>
+    simp only [readU64.go, readNat.go]
+    split
+    · split
+      · simp [UInt64.ofNat_add, UInt64.ofNat_mul]
+      · split
+        · rw [← ih]
+          congr 1
+          · simp [UInt64.ofNat_add, UInt64.ofNat_mul]
+          · simp [UInt64.ofNat_mul]
+        · rfl
+    · rfl
+
+/-- `readU64` is `readNat` with the number taken modulo 2^64. -/
+theorem readU64_eq (b : ByteArray) (i : Nat) :
+    readU64 b i = (readNat b i).map fun p => (p.1.toUInt64, p.2) := by
+  simpa [readU64, readNat] using readU64_go_eq b i 0 1 (b.size - i + 1)
+
+#guard [0, 1, 31, 32, 33, 1023, 1024, 2 ^ 63, 2 ^ 64 - 1, (3.25 : Float).toBits.toNat, (-0.0 : Float).toBits.toNat].all fun n =>
+  readU64 (pushNat (ByteArray.mk #[0x41]) n) 1 == some (n.toUInt64, (pushNat (ByteArray.mk #[0x41]) n).size)
+
 /-- Zigzag: 0, -1, 1, -2, ... as 0, 1, 2, 3, ... -/
 def zig (i : Int) : Nat := if i ≥ 0 then 2 * i.toNat else 2 * (-i).toNat - 1
 def unzig (n : Nat) : Int := if n % 2 == 0 then (n / 2 : Nat) else -((n + 1) / 2 : Nat)
@@ -580,21 +657,30 @@ structure DecEnv where
 abbrev DM := ReaderT DecEnv (EStateM String DecState)
 
 def getNat : DM Nat := do
-  let e ← read
-  let s ← get
-  -- most numbers are one digit: no `Option` or pair for them
-  if h : s.pos < e.bytes.size then
-    let x := e.bytes[s.pos].toNat
+  let b := (← read).bytes
+  -- the position only: a state held across `set` is shared, and `set` then copies the record
+  -- (1.9 million copies in a realm decode)
+  let i := (← get).pos
+  -- most numbers are one digit
+  if h : i < b.size then
+    let x := b[i].toNat
     if 0x23 ≤ x && x ≤ 0x42 then
-      set { s with pos := s.pos + 1 }
+      modify fun s => { s with pos := i + 1 }
       return x - 0x23
-  match readNat e.bytes s.pos with
-  | some (n, i) => set { s with pos := i }; pure n
-  | none => throw "snapshot: bad number"
+  let j := natEnd b i
+  if j == i then throw "snapshot: bad number"
+  modify fun s => { s with pos := j }
+  return natVal b i j
 
 def getBool : DM Bool := do pure ((← getNat) == 1)
 def getInt : DM Int := do pure (unzig (← getNat))
-def getFloat : DM Float := do pure (Float.ofBits (← getNat).toUInt64)
+/-- A float: its bits by `readU64` (= `getNat` then `toUInt64`, `readU64_eq`). -/
+def getFloat : DM Float := do
+  let b := (← read).bytes
+  let i := (← get).pos
+  match readU64 b i with
+  | some (n, j) => modify fun s => { s with pos := j }; pure (Float.ofBits n)
+  | none => throw "snapshot: bad number"
 
 def getStr : DM String := do
   let k ← getNat
@@ -786,7 +872,7 @@ def dFunCore : Nat → DM FunDef
     -- the code is not in the data: it is compiled from the literal
     pure (match f with
       | .mk nm p r b v u st kd g a info =>
-        .mk nm p r b v u st kd g a { info with code := Compile.compile f })
+        .mk nm p r b v u st kd g a { info with code := Thunk.mk fun _ => Compile.compile f })
 
 def dClass : Nat → DM ClassDef
   | 0 => deep

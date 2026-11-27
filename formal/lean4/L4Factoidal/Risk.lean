@@ -31,6 +31,15 @@ inductive Risk where
   https://github.com/danbri/factoidal/issues/1227: "off by default and make user pass in a
   \"dangerously_and_regrettsbly_.... \" symbol". -/
   | rsa1024Verify
+  /-- A page's real-time `AudioContext` starts, and its `resume()` goes on, with no user
+  activation (Web Audio API 1.1, "allowed to start"; `WebAudio.Api.allowedToStart`). Not
+  shown: that the person wants the sound. A page can make sound as it loads, before it has
+  been used. Accepted only by the engine's start request with `dangerouslyPermitAudio: true`
+  (`labs/demos/foafnaut/WebScripts.lean`, `audioLimits`), which the browser sends only for the
+  command-line option `--dangerously-permit-audio` or the Settings switch. Owner, 2026-11-26:
+  "3. yes (but with a Settings or CLI setting --dangerously-permit-audio). In future we may
+  have other mechanisms for page trust." -/
+  | audioWithoutActivation
   deriving DecidableEq, Repr
 
 /-- Evidence that a caller accepted risk `r`. The constructor is private: the only way to

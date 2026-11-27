@@ -1,0 +1,214 @@
+{
+ "description": "Published precompile test vectors used as a test oracle only. Files are downloaded at test time from the pinned commit and checked against these SHA-256 digests; they are not vendored. The repository they come from is licensed LGPL-3.0-or-later (library) and GPL-3.0-or-later (commands); these are its unmodified test data files.",
+ "repository": "https://github.com/ethereum/go-ethereum",
+ "commit": "b9f3a3d964ed3d31e710ec7dd66da9181477ecb2",
+ "tag": "v1.16.7",
+ "base": "https://raw.githubusercontent.com/ethereum/go-ethereum/b9f3a3d964ed3d31e710ec7dd66da9181477ecb2/core/vm/testdata/precompiles/",
+ "files": [
+  {
+   "file": "ecRecover.json",
+   "sha256": "58c02c28fbe2739e13d77444fa6cd44b1109b3eed6a92926681bcbf032576e7d",
+   "address": 1,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "modexp.json",
+   "sha256": "4f7e9a14b39ffdaafcd2ad4b3cca38f45fccfc192bd29eff1e48f6db2eb93902",
+   "address": 5,
+   "profile": "shanghaiPlus",
+   "kind": "output-only"
+  },
+  {
+   "file": "modexp_eip2565.json",
+   "sha256": "efc968652f64694616969a4d136f5c5d050fc754cb2d8aeb8b98601be136ea96",
+   "address": 5,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "modexp_eip7883.json",
+   "sha256": "b66970a383617ebbd036460547e555967b1ce953e3d2a2f5969d5fdff1719983",
+   "address": 5,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blake2F.json",
+   "sha256": "1a53af443a6312e1d5ffb4f6185de8a80ba090aca00f154b6cabea74ee1c1f69",
+   "address": 9,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "fail-blake2f.json",
+   "sha256": "a0c8bd027888d6e3a098c1c4b98483ae26e5480e93011337add3ad2370abcb70",
+   "address": 9,
+   "profile": "shanghaiPlus",
+   "kind": "fail"
+  },
+  {
+   "file": "bn256Add.json",
+   "sha256": "a5e6e81aceb187e41006a14583a7feebcb03060f9b9f083613271477b9091fae",
+   "address": 6,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "bn256ScalarMul.json",
+   "sha256": "aed562c718b07d13363748b1311614b5c709b9517a230eb86e347c78bfbdae19",
+   "address": 7,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "bn256Pairing.json",
+   "sha256": "1011b31345f6470ebc409b674f0f4a9318ac23e9a0fab5052aee3b77901310f1",
+   "address": 8,
+   "profile": "shanghaiPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "pointEvaluation.json",
+   "sha256": "e831a6e4b7c848ae012e75adfe7724caeb95e2ecb79af7e853e26ccdbe5cdc9d",
+   "address": 10,
+   "profile": "cancunPlus",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG1Add.json",
+   "sha256": "5422535e26e76c5ce11b463db4efb8031ced35e18062348a6a63bd392c555cac",
+   "address": 11,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG1Mul.json",
+   "sha256": "617b956de9b3bbbdda8c46d7702c2d82e2c93bc44c4986031875fc826a8e30d2",
+   "address": 12,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG1MultiExp.json",
+   "sha256": "b2603f681b9695e6ceb3cc7562c3c922b6db709882c26e84050774c0db7ce33a",
+   "address": 12,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG2Add.json",
+   "sha256": "dda1457ba7e3d48dc48fc37f827c69d1a76e3b40652ddfb085db8e3914baf5a0",
+   "address": 13,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG2Mul.json",
+   "sha256": "a7d52d2f6f9031dbce0a5af27b95ac81a500d3f35713b175b6e468c2a518099d",
+   "address": 14,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsG2MultiExp.json",
+   "sha256": "f9b3fabe719b89883be935d7482805ac1fe734419e5ec77707dc262b0fdad926",
+   "address": 14,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsPairing.json",
+   "sha256": "163ca9fe1345bd310afe399350b008e2e649e2e0539caca5fb4e7281e1896f85",
+   "address": 15,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsMapG1.json",
+   "sha256": "0306496993880223cb3d56a718de6746dc3cfee77dae572b9ba30bbbc64d2b24",
+   "address": 16,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "blsMapG2.json",
+   "sha256": "8e3aa0a738693ef2b2eac2f12dfad9252642c30129bf8bfeab79dd59e7186700",
+   "address": 17,
+   "profile": "osaka",
+   "kind": "ok"
+  },
+  {
+   "file": "fail-blsG1Add.json",
+   "sha256": "240555c02a269e381af81fc58cca0e4a36ef186938d8e994a56da0fd2f9a2ad1",
+   "address": 11,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsG1Mul.json",
+   "sha256": "54328387084e0419884e06172053e876ac20efedb65a19ea736d778fde516c70",
+   "address": 12,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsG1MultiExp.json",
+   "sha256": "68d9429031d410a16493dc13e0be795dd0ff603609dfc943f016c4b85438ce36",
+   "address": 12,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsG2Add.json",
+   "sha256": "a153b084e499c1c4a5ae86c9d09869d6398212e1816ce2d33011c4f6b3e374bd",
+   "address": 13,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsG2Mul.json",
+   "sha256": "a75ba7cb25b8d13271e0b75e882d8fafe5995d7ca45e79dd14ae035a04d6ae60",
+   "address": 14,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsG2MultiExp.json",
+   "sha256": "31a6f97c0993dd46da273cc8de4cbf39293cb4a49caae949f37ca97964930dbc",
+   "address": 14,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsPairing.json",
+   "sha256": "438333fb984ac7adef12bfad2d797f32d7c2480f8eaacf21bed16ae22453bf79",
+   "address": 15,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsMapG1.json",
+   "sha256": "2dd3304500423bdf5aa1fa1d3886307f32b88b3cc913727d7ebc8adf0c0e8323",
+   "address": 16,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "fail-blsMapG2.json",
+   "sha256": "101e4e994c1c265a8f49b1ea220f7ee9e9b208a63473fcd86a55a0d5e4a2bd37",
+   "address": 17,
+   "profile": "osaka",
+   "kind": "fail"
+  },
+  {
+   "file": "p256Verify.json",
+   "sha256": "72be71957c3e4292d874b3e2a6a2fc2142524433b01cb9a9552b9bb2528c214d",
+   "address": 256,
+   "profile": "osaka",
+   "kind": "ok"
+  }
+ ],
+ "kzgVectorsSha256": "1ce1b1d2dda4eb2d158f793c66f13925e1e126d550ea1ae69ba34a8bc4b593a0",
+ "kzgVectors": "third_party/ethereum-kzg-vectors/kzg-verify-proof.json (see its PROVENANCE.md)"
+}

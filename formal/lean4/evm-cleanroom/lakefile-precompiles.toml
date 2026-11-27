@@ -1,0 +1,12 @@
+name = "evm_cleanroom"
+version = "0.1.0"
+defaultTargets = ["EVMCleanroom"]
+
+# The precompile runner imports no Lean.* module, so it needs no startup
+# selection. It has its own configuration to leave the reviewed ones unchanged.
+[[lean_lib]]
+name = "EVMCleanroom"
+
+[[lean_exe]]
+name = "evm-precompile"
+root = "EVMCleanroom.PrecompileCLI"

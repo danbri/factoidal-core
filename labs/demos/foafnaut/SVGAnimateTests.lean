@@ -107,6 +107,19 @@ private def r (anim : String) (base : String := "") : String :=
 #guard at_ (r "<set id='s' attributeName='x' to='74' begin='0s; s.end + 1s' dur='1s'/>") 10500 "r" "x" == "74"
 -- A syntax error in a begin list: the whole list is indefinite (W3C animate-elem-225-t).
 #guard at_ (r "<set attributeName='fill' to='red' begin='1s; +-2s; 3s'/>" "fill='lime'") 5000 "r" "fill" == "lime"
+-- Path values with relative and absolute commands are compatible in absolute form (animate-elem-83-t).
+#guard at_ ("<path id='p' d='M0 0'><animate attributeName='d' from='M0 0 L10 0 Z' to='M10 10 l10 0 z' dur='1s'/></path>") 500 "p" "d" == "M 5 5 L 15 5 Z"
+-- An arc flag stays 0 or 1.
+#guard at_ ("<path id='p' d='M0 0'><animate attributeName='d' from='M0 0 A5 5 0 0 1 10 0' to='M0 0 A5 5 0 1 0 10 0' dur='1s'/></path>") 500 "p" "d" == "M 0 0 A 5 5 0 1 1 10 0"
+-- min="-6s" is ignored (W3C animate-elem-65-t).
+#guard at_ (r "<set attributeName='x' to='74' min='-6s' end='5s'/>") 4000 "r" "x" == "74"
+#guard at_ (r "<set attributeName='x' to='74' min='-6s' end='5s'/>") 5000 "r" "x" == "absent"
+-- calcMode linear on a path: each segment has an equal share of the time (M L L: two segments,
+-- of lengths 10 and 30), whatever its length.
+#guard at_ (r "<animateMotion path='M0 0 L10 0 L40 0' calcMode='linear' dur='2s'/>") 500 "r" "transform" == "translate(5 0)"
+#guard at_ (r "<animateMotion path='M0 0 L10 0 L40 0' calcMode='linear' dur='2s'/>") 1500 "r" "transform" == "translate(25 0)"
+-- A moveto is not a segment.
+#guard at_ (r "<animateMotion path='M0 0 L10 0 M20 0 L30 0' calcMode='linear' dur='2s'/>") 1500 "r" "transform" == "translate(25 0)"
 -- Refusals name the feature.
 -- animateMotion (§16.2.17): paced along the path; the motion is to the left of `transform`.
 #guard at_ (r "<animateMotion path='M0 0 L10 0 L10 10' dur='2s'/>") 500 "r" "transform" == "translate(5 0)"

@@ -229,8 +229,17 @@ inductive Arg where
   | str (b : ByteArray)
   | out
 
-/-- The capacity of an output buffer (as `read_bytes` of the QuickJS build allows). -/
-def outCap : Nat := 67108864
+/-- The capacity of an output buffer, and the largest argument block of a call: 1 GiB on a
+64-bit host, 64 MiB on a 32-bit host (the Wasm build, whose address space is 4 GiB). A call's
+memory here is sparse (`layout`, `callImport`), so the capacity costs nothing until a page sends or
+asks for that much. Until 2026-11-27 it was 64 MiB everywhere, the limit of `read_bytes` in the
+QuickJS build (`tools/wasmvm/quickjs/qjs_wasmvm_entry.c`, a 32-bit guest with a 64 MiB heap), which
+keeps it: that refused a Web Audio buffer or decode of a stereo song longer than about three minutes
+(https://github.com/danbri/factoidal-core/issues/1177). -/
+def outCap : Nat := if System.Platform.numBits == 64 then 1 <<< 30 else 1 <<< 26
+
+-- The output capacity and the argument block limit of `web_api` are the same number.
+#guard outCap == Hosts.WebApi.maxInput
 
 /-- ToInt32 of an argument (`JS_ToInt32` of the QuickJS build). -/
 def intOf : JS.HostArg → Int
@@ -868,7 +877,7 @@ def startBegin (base : Session) (dom : Arena) (url : String) (lim : Page.Limits 
   let s := match Hosts.WebApi.mathRandomSeed lim.entropy with
     | some x => { s with heap := { s.heap with rng := x } }
     | none => s
-  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader lim.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, violations := lim.cspViolations, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock } } }
+  let mut s := s.setHost { dom := domHost, reads, time, web := { entropy := lim.entropy, docEncoding := lim.encoding, net := { enabled := lim.network, page := L4Factoidal.Net.PageFetch.Page.ofUrl url lim.hostCors lim.pageAddress lim.tor, client := url, policy := L4Factoidal.Net.Xhr.policyOfHeader lim.referrerPolicy, csp := L4Factoidal.Net.Xhr.cspOf lim.csp lim.cspReportOnly lim.cspMeta, violations := lim.cspViolations, syncOk := lim.syncOk, syncAnswers := lim.syncAnswers, mayBlock := lim.mayBlock }, audio := { device := lim.audioDevice, autoplay := lim.autoplay } } }
   s := (s.api? "start" #[]).1
   s := (s.api? "url" #[.str (JS.Str.ofHost url)]).1
   return s

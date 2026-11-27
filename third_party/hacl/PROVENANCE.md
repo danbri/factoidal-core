@@ -59,7 +59,7 @@ changes only in code generation and control-flow layout (see the design record).
 
 ## What is vendored (the curation)
 
-The same primitives as before this re-pin; no new primitive was added.
+The same primitives as at the re-pin, plus secp256k1 (2026-11-27, same commit, files unchanged).
 
 | Primitive (consumer) | Translation units |
 |---|---|
@@ -72,6 +72,7 @@ The same primitives as before this re-pin; no new primitive was added.
 | HMAC, HKDF (`Crypto/Hkdf.lean`) | `Hacl_HMAC.c`, `Hacl_HKDF.c` |
 | X25519 (`Crypto/X25519.lean`) | `Hacl_Curve25519_51.c` |
 | HPKE base mode, DHKEM(X25519, HKDF-SHA256), ChaCha20-Poly1305 (`Crypto/Hpke.lean`) | `Hacl_HPKE_Curve51_CP32_SHA256.c` |
+| ECDSA secp256k1, Ethereum signing (`Crypto/K256Native.lean`; added 2026-11-27, owner approval quoted in CLAUDE.md "HACL\* is preferred; secp256k1 signer approved") | `Hacl_K256_ECDSA.c`, `Hacl_EC_K256.c` (constant-time point multiplication for the recovery id), `Hacl_HMAC_DRBG.c` (the RFC 6979 nonce: HMAC_DRBG with SHA-256) |
 | AES-128-GCM, AES-256-GCM, native x86-64 Linux and macOS only (`Crypto/AesGcmNative.lean`) | `EverCrypt_AEAD.c`, `EverCrypt_AutoConfig2.c`, `EverCrypt_Chacha20Poly1305.c`, `vale/src/aesgcm-x86_64-{linux,darwin}.S`, `vale/src/cpuid-x86_64-{linux,darwin}.S` |
 
 **Link closure.** `Hacl_HMAC.c` is one translation unit for every HMAC hash,
@@ -102,7 +103,7 @@ were removed.
 intrinsics that the Wasm build and a plain arm64 build lack), the EverCrypt
 agile hash/HMAC/HKDF/DRBG layers, `Hacl_Streaming_HMAC.c`, every fixed-width
 bignum (`Hacl_Bignum256*`, `Hacl_Bignum4096*`, `Hacl_Bignum32`),
-`Hacl_GenericField*`, K-256, FFDHE, Frodo, NaCl, Salsa20, the other HPKE
+`Hacl_GenericField*`, FFDHE, Frodo, NaCl, Salsa20, the other HPKE
 ciphersuites, the Vale Curve25519/Poly1305/SHA-256 assembly, and the `-mingw.S`,
 `-msvc.asm` and `ppc64le.S` Vale variants.
 

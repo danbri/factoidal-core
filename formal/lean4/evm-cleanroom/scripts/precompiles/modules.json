@@ -1,0 +1,21 @@
+{
+ "modules": [
+  "EVMCleanroom/Precompiles/Basic.lean",
+  "EVMCleanroom/Precompiles/Sha256.lean",
+  "EVMCleanroom/Precompiles/Ripemd160.lean",
+  "EVMCleanroom/Precompiles/Blake2f.lean",
+  "EVMCleanroom/Precompiles/ModExp.lean",
+  "EVMCleanroom/Precompiles/ModExpProofs.lean",
+  "EVMCleanroom/Precompiles/Field.lean",
+  "EVMCleanroom/Precompiles/Curve.lean",
+  "EVMCleanroom/Precompiles/Secp256k1.lean",
+  "EVMCleanroom/Precompiles/Ecrecover.lean",
+  "EVMCleanroom/Precompiles/Tower.lean",
+  "EVMCleanroom/Precompiles/Pairing.lean",
+  "EVMCleanroom/Precompiles/BN254.lean",
+  "EVMCleanroom/Precompiles/BLS12381.lean",
+  "EVMCleanroom/Precompiles/KZG.lean",
+  "EVMCleanroom/Precompiles/P256.lean",
+  "EVMCleanroom/Precompiles.lean"
+ ]
+}

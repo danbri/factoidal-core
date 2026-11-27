@@ -1184,9 +1184,13 @@ def HeapOf.fastGet (h : HeapOf H) (id : Nat) (key : String) : Nat → Value
   | 0 => .hole
   | fuel + 1 =>
     let o := h.objs.getD id default
+    -- A String wrapper (`String.prototype` among them) has the same exotic keys as an Array
+    -- (`length` and indexes, which start with a digit); other wrappers have none (`Obj.getOwn`).
+    -- Until 2026-11-27 every wrapper was refused, so each method read on a string
+    -- (`s.charCodeAt`) took the general path.
     let kindOk := match o.kind with
-      | .proxy .. | .typed .. | .prim _ => false
-      | .array _ => key != "length" && !key.front.isDigit
+      | .proxy .. | .typed .. => false
+      | .array _ | .prim (.str _) => key != "length" && !key.front.isDigit
       | _ => true
     if !kindOk then .hole else
     match o.props.get? key with

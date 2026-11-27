@@ -174,7 +174,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
     let mut lo := box.w + 1
     let mut hi := 0
     for s in [0:subRows] do
-      let ys := row + (nf s + 0.5) * wgt
+      let ys := row + (nf s + halfF) * wgt
       let mut xs : Array (Float × Int) := #[]
       for e in active do
         if e.y0 <= ys && ys < e.y1 then
@@ -183,7 +183,7 @@ def coverageIn (box : Box) (es : Array Edge) (rule : FillRule) : FloatArray × A
       -- Few crossings: insertion; many (overlapping shapes): a sort.
       xs := if xs.size ≤ 16 then xs.foldl (fun acc (x, d) => insertSorted acc x d) #[] else sortBy (·.1) xs
       let mut wind : Int := 0
-      let mut start := 0.0
+      let mut start := zeroF
       for (x, d) in xs do
         let before := wind
         wind := wind + d
@@ -305,7 +305,7 @@ def Op.unbounded : Op → Bool
 
 /-- Separable blend functions B(Cb, Cs), Compositing and Blending §10.2. -/
 def blendChannel (o : Op) (cb cs : Float) : Float :=
-  let hard := fun (cb cs : Float) => if cs <= 0.5 then cb * 2 * cs else let s := 2 * cs - 1; cb + s - cb * s
+  let hard := fun (cb cs : Float) => if cs <= halfF then cb * 2 * cs else let s := 2 * cs - 1; cb + s - cb * s
   match o with
   | .multiply => cb * cs
   | .screen => cb + cs - cb * cs
@@ -316,7 +316,7 @@ def blendChannel (o : Op) (cb cs : Float) : Float :=
   | .colorBurn => if cb >= 1 then 1 else if cs <= 0 then 0 else 1 - min 1 ((1 - cb) / cs)
   | .hardLight => hard cb cs
   | .softLight =>
-    if cs <= 0.5 then cb - (1 - 2 * cs) * cb * (1 - cb)
+    if cs <= halfF then cb - (1 - 2 * cs) * cb * (1 - cb)
     else
       let d := if cb <= 0.25 then ((16 * cb - 12) * cb + 4) * cb else Float.sqrt cb
       cb + (2 * cs - 1) * (d - cb)

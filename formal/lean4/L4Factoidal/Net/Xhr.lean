@@ -927,7 +927,7 @@ def wsOp (s : State) (code : Nat) (fs : Array ByteArray) (entropy : ByteArray) :
   match code with
   | 156 =>
     let protocols := ((List.range fs.size).drop 3).map str
-    match WebSocket.openCheck (str 0) (str 1) protocols s.page.secure with
+    match WebSocket.openCheckFor s.page (str 0) (str 1) protocols with
     | .error (n, m) => (s, ok ("err\u0000" ++ n ++ "\u0000" ++ m))
     | .ok u =>
       if s.sockets.size ≥ 256 then (s, ok "err\u0000SyntaxError\u0000Too many WebSocket connections.") else

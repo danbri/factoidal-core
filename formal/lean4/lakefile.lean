@@ -81,6 +81,24 @@ target Hacl_Bignum64.o pkg : FilePath :=
 target Hacl_Bignum.o pkg : FilePath :=
   buildHaclO pkg "Hacl_Bignum" (haclDir pkg / "src" / "Hacl_Bignum.c")
 
+/-! secp256k1 (2026-11-27). `L4Factoidal/Crypto/K256Native.lean` declares
+`@[extern "l4_hacl_k256_*"]` opaques realised by `ffi/hacl_k256.c` over HACL*
+`Hacl_K256_ECDSA.c`, `Hacl_EC_K256.c` and `Hacl_HMAC_DRBG.c` (the RFC 6979 nonce;
+it calls `Hacl_HMAC.c`, below). Owner, 2026-11-27: HACL* is preferred, and the
+secp256k1 signer for Ethereum is approved (CLAUDE.md). -/
+
+target hacl_k256_shim.o pkg : FilePath :=
+  buildHaclO pkg "hacl_k256_shim" (pkg.dir / "ffi" / "hacl_k256.c")
+
+target Hacl_K256_ECDSA.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_K256_ECDSA" (haclDir pkg / "src" / "Hacl_K256_ECDSA.c")
+
+target Hacl_EC_K256.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_EC_K256" (haclDir pkg / "src" / "Hacl_EC_K256.c")
+
+target Hacl_HMAC_DRBG.o pkg : FilePath :=
+  buildHaclO pkg "Hacl_HMAC_DRBG" (haclDir pkg / "src" / "Hacl_HMAC_DRBG.c")
+
 /-! The XMPP client-role and end-to-end-encryption additions (2026-09-07).
 `L4Factoidal/Crypto/ChaChaPoly.lean`, `Crypto/Hkdf.lean`, `Crypto/X25519.lean`
 and `Crypto/Hpke.lean` declare `@[extern]` opaques realised by
@@ -230,6 +248,10 @@ extern_lib libl4hacl pkg := do
   let memzero ← Lib_Memzero0.o.fetch
   let hpke ← Hacl_HPKE_Curve51_CP32_SHA256.o.fetch
   let aesShim ← hacl_aesgcm_shim.o.fetch
+  let k256Shim ← hacl_k256_shim.o.fetch
+  let k256 ← Hacl_K256_ECDSA.o.fetch
+  let ecK256 ← Hacl_EC_K256.o.fetch
+  let drbg ← Hacl_HMAC_DRBG.o.fetch
   let vale ← if valeHost then do
       pure #[← EverCrypt_AEAD.o.fetch, ← EverCrypt_AutoConfig2.o.fetch,
              ← EverCrypt_Chacha20Poly1305.o.fetch, ← vale_aesgcm.o.fetch,
@@ -240,7 +262,7 @@ extern_lib libl4hacl pkg := do
     (#[shim, ed, curve, sha2, p256Shim, rsaShim, p256, bn64, bn,
       cpShim, kdfShim, hpkeShim, webShim, rsapss, sha3,
       aead, chacha, poly, hkdf, hmac, sha1, blake2s, blake2b, md5, memzero, hpke,
-      aesShim] ++ vale)
+      aesShim, k256Shim, k256, ecK256, drbg] ++ vale)
 
 /-- Build the deliberately small POSIX `pread` host adapter used only by the
     native IBK2 range-read probe. The pure planner/decoder remains in Lean;
@@ -988,6 +1010,9 @@ lean_exe «l4wikidata-rewriter» where root := `Wikidata.RewriteServer
 -- a `#guard` cannot reach. Run the built binary from the REPOSITORY ROOT.
 @[default_target] lean_exe «l4crypto-probe» where root := `Harness.CryptoProbe
 
+/-- secp256k1 vectors over HACL* (`Harness/K256Probe.lean`). -/
+lean_exe «l4k256-probe» where root := `Harness.K256Probe
+
 -- JWE probe (Harness/JweProbe.lean, L4Factoidal/JOSE/Jwe.lean, issue 1085):
 -- the RFC 7516 Appendix A and RFC 7520 section 5 compact serializations
 -- (tests/jose/jwe-vectors.json), the RFC 7518 Appendix C derivation and
@@ -1090,3 +1115,6 @@ lean_exe l4xproc where root := `L4Factoidal.XProc31.Runner
 
 -- Lean shaping font adapter (https://github.com/danbri/factoidal/issues/1233). Not a default target.
 lean_exe «l4font-shape» where root := `L4Factoidal.Rendering.LeanFontShape
+
+-- Time of BubblePopJS's realm snapshot decode, the first start turn of every engine (issue 471).
+lean_exe «realm-decode-bench» where root := `Harness.RealmDecodeBench
